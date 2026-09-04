@@ -218,6 +218,7 @@ Errors handled in this sub-project: component outages degrade `/api/healthz` ins
 - Apply the two DNS records in §6 once Railway shows the targets.
 - Confirm GitHub Actions is enabled on `vin-swe/practice-match`.
 - Confirm the vin-swe repo may hold the design reference bundle (it contains the VIN Foundation logo, photos and design system files).
+- **Census API key (in hand, 2026-09-05).** Set it out-of-band — `railway variables --set CENSUS_API_KEY=<key> --service worker --environment <env>` or the dashboard — for both environments once the services exist. It is consumed by Sub-project 3's ingest worker; the spec treats a missing key as a hard startup failure of the ingest worker. Never paste it in chat, commit it, or place it in `.env.example`.
 
 **VIN Foundation (does not block SP1; carried into the SP3 plan)**
 
