@@ -102,20 +102,22 @@ practice-match/
 3. **vue-router as a sync layer.** `logic.js` is not edited. `src/router/` adds:
    - `routes.ts` — the table below; every route renders the one `App` component.
    - `sync.ts` — two pure functions: `stateToRoute(state) → { path, query, params }` and `routeToPatch(route) → Partial<State>`.
-   - `App.vue` gains a `watch` on `state.screen`, `state.mdTab`, `state.detailId`, `state.adminTab` → `router.push` (screen change) or `router.replace` (tab/id change within a screen); and a `router.afterEach` that calls `component.setState(routeToPatch(to))` when the patch differs from current state (guarding the loop).
+   - `App.vue` gains a `watch` on `state.screen`, `state.browseMode`, `state.detailId`, `state.adminTab` → `router.push` (screen change) or `router.replace` (tab/id change within a screen); and a `router.afterEach` that calls `component.setState(routeToPatch(to))` when the patch differs from current state (guarding the loop).
 
    | Route | `state.screen` | Synced extras |
    |---|---|---|
    | `/` | `gate` | gate sub-state (`signin` / `apply` / `status`) stays internal |
-   | `/browse` | `browse` | `?tab=listings\|market` ↔ `state.mdTab` (default `listings`) |
+   | `/browse` | `browse` | `?tab=listings\|market` ↔ `state.browseMode` (default `listings`; the handoff README's `mdTab` is the docked panel's tab, not this switch) |
    | `/practices/:id` | `detail` | `params.id` ↔ `state.detailId` |
    | `/requests` | `requests` | — |
    | `/seller` | `seller` | `sellerView` (`dash` / `wizard`) and `step` stay internal |
-   | `/admin` | `admin` | `?tab=users\|listings\|requests\|data-sources` ↔ `state.adminTab` |
+   | `/admin` | `admin` | `?tab=users\|listings\|activity\|data` ↔ `state.adminTab` (the design's own keys; `activity` is the Requests tab, `data` is Data Sources) |
    | anything else | — | redirect to `/` |
 
    Member screens still depend on `state.auth` exactly as the prototype does (fixture sign-in). Deep-linking to `/browse` while signed out shows the gate, because `renderVals()` already gates on `auth` — the router does not add a guard of its own.
-4. **Prototype props from the environment.** `prototypeBar` = `import.meta.env.VITE_ENVIRONMENT !== 'production'` (jump bar on in QA, off in production). `startScreen` is superseded by the route; `startViewport` remains a prop, settable via `?viewport=mobile` in non-production builds only (it is the design's own mobile toggle — see §9 on the undefined real-device breakpoint). `VITE_ENVIRONMENT` is set at image build time from the Railway service variable `ENVIRONMENT` (Dockerfile `ARG`).
+4. **Prototype props from the environment.** `prototypeBar` = `import.meta.env.VITE_ENVIRONMENT !== 'production'` (jump bar on in QA, off in production). `startScreen` and `startViewport` remain as props with their defaults and are not driven by the URL: the jump bar's own "Mobile view" / "Desktop view" toggle is the design's mobile switch, and the visual harness uses it on both targets (see §9 on the undefined real-device breakpoint). `VITE_ENVIRONMENT` is set at image build time from the Railway service variable `ENVIRONMENT` (Dockerfile `ARG`).
+
+5. **Design-system cascade.** The reference loads three design-system stylesheets before the design's own `<style>` (`colors_and_type.css`, `preview/_preview.css`, `ui_kits/vin/kit.css`); the handoff `vue-app` loads only the first. `_preview.css` carries `* { margin: 0; padding: 0 }` and `-webkit-font-smoothing`, so default element spacing differs without it. `frontend/index.html` links all three from `/ds/` in the reference's order, ahead of `tokens.css`/`global.css`. (`_ds_bundle.js` only defines unused DS demo components and is not shipped.)
 
 **Kept exactly as designed.** The prototype jump bar markup (gated), the "Prototype — access states" shortcuts, the pre-filled demo credentials, all fixture data in `logic.js` (`P`, `MARKETS`, `VETS`, `ECON_K`, `sellerListings`, `requests`, admin rows), all inline styles, all copy, the `v-hover` directive, ProximaNova from `/ds/fonts`, the VIN icon set incl. the six flagged `sub-*` substitutions, the three listing photos.
 
@@ -130,14 +132,13 @@ The reference `.dc.html` is the oracle. It renders standalone in a browser: `sup
 ```ts
 export interface Screen {
   name: string;                                   // baseline file stem
-  start: { screen: 'gate'|'browse'|'detail'|'requests'|'seller'|'admin'; viewport: 'desktop'|'mobile'; prototypeBar: boolean };
   viewport?: { width: number; height: number };   // default 1440×940
-  steps?: (page: Page) => Promise<void>;          // same clicks on both targets (role/text selectors)
+  steps: (page: Page) => Promise<void>;           // same clicks on both targets (role/text selectors), starting from the gate
 }
 ```
 
-- **Reference target** (`reference-baselines.spec.ts`, `npm run test:visual:baselines`): a static server serves `docs/design-reference/`; per state the harness fetches `Practice Match V2.dc.html`, rewrites the `data-props` defaults to `start`, serves it at a unique URL, runs `steps`, waits, and saves `visual.spec.ts-snapshots/<name>-chromium-<platform>.png`.
-- **App target** (`visual.spec.ts`, `npm run test:visual`): Vite serves the app; per state the test navigates to the route implied by `start` (`/`, `/browse`, `/practices/p1`, …, with `?viewport=mobile` when needed), runs the same `steps`, and asserts `expect(page).toHaveScreenshot('<name>.png')`.
+- **Reference target** (`reference-baselines.spec.ts`, `npm run test:visual:baselines`): a static server serves `docs/design-reference/`; per state the harness opens `Practice Match V2.dc.html` (its defaults already show the jump bar on the gate at 1440×940), runs `steps`, waits, and saves `visual.spec.ts-snapshots/<name>-<platform>.png`.
+- **App target** (`visual.spec.ts`, `npm run test:visual`): Vite serves the app at `/`; per state the test runs the same `steps` (the jump bar and in-screen clicks reach every state on both targets, so the reference needs no `data-props` rewriting) and asserts `expect(page).toHaveScreenshot('<name>.png')`.
 
 **Determinism rules (both targets).** Block basemap tile hosts (`**/*.arcgisonline.com/**` → abort) so maps render markers/pills over a blank canvas; `animations: 'disabled'`, `caret: 'hide'`; wait for `document.fonts.ready` and one settled frame; fixed viewport; workers = 1. Fonts are the same self-hosted ProximaNova files on both sides.
 
@@ -204,6 +205,7 @@ Order of operations for every change: deploy QA → verify on `qa.foundation.vin
 | Layer | Tool | What |
 |---|---|---|
 | Router sync | vitest | `stateToRoute` / `routeToPatch` round-trip for every row of the §3 table; unknown route → `/`; tab defaults; no-op patch when route already matches state |
+| Asset paths | vitest | no relative `assets/` or `ds/` reference remains in `frontend/src` (guards the 33 fixes) |
 | Leaflet adapter | vitest | `loadLeaflet()` resolves the bundled module and injects no external tags; `BASEMAPS` unchanged from the handoff |
 | Screens | Playwright smoke | every route renders without console errors; `/api/healthz` reachable |
 | Pixel fidelity | Playwright visual | §4 |
