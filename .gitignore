@@ -1,0 +1,26 @@
+# --- node / frontend ---
+node_modules/
+frontend/dist/
+frontend/playwright-report/
+frontend/test-results/
+
+# --- python ---
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- secrets & local env (never commit) ---
+.env
+.env.local
+.env.*.local
+.env.prod-backup*
+
+# --- superpowers / sdd scratch ---
+.superpowers/
+
+# --- os / editor ---
+.DS_Store
+*.log
