@@ -1,0 +1,30 @@
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def _run_import_without(*missing: str) -> subprocess.CompletedProcess[str]:
+    env = {k: v for k, v in os.environ.items() if k not in missing}
+    env["PYTHONPATH"] = str(ROOT)
+    return subprocess.run([sys.executable, "-c", "import app.config"], env=env, capture_output=True, text=True)
+
+
+def test_missing_required_variable_exits_1_and_names_it():
+    r = _run_import_without("DATABASE_URL")
+    assert r.returncode == 1
+    assert "DATABASE_URL" in r.stderr
+
+
+def test_all_required_present_imports_cleanly():
+    r = _run_import_without()
+    assert r.returncode == 0, r.stderr
+
+
+def test_origins_split_and_trimmed(monkeypatch):
+    from app.config import Settings
+    s = Settings(database_url="postgresql://x", redis_url="redis://x", environment="test",
+                 api_secret_key="x", allowed_origins=" https://foundation.vin, https://qa.foundation.vin ")
+    assert s.origins == ["https://foundation.vin", "https://qa.foundation.vin"]
