@@ -77,6 +77,8 @@
 
 ### Task I1: Schema (`010`–`014`), `app/db.py`, `app/cache.py`, root test fixtures
 
+*Cross-plan delta (2026-09-05): Platform Task 5 fix round 3 created `app/db.py` — `get_engine(url)`, `get_redis(url)` (one instance per running event loop and URL) and `dispose_all()` — so the health probes reuse pooled connections. Task I1 EXTENDS that module (schema/session helpers) rather than creating it; keep those three names and semantics.*
+
 **Files:**
 - Create: `migrations/010_accounts.sql`, `migrations/011_applications_roles.sql`, `migrations/012_api_tokens.sql`, `migrations/013_email.sql`, `migrations/014_audit_log.sql`, `app/db.py`, `app/cache.py`, `tests/auth/__init__.py`, `tests/auth/test_schema.py`
 - Modify: `tests/conftest.py` (add `scratch_dsn`, `conn`, `redis` fixtures), `pyproject.toml` (deps: `argon2-cffi`, `zxcvbn`, `fakeredis[aioredis]`, `sqlalchemy[asyncio]`, `asyncpg`, `redis`)

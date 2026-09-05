@@ -2308,6 +2308,14 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin fea
 - [ ] `check_db` builds its engine outside its own `try`, so a malformed DSN raises instead of degrading to `{ok: False, error}`. Move `create_async_engine(...)` inside the `try`. RED: `await check_db("not-a-dsn")` returns `{"ok": False, "error": "ArgumentError"}` (or the class SQLAlchemy actually raises — record it) instead of raising; same shape check for `check_redis("not-a-url")`.
 - [ ] `poetry run pytest -q -W error` green; `poetry run mypy app --strict` clean. Commit — `fix(api): health probes degrade on a malformed DSN instead of raising`.
 
+**Fix round 3 (2026-09-05 — John's ruling on the Task 6 stop: "pool the connections now"; files: new `app/db.py`, `app/checks.py`, `app/main.py`, new `tests/test_db.py`; `tests/perf/test_api_latency.py` untouched; one commit, made BEFORE Task 6's own commit, by the Task 6 implementer):**
+- [ ] **Why.** With Postgres and Redis up (Task 6), `/api/healthz` opened a new async engine and a new Redis client per call (~100 ms) and the policy's p95 ≤ 20 ms budget failed; it passed in Task 5 only because refused connections are instant.
+- [ ] **`app/db.py`** — `get_engine(url: str) -> AsyncEngine` and `get_redis(url: str) -> Redis` return one instance per (running event loop, url), created lazily on first use (`weakref.WeakKeyDictionary[AbstractEventLoop, dict[str, …]]`; engine `pool_pre_ping=True, pool_size=5, max_overflow=5`; redis `from_url(url)`); `async def dispose_all() -> None` disposes every cached engine and closes every cached client (all loops' entries for the current loop; other loops' entries are dropped). This is the Identity plan's Task I1 module pulled forward; that plan now extends it instead of creating it.
+- [ ] **`app/checks.py`** — `check_db(url)` / `check_redis(url)` keep their signatures and the round-1/2 error semantics but obtain the engine/client via `app.db` inside the `try` (a malformed URL still raises there and degrades to `{ok: False, error: <class>}`); no per-call `dispose()`/`aclose()` — the pooled objects live for the loop.
+- [ ] **`app/main.py`** — a FastAPI `lifespan` that calls `dispose_all()` on shutdown; `create_app` passes it.
+- [ ] **Tests (`tests/test_db.py`, RED first):** (1) two `get_engine(url)` calls in one loop return the same object and `get_engine(other_url)` a different one; (2) after `dispose_all()` a new call returns a fresh object; (3) two `check_db(url)` calls create ONE engine (patch `app.db.create_async_engine` and count calls) — this is the RED that exists today (two); (4) the perf gate with the services UP: `poetry run pytest tests/perf -q` → RED is the current `~107 ms > 20 ms` failure, GREEN after pooling (quote both p95 values). Existing degradation tests keep passing (malformed URL → `ArgumentError`/`ValueError` class names).
+- [ ] Gates with the containers UP: `poetry run pytest -q -W error` all green (`db_ready` fixture in the tree); `poetry run mypy app --strict` clean. Commit — `feat(db): pooled per-loop engine and redis client; health probes reuse them (p95 under budget with services up)`.
+
 ---
 
 ### Task 6: Migrations runner, PostGIS extension, local Postgres/Redis
@@ -2328,6 +2336,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin fea
 services:
   db:
     image: postgis/postgis:16-3.5
+    platform: linux/amd64  # the official PostGIS image ships no arm64 build; a no-op on amd64 CI/Railway (John's ruling 2026-09-05)
     environment:
       POSTGRES_USER: pm
       POSTGRES_PASSWORD: pm_dev_pw
