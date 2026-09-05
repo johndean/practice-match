@@ -1,6 +1,6 @@
-// Leaflet loader + basemap tile configuration, ported verbatim from the approved prototype.
-// Marker HTML builders moved to src/map/markers.js (Map-engines spec §11.1) — this file and
-// src/map/engines/* are the only places that touch Leaflet or window.L.
+// Leaflet loader + marker renderers, ported verbatim from the approved prototype.
+// Marker HTML is intentionally inline-styled: Leaflet divIcons live outside the app
+// stylesheet scope, so the approved values must travel with the markup.
 
 // Leaflet is bundled from npm (same 1.9.4 the prototype loaded from unpkg) so
 // production has no third-party runtime script dependency. Same exported API.
