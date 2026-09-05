@@ -202,8 +202,6 @@ function renderCredit(url, credit, attrError) {
 
 // _render (l.1068-1213), read-only branch.
 function render() {
-  if (!el) return;
-
   // Shape. Presets use border-radius so the dashed ring can follow the rounded outline.
   const shape = String(props.shape || 'rounded').toLowerCase();
   let radius = '';
