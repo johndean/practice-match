@@ -1,0 +1,32 @@
+{
+  "name": "practice-match",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview",
+    "typecheck": "vue-tsc --noEmit -p tsconfig.json",
+    "test": "vitest run",
+    "test:e2e": "playwright test --config=tests/playwright.config.ts --project=app",
+    "test:smoke": "playwright test --config=tests/playwright.config.ts --project=app smoke.spec.ts",
+    "test:visual": "playwright test --config=tests/playwright.config.ts --project=app visual.spec.ts",
+    "test:visual:baselines": "playwright test --config=tests/playwright.config.ts --project=reference"
+  },
+  "dependencies": {
+    "leaflet": "^1.9.4",
+    "vue": "^3.4.0",
+    "vue-router": "^4.6.4"
+  },
+  "devDependencies": {
+    "@types/leaflet": "^1.9.22",
+    "@types/node": "^26.4.1",
+    "@vitejs/plugin-vue": "^5.0.0",
+    "jsdom": "^30.0.1",
+    "typescript": "^6.0.3",
+    "vite": "^5.0.0",
+    "vitest": "^3.2.7",
+    "vue-tsc": "^3.3.11"
+  }
+}

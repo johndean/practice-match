@@ -1,0 +1,43 @@
+:root {
+    /* VIN Foundation Brand Style Guide 2026 — approved palette */
+    --vf-navy: #003a70;
+    --vf-accent: #339dde;
+    --vf-accent-bg: #deecf7;
+    --vf-text: #494949;
+    --vf-neutral: #f5f5f5;
+    --vf-white: #ffffff;
+
+    --color-navy: var(--vf-navy);
+    --color-navy-focus: #002a52;
+    --color-blue: var(--vf-accent);
+    --color-steel: var(--vf-text);
+    --color-light-steel: var(--vf-accent-bg);
+    --color-steel-hover: var(--vf-accent-bg);
+    --color-gold: var(--vf-accent);
+    --color-off-white: var(--vf-neutral);
+    --color-white: var(--vf-white);
+    --border-subtle: #d4dde5;
+    --status-success: var(--vf-navy);
+    --fg1: var(--vf-navy);
+    --fg2: var(--vf-text);
+    --fg-link: var(--vf-accent);
+    --text-primary: var(--vf-navy);
+    --text-secondary: var(--vf-text);
+
+    --rf-serif: 'ProximaNova', Arial, Helvetica, sans-serif;
+    --rf-display: 'ProximaNova', Arial, Helvetica, sans-serif;
+    --rf-band: var(--vf-accent-bg);
+    --rf-line: #e6e6e6;
+  }
+  body { margin: 0; background: var(--vf-white); font-family: 'ProximaNova', Arial, Helvetica, sans-serif; color: var(--vf-text); }
+  * { box-sizing: border-box; }
+  h1, h2, h3, h4 { font-family: var(--rf-display); font-weight: 700; color: var(--vf-navy); }
+  a { color: var(--vf-accent); text-decoration: none; }
+  a:hover { color: var(--vf-navy); text-decoration: underline; }
+  select, input, textarea, button { font-family: 'ProximaNova', Arial, Helvetica, sans-serif; }
+  .rf-scroll::-webkit-scrollbar { width: 10px; }
+  .rf-scroll::-webkit-scrollbar-thumb { background: #d4dde5; border-radius: 999px; border: 3px solid transparent; background-clip: padding-box; }
+  .leaflet-container { font-family: 'ProximaNova', Arial, Helvetica, sans-serif; }
+  @keyframes rf-fade-up { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
+  @keyframes rf-pulse { 0%, 100% { opacity: .5; } 50% { opacity: 1; } }
+  @keyframes rf-slide-in { from { opacity: 0; transform: translateX(24px); } to { opacity: 1; transform: none; } }

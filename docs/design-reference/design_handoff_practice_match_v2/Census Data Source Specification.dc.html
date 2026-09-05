@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<script src="./support.js"></script>
+</head>
+<body>
+<x-dc>
+<helmet>
+<link rel="stylesheet" href="_ds/vin-design-system-019dcfa0-cc54-758a-91dc-85ded39fc8af/colors_and_type.css">
+<link rel="stylesheet" href="_ds/vin-design-system-019dcfa0-cc54-758a-91dc-85ded39fc8af/preview/_preview.css">
+<link rel="stylesheet" href="_ds/vin-design-system-019dcfa0-cc54-758a-91dc-85ded39fc8af/ui_kits/vin/kit.css">
+<script src="_ds/vin-design-system-019dcfa0-cc54-758a-91dc-85ded39fc8af/_ds_bundle.js"></script>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin="anonymous">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Merriweather:wght@400;700&family=IBM+Plex+Mono:wght@400;500&display=swap">
+<style>
+  :root {
+    --vf-navy: #003a70;
+    --vf-accent: #339dde;
+    --vf-accent-bg: #deecf7;
+    --vf-text: #494949;
+    --vf-neutral: #f5f5f5;
+    --vf-white: #ffffff;
+    --vf-rule: #e6e6e6;
+    --rf-serif: 'Merriweather', Georgia, serif;
+    --rf-mono: 'IBM Plex Mono', ui-monospace, Menlo, monospace;
+  }
+  body { margin: 0; font-family: 'ProximaNova', Arial, Helvetica, sans-serif; color: var(--vf-text); }
+  * { box-sizing: border-box; }
+  a { color: var(--vf-accent); text-decoration: none; }
+  a:hover { color: var(--vf-navy); text-decoration: underline; }
+  doc-page:not(:defined) { visibility: hidden; }
+  table { break-inside: auto; }
+  tr, .keep { break-inside: avoid; }
+  h1, h2, h3, h4 { break-after: avoid; }
+</style>
+<script src="./doc-page.js"></script>
+</helmet>
+
+<doc-page margin="0.7in">
+
+  <div slot="header" style="display: flex; align-items: flex-end; justify-content: space-between; gap: 20px; padding-bottom: 7px; border-bottom: 2px solid var(--vf-navy);">
+    <img src="assets/vin-foundation-logo.png" alt="VIN Foundation" style="display: block; height: 26px; width: auto;">
+    <div style="font-size: 8.5px; letter-spacing: .07em; text-transform: uppercase; font-weight: 800; color: var(--vf-navy); white-space: nowrap;">Census Data Source Specification · v1.0 · Engineering</div>
+  </div>
+
+  <div slot="footer" style="display: flex; align-items: center; justify-content: space-between; gap: 20px; padding-top: 6px; border-top: 1px solid var(--vf-rule); font-size: 9px; color: var(--vf-text);">
+    <span>VIN Foundation — Veterinary Practice Marketplace</span>
+    <span>Confidential draft for implementation review</span>
+  </div>
+
+  <div style="padding: 8px 0 0;">
+    <div style="font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--vf-accent);">Implementation Specification</div>
+    <h1 style="font-family: var(--rf-serif); font-size: 30px; font-weight: 700; line-height: 1.15; color: var(--vf-navy); margin: 8px 0 0;">Census &amp; Market Data Source Specification</h1>
+    <p style="font-size: 13.5px; line-height: 1.6; color: var(--vf-text); margin: 10px 0 0; max-width: 62ch;">Everything the engineering team needs to build the market-data layer behind the Veterinary Practice Marketplace: dataset identifiers, endpoints, variable maps, geography resolution, joins, derived fields, caching, licensing, failure behavior, and the database schema to implement.</p>
+    <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin: 18px 0 0;">
+      <div class="keep" style="padding: 10px 12px; background: var(--vf-accent-bg); border-radius: 6px;">
+        <div style="font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--vf-navy);">Version</div>
+        <div style="font-size: 13px; font-weight: 500; color: var(--vf-navy); margin-top: 3px;">1.0 draft</div>
+      </div>
+      <div class="keep" style="padding: 10px 12px; background: var(--vf-accent-bg); border-radius: 6px;">
+        <div style="font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--vf-navy);">Owner</div>
+        <div style="font-size: 13px; font-weight: 500; color: var(--vf-navy); margin-top: 3px;">Platform engineering</div>
+      </div>
+      <div class="keep" style="padding: 10px 12px; background: var(--vf-accent-bg); border-radius: 6px;">
+        <div style="font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--vf-navy);">Data vintage</div>
+        <div style="font-size: 13px; font-weight: 500; color: var(--vf-navy); margin-top: 3px;">ACS 2019–2023</div>
+      </div>
+      <div class="keep" style="padding: 10px 12px; background: var(--vf-accent-bg); border-radius: 6px;">
+        <div style="font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--vf-navy);">Store</div>
+        <div style="font-size: 13px; font-weight: 500; color: var(--vf-navy); margin-top: 3px;">PostgreSQL + PostGIS</div>
+      </div>
+    </div>
+  </div>
+
+  <h2 style="font-family: var(--rf-serif); font-size: 19px; font-weight: 700; color: var(--vf-navy); margin: 30px 0 4px;">1. Scope and design rules</h2>
+  <div style="height: 3px; width: 42px; background: var(--vf-accent); margin-bottom: 12px;"></div>
+  <p style="font-size: 13px; line-height: 1.7; margin: 0 0 10px;">The market-data layer answers one buyer question — <em>what is the community around this practice like, and who else is already serving it?</em> — from public federal data. It never sources practice financials; those are seller-entered and separately governed.</p>
+  <ol style="font-size: 13px; line-height: 1.75; margin: 0; padding-left: 20px;">
+    <li><strong>Pinned vintages.</strong> Every request names an explicit year. No endpoint is called without a vintage, and vintages advance only through a migration.</li>
+    <li><strong>Pre-aggregate, never call at request time.</strong> All Census reads happen in scheduled ingest jobs. The web app reads only our own tables.</li>
+    <li><strong>Derived is labeled derived.</strong> Any figure we compute (pet households, drive-time catchments, opportunity score) is stored in a separate column family and rendered with a "derived estimate" qualifier.</li>
+    <li><strong>Licensing gates production.</strong> A dataset with an unresolved license cannot be ingested, cached, or displayed. Enforced by a foreign key to <code style="font-family: var(--rf-mono); font-size: 11.5px;">dataset_registry.license_status = 'cleared'</code>.</li>
+    <li><strong>Degrade, never block.</strong> A failed data layer hides itself and logs; listings, search and messaging must stay fully functional.</li>
+  </ol>
+
+  <h2 style="font-family: var(--rf-serif); font-size: 19px; font-weight: 700; color: var(--vf-navy); margin: 26px 0 4px;">2. Dataset register</h2>
+  <div style="height: 3px; width: 42px; background: var(--vf-accent); margin-bottom: 12px;"></div>
+  <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
+    <thead>
+      <tr style="background: var(--vf-navy); color: var(--vf-white);">
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800; letter-spacing: .04em;">Key</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800; letter-spacing: .04em;">Dataset</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800; letter-spacing: .04em;">API dataset ID</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800; letter-spacing: .04em;">Vintage</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800; letter-spacing: .04em;">Refresh</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800; letter-spacing: .04em;">License</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">acs5</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">ACS 5-Year Detailed Tables</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">2023/acs/acs5</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">2019–2023</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Annual (Dec)</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Public domain</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">acs5_subject</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">ACS 5-Year Subject Tables</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">2023/acs/acs5/subject</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">2019–2023</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Annual (Dec)</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Public domain</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">acs5_prior</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">ACS 5-Year, baseline for growth</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">2018/acs/acs5</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">2014–2018</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Static</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Public domain</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">cbp</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">County Business Patterns</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">2022/cbp</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">2022</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Annual (Apr)</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Public domain</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">qwi</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Quarterly Workforce Indicators</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">timeseries/qwi/sa</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">latest quarter</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Quarterly</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Public domain</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">bds</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Business Dynamics Statistics</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">timeseries/bds</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">latest</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Annual</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Public domain</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">geocoder</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Census Geocoder (geographies)</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">geocoding.geo.census.gov</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Current_Current</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">On write</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Public domain</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">tiger_cb</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">TIGER Cartographic Boundary files</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">TIGER2023/cb_2023_*</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">2023</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Annual</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Public domain</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">aies</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Annual Integrated Economic Survey</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">TBD — confirm at release</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">TBD</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Annual</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); color: var(--vf-navy); font-weight: 500;">Verify ID</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">osm_tiles</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Street basemap tiles (CARTO, OSM data)</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">basemaps.cartocdn.com/light_all</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">live</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">live</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">ODbL 1.0</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">imagery</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Satellite basemap</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">vendor TBD</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">live</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">live</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">Unresolved</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">pet_ownership</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Pet ownership incidence (commercial)</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">licensed feed</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">n/a</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">n/a</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">Blocked</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size: 11px; line-height: 1.6; margin: 9px 0 0;">Rows marked <strong>Unresolved</strong> or <strong>Blocked</strong> must not ship. The satellite basemap and any commercial pet-ownership incidence rate require a signed license before the layer is enabled; until then the UI shows the street basemap and derives pet households from ACS households alone (§8).</p>
+
+  <h2 style="font-family: var(--rf-serif); font-size: 19px; font-weight: 700; color: var(--vf-navy); margin: 26px 0 4px;">3. Endpoints and authentication</h2>
+  <div style="height: 3px; width: 42px; background: var(--vf-accent); margin-bottom: 12px;"></div>
+  <p style="font-size: 13px; line-height: 1.7; margin: 0 0 10px;">All Census Data API calls share the shape <code style="font-family: var(--rf-mono); font-size: 11.5px;">https://api.census.gov/data/{vintage}/{dataset}?get={vars}&amp;for={geo}&amp;in={parent}&amp;key={KEY}</code>. Register a key at <code style="font-family: var(--rf-mono); font-size: 11.5px;">api.census.gov/data/key_signup.html</code>; store it in the secret manager as <code style="font-family: var(--rf-mono); font-size: 11.5px;">CENSUS_API_KEY</code>. Unkeyed callers are throttled at roughly 500 requests per IP per day, which is below our ingest volume — treat a missing key as a hard startup failure in the ingest worker, never a silent fallback.</p>
+  <div class="keep" style="padding: 13px 15px; background: var(--vf-neutral); border-radius: 6px; margin: 0 0 12px;">
+    <div style="font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--vf-navy); margin-bottom: 7px;">Reference calls</div>
+    <div style="font-family: var(--rf-mono); font-size: 10.5px; line-height: 1.85; color: var(--vf-text); word-break: break-all;">
+      <div><strong style="color: var(--vf-navy);">ACS tract:</strong> /data/2023/acs/acs5?get=NAME,B01003_001E,B01003_001M,B11001_001E,B19013_001E,B19013_001M&amp;for=tract:*&amp;in=state:48+county:453</div>
+      <div><strong style="color: var(--vf-navy);">ACS place:</strong> /data/2023/acs/acs5?get=NAME,B01003_001E,B11001_001E,B19013_001E&amp;for=place:*&amp;in=state:48</div>
+      <div><strong style="color: var(--vf-navy);">CBP vet estab:</strong> /data/2022/cbp?get=NAME,ESTAB,EMP,PAYANN&amp;for=county:453&amp;in=state:48&amp;NAICS2017=541940</div>
+      <div><strong style="color: var(--vf-navy);">QWI wages:</strong> /data/timeseries/qwi/sa?get=EarnBeg,Emp,HirA&amp;for=county:453&amp;in=state:48&amp;year=2024&amp;quarter=4&amp;industry=5419&amp;ownercode=A05&amp;seasonadj=U</div>
+      <div><strong style="color: var(--vf-navy);">Geocode:</strong> geocoding.geo.census.gov/geocoder/geographies/address?street=…&amp;city=…&amp;state=TX&amp;benchmark=Public_AR_Current&amp;vintage=Current_Current&amp;format=json</div>
+    </div>
+  </div>
+  <p style="font-size: 12.5px; line-height: 1.7; margin: 0;">Operational rules: 15-second connect timeout, 45-second read timeout, three retries with exponential backoff and jitter on 5xx and 429 only, no retry on 4xx. Set a descriptive <code style="font-family: var(--rf-mono); font-size: 11.5px;">User-Agent</code> naming the VIN Foundation and a contact address. Serialize ingest to at most four concurrent requests per dataset.</p>
+
+  <h2 style="font-family: var(--rf-serif); font-size: 19px; font-weight: 700; color: var(--vf-navy); margin: 26px 0 4px;">4. Variable map</h2>
+  <div style="height: 3px; width: 42px; background: var(--vf-accent); margin-bottom: 12px;"></div>
+  <table style="width: 100%; border-collapse: collapse; font-size: 11px;">
+    <thead>
+      <tr style="background: var(--vf-navy); color: var(--vf-white);">
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Census variable</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Table</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Meaning</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Our column</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Type</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">B01003_001E / _001M</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">B01003</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">Total population + MOE</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">population, population_moe</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">integer</td></tr>
+      <tr><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">B11001_001E / _001M</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">B11001</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">Total households + MOE</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">households, households_moe</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">integer</td></tr>
+      <tr><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">B19013_001E / _001M</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">B19013</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">Median household income (inflation-adjusted dollars of the vintage's final year)</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">median_hh_income, median_hh_income_moe</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">integer</td></tr>
+      <tr><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">B19301_001E</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">B19301</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">Per capita income</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">per_capita_income</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">integer</td></tr>
+      <tr><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">B01002_001E</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">B01002</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">Median age</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">median_age</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">numeric(4,1)</td></tr>
+      <tr><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">B25003_002E</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">B25003</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">Owner-occupied housing units (pet-ownership proxy input)</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">owner_occupied_hh</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">integer</td></tr>
+      <tr><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">B25001_001E</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">B25001</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">Total housing units</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">housing_units</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">integer</td></tr>
+      <tr><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">S1501_C02_015E</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">S1501 (subject)</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">Percent bachelor's degree or higher, 25+</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">pct_bachelors_plus</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">numeric(4,1)</td></tr>
+      <tr><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">ESTAB</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">CBP</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">Establishment count for the NAICS code</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">establishments</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">integer</td></tr>
+      <tr><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">EMP</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">CBP</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">Paid employees, mid-March</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">employment</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">integer</td></tr>
+      <tr><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">PAYANN</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">CBP</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">Annual payroll, $1,000s</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">annual_payroll_k</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">bigint</td></tr>
+      <tr><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">EarnBeg</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">QWI</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">Average monthly earnings, stable jobs</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">avg_monthly_earnings</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">integer</td></tr>
+      <tr><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">Emp, HirA</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">QWI</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">Employment level; hires (all)</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">sector_employment, sector_hires</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">integer</td></tr>
+      <tr><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">FIRM, ESTAB_ENTRY</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">BDS</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">Firm count; establishment entries (market churn)</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">firms, estab_entry</td><td style="padding: 6px 8px; border-bottom: 1px solid var(--vf-rule);">integer</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size: 11px; line-height: 1.6; margin: 9px 0 0;">Every <code style="font-family: var(--rf-mono); font-size: 11px;">_E</code> estimate has a matching <code style="font-family: var(--rf-mono); font-size: 11px;">_M</code> margin of error. Request the MOE for population, households and median income at minimum; store it and use it to suppress display (§14). Census sentinel values (<code style="font-family: var(--rf-mono); font-size: 11px;">-666666666</code>, <code style="font-family: var(--rf-mono); font-size: 11px;">-999999999</code>, <code style="font-family: var(--rf-mono); font-size: 11px;">null</code>) must be normalized to SQL <code style="font-family: var(--rf-mono); font-size: 11px;">NULL</code> at parse time, never stored as numbers.</p>
+
+  <h2 style="font-family: var(--rf-serif); font-size: 19px; font-weight: 700; color: var(--vf-navy); margin: 26px 0 4px;">5. NAICS codes</h2>
+  <div style="height: 3px; width: 42px; background: var(--vf-accent); margin-bottom: 12px;"></div>
+  <table style="width: 100%; border-collapse: collapse; font-size: 11.5px;">
+    <thead>
+      <tr style="background: var(--vf-navy); color: var(--vf-white);">
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Code</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Title</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Used for</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy); font-weight: 500;">541940</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Veterinary Services</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Primary competition count (CBP, 6-digit)</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy); font-weight: 500;">5419</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Other Professional, Scientific &amp; Technical Services</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">QWI wages and hires — QWI resolves to 4-digit only</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy); font-weight: 500;">54</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Professional, Scientific &amp; Technical Services</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Sector denominator, BDS churn context</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy); font-weight: 500;">812910</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Pet Care (except Veterinary) Services</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Adjacent-demand signal; optional layer</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy); font-weight: 500;">459910</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Pet &amp; Pet Supplies Retailers</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Adjacent-demand signal; optional layer</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size: 11.5px; line-height: 1.7; margin: 9px 0 0;">The CBP parameter name is vintage-dependent — <code style="font-family: var(--rf-mono); font-size: 11px;">NAICS2017</code> for the 2022 release, <code style="font-family: var(--rf-mono); font-size: 11px;">NAICS2022</code> once the 2023+ releases land. Store the parameter name in <code style="font-family: var(--rf-mono); font-size: 11px;">dataset_registry.naics_param</code> rather than hard-coding it in the client. Note that 541940 counts <em>establishments</em>, which includes corporate-owned locations and specialty referral centers; it is a proxy for competitive density, not a count of independent owner-operated practices, and the UI must say so.</p>
+
+  <h2 style="font-family: var(--rf-serif); font-size: 19px; font-weight: 700; color: var(--vf-navy); margin: 26px 0 4px;">6. Geography levels and resolution order</h2>
+  <div style="height: 3px; width: 42px; background: var(--vf-accent); margin-bottom: 12px;"></div>
+  <table style="width: 100%; border-collapse: collapse; font-size: 11.5px;">
+    <thead>
+      <tr style="background: var(--vf-navy); color: var(--vf-white);">
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Summary level</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Geography</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">GEOID shape</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Role in the product</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">140</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Census tract</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">11 digits</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);"><strong>Primary unit.</strong> Drive-time catchments aggregate tracts.</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">150</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Block group</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">12 digits</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Optional refinement; high MOE, off by default</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">160</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Place (city/town)</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">7 digits</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">The community label shown on anonymized listings</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">860</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">ZCTA</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">5 digits</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Fallback when a seller gives ZIP but no address</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">050</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">County</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">5 digits</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);"><strong>Only</strong> level with CBP/QWI industry detail</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">310</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">CBSA (metro area)</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">5 digits</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">The market picker; search scoping</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">040</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">State</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">2 digits</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Benchmark denominators</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size: 12.5px; line-height: 1.7; margin: 10px 0 0;"><strong>Resolution order for a listing:</strong> full street address → geocoder returns tract, county, place → tract-level ACS. If the address is missing or fails to match, fall back to ZCTA centroid → containing tract. If that fails, fall back to place, then county, and set <code style="font-family: var(--rf-mono); font-size: 11px;">geo_precision</code> accordingly. Never silently promote a county figure into a tract-labeled slot; the UI reads <code style="font-family: var(--rf-mono); font-size: 11px;">geo_precision</code> and changes its wording ("around this community" vs "in this county").</p>
+
+  <h2 style="font-family: var(--rf-serif); font-size: 19px; font-weight: 700; color: var(--vf-navy); margin: 26px 0 4px;">7. Joins and the ingest pipeline</h2>
+  <div style="height: 3px; width: 42px; background: var(--vf-accent); margin-bottom: 12px;"></div>
+  <ol style="font-size: 12.5px; line-height: 1.75; margin: 0; padding-left: 20px;">
+    <li><strong>Geocode on listing write.</strong> Address → Census Geocoder → <code style="font-family: var(--rf-mono); font-size: 11px;">(lat, lon, tract_geoid, county_geoid, place_geoid)</code>, written to <code style="font-family: var(--rf-mono); font-size: 11px;">practice_location</code>. Result cached by normalized address hash for 365 days.</li>
+    <li><strong>Catchment build.</strong> For each listing, compute the drive-time polygon (§8), intersect with <code style="font-family: var(--rf-mono); font-size: 11px;">geo_area.geom</code> at summary level 140 using PostGIS, and store one row per (listing, tract, band) with an area-overlap weight in <code style="font-family: var(--rf-mono); font-size: 11px;">practice_catchment</code>.</li>
+    <li><strong>ACS join.</strong> <code style="font-family: var(--rf-mono); font-size: 11px;">practice_catchment ⋈ acs_measure ON geo_id AND vintage</code>. Counts (population, households) are summed with the overlap weight; medians are <em>not</em> summable — take a household-weighted average and flag it as an approximation.</li>
+    <li><strong>Industry join.</strong> <code style="font-family: var(--rf-mono); font-size: 11px;">practice_location.county_geoid ⋈ cbp_industry ON (geo_id, naics_code, vintage)</code>. County granularity only.</li>
+    <li><strong>Metric materialization.</strong> Write one row per (listing, metric, vintage) into <code style="font-family: var(--rf-mono); font-size: 11px;">market_metric</code> with provenance. The web app reads only this table plus <code style="font-family: var(--rf-mono); font-size: 11px;">geo_area</code>.</li>
+    <li><strong>Choropleth tiles.</strong> Nightly job renders tract-level vector tiles per metric into object storage, versioned by vintage; the client fetches static tiles, never live geometry queries.</li>
+  </ol>
+
+  <h2 style="font-family: var(--rf-serif); font-size: 19px; font-weight: 700; color: var(--vf-navy); margin: 26px 0 4px;">8. Derived fields — exact formulas</h2>
+  <div style="height: 3px; width: 42px; background: var(--vf-accent); margin-bottom: 12px;"></div>
+  <p style="font-size: 12.5px; line-height: 1.7; margin: 0 0 11px;">Each derived field is stored with <code style="font-family: var(--rf-mono); font-size: 11px;">is_derived = true</code> and a formula version. Changing a formula requires a version bump so historical values remain explicable.</p>
+  <table style="width: 100%; border-collapse: collapse; font-size: 11.5px;">
+    <thead>
+      <tr style="background: var(--vf-navy); color: var(--vf-white);">
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Field</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Formula</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Inputs</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">pet_households_est</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);"><code style="font-family: var(--rf-mono); font-size: 11px;">households × pet_incidence_rate</code>; rate is 0.57 as a documented national placeholder until a licensed regional rate is cleared</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">B11001_001E; rate constant</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">population_growth_pct</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);"><code style="font-family: var(--rf-mono); font-size: 11px;">(pop_2023 − pop_2018) / pop_2018 × 100</code></td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">B01003_001E at two vintages</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">vets_per_10k_households</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);"><code style="font-family: var(--rf-mono); font-size: 11px;">establishments / (households / 10000)</code></td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">CBP ESTAB (541940); B11001_001E</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">income_index_vs_us</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);"><code style="font-family: var(--rf-mono); font-size: 11px;">(local_median − us_median) / us_median × 100</code></td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">B19013_001E local and national</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">revenue_per_establishment</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);"><code style="font-family: var(--rf-mono); font-size: 11px;">payroll_k × 1000 / establishments</code> — a payroll-per-establishment benchmark, <em>not</em> revenue, until AIES revenue is confirmed</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">CBP PAYANN, ESTAB</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">drive_catchment</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">V1: straight-line buffers of 8 km (≈10 min) and 16 km (≈20 min) from the practice point, labeled as approximations. V2: true isochrones from a routing engine, which requires its own license review.</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">practice lat/lon</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono); color: var(--vf-navy);">opportunity_score</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);"><code style="font-family: var(--rf-mono); font-size: 11px;">40·min(income/140000, 1) + 35·min(growth/40, 1) + 25·max(0, 1 − vets_per_10k/3)</code>, clamped 0–100, rounded</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">the three fields above</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size: 11.5px; line-height: 1.65; margin: 9px 0 0;">The opportunity score is an editorial composite chosen by the VIN Foundation, not a market valuation. It must always render alongside its three components so a buyer can see what moved it, and it must never appear in a listing's price context.</p>
+
+  <h2 style="font-family: var(--rf-serif); font-size: 19px; font-weight: 700; color: var(--vf-navy); margin: 26px 0 4px;">9. Refresh schedule</h2>
+  <div style="height: 3px; width: 42px; background: var(--vf-accent); margin-bottom: 12px;"></div>
+  <table style="width: 100%; border-collapse: collapse; font-size: 11.5px;">
+    <thead>
+      <tr style="background: var(--vf-navy); color: var(--vf-white);">
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Job</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Cadence</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Trigger</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Behavior</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">acs_annual_load</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Yearly, December</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Manual approval after release</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Loads to a new vintage, runs QA diffs, then flips the active vintage flag</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">cbp_annual_load</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Yearly, April</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Manual approval</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Same vintage-flip pattern; watch for the NAICS parameter rename</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">qwi_quarterly_load</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Quarterly</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Scheduled</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Appends; keeps 20 quarters for trend</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">geocode_on_write</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Per listing</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Listing create/address edit</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Async job; listing stays in draft until geocode succeeds or staff overrides</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">metric_materialize</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Nightly</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Scheduled + on new listing</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Recomputes market_metric for listings whose inputs changed</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">tile_render</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Nightly</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">After materialize</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Publishes versioned tiles; old version retained one cycle</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">license_audit</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Quarterly</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Scheduled</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Re-reads each source's terms URL; flags drift for staff review</td></tr>
+    </tbody>
+  </table>
+
+  <h2 style="font-family: var(--rf-serif); font-size: 19px; font-weight: 700; color: var(--vf-navy); margin: 26px 0 4px;">10. Caching requirements</h2>
+  <div style="height: 3px; width: 42px; background: var(--vf-accent); margin-bottom: 12px;"></div>
+  <table style="width: 100%; border-collapse: collapse; font-size: 11.5px;">
+    <thead>
+      <tr style="background: var(--vf-navy); color: var(--vf-white);">
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Layer</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Key</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">TTL</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Invalidation</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Raw API response (S3/object store)</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">sha256(url)</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Permanent</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Never — immutable audit record of what we received</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Geocode result</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">sha256(normalized_address)</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">365 days</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Address edit; annual TIGER vintage change</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">market_metric (Postgres)</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">listing_id, metric, vintage</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Until vintage flip</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Nightly materialize; listing address change</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Panel payload (Redis)</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">listing:{id}:market:v{n}</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">24 hours</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Version bump in the key on materialize</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Choropleth tiles (CDN)</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-family: var(--rf-mono);">/tiles/{metric}/{vintage}/{z}/{x}/{y}</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">30 days, immutable</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">New path on vintage change; no purge needed</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Basemap tiles</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">vendor-controlled</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Per vendor terms</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Do not proxy or re-host without written permission</td></tr>
+    </tbody>
+  </table>
+  <p style="font-size: 11.5px; line-height: 1.7; margin: 9px 0 0;">Hard rule: the request path never calls a Census endpoint. A page render that cannot find a materialized metric renders the layer's empty state and enqueues a backfill — it does not fetch.</p>
+
+  <h2 style="font-family: var(--rf-serif); font-size: 19px; font-weight: 700; color: var(--vf-navy); margin: 26px 0 4px;">11. Failure handling</h2>
+  <div style="height: 3px; width: 42px; background: var(--vf-accent); margin-bottom: 12px;"></div>
+  <table style="width: 100%; border-collapse: collapse; font-size: 11.5px;">
+    <thead>
+      <tr style="background: var(--vf-navy); color: var(--vf-white);">
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">Failure</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">System behavior</th>
+        <th style="text-align: left; padding: 7px 8px; font-weight: 800;">What the user sees</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">Geocode no-match</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Fall back to ZIP centroid, set geo_precision='zcta', flag for staff</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Listing publishes; market panel says "approximate community data"</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">Census API 5xx / timeout</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Retry ×3 with backoff, then fail the job and keep the prior vintage active</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Nothing — last good data stays live with its vintage label</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">Census API 429</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Halve concurrency, resume from the last completed geography page</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Nothing</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">Variable renamed or withdrawn</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Schema-validate every response against the expected variable list; abort the load on mismatch</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Nothing — no partial vintage ever goes active</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">Suppressed / null cell</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Store NULL; do not impute; exclude from aggregates and record the exclusion</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">That tile reads "not available for this area"</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">MOE exceeds threshold</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Suppress the value per §14</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">"Estimate too imprecise to show at this geography"</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">Basemap tiles unavailable</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Catch the tile error; render the list-only view</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">"Map unavailable" panel; listings and filters keep working</td></tr>
+      <tr><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule); font-weight: 500; color: var(--vf-navy);">License status leaves 'cleared'</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">Feature flag for that layer flips off within one minute</td><td style="padding: 7px 8px; border-bottom: 1px solid var(--vf-rule);">The layer disappears from Data Layers; no error</td></tr>
+    </tbody>
+  </table>
+
+  <h2 style="font-family: var(--rf-serif); font-size: 19px; font-weight: 700; color: var(--vf-navy); margin: 26px 0 4px;">12. Licensing and attribution</h2>
+  <div style="height: 3px; width: 42px; background: var(--vf-accent); margin-bottom: 12px;"></div>
+  <ul style="font-size: 12.5px; line-height: 1.75; margin: 0; padding-left: 20px;">
+    <li><strong>Census Bureau data.</strong> Works of the U.S. government are not subject to domestic copyright, so ACS, CBP, QWI, BDS, TIGER and Geocoder output may be used commercially and redistributed. Attribution is requested, not optional for us: every surface carries "Source: U.S. Census Bureau, [dataset], [vintage]". We must not use the Census Bureau's name, seal or logo in any way that implies endorsement or verification of a listing.</li>
+    <li><strong>OpenStreetMap.</strong> ODbL 1.0. The credit "© OpenStreetMap contributors © CARTO" must be visible on every map view, with a link to the copyright page. Tiles are served by CARTO rather than the OSM VIN Foundation's volunteer servers, whose tile usage policy prohibits embedded application traffic. Derived database extracts, if we ever produce them, carry share-alike obligations — do not create them without counsel.</li>
+    <li><strong>Satellite imagery.</strong> No free-tier imagery is cleared for this use yet. The Satellite toggle stays behind a feature flag until a written license names commercial web display and states the attribution string.</li>
+    <li><strong>Pet-ownership incidence.</strong> Commercial survey data is licensed, usually per-seat and non-redistributable. Until a license is signed, ship only the ACS-derived estimate, labeled as derived, with the assumed rate disclosed.</li>
+    <li><strong>Practice location databases.</strong> Any purchased or scraped list of veterinary locations is out of scope for V1. Competition counts come from CBP establishment totals only, which carry no third-party rights.</li>
+    <li><strong>Display obligations in code.</strong> Attribution strings live in <code style="font-family: var(--rf-mono); font-size: 11px;">dataset_registry.attribution_text</code> and are rendered from the database, not hard-coded in components, so a terms change propagates in one edit.</li>
+  </ul>
+
+  <h2 style="font-family: var(--rf-serif); font-size: 19px; font-weight: 700; color: var(--vf-navy); margin: 26px 0 4px;">13. Database schema</h2>
+  <div style="height: 3px; width: 42px; background: var(--vf-accent); margin-bottom: 12px;"></div>
+  <pre style="font-family: var(--rf-mono); font-size: 9.5px; line-height: 1.6; background: var(--vf-neutral); border-left: 3px solid var(--vf-accent); border-radius: 4px; padding: 13px 14px; margin: 0; white-space: pre-wrap; color: var(--vf-text);">CREATE EXTENSION IF NOT EXISTS postgis;
+
+-- Provenance for every load. Created first: other tables reference it.
+CREATE TABLE ingest_run (
+  id             bigserial PRIMARY KEY,
+  dataset_key    text NOT NULL,
+  vintage        text NOT NULL,
+  started_at     timestamptz NOT NULL,
+  finished_at    timestamptz,
+  status         text NOT NULL CHECK (status IN ('running','succeeded','failed','aborted')),
+  rows_written   bigint DEFAULT 0,
+  request_count  integer DEFAULT 0,
+  raw_payload_uri text,
+  error_detail   text
+);
+
+-- Every external source, and whether it may be used at all.
+CREATE TABLE dataset_registry (
+  dataset_key      text PRIMARY KEY,
+  display_name     text NOT NULL,
+  api_dataset_id   text,
+  base_url         text NOT NULL,
+  vintage          text NOT NULL,
+  naics_param      text,
+  refresh_cadence  text NOT NULL,
+  license_status   text NOT NULL CHECK (license_status IN ('cleared','unresolved','blocked')),
+  license_name     text,
+  license_url      text,
+  attribution_text text NOT NULL,
+  last_verified_at timestamptz,
+  notes            text
+);
+
+-- Census geographies with geometry, one row per GEOID per vintage.
+CREATE TABLE geo_area (
+  geo_id        text NOT NULL,
+  summary_level char(3) NOT NULL,        -- 140 tract, 150 bg, 160 place, 860 zcta, 050 county, 310 cbsa, 040 state
+  vintage       text NOT NULL,
+  name          text NOT NULL,
+  state_fips    char(2),
+  county_fips   char(3),
+  parent_geo_id text,
+  land_area_m2  bigint,
+  geom          geometry(MultiPolygon, 4269),
+  centroid      geometry(Point, 4269),
+  PRIMARY KEY (geo_id, summary_level, vintage)
+);
+CREATE INDEX geo_area_geom_gix ON geo_area USING gist (geom);
+CREATE INDEX geo_area_level_idx ON geo_area (summary_level, vintage);
+
+-- ACS estimates, long format: one row per geography per variable per vintage.
+CREATE TABLE acs_measure (
+  geo_id        text NOT NULL,
+  summary_level char(3) NOT NULL,
+  vintage       text NOT NULL,
+  variable      text NOT NULL,           -- e.g. B19013_001E
+  estimate      numeric,
+  moe           numeric,
+  ingest_run_id bigint NOT NULL REFERENCES ingest_run(id),
+  PRIMARY KEY (geo_id, summary_level, vintage, variable)
+);
+CREATE INDEX acs_measure_var_idx ON acs_measure (variable, vintage);
+
+-- CBP / AIES industry facts. County granularity.
+CREATE TABLE cbp_industry (
+  geo_id           text NOT NULL,
+  summary_level    char(3) NOT NULL,
+  vintage          text NOT NULL,
+  naics_code       text NOT NULL,        -- '541940'
+  establishments   integer,
+  employment       integer,
+  annual_payroll_k bigint,
+  flag             text,                 -- Census noise/suppression flag, verbatim
+  ingest_run_id    bigint NOT NULL REFERENCES ingest_run(id),
+  PRIMARY KEY (geo_id, summary_level, vintage, naics_code)
+);
+
+-- QWI labor-market series.
+CREATE TABLE qwi_measure (
+  geo_id               text NOT NULL,
+  summary_level        char(3) NOT NULL,
+  naics_code           text NOT NULL,    -- '5419'
+  year                 smallint NOT NULL,
+  quarter              smallint NOT NULL,
+  avg_monthly_earnings integer,
+  sector_employment    integer,
+  sector_hires         integer,
+  ingest_run_id        bigint NOT NULL REFERENCES ingest_run(id),
+  PRIMARY KEY (geo_id, summary_level, naics_code, year, quarter)
+);
+
+-- Geocode outcome for a listing. One row per listing.
+CREATE TABLE practice_location (
+  listing_id      uuid PRIMARY KEY REFERENCES listing(id) ON DELETE CASCADE,
+  address_hash    text NOT NULL,
+  point           geometry(Point, 4269),
+  tract_geoid     text,
+  county_geoid    text,
+  place_geoid     text,
+  zcta_geoid      text,
+  cbsa_geoid      text,
+  geo_precision   text NOT NULL CHECK (geo_precision IN ('rooftop','tract','zcta','place','county')),
+  geocoded_at     timestamptz NOT NULL,
+  geocoder_vintage text NOT NULL
+);
+CREATE INDEX practice_location_point_gix ON practice_location USING gist (point);
+
+-- Which tracts fall in a listing's drive-time bands, and by how much.
+CREATE TABLE practice_catchment (
+  listing_id   uuid NOT NULL REFERENCES listing(id) ON DELETE CASCADE,
+  band         text NOT NULL CHECK (band IN ('drive_10','drive_20')),
+  geo_id       text NOT NULL,
+  summary_level char(3) NOT NULL DEFAULT '140',
+  vintage      text NOT NULL,
+  overlap_frac numeric(6,5) NOT NULL CHECK (overlap_frac > 0 AND overlap_frac &lt;= 1),
+  method       text NOT NULL,            -- 'euclidean_buffer_v1' | 'isochrone_v2'
+  PRIMARY KEY (listing_id, band, geo_id, vintage)
+);
+
+-- The only table the web app reads for market figures.
+CREATE TABLE market_metric (
+  listing_id     uuid NOT NULL REFERENCES listing(id) ON DELETE CASCADE,
+  band           text NOT NULL,
+  metric_key     text NOT NULL,          -- 'population' | 'median_hh_income' | 'opportunity_score' | ...
+  vintage        text NOT NULL,
+  value_num      numeric,
+  value_text     text,
+  unit           text NOT NULL,          -- 'count' | 'usd' | 'pct' | 'ratio' | 'score'
+  is_derived     boolean NOT NULL DEFAULT false,
+  formula_version text,
+  moe            numeric,
+  suppressed     boolean NOT NULL DEFAULT false,
+  suppress_reason text,
+  source_dataset text NOT NULL REFERENCES dataset_registry(dataset_key),
+  computed_at    timestamptz NOT NULL,
+  PRIMARY KEY (listing_id, band, metric_key, vintage)
+);
+CREATE INDEX market_metric_lookup_idx ON market_metric (listing_id, band, vintage);
+
+-- Provenance FK, added once dataset_registry exists.
+ALTER TABLE ingest_run
+  ADD CONSTRAINT ingest_run_dataset_fk
+  FOREIGN KEY (dataset_key) REFERENCES dataset_registry(dataset_key);
+
+-- Which vintage the app is allowed to read. Flipped only after QA.
+CREATE TABLE active_vintage (
+  dataset_key text PRIMARY KEY REFERENCES dataset_registry(dataset_key),
+  vintage     text NOT NULL,
+  activated_at timestamptz NOT NULL,
+  activated_by text NOT NULL
+);</pre>
+
+  <h2 style="font-family: var(--rf-serif); font-size: 19px; font-weight: 700; color: var(--vf-navy); margin: 26px 0 4px;">14. Data quality and suppression</h2>
+  <div style="height: 3px; width: 42px; background: var(--vf-accent); margin-bottom: 12px;"></div>
+  <ul style="font-size: 12.5px; line-height: 1.75; margin: 0; padding-left: 20px;">
+    <li><strong>MOE threshold.</strong> Suppress any ACS value whose coefficient of variation — <code style="font-family: var(--rf-mono); font-size: 11px;">(moe / 1.645) / estimate</code> — exceeds 0.30. Set <code style="font-family: var(--rf-mono); font-size: 11px;">suppressed = true</code> with reason <code style="font-family: var(--rf-mono); font-size: 11px;">'high_moe'</code> rather than deleting the row.</li>
+    <li><strong>Aggregating MOEs.</strong> For summed counts, the combined MOE is the square root of the sum of squared component MOEs. Apply the same CV test to the aggregate.</li>
+    <li><strong>Medians never sum.</strong> A catchment median is a household-weighted average of tract medians and must carry <code style="font-family: var(--rf-mono); font-size: 11px;">formula_version</code> and an "approximate" qualifier in the UI.</li>
+    <li><strong>CBP noise flags.</strong> Store the Census flag verbatim; treat any noise-flagged establishment count as an estimate and suppress employment or payroll where Census suppressed it.</li>
+    <li><strong>Vintage labeling.</strong> Every figure rendered in the product shows its dataset and vintage. Two figures from different vintages must never appear in the same computed ratio.</li>
+  </ul>
+
+  <h2 style="font-family: var(--rf-serif); font-size: 19px; font-weight: 700; color: var(--vf-navy); margin: 26px 0 4px;">15. Open items for VIN Foundation decision</h2>
+  <div style="height: 3px; width: 42px; background: var(--vf-accent); margin-bottom: 12px;"></div>
+  <ol style="font-size: 12.5px; line-height: 1.75; margin: 0; padding-left: 20px;">
+    <li>Which satellite imagery vendor, and is the license budgeted? Until answered, the Satellite toggle ships disabled.</li>
+    <li>Is a licensed pet-ownership incidence rate worth buying, or does the ACS-derived estimate suffice for V1?</li>
+    <li>Are true drive-time isochrones required for V1, or is the labeled straight-line approximation acceptable?</li>
+    <li>Who signs off on the opportunity-score weights, and are they published to members?</li>
+    <li>Should market data be visible to non-approved visitors as a public teaser, or gated with listings?</li>
+    <li>Confirm the AIES dataset identifier and geography availability before any revenue-benchmark layer is promised in the UI.</li>
+  </ol>
+
+</doc-page>
+
+</x-dc>
+</body>
+</html>

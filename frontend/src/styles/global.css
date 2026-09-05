@@ -1,0 +1,42 @@
+/* Global rules ported from the approved prototype. Everything else is inline by
+   design: the approved values live on the elements they style. */
+
+body {
+  margin: 0;
+  background: var(--vf-white);
+  font-family: 'ProximaNova', Arial, Helvetica, sans-serif;
+  color: var(--vf-text);
+}
+
+* { box-sizing: border-box; }
+
+h1, h2, h3, h4 {
+  font-family: 'ProximaNova', Arial, Helvetica, sans-serif;
+  font-weight: 700;
+  color: var(--vf-navy);
+}
+
+a { color: var(--vf-accent); text-decoration: none; }
+a:hover { color: var(--vf-navy); text-decoration: underline; }
+
+select, input, textarea, button { font-family: 'ProximaNova', Arial, Helvetica, sans-serif; }
+
+.rf-scroll::-webkit-scrollbar { width: 10px; }
+.rf-scroll::-webkit-scrollbar-thumb {
+  background: #d4dde5;
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: padding-box;
+}
+
+.leaflet-container { font-family: 'ProximaNova', Arial, Helvetica, sans-serif; }
+
+@keyframes rf-fade-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: none; }
+}
+
+@keyframes rf-pulse {
+  0%, 100% { opacity: .5; }
+  50% { opacity: 1; }
+}

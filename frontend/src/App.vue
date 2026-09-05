@@ -1,0 +1,1318 @@
+<template>
+<div style="min-height: 100vh; background: var(--color-white); color: #333;">
+
+  <template v-if="v.showPrototypeBar">
+  <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 7px 18px; background: #003a70; color: #fff; font-size: 11px;">
+    <div style="display: flex; align-items: center; gap: 10px;">
+      <span style="font-family: var(--rf-display); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #deecf7;">Prototype</span>
+      <span style="color: #deecf7;">Practice Match — internal working title. Public name to be set by the VIN Foundation.</span>
+    </div>
+    <div style="display: flex; align-items: center; gap: 6px;">
+      <span style="color: #deecf7;">Jump to</span>
+      <template v-for="(j, $index) in v.jumps" :key="$index">
+        <button @click="j.go" :style="j.style" v-hover="'background: rgba(255,255,255,.26);'">{{ j.label }}</button>
+      </template>
+      <span style="width: 1px; height: 15px; background: rgba(255,255,255,.22); margin: 0 4px;"></span>
+      <button @click="v.toggleViewport" style="font-size: 11px; font-weight: 500; color: #003a70; background: #deecf7; border: 0; border-radius: 3px; padding: 4px 9px; cursor: pointer;">{{ v.viewportLabel }}</button>
+    </div>
+  </div>
+  </template>
+
+  <template v-if="v.isDesktop">
+  <div>
+    <header style="position: sticky; top: 0; z-index: 40; display: flex; align-items: center; justify-content: space-between; gap: 28px; height: 74px; padding: 0 34px; background: var(--color-white); border-bottom: 1px solid var(--rf-line);">
+      <div @click="v.goHome" style="display: flex; align-items: center; gap: 12px; cursor: pointer;">
+        <img src="/assets/vin-foundation-logo.png" alt="VIN Foundation" style="display: block; height: 42px; width: auto;">
+        <div :style="v.subBrandStyle"></div>
+        <div :style="v.subBrandTextStyle">Practice Match</div>
+      </div>
+      <nav style="display: flex; align-items: center; gap: 22px; flex-wrap: nowrap;">
+        <template v-if="v.navExpanded">
+          <div style="display: flex; align-items: center; gap: 22px; flex-wrap: nowrap;">
+            <template v-for="(n, $index) in v.nav" :key="$index">
+              <button @click="n.go" :style="n.style">{{ n.label }}</button>
+            </template>
+          </div>
+        </template>
+        <template v-if="v.navCollapsed">
+          <div style="position: relative;">
+            <button @click="v.toggleNavMenu" aria-label="Main menu" style="display: flex; align-items: center; gap: 8px; font-family: var(--rf-display); font-size: 14px; font-weight: 500; white-space: nowrap; color: var(--color-navy); background: none; border: 1px solid var(--rf-line); border-radius: 6px; padding: 8px 12px; cursor: pointer;" v-hover="'background: var(--color-off-white);'">
+              Menu<img src="/assets/icons/toggle-caret.svg" alt="" width="9" height="9" style="flex: none; opacity: .5;">
+            </button>
+            <template v-if="v.navMenuOpen">
+              <div style="position: absolute; left: 0; top: 46px; z-index: 60; width: 208px; background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 8px; box-shadow: var(--shadow-lg); overflow: hidden; animation: rf-fade-up 150ms var(--easing-out) both;">
+                <template v-for="(n, $index) in v.nav" :key="$index">
+                  <button @click="n.goMenu" :style="n.menuStyle" v-hover="'background: var(--color-off-white);'">{{ n.label }}</button>
+                </template>
+              </div>
+            </template>
+          </div>
+        </template>
+        <template v-if="v.signedOut">
+          <button @click="v.goSignInScreen" style="font-family: var(--rf-display); font-size: 15px; font-weight: 500; color: var(--color-navy); background: none; border: 0; padding: 4px 0; cursor: pointer; white-space: nowrap;" v-hover="'color: var(--color-blue);'">Sign in</button>
+        </template>
+        <button style="font-family: var(--rf-display); font-size: 14px; font-weight: 500; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; padding: 10px 20px; cursor: pointer;" v-hover="'background: var(--color-navy);'">Give</button>
+        <template v-if="v.signedIn">
+        <div style="position: relative; padding-left: 8px; border-left: 1px solid var(--rf-line);">
+          <button @click="v.toggleUserMenu" style="display: flex; align-items: center; gap: 9px; background: none; border: 0; padding: 4px 6px; border-radius: 6px; cursor: pointer; text-align: left;" v-hover="'background: var(--color-off-white);'">
+            <div style="width: 32px; height: 32px; border-radius: 999px; background: var(--rf-band); display: grid; place-items: center; font-family: var(--rf-display); font-size: 12px; font-weight: 700; color: var(--color-navy);">{{ v.me.initials }}</div>
+            <div :style="v.identityStyle">
+              <div style="font-size: 13px; font-weight: 500; white-space: nowrap; color: var(--color-navy);">{{ v.me.name }}</div>
+              <div style="font-size: 11px; white-space: nowrap; color: var(--color-steel);">{{ v.me.role }}</div>
+            </div>
+            <img src="/assets/icons/toggle-caret.svg" alt="" width="11" height="11" style="flex: none; opacity: .55;">
+          </button>
+          <template v-if="v.userMenuOpen">
+            <div style="position: absolute; right: 0; top: 52px; z-index: 60; width: 236px; background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 8px; box-shadow: var(--shadow-lg); overflow: hidden; animation: rf-fade-up 150ms var(--easing-out) both;">
+              <div style="padding: 13px 15px; background: var(--color-off-white); border-bottom: 1px solid var(--rf-line);">
+                <div style="font-size: 13px; font-weight: 500; color: var(--color-navy);">{{ v.me.name }}</div>
+                <div style="font-size: 11.5px; color: var(--color-steel); margin-top: 1px;">{{ v.me.email }}</div>
+              </div>
+              <button @click="v.signOut" style="display: flex; align-items: center; gap: 10px; width: 100%; padding: 12px 15px; font-size: 13.5px; font-weight: 500; color: var(--color-navy); background: none; border: 0; cursor: pointer; text-align: left;" v-hover="'background: var(--color-off-white);'">
+                <img src="/assets/icons/navigate-arrow.svg" alt="" width="14" height="14" style="flex: none; opacity: .7;">Sign out
+              </button>
+            </div>
+          </template>
+        </div>
+        </template>
+      </nav>
+    </header>
+
+    <template v-if="v.showGate">
+      <div>
+        <div style="padding: 46px 34px; background: var(--rf-band);">
+          <h1 style="font-family: var(--rf-display); font-size: 40px; font-weight: 800; letter-spacing: .005em; text-transform: uppercase; color: var(--color-navy); margin: 0;">Veterinary Practice Transitions</h1>
+        </div>
+        <div style="max-width: 1180px; margin: 0 auto; padding: 62px 34px 80px; display: grid; grid-template-columns: 1.15fr .85fr; gap: 60px; align-items: start;">
+          <div>
+            <h2 style="font-family: var(--rf-display); font-size: 30px; font-weight: 800; letter-spacing: .005em; text-transform: uppercase; line-height: 1.25; color: var(--color-navy); margin: 0;">We're here to help connect veterinary practice owners with colleagues who want to purchase and carry the practice forward</h2>
+            <p style="font-family: var(--rf-display); font-size: 19px; font-weight: 500; line-height: 1.5; color: var(--vf-navy); margin: 26px 0 0;">Independent practices change hands every week. Most never reach a veterinarian who wants to own one.</p>
+            <p style="font-size: 16px; line-height: 1.75; color: #494949; margin: 26px 0 0; max-width: 60ch; text-wrap: pretty;">Practice Match is a permissioned marketplace, open only to members the VIN Foundation has reviewed and approved. Sellers publish a standardized listing and control what is disclosed. Buyers search a map, filter on a handful of things that actually matter, and ask for more information when a practice looks right.</p>
+            <div style="display: flex; flex-direction: column; gap: 22px; margin: 40px 0 0;">
+              <template v-for="(g, $index) in v.gatePoints" :key="$index">
+                <div style="display: flex; gap: 16px; align-items: flex-start;">
+                  <span style="width: 34px; height: 34px; flex: none; border-radius: 999px; background: var(--rf-band); display: grid; place-items: center; font-family: var(--rf-display); font-size: 14px; font-weight: 700; color: var(--color-navy);">{{ g.n }}</span>
+                  <div>
+                    <div style="font-family: var(--rf-display); font-size: 16px; font-weight: 800; color: var(--color-navy);">{{ g.title }}</div>
+                    <div style="font-size: 15px; line-height: 1.6; color: #494949; margin-top: 3px; max-width: 52ch;">{{ g.body }}</div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div>
+            <template v-if="v.gateSignin">
+              <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">
+                <div style="padding: 22px 26px; background: var(--rf-band);">
+                  <div style="font-family: var(--rf-display); font-size: 20px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--color-navy);">Member Sign In</div>
+                  <div style="font-size: 13px; color: #494949; margin-top: 3px;">Use your VIN credentials.</div>
+                </div>
+                <div style="padding: 24px 26px 26px; display: flex; flex-direction: column; gap: 16px;">
+                  <label style="display: flex; flex-direction: column; gap: 6px;">
+                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">VIN username or email</span>
+                    <input :value="v.form.email" @change="v.setEmail" style="height: 44px; padding: 0 13px; font-size: 15px; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none;">
+                  </label>
+                  <label style="display: flex; flex-direction: column; gap: 6px;">
+                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">Password</span>
+                    <input type="password" :value="v.form.pw" @change="v.setPw" style="height: 44px; padding: 0 13px; font-size: 15px; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none;">
+                  </label>
+                  <template v-if="v.form.error">
+                    <div style="display: flex; gap: 9px; padding: 11px 13px; background: #f5f5f5; border-left: 3px solid var(--vf-text); border-radius: 4px; font-size: 13px; line-height: 1.5; color: #494949;">{{ v.form.errorText }}</div>
+                  </template>
+                  <button @click="v.signIn" style="font-family: var(--rf-display); height: 48px; font-size: 15px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;" v-hover="'background: var(--color-navy);'">Sign in</button>
+                  <div style="text-align: center; font-size: 14px; color: #494949;">Not approved yet? <a href="#apply" @click="v.goApply">Request access</a></div>
+                </div>
+              </div>
+              <div style="margin-top: 16px; padding: 15px 17px; border: 1px dashed var(--border-subtle); border-radius: 8px;">
+                <div style="font-family: var(--rf-display); font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--color-steel);">Prototype — access states</div>
+                <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px;">
+                  <template v-for="(s, $index) in v.gateStates" :key="$index">
+                    <button @click="s.go" style="font-size: 12px; font-weight: 500; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 999px; padding: 6px 12px; cursor: pointer;" v-hover="'border-color: var(--color-steel); background: var(--color-off-white);'">{{ s.label }}</button>
+                  </template>
+                </div>
+              </div>
+            </template>
+
+            <template v-if="v.gateApply">
+              <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">
+                <div style="padding: 22px 26px; background: var(--rf-band);">
+                  <div style="font-family: var(--rf-display); font-size: 20px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--color-navy);">Request Access</div>
+                  <div style="font-size: 13px; line-height: 1.5; color: #494949; margin-top: 4px;">Every request is reviewed by VIN Foundation staff.</div>
+                </div>
+                <div style="padding: 24px 26px 26px; display: flex; flex-direction: column; gap: 15px;">
+                  <template v-for="(a, $index) in v.applyFields" :key="$index">
+                    <label style="display: flex; flex-direction: column; gap: 6px;">
+                      <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">{{ a.label }}</span>
+                      <input :value="a.value" @change="a.set" :placeholder="a.hint" style="height: 42px; padding: 0 13px; font-size: 14px; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none;">
+                    </label>
+                  </template>
+                  <label style="display: flex; flex-direction: column; gap: 6px;">
+                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">Why do you want access?</span>
+                    <textarea :value="v.apply.intent" @change="v.setIntent" rows="3" placeholder="Buying, selling, or exploring ownership" style="padding: 10px 13px; font-size: 14px; line-height: 1.5; color: var(--color-navy); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none; resize: vertical;"></textarea>
+                  </label>
+                  <label style="display: flex; gap: 10px; align-items: flex-start; font-size: 13px; line-height: 1.5; color: #494949;">
+                    <input type="checkbox" :checked="v.apply.affirm" @change="v.toggleAffirm" style="margin-top: 3px; width: 16px; height: 16px; accent-color: var(--color-blue);">
+                    <span>I am not acting on behalf of a corporate group or consolidator.</span>
+                  </label>
+                  <template v-if="v.apply.error">
+                    <div style="padding: 11px 13px; background: #f5f5f5; border-left: 3px solid var(--vf-text); border-radius: 4px; font-size: 13px; line-height: 1.5; color: #494949;">{{ v.apply.errorText }}</div>
+                  </template>
+                  <button @click="v.submitApply" style="font-family: var(--rf-display); height: 48px; font-size: 15px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;" v-hover="'background: var(--color-navy);'">Submit request</button>
+                  <div style="text-align: center; font-size: 14px; color: #494949;"><a href="#signin" @click="v.goSignin">Back to sign in</a></div>
+                </div>
+              </div>
+            </template>
+
+            <template v-if="v.gateStatus">
+              <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">
+                <div :style="v.status.headStyle">
+                  <div style="font-family: var(--rf-display); font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase;">{{ v.status.kicker }}</div>
+                  <div style="font-family: var(--rf-display); font-size: 22px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; margin-top: 5px;">{{ v.status.title }}</div>
+                </div>
+                <div style="padding: 24px 26px 26px;">
+                  <p style="font-size: 15px; line-height: 1.7; color: #494949; margin: 0;">{{ v.status.body }}</p>
+                  <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 20px;">
+                    <template v-for="(m, $index) in v.status.meta" :key="$index">
+                      <div style="display: flex; justify-content: space-between; gap: 16px; padding-bottom: 9px; border-bottom: 1px solid var(--rf-line); font-size: 13px;">
+                        <span style="color: var(--color-steel);">{{ m.k }}</span>
+                        <span style="font-weight: 500; color: var(--color-navy); text-align: right;">{{ m.v }}</span>
+                      </div>
+                    </template>
+                  </div>
+                  <div style="display: flex; gap: 10px; margin-top: 22px;">
+                    <button @click="v.status.primary.go" style="font-family: var(--rf-display); flex: 1; height: 46px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;" v-hover="'background: var(--color-navy);'">{{ v.status.primary.label }}</button>
+                    <button @click="v.goSignin" style="font-family: var(--rf-display); height: 46px; padding: 0 18px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;" v-hover="'background: var(--color-off-white);'">Sign out</button>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+
+        <div style="background: var(--color-navy); color: var(--color-white); padding: 30px 34px;">
+          <div style="max-width: 1180px; margin: 0 auto; display: flex; align-items: center; justify-content: space-between; gap: 28px; flex-wrap: wrap;">
+            <div style="display: flex; align-items: center; gap: 18px;">
+              <img src="/assets/icons/info-question.svg" alt="" width="34" height="34" style="flex: none; filter: brightness(0) invert(1);">
+              <div style="font-family: var(--rf-display); font-size: 24px; font-weight: 800; letter-spacing: .005em; text-transform: uppercase; line-height: 1.3;">New to ownership? Start with the StartUp Club.</div>
+            </div>
+            <button style="font-family: var(--rf-display); font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; padding: 15px 26px; cursor: pointer;" v-hover="'background: #003a70;'">Learn more</button>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <template v-if="v.isBrowse">
+      <div style="height: calc(100vh - 103px); display: flex; flex-direction: column; min-height: 640px;">
+        <div style="display: flex; align-items: center; gap: 8px; padding: 13px 22px; background: var(--color-white); border-bottom: 1px solid var(--rf-line); flex: none; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 8px 0 15px; min-width: 240px; background: var(--color-off-white); border: 1px solid var(--border-subtle); border-radius: 6px;">
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="#339dde" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg>
+            <select :value="v.market" @change="v.setMarket" style="flex: 1; height: 36px; border: 0; outline: none; background: none; font-size: 14px; font-weight: 500; color: var(--color-navy); cursor: pointer;">
+              <template v-for="(m, $index) in v.marketOptions" :key="$index">
+                <option :value="m.v">{{ m.label }}</option>
+              </template>
+            </select>
+          </div>
+          <div style="display: flex; gap: 3px; padding: 3px; background: var(--vf-neutral); border: 1px solid var(--border-subtle); border-radius: 7px;">
+            <template v-for="(bt, $index) in v.browseToggle" :key="$index">
+              <button @click="bt.go" :style="bt.style">{{ bt.label }}</button>
+            </template>
+          </div>
+          <div style="flex: 1; min-width: 12px;"></div>
+          <template v-for="(fl, $index) in v.filters" :key="$index">
+            <select :value="fl.value" @change="fl.set" :style="fl.style">
+              <template v-for="(o, $index) in fl.options" :key="$index">
+                <option :value="o.v">{{ o.label }}</option>
+              </template>
+            </select>
+          </template>
+          <button @click="v.clearFilters" :style="v.clearStyle" v-hover="'background: var(--color-off-white);'">Clear all</button>
+        </div>
+
+        <div style="flex: 1; display: flex; min-height: 0;">
+          <div style="order: 2; width: 500px; flex: none; display: flex; flex-direction: column; border-left: 1px solid var(--rf-line); background: var(--color-white);">
+            <div style="display: flex; align-items: flex-end; justify-content: space-between; gap: 12px; padding: 18px 22px 12px; flex: none;">
+              <div>
+                <div style="font-family: var(--rf-display); font-size: 19px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--color-navy); line-height: 1.2;">{{ v.resultHeadline }}</div>
+                <div style="font-size: 12px; color: var(--color-steel); margin-top: 3px;">{{ v.marketLabel }}</div>
+              </div>
+              <select style="height: 34px; padding: 0 9px; font-size: 12px; font-weight: 500; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">
+                <option>Newest first</option>
+                <option>Price: low to high</option>
+                <option>Revenue: high to low</option>
+              </select>
+            </div>
+
+            <div class="rf-scroll" style="flex: 1; overflow-y: auto; padding: 0 22px 26px; display: flex; flex-direction: column; gap: 12px;">
+              <template v-if="v.loading">
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+                  <template v-for="(k, $index) in v.skeletons" :key="$index">
+                    <div style="height: 148px; border: 1px solid var(--rf-line); border-radius: 10px; background: var(--color-off-white); animation: rf-pulse 1.4s ease-in-out infinite;"></div>
+                  </template>
+                </div>
+              </template>
+
+              <template v-if="v.showResults">
+                <div style="display: flex; flex-direction: column; gap: 12px;">
+                  <template v-for="(p, $index) in v.results" :key="$index">
+                    <div @click="p.open" @mouseenter="p.hover" @mouseleave="p.unhover" :style="p.cardStyle" v-hover="'box-shadow: var(--shadow-lg); transform: translateY(-2px);'">
+                      <div style="display: flex; gap: 15px; padding: 15px;">
+                        <div style="width: 112px; height: 100px; flex: none; border-radius: 8px; background: var(--rf-band); overflow: hidden;">
+                          <template v-if="p.hasPhotoSrc">
+                            <ImageSlot :id="p.photoId" shape="rect" :src="p.photoSrc" :placeholder="p.photoLabel"></ImageSlot>
+                          </template>
+                          <template v-if="p.noPhotoSrc">
+                            <ImageSlot :id="p.photoId" shape="rect" :placeholder="p.photoLabel"></ImageSlot>
+                          </template>
+                        </div>
+                        <div style="flex: 1; min-width: 0;">
+                          <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 10px;">
+                            <span style="font-family: var(--rf-display); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #339dde;">{{ p.type }}</span>
+                            <span style="font-family: var(--rf-display); font-size: 20px; font-weight: 800; letter-spacing: -.01em; color: var(--color-navy);">{{ p.priceLabel }}</span>
+                          </div>
+                          <div style="font-family: var(--rf-display); font-size: 16px; font-weight: 800; color: var(--color-navy); margin-top: 2px;">{{ p.area }}</div>
+                          <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 3px 14px; margin-top: 9px;">
+                            <div style="font-size: 12.5px; color: var(--color-steel);">Revenue <span style="color: var(--color-navy); font-weight: 500;">{{ p.revLabel }}</span></div>
+                            <div style="font-size: 12.5px; color: var(--color-steel);">Doctors <span style="color: var(--color-navy); font-weight: 500;">{{ p.docs }}</span></div>
+                            <div style="font-size: 12.5px; color: var(--color-steel);">Exam rooms <span style="color: var(--color-navy); font-weight: 500;">{{ p.rooms }}</span></div>
+                            <div style="font-size: 12.5px; color: var(--color-steel);">Square feet <span style="color: var(--color-navy); font-weight: 500;">{{ p.sqftLabel }}</span></div>
+                          </div>
+                        </div>
+                      </div>
+                      <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 10px 15px; border-top: 1px solid var(--rf-line); background: var(--color-off-white); border-radius: 0 0 9px 9px;">
+                        <span style="font-size: 11.5px; font-weight: 500; color: var(--color-navy); background: var(--rf-band); border-radius: 999px; padding: 4px 10px;">{{ p.bldgLabel }}</span>
+                        <span style="font-size: 11.5px; color: var(--color-steel);">Listed {{ p.listed }}</span>
+                      </div>
+                    </div>
+                  </template>
+                  <p style="font-size: 11.5px; line-height: 1.65; color: var(--color-steel); margin: 6px 0 0;">Locations are generalized to the community until the seller approves further disclosure. Practice and financial figures are seller-provided and are not independently verified by the VIN Foundation.</p>
+                </div>
+              </template>
+
+              <template v-if="v.isEmpty">
+                <div style="padding: 44px 26px; text-align: center; background: var(--color-off-white); border: 1px solid var(--rf-line); border-radius: 10px;">
+                  <div style="font-family: var(--rf-display); font-size: 18px; font-weight: 800; color: var(--color-navy);">No practices match</div>
+                  <p style="font-size: 14px; line-height: 1.6; color: #494949; margin: 10px auto 18px; max-width: 320px;">{{ v.emptyNote }}</p>
+                  <button @click="v.clearFilters" style="font-family: var(--rf-display); height: 44px; padding: 0 22px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;">Clear all filters</button>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div style="order: 1; flex: 1; position: relative; min-width: 0;">
+            <ListingsMap :markers="v.markers" :active-id="v.activeId" :hover-id="v.hoverId" :on-select="v.selectMarker" :center="v.mapCenter" :zoom="v.mapZoom" :resize-key="v.resizeKey"></ListingsMap>
+            <div style="position: absolute; left: 16px; top: 16px; z-index: 500; display: flex; gap: 8px; align-items: center;">
+              <div style="flex: none; white-space: nowrap; display: flex; align-items: center; gap: 8px; padding: 9px 13px; background: var(--color-white); border-radius: 6px; box-shadow: var(--shadow-md); font-size: 12.5px; font-weight: 500; color: var(--color-navy);">
+                <span style="width: 8px; height: 8px; border-radius: 999px; background: var(--color-blue);"></span>{{ v.resultCount }} matching this search
+              </div>
+              <button style="flex: none; white-space: nowrap; padding: 9px 13px; background: var(--color-white); border: 0; border-radius: 6px; box-shadow: var(--shadow-md); font-size: 12.5px; font-weight: 500; color: var(--color-navy); cursor: pointer;" v-hover="'background: var(--color-off-white);'">Search this area</button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <template v-if="v.md.isMarket">
+      <div style="height: calc(100vh - 103px); min-height: 640px; display: flex; flex-direction: column; background: var(--vf-white);">
+
+        <div style="display: flex; align-items: center; gap: 8px; padding: 13px 22px; background: var(--vf-white); border-bottom: 1px solid #e6e6e6; flex: none; flex-wrap: wrap;">
+          <div style="display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 8px 0 15px; min-width: 300px; background: var(--vf-neutral); border: 1px solid var(--border-subtle); border-radius: 6px;">
+            <img src="/assets/icons/sub-search.svg" alt="" width="14" height="14" style="opacity: .45;">
+            <select :value="v.market" @change="v.setMarket" style="flex: 1; height: 36px; border: 0; outline: none; background: none; font-size: 14px; font-weight: 500; color: var(--vf-navy); cursor: pointer;">
+              <template v-for="(m, $index) in v.marketOptions" :key="$index">
+                <option :value="m.v">{{ m.label }}</option>
+              </template>
+            </select>
+          </div>
+          <div style="display: flex; gap: 3px; padding: 3px; background: var(--vf-neutral); border: 1px solid var(--border-subtle); border-radius: 7px;">
+            <template v-for="(bt, $index) in v.browseToggle" :key="$index">
+              <button @click="bt.go" :style="bt.style">{{ bt.label }}</button>
+            </template>
+          </div>
+          <div style="flex: 1; min-width: 12px;"></div>
+          <template v-for="(fl, $index) in v.filters" :key="$index">
+            <select :value="fl.value" @change="fl.set" :style="fl.style">
+              <template v-for="(o, $index) in fl.options" :key="$index">
+                <option :value="o.v">{{ o.label }}</option>
+              </template>
+            </select>
+          </template>
+          <div style="position: relative;">
+            <button @click="v.toggleMore" :style="v.moreBtnStyle">
+              More filters<img src="/assets/icons/toggle-caret.svg" alt="" width="9" height="9" :style="v.moreCaretStyle">
+              <template v-if="v.hasMoreCount">
+                <span style="font-size: 11px; font-weight: 800; color: var(--vf-white); background: var(--vf-accent); border-radius: 999px; padding: 1px 7px;">{{ v.moreCount }}</span>
+              </template>
+            </button>
+            <template v-if="v.moreOpen">
+              <div style="position: absolute; right: 0; top: 46px; z-index: 700; width: 262px; padding: 16px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16);">
+                <div style="font-family: var(--rf-display); font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--vf-accent);">Additional filters</div>
+                <div style="display: flex; flex-direction: column; gap: 12px; margin-top: 12px;">
+                  <template v-for="(mf, $index) in v.moreFilters" :key="$index">
+                    <label style="display: flex; flex-direction: column; gap: 5px;">
+                      <span style="font-size: 12px; font-weight: 500; color: var(--vf-text);">{{ mf.label }}</span>
+                      <select :value="mf.value" @change="mf.set" style="height: 38px; padding: 0 10px; font-size: 13px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">
+                        <template v-for="(o, $index) in mf.options" :key="$index">
+                          <option :value="o.v">{{ o.label }}</option>
+                        </template>
+                      </select>
+                    </label>
+                  </template>
+                </div>
+                <button @click="v.toggleMore" style="width: 100%; height: 40px; margin-top: 14px; font-family: var(--rf-display); font-size: 13px; font-weight: 500; color: var(--vf-white); background: var(--vf-accent); border: 0; border-radius: 6px; cursor: pointer;" v-hover="'background: var(--vf-navy);'">Done</button>
+              </div>
+            </template>
+          </div>
+          <button @click="v.clearFilters" :style="v.clearStyle" v-hover="'background: var(--vf-neutral);'">Clear all</button>
+        </div>
+
+        <div style="flex: 1; display: flex; min-height: 300px; border-bottom: 1px solid #e6e6e6; overflow-x: auto;">
+
+          <div style="flex: 1 1 460px; position: relative; min-width: 300px; overflow: hidden;">
+            <MarketMapView :practices="v.md.practices" :communities="v.md.communities" :layers="v.md.layers" :value-layer="v.md.valueLayer" :basemap="v.md.basemap" :active-id="v.md.activeId" :on-select="v.md.selectFromMap" :center="v.md.mapCenter" :zoom="v.md.mapZoom" :drive-center="v.md.driveCenter" :resize-key="v.md.resizeKey"></MarketMapView>
+
+            <div style="position: absolute; left: 16px; top: 16px; z-index: 600; display: flex; background: var(--vf-neutral); border: 1px solid var(--border-subtle); border-radius: 6px; overflow: hidden; box-shadow: 0 2px 6px rgba(0,58,112,.16);">
+              <template v-for="(b, $index) in v.md.basemapTabs" :key="$index">
+                <button @click="b.go" :style="b.style">{{ b.label }}</button>
+              </template>
+            </div>
+
+            <div style="position: absolute; left: 16px; top: 64px; z-index: 600; width: 202px; max-height: calc(100% - 150px); display: flex; flex-direction: column; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 3px 10px rgba(0,58,112,.16); overflow: hidden;">
+              <button @click="v.md.toggleLayersPanel" style="flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; width: 100%; padding: 11px 12px; background: var(--vf-white); border: 0; cursor: pointer;">
+                <span style="display: inline-flex; align-items: center; gap: 6px; font-family: var(--rf-display); font-size: 13px; font-weight: 500; color: var(--vf-navy);">Data Layers<img src="/assets/icons/sub-info.svg" alt="" width="13" height="13" style="opacity: .4;"></span>
+                <img src="/assets/icons/toggle-caret.svg" alt="" width="11" height="11" style="opacity: .45;">
+              </button>
+              <template v-if="v.md.layersOpen">
+                <div class="rf-scroll" style="flex: 1; min-height: 0; overflow-y: auto; display: flex; flex-direction: column; gap: 2px; padding: 2px 12px 12px;">
+                  <template v-for="(lr, $index) in v.md.layerRows" :key="$index">
+                    <button @click="lr.toggle" style="display: flex; align-items: center; gap: 9px; padding: 5px 0; background: none; border: 0; text-align: left; cursor: pointer;">
+                      <span :style="lr.boxStyle"><img src="/assets/icons/sub-check-filled.svg" alt="" width="10" height="10" :style="lr.tickStyle"></span>
+                      <span :style="lr.textStyle">{{ lr.label }}</span>
+                    </button>
+                  </template>
+                  <template v-if="v.md.hasHiddenLayers">
+                    <div style="margin-top: 7px; padding-top: 8px; border-top: 1px solid #e6e6e6; font-size: 10.5px; line-height: 1.45; color: var(--vf-text);">{{ v.md.hiddenLayers }} layer(s) switched off in Layered Market Data</div>
+                  </template>
+                </div>
+              </template>
+            </div>
+
+            <template v-if="v.md.hasLegend">
+              <div style="position: absolute; left: 16px; bottom: 22px; z-index: 600; width: 276px; padding: 10px 12px 11px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; box-shadow: 0 2px 8px rgba(0,58,112,.16);">
+                <div style="font-size: 11.5px; font-weight: 500; color: var(--vf-text);">{{ v.md.legend.title }}</div>
+                <div style="display: flex; margin-top: 7px; border-radius: 2px; overflow: hidden;">
+                  <template v-for="(sw, $index) in v.md.legend.swatches" :key="$index">
+                    <div :style="sw.style"></div>
+                  </template>
+                </div>
+                <div style="display: flex; margin-top: 5px;">
+                  <template v-for="(sw, $index) in v.md.legend.swatches" :key="$index">
+                    <div style="flex: 1; font-size: 10px; color: var(--vf-text); text-align: center;">{{ sw.label }}</div>
+                  </template>
+                </div>
+              </div>
+            </template>
+          </div>
+
+          <div class="rf-scroll" :style="v.md.railStyle">
+            <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; padding: 16px 16px 10px;">
+              <div>
+                <div style="font-family: var(--rf-display); font-size: 20px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--vf-navy); line-height: 1.2;">{{ v.md.mdHeadline }}</div>
+                <div style="font-size: 12.5px; color: var(--vf-text); margin-top: 3px;">{{ v.md.mdSubline }}</div>
+              </div>
+              <select style="flex: none; height: 34px; padding: 0 9px; font-size: 12.5px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">
+                <option>Newest first</option>
+                <option>Price: low to high</option>
+                <option>Revenue: high to low</option>
+              </select>
+            </div>
+            <div style="display: flex; flex-direction: column; gap: 10px; padding: 0 16px 20px;">
+              <template v-for="(r, $index) in v.md.mdResults" :key="$index">
+                <div @click="r.select" :style="r.cardStyle">
+                  <div style="position: relative; width: 86px; height: 78px; flex: none; border-radius: 6px; background: var(--rf-band); overflow: hidden;">
+                    <template v-if="r.hasPhotoSrc">
+                      <ImageSlot :id="r.photoId" shape="rect" :src="r.photoSrc" :placeholder="r.photoHint"></ImageSlot>
+                    </template>
+                    <template v-if="r.noPhotoSrc">
+                      <div style="position: absolute; inset: 0; display: grid; place-items: center; background: var(--rf-band);">
+                        <span style="font-family: var(--rf-display); font-size: 9px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--vf-accent);">Exterior</span>
+                      </div>
+                    </template>
+                    <button @click="r.toggleSave" aria-label="Save practice" :style="r.heartStyle"><img src="/assets/icons/sub-heart-filled.svg" alt="" width="13" height="13" :style="r.heartIconStyle"></button>
+                  </div>
+                  <div style="flex: 1; min-width: 0;">
+                    <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 10px;">
+                      <span style="font-family: var(--rf-display); font-size: 10px; font-weight: 800; letter-spacing: .1em; color: var(--vf-accent);">{{ r.eyebrow }}</span>
+                      <span style="font-family: var(--rf-display); font-size: 17px; font-weight: 800; color: var(--vf-navy); white-space: nowrap;">{{ r.priceLabel }}</span>
+                    </div>
+                    <div style="font-family: var(--rf-display); font-size: 15px; font-weight: 800; color: var(--vf-navy); margin-top: 1px;">{{ r.name }}</div>
+                    <div style="font-size: 12.5px; color: var(--vf-text); margin-top: 1px;">{{ r.place }}</div>
+                    <div style="display: grid; grid-template-columns: 1fr auto; gap: 2px 14px; margin-top: 8px;">
+                      <div style="font-size: 12px; color: var(--vf-text);">Revenue <span style="font-weight: 500; color: var(--vf-navy);">{{ r.revLabel }}</span></div>
+                      <div style="font-size: 12px; color: var(--vf-text);">Doctors <span style="font-weight: 500; color: var(--vf-navy);">{{ r.docs }}</span></div>
+                      <div style="font-size: 12px; color: var(--vf-text);">EBITDA (est.) <span style="font-weight: 500; color: var(--vf-navy);">{{ r.ebitdaLabel }}</span></div>
+                      <div style="font-size: 12px; color: var(--vf-text);">Square feet <span style="font-weight: 500; color: var(--vf-navy);">{{ r.sqft }}</span></div>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <template v-if="v.md.hasSel">
+            <div class="rf-scroll" style="width: 366px; flex: none; overflow-y: auto; border-left: 1px solid #e6e6e6; background: var(--vf-white); animation: rf-slide-in 300ms var(--easing-out) both;">
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 6px 6px 6px 16px; border-bottom: 1px solid #e6e6e6; background: var(--vf-white);">
+                <span style="font-family: var(--rf-display); font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--vf-text);">Practice detail</span>
+                <button @click="v.md.closePanel" aria-label="Close panel" style="flex: none; width: 38px; height: 38px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; opacity: .8; transition: opacity 150ms var(--easing-out);" v-hover="'opacity: 1;'">
+                  <img src="/assets/icons/close-x-gray.svg" alt="" width="26" height="26" style="display: block;">
+                </button>
+              </div>
+              <div style="position: relative; height: 232px; background: var(--rf-band); display: grid; place-items: center;">
+                <template v-if="v.md.panel.photos.hasAny">
+                  <ImageSlot :id="v.md.panel.photos.currentId" shape="rect" :src="v.md.panel.photos.currentSrc" :placeholder="v.md.panel.photos.currentCaption"></ImageSlot>
+                </template>
+                <template v-if="v.md.panel.photos.isEmpty">
+                  <ImageSlot :id="v.md.panel.photos.emptyId" shape="rect" :placeholder="v.md.panel.photos.emptyHint"></ImageSlot>
+                </template>
+                <template v-if="v.md.panel.photos.multiple">
+                  <div>
+                    <button @click="v.md.panel.photos.prev" aria-label="Previous photo" style="position: absolute; left: 10px; top: 50%; margin-top: -17px; width: 34px; height: 34px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; opacity: .92; transition: opacity 150ms var(--easing-out);" v-hover="'opacity: 1;'">
+                      <img src="/assets/icons/nav-arrow-white.svg" alt="" width="34" height="34" style="display: block; filter: drop-shadow(0 1px 3px rgba(0,58,112,.4));">
+                    </button>
+                    <button @click="v.md.panel.photos.next" aria-label="Next photo" style="position: absolute; right: 10px; top: 50%; margin-top: -17px; width: 34px; height: 34px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; opacity: .92; transition: opacity 150ms var(--easing-out);" v-hover="'opacity: 1;'">
+                      <img src="/assets/icons/nav-arrow-white.svg" alt="" width="34" height="34" style="display: block; transform: rotate(180deg); filter: drop-shadow(0 1px 3px rgba(0,58,112,.4));">
+                    </button>
+                  </div>
+                </template>
+                <template v-if="v.md.panel.photos.hasAny">
+                  <div>
+                    <span style="position: absolute; right: 12px; bottom: 12px; font-size: 12px; font-weight: 500; color: var(--vf-navy); background: rgba(255,255,255,.92); border-radius: 4px; padding: 3px 9px;">{{ v.md.panel.photos.counter }}</span>
+                    <span style="position: absolute; left: 12px; bottom: 12px; max-width: 55%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; font-weight: 500; color: var(--vf-navy); background: rgba(255,255,255,.92); border-radius: 4px; padding: 3px 9px;">{{ v.md.panel.photos.currentCaption }}</span>
+                  </div>
+                </template>
+                <template v-if="v.md.panel.photos.multiple">
+                  <div style="position: absolute; left: 0; right: 0; bottom: 46px; display: flex; justify-content: center; gap: 5px;">
+                    <template v-for="(pd, $index) in v.md.panel.photos.dots" :key="$index">
+                      <span :style="pd.style"></span>
+                    </template>
+                  </div>
+                </template>
+              </div>
+
+              <div style="padding: 14px 16px 0;">
+                <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 12px;">
+                  <div style="min-width: 0;">
+                    <div style="font-family: var(--rf-display); font-size: 17px; font-weight: 800; color: var(--vf-navy); line-height: 1.25;">{{ v.md.panel.name }}</div>
+                    <div style="font-size: 12.5px; color: var(--vf-text); margin-top: 2px;">{{ v.md.panel.place }}</div>
+                  </div>
+                  <div style="display: flex; align-items: center; gap: 8px; flex: none;">
+                    <span style="font-family: var(--rf-display); font-size: 17px; font-weight: 800; color: var(--vf-navy);">{{ v.md.panel.priceLabel }}</span>
+                    <img src="/assets/icons/sub-heart-filled.svg" alt="" width="13" height="13" style="display: block; filter: brightness(0) invert(.62);">
+                  </div>
+                </div>
+                <div style="display: flex; gap: 2px; margin-top: 10px; border-bottom: 1px solid #e6e6e6;">
+                  <template v-for="(t, $index) in v.md.panel.tabs" :key="$index">
+                    <button @click="t.go" :style="t.style">{{ t.label }}</button>
+                  </template>
+                </div>
+              </div>
+
+              <template v-if="v.md.panel.isInsights">
+                <div style="padding: 16px;">
+                  <div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy);">Market Overview (10 min drive)</div>
+                  <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 9px;">
+                    <template v-for="(o, $index) in v.md.panel.overviewTiles" :key="$index">
+                      <div style="padding: 9px 7px; border: 1px solid #e6e6e6; border-radius: 6px; text-align: center;">
+                        <div style="font-family: var(--rf-display); font-size: 16px; font-weight: 800; color: var(--vf-navy); line-height: 1.1;">{{ o.v }}</div>
+                        <div style="font-size: 9.5px; color: var(--vf-text); margin-top: 4px; line-height: 1.25;">{{ o.k }}</div>
+                        <div style="font-size: 9.5px; font-weight: 500; color: var(--vf-accent); margin-top: 2px;">{{ o.sub }}</div>
+                      </div>
+                    </template>
+                  </div>
+
+                  <div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy); margin-top: 18px;">Competitive Landscape</div>
+                  <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; margin-top: 9px;">
+                    <div style="display: flex; gap: 8px; align-items: center; padding: 10px; border: 1px solid #e6e6e6; border-radius: 6px;">
+                      <img src="/assets/icons/sub-info.svg" alt="" width="15" height="15" style="flex: none; opacity: .7;">
+                      <div>
+                        <div style="font-family: var(--rf-display); font-size: 15px; font-weight: 800; color: var(--vf-navy); line-height: 1;">{{ v.md.panel.compEstab }}</div>
+                        <div style="font-size: 9.5px; color: var(--vf-text); line-height: 1.25; margin-top: 3px;">Veterinary Establishments</div>
+                      </div>
+                    </div>
+                    <div style="display: flex; gap: 8px; align-items: center; padding: 10px; border: 1px solid #e6e6e6; border-radius: 6px;">
+                      <img src="/assets/icons/move-arrow.svg" alt="" width="15" height="15" style="opacity: .5;">
+                      <div>
+                        <div style="font-family: var(--rf-display); font-size: 15px; font-weight: 800; color: var(--vf-navy); line-height: 1;">{{ v.md.panel.compPer10k }}</div>
+                        <div style="font-size: 9.5px; color: var(--vf-text); line-height: 1.25; margin-top: 3px;">per 10k households</div>
+                      </div>
+                    </div>
+                    <div style="padding: 10px; border: 1px solid #e6e6e6; border-radius: 6px;">
+                      <div style="font-family: var(--rf-display); font-size: 11.5px; font-weight: 500; color: var(--vf-navy); line-height: 1.3;">{{ v.md.panel.compLevel }}</div>
+                      <div style="display: flex; gap: 3px; margin-top: 8px;">
+                        <template v-for="(b, $index) in v.md.panel.compBars" :key="$index">
+                          <div :style="b.style"></div>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy); margin-top: 18px;">Market Opportunity</div>
+                  <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 9px;">
+                    <template v-for="(t, $index) in v.md.panel.oppTiles" :key="$index">
+                      <div style="padding: 10px 7px; border: 1px solid #e6e6e6; border-radius: 6px; text-align: center;">
+                        <div :style="t.iconStyle">{{ t.icon }}</div>
+                        <div :style="t.labelStyle">{{ t.label }}</div>
+                        <div style="font-size: 9.5px; color: var(--vf-text); margin-top: 2px; line-height: 1.25;">{{ t.sub }}</div>
+                      </div>
+                    </template>
+                    <div style="padding: 8px 6px; border: 1px solid #e6e6e6; border-radius: 6px; display: flex; flex-direction: column; align-items: center; gap: 4px;">
+                      <div :style="v.md.panel.scoreRing">
+                        <span style="font-size: 14px; font-weight: 800; color: var(--vf-navy);">{{ v.md.panel.score }}</span>
+                      </div>
+                      <div style="font-size: 9.5px; font-weight: 500; color: var(--vf-navy); line-height: 1.2;">{{ v.md.panel.scoreLabel }}</div>
+                      <div style="font-size: 9px; color: var(--vf-text);">Overall Score</div>
+                    </div>
+                  </div>
+
+                  <button @click="v.md.panel.openListing" style="display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%; height: 44px; margin-top: 16px; font-family: var(--rf-display); font-size: 13.5px; font-weight: 500; color: var(--vf-white); background: var(--vf-accent); border: 0; border-radius: 6px; cursor: pointer;" v-hover="'background: var(--vf-navy);'">
+                    View full market report<img src="/assets/icons/navigate-arrow.svg" alt="" width="12" height="12" style="filter: brightness(0) invert(1);">
+                  </button>
+                  <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">Drive-time figures are approximated from a straight-line catchment around the practice. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>
+                </div>
+              </template>
+
+              <template v-if="v.md.panel.isOther">
+                <div style="padding: 24px 16px;">
+                  <div style="padding: 20px 18px; background: var(--vf-neutral); border-radius: 8px;">
+                    <div style="font-family: var(--rf-display); font-size: 15px; font-weight: 800; color: var(--vf-navy);">{{ v.md.panel.otherTitle }}</div>
+                    <p style="font-size: 13px; line-height: 1.65; color: var(--vf-text); margin: 7px 0 0;">This tab reuses the listing detail sections already built on the Browse Practices screen. Open the full listing to see it, or switch back to Market Insights.</p>
+                    <div style="display: flex; gap: 8px; margin-top: 14px;">
+                      <button @click="v.md.panel.openListing" style="font-family: var(--rf-display); height: 40px; padding: 0 16px; font-size: 13px; font-weight: 500; color: var(--vf-white); background: var(--vf-accent); border: 0; border-radius: 6px; cursor: pointer;">Open full listing</button>
+                      <button @click="v.md.panel.goInsights" style="font-family: var(--rf-display); height: 40px; padding: 0 16px; font-size: 13px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">Market Insights</button>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </template>
+        </div>
+
+        <div class="rf-scroll" style="flex: none; max-height: 46%; overflow-y: auto; padding: 14px 22px 16px; background: var(--vf-white);">
+          <button @click="v.md.toggleStrip" style="display: flex; align-items: center; gap: 12px; width: 100%; padding: 0; background: none; border: 0; cursor: pointer; text-align: left;">
+            <span :style="v.md.stripCaretStyle">
+              <img src="/assets/icons/toggle-caret.svg" alt="" width="12" height="12" style="opacity: .6;">
+            </span>
+            <h2 style="font-family: var(--rf-display); font-size: 20px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--vf-navy); margin: 0;">Layered Market Data</h2>
+            <span style="font-size: 13px; color: var(--vf-text);">simple for users, powerful underneath</span>
+            <span style="flex: 1;"></span>
+            <span style="font-family: var(--rf-display); font-size: 12.5px; font-weight: 500; color: var(--vf-accent); white-space: nowrap;">{{ v.md.stripToggleLabel }}</span>
+          </button>
+          <template v-if="v.md.stripOpen">
+          <div>
+          <div style="display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 12px; margin-top: 16px;">
+            <template v-for="(c, $index) in v.md.stripCards" :key="$index">
+              <div style="padding: 13px; background: var(--vf-white); border: 1px solid #e6e6e6; border-radius: 8px;">
+                <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 8px;">
+                  <div style="font-family: var(--rf-display); font-size: 13.5px; font-weight: 800; color: var(--vf-navy); line-height: 1.3;">{{ c.n }}. {{ c.title }}</div>
+                  <button @click="c.toggle" :style="c.trackStyle"><span :style="c.knobStyle"></span></button>
+                </div>
+                <div style="font-size: 11px; line-height: 1.45; color: var(--vf-text); margin-top: 5px;">{{ c.blurb }}<br>({{ c.src }})</div>
+                <div :style="c.bodyStyle">
+                  <div style="position: relative; height: 96px; margin-top: 10px; border-radius: 6px; background: var(--vf-neutral); overflow: hidden;">
+                    <template v-for="(d, $index) in c.dots" :key="$index">
+                      <div :style="d.style"></div>
+                    </template>
+                    <span style="position: absolute; left: 50%; top: 50%; transform: translate(-50%,-50%); font-family: var(--rf-display); font-size: 11px; font-weight: 500; color: var(--vf-navy); pointer-events: none;">{{ c.cityLabel }}</span>
+                  </div>
+                  <div style="font-size: 10.5px; color: var(--vf-text); margin-top: 8px;">{{ c.caption }}</div>
+                  <div style="display: flex; margin-top: 5px; border-radius: 2px; overflow: hidden;">
+                    <template v-for="(r, $index) in c.ramp" :key="$index">
+                      <div :style="r.style"></div>
+                    </template>
+                  </div>
+                </div>
+                <template v-if="c.hasLayerNote">
+                  <div :style="c.layerNoteStyle">{{ c.layerNote }}</div>
+                </template>
+                <template v-if="c.noLayerNote">
+                  <div style="font-size: 10px; line-height: 1.4; margin-top: 6px; color: var(--vf-text);">Feeds the market panel — no map layer</div>
+                </template>
+              </div>
+            </template>
+          </div>
+          </div>
+          </template>
+          <div style="display: flex; align-items: center; justify-content: space-between; gap: 20px; margin-top: 16px; padding-top: 14px; border-top: 1px solid #e6e6e6; flex-wrap: wrap;">
+            <div style="font-size: 11.5px; color: var(--vf-text);">Data sources: U.S. Census Bureau (ACS, CBP, AIES, QWI, BDS) and derived pet-household estimates. <a href="#sources" @click="v.md.openSpec">Learn more</a></div>
+            <div style="display: flex; gap: 16px; font-size: 11.5px; color: var(--vf-text);">
+              <span>Map data © OpenStreetMap contributors · Imagery © Esri</span>
+              <a href="#terms">Terms</a>
+              <a href="#privacy">Privacy</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </template>
+
+    <template v-if="v.isDetail">
+      <div>
+        <div style="padding: 28px 34px; background: var(--rf-band);">
+          <div style="max-width: 1180px; margin: 0 auto;">
+            <button @click="v.backToBrowse" style="display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500; color: var(--color-navy); background: none; border: 0; padding: 0; cursor: pointer;">
+              <img src="/assets/icons/navigate-arrow.svg" alt="" width="13" height="13" style="flex: none; transform: rotate(180deg); opacity: .7;">Back to results
+            </button>
+            <h1 style="font-family: var(--rf-display); font-size: 34px; font-weight: 800; letter-spacing: .005em; text-transform: uppercase; color: var(--color-navy); margin: 12px 0 0;">{{ d.title }}</h1>
+            <div style="display: flex; align-items: center; gap: 14px; margin-top: 8px; flex-wrap: wrap;">
+              <span style="font-size: 14px; font-weight: 500; color: var(--color-navy);">{{ d.subtitle }}</span>
+              <span style="width: 4px; height: 4px; border-radius: 999px; background: #339dde;"></span>
+              <span style="font-size: 14px; color: #494949;">Listed {{ d.listed }}</span>
+              <span style="flex: none; display: inline-block; white-space: nowrap; font-size: 11.5px; font-weight: 500; color: var(--color-white); background: var(--vf-navy); border-radius: 999px; padding: 4px 11px;">{{ d.statusLabel }}</span>
+            </div>
+          </div>
+        </div>
+
+        <div style="max-width: 1180px; margin: 0 auto; padding: 34px 34px 70px; display: grid; grid-template-columns: 1fr 372px; gap: 44px; align-items: start;">
+          <div style="min-width: 0; display: flex; flex-direction: column; gap: 34px;">
+
+            <div>
+              <div style="display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px;">
+                <template v-for="(ph, $index) in d.photos" :key="$index">
+                  <div>
+                    <div style="position: relative; height: 168px; border-radius: 10px; overflow: hidden; background: var(--rf-band);">
+                      <template v-if="ph.hasSrc">
+                        <ImageSlot :id="ph.id" shape="rect" :src="ph.src" :placeholder="ph.placeholder"></ImageSlot>
+                      </template>
+                      <template v-if="ph.noSrc">
+                        <ImageSlot :id="ph.id" shape="rect" :placeholder="ph.placeholder"></ImageSlot>
+                      </template>
+                    </div>
+                    <div style="display: flex; align-items: baseline; gap: 7px; margin-top: 7px;">
+                      <span style="font-family: var(--rf-display); font-size: 10px; font-weight: 800; letter-spacing: .1em; color: var(--color-blue);">{{ ph.index }}</span>
+                      <span style="font-size: 12.5px; font-weight: 500; color: var(--color-navy);">{{ ph.caption }}</span>
+                    </div>
+                  </div>
+                </template>
+              </div>
+              <p style="font-size: 11.5px; line-height: 1.6; color: var(--color-steel); margin: 12px 0 0;">Six views per practice, all photographed at the same location. Drop a photo onto any frame to fill it; each frame belongs to this practice only.</p>
+            </div>
+
+            <template v-for="(sec, $index) in d.sections" :key="$index">
+              <div>
+                <h2 style="font-family: var(--rf-display); font-size: 21px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--color-navy); margin: 0 0 4px;">{{ sec.title }}</h2>
+                <div style="height: 3px; width: 46px; background: var(--color-blue); margin-bottom: 18px;"></div>
+                <template v-if="sec.hasProse">
+                  <p style="font-size: 15.5px; line-height: 1.75; color: #494949; margin: 0 0 18px; max-width: 68ch; text-wrap: pretty;">{{ sec.prose }}</p>
+                </template>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0 34px;">
+                  <template v-for="(r, $index) in sec.rows" :key="$index">
+                    <div style="display: flex; justify-content: space-between; gap: 16px; padding: 11px 0; border-bottom: 1px solid var(--rf-line);">
+                      <span style="font-size: 13.5px; color: var(--color-steel);">{{ r.k }}</span>
+                      <span style="font-size: 13.5px; font-weight: 500; color: var(--color-navy); text-align: right;">{{ r.v }}</span>
+                    </div>
+                  </template>
+                </div>
+                <template v-if="sec.hasNote">
+                  <div style="display: flex; gap: 10px; margin-top: 16px; padding: 12px 14px; background: var(--color-off-white); border-left: 3px solid #339dde; border-radius: 4px;">
+                    <span style="font-size: 12.5px; line-height: 1.6; color: #494949;">{{ sec.note }}</span>
+                  </div>
+                </template>
+              </div>
+            </template>
+
+            <div>
+              <h2 style="font-family: var(--rf-display); font-size: 21px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--color-navy); margin: 0 0 4px;">Photos and Documents</h2>
+              <div style="height: 3px; width: 46px; background: var(--color-blue); margin-bottom: 18px;"></div>
+              <div style="display: flex; flex-direction: column; gap: 9px;">
+                <template v-for="(doc, $index) in d.docs" :key="$index">
+                  <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 14px 16px; background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 8px;">
+                    <div style="display: flex; align-items: center; gap: 12px; min-width: 0;">
+                      <span :style="doc.iconStyle">
+                        <template v-if="doc.isOpen">
+                          <img src="/assets/icons/pad-lock-open.svg" alt="" width="15" height="15" style="opacity: .7;">
+                        </template>
+                        <template v-if="doc.isLocked">
+                          <img src="/assets/icons/pad-lock.svg" alt="" width="15" height="15" style="opacity: .7;">
+                        </template>
+                      </span>
+                      <div style="min-width: 0;">
+                        <div style="font-size: 14px; font-weight: 500; color: var(--color-navy);">{{ doc.name }}</div>
+                        <div style="font-size: 12px; color: var(--color-steel);">{{ doc.meta }}</div>
+                      </div>
+                    </div>
+                    <span :style="doc.pillStyle">{{ doc.pill }}</span>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <div>
+              <h2 style="font-family: var(--rf-display); font-size: 21px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--color-navy); margin: 0 0 4px;">Community Context</h2>
+              <div style="height: 3px; width: 46px; background: var(--color-blue); margin-bottom: 18px;"></div>
+              <template v-if="d.hasDemo">
+                <div>
+                  <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;">
+                    <template v-for="(m, $index) in d.demo" :key="$index">
+                      <div style="padding: 18px 16px; background: var(--rf-band); border-radius: 10px;">
+                        <div style="font-family: var(--rf-display); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: var(--vf-navy);">{{ m.k }}</div>
+                        <div style="font-family: var(--rf-display); font-size: 24px; font-weight: 800; letter-spacing: .005em; text-transform: uppercase; color: var(--color-navy); margin-top: 7px; line-height: 1.15;">{{ m.v }}</div>
+                        <div style="font-size: 12px; color: var(--color-steel); margin-top: 3px;">{{ m.sub }}</div>
+                      </div>
+                    </template>
+                  </div>
+                  <p style="font-size: 12px; line-height: 1.6; color: var(--color-steel); margin: 14px 0 0;">Source: U.S. Census Bureau, American Community Survey 2023 5-year estimates (public domain, attribution requested). Figures describe the community around the practice, not the practice itself.</p>
+                </div>
+              </template>
+              <template v-if="d.noDemo">
+                <div style="padding: 22px; background: var(--color-off-white); border: 1px dashed var(--border-subtle); border-radius: 10px;">
+                  <div style="font-size: 14px; font-weight: 500; color: var(--color-navy);">Community data unavailable for this location</div>
+                  <p style="font-size: 13px; line-height: 1.6; color: #494949; margin: 6px 0 0; max-width: 60ch;">The Census geography for this address has not been matched yet. Everything else on this listing is seller-provided and unaffected.</p>
+                </div>
+              </template>
+            </div>
+          </div>
+
+          <div style="position: sticky; top: 90px; display: flex; flex-direction: column; gap: 14px;">
+            <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">
+              <div style="padding: 20px 22px; background: var(--color-navy); color: var(--color-white);">
+                <div style="font-family: var(--rf-display); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #deecf7;">Asking price</div>
+                <div style="font-family: var(--rf-display); font-size: 34px; font-weight: 800; letter-spacing: -.01em; line-height: 1.1; margin-top: 4px;">{{ d.priceLabel }}</div>
+                <div style="font-size: 13px; color: #deecf7; margin-top: 3px;">{{ d.priceNote }}</div>
+              </div>
+              <div style="padding: 18px 22px;">
+                <div style="display: flex; flex-direction: column;">
+                  <template v-for="(k, $index) in d.keyFacts" :key="$index">
+                    <div style="display: flex; justify-content: space-between; gap: 14px; padding: 9px 0; border-bottom: 1px solid var(--rf-line);">
+                      <span style="font-size: 13px; color: var(--color-steel);">{{ k.k }}</span>
+                      <span style="font-size: 13px; font-weight: 500; color: var(--color-navy); text-align: right;">{{ k.v }}</span>
+                    </div>
+                  </template>
+                </div>
+                <template v-if="d.canRequest">
+                  <button @click="v.openInterest" style="font-family: var(--rf-display); width: 100%; height: 50px; margin-top: 18px; font-size: 15px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;" v-hover="'background: var(--color-navy);'">I'm interested</button>
+                </template>
+                <template v-if="d.alreadySent">
+                  <div style="margin-top: 18px; padding: 14px; background: #deecf7; border-left: 3px solid var(--vf-navy); border-radius: 4px;">
+                    <div style="font-size: 13.5px; font-weight: 500; color: #003a70;">{{ d.sentLabel }}</div>
+                    <div style="font-size: 12.5px; line-height: 1.55; color: #494949; margin-top: 3px;">{{ d.sentNote }}</div>
+                  </div>
+                </template>
+                <button style="font-family: var(--rf-display); width: 100%; height: 44px; margin-top: 9px; font-size: 13.5px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;" v-hover="'background: var(--color-off-white);'">Save listing</button>
+                <p style="font-size: 11.5px; line-height: 1.6; color: var(--color-steel); margin: 14px 0 0;">Your name, credentials and license state are shared with the seller when you express interest. Nothing else is disclosed.</p>
+              </div>
+            </div>
+
+            <div style="padding: 16px 18px; background: var(--color-off-white); border: 1px solid var(--rf-line); border-radius: 10px;">
+              <div style="display: flex; align-items: center; gap: 9px;">
+                <img src="/assets/icons/pad-lock.svg" alt="" width="14" height="14" style="flex: none; opacity: .6;">
+                <div style="font-family: var(--rf-display); font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--color-steel);">Seller disclosure</div>
+              </div>
+              <p style="font-size: 12.5px; line-height: 1.65; color: #494949; margin: 9px 0 0;">{{ d.disclosure }}</p>
+            </div>
+          </div>
+        </div>
+
+        <template v-if="v.interestOpen">
+          <div style="position: fixed; inset: 0; z-index: 900; background: rgba(0,58,112,.55); display: grid; place-items: center; padding: 24px;">
+            <div style="width: 100%; max-width: 520px; background: var(--color-white); border-radius: 12px; box-shadow: var(--shadow-xl); overflow: hidden; animation: rf-fade-up 300ms var(--easing-out) both;">
+              <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; padding: 22px 26px; background: var(--rf-band);">
+                <div>
+                  <div style="font-family: var(--rf-display); font-size: 20px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--color-navy);">{{ v.modal.title }}</div>
+                  <div style="font-size: 13px; color: #494949; margin-top: 3px;">{{ v.modal.sub }}</div>
+                </div>
+                <button @click="v.closeInterest" style="flex: none; width: 30px; height: 30px; display: grid; place-items: center; background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer; color: var(--color-navy);">
+                  <img src="/assets/icons/delete-x.svg" alt="" width="12" height="12" style="flex: none; opacity: .75;">
+                </button>
+              </div>
+              <template v-if="v.modal.isForm">
+                <div style="padding: 24px 26px 26px;">
+                  <div style="display: flex; flex-direction: column; gap: 8px; padding: 14px 16px; background: var(--color-off-white); border-radius: 8px;">
+                    <template v-for="(sh, $index) in v.modal.shared" :key="$index">
+                      <div style="display: flex; justify-content: space-between; gap: 14px; font-size: 13px;">
+                        <span style="color: var(--color-steel);">{{ sh.k }}</span>
+                        <span style="font-weight: 500; color: var(--color-navy);">{{ sh.v }}</span>
+                      </div>
+                    </template>
+                  </div>
+                  <label style="display: flex; flex-direction: column; gap: 7px; margin-top: 18px;">
+                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">Message to the seller</span>
+                    <textarea :value="v.interestMsg" @change="v.setInterestMsg" rows="4" placeholder="What you would like to know, and where you are in your plans." style="padding: 12px 13px; font-size: 14px; line-height: 1.6; color: var(--color-navy); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none; resize: vertical;"></textarea>
+                  </label>
+                  <template v-if="v.modal.error">
+                    <div style="margin-top: 12px; padding: 11px 13px; background: #f5f5f5; border-left: 3px solid var(--vf-text); border-radius: 4px; font-size: 13px; color: #494949;">Add a short message so the seller knows what you are asking for.</div>
+                  </template>
+                  <div style="display: flex; gap: 10px; margin-top: 18px;">
+                    <button @click="v.sendInterest" style="font-family: var(--rf-display); flex: 1; height: 48px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;" v-hover="'background: var(--color-navy);'">Send request</button>
+                    <button @click="v.closeInterest" style="font-family: var(--rf-display); height: 48px; padding: 0 20px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">Cancel</button>
+                  </div>
+                </div>
+              </template>
+              <template v-if="v.modal.isSent">
+                <div style="padding: 26px;">
+                  <p style="font-size: 15px; line-height: 1.7; color: #494949; margin: 0;">Your request has gone to the seller. They decide whether to engage and what to release next — the financial packet and floor plans stay locked until they do.</p>
+                  <div style="display: flex; gap: 10px; margin-top: 20px;">
+                    <button @click="v.goRequests" style="font-family: var(--rf-display); flex: 1; height: 48px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;">View my requests</button>
+                    <button @click="v.closeInterest" style="font-family: var(--rf-display); height: 48px; padding: 0 20px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">Keep browsing</button>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+    </template>
+
+    <template v-if="v.isRequests">
+      <div>
+        <div style="padding: 40px 34px; background: var(--rf-band);">
+          <div style="max-width: 1000px; margin: 0 auto;">
+            <h1 style="font-family: var(--rf-display); font-size: 36px; font-weight: 800; letter-spacing: .005em; text-transform: uppercase; color: var(--color-navy); margin: 0;">My Requests</h1>
+            <p style="font-size: 15px; color: #494949; margin: 8px 0 0;">Every practice you have asked about, and where the seller left it.</p>
+          </div>
+        </div>
+        <div style="max-width: 1000px; margin: 0 auto; padding: 34px 34px 70px; display: flex; flex-direction: column; gap: 14px;">
+          <template v-for="(r, $index) in v.reqList" :key="$index">
+            <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-sm); overflow: hidden;">
+              <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; padding: 18px 20px;">
+                <div style="display: flex; gap: 15px; min-width: 0;">
+                  <div style="width: 74px; height: 62px; flex: none; border-radius: 8px; background: var(--rf-band);"></div>
+                  <div style="min-width: 0;">
+                    <div style="font-family: var(--rf-display); font-size: 17px; font-weight: 800; color: var(--color-navy);">{{ r.title }}</div>
+                    <div style="font-size: 13px; color: var(--color-steel); margin-top: 2px;">{{ r.meta }}</div>
+                    <p style="font-size: 14px; line-height: 1.6; color: #494949; margin: 10px 0 0; max-width: 62ch;">{{ r.msg }}</p>
+                  </div>
+                </div>
+                <div style="flex: none; text-align: right;">
+                  <span :style="r.pillStyle">{{ r.statusLabel }}</span>
+                  <div style="font-size: 12px; color: var(--color-steel); margin-top: 8px;">Sent {{ r.when }}</div>
+                </div>
+              </div>
+              <template v-if="r.hasReply">
+                <div style="display: flex; gap: 12px; padding: 15px 20px; background: var(--color-off-white); border-top: 1px solid var(--rf-line);">
+                  <div style="width: 30px; height: 30px; flex: none; border-radius: 999px; background: var(--rf-band); display: grid; place-items: center; font-family: var(--rf-display); font-size: 11px; font-weight: 700; color: var(--color-navy);">S</div>
+                  <div>
+                    <div style="font-size: 12px; font-weight: 500; color: var(--color-steel);">Seller replied</div>
+                    <p style="font-size: 14px; line-height: 1.6; color: #494949; margin: 3px 0 0;">{{ r.reply }}</p>
+                  </div>
+                </div>
+              </template>
+              <div style="display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 12px 20px; border-top: 1px solid var(--rf-line);">
+                <span style="font-size: 12.5px; color: var(--color-steel);">{{ r.hint }}</span>
+                <button @click="r.open" style="font-family: var(--rf-display); font-size: 13px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-blue); background: none; border: 0; cursor: pointer;" v-hover="'color: var(--color-navy);'">View listing</button>
+              </div>
+            </div>
+          </template>
+          <template v-if="v.noRequests">
+            <div style="padding: 54px 26px; text-align: center; background: var(--color-off-white); border: 1px solid var(--rf-line); border-radius: 10px;">
+              <div style="font-family: var(--rf-display); font-size: 19px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--color-navy);">No requests yet</div>
+              <p style="font-size: 14px; line-height: 1.6; color: #494949; margin: 10px auto 18px; max-width: 340px;">When you ask a seller for more information, the conversation shows up here.</p>
+              <button @click="v.goBrowseBtn" style="font-family: var(--rf-display); height: 46px; padding: 0 24px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;">Browse practices</button>
+            </div>
+          </template>
+        </div>
+      </div>
+    </template>
+
+    <template v-if="v.isSeller">
+      <div>
+        <div style="padding: 40px 34px; background: var(--rf-band);">
+          <div style="max-width: 1120px; margin: 0 auto; display: flex; align-items: flex-end; justify-content: space-between; gap: 24px; flex-wrap: wrap;">
+            <div>
+              <h1 style="font-family: var(--rf-display); font-size: 36px; font-weight: 800; letter-spacing: .005em; text-transform: uppercase; color: var(--color-navy); margin: 0;">{{ v.seller.heading }}</h1>
+              <p style="font-size: 15px; color: #494949; margin: 8px 0 0;">{{ v.seller.sub }}</p>
+            </div>
+            <template v-if="v.seller.isDash">
+              <button @click="v.startWizard" style="font-family: var(--rf-display); height: 50px; padding: 0 26px; font-size: 15px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;" v-hover="'background: var(--color-navy);'">Create a listing</button>
+            </template>
+            <template v-if="v.seller.isWizard">
+              <button @click="v.exitWizard" style="font-family: var(--rf-display); height: 46px; padding: 0 20px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">Save and exit</button>
+            </template>
+          </div>
+        </div>
+
+        <template v-if="v.seller.isDash">
+          <div style="max-width: 1120px; margin: 0 auto; padding: 34px 34px 70px; display: grid; grid-template-columns: 1.35fr 1fr; gap: 40px; align-items: start;">
+            <div>
+              <h2 style="font-family: var(--rf-display); font-size: 19px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--color-navy); margin: 0 0 4px;">My Listings</h2>
+              <div style="height: 3px; width: 44px; background: var(--color-blue); margin-bottom: 18px;"></div>
+              <div style="display: flex; flex-direction: column; gap: 12px;">
+                <template v-for="(l, $index) in v.seller.listings" :key="$index">
+                  <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-sm); overflow: hidden;">
+                    <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; padding: 17px 19px;">
+                      <div>
+                        <div style="font-family: var(--rf-display); font-size: 16px; font-weight: 800; color: var(--color-navy);">{{ l.title }}</div>
+                        <div style="font-size: 13px; color: var(--color-steel); margin-top: 2px;">{{ l.meta }}</div>
+                      </div>
+                      <span :style="l.pillStyle">{{ l.status }}</span>
+                    </div>
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 14px; padding: 11px 19px; border-top: 1px solid var(--rf-line); background: var(--color-off-white);">
+                      <span style="font-size: 12.5px; color: var(--color-steel);">{{ l.note }}</span>
+                      <div style="display: flex; gap: 14px;">
+                        <template v-for="(a, $index) in l.actions" :key="$index">
+                          <button @click="a.go" style="font-family: var(--rf-display); font-size: 12.5px; font-weight: 500; letter-spacing: .03em; text-transform: uppercase; color: var(--color-blue); background: none; border: 0; padding: 0; cursor: pointer;" v-hover="'color: var(--color-navy);'">{{ a.label }}</button>
+                        </template>
+                      </div>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </div>
+
+            <div>
+              <h2 style="font-family: var(--rf-display); font-size: 19px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--color-navy); margin: 0 0 4px;">Buyer Interest</h2>
+              <div style="height: 3px; width: 44px; background: var(--color-blue); margin-bottom: 18px;"></div>
+              <div style="display: flex; flex-direction: column; gap: 12px;">
+                <template v-for="(i, $index) in v.seller.inbox" :key="$index">
+                  <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-sm); padding: 17px 19px;">
+                    <div style="display: flex; align-items: flex-start; justify-content: space-between; gap: 14px;">
+                      <div>
+                        <div style="font-family: var(--rf-display); font-size: 15px; font-weight: 800; color: var(--color-navy);">{{ i.buyer }}</div>
+                        <div style="font-size: 12.5px; color: var(--color-steel); margin-top: 2px;">{{ i.meta }}</div>
+                      </div>
+                      <span :style="i.pillStyle">{{ i.statusLabel }}</span>
+                    </div>
+                    <p style="font-size: 13.5px; line-height: 1.6; color: #494949; margin: 11px 0 0;">{{ i.msg }}</p>
+                    <template v-if="i.isPending">
+                      <div style="display: flex; gap: 8px; margin-top: 14px;">
+                        <button @click="i.accept" style="font-family: var(--rf-display); flex: 1; height: 40px; font-size: 12.5px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--vf-navy); border: 0; border-radius: 6px; cursor: pointer;">Share more</button>
+                        <button @click="i.decline" style="font-family: var(--rf-display); height: 40px; padding: 0 16px; font-size: 12.5px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">Decline</button>
+                      </div>
+                    </template>
+                    <template v-if="i.isResolved">
+                      <div style="margin-top: 12px; font-size: 12.5px; color: var(--color-steel);">{{ i.resolvedNote }}</div>
+                    </template>
+                  </div>
+                </template>
+                <template v-if="v.seller.inboxEmpty">
+                  <div style="padding: 30px 22px; text-align: center; background: var(--color-off-white); border: 1px solid var(--rf-line); border-radius: 10px;">
+                    <div style="font-size: 14px; font-weight: 500; color: var(--color-navy);">No interest yet</div>
+                    <p style="font-size: 13px; line-height: 1.6; color: #494949; margin: 6px 0 0;">Requests appear here as approved buyers find your listing.</p>
+                  </div>
+                </template>
+              </div>
+            </div>
+          </div>
+        </template>
+
+        <template v-if="v.seller.isWizard">
+          <div style="max-width: 1060px; margin: 0 auto; padding: 30px 34px 70px; display: grid; grid-template-columns: 250px 1fr; gap: 40px; align-items: start;">
+            <div style="position: sticky; top: 90px;">
+              <div style="height: 5px; background: var(--rf-line); border-radius: 999px; overflow: hidden;">
+                <div :style="v.wiz.barStyle"></div>
+              </div>
+              <div style="font-size: 12px; color: var(--color-steel); margin: 9px 0 18px;">{{ v.wiz.progressLabel }}</div>
+              <div style="display: flex; flex-direction: column; gap: 2px;">
+                <template v-for="(st, $index) in v.wiz.steps" :key="$index">
+                  <button @click="st.go" :style="st.style">
+                    <span :style="st.dotStyle">{{ st.n }}</span>
+                    <span>{{ st.label }}</span>
+                  </button>
+                </template>
+              </div>
+            </div>
+
+            <div>
+              <template v-if="v.wiz.isForm">
+                <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">
+                  <div style="padding: 22px 26px; border-bottom: 1px solid var(--rf-line);">
+                    <div style="font-family: var(--rf-display); font-size: 22px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--color-navy);">{{ v.wiz.title }}</div>
+                    <div style="font-size: 14px; line-height: 1.55; color: #494949; margin-top: 5px; max-width: 60ch;">{{ v.wiz.blurb }}</div>
+                  </div>
+                  <div style="padding: 24px 26px 26px;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 16px;">
+                      <template v-for="(fd, $index) in v.wiz.fields" :key="$index">
+                        <label :style="fd.wrapStyle">
+                          <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">{{ fd.label }}</span>
+                          <template v-if="fd.isText">
+                            <input :value="fd.value" @change="fd.set" :placeholder="fd.hint" style="height: 44px; padding: 0 13px; font-size: 14.5px; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none;">
+                          </template>
+                          <template v-if="fd.isSelect">
+                            <select :value="fd.value" @change="fd.set" style="height: 44px; padding: 0 11px; font-size: 14.5px; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">
+                              <template v-for="(o, $index) in fd.options" :key="$index">
+                                <option :value="o.v">{{ o.label }}</option>
+                              </template>
+                            </select>
+                          </template>
+                          <template v-if="fd.isArea">
+                            <textarea :value="fd.value" @change="fd.set" rows="4" :placeholder="fd.hint" style="padding: 11px 13px; font-size: 14.5px; line-height: 1.6; color: var(--color-navy); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none; resize: vertical;"></textarea>
+                          </template>
+                          <template v-if="fd.hasHelp">
+                            <span style="font-size: 12px; line-height: 1.5; color: var(--color-steel);">{{ fd.help }}</span>
+                          </template>
+                        </label>
+                      </template>
+                    </div>
+
+                    <template v-if="v.wiz.hasToggles">
+                      <div style="display: flex; flex-direction: column; gap: 10px; margin-top: 20px;">
+                        <template v-for="(tg, $index) in v.wiz.toggles" :key="$index">
+                          <label style="display: flex; gap: 12px; align-items: flex-start; padding: 14px 16px; background: var(--color-off-white); border: 1px solid var(--rf-line); border-radius: 8px; cursor: pointer;">
+                            <input type="checkbox" :checked="tg.on" @change="tg.toggle" style="margin-top: 3px; width: 16px; height: 16px; accent-color: var(--color-blue);">
+                            <span>
+                              <span style="display: block; font-size: 14px; font-weight: 500; color: var(--color-navy);">{{ tg.label }}</span>
+                              <span style="display: block; font-size: 13px; line-height: 1.55; color: #494949; margin-top: 2px;">{{ tg.help }}</span>
+                            </span>
+                          </label>
+                        </template>
+                      </div>
+                    </template>
+
+                    <template v-if="v.wiz.hasUpload">
+                      <div style="margin-top: 6px;">
+                        <div style="padding: 34px 22px; text-align: center; background: var(--color-off-white); border: 1px dashed var(--border-subtle); border-radius: 10px;">
+                          <div style="font-family: var(--rf-display); font-size: 15px; font-weight: 800; color: var(--color-navy);">Drag photos and documents here</div>
+                          <p style="font-size: 13px; line-height: 1.6; color: #494949; margin: 6px auto 16px; max-width: 380px;">Exterior, lobby, treatment area and exam rooms cover most of what buyers ask for. Floor plans and financial summaries can stay locked until you approve a buyer.</p>
+                          <button @click="v.wiz.addPhoto" style="font-family: var(--rf-display); height: 42px; padding: 0 20px; font-size: 13px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;">Add files</button>
+                        </div>
+                        <div style="display: flex; gap: 9px; margin-top: 14px; flex-wrap: wrap;">
+                          <template v-for="(u, $index) in v.wiz.uploads" :key="$index">
+                            <div style="width: 92px;">
+                              <div style="height: 68px; border-radius: 8px; background: var(--rf-band); display: grid; place-items: center; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #339dde;">{{ u.kind }}</div>
+                              <div style="font-size: 11px; color: var(--color-steel); margin-top: 4px;">{{ u.name }}</div>
+                            </div>
+                          </template>
+                        </div>
+                      </div>
+                    </template>
+
+                    <template v-if="v.wiz.error">
+                      <div style="margin-top: 18px; padding: 12px 14px; background: #f5f5f5; border-left: 3px solid var(--vf-text); border-radius: 4px; font-size: 13.5px; line-height: 1.55; color: #494949;">{{ v.wiz.errorText }}</div>
+                    </template>
+
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 26px; padding-top: 20px; border-top: 1px solid var(--rf-line);">
+                      <button @click="v.wiz.back" :style="v.wiz.backStyle">Back</button>
+                      <div style="display: flex; align-items: center; gap: 14px;">
+                        <span style="font-size: 12.5px; color: var(--color-steel);">{{ v.wiz.saveNote }}</span>
+                        <button @click="v.wiz.next" style="font-family: var(--rf-display); height: 48px; padding: 0 26px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;" v-hover="'background: var(--color-navy);'">{{ v.wiz.nextLabel }}</button>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </template>
+
+              <template v-if="v.wiz.isPreview">
+                <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">
+                  <div style="padding: 20px 26px; background: var(--rf-band);">
+                    <div style="font-family: var(--rf-display); font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #494949;">Preview — this is what an approved buyer sees</div>
+                    <div style="font-family: var(--rf-display); font-size: 24px; font-weight: 800; letter-spacing: .005em; text-transform: uppercase; color: var(--color-navy); margin-top: 6px;">{{ v.wiz.previewTitle }}</div>
+                  </div>
+                  <div style="padding: 24px 26px 26px;">
+                    <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 0 30px;">
+                      <template v-for="(pr, $index) in v.wiz.previewRows" :key="$index">
+                        <div style="display: flex; justify-content: space-between; gap: 14px; padding: 10px 0; border-bottom: 1px solid var(--rf-line);">
+                          <span style="font-size: 13px; color: var(--color-steel);">{{ pr.k }}</span>
+                          <span style="font-size: 13px; font-weight: 500; color: var(--color-navy); text-align: right;">{{ pr.v }}</span>
+                        </div>
+                      </template>
+                    </div>
+                    <div style="margin-top: 18px; padding: 14px 16px; background: var(--color-off-white); border-left: 3px solid #339dde; border-radius: 4px; font-size: 13px; line-height: 1.6; color: #494949;">{{ v.wiz.previewNote }}</div>
+                    <div style="display: flex; align-items: center; justify-content: space-between; gap: 14px; margin-top: 24px; padding-top: 20px; border-top: 1px solid var(--rf-line);">
+                      <button @click="v.wiz.back" :style="v.wiz.backStyle">Back to edit</button>
+                      <button @click="v.wiz.submit" style="font-family: var(--rf-display); height: 50px; padding: 0 28px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;" v-hover="'background: var(--color-navy);'">Submit for review</button>
+                    </div>
+                  </div>
+                </div>
+              </template>
+
+              <template v-if="v.wiz.isDone">
+                <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">
+                  <div style="padding: 24px 26px; background: #deecf7;">
+                    <div style="font-family: var(--rf-display); font-size: 11px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #003a70;">Submitted</div>
+                    <div style="font-family: var(--rf-display); font-size: 24px; font-weight: 800; letter-spacing: .005em; text-transform: uppercase; color: #003a70; margin-top: 5px;">Your listing is with the VIN Foundation</div>
+                  </div>
+                  <div style="padding: 24px 26px 26px;">
+                    <p style="font-size: 15px; line-height: 1.7; color: #494949; margin: 0;">A staff reviewer checks each listing before it goes live — usually within two business days. You can keep editing while it waits; edits after publication go through the same short review.</p>
+                    <div style="display: flex; gap: 10px; margin-top: 20px;">
+                      <button @click="v.exitWizard" style="font-family: var(--rf-display); height: 48px; padding: 0 24px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;">Go to my listings</button>
+                    </div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+      </div>
+    </template>
+
+    <template v-if="v.isAdmin">
+      <div>
+        <div style="padding: 40px 34px 0; background: var(--rf-band);">
+          <div style="max-width: 1180px; margin: 0 auto;">
+            <h1 style="font-family: var(--rf-display); font-size: 36px; font-weight: 800; letter-spacing: .005em; text-transform: uppercase; color: var(--color-navy); margin: 0;">VIN Foundation Admin</h1>
+            <p style="font-size: 15px; color: #494949; margin: 8px 0 0;">Access, listings, activity and the data the platform depends on.</p>
+            <div style="display: flex; gap: 4px; margin-top: 26px;">
+              <template v-for="(t, $index) in v.admin.tabs" :key="$index">
+                <button @click="t.go" :style="t.style">{{ t.label }}<span :style="t.countStyle">{{ t.count }}</span></button>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <div style="max-width: 1180px; margin: 0 auto; padding: 30px 34px 70px;">
+          <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-sm); overflow: hidden;">
+            <div :style="v.admin.headStyle">
+              <template v-for="(c, $index) in v.admin.columns" :key="$index">
+                <div style="font-family: var(--rf-display); font-size: 10.5px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--color-steel);">{{ c }}</div>
+              </template>
+            </div>
+            <template v-for="(row, $index) in v.admin.rows" :key="$index">
+              <div :style="row.style">
+                <template v-for="(cell, $index) in row.cells" :key="$index">
+                  <div style="min-width: 0;">
+                    <template v-if="cell.hasPill">
+                      <span :style="cell.pillStyle">{{ cell.pill }}</span>
+                    </template>
+                    <template v-if="cell.hasMain">
+                      <div style="font-size: 14px; font-weight: 500; color: var(--color-navy);">{{ cell.main }}</div>
+                    </template>
+                    <template v-if="cell.hasSub">
+                      <div style="font-size: 12.5px; line-height: 1.5; color: var(--color-steel); margin-top: 2px;">{{ cell.sub }}</div>
+                    </template>
+                    <template v-if="cell.hasActions">
+                      <div style="display: flex; gap: 8px; justify-content: flex-end;">
+                        <template v-for="(a, $index) in cell.actions" :key="$index">
+                          <button @click="a.go" :style="a.style">{{ a.label }}</button>
+                        </template>
+                      </div>
+                    </template>
+                  </div>
+                </template>
+              </div>
+            </template>
+          </div>
+          <p style="font-size: 12px; line-height: 1.65; color: var(--color-steel); margin: 14px 0 0; max-width: 90ch;">{{ v.admin.footnote }}</p>
+        </div>
+      </div>
+    </template>
+  </div>
+  </template>
+
+  <template v-if="v.isMobile">
+    <div style="display: grid; place-items: start center; padding: 34px 20px 60px; background: var(--color-off-white); min-height: calc(100vh - 29px);">
+      <div style="width: 390px; height: 800px; display: flex; flex-direction: column; background: var(--color-white); border-radius: 26px; box-shadow: var(--shadow-xl); overflow: hidden; border: 1px solid var(--rf-line);">
+        <div style="display: flex; align-items: center; justify-content: space-between; padding: 10px 20px 4px; font-size: 11px; font-weight: 500; color: var(--color-navy);">
+          <span>9:41</span><span>Austin, TX</span>
+        </div>
+        <div style="display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 8px 16px 12px; border-bottom: 1px solid var(--rf-line);">
+          <div style="font-family: var(--rf-display); font-size: 15px; font-weight: 700; color: var(--color-navy);">VIN Foundation</div>
+          <div style="display: flex; align-items: center; gap: 8px;">
+            <span style="font-size: 10.5px; font-weight: 500; color: var(--color-white); background: var(--vf-navy); border-radius: 999px; padding: 3px 9px;">Approved</span>
+            <button @click="v.signOut" style="display: flex; align-items: center; gap: 6px; padding: 4px 8px 4px 4px; background: none; border: 1px solid var(--rf-line); border-radius: 999px; cursor: pointer;">
+              <span style="width: 24px; height: 24px; border-radius: 999px; background: var(--rf-band); display: grid; place-items: center; font-size: 10px; font-weight: 700; color: var(--color-navy);">{{ v.me.initials }}</span>
+              <img src="/assets/icons/navigate-arrow.svg" alt="" width="12" height="12" style="flex: none; opacity: .7;">
+            </button>
+          </div>
+        </div>
+
+        <template v-if="v.mob.isList">
+          <div style="flex: 1; display: flex; flex-direction: column; min-height: 0;">
+            <div style="padding: 12px 16px; display: flex; flex-direction: column; gap: 9px; border-bottom: 1px solid var(--rf-line);">
+              <div style="display: flex; align-items: center; gap: 8px; height: 38px; padding: 0 13px; background: var(--color-off-white); border: 1px solid var(--border-subtle); border-radius: 6px;">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#339dde" stroke-width="2.4" stroke-linecap="round"><circle cx="11" cy="11" r="7"></circle><path d="M20 20l-4-4"></path></svg>
+                <span style="font-size: 13.5px; font-weight: 500; color: var(--color-navy);">{{ v.place }}</span>
+              </div>
+              <div style="display: flex; gap: 7px; overflow-x: auto;">
+                <template v-for="(c, $index) in v.mob.chips" :key="$index">
+                  <span :style="c.style">{{ c.label }}</span>
+                </template>
+              </div>
+            </div>
+            <div class="rf-scroll" style="flex: 1; overflow-y: auto; padding: 12px 16px 80px; display: flex; flex-direction: column; gap: 10px;">
+              <div style="font-family: var(--rf-display); font-size: 13px; font-weight: 500; text-transform: uppercase; letter-spacing: .04em; color: var(--color-steel);">{{ v.resultHeadline }}</div>
+              <template v-for="(p, $index) in v.results" :key="$index">
+                <div @click="p.open" style="flex: none; background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; overflow: hidden; box-shadow: var(--shadow-sm); cursor: pointer;">
+                  <div style="height: 108px; background: var(--rf-band); display: grid; place-items: center; font-family: var(--rf-display); font-size: 9px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #339dde;">Photo</div>
+                  <div style="padding: 12px 14px;">
+                    <div style="display: flex; align-items: baseline; justify-content: space-between; gap: 10px;">
+                      <span style="font-family: var(--rf-display); font-size: 9.5px; font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #339dde;">{{ p.type }}</span>
+                      <span style="font-family: var(--rf-display); font-size: 18px; font-weight: 800; color: var(--color-navy);">{{ p.priceLabel }}</span>
+                    </div>
+                    <div style="font-family: var(--rf-display); font-size: 15px; font-weight: 800; color: var(--color-navy); margin-top: 2px;">{{ p.area }}</div>
+                    <div style="font-size: 12.5px; color: var(--color-steel); margin-top: 6px;">Revenue {{ p.revLabel }} · {{ p.docs }} doctors · {{ p.rooms }} exam rooms</div>
+                  </div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </template>
+
+        <template v-if="v.mob.isMap">
+          <div style="flex: 1; position: relative; min-height: 0;">
+            <ListingsMap :markers="v.markers" :active-id="v.activeId" :on-select="v.mob.selectMarker" :zoom="v.mob.zoom" :resize-key="v.resizeKey"></ListingsMap>
+            <template v-if="v.mob.hasPeek">
+              <div style="position: absolute; left: 12px; right: 12px; bottom: 74px; z-index: 500; display: flex; gap: 12px; padding: 12px; background: var(--color-white); border-radius: 10px; box-shadow: var(--shadow-lg);">
+                <div style="width: 66px; height: 56px; flex: none; border-radius: 8px; background: var(--rf-band);"></div>
+                <div style="min-width: 0;">
+                  <div style="font-family: var(--rf-display); font-size: 14px; font-weight: 500; color: var(--color-navy);">{{ v.mob.peek.area }}</div>
+                  <div style="font-size: 12px; color: var(--color-steel); margin-top: 1px;">{{ v.mob.peek.meta }}</div>
+                  <button @click="v.mob.peek.open" style="margin-top: 6px; font-family: var(--rf-display); font-size: 11.5px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-blue); background: none; border: 0; padding: 0; cursor: pointer;">View listing</button>
+                </div>
+              </div>
+            </template>
+          </div>
+        </template>
+
+        <template v-if="v.mob.isDetail">
+          <div class="rf-scroll" style="flex: 1; overflow-y: auto; min-height: 0; padding-bottom: 80px;">
+            <div style="height: 168px; background: var(--rf-band); display: grid; place-items: center; font-family: var(--rf-display); font-size: 10px; font-weight: 800; letter-spacing: .12em; text-transform: uppercase; color: #339dde;">Exterior photo</div>
+            <div style="padding: 16px;">
+              <div style="font-family: var(--rf-display); font-size: 19px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; line-height: 1.25; color: var(--color-navy);">{{ d.title }}</div>
+              <div style="font-size: 13px; color: var(--color-steel); margin-top: 4px;">{{ d.subtitle }}</div>
+              <div style="font-family: var(--rf-display); font-size: 28px; font-weight: 800; letter-spacing: .005em; text-transform: uppercase; color: var(--color-navy); margin-top: 12px;">{{ d.priceLabel }}</div>
+              <div style="display: flex; flex-direction: column; margin-top: 12px;">
+                <template v-for="(k, $index) in d.keyFacts" :key="$index">
+                  <div style="display: flex; justify-content: space-between; gap: 14px; padding: 9px 0; border-bottom: 1px solid var(--rf-line);">
+                    <span style="font-size: 13px; color: var(--color-steel);">{{ k.k }}</span>
+                    <span style="font-size: 13px; font-weight: 500; color: var(--color-navy); text-align: right;">{{ k.v }}</span>
+                  </div>
+                </template>
+              </div>
+              <template v-if="d.canRequest">
+                <button @click="v.openInterest" style="font-family: var(--rf-display); width: 100%; height: 48px; margin-top: 16px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;">I'm interested</button>
+              </template>
+              <template v-if="d.alreadySent">
+                <div style="margin-top: 16px; padding: 13px; background: #deecf7; border-left: 3px solid var(--vf-navy); border-radius: 4px; font-size: 13px; color: #003a70;">{{ d.sentLabel }}</div>
+              </template>
+              <p style="font-size: 12px; line-height: 1.65; color: var(--color-steel); margin: 14px 0 0;">{{ d.disclosure }}</p>
+            </div>
+          </div>
+        </template>
+
+        <div style="flex: none; display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 10px 14px 16px; border-top: 1px solid var(--rf-line); background: var(--color-white);">
+          <div style="display: flex; background: var(--color-off-white); border-radius: 999px; padding: 3px;">
+            <template v-for="(t, $index) in v.mob.toggle" :key="$index">
+              <button @click="t.go" :style="t.style">{{ t.label }}</button>
+            </template>
+          </div>
+          <button @click="v.mob.back" :style="v.mob.backStyle">{{ v.mob.backLabel }}</button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+</div>
+</template>
+
+<script setup>
+import { computed, onMounted, onUnmounted, reactive } from 'vue';
+import { Component } from './logic.js';
+import ListingsMap from './components/ListingsMap.vue';
+import MarketMapView from './components/MarketMapView.vue';
+import ImageSlot from './components/ImageSlot.vue';
+import { vHover } from './directives/hover.js';
+
+// Prototype-only props. `prototypeBar` must be false in production.
+const props = defineProps({
+  prototypeBar: { type: Boolean, default: false },
+  startScreen: { type: String, default: 'gate' },
+  startViewport: { type: String, default: 'desktop' }
+});
+
+// The approved prototype logic runs verbatim; `state` is made reactive so that
+// renderVals() re-evaluates exactly like the original render pass.
+const c = new Component(props);
+c.state = reactive(c.state);
+const v = computed(() => c.renderVals());
+
+onMounted(() => c.componentDidMount && c.componentDidMount());
+onUnmounted(() => c.componentWillUnmount && c.componentWillUnmount());
+</script>
