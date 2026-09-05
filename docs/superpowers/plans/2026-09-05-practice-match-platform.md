@@ -2880,6 +2880,9 @@ git add -A && git commit -m "feat(infra): Celery skeleton, role dispatcher, Dock
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/platform && git push production feat/platform
 ```
 
+
+**Accepted deviations (John, 2026-09-06):** (1) `app/tasks/celery_app.py` carries two inline `# type: ignore[import-untyped]` / `# type: ignore[untyped-decorator]` comments — Celery ships no `py.typed`; a `[tool.mypy.overrides]` entry may replace them when Task 9 touches `pyproject.toml`'s tool config. (2) `scripts/start.sh` has the `DRY_RUN=1` branch that Step 2b's test requires (Step 3's snippet lacked it) and lowercases `RAILWAY_SERVICE_NAME` with `tr` rather than the bash-4-only `${var,,}` (macOS system bash is 3.2). (3) `scripts/verify-image.sh` captures each command's output into a variable before matching instead of `cmd | grep -q` under `set -o pipefail`, which was flaky (exit 22 / SIGPIPE 141); same messages and logic.
+
 ---
 
 ### Task 8: Railway project, services, environments, domains, guarded deploy scripts — first QA deploy
