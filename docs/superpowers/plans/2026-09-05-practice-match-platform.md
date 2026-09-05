@@ -3666,7 +3666,7 @@ Use superpowers:finishing-a-development-branch: merge `feat/platform` → `main`
 - Modify: `Dockerfile`, `.dockerignore`, `.railwayignore`, `.gitignore`, `tests/test_build_config.py`
 
 **Interfaces:**
-- Produces: image path `/app/coming-soon/dist/` (Vite output with `index.html`, `_app/`, `assets/`, `ds/` after 11d sets `assetsDir`; until 11d the bundle dir is Vite's default `assets/` — 11b's serving code reads `index.html` and static files from the directory root, so both layouts serve).
+- Produces: image path `/app/coming-soon/dist/` (Vite output with `index.html`, `_app/`, `assets/`, `ds/`). *Corrected 2026-09-06 after 11b's real image run:* the api's `/_app` mount is a `StaticFiles` that requires the directory at boot, so the default `assets/` layout crashes the api in coming-soon mode; spec §4 edit 3 (`build.assetsDir = '_app'`) is therefore made in **11b**, not 11d.
 
 - [ ] **Step 1: Copy and lock**
 ```bash
@@ -3734,7 +3734,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ### Task 11b: `SITE_MODE` — the api serves the site the mode selects; health reports it
 
 **Files:**
-- Modify: `app/config.py`, `app/static.py`, `app/main.py`, `app/api/health.py`, `tests/test_config.py`, `tests/test_static.py`, `tests/test_health.py`, `tests/conftest.py`, `.env.example`, `DEPLOY.md`, `CLAUDE.md`, `tests/test_docs.py`, `scripts/verify-image.sh`, `tests/scripts/test_verify_image_sh.sh`
+- Modify: `app/config.py`, `app/static.py`, `app/main.py`, `app/api/health.py`, `tests/test_config.py`, `tests/test_static.py`, `tests/test_health.py`, `tests/conftest.py`, `.env.example`, `DEPLOY.md`, `CLAUDE.md`, `tests/test_docs.py`, `scripts/verify-image.sh`, `tests/scripts/test_verify_image_sh.sh`, `coming-soon/vite.config.js` + `tests/test_build_config.py` *(added 2026-09-06 — Step 2b below)*
 
 **Interfaces:**
 - Produces: `settings.site_mode: str` (`"app"` | `"coming_soon"`); `app.static.COMING_SOON_DIST: Path`; `app.static.dist_for(mode: str) -> Path`; `HealthBody.site_mode: str`.
@@ -3747,7 +3747,7 @@ def test_site_mode_defaults_to_app_and_rejects_unknown_values():
     from pydantic import ValidationError
 
     from app.config import Settings
-    base = dict(database_url="postgresql://x", redis_url="redis://x", environment="test", api_secret_key="x")
+    base = {"database_url": "postgresql://x", "redis_url": "redis://x", "environment": "test", "api_secret_key": "x"}
     assert Settings(**base).site_mode == "app"
     assert Settings(**base, site_mode="coming_soon").site_mode == "coming_soon"
     with pytest.raises(ValidationError):
@@ -3756,7 +3756,7 @@ def test_site_mode_defaults_to_app_and_rejects_unknown_values():
 
 def test_invalid_site_mode_exits_1_and_names_it():
     env = dict(os.environ, SITE_MODE="marketplace", PYTHONPATH=str(ROOT))
-    r = subprocess.run([sys.executable, "-c", "import app.config"], env=env, capture_output=True, text=True)
+    r = subprocess.run([sys.executable, "-c", "import app.config"], env=env, capture_output=True, text=True, check=False)
     assert r.returncode == 1
     assert "SITE_MODE" in r.stderr
 ```
@@ -3844,6 +3844,25 @@ def dist_for(mode: str) -> Path:
 
 `app/api/health.py`: `HealthBody` gains `site_mode: str`; `_body` adds `"site_mode": settings.site_mode`.
 
+- [ ] **Step 2b (added 2026-09-06 — found by this task's real image run): the coming-soon bundle goes under `_app/`** — spec §4 edit 3, moved here from 11d. RED first: append to `tests/test_build_config.py`
+```python
+def test_coming_soon_build_emits_its_bundle_under_app_like_the_marketplace():
+    # app/static.py mounts /_app at boot; without this the api crashes in coming-soon mode (11b, 2026-09-06).
+    assert "assetsDir: '_app'" in (ROOT / "coming-soon" / "vite.config.js").read_text()
+```
+Run: `poetry run pytest tests/test_build_config.py -q -W error` → FAIL. Then `coming-soon/vite.config.js` becomes exactly:
+```js
+import { defineConfig } from 'vite';
+import vue from '@vitejs/plugin-vue';
+
+export default defineConfig({
+  plugins: [vue()],
+  // `_app` matches the marketplace build so app/static.py's immutable-cache rule applies.
+  build: { assetsDir: '_app' }
+});
+```
+Run the test again → PASS. (`cd coming-soon && npm run build && ls dist` shows `_app/`; the real `scripts/verify-image.sh` in Step 4 rebuilds the image and is the end-to-end proof — its seventh check was the RED that exposed this.)
+
 - [ ] **Step 3: Docs and drift**
 
 `.env.example` — add `SITE_MODE=app                                                            # app | coming_soon — production runs coming_soon until launch (QA never does)`.
@@ -3891,8 +3910,8 @@ echo "coming soon OK"
 
 - [ ] **Step 5: Commit**
 ```bash
-git add app/config.py app/static.py app/main.py app/api/health.py tests/test_config.py tests/test_static.py tests/test_health.py tests/conftest.py .env.example DEPLOY.md CLAUDE.md tests/test_docs.py scripts/verify-image.sh tests/scripts/test_verify_image_sh.sh
-git commit -m "feat(api): SITE_MODE selects the served site (marketplace or coming soon); health reports site_mode
+git add app/config.py app/static.py app/main.py app/api/health.py tests/test_config.py tests/test_static.py tests/test_health.py tests/conftest.py .env.example DEPLOY.md CLAUDE.md tests/test_docs.py scripts/verify-image.sh tests/scripts/test_verify_image_sh.sh coming-soon/vite.config.js tests/test_build_config.py
+git commit -m "feat(api): SITE_MODE selects the served site (marketplace or coming soon); health reports site_mode; coming-soon bundle under _app
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -4158,9 +4177,9 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes: `POST /api/interest` (11c) — `202` success, `429` rate-limited, anything else failure.
 
-**Scope note:** the spec's three edits (§4) are the only changes to what the page ships. The test tooling this task adds — vitest devDependencies and a `test` script in `package.json`, the `test` block in `vite.config.js`, `src/logic.test.js` — is the §5 unit gate; none of it reaches `dist/`. The self-hosted font files and `merriweather.css` are edit 2 of §4.
+**Scope note:** the spec's three edits (§4) are the only changes to what the page ships (edit 3, `assetsDir`, landed in 11b). The test tooling this task adds — vitest devDependencies and a `test` script in `package.json`, the `test` block in `vite.config.js`, `src/logic.test.js` — is the §5 unit gate; none of it reaches `dist/`. The self-hosted font files and `merriweather.css` are edit 2 of §4.
 
-- [ ] **Step 1: Tooling** — `cd coming-soon && npm install --save-dev vitest@3.2.7 @vitest/coverage-v8@3.2.7 jsdom@30` and add `"test": "vitest run --coverage"` to `scripts`. `vite.config.js` becomes:
+- [ ] **Step 1: Tooling** — `cd coming-soon && npm install --save-dev vitest@3.2.7 @vitest/coverage-v8@3.2.7 jsdom@30` and add `"test": "vitest run --coverage"` to `scripts`. `vite.config.js` (which already carries `build.assetsDir = '_app'` from 11b) becomes:
 ```js
 import { defineConfig } from 'vite';
 import vue from '@vitejs/plugin-vue';
