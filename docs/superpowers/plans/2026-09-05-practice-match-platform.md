@@ -2895,7 +2895,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin fea
 ### Task 8: Railway project, services, environments, domains, guarded deploy scripts — first QA deploy
 
 **Files:**
-- Create: `scripts/deploy.sh`, `scripts/verify-deploy.sh`, `tests/scripts/test_deploy_guard.sh`
+- Create: `scripts/deploy.sh`, `scripts/verify-deploy.sh`, `tests/scripts/test_deploy_guard.sh`, `tests/scripts/test_verify_deploy.sh` *(added 2026-09-06: created by Step 1b but missing from this list)*
 - Railway state (not files): project `Practice Match`; envs `production`, `QA`; services `api`, `worker`, PostGIS db, `Redis`; domains.
 
 **Interfaces:**
