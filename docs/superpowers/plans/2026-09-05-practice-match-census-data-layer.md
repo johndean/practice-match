@@ -30,6 +30,13 @@
 - **Refresh (§9):** `acs_annual_load` yearly Dec, manual approval · `cbp_annual_load` yearly Apr, manual · `qwi_quarterly_load` scheduled quarterly, keeps 20 quarters · `geocode_on_write` per listing create/address edit · `metric_materialize` nightly + on new listing · `license_audit` quarterly.
 - **Attribution (§12):** strings live in `dataset_registry.attribution_text` and are returned by the API; "Source: U.S. Census Bureau, [dataset], [vintage]" on every surface; never the Bureau's seal/logo. Basemap attribution is the map component's concern (Foundation spec §9 open item).
 - **Schema (§13):** the DDL is applied verbatim as numbered migrations, in the order the spec gives (`ingest_run` → `dataset_registry` → FK back-fill → `geo_area` → measures → listing-dependent tables → `active_vintage`).
+- **Competition geography (red-team C1):** community-level competition comes from **ZIP Code Business Patterns** (`zbp`, same Census program, public domain) aggregated over the ZCTAs a catchment/place intersects; county CBP remains the county benchmark. `vets_per_10k_households` always divides establishments and households measured over the **same** geography. The UI must say the count is a proxy for competitive density (spec §5).
+- **Growth geography (red-team C2):** `population_growth_pct` is computed at **place** level (stable GEOIDs across the 2020 tract redefinition), county fallback; tract-level growth waits for the 2010→2020 tract crosswalk (Phase C).
+- **Bands:** `market_metric.band ∈ {'place', 'drive_10', 'drive_20'}`. Community bubbles and the "community label" figures default to `place` (the approved design's numbers are city-level); the practice panel's drive-time context defaults to `drive_10`; every response names its band.
+- **Access (red-team C4):** every market endpoint requires an approved member session (Sub-project 2's `require_member`) unless `MARKET_DATA_PUBLIC=true` (VIN Foundation decision, spec §15). Coordinates returned are the **place centroid** unless the seller disclosed the location (`listing.location_disclosed`), never the geocoded point otherwise.
+- **Cache gate (red-team C5):** panel and community payloads are cached under a key that includes a global `market:gate:v` counter bumped on any licence decision, and metrics are re-filtered through the gate on read — a blocked layer disappears within 60 s even from cached payloads.
+- **Secrets in errors (red-team C6):** the API key never appears in exceptions, logs or archive keys (`CensusClient.redact(url)`).
+- **Migration numbering:** Sub-project 3 Phase A uses `002`–`009`; Sub-project 2 owns `010`–`059`; Sub-project 3 Phase B (listing-dependent) uses `060`+.
 - Every commit: conventional message, `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`, pushed to `origin` and `production`. Work on `feat/census-data-layer` in a worktree.
 
 ## Decisions recorded in this plan (confirm on review)
@@ -43,43 +50,63 @@
 | D5 | **Ingest writes use psycopg2 (sync) inside Celery tasks; API reads use SQLAlchemy async.** | Celery tasks are synchronous; one connection per task, executemany batches. |
 | D6 | **API contract mirrors the fixture field names** the approved UI already reads (`pop`, `hh`, `income`, `growth`, `pets`, `econ`, `vets`) so Sub-project 2's "replace fixtures with API calls" is a field-for-field swap. | The handoff README: "Keep the field names — the UI reads them directly." |
 | D7 | **National benchmark** `us_median` comes from the same `acs5` vintage at geography `us:1` (stored `geo_id='1'`, `summary_level='010'`), never a hard-coded constant (the prototype's `75149` is replaced). | §14: two vintages never in one ratio. |
-| D8 | **Community location shown on the map** = the listing's place centroid when `geo_precision` is `rooftop`/`tract` and the seller has chosen generalized location, else the practice point; the API returns both `lat/lng` (display) and `geo_precision`. | Sellers control disclosure (design principle 2). |
+| D8 | **Community location shown on the map** = the listing's place centroid; the geocoded point is returned only when `listing.location_disclosed` is true **and** the caller is an approved member. `geo_precision` is always returned. | Sellers control disclosure (design principle 2); an anonymized listing must not be locatable from the API (red-team C4). |
+| D10 | **Three bands.** `place` (the listing's city/CDP), `drive_10` (8 km), `drive_20` (16 km). Community bubbles and community-label figures use `place` by default; the panel's drive-time tiles use `drive_10`; `?band=` selects. | The approved design's community numbers are city-level (Cedar Park 81,900 = the city); the spec's catchments answer the drive-time question. Both are real needs; the band is explicit (red-team C3). |
+| D11 | **ZIP Code Business Patterns (`zbp`, `2022/zbp`, NAICS2017) is the community-level competition source**, aggregated over ZCTAs by area overlap; county CBP is the benchmark. Register it as a new cleared public-domain dataset (VIN Foundation to approve the addition to the spec's §2 table). | County CBP cannot render per-community competition and produced incoherent ratios (red-team C1). ZIPs ≈ ZCTAs; the approximation is labelled. |
+| D12 | **Population growth at place level** (2014–2018 → 2019–2023 place rows), county fallback; tract growth deferred until the 2010→2020 tract relationship file is loaded. | 2010 and 2020 tract GEOIDs differ; joining prior-vintage tracts on 2020 GEOIDs is wrong (red-team C2). |
+| D13 | **Market endpoints are member-gated** via SP2's `require_member`, with `MARKET_DATA_PUBLIC` as the only way to open them (default false). | Spec §15 leaves public teaser vs gated to the VIN Foundation; default closed. |
+| D14 | **Migration ranges:** SP3-A `002`–`009`, SP2 `010`–`059`, SP3-B `060`+. | Phase B tables reference `listing(id)`, which SP2 creates; numbered ordering must guarantee it exists first. |
 
 ## API contract (consumed by Sub-project 2's frontend wiring)
 
+All routes below except `/api/admin/*` use `Depends(require_member)` from Sub-project 2 (approved buyer/seller/admin session). `MARKET_DATA_PUBLIC=true` removes the dependency (VIN Foundation decision, spec §15). Until SP2 lands, the dependency is the A9 operator token.
+
 ```
+GET /api/layers
+→ [{ "key": "income",      "label": "Median Household Income",  "source_label": "Source: U.S. Census Bureau, American Community Survey 5-Year Estimates, 2019–2023",
+     "dataset_key": "acs5", "vintage": "2019–2023", "geo_level": "place|catchment", "enabled": true, "is_derived": false, "caveat": null },
+   { "key": "pets",        "label": "Pet Ownership (est.)",      "dataset_key": "acs5", "is_derived": true,  "caveat": "Derived estimate: households × 0.57 (national placeholder rate)." , … },
+   { "key": "competition", "label": "Veterinary Competition",    "dataset_key": "zbp",  "vintage": "2022", "geo_level": "zcta",
+     "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices." , … },
+   { "key": "growth",      "label": "Population Growth",         "dataset_key": "acs5_prior", "vintage": "2014–2018 → 2019–2023", "geo_level": "place", … },
+   { "key": "households",  … }, { "key": "econ", "label": "Economic Profile", "dataset_key": "cbp", "vintage": "2022", "geo_level": "county",
+     "caveat": "Payroll per establishment, not revenue." , … },
+   { "key": "drive_10", "label": "5–10 min drive time", "dataset_key": null, "caveat": "Straight-line 8 km approximation of drive time." },
+   { "key": "drive_20", "label": "10–20 min drive time", "dataset_key": null, "caveat": "Straight-line 16 km approximation of drive time." },
+   { "key": "practices", "label": "Practice Listings", "dataset_key": null } ]
+    # The UI renders labels, "Source:" lines, legend caveats and card `on` states from this — never hard-coded copy (spec §12).
+    # `enabled` is the licence gate; a disabled layer is also absent from every community object below.
+
 GET /api/markets
 → [{ "cbsa_geoid": "12420", "name": "Austin, TX", "center": [30.31, -97.75], "zoom": 10 }, …]
 
-GET /api/markets/{cbsa_geoid}/communities
-→ { "vintage": "2019–2023", "attribution": ["Source: U.S. Census Bureau, ACS 5-Year (2019–2023)", "Source: U.S. Census Bureau, County Business Patterns 2022"],
+GET /api/markets/{cbsa_geoid}/communities?band=place|drive_10   (default place)
+→ { "band": "place", "vintage": "2019–2023", "attribution": [ … ],
     "communities": [
-      { "listing_id": "…", "name": "Cedar Park", "lat": 30.5052, "lng": -97.8203, "geo_precision": "rooftop",
+      { "listing_id": "…", "name": "Cedar Park", "lat": 30.5052, "lng": -97.8203, "location": "place_centroid|disclosed_point", "geo_precision": "rooftop",
         "pop": 81900, "hh": 27600, "income": 118400, "growth": 14.2, "pets": 15732, "econ": 685000, "vets": 7,
+        "competition": { "count": 7, "geo_level": "zcta", "zctas": 3, "per_10k_households": 2.54, "level": "Moderate" },
         "suppressed": [] } ] }
-    # numeric raw values; the UI's bucket()/fmtMetric() do the formatting exactly as the prototype does.
-    # a layer whose dataset is not cleared is absent from every community object (and from "attribution").
+    # fixture field names (D6); numeric raw values; `level` uses the design's thresholds (<1.4 Low, <2.2 Moderate, else High).
 
-GET /api/listings/{listing_id}/market
+GET /api/listings/{listing_id}/market?band=drive_10|drive_20|place   (default drive_10)
 → { "listing_id": "…", "band": "drive_10", "geo_precision": "tract", "vintage": "2019–2023", "computed_at": "…",
     "metrics": {
-      "population":              { "value": 81900,  "unit": "count", "is_derived": false, "moe": 2140, "suppressed": false, "source_dataset": "acs5", "vintage": "2019–2023" },
-      "households":              { … "unit": "count" … },
-      "median_hh_income":        { … "unit": "usd", "approximate": true … },
-      "population_growth_pct":   { … "unit": "pct", "is_derived": true, "formula_version": "v1" … },
-      "pet_households_est":      { … "unit": "count", "is_derived": true, "formula_version": "v1", "assumed_rate": 0.57 … },
-      "establishments":          { … "unit": "count", "source_dataset": "cbp", "vintage": "2022", "flag": null … },
-      "vets_per_10k_households": { … "unit": "ratio", "is_derived": true … },
-      "revenue_per_establishment": { … "unit": "usd", "is_derived": true, "label": "Payroll per establishment" … },
-      "income_index_vs_us":      { … "unit": "pct", "is_derived": true … },
-      "opportunity_score":       { "value": 71, "unit": "score", "is_derived": true, "formula_version": "v1",
-                                   "components": { "income": 118400, "growth": 14.2, "vets_per_10k": 2.54 } } },
+      "population":               { "value": 44800, "unit": "count", "is_derived": false, "moe": 2140, "suppressed": false, "source_dataset": "acs5", "vintage": "2019–2023" },
+      "households":               { … },
+      "median_hh_income":         { … "unit": "usd", "is_derived": true, "approximate": true … },
+      "population_growth_pct":    { … "unit": "pct", "is_derived": true, "geo_level": "place", "inputs": {"acs5": "2019–2023", "acs5_prior": "2014–2018"} },
+      "pet_households_est":       { … "is_derived": true, "assumed_rate": 0.57 },
+      "establishments":           { "value": 7, "unit": "count", "source_dataset": "zbp", "vintage": "2022", "geo_level": "zcta" },
+      "vets_per_10k_households":  { … "unit": "ratio", "is_derived": true, "inputs": {"acs5": "2019–2023", "zbp": "2022"} },
+      "revenue_per_establishment":{ … "unit": "usd", "is_derived": true, "label": "Payroll per establishment", "source_dataset": "cbp", "geo_level": "county" },
+      "income_index_vs_us":       { … "unit": "pct", "is_derived": true },
+      "opportunity_score":        { "value": 50, "unit": "score", "is_derived": true, "formula_version": "v1", "components": { "income": 118400, "growth": 14.2, "vets_per_10k": 2.54 } } },
     "attribution": [ … ] }
-    # 404 {"error":{"code":"NO_MARKET_DATA"}} when nothing is materialised yet — and a backfill is enqueued (§10 hard rule).
+    # suppressed → value null + suppress_reason; 404 {"error":{"code":"NO_MARKET_DATA"}} only for an existing published listing (and enqueues one backfill per 10 min);
+    # unknown listing → 404 {"error":{"code":"NOT_FOUND"}} with nothing enqueued.
 
-GET /api/admin/data-sources   (admin only — auth arrives with Sub-project 2; until then the route is mounted but returns 401 unless ENVIRONMENT=test)
-→ [{ "dataset_key": "acs5", "display_name": "ACS 5-Year Detailed Tables", "license_status": "cleared", "license_name": "Public domain",
-     "vintage": "2019–2023", "refresh_cadence": "Annual (Dec)", "last_verified_at": "…", "active_vintage": "2019–2023", "notes": null }, …]
+GET /api/admin/data-sources · POST /api/admin/data-sources/{key}/license   (operator/admin only — see A9)
 ```
 
 ## File map
@@ -89,15 +116,16 @@ GET /api/admin/data-sources   (admin only — auth arrives with Sub-project 2; u
 | `migrations/002_census_registry.sql` | `ingest_run`, `dataset_registry`, FK back-fill, `active_vintage`, `market_state`; registry seed (§2 + attribution) |
 | `migrations/003_census_geo.sql` | `geo_area` + indexes |
 | `migrations/004_census_measures.sql` | `acs_measure`, `cbp_industry`, `qwi_measure`, `bds_measure` |
-| `migrations/005_geocode_cache.sql` | `geocode_cache` (365-day cache, §10) |
-| `migrations/006_census_listing_tables.sql` | `practice_location`, `practice_catchment`, `market_metric`, licence-gate trigger (Phase B) |
+| `migrations/008_zbp.sql` | `zbp_industry` (ZIP-level establishments, D11) |
+| `migrations/060_geocode_cache.sql` | `geocode_cache`, `geocode_review` (365-day cache, §10; staff flags §11) — Phase B, after SP2's `010`–`059` |
+| `migrations/061_census_listing_tables.sql` | `practice_location`, `practice_catchment`, `market_metric` (+`inputs`), licence-gate trigger (Phase B) |
 | `app/census/__init__.py` | package |
 | `app/census/registry.py` | `Dataset` records read from `dataset_registry`; `is_cleared(key)`; `attribution(keys)` |
 | `app/census/client.py` | `CensusClient` — URL building, key check, timeouts, retry policy, UA, per-dataset concurrency, raw archive, sentinel normalisation, variable validation |
 | `app/census/storage.py` | `ObjectStore` — boto3 to the Railway bucket; `put_immutable`, `get`, `exists` |
 | `app/census/tiger.py` | boundary-file download + pyshp/shapely parse → `geo_area` upsert |
 | `app/census/acs.py` | ACS detailed + subject + prior-vintage loads → `acs_measure` |
-| `app/census/cbp.py`, `qwi.py`, `bds.py` | industry loads |
+| `app/census/cbp.py`, `zbp.py`, `qwi.py`, `bds.py` | industry loads (county CBP, ZIP ZBP, QWI, BDS) |
 | `app/census/ingest.py` | `IngestRun` lifecycle (`start/succeed/fail/abort`), row counting |
 | `app/census/vintage.py` | QA diff + `activate()` |
 | `app/census/geocode.py` | Census Geocoder client, normalisation + cache, fallback ladder → `practice_location` |
@@ -105,7 +133,7 @@ GET /api/admin/data-sources   (admin only — auth arrives with Sub-project 2; u
 | `app/census/metrics.py` | pure formulas (§8), MOE/CV rules (§14), aggregation |
 | `app/census/materialize.py` | joins + writes `market_metric` with provenance |
 | `app/tasks/census.py` | Celery tasks + beat schedule |
-| `app/api/market.py` | `/api/markets*`, `/api/listings/{id}/market` |
+| `app/api/market.py` | `/api/layers`, `/api/markets*`, `/api/listings/{id}/market` |
 | `app/api/admin_data_sources.py` | `/api/admin/data-sources` |
 | `app/cache.py` | Redis helpers (`get_json`, `set_json`, TTLs) |
 | `scripts/census_load.py` | operator CLI: `--acs 2023 --states 48,06,12,13`, `--cbp`, `--qwi`, `--tiger`, `--activate acs5 2019–2023 --by john` |
@@ -236,7 +264,7 @@ def pytest_raises(exc):
 ```python
 from app.census.registry import attribution, is_cleared, load
 
-SPEC_KEYS = {"acs5", "acs5_subject", "acs5_prior", "cbp", "qwi", "bds", "geocoder", "tiger_cb", "aies", "osm_tiles", "imagery", "pet_ownership"}
+SPEC_KEYS = {"acs5", "acs5_subject", "acs5_prior", "cbp", "zbp", "qwi", "bds", "geocoder", "tiger_cb", "aies", "osm_tiles", "imagery", "pet_ownership", "practice_locations"}
 
 
 def test_seed_matches_the_spec_dataset_register(conn):
@@ -249,6 +277,8 @@ def test_seed_matches_the_spec_dataset_register(conn):
     assert reg["imagery"].license_status == "unresolved"
     assert reg["pet_ownership"].license_status == "blocked"
     assert reg["aies"].license_status == "unresolved"  # "Verify ID" in the spec → not cleared until confirmed
+    assert reg["zbp"].api_dataset_id == "2022/zbp" and reg["zbp"].naics_param == "NAICS2017" and reg["zbp"].license_status == "cleared"
+    assert reg["practice_locations"].license_status == "blocked"  # spec §12: third-party practice-location data is out of scope for V1
     for k in ("acs5", "acs5_subject", "acs5_prior", "cbp", "qwi", "bds", "geocoder", "tiger_cb"):
         assert reg[k].license_status == "cleared" and reg[k].license_name == "Public domain"
 
@@ -333,6 +363,7 @@ INSERT INTO dataset_registry
   ('acs5_subject','ACS 5-Year Subject Tables','2023/acs/acs5/subject','https://api.census.gov/data','2019–2023',NULL,'Annual (Dec)','cleared','Public domain','https://www.census.gov/data/developers/about/terms-of-service.html','Source: U.S. Census Bureau, American Community Survey 5-Year Subject Tables, 2019–2023',NULL),
   ('acs5_prior','ACS 5-Year, baseline for growth','2018/acs/acs5','https://api.census.gov/data','2014–2018',NULL,'Static','cleared','Public domain','https://www.census.gov/data/developers/about/terms-of-service.html','Source: U.S. Census Bureau, American Community Survey 5-Year Estimates, 2014–2018','Growth baseline only'),
   ('cbp','County Business Patterns','2022/cbp','https://api.census.gov/data','2022','NAICS2017','Annual (Apr)','cleared','Public domain','https://www.census.gov/data/developers/about/terms-of-service.html','Source: U.S. Census Bureau, County Business Patterns, 2022','Parameter renames to NAICS2022 with the 2023+ releases'),
+  ('zbp','ZIP Code Business Patterns','2022/zbp','https://api.census.gov/data','2022','NAICS2017','Annual (Apr)','cleared','Public domain','https://www.census.gov/data/developers/about/terms-of-service.html','Source: U.S. Census Bureau, ZIP Code Business Patterns, 2022','Plan decision D11 — community-level competition counts; ZIP codes treated as ZCTAs (approximation labelled in the UI). Confirm 2022/zbp exists at api.census.gov/data.html; fall back to 2021/zbp.'),
   ('qwi','Quarterly Workforce Indicators','timeseries/qwi/sa','https://api.census.gov/data','latest quarter',NULL,'Quarterly','cleared','Public domain','https://www.census.gov/data/developers/about/terms-of-service.html','Source: U.S. Census Bureau, Quarterly Workforce Indicators',NULL),
   ('bds','Business Dynamics Statistics','timeseries/bds','https://api.census.gov/data','latest',NULL,'Annual','cleared','Public domain','https://www.census.gov/data/developers/about/terms-of-service.html','Source: U.S. Census Bureau, Business Dynamics Statistics',NULL),
   ('geocoder','Census Geocoder (geographies)',NULL,'https://geocoding.geo.census.gov/geocoder','Current_Current',NULL,'On write','cleared','Public domain','https://geocoding.geo.census.gov/geocoder/Geocoding_Services_API.html','Geocoding: U.S. Census Bureau Geocoder',NULL),
@@ -340,7 +371,8 @@ INSERT INTO dataset_registry
   ('aies','Annual Integrated Economic Survey',NULL,'https://api.census.gov/data','TBD',NULL,'Annual','unresolved','Verify ID',NULL,'Source: U.S. Census Bureau, Annual Integrated Economic Survey','Confirm dataset identifier and geography availability before any revenue-benchmark layer is promised (§15)'),
   ('osm_tiles','Street basemap tiles (CARTO, OSM data)',NULL,'https://basemaps.cartocdn.com/light_all','live',NULL,'live','cleared','ODbL 1.0','https://www.openstreetmap.org/copyright','© OpenStreetMap contributors © CARTO','Registered by the spec; the approved design ships Esri tiles — VIN Foundation decision pending (Foundation spec §9)'),
   ('imagery','Satellite basemap',NULL,'vendor TBD','live',NULL,'live','unresolved',NULL,NULL,'Imagery attribution pending licence','Satellite toggle stays behind a feature flag until a written licence names commercial web display'),
-  ('pet_ownership','Pet ownership incidence (commercial)',NULL,'licensed feed','n/a',NULL,'n/a','blocked',NULL,NULL,'Pet-ownership incidence (licensed) — not in use','Ship only the ACS-derived estimate (rate 0.57) until a licence is signed');
+  ('pet_ownership','Pet ownership incidence (commercial)',NULL,'licensed feed','n/a',NULL,'n/a','blocked',NULL,NULL,'Pet-ownership incidence (licensed) — not in use','Ship only the ACS-derived estimate (rate 0.57) until a licence is signed'),
+  ('practice_locations','Third-party practice location data',NULL,'n/a','n/a',NULL,'n/a','blocked',NULL,NULL,'Practice locations (third party) — not in use','Spec §12: purchased or scraped veterinary location lists are out of scope for V1 (undocumented provenance). Competition counts come from Census establishment totals only.');
 ```
 
 `migrations/003_census_geo.sql`:
@@ -708,6 +740,7 @@ def test_retries_5xx_three_times_with_backoff_then_raises():
     with pytest.raises(CensusHTTPError) as e:
         c.fetch_table("https://api.census.gov/data/2023/acs/acs5?get=NAME&for=us:1&key=KEY123")
     assert len(calls) == 4 and e.value.status == 503
+    assert "KEY123" not in str(e.value) and "KEY123" not in e.value.url     # red-team C6: key never in errors/logs
     assert len(sleeps) == 3 and sleeps[0] < sleeps[1] < sleeps[2]
 
 
@@ -773,6 +806,7 @@ import hashlib
 import json
 import os
 import random
+import re
 import sys
 import threading
 import time
@@ -797,14 +831,18 @@ def require_key(env=os.environ) -> str:
 
 class CensusHTTPError(Exception):
     def __init__(self, status: int, url: str):
-        super().__init__(f"HTTP {status} from {url}")
-        self.status, self.url = status, url
+        super().__init__(f"HTTP {status} from {redact(url)}")   # never leak the key into logs (red-team C6)
+        self.status, self.url = status, redact(url)
 
 
 class VariableMissing(Exception):
     def __init__(self, missing: list[str]):
         super().__init__(f"response lacks expected variables: {missing}")
         self.missing = missing
+
+
+def redact(url: str) -> str:
+    return re.sub(r"([?&]key=)[^&]+", r"\1<redacted>", url)
 
 
 def normalise(value) -> str | None:
@@ -838,7 +876,7 @@ class CensusClient:
         return f"{self.dataset.base_url}/{self.dataset.api_dataset_id}?{query}"
 
     def archive_key(self, url: str) -> str:
-        public = url.replace(f"&key={self.api_key}", "")
+        public = re.sub(r"[?&]key=[^&]+", "", url)
         return f"raw/{self.dataset.dataset_key}/{self.dataset.vintage}/{hashlib.sha256(public.encode()).hexdigest()}.json"
 
     # ---- fetching -----------------------------------------------------------
@@ -1031,6 +1069,7 @@ def BOUNDARY_FILES(vintage_year: int, state_fips: list[str]) -> list[BoundarySpe
         BoundarySpec("040", f"{b}/cb_{y}_us_state_500k.zip", "GEOID", "NAME", "STATEFP", None, "ALAND", "nation"),
         BoundarySpec("050", f"{b}/cb_{y}_us_county_500k.zip", "GEOID", "NAMELSAD", "STATEFP", "COUNTYFP", "ALAND", "state"),
         BoundarySpec("310", f"{b}/cb_{y}_us_cbsa_500k.zip", "GEOID", "NAME", None, None, "ALAND", None),
+        # ZCTAs are 2020-based; the GENZ{y} folder may not republish them — load_boundaries falls back to GENZ2020.
         BoundarySpec("860", f"{b}/cb_{y}_us_zcta520_500k.zip", "GEOID20", "NAME20", None, None, "ALAND20", None),
     ]
     for st in state_fips:
@@ -1093,7 +1132,10 @@ def load_boundaries(conn, http: httpx.Client, states: list[str], vintage: str = 
     counts: dict[str, int] = {}
     state_geoms = None
     for spec in BOUNDARY_FILES(int(vintage), states):
-        body = http.get(spec.url, timeout=httpx.Timeout(connect=15.0, read=300.0, write=15.0, pool=15.0)).raise_for_status().content
+        resp = http.get(spec.url, timeout=httpx.Timeout(connect=15.0, read=300.0, write=15.0, pool=15.0))
+        if resp.status_code == 404 and spec.summary_level == "860":
+            resp = http.get(spec.url.replace(f"GENZ{vintage}", "GENZ2020").replace(f"cb_{vintage}_", "cb_2020_"), timeout=httpx.Timeout(connect=15.0, read=300.0, write=15.0, pool=15.0))
+        body = resp.raise_for_status().content
         rows = parse_shapefile(body, spec)
         if spec.summary_level == "040":
             from shapely import wkb as _wkb
@@ -1520,10 +1562,10 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin fea
 
 ---
 
-### Task A6: Industry loads — CBP (541940 + adjacent), QWI (5419, 20 quarters), BDS (54)
+### Task A6: Industry loads — CBP (541940 + adjacent), ZBP (ZIP-level competition, D11), QWI (5419, 20 quarters), BDS (54)
 
 **Files:**
-- Create: `app/census/cbp.py`, `app/census/qwi.py`, `app/census/bds.py`, `tests/census/test_industry.py`
+- Create: `migrations/008_zbp.sql`, `app/census/cbp.py`, `app/census/zbp.py`, `app/census/qwi.py`, `app/census/bds.py`, `tests/census/test_industry.py`
 - Modify: `scripts/census_load.py` (`cbp`, `qwi`, `bds` subcommands)
 
 **Interfaces:**
@@ -1663,6 +1705,79 @@ def load(conn, client_factory, states: list[str]) -> int:
         return run.rows
 ```
 
+`migrations/008_zbp.sql` (D11):
+```sql
+-- ZIP Code Business Patterns — the community-level competition source. ZIP codes are stored as
+-- summary_level '860' (ZCTA) geo_ids; the ZIP≈ZCTA approximation is labelled in the UI.
+CREATE TABLE zbp_industry (
+  geo_id text NOT NULL,            -- 5-digit ZIP
+  summary_level char(3) NOT NULL DEFAULT '860',
+  vintage text NOT NULL,
+  naics_code text NOT NULL,        -- '541940' | '812910' | '459910'
+  establishments integer,
+  flag text,
+  ingest_run_id bigint NOT NULL REFERENCES ingest_run(id),
+  PRIMARY KEY (geo_id, summary_level, vintage, naics_code)
+);
+```
+
+`app/census/zbp.py`:
+```python
+"""ZIP Code Business Patterns (plan D11). Establishment counts per ZIP for the spec's NAICS codes;
+the same NAICS-2017 alias as CBP applies. Employment/payroll are mostly suppressed at ZIP level and
+are not requested — ESTAB is what the competition layer needs."""
+from __future__ import annotations
+
+from app.census import ingest
+from app.census.cbp import NAICS, NAICS_ALIASES
+from app.census.registry import load as load_registry
+
+VARS = ["ESTAB"]
+
+UPSERT = """
+INSERT INTO zbp_industry (geo_id, summary_level, vintage, naics_code, establishments, flag, ingest_run_id)
+VALUES (%s, '860', %s, %s, %s, %s, %s)
+ON CONFLICT (geo_id, summary_level, vintage, naics_code) DO UPDATE SET establishments = EXCLUDED.establishments, flag = EXCLUDED.flag, ingest_run_id = EXCLUDED.ingest_run_id
+"""
+
+
+def load(conn, client_factory, states: list[str]) -> int:
+    ds = load_registry(conn)["zbp"]
+    if not ds.cleared:
+        raise PermissionError("zbp is not cleared")
+    param = ds.naics_param or "NAICS2017"
+    client = client_factory(ds)
+    with ingest.run(conn, "zbp", ds.vintage) as run:
+        for code in NAICS:
+            requested = NAICS_ALIASES.get((param, code), code)
+            for st in states:
+                # ZBP geography is zipcode; 'in=state' is supported for filtering to a state's ZIPs.
+                rows = client.fetch_table(client.build_url(VARS, "zipcode:*", f"state:{st}", {param: requested}))
+                client.validate_variables(rows, VARS)
+                with conn.cursor() as cur:
+                    cur.executemany(UPSERT, [(r["zipcode"], ds.vintage, code, int(r["ESTAB"]) if r.get("ESTAB") not in (None, "") else None, r.get("ESTAB_F"), run.id) for r in rows])
+                run.rows += len(rows)
+                run.requests = client.request_count
+        return run.rows
+```
+
+Test (append to `tests/census/test_industry.py`):
+```python
+def test_zbp_loads_zip_establishments_with_alias(conn):
+    from app.census import zbp
+    urls = []
+    def handler(r):
+        urls.append(str(r.url))
+        code = r.url.params["NAICS2017"]
+        return httpx.Response(200, json=[["ESTAB", "state", "zipcode", "NAICS2017"], ["7", "48", "78613", code], ["2", "48", "78664", code]])
+    assert zbp.load(conn, factory_for(handler), ["48"]) == 6
+    assert any("for=zipcode:*" in u and "NAICS2017=453910" in u for u in urls)
+    with conn.cursor() as cur:
+        cur.execute("SELECT establishments FROM zbp_industry WHERE geo_id='78613' AND naics_code='541940'")
+        assert cur.fetchone() == (7,)
+```
+If `2022/zbp` returns 404 for the `zipcode:*` + `in=state` form, use `for=zipcode:*` without `in` and filter rows by the ZIP→state map in `geo_area` (860 rows carry no state; use ZCTA centroid containment) — record which form worked in the registry `notes`.
+
 `app/census/qwi.py`:
 ```python
 """Quarterly Workforce Indicators (spec §2 qwi, §5 industry 5419, §9 keep 20 quarters)."""
@@ -1770,12 +1885,12 @@ def load(conn, client_factory, states: list[str], *, year: int) -> int:
 
 Run: `poetry run pytest tests/census -q` → all pass.
 
-- [ ] **Step 3: CLI subcommands** (same pattern as `cmd_acs`; `qwi` resolves `latest_available(client, states[0], today=(now.year, (now.month-1)//3+1))` when `--year/--quarter` are omitted, then calls `trim`; `bds --year 2022`). Smoke locally with the real key; expect `succeeded` rows in `ingest_run` for `cbp`, `qwi`, `bds`.
+- [ ] **Step 3: CLI subcommands** (same pattern as `cmd_acs`; add `zbp`; `qwi` resolves `latest_available(client, states[0], today=(now.year, (now.month-1)//3+1))` when `--year/--quarter` are omitted, then calls `trim`; `bds --year 2022`). Smoke locally with the real key; expect `succeeded` rows in `ingest_run` for `cbp`, `qwi`, `bds`.
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add -A && git commit -m "feat(census): CBP (with NAICS-2017 alias), QWI (20-quarter window), BDS loads
+git add -A && git commit -m "feat(census): CBP (with NAICS-2017 alias), ZBP zip-level competition, QWI (20-quarter window), BDS loads
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/census-data-layer && git push production feat/census-data-layer
 ```
@@ -1843,7 +1958,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 TABLE_FOR = {"acs5": "acs_measure", "acs5_subject": "acs_measure", "acs5_prior": "acs_measure",
-             "cbp": "cbp_industry", "bds": "bds_measure", "tiger_cb": "geo_area"}
+             "cbp": "cbp_industry", "zbp": "zbp_industry", "bds": "bds_measure", "tiger_cb": "geo_area"}
 LOW, HIGH = 0.8, 1.25
 
 
@@ -2163,8 +2278,10 @@ def test_gate_reads_registry_and_caches_for_60s(conn):
         cur.execute("UPDATE dataset_registry SET license_status='blocked' WHERE dataset_key='acs5'")
     assert gate.layer_enabled(r, lambda: conn, "acs5") is True          # cached
     assert 0 < r.ttl("gate:acs5") <= 60
+    before = gate.version(r)
     gate.invalidate(r, "acs5")
     assert gate.layer_enabled(r, lambda: conn, "acs5") is False         # fresh read
+    assert gate.version(r) == before + 1                                # cached payloads are keyed away
 ```
 
 `tests/census/test_admin_api.py`:
@@ -2246,7 +2363,15 @@ def layer_enabled(r, conn_factory, dataset_key: str) -> bool:
 
 
 def invalidate(r, dataset_key: str) -> None:
+    """Drop the cached status AND bump the global gate version so every cached market payload
+    (panel, communities) is keyed away within the same minute (red-team C5)."""
     r.delete(f"gate:{dataset_key}")
+    r.incr("market:gate:v")
+
+
+def version(r) -> int:
+    v = r.get("market:gate:v")
+    return int(v) if v else 0
 ```
 
 `app/api/auth_stub.py`:
@@ -2328,18 +2453,18 @@ git add -A && git commit -m "feat(census): admin Data Sources API, licence decis
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/census-data-layer && git push production feat/census-data-layer
 ```
 
-**Phase A exit:** deploy to QA (`scripts/deploy.sh QA`), then from the worker: `railway run --service worker --environment QA -- python scripts/census_load.py tiger`, `… acs`, `… cbp`, `… qwi`, `… bds --year 2022`, then `… activate acs5 "2019–2023" --by john` (and `acs5_subject`, `acs5_prior`, `cbp`, `tiger_cb`). `GET /api/admin/data-sources` on qa.foundation.vin shows every dataset with its status, last run and active vintage.
+**Phase A exit:** deploy to QA (`scripts/deploy.sh QA`), then from the worker: `railway run --service worker --environment QA -- python scripts/census_load.py tiger`, `… acs`, `… cbp`, `… zbp`, `… qwi`, `… bds --year 2022`, then `… activate acs5 "2019–2023" --by john` (and `acs5_subject`, `acs5_prior`, `cbp`, `zbp`, `tiger_cb`). `GET /api/admin/data-sources` on qa.foundation.vin shows every dataset with its status, last run and active vintage.
 
 ---
 
 ## Phase B — Listing-dependent (requires Sub-project 2's `listing` table)
 
-> **Precondition check before B1:** `psql "$DATABASE_URL" -c '\d listing'` must show `id uuid PRIMARY KEY` plus address columns (`street`, `city`, `state`, `zip`) and `status`. If it does not, STOP — Sub-project 2 has not landed; report BLOCKED rather than inventing a `listing` table here.
+> **Precondition check before B1:** `psql "$DATABASE_URL" -c '\d listing'` must show `id uuid PRIMARY KEY`, address columns (`street`, `city`, `state`, `zip`), `status`, and `location_disclosed boolean` (SP2's seller disclosure toggle — the design's step-7 "generalized location" control). If it does not, STOP — Sub-project 2 has not landed; report BLOCKED rather than inventing a `listing` table here. Phase B migrations are numbered `060`+ so they always sort after SP2's `010`–`059` (D14).
 
-### Task B1: Listing-dependent tables, geocode cache, licence-gate trigger (migrations 005–006)
+### Task B1: Listing-dependent tables, geocode cache, licence-gate trigger (migrations 060–061)
 
 **Files:**
-- Create: `migrations/005_geocode_cache.sql`, `migrations/006_census_listing_tables.sql`, `tests/census/test_listing_schema.py`, `tests/census/listing_fixtures.py`
+- Create: `migrations/060_geocode_cache.sql`, `migrations/061_census_listing_tables.sql`, `tests/census/test_listing_schema.py`, `tests/census/listing_fixtures.py`
 
 **Interfaces:**
 - Tables `geocode_cache`, `geocode_review`, `practice_location`, `practice_catchment`, `market_metric` (+ `inputs jsonb`, decision D9 below), trigger `market_metric_license_gate`.
@@ -2419,7 +2544,7 @@ Run → FAIL (relations missing).
 
 - [ ] **Step 2: Migrations**
 
-`migrations/005_geocode_cache.sql`:
+`migrations/060_geocode_cache.sql`:
 ```sql
 -- §10 geocode result cache: sha256(normalized_address) → payload, 365 days.
 CREATE TABLE geocode_cache (
@@ -2439,7 +2564,7 @@ CREATE TABLE geocode_review (
 );
 ```
 
-`migrations/006_census_listing_tables.sql`:
+`migrations/061_census_listing_tables.sql`:
 ```sql
 -- §13 listing-dependent tables, verbatim, plus the licence-gate trigger (§1) and
 -- market_metric.inputs (plan decision D9).
@@ -2808,13 +2933,13 @@ Run: `poetry run pytest tests/census/test_geocode.py -q` → 6 passed. Commit: `
 
 ---
 
-### Task B3: Drive-time catchments (V1 straight-line buffers)
+### Task B3: Drive-time catchments (V1 straight-line buffers) — tracts and ZCTAs
 
 **Files:**
 - Create: `app/census/catchment.py`, `tests/census/test_catchment.py`
 
 **Interfaces:**
-- `catchment.BANDS = {"drive_10": 8000, "drive_20": 16000}` (metres, spec §8) · `catchment.METHOD = "euclidean_buffer_v1"` · `catchment.build(conn, listing_id, geo_vintage) -> dict[str, int]` (rows per band; replaces existing rows for the listing/vintage).
+- `catchment.BANDS = {"drive_10": 8000, "drive_20": 16000}` (metres, spec §8) · `catchment.METHOD = "euclidean_buffer_v1"` · `catchment.build(conn, listing_id, geo_vintage) -> dict[str, dict[str, int]]` — rows written per band per summary level, e.g. `{"drive_10": {"140": 2, "860": 1}, …}`; replaces existing rows for the listing/vintage. Tract rows (`140`) feed ACS aggregation; ZCTA rows (`860`) feed ZBP competition counts (D11).
 
 - [ ] **Step 1: Failing test**
 
@@ -2831,20 +2956,28 @@ def _seed(conn, lid):
             cur.execute("""INSERT INTO geo_area (geo_id, summary_level, vintage, name, geom) VALUES (%s,'140','2023',%s,
                            ST_Multi(ST_GeomFromText(%s, 4269)))""",
                         (gid, gid, f"POLYGON(({x0} 30.50,{x0+0.1} 30.50,{x0+0.1} 30.60,{x0} 30.60,{x0} 30.50))"))
+        # one ZCTA covering the first two tracts, one far away
+        cur.execute("""INSERT INTO geo_area (geo_id, summary_level, vintage, name, geom) VALUES
+            ('78613','860','2023','ZCTA5 78613', ST_Multi(ST_GeomFromText('POLYGON((-97.90 30.50,-97.70 30.50,-97.70 30.60,-97.90 30.60,-97.90 30.50))',4269))),
+            ('79999','860','2023','ZCTA5 79999', ST_Multi(ST_GeomFromText('POLYGON((-99.0 31.0,-98.9 31.0,-98.9 31.1,-99.0 31.1,-99.0 31.0))',4269)))""")
         cur.execute("""INSERT INTO practice_location (listing_id, address_hash, point, geo_precision, geocoded_at, geocoder_vintage)
                        VALUES (%s, 'h', ST_SetSRID(ST_Point(-97.85, 30.55), 4269), 'rooftop', now(), 'Current_Current')""", (lid,))
 
 
-def test_buffers_intersect_tracts_with_overlap_fractions(conn):
+def test_buffers_intersect_tracts_and_zctas_with_overlap_fractions(conn):
     lid = make_listing(conn)
     _seed(conn, lid)
     counts = catchment.build(conn, lid, "2023")
-    assert counts == {"drive_10": 2, "drive_20": 3}   # 8 km reaches the neighbour; 16 km reaches all three
+    assert counts == {"drive_10": {"140": 2, "860": 1}, "drive_20": {"140": 3, "860": 1}}
     with conn.cursor() as cur:
-        cur.execute("SELECT geo_id, overlap_frac::float, method FROM practice_catchment WHERE listing_id=%s AND band='drive_10' ORDER BY geo_id", (lid,))
+        cur.execute("SELECT geo_id, overlap_frac::float, method FROM practice_catchment WHERE listing_id=%s AND band='drive_10' AND summary_level='140' ORDER BY geo_id", (lid,))
         rows = cur.fetchall()
     assert rows[0][0] == "48000000001" and 0.9 < rows[0][1] <= 1.0 and rows[0][2] == "euclidean_buffer_v1"
     assert rows[1][0] == "48000000002" and 0.0 < rows[1][1] < 0.5
+    with conn.cursor() as cur:
+        cur.execute("SELECT geo_id, overlap_frac::float FROM practice_catchment WHERE listing_id=%s AND band='drive_10' AND summary_level='860'", (lid,))
+        (zcta, frac), = cur.fetchall()
+    assert zcta == "78613" and 0.4 < frac < 0.8
 
 
 def test_rebuild_replaces_rows(conn):
@@ -2854,53 +2987,59 @@ def test_rebuild_replaces_rows(conn):
     catchment.build(conn, lid, "2023")
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM practice_catchment WHERE listing_id=%s", (lid,))
-        assert cur.fetchone()[0] == 5
+        assert cur.fetchone()[0] == 7
 ```
 
 - [ ] **Step 2: Implement**
 
 ```python
-"""Drive-time catchments, V1 (spec §7 'Catchment build', §8 drive_catchment):
-straight-line buffers of 8 km (≈10 min) and 16 km (≈20 min) in geography space,
-intersected with tracts; overlap_frac = intersected area / tract area."""
+"""Drive-time catchments, V1 (spec §7 'Catchment build', §8 drive_catchment): straight-line
+buffers of 8 km (≈10 min) and 16 km (≈20 min) in geography space, intersected with tracts
+(ACS inputs) and ZCTAs (ZBP competition inputs, D11); overlap_frac = intersected area / unit area.
+Geometry is NAD83 (4269); geography maths is done after ST_Transform to 4326 (red-team C6)."""
 BANDS = {"drive_10": 8000, "drive_20": 16000}
 METHOD = "euclidean_buffer_v1"
+LEVELS = ("140", "860")
 
 SQL = """
 INSERT INTO practice_catchment (listing_id, band, geo_id, summary_level, vintage, overlap_frac, method)
-SELECT p.listing_id, %(band)s, g.geo_id, '140', %(vintage)s,
-       LEAST(1.0, GREATEST(0.00001, ST_Area(ST_Intersection(g.geom::geography, b.buf)) / NULLIF(ST_Area(g.geom::geography), 0))),
+SELECT p.listing_id, %(band)s, g.geo_id, %(level)s, %(vintage)s,
+       LEAST(1.0, GREATEST(0.00001,
+         ST_Area(ST_Intersection(ST_Transform(g.geom, 4326)::geography, b.buf)) / NULLIF(ST_Area(ST_Transform(g.geom, 4326)::geography), 0))),
        %(method)s
 FROM practice_location p
-CROSS JOIN LATERAL (SELECT ST_Buffer(p.point::geography, %(radius)s) AS buf) b
-JOIN geo_area g ON g.summary_level = '140' AND g.vintage = %(vintage)s AND ST_Intersects(g.geom::geography, b.buf)
+CROSS JOIN LATERAL (SELECT ST_Buffer(ST_Transform(p.point, 4326)::geography, %(radius)s) AS buf) b
+JOIN geo_area g ON g.summary_level = %(level)s AND g.vintage = %(vintage)s AND ST_Intersects(ST_Transform(g.geom, 4326)::geography, b.buf)
 WHERE p.listing_id = %(listing_id)s AND p.point IS NOT NULL
 """
 
 
-def build(conn, listing_id: str, geo_vintage: str) -> dict[str, int]:
-    counts: dict[str, int] = {}
+def build(conn, listing_id: str, geo_vintage: str) -> dict[str, dict[str, int]]:
+    counts: dict[str, dict[str, int]] = {}
     with conn.cursor() as cur:
         cur.execute("DELETE FROM practice_catchment WHERE listing_id = %s AND vintage = %s", (listing_id, geo_vintage))
         for band, radius in BANDS.items():
-            cur.execute(SQL, {"band": band, "vintage": geo_vintage, "method": METHOD, "radius": radius, "listing_id": listing_id})
-            counts[band] = cur.rowcount
+            counts[band] = {}
+            for level in LEVELS:
+                cur.execute(SQL, {"band": band, "level": level, "vintage": geo_vintage, "method": METHOD, "radius": radius, "listing_id": listing_id})
+                counts[band][level] = cur.rowcount
     return counts
 ```
 
-Run → 2 passed. Commit: `feat(census): euclidean_buffer_v1 drive-time catchments`.
+Run → 2 passed. Commit: `feat(census): euclidean_buffer_v1 catchments over tracts and ZCTAs`.
 
 ---
 
-### Task B4: Metric formulas (§8), data-quality rules (§14), materialisation into `market_metric`
+### Task B4: Metric formulas (§8), data-quality rules (§14), materialisation into `market_metric` — three bands
 
 **Files:**
 - Create: `app/census/metrics.py`, `app/census/materialize.py`, `tests/census/test_metrics.py`, `tests/census/test_materialize.py`
 - Modify: `app/tasks/census.py` (`census.materialize_metrics` nightly, `census.backfill_listing`), `app/tasks/celery_app.py` (beat entry), `scripts/census_load.py` (`materialize` subcommand)
 
 **Interfaces:**
-- `metrics`: `Z90 = 1.645`, `CV_THRESHOLD = 0.30`, `PET_RATE = 0.57`, `FORMULA_VERSION = "v1"`; `cv(estimate, moe) -> float | None`; `high_moe(estimate, moe) -> bool`; `weighted_count(parts: list[tuple[float | None, float | None, float]]) -> tuple[float | None, float | None, int]` (estimate, combined MOE, excluded count); `weighted_median(parts: list[tuple[float | None, float | None]]) -> float | None` (value, weight); `pet_households_est(hh)`, `population_growth_pct(now, prior)`, `vets_per_10k(estab, hh)`, `income_index_vs_us(local, us)`, `revenue_per_establishment(payroll_k, estab)`, `opportunity_score(income, growth, per10k) -> int | None`.
-- `materialize.materialize_listing(conn, redis, listing_id) -> int` (rows written); `materialize.materialize_all(conn, redis) -> dict[str, int]`; Redis version key `listing:{id}:market:version` bumped on every write (drives B5's cache key).
+- `metrics`: `Z90 = 1.645`, `CV_THRESHOLD = 0.30`, `PET_RATE = 0.57`, `FORMULA_VERSION = "v1"`, `COMPETITION_LEVELS = ((1.4, "Low"), (2.2, "Moderate"))` (design thresholds; else `"High"`); `cv`, `high_moe`, `weighted_count`, `weighted_median`, `pet_households_est`, `population_growth_pct`, `vets_per_10k`, `income_index_vs_us`, `revenue_per_establishment`, `opportunity_score`, `competition_level(per10k) -> str`.
+- `materialize.BANDS = ("place", "drive_10", "drive_20")`; `materialize.materialize_listing(conn, redis, listing_id) -> int`; `materialize.materialize_all(conn, redis) -> dict[str, int]`; Redis `listing:{id}:market:version` bumped on every write.
+- Every derived row's `inputs` carries `{"geo_level": …}` plus the vintages of each input dataset.
 
 - [ ] **Step 1: Failing formula tests**
 
@@ -2947,6 +3086,11 @@ def test_opportunity_score_is_clamped_rounded_and_needs_all_inputs():
     assert m.opportunity_score(200000, 60, 4.0) == 75       # income and growth capped, competition floor 0
     assert m.opportunity_score(0, 0, 0) == 25
     assert m.opportunity_score(None, 14.2, 2.54) is None
+
+
+def test_competition_level_uses_the_design_thresholds():
+    assert m.competition_level(1.39) == "Low" and m.competition_level(1.4) == "Moderate" and m.competition_level(2.2) == "High"
+    assert m.competition_level(None) is None
 ```
 
 - [ ] **Step 2: Implement `metrics.py`**
@@ -2962,6 +3106,7 @@ Z90 = 1.645
 CV_THRESHOLD = 0.30
 PET_RATE = 0.57  # documented national placeholder until a licensed regional rate is cleared (§8)
 FORMULA_VERSION = "v1"
+COMPETITION_LEVELS = ((1.4, "Low"), (2.2, "Moderate"))  # per 10k households; else "High" — the approved design's thresholds
 
 
 def cv(estimate, moe) -> float | None:
@@ -2977,8 +3122,7 @@ def high_moe(estimate, moe) -> bool:
 
 def weighted_count(parts):
     """Σ w·est over parts with an estimate; MOE = sqrt(Σ (w·moe)²); returns (est, moe, excluded)."""
-    est, var, excluded = 0.0, 0.0, 0
-    used = False
+    est, var, excluded, used = 0.0, 0.0, 0, False
     for e, mo, w in parts:
         if e is None:
             excluded += 1
@@ -3032,9 +3176,18 @@ def opportunity_score(income, growth, per10k):
         return None
     raw = 40 * min(float(income) / 140000, 1) + 35 * min(float(growth) / 40, 1) + 25 * max(0.0, 1 - float(per10k) / 3)
     return int(round(max(0.0, min(100.0, raw))))
+
+
+def competition_level(per10k):
+    if per10k is None:
+        return None
+    for threshold, label in COMPETITION_LEVELS:
+        if float(per10k) < threshold:
+            return label
+    return "High"
 ```
 
-Run: `poetry run pytest tests/census/test_metrics.py -q` → 5 passed.
+Run: `poetry run pytest tests/census/test_metrics.py -q` → 6 passed.
 
 - [ ] **Step 3: Failing materialisation test**
 
@@ -3046,27 +3199,37 @@ import pytest
 from app.census import catchment, materialize
 from tests.census.listing_fixtures import make_listing
 
+PLACE = "POLYGON((-97.90 30.50,-97.70 30.50,-97.70 30.60,-97.90 30.60,-97.90 30.50))"  # covers both tracts and both ZCTAs
+
 
 @pytest.fixture
 def world(conn):
-    """Two tracts, a county, the nation, both ACS vintages, CBP, active vintages, one geocoded listing."""
+    """Two tracts, two ZCTAs, a place, a county, the nation; both ACS vintages; CBP; ZBP; active vintages; one geocoded listing."""
     lid = make_listing(conn)
     with conn.cursor() as cur:
         for i, gid in enumerate(["48491000001", "48491000002"]):
             x0 = -97.90 + 0.1 * i
             cur.execute("INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, county_fips, parent_geo_id, geom) VALUES (%s,'140','2023',%s,'48','491','48491', ST_Multi(ST_GeomFromText(%s,4269)))",
                         (gid, gid, f"POLYGON(({x0} 30.50,{x0+0.1} 30.50,{x0+0.1} 30.60,{x0} 30.60,{x0} 30.50))"))
-        cur.execute("INSERT INTO ingest_run (dataset_key, vintage, started_at, status) VALUES ('acs5','2019–2023',now(),'succeeded'),('acs5_prior','2014–2018',now(),'succeeded'),('cbp','2022',now(),'succeeded') RETURNING id")
-        cur.execute("SELECT id FROM ingest_run ORDER BY id"); r1, r2, r3 = [x[0] for x in cur.fetchall()]
-        rows = [("48491000001", "B01003_001E", 4000, 200), ("48491000001", "B11001_001E", 1500, 95), ("48491000001", "B19013_001E", 118400, 9100),
-                ("48491000002", "B01003_001E", 3000, 300), ("48491000002", "B11001_001E", 1200, 80), ("48491000002", "B19013_001E", 98000, 12000)]
-        cur.executemany("INSERT INTO acs_measure VALUES (%s,'140','2019–2023',%s,%s,%s,%s)", [(g, v, e, mo, r1) for g, v, e, mo in rows])
+        for i, z in enumerate(["78613", "78664"]):
+            x0 = -97.90 + 0.1 * i
+            cur.execute("INSERT INTO geo_area (geo_id, summary_level, vintage, name, geom) VALUES (%s,'860','2023',%s, ST_Multi(ST_GeomFromText(%s,4269)))",
+                        (z, z, f"POLYGON(({x0} 30.50,{x0+0.1} 30.50,{x0+0.1} 30.60,{x0} 30.60,{x0} 30.50))"))
+        cur.execute("INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, geom, centroid) VALUES ('4813552','160','2023','Cedar Park city','48', ST_Multi(ST_GeomFromText(%s,4269)), ST_Point(-97.80,30.55,4269))", (PLACE,))
+        cur.execute("INSERT INTO ingest_run (dataset_key, vintage, started_at, status) VALUES ('acs5','2019–2023',now(),'succeeded'),('acs5_prior','2014–2018',now(),'succeeded'),('cbp','2022',now(),'succeeded'),('zbp','2022',now(),'succeeded')")
+        cur.execute("SELECT id FROM ingest_run ORDER BY id"); r1, r2, r3, r4 = [x[0] for x in cur.fetchall()]
+        tracts = [("48491000001", "B01003_001E", 4000, 200), ("48491000001", "B11001_001E", 1500, 95), ("48491000001", "B19013_001E", 118400, 9100),
+                  ("48491000002", "B01003_001E", 3000, 300), ("48491000002", "B11001_001E", 1200, 80), ("48491000002", "B19013_001E", 98000, 12000)]
+        cur.executemany("INSERT INTO acs_measure VALUES (%s,'140','2019–2023',%s,%s,%s,%s)", [(g, v, e, mo, r1) for g, v, e, mo in tracts])
+        cur.executemany("INSERT INTO acs_measure VALUES ('4813552','160','2019–2023',%s,%s,%s,%s)", [("B01003_001E", 81900, 900, r1), ("B11001_001E", 27600, 600, r1), ("B19013_001E", 118400, 4100, r1)])
+        cur.execute("INSERT INTO acs_measure VALUES ('4813552','160','2014–2018','B01003_001E',71716,850,%s)", (r2,))
         cur.execute("INSERT INTO acs_measure VALUES ('1','010','2019–2023','B19013_001E',75149,120,%s)", (r1,))
-        cur.executemany("INSERT INTO acs_measure VALUES (%s,'140','2014–2018','B01003_001E',%s,%s,%s)", [("48491000001", 3500, 250, r2), ("48491000002", 2600, 260, r2)])
-        cur.execute("INSERT INTO cbp_industry VALUES ('48491','050','2022','541940',7,120,4795,NULL,%s)", (r3,))
-        cur.executemany("INSERT INTO active_vintage VALUES (%s,%s,now(),'test')", [("acs5", "2019–2023"), ("acs5_prior", "2014–2018"), ("cbp", "2022"), ("tiger_cb", "2023")])
-        cur.execute("""INSERT INTO practice_location (listing_id, address_hash, point, tract_geoid, county_geoid, geo_precision, geocoded_at, geocoder_vintage)
-                       VALUES (%s,'h', ST_SetSRID(ST_Point(-97.85,30.55),4269), '48491000001','48491','rooftop',now(),'Current_Current')""", (lid,))
+        cur.execute("INSERT INTO cbp_industry VALUES ('48491','050','2022','541940',210,3400,143850,NULL,%s)", (r3,))      # county benchmark: 210 practices
+        cur.execute("INSERT INTO acs_measure VALUES ('48491','050','2019–2023','B11001_001E',230000,1200,%s)", (r1,))         # county households for the apportionment fallback
+        cur.executemany("INSERT INTO zbp_industry (geo_id, vintage, naics_code, establishments, ingest_run_id) VALUES (%s,'2022','541940',%s,%s)", [("78613", 5, r4), ("78664", 2, r4)])
+        cur.executemany("INSERT INTO active_vintage VALUES (%s,%s,now(),'test')", [("acs5", "2019–2023"), ("acs5_prior", "2014–2018"), ("cbp", "2022"), ("zbp", "2022"), ("tiger_cb", "2023")])
+        cur.execute("""INSERT INTO practice_location (listing_id, address_hash, point, tract_geoid, county_geoid, place_geoid, geo_precision, geocoded_at, geocoder_vintage)
+                       VALUES (%s,'h', ST_SetSRID(ST_Point(-97.85,30.55),4269), '48491000001','48491','4813552','rooftop',now(),'Current_Current')""", (lid,))
     catchment.build(conn, lid, "2023")
     return lid
 
@@ -3077,38 +3240,47 @@ def _metric(conn, lid, key, band="drive_10"):
         return cur.fetchone()
 
 
-def _weights(conn, lid, band="drive_10"):
+def _weights(conn, lid, band, level):
     with conn.cursor() as cur:
-        cur.execute("SELECT geo_id, overlap_frac::float FROM practice_catchment WHERE listing_id=%s AND band=%s", (lid, band))
+        cur.execute("SELECT geo_id, overlap_frac::float FROM practice_catchment WHERE listing_id=%s AND band=%s AND summary_level=%s", (lid, band, level))
         return dict(cur.fetchall())
 
 
-def test_materialize_writes_every_metric_with_provenance(conn, world):
-    r = fakeredis.FakeRedis()
-    n = materialize.materialize_listing(conn, r, world)
-    assert n == 2 * 10  # two bands × ten metrics
-    w = _weights(conn, world)
-    exp_pop = 4000 * w["48491000001"] + 3000 * w["48491000002"]
-    pop = _metric(conn, world, "population")
-    assert pop[0] == pytest.approx(exp_pop, rel=1e-6) and pop[1] == "count" and pop[2] is False and pop[7] == "acs5" and pop[8] == "2019–2023"
+def test_place_band_reproduces_the_design_style_city_figures(conn, world):
+    materialize.materialize_listing(conn, fakeredis.FakeRedis(), world)
+    assert _metric(conn, world, "population", "place")[0] == 81900
+    assert _metric(conn, world, "households", "place")[0] == 27600
+    assert _metric(conn, world, "median_hh_income", "place")[0] == 118400 and _metric(conn, world, "median_hh_income", "place")[2] is False  # a real median, not approximate
+    g = _metric(conn, world, "population_growth_pct", "place")
+    assert g[0] == pytest.approx(14.2, abs=0.01) and g[9]["geo_level"] == "place" and g[9]["acs5_prior"] == "2014–2018"
+    est = _metric(conn, world, "establishments", "place")
+    assert est[0] == 7 and est[7] == "zbp" and est[9]["geo_level"] == "zcta" and est[9]["zctas"] == 2   # both ZCTAs lie fully inside the place
+    assert _metric(conn, world, "vets_per_10k_households", "place")[0] == pytest.approx(7 / 2.76, rel=1e-6)
+    assert _metric(conn, world, "opportunity_score", "place")[0] == 50
+
+
+def test_catchment_bands_aggregate_tracts_and_zctas_coherently(conn, world):
+    materialize.materialize_listing(conn, fakeredis.FakeRedis(), world)
+    wt = _weights(conn, world, "drive_10", "140"); wz = _weights(conn, world, "drive_10", "860")
+    exp_pop = 4000 * wt["48491000001"] + 3000 * wt["48491000002"]
+    exp_hh = 1500 * wt["48491000001"] + 1200 * wt["48491000002"]
+    exp_estab = 5 * wz["78613"] + 2 * wz.get("78664", 0)
+    assert _metric(conn, world, "population")[0] == pytest.approx(exp_pop, rel=1e-6)
     inc = _metric(conn, world, "median_hh_income")
-    exp_inc = (118400 * 1500 * w["48491000001"] + 98000 * 1200 * w["48491000002"]) / (1500 * w["48491000001"] + 1200 * w["48491000002"])
-    assert inc[0] == pytest.approx(exp_inc, rel=1e-6) and inc[2] is True and inc[3] == "v1"   # approximate → labelled derived
-    growth = _metric(conn, world, "population_growth_pct")
-    exp_prior = 3500 * w["48491000001"] + 2600 * w["48491000002"]
-    assert growth[0] == pytest.approx((exp_pop - exp_prior) / exp_prior * 100, rel=1e-6) and growth[9] == {"acs5": "2019–2023", "acs5_prior": "2014–2018"}
-    vets = _metric(conn, world, "vets_per_10k_households")
-    assert vets[7] == "cbp" and vets[9] == {"acs5": "2019–2023", "cbp": "2022"}
-    assert _metric(conn, world, "establishments")[0] == 7
-    assert _metric(conn, world, "revenue_per_establishment")[0] == pytest.approx(685000)
-    score = _metric(conn, world, "opportunity_score")
-    assert score[1] == "score" and 0 <= score[0] <= 100 and score[2] is True
-    assert r.get(f"listing:{world}:market:version") is not None
+    assert inc[2] is True and inc[3] == "v1"                                  # catchment median is an approximation → labelled derived
+    est = _metric(conn, world, "establishments")
+    assert est[0] == pytest.approx(exp_estab, rel=1e-6) and est[9]["geo_level"] == "zcta"
+    assert _metric(conn, world, "vets_per_10k_households")[0] == pytest.approx(exp_estab / (exp_hh / 10000), rel=1e-6)   # same geography top and bottom (C1)
+    g = _metric(conn, world, "population_growth_pct")
+    assert g[0] == pytest.approx(14.2, abs=0.01) and g[9]["geo_level"] == "place"   # growth is place-level for every band (D12)
+    rev = _metric(conn, world, "revenue_per_establishment")
+    assert rev[0] == pytest.approx(143850 * 1000 / 210) and rev[7] == "cbp" and rev[9]["geo_level"] == "county"
+    assert _metric(conn, world, "opportunity_score")[9]["components"].keys() == {"income", "growth", "vets_per_10k"}
 
 
 def test_high_moe_suppresses_the_value_and_its_derivatives(conn, world):
     with conn.cursor() as cur:
-        cur.execute("UPDATE acs_measure SET moe = 900 WHERE variable='B11001_001E'")  # CV ≈ 0.36 on households
+        cur.execute("UPDATE acs_measure SET moe = 900 WHERE variable='B11001_001E' AND summary_level='140'")  # CV ≈ 0.36 on catchment households
     materialize.materialize_listing(conn, fakeredis.FakeRedis(), world)
     hh = _metric(conn, world, "households")
     assert hh[5] is True and hh[6] == "high_moe" and hh[0] is not None   # row kept, flagged (§14)
@@ -3116,19 +3288,27 @@ def test_high_moe_suppresses_the_value_and_its_derivatives(conn, world):
     assert pets[5] is True and pets[6] == "input_suppressed"
 
 
-def test_uncleared_dataset_metrics_are_not_written(conn, world):
+def test_without_zbp_competition_falls_back_to_labelled_county_apportionment(conn, world):
     with conn.cursor() as cur:
-        cur.execute("UPDATE dataset_registry SET license_status='unresolved' WHERE dataset_key='cbp'")
+        cur.execute("UPDATE dataset_registry SET license_status='unresolved' WHERE dataset_key='zbp'")
+    materialize.materialize_listing(conn, fakeredis.FakeRedis(), world)
+    est = _metric(conn, world, "establishments", "place")
+    assert est[7] == "cbp" and est[2] is True and est[9]["method"] == "county_apportioned"
+    assert est[0] == pytest.approx(210 * 27600 / 230000)   # county establishments × place households ÷ county households
+
+
+def test_uncleared_cbp_and_zbp_leave_no_competition_rows(conn, world):
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET license_status='unresolved' WHERE dataset_key IN ('cbp','zbp')")
     n = materialize.materialize_listing(conn, fakeredis.FakeRedis(), world)
-    assert n == 2 * 6   # population, households, median income, growth, pets, income index — no CBP-based rows, no score
+    assert n == 3 * 6   # per band: population, households, median income, growth, pets, income index — no establishments/per10k/payroll/score
     assert _metric(conn, world, "establishments") is None and _metric(conn, world, "opportunity_score") is None
 ```
-
 - [ ] **Step 4: Implement `materialize.py`**
 
 ```python
-"""Materialise market_metric rows per (listing, band, metric, vintage) — spec §7 'Metric
-materialization', §8 formulas, §14 suppression. The only writer of market_metric."""
+"""Materialise market_metric rows per (listing, band, metric, vintage) — spec §7, §8, §14; plan D10–D12.
+The only writer of market_metric. Bands: place (city figures), drive_10, drive_20 (catchments)."""
 from __future__ import annotations
 
 import json
@@ -3138,7 +3318,7 @@ from app.census import metrics as M
 from app.census.registry import load as load_registry
 from app.census.vintage import active
 
-BANDS = ("drive_10", "drive_20")
+BANDS = ("place", "drive_10", "drive_20")
 
 UPSERT = """
 INSERT INTO market_metric (listing_id, band, metric_key, vintage, value_num, unit, is_derived, formula_version, moe, suppressed, suppress_reason, source_dataset, computed_at, inputs)
@@ -3148,71 +3328,136 @@ ON CONFLICT (listing_id, band, metric_key, vintage) DO UPDATE SET value_num = EX
   source_dataset = EXCLUDED.source_dataset, computed_at = now(), inputs = EXCLUDED.inputs
 """
 
+PLACE_ZCTA_SQL = """
+SELECT z.geo_id, LEAST(1.0, ST_Area(ST_Intersection(ST_Transform(z.geom,4326)::geography, ST_Transform(p.geom,4326)::geography)) / NULLIF(ST_Area(ST_Transform(z.geom,4326)::geography),0))
+FROM geo_area p JOIN geo_area z ON z.summary_level='860' AND z.vintage=p.vintage AND ST_Intersects(z.geom, p.geom)
+WHERE p.summary_level='160' AND p.vintage=%s AND p.geo_id=%s
+"""
 
-def _acs(cur, geo_ids, vintage, variable):
-    cur.execute("SELECT geo_id, estimate, moe FROM acs_measure WHERE summary_level='140' AND vintage=%s AND variable=%s AND geo_id = ANY(%s)", (vintage, variable, geo_ids))
-    return {g: (e, m) for g, e, m in cur.fetchall()}
+
+def _acs(cur, level, geo_ids, vintage, variable):
+    cur.execute("SELECT geo_id, estimate, moe FROM acs_measure WHERE summary_level=%s AND vintage=%s AND variable=%s AND geo_id = ANY(%s)", (level, vintage, variable, list(geo_ids)))
+    return {g: (float(e) if e is not None else None, float(m) if m is not None else None) for g, e, m in cur.fetchall()}
 
 
-def _row(listing_id, band, key, vintage, value, unit, *, derived=False, moe=None, suppressed=False, reason=None, source="acs5", inputs=None):
-    return (listing_id, band, key, vintage, value, unit, derived, M.FORMULA_VERSION if derived else None, moe, suppressed, reason, source, json.dumps(inputs) if inputs else None)
+def _one(cur, level, geo_id, vintage, variable):
+    return _acs(cur, level, [geo_id], vintage, variable).get(geo_id, (None, None))
+
+
+def _zbp(cur, zctas, vintage):
+    cur.execute("SELECT geo_id, establishments FROM zbp_industry WHERE summary_level='860' AND vintage=%s AND naics_code='541940' AND geo_id = ANY(%s)", (vintage, list(zctas)))
+    return {g: e for g, e in cur.fetchall()}
+
+
+def _row(lid, band, key, vintage, value, unit, *, derived=False, moe=None, suppressed=False, reason=None, source="acs5", inputs=None):
+    return (lid, band, key, vintage, value, unit, derived, M.FORMULA_VERSION if derived else None, moe, suppressed, reason, source, json.dumps(inputs) if inputs else None)
+
+
+class _Ctx:
+    def __init__(self, conn, listing_id):
+        reg = load_registry(conn)
+        act = active(conn)
+        self.acs_v, self.prior_v, self.cbp_v, self.zbp_v, self.geo_v = act.get("acs5"), act.get("acs5_prior"), act.get("cbp"), act.get("zbp"), act.get("tiger_cb")
+        if not (self.acs_v and self.geo_v):
+            raise RuntimeError("acs5 and tiger_cb must have active vintages before materialising")
+        self.use_cbp = bool(self.cbp_v) and reg["cbp"].cleared
+        self.use_zbp = bool(self.zbp_v) and reg["zbp"].cleared
+        self.use_prior = bool(self.prior_v) and reg["acs5_prior"].cleared
+        with conn.cursor() as cur:
+            cur.execute("SELECT county_geoid, place_geoid FROM practice_location WHERE listing_id = %s", (listing_id,))
+            row = cur.fetchone()
+            self.county, self.place = row if row else (None, None)
+            self.us_income = _one(cur, "010", "1", self.acs_v, "B19013_001E")[0]
+            self.cbp = None
+            if self.use_cbp and self.county:
+                cur.execute("SELECT establishments, annual_payroll_k, flag FROM cbp_industry WHERE geo_id=%s AND summary_level='050' AND vintage=%s AND naics_code='541940'", (self.county, self.cbp_v))
+                self.cbp = cur.fetchone()
+            self.county_hh = _one(cur, "050", self.county, self.acs_v, "B11001_001E")[0] if self.county else None
+            # Growth is place-level (D12); county fallback; None when neither exists.
+            self.growth, self.growth_inputs = None, None
+            if self.use_prior:
+                for level, gid in (("160", self.place), ("050", self.county)):
+                    if not gid:
+                        continue
+                    now, prior = _one(cur, level, gid, self.acs_v, "B01003_001E")[0], _one(cur, level, gid, self.prior_v, "B01003_001E")[0]
+                    g = M.population_growth_pct(now, prior)
+                    if g is not None:
+                        self.growth, self.growth_inputs = g, {"acs5": self.acs_v, "acs5_prior": self.prior_v, "geo_level": "place" if level == "160" else "county"}
+                        break
+
+
+def _competition(cur, ctx, zcta_weights, hh_e):
+    """Returns (establishments, source, derived, inputs) or None. ZBP over ZCTAs first; county apportionment fallback."""
+    if ctx.use_zbp and zcta_weights:
+        counts = _zbp(cur, zcta_weights.keys(), ctx.zbp_v)
+        parts = [(counts.get(z), 0, w) for z, w in zcta_weights.items()]
+        est, _, _ = M.weighted_count(parts)
+        if est is not None:
+            return est, "zbp", False, {"zbp": ctx.zbp_v, "geo_level": "zcta", "zctas": len(zcta_weights), "naics": "541940"}
+    if ctx.cbp and ctx.county_hh and hh_e:
+        est = ctx.cbp[0] * (hh_e / ctx.county_hh) if ctx.cbp[0] is not None else None
+        if est is not None:
+            return est, "cbp", True, {"cbp": ctx.cbp_v, "acs5": ctx.acs_v, "geo_level": "county", "method": "county_apportioned", "naics": "541940"}
+    return None
+
+
+def _band_inputs(cur, ctx, listing_id, band):
+    """Returns (pop, pop_moe, hh, hh_moe, income, income_is_approx, zcta_weights)."""
+    if band == "place":
+        if not ctx.place:
+            return None
+        pop = _one(cur, "160", ctx.place, ctx.acs_v, "B01003_001E"); hh = _one(cur, "160", ctx.place, ctx.acs_v, "B11001_001E"); inc = _one(cur, "160", ctx.place, ctx.acs_v, "B19013_001E")
+        cur.execute(PLACE_ZCTA_SQL, (ctx.geo_v, ctx.place))
+        zw = {g: float(w) for g, w in cur.fetchall()}
+        return pop[0], pop[1], hh[0], hh[1], inc[0], inc[1], False, zw
+    cur.execute("SELECT summary_level, geo_id, overlap_frac FROM practice_catchment WHERE listing_id=%s AND band=%s AND vintage=%s", (listing_id, band, ctx.geo_v))
+    tw, zw = {}, {}
+    for level, g, w in cur.fetchall():
+        (tw if level == "140" else zw)[g] = float(w)
+    if not tw:
+        return None
+    pop, hh, inc = _acs(cur, "140", tw, ctx.acs_v, "B01003_001E"), _acs(cur, "140", tw, ctx.acs_v, "B11001_001E"), _acs(cur, "140", tw, ctx.acs_v, "B19013_001E")
+    pop_e, pop_m, _ = M.weighted_count([(*pop.get(g, (None, None)), w) for g, w in tw.items()])
+    hh_e, hh_m, _ = M.weighted_count([(*hh.get(g, (None, None)), w) for g, w in tw.items()])
+    inc_e = M.weighted_median([(inc.get(g, (None, None))[0], (hh.get(g, (None, None))[0] or 0) * w) for g, w in tw.items()])
+    return pop_e, pop_m, hh_e, hh_m, inc_e, None, True, zw
 
 
 def materialize_listing(conn, redis, listing_id: str) -> int:
-    reg = load_registry(conn)
-    act = active(conn)
-    acs_v, prior_v, cbp_v, geo_v = act.get("acs5"), act.get("acs5_prior"), act.get("cbp"), act.get("tiger_cb")
-    if not (acs_v and geo_v):
-        raise RuntimeError("acs5 and tiger_cb must have active vintages before materialising")
-    use_cbp = bool(cbp_v) and reg["cbp"].cleared
-    use_prior = bool(prior_v) and reg["acs5_prior"].cleared
+    ctx = _Ctx(conn, listing_id)
     rows = []
     with conn.cursor() as cur:
-        cur.execute("SELECT county_geoid FROM practice_location WHERE listing_id = %s", (listing_id,))
-        loc = cur.fetchone()
-        if not loc:
-            return 0
-        county = loc[0]
-        cur.execute("SELECT estimate FROM acs_measure WHERE geo_id='1' AND summary_level='010' AND vintage=%s AND variable='B19013_001E'", (acs_v,))
-        us_income = (cur.fetchone() or [None])[0]
-        cbp_row = None
-        if use_cbp and county:
-            cur.execute("SELECT establishments, annual_payroll_k, flag FROM cbp_industry WHERE geo_id=%s AND summary_level='050' AND vintage=%s AND naics_code='541940'", (county, cbp_v))
-            cbp_row = cur.fetchone()
         for band in BANDS:
-            cur.execute("SELECT geo_id, overlap_frac FROM practice_catchment WHERE listing_id=%s AND band=%s AND vintage=%s", (listing_id, band, geo_v))
-            weights = {g: float(w) for g, w in cur.fetchall()}
-            if not weights:
+            got = _band_inputs(cur, ctx, listing_id, band)
+            if not got:
                 continue
-            gids = list(weights)
-            pop, hh, inc = _acs(cur, gids, acs_v, "B01003_001E"), _acs(cur, gids, acs_v, "B11001_001E"), _acs(cur, gids, acs_v, "B19013_001E")
-            pop_e, pop_m, _ = M.weighted_count([(*pop.get(g, (None, None)), w) for g, w in weights.items()])
-            hh_e, hh_m, _ = M.weighted_count([(*hh.get(g, (None, None)), w) for g, w in weights.items()])
-            inc_e = M.weighted_median([(inc.get(g, (None, None))[0], (hh.get(g, (None, None))[0] or 0) * w) for g, w in weights.items()])
+            pop_e, pop_m, hh_e, hh_m, inc_e, inc_m, inc_approx, zw = got
+            geo_level = "place" if band == "place" else "catchment"
             pop_sup, hh_sup = M.high_moe(pop_e, pop_m), M.high_moe(hh_e, hh_m)
-            rows.append(_row(listing_id, band, "population", acs_v, pop_e, "count", moe=pop_m, suppressed=pop_sup, reason="high_moe" if pop_sup else None))
-            rows.append(_row(listing_id, band, "households", acs_v, hh_e, "count", moe=hh_m, suppressed=hh_sup, reason="high_moe" if hh_sup else None))
-            rows.append(_row(listing_id, band, "median_hh_income", acs_v, inc_e, "usd", derived=True, inputs={"acs5": acs_v, "note": "household-weighted average of tract medians"}))
-            rows.append(_row(listing_id, band, "pet_households_est", acs_v, M.pet_households_est(hh_e), "count", derived=True,
-                             suppressed=hh_sup, reason="input_suppressed" if hh_sup else None, inputs={"acs5": acs_v, "pet_incidence_rate": M.PET_RATE}))
-            rows.append(_row(listing_id, band, "income_index_vs_us", acs_v, M.income_index_vs_us(inc_e, us_income), "pct", derived=True, inputs={"acs5": acs_v}))
-            growth = None
-            if use_prior:
-                prior = _acs(cur, gids, prior_v, "B01003_001E")
-                prior_e, _, _ = M.weighted_count([(*prior.get(g, (None, None)), w) for g, w in weights.items()])
-                growth = M.population_growth_pct(pop_e, prior_e)
-                rows.append(_row(listing_id, band, "population_growth_pct", acs_v, growth, "pct", derived=True, suppressed=pop_sup,
-                                 reason="input_suppressed" if pop_sup else None, inputs={"acs5": acs_v, "acs5_prior": prior_v}))
-            if cbp_row:
-                estab, payroll_k, flag = cbp_row
-                per10k = M.vets_per_10k(estab, hh_e)
-                rows.append(_row(listing_id, band, "establishments", cbp_v, estab, "count", source="cbp", suppressed=bool(flag), reason=f"cbp_flag:{flag}" if flag else None, inputs={"cbp": cbp_v, "naics": "541940"}))
-                rows.append(_row(listing_id, band, "vets_per_10k_households", acs_v, per10k, "ratio", derived=True, source="cbp", suppressed=hh_sup, reason="input_suppressed" if hh_sup else None, inputs={"acs5": acs_v, "cbp": cbp_v}))
-                rows.append(_row(listing_id, band, "revenue_per_establishment", cbp_v, M.revenue_per_establishment(payroll_k, estab), "usd", derived=True, source="cbp", inputs={"cbp": cbp_v, "note": "payroll per establishment, not revenue"}))
-                score = M.opportunity_score(inc_e, growth, per10k)
+            base = {"acs5": ctx.acs_v, "geo_level": geo_level}
+            rows.append(_row(listing_id, band, "population", ctx.acs_v, pop_e, "count", moe=pop_m, suppressed=pop_sup, reason="high_moe" if pop_sup else None, inputs=base))
+            rows.append(_row(listing_id, band, "households", ctx.acs_v, hh_e, "count", moe=hh_m, suppressed=hh_sup, reason="high_moe" if hh_sup else None, inputs=base))
+            rows.append(_row(listing_id, band, "median_hh_income", ctx.acs_v, inc_e, "usd", derived=inc_approx, moe=inc_m,
+                             inputs={**base, "note": "household-weighted average of tract medians"} if inc_approx else base))
+            rows.append(_row(listing_id, band, "pet_households_est", ctx.acs_v, M.pet_households_est(hh_e), "count", derived=True,
+                             suppressed=hh_sup, reason="input_suppressed" if hh_sup else None, inputs={**base, "pet_incidence_rate": M.PET_RATE}))
+            rows.append(_row(listing_id, band, "income_index_vs_us", ctx.acs_v, M.income_index_vs_us(inc_e, ctx.us_income), "pct", derived=True, inputs=base))
+            if ctx.growth is not None:
+                rows.append(_row(listing_id, band, "population_growth_pct", ctx.acs_v, ctx.growth, "pct", derived=True, inputs=ctx.growth_inputs))
+            comp = _competition(cur, ctx, zw, hh_e)
+            if comp:
+                est, source, derived, inputs = comp
+                per10k = M.vets_per_10k(est, hh_e)
+                rows.append(_row(listing_id, band, "establishments", inputs.get("zbp") or inputs.get("cbp"), est, "count", derived=derived, source=source, inputs=inputs))
+                rows.append(_row(listing_id, band, "vets_per_10k_households", ctx.acs_v, per10k, "ratio", derived=True, source=source,
+                                 suppressed=hh_sup, reason="input_suppressed" if hh_sup else None, inputs={**inputs, "acs5": ctx.acs_v}))
+                if ctx.cbp:
+                    rows.append(_row(listing_id, band, "revenue_per_establishment", ctx.cbp_v, M.revenue_per_establishment(ctx.cbp[1], ctx.cbp[0]), "usd", derived=True, source="cbp",
+                                     inputs={"cbp": ctx.cbp_v, "geo_level": "county", "note": "payroll per establishment, not revenue"}))
+                score = M.opportunity_score(inc_e, ctx.growth, per10k)
                 if score is not None:
-                    rows.append(_row(listing_id, band, "opportunity_score", acs_v, score, "score", derived=True, source="acs5",
-                                     inputs={"acs5": acs_v, "acs5_prior": prior_v, "cbp": cbp_v, "components": {"income": inc_e, "growth": growth, "vets_per_10k": per10k}}))
+                    rows.append(_row(listing_id, band, "opportunity_score", ctx.acs_v, score, "score", derived=True, source="acs5",
+                                     inputs={**inputs, "acs5": ctx.acs_v, "acs5_prior": ctx.prior_v, "components": {"income": inc_e, "growth": ctx.growth, "vets_per_10k": per10k}}))
         cur.executemany(UPSERT, rows)
     redis.set(f"listing:{listing_id}:market:version", int(time.time()))
     return len(rows)
@@ -3221,11 +3466,11 @@ def materialize_listing(conn, redis, listing_id: str) -> int:
 def materialize_all(conn, redis) -> dict[str, int]:
     with conn.cursor() as cur:
         cur.execute("SELECT listing_id FROM practice_location")
-        ids = [r[0] for r in cur.fetchall()]
-    return {lid: materialize_listing(conn, redis, str(lid)) for lid in ids}
+        ids = [str(r[0]) for r in cur.fetchall()]
+    return {lid: materialize_listing(conn, redis, lid) for lid in ids}
 ```
 
-Run: `poetry run pytest tests/census -q` → all pass (`poetry add --group dev fakeredis` if not yet).
+Run: `poetry run pytest tests/census -q` → all pass (`poetry add --group dev fakeredis` if not yet). Note the count in `test_uncleared_cbp_and_zbp_leave_no_competition_rows` is 3 bands × 6 metrics.
 
 - [ ] **Step 5: Tasks and beat**
 
@@ -3249,17 +3494,17 @@ def backfill_listing(listing_id: str) -> dict:
     rows = materialize.materialize_listing(conn, sync_redis(), listing_id)
     return {"listing_id": listing_id, "catchment": bands, "rows": rows}
 ```
-Beat: `"materialize-nightly": {"task": "census.materialize_metrics", "schedule": crontab(minute=0, hour=3)}` (03:00 UTC). CLI: `materialize [--listing ID]`. Tests: extend `test_tasks.py` for the two names and the nightly entry. Commit: `feat(census): §8 formulas, §14 suppression, market_metric materialisation, nightly + backfill tasks`.
+Beat: `"materialize-nightly": {"task": "census.materialize_metrics", "schedule": crontab(minute=0, hour=3)}` (03:00 UTC). CLI: `materialize [--listing ID]`. Tests: extend `test_tasks.py` for the two names and the nightly entry. Commit: `feat(census): §8 formulas, §14 suppression, three-band materialisation with ZBP competition and place-level growth`.
 
 ---
 
-### Task B5: Market API — markets, communities, listing panel, Redis cache, backfill-on-miss
+### Task B5: Market API — layers, markets, communities, listing panel; member gate; gate-versioned cache; backfill-on-miss
 
 **Files:**
-- Create: `app/api/market.py`, `app/db.py` (if not created in A9), `tests/census/test_market_api.py`
-- Modify: `app/main.py` (include router before the `/api` catch-all)
+- Create: `app/api/market.py`, `app/api/access.py`, `app/db.py` (if not created in A9), `tests/census/test_market_api.py`
+- Modify: `app/main.py` (include router before the `/api` catch-all), `app/config.py` (`market_data_public: bool = False`)
 
-**Interfaces:** the endpoints in the API contract section. `market.short_market_name("Austin-Round Rock-San Marcos, TX Metro Area") -> "Austin, TX"`. Cache key `listing:{id}:market:v{version}` TTL 86400 s; dedupe key `backfill:{id}` TTL 600 s.
+**Interfaces:** the endpoints in the API contract section. `access.market_access(request)` — no-op when `settings.market_data_public`, else `require_member(request)` (SP2; until SP2 lands, `require_member = auth_stub.require_operator`). `market.short_market_name(...)`. Cache keys `listing:{id}:market:v{version}:g{gate_version}` (TTL 86400 s); dedupe `backfill:{id}` (TTL 600 s).
 
 - [ ] **Step 1: Failing tests**
 
@@ -3270,19 +3515,20 @@ import pytest
 from httpx import ASGITransport
 
 from app.cache import sync_redis
-from app.census import materialize
+from app.census import gate, materialize
 from app.config import settings
 from app.main import create_app
 from tests.census.test_materialize import world  # noqa: F401 — reuse the seeded listing fixture
+
+H = {"Authorization": f"Bearer {settings.api_secret_key}"}   # SP2 replaces this with a member session
 
 
 @pytest.fixture
 async def client(scratch_dsn, monkeypatch):
     monkeypatch.setattr(settings, "database_url", scratch_dsn)
     r = sync_redis()
-    for k in r.scan_iter("listing:*"): r.delete(k)
-    for k in r.scan_iter("backfill:*"): r.delete(k)
-    for k in r.scan_iter("gate:*"): r.delete(k)
+    for pat in ("listing:*", "backfill:*", "gate:*", "market:*"):
+        for k in r.scan_iter(pat): r.delete(k)
     r.delete("celery")
     async with httpx.AsyncClient(transport=ASGITransport(app=create_app()), base_url="http://test") as c:
         yield c
@@ -3292,8 +3538,7 @@ async def client(scratch_dsn, monkeypatch):
 def materialized(conn, world):
     with conn.cursor() as cur:
         cur.execute("INSERT INTO geo_area (geo_id, summary_level, vintage, name, geom, centroid) VALUES ('12420','310','2023','Austin-Round Rock-San Marcos, TX Metro Area', ST_Multi(ST_GeomFromText('POLYGON((-98 30,-97 30,-97 31,-98 31,-98 30))',4269)), ST_Point(-97.75,30.31,4269))")
-        cur.execute("INSERT INTO geo_area (geo_id, summary_level, vintage, name, geom, centroid) VALUES ('4813552','160','2023','Cedar Park city', ST_Multi(ST_GeomFromText('POLYGON((-97.9 30.5,-97.8 30.5,-97.8 30.6,-97.9 30.6,-97.9 30.5))',4269)), ST_Point(-97.85,30.55,4269))")
-        cur.execute("UPDATE practice_location SET cbsa_geoid='12420', place_geoid='4813552' WHERE listing_id=%s", (world,))
+        cur.execute("UPDATE practice_location SET cbsa_geoid='12420' WHERE listing_id=%s", (world,))
     materialize.materialize_listing(conn, sync_redis(), world)
     return world
 
@@ -3304,95 +3549,202 @@ def test_short_market_name():
     assert short_market_name("Sacramento-Roseville-Folsom, CA Metro Area") == "Sacramento, CA"
 
 
+async def test_market_endpoints_require_a_member_unless_public(client, materialized, monkeypatch):
+    for path in ("/api/layers", "/api/markets", "/api/markets/12420/communities", f"/api/listings/{materialized}/market"):
+        assert (await client.get(path)).status_code == 401, path
+    monkeypatch.setattr(settings, "market_data_public", True)
+    assert (await client.get("/api/markets")).status_code == 200
+
+
+async def test_layers_come_from_the_registry_with_gating_and_caveats(client, materialized, conn):
+    layers = {l["key"]: l for l in (await client.get("/api/layers", headers=H)).json()}
+    assert set(layers) == {"income", "pets", "growth", "households", "econ", "competition", "practices", "drive_10", "drive_20"}
+    assert layers["income"]["source_label"].startswith("Source: U.S. Census Bureau, American Community Survey") and layers["income"]["enabled"] is True
+    assert layers["competition"]["dataset_key"] == "zbp" and "proxy" in layers["competition"]["caveat"] and layers["competition"]["geo_level"] == "zcta"
+    assert layers["pets"]["is_derived"] is True and "0.57" in layers["pets"]["caveat"]
+    assert layers["growth"]["vintage"] == "2014–2018 → 2019–2023" and layers["growth"]["geo_level"] == "place"
+    assert "approximation" in layers["drive_10"]["caveat"]
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET license_status='unresolved' WHERE dataset_key='zbp'")
+    gate.invalidate(sync_redis(), "zbp")
+    layers = {l["key"]: l for l in (await client.get("/api/layers", headers=H)).json()}
+    assert layers["competition"]["enabled"] is False
+
+
 async def test_markets_lists_cbsas_with_published_listings(client, materialized):
-    r = await client.get("/api/markets")
-    assert r.status_code == 200
+    r = await client.get("/api/markets", headers=H)
     assert r.json() == [{"cbsa_geoid": "12420", "name": "Austin, TX", "center": [30.31, -97.75], "zoom": 10}]
 
 
-async def test_communities_serve_fixture_field_names_with_attribution(client, materialized):
-    body = (await client.get("/api/markets/12420/communities")).json()
-    assert body["vintage"] == "2019–2023"
-    assert any(a.startswith("Source: U.S. Census Bureau, American Community Survey") for a in body["attribution"])
+async def test_communities_default_to_place_band_with_fixture_fields_and_competition(client, materialized):
+    body = (await client.get("/api/markets/12420/communities", headers=H)).json()
+    assert body["band"] == "place" and body["vintage"] == "2019–2023"
     c = body["communities"][0]
-    assert set(c) >= {"listing_id", "name", "lat", "lng", "geo_precision", "pop", "hh", "income", "growth", "pets", "econ", "vets", "suppressed"}
-    assert c["name"] == "Cedar Park city" and c["vets"] == 7 and c["econ"] == pytest.approx(685000)
-    assert (c["lat"], c["lng"]) == (30.55, -97.85)   # place centroid (generalized location) — decision D8
+    assert c["name"] == "Cedar Park city" and c["pop"] == 81900 and c["hh"] == 27600 and c["income"] == 118400
+    assert c["growth"] == pytest.approx(14.2, abs=0.01) and c["pets"] == 15732 and c["vets"] == 7 and c["econ"] == pytest.approx(143850 * 1000 / 210)
+    assert c["competition"] == {"count": 7, "geo_level": "zcta", "zctas": 2, "per_10k_households": pytest.approx(7 / 2.76, rel=1e-6), "level": "High"}  # 2.54/10k ≥ 2.2 → High (design thresholds)
+    assert c["location"] == "place_centroid" and (c["lat"], c["lng"]) == (30.55, -97.8)     # never the geocoded point unless disclosed
+    drive = (await client.get("/api/markets/12420/communities?band=drive_10", headers=H)).json()
+    assert drive["band"] == "drive_10" and drive["communities"][0]["pop"] < 81900
+
+
+async def test_disclosed_location_returns_the_point_for_members(client, materialized, conn):
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET location_disclosed = true WHERE id=%s", (materialized,))
+    c = (await client.get("/api/markets/12420/communities", headers=H)).json()["communities"][0]
+    assert c["location"] == "disclosed_point" and (c["lat"], c["lng"]) == (30.55, -97.85)
 
 
 async def test_uncleared_layer_is_absent_within_60s(client, materialized, conn):
     with conn.cursor() as cur:
-        cur.execute("UPDATE dataset_registry SET license_status='unresolved' WHERE dataset_key='cbp'")
-    from app.census import gate
-    gate.invalidate(sync_redis(), "cbp")
-    c = (await client.get("/api/markets/12420/communities")).json()["communities"][0]
-    assert "vets" not in c and "econ" not in c and "pop" in c
+        cur.execute("UPDATE dataset_registry SET license_status='unresolved' WHERE dataset_key IN ('zbp','cbp')")
+    gate.invalidate(sync_redis(), "zbp"); gate.invalidate(sync_redis(), "cbp")
+    c = (await client.get("/api/markets/12420/communities", headers=H)).json()["communities"][0]
+    assert "vets" not in c and "econ" not in c and "competition" not in c and "pop" in c
 
 
-async def test_listing_panel_is_cached_and_shaped(client, materialized):
-    r = await client.get(f"/api/listings/{materialized}/market")
-    assert r.status_code == 200
-    body = r.json()
-    assert body["band"] == "drive_10" and body["geo_precision"] == "rooftop"
-    m = body["metrics"]
-    assert m["population"]["unit"] == "count" and m["population"]["is_derived"] is False and m["population"]["source_dataset"] == "acs5"
+async def test_listing_panel_is_cached_and_re_gated_on_read(client, materialized, conn):
+    r = await client.get(f"/api/listings/{materialized}/market", headers=H)
+    assert r.status_code == 200 and r.headers["x-cache"] == "miss"
+    m = r.json()["metrics"]
+    assert m["population"]["unit"] == "count" and m["establishments"]["source_dataset"] == "zbp"
     assert m["opportunity_score"]["components"].keys() == {"income", "growth", "vets_per_10k"}
     assert m["revenue_per_establishment"]["label"] == "Payroll per establishment"
-    assert any(k.startswith(f"listing:{materialized}:market:v") for k in sync_redis().scan_iter("listing:*"))
-    assert (await client.get(f"/api/listings/{materialized}/market")).headers["x-cache"] == "hit"
+    assert (await client.get(f"/api/listings/{materialized}/market", headers=H)).headers["x-cache"] == "hit"
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET license_status='blocked' WHERE dataset_key='zbp'")
+    gate.invalidate(sync_redis(), "zbp")
+    m2 = (await client.get(f"/api/listings/{materialized}/market", headers=H)).json()["metrics"]
+    assert "establishments" not in m2 and "population" in m2          # gate version changed the key; blocked layer gone
+
+
+async def test_place_band_panel_on_request(client, materialized):
+    body = (await client.get(f"/api/listings/{materialized}/market?band=place", headers=H)).json()
+    assert body["band"] == "place" and body["metrics"]["population"]["value"] == 81900
 
 
 async def test_suppressed_metric_hides_value_but_keeps_reason(client, materialized, conn):
     with conn.cursor() as cur:
         cur.execute("UPDATE market_metric SET suppressed=true, suppress_reason='high_moe' WHERE listing_id=%s AND metric_key='households'", (materialized,))
     sync_redis().incr(f"listing:{materialized}:market:version")
-    hh = (await client.get(f"/api/listings/{materialized}/market")).json()["metrics"]["households"]
+    hh = (await client.get(f"/api/listings/{materialized}/market", headers=H)).json()["metrics"]["households"]
     assert hh["value"] is None and hh["suppressed"] is True and hh["suppress_reason"] == "high_moe"
 
 
-async def test_missing_metrics_404_and_enqueue_backfill_once(client, scratch_dsn, conn):
+async def test_missing_metrics_404_and_enqueue_backfill_once_for_real_listings_only(client, conn):
     from tests.census.listing_fixtures import make_listing
     lid = make_listing(conn)
-    r1 = await client.get(f"/api/listings/{lid}/market")
-    r2 = await client.get(f"/api/listings/{lid}/market")
+    r1 = await client.get(f"/api/listings/{lid}/market", headers=H)
+    r2 = await client.get(f"/api/listings/{lid}/market", headers=H)
     assert r1.status_code == r2.status_code == 404 and r1.json()["error"]["code"] == "NO_MARKET_DATA"
     assert sync_redis().llen("celery") == 1          # one real message on the broker, deduped by backfill:{id}
+    r3 = await client.get("/api/listings/00000000-0000-0000-0000-000000000000/market", headers=H)
+    assert r3.status_code == 404 and r3.json()["error"]["code"] == "NOT_FOUND"
+    assert sync_redis().llen("celery") == 1          # unknown ids never enqueue (red-team C4)
 ```
 
-- [ ] **Step 2: Implement `app/api/market.py`**
+- [ ] **Step 2: Implement**
 
+`app/api/access.py`:
 ```python
-"""Read-only market-data endpoints. Reads market_metric + geo_area only (spec §7, §10 hard rule):
-never a Census call on the request path; a miss enqueues a backfill and returns the empty state."""
+"""Market-data access rule (plan D13). Sub-project 2 provides require_member; until then the
+operator token stands in. MARKET_DATA_PUBLIC=true is the VIN Foundation's 'public teaser' switch."""
+from fastapi import Request
+
+from app.config import settings
+
+try:  # Sub-project 2
+    from app.api.auth import require_member  # type: ignore
+except ImportError:  # pragma: no cover — before SP2 lands
+    from app.api.auth_stub import require_operator as require_member
+
+
+def market_access(request: Request) -> None:
+    if settings.market_data_public:
+        return
+    require_member(request)
+```
+
+`app/api/market.py`:
+```python
+"""Read-only market-data endpoints. Reads market_metric + geo_area + dataset_registry only
+(spec §7, §10 hard rule): never a Census call on the request path; a miss for a real published
+listing enqueues one backfill and returns the empty state."""
 from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, HTTPException, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import text
 
+from app.api.access import market_access
 from app.cache import sync_redis
 from app.census import gate
+from app.census import metrics as M
 from app.db import engine, sync_conn
 from app.tasks.celery_app import celery_app
 
-router = APIRouter(prefix="/api")
+router = APIRouter(prefix="/api", dependencies=[Depends(market_access)])
 PANEL_TTL = 86400
 BACKFILL_DEDUPE_TTL = 600
-LAYER_DATASET = {"pop": "acs5", "hh": "acs5", "income": "acs5", "growth": "acs5_prior", "pets": "acs5", "econ": "cbp", "vets": "cbp"}
-METRIC_FOR = {"pop": "population", "hh": "households", "income": "median_hh_income", "growth": "population_growth_pct",
-              "pets": "pet_households_est", "econ": "revenue_per_establishment", "vets": "establishments"}
+BANDS = ("place", "drive_10", "drive_20")
+
+# The nine approved layers. Labels are the design's; sources/vintages come from the registry at request time.
+LAYERS = [
+    {"key": "income", "label": "Median Household Income", "dataset_key": "acs5", "metric": "median_hh_income", "is_derived": False, "caveat": None},
+    {"key": "pets", "label": "Pet Ownership (est.)", "dataset_key": "acs5", "metric": "pet_households_est", "is_derived": True,
+     "caveat": f"Derived estimate: households × {M.PET_RATE} (national placeholder rate until a licensed regional rate is cleared)."},
+    {"key": "growth", "label": "Population Growth", "dataset_key": "acs5_prior", "metric": "population_growth_pct", "is_derived": True, "geo_level": "place",
+     "caveat": "Change between two ACS 5-year periods, measured for the listing's city/CDP."},
+    {"key": "households", "label": "Households", "dataset_key": "acs5", "metric": "households", "is_derived": False, "caveat": None},
+    {"key": "econ", "label": "Economic Profile", "dataset_key": "cbp", "metric": "revenue_per_establishment", "is_derived": True, "geo_level": "county",
+     "caveat": "Payroll per establishment (NAICS 541940), not revenue; county level."},
+    {"key": "competition", "label": "Veterinary Competition", "dataset_key": "zbp", "metric": "establishments", "is_derived": False, "geo_level": "zcta",
+     "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. ZIP-code counts aggregated to the community."},
+    {"key": "practices", "label": "Practice Listings", "dataset_key": None, "metric": None, "is_derived": False, "caveat": None},
+    {"key": "drive_10", "label": "5–10 min drive time", "dataset_key": None, "metric": None, "is_derived": True, "caveat": "Straight-line 8 km approximation of drive time."},
+    {"key": "drive_20", "label": "10–20 min drive time", "dataset_key": None, "metric": None, "is_derived": True, "caveat": "Straight-line 16 km approximation of drive time."},
+]
+FIELD_FOR = {"pop": "population", "hh": "households", "income": "median_hh_income", "growth": "population_growth_pct",
+             "pets": "pet_households_est", "econ": "revenue_per_establishment", "vets": "establishments"}
 LABELS = {"revenue_per_establishment": "Payroll per establishment"}
 
 
 def short_market_name(cbsa_name: str) -> str:
     city_part, _, rest = cbsa_name.partition(",")
-    state = rest.strip().split(" ")[0]
-    return f"{city_part.split('-')[0].strip()}, {state}"
+    return f"{city_part.split('-')[0].strip()}, {rest.strip().split(' ')[0]}"
+
+
+def _band(band: str | None, default: str) -> str:
+    b = band or default
+    if b not in BANDS:
+        raise HTTPException(422, detail={"code": "BAD_BAND", "message": f"band must be one of {BANDS}"})
+    return b
 
 
 async def _active(conn) -> dict[str, str]:
     return dict((await conn.execute(text("SELECT dataset_key, vintage FROM active_vintage"))).all())
+
+
+async def _registry(conn) -> dict[str, dict]:
+    rows = (await conn.execute(text("SELECT dataset_key, attribution_text, vintage, license_status FROM dataset_registry"))).mappings().all()
+    return {r["dataset_key"]: dict(r) for r in rows}
+
+
+@router.get("/layers")
+async def layers() -> list[dict]:
+    r = sync_redis()
+    async with engine.connect() as conn:
+        reg, act = await _registry(conn), await _active(conn)
+    out = []
+    for l in LAYERS:
+        ds = l["dataset_key"]
+        enabled = gate.layer_enabled(r, sync_conn, ds) if ds else True
+        vintage = (f"{act.get('acs5_prior')} → {act.get('acs5')}" if ds == "acs5_prior" else act.get(ds)) if ds else None
+        out.append({"key": l["key"], "label": l["label"], "dataset_key": ds, "source_label": reg[ds]["attribution_text"] if ds else None,
+                    "vintage": vintage, "geo_level": l.get("geo_level", "place|catchment" if ds else None), "enabled": enabled,
+                    "is_derived": l["is_derived"], "caveat": l["caveat"]})
+    return out
 
 
 @router.get("/markets")
@@ -3402,81 +3754,91 @@ async def markets() -> list[dict]:
         rows = (await conn.execute(text("""
             SELECT DISTINCT pl.cbsa_geoid, ga.name, ST_Y(ga.centroid) AS lat, ST_X(ga.centroid) AS lng
             FROM practice_location pl JOIN listing l ON l.id = pl.listing_id AND l.status = 'published'
-            JOIN geo_area ga ON ga.geo_id = pl.cbsa_geoid AND ga.summary_level = '310' AND ga.vintage = :gv
-            ORDER BY ga.name"""), {"gv": act.get("tiger_cb")})).mappings().all()
+            JOIN geo_area ga ON ga.geo_id = pl.cbsa_geoid AND ga.summary_level = '310' AND ga.vintage = :gv ORDER BY ga.name"""), {"gv": act.get("tiger_cb")})).mappings().all()
     return [{"cbsa_geoid": r["cbsa_geoid"], "name": short_market_name(r["name"]), "center": [round(r["lat"], 2), round(r["lng"], 2)], "zoom": 10} for r in rows]
 
 
 @router.get("/markets/{cbsa}/communities")
-async def communities(cbsa: str) -> dict:
+async def communities(cbsa: str, band: str | None = Query(None)) -> dict:
+    b = _band(band, "place")
     r = sync_redis()
-    enabled = {k: gate.layer_enabled(r, sync_conn, ds) for k, ds in LAYER_DATASET.items()}
+    enabled = {ds: gate.layer_enabled(r, sync_conn, ds) for ds in ("acs5", "acs5_prior", "cbp", "zbp")}
     async with engine.connect() as conn:
-        act = await _active(conn)
+        act, reg = await _active(conn), await _registry(conn)
         rows = (await conn.execute(text("""
-            SELECT l.id AS listing_id, pl.geo_precision, COALESCE(pg.name, l.city) AS name,
+            SELECT l.id AS listing_id, pl.geo_precision, COALESCE(pg.name, l.city) AS name, l.location_disclosed,
                    ST_Y(pl.point) AS pt_lat, ST_X(pl.point) AS pt_lng, ST_Y(pg.centroid) AS pl_lat, ST_X(pg.centroid) AS pl_lng,
-                   COALESCE(l.generalized_location, true) AS generalized,   -- SP2 column; adjust the name here only
-                   mm.metric_key, mm.value_num, mm.suppressed
+                   mm.metric_key, mm.value_num, mm.suppressed, mm.source_dataset, mm.inputs
             FROM listing l JOIN practice_location pl ON pl.listing_id = l.id AND pl.cbsa_geoid = :cbsa
             LEFT JOIN geo_area pg ON pg.geo_id = pl.place_geoid AND pg.summary_level = '160' AND pg.vintage = :gv
-            LEFT JOIN market_metric mm ON mm.listing_id = l.id AND mm.band = 'drive_10'
-            WHERE l.status = 'published'"""), {"cbsa": cbsa, "gv": act.get("tiger_cb")})).mappings().all()
-        att_rows = (await conn.execute(text("SELECT dataset_key, attribution_text FROM dataset_registry WHERE dataset_key = ANY(:k)"),
-                                       {"k": sorted({d for k, d in LAYER_DATASET.items() if enabled[k]} | {"acs5"})})).all()
-    by_listing: dict[str, dict] = {}
+            LEFT JOIN market_metric mm ON mm.listing_id = l.id AND mm.band = :band
+            WHERE l.status = 'published'"""), {"cbsa": cbsa, "gv": act.get("tiger_cb"), "band": b})).mappings().all()
+    by: dict[str, dict] = {}
+    used = {"acs5"}
     for row in rows:
-        c = by_listing.setdefault(str(row["listing_id"]), {
-            "listing_id": str(row["listing_id"]), "name": row["name"], "geo_precision": row["geo_precision"],
-            "lat": row["pl_lat"] if (row["generalized"] and row["pl_lat"] is not None) else row["pt_lat"],
-            "lng": row["pl_lng"] if (row["generalized"] and row["pl_lng"] is not None) else row["pt_lng"], "suppressed": []})
-        for field, metric in METRIC_FOR.items():
-            if row["metric_key"] == metric and enabled[field]:
+        lid = str(row["listing_id"])
+        c = by.setdefault(lid, {"listing_id": lid, "name": row["name"], "geo_precision": row["geo_precision"], "suppressed": [],
+                                "location": "disclosed_point" if (row["location_disclosed"] and row["pt_lat"] is not None) else "place_centroid",
+                                "lat": row["pt_lat"] if row["location_disclosed"] else row["pl_lat"], "lng": row["pt_lng"] if row["location_disclosed"] else row["pl_lng"]})
+        if not row["metric_key"] or not enabled.get(row["source_dataset"], True):
+            continue
+        for field, metric in FIELD_FOR.items():
+            if row["metric_key"] == metric:
+                used.add(row["source_dataset"])
                 if row["suppressed"]:
                     c["suppressed"].append(field)
                 else:
                     c[field] = float(row["value_num"]) if row["value_num"] is not None else None
-    return {"vintage": act.get("acs5"), "attribution": [a for _, a in sorted(att_rows)], "communities": list(by_listing.values())}
+        if row["metric_key"] == "establishments" and not row["suppressed"]:
+            inputs = row["inputs"] or {}
+            c["competition"] = {"count": float(row["value_num"]), "geo_level": inputs.get("geo_level"), "zctas": inputs.get("zctas")}
+        if row["metric_key"] == "vets_per_10k_households" and not row["suppressed"] and "competition" in c:
+            per = float(row["value_num"]) if row["value_num"] is not None else None
+            c["competition"].update({"per_10k_households": per, "level": M.competition_level(per)})
+    return {"band": b, "vintage": act.get("acs5"), "attribution": [reg[k]["attribution_text"] for k in sorted(used) if k in reg], "communities": list(by.values())}
 
 
 @router.get("/listings/{listing_id}/market")
-async def listing_market(listing_id: str, response: Response) -> dict:
+async def listing_market(listing_id: str, response: Response, band: str | None = Query(None)) -> dict:
+    b = _band(band, "drive_10")
     r = sync_redis()
     version = r.get(f"listing:{listing_id}:market:version")
-    key = f"listing:{listing_id}:market:v{(version or b'0').decode() if isinstance(version, bytes) else version or 0}"
+    key = f"listing:{listing_id}:market:{b}:v{int(version) if version else 0}:g{gate.version(r)}"
     cached = r.get(key)
     if cached:
         response.headers["x-cache"] = "hit"
         return json.loads(cached)
     async with engine.connect() as conn:
+        exists = (await conn.execute(text("SELECT status FROM listing WHERE id = :id"), {"id": listing_id})).first()
+        if not exists:
+            raise HTTPException(404, detail={"code": "NOT_FOUND", "message": "No such listing."})
         rows = (await conn.execute(text("""
             SELECT mm.*, pl.geo_precision FROM market_metric mm JOIN practice_location pl ON pl.listing_id = mm.listing_id
-            WHERE mm.listing_id = :id AND mm.band = 'drive_10'"""), {"id": listing_id})).mappings().all()
+            WHERE mm.listing_id = :id AND mm.band = :band"""), {"id": listing_id, "band": b})).mappings().all()
         if not rows:
-            if r.set(f"backfill:{listing_id}", "1", ex=BACKFILL_DEDUPE_TTL, nx=True):
+            if exists[0] == "published" and r.set(f"backfill:{listing_id}", "1", ex=BACKFILL_DEDUPE_TTL, nx=True):
                 celery_app.send_task("census.backfill_listing", args=[listing_id])
             raise HTTPException(404, detail={"code": "NO_MARKET_DATA", "message": "Community data is being prepared for this listing."})
-        used = sorted({m["source_dataset"] for m in rows} | {"acs5"})
-        att = [a for _, a in sorted((await conn.execute(text("SELECT dataset_key, attribution_text FROM dataset_registry WHERE dataset_key = ANY(:k)"), {"k": used})).all())]
+        reg = await _registry(conn)
     metrics = {}
+    used = {"acs5"}
     for m in rows:
         if not gate.layer_enabled(r, sync_conn, m["source_dataset"]):
             continue
+        used.add(m["source_dataset"])
+        inputs = m["inputs"] or {}
         entry = {"value": None if m["suppressed"] else (float(m["value_num"]) if m["value_num"] is not None else None), "unit": m["unit"],
                  "is_derived": m["is_derived"], "formula_version": m["formula_version"], "moe": float(m["moe"]) if m["moe"] is not None else None,
-                 "suppressed": m["suppressed"], "suppress_reason": m["suppress_reason"], "source_dataset": m["source_dataset"], "vintage": m["vintage"]}
-        inputs = m["inputs"] or {}
-        if "components" in inputs:
-            entry["components"] = inputs["components"]
-        if "pet_incidence_rate" in inputs:
-            entry["assumed_rate"] = inputs["pet_incidence_rate"]
-        if m["metric_key"] == "median_hh_income":
-            entry["approximate"] = True
-        if m["metric_key"] in LABELS:
-            entry["label"] = LABELS[m["metric_key"]]
+                 "suppressed": m["suppressed"], "suppress_reason": m["suppress_reason"], "source_dataset": m["source_dataset"], "vintage": m["vintage"],
+                 "geo_level": inputs.get("geo_level"), "inputs": {k: v for k, v in inputs.items() if k in ("acs5", "acs5_prior", "cbp", "zbp")} or None}
+        if "components" in inputs: entry["components"] = inputs["components"]
+        if "pet_incidence_rate" in inputs: entry["assumed_rate"] = inputs["pet_incidence_rate"]
+        if m["metric_key"] == "median_hh_income" and m["is_derived"]: entry["approximate"] = True
+        if m["metric_key"] in LABELS: entry["label"] = LABELS[m["metric_key"]]
         metrics[m["metric_key"]] = entry
-    body = {"listing_id": listing_id, "band": "drive_10", "geo_precision": rows[0]["geo_precision"], "vintage": rows[0]["vintage"],
-            "computed_at": max(m["computed_at"] for m in rows).isoformat(), "metrics": metrics, "attribution": att}
+    body = {"listing_id": listing_id, "band": b, "geo_precision": rows[0]["geo_precision"], "vintage": rows[0]["vintage"],
+            "computed_at": max(m["computed_at"] for m in rows).isoformat(), "metrics": metrics,
+            "attribution": [reg[k]["attribution_text"] for k in sorted(used) if k in reg]}
     r.set(key, json.dumps(body), ex=PANEL_TTL)
     response.headers["x-cache"] = "miss"
     return body
@@ -3484,10 +3846,9 @@ async def listing_market(listing_id: str, response: Response) -> dict:
 
 `app/db.py`:
 ```python
-from sqlalchemy.ext.asyncio import create_async_engine
 import psycopg2
+from sqlalchemy.ext.asyncio import create_async_engine
 
-from app.census.client import normalise  # noqa: F401  (keeps import graph acyclic: no app.checks import here)
 from app.checks import async_dsn
 from app.config import settings
 
@@ -3499,7 +3860,7 @@ def sync_conn():
     c.autocommit = True
     return c
 ```
-(Remove the stray `normalise` import line if a linter objects — it is not needed.) Wire `market.router` in `main.py` before the catch-all. Run: `poetry run pytest -q` → all pass. Commit: `feat(census): market API — markets, communities, listing panel with 24h cache and backfill-on-miss`.
+Add `market_data_public: bool = False` to `Settings`. Wire `market.router` in `main.py` before the catch-all. Run: `poetry run pytest -q` → all pass. Commit: `feat(census): member-gated market API — layers, markets, communities (place/catchment), panel with gate-versioned cache`.
 
 ---
 
@@ -3519,7 +3880,12 @@ def sync_conn():
 | `P[].pop/growth/income/hh` strings on the detail page | `GET /api/listings/{id}/market` → `metrics.population.value` etc.; format client-side with the prototype's `fmtMetric` |
 | `marketPanel()` `incomeNat = 75149`, `per10k`, `score` | `metrics.income_index_vs_us`, `metrics.vets_per_10k_households`, `metrics.opportunity_score` (+ `components`) |
 | Admin **Data Sources** tab rows | `GET /api/admin/data-sources` (columns: Dataset · Source and license · Status · Action → `POST …/license`) |
-| Data Layers rows / footer cards `on` state | a layer whose dataset is not `cleared` is absent from `communities[]` → hide its row (spec §11) |
+| Data Layers rows / footer cards `on` state, card `src` text ("Census ACS 5-year", "Census CBP, NAICS 541940", …), legend titles | `GET /api/layers` → `label`, `source_label`, `vintage`, `caveat`, `enabled`. A disabled layer's row and card disappear (spec §11); no hard-coded source copy remains (spec §12) |
+| `layers.competition` dots (`dot(size, 'rgba(120,86,190,.75)')`, size `8 + min(n, 14)`, tooltip "N veterinary establishments") | `communities[].competition.count`; tooltip gains the proxy caveat from `/api/layers` |
+| Panel `compBars` Low/Moderate/High (`per10k < 1.4 / < 2.2`) and `per10k` | `communities[].competition.level` / `metrics.vets_per_10k_households` — thresholds now live in `metrics.competition_level` and are returned, not recomputed |
+| `MARKETS[market].center/zoom`, `mdSubline: "… metro · within 20 miles"` | `GET /api/markets`; the "within 20 miles" copy stays a results-radius statement (unchanged) |
+
+**Design-vs-spec copy conflicts (route to the VIN Foundation / Claude Design before SP2 wires them):** (1) the card/legend copy "Growth since 2015" must become a vintage statement ("ACS 2014–2018 → 2019–2023"); (2) "5–10 min drive time" / "10–20 min drive time" need the spec §8 approximation label ("≈ 8 km straight-line"); (3) the competition card needs the §5 proxy sentence. The API supplies all three strings via `/api/layers`; the approved design must be updated to show them.
 
 Copy rules the frontend must honour when wiring (spec §8/§12/§14): every figure shows dataset + vintage (`attribution[]` and `metrics[].vintage`); `is_derived` → "derived estimate"; `median_hh_income.approximate` → "approximate"; `suppressed` → "Estimate too imprecise to show at this geography"; `geo_precision != 'rooftop'` → "approximate community data"; `opportunity_score` always with its three components and never near the price.
 
@@ -3535,6 +3901,24 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin fea
 
 ---
 
+## Layer rendering contract (the nine approved layers, their data, their source)
+
+Rendering stays exactly as the approved components do it (`MarketMapView.vue`, `logic.js`); this table pins where each pixel's number and label come from once fixtures are replaced.
+
+| Layer (design key) | Drawn as (existing component behaviour) | Number(s) | Data path | Geography | Source label & caveat (from `/api/layers`) | Gate |
+|---|---|---|---|---|---|---|
+| Practice Listings (`practices`) | price pins `pricePin(label, active)` at practice/generalized point | asking price | SP2 listings API | point or place centroid (D8) | — | published listings only |
+| 5–10 min drive time (`drive5` in code, `drive_10` band) | `L.circle(hub, 8000 m, #003a70, .2)` | — | client-side; hub = selected practice or market center | 8 km buffer | "Straight-line 8 km approximation of drive time." | always |
+| 10–20 min drive time (`drive10` in code, `drive_20` band) | `L.circle(hub, 16000 m, #339dde, .16)` | — | client-side | 16 km buffer | "Straight-line 16 km approximation …" | always |
+| Median Household Income (`income`) | community bubble `dot(16 + 30·t, ramp)`; legend buckets `<$60K … >$150K` | `communities[].income` | `market_metric.median_hh_income` (band `place` by default) | place (drive bands on request) | ACS attribution + vintage; `approximate` for catchment bands | `acs5` cleared |
+| Pet Ownership (est.) (`pets`) | bubble, orange ramp | `communities[].pets` | `pet_households_est` (derived, rate 0.57) | place | ACS attribution; "Derived estimate: households × 0.57 …" | `acs5` cleared |
+| Population Growth (`growth`) | bubble, green ramp | `communities[].growth` | `population_growth_pct` (derived) | **place** (D12) | "ACS 2014–2018 → 2019–2023 …" | `acs5_prior` cleared |
+| Households (`households`) | bubble, blue ramp | `communities[].hh` | `households` | place | ACS attribution | `acs5` cleared |
+| Economic Profile (`econ`) | bubble, violet ramp; buckets `<$450K … >$900K` | `communities[].econ` | `revenue_per_establishment` (CBP payroll ÷ establishments) | **county** | CBP attribution; "Payroll per establishment, not revenue; county level." | `cbp` cleared |
+| Veterinary Competition (`competition`) | offset dot `[lat+.012, lng+.012]`, size `8 + min(n,14)`, `rgba(120,86,190,.75)`; tooltip "N veterinary establishments"; panel bars Low/Moderate/High | `communities[].vets`, `communities[].competition.{count, per_10k_households, level}` | `establishments` from **ZBP** ZIP counts aggregated over the community's ZCTAs (fallback: county CBP apportioned by household share, labelled derived) | ZCTA→place / catchment | ZBP attribution; "… proxy for competitive density, not a count of independent practices. ZIP-code counts aggregated to the community." | `zbp` cleared (fallback needs `cbp`) |
+
+Sources in one sentence for stakeholders: demographics, households, income and growth are the Census Bureau's American Community Survey; competition is the Census Bureau's count of veterinary establishments (NAICS 541940) by ZIP code, with the county total as a benchmark; the economic profile is Census payroll per establishment; pet ownership is our estimate from households; drive-time rings are straight-line approximations until a routing licence exists. No third-party practice list is used (spec §12).
+
 ## Phase C — Deferred by design (each has a stated trigger)
 
 | Item | Spec ref | Trigger to build | Sketch |
@@ -3546,14 +3930,35 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin fea
 | AIES revenue benchmark | §2 aies, §15 | Dataset ID and geography confirmed | New loader + `revenue_per_establishment` v2 from AIES receipts |
 | Block groups (`150`) | §6 | A buyer-facing need for sub-tract detail | Add `150` to `GEOGRAPHIES` and `BOUNDARY_FILES`; off by default |
 | Auto-extend `market_state` | D4 | First listing geocoded outside TX/CA/FL/GA | `geocode.resolve` inserts the state and enqueues `census.load_tiger` + `census.load_acs` for it |
+| Individual competitor locations (points, not counts) | §12 "Practice location databases … out of scope for V1" | The VIN Foundation approves a provenance-clear source. Candidate with clear provenance: **VIN's own member practice directory** (VIN-owned data; needs VIN privacy/consent review and an opt-out). Purchased/scraped lists stay blocked. | New dataset row (`vin_practice_directory`), nightly sync, `competitor_location` table, points layer with per-point tooltips; `competition.count` then becomes a real count within the catchment rather than a ZIP aggregate |
+| Tract-level growth (catchment bands) | D12 | Need for sub-place growth | Load the 2010→2020 tract relationship file (`tab20_tract20_tract10_natl.txt`), apportion 2014–2018 tract populations onto 2020 tracts by land-area share, then compute growth per catchment; `formula_version` → `v2` |
+| Population-weighted apportionment | §7 area-overlap weights | Catchments that cut large, unevenly populated tracts | Weight tract overlap by block-group population instead of area (`150` rows); `method` → `euclidean_buffer_v1_bgweighted` |
 
 ## Open items for the VIN Foundation (carried from the spec §15 and the Foundation spec §9)
 
 Basemap licence (Esri in the design vs CARTO in the spec) · satellite vendor · licensed pet rate vs ACS-derived · isochrones vs straight-line · opportunity-score weights sign-off and publication · public teaser vs gated market data · AIES identifier · Census API key contact address to use in the User-Agent (`CENSUS_CONTACT_EMAIL`).
+
+## Red-team review (2026-09-05) — findings and dispositions
+
+| # | Finding | Severity | Disposition |
+|---|---|---|---|
+| C1 | **Competition layer incoherent.** CBP is county-level; the design renders per-community dots and Low/Moderate/High per community; `vets_per_10k` divided county establishments by catchment households (≈ 66/10k for Travis County vs the design's ≈ 2.5). No rendering/source plan existed for the layer. | High | D11: ZIP Code Business Patterns (`zbp`) aggregated over ZCTAs (A6, B3, B4); ratios computed over one geography; county apportionment fallback labelled derived; `GET /api/layers` + the layer rendering contract; caveat text per §5. |
+| C2 | **Growth joined 2014–2018 tracts (2010 GEOIDs) to 2020 tracts.** Tract definitions changed in 2020; many GEOIDs do not exist in both vintages. | High | D12: growth at place level with county fallback (B4); tract crosswalk deferred (Phase C). |
+| C3 | The design's community figures are city-level (Cedar Park 81,900), but the plan mapped them to `drive_10` catchments without saying so. | Medium | D10: three bands, `place` default for community surfaces, `drive_10` for the panel, `?band=` everywhere. |
+| C4 | **Market endpoints were unauthenticated**, returned a coordinate per listing (an anonymized listing becomes locatable), and enqueued a backfill for any id (queue flooding). | High | D13 + `market_access`; `location_disclosed` rule (D8); enqueue only for existing published listings (B5). |
+| C5 | A cached panel kept a just-blocked layer for up to 24 h, violating "hides within one minute" (§11). | Medium | Gate version counter in every cache key (`gate.invalidate` bumps it) and re-filtering on read (A9, B5). |
+| C6 | The Census API key appeared in `CensusHTTPError` messages/logs; the ZCTA boundary file may be absent from GENZ2023; `4269::geography` cast should transform to 4326; archive-failure semantics unstated. | Medium | `redact()` in A3 with a test; GENZ2020 fallback in A4; `ST_Transform(…,4326)::geography` in B3/B4; archive failure fails the run (boto3 error propagates through `ingest.run`, recorded as `failed`). |
+| C7 | Migration numbers `005`/`006` collided with Sub-project 2's range and could sort before `listing` exists. | Medium | D14 ranges; Phase B → `060`/`061`. |
+| C8 | Registry lacked the spec §12 "practice location databases" blocked row the admin tab should show. | Low | `practice_locations` blocked row seeded (A1). |
+| C9 | Design copy conflicts with the spec: "Growth since 2015"; drive-time labels without the approximation qualifier; competition card lacks the proxy sentence. | Medium | Strings supplied by `/api/layers`; conflicts routed to the VIN Foundation/Claude Design (B6). |
+| C10 | Per-process concurrency semaphore (Celery concurrency 2 → up to 8 in flight per dataset). | Low | Accepted for V1 volumes; Redis token bucket if the Census API pushes back (429 halving already applies). |
+| C11 | `ingest.run` is all-or-nothing per run; §11's "resume from the last completed geography page" is not implemented. | Low | Accepted: atomic runs satisfy "no partial vintage ever goes active"; a rerun is cheap. |
+| C12 | Operator token = `API_SECRET_KEY` until SP2. | Low | Rotate `API_SECRET_KEY` when SP2 lands; `auth_stub.py` is deleted then. |
+| C13 | Business addresses are sent to the Census Geocoder (a public federal service). | Info | Acceptable for business premises; noted for the VIN Foundation's privacy notice. |
 
 ## Self-review
 
 - **Spec coverage:** §1 rules → constraints + A3 (client), A9/B1 (licence gate), B5 (never fetch on request); §2 register → A1 seed; §3 endpoints/auth → A3; §4 variables → A5 `VARIABLES`; §5 NAICS → A6 (incl. NAICS-2017 alias); §6 geography + resolution order → A4, B2; §7 pipeline → B2–B5; §8 formulas → B4 `metrics.py`; §9 refresh → A8 beat + B4 nightly + manual annual loads; §10 caching → A2 archive, B2 geocode cache, B5 panel cache, tiles deferred (Phase C); §11 failures → A3 retries/429, A5 abort-on-drift, B2 fallbacks, B5 empty state, A9 60 s gate; §12 licensing/attribution → A1 registry text, A8 audit, B5 attribution arrays; §13 DDL → A1, B1 (verbatim + `bds_measure`, `inputs`, `geocode_cache`, `geocode_review`, `license_audit_log`, `market_state` as documented additions); §14 quality → B4; §15 open items → listed above.
 - **Placeholder scan:** none. Two deliberate STOP conditions (Phase B precondition; SP2's `generalized_location` column name) are explicit instructions, not gaps.
 - **Type consistency:** `Dataset` fields (A1) used by A3/A5/A6; `CensusClient.fetch_table/validate_variables/build_url/request_count/concurrency` used consistently in A5/A6/A8; `ingest.run` yields `Run(id, rows, requests, raw_uri)` used identically in A5/A6; `ObjectStore.put_immutable(key, data, content_type)` matches the client's call; `catchment.build(conn, listing_id, geo_vintage)` matches B4/B5 tasks; `materialize_listing(conn, redis, listing_id)` matches B5 fixtures; `gate.layer_enabled(r, conn_factory, key)` signature matches A9 and B5 (`sync_conn` is a factory); metric keys in B4 rows match B5's `METRIC_FOR` and the API contract.
-- **Deviation from the spec, recorded:** D3 (tiles deferred), D9 (`inputs jsonb`), `bds_measure` table, `geocode_review`, `license_audit_log`, `market_state`; the licence FK is a trigger; `us:1` national row for the income benchmark.
+- **Deviation from the spec, recorded:** D3 (tiles deferred), D9 (`inputs jsonb`), D10 (`place` band), D11 (`zbp` dataset — needs the VIN Foundation's nod as an addition to §2), D12 (place-level growth), D13 (member gate), D14 (migration ranges); `bds_measure`, `zbp_industry`, `geocode_review`, `license_audit_log`, `market_state` tables; the licence FK is a trigger; `us:1` national row for the income benchmark.

@@ -16,6 +16,9 @@
 - The only edits to ported files: (a) `assets/` → `/assets/`, `ds/` → `/ds/` path prefixes; (b) `lib/leaflet.js` loader body (npm import, same exported API); (c) two lines in `App.vue`'s `<script setup>` to install the router sync composable; (d) `prototypeBar` default sourced from `import.meta.env`.
 - `logic.js` is never edited except for the four `assets/photos/` path prefixes on lines 394–396 and 431.
 - Route table (exact): `/`→`gate`; `/browse` + `?tab=listings|market` ↔ `browseMode`; `/practices/:id` ↔ `detailId`; `/requests`; `/seller`; `/admin` + `?tab=users|listings|activity|data` ↔ `adminTab`; unknown → `/`.
+- Signed-out visitors never reach a member screen by URL: the router sync applies the prototype's `go()` semantics — the gate renders, the URL is kept, and the intended route is applied the moment `state.auth` becomes true.
+- Every response carries `X-Robots-Tag: noindex, nofollow` and `/robots.txt` disallows all, unless `PUBLIC_INDEXING=true` (never set before launch).
+- `commit_sha` in `/api/healthz` is the deployed git SHA: `scripts/deploy.sh` sets the `COMMIT_SHA` service variable from `git rev-parse --short HEAD` before each `railway up`; the Dockerfile declares `ARG COMMIT_SHA`.
 - Visual tolerance: `maxDiffPixels: 0, threshold: 0.1`; ceiling if relaxed `maxDiffPixelRatio: 0.001`, recorded in `playwright.config.ts` with the reason.
 - Basemap tile hosts are aborted in both harness targets: `**/*.arcgisonline.com/**`.
 - Health body (exact keys): `status, version, environment, commit_sha, db{ok, postgis_version|error}, redis{ok|error}`. `/api/healthz` is always 200; `/api/healthz/deep` is 503 when `db.ok` or `redis.ok` is false.
@@ -280,7 +283,7 @@ git push origin feat/foundation && git push production feat/foundation
 - Modify: `frontend/src/App.vue:1295-1318` (script block only: two added lines + `prototypeBar` default), delete `frontend/src/main.js`
 
 **Interfaces:**
-- Produces: `stateToRoute(state: RoutedState): RouteTarget`; `routeToPatch(to: {path: string; params: Record<string, unknown>; query: Record<string, unknown>}): Partial<RoutedState>`; `needsPatch(state, patch): boolean`; `sameLocation(a: RouteTarget, b: {path: string; query: Record<string, unknown>}): boolean`; `useStateRouteSync(component, router)`.
+- Produces: `stateToRoute(state: RoutedState): RouteTarget`; `routeToPatch(to: {path: string; params: Record<string, unknown>; query: Record<string, unknown>}): Partial<RoutedState>`; `guard(state: RoutedState & {auth?: boolean}, patch: Partial<RoutedState>): { apply: Partial<RoutedState>; pending: Partial<RoutedState> | null }` (signed-out + member screen → `apply = {screen:'gate', gate:'signin'}`, `pending = patch`); `needsPatch(state, patch): boolean`; `sameLocation(a: RouteTarget, b: {path: string; query: Record<string, unknown>}): boolean`; `useStateRouteSync(component, router)`.
 - Consumes: `Component` from `logic.js` — `state.screen`, `state.browseMode`, `state.detailId`, `state.adminTab`, `setState(patch)`.
 
 - [ ] **Step 1: Write the failing sync tests**
@@ -288,7 +291,7 @@ git push origin feat/foundation && git push production feat/foundation
 `frontend/src/router/sync.test.ts`:
 ```ts
 import { describe, it, expect } from 'vitest';
-import { stateToRoute, routeToPatch, needsPatch, sameLocation } from './sync';
+import { stateToRoute, routeToPatch, guard, needsPatch, sameLocation } from './sync';
 
 const base = { screen: 'gate', browseMode: 'listings', detailId: 'p1', adminTab: 'users' };
 
@@ -336,6 +339,16 @@ describe('routeToPatch', () => {
   });
 });
 
+describe('guard (the prototype\'s go() semantics)', () => {
+  it('sends a signed-out visitor to the gate and remembers the intended route', () =>
+    expect(guard({ ...base, auth: false }, { screen: 'browse', browseMode: 'market' }))
+      .toEqual({ apply: { screen: 'gate', gate: 'signin' }, pending: { screen: 'browse', browseMode: 'market' } }));
+  it('applies member routes directly when signed in', () =>
+    expect(guard({ ...base, auth: true }, { screen: 'admin', adminTab: 'data' })).toEqual({ apply: { screen: 'admin', adminTab: 'data' }, pending: null }));
+  it('never guards the gate itself', () =>
+    expect(guard({ ...base, auth: false }, { screen: 'gate' })).toEqual({ apply: { screen: 'gate' }, pending: null }));
+});
+
 describe('needsPatch / sameLocation', () => {
   it('needsPatch is false when state already matches', () =>
     expect(needsPatch({ ...base, screen: 'browse' }, { screen: 'browse', browseMode: 'listings' })).toBe(false));
@@ -354,7 +367,7 @@ describe('needsPatch / sameLocation', () => {
 
 ```ts
 export type Screen = 'gate' | 'browse' | 'detail' | 'requests' | 'seller' | 'admin';
-export interface RoutedState { screen: string; browseMode?: string; detailId?: string; adminTab?: string }
+export interface RoutedState { screen: string; browseMode?: string; detailId?: string; adminTab?: string; gate?: string; auth?: boolean }
 export interface RouteTarget { path: string; query: Record<string, string> }
 interface RouteLike { path: string; params: Record<string, unknown>; query: Record<string, unknown> }
 
@@ -389,6 +402,13 @@ export function routeToPatch(to: RouteLike): Partial<RoutedState> {
   if (to.path === '/seller') return { screen: 'seller' };
   if (to.path === '/admin') return { screen: 'admin', adminTab: pick(to.query.tab, ADMIN_TABS, 'users') };
   return { screen: 'gate' };
+}
+
+// The prototype's go(): a member screen requested while signed out shows the gate
+// (sign-in tab) and the request is remembered until auth flips true.
+export function guard(state: RoutedState & { auth?: boolean }, patch: Partial<RoutedState>): { apply: Partial<RoutedState>; pending: Partial<RoutedState> | null } {
+  if (patch.screen && patch.screen !== 'gate' && !state.auth) return { apply: { screen: 'gate', gate: 'signin' } as Partial<RoutedState>, pending: patch };
+  return { apply: patch, pending: null };
 }
 
 export function needsPatch(state: RoutedState, patch: Partial<RoutedState>): boolean {
@@ -430,22 +450,29 @@ export const router = createRouter({ history: createWebHistory(), routes });
 ```ts
 import { watch } from 'vue';
 import type { Router } from 'vue-router';
-import { needsPatch, routeToPatch, sameLocation, stateToRoute, type RoutedState } from './sync';
+import { guard, needsPatch, routeToPatch, sameLocation, stateToRoute, type RoutedState } from './sync';
 
 interface StatefulComponent { state: RoutedState; setState(patch: Partial<RoutedState>): void }
 
-// Two one-way bindings with loop guards. Route → state is applied first so a
-// deep link is honoured before the state → route watcher can rewrite the URL.
+// Route → state first (so a deep link is honoured before the state → route watcher can
+// rewrite the URL), then state → route. A member route requested while signed out shows
+// the gate, keeps the URL, and is applied the moment the fixture sign-in flips auth.
 export function useStateRouteSync(c: StatefulComponent, router: Router): void {
+  let pending: Partial<RoutedState> | null = null;
   const apply = (to: { path: string; params: Record<string, unknown>; query: Record<string, unknown> }) => {
-    const patch = routeToPatch(to);
-    if (needsPatch(c.state, patch)) c.setState(patch);
+    const g = guard(c.state, routeToPatch(to));
+    pending = g.pending;
+    if (needsPatch(c.state, g.apply)) c.setState(g.apply);
   };
   apply(router.currentRoute.value);
   router.afterEach((to) => apply(to));
+  watch(() => c.state.auth, (auth) => {
+    if (auth && pending) { const p = pending; pending = null; c.setState(p); }
+  });
   watch(
     () => stateToRoute(c.state),
     (loc) => {
+      if (pending) return;                       // keep the deep link visible while the gate is shown
       const cur = router.currentRoute.value;
       if (sameLocation(loc, cur)) return;
       if (loc.path === cur.path) router.replace(loc); else router.push(loc);
@@ -517,6 +544,13 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin fea
 
 ```bash
 cd frontend && npm install -D @playwright/test && npx playwright install chromium
+# Vendor the exact files support.js loads (SRI-pinned, so the bytes must be identical) so CI
+# never depends on unpkg being up. MIT-licensed; committed under the reference bundle.
+V="../docs/design-reference/design_handoff_practice_match_v2/vendor"; mkdir -p "$V"
+curl -sSL -o "$V/react.production.min.js"     https://unpkg.com/react@18.3.1/umd/react.production.min.js
+curl -sSL -o "$V/react-dom.production.min.js" https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js
+curl -sSL -o "$V/babel.min.js"                https://unpkg.com/@babel/standalone@7.29.0/babel.min.js
+grep -oE 'https://unpkg.com/[^"]+' "$V/../support.js" | sort -u   # must list exactly these three URLs
 ```
 
 - [ ] **Step 2: Reference static server** — `frontend/tests/reference-server.mjs`
@@ -607,13 +641,28 @@ export default defineConfig({
 
 ```ts
 import type { Page } from '@playwright/test';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export type JumpLabel = 'Access' | 'Browse' | 'Listing' | 'Requests' | 'Seller' | 'Admin';
 
 // Deterministic rendering on both targets: no basemap tiles (markers still draw
 // over the blank canvas), fonts loaded, pointer parked, animations settled.
+const VENDOR = join(fileURLToPath(new URL('.', import.meta.url)), '../../docs/design-reference/design_handoff_practice_match_v2/vendor');
+const VENDORED: Record<string, string> = {
+  'https://unpkg.com/react@18.3.1/umd/react.production.min.js': 'react.production.min.js',
+  'https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js': 'react-dom.production.min.js',
+  'https://unpkg.com/@babel/standalone@7.29.0/babel.min.js': 'babel.min.js'
+};
+
 export async function prepare(page: Page): Promise<void> {
   await page.route(/arcgisonline\.com/, (route) => route.abort());
+  // The reference runtime loads React/Babel from unpkg with SRI hashes; serve the vendored
+  // identical bytes so the suite is deterministic and offline-safe (same hashes → SRI passes).
+  await page.route('https://unpkg.com/**', (route) => {
+    const file = VENDORED[route.request().url()];
+    return file ? route.fulfill({ path: join(VENDOR, file), contentType: 'text/javascript' }) : route.abort();
+  });
 }
 
 export async function booted(page: Page): Promise<void> {
@@ -1008,6 +1057,7 @@ class Settings(BaseSettings):
     api_secret_key: str
     allowed_origins: str = ""
     commit_sha: str = "dev"
+    public_indexing: bool = False  # flip to true at launch; until then every response is noindex
 
     @property
     def origins(self) -> list[str]:
@@ -1162,6 +1212,21 @@ async def test_api_404_wins_over_spa_fallback(client):
     assert r.status_code == 404 and r.json()["error"]["code"] == "NOT_FOUND"
 
 
+async def test_noindex_until_public_indexing_is_enabled(client):
+    r = await client.get("/")
+    assert r.headers["x-robots-tag"] == "noindex, nofollow"
+    robots = await client.get("/robots.txt")
+    assert robots.status_code == 200 and robots.text == "User-agent: *\nDisallow: /\n"
+
+
+async def test_indexing_allowed_when_flag_is_set(dist, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "public_indexing", True)
+    async with httpx.AsyncClient(transport=ASGITransport(app=create_app(dist=dist)), base_url="http://test") as c:
+        assert "x-robots-tag" not in (await c.get("/")).headers
+        assert (await c.get("/robots.txt")).text == "User-agent: *\nAllow: /\n"
+
+
 async def test_path_traversal_never_escapes_dist(client):
     r = await client.get("/..%2F..%2Fpyproject.toml")
     assert r.status_code == 200 and 'id="app"' in r.text  # falls back to index, not the file
@@ -1314,6 +1379,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import PlainTextResponse
 
 from app.api.health import not_found_router, router as health_router
 from app.config import settings
@@ -1323,6 +1389,18 @@ from app.version import VERSION
 
 def create_app(dist: Path | None = None) -> FastAPI:
     app = FastAPI(title="Practice Match API", version=VERSION, docs_url=None, redoc_url=None, openapi_url=None)
+
+    @app.middleware("http")
+    async def robots_header(request, call_next):
+        response = await call_next(request)
+        if not settings.public_indexing:
+            response.headers["X-Robots-Tag"] = "noindex, nofollow"
+        return response
+
+    @app.get("/robots.txt", include_in_schema=False)
+    async def robots() -> PlainTextResponse:
+        return PlainTextResponse("User-agent: *\nAllow: /\n" if settings.public_indexing else "User-agent: *\nDisallow: /\n")
+
     if settings.origins:
         app.add_middleware(
             CORSMiddleware, allow_origins=settings.origins, allow_credentials=True,
@@ -1729,7 +1807,6 @@ esac
 # frontend's VITE_ENVIRONMENT; RAILWAY_GIT_COMMIT_SHA stamps both layers.
 FROM node:22-bookworm-slim AS frontend-build
 ARG ENVIRONMENT=qa
-ARG RAILWAY_GIT_COMMIT_SHA=dev
 WORKDIR /work/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
@@ -1738,14 +1815,16 @@ ENV VITE_ENVIRONMENT=$ENVIRONMENT
 RUN npm run build
 
 FROM python:3.12-slim-bookworm AS runtime
-ARG RAILWAY_GIT_COMMIT_SHA=dev
+# `railway up` builds are not git-connected, so RAILWAY_GIT_COMMIT_SHA is usually absent;
+# scripts/deploy.sh sets the COMMIT_SHA service variable before each upload instead.
+ARG COMMIT_SHA=dev
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
     POETRY_VERSION=2.4.1 \
     POETRY_NO_INTERACTION=1 \
     POETRY_VIRTUALENVS_CREATE=false \
     PIP_NO_CACHE_DIR=1 \
-    COMMIT_SHA=$RAILWAY_GIT_COMMIT_SHA
+    COMMIT_SHA=$COMMIT_SHA
 RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl \
     && rm -rf /var/lib/apt/lists/*
 RUN pip install "poetry==${POETRY_VERSION}"
@@ -1876,6 +1955,7 @@ cat > "$tmp/railway" <<'F'
 #!/usr/bin/env bash
 case "$1" in
   status) echo "{\"name\":\"${FAKE_PROJECT}\"}" ;;
+  variable) : ;;
   up) echo "UP $*" >> "$FAKE_LOG" ;;
 esac
 F
@@ -1910,8 +1990,10 @@ if [[ "$PROJECT" != "Practice Match" ]]; then
   exit 65
 fi
 echo "🚦 railway status → Project: $PROJECT | target environment: $ENV"
+SHA=$(git rev-parse --short HEAD)
 for svc in api worker; do
-  echo "→ railway up --environment $ENV --service $svc --ci"
+  railway variable set "COMMIT_SHA=$SHA" --service "$svc" --environment "$ENV" --skip-deploys >/dev/null
+  echo "→ railway up --environment $ENV --service $svc --ci  (commit $SHA)"
   railway up --environment "$ENV" --service "$svc" --ci
 done
 [[ -n "${SKIP_VERIFY:-}" ]] || scripts/verify-deploy.sh "$ENV"
@@ -2020,7 +2102,7 @@ QA_URL="https://$(railway domain list --service api --environment QA --json | py
 scripts/verify-deploy.sh QA "$QA_URL"
 ```
 If the `railway domain list --json` shape differs, read the `*.up.railway.app` host from `railway domain list --service api --environment QA` (plain) and set `QA_URL` by hand.
-Expected: `healthz OK  version 0.1.0 … postgis 3.5.x`, `deep healthz OK`, `SPA fallback OK`. Open `$QA_URL` in the Playwright MCP browser (or `curl`) and confirm the gate renders with the jump bar (QA build).
+Expected: `healthz OK  version 0.1.0 … postgis 3.5.x`, `deep healthz OK`, `SPA fallback OK`, and `commit_sha` equal to `git rev-parse --short HEAD`. Open `$QA_URL` and confirm the gate renders **with the jump bar** — that proves Railway passed `ENVIRONMENT` into the Docker `ARG` (`VITE_ENVIRONMENT=qa`). If the bar is missing, the build arg did not arrive: add `GET /api/config → {"environment": …}` to `app/api/health.py`, fetch it in `main.ts` before mounting, and pass `prototypeBar` from it instead of `import.meta.env`; record the change in the spec.
 
 - [ ] **Step 9: Commit the scripts**
 
@@ -2419,13 +2501,28 @@ cd frontend && PW_APP_URL=https://qa.foundation.vin npx playwright test --config
 
 Update the spec's status line to `Implemented 2026-09-__ — live on qa.foundation.vin and foundation.vin` and commit. Then write the hand-back:
 - **Forwardable summary** (no jargon): Practice Match is live at foundation.vin as the approved design with sample listings; the sign-in is a preview until member accounts arrive; the team test site is qa.foundation.vin.
-- **Engineer's note:** version, commit, both remotes pushed, CI green in both repos, visual suite 25/25 on QA, production smoke, worker ping; explicitly list anything not verified (e.g. Linux-vs-macOS rendering if the tolerance was relaxed) and the VIN Foundation open items (basemap licence, mobile breakpoint).
+- **Engineer's note:** version, commit, both remotes pushed, both hosts `noindex` until launch, the fact that production still exposes the design's "Prototype — access states" shortcuts (anyone can enter the fixture marketplace and its fictional admin console — accepted by John 2026-09-05, removed in Sub-project 2), CI green in both repos, visual suite 25/25 on QA, production smoke, worker ping; explicitly list anything not verified (e.g. Linux-vs-macOS rendering if the tolerance was relaxed) and the VIN Foundation open items (basemap licence, mobile breakpoint).
 
 - [ ] **Step 7: Finish the branch**
 
 Use superpowers:finishing-a-development-branch: merge `feat/foundation` → `main`, push `main` to both remotes, delete the branch, then invoke the Census data-layer plan.
 
 ---
+
+## Red-team review (2026-09-05) — findings and dispositions
+
+| # | Finding | Severity | Disposition |
+|---|---|---|---|
+| F1 | Deep links bypassed the fixture gate: `routeToPatch` set a member screen while `auth=false`, and `renderVals` shows a screen by `state.screen` alone. The smoke test asserting the gate would have failed. | High | Fixed in Task 2: `guard()` applies the prototype's `go()` semantics (gate + remembered route, applied when `auth` flips); state→route watcher pauses while a route is pending. Spec §3 corrected. |
+| F2 | Visual harness depended on unpkg at CI time (React/ReactDOM/Babel loaded by `support.js`). An unpkg outage = red CI, and reference rendering could drift with CDN changes. | Medium | Fixed in Task 3: vendored the three SRI-pinned files; `prepare()` fulfils `https://unpkg.com/**` from disk on both targets. |
+| F3 | `commit_sha` would read `dev` on every deploy — `railway up` builds are not git-connected. | Medium | Fixed in Tasks 7–8: `deploy.sh` sets `COMMIT_SHA` per service before upload; Dockerfile `ARG COMMIT_SHA`. |
+| F4 | Two public prototype hosts with fixture listings and a fictional admin console were indexable. | Medium | Fixed in Task 5: `X-Robots-Tag: noindex, nofollow` + `robots.txt` disallow until `PUBLIC_INDEXING=true`. |
+| F5 | `VITE_ENVIRONMENT` via Docker `ARG` from a Railway service variable was asserted, not verified. | Low | Task 8 step 8 now verifies the jump bar on QA and names the runtime-config fallback. |
+| F6 | `updateSnapshots: 'none'` + a missing baseline: confirmed Playwright fails (desired). | Info | No change. |
+| F7 | Two `railway up` builds per deploy (api, worker) double build time. | Low | Accepted — Rounds pattern; revisit with a registry image if builds exceed ~8 min. |
+| F8 | `routeToPatch` + `jumpTo` interplay: `jumpTo` sets auth and screen together, so the pending-route logic never fires for jump-bar navigation. | Info | Verified by reading `logic.js:154`; no change. |
+| F9 | The design's access-state shortcuts remain on production (anyone "enters" the prototype). | Accepted risk | John's decision 2026-09-05; removed in Sub-project 2; called out in the hand-back. |
+| F10 | `railway environment new QA --duplicate production` duplicates the database service with the template's rolling image tag. | Low | Task 8 step 6 already repeats the image pin for QA. |
 
 ## Self-review (run by the plan author before hand-off)
 

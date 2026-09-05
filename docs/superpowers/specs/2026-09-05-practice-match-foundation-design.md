@@ -114,7 +114,7 @@ practice-match/
    | `/admin` | `admin` | `?tab=users\|listings\|activity\|data` ↔ `state.adminTab` (the design's own keys; `activity` is the Requests tab, `data` is Data Sources) |
    | anything else | — | redirect to `/` |
 
-   Member screens still depend on `state.auth` exactly as the prototype does (fixture sign-in). Deep-linking to `/browse` while signed out shows the gate, because `renderVals()` already gates on `auth` — the router does not add a guard of its own.
+   Member screens depend on `state.auth` (fixture sign-in). `renderVals()` selects a screen by `state.screen` alone, so the sync layer — not the router — enforces the prototype's `go()` rule: a member route requested while signed out renders the gate (sign-in tab), keeps the URL, and applies the requested route the moment `auth` becomes true (`guard()` in `router/sync.ts`).
 4. **Prototype props from the environment.** `prototypeBar` = `import.meta.env.VITE_ENVIRONMENT !== 'production'` (jump bar on in QA, off in production). `startScreen` and `startViewport` remain as props with their defaults and are not driven by the URL: the jump bar's own "Mobile view" / "Desktop view" toggle is the design's mobile switch, and the visual harness uses it on both targets (see §9 on the undefined real-device breakpoint). `VITE_ENVIRONMENT` is set at image build time from the Railway service variable `ENVIRONMENT` (Dockerfile `ARG`).
 
 5. **Design-system cascade.** The reference loads three design-system stylesheets before the design's own `<style>` (`colors_and_type.css`, `preview/_preview.css`, `ui_kits/vin/kit.css`); the handoff `vue-app` loads only the first. `_preview.css` carries `* { margin: 0; padding: 0 }` and `-webkit-font-smoothing`, so default element spacing differs without it. `frontend/index.html` links all three from `/ds/` in the reference's order, ahead of `tokens.css`/`global.css`. (`_ds_bundle.js` only defines unused DS demo components and is not shipped.)
@@ -140,7 +140,7 @@ export interface Screen {
 - **Reference target** (`reference-baselines.spec.ts`, `npm run test:visual:baselines`): a static server serves `docs/design-reference/`; per state the harness opens `Practice Match V2.dc.html` (its defaults already show the jump bar on the gate at 1440×940), runs `steps`, waits, and saves `visual.spec.ts-snapshots/<name>-<platform>.png`.
 - **App target** (`visual.spec.ts`, `npm run test:visual`): Vite serves the app at `/`; per state the test runs the same `steps` (the jump bar and in-screen clicks reach every state on both targets, so the reference needs no `data-props` rewriting) and asserts `expect(page).toHaveScreenshot('<name>.png')`.
 
-**Determinism rules (both targets).** Block basemap tile hosts (`**/*.arcgisonline.com/**` → abort) so maps render markers/pills over a blank canvas; `animations: 'disabled'`, `caret: 'hide'`; wait for `document.fonts.ready` and one settled frame; fixed viewport; workers = 1. Fonts are the same self-hosted ProximaNova files on both sides.
+**Determinism rules (both targets).** Block basemap tile hosts (`**/*.arcgisonline.com/**` → abort) so maps render markers/pills over a blank canvas; serve the reference runtime's React/ReactDOM/Babel from vendored, byte-identical copies (`docs/design-reference/…/vendor/`) via `page.route('https://unpkg.com/**')` so the suite never depends on a CDN; `animations: 'disabled'`, `caret: 'hide'`; wait for `document.fonts.ready` and one settled frame; fixed viewport; workers = 1. Fonts are the same self-hosted ProximaNova files on both sides.
 
 **Tolerance.** Start at `maxDiffPixels: 0, threshold: 0.1`. If Chromium subpixel noise forces relaxation, the ceiling is `maxDiffPixelRatio: 0.001` and the actual value plus the reason is recorded in `playwright.config.ts` and in this section. Rounds runs 0.005 / 0.2; this project is stricter because both sides render in the same browser with the same DOM.
 
@@ -161,6 +161,7 @@ export interface Screen {
 - `GET /api/healthz/deep` → `200` when db and redis both respond, else `503` with the same body. Used by `scripts/verify-deploy.sh`, never by Railway.
 - Static serving of `frontend/dist` mounted after `/api/*`; unknown non-API paths return `index.html` (SPA fallback) so `/browse` deep-links work. `/api/*` unknown paths return JSON 404, never `index.html`.
 - CORS allowlist from `ALLOWED_ORIGINS` (comma-separated); default empty.
+- `X-Robots-Tag: noindex, nofollow` on every response and `/robots.txt` disallow-all until `PUBLIC_INDEXING=true` (both hosts are public prototypes before Sub-project 2).
 
 **Config (`app/config.py`, pydantic-settings).** `DATABASE_URL`, `REDIS_URL`, `ENVIRONMENT` (`qa` | `production` | `test`), `API_SECRET_KEY`, `ALLOWED_ORIGINS`; optional `COMMIT_SHA` (from `RAILWAY_GIT_COMMIT_SHA`). Missing required var → `SystemExit` at import with the variable named.
 
@@ -188,6 +189,7 @@ The current `A 91.195.240.94` (name.com parking) on both hosts is replaced.
 **Deploy loop.** No git auto-deploy. `scripts/deploy.sh <QA|production>`:
 
 1. `railway status` — must print `Project: Practice Match`; anything else aborts (John's 🚦 rule).
+1a. `railway variable set COMMIT_SHA=$(git rev-parse --short HEAD)` on `api` and `worker` (`--skip-deploys`) so `/api/healthz` reports the deployed commit (CLI uploads are not git-connected).
 2. `railway up --environment <env> --service api --ci`
 3. `railway up --environment <env> --service worker --ci`
 4. `scripts/verify-deploy.sh <env>` — `curl /api/healthz` (expects the environment name and the new version), `curl /api/healthz/deep` (expects 200), tails `railway logs --service api` for the boot lines.
