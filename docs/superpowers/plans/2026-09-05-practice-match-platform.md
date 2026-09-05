@@ -4015,18 +4015,16 @@ async def test_fourth_attempt_for_one_address_in_a_day_is_429(client, db_ready, 
     assert r.status_code == 429
 
 
-def test_hit_counts_within_a_window_and_denies_past_the_limit():
-    import asyncio
-
+async def test_hit_counts_within_a_window_and_denies_past_the_limit():
+    # An async test on pytest's own loop (asyncio auto mode): the pooled client is then disposed by the
+    # autouse `_dispose_pools` fixture. A private `asyncio.run()` loop leaked the connection and its
+    # GC-time ResourceWarning failed under `-W error` (11c, 2026-09-06).
     from app.db import get_redis
     from app.ratelimit import hit
 
-    async def go() -> list[bool]:
-        client = get_redis(settings.redis_url)
-        subject = uuid.uuid4().hex
-        return [await hit(client, "unit", subject, 2, 60) for _ in range(3)]
-
-    assert asyncio.run(go()) == [True, True, False]
+    client = get_redis(settings.redis_url)
+    subject = uuid.uuid4().hex
+    assert [await hit(client, "unit", subject, 2, 60) for _ in range(3)] == [True, True, False]
 ```
 (The `rl-…@example.org` rows are cleaned by a module-level fixture: add `@pytest.fixture(autouse=True, scope="module")` that deletes `email_normalised LIKE 'rl-%'` after the module.)
 
