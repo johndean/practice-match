@@ -70,6 +70,38 @@ describe('convert — template constructs', () => {
     expect(() => convert('<x-import component="NoSuchThing" from="./NoSuchThing.jsx" style="top: 0;"></x-import>'))
       .toThrow('unknown x-import component NoSuchThing');
   });
+
+  // Zero-gap audit, Phase 9: the guard-ordering fix was only ever exercised on ONE of the
+  // six component × known × style combinations. All six, as a table — so a future edit that
+  // reorders the two throws, or makes `out` truthy for an unknown component, is caught
+  // wherever it lands rather than only on the single case someone happened to write down.
+  describe('x-import guard order — every component/known/style combination', () => {
+    const CASES: { name: string; src: string; expected: 'ok' | RegExp }[] = [
+      { name: 'plain element, no style', src: '<div id="a"></div>', expected: 'ok' },
+      { name: 'plain element, with style', src: '<div style="top: 0;"></div>', expected: 'ok' },
+      { name: 'image-slot (known), no style', src: '<image-slot id="x"></image-slot>', expected: 'ok' },
+      { name: 'image-slot (known), with style', src: '<image-slot id="x" style="top: 0;"></image-slot>', expected: 'ok' },
+      { name: 'x-import known, no style', src: '<x-import component="MarketMap" from="./m.jsx"></x-import>', expected: 'ok' },
+      { name: 'x-import known, with style', src: '<x-import component="MarketMap" from="./m.jsx" style="top: 0;"></x-import>', expected: /^x-import with a style attribute is unsupported/ },
+      { name: 'x-import UNKNOWN, no style', src: '<x-import component="NoSuchThing" from="./n.jsx"></x-import>', expected: /^unknown x-import component NoSuchThing$/ },
+      { name: 'x-import UNKNOWN, with style', src: '<x-import component="NoSuchThing" from="./n.jsx" style="top: 0;"></x-import>', expected: /^unknown x-import component NoSuchThing$/ },
+      // The degenerate case: no `component` attribute at all is still an unknown component,
+      // not a crash reading COMPONENTS[undefined].
+      { name: 'x-import with no component attribute', src: '<x-import from="./n.jsx"></x-import>', expected: /^unknown x-import component undefined$/ }
+    ];
+    for (const c of CASES) {
+      it(c.name, () => {
+        if (c.expected === 'ok') expect(() => convert(c.src)).not.toThrow();
+        else expect(() => convert(c.src)).toThrow(c.expected);
+      });
+    }
+
+    // The reordering must not have changed what a *valid* conversion produces.
+    it('leaves unrelated conversion output untouched', () => {
+      expect(convert('<image-slot id="x" style="top: 0;"></image-slot>').template).toBe('<ImageSlot id="x" style="top: 0;"></ImageSlot>');
+      expect(convert('<div style="top: 0;"><span>a</span></div>').template).toBe('<div style="top: 0;"><span>a</span></div>');
+    });
+  });
   it('drops HTML comments and the helmet block, escapes text, keeps attribute case', () => {
     expect(extractTemplate('<html><x-dc><helmet><style>a{}</style></helmet>\n<div aria-label="Go">a &amp; b</div></x-dc><script data-dc-script></script></html>')).toBe('\n<div aria-label="Go">a &amp; b</div>');
     expect(convert('<!-- note --><div>a &lt; b</div>').template).toBe('<div>a &lt; b</div>');
