@@ -1,4 +1,5 @@
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI, Request, Response
@@ -7,12 +8,20 @@ from fastapi.responses import PlainTextResponse
 
 from app.api.health import not_found_router, router as health_router
 from app.config import settings
+from app.db import dispose_all
 from app.static import DIST, mount_spa
 from app.version import VERSION
 
 
 def create_app(dist: Path | None = None) -> FastAPI:
-    app = FastAPI(title="Practice Match API", version=VERSION, docs_url=None, redoc_url=None, openapi_url=None)
+    @asynccontextmanager
+    async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+        yield
+        await dispose_all()
+
+    app = FastAPI(
+        title="Practice Match API", version=VERSION, docs_url=None, redoc_url=None, openapi_url=None, lifespan=lifespan
+    )
 
     @app.middleware("http")
     async def robots_header(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
