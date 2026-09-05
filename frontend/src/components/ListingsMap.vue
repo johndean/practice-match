@@ -16,86 +16,50 @@
 
 <script setup>
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
-import { BASEMAPS, LABEL_TILES, clusterIcon, clusterize, loadLeaflet, pill } from '../lib/leaflet.js';
+import { clusterIcon, clusterize, pill } from '../map/markers.js';
+import { createEngine } from '../map/create';
 
 const props = defineProps({
-  markers: { type: Array, default: () => [] },
-  activeId: { type: String, default: null },
-  hoverId: { type: String, default: null },
-  onSelect: { type: Function, default: null },
-  onClusterClick: { type: Function, default: null },
-  center: { type: Array, default: () => [30.31, -97.75] },
-  zoom: { type: Number, default: 10 },
-  dimmed: { type: Array, default: () => [] },
-  resizeKey: { type: String, default: '' }
+  markers: { type: Array, default: () => [] }, activeId: { type: String, default: null }, hoverId: { type: String, default: null },
+  onSelect: { type: Function, default: null }, onClusterClick: { type: Function, default: null },
+  center: { type: Array, default: () => [30.31, -97.75] }, zoom: { type: Number, default: 10 }, dimmed: { type: Array, default: () => [] }, resizeKey: { type: String, default: '' }
 });
-
 const host = ref(null);
 const status = ref('loading');
 const z = ref(props.zoom);
-let map = null;
-let layer = null;
+let engine = null;
+let offMove = null;
 
-onMounted(() => {
-  loadLeaflet()
-    .then((L) => {
-      if (!host.value || map) return;
-      map = L.map(host.value, { center: props.center, zoom: props.zoom, zoomControl: false, attributionControl: true });
-      L.tileLayer(BASEMAPS.map.url, { attribution: BASEMAPS.map.attribution, maxZoom: 18 }).addTo(map);
-      // The gray canvas carries almost no labels — Esri's matching reference layer supplies them.
-      L.tileLayer(LABEL_TILES, { maxZoom: 18, pane: 'shadowPane' }).addTo(map);
-      L.control.zoom({ position: 'bottomright' }).addTo(map);
-      layer = L.layerGroup().addTo(map);
-      map.on('zoomend', () => { z.value = map.getZoom(); });
-      status.value = 'ready';
-      setTimeout(() => map.invalidateSize(), 60);
-      draw();
-    })
-    .catch(() => { status.value = 'error'; });
+onMounted(async () => {
+  try {
+    const e = await createEngine();
+    if (!host.value || engine) return;
+    await e.mount(host.value, { center: props.center, zoom: props.zoom, basemap: 'map', zoomControl: 'bottomright', scaleControl: false, groups: ['layer'] });
+    engine = e;
+    offMove = e.onMove((_c, zoom) => { z.value = zoom; });
+    status.value = 'ready';
+    draw();
+  } catch { status.value = 'error'; }
 });
-
-onBeforeUnmount(() => {
-  if (map) { map.remove(); map = null; }
-});
+onBeforeUnmount(() => { if (offMove) offMove(); if (engine) { engine.destroy(); engine = null; } });
 
 function draw() {
-  const L = window.L;
-  if (!L || !map || !layer) return;
-  layer.clearLayers();
+  if (!engine) return;
+  engine.clear('layer');
   clusterize(props.markers, z.value).forEach((entry) => {
     if (entry.kind === 'cluster') {
-      const icon = L.divIcon({ html: clusterIcon(entry.count), className: '', iconSize: [44, 44], iconAnchor: [22, 22] });
-      L.marker([entry.lat, entry.lng], { icon })
-        .on('click', () => {
-          map.setView([entry.lat, entry.lng], Math.max(z.value + 2, 11));
-          if (props.onClusterClick) props.onClusterClick(entry.ids);
-        })
-        .addTo(layer);
+      engine.marker([entry.lat, entry.lng], { html: clusterIcon(entry.count), size: [44, 44], anchor: [22, 22],
+        onClick: () => { engine.setView([entry.lat, entry.lng], Math.max(z.value + 2, 11)); if (props.onClusterClick) props.onClusterClick(entry.ids); } }, 'layer');
     } else {
       const m = entry.m;
       const active = m.id === props.activeId || m.id === props.hoverId;
-      const icon = L.divIcon({
-        html: pill(m.priceLabel, active, props.dimmed.indexOf(m.id) > -1),
-        className: '',
-        iconSize: [70, 26],
-        iconAnchor: [35, 13]
-      });
-      L.marker([m.lat, m.lng], { icon, zIndexOffset: active ? 1000 : 0 })
-        .on('click', () => props.onSelect && props.onSelect(m.id))
-        .addTo(layer);
+      engine.marker([m.lat, m.lng], { html: pill(m.priceLabel, active, props.dimmed.indexOf(m.id) > -1), size: [70, 26], anchor: [35, 13], zIndexOffset: active ? 1000 : 0,
+        onClick: () => props.onSelect && props.onSelect(m.id) }, 'layer');
     }
   });
 }
 
 watch([() => props.markers, () => props.activeId, () => props.hoverId, z, status, () => props.dimmed], draw, { deep: true });
-
-watch(() => props.resizeKey, () => {
-  if (!map) return;
-  setTimeout(() => map.invalidateSize(), 80);
-});
-
-watch([() => props.center && props.center[0], () => props.center && props.center[1], () => props.zoom, status], () => {
-  if (!map || !props.center) return;
-  map.setView(props.center, props.zoom, { animate: true });
-});
+watch(() => props.resizeKey, () => { if (engine) engine.show(); });
+watch([() => props.center && props.center[0], () => props.center && props.center[1], () => props.zoom, status], () => { if (engine && props.center) engine.setView(props.center, props.zoom, true); });
 </script>
