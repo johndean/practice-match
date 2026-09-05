@@ -8,7 +8,9 @@ _PYPROJECT = Path(__file__).resolve().parent.parent / "pyproject.toml"
 
 def app_version() -> str:
     with _PYPROJECT.open("rb") as fh:
-        return tomllib.load(fh)["project"]["version"]
+        version = tomllib.load(fh)["project"]["version"]
+    assert isinstance(version, str)  # narrows tomllib's Any for mypy --strict (fix round 1, incidental)
+    return version
 
 
 VERSION = app_version()

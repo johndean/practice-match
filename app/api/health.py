@@ -1,9 +1,10 @@
 import asyncio
+from typing import TypedDict
 
 from fastapi import APIRouter
 from fastapi.responses import JSONResponse
 
-from app.checks import check_db, check_redis
+from app.checks import ComponentStatus, check_db, check_redis
 from app.config import settings
 from app.version import VERSION
 
@@ -11,7 +12,16 @@ router = APIRouter(prefix="/api")
 not_found_router = APIRouter(prefix="/api")  # include LAST among /api routers
 
 
-async def _body() -> dict:
+class HealthBody(TypedDict):
+    status: str
+    version: str
+    environment: str
+    commit_sha: str
+    db: ComponentStatus
+    redis: ComponentStatus
+
+
+async def _body() -> HealthBody:
     db, redis_ = await asyncio.gather(check_db(settings.database_url), check_redis(settings.redis_url))
     return {
         "status": "ok",
@@ -24,7 +34,7 @@ async def _body() -> dict:
 
 
 @router.get("/healthz")
-async def healthz() -> dict:
+async def healthz() -> HealthBody:
     """Railway's healthcheck. Always 200; component state is inside the body."""
     return await _body()
 

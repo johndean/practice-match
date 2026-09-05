@@ -1,11 +1,14 @@
 """Serve the built Vue app. Fingerprinted bundles under /_app are immutable for a
 year; design assets (/assets, /ds) are short-cached because their names never
 change (the sub-* icons will be swapped in place); index.html always revalidates."""
+import os
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 from fastapi.staticfiles import StaticFiles
+from starlette.staticfiles import PathLike
+from starlette.types import Scope
 
 DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
 INDEX_HEADERS = {"Cache-Control": "no-cache"}
@@ -13,8 +16,14 @@ FILE_HEADERS = {"Cache-Control": "public, max-age=3600"}
 
 
 class ImmutableStaticFiles(StaticFiles):
-    def file_response(self, *args, **kwargs):  # type: ignore[override]
-        resp = super().file_response(*args, **kwargs)
+    def file_response(
+        self,
+        full_path: PathLike,
+        stat_result: os.stat_result,
+        scope: Scope,
+        status_code: int = 200,
+    ) -> Response:
+        resp = super().file_response(full_path, stat_result, scope, status_code)
         resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
         return resp
 

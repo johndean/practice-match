@@ -1,6 +1,7 @@
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
@@ -14,7 +15,7 @@ def create_app(dist: Path | None = None) -> FastAPI:
     app = FastAPI(title="Practice Match API", version=VERSION, docs_url=None, redoc_url=None, openapi_url=None)
 
     @app.middleware("http")
-    async def robots_header(request, call_next):
+    async def robots_header(request: Request, call_next: Callable[[Request], Awaitable[Response]]) -> Response:
         response = await call_next(request)
         if not settings.public_indexing:
             response.headers["X-Robots-Tag"] = "noindex, nofollow"

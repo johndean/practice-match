@@ -27,7 +27,7 @@ class Settings(BaseSettings):
 
 def load_settings() -> Settings:
     try:
-        return Settings()
+        return Settings()  # type: ignore[call-arg]  # required fields come from the environment at runtime, not this call site (fix round 1, incidental)
     except ValidationError as exc:
         names = ", ".join(sorted({str(e["loc"][0]).upper() for e in exc.errors()}))
         print(f"[config] missing or invalid environment variables: {names}", file=sys.stderr)

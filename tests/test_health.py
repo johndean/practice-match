@@ -1,3 +1,5 @@
+import logging
+
 import httpx
 import pytest
 from httpx import ASGITransport
@@ -39,6 +41,17 @@ async def test_healthz_stays_200_with_components_down(client, components_down):
     body = r.json()
     assert body["db"]["ok"] is False and "error" in body["db"]
     assert body["redis"]["ok"] is False and "error" in body["redis"]
+
+
+async def test_healthz_error_text_is_generic_and_detail_is_logged(client, components_down, caplog):
+    caplog.set_level(logging.WARNING, logger="app.checks")
+    r = await client.get("/api/healthz")
+    body = r.json()
+    db_error = body["db"]["error"]
+    redis_error = body["redis"]["error"]
+    assert db_error.isidentifier() and " " not in db_error
+    assert redis_error.isidentifier() and " " not in redis_error
+    assert "health check failed" in caplog.text
 
 
 async def test_deep_healthz_is_503_with_components_down(client, components_down):
