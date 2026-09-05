@@ -1,7 +1,14 @@
 export interface Call { fn: string; args: unknown[] }
 export interface LeafletStub { calls: Call[]; map: FakeMap; tiles: FakeTile[]; L: unknown }
 
-class FakeLayer { added: unknown[] = []; on(ev: string, cb: () => void) { (this as any)['on_' + ev] = cb; return this; } addTo(g: any) { g.added?.push(this); (this as any).parent = g; return this; } remove() { const p = (this as any).parent; if (p?.added) p.added = p.added.filter((x: unknown) => x !== this); } bindTooltip(text: string, opts: unknown) { (this as any).tooltip = { text, opts }; return this; } }
+// Every addTo() stamps a monotonically increasing `seq`, so a test can read back the order
+// in which layers were attached — which is the order Leaflet's SHARED markerPane sees, and
+// therefore what decides which of two z-index-tied markers paints on top. Counting attaches
+// lets MarketMapView.test.ts state its invariant semantically ("every overlay layer was
+// attached before every pin layer") instead of pinning a fixture-shaped expected array.
+let SEQ = 0;
+
+class FakeLayer { added: unknown[] = []; seq = -1; on(ev: string, cb: () => void) { (this as any)['on_' + ev] = cb; return this; } addTo(g: any) { g.added?.push(this); (this as any).parent = g; this.seq = SEQ++; return this; } remove() { const p = (this as any).parent; if (p?.added) p.added = p.added.filter((x: unknown) => x !== this); } bindTooltip(text: string, opts: unknown) { (this as any).tooltip = { text, opts }; return this; } }
 export class FakeTile extends FakeLayer { url: string; options: Record<string, unknown>; constructor(url: string, options: Record<string, unknown>) { super(); this.url = url; this.options = options; } setUrl(u: string) { this.url = u; } }
 class FakeGroup extends FakeLayer { clearLayers() { this.added = []; } }
 export class FakeMap { added: unknown[] = []; handlers: Record<string, () => void> = {}; center: unknown; zoom: number; invalidated = 0; attributionControl = { _update: () => { (this as any).attrUpdated = ((this as any).attrUpdated ?? 0) + 1; } };
@@ -13,6 +20,7 @@ export class FakeMap { added: unknown[] = []; handlers: Record<string, () => voi
   removeLayer(l: unknown) { this.added = this.added.filter((x) => x !== l); } remove() { (this as any).removed = true; } fitBounds(b: unknown, o?: unknown) { (this as any).fitted = [b, o]; } }
 
 export function installLeafletStub(): LeafletStub {
+  SEQ = 0;
   const calls: Call[] = []; const tiles: FakeTile[] = []; let map: FakeMap;
   const rec = (fn: string, ret: (...a: any[]) => unknown) => (...args: unknown[]) => { calls.push({ fn, args }); return ret(...args); };
   const L = {
