@@ -2572,6 +2572,13 @@ git add -A && git commit -m "feat(db): ledger migration runner, PostGIS extensio
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/platform && git push production feat/platform
 ```
 
+
+**Fix round 1 (2026-09-05, after review — John's ruling "fix all three now"; files: `scripts/migrate.py`, `tests/test_migrate.py`, `pyproject.toml` + `poetry.lock` (dev group only); one commit):**
+- [ ] **Atomic apply-and-record (Important, plan-mandated).** In `run()`, each migration file's SQL and its `INSERT INTO schema_migrations` execute in ONE transaction: `conn.autocommit = False` for the per-file block, `cur.execute(sql)` then the insert, then `conn.commit()`; any exception → `conn.rollback()` and re-raise (the advisory lock stays session-level and is released in the existing `finally`). `CREATE EXTENSION` is transactional in Postgres, so `001_init.sql` is unaffected. RED (scratch DB): a temp migration `002_tmp.sql` that creates a table, with the ledger insert forced to fail (monkeypatch the cursor's `execute` to raise on the `INSERT`) → after `run()` raises, the table does NOT exist and the ledger has no row for it; GREEN with the single transaction. Keep the existing failure-not-recorded test.
+- [ ] **CLI tests (Minor).** `main()` returns `2` and prints the variable name to stderr when `DATABASE_URL` is unset (`monkeypatch.delenv`); returns `0` and applies nothing on a second run against the scratch DB (`monkeypatch.setenv`), asserting the printed list of applied names is empty. RED first (the tests fail before any change only if `main()` misbehaves — if they pass immediately, break `main()`'s return once, watch, restore).
+- [ ] **Driver stubs (Minor).** Add `types-psycopg2` to `[tool.poetry.group.dev.dependencies]`, `poetry lock && poetry install`, and prove it: `poetry run mypy scripts/migrate.py --strict` → `Success` (RED before: `import-untyped` on `psycopg2`).
+- [ ] Gates with the containers up: `poetry run pytest -q -W error` all green; `poetry run mypy app --strict` clean; `poetry run mypy scripts/migrate.py --strict` clean. Commit — `fix(db): migration apply and ledger record commit as one transaction; CLI tests; psycopg2 stubs`.
+
 ---
 
 ### Task 7: Celery skeleton, role dispatcher, Docker image, Railway config
