@@ -47,3 +47,19 @@ def test_ignore_files_keep_secrets_tests_and_node_modules_out_of_uploads_and_ima
         text = (ROOT / name).read_text().split()
         for entry in ("frontend/node_modules", "tests", ".env", ".env.*", ".venv"):
             assert entry in text, f"{name} lacks {entry}"
+
+
+def test_dockerfile_builds_the_coming_soon_page_in_its_own_stage():
+    d = (ROOT / "Dockerfile").read_text()
+    assert "FROM node:22-bookworm-slim AS coming-soon-build" in d
+    assert "COPY coming-soon/package.json coming-soon/package-lock.json ./" in d
+    assert "COPY --from=coming-soon-build /work/coming-soon/dist/ ./coming-soon/dist/" in d
+
+
+def test_ignore_files_keep_the_coming_soon_build_and_modules_out():
+    for name in (".railwayignore", ".dockerignore"):
+        text = (ROOT / name).read_text().split()
+        for entry in ("coming-soon/node_modules", "coming-soon/dist"):
+            assert entry in text, f"{name} lacks {entry}"
+    assert "coming-soon/dist/" in (ROOT / ".gitignore").read_text().split()
+    assert "frontend/coverage/" in (ROOT / ".gitignore").read_text().split()

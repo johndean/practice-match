@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1.7
 # Practice Match — one image for the api and worker services.
-# Stage 1 builds the Vue app; stage 2 serves it from FastAPI. Railway populates
+# Stages 1–2 build the two frontends; stage 3 serves the one SITE_MODE selects. Railway populates
 # declared ARGs from service variables: ENVIRONMENT (qa|production) drives the
 # frontend's VITE_ENVIRONMENT; RAILWAY_GIT_COMMIT_SHA stamps only the runtime
 # layer, as COMMIT_SHA (see below) — the frontend-build stage never receives it.
@@ -15,6 +15,15 @@ RUN npm ci
 COPY frontend/ ./
 ENV VITE_ENVIRONMENT=$ENVIRONMENT
 RUN test -n "$ENVIRONMENT" || { echo "ENVIRONMENT build arg is required (qa|production)" >&2; exit 1; }
+RUN npm run build
+
+# The VIN Foundation Coming Soon page (John's Vue project, coming-soon/): built into the
+# same image and served by the api when SITE_MODE=coming_soon (production until launch).
+FROM node:22-bookworm-slim AS coming-soon-build
+WORKDIR /work/coming-soon
+COPY coming-soon/package.json coming-soon/package-lock.json ./
+RUN npm ci
+COPY coming-soon/ ./
 RUN npm run build
 
 FROM python:3.12-slim-bookworm AS runtime
@@ -41,6 +50,7 @@ COPY app/ ./app/
 COPY migrations/ ./migrations/
 COPY scripts/ ./scripts/
 COPY --from=frontend-build /work/frontend/dist/ ./frontend/dist/
+COPY --from=coming-soon-build /work/coming-soon/dist/ ./coming-soon/dist/
 # Nothing writes under /app at runtime (uvicorn and the Celery worker keep no
 # files there; `migrate` only reads), so a non-root user is a plain drop of
 # privilege — no volume or writable-path accommodation needed.

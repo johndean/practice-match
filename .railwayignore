@@ -9,6 +9,8 @@ frontend/dist
 frontend/tests
 frontend/test-results
 frontend/playwright-report
+coming-soon/node_modules
+coming-soon/dist
 .env
 .env.*
 *.log

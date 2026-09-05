@@ -1,0 +1,26 @@
+/* VIN Foundation Brand Style Guide 2026 — §04 palette, §05 type pairing */
+  :root {
+    --vf-navy: #003a70;
+    --vf-accent: #339dde;
+    --vf-accent-bg: #deecf7;
+    --vf-text: #494949;
+    --vf-neutral: #f5f5f5;
+    --vf-white: #ffffff;
+    --vf-display: 'Merriweather', Georgia, serif;
+    --vf-body: 'ProximaNova', Arial, Helvetica, sans-serif;
+  }
+  body { margin: 0; background: var(--vf-white); font-family: var(--vf-body); color: var(--vf-text); }
+  * { box-sizing: border-box; }
+  h1, h2 { font-family: var(--vf-display); font-weight: 700; color: var(--vf-navy); }
+  a { color: var(--vf-accent); text-decoration: none; }
+  a:hover { color: var(--vf-navy); text-decoration: underline; }
+  input, button { font-family: var(--vf-body); }
+  input::placeholder { color: #8c9aa8; }
+  @keyframes cs-rise { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+  @keyframes cs-rule { from { transform: scaleX(0); } to { transform: scaleX(1); } }
+  @keyframes cs-ring { 0% { transform: scale(.62); opacity: 0; } 18% { opacity: .85; } 100% { transform: scale(1.5); opacity: 0; } }
+  @keyframes cs-pulse { 0%, 100% { opacity: .35; } 50% { opacity: 1; } }
+  @keyframes cs-shimmer { 0%, 100% { opacity: .14; } 50% { opacity: .3; } }
+  @media (prefers-reduced-motion: reduce) {
+    *, *::before, *::after { animation-duration: .001ms !important; animation-iteration-count: 1 !important; transition-duration: .001ms !important; }
+  }

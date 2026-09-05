@@ -5,6 +5,9 @@ frontend/playwright-report/
 frontend/test-results/
 frontend/tests/visual.spec.ts-snapshots/
 frontend/tests/dom-snapshots/
+coming-soon/dist/
+coming-soon/coverage/
+frontend/coverage/
 
 # --- python ---
 __pycache__/
