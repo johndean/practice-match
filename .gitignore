@@ -27,3 +27,6 @@ __pycache__/
 
 # --- third-party POI exports (Google Places content: never commit) ---
 Report_Hospital_Competitor*.csv
+
+# --- git worktrees (never commit) ---
+.worktrees/
