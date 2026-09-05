@@ -3,6 +3,7 @@ node_modules/
 frontend/dist/
 frontend/playwright-report/
 frontend/test-results/
+frontend/tests/visual.spec.ts-snapshots/
 
 # --- python ---
 __pycache__/
