@@ -1,0 +1,4 @@
+/* Merriweather (SIL Open Font License, see fonts/OFL-Merriweather.txt) — self-hosted so the page
+   makes no third-party request and pixel tests are deterministic (README: "self-host before launch").
+   One variable-weight file (Google Fonts v33, latin subset) covers the 400 and 700 the page uses. */
+@font-face { font-family: 'Merriweather'; font-style: normal; font-weight: 400 700; font-display: swap; src: url('/ds/fonts/Merriweather-Latin.woff2') format('woff2'); }

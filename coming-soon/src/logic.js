@@ -2,7 +2,7 @@
 import { DCLogic } from './dc-logic.js';
 
 class Component extends DCLogic {
-  state = { email: "", error: "", done: false, pokes: 0 };
+  state = { email: "", error: "", done: false, pokes: 0, sending: false };
 
   // Redacted teaser. Widths are arbitrary — deliberately NOT the letter counts of any
   // real sentence, so nothing can be inferred from them. Clicking only changes the
@@ -19,11 +19,24 @@ class Component extends DCLogic {
     return /^[^\s@]+@[^\s@]+\.[a-z]{2,}$/i.test(String(e || "").trim());
   }
 
-  submit = () => {
+  // Wired to the Practice Match API (spec 2026-09-06): the page's own validation runs first,
+  // then one POST; 202 confirms, 429 and any failure use the error slot below the field.
+  submit = async () => {
     const e = this.state.email.trim();
     if (!e) return this.setState({ error: "Enter your email address." });
     if (!this.valid(e)) return this.setState({ error: "That address doesn't look right. Check it and try again." });
-    this.setState({ error: "", done: true, email: e });
+    if (this.state.sending) return;
+    this.setState({ sending: true, error: "" });
+    try {
+      const res = await fetch("/api/interest", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: e })
+      });
+      if (res.status === 202) return this.setState({ sending: false, error: "", done: true, email: e });
+      if (res.status === 429) return this.setState({ sending: false, error: "Too many attempts — please try again later." });
+      this.setState({ sending: false, error: "Something went wrong. Please try again." });
+    } catch {
+      this.setState({ sending: false, error: "Something went wrong. Please try again." });
+    }
   };
 
   renderVals() {

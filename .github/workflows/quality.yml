@@ -107,3 +107,17 @@ jobs:
             frontend/tests/visual.spec.ts-snapshots
             frontend/tests/dom-snapshots
           retention-days: 14
+
+  coming-soon:
+    name: coming-soon (unit at 100% · build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run: { working-directory: coming-soon }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'npm', cache-dependency-path: coming-soon/package-lock.json }
+      - run: npm ci
+      - run: npx vitest run --coverage
+      - run: npm run build

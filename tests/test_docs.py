@@ -101,7 +101,7 @@ def test_relative_markdown_links_resolve():
 def test_ci_workflow_runs_every_gate():
     path = ROOT / ".github" / "workflows" / "quality.yml"
     wf = yaml.safe_load(path.read_text())
-    assert {"gitleaks", "backend", "frontend"} <= set(wf["jobs"])
+    assert {"gitleaks", "backend", "frontend", "coming-soon"} <= set(wf["jobs"])
     text = path.read_text()
     for cmd in REQUIRED_CI_COMMANDS:
         assert cmd in text, cmd
