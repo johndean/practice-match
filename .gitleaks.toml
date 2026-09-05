@@ -1,0 +1,20 @@
+# Gitleaks — Practice Match. Direct binary in CI (not the paid Action for orgs).
+title = "Practice Match gitleaks config"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Placeholders in example/test files; design-reference is vendored design source"
+paths = [
+  '''(?i)\.env\.example$''',
+  '''(?i)^docs/.*''',
+  '''(?i)^frontend/tests/.*''',
+  '''(?i)^tests/.*''',
+]
+regexes = [
+  '''pm_dev_pw''',
+  '''test_only_secret_change_me''',
+  '''ci_only_secret_change_me''',
+  '''local_only''',
+]
