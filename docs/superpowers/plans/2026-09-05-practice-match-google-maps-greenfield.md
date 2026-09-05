@@ -29,7 +29,7 @@
 | # | Decision | Why |
 |---|---|---|
 | G0 | **The VIN Foundation chooses the map engine.** This plan executes only on "Google Maps"; the approved design's Leaflet/Esri map is the alternative. | Terms §3.2.3(e) makes the choice binary and app-wide; it changes the approved design's map corners (logo, attribution, controls) and introduces usage-based cost. |
-| G1 | **Leaflet is removed, not wrapped.** Foundation plan Task 1's `lib/leaflet.js` vendoring and the Leaflet npm dependency are dropped; Task 3's reference server keeps Leaflet for the design reference only. | No-mixing rule; a dormant Leaflet bundle invites accidental use. |
+| G1 | **Leaflet is removed, not wrapped.** Platform plan Task 1's `lib/leaflet.js` vendoring and the Leaflet npm dependency are dropped; Task 3's reference server keeps Leaflet for the design reference only. | No-mixing rule; a dormant Leaflet bundle invites accidental use. |
 | G2 | **Pins are fetched in the browser per view; the count is fetched by our API per request; neither is persisted.** | The Places terms are written for live display; server-side fetching of Places content would tempt storage and needs the same fields anyway. The Aggregate key must not reach the browser. |
 | G3 | **Pin fields = Pro tier by default:** `id, displayName, location, formattedAddress, businessStatus, primaryType, attributions`. `rating`, `userRatingCount` (Enterprise tier, $35/1k) sit behind the layer option `competition_live_points.ratings` (default off). | The approved design's competition card shows no ratings; ratings cost 9 % more per call and shrink the free allowance from 5,000 to 1,000. |
 | G4 | **One Nearby Search per band** (`locationRestriction` circle of 8,000 m or 16,000 m, `maxResultCount: 20`, `rankPreference: DISTANCE`); no tiling of the catchment in V1. When 20 come back the UI says "the 20 nearest are shown" and the number comes from the live count, not the pins. | Nearby Search (New) has no pagination; tiling multiplies cost 4–7× for pins nobody can read at that zoom. |
@@ -835,7 +835,7 @@ CREATE TRIGGER google_engine_blocks_other_basemaps AFTER UPDATE OF license_statu
 - Modify: `frontend/e2e/harness.ts` (`prepare()`), `frontend/e2e/visual.spec.ts`, `frontend/e2e/smoke.spec.ts`, `frontend/playwright.config.ts` (env `DESIGN_HAS_GOOGLE_MAP`)
 
 **Interfaces:**
-- Consumes: Foundation plan Task 3's `prepare(page)` and Task 4's `smoke.spec.ts`.
+- Consumes: Platform plan Task 3's `prepare(page)` and Task 4's `smoke.spec.ts`.
 - Produces: `prepare()` routes `https://maps.googleapis.com/maps/api/js**` to the stub and invokes the `callback` query parameter; `MAP_MASK = page.locator('[data-map]')` applied while `process.env.DESIGN_HAS_GOOGLE_MAP !== 'true'`.
 
 - [ ] **Step 1: Failing tests**
@@ -891,16 +891,16 @@ Update `Practice Match V2.dc.html` on the canvas: replace the Esri/Leaflet map f
 
 ---
 
-### Task G8: Deltas to the Foundation and Census plans (documentation task; apply only when G0 = Google)
+### Task G8: Deltas to the Platform and Census plans (documentation task; apply only when G0 = Google)
 
 | Plan | Task | Change |
 |---|---|---|
-| Foundation | Task 1 | Drop the `lib/leaflet.js` npm import and the `leaflet` dependency; keep the reference bundle's Leaflet files under `docs/design-reference/` (design fixture only). Remove the Leaflet CSS from `index.html`. Add `ARG VITE_GOOGLE_MAPS_BROWSER_KEY`, `ARG VITE_GOOGLE_MAPS_MAP_ID` to the Dockerfile. |
-| Foundation | Task 2 | No change (router sync is engine-agnostic). |
-| Foundation | Task 3 | `prepare()` gains the Google loader stub route (G6); the reference server injects `data-map`; `toHaveScreenshot` gains the map mask while `DESIGN_HAS_GOOGLE_MAP=false`. |
-| Foundation | Task 4 | Parity triage excludes the masked map viewport; the design-reference hand-off (G6 Step 5) is added to the DoD. |
-| Foundation | Task 8 | `deploy.sh` documents the three new Railway variables; `verify-deploy.sh` checks `healthz.google.configured === true` on QA. |
-| Foundation spec | §2, §9 | Map engine = Google Maps JavaScript API; the Esri-vs-CARTO basemap item and the satellite licence item close; attribution and no-mixing rules added. |
+| Platform | Task 1 | Drop the `lib/leaflet.js` npm import and the `leaflet` dependency; keep the reference bundle's Leaflet files under `docs/design-reference/` (design fixture only). Remove the Leaflet CSS from `index.html`. Add `ARG VITE_GOOGLE_MAPS_BROWSER_KEY`, `ARG VITE_GOOGLE_MAPS_MAP_ID` to the Dockerfile. |
+| Platform | Task 2 | No change (router sync is engine-agnostic). |
+| Platform | Task 3 | `prepare()` gains the Google loader stub route (G6); the reference server injects `data-map`; `toHaveScreenshot` gains the map mask while `DESIGN_HAS_GOOGLE_MAP=false`. |
+| Platform | Task 4 | Parity triage excludes the masked map viewport; the design-reference hand-off (G6 Step 5) is added to the DoD. |
+| Platform | Task 8 | `deploy.sh` documents the three new Railway variables; `verify-deploy.sh` checks `healthz.google.configured === true` on QA. |
+| Platform spec | §2, §9 | Map engine = Google Maps JavaScript API; the Esri-vs-CARTO basemap item and the satellite licence item close; attribution and no-mixing rules added. |
 | Census | D3 (tiles) | Choropleth tiles, if ever built, render through `google.maps.Data`/`deck.gl` on the Google map; bucket path unchanged. |
 | Census | D16 / Task C2 | Optional. Live Google pins cover the "literal competitors" need on screen; Overture remains the only source for anything that must be **stored** or **analysed** (e.g., a future exportable competitor list). |
 | Census | D17 / Task C1 | **Superseded.** The live Aggregate count is displayed directly (G5); no Customer Values, no `market_freshness` table. |

@@ -1,4 +1,4 @@
-# Practice Match Foundation Implementation Plan
+# Practice Match Platform Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
@@ -8,7 +8,7 @@
 
 **Tech Stack:** Vue 3.5 · Vite · vue-router 4 · TypeScript (new code only) · vitest · @playwright/test · leaflet 1.9.4 · Python 3.12 · Poetry 2.4.1 · FastAPI · SQLAlchemy 2 async + asyncpg · psycopg2-binary · Celery 5 + redis · pydantic-settings · pytest · Docker · Railway CLI ≥ 5.26
 
-**Spec:** `docs/superpowers/specs/2026-09-05-practice-match-foundation-design.md` (read §3–§6 before any task that touches those areas).
+**Spec:** `docs/superpowers/specs/2026-09-05-practice-match-platform-design.md` (read §3–§6 before any task that touches those areas).
 
 ## Global Constraints
 
@@ -28,11 +28,11 @@
 - Secrets never appear in git, chat, or `.env.example` values. `CENSUS_API_KEY` is set on `worker` out-of-band (John holds it).
 - Before any `railway up`, variable change or service mutation: `railway status --json` must report project `Practice Match` — abort otherwise.
 - Node 22 for builds (`nvm use 22`; `.nvmrc` = `22`). Python 3.12 (`poetry env use python3.12`).
-- Work on branch `feat/foundation` in a worktree; `main` receives the merge at the end.
+- Work on branch `feat/platform` in a worktree; `main` receives the merge at the end.
 
 ## Source material
 
-- Handoff bundle (extracted copy available at `/private/tmp/claude-502/-Users-johndean-Development-Practice-Match/39b87aac-a222-47b1-8bec-a538c22fdc1f/scratchpad/design/small/design_handoff_practice_match_v2`; canonical zip: `/Users/johndean/Downloads/VIN FOUNDATION/Claude Design zips/Vin Foundation Marketplace Design.zip`). If the scratchpad copy is gone, `unzip` the zip into a temp dir; the bundle root is `design_handoff_practice_match_v2/`.
+- Handoff bundle (extracted copy available at `/private/tmp/claude-502/-Users-johndean-Development-Practice-Match/39b87aac-a222-47b1-8bec-a538c22fdc1f/scratchpad/design/small/design_handoff_practice_match_v2`; canonical zip: `/Users/johndean/Downloads/VIN FOUNDATION/Claude Design zips/Vin Platform Marketplace Design.zip`). If the scratchpad copy is gone, `unzip` the zip into a temp dir; the bundle root is `design_handoff_practice_match_v2/`.
 - Reference patterns to copy from: `/Users/johndean/Development/Rounds.vin/scripts/start.sh`, `.../Rounds.vin/.github/workflows/quality.yml`, `.../Rounds.vin/.gitleaks.toml`, `/Users/johndean/Development/Po.vin/CLAUDE.md`, `.../Po.vin/DEPLOY.md`, `.../Po.vin/.claude/skills/povin-workflow/SKILL.md`.
 
 ## File map
@@ -271,7 +271,7 @@ git add -A
 git commit -m "feat(frontend): import approved handoff, absolute asset paths, bundled Leaflet, DS cascade
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-git push origin feat/foundation && git push production feat/foundation
+git push origin feat/platform && git push production feat/platform
 ```
 
 ---
@@ -948,7 +948,7 @@ Run: `npm run dev &` then `curl -s localhost:5173/browse | grep -c 'src/main.ts'
 ```bash
 git add -A && git commit -m "feat(frontend): vue-router sync layer over the untouched prototype logic
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/foundation && git push production feat/foundation
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/platform && git push production feat/platform
 ```
 
 ---
@@ -1235,7 +1235,7 @@ git add .gitignore frontend/tests frontend/package.json frontend/package-lock.js
 git commit -m "test(visual): reference-driven Playwright harness with 25 screen states
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
-git push origin feat/foundation && git push production feat/foundation
+git push origin feat/platform && git push production feat/platform
 ```
 
 ---
@@ -1337,7 +1337,7 @@ Run: `npm run typecheck && npm test && npm run build && npm run test:smoke && np
 ```bash
 git add -A && git commit -m "test(frontend): visual parity green (25 states) and route smoke suite
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/foundation && git push production feat/foundation
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/platform && git push production feat/platform
 ```
 
 ---
@@ -1848,7 +1848,7 @@ Run: `poetry run pytest -q` → all pass (the `components_down` tests fail fast 
 ```bash
 git add -A && git commit -m "feat(api): FastAPI skeleton — fail-fast config, health endpoints, SPA serving
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/foundation && git push production feat/foundation
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/platform && git push production feat/platform
 ```
 
 ---
@@ -2097,7 +2097,7 @@ Run: `poetry run pytest -q` → all pass.
 ```bash
 git add -A && git commit -m "feat(db): ledger migration runner, PostGIS extension, local PostGIS/Redis compose
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/foundation && git push production feat/foundation
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/platform && git push production feat/platform
 ```
 
 ---
@@ -2351,7 +2351,7 @@ Expected: `api healthz OK 3.5.x`, `index.html served`, `SPA fallback OK`, `worke
 ```bash
 git add -A && git commit -m "feat(infra): Celery skeleton, role dispatcher, Docker image, Railway config
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/foundation && git push production feat/foundation
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/platform && git push production feat/platform
 ```
 
 ---
@@ -2534,7 +2534,7 @@ Expected: `healthz OK  version 0.1.0 … postgis 3.5.x`, `deep healthz OK`, `SPA
 ```bash
 git add scripts tests/scripts && git commit -m "feat(deploy): guarded railway deploy + post-deploy verification scripts
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/foundation && git push production feat/foundation
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/platform && git push production feat/platform
 ```
 
 ---
@@ -2718,7 +2718,7 @@ VIN Foundation veterinary practice marketplace (internal working title). Read th
 `docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html` is the approved design. Rules, each violated by an assistant somewhere before:
 
 - **Reference open first, port verbatim, absent beats faked.** No invented UI, no placeholder banners, no "TODO Phase X", no simplifications.
-- **Ported files are byte-identical** except the edits listed in `docs/superpowers/specs/2026-09-05-practice-match-foundation-design.md` §3. `logic.js` is never restructured. Inline styles stay inline. No CSS framework, no Pinia, no per-screen split without a visual diff per screen.
+- **Ported files are byte-identical** except the edits listed in `docs/superpowers/specs/2026-09-05-practice-match-platform-design.md` §3. `logic.js` is never restructured. Inline styles stay inline. No CSS framework, no Pinia, no per-screen split without a visual diff per screen.
 - **`npm run test:visual` is the arbiter.** Baselines are generated from the reference in the same run (`npm run test:visual:baselines`). Tolerance is zero (`playwright.config.ts`); relaxing it requires a recorded reason.
 - The design-system cascade matters: `frontend/index.html` links `colors_and_type.css`, `preview/_preview.css`, `ui_kits/vin/kit.css` in that order, before the app styles.
 
@@ -2851,10 +2851,10 @@ Unfaithful ports with the reference closed · collateral removal · destructive 
 ```bash
 git add -A && git commit -m "ci(quality): gitleaks, pytest on PostGIS, frontend gates incl. visual parity; working docs
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/foundation && git push production feat/foundation
-gh run list --repo johndean/practice-match --branch feat/foundation --limit 3
-gh run list --repo vin-swe/practice-match --branch feat/foundation --limit 3
-gh run watch --repo johndean/practice-match "$(gh run list --repo johndean/practice-match --branch feat/foundation --limit 1 --json databaseId -q '.[0].databaseId')"
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/platform && git push production feat/platform
+gh run list --repo johndean/practice-match --branch feat/platform --limit 3
+gh run list --repo vin-swe/practice-match --branch feat/platform --limit 3
+gh run watch --repo johndean/practice-match "$(gh run list --repo johndean/practice-match --branch feat/platform --limit 1 --json databaseId -q '.[0].databaseId')"
 ```
 Expected: `gitleaks`, `backend`, `frontend` all green in both repos. A red `frontend/visual` step means Linux Chromium renders a state differently from darwin — download the `playwright-report` artifact, inspect the diff, and apply Task 4's triage table (harness timing/selector fixes only; a design-level diff is `DONE_WITH_CONCERNS`).
 
@@ -2863,7 +2863,7 @@ Expected: `gitleaks`, `backend`, `frontend` all green in both repos. A red `fron
 ### Task 10: DNS, production deploy, live verification, hand-back
 
 **Files:**
-- Modify: `DEPLOY.md` (DNS values), `docs/superpowers/specs/2026-09-05-practice-match-foundation-design.md` (status line), `frontend/tests/playwright.config.ts` (live-target override)
+- Modify: `DEPLOY.md` (DNS values), `docs/superpowers/specs/2026-09-05-practice-match-platform-design.md` (status line), `frontend/tests/playwright.config.ts` (live-target override)
 
 **Interfaces:** `PW_APP_URL=<https://host>` makes the `app` project target a live deployment (no local dev server).
 
@@ -2930,7 +2930,7 @@ Update the spec's status line to `Implemented 2026-09-__ — live on qa.foundati
 
 - [ ] **Step 7: Finish the branch**
 
-Use superpowers:finishing-a-development-branch: merge `feat/foundation` → `main`, push `main` to both remotes, delete the branch, then invoke the Census data-layer plan.
+Use superpowers:finishing-a-development-branch: merge `feat/platform` → `main`, push `main` to both remotes, delete the branch, then invoke the Census data-layer plan.
 
 ---
 

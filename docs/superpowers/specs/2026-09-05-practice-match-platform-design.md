@@ -1,4 +1,4 @@
-# Practice Match — Foundation (Sub-project 1) — Design
+# Practice Match — Platform (Sub-project 1) — Design
 
 | | |
 |---|---|
@@ -13,7 +13,7 @@
 
 Practice Match was designed in Claude Design and handed off as a bundle
 (`design_handoff_practice_match_v2/`, from
-`/Users/johndean/Downloads/VIN FOUNDATION/Claude Design zips/Vin Foundation Marketplace Design.zip`;
+`/Users/johndean/Downloads/VIN FOUNDATION/Claude Design zips/Vin Platform Marketplace Design.zip`;
 canvas: `https://claude.ai/design/p/3047ec64-fe8c-4f97-9c16-50e41f780147?file=Practice+Match+V2.dc.html`).
 The bundle contains three approved artifacts:
 
@@ -25,7 +25,7 @@ The work decomposes into three sub-projects. **This spec covers Sub-project 1 on
 
 | Sub-project | Deliverable | Design input |
 |---|---|---|
-| **1 — Foundation (this spec)** | Repo, Railway, domains, CI, working docs, and the pixel-faithful Vue app on the design's fixture data, live on QA and production | this document |
+| **1 — Platform (this spec)** | Repo, Railway, domains, CI, working docs, and the pixel-faithful Vue app on the design's fixture data, live on QA and production | this document |
 | 2 — Application backend | Own auth + access approval, listings + wizard, photos, interest requests, document locks, admin console | its own spec (next) |
 | 3 — Market-data layer | The Census spec implemented: PostGIS schema, ingest workers, derived metrics, materialisation, tiles, licence gates | the approved Census spec; implementation plan written after this spec is approved |
 
@@ -230,7 +230,7 @@ Errors handled in this sub-project: component outages degrade `/api/healthz` ins
 - **Mobile activation width.** The design's mobile layout is a prototype toggle, not a breakpoint; the width at which real devices get it is undefined. Decide before SP2 ships to phones.
 - The spec's §15 open items: satellite imagery vendor; licensed pet-ownership rate vs ACS-derived; isochrones vs straight-line buffers; opportunity-score weights sign-off; public teaser vs gated market data; AIES dataset ID.
 - Public product name (replaces "Practice Match").
-- **Map engine (G0, added 2026-09-05).** The approved design is Leaflet with Esri tiles. Google Maps Platform's terms forbid Google Places content "with or near a non-Google Map", so any Google-based competition presentation means switching the whole application to the Maps JavaScript API (Google logo, attribution and controls change the map corners of every screen; satellite imagery and the basemap licence come with it). Options and costs: `docs/decisions/2026-09-05-competition-presentation-options.md`; the switch, if chosen, is planned in `docs/superpowers/plans/2026-09-05-practice-match-google-maps-greenfield.md` and must be decided **before** Task 1 of the Foundation plan vendors Leaflet.
+- **Map engine (G0, added 2026-09-05).** The approved design is Leaflet with Esri tiles. Google Maps Platform's terms forbid Google Places content "with or near a non-Google Map", so any Google-based competition presentation means switching the whole application to the Maps JavaScript API (Google logo, attribution and controls change the map corners of every screen; satellite imagery and the basemap licence come with it). Options and costs: `docs/decisions/2026-09-05-competition-presentation-options.md`; the switch, if chosen, is planned in `docs/superpowers/plans/2026-09-05-practice-match-google-maps-greenfield.md` and must be decided **before** Task 1 of the Platform plan vendors Leaflet.
 
 ## 10. Definition of done (Sub-project 1)
 

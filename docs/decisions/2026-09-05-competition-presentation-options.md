@@ -21,7 +21,7 @@ Google can present **both** — but only on a **Google map**, and only **live** 
 | SST §13 Places Aggregate API | POI Count cacheable 30 days "solely for the purpose of calculating the Customer Value"; Customer Values must not substitute for the count | Counts are for live display (on a Google map) or for derived buckets; §3.2.3(e) still applies to the service |
 | SST §3 / Places policies | `place_id` "exempt from the caching restrictions … store … indefinitely" | The only thing the 2017 file could contribute — and it is not needed |
 | Maps JS policies | Google logo, "Map data ©" and Terms link are rendered by the API and must never be removed, hidden, obscured or modified | The map corners of the approved design change |
-| Foundation spec (pixel gate) | Screens must match the approved design at `maxDiffPixels: 0`; map **tiles** are already excluded from comparison | A Google map is not pixel-identical to the Esri/Leaflet design: controls, logo and attribution differ. The design must be updated in Claude Design and baselines regenerated, or the map viewport masked |
+| Platform spec (pixel gate) | Screens must match the approved design at `maxDiffPixels: 0`; map **tiles** are already excluded from comparison | A Google map is not pixel-identical to the Esri/Leaflet design: controls, logo and attribution differ. The design must be updated in Claude Design and baselines regenerated, or the map viewport masked |
 
 ## Options
 
@@ -41,7 +41,7 @@ What no option changes: the **displayed density count** stays Census-sourced (sp
 
 ## Is switching the map possible?
 
-Yes. The Maps JavaScript API does everything the design's Leaflet components do (circles, HTML markers via `AdvancedMarkerElement`, GeoJSON overlays, fit-to-bounds) and adds satellite/hybrid imagery and cloud-based styling on a Map ID. What it demands: one engine across the whole application (§3.2.3(e)); the Google logo and attribution untouched; nothing from Google persisted; browser key restricted by referrer and API; quotas and a billing budget so a traffic spike cannot run up the bill; the visual gate re-baselined against an updated design (the map viewport is masked until then). The greenfield plan sequences this **before** Foundation Task 1 (Leaflet vendoring) or as an amendment to it, and lists the exact deltas to the Foundation and Census plans.
+Yes. The Maps JavaScript API does everything the design's Leaflet components do (circles, HTML markers via `AdvancedMarkerElement`, GeoJSON overlays, fit-to-bounds) and adds satellite/hybrid imagery and cloud-based styling on a Map ID. What it demands: one engine across the whole application (§3.2.3(e)); the Google logo and attribution untouched; nothing from Google persisted; browser key restricted by referrer and API; quotas and a billing budget so a traffic spike cannot run up the bill; the visual gate re-baselined against an updated design (the map viewport is masked until then). The greenfield plan sequences this **before** Platform Task 1 (Leaflet vendoring) or as an amendment to it, and lists the exact deltas to the Platform and Census plans.
 
 ## Recommendation
 

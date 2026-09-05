@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python 3.12 · FastAPI · Celery 5 (beat on the worker) · PostgreSQL 16 + PostGIS 3.5 · SQLAlchemy 2 async (API reads) · psycopg2 (ingest writes) · httpx (sync client for tasks) · boto3 → Railway Buckets (S3-compatible) · pyshp + shapely (boundary files, no GDAL) · redis-py · pytest + moto (S3 mock) + httpx `MockTransport`.
 
-**Spec:** `docs/design-reference/design_handoff_practice_match_v2/Census Data Source Specification.dc.html` (§ references below are to it). Foundation spec: `docs/superpowers/specs/2026-09-05-practice-match-foundation-design.md`.
+**Spec:** `docs/design-reference/design_handoff_practice_match_v2/Census Data Source Specification.dc.html` (§ references below are to it). Platform spec: `docs/superpowers/specs/2026-09-05-practice-match-platform-design.md`.
 
 **Depends on:** Sub-project 1 complete (`worker` service, PostGIS, Redis, `scripts/migrate.py`, `app/tasks/celery_app.py`). Phase B additionally depends on Sub-project 2 providing `listing(id uuid PRIMARY KEY, status text, address fields)`; Phase A has no listing dependency and can start immediately.
 
@@ -28,7 +28,7 @@
 - **Data quality (§14):** suppress any ACS value with CV `(moe / 1.645) / estimate > 0.30` → `suppressed = true, suppress_reason = 'high_moe'` (row kept). Summed counts: combined MOE `sqrt(Σ moe²)`, same CV test. Medians never sum: household-weighted average, flagged approximate. CBP noise flags stored verbatim; noise-flagged counts are estimates; suppress employment/payroll where Census suppressed. Every rendered figure shows dataset + vintage; two vintages never appear in one ratio.
 - **Caching (§10):** raw API response → bucket key `raw/{dataset_key}/{vintage}/{sha256(url)}.json`, immutable · geocode result → `geocode_cache` keyed `sha256(normalized_address)`, 365 d · `market_metric` until vintage flip · panel payload → Redis `listing:{id}:market:v{n}` 24 h · basemap tiles never proxied.
 - **Refresh (§9):** `acs_annual_load` yearly Dec, manual approval · `cbp_annual_load` yearly Apr, manual · `qwi_quarterly_load` scheduled quarterly, keeps 20 quarters · `geocode_on_write` per listing create/address edit · `metric_materialize` nightly + on new listing · `license_audit` quarterly.
-- **Attribution (§12):** strings live in `dataset_registry.attribution_text` and are returned by the API; "Source: U.S. Census Bureau, [dataset], [vintage]" on every surface; never the Bureau's seal/logo. Basemap attribution is the map component's concern (Foundation spec §9 open item).
+- **Attribution (§12):** strings live in `dataset_registry.attribution_text` and are returned by the API; "Source: U.S. Census Bureau, [dataset], [vintage]" on every surface; never the Bureau's seal/logo. Basemap attribution is the map component's concern (Platform spec §9 open item).
 - **Schema (§13):** the DDL is applied verbatim as numbered migrations, in the order the spec gives (`ingest_run` → `dataset_registry` → FK back-fill → `geo_area` → measures → listing-dependent tables → `active_vintage`).
 - **Competition geography (red-team C1):** community-level competition comes from **ZIP Code Business Patterns** (`zbp`, same Census program, public domain) aggregated over the ZCTAs a catchment/place intersects; county CBP remains the county benchmark. `vets_per_10k_households` always divides establishments and households measured over the **same** geography. The UI must say the count is a proxy for competitive density (spec §5).
 - **Growth geography (red-team C2):** `population_growth_pct` is computed at **place** level (stable GEOIDs across the 2020 tract redefinition), county fallback; tract-level growth waits for the 2010→2020 tract crosswalk (Phase C).
@@ -377,7 +377,7 @@ INSERT INTO dataset_registry
   ('geocoder','Census Geocoder (geographies)',NULL,'https://geocoding.geo.census.gov/geocoder','Current_Current',NULL,'On write','cleared','Public domain','https://geocoding.geo.census.gov/geocoder/Geocoding_Services_API.html','Geocoding: U.S. Census Bureau Geocoder',NULL),
   ('tiger_cb','TIGER Cartographic Boundary files','TIGER2023/cb_2023_*','https://www2.census.gov/geo/tiger/GENZ2023/shp','2023',NULL,'Annual','cleared','Public domain','https://www.census.gov/programs-surveys/geography/technical-documentation/naming-convention/cartographic-boundary-file.html','Boundaries: U.S. Census Bureau, TIGER/Line Cartographic Boundary Files 2023',NULL),
   ('aies','Annual Integrated Economic Survey',NULL,'https://api.census.gov/data','TBD',NULL,'Annual','unresolved','Verify ID',NULL,'Source: U.S. Census Bureau, Annual Integrated Economic Survey','Confirm dataset identifier and geography availability before any revenue-benchmark layer is promised (§15)'),
-  ('osm_tiles','Street basemap tiles (CARTO, OSM data)',NULL,'https://basemaps.cartocdn.com/light_all','live',NULL,'live','cleared','ODbL 1.0','https://www.openstreetmap.org/copyright','© OpenStreetMap contributors © CARTO','Registered by the spec; the approved design ships Esri tiles — VIN Foundation decision pending (Foundation spec §9)'),
+  ('osm_tiles','Street basemap tiles (CARTO, OSM data)',NULL,'https://basemaps.cartocdn.com/light_all','live',NULL,'live','cleared','ODbL 1.0','https://www.openstreetmap.org/copyright','© OpenStreetMap contributors © CARTO','Registered by the spec; the approved design ships Esri tiles — VIN Foundation decision pending (Platform spec §9)'),
   ('imagery','Satellite basemap',NULL,'vendor TBD','live',NULL,'live','unresolved',NULL,NULL,'Imagery attribution pending licence','Satellite toggle stays behind a feature flag until a written licence names commercial web display'),
   ('pet_ownership','Pet ownership incidence (commercial)',NULL,'licensed feed','n/a',NULL,'n/a','blocked',NULL,NULL,'Pet-ownership incidence (licensed) — not in use','Ship only the ACS-derived estimate (rate 0.57) until a licence is signed'),
   ('practice_locations','Third-party practice location data',NULL,'n/a','n/a',NULL,'n/a','blocked',NULL,NULL,'Practice locations (third party) — not in use','Spec §12: purchased or scraped veterinary location lists are out of scope for V1 (undocumented provenance). Includes the 2017 Google Places export Report_Hospital_Competitor_All_US_ZipCode_FULL.csv (D15): Google Maps Platform Terms §3.2.3 and SST §14 forbid storing or rendering its content. Competition counts come from Census establishment totals only.'),
@@ -519,7 +519,7 @@ def attribution(conn, dataset_keys: list[str]) -> list[str]:
     return [by_key[k] for k in dataset_keys if k in by_key]
 ```
 
-Run: `poetry run pytest tests/census -q` → all pass. Also `poetry run pytest -q` (whole suite, Foundation tests still green — `001_init.sql` is untouched).
+Run: `poetry run pytest tests/census -q` → all pass. Also `poetry run pytest -q` (whole suite, Platform tests still green — `001_init.sql` is untouched).
 
 - [ ] **Step 4: Commit**
 
@@ -2257,7 +2257,7 @@ celery_app.conf.beat_schedule = {
 celery_app.conf.imports = ("app.tasks.census",)
 ```
 
-Run: `poetry run pytest -q` → all pass (including Foundation's `test_celery.py`). Commit: `feat(census): Celery tasks, quarterly beat, licence audit with drift flag`.
+Run: `poetry run pytest -q` → all pass (including Platform's `test_celery.py`). Commit: `feat(census): Celery tasks, quarterly beat, licence audit with drift flag`.
 
 ---
 
@@ -4359,7 +4359,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 git push origin HEAD && git push production HEAD
 ```
 
-## Open items for the VIN Foundation (carried from the spec §15 and the Foundation spec §9)
+## Open items for the VIN Foundation (carried from the spec §15 and the Platform spec §9)
 
 Basemap licence (Esri in the design vs CARTO in the spec) · satellite vendor · licensed pet rate vs ACS-derived · isochrones vs straight-line · opportunity-score weights sign-off and publication · public teaser vs gated market data · AIES identifier · Census API key contact address to use in the User-Agent (`CENSUS_CONTACT_EMAIL`) · **Google Places Aggregate API (D17)** — counsel sign-off on SST §13 "Customer Values" (a Low/Moderate/High bucket and a divergence flag as the only persisted outputs) and a Google Cloud billing account · **competitor-points source (D16)** — approve Overture Maps Places (or Foursquare OS Places / VIN's directory) for a Phase C points layer · **disposition of the 2017 Google Places export (D15)** — done 2026-09-05: John kept the `place_id` column only (`practice_match_google_place_ids_2017.csv`) and deleted the file · **map engine (G0)** — Leaflet (approved design) or Google Maps: see `docs/decisions/2026-09-05-competition-presentation-options.md` and the greenfield plan `docs/superpowers/plans/2026-09-05-practice-match-google-maps-greenfield.md`; if Google is chosen, D16/D17 and Task C1 are superseded by that plan.
 

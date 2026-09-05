@@ -1,6 +1,6 @@
 # Practice Match — Map Engines and Layer Eligibility (Sub-project 4) — Design
 
-**Date:** 2026-09-05 · **Status:** approved in brainstorming (Sections A–C with security/performance audits) · **Depends on:** Foundation spec (SP1), Census & Market Data Source Specification v1.0 and its plan (SP3), Google Maps greenfield plan (reference), `docs/decisions/2026-09-05-competition-presentation-options.md`.
+**Date:** 2026-09-05 · **Status:** approved in brainstorming (Sections A–C with security/performance audits) · **Depends on:** Platform spec (SP1), Census & Market Data Source Specification v1.0 and its plan (SP3), Google Maps greenfield plan (reference), `docs/decisions/2026-09-05-competition-presentation-options.md`.
 
 ## 0. Decisions taken in brainstorming
 
@@ -128,7 +128,7 @@ Rows (seeded by `080`; `notes` carries the clause):
 |---|---|---|---|---|
 | `map_engine_leaflet` — "Map engine — Leaflet + Esri tiles" | engine | `{leaflet}` | cleared (Leaflet BSD-2-Clause; tiles governed by their own rows) | **true** |
 | `map_engine_google` — "Map engine — Google Maps Platform" (basemap and satellite) | engine | `{google}` | unresolved → cleared by Google plan G1 | false |
-| `esri_tiles` (the design's URL) | basemap | `{leaflet}` | unresolved (Esri licence question, Foundation spec §9) | — |
+| `esri_tiles` (the design's URL) | basemap | `{leaflet}` | unresolved (Esri licence question, Platform spec §9) | — |
 | `osm_tiles` (CARTO, existing row) | basemap | `{leaflet}` | cleared | — |
 | `imagery` (existing row) | basemap | `{leaflet}` | unresolved | — |
 | Census rows (`acs5`, `acs5_subject`, `acs5_prior`, `cbp`, `zbp`, `qwi`, `bds`, `geocoder`, `tiger_cb`) | dataset | `{leaflet,google}` | as seeded by A1 | — |
@@ -261,7 +261,7 @@ Every other row's "Source and license" sub-line gains "Renders on: Leaflet · Go
 
 ## 11. Sequencing and plan impacts
 
-1. **SP1 Foundation — Task 1 amendment:** add `frontend/src/map/engine.ts` and `frontend/src/map/engines/leaflet.ts`; point `MarketMapView.vue` and `ListingsMap.vue` at the interface; add the ESLint import rule. Pixels unchanged; Leaflet stays vendored. No other SP1 change.
+1. **SP1 Platform — Task 1 amendment:** add `frontend/src/map/engine.ts` and `frontend/src/map/engines/leaflet.ts`; point `MarketMapView.vue` and `ListingsMap.vue` at the interface; add the ESLint import rule. Pixels unchanged; Leaflet stays vendored. No other SP1 change.
 2. **Census A1 + A9 first** (registry + seed; gate + `/api/admin/data-sources`): prerequisites of this sub-project; A1's seed is not edited — `080` adds the columns and rows.
 3. **This sub-project (plan to follow):** `080_map_engines.sql`; shell rendering + CSP + ETag; `/api/map-config`; `/api/layers` rule; `activate` + change log + `/changes`; Admin rows and action (operator token until SP2); `engines/google.ts` and the Google plan's G3 (pins), G4 (count proxy), G6 (stub, mask), G7 (runbook). The Google plan's G5 "block tiles" trigger and G8 "remove Leaflet" deltas are **superseded** by the matrix and dropped.
 4. **SP2 Admin** attaches the real admin role and CSRF to endpoints that already exist; enables `activate` on production.
