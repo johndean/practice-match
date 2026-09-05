@@ -1735,7 +1735,7 @@ Run: `npx vitest run tests/app-generated.test.ts` → **FAIL** (App.vue is the h
 ### Task 5: FastAPI skeleton — config (fail-fast), version, health endpoints, SPA serving
 
 **Files:**
-- Create: `pyproject.toml`, `app/__init__.py`, `app/config.py`, `app/version.py`, `app/checks.py`, `app/api/__init__.py`, `app/api/health.py`, `app/static.py`, `app/main.py`, `tests/__init__.py`, `tests/conftest.py`, `tests/test_config.py`, `tests/test_versions.py`, `tests/test_health.py`, `tests/test_static.py`
+- Create: `pyproject.toml`, `app/__init__.py`, `app/config.py`, `app/version.py`, `app/checks.py`, `app/api/__init__.py`, `app/api/health.py`, `app/static.py`, `app/main.py`, `tests/__init__.py`, `tests/conftest.py`, `tests/test_config.py`, `tests/test_versions.py`, `tests/test_health.py`, `tests/test_static.py`, `tests/perf/__init__.py`, `tests/perf/test_api_latency.py`; `poetry.lock` is committed with `pyproject.toml` (Task 7's Dockerfile needs it)
 
 **Interfaces:**
 - Produces: `settings: Settings` (`database_url`, `redis_url`, `environment`, `api_secret_key`, `allowed_origins`, `commit_sha`, `origins: list[str]`); `VERSION: str`; `async check_db(url) -> dict`, `async check_redis(url) -> dict`; `create_app(dist: Path | None = None) -> FastAPI`; module-level `app`.
@@ -1761,6 +1761,7 @@ dependencies = [
   "pydantic-settings>=2.6",
   "httpx>=0.27",
   "structlog>=24.4",
+  "greenlet>=3.0",  # explicit: SQLAlchemy's platform marker omits arm64 and Poetry 2.4.1 does not honour the asyncio-extra marker (John's ruling 2026-09-05)
 ]
 
 [tool.poetry]
@@ -1785,7 +1786,32 @@ poetry env use python3.12 && poetry install
 mkdir -p app/api tests && touch app/__init__.py app/api/__init__.py tests/__init__.py
 ```
 
-**Performance gate (policy §3):** add `tests/perf/test_api_latency.py` from `docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md` §5 with `BUDGET_MS = {'/api/healthz': 20, '/': 15}`. RED: it fails with the app missing; GREEN after this task at both budgets.
+**Performance gate (policy §3; amended 2026-09-05 by John's ruling — in scope for Task 5):** `tests/perf/__init__.py` (empty) and `tests/perf/test_api_latency.py`, verbatim from `docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md` §5 (the `client` fixture comes from `tests/conftest.py`):
+```python
+import statistics
+import time
+
+import pytest
+
+BUDGET_MS = {"/api/healthz": 20, "/": 15}   # Census B5 and Map engines M3/M4 extend this dict in their tasks
+
+
+async def p95(client, path: str, n: int = 50) -> float:
+    await client.get(path)  # warm-up
+    samples = []
+    for _ in range(n):
+        t0 = time.perf_counter()
+        r = await client.get(path)
+        samples.append((time.perf_counter() - t0) * 1000)
+        assert r.status_code < 500, path
+    return statistics.quantiles(samples, n=20)[18]
+
+
+@pytest.mark.parametrize("path, budget", sorted(BUDGET_MS.items()))
+async def test_p95_within_budget(client, path, budget):
+    assert await p95(client, path) <= budget, f"{path} p95 over {budget} ms"
+```
+Run (after Step 5): `poetry run pytest tests/perf -q` → 2 passed. RED first: run it before `app/main.py` exists → `ModuleNotFoundError` from the conftest import.. RED: it fails with the app missing; GREEN after this task at both budgets.
 
 - [ ] **Step 2: Failing tests — config fail-fast and version lockstep**
 
@@ -1797,7 +1823,33 @@ os.environ.setdefault("DATABASE_URL", "postgresql://pm:pm_dev_pw@localhost:5433/
 os.environ.setdefault("REDIS_URL", "redis://localhost:6380/0")
 os.environ.setdefault("ENVIRONMENT", "test")
 os.environ.setdefault("API_SECRET_KEY", "test_only_secret_change_me")
+
+from pathlib import Path  # noqa: E402  (env defaults must precede any app.* import)
+
+import httpx  # noqa: E402
+import pytest  # noqa: E402
+from httpx import ASGITransport  # noqa: E402
+
+
+@pytest.fixture
+def dist(tmp_path: Path) -> Path:
+    d = tmp_path / "dist"
+    (d / "_app").mkdir(parents=True)
+    (d / "assets" / "icons").mkdir(parents=True)
+    (d / "index.html").write_text("<!doctype html><div id=\"app\"></div>")
+    (d / "_app" / "index-abc123.js").write_text("console.log(1)")
+    (d / "assets" / "icons" / "pad-lock.svg").write_text("<svg/>")
+    return d
+
+
+@pytest.fixture
+async def client(dist):
+    from app.main import create_app  # imported here so this conftest loads before app.main exists (Steps 2-3)
+
+    async with httpx.AsyncClient(transport=ASGITransport(app=create_app(dist=dist)), base_url="http://test") as c:
+        yield c
 ```
+*(Amended 2026-09-05, John's ruling: `dist` and `client` live here so `tests/perf/` and `tests/test_static.py` share them; the lazy import keeps Steps 2–3 runnable before `app/main.py` exists.)*
 
 `tests/test_config.py`:
 ```python
@@ -1984,21 +2036,7 @@ from httpx import ASGITransport
 from app.main import create_app
 
 
-@pytest.fixture
-def dist(tmp_path: Path) -> Path:
-    d = tmp_path / "dist"
-    (d / "_app").mkdir(parents=True)
-    (d / "assets" / "icons").mkdir(parents=True)
-    (d / "index.html").write_text("<!doctype html><div id=\"app\"></div>")
-    (d / "_app" / "index-abc123.js").write_text("console.log(1)")
-    (d / "assets" / "icons" / "pad-lock.svg").write_text("<svg/>")
-    return d
-
-
-@pytest.fixture
-async def client(dist):
-    async with httpx.AsyncClient(transport=ASGITransport(app=create_app(dist=dist)), base_url="http://test") as c:
-        yield c
+# `dist` and `client` are shared fixtures in tests/conftest.py (amended 2026-09-05); drop any import this module no longer uses.
 
 
 async def test_root_serves_index_with_no_cache(client):
