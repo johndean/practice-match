@@ -334,3 +334,57 @@ describe('LeafletMapEngine — ListingsMap shape', () => {
     expect(stub.calls.filter((c) => c.fn === 'control.scale')).toHaveLength(0);
   });
 });
+
+describe('LeafletMapEngine — branch coverage: basemap fallback, control toggling, live zoom/fit, live handle.remove()', () => {
+  it('falls back to the "map" basemap tiles for an unrecognised key, on mount and on setBase', async () => {
+    const { stub, engine } = await mounted({ basemap: 'not-a-real-basemap' as unknown as 'map' });
+    expect(stub.tiles[0].url).toBe(BASEMAPS.map.url);
+
+    engine.setBase('not-a-real-basemap' as unknown as 'map');
+    expect(stub.tiles[0].url).toBe(BASEMAPS.map.url);
+  });
+
+  it('setControls removes a previously-added zoom/scale control when disabled, and recreates them when re-enabled', async () => {
+    const { stub, engine } = await mounted({ zoomControl: 'bottomright', scaleControl: true });
+    const zoomCalls = () => stub.calls.filter((c) => c.fn === 'control.zoom').length;
+    const scaleCalls = () => stub.calls.filter((c) => c.fn === 'control.scale').length;
+    expect(zoomCalls()).toBe(1);
+    expect(scaleCalls()).toBe(1);
+    const addedBefore = (stub.map.added as unknown[]).length;
+
+    engine.setControls({ zoomControl: false, scaleControl: false });
+    expect((stub.map.added as unknown[]).length).toBe(addedBefore - 2); // both controls removed from the map
+
+    engine.setControls({ zoomControl: 'bottomright', scaleControl: true });
+    expect(zoomCalls(), 'a fresh zoom control should have been created, not reused').toBe(2);
+    expect(scaleCalls(), 'a fresh scale control should have been created, not reused').toBe(2);
+  });
+
+  it('zoomIn/zoomOut/fitBounds act on a live map, not only guarded when destroyed', async () => {
+    const { stub, engine } = await mounted();
+    const before = stub.map.zoom;
+
+    engine.zoomIn();
+    expect(stub.map.zoom).toBe(before + 1);
+    engine.zoomOut();
+    expect(stub.map.zoom).toBe(before);
+    engine.fitBounds([[1, 2], [3, 4]]);
+    expect((stub.map as { fitted?: unknown }).fitted).toEqual([{ pts: [[1, 2], [3, 4]] }, { padding: [24, 24] }]);
+  });
+
+  it("a live circle/marker handle's remove() actually removes it from its group (not only clear())", async () => {
+    const { stub, engine } = await mounted();
+
+    const circleHandle = engine.circle([30.3, -97.7], 1000, { fillColor: '#000', fillOpacity: 1 }, 'overlay');
+    const overlayGroup = (stub.map.added as { clearLayers?: unknown; added: unknown[] }[]).find((g) => g.clearLayers)!;
+    expect(overlayGroup.added).toHaveLength(1);
+    circleHandle.remove();
+    expect(overlayGroup.added).toHaveLength(0);
+
+    const markerHandle = engine.marker([1, 2], { html: '<i></i>', size: [1, 1], anchor: [0, 0] }, 'pins');
+    const pinsGroup = (stub.map.added as { clearLayers?: unknown; added: unknown[] }[]).filter((g) => g.clearLayers)[1];
+    expect(pinsGroup.added).toHaveLength(1);
+    markerHandle.remove();
+    expect(pinsGroup.added).toHaveLength(0);
+  });
+});

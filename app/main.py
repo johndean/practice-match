@@ -6,7 +6,8 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
-from app.api.health import not_found_router, router as health_router
+from app.api.health import not_found_router
+from app.api.health import router as health_router
 from app.config import settings
 from app.db import dispose_all
 from app.static import DIST, mount_spa

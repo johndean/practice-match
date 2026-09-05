@@ -21,6 +21,10 @@ describe('stateToRoute', () => {
   });
   it('treats an undefined browseMode as listings (the logic does the same)', () =>
     expect(stateToRoute({ ...base, screen: 'browse', browseMode: undefined })).toEqual({ path: '/browse', query: {} }));
+  it('treats an undefined detailId as p1', () =>
+    expect(stateToRoute({ ...base, screen: 'detail', detailId: undefined })).toEqual({ path: '/practices/p1', query: {} }));
+  it('treats an undefined adminTab as users', () =>
+    expect(stateToRoute({ ...base, screen: 'admin', adminTab: undefined })).toEqual({ path: '/admin', query: {} }));
 });
 
 describe('routeToPatch', () => {

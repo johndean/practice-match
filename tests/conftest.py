@@ -5,11 +5,13 @@ os.environ.setdefault("REDIS_URL", "redis://localhost:6380/0")
 os.environ.setdefault("ENVIRONMENT", "test")
 os.environ.setdefault("API_SECRET_KEY", "test_only_secret_change_me")
 
-from pathlib import Path  # noqa: E402  (env defaults must precede any app.* import)
+# Env defaults above must precede any app.* import (E402 no longer enforced by ruff's
+# config here, but the ordering itself still matters — see the module docstring intent).
+from pathlib import Path
 
-import httpx  # noqa: E402
-import pytest  # noqa: E402
-from httpx import ASGITransport  # noqa: E402
+import httpx
+import pytest
+from httpx import ASGITransport
 
 
 @pytest.fixture
@@ -31,7 +33,7 @@ async def client(dist):
         yield c
 
 
-import psycopg2  # noqa: E402
+import psycopg2
 
 
 @pytest.fixture(scope="session")

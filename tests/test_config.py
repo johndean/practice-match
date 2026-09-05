@@ -9,7 +9,7 @@ ROOT = Path(__file__).resolve().parent.parent
 def _run_import_without(*missing: str) -> subprocess.CompletedProcess[str]:
     env = {k: v for k, v in os.environ.items() if k not in missing}
     env["PYTHONPATH"] = str(ROOT)
-    return subprocess.run([sys.executable, "-c", "import app.config"], env=env, capture_output=True, text=True)
+    return subprocess.run([sys.executable, "-c", "import app.config"], env=env, capture_output=True, text=True, check=False)
 
 
 def test_missing_required_variable_exits_1_and_names_it():

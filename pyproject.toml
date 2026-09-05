@@ -26,10 +26,23 @@ pytest-asyncio = ">=0.24"
 mypy = ">=1.13"
 types-psycopg2 = ">=2.9"
 pyyaml = "^6.0.3"
+ruff = "0.16.6"
+pytest-cov = "7.1.0"
+diff-cover = "10.5.1"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 160
+
+[tool.ruff.lint]
+# No `select` key: ruff's own default rule set stays active (it already includes
+# pyflakes/pycodestyle plus a broad "recommended" set — RUF and PLW among them).
+# extend-select only guarantees I (isort) and RUF are on, per policy; no ignores.
+extend-select = ["I", "RUF"]
 
 [build-system]
 requires = ["poetry-core>=2.0"]

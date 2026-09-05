@@ -24,10 +24,18 @@ def async_dsn(url: str) -> str:
     template hands out the legacy postgres:// scheme (not postgresql://, despite what
     this docstring used to claim) — libpq/psycopg2 accept both, SQLAlchemy 2.x's
     `postgres` dialect alias does not exist, so it must be rewritten before the
-    dialect-suffix rewrite below (fix round 5)."""
+    dialect-suffix rewrite below (fix round 5).
+
+    Both rewrites are anchored to the string's own leading scheme via `startswith`/
+    slicing, never a bare `str.replace(..., 1)` — that would still find and mangle a
+    "postgresql://" substring anywhere else in the URL (e.g. inside a query value)
+    while leaving the DSN's own, different scheme untouched (Task 9 fix round 1,
+    folded in from the Task 5 round-5 re-review)."""
     if url.startswith("postgres://"):
         url = "postgresql://" + url[len("postgres://"):]
-    return url if url.startswith("postgresql+asyncpg://") else url.replace("postgresql://", "postgresql+asyncpg://", 1)
+    if url.startswith("postgresql://") and not url.startswith("postgresql+asyncpg://"):
+        url = "postgresql+asyncpg://" + url[len("postgresql://"):]
+    return url
 
 
 def _err(exc: Exception) -> ComponentStatus:

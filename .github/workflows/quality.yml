@@ -17,6 +17,7 @@ jobs:
   gitleaks:
     name: gitleaks
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
         with: { fetch-depth: 0 }
@@ -31,6 +32,7 @@ jobs:
   backend:
     name: backend (pytest against PostGIS + Redis)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     services:
       postgres:
         image: postgis/postgis:16-3.5
@@ -50,21 +52,13 @@ jobs:
       API_SECRET_KEY: ci_only_secret_change_me
     steps:
       - uses: actions/checkout@v4
+        with: { fetch-depth: 0 }   # diff-cover (PRs) needs origin/main reachable
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
       - run: pipx install poetry==2.4.1
       - run: poetry install --no-interaction
-      # ruff, pytest-cov and diff-cover are CI-only tooling: installed into the poetry
-      # venv here rather than added to pyproject.toml's dev group, which Task 9 scopes
-      # to pyyaml (+ an optional mypy override) only. `poetry run <tool>` finds them
-      # because it runs the venv's Python/PATH with these packages now importable/on it.
-      - run: poetry run pip install ruff==0.16.6 pytest-cov==7.1.0 diff-cover==10.5.1
       - run: poetry run python scripts/migrate.py
-      # --extend-ignore: I001 (import sort), RUF100 (unused noqa for a non-default rule)
-      # and PLW1510 (subprocess without explicit check=) are ruff's real default-ruleset
-      # findings against Tasks 1-8 code, which this task does not own and must not edit
-      # (surgical diffs) and cannot silence via pyproject.toml (out of scope here).
-      - run: poetry run ruff check app tests --extend-ignore I001,RUF100,PLW1510
+      - run: poetry run ruff check app tests scripts
       - run: poetry run mypy app --strict
       - run: poetry run mypy scripts/migrate.py --strict
       - run: poetry run pytest -q -W error --cov=app --cov-report=xml --cov-fail-under=90
@@ -79,6 +73,7 @@ jobs:
   frontend:
     name: frontend (typecheck · unit · build · smoke · visual parity)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     defaults:
       run: { working-directory: frontend }
     steps:
@@ -93,12 +88,10 @@ jobs:
           npm run gen:app
           git diff --exit-code -- src/App.vue src/app.setup.js src/generated/pseudo.css
       - run: npm run build
-      - run: npx vitest run
-      # @vitest/coverage-v8 is CI-only tooling for this scoped threshold gate, installed
-      # without touching package.json/package-lock.json (outside this task's scope).
-      - run: npm install --no-save @vitest/coverage-v8@3.2.7
-      - run: npx vitest run --coverage --coverage.thresholds.lines=85 --coverage.include='src/map/**' --coverage.include='src/router/**' --coverage.include='src/admin/**'
-      - run: npx vitest run tests/bundle-budget.test.ts
+      # The 100/100/100/100 thresholds (vite.config.ts's test.coverage) already require every
+      # test file to run, so this one command replaces the separate plain `vitest run` and the
+      # standalone bundle-budget.test.ts run the earlier draft had (both redundant with this).
+      - run: npx vitest run --coverage
       - run: npx playwright install --with-deps chromium
       - name: Reference project — generates the oracle (visual baselines + DOM snapshots) from the approved design, this run's Linux Chromium
         run: npx playwright test --config=tests/playwright.config.ts --project=reference

@@ -74,7 +74,7 @@ class _RaisingOnLedgerInsertCursor(psycopg2.extensions.cursor):
     prove the migration file's own SQL rolls back too (they must commit as one
     transaction)."""
 
-    def execute(self, query, vars=None):  # noqa: A002 - matches psycopg2's own param name
+    def execute(self, query, vars=None):  # matches psycopg2's own cursor.execute signature (shadows the builtin, intentionally)
         if isinstance(query, str) and "INSERT INTO schema_migrations" in query:
             raise psycopg2.Error("forced failure (RED/behavioural test): ledger insert")
         return super().execute(query, vars)

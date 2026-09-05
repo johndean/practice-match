@@ -68,6 +68,21 @@ def test_async_dsn_accepts_the_legacy_postgres_scheme():
     assert async_dsn("postgresql+asyncpg://u:p@h:5432/db") == "postgresql+asyncpg://u:p@h:5432/db"
 
 
+def test_async_dsn_rewrite_is_anchored_to_the_scheme_prefix():
+    """The dialect-suffix rewrite must only ever touch the DSN's own leading scheme,
+    never a substring found elsewhere in the URL (Task 9 fix round 1, folded in from
+    the Task 5 round-5 re-review: the inherited `str.replace(..., 1)` fallback was
+    unanchored)."""
+    already_asyncpg = "postgresql+asyncpg://u:p@h/db?x=postgresql://y"
+    assert async_dsn(already_asyncpg) == already_asyncpg
+    assert async_dsn("postgresql://u:p@h/db?x=postgresql://y") == "postgresql+asyncpg://u:p@h/db?x=postgresql://y"
+    # Proves the anchoring actually matters: an unanchored `.replace("postgresql://",
+    # ..., 1)` would leave this DSN's own (non-postgres) scheme alone but still find
+    # and mangle the embedded "postgresql://" inside the query value, since it's the
+    # first (and only) match in the string.
+    assert async_dsn("mysql://u:p@h/db?x=postgresql://y") == "mysql://u:p@h/db?x=postgresql://y"
+
+
 async def test_check_db_degrades_on_malformed_dsn_instead_of_raising():
     result = await check_db("not-a-dsn")
     assert result == {"ok": False, "error": "ArgumentError"}

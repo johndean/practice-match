@@ -95,6 +95,24 @@ describe('useStateRouteSync — signed-out deep link + pending route on auth', (
   });
 });
 
+describe('useStateRouteSync — replace vs. push', () => {
+  it('uses router.replace (not push) when only the query changes and the path stays the same', async () => {
+    const { c, router } = await setup('/');
+    c.setState({ screen: 'browse', browseMode: 'listings', auth: true });
+    await flush(); await nextTick();
+    expect(router.currentRoute.value.fullPath).toBe('/browse');
+
+    const pushSpy = vi.spyOn(router, 'push');
+    const replaceSpy = vi.spyOn(router, 'replace');
+    c.setState({ browseMode: 'market' }); // same screen/path, only the query changes
+    await flush(); await nextTick();
+
+    expect(router.currentRoute.value.fullPath).toBe('/browse?tab=market');
+    expect(replaceSpy).toHaveBeenCalledTimes(1);
+    expect(pushSpy).not.toHaveBeenCalled();
+  });
+});
+
 describe('useStateRouteSync — no state↔route loop', () => {
   it('produces exactly one navigation for a state change, and none for a repeat of the same state', async () => {
     const { c, router } = await setup('/');

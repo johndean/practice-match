@@ -61,6 +61,9 @@ const ringOf = (root: ShadowRoot) => root.querySelector('.ring') as HTMLElement;
 const imgOf = (root: ShadowRoot) => root.querySelector('.frame img') as HTMLImageElement;
 const capOf = (root: ShadowRoot) => root.querySelector('.empty .cap') as HTMLElement;
 const emptyOf = (root: ShadowRoot) => root.querySelector('.empty') as HTMLElement;
+const creditOf = (root: ShadowRoot) => root.querySelector('.credit') as HTMLElement;
+// image-slot.js l.108-146, verbatim.
+const UNSPLASH_HOMEPAGE_HREF = 'https://unsplash.com/?utm_source=claude_design&utm_medium=referral';
 
 describe('ImageSlot — shadow root and structure', () => {
   // The Popover-present test fakes support on the prototype; undo it for every other test.
@@ -196,6 +199,16 @@ describe('ImageSlot — shape', () => {
     expect(frameOf(slot({ id: 'x', shape: 'rounded', radius: 20 }).root).style.borderRadius).toBe('20px');
   });
 
+  it('falls back to 12px when radius is not a finite number', () => {
+    expect(frameOf(slot({ id: 'x', shape: 'rounded', radius: Number.NaN }).root).style.borderRadius).toBe('12px');
+  });
+
+  it('an empty shape prop falls back to rounded, in the template attribute and in render()', () => {
+    const { host, root } = slot({ id: 'x', shape: '' });
+    expect(host.hasAttribute('shape')).toBe(false); // template: `:shape="shape || undefined"`
+    expect(frameOf(root).style.borderRadius).toBe('12px'); // render(): `String(props.shape || 'rounded')`
+  });
+
   it('uses 50% for circle and 9999px for pill, on the ring too', () => {
     const circle = slot({ id: 'x', shape: 'circle' }).root;
     expect(frameOf(circle).style.borderRadius).toBe('50%');
@@ -222,6 +235,37 @@ describe('ImageSlot — empty state', () => {
   it('falls back to the element\'s own default caption', () => {
     expect(capOf(slot({ id: 'x' }).root).textContent).toBe('Drop an image');
     expect(capOf(slot({ id: 'x', placeholder: '' }).root).textContent).toBe('Drop an image');
+  });
+
+  it('an unset id (default \'\') writes no id attribute at all', () => {
+    const { host } = slot({});
+    expect(host.hasAttribute('id')).toBe(false);
+  });
+});
+
+describe('ImageSlot — blocked Unsplash attribution', () => {
+  it('hides the photo behind the attribution-error tile for a real Unsplash host with no credit', () => {
+    const { host, root } = slot({ id: 'x', src: 'https://images.unsplash.com/photo-1234' });
+    expect(host.hasAttribute('data-attribution-error')).toBe(true);
+    expect(host.hasAttribute('data-filled')).toBe(false);
+    expect(imgOf(root).style.display).toBe('none');
+    expect(imgOf(root).hasAttribute('src')).toBe(false);
+    expect(emptyOf(root).style.display).toBe('none'); // the error tile owns this state, not .empty
+  });
+
+  it('re-showing an attribution-blocked photo (hidShowing) after the src is cleared, then re-set', async () => {
+    const { wrapper, host, root } = slot({ id: 'x', src: 'https://images.unsplash.com/photo-1234' });
+    expect(host.hasAttribute('data-attribution-error')).toBe(true);
+
+    // Clears the blocked src: hidShowing becomes true (attrError was true and img had a src).
+    await wrapper.setProps({ src: '' });
+    expect(host.hasAttribute('data-attribution-error')).toBe(false);
+    expect(emptyOf(root).style.display).toBe('flex');
+
+    // Setting a normal (non-Unsplash) photo now takes the `hidShowing` branch in the filled
+    // path (prev !== url still holds since the src actually changed to a new value).
+    await wrapper.setProps({ src: PHOTO });
+    expect(host.hasAttribute('data-filled')).toBe(true);
   });
 });
 
@@ -257,6 +301,64 @@ describe('ImageSlot — filled state', () => {
     expect(img.style.objectFit).toBe('cover');
     expect(imgOf(slot({ id: 'x', src: PHOTO, fit: 'contain' }).root).style.objectFit).toBe('contain');
   });
+
+  it('computes real width/height once the image has real geometry (applyView\'s baseline branch)', () => {
+    const { host, root } = slot({ id: 'x', src: PHOTO, fit: 'contain' });
+    const img = imgOf(root);
+    // jsdom never lays anything out, so applyView's no-geometry branch is all any other test
+    // sees; stub the four reads geom() makes (naturalWidth/Height on the img, clientWidth/
+    // Height on the host) and fire the same 'load' event the browser would, which calls
+    // applyView() again (image-slot.js l.567-577).
+    Object.defineProperty(img, 'naturalWidth', { value: 400, configurable: true });
+    Object.defineProperty(img, 'naturalHeight', { value: 300, configurable: true });
+    Object.defineProperty(host, 'clientWidth', { value: 200, configurable: true });
+    Object.defineProperty(host, 'clientHeight', { value: 200, configurable: true });
+
+    img.dispatchEvent(new Event('load'));
+
+    // contain: base = min(fw/iw, fh/ih) = min(200/400, 200/300) = 0.5
+    expect(img.style.width).toBe('100%');   // 400 * 0.5 / 200 * 100
+    expect(img.style.height).toBe('75%');   // 300 * 0.5 / 200 * 100
+    expect(img.style.left).toBe('50%');
+    expect(img.style.top).toBe('50%');
+    expect(img.style.objectFit).toBe(''); // cleared once real geometry is known — the CSS default applies
+  });
+
+  it('computes the cover baseline (Math.max) with real geometry, not just contain (Math.min)', () => {
+    const { host, root } = slot({ id: 'x', src: PHOTO }); // fit defaults to cover
+    const img = imgOf(root);
+    Object.defineProperty(img, 'naturalWidth', { value: 400, configurable: true });
+    Object.defineProperty(img, 'naturalHeight', { value: 300, configurable: true });
+    Object.defineProperty(host, 'clientWidth', { value: 200, configurable: true });
+    Object.defineProperty(host, 'clientHeight', { value: 200, configurable: true });
+
+    img.dispatchEvent(new Event('load'));
+
+    // cover: base = max(fw/iw, fh/ih) = max(0.5, 0.667) = 0.667 (400*0.667/200*100 = 133.3%)
+    expect(img.style.width).toBe((400 * (200 / 300) / 200 * 100) + '%');
+    expect(img.style.height).toBe((300 * (200 / 300) / 200 * 100) + '%');
+  });
+
+  it('geom() is null when only some of the four dimensions are known', () => {
+    // The no-geometry fallback style values below are only reachable through geom()
+    // returning null, so an unchanged fallback proves each partial case still short-circuits
+    // — naturalWidth/Height and clientWidth/Height each have to be checked independently.
+    const cases: Array<[number, number, number, number]> = [
+      [400, 0, 200, 200], // naturalHeight missing
+      [400, 300, 0, 200], // clientWidth missing
+      [400, 300, 200, 0]  // clientHeight missing
+    ];
+    for (const [iw, ih, fw, fh] of cases) {
+      const { host, root } = slot({ id: 'x', src: PHOTO });
+      const img = imgOf(root);
+      Object.defineProperty(img, 'naturalWidth', { value: iw, configurable: true });
+      Object.defineProperty(img, 'naturalHeight', { value: ih, configurable: true });
+      Object.defineProperty(host, 'clientWidth', { value: fw, configurable: true });
+      Object.defineProperty(host, 'clientHeight', { value: fh, configurable: true });
+      img.dispatchEvent(new Event('load'));
+      expect(img.style.width, `iw=${iw} ih=${ih} fw=${fw} fh=${fh}`).toBe('100%');
+    }
+  });
 });
 
 describe('ImageSlot — reactivity', () => {
@@ -284,5 +386,147 @@ describe('ImageSlot — reactivity', () => {
 
     await wrapper.setProps({ src: '/assets/photos/round-rock-exterior-side.webp' });
     expect(host.hasAttribute('data-swapping')).toBe(true);
+  });
+
+  it('re-rendering with the same src (a different prop changed) takes the no-op releaseMask branch, not a re-swap', async () => {
+    const { wrapper, host, root } = slot({ id: 'x', src: PHOTO, placeholder: 'Practice exterior' });
+    expect(host.hasAttribute('data-swapping')).toBe(false);
+    // The image "finishes loading" first, so loadPending is false before the next render —
+    // without this, releaseMask()'s `!loadPending` guard alone would short-circuit the call,
+    // never reaching the `settled || img.complete` check this test targets.
+    imgOf(root).dispatchEvent(new Event('load'));
+
+    // Only `placeholder` changes; `src` is the same value, so render()'s `prev !== url` is
+    // false and it calls releaseMask() (no swap, settled undefined) instead of re-assigning
+    // img.src — which is what evaluates `img.complete` rather than short-circuiting on `settled`.
+    await wrapper.setProps({ placeholder: 'Treatment area' });
+    expect(capOf(root).textContent).toBe('Treatment area');
+    expect(imgOf(root).getAttribute('src')).toBe(PHOTO);
+    expect(host.hasAttribute('data-swapping')).toBe(false);
+  });
+});
+
+describe('ImageSlot — Unsplash attribution-error gate (isUnsplashHost)', () => {
+  it('degrades to false — no attribution-error tile — when the src cannot be parsed as a URL', () => {
+    // A space in the host is genuinely unparseable (`new URL` throws), not merely an
+    // unusual value; isUnsplashHost's catch branch is only reachable this way.
+    const { host } = slot({ id: 'x', src: 'http://exa mple.com/photo.jpg' });
+    expect(host.hasAttribute('data-attribution-error')).toBe(false);
+  });
+});
+
+describe('ImageSlot — credit attribution (renderCredit / withReferral)', () => {
+  it('shows nothing and clears data-credit when there is no credit text', () => {
+    const { host, root } = slot({ id: 'x', src: PHOTO });
+    expect(host.hasAttribute('data-credit')).toBe(false);
+    expect(creditOf(root).textContent).toBe('');
+  });
+
+  it('shows plain text when credit has no creditHref', () => {
+    const { host, root } = slot({ id: 'x', src: PHOTO, credit: 'Interior by Acme Corp' });
+    expect(host.hasAttribute('data-credit')).toBe(true);
+    expect(creditOf(root).textContent).toBe('Interior by Acme Corp');
+    expect(creditOf(root).querySelector('a')).toBeNull();
+  });
+
+  it('falls back to plain text when creditHref cannot be parsed as a URL', () => {
+    const { root } = slot({ id: 'x', src: PHOTO, credit: 'Interior by Acme Corp', creditHref: 'http://exa mple.com/x' });
+    expect(creditOf(root).textContent).toBe('Interior by Acme Corp');
+    expect(creditOf(root).querySelector('a')).toBeNull();
+  });
+
+  it('falls back to plain text when creditHref parses but is not http(s)', () => {
+    const { root } = slot({ id: 'x', src: PHOTO, credit: 'Interior by Acme Corp', creditHref: 'mailto:owner@example.com' });
+    expect(creditOf(root).textContent).toBe('Interior by Acme Corp');
+    expect(creditOf(root).querySelector('a')).toBeNull();
+  });
+
+  it('links non-Unsplash credit text to a valid creditHref, unmodified (not an Unsplash host, so no utm rewrite)', () => {
+    const { root } = slot({ id: 'x', src: PHOTO, credit: 'Interior by Acme Corp', creditHref: 'https://acme.example/credits/1' });
+    const a = creditOf(root).querySelector('a');
+    expect(a?.textContent).toBe('Interior by Acme Corp');
+    expect(a?.getAttribute('href')).toBe('https://acme.example/credits/1');
+    expect(a?.getAttribute('target')).toBe('_blank');
+    expect(a?.getAttribute('rel')).toBe('noopener noreferrer');
+  });
+
+  it('a "Photo by X on Unsplash" credit with no href links only the trailing "Unsplash" word', () => {
+    const { root } = slot({ id: 'x', src: PHOTO, credit: 'Photo by Jane Doe on Unsplash' });
+    const credit = creditOf(root);
+    expect(credit.textContent).toBe('Photo by Jane Doe on Unsplash');
+    const links = [...credit.querySelectorAll('a')];
+    expect(links).toHaveLength(1);
+    expect(links[0].textContent).toBe('Unsplash');
+    expect(links[0].getAttribute('href')).toBe(UNSPLASH_HOMEPAGE_HREF);
+  });
+
+  it('a "Photo by X on Unsplash" credit with a valid Unsplash creditHref links the name too, with utm params added', () => {
+    const { root } = slot({ id: 'x', src: PHOTO, credit: 'Photo by Jane Doe on Unsplash', creditHref: 'https://unsplash.com/photos/abc' });
+    const links = [...creditOf(root).querySelectorAll('a')];
+    expect(links).toHaveLength(2);
+    expect(links[0].textContent).toBe('Jane Doe');
+    expect(links[0].getAttribute('href')).toBe('https://unsplash.com/photos/abc?utm_source=claude_design&utm_medium=referral');
+    expect(links[1].textContent).toBe('Unsplash');
+    expect(links[1].getAttribute('href')).toBe(UNSPLASH_HOMEPAGE_HREF);
+  });
+
+  it('does not duplicate utm params already present on the creditHref', () => {
+    const { root } = slot({
+      id: 'x', src: PHOTO, credit: 'Photo by Jane Doe on Unsplash',
+      creditHref: 'https://unsplash.com/photos/abc?utm_source=x&utm_medium=y'
+    });
+    const links = [...creditOf(root).querySelectorAll('a')];
+    expect(links[0].getAttribute('href')).toBe('https://unsplash.com/photos/abc?utm_source=x&utm_medium=y');
+  });
+
+  it("withReferral falls back to the href unchanged if the internal re-parse ever throws (defensive branch)", () => {
+    // Unreachable through any real caller: `u.href` (the only input withReferral ever
+    // receives) is always a valid absolute URL by construction, so re-parsing it can never
+    // throw in practice — proven separately by direct probing of `new URL(new URL(x).href)`
+    // across many inputs. The catch exists as a safety net anyway, so it is exercised here by
+    // stubbing the global URL constructor to throw ONLY on withReferral's own single-argument
+    // re-parse call, leaving every other URL construction (jsdom's own use, and the first,
+    // two-argument parse at l.176) untouched.
+    const RealURL = globalThis.URL;
+    const TRIGGER = 'https://unsplash.com/photos/forced-throw';
+    function StubURL(this: unknown, url: string, base?: string) {
+      if (base === undefined && url === TRIGGER) throw new Error('forced for test');
+      return new RealURL(url, base);
+    }
+    vi.stubGlobal('URL', StubURL);
+    try {
+      const { root } = slot({ id: 'x', src: PHOTO, credit: 'Photo by Jane Doe on Unsplash', creditHref: TRIGGER });
+      const links = [...creditOf(root).querySelectorAll('a')];
+      expect(links[0].getAttribute('href')).toBe(TRIGGER); // unchanged: no utm params appended
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
+
+describe('ImageSlot — ResizeObserver wiring', () => {
+  it('observes the host when ResizeObserver is available, re-renders on notify, and disconnects on unmount', () => {
+    let capturedCallback: (() => void) | undefined;
+    let observedTarget: Element | undefined;
+    let disconnectCalls = 0;
+    class FakeResizeObserver {
+      constructor(cb: () => void) { capturedCallback = cb; }
+      observe(el: Element) { observedTarget = el; }
+      disconnect() { disconnectCalls += 1; }
+    }
+    vi.stubGlobal('ResizeObserver', FakeResizeObserver);
+    try {
+      const { wrapper, host, root } = slot({ id: 'x', shape: 'rect' });
+      expect(observedTarget).toBe(host);
+      expect(capturedCallback).toBeTypeOf('function');
+
+      expect(() => capturedCallback!()).not.toThrow(); // the notify callback re-renders
+      expect(frameOf(root).style.borderRadius).toBe(''); // rect: still square after the re-render
+
+      wrapper.unmount();
+      expect(disconnectCalls).toBe(1);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 });
