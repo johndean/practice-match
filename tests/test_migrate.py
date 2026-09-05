@@ -3,6 +3,7 @@ import uuid
 from pathlib import Path
 
 import psycopg2
+import psycopg2.extensions
 import pytest
 
 from app.config import settings
@@ -58,3 +59,53 @@ def test_failing_file_raises_and_is_not_recorded(scratch_db, tmp_path):
 def test_normalize_dsn_strips_the_asyncpg_dialect():
     assert migrate.normalize_dsn("postgresql+asyncpg://u:p@h/db") == "postgresql://u:p@h/db"
     assert migrate.normalize_dsn("postgresql://u:p@h/db") == "postgresql://u:p@h/db"
+
+
+class _RaisingOnLedgerInsertCursor(psycopg2.extensions.cursor):
+    """A cursor that raises the moment the ledger row would be inserted, so a test can
+    prove the migration file's own SQL rolls back too (they must commit as one
+    transaction)."""
+
+    def execute(self, query, vars=None):  # noqa: A002 - matches psycopg2's own param name
+        if isinstance(query, str) and "INSERT INTO schema_migrations" in query:
+            raise psycopg2.Error("forced failure (RED/behavioural test): ledger insert")
+        return super().execute(query, vars)
+
+
+def test_apply_and_record_commit_as_one_transaction(scratch_db, tmp_path, monkeypatch):
+    """Fix round 1 (Important, plan-mandated): if the ledger INSERT fails, the
+    migration file's own SQL must not be left committed either."""
+    (tmp_path / "002_tmp.sql").write_text("CREATE TABLE tmp_probe (id int);")
+    real_connect = psycopg2.connect
+
+    def connect_with_raising_cursor(dsn):
+        return real_connect(dsn, cursor_factory=_RaisingOnLedgerInsertCursor)
+
+    monkeypatch.setattr(migrate.psycopg2, "connect", connect_with_raising_cursor)
+
+    with pytest.raises(psycopg2.Error):
+        migrate.run(scratch_db, directory=tmp_path)
+
+    with real_connect(scratch_db) as conn, conn.cursor() as cur:
+        cur.execute("SELECT to_regclass('tmp_probe')")
+        assert cur.fetchone()[0] is None, "the migration's own CREATE TABLE must have rolled back too"
+        cur.execute("SELECT count(*) FROM schema_migrations WHERE name = %s", ("002_tmp.sql",))
+        assert cur.fetchone()[0] == 0
+
+
+def test_main_returns_2_and_names_the_missing_variable_on_stderr(monkeypatch, capsys):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    code = migrate.main()
+    assert code == 2
+    assert "DATABASE_URL" in capsys.readouterr().err
+
+
+def test_main_returns_0_and_applies_nothing_on_a_second_run(scratch_db, monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", scratch_db)
+    first_code = migrate.main()
+    assert first_code == 0
+    capsys.readouterr()  # discard the first run's output
+
+    second_code = migrate.main()
+    assert second_code == 0
+    assert "done — 0 applied" in capsys.readouterr().out

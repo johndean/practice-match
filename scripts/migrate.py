@@ -52,8 +52,18 @@ def run(dsn: str, directory: Path = MIGRATIONS_DIR) -> list[str]:
                         print(f"  ✓ {name} (already applied)")
                         continue
                     print(f"  → {name}")
-                    cur.execute(Path(path).read_text(encoding="utf-8"))
-                    cur.execute("INSERT INTO schema_migrations (name) VALUES (%s)", (name,))
+                    # The file's own SQL and its ledger row commit as ONE transaction:
+                    # a failing ledger insert must not leave the file's SQL applied.
+                    conn.autocommit = False
+                    try:
+                        cur.execute(Path(path).read_text(encoding="utf-8"))
+                        cur.execute("INSERT INTO schema_migrations (name) VALUES (%s)", (name,))
+                        conn.commit()
+                    except Exception:
+                        conn.rollback()
+                        raise
+                    finally:
+                        conn.autocommit = True
                     applied.append(name)
             finally:
                 cur.execute("SELECT pg_advisory_unlock(%s)", (LOCK_KEY,))
