@@ -12,6 +12,7 @@
 
 ## Global Constraints (exact values — verified against Google's terms and pricing on 2026-09-05)
 
+- **TDD, no exceptions (John, 2026-09-05: "everything must have tests").** Every production change begins with a failing test that is run and watched fail (RED), then the minimal code, then the same test watched pass (GREEN) — the `Run:` lines in each task are mandatory steps, not illustrations. Documentation and configuration are covered by drift tests (`tests/test_docs.py`: every setting in `.env.example` and `DEPLOY.md`, relative links resolve, CI workflow shape, runbook endpoints exist); operational scripts have shell tests under `tests/scripts/` that run them against stubbed servers or a stubbed `curl`; ops steps end with an executable verification whose script is itself tested. The handoff's generated UI is covered by the visual gate (every screen state), the route smoke tests, the router-sync and engine unit tests and the `logic.js` characterisation suite (Platform Task 1c); new code in those files follows TDD.
 - **One map engine, app-wide (Terms §3.2.3(e)).** "Customer will not use the Google Maps Core Services with or near a non-Google Map in a Customer Application." Leaflet, Esri and CARTO leave the application entirely; an ESLint `no-restricted-imports` rule for `leaflet` enforces it. The design-reference render used by the visual harness may still contain Leaflet — it is a development fixture, not part of the Customer Application.
 - **Attribution untouched.** The Google logo, "Map data ©… Google" and the Terms link are rendered by the API; they are never removed, hidden, obscured or moved (Maps JavaScript API policies). `disableDefaultUI: true` removes controls only; it does not and must not touch attribution. Places content shown outside the map (a list, a tooltip) shows each place's `attributions` when present.
 - **Nothing from Google is stored.** No Places field (name, address, status, rating, lat/lng) and no Aggregate count is written to Postgres, Redis (other than rate-limit counters), the bucket, logs or analytics. `place_id` may be stored (SST §3) but V1 stores none. Lat/lng of a place may be held in browser memory for the page's life (SST §14.3 allows 30 days; we keep none past the view).
@@ -75,14 +76,14 @@
 | `app/census/google_aggregate.py` | Aggregate client (sync from the Census plan, plus `count_operational_async`) |
 | `migrations/009_google_registry.sql` | Registry rows `google_maps_js`, `google_places_live`; notes update on `google_places_aggregate` |
 | `frontend/e2e/visual.spec.ts`, `frontend/e2e/harness.ts` | Map-viewport mask while `DESIGN_HAS_GOOGLE_MAP=false`; Google loader stub route |
-| `docs/DEPLOY.md`, `docs/RUNBOOK-google-quota.md` | Console setup, keys, quotas, what to do when a quota trips |
+| `DEPLOY.md`, `docs/RUNBOOK-google-quota.md` | Console setup, keys, quotas, what to do when a quota trips |
 
 ---
 
 ### Task G1: Google Cloud project, keys, Map ID, quotas, budget, Railway variables (ops — John, with exact steps)
 
 **Files:**
-- Create: `docs/DEPLOY.md` §"Google Maps Platform", `scripts/verify-google.sh`
+- Create: `DEPLOY.md` §"Google Maps Platform", `scripts/verify-google.sh`
 - Test: manual verification commands below (no automated test can hold a live key)
 
 **Interfaces:**
@@ -108,6 +109,28 @@ for env in QA production; do
 done
 ```
 
+- [ ] **Step 2b: Failing shell test for the verification script**
+
+`tests/scripts/test_verify_google.sh` — runs `scripts/verify-google.sh` against a stubbed `curl` so the script's parsing and its "never print a key" rule are proved without a live key:
+```bash
+#!/usr/bin/env bash
+set -euo pipefail; cd "$(dirname "$0")/../.."
+fail() { echo "FAIL: $*"; exit 1; }
+STUB=$(mktemp -d); trap 'rm -rf "$STUB"' EXIT
+cat > "$STUB/curl" <<'SH'
+#!/usr/bin/env bash
+# areainsights → a count; anything with -w '%{http_code}' → 200
+case "$*" in *areainsights.googleapis.com*) echo '{"count": 17}';; *http_code*) echo 200;; *) echo '{}';; esac
+SH
+chmod +x "$STUB/curl"
+out=$(PATH="$STUB:$PATH" GOOGLE_MAPS_SERVER_KEY=secret-server VITE_GOOGLE_MAPS_BROWSER_KEY=secret-browser bash scripts/verify-google.sh 2>&1) || fail "script exited non-zero: $out"
+[[ "$out" == *"aggregate ok, Cedar Park 8 km count: 17"* ]] || fail "count line missing: $out"
+[[ "$out" != *secret-server* && "$out" != *secret-browser* ]] || fail "a key value leaked into the output"
+if PATH="$STUB:$PATH" bash scripts/verify-google.sh >/dev/null 2>&1; then fail "missing GOOGLE_MAPS_SERVER_KEY must fail"; fi
+echo "verify-google.sh OK"
+```
+Run: `bash tests/scripts/test_verify_google.sh` → **FAIL** (`scripts/verify-google.sh: No such file or directory`).
+
 - [ ] **Step 3: Verify from the terminal**
 
 `scripts/verify-google.sh`:
@@ -127,9 +150,11 @@ echo "browser key without referrer -> HTTP ${code} (200 is expected: the JS load
 ```
 Expected: an integer count for Cedar Park (a plausibility check: tens, not thousands), and no `RefererNotAllowedMapError` on `https://qa.foundation.vin`.
 
+Run: `bash tests/scripts/test_verify_google.sh` → `verify-google.sh OK` (GREEN) **before** the live run against the real keys; add it to the backend CI job.
+
 - [ ] **Step 4: Document and commit**
 
-Add the §"Google Maps Platform" section to `docs/DEPLOY.md` with the steps above (keys named, never valued). Commit: `docs(deploy): Google Maps Platform project, keys, Map ID, quotas, budget`.
+Add the §"Google Maps Platform" section to `DEPLOY.md` with the steps above (keys named, never valued). Commit: `docs(deploy): Google Maps Platform project, keys, Map ID, quotas, budget`.
 
 ---
 
@@ -883,11 +908,40 @@ Update `Practice Match V2.dc.html` on the canvas: replace the Esri/Leaflet map f
 
 **Files:**
 - Create: `docs/RUNBOOK-google-quota.md`
-- Modify: `app/api/health.py` (`google: {"configured": bool}` in `/api/healthz`), `docs/DEPLOY.md`
+- Modify: `app/api/health.py` (`google: {"configured": bool}` in `/api/healthz`), `DEPLOY.md`
 
-- [ ] Health: add `"google": {"configured": bool(settings.google_maps_server_key)}` to the healthz body; test asserts the key's **value** never appears in any response (`assert "server-k" not in r.text`).
-- [ ] Runbook: what a tripped quota looks like (`reason: quota`, hidden live layers, budget email), how to raise a quota deliberately (console, not code), how to rotate either key (create new → update Railway variable → `railway up` → delete old), and the monthly cost check (Cloud console → Billing → Reports filtered to the three SKUs).
-- [ ] Commit: `docs(ops): Google Maps quota runbook; healthz reports google.configured`.
+- [ ] **Step 1: Failing tests**
+
+`tests/test_health.py` — add:
+```python
+async def test_healthz_reports_google_configured_without_leaking_the_key(client, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "google_maps_server_key", "server-k")
+    r = await client.get("/api/healthz")
+    assert r.json()["google"] == {"configured": True}
+    assert "server-k" not in r.text
+```
+`tests/test_docs.py` — add:
+```python
+def test_google_runbook_and_deploy_variables_exist():
+    assert (ROOT / "docs" / "RUNBOOK-google-quota.md").read_text().count("quota") >= 3
+    text = (ROOT / "DEPLOY.md").read_text()
+    for var in ("GOOGLE_MAPS_BROWSER_KEY", "GOOGLE_MAPS_MAP_ID", "GOOGLE_MAPS_SERVER_KEY"):
+        assert var in text, var
+```
+Run: `poetry run pytest tests/test_health.py tests/test_docs.py -q` → **FAIL** (`KeyError: 'google'`, `FileNotFoundError: docs/RUNBOOK-google-quota.md`).
+
+- [ ] **Step 2: Implement**
+
+- Health: add `"google": {"configured": bool(settings.google_maps_server_key)}` to the healthz body.
+- `docs/RUNBOOK-google-quota.md`: what a tripped quota looks like (`reason: quota`, hidden live layers, budget email), how to raise a quota deliberately (console, not code), how to rotate either key (create new → update Railway variable → `railway up` → delete old), and the monthly cost check (Cloud console → Billing → Reports filtered to the three SKUs).
+- `DEPLOY.md`: the three variables and which service holds each.
+
+- [ ] **Step 3: Run — GREEN**
+
+Run: `poetry run pytest tests/test_health.py tests/test_docs.py -q` → all pass.
+
+- [ ] **Step 4: Commit** — `docs(ops): Google Maps quota runbook; healthz reports google.configured`.
 
 ---
 
@@ -905,6 +959,12 @@ Update `Practice Match V2.dc.html` on the canvas: replace the Esri/Leaflet map f
 | Census | D16 / Task C2 | Optional. Live Google pins cover the "literal competitors" need on screen; Overture remains the only source for anything that must be **stored** or **analysed** (e.g., a future exportable competitor list). |
 | Census | D17 / Task C1 | **Superseded.** The live Aggregate count is displayed directly (G5); no Customer Values, no `market_freshness` table. |
 | Census | Registry | `osm_tiles`, `imagery` → blocked by the G5 trigger when `google_maps_js` clears. |
+
+- [ ] **Step 1: Failing test** — the edits above are exercised by `tests/test_docs.py::test_relative_markdown_links_resolve` (every link in the edited plans must still resolve) and by a new assertion: `assert "Map engine = Google Maps JavaScript API" in (ROOT / "docs/superpowers/specs/2026-09-05-practice-match-platform-design.md").read_text()`. Run: `poetry run pytest tests/test_docs.py -q` → **FAIL** (assertion: the spec still names Leaflet).
+
+- [ ] **Step 2: Apply the deltas in the table.**
+
+- [ ] **Step 3: Run — GREEN** — `poetry run pytest tests/test_docs.py -q` → all pass. Commit: `docs(plans): apply the Google-engine deltas to the Platform and Census plans`.
 
 ## Cost model (Google list prices, 0–100 K tier, after free allowances)
 

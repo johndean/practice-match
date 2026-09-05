@@ -14,6 +14,7 @@
 
 ## Global Constraints (from the spec — exact values)
 
+- **TDD, no exceptions (John, 2026-09-05: "everything must have tests").** Every production change begins with a failing test that is run and watched fail (RED), then the minimal code, then the same test watched pass (GREEN) — the `Run:` lines in each task are mandatory steps, not illustrations. Documentation and configuration are covered by drift tests (`tests/test_docs.py`: every setting in `.env.example` and `DEPLOY.md`, relative links resolve, CI workflow shape, runbook endpoints exist); operational scripts have shell tests under `tests/scripts/` that run them against stubbed servers or a stubbed `curl`; ops steps end with an executable verification whose script is itself tested. The handoff's generated UI is covered by the visual gate (every screen state), the route smoke tests, the router-sync and engine unit tests and the `logic.js` characterisation suite (Platform Task 1c); new code in those files follows TDD.
 - **Pinned vintages, in `dataset_registry`:** `acs5` = `2023/acs/acs5` (2019–2023) · `acs5_subject` = `2023/acs/acs5/subject` · `acs5_prior` = `2018/acs/acs5` (2014–2018, static) · `cbp` = `2022/cbp` (NAICS parameter `NAICS2017`) · `qwi` = `timeseries/qwi/sa` · `bds` = `timeseries/bds` · `geocoder` = `geocoding.geo.census.gov`, benchmark `Public_AR_Current`, vintage `Current_Current` · `tiger_cb` = `TIGER2023/cb_2023_*`. No request is made without a vintage; vintages advance only by migration + `active_vintage` flip.
 - **Pre-aggregate, never call at request time.** The request path reads our tables only. A page that finds no materialised metric renders the layer's empty state and enqueues a backfill.
 - **Derived is labelled derived:** `is_derived = true` + `formula_version`; UI copy carries "derived estimate" / "approximate".
@@ -1959,6 +1960,8 @@ def test_large_row_swing_is_refused_unless_forced(conn):
     assert rep.ratio == 0.4 and vintage.active(conn)["acs5"] == "2020–2024"
 ```
 
+Run: `poetry run pytest tests/census/test_vintage.py -q` → **FAIL** (`ModuleNotFoundError: No module named 'app.census.vintage'`) — watch it fail before writing any implementation.
+
 - [ ] **Step 2: Implement**
 
 ```python
@@ -2027,6 +2030,8 @@ CLI: `activate <dataset_key> <vintage> --by <name> [--force]` printing the repor
 
 ---
 
+Run: `poetry run pytest tests/census/test_vintage.py -q` → all pass (GREEN); then `poetry run pytest tests/census -q` → everything else still green.
+
 ### Task A8: Celery tasks, beat schedule, licence audit
 
 **Files:**
@@ -2091,6 +2096,8 @@ def test_datasets_without_a_terms_url_are_skipped(conn):
     keys = {r.dataset_key for r in license.audit(conn, http)}
     assert "imagery" not in keys and "pet_ownership" not in keys
 ```
+
+Run: `poetry run pytest tests/census/test_license.py tests/census/test_tasks.py -q` → **FAIL** (`ModuleNotFoundError: No module named 'app.census.license'`) — watch it fail before writing any implementation.
 
 - [ ] **Step 2: Migration and licence module**
 
@@ -2334,6 +2341,8 @@ async def test_license_decision_updates_registry_and_logs(client):
     assert r2.status_code == 422
 ```
 
+Run: `poetry run pytest tests/census/test_admin_api.py tests/census/test_gate.py -q` → **FAIL** (`ModuleNotFoundError: No module named 'app.api.admin_data_sources'`) — watch it fail before writing any implementation.
+
 - [ ] **Step 2: Implement**
 
 `app/cache.py`:
@@ -2455,6 +2464,8 @@ async def decide_license(dataset_key: str, body: LicenseDecision) -> dict:
 ```
 
 Wire in `app/main.py` before `not_found_router`: `app.include_router(admin_data_sources.router)`. Run: `poetry run pytest -q` → all pass.
+
+Run: `poetry run pytest tests/census/test_admin_api.py tests/census/test_gate.py -q` → all pass (GREEN); then `poetry run pytest tests/census -q` → everything else still green.
 
 - [ ] **Step 3: Commit**
 
@@ -3001,6 +3012,8 @@ def test_rebuild_replaces_rows(conn):
         assert cur.fetchone()[0] == 7
 ```
 
+Run: `poetry run pytest tests/census/test_catchment.py -q` → **FAIL** (`ModuleNotFoundError: No module named 'app.census.catchment'`) — watch it fail before writing any implementation.
+
 - [ ] **Step 2: Implement**
 
 ```python
@@ -3040,6 +3053,8 @@ def build(conn, listing_id: str, geo_vintage: str) -> dict[str, dict[str, int]]:
 Run → 2 passed. Commit: `feat(census): euclidean_buffer_v1 catchments over tracts and ZCTAs`.
 
 ---
+
+Run: `poetry run pytest tests/census/test_catchment.py -q` → all pass (GREEN); then `poetry run pytest tests/census -q` → everything else still green.
 
 ### Task B4: Metric formulas (§8), data-quality rules (§14), materialisation into `market_metric` — three bands
 
@@ -3103,6 +3118,8 @@ def test_competition_level_uses_the_design_thresholds():
     assert m.competition_level(1.39) == "Low" and m.competition_level(1.4) == "Moderate" and m.competition_level(2.2) == "High"
     assert m.competition_level(None) is None
 ```
+
+Run: `poetry run pytest tests/census/test_metrics.py -q` → **FAIL** (`ModuleNotFoundError: No module named 'app.census.metrics'`).
 
 - [ ] **Step 2: Implement `metrics.py`**
 
@@ -3315,6 +3332,9 @@ def test_uncleared_cbp_and_zbp_leave_no_competition_rows(conn, world):
     assert n == 3 * 6   # per band: population, households, median income, growth, pets, income index — no establishments/per10k/payroll/score
     assert _metric(conn, world, "establishments") is None and _metric(conn, world, "opportunity_score") is None
 ```
+
+Run: `poetry run pytest tests/census/test_materialize.py -q` → **FAIL** (`ModuleNotFoundError: No module named 'app.census.materialize'`).
+
 - [ ] **Step 4: Implement `materialize.py`**
 
 ```python
@@ -3654,6 +3674,8 @@ async def test_missing_metrics_404_and_enqueue_backfill_once_for_real_listings_o
     assert sync_redis().llen("celery") == 1          # unknown ids never enqueue (red-team C4)
 ```
 
+Run: `poetry run pytest tests/census/test_market_api.py -q` → **FAIL** (`ModuleNotFoundError: No module named 'app.api.market'`) — watch it fail before writing any implementation.
+
 - [ ] **Step 2: Implement**
 
 `app/api/access.py`:
@@ -3875,11 +3897,43 @@ Add `market_data_public: bool = False` to `Settings`. Wire `market.router` in `m
 
 ---
 
+Run: `poetry run pytest tests/census/test_market_api.py -q` → all pass (GREEN); then `poetry run pytest tests/census -q` → everything else still green.
+
 ### Task B6: Integration contract for Sub-project 2 and the admin Data Sources tab
 
 **Files:**
 - Create: `docs/integrations/market-data-api.md`
 - Modify: `CLAUDE.md` (pointer), `DEPLOY.md` (Phase A exit runbook + variables)
+
+- [ ] **Step 0: Failing contract-drift test**
+
+`tests/api/test_contract_doc.py` — the integration contract must name every market and admin route the application exposes, carry the fixture field names the UI reads, and state growth as a vintage comparison:
+```python
+import re
+from pathlib import Path
+
+from app.api import admin_data_sources, market
+
+DOC = Path(__file__).resolve().parents[2] / "docs" / "integrations" / "market-data-api.md"
+
+
+def _paths(router) -> list[str]:
+    return sorted({r.path for r in router.routes if getattr(r, "path", None)})
+
+
+def test_contract_doc_names_every_market_and_admin_route():
+    text = DOC.read_text(encoding="utf-8")
+    for path in _paths(market.router) + _paths(admin_data_sources.router):
+        assert path in text, path
+
+
+def test_contract_doc_carries_the_fixture_field_names_and_the_vintage_statement():
+    text = DOC.read_text(encoding="utf-8")
+    for field in ("pop", "hh", "income", "growth", "pets", "econ", "vets"):
+        assert re.search(rf"`{field}`", text), field
+    assert "ACS 2014–2018 → 2019–2023" in text
+```
+Run: `poetry run pytest tests/api/test_contract_doc.py -q` → **FAIL** (`FileNotFoundError: docs/integrations/market-data-api.md`).
 
 - [ ] **Step 1: Write the contract** — `docs/integrations/market-data-api.md` containing: the API contract section of this plan verbatim; the **fixture → field mapping** table below; the admin tab mapping; the copy rules.
 
@@ -3899,6 +3953,8 @@ Add `market_data_public: bool = False` to `Settings`. Wire `market.router` in `m
 **Design-vs-spec copy conflicts (route to the VIN Foundation / Claude Design before SP2 wires them):** (1) the card/legend copy "Growth since 2015" must become a vintage statement ("ACS 2014–2018 → 2019–2023"); (2) "5–10 min drive time" / "10–20 min drive time" need the spec §8 approximation label ("≈ 8 km straight-line"); (3) the competition card needs the §5 proxy sentence. The API supplies all three strings via `/api/layers`; the approved design must be updated to show them.
 
 Copy rules the frontend must honour when wiring (spec §8/§12/§14): every figure shows dataset + vintage (`attribution[]` and `metrics[].vintage`); `is_derived` → "derived estimate"; `median_hh_income.approximate` → "approximate"; `suppressed` → "Estimate too imprecise to show at this geography"; `geo_precision != 'rooftop'` → "approximate community data"; `opportunity_score` always with its three components and never near the price.
+
+Run: `poetry run pytest tests/api/test_contract_doc.py -q` → 2 passed (GREEN): the document and the routers cannot drift apart silently.
 
 - [ ] **Step 2: Commit and hand off**
 

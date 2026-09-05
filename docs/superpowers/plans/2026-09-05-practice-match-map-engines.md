@@ -12,6 +12,7 @@
 
 ## Global Constraints (exact values — from the spec)
 
+- **TDD, no exceptions (John, 2026-09-05: "everything must have tests").** Every production change begins with a failing test that is run and watched fail (RED), then the minimal code, then the same test watched pass (GREEN) — the `Run:` lines in each task are mandatory steps, not illustrations. Documentation and configuration are covered by drift tests (`tests/test_docs.py`: every setting in `.env.example` and `DEPLOY.md`, relative links resolve, CI workflow shape, runbook endpoints exist); operational scripts have shell tests under `tests/scripts/` that run them against stubbed servers or a stubbed `curl`; ops steps end with an executable verification whose script is itself tested. The handoff's generated UI is covered by the visual gate (every screen state), the route smoke tests, the router-sync and engine unit tests and the `logic.js` characterisation suite (Platform Task 1c); new code in those files follows TDD.
 - **One engine active per environment, never per user or per screen** (Google Maps Platform Terms §3.2.3(e)). The inactive engine's JavaScript chunk, CSS and tile hosts are never requested — proved by e2e route interception (Task M7).
 - **Only `frontend/src/map/engines/*.ts` and `frontend/src/lib/leaflet.js` may import `leaflet` or the Google loader** — enforced by the import-boundary test (`frontend/src/map/boundary.test.ts`, Platform Task 1b).
 - **Nothing from Google is stored.** No Places field and no Aggregate count is written to Postgres, Redis (other than rate-limit counters), the bucket, logs or analytics. Lat/lng of a place may live in browser memory for the page's life only.
@@ -55,7 +56,7 @@
 | `frontend/src/map/testing/google-stub.ts` | Deterministic `google.maps` for Vitest and Playwright |
 | `frontend/src/admin/dataSources.ts` | API rows → the Data tab's cell shape; engine rows; two-click Activate state machine |
 | `frontend/e2e/engines.spec.ts`, `frontend/tests/playwright.config.ts` | `app-google` project; no-mixing, preload, activation e2e |
-| `docs/DEPLOY.md`, `docs/RUNBOOK-map-engines.md` | Variables, activation runbook, quota response |
+| `DEPLOY.md`, `docs/RUNBOOK-map-engines.md` | Variables, activation runbook, quota response |
 
 ---
 
@@ -1352,7 +1353,7 @@ describe('useActivate', () => {
 - Consumes: FastAPI on `http://localhost:8010` started by Playwright (`poetry run uvicorn app.main:app --port 8010` with `DATABASE_URL`/`REDIS_URL` from the CI services or `docker-compose.dev.yml`, all migrations applied by `scripts/migrate.py`, `MARKET_DATA_PUBLIC=true`, `API_SECRET_KEY` from env, `GOOGLE_MAPS_BROWSER_KEY=stub`, `GOOGLE_MAPS_MAP_ID=practice-match-web`), the built `frontend/dist`.
 - Produces: the e2e proofs listed in the spec §10.
 
-- [ ] **Step 1: Write the spec**
+- [ ] **Step 1: Write the spec and the `app-google` project — no Google stub yet**
 
 ```ts
 import { expect, test, type Page } from '@playwright/test';
@@ -1418,6 +1419,14 @@ test.describe.serial('map engines', () => {
   });
 });
 ```
+`playwright.config.ts`: `fullyParallel: false`; add `webServer` entry for the backend (`command: 'cd .. && poetry run python scripts/migrate.py && poetry run uvicorn app.main:app --port 8010'`, `url: 'http://localhost:8010/api/healthz'`, `reuseExistingServer: !process.env.CI`); add project `{ name: 'app-google', testMatch: /engines\.spec\.ts/, use: { ...devices['Desktop Chrome'], viewport: VIEWPORT }, dependencies: ['app'] }`. The visual project (`app`) keeps its full run; `engines.spec.ts` runs after it and leaves the database on Leaflet.
+
+- [ ] **Step 2: Run — RED**
+
+Run: `npm run build && npx playwright test --project=app-google` → the Leaflet test passes (it characterises M2–M5); the two Google tests **FAIL**: `[data-map="google"]` never mounts because the harness aborts `maps.googleapis.com` and no stub answers. Watch the failure message name the missing element.
+
+- [ ] **Step 3: Add the loader stub route and `build:stubs`**
+
 `harness.ts` `prepare()` adds:
 ```ts
 await page.route('https://maps.googleapis.com/maps/api/js**', async (route) => {
@@ -1426,11 +1435,14 @@ await page.route('https://maps.googleapis.com/maps/api/js**', async (route) => {
   await route.fulfill({ contentType: 'application/javascript', body: `${stub}\nwindow.google = __stub.makeGoogleStub([]).g;\nwindow[${JSON.stringify(cb)}]();` });
 });
 ```
-`playwright.config.ts`: `fullyParallel: false`; add `webServer` entry for the backend (`command: 'cd .. && poetry run python scripts/migrate.py && poetry run uvicorn app.main:app --port 8010'`, `url: 'http://localhost:8010/api/healthz'`, `reuseExistingServer: !process.env.CI`); add project `{ name: 'app-google', testMatch: /engines\.spec\.ts/, use: { ...devices['Desktop Chrome'], viewport: VIEWPORT }, dependencies: ['app'] }`. The visual project (`app`) keeps its full run; `engines.spec.ts` runs after it and leaves the database on Leaflet.
 
-- [ ] **Step 2: Run** — `npm run build && npm run build:stubs && npx playwright test --project=app-google` → 3 passed (the middle test takes ~16 s for the snapshot TTL).
+`package.json`: `"build:stubs": "esbuild src/map/testing/google-stub.ts --bundle --format=iife --global-name=__stub --outfile=e2e/stubs/google-maps.js"`.
 
-- [ ] **Step 3: Commit** — `test(e2e): engine no-mixing, preload timing, activation round-trip with the Google stub`.
+- [ ] **Step 4: Run — GREEN**
+
+Run: `npm run build:stubs && npx playwright test --project=app-google` → 3 passed (the middle test takes ~16 s for the snapshot TTL). Then `npx playwright test` → the full visual gate is still green.
+
+- [ ] **Step 5: Commit** — `test(e2e): engine no-mixing, preload timing, activation round-trip with the Google stub`.
 
 ---
 
@@ -1447,6 +1459,9 @@ Execute the Google plan's **Task G3** (live competitor pins) and **Task G4** (li
 | `registry key google_maps_js` (G5) | **not created** — `map_engine_google` (Task M1) is the engine row; G5 and G8 are superseded |
 | G6 stub/mask | the stub is `src/map/testing/google-stub.ts` (M5); the mask rule is Task M7/M9 |
 
+
+**TDD:** follow G3 and G4 Steps 1–5 exactly — failing tests first with the delta table applied to the **test code** before any implementation. RED runs: `cd frontend && npx vitest run src/map/competition.test.ts` → **FAIL** (`Cannot find module './competition'`); `poetry run pytest tests/api/test_competition_live.py -q` → **FAIL** (`ImportError: app.api.competition_live`). GREEN runs: the same commands → all pass; `poetry run pytest -q && npx vitest run` → everything else still green.
+
 Commit messages as in the Google plan.
 
 ---
@@ -1455,14 +1470,57 @@ Commit messages as in the Google plan.
 
 **Files:**
 - Create: `docs/RUNBOOK-map-engines.md`
-- Modify: `docs/DEPLOY.md`, `app/api/health.py` (`map: {"engine": …}`), `tests/test_health.py`, `docs/superpowers/plans/2026-09-05-practice-match-census-data-layer.md` (API contract `/api/layers` shape; note on `esri_tiles`/`LEAFLET` constant follow-up), `docs/superpowers/plans/2026-09-05-practice-match-google-maps-greenfield.md` (status banner: G5/G8 superseded, engine row renamed)
+- Modify: `DEPLOY.md`, `app/api/health.py` (`map: {"engine": …}`), `tests/test_health.py`, `docs/superpowers/plans/2026-09-05-practice-match-census-data-layer.md` (API contract `/api/layers` shape; note on `esri_tiles`/`LEAFLET` constant follow-up), `docs/superpowers/plans/2026-09-05-practice-match-google-maps-greenfield.md` (status banner: G5/G8 superseded, engine row renamed)
 
-- [ ] Healthz: add `"map": {"engine": shell.snapshot().engine}` to the body; test asserts the key and that the browser key never appears in the response text.
-- [ ] `docs/DEPLOY.md`: the three variables (`GOOGLE_MAPS_BROWSER_KEY`, `GOOGLE_MAPS_MAP_ID` on `api`; `GOOGLE_MAPS_SERVER_KEY` on `api` for the count proxy), `ADMIN_ACTIVATE_ENABLED` (production: unset/false until SP2), `MARKET_DATA_PUBLIC=true` on QA only for evaluation.
-- [ ] `docs/RUNBOOK-map-engines.md`: how to activate an engine (`curl -X POST …/activate` with the operator token; what changes within 15 s; how to verify with `curl -sI / | grep -i content-security-policy`), how to revert, how to read `/changes`, what a tripped Google quota looks like and what to do, key rotation.
-- [ ] Census plan: API contract `/api/layers` → `{engine, gate, layers[]}`; B5 test snippets read `r.json()["layers"]`; Task B6 note: `map_config.LEAFLET` follows the cleared basemap row (`esri_tiles` or `osm_tiles`) when SP2 wires the Data tab.
-- [ ] Google plan: add a status banner under the title: "Superseded in part by the Map-engines plan (2026-09-05): G2's engine is implemented as `frontend/src/map/engines/google.ts` behind `MapEngine`; G5 (`009_google_registry.sql`, `google_maps_js`, the tile-blocking trigger) and G8 (Leaflet removal) are replaced by registry row `map_engine_google` and the eligibility matrix; G1, G3, G4, G6-stub, G7 stand and are executed from Map-engines Task M8/M7."
-- [ ] Commit: `docs(map-engines): runbook, deploy variables, healthz map.engine; cross-plan deltas`.
+- [ ] **Step 1: Failing tests**
+
+`tests/test_health.py` — add:
+```python
+async def test_healthz_reports_the_active_map_engine_and_never_a_google_key(client, monkeypatch):
+    from app.config import settings
+    monkeypatch.setattr(settings, "google_maps_browser_key", "browser-k")
+    monkeypatch.setattr(settings, "google_maps_server_key", "server-k")
+    r = await client.get("/api/healthz")
+    assert r.json()["map"]["engine"] in {"leaflet", "google"}
+    assert "browser-k" not in r.text and "server-k" not in r.text
+```
+`tests/test_docs.py` — add:
+```python
+def test_deploy_md_documents_the_map_engine_variables():
+    text = (ROOT / "DEPLOY.md").read_text()
+    for var in ("GOOGLE_MAPS_BROWSER_KEY", "GOOGLE_MAPS_MAP_ID", "GOOGLE_MAPS_SERVER_KEY", "ADMIN_ACTIVATE_ENABLED", "MARKET_DATA_PUBLIC"):
+        assert var in text, var
+
+
+def test_runbook_endpoints_exist():
+    from app.main import app
+    templates = {getattr(r, "path", "") for r in app.routes}
+    runbook = (ROOT / "docs" / "RUNBOOK-map-engines.md").read_text()
+    for path in set(re.findall(r"`(?:GET|POST) (/api/[^`\s]+)`", runbook)):
+        norm = re.sub(r"/[a-z_]+_[a-z_]+(?=/|$)", "/{dataset_key}", path)   # `…/map_engine_google/activate` → the route template
+        assert path in templates or norm in templates, path
+
+
+def test_cross_plan_deltas_are_applied():
+    census = (ROOT / "docs/superpowers/plans/2026-09-05-practice-match-census-data-layer.md").read_text()
+    google = (ROOT / "docs/superpowers/plans/2026-09-05-practice-match-google-maps-greenfield.md").read_text()
+    assert '"layers": [' in census and "Superseded in part by the Map-engines plan" in google
+```
+Run: `poetry run pytest tests/test_health.py tests/test_docs.py -q` → **FAIL** (`KeyError: 'map'`, `FileNotFoundError: docs/RUNBOOK-map-engines.md`, missing variables, missing delta text).
+
+- [ ] **Step 2: Healthz, docs, deltas**
+
+- Healthz: add `"map": {"engine": shell.snapshot().engine}` to the body.
+- `DEPLOY.md`: the three Google variables (`GOOGLE_MAPS_BROWSER_KEY`, `GOOGLE_MAPS_MAP_ID` on `api`; `GOOGLE_MAPS_SERVER_KEY` on `api` for the count proxy), `ADMIN_ACTIVATE_ENABLED` (production: unset/false until SP2), `MARKET_DATA_PUBLIC=true` on QA only for evaluation.
+- `docs/RUNBOOK-map-engines.md`: how to activate an engine (`POST /api/admin/data-sources/map_engine_google/activate` with the operator token; what changes within 15 s; `curl -sI / | grep -i content-security-policy` to verify), how to revert, how to read `GET /api/admin/data-sources/changes`, what a tripped Google quota looks like and what to do, key rotation.
+- Census plan: API contract `/api/layers` → `{ "engine": …, "gate": …, "layers": [ … ] }`; B5 test snippets read `r.json()["layers"]`; Task B6 note: `map_config.LEAFLET` follows the cleared basemap row (`esri_tiles` or `osm_tiles`) when SP2 wires the Data tab.
+- Google plan: status banner under the title — "Superseded in part by the Map-engines plan (2026-09-05): G2's engine is implemented as `frontend/src/map/engines/google.ts` behind `MapEngine`; G5 (`009_google_registry.sql`, `google_maps_js`, the tile-blocking trigger) and G8 (Leaflet removal) are replaced by registry row `map_engine_google` and the eligibility matrix; G1, G3, G4, G6-stub, G7 stand and are executed from Map-engines Tasks M7/M8."
+
+- [ ] **Step 3: Run — GREEN**
+
+Run: `poetry run pytest tests/test_health.py tests/test_docs.py -q` → all pass.
+
+- [ ] **Step 4: Commit** — `docs(map-engines): runbook, deploy variables, healthz map.engine; cross-plan deltas`.
 
 ---
 

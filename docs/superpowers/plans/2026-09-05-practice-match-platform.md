@@ -12,6 +12,7 @@
 
 ## Global Constraints
 
+- **TDD, no exceptions (John, 2026-09-05: "everything must have tests").** Every production change begins with a failing test that is run and watched fail (RED), then the minimal code, then the same test watched pass (GREEN) — the `Run:` lines in each task are mandatory steps, not illustrations. Documentation and configuration are covered by drift tests (`tests/test_docs.py`: every setting in `.env.example` and `DEPLOY.md`, relative links resolve, CI workflow shape, runbook endpoints exist); operational scripts have shell tests under `tests/scripts/` that run them against stubbed servers or a stubbed `curl`; ops steps end with an executable verification whose script is itself tested. The handoff's generated UI is covered by the visual gate (every screen state), the route smoke tests, the router-sync and engine unit tests and the `logic.js` characterisation suite (Platform Task 1c); new code in those files follows TDD.
 - Ported files stay byte-identical except for the edits this plan names: `frontend/src/App.vue`, `logic.js`, `dc-logic.js`, `directives/hover.js`, `lib/leaflet.js`, `components/*.vue`. No restyling, no inline-style extraction, no copy edits, no renames, no Pinia, no per-screen split.
 - The only edits to ported files: (a) `assets/` → `/assets/`, `ds/` → `/ds/` path prefixes; (b) `lib/leaflet.js` loader body (npm import, same exported API); (c) two lines in `App.vue`'s `<script setup>` to install the router sync composable; (d) `prototypeBar` default sourced from `import.meta.env`.
 - `logic.js` is never edited except for the four `assets/photos/` path prefixes on lines 394–396 and 431.
@@ -693,6 +694,105 @@ Run: `cd frontend && npx vitest run && npm run build && npx vue-tsc --noEmit` �
 ```bash
 git add frontend/src/map frontend/src/lib/leaflet.js frontend/src/components/MarketMapView.vue frontend/src/components/ListingsMap.vue
 git commit -m "refactor(map): MapEngine interface + LeafletMapEngine; marker builders moved out of lib/leaflet.js (pixels unchanged)
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 1c: Characterisation tests for the untouched `logic.js`
+
+The approved prototype's state machine is exercised end-to-end by the visual gate and the route smoke tests, but nothing pins its **rules** (sign-in gating, jump-bar behaviour, admin tab sets) at the unit level. These tests do — against the file exactly as shipped (the SP1 rule "logic.js untouched" stands). Characterisation tests are written against existing behaviour, so the RED step is a deliberate proof that they bite.
+
+**Files:**
+- Create: `frontend/src/logic.test.ts`
+
+**Interfaces:**
+- Consumes: `Component` from `frontend/src/logic.js` (`new Component({})`; `setState(patch)`; `go(screen)()`; `jumpTo(screen)()`; `renderVals()`; `adminVals()`; `filtered()`; `activeFilterCount()`; `setListingStatus(id, status)`; `money(n)`).
+- Produces: nothing new — a safety net SP2 relies on when it wires the API into these transitions.
+
+- [ ] **Step 1: Write the characterisation tests**
+
+`frontend/src/logic.test.ts`:
+```ts
+// @vitest-environment jsdom
+import { beforeEach, describe, expect, it } from 'vitest';
+import { Component } from './logic.js';
+
+let c: any;
+beforeEach(() => { c = new Component({}); });
+
+describe('logic.js — characterisation of the approved prototype (file untouched)', () => {
+  it('starts signed out on the sign-in gate with the design defaults', () => {
+    expect(c.state).toMatchObject({ screen: 'gate', gate: 'signin', auth: false, viewport: 'desktop', mobileTab: 'list', adminTab: 'users', detailId: 'p1', sellerView: 'dash' });
+  });
+
+  it('go() refuses navigation while signed out and returns to the sign-in gate', () => {
+    c.setState({ screen: 'browse', userMenu: true });
+    c.go('requests')();
+    expect(c.state).toMatchObject({ screen: 'gate', gate: 'signin', userMenu: false, auth: false });
+  });
+
+  it('jumpTo() (the prototype jump bar) signs in and navigates; jumpTo("gate") signs out', () => {
+    c.jumpTo('admin')();
+    expect(c.state).toMatchObject({ screen: 'admin', auth: true, interest: 'closed', userMenu: false, gate: 'signin' });
+    c.jumpTo('gate')();
+    expect(c.state).toMatchObject({ screen: 'gate', auth: false });
+  });
+
+  it('go() navigates once signed in', () => {
+    c.jumpTo('browse')();
+    c.go('seller')();
+    expect(c.state.screen).toBe('seller');
+  });
+
+  it('renderVals exposes the four nav items and six jumps with the design labels, plus the signed-in flags', () => {
+    const v = c.renderVals();
+    expect(v.nav.map((n: any) => n.label)).toEqual(['Browse Practices', 'My Requests', 'List a Practice', 'VIN Foundation Admin']);
+    expect(v.jumps.map((j: any) => j.label)).toEqual(['Access', 'Browse', 'Listing', 'Requests', 'Seller', 'Admin']);
+    expect(v.signedIn).toBe(false);
+    expect(v.signedOut).toBe(true);
+  });
+
+  it('adminVals renders the four tabs and switches the row set with adminTab', () => {
+    expect(c.adminVals().tabs.map((t: any) => t.label)).toEqual(['Users', 'Listings', 'Requests', 'Data Sources']);
+    c.setState({ adminTab: 'data' });
+    const a = c.adminVals();
+    expect(a.columns).toEqual(['Dataset', 'Source and license', 'Status', 'Action']);
+    expect(a.rows).toHaveLength(5);
+    expect(a.footnote).toContain('No dataset reaches production until its license is recorded here');
+  });
+
+  it('setListingStatus changes exactly the targeted seller listing', () => {
+    c.setListingStatus('s1', 'paused');
+    expect(c.state.sellerListings.map((l: any) => [l.id, l.status])).toEqual([['s1', 'paused'], ['s2', 'in_review'], ['s3', 'draft'], ['s4', 'paused']]);
+  });
+
+  it('filters: activeFilterCount counts non-default filters and filtered() never grows', () => {
+    const all = c.filtered().length;
+    expect(c.activeFilterCount()).toBe(0);
+    c.setState({ f: { ...c.state.f, doctors: '1' } });
+    expect(c.activeFilterCount()).toBe(1);
+    expect(c.filtered().length).toBeLessThanOrEqual(all);
+  });
+
+  it('money() formats the way the seller cards show it', () => {
+    expect(c.money(1450000)).toBe('$1.45M');
+    expect(c.money(860000)).toBe('$860K');
+  });
+});
+```
+
+- [ ] **Step 2: Run, then prove the tests bite (the RED of a characterisation suite)**
+
+Run: `cd frontend && npx vitest run src/logic.test.ts` → all pass (they describe existing behaviour). If `money()` or a label differs from the literal above, the failure message shows the prototype's actual value — pin **that** value (the prototype is the oracle; never change `logic.js`).
+Then change `expect(c.state.screen).toBe('seller')` to `'browse'` → run → **FAIL** with `expected 'seller' to be 'browse'` → revert. Every remaining test must be shown to fail the same way once; a test that cannot be made to fail is deleted.
+
+- [ ] **Step 3: Commit**
+
+```bash
+git add frontend/src/logic.test.ts
+git commit -m "test(logic): characterisation suite for the untouched prototype state machine
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -2161,6 +2261,50 @@ def ping() -> str:
 
 Run: `poetry run pytest -q` → all pass.
 
+- [ ] **Step 2b: Failing dispatcher and build-config tests**
+
+`tests/scripts/test_start_sh.sh` — the dispatcher contract Step 3 must satisfy: the role comes from `$1`, else from `RAILWAY_SERVICE_NAME`; `DRY_RUN=1` prints the command instead of `exec`-ing it; an unknown role exits non-zero.
+```bash
+#!/usr/bin/env bash
+set -euo pipefail; cd "$(dirname "$0")/../.."
+fail() { echo "FAIL: $*"; exit 1; }
+out=$(DRY_RUN=1 bash scripts/start.sh api) || fail "api role exited non-zero"
+[[ "$out" == *uvicorn* && "$out" == *app.main:app* ]] || fail "api role should start uvicorn app.main:app, got: $out"
+out=$(DRY_RUN=1 RAILWAY_SERVICE_NAME=worker bash scripts/start.sh) || fail "worker role via RAILWAY_SERVICE_NAME exited non-zero"
+[[ "$out" == *celery* && "$out" == *worker* ]] || fail "worker role should start a celery worker, got: $out"
+if DRY_RUN=1 bash scripts/start.sh bogus 2>/dev/null; then fail "unknown role must exit non-zero"; fi
+echo "start.sh dispatcher OK"
+```
+
+`tests/test_build_config.py`:
+```python
+import json
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+
+
+def test_dockerfile_declares_the_build_args_and_the_dispatcher_entrypoint():
+    d = (ROOT / "Dockerfile").read_text()
+    assert "ARG ENVIRONMENT=qa" in d and "ARG COMMIT_SHA=dev" in d
+    assert 'ENTRYPOINT ["bash", "scripts/start.sh"]' in d and 'CMD ["api"]' in d
+
+
+def test_railway_json_points_at_the_dispatcher_migrations_and_healthz():
+    cfg = json.loads((ROOT / "railway.json").read_text())
+    assert cfg["deploy"]["startCommand"] == "bash scripts/start.sh api"
+    assert cfg["deploy"]["preDeployCommand"] == "python scripts/migrate.py"
+    assert cfg["deploy"]["healthcheckPath"] == "/api/healthz"
+
+
+def test_ignore_files_keep_secrets_tests_and_node_modules_out_of_uploads_and_images():
+    for name in (".railwayignore", ".dockerignore"):
+        text = (ROOT / name).read_text().split()
+        for entry in ("frontend/node_modules", "tests", ".env", ".env.*"):
+            assert entry in text, f"{name} lacks {entry}"
+```
+Run: `bash tests/scripts/test_start_sh.sh` → **FAIL** (`scripts/start.sh: No such file or directory`). Run: `poetry run pytest tests/test_build_config.py -q` → **FAIL** (`FileNotFoundError: Dockerfile`).
+
 - [ ] **Step 3: Role dispatcher** — `scripts/start.sh` (from Rounds, without the GCP block)
 
 ```bash
@@ -2317,6 +2461,8 @@ frontend/playwright-report
 *.log
 ```
 
+Run: `bash tests/scripts/test_start_sh.sh && poetry run pytest tests/test_build_config.py -q` → `start.sh dispatcher OK`, 3 passed (GREEN for Step 2b). Add `bash tests/scripts/test_start_sh.sh` to the backend CI job in Task 9.
+
 - [ ] **Step 5: Local image verification** — `scripts/verify-image.sh`
 
 ```bash
@@ -2397,6 +2543,38 @@ echo "deploy guard OK"
 ```
 `chmod +x tests/scripts/test_deploy_guard.sh`. Run it → FAIL: `scripts/deploy.sh missing`.
 
+- [ ] **Step 1b: Failing test for `verify-deploy.sh`**
+
+Contract Step 2's script must satisfy: `scripts/verify-deploy.sh <ENV>` resolves the target from the environment name (`QA` → `https://qa.foundation.vin`, `production` → `https://foundation.vin`) unless `VERIFY_BASE_URL` is set; it prints `healthz OK …`, `deep healthz OK`, `SPA fallback OK`; it fails when the body's `environment` does not equal the lower-cased `<ENV>` or when `commit_sha` differs from `EXPECT_SHA` (default `git rev-parse --short HEAD`).
+
+`tests/scripts/test_verify_deploy.sh`:
+```bash
+#!/usr/bin/env bash
+set -euo pipefail; cd "$(dirname "$0")/../.."
+fail() { echo "FAIL: $*"; exit 1; }
+PORT=8765
+python3 - "$PORT" <<'PY' &
+import json, sys
+from http.server import BaseHTTPRequestHandler, HTTPServer
+BODY = {"status": "ok", "version": "0.1.0", "environment": "qa", "commit_sha": "abc1234", "db": {"ok": True, "postgis_version": "3.5.2"}, "redis": {"ok": True}}
+class H(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path.startswith("/api/healthz"):
+            self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(json.dumps(BODY).encode())
+        else:
+            self.send_response(200); self.send_header("Content-Type", "text/html"); self.end_headers(); self.wfile.write(b'<!doctype html><div id="app"></div>')
+    def log_message(self, *a): pass
+HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+PY
+SRV=$!; trap 'kill $SRV' EXIT; sleep 0.5
+out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA) || fail "a healthy target must verify; output: $out"
+for line in "healthz OK" "deep healthz OK" "SPA fallback OK"; do [[ "$out" == *"$line"* ]] || fail "missing '$line' in: $out"; done
+if VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh production >/dev/null 2>&1; then fail "environment mismatch must fail"; fi
+if VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=deadbee bash scripts/verify-deploy.sh QA >/dev/null 2>&1; then fail "commit mismatch must fail"; fi
+echo "verify-deploy.sh OK"
+```
+Run: `bash tests/scripts/test_verify_deploy.sh` → **FAIL** (`scripts/verify-deploy.sh: No such file or directory`).
+
 - [ ] **Step 2: Deploy and verify scripts**
 
 `scripts/deploy.sh`:
@@ -2452,6 +2630,8 @@ echo "→ recent api logs"
 railway logs --service api --environment "$ENV" 2>/dev/null | tail -20 || true
 ```
 `chmod +x scripts/deploy.sh scripts/verify-deploy.sh`. Run `tests/scripts/test_deploy_guard.sh` → `deploy guard OK`.
+
+Run: `bash tests/scripts/test_deploy_guard.sh && bash tests/scripts/test_verify_deploy.sh` → both print OK (GREEN for Steps 1 and 1b) before any Railway resource is touched.
 
 - [ ] **Step 3: Create the project and services (production environment)**
 
@@ -2545,6 +2725,64 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin fea
 - Create: `.github/workflows/quality.yml`, `.gitleaks.toml`, `CLAUDE.md`, `DEPLOY.md`, `README.md`, `.env.example`, `.claude/skills/practice-match-workflow/SKILL.md`
 
 **Interfaces:** none new; CI consumes every script/test from Tasks 1–8.
+
+- [ ] **Step 0: Failing drift tests for CI, secrets scanning and the working docs**
+
+`tests/test_docs.py` (`poetry add --group dev pyyaml`):
+```python
+import re
+import tomllib
+from pathlib import Path
+
+import yaml
+
+from app.config import Settings
+
+ROOT = Path(__file__).resolve().parent.parent
+DOCS = [ROOT / "README.md", ROOT / "CLAUDE.md", ROOT / "DEPLOY.md", *sorted((ROOT / "docs").rglob("*.md"))]
+
+
+def env_names() -> set[str]:
+    return {(f.alias or name).upper() for name, f in Settings.model_fields.items()}
+
+
+def test_every_setting_is_documented_in_env_example_and_deploy_md():
+    example = (ROOT / ".env.example").read_text()
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    missing = sorted(n for n in env_names() if not re.search(rf"(?m)^#?\s*{n}=", example) or n not in deploy)
+    assert missing == []
+
+
+def test_relative_markdown_links_resolve():
+    broken = []
+    for doc in DOCS:
+        for m in re.finditer(r"\]\(((?!https?://|#|mailto:)[^)\s]+)\)", doc.read_text(encoding="utf-8")):
+            target = (doc.parent / m.group(1).split("#")[0]).resolve()
+            if not target.exists():
+                broken.append(f"{doc.relative_to(ROOT)} -> {m.group(1)}")
+    assert broken == []
+
+
+def test_ci_workflow_runs_every_gate():
+    path = ROOT / ".github" / "workflows" / "quality.yml"
+    wf = yaml.safe_load(path.read_text())
+    assert {"gitleaks", "backend", "frontend"} <= set(wf["jobs"])
+    text = path.read_text()
+    for cmd in ("poetry run pytest", "bash tests/scripts/test_start_sh.sh", "npx vitest run", "npx playwright test"):
+        assert cmd in text, cmd
+
+
+def test_gitleaks_config_parses():
+    tomllib.loads((ROOT / ".gitleaks.toml").read_text())
+
+
+def test_working_docs_carry_the_railway_status_rule_and_the_key_handling_rule():
+    for name in ("CLAUDE.md", "DEPLOY.md"):
+        text = (ROOT / name).read_text()
+        assert "railway status" in text and "Project: Practice Match" in text, name
+        assert "CENSUS_API_KEY" in text and "never" in text.lower(), name
+```
+Run: `poetry run pytest tests/test_docs.py -q` → **FAIL** (`FileNotFoundError: .github/workflows/quality.yml`, `.env.example`, `DEPLOY.md`).
 
 - [ ] **Step 1: CI workflow** — `.github/workflows/quality.yml`
 
@@ -2846,6 +3084,8 @@ Plain-language summary John can forward (no jargon, UUIDs, versions, paths) · s
 Unfaithful ports with the reference closed · collateral removal · destructive actions without instruction · false "done" without live verification · deploying with the wrong Railway link · trusting remembered API shapes · treating "tests pass" as done.
 ```
 
+Run: `poetry run pytest tests/test_docs.py -q` → 5 passed (GREEN for Step 0: every setting documented, every link resolves, CI runs every gate).
+
 - [ ] **Step 7: Push and watch CI in both repos**
 
 ```bash
@@ -2867,6 +3107,31 @@ Expected: `gitleaks`, `backend`, `frontend` all green in both repos. A red `fron
 
 **Interfaces:** `PW_APP_URL=<https://host>` makes the `app` project target a live deployment (no local dev server).
 
+- [ ] **Step 0: Failing test for the live-target resolver**
+
+Extract the target logic from `playwright.config.ts` into `frontend/tests/targets.ts` so it can be tested: `resolveTargets(env: NodeJS.ProcessEnv, ports: { app: number; ref: number }) -> { baseURL: string; webServer: Array<{ command: string; url: string }> }`.
+
+`frontend/tests/targets.test.ts`:
+```ts
+import { describe, expect, it } from 'vitest';
+import { resolveTargets } from './targets';
+
+describe('resolveTargets', () => {
+  it('runs against localhost with both servers when PW_APP_URL is unset', () => {
+    const t = resolveTargets({}, { app: 5173, ref: 4174 });
+    expect(t.baseURL).toBe('http://localhost:5173');
+    expect(t.webServer.map((w) => w.url)).toEqual(['http://localhost:5173', 'http://localhost:4174/']);
+  });
+  it('runs against the live deployment and starts only the reference server when PW_APP_URL is set', () => {
+    const t = resolveTargets({ PW_APP_URL: 'https://qa.foundation.vin' }, { app: 5173, ref: 4174 });
+    expect(t.baseURL).toBe('https://qa.foundation.vin');
+    expect(t.webServer).toHaveLength(1);
+    expect(t.webServer[0].url).toBe('http://localhost:4174/');
+  });
+});
+```
+Run: `cd frontend && npx vitest run tests/targets.test.ts` → **FAIL** (`Cannot find module './targets'`). (Add `tests/**/*.test.ts` to the vitest `include` list.)
+
 - [ ] **Step 1: Live-target override in Playwright**
 
 In `frontend/tests/playwright.config.ts`: 
@@ -2881,6 +3146,8 @@ webServer: [
 ],
 ```
 Run `npm run test:visual` locally (no `PW_APP_URL`) → still 25 passed. Commit: `test(visual): PW_APP_URL runs the parity suite against a live host`.
+
+Implement `resolveTargets` in `frontend/tests/targets.ts` and have `playwright.config.ts` spread its result (`baseURL`, `webServer`). Run: `npx vitest run tests/targets.test.ts` → 2 passed (GREEN for Step 0).
 
 - [ ] **Step 2: Hand John the DNS records — CHECKPOINT**
 
