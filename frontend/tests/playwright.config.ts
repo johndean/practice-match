@@ -1,8 +1,13 @@
 import { defineConfig, devices } from '@playwright/test';
+import { resolveTargets } from './targets';
 
 const APP = Number(process.env.PW_APP_PORT) || 5173;
 const REF = Number(process.env.PW_REF_PORT) || 5174;
 const VIEWPORT = { width: 1440, height: 940 }; // the design's preview size
+// PW_APP_URL=https://<host> runs the `app` project against a live deployment and skips the
+// local Vite server; the reference server (the design oracle) always runs locally. See
+// tests/targets.ts, unit-tested in tests/targets.test.ts.
+const { baseURL, webServer } = resolveTargets(process.env, { app: APP, ref: REF });
 
 export default defineConfig({
   testDir: '.',
@@ -37,11 +42,8 @@ export default defineConfig({
     // Anchored at a path boundary (start-or-slash) and the extension: an unanchored
     // (visual|smoke|dom) would also match "reference-dom.spec.ts" as a substring, which
     // belongs to the reference project only.
-    { name: 'app', testMatch: /(^|\/)(visual|smoke|dom)\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: VIEWPORT, baseURL: `http://localhost:${APP}` } },
+    { name: 'app', testMatch: /(^|\/)(visual|smoke|dom)\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: VIEWPORT, baseURL } },
     { name: 'reference', testMatch: /(^|\/)reference-(baselines|dom)\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: VIEWPORT, baseURL: `http://localhost:${REF}` } }
   ],
-  webServer: [
-    { command: `npm run dev -- --port ${APP} --strictPort`, url: `http://localhost:${APP}`, cwd: '..', timeout: 60_000, reuseExistingServer: !process.env.CI, stdout: 'ignore', stderr: 'pipe' },
-    { command: `node tests/reference-server.mjs ${REF}`, url: `http://localhost:${REF}/`, cwd: '..', timeout: 30_000, reuseExistingServer: !process.env.CI, stdout: 'ignore', stderr: 'pipe' }
-  ]
+  webServer
 });

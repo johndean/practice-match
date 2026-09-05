@@ -1,0 +1,39 @@
+# Nightly load smoke (quality policy §3). QA only, never production: this drives 20 virtual
+# users for two minutes against a live host, and the budgets it enforces (p95 < 400 ms, 0 %
+# errors) are the policy's numbers, not advisory. MEMBER_TOKEN is a repository secret John
+# sets — the operator token until Sub-project 2 issues member accounts; it is never a file
+# and never a literal here.
+name: Perf
+
+on:
+  schedule:
+    - cron: '0 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: perf-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  load-smoke:
+    name: k6 load smoke against QA
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install k6
+        run: |
+          set -euo pipefail
+          V=2.2.0
+          curl -sSL -o k6.tar.gz "https://github.com/grafana/k6/releases/download/v${V}/k6-v${V}-linux-amd64.tar.gz"
+          tar -xzf k6.tar.gz "k6-v${V}-linux-amd64/k6"
+          sudo mv "k6-v${V}-linux-amd64/k6" /usr/local/bin/k6
+          k6 version
+      - name: k6 smoke — 20 VUs · 2 min · p95 < 400 ms · error rate 0 %
+        env:
+          BASE_URL: https://qa.foundation.vin
+          MEMBER_TOKEN: ${{ secrets.MEMBER_TOKEN }}
+        run: k6 run scripts/k6-smoke.js

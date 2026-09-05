@@ -170,3 +170,40 @@ def test_deploy_md_carries_the_skip_verify_rule():
     text = (ROOT / "DEPLOY.md").read_text()
     assert "SKIP_VERIFY" in text
     assert "must never be habitual" in text
+
+
+def test_perf_workflow_targets_qa_with_thresholds():
+    """Policy §3's nightly load smoke: the workflow and the k6 script must keep pointing at
+    QA and keep the budgets that make the run a gate rather than a report."""
+    workflow = ROOT / ".github" / "workflows" / "perf.yml"
+    assert workflow.exists(), "the nightly load smoke workflow is missing"
+    text = workflow.read_text()
+    wf = yaml.safe_load(text)
+    # `on:` is YAML 1.1's boolean True once parsed, which is why it is looked up as a key
+    # rather than the string "on".
+    triggers = wf[True]
+    assert triggers["schedule"] == [{"cron": "0 6 * * *"}], triggers
+    assert "workflow_dispatch" in triggers, "the run must be launchable by hand (gh workflow run)"
+    for name, job in wf["jobs"].items():
+        assert "timeout-minutes" in job, name
+    assert "qa.foundation.vin" in text, "the load smoke must run against QA, never production"
+    assert "foundation.vin/api" not in text.replace("qa.foundation.vin", ""), "production must not be a target"
+    # The member token is a GitHub Actions secret John sets; it must never become a literal.
+    assert "${{ secrets.MEMBER_TOKEN }}" in text
+    assert "scripts/k6-smoke.js" in text
+
+    k6 = (ROOT / "scripts" / "k6-smoke.js").read_text()
+    assert "p(95)<400" in k6, "the p95 budget (policy §3) is gone"
+    assert "rate==0" in k6, "the zero-error-rate budget (policy §3) is gone"
+
+
+def test_deploy_md_documents_the_expect_sha_semantics():
+    """verify-deploy.sh's `${EXPECT_SHA:-…}` treats unset and empty identically, so the
+    runbook must not tell an operator that blanking it disables the check."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "EXPECT_SHA" in text
+    lowered = text.lower()
+    assert "unset or empty" in lowered, "the unset-equals-empty rule is undocumented"
+    assert "outside a git checkout" in lowered, "the only skip condition is undocumented"
+    for wrong in ("disables the check", "disable the check"):
+        assert wrong not in lowered, f"DEPLOY.md repeats the wrong EXPECT_SHA semantics: {wrong!r}"
