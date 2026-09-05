@@ -73,7 +73,7 @@ describe('LeafletMapEngine — teardown', () => {
   // Not firing is only half of it: the set that holds them must also be drained, or a
   // long-lived engine would accumulate dead handles and a second destroy would re-clear
   // ids the platform may already have recycled. Asserted through clearTimeout, since the
-  // set itself is private and this round may not touch engines/leaflet.ts.
+  // set itself is private.
   it('drains the pending-timer set on destroy, so a second destroy clears nothing', async () => {
     const { engine } = await mounted();
     engine.show();
@@ -86,6 +86,74 @@ describe('LeafletMapEngine — teardown', () => {
     engine.destroy();
     expect(cleared).toHaveBeenCalledTimes(0);
     cleared.mockRestore();
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Zero-gap audit, Phase 8. `clearTimeout called twice` is a proxy for the properties that
+  // actually matter; the five below assert those directly — no leak, no callback after
+  // teardown, idempotent teardown, inert afterwards, and revivable by a fresh mount().
+  // ---------------------------------------------------------------------------------------
+  it('leaks no timer: after destroy the loop holds none of the engine\'s, however many were queued', async () => {
+    const { engine } = await mounted();
+    for (let i = 0; i < 5; i++) engine.show();          // five 80 ms invalidateSize timers
+    expect(vi.getTimerCount()).toBe(6);                  // + mount()'s 60 ms
+
+    engine.destroy();
+    // The real property: nothing of this engine's is left in the event loop at all — not
+    // merely absent from a private Set, and not merely un-fired for the 200 ms the previous
+    // test happened to advance.
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('lets no callback run after destroy, however far time advances', async () => {
+    const { stub, engine } = await mounted();
+    engine.show();
+    engine.destroy();
+
+    vi.advanceTimersByTime(60_000);
+    await vi.runAllTimersAsync();
+    expect(stub.map.invalidated).toBe(0);
+  });
+
+  it('is idempotent: a second destroy tears nothing down a second time', async () => {
+    const { stub, engine } = await mounted();
+    engine.destroy();
+    expect((stub.map as any).removed).toBe(true);
+
+    // Observe whether the second call re-runs teardown rather than trusting that the
+    // underlying library tolerates it. Leaflet's own Map.remove() reaches into
+    // `this._container._leaflet_id`, `this._panes` and `this._layers`, all of which the
+    // first call already tore down — "it happens not to throw today" is not the guarantee
+    // the audit asks for.
+    (stub.map as any).removed = false;
+    expect(() => engine.destroy()).not.toThrow();
+    expect((stub.map as any).removed, 'destroy() ran the map teardown a second time').toBe(false);
+  });
+
+  it('stays inert after destroy: a later show() schedules nothing on the removed map', async () => {
+    const { stub, engine } = await mounted();
+    engine.destroy();
+
+    engine.show();
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(60_000);
+    expect(stub.map.invalidated).toBe(0);
+  });
+
+  // …and "inert" must not mean "permanently dead": mount() is the single point that
+  // (re)initialises the engine, so a fresh mount on the same instance works normally again.
+  // Without this the destroyed-guard would silently swallow the new map's invalidateSize.
+  it('comes back to life on a fresh mount(): the guard is reset, not permanent', async () => {
+    const { engine } = await mounted();
+    engine.destroy();
+
+    const stub2 = installLeafletStub();
+    await engine.mount(document.createElement('div'), { center: [30.31, -97.75], zoom: 10, basemap: 'map', zoomControl: false, scaleControl: true });
+    vi.advanceTimersByTime(60);
+    expect(stub2.map.invalidated).toBe(1);
+    engine.show();
+    vi.advanceTimersByTime(80);
+    expect(stub2.map.invalidated).toBe(2);
   });
 });
 

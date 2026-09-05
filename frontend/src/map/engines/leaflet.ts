@@ -11,8 +11,16 @@ export class LeafletMapEngine implements MapEngine {
   // destroy() has already removed — Leaflet throws on `_leaflet_pos` of the detached
   // container. Every timer this engine schedules is tracked here and cleared in destroy().
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
+  // Zero-gap audit, Phase 8: teardown must run exactly once and leave the engine inert.
+  // Without this, a second destroy() re-entered Leaflet's Map.remove() on an already-torn-
+  // down map (it reaches into _container._leaflet_id, _panes and _layers, all of which the
+  // first call deleted), and a show() after destroy() queued a fresh invalidateSize() on
+  // the removed map — the very `_leaflet_pos` crash ruling F set out to eliminate, merely
+  // moved from "a timer that outlived destroy" to "a timer created after it".
+  private destroyed = false;
 
   async mount(el: HTMLElement, opts: MountOptions): Promise<void> {
+    this.destroyed = false;   // mount() is the single point that (re)initialises the engine
     const L = await loadLeaflet(); this.L = L;
     this.map = L.map(el, { center: opts.center, zoom: opts.zoom, zoomControl: false, attributionControl: true });
     const cfg = BASEMAPS[opts.basemap] || BASEMAPS.map;
@@ -62,7 +70,7 @@ export class LeafletMapEngine implements MapEngine {
     this.map.on('moveend zoomend', h);
     return () => this.map.off('moveend zoomend', h);
   }
-  destroy(): void { for (const t of this.timers) clearTimeout(t); this.timers.clear(); this.map.remove(); }
-  private later(ms: number): void { const t = setTimeout(() => { this.timers.delete(t); this.map.invalidateSize(); }, ms); this.timers.add(t); }
+  destroy(): void { if (this.destroyed) return; this.destroyed = true; for (const t of this.timers) clearTimeout(t); this.timers.clear(); this.map.remove(); }
+  private later(ms: number): void { if (this.destroyed) return; const t = setTimeout(() => { this.timers.delete(t); this.map.invalidateSize(); }, ms); this.timers.add(t); }
   private group(name: string) { let g = this.groups.get(name); if (!g) { g = this.L.layerGroup().addTo(this.map); this.groups.set(name, g); } return g; }
 }
