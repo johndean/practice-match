@@ -1,6 +1,8 @@
 """Serve the built Vue app. Fingerprinted bundles under /_app are immutable for a
 year; design assets (/assets, /ds) are short-cached because their names never
-change (the sub-* icons will be swapped in place); index.html always revalidates."""
+change (the sub-* icons will be swapped in place); index.html always revalidates.
+`dist_for(mode)` selects which built site is served: the marketplace (`DIST`) or
+the Coming Soon page (`COMING_SOON_DIST`) when `SITE_MODE=coming_soon`."""
 import os
 from pathlib import Path
 

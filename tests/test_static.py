@@ -72,6 +72,7 @@ async def test_coming_soon_mode_serves_the_coming_soon_shell_everywhere_but_the_
             assert r.headers["cache-control"] == "no-cache"
         assert (await c.get("/_app/index-cs1.js")).headers["cache-control"] == "public, max-age=31536000, immutable"
         assert (await c.get("/ds/colors_and_type.css")).headers["cache-control"] == "public, max-age=3600"
+        assert (await c.get("/assets/vin-foundation-logo.png")).headers["cache-control"] == "public, max-age=3600"
         r = await c.get("/api/nope")
         assert r.status_code == 404 and r.json()["error"]["code"] == "NOT_FOUND"
         assert (await c.get("/api/healthz")).json()["site_mode"] == "coming_soon"

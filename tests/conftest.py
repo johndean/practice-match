@@ -30,9 +30,11 @@ def coming_dist(tmp_path: Path) -> Path:
     d = tmp_path / "coming-soon-dist"
     (d / "_app").mkdir(parents=True)
     (d / "ds").mkdir()
+    (d / "assets").mkdir()
     (d / "index.html").write_text('<!doctype html><title>VIN Foundation — Coming Soon</title><div id="app"></div>')
     (d / "_app" / "index-cs1.js").write_text("console.log(2)")
     (d / "ds" / "colors_and_type.css").write_text(":root{}")
+    (d / "assets" / "vin-foundation-logo.png").write_bytes(b"\x89PNG")
     return d
 
 
