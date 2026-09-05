@@ -1,0 +1,14 @@
+.git
+.github
+.superpowers
+docs
+tests
+frontend/node_modules
+frontend/dist
+frontend/tests
+frontend/test-results
+frontend/playwright-report
+.env
+.env.*
+*.log
+.DS_Store
