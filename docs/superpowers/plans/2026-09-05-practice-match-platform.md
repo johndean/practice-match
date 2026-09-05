@@ -3112,9 +3112,10 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin fea
 ### Task 9: CI and working docs
 
 **Files:**
-- Create: `.github/workflows/quality.yml`, `.gitleaks.toml`, `CLAUDE.md`, `DEPLOY.md`, `README.md`, `.env.example`, `.claude/skills/practice-match-workflow/SKILL.md`
+- Create: `.github/workflows/quality.yml`, `.gitleaks.toml`, `CLAUDE.md`, `DEPLOY.md`, `README.md`, `.env.example`, `.claude/skills/practice-match-workflow/SKILL.md`, `tests/test_docs.py` *(added 2026-09-06: created by Step 0 but missing from this list)*
+- Modify: `pyproject.toml` + `poetry.lock` (dev group only: `pyyaml` for the drift tests; a `[tool.mypy.overrides]` entry for `celery.*` may replace Task 7's inline type-ignores here), `tests/test_versions.py` if Step 0 extends it
 
-**Interfaces:** none new; CI consumes every script/test from Tasks 1–8.
+**Interfaces:** none new; CI consumes every script/test from Tasks 1–8. *Process note (2026-09-06): Step 7's `git add -A … && git push …` is replaced by the standing rule — the implementer commits with explicit pathspecs and does not push; the controller pushes after review and then runs the `gh run` watch commands in both repos.*
 
 - [ ] **Step 0: Failing drift tests for CI, secrets scanning and the working docs**
 
