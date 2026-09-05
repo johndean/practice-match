@@ -1294,15 +1294,17 @@
 
 <script setup>
 import { computed, onMounted, onUnmounted, reactive } from 'vue';
+import { useRouter } from 'vue-router';
 import { Component } from './logic.js';
 import ListingsMap from './components/ListingsMap.vue';
 import MarketMapView from './components/MarketMapView.vue';
 import ImageSlot from './components/ImageSlot.vue';
 import { vHover } from './directives/hover.js';
+import { useStateRouteSync } from './router/useStateRouteSync';
 
 // Prototype-only props. `prototypeBar` must be false in production.
 const props = defineProps({
-  prototypeBar: { type: Boolean, default: false },
+  prototypeBar: { type: Boolean, default: import.meta.env.VITE_ENVIRONMENT !== 'production' },
   startScreen: { type: String, default: 'gate' },
   startViewport: { type: String, default: 'desktop' }
 });
@@ -1311,6 +1313,7 @@ const props = defineProps({
 // renderVals() re-evaluates exactly like the original render pass.
 const c = new Component(props);
 c.state = reactive(c.state);
+useStateRouteSync(c, useRouter());
 const v = computed(() => c.renderVals());
 
 onMounted(() => c.componentDidMount && c.componentDidMount());
