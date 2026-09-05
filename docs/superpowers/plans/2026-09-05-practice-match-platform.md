@@ -2585,7 +2585,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin fea
 ### Task 7: Celery skeleton, role dispatcher, Docker image, Railway config
 
 **Files:**
-- Create: `app/tasks/__init__.py`, `app/tasks/celery_app.py`, `tests/test_celery.py`, `scripts/start.sh`, `Dockerfile`, `.dockerignore`, `railway.json`, `.railwayignore`, `scripts/verify-image.sh`
+- Create: `app/tasks/__init__.py`, `app/tasks/celery_app.py`, `tests/test_celery.py`, `scripts/start.sh`, `Dockerfile`, `.dockerignore`, `railway.json`, `.railwayignore`, `scripts/verify-image.sh`, `tests/test_build_config.py`, `tests/scripts/test_start_sh.sh` *(added 2026-09-05: both are created by Steps 2b–3 but were missing from this list)*
 
 **Interfaces:**
 - Produces: `celery_app` (broker/backend = `settings.redis_url`), task `ping` (`app.tasks.celery_app.ping`); container roles `api | worker | migrate`.
