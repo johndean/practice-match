@@ -59,4 +59,7 @@ done
 first_docker=$(grep '^docker ' "$FAKE_LOG" | head -1)
 [[ "$first_docker" == "docker rm -f pm-api pm-worker" ]] || fail "first docker call must be the idempotent cleanup (rm -f pm-api pm-worker), got: $first_docker"
 
+build_line=$(grep '^docker build ' "$FAKE_LOG" | head -1)
+[[ "$build_line" == *"--build-arg ENVIRONMENT=qa"* ]] || fail "docker build must receive --build-arg ENVIRONMENT=qa (no default now baked into the Dockerfile), got: $build_line"
+
 echo "verify-image.sh dispatcher OK (stubbed docker/curl)"

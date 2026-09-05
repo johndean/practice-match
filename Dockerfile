@@ -5,15 +5,22 @@
 # frontend's VITE_ENVIRONMENT; RAILWAY_GIT_COMMIT_SHA stamps only the runtime
 # layer, as COMMIT_SHA (see below) — the frontend-build stage never receives it.
 FROM node:22-bookworm-slim AS frontend-build
-ARG ENVIRONMENT=qa
+# No default: a build that ever fails to receive ENVIRONMENT must fail loudly here,
+# not silently constant-fold the qa bundle (prototype jump bar included) into what
+# ships to production (Task 8 finding, 2026-09-06).
+ARG ENVIRONMENT
 WORKDIR /work/frontend
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
 COPY frontend/ ./
 ENV VITE_ENVIRONMENT=$ENVIRONMENT
+RUN test -n "$ENVIRONMENT" || { echo "ENVIRONMENT build arg is required (qa|production)" >&2; exit 1; }
 RUN npm run build
 
 FROM python:3.12-slim-bookworm AS runtime
+# ARG scope is per-stage; declared again here (still no default) so the same
+# requirement holds even if this stage ever comes to consume it directly.
+ARG ENVIRONMENT
 # `railway up` builds are not git-connected, so RAILWAY_GIT_COMMIT_SHA is usually absent;
 # scripts/deploy.sh sets the COMMIT_SHA service variable before each upload instead.
 ARG COMMIT_SHA=dev

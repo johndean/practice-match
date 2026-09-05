@@ -6,8 +6,20 @@ ROOT = Path(__file__).resolve().parent.parent
 
 def test_dockerfile_declares_the_build_args_and_the_dispatcher_entrypoint():
     d = (ROOT / "Dockerfile").read_text()
-    assert "ARG ENVIRONMENT=qa" in d and "ARG COMMIT_SHA=dev" in d
+    assert "ARG ENVIRONMENT" in d and "ARG COMMIT_SHA=dev" in d
     assert 'ENTRYPOINT ["bash", "scripts/start.sh"]' in d and 'CMD ["api"]' in d
+
+
+def test_dockerfile_requires_an_explicit_environment_build_arg():
+    d = (ROOT / "Dockerfile").read_text()
+    assert "ARG ENVIRONMENT=" not in d, (
+        "ENVIRONMENT must have NO default — a build that ever fails to receive it must fail "
+        "loudly, not silently ship the qa bundle (prototype jump bar included) to production"
+    )
+    assert d.count("ARG ENVIRONMENT") == 2, "ENVIRONMENT must still be declared (with no default) in both stages"
+    assert 'test -n "$ENVIRONMENT"' in d, (
+        "the frontend stage must guard against a missing/empty ENVIRONMENT before `npm run build`"
+    )
 
 
 def test_dockerfile_runs_as_a_non_root_user_declared_after_the_last_copy():

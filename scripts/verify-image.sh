@@ -8,7 +8,7 @@ trap cleanup EXIT
 # otherwise make the `docker run --name` below fail, so clear them first —
 # before even the build, so this is the very first docker call this script makes.
 cleanup
-docker build --build-arg ENVIRONMENT=test -t practice-match:local .
+docker build --build-arg ENVIRONMENT=qa -t practice-match:local .
 COMMON=(-e PORT=8000 -e ENVIRONMENT=test -e API_SECRET_KEY=local_only
         -e DATABASE_URL=postgresql://pm:pm_dev_pw@host.docker.internal:5433/practice_match
         -e REDIS_URL=redis://host.docker.internal:6380/0)
