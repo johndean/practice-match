@@ -1,4 +1,4 @@
-<template><div ref="host" :id="id"></div></template>
+<template><image-slot ref="host" :id="id || undefined" :shape="shape || undefined" :placeholder="placeholder || undefined" :src="src || undefined"></image-slot></template>
 
 <script setup>
 // Parity port of the design's <image-slot> custom element
@@ -7,6 +7,13 @@
 // constructor builds it, so the host element itself stays empty — and the template holds
 // nothing else, since a second root node (a comment included) would make the component a
 // fragment and there would be no single host to attach the shadow root to.
+//
+// The host IS an <image-slot> element (vite.config.ts's isCustomElement keeps the compiler
+// from resolving it as a component): the design's runtime renders that tag, and the DOM
+// oracle compares tag names strictly. It carries the four attributes the design template
+// writes on the element — id, shape, placeholder and, in the has-photo branch only, src —
+// as real attributes, since that is where the design puts them; the empty-string cases
+// drop out so the no-photo branch has no src attribute, exactly as the template has none.
 //
 // Read-only branch only. The design tool's runtime (window.omelette) is never present in
 // this app, so `editable` is false throughout: no Replace/Edit controls, no drag-and-drop
@@ -65,8 +72,11 @@ const warnIcon =
   '<path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/>' +
   '<path d="M12 9v4"/><path d="M12 17h.01"/></svg>';
 
-// The constructor's shadow tree (l.494-528), minus the reframe spill, the hover controls
-// and the file input — editor-only chrome this port does not create.
+// The constructor's shadow tree (l.501-529), verbatim — the reframe spill, the hover
+// controls and the file input included. Nothing in this port drives them (no window.omelette
+// → no data-editable, and the two popovers stay closed, so all three are display:none), but
+// they are part of the tree the design renders and the DOM oracle counts them.
+const ACCEPT = ['image/png', 'image/jpeg', 'image/webp', 'image/avif'];
 const markup =
   '<div class="frame" part="frame">' +
   '  <img part="image" alt="" draggable="false" style="display:none">' +
@@ -78,7 +88,15 @@ const markup =
   '  <div class="loading" part="loading"></div>' +
   '  <div class="ring" part="ring"></div>' +
   '</div>' +
-  '<span class="credit" part="credit"></span>';
+  '<span class="credit" part="credit"></span>' +
+  '<div class="spill" popover="manual" data-dc-edit-transparent>' +
+  '  <img class="ghost" alt="" draggable="false">' +
+  '  <div class="handle" data-c="nw"></div><div class="handle" data-c="ne"></div>' +
+  '  <div class="handle" data-c="sw"></div><div class="handle" data-c="se"></div>' +
+  '</div>' +
+  '<div class="ctl" popover="manual" data-dc-edit-transparent><button data-act="replace" title="Replace image">Replace</button>' +
+  '  <button data-act="edit" title="Reframe image">Edit</button></div>' +
+  '<input type="file" accept="' + ACCEPT.join(',') + '" hidden>';
 
 const host = ref(null);
 let el = null;   // the host element
@@ -86,6 +104,7 @@ let frame = null;
 let ring = null;
 let img = null;
 let empty = null;
+let ghost = null;
 let cap = null;
 let sub = null;
 let creditEl = null;
@@ -212,6 +231,7 @@ function render() {
       if (prev || hidShowing) el.setAttribute('data-swapping', '');
       loadPending = true;
       img.src = url;
+      ghost.src = url;   // l.1142: the reframe ghost tracks the frame image
     } else {
       releaseMask();
     }
@@ -227,6 +247,7 @@ function render() {
     hidShowing = attrError && !!img.getAttribute('src');
     img.style.display = 'none';
     img.removeAttribute('src');
+    ghost.removeAttribute('src');   // l.1167
     // The error tile owns the blocked-photo state; .empty stays for the genuinely-empty slot.
     empty.style.display = attrError ? 'none' : 'flex';
     el.removeAttribute('data-filled');
@@ -248,6 +269,7 @@ onMounted(() => {
   ring = root.querySelector('.ring');
   img = root.querySelector('.frame img');
   empty = root.querySelector('.empty');
+  ghost = root.querySelector('.ghost');
   cap = root.querySelector('.empty .cap');
   sub = root.querySelector('.sub');
   creditEl = root.querySelector('.credit');

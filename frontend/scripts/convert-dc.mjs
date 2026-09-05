@@ -83,6 +83,12 @@ export function convert(templateHtml) {
     if (tag === 'sc-for') { const alias = a.as || 'item'; const inner = new Set([...scope, alias, '$index']); return `<template v-for="(${alias}, $index) in __arr(${escAttr(compileExpr(a.list.match(WHOLE)?.[1] ?? a.list, scope))})" :key="$index">${kids(el, inner)}</template>`; }
     let out = tag; const attrs = []; let classStatic = null, classExpr = null; const pseudos = [];
     if (tag === 'x-import') out = COMPONENTS[a.component]; else if (tag === 'image-slot') out = COMPONENTS['image-slot'];
+    // support.js `walkXImport`: the component is always rendered inside a host div, since
+    // `wrap` is `tplId != null || styleGet != null` and compileTemplate stamps data-dc-tpl
+    // on every element. Its style is hostPositionStyle(style) || { display: 'contents' };
+    // no x-import here carries a style attribute, so the host style is always the latter —
+    // and rather than half-implement hostPositionStyle, an x-import style is refused.
+    if (tag === 'x-import' && 'style' in a) throw new Error(`x-import with a style attribute is unsupported (support.js hostPositionStyle): ${a.component}`);
     if (!out) throw new Error(`unknown x-import component ${a.component}`);
     for (const [name, raw] of Object.entries(a)) {
       if (name.startsWith('hint-') || name === 'sc-name' || name === 'data-dc-tpl' || (tag === 'x-import' && (name === 'component' || name === 'from'))) continue;
@@ -102,7 +108,8 @@ export function convert(templateHtml) {
     if (classExpr) attrs.unshift(`:class="${escAttr(pseudos.length ? `[${classExpr}, ${pseudos.map(jsStr).join(', ')}]` : classExpr)}"`);
     else if (classStatic !== null || pseudos.length) attrs.unshift(`class="${escAttr([classStatic, ...pseudos].filter(Boolean).join(' '))}"`);
     const open = `<${out}${attrs.length ? ' ' + attrs.join(' ') : ''}>`;
-    return VOID.has(tag) ? open : `${open}${kids(el, scope)}</${out}>`;
+    const self = VOID.has(tag) ? open : `${open}${kids(el, scope)}</${out}>`;
+    return tag === 'x-import' ? `<div class="sc-host-x" style="display: contents">${self}</div>` : self;
   };
   const kids = (node, scope) => node.children.map((c) => c.type === 'text' ? text(c.data, scope) : c.type === 'tag' || c.type === 'script' || c.type === 'style' ? element(c, scope) : '').join('');
   return { template: kids(doc, new Set()), pseudoCss: rules.map((r) => r + '\n').join('') };

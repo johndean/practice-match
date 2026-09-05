@@ -304,7 +304,7 @@
           </div>
 
           <div style="order: 1; flex: 1; position: relative; min-width: 0;">
-            <ListingsMap :markers="v.markers" :active-id="v.activeId" :hover-id="v.hoverId" :on-select="v.selectMarker" :center="v.mapCenter" :zoom="v.mapZoom" :resize-key="v.resizeKey"></ListingsMap>
+            <div class="sc-host-x" style="display: contents"><ListingsMap :markers="v.markers" :active-id="v.activeId" :hover-id="v.hoverId" :on-select="v.selectMarker" :center="v.mapCenter" :zoom="v.mapZoom" :resize-key="v.resizeKey"></ListingsMap></div>
             <div style="position: absolute; left: 16px; top: 16px; z-index: 500; display: flex; gap: 8px; align-items: center;">
               <div style="flex: none; white-space: nowrap; display: flex; align-items: center; gap: 8px; padding: 9px 13px; background: var(--color-white); border-radius: 6px; box-shadow: var(--shadow-md); font-size: 12.5px; font-weight: 500; color: var(--color-navy);">
                 <span style="width: 8px; height: 8px; border-radius: 999px; background: var(--color-blue);"></span><span v-if="__s(v.resultCount) !== null" class="sc-interp">{{ __s(v.resultCount) }}</span> matching this search
@@ -373,7 +373,7 @@
         <div style="flex: 1; display: flex; min-height: 300px; border-bottom: 1px solid #e6e6e6; overflow-x: auto;">
 
           <div style="flex: 1 1 460px; position: relative; min-width: 300px; overflow: hidden;">
-            <MarketMapView :practices="v.md?.practices" :communities="v.md?.communities" :layers="v.md?.layers" :value-layer="v.md?.valueLayer" :basemap="v.md?.basemap" :active-id="v.md?.activeId" :on-select="v.md?.selectFromMap" :center="v.md?.mapCenter" :zoom="v.md?.mapZoom" :drive-center="v.md?.driveCenter" :resize-key="v.md?.resizeKey"></MarketMapView>
+            <div class="sc-host-x" style="display: contents"><MarketMapView :practices="v.md?.practices" :communities="v.md?.communities" :layers="v.md?.layers" :value-layer="v.md?.valueLayer" :basemap="v.md?.basemap" :active-id="v.md?.activeId" :on-select="v.md?.selectFromMap" :center="v.md?.mapCenter" :zoom="v.md?.mapZoom" :drive-center="v.md?.driveCenter" :resize-key="v.md?.resizeKey"></MarketMapView></div>
 
             <div style="position: absolute; left: 16px; top: 16px; z-index: 600; display: flex; background: var(--vf-neutral); border: 1px solid var(--border-subtle); border-radius: 6px; overflow: hidden; box-shadow: 0 2px 6px rgba(0,58,112,.16);">
               <template v-for="(b, $index) in __arr(v.md?.basemapTabs)" :key="$index">
@@ -1241,7 +1241,7 @@
 
         <template v-if="v.mob?.isMap">
           <div style="flex: 1; position: relative; min-height: 0;">
-            <ListingsMap :markers="v.markers" :active-id="v.activeId" :on-select="v.mob?.selectMarker" :zoom="v.mob?.zoom" :resize-key="v.resizeKey"></ListingsMap>
+            <div class="sc-host-x" style="display: contents"><ListingsMap :markers="v.markers" :active-id="v.activeId" :on-select="v.mob?.selectMarker" :zoom="v.mob?.zoom" :resize-key="v.resizeKey"></ListingsMap></div>
             <template v-if="v.mob?.hasPeek">
               <div style="position: absolute; left: 12px; right: 12px; bottom: 74px; z-index: 500; display: flex; gap: 12px; padding: 12px; background: var(--color-white); border-radius: 10px; box-shadow: var(--shadow-lg);">
                 <div style="width: 66px; height: 56px; flex: none; border-radius: 8px; background: var(--rf-band);"></div>

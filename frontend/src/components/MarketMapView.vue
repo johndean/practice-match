@@ -100,6 +100,17 @@ function drawPins() {
   });
 }
 
-watch([() => props.communities, () => props.layers.drive5, () => props.layers.drive10, () => props.layers.competition, () => props.valueLayer, () => props.driveCenter && props.driveCenter[0], status], drawOverlay, { deep: true });
-watch([() => props.practices, () => props.activeId, () => props.layers.practices, status], drawPins, { deep: true });
+// MarketMap.jsx's effects 5 (overlay) and 6 (pins), as ONE ordered watcher. React runs
+// every effect whose deps changed in declaration order on each commit, so the overlay's
+// markers are always re-added to Leaflet's shared markerPane before the price pins and the
+// pins therefore paint on top. Two separate Vue watchers cannot promise that: they are
+// queued in the order their props are written during the parent's re-render (the design
+// template lists `practices` before `communities`), which put the pins first and let the
+// community bubbles repaint over them.
+watch(
+  [() => props.communities, () => props.layers.drive5, () => props.layers.drive10, () => props.layers.competition, () => props.valueLayer, () => props.driveCenter && props.driveCenter[0],
+    () => props.practices, () => props.activeId, () => props.layers.practices, status],
+  () => { drawOverlay(); drawPins(); },
+  { deep: true }
+);
 </script>

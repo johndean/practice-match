@@ -7,6 +7,10 @@ export class LeafletMapEngine implements MapEngine {
   private L!: any; private map!: any; private tile!: any; private labels!: any;
   private zoomCtl: any = null; private scaleCtl: any = null;
   private readonly groups = new Map<string, any>();
+  // Ruling F: mount()'s and show()'s deferred invalidateSize() must never reach a map that
+  // destroy() has already removed — Leaflet throws on `_leaflet_pos` of the detached
+  // container. Every timer this engine schedules is tracked here and cleared in destroy().
+  private readonly timers = new Set<ReturnType<typeof setTimeout>>();
 
   async mount(el: HTMLElement, opts: MountOptions): Promise<void> {
     const L = await loadLeaflet(); this.L = L;
@@ -19,9 +23,9 @@ export class LeafletMapEngine implements MapEngine {
     for (const g of opts.groups ?? []) this.group(g);
     this.setControls(opts);
     el.dataset.map = 'leaflet';
-    setTimeout(() => this.map.invalidateSize(), 60);
+    this.later(60);
   }
-  show(): void { setTimeout(() => this.map.invalidateSize(), 80); }
+  show(): void { this.later(80); }
   setControls(opts: Pick<MountOptions, 'zoomControl' | 'scaleControl'>): void {
     if (opts.zoomControl && !this.zoomCtl) this.zoomCtl = this.L.control.zoom({ position: opts.zoomControl }).addTo(this.map);
     if (!opts.zoomControl && this.zoomCtl) { this.zoomCtl.remove(); this.zoomCtl = null; }
@@ -58,6 +62,7 @@ export class LeafletMapEngine implements MapEngine {
     this.map.on('moveend zoomend', h);
     return () => this.map.off('moveend zoomend', h);
   }
-  destroy(): void { this.map.remove(); }
+  destroy(): void { for (const t of this.timers) clearTimeout(t); this.timers.clear(); this.map.remove(); }
+  private later(ms: number): void { const t = setTimeout(() => { this.timers.delete(t); this.map.invalidateSize(); }, ms); this.timers.add(t); }
   private group(name: string) { let g = this.groups.get(name); if (!g) { g = this.L.layerGroup().addTo(this.map); this.groups.set(name, g); } return g; }
 }

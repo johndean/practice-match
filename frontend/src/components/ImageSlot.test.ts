@@ -18,6 +18,20 @@ import { mount } from '@vue/test-utils';
 // `new URL(…, import.meta.url)`: Vite rewrites that form into a served asset URL.)
 const CSS_PATH = join(import.meta.dirname, 'image-slot.css');
 const css = readFileSync(CSS_PATH, 'utf8');
+
+// The design's own stylesheet, read out of the read-only reference: image-slot.js builds it
+// as one `const stylesheet = '…' + '…'` concatenation (l.290-425) whose comment lines are
+// dropped before the literals are joined. Evaluating it here makes the port's CSS file a
+// byte-for-byte assertion against the element's real text rather than a transcription.
+const SLOT_JS = join(import.meta.dirname, '..', '..', '..', 'docs', 'design-reference', 'design_handoff_practice_match_v2', 'image-slot.js');
+function designStylesheet(): string {
+  const src = readFileSync(SLOT_JS, 'utf8');
+  const start = src.indexOf('const stylesheet =');
+  const end = src.indexOf("';", src.indexOf(':host([data-attribution-error]) .ring{display:none}'));
+  if (start < 0 || end < 0) throw new Error('image-slot.js: stylesheet literal not found');
+  const literals = src.slice(start + 'const stylesheet ='.length, end + 1).split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
+  return eval('(' + literals + ')') as string;
+}
 vi.mock('./image-slot.css?raw', async () => {
   const { readFileSync: read } = await import('node:fs');
   const { join: j } = await import('node:path');
@@ -43,6 +57,19 @@ const capOf = (root: ShadowRoot) => root.querySelector('.empty .cap') as HTMLEle
 const emptyOf = (root: ShadowRoot) => root.querySelector('.empty') as HTMLElement;
 
 describe('ImageSlot — shadow root and structure', () => {
+  it('renders an <image-slot> host carrying the design template\'s own attributes', () => {
+    // The DOM oracle compares tag names strictly and reads the host's attributes, which in
+    // the design are the ones the template wrote on <image-slot> (never only props).
+    const filled = slot({ id: 'ph-p2-exterior', shape: 'rect', src: PHOTO, placeholder: 'Exterior' }).host;
+    expect(filled.tagName.toLowerCase()).toBe('image-slot');
+    expect(filled.getAttribute('id')).toBe('ph-p2-exterior');
+    expect(filled.getAttribute('shape')).toBe('rect');
+    expect(filled.getAttribute('placeholder')).toBe('Exterior');
+    expect(filled.getAttribute('src')).toBe(PHOTO);
+    // The design's no-photo branch writes no src attribute at all (…dc.html l.328).
+    expect(slot({ id: 'ph-p1-exterior', shape: 'rect', placeholder: 'Exterior' }).host.hasAttribute('src')).toBe(false);
+  });
+
   it('renders the element\'s shadow tree, not light DOM', () => {
     const { host, root } = slot({ id: 'x', shape: 'rect', placeholder: 'Practice exterior' });
 
@@ -63,14 +90,31 @@ describe('ImageSlot — shadow root and structure', () => {
 
     expect(styles).toHaveLength(1);
     expect(styles[0].textContent).toBe(css);
+    // …and that file is the design's `stylesheet` string byte for byte — the concatenation
+    // has no newlines, only the two-space runs its source literals begin with.
+    expect(css).toBe(designStylesheet());
   });
 
-  it('carries no editor, reframe or sidecar chrome', () => {
+  it('builds the constructor\'s six shadow nodes, editor chrome included but inert', () => {
     const { host, root } = slot({ id: 'x', src: PHOTO });
 
-    expect(root.querySelector('.ctl')).toBeNull();
-    expect(root.querySelector('.spill')).toBeNull();
-    expect(root.querySelector('input')).toBeNull();
+    // image-slot.js l.501-529: style, .frame, .credit, .spill, .ctl, the file input.
+    expect(root.childNodes).toHaveLength(6);
+    expect([...root.children].map((c) => c.tagName.toLowerCase() + (c.className ? '.' + c.className : '')))
+      .toEqual(['style', 'div.frame', 'span.credit', 'div.spill', 'div.ctl', 'input']);
+    const spill = root.querySelector('.spill') as HTMLElement;
+    expect([spill.getAttribute('popover'), spill.getAttribute('data-dc-edit-transparent')]).toEqual(['manual', '']);
+    expect([...spill.children].map((c) => c.tagName.toLowerCase() + '.' + c.className)).toEqual(['img.ghost', 'div.handle', 'div.handle', 'div.handle', 'div.handle']);
+    expect([...spill.querySelectorAll('.handle')].map((h) => h.getAttribute('data-c'))).toEqual(['nw', 'ne', 'sw', 'se']);
+    const ctl = root.querySelector('.ctl') as HTMLElement;
+    expect([ctl.getAttribute('popover'), ctl.getAttribute('data-dc-edit-transparent')]).toEqual(['manual', '']);
+    expect([...ctl.querySelectorAll('button')].map((b) => [b.getAttribute('data-act'), b.getAttribute('title'), b.textContent]))
+      .toEqual([['replace', 'Replace image', 'Replace'], ['edit', 'Reframe image', 'Edit']]);
+    const input = root.querySelector('input') as HTMLInputElement;
+    expect([input.type, input.getAttribute('accept'), input.hasAttribute('hidden')]).toEqual(['file', 'image/png,image/jpeg,image/webp,image/avif', true]);
+    // Read-only port: the chrome exists so the tree matches, but nothing drives it —
+    // without data-editable the .ctl stays opacity:0/pointer-events:none, and popover
+    // elements are display:none until shown.
     expect(host.hasAttribute('data-editable')).toBe(false);
     // .sub ("or browse files") is the browse affordance: present in the tree, hidden by
     // _render's read-only branch (image-slot.js l.1088).
@@ -132,6 +176,18 @@ describe('ImageSlot — filled state', () => {
     // :host([data-filled]) .ring{display:none} — image-slot.css
     expect(host.hasAttribute('data-filled')).toBe(true);
     expect(css).toContain(':host([data-filled]) .ring{display:none}');
+  });
+
+  it('mirrors the src onto the reframe ghost, and drops it again when the slot empties', async () => {
+    // image-slot.js l.1142 / l.1167: _render assigns the same URL to .spill .ghost as to
+    // the frame image, and removes it in the empty branch. The ghost is never shown here
+    // (the popover stays closed) but the attribute is part of the tree the oracle reads.
+    const { wrapper, root } = slot({ id: 'x', src: PHOTO });
+    const ghost = root.querySelector('.spill .ghost') as HTMLImageElement;
+    expect(ghost.getAttribute('src')).toBe(PHOTO);
+
+    await wrapper.setProps({ src: '' });
+    expect(ghost.hasAttribute('src')).toBe(false);
   });
 
   it('centres the image at the fit baseline before it loads', () => {

@@ -56,6 +56,21 @@ describe('LeafletMapEngine — MarketMapView shape', () => {
   });
 });
 
+describe('LeafletMapEngine — teardown', () => {
+  // John's ruling F: mount()'s 60 ms and show()'s 80 ms invalidateSize timers outlive a
+  // destroy() that happens before they fire, and Leaflet then throws
+  // "Cannot read properties of undefined (reading '_leaflet_pos')" on the removed map —
+  // the `navigation writes the URL` smoke failure. The timers must be tracked and cleared.
+  it('clears the mount and show invalidateSize timers on destroy', async () => {
+    const { stub, engine } = await mounted();
+    engine.show();
+    engine.destroy();
+    vi.advanceTimersByTime(200);
+    expect((stub.map as any).removed).toBe(true);
+    expect(stub.map.invalidated).toBe(0);
+  });
+});
+
 describe('LeafletMapEngine — ListingsMap shape', () => {
   it('adds the bottom-right zoom control and no scale control', async () => {
     const { stub } = await mounted({ zoomControl: 'bottomright', scaleControl: false, groups: ['layer'] });

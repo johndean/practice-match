@@ -50,8 +50,21 @@ describe('convert — template constructs', () => {
   });
   it('maps x-import and image-slot to the Vue components with bound props and drops hint-* attributes', () => {
     const { template } = convert('<x-import component="AustinMap" from="./AustinMap.jsx" markers="{{ markers }}" active-id="{{ activeId }}" on-select="{{ selectMarker }}" hint-size="100%,100%"></x-import><image-slot id="{{ p.photoId }}" shape="rect" src="{{ p.photoSrc }}" placeholder="{{ p.photoLabel }}"></image-slot>');
-    expect(template).toBe('<ListingsMap :markers="v.markers" :active-id="v.activeId" :on-select="v.selectMarker"></ListingsMap><ImageSlot :id="v.p?.photoId" shape="rect" :src="v.p?.photoSrc" :placeholder="v.p?.photoLabel"></ImageSlot>');
-    expect(convert('<x-import component="MarketMap" from="./MarketMap.jsx" practices="{{ md.practices }}"></x-import>').template).toBe('<MarketMapView :practices="v.md?.practices"></MarketMapView>');
+    expect(template).toBe('<div class="sc-host-x" style="display: contents"><ListingsMap :markers="v.markers" :active-id="v.activeId" :on-select="v.selectMarker"></ListingsMap></div><ImageSlot :id="v.p?.photoId" shape="rect" :src="v.p?.photoSrc" :placeholder="v.p?.photoLabel"></ImageSlot>');
+    expect(convert('<x-import component="MarketMap" from="./MarketMap.jsx" practices="{{ md.practices }}"></x-import>').template).toBe('<div class="sc-host-x" style="display: contents"><MarketMapView :practices="v.md?.practices"></MarketMapView></div>');
+  });
+
+  // support.js `walkXImport` wraps every <x-import> in a host div — `wrap` is
+  // `tplId != null || styleGet != null` and compileTemplate stamps data-dc-tpl on every
+  // element, so the wrapper is unconditional. Its style is `hostPositionStyle(style) ||
+  // { display: 'contents' }`; no x-import in this template carries a style attribute, so
+  // the host style is always exactly `display: contents`. Rather than half-implement
+  // hostPositionStyle for a case the design never exercises, the transpiler refuses it.
+  it('wraps every x-import in the runtime\'s sc-host-x display:contents host, and refuses an x-import style attribute', () => {
+    expect(convert('<div><x-import component="MarketMap" from="./MarketMap.jsx"></x-import></div>').template)
+      .toBe('<div><div class="sc-host-x" style="display: contents"><MarketMapView></MarketMapView></div></div>');
+    expect(() => convert('<x-import component="MarketMap" from="./MarketMap.jsx" style="top: 0;"></x-import>'))
+      .toThrow(/x-import .*style/);
   });
   it('drops HTML comments and the helmet block, escapes text, keeps attribute case', () => {
     expect(extractTemplate('<html><x-dc><helmet><style>a{}</style></helmet>\n<div aria-label="Go">a &amp; b</div></x-dc><script data-dc-script></script></html>')).toBe('\n<div aria-label="Go">a &amp; b</div>');

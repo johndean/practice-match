@@ -16,7 +16,7 @@ describe('App.vue is generated from the design', () => {
     const { parse, compileTemplate } = await import('@vue/compiler-sfc');
     const { descriptor, errors } = parse(readFileSync(join(ROOT, 'src/App.vue'), 'utf8'));
     expect(errors).toEqual([]);
-    const out = compileTemplate({ source: descriptor.template!.content, filename: 'App.vue', id: 'app', compilerOptions: { whitespace: 'preserve' } });
+    const out = compileTemplate({ source: descriptor.template!.content, filename: 'App.vue', id: 'app', compilerOptions: { whitespace: 'preserve', isCustomElement: (tag: string) => tag === 'image-slot' } });
     expect(out.errors).toEqual([]);
   });
   it('retired the JS hover directive: no v-hover, no hover.js', () => {
