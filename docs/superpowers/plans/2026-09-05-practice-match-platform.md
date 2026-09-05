@@ -12,6 +12,7 @@
 
 ## Global Constraints
 
+- **Quality and performance policy (`docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md`).** Test shape ~70/20/10 unit/integration/e2e enforced by rules; CI gates: `pytest -W error --cov-fail-under=90`, `diff-cover --fail-under=100`, `ruff`, `mypy --strict`, `vue-tsc --noEmit` (strict), vitest coverage ≥ 85 % on `src/map|router|admin`, Playwright fails on any `pageerror`/`console.error`, `gitleaks`; performance budgets are tests: API p95 (`/api/healthz` ≤ 20 ms, shell ≤ 15 ms, list endpoints ≤ 100 ms, panel ≤ 150 ms), bundle sizes (main ≤ 220 KB gz, `engine-leaflet` ≤ 60, `engine-google` ≤ 12, first load ≤ 300), first map paint ≤ 1,500 ms, hot queries use indexes, nightly k6 on QA (p95 ≤ 400 ms, 0 errors). Raising a budget is a reviewed change with a reason in the commit message.
 - **TDD, no exceptions (John, 2026-09-05: "everything must have tests").** Every production change begins with a failing test that is run and watched fail (RED), then the minimal code, then the same test watched pass (GREEN) — the `Run:` lines in each task are mandatory steps, not illustrations. Documentation and configuration are covered by drift tests (`tests/test_docs.py`: every setting in `.env.example` and `DEPLOY.md`, relative links resolve, CI workflow shape, runbook endpoints exist); operational scripts have shell tests under `tests/scripts/` that run them against stubbed servers or a stubbed `curl`; ops steps end with an executable verification whose script is itself tested. The handoff's generated UI is covered by the visual gate (every screen state), the route smoke tests, the router-sync and engine unit tests and the `logic.js` characterisation suite (Platform Task 1c); new code in those files follows TDD.
 - Ported files stay byte-identical except for the edits this plan names: `frontend/src/App.vue`, `logic.js`, `dc-logic.js`, `directives/hover.js`, `lib/leaflet.js`, `components/*.vue`. No restyling, no inline-style extraction, no copy edits, no renames, no Pinia, no per-screen split.
 - The only edits to ported files: (a) `assets/` → `/assets/`, `ds/` → `/ds/` path prefixes; (b) `lib/leaflet.js` loader body (npm import, same exported API); (c) two lines in `App.vue`'s `<script setup>` to install the router sync composable; (d) `prototypeBar` default sourced from `import.meta.env`.
@@ -263,6 +264,8 @@ interface ImportMeta { readonly env: ImportMetaEnv }
 
 Run: `npm run build && npm run typecheck`
 Expected: `vite build` succeeds, output under `dist/_app/*` plus `dist/assets/`, `dist/ds/`; `vue-tsc` exits 0. If `vue-tsc` reports errors inside the ported `.vue`/`.js` files, add `// @ts-nocheck` is NOT allowed — instead set `"checkJs": false` (already) and confirm the error is in a `.ts` file you wrote.
+
+**Performance gate (policy §3):** add `frontend/tests/bundle-budget.test.ts` from `docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md` §5 (RED before `npm run build` — `ENOENT dist/_app`; GREEN after: main bundle ≤ 220 KB gz). Add `tests/**/*.test.ts` to the vitest `include`.
 
 - [ ] **Step 13: Commit**
 
@@ -1076,6 +1079,8 @@ curl -sSL -o "$V/babel.min.js"                https://unpkg.com/@babel/standalon
 grep -oE 'https://unpkg.com/[^"]+' "$V/../support.js" | sort -u   # must list exactly these three URLs
 ```
 
+**Error gate (policy §2):** `prepare()` also registers the `pageerror` and `console.error` handlers from `docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md` §5 — any browser error fails the test. RED: add a temporary `console.error('x')` to `main.ts` and watch the smoke test fail; remove it.
+
 - [ ] **Step 2: Reference static server** — `frontend/tests/reference-server.mjs`
 
 ```js
@@ -1363,6 +1368,8 @@ For every failing state open `frontend/test-results/**/<name>-diff.png` (Read to
 | Modal/menu missing or extra | Selector clicked a different element; fix the locator in `screens.ts` (both targets). |
 | A colour, size, or copy difference inside the design itself | **STOP.** Do not edit ported templates or styles. Report `DONE_WITH_CONCERNS` naming the state and attaching the diff path. |
 
+**Performance gate (policy §3):** `smoke.spec.ts` gains `test('first map paint within budget')`: record `Date.now()` before `page.goto('/browse?tab=market')` (signed in via the jump bar), `await page.locator('[data-map]').waitFor()`, assert elapsed ≤ 1,500 ms.
+
 - [ ] **Step 2: Re-run until GREEN**
 
 Run: `npm run test:visual`
@@ -1494,6 +1501,8 @@ cd "/Users/johndean/Development/Practice Match"
 poetry env use python3.12 && poetry install
 mkdir -p app/api tests && touch app/__init__.py app/api/__init__.py tests/__init__.py
 ```
+
+**Performance gate (policy §3):** add `tests/perf/test_api_latency.py` from `docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md` §5 with `BUDGET_MS = {'/api/healthz': 20, '/': 15}`. RED: it fails with the app missing; GREEN after this task at both budgets.
 
 - [ ] **Step 2: Failing tests — config fail-fast and version lockstep**
 
@@ -2878,6 +2887,8 @@ jobs:
           retention-days: 14
 ```
 
+**CI gates (policy §2):** the `backend` job runs `poetry run ruff check app tests`, `poetry run mypy app --strict`, `poetry run pytest -q -W error --cov=app --cov-report=xml --cov-fail-under=90`, `bash tests/scripts/*.sh`, and on pull requests `diff-cover coverage.xml --compare-branch=origin/main --fail-under=100`; the `frontend` job runs `npx vue-tsc --noEmit`, `npx vitest run --coverage --coverage.thresholds.lines=85 --coverage.include='src/map/**' --coverage.include='src/router/**' --coverage.include='src/admin/**'`, `npm run build`, `npx vitest run tests/bundle-budget.test.ts`, `npx playwright test`. `tests/test_docs.py::test_ci_workflow_runs_every_gate` asserts every one of these commands appears in `quality.yml` (extend its list). `DEPLOY.md` gains the rollback procedure: redeploy the previous image (`railway redeploy --service api --environment <env>` after `railway status` shows `Project: Practice Match`), then `scripts/verify-deploy.sh`.
+
 - [ ] **Step 2: gitleaks config** — `.gitleaks.toml`
 
 ```toml
@@ -3166,6 +3177,8 @@ scripts/verify-deploy.sh QA
 cd frontend && PW_APP_URL=https://qa.foundation.vin npm run test:smoke && PW_APP_URL=https://qa.foundation.vin npm run test:visual
 ```
 Expected: verify OK; smoke green; visual `25 passed` against the live QA build (the QA image has the jump bar on, so every state is reachable).
+
+**Nightly load smoke (policy §3):** add `scripts/k6-smoke.js` from `docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md` §5 and `.github/workflows/perf.yml` (schedule `0 6 * * *`; installs k6; runs against `https://qa.foundation.vin` with `MEMBER_TOKEN` from a GitHub secret — the operator token until SP2). Test first: `tests/test_docs.py::test_perf_workflow_targets_qa_with_thresholds` asserts the workflow file exists, names `qa.foundation.vin`, and `k6-smoke.js` declares `p(95)<400` and `rate==0`. Run the workflow manually once (`gh workflow run perf.yml`) and record the p95 in `DEPLOY.md`.
 
 - [ ] **Step 4: Production**
 

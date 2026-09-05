@@ -12,6 +12,7 @@
 
 ## Global Constraints (exact values — from the spec)
 
+- **Quality and performance policy (`docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md`).** Test shape ~70/20/10 unit/integration/e2e enforced by rules; CI gates: `pytest -W error --cov-fail-under=90`, `diff-cover --fail-under=100`, `ruff`, `mypy --strict`, `vue-tsc --noEmit` (strict), vitest coverage ≥ 85 % on `src/map|router|admin`, Playwright fails on any `pageerror`/`console.error`, `gitleaks`; performance budgets are tests: API p95 (`/api/healthz` ≤ 20 ms, shell ≤ 15 ms, list endpoints ≤ 100 ms, panel ≤ 150 ms), bundle sizes (main ≤ 220 KB gz, `engine-leaflet` ≤ 60, `engine-google` ≤ 12, first load ≤ 300), first map paint ≤ 1,500 ms, hot queries use indexes, nightly k6 on QA (p95 ≤ 400 ms, 0 errors). Raising a budget is a reviewed change with a reason in the commit message.
 - **TDD, no exceptions (John, 2026-09-05: "everything must have tests").** Every production change begins with a failing test that is run and watched fail (RED), then the minimal code, then the same test watched pass (GREEN) — the `Run:` lines in each task are mandatory steps, not illustrations. Documentation and configuration are covered by drift tests (`tests/test_docs.py`: every setting in `.env.example` and `DEPLOY.md`, relative links resolve, CI workflow shape, runbook endpoints exist); operational scripts have shell tests under `tests/scripts/` that run them against stubbed servers or a stubbed `curl`; ops steps end with an executable verification whose script is itself tested. The handoff's generated UI is covered by the visual gate (every screen state), the route smoke tests, the router-sync and engine unit tests and the `logic.js` characterisation suite (Platform Task 1c); new code in those files follows TDD.
 - **One engine active per environment, never per user or per screen** (Google Maps Platform Terms §3.2.3(e)). The inactive engine's JavaScript chunk, CSS and tile hosts are never requested — proved by e2e route interception (Task M7).
 - **Only `frontend/src/map/engines/*.ts` and `frontend/src/lib/leaflet.js` may import `leaflet` or the Google loader** — enforced by the import-boundary test (`frontend/src/map/boundary.test.ts`, Platform Task 1b).
@@ -162,6 +163,8 @@ def test_change_log_is_append_only_for_the_application_role(conn):
     conn.rollback()
 ```
 Extend `tests/census/test_registry.py`: add `"map_engine_leaflet", "map_engine_google", "esri_tiles", "places_ui_kit", "google_maps_link", "osm_poi", "google_places_live"` to `SPEC_KEYS`.
+
+**Performance gate (policy §3):** add the `active_engine` entry to `tests/perf/test_query_plans.py::PLANS` — the partial unique index makes the active-engine lookup an index scan; a seq scan on this ~20-row table is tolerated by the test, the assertion is that the query is planned at all after `080` (RED: relation column `active` missing).
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -409,6 +412,8 @@ def test_every_basemap_base_url_host_is_in_the_csp_allowlist(conn):
         if row.kind == "basemap":
             assert shell.validate_basemap_host(row.base_url), row.dataset_key
 ```
+
+**Performance gate (policy §3):** add `test_render_index_is_string_work_only` to `tests/test_shell.py`: patch `shell._load_snapshot` with a spy, call `shell.render_index(index_html, snap, chunks, authed=False)` 1,000 times from a fixed snapshot, assert the spy was never called and the mean is ≤ 2 ms. RED: `app.shell` missing.
 
 - [ ] **Step 2: Run to verify failure**
 
@@ -675,6 +680,8 @@ async def test_layers_carry_engine_gate_and_engines_and_apply_the_rule(client, c
     layers = {l["key"]: l for l in body["layers"]}
     assert body["engine"] == "google" and layers["competition_live_points"]["enabled"] is True and layers["competition"]["enabled"] is True
 ```
+
+**Performance gate (policy §3):** extend `tests/perf/test_api_latency.py::BUDGET_MS` with `'/api/map-config': 100`; the `/api/layers` budget (100 ms) must still hold with the eligibility rule applied.
 
 - [ ] **Step 2: Run to verify failure** — `poetry run pytest tests/api/test_map_config.py -q` → FAIL (404 / KeyError `engine`).
 
@@ -1079,6 +1086,8 @@ describe('useMapHost', () => {
 ```
 
 Extend `frontend/src/map/boundary.test.ts` (Platform Task 1b) so that `maps.googleapis.com` and `google.maps` strings are allowed only in `src/map/engines/` and `src/map/testing/`.
+
+**Performance gate (policy §3):** `frontend/tests/bundle-budget.test.ts` (Platform Task 1) now finds `engine-leaflet-*` and `engine-google-*` and enforces ≤ 60 KB and ≤ 12 KB gz, and first-load JS ≤ 300 KB gz. RED until `manualChunks` lands; GREEN after Step 3.
 
 - [ ] **Step 2: Run to verify failure** — `cd frontend && npx vitest run src/map` → FAIL (missing modules).
 

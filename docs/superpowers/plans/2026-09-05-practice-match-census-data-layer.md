@@ -14,6 +14,7 @@
 
 ## Global Constraints (from the spec — exact values)
 
+- **Quality and performance policy (`docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md`).** Test shape ~70/20/10 unit/integration/e2e enforced by rules; CI gates: `pytest -W error --cov-fail-under=90`, `diff-cover --fail-under=100`, `ruff`, `mypy --strict`, `vue-tsc --noEmit` (strict), vitest coverage ≥ 85 % on `src/map|router|admin`, Playwright fails on any `pageerror`/`console.error`, `gitleaks`; performance budgets are tests: API p95 (`/api/healthz` ≤ 20 ms, shell ≤ 15 ms, list endpoints ≤ 100 ms, panel ≤ 150 ms), bundle sizes (main ≤ 220 KB gz, `engine-leaflet` ≤ 60, `engine-google` ≤ 12, first load ≤ 300), first map paint ≤ 1,500 ms, hot queries use indexes, nightly k6 on QA (p95 ≤ 400 ms, 0 errors). Raising a budget is a reviewed change with a reason in the commit message.
 - **TDD, no exceptions (John, 2026-09-05: "everything must have tests").** Every production change begins with a failing test that is run and watched fail (RED), then the minimal code, then the same test watched pass (GREEN) — the `Run:` lines in each task are mandatory steps, not illustrations. Documentation and configuration are covered by drift tests (`tests/test_docs.py`: every setting in `.env.example` and `DEPLOY.md`, relative links resolve, CI workflow shape, runbook endpoints exist); operational scripts have shell tests under `tests/scripts/` that run them against stubbed servers or a stubbed `curl`; ops steps end with an executable verification whose script is itself tested. The handoff's generated UI is covered by the visual gate (every screen state), the route smoke tests, the router-sync and engine unit tests and the `logic.js` characterisation suite (Platform Task 1c); new code in those files follows TDD.
 - **Pinned vintages, in `dataset_registry`:** `acs5` = `2023/acs/acs5` (2019–2023) · `acs5_subject` = `2023/acs/acs5/subject` · `acs5_prior` = `2018/acs/acs5` (2014–2018, static) · `cbp` = `2022/cbp` (NAICS parameter `NAICS2017`) · `qwi` = `timeseries/qwi/sa` · `bds` = `timeseries/bds` · `geocoder` = `geocoding.geo.census.gov`, benchmark `Public_AR_Current`, vintage `Current_Current` · `tiger_cb` = `TIGER2023/cb_2023_*`. No request is made without a vintage; vintages advance only by migration + `active_vintage` flip.
 - **Pre-aggregate, never call at request time.** The request path reads our tables only. A page that finds no materialised metric renders the layer's empty state and enqueues a backfill.
@@ -3675,6 +3676,8 @@ async def test_missing_metrics_404_and_enqueue_backfill_once_for_real_listings_o
 ```
 
 Run: `poetry run pytest tests/census/test_market_api.py -q` → **FAIL** (`ModuleNotFoundError: No module named 'app.api.market'`) — watch it fail before writing any implementation.
+
+**Performance gates (policy §3):** extend `tests/perf/test_api_latency.py::BUDGET_MS` with `'/api/layers': 100, '/api/markets': 100, '/api/markets/12420/communities': 150` and (after `materialized`) `f'/api/listings/{lid}/market': 150`; add `tests/perf/test_query_plans.py` from `docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md` §5 with the `panel` plan (`market_metric` PK lookup → Index Scan). RED: endpoints 404 / table missing; GREEN after this task.
 
 - [ ] **Step 2: Implement**
 
