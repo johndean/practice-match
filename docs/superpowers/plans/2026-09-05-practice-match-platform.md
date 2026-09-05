@@ -4170,7 +4170,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `coming-soon/src/logic.js`, `coming-soon/index.html`, `coming-soon/vite.config.js`, `coming-soon/package.json` + `package-lock.json`, `.github/workflows/quality.yml`, `tests/test_docs.py`
-- Create: `coming-soon/src/logic.test.js`, `coming-soon/public/ds/merriweather.css`, `coming-soon/public/ds/fonts/Merriweather-Regular.woff2`, `coming-soon/public/ds/fonts/Merriweather-Bold.woff2`, `coming-soon/public/ds/fonts/OFL-Merriweather.txt`
+- Create: `coming-soon/src/logic.test.js`, `coming-soon/public/ds/merriweather.css`, `coming-soon/public/ds/fonts/Merriweather-Latin.woff2` *(one variable-weight file — Google serves Merriweather v33 as a variable font, the same woff2 for 400 and 700; corrected 2026-09-06 after the first command returned TrueType)*, `coming-soon/public/ds/fonts/OFL-Merriweather.txt`
 
 **Interfaces:**
 - Consumes: `POST /api/interest` (11c) — `202` success, `429` rate-limited, anything else failure.
@@ -4319,21 +4319,24 @@ Run: `cd coming-soon && npx vitest run --coverage` → FAIL (`sending` undefined
 ```
 Nothing else in the file changes (the README's inline-style rule stands).
 
-- [ ] **Step 4: Self-host Merriweather** — fetch the OFL font files once (Chrome UA gets woff2 URLs):
+- [ ] **Step 4: Self-host Merriweather** — fetch the OFL font once. Google Fonts only answers woff2 to a full Chrome user agent, and it serves Merriweather v33 as a **variable** font: the `latin` blocks for weight 400 and 700 name the same file (verified 2026-09-06: 97 608 bytes, magic `wOF2`). Pick the `latin` subset by its `/* latin */` comment:
 ```bash
 cd coming-soon/public/ds/fonts
-css=$(curl -fsS -A "Mozilla/5.0 Chrome/125" "https://fonts.googleapis.com/css2?family=Merriweather:wght@400;700&display=swap")
-curl -fsS -o Merriweather-Regular.woff2 "$(echo "$css" | awk '/font-weight: 400/{f=1} f&&/url\(/{gsub(/.*url\(|\).*/,""); print; exit}')"
-curl -fsS -o Merriweather-Bold.woff2    "$(echo "$css" | awk '/font-weight: 700/{f=1} f&&/url\(/{gsub(/.*url\(|\).*/,""); print; exit}')"
+UA="Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36"
+curl -fsS -A "$UA" "https://fonts.googleapis.com/css2?family=Merriweather:wght@400;700&display=swap" -o merri.css
+url=$(python3 -c 'import re,sys; css=open(sys.argv[1]).read(); urls={re.search(r"url\((\S+?)\)", b).group(1) for s,b in re.findall(r"/\* (\w[\w-]*) \*/\s*@font-face \{(.*?)\}", css, re.S) if s=="latin"}; assert len(urls)==1, urls; print(urls.pop())' merri.css)
+curl -fsS -o Merriweather-Latin.woff2 "$url"
+rm merri.css
 curl -fsS -o OFL-Merriweather.txt https://raw.githubusercontent.com/SorkinType/Merriweather/master/OFL.txt
-file Merriweather-*.woff2   # both: Web Open Font Format (Version 2)
+file Merriweather-Latin.woff2      # Web Open Font Format (Version 2), TrueType
+head -c 4 Merriweather-Latin.woff2 # wOF2
 ```
-`coming-soon/public/ds/merriweather.css`:
+If `file` does not report WOFF2 or the `assert` fails, STOP and report. `coming-soon/public/ds/merriweather.css`:
 ```css
 /* Merriweather (SIL Open Font License, see fonts/OFL-Merriweather.txt) — self-hosted so the page
-   makes no third-party request and pixel tests are deterministic (README: "self-host before launch"). */
-@font-face { font-family: 'Merriweather'; font-style: normal; font-weight: 400; font-display: swap; src: url('/ds/fonts/Merriweather-Regular.woff2') format('woff2'); }
-@font-face { font-family: 'Merriweather'; font-style: normal; font-weight: 700; font-display: swap; src: url('/ds/fonts/Merriweather-Bold.woff2') format('woff2'); }
+   makes no third-party request and pixel tests are deterministic (README: "self-host before launch").
+   One variable-weight file (Google Fonts v33, latin subset) covers the 400 and 700 the page uses. */
+@font-face { font-family: 'Merriweather'; font-style: normal; font-weight: 400 700; font-display: swap; src: url('/ds/fonts/Merriweather-Latin.woff2') format('woff2'); }
 ```
 `coming-soon/index.html`: replace the two `<link rel="preconnect" …>` lines and the Google Fonts `<link rel="stylesheet" …>` with `<link rel="stylesheet" href="/ds/merriweather.css" />`, and change the comment above them to `<!-- Merriweather carries headlines per the VIN Foundation Brand Style Guide 2026 §05 — self-hosted (OFL). -->`. No other change to the file.
 
@@ -4359,7 +4362,7 @@ file Merriweather-*.woff2   # both: Web Open Font Format (Version 2)
 
 - [ ] **Step 7: Commit**
 ```bash
-git add coming-soon/src/logic.js coming-soon/src/logic.test.js coming-soon/index.html coming-soon/vite.config.js coming-soon/package.json coming-soon/package-lock.json coming-soon/public/ds/merriweather.css coming-soon/public/ds/fonts/Merriweather-Regular.woff2 coming-soon/public/ds/fonts/Merriweather-Bold.woff2 coming-soon/public/ds/fonts/OFL-Merriweather.txt .github/workflows/quality.yml tests/test_docs.py
+git add coming-soon/src/logic.js coming-soon/src/logic.test.js coming-soon/index.html coming-soon/vite.config.js coming-soon/package.json coming-soon/package-lock.json coming-soon/public/ds/merriweather.css coming-soon/public/ds/fonts/Merriweather-Latin.woff2 coming-soon/public/ds/fonts/OFL-Merriweather.txt .github/workflows/quality.yml tests/test_docs.py
 git commit -m "feat(coming-soon): sign-up posts to /api/interest; Merriweather self-hosted; logic unit-tested at 100 %
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
