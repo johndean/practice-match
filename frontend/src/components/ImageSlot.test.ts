@@ -8,7 +8,7 @@
 // _render() (l.1068-1213 with `data-editable` false — no window.omelette, no sidecar).
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import { mount } from '@vue/test-utils';
 
 // Vitest stubs every `.css` request — `?raw` included — with `export default ""` unless
@@ -63,6 +63,9 @@ const capOf = (root: ShadowRoot) => root.querySelector('.empty .cap') as HTMLEle
 const emptyOf = (root: ShadowRoot) => root.querySelector('.empty') as HTMLElement;
 
 describe('ImageSlot — shadow root and structure', () => {
+  // The Popover-present test fakes support on the prototype; undo it for every other test.
+  afterEach(() => { delete (HTMLElement.prototype as { popover?: unknown }).popover; });
+
   it('renders an <image-slot> host carrying the design template\'s own attributes', () => {
     // The DOM oracle compares tag names strictly and reads the host's attributes, which in
     // the design are the ones the template wrote on <image-slot> (never only props).
@@ -101,19 +104,32 @@ describe('ImageSlot — shadow root and structure', () => {
     expect(css).toBe(designStylesheet());
   });
 
-  it('hides the ported chrome below the Popover floor, without adding a shadow child', () => {
-    // .spill and .ctl carry no display:none of their own — in Chromium they are invisible
-    // only because of the UA's `[popover]:not(:popover-open)` rule. Vite 5's default target
-    // is chrome87/safari14/firefox78, all below the Popover floor (Chrome 114 / Safari 17 /
-    // Firefox 125), where the four 12 px handles would paint and the Replace/Edit buttons
-    // would stay tab-focusable. The guard is a constructable sheet rather than a second
-    // <style> node so the shadow root keeps exactly the design's six children.
-    const { root } = slot({ id: 'x', src: PHOTO });
-    const sheets = (root as ShadowRoot & { adoptedStyleSheets?: CSSStyleSheet[] }).adoptedStyleSheets;
+  // .spill and .ctl carry no display:none of their own — in Chromium they are invisible only
+  // because of the UA's `[popover]:not(:popover-open)` rule. Vite 5's default build target is
+  // chrome87/safari14/firefox78, all below the Popover floor (Chrome 114 / Safari 17 /
+  // Firefox 125), where the four 12 px handles would paint and the Replace/Edit buttons would
+  // stay tab-focusable. A plain feature check covers every one of those engines — unlike a
+  // constructable stylesheet, which Safari < 16.4 and Firefox < 101 do not have either.
+  const chrome = (root: ShadowRoot) => [root.querySelector('.spill'), root.querySelector('.ctl')] as HTMLElement[];
 
-    expect(sheets).toHaveLength(1);
-    const text = [...sheets![0].cssRules].map((r) => r.cssText).join('').replace(/\s+/g, ' ').trim();
-    expect(text).toBe('@supports not selector(:popover-open) { .spill, .ctl { display: none; } }');
+  it('hides the ported chrome inline where the Popover API is missing, without adding a shadow child', () => {
+    // jsdom has no Popover API, so this is the sub-floor branch as a browser below the floor
+    // would take it.
+    expect('popover' in HTMLElement.prototype).toBe(false);
+    const { root } = slot({ id: 'x', src: PHOTO });
+
+    expect(chrome(root).map((el) => el.style.display)).toEqual(['none', 'none']);
+    expect(root.childNodes).toHaveLength(6); // no extra <style> node — the oracle counts six
+  });
+
+  it('leaves the chrome untouched where the Popover API exists, so the oracle sees the design\'s styles', () => {
+    // Every gate browser has it: the branch must be dead there, or `el.style` would carry a
+    // declaration the design's element never sets and the DOM oracle would report it.
+    Object.defineProperty(HTMLElement.prototype, 'popover', { value: null, configurable: true });
+    const { root } = slot({ id: 'x', src: PHOTO });
+
+    expect(chrome(root).map((el) => el.style.display)).toEqual(['', '']);
+    expect(chrome(root).map((el) => el.getAttribute('style'))).toEqual([null, null]);
     expect(root.childNodes).toHaveLength(6);
   });
 
