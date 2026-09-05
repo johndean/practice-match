@@ -48,3 +48,14 @@ def db_ready():
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)  # type: ignore[union-attr]
     mod.run(os.environ["DATABASE_URL"])
+
+
+@pytest.fixture(autouse=True)
+async def _dispose_pools():
+    """Disposes app.db's pooled engine/redis-client cache for the current test's
+    event loop before that loop closes at teardown (round 4: production code no
+    longer monkeypatches loop.close to do this — see app/db.py)."""
+    yield
+    from app.db import dispose_all  # imported lazily, as `client` does
+
+    await dispose_all()

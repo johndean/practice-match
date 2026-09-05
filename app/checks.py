@@ -8,9 +8,7 @@ from typing import TypedDict
 
 from sqlalchemy import text
 
-from app.db import get_engine, get_redis
-
-TIMEOUT_S = 3.0
+from app.db import TIMEOUT_S, get_engine, get_redis
 
 logger = logging.getLogger(__name__)
 
@@ -33,12 +31,19 @@ def _err(exc: Exception) -> ComponentStatus:
 
 async def check_db(url: str) -> ComponentStatus:
     # The engine is pooled per (event loop, url) in app.db (Task 5 fix round 3); no
-    # per-call dispose() — the pooled engine lives for the loop.
+    # per-call dispose() — the pooled engine lives for the loop. The whole probe —
+    # connection establishment AND the query — is bounded by one wait_for (round 4);
+    # app.db's connect_args timeout is belt-and-braces against asyncpg's 60s default.
     try:
         engine = get_engine(async_dsn(url))
-        async with engine.connect() as conn:
-            result = await asyncio.wait_for(conn.execute(text("SELECT postgis_version()")), TIMEOUT_S)
-            return {"ok": True, "postgis_version": str(result.scalar_one())}
+
+        async def _probe() -> str:
+            async with engine.connect() as conn:
+                result = await conn.execute(text("SELECT postgis_version()"))
+                return str(result.scalar_one())
+
+        version = await asyncio.wait_for(_probe(), TIMEOUT_S)
+        return {"ok": True, "postgis_version": version}
     except Exception as exc:  # noqa: BLE001 — reported, never raised (a malformed DSN raises here too, before any connection is attempted)
         return _err(exc)
 
