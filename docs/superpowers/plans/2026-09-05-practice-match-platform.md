@@ -1720,6 +1720,14 @@ Run: `npx vitest run tests/app-generated.test.ts` → **FAIL** (App.vue is the h
 - [ ] `npx vitest run && npx vue-tsc --noEmit && npm run gen:app` (no drift) → green; then `npx playwright test --config=tests/playwright.config.ts --project=app` — visual 25/25, dom 25/25, smoke 11/11 unchanged.
 - [ ] Commit — `fix(frontend): image-slot chrome hidden without Popover support; order/cleanup unit guards; test and transpiler guard fixes`.
 
+**Fix round 2 (2026-09-05 — John's ruling: replace the stylesheet fallback with a feature-detected branch; files: `frontend/src/components/ImageSlot.vue` + `ImageSlot.test.ts` only; one commit):**
+- [ ] **Why:** constructable stylesheets (`new CSSStyleSheet()` / `adoptedStyleSheets`) are absent on Safari < 16.4 and Firefox < 101, so the fix-round-1 fallback covered Chrome/Edge 87–113 only; on the other sub-floor engines the constructor threw and the chrome still painted.
+- [ ] **Remove** `POPOVER_FALLBACK` and the `adoptedStyleSheets` attach (and its test).
+- [ ] **Add** in `onMounted`, after the shadow content is rendered: `if (!('popover' in HTMLElement.prototype)) { for (const el of root.querySelectorAll<HTMLElement>('.spill, .ctl')) el.style.display = 'none'; }` — on every engine with the Popover API (all gate browsers) the branch is dead, so the DOM oracle (`el.style` declarations, attrs, shadow child count) and the pixels are untouched; on every engine below the floor the chrome is hidden with a plain inline style, no stylesheet API needed.
+- [ ] **RED (jsdom has no Popover API):** after mount, both `.spill` and `.ctl` have `style.display === 'none'` and `shadowRoot.childNodes.length` is still 6; a second test defines `popover` on `HTMLElement.prototype` (`Object.defineProperty(..., { value: null, configurable: true })`, deleted in `afterEach`) before mounting and asserts neither element has an inline `display`. GREEN with the branch.
+- [ ] **Full gate:** `npx vitest run && npx vue-tsc --noEmit && npm run gen:app` (no drift) → `--project=reference` then `--project=app` → visual 25/25, dom 25/25, smoke 11/11.
+- [ ] Commit — `fix(frontend): image-slot chrome hidden by a Popover feature check on every engine below the floor`.
+
 **Recorded rulings folded in:** A (hover) — solved by construction (generated pseudo-classes); B (`d.`→`v.d.`) — solved by construction (the transpiler resolves paths); C (watcher order) — 4e; D (ImageSlot) — 4c; E (interpolation spans) — the transpiler reproduces **every** span, superseding the "three spots" ruling in the stricter direction; F (`_leaflet_pos`) — 4e.
 
 ---
