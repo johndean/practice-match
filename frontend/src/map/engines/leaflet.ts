@@ -1,6 +1,11 @@
 import type { BaseKind, CircleStyle, Handle, LatLng, MapEngine, MarkerOptions, MountOptions } from '../engine';
 import { BASEMAPS, LABEL_TILES, loadLeaflet } from '../../lib/leaflet.js';
 
+// Handed back by the handle-returning methods once the engine is destroyed: callers keep
+// these and call them later, so they must be safe to use rather than undefined.
+const NOOP_HANDLE: Handle = { remove() {} };
+const NOOP_UNSUBSCRIBE = () => {};
+
 /** Leaflet 1.9.4 behind MapEngine. Every option below is the handoff's, unchanged — Task 4's visual gate proves it. */
 export class LeafletMapEngine implements MapEngine {
   readonly name = 'leaflet' as const;
@@ -11,17 +16,26 @@ export class LeafletMapEngine implements MapEngine {
   // destroy() has already removed — Leaflet throws on `_leaflet_pos` of the detached
   // container. Every timer this engine schedules is tracked here and cleared in destroy().
   private readonly timers = new Set<ReturnType<typeof setTimeout>>();
-  // Zero-gap audit, Phase 8: teardown must run exactly once and leave the engine inert.
-  // Without this, a second destroy() re-entered Leaflet's Map.remove() on an already-torn-
-  // down map (it reaches into _container._leaflet_id, _panes and _layers, all of which the
-  // first call deleted), and a show() after destroy() queued a fresh invalidateSize() on
-  // the removed map — the very `_leaflet_pos` crash ruling F set out to eliminate, merely
-  // moved from "a timer that outlived destroy" to "a timer created after it".
+  // Zero-gap audit, Phase 8 + fix round 3: teardown must run exactly once and leave the
+  // engine inert ACROSS ITS WHOLE PUBLIC SURFACE. Without this, a second destroy() re-entered
+  // Leaflet's Map.remove() on an already-torn-down map (it reaches into
+  // _container._leaflet_id, _panes and _layers, all of which the first call deleted); a
+  // show() after destroy() queued a fresh invalidateSize() on the removed map — the very
+  // `_leaflet_pos` crash ruling F set out to eliminate, merely moved from "a timer that
+  // outlived destroy" to "a timer created after it"; and setView/zoomIn/zoomOut/setBase/
+  // fitBounds/clear/circle/marker/onMove all still reached the removed map. The app has not
+  // hit those only because both map components null their `engine` reference on unmount —
+  // the engine must not depend on its callers doing that.
   private destroyed = false;
 
   async mount(el: HTMLElement, opts: MountOptions): Promise<void> {
     this.destroyed = false;   // mount() is the single point that (re)initialises the engine
-    const L = await loadLeaflet(); this.L = L;
+    const L = await loadLeaflet();
+    // Fix round 3: a destroy() that landed while the loader was in flight must win. Creating
+    // the map here would leave a live Leaflet instance and its 60 ms invalidateSize behind
+    // with nothing holding a reference to tear either down.
+    if (this.destroyed) return;
+    this.L = L;
     this.map = L.map(el, { center: opts.center, zoom: opts.zoom, zoomControl: false, attributionControl: true });
     const cfg = BASEMAPS[opts.basemap] || BASEMAPS.map;
     this.tile = L.tileLayer(cfg.url, { attribution: cfg.attribution, maxZoom: 18 }).addTo(this.map);
@@ -33,19 +47,23 @@ export class LeafletMapEngine implements MapEngine {
     el.dataset.map = 'leaflet';
     this.later(60);
   }
-  show(): void { this.later(80); }
+  show(): void { this.later(80); }   // later() carries the destroyed guard
   setControls(opts: Pick<MountOptions, 'zoomControl' | 'scaleControl'>): void {
+    if (this.destroyed) return;
     if (opts.zoomControl && !this.zoomCtl) this.zoomCtl = this.L.control.zoom({ position: opts.zoomControl }).addTo(this.map);
     if (!opts.zoomControl && this.zoomCtl) { this.zoomCtl.remove(); this.zoomCtl = null; }
     if (opts.scaleControl && !this.scaleCtl) this.scaleCtl = this.L.control.scale({ imperial: true, metric: false, position: 'bottomright' }).addTo(this.map);
     if (!opts.scaleControl && this.scaleCtl) { this.scaleCtl.remove(); this.scaleCtl = null; }
   }
-  setView(center: LatLng, zoom: number, animate?: boolean): void { this.map.setView(center, zoom, animate === undefined ? undefined : { animate }); }
-  getZoom(): number { return this.map.getZoom(); }
-  zoomIn(): void { this.map.zoomIn(); }
-  zoomOut(): void { this.map.zoomOut(); }
-  fitBounds(points: LatLng[]): void { this.map.fitBounds(this.L.latLngBounds(points), { padding: [24, 24] }); }
+  setView(center: LatLng, zoom: number, animate?: boolean): void { if (this.destroyed) return; this.map.setView(center, zoom, animate === undefined ? undefined : { animate }); }
+  // 0, not a throw and not the last live value: a destroyed engine has no map and therefore
+  // no zoom. Callers read this to seed a view; a stale number would be worse than a neutral one.
+  getZoom(): number { return this.destroyed ? 0 : this.map.getZoom(); }
+  zoomIn(): void { if (this.destroyed) return; this.map.zoomIn(); }
+  zoomOut(): void { if (this.destroyed) return; this.map.zoomOut(); }
+  fitBounds(points: LatLng[]): void { if (this.destroyed) return; this.map.fitBounds(this.L.latLngBounds(points), { padding: [24, 24] }); }
   setBase(kind: BaseKind): void {
+    if (this.destroyed) return;
     const cfg = BASEMAPS[kind] || BASEMAPS.map;
     this.tile.setUrl(cfg.url);
     if (kind === 'map') this.labels.addTo(this.map); else this.map.removeLayer(this.labels);
@@ -53,10 +71,12 @@ export class LeafletMapEngine implements MapEngine {
     if (this.map.attributionControl._update) this.map.attributionControl._update();
   }
   circle(center: LatLng, radiusM: number, s: CircleStyle, group: string): Handle {
+    if (this.destroyed) return NOOP_HANDLE;
     const c = this.L.circle(center, { radius: radiusM, stroke: s.stroke ?? false, fillColor: s.fillColor, fillOpacity: s.fillOpacity, interactive: s.interactive ?? false }).addTo(this.group(group));
     return { remove: () => c.remove() };
   }
   marker(pos: LatLng, o: MarkerOptions, group: string): Handle {
+    if (this.destroyed) return NOOP_HANDLE;
     const icon = this.L.divIcon({ html: o.html, className: '', iconSize: o.size, iconAnchor: o.anchor });
     const m = this.L.marker(pos, { icon, zIndexOffset: o.zIndexOffset ?? 0, interactive: o.interactive ?? true });
     if (o.tooltip) m.bindTooltip(o.tooltip, { direction: 'top', offset: [0, -6] });
@@ -64,13 +84,16 @@ export class LeafletMapEngine implements MapEngine {
     m.addTo(this.group(group));
     return { remove: () => m.remove() };
   }
-  clear(group: string): void { this.groups.get(group)?.clearLayers(); }
+  clear(group: string): void { if (this.destroyed) return; this.groups.get(group)?.clearLayers(); }
   onMove(cb: (center: LatLng, zoom: number) => void): () => void {
+    if (this.destroyed) return NOOP_UNSUBSCRIBE;
     const h = () => { const c = this.map.getCenter(); cb([c.lat, c.lng], this.map.getZoom()); };
     this.map.on('moveend zoomend', h);
     return () => this.map.off('moveend zoomend', h);
   }
-  destroy(): void { if (this.destroyed) return; this.destroyed = true; for (const t of this.timers) clearTimeout(t); this.timers.clear(); this.map.remove(); }
+  // `this.map` is undefined until a mount() completes, so a destroy() before (or during)
+  // the first mount must not reach for it — that was a plain TypeError before fix round 3.
+  destroy(): void { if (this.destroyed) return; this.destroyed = true; for (const t of this.timers) clearTimeout(t); this.timers.clear(); if (this.map) this.map.remove(); }
   private later(ms: number): void { if (this.destroyed) return; const t = setTimeout(() => { this.timers.delete(t); this.map.invalidateSize(); }, ms); this.timers.add(t); }
   private group(name: string) { let g = this.groups.get(name); if (!g) { g = this.L.layerGroup().addTo(this.map); this.groups.set(name, g); } return g; }
 }

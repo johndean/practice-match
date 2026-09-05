@@ -2,7 +2,7 @@ import { mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { diff, normalise, readReferenceSnapshot, type DomElement, type DomNode, type RawElement, type RawNode } from './dom';
+import { diff, normalise, readReferenceSnapshot, summarise, type DomElement, type DomNode, type RawElement, type RawNode } from './dom';
 
 // Minimal element fixtures. Every field the interface requires is present so the tests
 // exercise normalise()/diff() exactly as serialize(page) would feed them, without a browser.
@@ -200,9 +200,12 @@ describe('normalise', () => {
     });
   });
 
-  // Rule C (John, 2026-09-05): on input/select/textarea, live form state is recorded via
-  // `props` (sorted [name, value] pairs from el.value/el.checked/el.selected), not via the
-  // mirrored value/checked/selected attributes.
+  // Rule C (John, 2026-09-05), as NARROWED in fix round 2: live form state is recorded via
+  // `props` rather than via the mirrored attributes — `value` on input/select/textarea, and
+  // `checked` on an <input> whose type is checkbox or radio, and nothing else. `selected` is
+  // never read: it belongs to <option>, which is not one of the three form tags. (The
+  // pre-narrowing wording of this comment claimed el.value/el.checked/el.selected on all
+  // three tags; walkPage has not behaved that way since b1aed38 — see dom.walk.test.ts.)
   describe('rule C — live form props', () => {
     it('carries a sorted props field through for a form tag', () => {
       const raw = el({ tag: 'select', attrs: [['id', 'city']], props: [['value', 'Austin, TX']] });
@@ -213,6 +216,69 @@ describe('normalise', () => {
 
     it('does not attach a props field to a non-form tag', () => {
       expect((normalise(el({ tag: 'div' })) as DomElement).props).toBeUndefined();
+    });
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Rule E (John, 2026-09-05, fix round 3): inside an `image-slot` shadow root, the DESIGN
+  // side's editor nodes — `.spill`, `.ctl` and `input[type=file]` — are dropped before
+  // comparison. The port no longer builds them (John's ruling: the design tool's image
+  // editor is removed, not hidden — docs/decisions/2026-09-05-image-slot-editor-removed.md),
+  // while the design's element still does, so without this rule every image-slot state would
+  // report three phantom missing children.
+  //
+  // The rule is deliberately ONE-SIDED and deliberately SCOPED. One-sided: the app side is
+  // never filtered, so if the port ever grows editor chrome again the oracle reports it
+  // rather than quietly matching. Scoped: only the shadow root of an `image-slot` host, so a
+  // `.ctl` anywhere else in either tree is ordinary content and is compared as such.
+  // ---------------------------------------------------------------------------------------
+  describe('rule E — the design\'s image-slot editor chrome', () => {
+    const EDITOR = [
+      el({ tag: 'div', classList: ['spill'], attrs: [['popover', 'manual']] }),
+      el({ tag: 'div', classList: ['ctl'], attrs: [['popover', 'manual']] }),
+      el({ tag: 'input', attrs: [['type', 'file'], ['hidden', '']] })
+    ];
+    const imageSlot = (extra: RawNode[] = []) =>
+      el({
+        tag: 'image-slot',
+        children: [{ shadow: [el({ tag: 'style' }), el({ tag: 'div', classList: ['frame'] }), el({ tag: 'span', classList: ['credit'] }), ...extra] }]
+      });
+    const shadowOf = (n: DomNode) => ((n as DomElement).children[0] as { shadow: DomNode[] }).shadow;
+    const label = (n: DomNode) => (n as DomElement).tag + ((n as DomElement).class.length ? '.' + (n as DomElement).class.join('.') : '');
+
+    it('drops the design side\'s six-node image-slot shadow to the three display-only nodes', () => {
+      const six = imageSlot(EDITOR);
+      expect(shadowOf(normalise(six, { design: true })).map(label)).toEqual(['style', 'div.frame', 'span.credit']);
+    });
+
+    it('never filters the app side: an app-side .ctl survives normalisation and is REPORTED', () => {
+      const design = normalise(imageSlot(EDITOR), { design: true });
+      const appWithChrome = normalise(imageSlot([el({ tag: 'div', classList: ['ctl'] })]));
+
+      expect(shadowOf(appWithChrome).map(label)).toEqual(['style', 'div.frame', 'span.credit', 'div.ctl']);
+      // The image-slot is the diffed ROOT here, so its children start the path fresh.
+      expect(diff(design, appWithChrome)).toEqual([
+        'shadow: child count 3 ≠ 4',
+        'shadow: child[3] (none) ≠ <div>'
+      ]);
+    });
+
+    it('matches a compliant port exactly: design six nodes against app three, no diff', () => {
+      expect(diff(normalise(imageSlot(EDITOR), { design: true }), normalise(imageSlot()))).toEqual([]);
+    });
+
+    it('is scoped to an image-slot shadow root: a .ctl elsewhere is ordinary content', () => {
+      // …in the light DOM of an image-slot,
+      const light = el({ tag: 'image-slot', children: [el({ tag: 'div', classList: ['ctl'] })] });
+      expect(((normalise(light, { design: true }) as DomElement).children[0] as DomElement).class).toEqual(['ctl']);
+      // …and in some other element's shadow root.
+      const other = el({ tag: 'x-widget', children: [{ shadow: [el({ tag: 'div', classList: ['ctl'] })] }] });
+      expect(shadowOf(normalise(other, { design: true })).map(label)).toEqual(['div.ctl']);
+    });
+
+    it('drops a file input only when it really is type=file', () => {
+      const slot = imageSlot([el({ tag: 'input', attrs: [['type', 'text']] }), el({ tag: 'input', attrs: [['type', 'file']] })]);
+      expect(shadowOf(normalise(slot, { design: true })).map(label)).toEqual(['style', 'div.frame', 'span.credit', 'input']);
     });
   });
 
@@ -493,5 +559,36 @@ describe('readReferenceSnapshot', () => {
     const node = domEl({ tag: 'div' });
     writeFileSync(join(dir, 'gate-signin.json'), JSON.stringify(node));
     expect(readReferenceSnapshot(dir, 'gate-signin')).toEqual(node);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// summarise() — re-review minor 4. `diff()` returns EVERY actionable line by design (fix
+// round 2's Phase 4 requirement), which on a badly diverged state can be hundreds. The data
+// is not capped; only the message a failing assertion PRINTS is, so a real regression stays
+// readable in CI instead of scrolling the whole run out of the buffer. dom.spec.ts passes
+// the summary as the assertion message while still asserting on the full array.
+// ---------------------------------------------------------------------------------------
+describe('summarise', () => {
+  it('returns nothing for an empty list', () => {
+    expect(summarise([])).toBe('');
+  });
+
+  it('joins every line unchanged when there are no more than max', () => {
+    const lines = ['a: 1', 'b: 2', 'c: 3'];
+    expect(summarise(lines, 3)).toBe('a: 1\nb: 2\nc: 3');
+  });
+
+  it('prints the first max lines and an exact tail line when there are more', () => {
+    const lines = Array.from({ length: 10 }, (_, i) => `line ${i}`);
+    expect(summarise(lines, 4)).toBe('line 0\nline 1\nline 2\nline 3\n… and 6 more (10 total)');
+  });
+
+  it('defaults to 40 lines', () => {
+    const lines = Array.from({ length: 41 }, (_, i) => `line ${i}`);
+    const out = summarise(lines).split('\n');
+    expect(out).toHaveLength(41);
+    expect(out[39]).toBe('line 39');
+    expect(out[40]).toBe('… and 1 more (41 total)');
   });
 });

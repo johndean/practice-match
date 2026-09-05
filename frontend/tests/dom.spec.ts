@@ -3,7 +3,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SCREENS } from './screens';
 import { booted, prepare, settle } from './harness';
-import { diff, readReferenceSnapshot, serialize } from './dom';
+import { diff, readReferenceSnapshot, serialize, summarise } from './dom';
 
 const SNAPSHOTS = join(fileURLToPath(new URL('.', import.meta.url)), 'dom-snapshots');
 
@@ -19,7 +19,11 @@ test.describe('DOM parity with the approved design', () => {
       await booted(page);
       await s.steps(page);
       await settle(page);
-      expect(diff(readReferenceSnapshot(SNAPSHOTS, s.name), await serialize(page))).toEqual([]);
+      // The assertion is still on the WHOLE list — nothing is capped away — but the message
+      // Playwright prints when it fails is summarise()'d, so a badly diverged state stays
+      // readable instead of dumping hundreds of lines into the run (re-review minor 4).
+      const lines = diff(readReferenceSnapshot(SNAPSHOTS, s.name), await serialize(page));
+      expect(lines, summarise(lines)).toEqual([]);
     });
   }
 });

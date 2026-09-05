@@ -57,18 +57,42 @@ function drawOrder(stub: LeafletStub, from: number): string[] {
     .map((c) => (/^<div style="width:/.test((c.args[0] as { html: string }).html) ? 'overlay' : 'pins'));
 }
 
-// The two layer groups, in the order MarketMapView asks the engine to create them at mount
-// (`groups: ['overlay', 'pins']`) — identified by construction order, not by contents, so a
-// fixture with zero overlay markers would still be found.
+// Re-review minor 5: the two layer groups used to be picked out by CONSTRUCTION ORDER —
+// `groups[0]` is overlay because MarketMapView passes `groups: ['overlay', 'pins']` at mount.
+// That is a second hidden coupling of exactly the kind this file exists to be free of: swap
+// the component's two group names and an index-keyed helper silently reads the invariant
+// backwards, failing (or worse, passing) for a reason that has nothing to do with ordering.
+//
+// Each group is identified by ITS ROLE instead — which production renderer filled it. The
+// engine keys its groups by name, so role is what the name means: `markers.js` `dot()` opens
+// a community bubble's HTML with the div's width, `pricePin()` opens the pill with a
+// font-family, and a drive-time ring is an L.circle carrying a radius. Creation order is
+// never consulted, and the helper asserts that each group holds exactly one role, so a
+// component change that mixed the two would fail here rather than be mislabelled.
+type StubLayer = { seq: number; options?: { radius?: number; icon?: { icon?: { html?: string } } } };
+type StubGroup = { clearLayers?: unknown; added: StubLayer[] };
+
+const roleOf = (l: StubLayer): 'overlay' | 'pins' => {
+  if (typeof l.options?.radius === 'number') return 'overlay';        // a drive-time L.circle
+  return /^<div style="width:/.test(l.options?.icon?.icon?.html ?? '') ? 'overlay' : 'pins';
+};
+
 function layerGroups(stub: LeafletStub) {
-  const groups = (stub.map.added as { clearLayers?: unknown; added: { seq: number }[] }[])
-    .filter((g) => typeof g.clearLayers === 'function');
-  expect(groups).toHaveLength(2);
-  return { overlay: groups[0], pins: groups[1] };
+  const groups = (stub.map.added as StubGroup[]).filter((g) => typeof g.clearLayers === 'function');
+  expect(groups, 'the engine did not create exactly the two groups MarketMapView asks for').toHaveLength(2);
+  const labelled = groups.map((g) => {
+    const roles = [...new Set(g.added.map(roleOf))];
+    expect(roles, `a layer group holds ${roles.length} renderer roles — the two draws are not separated`).toHaveLength(1);
+    return { role: roles[0], group: g };
+  });
+  const overlay = labelled.find((x) => x.role === 'overlay');
+  const pins = labelled.find((x) => x.role === 'pins');
+  expect(Boolean(overlay && pins), 'could not identify both groups by the renderer that filled them').toBe(true);
+  return { overlay: overlay!.group, pins: pins!.group };
 }
 // The attach sequence of every layer currently in a group. `seq` is stamped by the stub on
 // every `addTo()`, so it records the order Leaflet's shared markerPane actually saw.
-const attachSeqs = (g: { added: { seq: number }[] }) => g.added.map((l) => l.seq);
+const attachSeqs = (g: StubGroup) => g.added.map((l) => l.seq);
 
 async function mounted(n = { communities: 2, practices: 1 }) {
   const stub = installLeafletStub();
@@ -198,6 +222,34 @@ describe('MarketMapView — redraw order', () => {
     const { overlay, pins } = layerGroups(stub);
     expect(attachSeqs(overlay)).toHaveLength(4);
     expect(attachSeqs(pins)).toHaveLength(3);
+  });
+});
+
+// Re-review minor 5: the group identification itself, stated as a property. The helper must
+// name the groups from what filled them, so the two labels cannot swap when the engine's
+// creation order does. Proven by break-and-restore as well: swapping MarketMapView's
+// `groups: ['overlay', 'pins']` to `['pins', 'overlay']` leaves all of these green, where an
+// index-keyed helper would read the invariant backwards.
+describe('MarketMapView — group identification is by role, not creation order', () => {
+  it('labels each group by the renderer that filled it, and refuses a group holding both', async () => {
+    const { stub } = await mounted({ communities: 3, practices: 2 });
+    const { overlay, pins } = layerGroups(stub);
+
+    expect(overlay.added.map(roleOf)).toEqual(['overlay', 'overlay', 'overlay']);
+    expect(pins.added.map(roleOf)).toEqual(['pins', 'pins']);
+    expect(overlay).not.toBe(pins);
+    // The labels track the CONTENT, so they cannot both come back as the same object even
+    // though the two groups are indistinguishable by construction.
+    expect(new Set([overlay, pins]).size).toBe(2);
+  });
+
+  it('recognises a drive-time ring as overlay content even though it is a circle, not a marker', async () => {
+    const { stub, wrapper } = await mounted({ communities: 2, practices: 1 });
+    await wrapper.setProps({ layers: { practices: true, competition: false, drive5: true, drive10: true } });
+    const { overlay, pins } = layerGroups(stub);
+    expect(overlay.added.filter((l) => typeof l.options?.radius === 'number')).toHaveLength(2);
+    expect(pins.added).toHaveLength(1);
+    expectOverlayBeforePins(stub);
   });
 });
 

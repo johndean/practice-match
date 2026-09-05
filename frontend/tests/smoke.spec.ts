@@ -48,6 +48,76 @@ test.describe('smoke', () => {
     await expect(page).toHaveURL(/\/$/);
   });
 
+  // ---------------------------------------------------------------------------------------
+  // Accessibility gate (John's ruling 2026-09-05, fix round 3 —
+  // docs/decisions/2026-09-05-image-slot-editor-removed.md). The zero-gap audit measured 12
+  // phantom tab stops on this screen: the design tool's Replace/Edit buttons inside each
+  // <image-slot> shadow root, invisible (opacity:0) and mouse-inert (pointer-events:none)
+  // but keyboard-focusable and named in the accessibility tree in every browser, because
+  // the design's own `.ctl{display:flex}` beats the UA's closed-popover rule. The editor is
+  // removed from the port; this is the repeatable end-to-end proof, in a real engine, that
+  // it stays removed.
+  //
+  // Asserted twice over, because either alone could pass while the defect returned: the
+  // structural half would miss an element focusable for some reason other than tabIndex, and
+  // the behavioural half alone would not say WHICH node was reachable.
+  // ---------------------------------------------------------------------------------------
+  test('no element inside any image-slot shadow root is focusable on the Listing screen', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    await page.goto('/practices/p1');
+    await page.getByRole('button', { name: 'Approved — enter', exact: true }).click();
+    await expect(page).toHaveURL(/\/practices\/p1$/);
+    await page.locator('image-slot').first().waitFor();
+
+    // The screen really does render the slots this test is about — otherwise an empty page
+    // would pass it vacuously.
+    const slots = await page.locator('image-slot').count();
+    expect(slots, 'the Listing screen rendered no image-slot at all').toBeGreaterThan(0);
+
+    // 1. Structural: nothing in any of those shadow roots is in the tab order, and none of
+    //    the removed editor nodes is back under any name.
+    const inside = await page.evaluate(() => {
+      const out: { focusable: string[]; chrome: string[]; shadowChildren: number[] } = { focusable: [], chrome: [], shadowChildren: [] };
+      for (const host of Array.from(document.querySelectorAll('image-slot'))) {
+        const root = host.shadowRoot;
+        if (!root) continue;
+        out.shadowChildren.push(root.childNodes.length);
+        for (const el of Array.from(root.querySelectorAll('*'))) {
+          const name = el.tagName.toLowerCase() + (el.className ? '.' + el.className : '');
+          if ((el as HTMLElement).tabIndex >= 0) out.focusable.push(name);
+          if (el.matches('.spill, .ctl, [popover], input[type=file], button')) out.chrome.push(name);
+        }
+      }
+      return out;
+    });
+    expect(inside.focusable, 'an image-slot shadow root contains a focusable element').toEqual([]);
+    expect(inside.chrome, 'the design tool\'s editor chrome is back in the shadow root').toEqual([]);
+    // style, .frame, .credit — the display-only tree, on every slot.
+    expect(new Set(inside.shadowChildren)).toEqual(new Set([3]));
+
+    // 2. Behavioural: walk the real tab order and confirm focus never enters one. 60 presses
+    //    comfortably exceeds one full cycle of this screen (28 stops when the chrome was
+    //    still there, 16 without it).
+    await page.evaluate(() => document.body.focus());
+    const landings: string[] = [];
+    for (let i = 0; i < 60; i++) {
+      await page.keyboard.press('Tab');
+      const at = await page.evaluate(() => {
+        const deep = (d: Document | ShadowRoot): Element | null =>
+          d.activeElement && d.activeElement.shadowRoot ? deep(d.activeElement.shadowRoot) : d.activeElement;
+        const el = deep(document);
+        if (!el) return null;
+        const root = el.getRootNode();
+        if (!(root instanceof ShadowRoot) || root.host?.tagName !== 'IMAGE-SLOT') return null;
+        return el.tagName.toLowerCase() + (el.className ? '.' + el.className : '');
+      });
+      if (at) landings.push(at);
+    }
+    expect(landings, 'the tab order still reaches inside an image-slot shadow root').toEqual([]);
+    expect(errors).toEqual([]);
+  });
+
   // Performance gate (policy §3): the market map's first paint. The clock starts on the
   // navigation, not after it — the deep link is signed in through the gate's fixture
   // button, which is the only way `/browse?tab=market` survives a cold load, so the

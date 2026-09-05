@@ -4,7 +4,18 @@ import { LeafletMapEngine } from './leaflet';
 import { installLeafletStub } from '../testing/leaflet-stub';
 import { BASEMAPS, LABEL_TILES } from '../../lib/leaflet.js';
 
-afterEach(() => { vi.useRealTimers(); delete (window as any).L; });
+// Only `loadLeaflet` is replaced; BASEMAPS/LABEL_TILES come from the real module, because
+// this file asserts on their actual values. The replacement behaves exactly like the real
+// loader when `window.L` is already set (which installLeafletStub() does) — except that a
+// test can hold it open on `loader.gate`, which is the only way to reproduce a destroy()
+// that lands while mount() is still awaiting the library. `src/lib/leaflet.js` is untouched.
+const loader = vi.hoisted(() => ({ gate: null as Promise<void> | null }));
+vi.mock('../../lib/leaflet.js', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../lib/leaflet.js')>();
+  return { ...actual, loadLeaflet: async () => { if (loader.gate) await loader.gate; return (window as any).L; } };
+});
+
+afterEach(() => { vi.useRealTimers(); delete (window as any).L; loader.gate = null; });
 
 async function mounted(opts: Partial<Parameters<LeafletMapEngine['mount']>[1]> = {}) {
   vi.useFakeTimers();
@@ -70,11 +81,17 @@ describe('LeafletMapEngine — teardown', () => {
     expect(stub.map.invalidated).toBe(0);
   });
 
-  // Not firing is only half of it: the set that holds them must also be drained, or a
-  // long-lived engine would accumulate dead handles and a second destroy would re-clear
-  // ids the platform may already have recycled. Asserted through clearTimeout, since the
-  // set itself is private.
-  it('drains the pending-timer set on destroy, so a second destroy clears nothing', async () => {
+  // Not firing is only half of it: the set that holds them must also be DRAINED, or a
+  // long-lived engine would accumulate dead handles and re-clear ids the platform may
+  // already have recycled.
+  //
+  // Re-review minor (ii): this used to prove that by calling destroy() twice and expecting
+  // the second call to clear nothing — which became tautological the moment destroy() grew
+  // its early-return guard (the second call returns before it can clear anything, drained
+  // set or not). Measured through a fresh lifecycle instead: if the set were not drained it
+  // would still hold the first lifecycle's two handles, and the second destroy() would clear
+  // three timers rather than the one the second mount() actually scheduled.
+  it('drains the pending-timer set on destroy, so a later lifecycle clears only its own timers', async () => {
     const { engine } = await mounted();
     engine.show();
     const cleared = vi.spyOn(globalThis, 'clearTimeout');
@@ -83,8 +100,10 @@ describe('LeafletMapEngine — teardown', () => {
     expect(cleared).toHaveBeenCalledTimes(2); // mount()'s 60 ms and show()'s 80 ms
 
     cleared.mockClear();
+    installLeafletStub();
+    await engine.mount(document.createElement('div'), { center: [30.31, -97.75], zoom: 10, basemap: 'map', zoomControl: false, scaleControl: true });
     engine.destroy();
-    expect(cleared).toHaveBeenCalledTimes(0);
+    expect(cleared, 'the first lifecycle\'s handles were still in the set').toHaveBeenCalledTimes(1);
     cleared.mockRestore();
   });
 
@@ -138,6 +157,92 @@ describe('LeafletMapEngine — teardown', () => {
     expect(vi.getTimerCount()).toBe(0);
     vi.advanceTimersByTime(60_000);
     expect(stub.map.invalidated).toBe(0);
+  });
+
+  // Re-review minor (i): "inert" must hold for the WHOLE public surface, not only the
+  // timers. Every one of these reached `this.map` after it had been removed — on real
+  // Leaflet that is the `_leaflet_pos` / `_container is null` family of crashes, and the
+  // only reason the app has not hit them is that both map components null their `engine`
+  // reference on unmount. The engine must not depend on its callers doing that.
+  it('turns every public method into a no-op after destroy: nothing throws, nothing reaches the map', async () => {
+    const { stub, engine } = await mounted();
+    const before = {
+      calls: stub.calls.length,
+      zoom: stub.map.zoom,
+      center: stub.map.center,
+      invalidated: stub.map.invalidated,
+      lastSetView: (stub.map as any).lastSetView,
+      fitted: (stub.map as any).fitted,
+      attrUpdated: (stub.map as any).attrUpdated,
+      handlers: Object.keys(stub.map.handlers).length,
+      tileUrl: stub.tiles[0].url,
+      added: (stub.map.added as unknown[]).length,
+      groupLayers: (stub.map.added as any[]).filter((g) => g.clearLayers).map((g) => g.added.length)
+    };
+
+    engine.destroy();
+
+    expect(() => {
+      engine.show();
+      engine.setControls({ zoomControl: 'bottomright', scaleControl: false });
+      engine.setView([1, 2], 5, true);
+      engine.zoomIn();
+      engine.zoomOut();
+      engine.fitBounds([[1, 2], [3, 4]]);
+      engine.setBase('satellite');
+      engine.clear('overlay');
+      engine.circle([1, 2], 100, { fillColor: '#000', fillOpacity: 1 }, 'overlay');
+      engine.marker([1, 2], { html: '<i></i>', size: [1, 1], anchor: [0, 0] }, 'pins');
+      engine.onMove(() => {});
+      engine.getZoom();
+    }).not.toThrow();
+
+    vi.advanceTimersByTime(60_000);
+    expect({
+      calls: stub.calls.length,
+      zoom: stub.map.zoom,
+      center: stub.map.center,
+      invalidated: stub.map.invalidated,
+      lastSetView: (stub.map as any).lastSetView,
+      fitted: (stub.map as any).fitted,
+      attrUpdated: (stub.map as any).attrUpdated,
+      handlers: Object.keys(stub.map.handlers).length,
+      tileUrl: stub.tiles[0].url,
+      added: (stub.map.added as unknown[]).length,
+      groupLayers: (stub.map.added as any[]).filter((g) => g.clearLayers).map((g) => g.added.length)
+    }).toEqual(before);
+  });
+
+  it('returns usable no-op values from the handle-returning methods after destroy', async () => {
+    const { engine } = await mounted();
+    engine.destroy();
+
+    // Callers hold on to these; they must be safe to use, not undefined.
+    expect(() => engine.circle([1, 2], 100, { fillColor: '#000', fillOpacity: 1 }, 'overlay').remove()).not.toThrow();
+    expect(() => engine.marker([1, 2], { html: '<i></i>', size: [1, 1], anchor: [0, 0] }, 'pins').remove()).not.toThrow();
+    expect(() => engine.onMove(() => {})()).not.toThrow();
+  });
+
+  // Re-review item 7 — the mount/destroy race. mount() clears `destroyed` BEFORE awaiting
+  // the library, so a destroy() that lands during that await used to be forgotten: the map
+  // was then created, its 60 ms invalidateSize scheduled, and nothing held a reference to
+  // tear any of it down. (A destroy() before any mount at all threw outright, because
+  // `this.map` was undefined.)
+  it('honours a destroy() that lands while mount() is still awaiting the library', async () => {
+    vi.useFakeTimers();
+    let release!: () => void;
+    loader.gate = new Promise<void>((r) => { release = r; });
+    const stub = installLeafletStub();
+    const engine = new LeafletMapEngine();
+
+    const mounting = engine.mount(document.createElement('div'), { center: [30.31, -97.75], zoom: 10, basemap: 'map', zoomControl: false, scaleControl: true, groups: ['overlay', 'pins'] });
+    expect(() => engine.destroy()).not.toThrow();   // no map exists yet
+    release();
+    await expect(mounting).resolves.toBeUndefined();
+
+    expect(stub.calls.filter((c) => c.fn === 'map'), 'a map was created after destroy()').toHaveLength(0);
+    expect(vi.getTimerCount()).toBe(0);
+    vi.advanceTimersByTime(60_000);
   });
 
   // …and "inert" must not mean "permanently dead": mount() is the single point that

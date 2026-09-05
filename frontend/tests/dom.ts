@@ -126,6 +126,24 @@ function rewriteDesignAttr([name, value]: [string, string]): [string, string] {
   return [name, value];
 }
 
+// Rule E (John, 2026-09-05, fix round 3 — docs/decisions/2026-09-05-image-slot-editor-
+// removed.md): the design tool's image editor is REMOVED from the port, not hidden, because
+// the design's own `.ctl{…display:flex…}` beats the UA's `[popover]:not(:popover-open)` rule
+// and left the Replace/Edit buttons keyboard-focusable and named in the accessibility tree
+// in every browser. The design's element still builds them, so inside an `image-slot` shadow
+// root the DESIGN side's `.spill`, `.ctl` and `input[type=file]` are dropped before
+// comparison — otherwise every image-slot state would report three phantom missing children.
+//
+// One-sided on purpose: the app side is NEVER filtered, so a re-introduced `.ctl` in the
+// port is still reported. Scoped on purpose: only an `image-slot` host's own shadow root, so
+// a `.ctl` anywhere else in either tree stays ordinary content.
+const isDesignEditorChrome = (n: RawNode): boolean => {
+  if (kindOf(n) !== 'element') return false;
+  const el = n as RawElement;
+  if (el.classList.includes('spill') || el.classList.includes('ctl')) return true;
+  return el.tag === 'input' && el.attrs.some(([name, value]) => name === 'type' && value === 'file');
+};
+
 export interface NormaliseOptions {
   design?: boolean;
 }
@@ -149,12 +167,24 @@ export function normalise(raw: RawNode, opts: NormaliseOptions = {}): DomNode {
       const pseudoHook = opts.design ? PSEUDO_CLASS_DESIGN : PSEUDO_CLASS_APP;
       let attrs = el.attrs.filter(([name]) => !isDroppedAttr(name)).slice().sort(byString);
       if (opts.design) attrs = attrs.map(rewriteDesignAttr);
+      // Rule E applies at the image-slot HOST, because that is the only place the shadow
+      // root's owner is known — `normalise()`'s shadow case sees a bare { shadow: [...] }.
+      const dropEditorChrome = !!opts.design && el.tag === 'image-slot';
       const node: DomElement = {
         tag: el.tag,
         attrs,
         class: el.classList.map((c) => (pseudoHook.test(c) ? '<pseudo>' : c)).sort(),
         style: el.style.slice().sort(byString),
-        children: el.children.filter((n) => !isWhitespaceOnlyText(n)).map((n) => normalise(n, opts))
+        children: el.children
+          .filter((n) => !isWhitespaceOnlyText(n))
+          .map((n) =>
+            normalise(
+              dropEditorChrome && kindOf(n) === 'shadow'
+                ? { shadow: (n as RawShadow).shadow.filter((c) => !isDesignEditorChrome(c)) }
+                : n,
+              opts
+            )
+          )
       };
       if (FORM_TAGS.has(el.tag) && el.props) {
         node.props = el.props.slice().sort(byString);
@@ -346,6 +376,19 @@ export function diff(a: DomNode, b: DomNode): string[] {
       compareElements(a as DomElement, b as DomElement, '(root)', '', out);
       return out;
   }
+}
+
+// ---------------------------------------------------------------------------------------
+// summarise(lines, max) — re-review minor 4. `diff()` returns EVERY actionable line, which
+// is the point (fix round 2's "diagnostic and complete, not merely first-error"); on a badly
+// diverged state that can be hundreds. The DATA is never capped — dom.spec.ts still asserts
+// `toEqual([])` on the whole array — but the message a failing assertion PRINTS is, so a real
+// regression stays readable in CI instead of scrolling the run out of the buffer. The tail
+// line always names how many were withheld and the true total, so nothing is hidden silently.
+// ---------------------------------------------------------------------------------------
+export function summarise(lines: string[], max = 40): string {
+  if (lines.length <= max) return lines.join('\n');
+  return [...lines.slice(0, max), `… and ${lines.length - max} more (${lines.length} total)`].join('\n');
 }
 
 // ---------------------------------------------------------------------------------------

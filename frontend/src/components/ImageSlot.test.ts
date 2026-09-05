@@ -104,129 +104,77 @@ describe('ImageSlot — shadow root and structure', () => {
     expect(css).toBe(designStylesheet());
   });
 
-  // .spill and .ctl carry no display:none of their own — in Chromium they are invisible only
-  // because of the UA's `[popover]:not(:popover-open)` rule. Vite 5's default build target is
-  // chrome87/safari14/firefox78, all below the Popover floor (Chrome 114 / Safari 17 /
-  // Firefox 125), where the four 12 px handles would paint and the Replace/Edit buttons would
-  // stay tab-focusable. A plain feature check covers every one of those engines — unlike a
-  // constructable stylesheet, which Safari < 16.4 and Firefox < 101 do not have either.
-  const chrome = (root: ShadowRoot) => [root.querySelector('.spill'), root.querySelector('.ctl')] as HTMLElement[];
-
-  it('hides the ported chrome inline where the Popover API is missing, without adding a shadow child', () => {
-    // jsdom has no Popover API, so this is the sub-floor branch as a browser below the floor
-    // would take it.
-    expect('popover' in HTMLElement.prototype).toBe(false);
+  // ---------------------------------------------------------------------------------------
+  // Fix round 3 (John's ruling, 2026-09-05 — docs/decisions/2026-09-05-image-slot-editor-
+  // removed.md). The design tool's image editor is REMOVED from the port, not hidden.
+  //
+  // The zero-gap audit measured the reason: the design's own `.ctl{…display:flex…}` beats
+  // the UA's `[popover]:not(:popover-open){display:none}` rule, so the Replace/Edit buttons
+  // were keyboard-focusable and announced by assistive technology in EVERY browser — 12
+  // phantom tab stops on the Listing screen (WCAG 2.1 SC 2.4.3, 4.1.2) — and hiding them
+  // only below the Popover floor could never reach that. The editor is design-tool chrome:
+  // unpermissioned, gated on `data-editable`, which the app never sets, and with no upload
+  // backend. Permissioned photo management is a Wave 2b feature.
+  //
+  // So there is nothing left to hide, and the Popover feature check is gone with it. The
+  // stylesheet stays byte-for-byte (asserted above) — its editor rules are simply unused —
+  // and the DOM oracle drops the DESIGN side's editor nodes instead (rule E, tests/dom.ts).
+  // ---------------------------------------------------------------------------------------
+  it('builds no editor chrome at all: no .spill, no .ctl, no file input', () => {
     const { root } = slot({ id: 'x', src: PHOTO });
 
-    expect(chrome(root).map((el) => el.style.display)).toEqual(['none', 'none']);
-    expect(root.childNodes).toHaveLength(6); // no extra <style> node — the oracle counts six
+    expect(root.querySelector('.spill')).toBeNull();
+    expect(root.querySelector('.ctl')).toBeNull();
+    expect(root.querySelector('input[type=file]')).toBeNull();
+    // …and none of their parts survive under another name.
+    expect(root.querySelector('.ghost')).toBeNull();
+    expect(root.querySelector('.handle')).toBeNull();
+    expect(root.querySelectorAll('button')).toHaveLength(0);
+    expect(root.querySelectorAll('input')).toHaveLength(0);
+    expect(root.querySelector('[popover]')).toBeNull();
   });
 
-  it('leaves the chrome untouched where the Popover API exists, so the oracle sees the design\'s styles', () => {
-    // Every gate browser has it: the branch must be dead there, or `el.style` would carry a
-    // declaration the design's element never sets and the DOM oracle would report it.
+  it('leaves nothing inside the shadow root focusable, on any engine', () => {
+    // The requirement the audit's 12 phantom tab stops failed. Stated as the property
+    // itself — "no focusable area in this shadow root" — not as a list of removed nodes, so
+    // re-adding any focusable element (a button, a link, anything with a tabindex) fails
+    // here even if it is called something new. jsdom models no layout, but tabIndex is a
+    // real IDL attribute: it is >= 0 exactly for the elements that are in the tab order
+    // when rendered, which after this change must be none of them.
+    const { root } = slot({ id: 'x', src: PHOTO });
+
+    const focusable = [...root.querySelectorAll('*')].filter((n) => (n as HTMLElement).tabIndex >= 0);
+    expect(focusable.map((n) => n.tagName.toLowerCase() + (n.className ? '.' + n.className : ''))).toEqual([]);
+  });
+
+  it('no longer feature-checks Popover — the branch and everything it hid are gone', () => {
+    // Both engines now produce the identical tree, so nothing about the port depends on the
+    // Popover API any more. Asserted on both sides of the old branch so a re-introduced
+    // feature check (which would write an inline style the DOM oracle reports) fails here.
+    const withoutPopover = slot({ id: 'x', src: PHOTO }).root;
     Object.defineProperty(HTMLElement.prototype, 'popover', { value: null, configurable: true });
+    const withPopover = slot({ id: 'x', src: PHOTO }).root;
+
+    expect(withPopover.innerHTML).toBe(withoutPopover.innerHTML);
+    expect([...withPopover.querySelectorAll('*')].filter((n) => n.hasAttribute('style')).map((n) => n.getAttribute('style')))
+      .toEqual([...withoutPopover.querySelectorAll('*')].filter((n) => n.hasAttribute('style')).map((n) => n.getAttribute('style')));
+  });
+
+  it('exposes exactly the design\'s display-only ::part() handles', () => {
     const { root } = slot({ id: 'x', src: PHOTO });
-
-    expect(chrome(root).map((el) => el.style.display)).toEqual(['', '']);
-    expect(chrome(root).map((el) => el.getAttribute('style'))).toEqual([null, null]);
-    expect(root.childNodes).toHaveLength(6);
+    expect([...root.querySelectorAll('[part]')].map((n) => n.getAttribute('part')))
+      .toEqual(['frame', 'image', 'empty', 'attribution-error', 'loading', 'ring', 'credit']);
   });
 
-  // ---------------------------------------------------------------------------------------
-  // Zero-gap audit, Phase 11. `style.display === 'none'` on the two chrome hosts is only the
-  // first link. What the requirement actually is — the controls must be UNAVAILABLE, not
-  // merely invisible — needs the whole cascade closed, because a control that is
-  // visually gone but still tab-focusable and still in the accessibility tree is NOT fixed.
-  //
-  // jsdom cannot answer that directly: it models neither layout nor focusable-area rules
-  // (`b.focus()` succeeds inside a display:none subtree, `getComputedStyle` does not apply a
-  // shadow ancestor's cascade, `checkVisibility` is unimplemented). So the proof is
-  // structural instead, and it is a complete one — these four facts together force
-  // `display: none` to be the computed value in every engine that implements the cascade,
-  // and a `display: none` element generates no box, is not a focusable area (HTML §6.6.2
-  // requires a focusable area to be *being rendered*), is excluded from the accessibility
-  // tree, and receives no pointer events:
-  //
-  //   1. every interactive/painting node of the chrome sits under an inline display:none;
-  //   2. the shadow root's ONLY author stylesheet is image-slot.css (one <style>, asserted
-  //      byte-for-byte above), so nothing else in the root can compete;
-  //   3. that stylesheet's only `!important` declarations set display to `none` — an
-  //      inline declaration outranks every non-important author rule, so no rule in it can
-  //      restore a box;
-  //   4. the chrome carries no `part`, so no `::part()` rule from the outer document can
-  //      reach in either, and `display` is not inherited, so nothing else crosses the
-  //      shadow boundary.
-  // ---------------------------------------------------------------------------------------
-  // The nearest ancestor (the node itself included), up to but not through the shadow root,
-  // whose INLINE style hides it. Inline is the level the fallback writes at.
-  const hiddenAncestor = (node: Element, root: ShadowRoot): HTMLElement | null => {
-    for (let n: Node | null = node; n && n !== root; n = (n as Element).parentNode) {
-      const e = n as HTMLElement;
-      if (e.style && e.style.display === 'none') return e;
-    }
-    return null;
-  };
-
-  it('leaves no chrome node interactive below the Popover floor: every control sits under a display:none host', () => {
-    expect('popover' in HTMLElement.prototype).toBe(false);
-    const { root } = slot({ id: 'x', src: PHOTO });
-
-    // Everything the editor chrome can paint or focus: the two Replace/Edit buttons, the
-    // four resize handles, the translucent reframe ghost (which _render fills with the real
-    // src), and the file input. Queried from the root, so a node moved out of .spill/.ctl
-    // in some future edit would still have to be accounted for here.
-    const interactive = [...root.querySelectorAll('.ctl button, .spill .handle, .spill .ghost')];
-    expect(interactive.map((n) => n.tagName.toLowerCase() + '.' + (n.className || '')))
-      .toEqual(['img.ghost', 'div.handle', 'div.handle', 'div.handle', 'div.handle', 'button.', 'button.']);
-    for (const node of interactive) {
-      expect(hiddenAncestor(node, root), `${node.tagName}.${node.className} is still rendered`).not.toBeNull();
-    }
-    // The file input is hidden by the design's own `hidden` attribute, not by the fallback.
-    expect((root.querySelector('input') as HTMLInputElement).hasAttribute('hidden')).toBe(true);
-  });
-
-  it('cannot have that display:none overridden: the stylesheet\'s only !important declarations are display:none', () => {
-    // If the design ever gained, say, `.ctl{display:flex !important}`, the inline fallback
-    // would lose the cascade and the buttons would come back — silently, since jsdom shows
-    // no layout. Pin the complete !important set instead.
-    const important = [...css.matchAll(/[-a-z]+\s*:[^;{}]*?!important/g)].map((m) => m[0].replace(/\s+/g, ' '));
-    expect(important).toEqual(['display:none !important', 'display:none !important']);
-  });
-
-  it('exposes no ::part() handle on the chrome, so no outer rule can reach past the fallback', () => {
-    const { root } = slot({ id: 'x', src: PHOTO });
-    const parts = [...root.querySelectorAll('[part]')].map((n) => n.getAttribute('part'));
-    expect(parts).toEqual(['frame', 'image', 'empty', 'attribution-error', 'loading', 'ring', 'credit']);
-    expect([...root.querySelectorAll('.spill, .spill *, .ctl, .ctl *')].some((n) => n.hasAttribute('part'))).toBe(false);
-  });
-
-  it('builds the constructor\'s six shadow nodes, editor chrome included but inert', () => {
+  it('builds the constructor\'s display-only shadow nodes and nothing else', () => {
     const { host, root } = slot({ id: 'x', src: PHOTO });
 
-    // image-slot.js l.501-529: style, .frame, .credit, .spill, .ctl, the file input.
-    expect(root.childNodes).toHaveLength(6);
+    // image-slot.js l.501-529 minus the editor: style, .frame, .credit. The .spill overlay,
+    // the .ctl strip and the file input are gone (fix round 3); the DOM oracle drops the
+    // same three from the design side so the two trees still match node for node.
+    expect(root.childNodes).toHaveLength(3);
     expect([...root.children].map((c) => c.tagName.toLowerCase() + (c.className ? '.' + c.className : '')))
-      .toEqual(['style', 'div.frame', 'span.credit', 'div.spill', 'div.ctl', 'input']);
-    const spill = root.querySelector('.spill') as HTMLElement;
-    expect([spill.getAttribute('popover'), spill.getAttribute('data-dc-edit-transparent')]).toEqual(['manual', '']);
-    expect([...spill.children].map((c) => c.tagName.toLowerCase() + '.' + c.className)).toEqual(['img.ghost', 'div.handle', 'div.handle', 'div.handle', 'div.handle']);
-    expect([...spill.querySelectorAll('.handle')].map((h) => h.getAttribute('data-c'))).toEqual(['nw', 'ne', 'sw', 'se']);
-    const ctl = root.querySelector('.ctl') as HTMLElement;
-    expect([ctl.getAttribute('popover'), ctl.getAttribute('data-dc-edit-transparent')]).toEqual(['manual', '']);
-    expect([...ctl.querySelectorAll('button')].map((b) => [b.getAttribute('data-act'), b.getAttribute('title'), b.textContent]))
-      .toEqual([['replace', 'Replace image', 'Replace'], ['edit', 'Reframe image', 'Edit']]);
-    const input = root.querySelector('input') as HTMLInputElement;
-    expect([input.type, input.getAttribute('accept'), input.hasAttribute('hidden')]).toEqual(['file', 'image/png,image/jpeg,image/webp,image/avif', true]);
-    // Read-only port: the chrome exists so the tree matches, but nothing drives it —
-    // without data-editable the .ctl stays opacity:0/pointer-events:none, and .spill (which
-    // sets no display of its own) is display:none under the UA popover rule.
-    //
-    // "inert" in this test's title means "nothing drives it", NOT "unreachable": .ctl's own
-    // display:flex beats the UA popover rule, so above the Popover floor its two buttons
-    // remain tab-focusable and named in the accessibility tree — measured in Chromium on
-    // both targets, see the zero-gap audit report's NEEDS_CONTEXT item. Below the floor the
-    // feature-check branch above removes them entirely.
+      .toEqual(['style', 'div.frame', 'span.credit']);
     expect(host.hasAttribute('data-editable')).toBe(false);
     // .sub ("or browse files") is the browse affordance: present in the tree, hidden by
     // _render's read-only branch (image-slot.js l.1088).
@@ -290,16 +238,13 @@ describe('ImageSlot — filled state', () => {
     expect(css).toContain(':host([data-filled]) .ring{display:none}');
   });
 
-  it('mirrors the src onto the reframe ghost, and drops it again when the slot empties', async () => {
-    // image-slot.js l.1142 / l.1167: _render assigns the same URL to .spill .ghost as to
-    // the frame image, and removes it in the empty branch. The ghost is never shown here
-    // (the popover stays closed) but the attribute is part of the tree the oracle reads.
-    const { wrapper, root } = slot({ id: 'x', src: PHOTO });
-    const ghost = root.querySelector('.spill .ghost') as HTMLImageElement;
-    expect(ghost.getAttribute('src')).toBe(PHOTO);
-
-    await wrapper.setProps({ src: '' });
-    expect(ghost.hasAttribute('src')).toBe(false);
+  it('mirrors nothing onto a reframe ghost — the reframe overlay no longer exists', () => {
+    // image-slot.js l.1142/l.1167 assigned the frame image's URL to .spill .ghost and
+    // removed it again when the slot emptied. With the overlay gone the port must not keep
+    // a second <img> alive fetching the same photo.
+    const { root } = slot({ id: 'x', src: PHOTO });
+    expect(root.querySelectorAll('img')).toHaveLength(1);
+    expect((root.querySelector('img') as HTMLImageElement).getAttribute('src')).toBe(PHOTO);
   });
 
   it('centres the image at the fit baseline before it loads', () => {

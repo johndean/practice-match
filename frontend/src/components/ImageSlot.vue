@@ -20,6 +20,19 @@
 // ingest, no reframe, and no .image-slots.state.json sidecar — `getSlot()` never returns
 // anything, which fixes the stored view at the identity {s: 1, x: 0, y: 0}. Line numbers
 // below refer to image-slot.js.
+//
+// Fix round 3 (John's ruling 2026-09-05, docs/decisions/2026-09-05-image-slot-editor-
+// removed.md): the design tool's image editor is REMOVED from this port, not hidden. The
+// zero-gap audit measured why hiding could not work — the design's own `.ctl{…display:flex…}`
+// beats the UA's `[popover]:not(:popover-open){display:none}`, so the Replace/Edit buttons
+// were keyboard-focusable and named in the accessibility tree in EVERY browser (12 phantom
+// tab stops on the Listing screen; WCAG 2.1 SC 2.4.3, 4.1.2), and the design page has the
+// identical defect. So the `.spill` reframe overlay, the `.ctl` strip and the hidden file
+// input are gone, along with the ghost `src` mirroring and the Popover feature check that
+// used to hide them below the floor. `image-slot.css` is untouched and still byte-for-byte
+// the design's string — its editor rules are simply unused — and the DOM oracle drops the
+// same three nodes from the DESIGN side (rule E, frontend/tests/dom.ts), so the two trees
+// still match node for node. Permissioned photo management is a Wave 2b feature.
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import css from './image-slot.css?raw';
 
@@ -72,25 +85,10 @@ const warnIcon =
   '<path d="m21.73 18-8-14a2 2 0 0 0-3.46 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3"/>' +
   '<path d="M12 9v4"/><path d="M12 17h.01"/></svg>';
 
-// The constructor's shadow tree (l.501-529), verbatim — the reframe spill, the hover
-// controls and the file input included. Nothing in this port drives them: no window.omelette
-// → no data-editable, so `.ctl` never reaches opacity 1 and neither popover is ever shown.
-// They are part of the tree the design renders and the DOM oracle counts them.
-//
-// Correction (zero-gap audit, Phase 11 — measured, not assumed): an earlier version of this
-// comment said "the two popovers stay closed, so all three are display:none". That is true
-// of `.spill` and the file input, and FALSE of `.ctl`. The UA's
-// `[popover]:not(:popover-open){display:none}` is an ordinary author-beatable rule, and
-// `.ctl{…display:flex…}` in the design's own stylesheet overrides it — image-slot.js's own
-// comment at l.343-346 says so outright. Measured in Chromium 1440×940 on the Listing
-// screen: `.ctl` computes display:flex with a 108×21 box, and its two buttons are
-// tab-focusable and named in the accessibility tree (opacity:0 hides them from sight;
-// pointer-events:none stops the mouse; neither touches the keyboard). The reference design
-// page behaves identically, so this is inherited parity, not a port divergence — it is
-// carried to John as a NEEDS_CONTEXT item in the Task 4e zero-gap audit report, because
-// every remedy would either change `image-slot.css` (a byte-for-byte invariant, ruling D)
-// or add tree/attribute state the DOM oracle compares against the design.
-const ACCEPT = ['image/png', 'image/jpeg', 'image/webp', 'image/avif'];
+// The constructor's shadow tree (l.501-529) minus the editor — the frame and the credit
+// span. The editor nodes the design also builds there (.spill with its .ghost and four
+// .handle children, the .ctl strip with its two buttons, and the hidden file input) are not
+// built here at all; see the ruling in the header comment.
 const markup =
   '<div class="frame" part="frame">' +
   '  <img part="image" alt="" draggable="false" style="display:none">' +
@@ -102,15 +100,7 @@ const markup =
   '  <div class="loading" part="loading"></div>' +
   '  <div class="ring" part="ring"></div>' +
   '</div>' +
-  '<span class="credit" part="credit"></span>' +
-  '<div class="spill" popover="manual" data-dc-edit-transparent>' +
-  '  <img class="ghost" alt="" draggable="false">' +
-  '  <div class="handle" data-c="nw"></div><div class="handle" data-c="ne"></div>' +
-  '  <div class="handle" data-c="sw"></div><div class="handle" data-c="se"></div>' +
-  '</div>' +
-  '<div class="ctl" popover="manual" data-dc-edit-transparent><button data-act="replace" title="Replace image">Replace</button>' +
-  '  <button data-act="edit" title="Reframe image">Edit</button></div>' +
-  '<input type="file" accept="' + ACCEPT.join(',') + '" hidden>';
+  '<span class="credit" part="credit"></span>';
 
 const host = ref(null);
 let el = null;   // the host element
@@ -118,7 +108,6 @@ let frame = null;
 let ring = null;
 let img = null;
 let empty = null;
-let ghost = null;
 let cap = null;
 let sub = null;
 let creditEl = null;
@@ -245,7 +234,6 @@ function render() {
       if (prev || hidShowing) el.setAttribute('data-swapping', '');
       loadPending = true;
       img.src = url;
-      ghost.src = url;   // l.1142: the reframe ghost tracks the frame image
     } else {
       releaseMask();
     }
@@ -261,7 +249,6 @@ function render() {
     hidShowing = attrError && !!img.getAttribute('src');
     img.style.display = 'none';
     img.removeAttribute('src');
-    ghost.removeAttribute('src');   // l.1167
     // The error tile owns the blocked-photo state; .empty stays for the genuinely-empty slot.
     empty.style.display = attrError ? 'none' : 'flex';
     el.removeAttribute('data-filled');
@@ -279,22 +266,13 @@ onMounted(() => {
   tpl.innerHTML = markup;
   root.appendChild(style);
   root.appendChild(tpl.content);
-  // .spill and .ctl carry no display:none of their own: the design leans on the UA's
-  // `[popover]:not(:popover-open)` rule, which does not exist below Chrome 114 / Safari 17 /
-  // Firefox 125 — and Vite 5's default build target (`'modules'`: chrome87/safari14/
-  // firefox78) reaches well below that, where the four 12px handles would paint and the
-  // Replace/Edit buttons would stay tab-focusable. A feature check covers every one of those
-  // engines (a constructable stylesheet would not: Safari < 16.4 and Firefox < 101 lack that
-  // API too). In every gate browser the branch is dead, so `el.style` stays empty and both
-  // the DOM oracle and the pixels see exactly what the design's element renders.
-  if (!('popover' in HTMLElement.prototype)) {
-    for (const chrome of root.querySelectorAll('.spill, .ctl')) chrome.style.display = 'none';
-  }
+  // No Popover feature check any more: the nodes it used to hide below the floor are not
+  // built at all, so there is nothing engine-dependent left here and every browser gets the
+  // identical tree — which is also what keeps `el.style` empty for the DOM oracle.
   frame = root.querySelector('.frame');
   ring = root.querySelector('.ring');
   img = root.querySelector('.frame img');
   empty = root.querySelector('.empty');
-  ghost = root.querySelector('.ghost');
   cap = root.querySelector('.empty .cap');
   sub = root.querySelector('.sub');
   creditEl = root.querySelector('.credit');
