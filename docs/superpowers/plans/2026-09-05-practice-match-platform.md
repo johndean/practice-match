@@ -14,8 +14,8 @@
 
 - **Quality and performance policy (`docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md`).** Test shape ~70/20/10 unit/integration/e2e enforced by rules; CI gates: `pytest -W error --cov-fail-under=90`, `diff-cover --fail-under=100`, `ruff`, `mypy --strict`, `vue-tsc --noEmit` (strict), vitest coverage ≥ 85 % on `src/map|router|admin`, Playwright fails on any `pageerror`/`console.error`, `gitleaks`; performance budgets are tests: API p95 (`/api/healthz` ≤ 20 ms, shell ≤ 15 ms, list endpoints ≤ 100 ms, panel ≤ 150 ms), bundle sizes (main ≤ 220 KB gz, `engine-leaflet` ≤ 60, `engine-google` ≤ 12, first load ≤ 300), first map paint ≤ 1,500 ms, hot queries use indexes, nightly k6 on QA (p95 ≤ 400 ms, 0 errors). Raising a budget is a reviewed change with a reason in the commit message.
 - **TDD, no exceptions (John, 2026-09-05: "everything must have tests").** Every production change begins with a failing test that is run and watched fail (RED), then the minimal code, then the same test watched pass (GREEN) — the `Run:` lines in each task are mandatory steps, not illustrations. Documentation and configuration are covered by drift tests (`tests/test_docs.py`: every setting in `.env.example` and `DEPLOY.md`, relative links resolve, CI workflow shape, runbook endpoints exist); operational scripts have shell tests under `tests/scripts/` that run them against stubbed servers or a stubbed `curl`; ops steps end with an executable verification whose script is itself tested. The handoff's generated UI is covered by the visual gate (every screen state), the route smoke tests, the router-sync and engine unit tests and the `logic.js` characterisation suite (Platform Task 1c); new code in those files follows TDD.
-- Ported files stay byte-identical except for the edits this plan names: `frontend/src/App.vue`, `logic.js`, `dc-logic.js`, `directives/hover.js`, `lib/leaflet.js`, `components/*.vue`. No restyling, no inline-style extraction, no copy edits, no renames, no Pinia, no per-screen split.
-- The only edits to ported files: (a) `assets/` → `/assets/`, `ds/` → `/ds/` path prefixes; (b) `lib/leaflet.js` loader body (npm import, same exported API); (c) two lines in `App.vue`'s `<script setup>` to install the router sync composable; (d) `prototypeBar` default sourced from `import.meta.env`.
+- Ported files stay byte-identical except for the edits this plan names: `logic.js`, `dc-logic.js`, `lib/leaflet.js`, `components/*.vue`. No restyling, no inline-style extraction, no copy edits, no renames, no Pinia, no per-screen split. **`frontend/src/App.vue` is GENERATED** from the design template by `frontend/scripts/convert-dc.mjs` (Tasks 4a–4b; John's ruling 2026-09-05: full mechanical re-conversion) — never hand-edited; `tests/app-generated.test.ts` fails if it drifts. `directives/hover.js` is deleted: hover is generated as CSS pseudo-class rules exactly as the design runtime does. `components/ImageSlot.vue` is a parity port of the design's `image-slot` element (Task 4c).
+- The only edits to ported files: (a) `assets/` → `/assets/`, `ds/` → `/ds/` path prefixes; (b) `lib/leaflet.js` loader body (npm import, same exported API); (c) `App.vue`'s former `<script setup>` lives in the hand-maintained `frontend/src/app.setup.js` — the router-sync install (two import lines + one call), the `prototypeBar` default from `import.meta.env`, the `v` merge and the `__s`/`__arr` helpers are its only additions; (d) map components: effect order mirrored from the JSX (Task 4e).
 - `logic.js` is never edited except for the four `assets/photos/` path prefixes on lines 394–396 and 431.
 - Route table (exact): `/`→`gate`; `/browse` + `?tab=listings|market` ↔ `browseMode`; `/practices/:id` ↔ `detailId`; `/requests`; `/seller`; `/admin` + `?tab=users|listings|activity|data` ↔ `adminTab`; unknown → `/`.
 - Signed-out visitors never reach a member screen by URL: the router sync applies the prototype's `go()` semantics — the gate renders, the URL is kept, and the intended route is applied the moment `state.auth` becomes true.
@@ -1350,107 +1350,328 @@ git push origin feat/platform && git push production feat/platform
 
 ---
 
-> **Task 1b check:** the `MapEngine` refactor (Task 1b) must produce zero pixel differences on every map state below; any map-region diff after Task 1b is a Task 1b bug, not a design mismatch.
+> **Task 1b check:** the `MapEngine` refactor (Task 1b) must produce zero pixel differences on every map state; any map-region diff after Task 1b is a Task 1b bug, not a design mismatch.
 
-### Task 4: Visual parity to GREEN, plus route smoke tests
+> **Task 4 re-planned 2026-09-05 (John's ruling):** the hand conversion produced port bugs (hover restore, `d.` vs `v.d.`, watcher order) and two design-tool artifacts (interpolation spans, `image-slot`). Instead of spot fixes, `App.vue` is regenerated mechanically from the design template by a golden-tested transpiler (4a–4b), `ImageSlot` is ported for parity (4c), a DOM oracle compares app and design element by element (4d), and parity is brought to green under both oracles (4e). The route smoke suite from the original Task 4 already exists (commit 5a5ea8c).
+
+### Task 4a: `convert-dc` — the design-template → Vue transpiler (runtime-faithful, golden-tested)
+
+**Decision (John, 2026-09-05):** the Vue conversion is regenerated mechanically from the design, not hand-fixed. The design file `Practice Match V2.dc.html` is an HTML template inside `<x-dc>…</x-dc>` with a small grammar rendered by the tool's runtime (`support.js`): `{{ expr }}` interpolations, `<sc-if value="{{…}}">`, `<sc-for list="{{…}}" as="x">`, `onClick="{{ fn }}"`-style events, `style-hover="css"` pseudo-classes, `<x-import component="AustinMap|MarketMap">` for the two JSX map components, and the `<image-slot>` custom element. This task writes a transpiler that mirrors those runtime rules exactly; Task 4b regenerates `App.vue` from it.
 
 **Files:**
-- Create: `frontend/tests/smoke.spec.ts`
-- Modify (only if a diff demands it, and only these): `frontend/index.html`, `frontend/src/styles/global.css`, `frontend/src/styles/tokens.css`, `frontend/tests/harness.ts`, `frontend/tests/screens.ts`, `frontend/tests/playwright.config.ts`
+- Create: `frontend/scripts/convert-dc.mjs`, `frontend/tests/convert-dc.test.ts`
+- Modify: `frontend/package.json` (`"gen:app"` script; dev dep `htmlparser2`)
 
-**Interfaces:** none new.
+**Interfaces:**
+- Produces (ESM, Node): `extractTemplate(html: string): string` (innerHTML of `<x-dc>` with the `<helmet>…</helmet>` block removed); `compileExpr(expr: string, scope: Set<string>): string` (the runtime's `resolve` grammar → a JS expression over `v`); `convert(templateHtml: string): { template: string; pseudoCss: string }`; `buildAppVue(template: string, setupJs: string, pseudoCssImport: string): string`; CLI `node scripts/convert-dc.mjs <dc.html> <app.setup.js> <out App.vue> <out pseudo.css>`.
+- Runtime rules mirrored (from `docs/design-reference/design_handoff_practice_match_v2/support.js`, line refs in that file): template = innerHTML of `<x-dc>` (`parseDcDocument`, l.24–37) · `{{ }}` in text → `<span class="sc-interp">String(v)</span>`; `undefined`/`null`/booleans render nothing (`walkText`, l.569–609) · attribute whole-`{{}}` → the resolved value; mixed → string join with `?? ""` (`compileAttr`, l.401–412) · `style` string → per-declaration inline style (`cssToObj`, l.392) · `value`/`checked` undefined → `""`/`false` (`walkElement`, l.801–803) · `style-<pseudo>="css"` → a generated class whose rule is `.cls:pseudo{ css !important… }` (`createPseudoSheet`+`importantify`, l.1600s) · events: React `onChange` fires like the native `input` event on text inputs/textareas and like `change` on `select`/checkbox/radio · `sc-if value` truthiness (`walkIf`) · `sc-for list as` with `$index`, non-arrays → `[]` (`walkFor`) · expression grammar (`resolve`, l.205–296): parens, `=== !== == !=`, `!`, `true/false/null/undefined`, numbers, quoted strings, dotted/bracket paths that never throw on missing intermediates.
 
-- [ ] **Step 1: Triage each RED state from Task 3**
+- [ ] **Step 1: Failing golden tests**
 
-For every failing state open `frontend/test-results/**/<name>-diff.png` (Read tool). Classify the diff:
-
-| Diff looks like | Allowed fix |
-|---|---|
-| Whole-page vertical offset / default spacing on `<p>`, `<h*>`, `<ul>`, `<button>` | The DS cascade is wrong: confirm `index.html` links the three `/ds/*.css` files in the reference's order (Task 1 step 11) and that `tokens.css`/`global.css` load after them (check `<head>` order in the served page). |
-| Text anti-aliasing weight differs everywhere | `_preview.css` `-webkit-font-smoothing` not applied → same cascade check. |
-| Map area differs only inside the Leaflet canvas | Timing: raise `waitMap` delay to 1000 ms in `harness.ts` (both targets use it). |
-| Hover styling on one element | Pointer not parked: `settle()` already moves to (0,0); add `await page.mouse.move(0, 0)` before the step that opens a menu. |
-| Modal/menu missing or extra | Selector clicked a different element; fix the locator in `screens.ts` (both targets). |
-| A colour, size, or copy difference inside the design itself | **STOP.** Do not edit ported templates or styles. Report `DONE_WITH_CONCERNS` naming the state and attaching the diff path. |
-
-**Performance gate (policy §3):** `smoke.spec.ts` gains `test('first map paint within budget')`: record `Date.now()` before `page.goto('/browse?tab=market')` (signed in via the jump bar), `await page.locator('[data-map]').waitFor()`, assert elapsed ≤ 1,500 ms.
-
-- [ ] **Step 2: Re-run until GREEN**
-
-Run: `npm run test:visual`
-Expected: `25 passed`. If a residual diff is provably sub-pixel anti-aliasing (a few isolated pixels on glyph edges, nothing structural), relax `toHaveScreenshot` to `maxDiffPixelRatio: 0.001` (delete `maxDiffPixels`) and add a comment in `playwright.config.ts` naming the states and the date. Never go above 0.001.
-
-- [ ] **Step 3: Write the failing smoke spec** — `frontend/tests/smoke.spec.ts`
-
+`frontend/tests/convert-dc.test.ts`:
 ```ts
-import { test, expect, type Page } from '@playwright/test';
-import { prepare } from './harness';
+import { describe, expect, it } from 'vitest';
+import { buildAppVue, compileExpr, convert, extractTemplate } from '../scripts/convert-dc.mjs';
 
-const ROUTES = ['/', '/browse', '/browse?tab=market', '/practices/p1', '/requests', '/seller', '/admin?tab=data'];
+const S = new Set<string>();
 
-function trapErrors(page: Page): string[] {
-  const errors: string[] = [];
-  page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(`console: ${m.text()}`); });
-  return errors;
-}
-
-test.describe('smoke', () => {
-  for (const r of ROUTES) {
-    test(`${r} renders the gate for a signed-out visitor without errors`, async ({ page }) => {
-      await prepare(page);
-      const errors = trapErrors(page);
-      await page.goto(r);
-      await expect(page.getByText('Approved members only')).toBeVisible();
-      expect(errors).toEqual([]);
-    });
-  }
-
-  test('a deep link is honoured after the fixture sign-in', async ({ page }) => {
-    await prepare(page);
-    await page.goto('/browse?tab=market');
-    await page.getByRole('button', { name: 'Approved — enter', exact: true }).click();
-    await expect(page).toHaveURL(/\/browse\?tab=market$/);
-    await expect(page.getByRole('button', { name: 'Data Layers', exact: true })).toBeVisible();
+describe('compileExpr — the runtime resolve() grammar', () => {
+  it('prefixes root identifiers with v., leaves loop aliases and $index alone, and never throws on missing paths', () => {
+    expect(compileExpr('showPrototypeBar', S)).toBe('v.showPrototypeBar');
+    expect(compileExpr('md.panel.photos.currentId', S)).toBe('v.md?.panel?.photos?.currentId');
+    expect(compileExpr('j.go', new Set(['j']))).toBe('j?.go');
+    expect(compileExpr('$index', new Set(['$index']))).toBe('$index');
+    expect(compileExpr('rows[$index].label', new Set(['$index']))).toBe('v.rows?.[$index]?.label');
+    expect(compileExpr('a[b.c]', S)).toBe('v.a?.[v.b?.c]');
   });
-
-  test('navigation writes the URL', async ({ page }) => {
-    await prepare(page);
-    await page.goto('/');
-    await page.getByRole('button', { name: 'Browse', exact: true }).first().click();
-    await expect(page).toHaveURL(/\/browse$/);
-    await page.getByText('Market Data', { exact: true }).first().click();
-    await expect(page).toHaveURL(/\/browse\?tab=market$/);
-    await page.getByRole('button', { name: 'Listing', exact: true }).first().click();
-    await expect(page).toHaveURL(/\/practices\/p1$/);
-    await page.getByRole('button', { name: 'Admin', exact: true }).first().click();
-    await page.getByRole('button', { name: /^Data Sources\s*\d/ }).first().click();
-    await expect(page).toHaveURL(/\/admin\?tab=data$/);
+  it('translates equality, negation, literals and parentheses', () => {
+    expect(compileExpr("gate === 'signin'", S)).toBe("(v.gate) === ('signin')");
+    expect(compileExpr('!(auth == true)', S)).toBe('!((v.auth) == (true))');
+    expect(compileExpr('count != 0', S)).toBe('(v.count) != (0)');
+    expect(compileExpr('null', S)).toBe('null'); expect(compileExpr('12.5', S)).toBe('12.5'); expect(compileExpr('"x"', S)).toBe('"x"');
   });
+});
 
-  test('unknown routes redirect to /', async ({ page }) => {
-    await page.goto('/definitely-not-a-route');
-    await expect(page).toHaveURL(/\/$/);
+describe('convert — template constructs', () => {
+  it('wraps text interpolations in sc-interp spans that vanish for null/undefined/boolean, keeping literal text and whitespace verbatim', () => {
+    const { template } = convert('<p>Hello {{ name }} and {{ other }}!</p>');
+    expect(template).toBe('<p>Hello <span v-if="__s(v.name) !== null" class="sc-interp">{{ __s(v.name) }}</span> and <span v-if="__s(v.other) !== null" class="sc-interp">{{ __s(v.other) }}</span>!</p>');
+  });
+  it('binds whole-interpolated attributes, joins mixed ones with ?? "", and defaults value/checked', () => {
+    const { template } = convert('<input value="{{ form.email }}" placeholder="Hi {{ who }}!" onChange="{{ setEmail }}" checked="{{ on }}">');
+    expect(template).toBe('<input :value="(v.form?.email) ?? \'\'" :placeholder="`Hi ${(v.who) ?? \'\'}!`" @input="v.setEmail" :checked="(v.on) ?? false">');
+  });
+  it('maps React events: onClick → @click; onChange → @input on text controls and @change on select/checkbox/radio', () => {
+    expect(convert('<button onClick="{{ go }}">x</button>').template).toBe('<button @click="v.go">x</button>');
+    expect(convert('<select onChange="{{ pick }}"></select>').template).toBe('<select @change="v.pick"></select>');
+    expect(convert('<input type="checkbox" onChange="{{ toggle }}">').template).toBe('<input type="checkbox" @change="v.toggle">');
+    expect(convert('<textarea onChange="{{ set }}"></textarea>').template).toBe('<textarea @input="v.set"></textarea>');
+    expect(convert('<div onMouseEnter="{{ a }}" onMouseLeave="{{ b }}"></div>').template).toBe('<div @mouseenter="v.a" @mouseleave="v.b"></div>');
+  });
+  it('turns style-hover into a generated pseudo-class with !important declarations, deduplicated by css text', () => {
+    const { template, pseudoCss } = convert('<button class="x" style-hover="background: rgba(255,255,255,.26); color: #fff"></button><a style-hover="background: rgba(255,255,255,.26); color: #fff"></a><i style-hover="opacity: .5"></i>');
+    expect(template).toBe('<button class="x sch0"></button><a class="sch0"></a><i class="sch1"></i>');
+    expect(pseudoCss).toBe('.sch0:hover{background: rgba(255,255,255,.26) !important;color: #fff !important}\n.sch1:hover{opacity: .5 !important}\n');
+  });
+  it('merges a pseudo class into a dynamic class binding', () => {
+    expect(convert('<b class="{{ cls }}" style-hover="x: y"></b>').template).toBe('<b :class="[v.cls, \'sch0\']"></b>');
+  });
+  it('converts sc-if and sc-for (with $index and the array guard), scoping loop aliases', () => {
+    const { template } = convert('<sc-if value="{{ isDesktop }}" hint-placeholder-val="{{ true }}"><sc-for list="{{ nav }}" as="n" hint-placeholder-count="4"><button onClick="{{ n.go }}" style="{{ n.style }}">{{ n.label }} {{ title }}</button></sc-for></sc-if>');
+    expect(template).toBe('<template v-if="v.isDesktop"><template v-for="(n, $index) in __arr(v.nav)" :key="$index"><button @click="n?.go" :style="n?.style"><span v-if="__s(n?.label) !== null" class="sc-interp">{{ __s(n?.label) }}</span> <span v-if="__s(v.title) !== null" class="sc-interp">{{ __s(v.title) }}</span></button></template></template>');
+  });
+  it('maps x-import and image-slot to the Vue components with bound props and drops hint-* attributes', () => {
+    const { template } = convert('<x-import component="AustinMap" from="./AustinMap.jsx" markers="{{ markers }}" active-id="{{ activeId }}" on-select="{{ selectMarker }}" hint-size="100%,100%"></x-import><image-slot id="{{ p.photoId }}" shape="rect" src="{{ p.photoSrc }}" placeholder="{{ p.photoLabel }}"></image-slot>');
+    expect(template).toBe('<ListingsMap :markers="v.markers" :active-id="v.activeId" :on-select="v.selectMarker"></ListingsMap><ImageSlot :id="v.p?.photoId" shape="rect" :src="v.p?.photoSrc" :placeholder="v.p?.photoLabel"></ImageSlot>');
+    expect(convert('<x-import component="MarketMap" from="./MarketMap.jsx" practices="{{ md.practices }}"></x-import>').template).toBe('<MarketMapView :practices="v.md?.practices"></MarketMapView>');
+  });
+  it('drops HTML comments and the helmet block, escapes text, keeps attribute case', () => {
+    expect(extractTemplate('<html><x-dc><helmet><style>a{}</style></helmet>\n<div aria-label="Go">a &amp; b</div></x-dc><script data-dc-script></script></html>')).toBe('\n<div aria-label="Go">a &amp; b</div>');
+    expect(convert('<!-- note --><div>a &lt; b</div>').template).toBe('<div>a &lt; b</div>');
+  });
+  it('is idempotent and buildAppVue assembles the SFC from the generated template and the hand-maintained setup script', () => {
+    const t = convert('<div>{{ a }}</div>');
+    expect(convert('<div>{{ a }}</div>')).toEqual(t);
+    const sfc = buildAppVue(t.template, "const x = 1;\n", './generated/pseudo.css');
+    expect(sfc.startsWith('<!-- GENERATED by frontend/scripts/convert-dc.mjs from docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html — do not edit; run `npm run gen:app` -->\n<template>\n')).toBe(true);
+    expect(sfc).toContain("<script setup>\nimport './generated/pseudo.css';\nconst x = 1;\n</script>");
   });
 });
 ```
 
-- [ ] **Step 4: Run — expect RED on at least one test, or explain why not**
+- [ ] **Step 2: Run to verify failure**
 
-Run: `npm run test:smoke`
-Expected: if Task 2 is correct, these pass immediately — that is acceptable here because the behaviour under test was built (and unit-tested) in Task 2; the smoke spec is its end-to-end confirmation. If a test fails, the router wiring in `useStateRouteSync.ts` is wrong — fix it there, not in the test.
+Run: `cd frontend && source ~/.nvm/nvm.sh && nvm use 22 && npm install -D htmlparser2 && npx vitest run tests/convert-dc.test.ts` → **FAIL** (`Cannot find module '../scripts/convert-dc.mjs'`).
 
-- [ ] **Step 5: Full frontend gate**
+- [ ] **Step 3: Implement `frontend/scripts/convert-dc.mjs`**
 
-Run: `npm run typecheck && npm test && npm run build && npm run test:smoke && npm run test:visual` → all green.
+```js
+#!/usr/bin/env node
+// Design template → Vue template. Mirrors the dc runtime (docs/design-reference/.../support.js) rule for rule; see the
+// plan's Task 4a "Runtime rules mirrored". Output is deterministic: the same input always yields the same output.
+import { readFileSync, writeFileSync } from 'node:fs';
+import { parseDocument } from 'htmlparser2';
 
-- [ ] **Step 6: Commit**
+const IDENT_RE = /^[A-Za-z_$][\w$]*/;
+const NUMBER_RE = /^-?\d+(\.\d+)?$/;
+const EVENTS = { onClick: 'click', onInput: 'input', onSubmit: 'submit', onKeyDown: 'keydown', onKeyUp: 'keyup', onKeyPress: 'keypress', onMouseDown: 'mousedown', onMouseUp: 'mouseup',
+  onMouseEnter: 'mouseenter', onMouseLeave: 'mouseleave', onFocus: 'focus', onBlur: 'blur', onDoubleClick: 'dblclick', onContextMenu: 'contextmenu', onMouseMove: 'mousemove',
+  onMouseOver: 'mouseover', onMouseOut: 'mouseout', onPointerDown: 'pointerdown', onPointerUp: 'pointerup', onPointerMove: 'pointermove', onPointerEnter: 'pointerenter', onPointerLeave: 'pointerleave' };
+const COMPONENTS = { AustinMap: 'ListingsMap', MarketMap: 'MarketMapView', 'image-slot': 'ImageSlot' };
+const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
+const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+const escAttr = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
+const jsStr = (s) => `'${s.replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 
-```bash
-git add -A && git commit -m "test(frontend): visual parity green (25 states) and route smoke suite
+export function extractTemplate(html) {
+  const open = /<x-dc(?:\s[^>]*)?>/.exec(html); const close = html.lastIndexOf('</x-dc>');
+  if (!open || close < 0) throw new Error('no <x-dc> template');
+  return html.slice(open.index + open[0].length, close).replace(/<helmet(?:\s[^>]*)?>[\s\S]*?<\/helmet\s*>/gi, '');
+}
 
-Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/platform && git push production feat/platform
+function parensWrapWhole(e) { let d = 0; for (let i = 0; i < e.length - 1; i++) { if (e[i] === '(') d++; else if (e[i] === ')') { d--; if (d === 0) return false; } } return true; }
+function topEquality(e) {
+  let d = 0;
+  for (let i = 0; i < e.length; i++) {
+    const c = e[i];
+    if (c === '[' || c === '(') d++; else if (c === ']' || c === ')') d--;
+    else if (d === 0 && (c === '=' || c === '!') && e[i + 1] === '=') {
+      if (i > 0 && (e[i - 1] === '=' || e[i - 1] === '!')) continue;
+      if (!e.slice(0, i).trim()) continue;
+      const op = e[i + 2] === '=' ? c + '==' : c + '=';
+      return { index: i, op };
+    }
+  }
+  return null;
+}
+export function compileExpr(src, scope) {
+  const e = String(src).trim();
+  if (!e) return 'undefined';
+  if (e[0] === '(' && e[e.length - 1] === ')' && parensWrapWhole(e)) return compileExpr(e.slice(1, -1), scope);
+  const eq = topEquality(e);
+  if (eq) return `(${compileExpr(e.slice(0, eq.index), scope)}) ${eq.op} (${compileExpr(e.slice(eq.index + eq.op.length), scope)})`;
+  if (e[0] === '!') return `!(${compileExpr(e.slice(1), scope)})`;
+  if (['true', 'false', 'null', 'undefined'].includes(e) || NUMBER_RE.test(e)) return e;
+  if (e.length >= 2 && (e[0] === '"' || e[0] === "'") && e[e.length - 1] === e[0]) return e;
+  const head = e.match(IDENT_RE); if (!head) return 'undefined';
+  let out = scope.has(head[0]) ? head[0] : `v.${head[0]}`; let i = head[0].length;
+  while (i < e.length) {
+    if (e[i] === '.') { const m = e.slice(i + 1).match(IDENT_RE) || e.slice(i + 1).match(/^\d+/); if (!m) return 'undefined'; out += /^\d/.test(m[0]) ? `?.[${m[0]}]` : `?.${m[0]}`; i += 1 + m[0].length; }
+    else if (e[i] === '[') { let d = 1, j = i + 1; while (j < e.length && d > 0) { if (e[j] === '[') d++; else if (e[j] === ']') { d--; if (d === 0) break; } j++; } if (d !== 0) return 'undefined'; out += `?.[${compileExpr(e.slice(i + 1, j), scope)}]`; i = j + 1; }
+    else return 'undefined';
+  }
+  return out;
+}
+
+const WHOLE = /^\s*\{\{([\s\S]+?)\}\}\s*$/; const PARTS = /\{\{([\s\S]+?)\}\}/g;
+function attrValue(raw, scope) {   // → { kind: 'static'|'expr', js }
+  const whole = raw.match(WHOLE);
+  if (whole) return { kind: 'expr', js: compileExpr(whole[1], scope) };
+  if (!raw.includes('{{')) return { kind: 'static', js: raw };
+  const parts = raw.split(PARTS);
+  return { kind: 'expr', js: '`' + parts.map((s, i) => (i & 1) ? `\${(${compileExpr(s, scope)}) ?? ''}` : s.replace(/`/g, '\\`')).join('') + '`' };
+}
+function importantify(css) {
+  const decls = []; let start = 0, depth = 0, quote = '';
+  for (let i = 0; i < css.length; i++) { const c = css[i]; if (quote) { if (c === '\\') i++; else if (c === quote) quote = ''; } else if (c === '"' || c === "'") quote = c; else if (c === '(') depth++; else if (c === ')') depth--; else if (c === ';' && depth === 0) { decls.push(css.slice(start, i)); start = i + 1; } }
+  decls.push(css.slice(start));
+  return decls.map((d) => d.trim()).filter(Boolean).map((d) => /!important$/i.test(d) ? d : `${d} !important`).join(';');
+}
+
+export function convert(templateHtml) {
+  const doc = parseDocument(templateHtml, { lowerCaseTags: false, lowerCaseAttributeNames: false, recognizeSelfClosing: true, decodeEntities: true });
+  const pseudo = new Map(); const rules = [];
+  const pseudoClass = (kind, css) => { const k = `${kind}|${css}`; if (!pseudo.has(k)) { const cls = 'sch' + pseudo.size.toString(36); pseudo.set(k, cls); const pe = kind === 'before' || kind === 'after'; rules.push(`.${cls}${pe ? '::' : ':'}${kind}{${pe ? css : importantify(css)}}`); } return pseudo.get(k); };
+  const text = (t, scope) => t.split(PARTS).map((s, i) => (i & 1) ? `<span v-if="__s(${compileExpr(s, scope)}) !== null" class="sc-interp">{{ __s(${compileExpr(s, scope)}) }}</span>` : esc(s)).join('');
+  const element = (el, scope) => {
+    const tag = el.name; const a = el.attribs;
+    if (tag === 'sc-if') return `<template v-if="${escAttr(compileExpr(a.value.match(WHOLE)?.[1] ?? a.value, scope))}">${kids(el, scope)}</template>`;
+    if (tag === 'sc-for') { const alias = a.as || 'item'; const inner = new Set([...scope, alias, '$index']); return `<template v-for="(${alias}, $index) in __arr(${escAttr(compileExpr(a.list.match(WHOLE)?.[1] ?? a.list, scope))})" :key="$index">${kids(el, inner)}</template>`; }
+    let out = tag; const attrs = []; let classStatic = null, classExpr = null; const pseudos = [];
+    if (tag === 'x-import') out = COMPONENTS[a.component]; else if (tag === 'image-slot') out = COMPONENTS['image-slot'];
+    if (!out) throw new Error(`unknown x-import component ${a.component}`);
+    for (const [name, raw] of Object.entries(a)) {
+      if (name.startsWith('hint-') || name === 'sc-name' || name === 'data-dc-tpl' || (tag === 'x-import' && (name === 'component' || name === 'from'))) continue;
+      if (name.startsWith('style-')) { pseudos.push(pseudoClass(name.slice(6), raw)); continue; }
+      if (name in EVENTS || name === 'onChange') {
+        const js = compileExpr(raw.match(WHOLE)?.[1] ?? raw, scope);
+        const ev = name === 'onChange' ? ((tag === 'select' || (tag === 'input' && /^(checkbox|radio)$/i.test(a.type || ''))) ? 'change' : 'input') : EVENTS[name];
+        attrs.push(`@${ev}="${escAttr(js)}"`); continue;
+      }
+      const v = attrValue(raw, scope);
+      if (name === 'class') { if (v.kind === 'static') classStatic = v.js; else classExpr = v.js; continue; }
+      if (v.kind === 'static') attrs.push(raw === '' ? name : `${name}="${escAttr(raw)}"`);
+      else if (name === 'value') attrs.push(`:value="${escAttr(`(${v.js}) ?? ''`)}"`);
+      else if (name === 'checked') attrs.push(`:checked="${escAttr(`(${v.js}) ?? false`)}"`);
+      else attrs.push(`:${name}="${escAttr(v.js)}"`);
+    }
+    if (classExpr) attrs.unshift(`:class="${escAttr(pseudos.length ? `[${classExpr}, ${pseudos.map(jsStr).join(', ')}]` : classExpr)}"`);
+    else if (classStatic !== null || pseudos.length) attrs.unshift(`class="${escAttr([classStatic, ...pseudos].filter(Boolean).join(' '))}"`);
+    const open = `<${out}${attrs.length ? ' ' + attrs.join(' ') : ''}>`;
+    return VOID.has(tag) ? open : `${open}${kids(el, scope)}</${out}>`;
+  };
+  const kids = (node, scope) => node.children.map((c) => c.type === 'text' ? text(c.data, scope) : c.type === 'tag' || c.type === 'script' || c.type === 'style' ? element(c, scope) : '').join('');
+  return { template: kids(doc, new Set()), pseudoCss: rules.map((r) => r + '\n').join('') };
+}
+
+export function buildAppVue(template, setupJs, pseudoCssImport) {
+  return `<!-- GENERATED by frontend/scripts/convert-dc.mjs from docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html — do not edit; run \`npm run gen:app\` -->\n<template>\n${template}\n</template>\n\n<script setup>\nimport '${pseudoCssImport}';\n${setupJs}</script>\n`;
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  const [dc, setup, outVue, outCss] = process.argv.slice(2);
+  const { template, pseudoCss } = convert(extractTemplate(readFileSync(dc, 'utf8')));
+  writeFileSync(outVue, buildAppVue(template, readFileSync(setup, 'utf8'), './generated/pseudo.css'));
+  writeFileSync(outCss, pseudoCss);
+  console.log(`wrote ${outVue} (${template.length} chars) and ${outCss} (${pseudoCss.split('\n').length - 1} rules)`);
+}
 ```
+`package.json`: `"gen:app": "node scripts/convert-dc.mjs ../docs/design-reference/design_handoff_practice_match_v2/'Practice Match V2.dc.html' src/app.setup.js src/App.vue src/generated/pseudo.css"`.
+
+- [ ] **Step 4: Run to verify passing** — `npx vitest run tests/convert-dc.test.ts` → all pass; adjust nothing in the tests — if an expectation and the runtime disagree, the runtime (support.js) wins and the test is corrected to the runtime's rule with a comment citing the line.
+
+- [ ] **Step 5: Commit** — `feat(gen): convert-dc transpiler — design template to Vue, runtime-faithful (spans, pseudo-classes, events, if/for, imports)`.
+
+---
+
+### Task 4b: Generate `App.vue` from the design; hand-maintained setup script; drift test; retire `hover.js`
+
+**Files:**
+- Create: `frontend/src/app.setup.js` (the `<script setup>` body, moved from `App.vue` — byte-identical logic plus the three additions below), `frontend/src/generated/pseudo.css` (generated), `frontend/tests/app-generated.test.ts`
+- Modify: `frontend/src/App.vue` (now generated), `frontend/vite.config.ts` (`vue({ template: { compilerOptions: { whitespace: 'preserve' } } })`), `frontend/src/logic.test.ts` (unchanged expectations — `logic.js` is untouched), `frontend/src/map/boundary.test.ts` (unchanged)
+- Delete: `frontend/src/directives/hover.js` (hover is now the generated pseudo-class stylesheet — exactly what the runtime does)
+
+**Interfaces:**
+- `app.setup.js` exports nothing; it defines for the template: `v = computed(() => ({ ...props, ...c.renderVals() }))` (the runtime merges user props into vals, `support.js` l.1085), `__s = (x) => (x == null || typeof x === 'boolean' || typeof x === 'object') ? null : String(x)`, `__arr = (x) => (Array.isArray(x) ? x : [])`, and the component imports `ListingsMap`, `MarketMapView`, `ImageSlot` — no `vHover`.
+
+- [ ] **Step 1: Failing drift test**
+
+`frontend/tests/app-generated.test.ts`:
+```ts
+import { describe, expect, it } from 'vitest';
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import { buildAppVue, convert, extractTemplate } from '../scripts/convert-dc.mjs';
+
+const ROOT = join(import.meta.dirname, '..');
+const DC = join(ROOT, '..', 'docs', 'design-reference', 'design_handoff_practice_match_v2', 'Practice Match V2.dc.html');
+
+describe('App.vue is generated from the design', () => {
+  it('regenerating yields byte-identical App.vue and pseudo.css (no hand edits survive)', () => {
+    const { template, pseudoCss } = convert(extractTemplate(readFileSync(DC, 'utf8')));
+    expect(readFileSync(join(ROOT, 'src/App.vue'), 'utf8')).toBe(buildAppVue(template, readFileSync(join(ROOT, 'src/app.setup.js'), 'utf8'), './generated/pseudo.css'));
+    expect(readFileSync(join(ROOT, 'src/generated/pseudo.css'), 'utf8')).toBe(pseudoCss);
+  });
+  it('the generated template compiles under the Vue SFC compiler with preserved whitespace', async () => {
+    const { parse, compileTemplate } = await import('@vue/compiler-sfc');
+    const { descriptor, errors } = parse(readFileSync(join(ROOT, 'src/App.vue'), 'utf8'));
+    expect(errors).toEqual([]);
+    const out = compileTemplate({ source: descriptor.template!.content, filename: 'App.vue', id: 'app', compilerOptions: { whitespace: 'preserve' } });
+    expect(out.errors).toEqual([]);
+  });
+  it('retired the JS hover directive: no v-hover, no hover.js', () => {
+    expect(readFileSync(join(ROOT, 'src/App.vue'), 'utf8')).not.toContain('v-hover');
+    expect(() => readFileSync(join(ROOT, 'src/directives/hover.js'))).toThrow();
+  });
+});
+```
+Run: `npx vitest run tests/app-generated.test.ts` → **FAIL** (App.vue is the hand conversion; hover.js exists).
+
+- [ ] **Step 2: Move the script, generate, wire**
+
+`frontend/src/app.setup.js` = the current `<script setup>` body of `App.vue` with: the `vHover` import removed; `import ImageSlot from './components/ImageSlot.vue'` kept; `const v = computed(() => ({ ...props, ...c.renderVals() }));` replacing `computed(() => c.renderVals())`; and `const __s = …; const __arr = …;` added (as in Interfaces). Then `npm run gen:app`; `git rm frontend/src/directives/hover.js`; vite config `vue({ template: { compilerOptions: { whitespace: 'preserve' } } })`.
+
+- [ ] **Step 3: Run — GREEN** — `npx vitest run` (all suites incl. Task 1c's `logic.test.ts` unchanged), `npx vue-tsc --noEmit`, `npm run build`; `npx playwright test --project=reference` still 25/25. The app project is measured (expect a large jump from 4/25) and recorded — parity is finished in Task 4e.
+
+- [ ] **Step 4: Commit** — `feat(frontend): App.vue generated from the design template; hover as generated pseudo-classes; setup script extracted`.
+
+---
+
+### Task 4c: `ImageSlot.vue` — parity port of the design's `<image-slot>` element (John's ruling D)
+
+**Files:**
+- Modify: `frontend/src/components/ImageSlot.vue`
+- Create: `frontend/src/components/image-slot.css` (the element's stylesheet text, copied from `image-slot.js`), `frontend/src/components/ImageSlot.test.ts`
+
+**Interfaces:**
+- Props: `id: string`, `shape: 'rect' | 'rounded' | 'circle' | 'pill'` (default `rounded`), `radius?: number` (default 12), `src?: string`, `placeholder?: string` (default `'Drop an image'`), `fit?: string`, `credit?: string`, `creditHref?: string` — the element's `observedAttributes` (`image-slot.js` l.440–442).
+- Renders an **open shadow root** (`attachShadow({ mode: 'open' })` in `onMounted`) containing exactly the element's `_frame`/`_ring`/glyph/caption structure and its stylesheet, with the read-only branch of `_render()` (`data-editable` false: the `_sub` controls hidden) — the source is `docs/design-reference/design_handoff_practice_match_v2/image-slot.js` `_render()` (l.~840–940) and the CSS text the constructor injects (l.~497–560). `shape=rect` → no border radius; `rounded` → `radius`px; `circle` → 50 %; `pill` → 9999px; `src` present → `<img>` with `object-fit` per `fit`; absent → dashed ring + glyph + caption `placeholder`.
+
+- [ ] **Step 1: Failing tests** — `ImageSlot.test.ts` (jsdom, `@vue/test-utils` — install if absent): mounts with `{ id: 'x', shape: 'rect', placeholder: 'Practice exterior' }` → `wrapper.element.shadowRoot` exists, contains a frame element with `border-radius: ''`, a visible ring, a caption whose text is `Practice exterior`, no `<img>`; with `src` → an `<img src>` inside the frame and the ring hidden; `shape: 'circle'` → frame `border-radius: 50%`; the shadow stylesheet text equals `image-slot.css`. Run → **FAIL** (current component renders a flat band in light DOM).
+- [ ] **Step 2: Port** — copy the stylesheet text verbatim into `image-slot.css` (imported with `?raw`), build the shadow tree in `onMounted`, re-render on prop change (`watch`), never include the editor controls or the sidecar/store logic (reference-runtime only per the handoff README).
+- [ ] **Step 3: Run — GREEN** — `npx vitest run src/components/ImageSlot.test.ts`, full suite, `npm run build`.
+- [ ] **Step 4: Commit** — `feat(frontend): ImageSlot parity port of the design's image-slot element (shadow DOM, ring, glyph, caption)`.
+
+---
+
+### Task 4d: DOM oracle — element-by-element comparison of app vs design for every state
+
+**Files:**
+- Create: `frontend/tests/dom.ts` (serializer + normaliser), `frontend/tests/reference-dom.spec.ts` (writes `dom-snapshots/<state>.json` from the design, git-ignored), `frontend/tests/dom.spec.ts` (compares the app), `frontend/tests/dom.test.ts` (unit tests of the normaliser)
+- Modify: `frontend/tests/playwright.config.ts` (`reference` project also matches `reference-dom.spec.ts`; `app` project also matches `dom.spec.ts`), `.gitignore` (`frontend/tests/dom-snapshots/`)
+
+**Interfaces:**
+- `serialize(page): Promise<Node>` — evaluates in the page: root = `document.querySelector('div[style*="min-height: 100vh"]')`; for each element: `{ tag, attrs: sorted [name, value] pairs excluding data-dc-tpl, data-reactroot, data-v-*, key; class: sorted tokens with /^sc[hp][0-9a-z]+$/ → '<pseudo>'; style: sorted declarations from el.style (property → value); children }`; text nodes → `{ text }` with whitespace-only text normalised to a single space and `sc-interp` spans kept; `.leaflet-container` → `{ tag: 'div', leaflet: true }` (maps are covered by pixels); `el.shadowRoot` → child `{ shadow: [...] }`. `diff(a: Node, b: Node): string[]` → paths like `div[0]/div[2]/span[1]: text "Approved buyer" ≠ "Approved buyer "`.
+
+- [ ] **Step 1: Failing tests** — `dom.test.ts` (node): `diff` reports the first differing attribute, class-token set, style declaration, text, child count and shadow content with paths; `normalise` maps `scp3` and `sch3` both to `<pseudo>`, sorts attributes and style declarations, collapses whitespace-only text. `dom.spec.ts` on the app: for each `SCREENS` state, `expect(diff(referenceSnapshot(state), await serialize(page))).toEqual([])`. Run: `npx vitest run tests/dom.test.ts` → **FAIL** (module missing); `npx playwright test --project=reference` → writes snapshots; `--project=app` `dom.spec.ts` → FAIL on divergent states (that is the triage list for 4e).
+- [ ] **Step 2: Implement** the serializer/normaliser/diff and the two specs (they reuse `SCREENS`, `prepare`, `settle` from the harness exactly as `visual.spec.ts` does).
+- [ ] **Step 3: Run — GREEN for the unit tests; record the per-state DOM diffs** in the report (they are inputs to 4e, not defects of 4d).
+- [ ] **Step 4: Commit** — `test(dom): DOM oracle — normalised element-by-element comparison of app vs design per state`.
+
+---
+
+### Task 4e: Parity to GREEN — DOM oracle + pixel gate on all 25 states, map effect order, `_leaflet_pos`, smoke
+
+**Files (the only ones that may change; anything else → `NEEDS_CONTEXT`):**
+- `frontend/scripts/convert-dc.mjs` + `tests/convert-dc.test.ts` (a rule the transpiler got wrong — fix the rule, add the golden test, regenerate), `frontend/src/app.setup.js`, `frontend/src/components/ImageSlot.vue` + its css/test, `frontend/src/components/MarketMapView.vue` and `ListingsMap.vue` (**effect order only**: mirror `MarketMap.jsx`'s six `useEffect`s / `AustinMap.jsx`'s four in declaration order — one ordered watcher that redraws overlay then pins, as React runs effects in declaration order on every commit), `frontend/src/map/engines/leaflet.ts` + `leaflet.test.ts` (John's ruling F: `mount()`/`show()` timers are tracked and cleared in `destroy()`; test: destroy before the 60/80 ms timers fire → `invalidateSize` never called), `frontend/src/styles/global.css`, `tokens.css`, `frontend/tests/harness.ts`, `screens.ts`, `playwright.config.ts`, `smoke.spec.ts`.
+
+- [ ] **Step 1: Triage from the oracle** — run `npx playwright test --project=reference` then `--project=app`; for every state list: DOM diff paths, pixel diff count, cause, which allowed file fixes it. Anything outside the allowed files or the named causes → stop with `NEEDS_CONTEXT`.
+- [ ] **Step 2: Fix at the cause, regenerate, re-run** until `dom.spec.ts` 25/25 and `visual.spec.ts` 25/25 at `maxDiffPixels: 0`. The `_leaflet_pos` fix is test-first in `engines/leaflet.test.ts` (RED: a fake-timer run past 80 ms after `destroy()` calls `invalidateSize` on the removed map).
+- [ ] **Step 3: Smoke** — `smoke.spec.ts` (committed in 5a5ea8c) 11/11 incl. the first-map-paint budget and the no-`pageerror` route walk.
+- [ ] **Step 4: Full gate** — `npx vitest run && npx vue-tsc --noEmit && npm run build && npx playwright test` → all green; `npm run gen:app` leaves the tree unchanged (drift test).
+- [ ] **Step 5: Commit** — `feat(frontend): pixel and DOM parity with the approved design on all 25 states; map effect order; leaflet timers cleared on destroy`.
+
+**Recorded rulings folded in:** A (hover) — solved by construction (generated pseudo-classes); B (`d.`→`v.d.`) — solved by construction (the transpiler resolves paths); C (watcher order) — 4e; D (ImageSlot) — 4c; E (interpolation spans) — the transpiler reproduces **every** span, superseding the "three spots" ruling in the stricter direction; F (`_leaflet_pos`) — 4e.
 
 ---
 
