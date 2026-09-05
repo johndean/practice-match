@@ -1,0 +1,11 @@
+.sch0:hover{background: rgba(255,255,255,.26) !important}
+.sch1:hover{background: var(--color-off-white) !important}
+.sch2:hover{color: var(--color-blue) !important}
+.sch3:hover{background: var(--color-navy) !important}
+.sch4:hover{border-color: var(--color-steel) !important;background: var(--color-off-white) !important}
+.sch5:hover{background: #003a70 !important}
+.sch6:hover{box-shadow: var(--shadow-lg) !important;transform: translateY(-2px) !important}
+.sch7:hover{background: var(--vf-navy) !important}
+.sch8:hover{background: var(--vf-neutral) !important}
+.sch9:hover{opacity: 1 !important}
+.scha:hover{color: var(--color-navy) !important}
