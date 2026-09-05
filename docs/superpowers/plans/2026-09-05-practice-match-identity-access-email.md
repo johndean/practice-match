@@ -77,7 +77,7 @@
 
 ### Task I1: Schema (`010`–`014`), `app/db.py`, `app/cache.py`, root test fixtures
 
-*Cross-plan delta (2026-09-05): Platform Task 5 fix round 3 created `app/db.py` — `get_engine(url)`, `get_redis(url)` (one instance per running event loop and URL) and `dispose_all()` — so the health probes reuse pooled connections. Task I1 EXTENDS that module (schema/session helpers) rather than creating it; keep those three names and semantics.*
+*Cross-plan delta (2026-09-05): Platform Task 5 fix round 3 created `app/db.py` — `get_engine(url)`, `get_redis(url)` (one instance per running event loop and URL) and `dispose_all()` — so the health probes reuse pooled connections. Task I1 EXTENDS that module (schema/session helpers) rather than creating it; keep those three names and semantics. Migration files (`010`–`014` and later) run under `scripts/migrate.py`, which commits each file and its ledger row as ONE transaction: a migration file must not contain its own `BEGIN`/`COMMIT`/`ROLLBACK`, and statements that cannot run inside a transaction (`CREATE INDEX CONCURRENTLY`, `VACUUM`, `CREATE DATABASE`) need their own runner path — add the rule to the `scripts/migrate.py` docstring in I1.*
 
 **Files:**
 - Create: `migrations/010_accounts.sql`, `migrations/011_applications_roles.sql`, `migrations/012_api_tokens.sql`, `migrations/013_email.sql`, `migrations/014_audit_log.sql`, `app/db.py`, `app/cache.py`, `tests/auth/__init__.py`, `tests/auth/test_schema.py`
