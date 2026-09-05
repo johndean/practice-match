@@ -187,12 +187,16 @@ def test_perf_workflow_targets_qa_with_thresholds():
     for name, job in wf["jobs"].items():
         assert "timeout-minutes" in job, name
     assert "qa.foundation.vin" in text, "the load smoke must run against QA, never production"
-    # Discriminating (fix round 1): the first version of this line looked for the literal
-    # "foundation.vin/api", which a bare `BASE_URL: https://<host>` can never contain whatever
-    # host it names — it passed with `BASE_URL_PROD: https://foundation.vin` planted beside the
-    # QA line. The lookbehind is what does the work: it matches any `foundation.vin` that is not
-    # the `qa.` host, so a second step or job aimed at production fails this test.
-    assert not re.search(r"(?<!qa\.)\bfoundation\.vin\b", text), "production must not be a target"
+    # Enumerate every host-like token ending in the domain and require them ALL to be QA's.
+    # Two weaker forms were tried and each let a production target through (fix rounds 1 and 2):
+    # the literal `"foundation.vin/api"`, which a bare `BASE_URL: https://<host>` can never
+    # contain whatever host it names; and `re.search(r"(?<!qa\.)\bfoundation\.vin\b", text)`,
+    # which is case-sensitive (`https://FOUNDATION.VIN` slipped past) and whose lookbehind is
+    # un-anchored (`notqa.foundation.vin` slipped past too). Collecting the hosts instead of
+    # hunting for a bad one means anything that is not exactly qa.foundation.vin fails, and the
+    # message names the offender.
+    hosts = {h.lower() for h in re.findall(r"[\w.-]*foundation\.vin", text, re.IGNORECASE)}
+    assert hosts == {"qa.foundation.vin"}, f"production must not be a target: {sorted(hosts)}"
     # The member token is a GitHub Actions secret John sets; it must never become a literal.
     assert "${{ secrets.MEMBER_TOKEN }}" in text
     assert "scripts/k6-smoke.js" in text
