@@ -187,7 +187,12 @@ def test_perf_workflow_targets_qa_with_thresholds():
     for name, job in wf["jobs"].items():
         assert "timeout-minutes" in job, name
     assert "qa.foundation.vin" in text, "the load smoke must run against QA, never production"
-    assert "foundation.vin/api" not in text.replace("qa.foundation.vin", ""), "production must not be a target"
+    # Discriminating (fix round 1): the first version of this line looked for the literal
+    # "foundation.vin/api", which a bare `BASE_URL: https://<host>` can never contain whatever
+    # host it names — it passed with `BASE_URL_PROD: https://foundation.vin` planted beside the
+    # QA line. The lookbehind is what does the work: it matches any `foundation.vin` that is not
+    # the `qa.` host, so a second step or job aimed at production fails this test.
+    assert not re.search(r"(?<!qa\.)\bfoundation\.vin\b", text), "production must not be a target"
     # The member token is a GitHub Actions secret John sets; it must never become a literal.
     assert "${{ secrets.MEMBER_TOKEN }}" in text
     assert "scripts/k6-smoke.js" in text
