@@ -1364,6 +1364,7 @@ git push origin feat/platform && git push production feat/platform
 
 **Interfaces:**
 - Produces (ESM, Node): `extractTemplate(html: string): string` (innerHTML of `<x-dc>` with the `<helmet>…</helmet>` block removed); `compileExpr(expr: string, scope: Set<string>): string` (the runtime's `resolve` grammar → a JS expression over `v`); `convert(templateHtml: string): { template: string; pseudoCss: string }`; `buildAppVue(template: string, setupJs: string, pseudoCssImport: string): string`; CLI `node scripts/convert-dc.mjs <dc.html> <app.setup.js> <out App.vue> <out pseudo.css>`.
+- Also applied (not a runtime rule — the plan's Global Constraint (a)): static attribute values beginning `assets/` or `ds/` are rewritten to `/assets/`, `/ds/` (Vite serves `public/` at the root); bound values are untouched because `logic.js` already carries absolute paths.
 - Runtime rules mirrored (from `docs/design-reference/design_handoff_practice_match_v2/support.js`, line refs in that file): template = innerHTML of `<x-dc>` (`parseDcDocument`, l.24–37) · `{{ }}` in text → `<span class="sc-interp">String(v)</span>`; `undefined`/`null`/booleans render nothing (`walkText`, l.569–609) · attribute whole-`{{}}` → the resolved value; mixed → string join with `?? ""` (`compileAttr`, l.401–412) · `style` string → per-declaration inline style (`cssToObj`, l.392) · `value`/`checked` undefined → `""`/`false` (`walkElement`, l.801–803) · `style-<pseudo>="css"` → a generated class whose rule is `.cls:pseudo{ css !important… }` (`createPseudoSheet`+`importantify`, l.1600s) · events: React `onChange` fires like the native `input` event on text inputs/textareas and like `change` on `select`/checkbox/radio · `sc-if value` truthiness (`walkIf`) · `sc-for list as` with `$index`, non-arrays → `[]` (`walkFor`) · expression grammar (`resolve`, l.205–296): parens, `=== !== == !=`, `!`, `true/false/null/undefined`, numbers, quoted strings, dotted/bracket paths that never throw on missing intermediates.
 
 - [ ] **Step 1: Failing golden tests**
@@ -1429,6 +1430,19 @@ describe('convert — template constructs', () => {
     expect(extractTemplate('<html><x-dc><helmet><style>a{}</style></helmet>\n<div aria-label="Go">a &amp; b</div></x-dc><script data-dc-script></script></html>')).toBe('\n<div aria-label="Go">a &amp; b</div>');
     expect(convert('<!-- note --><div>a &lt; b</div>').template).toBe('<div>a &lt; b</div>');
   });
+  it('rewrites the design\'s relative asset paths to the app\'s absolute public paths (Global Constraint (a)), static values only', () => {
+    expect(convert('<img src="assets/vin-foundation-logo.png" alt="VIN"><link href="ds/kit.css"><img src="{{ p.photoSrc }}">').template)
+      .toBe('<img src="/assets/vin-foundation-logo.png" alt="VIN"><link href="/ds/kit.css"><img :src="v.p?.photoSrc">');
+  });
+  it('the CLI runs from a path containing spaces (self-invocation guard compares file paths, not URL strings)', async () => {
+    const { mkdtempSync, writeFileSync, readFileSync, existsSync } = await import('node:fs');
+    const { execFileSync } = await import('node:child_process');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(process.env.TMPDIR ?? '/tmp', 'convert dc '));
+    writeFileSync(join(dir, 'd.html'), '<html><x-dc><div>{{ a }}</div></x-dc></html>'); writeFileSync(join(dir, 'setup.js'), 'const x = 1;\n');
+    execFileSync(process.execPath, [join(import.meta.dirname, '..', 'scripts', 'convert-dc.mjs'), join(dir, 'd.html'), join(dir, 'setup.js'), join(dir, 'App.vue'), join(dir, 'pseudo.css')]);
+    expect(existsSync(join(dir, 'App.vue')) && readFileSync(join(dir, 'App.vue'), 'utf8').includes('sc-interp')).toBe(true);
+  });
   it('is idempotent and buildAppVue assembles the SFC from the generated template and the hand-maintained setup script', () => {
     const t = convert('<div>{{ a }}</div>');
     expect(convert('<div>{{ a }}</div>')).toEqual(t);
@@ -1451,6 +1465,8 @@ Run: `cd frontend && source ~/.nvm/nvm.sh && nvm use 22 && npm install -D htmlpa
 // plan's Task 4a "Runtime rules mirrored". Output is deterministic: the same input always yields the same output.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { parseDocument } from 'htmlparser2';
+import { resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 const IDENT_RE = /^[A-Za-z_$][\w$]*/;
 const NUMBER_RE = /^-?\d+(\.\d+)?$/;
@@ -1540,7 +1556,7 @@ export function convert(templateHtml) {
       }
       const v = attrValue(raw, scope);
       if (name === 'class') { if (v.kind === 'static') classStatic = v.js; else classExpr = v.js; continue; }
-      if (v.kind === 'static') attrs.push(raw === '' ? name : `${name}="${escAttr(raw)}"`);
+      if (v.kind === 'static') attrs.push(raw === '' ? name : `${name}="${escAttr(raw.replace(/^(assets|ds)\//, '/$1/'))}"`);   // Global Constraint (a): the design's relative public paths become absolute
       else if (name === 'value') attrs.push(`:value="${escAttr(`(${v.js}) ?? ''`)}"`);
       else if (name === 'checked') attrs.push(`:checked="${escAttr(`(${v.js}) ?? false`)}"`);
       else attrs.push(`:${name}="${escAttr(v.js)}"`);
@@ -1558,7 +1574,7 @@ export function buildAppVue(template, setupJs, pseudoCssImport) {
   return `<!-- GENERATED by frontend/scripts/convert-dc.mjs from docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html — do not edit; run \`npm run gen:app\` -->\n<template>\n${template}\n</template>\n\n<script setup>\nimport '${pseudoCssImport}';\n${setupJs}</script>\n`;
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+if (fileURLToPath(import.meta.url) === resolve(process.argv[1] ?? '')) {   // path comparison, not URL string: the repo path contains a space
   const [dc, setup, outVue, outCss] = process.argv.slice(2);
   const { template, pseudoCss } = convert(extractTemplate(readFileSync(dc, 'utf8')));
   writeFileSync(outVue, buildAppVue(template, readFileSync(setup, 'utf8'), './generated/pseudo.css'));
