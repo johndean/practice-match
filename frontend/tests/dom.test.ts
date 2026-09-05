@@ -73,10 +73,73 @@ describe('normalise', () => {
     });
   });
 
-  it('collapses whitespace-only text to a single space, keeping other text verbatim', () => {
-    expect(normalise({ text: '   \n\t ' })).toEqual({ text: ' ' });
-    expect(normalise({ text: '' })).toEqual({ text: ' ' });
+  // Rule W (John, 2026-09-05): whitespace-only text nodes are DROPPED from child lists on
+  // both targets (not collapsed to a single space, as an earlier draft of this rule had
+  // it) — Vue's compiler removes/condenses them even under `whitespace: 'preserve'`, while
+  // the design's React runtime renders every source whitespace node, so no transpiler
+  // output can match them position-for-position. Text with any visible character is still
+  // compared exactly, whitespace inside it untouched.
+  it('drops whitespace-only and empty text nodes from children (rule W)', () => {
+    const raw = el({
+      children: [{ text: '\n  ' }, el({ tag: 'span' }), { text: '' }, el({ tag: 'em' })]
+    });
+    expect((normalise(raw) as DomElement).children).toEqual([domEl({ tag: 'span' }), domEl({ tag: 'em' })]);
+  });
+
+  it('drops whitespace-only and empty text nodes from shadow content too (rule W)', () => {
+    const raw: RawNode = {
+      shadow: [{ text: '\n  ' }, el({ tag: 'span' }), { text: '' }, el({ tag: 'em' })]
+    };
+    expect(normalise(raw)).toEqual({ shadow: [domEl({ tag: 'span' }), domEl({ tag: 'em' })] });
+  });
+
+  it('keeps text with any visible character verbatim, whitespace inside it untouched', () => {
     expect(normalise({ text: 'Approved buyer ' })).toEqual({ text: 'Approved buyer ' });
+  });
+
+  // Rule B (John, 2026-09-05): on the DESIGN side only, src/href values beginning
+  // `assets/` or `ds/` are read as `/assets/…`/`/ds/…`; the app side (no options, or
+  // `{ design: false }`) is unchanged; any other value (including one already starting
+  // `/assets/`) is untouched either way.
+  describe('rule B — design-side asset path rewrite', () => {
+    it('rewrites design-side assets/ and ds/ src|href to /assets/ and /ds/', () => {
+      const bySrc = el({ attrs: [['src', 'assets/x.png']] });
+      expect((normalise(bySrc, { design: true }) as DomElement).attrs).toEqual([['src', '/assets/x.png']]);
+
+      const byHref = el({ attrs: [['href', 'ds/icons.svg']] });
+      expect((normalise(byHref, { design: true }) as DomElement).attrs).toEqual([['href', '/ds/icons.svg']]);
+    });
+
+    it('leaves a value already starting /assets/, or any other value, untouched', () => {
+      const already = el({ attrs: [['src', '/assets/x.png']] });
+      expect((normalise(already, { design: true }) as DomElement).attrs).toEqual([['src', '/assets/x.png']]);
+
+      const unrelated = el({ attrs: [['src', 'https://example.com/x.png']] });
+      expect((normalise(unrelated, { design: true }) as DomElement).attrs).toEqual([
+        ['src', 'https://example.com/x.png']
+      ]);
+    });
+
+    it('does not rewrite on the app side (no design option)', () => {
+      const raw = el({ attrs: [['src', 'assets/x.png']] });
+      expect((normalise(raw) as DomElement).attrs).toEqual([['src', 'assets/x.png']]);
+    });
+  });
+
+  // Rule C (John, 2026-09-05): on input/select/textarea, live form state is recorded via
+  // `props` (sorted [name, value] pairs from el.value/el.checked/el.selected), not via the
+  // mirrored value/checked/selected attributes.
+  describe('rule C — live form props', () => {
+    it('carries a sorted props field through for a form tag', () => {
+      const raw = el({ tag: 'select', attrs: [['id', 'city']], props: [['value', 'Austin, TX']] });
+      const n = normalise(raw) as DomElement;
+      expect(n.attrs).toEqual([['id', 'city']]);
+      expect(n.props).toEqual([['value', 'Austin, TX']]);
+    });
+
+    it('does not attach a props field to a non-form tag', () => {
+      expect((normalise(el({ tag: 'div' })) as DomElement).props).toBeUndefined();
+    });
   });
 
   it('passes leaflet nodes through unchanged', () => {
@@ -166,6 +229,31 @@ describe('diff', () => {
     const a = domEl({ children: [domEl({ tag: 'image-slot', children: [{ shadow: [domEl({ tag: 'img', attrs: [['src', 'a.png']] })] }] })] });
     const b = domEl({ children: [domEl({ tag: 'image-slot', children: [{ shadow: [domEl({ tag: 'img', attrs: [['src', 'b.png']] })] }] })] });
     expect(diff(a, b)).toEqual(['image-slot[0]/shadow/img[0]: attr src: "a.png" ≠ "b.png"']);
+  });
+
+  // Reviewer finding (Important #1, fix round 1): compareChildren alone only walks
+  // min(a.length, b.length), so a shadow-root child-count mismatch was silently ignored.
+  // The count must be reported at the `.../shadow` path before recursing.
+  it('reports a shadow-root child-count mismatch before recursing further', () => {
+    const shadowHost = (children: DomNode[]) =>
+      domEl({ children: [domEl({ tag: 'image-slot', children: [{ shadow: children }] })] });
+    const a = shadowHost([domEl({ tag: 'img' }), domEl({ tag: 'span' })]);
+    const b = shadowHost([domEl({ tag: 'img' })]);
+    expect(diff(a, b)).toEqual(['image-slot[0]/shadow: child count 2 ≠ 1']);
+  });
+
+  it('reports the same shadow-root child-count mismatch when the shadow root is the diffed root itself', () => {
+    const a: DomNode = { shadow: [domEl({ tag: 'img' }), domEl({ tag: 'span' })] };
+    const b: DomNode = { shadow: [domEl({ tag: 'img' })] };
+    expect(diff(a, b)).toEqual(['shadow: child count 2 ≠ 1']);
+  });
+
+  it('reports a differing props entry, with path (rule C)', () => {
+    const a = domEl({
+      children: [domEl({ tag: 'span' }), domEl({ tag: 'select', props: [['value', 'Austin, TX']] })]
+    });
+    const b = domEl({ children: [domEl({ tag: 'span' }), domEl({ tag: 'select', props: [['value', 'Any']] })] });
+    expect(diff(a, b)).toEqual(['select[1]: prop value "Austin, TX" ≠ "Any"']);
   });
 
   it('reports a strict tag mismatch and does not cascade further diffs below it', () => {

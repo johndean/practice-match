@@ -28,6 +28,10 @@ export interface DomElement {
   attrs: [string, string][]; // sorted by name; excludes class, style and the dropped attrs
   class: string[]; // sorted tokens; scp…/sch… pseudo-class hooks collapse to '<pseudo>'
   style: [string, string][]; // sorted declarations read from el.style, not the attribute
+  // Rule C: only present on input/select/textarea — sorted [name, value] pairs from the
+  // LIVE el.value/el.checked/el.selected, standing in for the value/checked/selected
+  // attributes (which Vue mirrors onto the DOM but React does not set at all).
+  props?: [string, string][];
   children: DomNode[];
 }
 export type DomNode = DomText | DomShadow | DomLeaflet | DomElement;
@@ -52,6 +56,9 @@ export interface RawElement {
   attrs: [string, string][];
   classList: string[];
   style: [string, string][];
+  // Rule C: only populated by the in-page walk for input/select/textarea, from the live
+  // el.value/el.checked/el.selected properties (whichever exist on the element).
+  props?: [string, string][];
   children: RawNode[];
 }
 export type RawNode = RawText | RawShadow | RawLeaflet | RawElement;
@@ -76,25 +83,59 @@ const PSEUDO_CLASS = /^sc[hp][0-9a-z]+$/;
 
 const byString = ([a]: [string, string], [b]: [string, string]) => (a < b ? -1 : a > b ? 1 : 0);
 
-export function normalise(raw: RawNode): DomNode {
+// Rule C: only these three tags ever carry a `props` field (excluded attrs/live props).
+const FORM_TAGS = new Set(['input', 'select', 'textarea']);
+
+// Rule W: a text node with only spaces/tabs/newlines (or none at all) is dropped from its
+// parent's child list entirely — not collapsed to a single space (that was an earlier,
+// now-superseded draft of this rule). Vue's compiler removes/condenses these even under
+// `whitespace: 'preserve'`, while the design's React runtime renders every source
+// whitespace node, so no transpiler output can match them position-for-position.
+const isWhitespaceOnlyText = (n: RawNode): boolean => kindOf(n) === 'text' && /^\s*$/.test((n as RawText).text);
+
+// Rule B: on the design (reference) target only, a `src`/`href` value beginning `assets/`
+// or `ds/` is read as if it began `/assets/`/`/ds/` (the plan's mandated path rewrite).
+// Any other value — including one already starting `/assets/` — is left untouched, on
+// either target, and this never applies to the app side at all.
+function rewriteDesignAttr([name, value]: [string, string]): [string, string] {
+  if (name !== 'src' && name !== 'href') return [name, value];
+  if (value.startsWith('assets/') || value.startsWith('ds/')) return [name, `/${value}`];
+  return [name, value];
+}
+
+export interface NormaliseOptions {
+  design?: boolean;
+}
+
+export function normalise(raw: RawNode, opts: NormaliseOptions = {}): DomNode {
   switch (kindOf(raw)) {
     case 'text': {
-      const { text } = raw as RawText;
-      return { text: /^\s*$/.test(text) ? ' ' : text };
+      // Whitespace-only filtering happens in the PARENT (element/shadow) case below, by
+      // dropping such children before recursing — a lone text node handed to normalise()
+      // directly (as in a unit test, or the diff root) is returned verbatim either way.
+      return { text: (raw as RawText).text };
     }
-    case 'shadow':
-      return { shadow: (raw as RawShadow).shadow.map(normalise) };
+    case 'shadow': {
+      const shadow = (raw as RawShadow).shadow;
+      return { shadow: shadow.filter((n) => !isWhitespaceOnlyText(n)).map((n) => normalise(n, opts)) };
+    }
     case 'leaflet':
       return { tag: 'div', leaflet: true };
     default: {
       const el = raw as RawElement;
-      return {
+      let attrs = el.attrs.filter(([name]) => !isDroppedAttr(name)).slice().sort(byString);
+      if (opts.design) attrs = attrs.map(rewriteDesignAttr);
+      const node: DomElement = {
         tag: el.tag,
-        attrs: el.attrs.filter(([name]) => !isDroppedAttr(name)).slice().sort(byString),
+        attrs,
         class: el.classList.map((c) => (PSEUDO_CLASS.test(c) ? '<pseudo>' : c)).sort(),
         style: el.style.slice().sort(byString),
-        children: el.children.map(normalise)
+        children: el.children.filter((n) => !isWhitespaceOnlyText(n)).map((n) => normalise(n, opts))
       };
+      if (FORM_TAGS.has(el.tag) && el.props) {
+        node.props = el.props.slice().sort(byString);
+      }
+      return node;
     }
   }
 }
@@ -108,26 +149,33 @@ function joinPath(base: string, segment: string): string {
 function show(pair: [string, string] | null): string {
   return pair ? `"${pair[1]}"` : '(none)';
 }
-// Walks two sorted [name, value] arrays (attrs or style declarations) in lockstep and
-// reports the first name whose value differs, or the first name present on only one side.
-function firstPairDiff(label: string, a: [string, string][], b: [string, string][]): string | null {
+type PairFmt = (name: string, av: [string, string] | null, bv: [string, string] | null) => string;
+// Walks two sorted [name, value] arrays (attrs, style declarations, or — rule C — props) in
+// lockstep and reports the first name whose value differs, or the first name present on
+// only one side. `fmt` supplies the message shape, which differs slightly by kind: attrs
+// and style use `label name: "a" ≠ "b"`; props use `prop name "a" ≠ "b"` (no colon after
+// the name), per the brief's own example.
+function firstPairDiff(a: [string, string][], b: [string, string][], fmt: PairFmt): string | null {
   let i = 0;
   let j = 0;
   while (i < a.length || j < b.length) {
     const av = i < a.length ? a[i] : null;
     const bv = j < b.length ? b[j] : null;
     if (av && bv && av[0] === bv[0]) {
-      if (av[1] !== bv[1]) return `${label} ${av[0]}: ${show(av)} ≠ ${show(bv)}`;
+      if (av[1] !== bv[1]) return fmt(av[0], av, bv);
       i++;
       j++;
     } else if (bv === null || (av !== null && av[0] < bv[0])) {
-      return `${label} ${av![0]}: ${show(av)} ≠ ${show(null)}`;
+      return fmt(av![0], av, null);
     } else {
-      return `${label} ${bv![0]}: ${show(null)} ≠ ${show(bv)}`;
+      return fmt(bv![0], null, bv);
     }
   }
   return null;
 }
+const attrFmt: PairFmt = (name, av, bv) => `attr ${name}: ${show(av)} ≠ ${show(bv)}`;
+const styleFmt: PairFmt = (name, av, bv) => `style ${name}: ${show(av)} ≠ ${show(bv)}`;
+const propFmt: PairFmt = (name, av, bv) => `prop ${name} ${show(av)} ≠ ${show(bv)}`;
 function classDiff(a: string[], b: string[]): string | null {
   if (a.length === b.length && a.every((c, i) => c === b[i])) return null;
   return `class [${a.join(' ')}] ≠ [${b.join(' ')}]`;
@@ -138,11 +186,13 @@ function compareElements(a: DomElement, b: DomElement, selfPath: string, childBa
     out.push(`${selfPath}: tag <${a.tag}> ≠ <${b.tag}>`);
     return; // structurally different subtrees below here — nothing further is meaningful
   }
-  const attr = firstPairDiff('attr', a.attrs, b.attrs);
+  const attr = firstPairDiff(a.attrs, b.attrs, attrFmt);
   if (attr) out.push(`${selfPath}: ${attr}`);
+  const prop = firstPairDiff(a.props ?? [], b.props ?? [], propFmt);
+  if (prop) out.push(`${selfPath}: ${prop}`);
   const cls = classDiff(a.class, b.class);
   if (cls) out.push(`${selfPath}: ${cls}`);
-  const style = firstPairDiff('style', a.style, b.style);
+  const style = firstPairDiff(a.style, b.style, styleFmt);
   if (style) out.push(`${selfPath}: ${style}`);
   if (a.children.length !== b.children.length) {
     out.push(`${selfPath}: child count ${a.children.length} ≠ ${b.children.length}`);
@@ -153,6 +203,18 @@ function compareElements(a: DomElement, b: DomElement, selfPath: string, childBa
 function compareChildren(a: DomNode[], b: DomNode[], basePath: string, out: string[]): void {
   const len = Math.min(a.length, b.length);
   for (let i = 0; i < len; i++) compareChild(a[i], b[i], i, basePath, out);
+}
+
+// Reviewer finding (Important #1, fix round 1): compareChildren alone only ever walks
+// min(a.length, b.length), so a shadow-root child-count mismatch was silently swallowed —
+// nothing was reported about the missing/extra nodes. Both call sites that recurse into a
+// shadow root (compareChild below, and diff()'s root-is-shadow branch) go through this
+// helper instead, so the count is always reported at the `.../shadow` path before recursing.
+function compareShadowChildren(a: DomNode[], b: DomNode[], shadowPath: string, out: string[]): void {
+  if (a.length !== b.length) {
+    out.push(`${shadowPath}: child count ${a.length} ≠ ${b.length}`);
+  }
+  compareChildren(a, b, shadowPath, out);
 }
 
 // Text-node (and node-kind) mismatches are reported at the PARENT's own path — they never
@@ -180,7 +242,7 @@ function compareChild(a: DomNode, b: DomNode, index: number, parentPath: string,
     case 'leaflet':
       return; // both reduced identically by construction — nothing further to compare
     case 'shadow':
-      compareChildren((a as DomShadow).shadow, (b as DomShadow).shadow, joinPath(parentPath, 'shadow'), out);
+      compareShadowChildren((a as DomShadow).shadow, (b as DomShadow).shadow, joinPath(parentPath, 'shadow'), out);
       return;
     default: {
       const ea = a as DomElement;
@@ -210,7 +272,10 @@ export function diff(a: DomNode, b: DomNode): string[] {
     case 'leaflet':
       return out;
     case 'shadow':
-      compareChildren((a as DomShadow).shadow, (b as DomShadow).shadow, 'shadow', out);
+      // Dead in practice (serialize()'s root is always the app/design's outer <div>, never
+      // a shadow host itself), but kept symmetric with compareChild's shadow branch above —
+      // both go through compareShadowChildren so a count mismatch is never silently dropped.
+      compareShadowChildren((a as DomShadow).shadow, (b as DomShadow).shadow, 'shadow', out);
       return out;
     default:
       // The root itself has no siblings/position, so its own attr/class/style/count issues
@@ -227,8 +292,14 @@ export function diff(a: DomNode, b: DomNode): string[] {
 // a RawNode tree. All of the normalisation rules live in normalise() above, shared by
 // both this wrapper and dom.test.ts's unit tests.
 // ---------------------------------------------------------------------------------------
-export async function serialize(page: Page): Promise<DomNode> {
+export async function serialize(page: Page, opts: NormaliseOptions = {}): Promise<DomNode> {
   const raw = await page.evaluate<RawNode>(() => {
+    // Rule C: only these tags get value/checked/selected excluded from attrs and a `props`
+    // field of the live properties instead (Vue's runtime-dom mirrors form state onto the
+    // attribute; React sets only the property, so the attribute-based comparison can never
+    // agree — the live property is the thing that's actually true on both targets).
+    const FORM_TAGS = new Set(['input', 'select', 'textarea']);
+
     // Comments (and any other non-element, non-text node) carry no rendered content and
     // have no counterpart in either target's markup; they are simply not one of the two
     // node shapes this oracle represents, so walk() returns null for them and callers
@@ -244,9 +315,12 @@ export async function serialize(page: Page): Promise<DomNode> {
       if (el.classList.contains('leaflet-container')) {
         return { tag: 'div', leaflet: true };
       }
+      const tag = el.tagName.toLowerCase();
+      const isFormTag = FORM_TAGS.has(tag);
       const attrs: [string, string][] = [];
       for (const attr of Array.from(el.attributes)) {
         if (attr.name === 'class' || attr.name === 'style') continue;
+        if (isFormTag && (attr.name === 'value' || attr.name === 'checked' || attr.name === 'selected')) continue;
         attrs.push([attr.name, attr.value]);
       }
       const style: [string, string][] = [];
@@ -254,6 +328,17 @@ export async function serialize(page: Page): Promise<DomNode> {
       for (let i = 0; i < decl.length; i++) {
         const prop = decl[i];
         style.push([prop, decl.getPropertyValue(prop)]);
+      }
+      let props: [string, string][] | undefined;
+      if (isFormTag) {
+        // Feature-detect rather than hard-code per tag: `checked` only exists on
+        // HTMLInputElement, `selected` on neither input/select/textarea today (it's an
+        // <option> property) but is read defensively in case that ever changes.
+        const live = el as unknown as { value?: unknown; checked?: unknown; selected?: unknown };
+        props = [];
+        if ('value' in live) props.push(['value', String(live.value)]);
+        if ('checked' in live) props.push(['checked', String(live.checked)]);
+        if ('selected' in live) props.push(['selected', String(live.selected)]);
       }
       const children: RawNode[] = [];
       if (el.shadowRoot) {
@@ -268,7 +353,7 @@ export async function serialize(page: Page): Promise<DomNode> {
         const w = walk(child);
         if (w) children.push(w);
       }
-      return { tag: el.tagName.toLowerCase(), attrs, classList: Array.from(el.classList), style, children };
+      return { tag, attrs, classList: Array.from(el.classList), style, children, ...(props ? { props } : {}) };
     }
 
     const root = document.querySelector('div[style*="min-height: 100vh"]');
@@ -277,5 +362,5 @@ export async function serialize(page: Page): Promise<DomNode> {
     if (!walked) throw new Error('dom oracle: root failed to serialise');
     return walked;
   });
-  return normalise(raw);
+  return normalise(raw, opts);
 }

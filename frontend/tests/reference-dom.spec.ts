@@ -21,7 +21,7 @@ test.describe('reference DOM snapshots', () => {
       await booted(page);
       await s.steps(page);
       await settle(page);
-      writeFileSync(join(OUT, `${s.name}.json`), JSON.stringify(await serialize(page), null, 2));
+      writeFileSync(join(OUT, `${s.name}.json`), JSON.stringify(await serialize(page, { design: true }), null, 2));
     });
   }
 });
