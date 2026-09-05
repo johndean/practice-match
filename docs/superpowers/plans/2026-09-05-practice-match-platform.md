@@ -3107,6 +3107,9 @@ git add scripts tests/scripts && git commit -m "feat(deploy): guarded railway de
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/platform && git push production feat/platform
 ```
 
+
+**Rulings during execution (John, 2026-09-06):** the PostGIS image pin is done with the CLI (`railway service source connect --image postgis/postgis:16-3.5 --service PostGIS --environment production`, available in Railway CLI 5.26) after the 🚦 check, for production and — if the duplicate did not inherit it — QA. The private-network key on this template is `DATABASE_PRIVATE_URL` (the template's `DATABASE_URL` is the public `rlwy.net` proxy), so `DATABASE_URL=${{PostGIS.DATABASE_PRIVATE_URL}}`. Accepted adaptations: `railway logs --lines 20` (5.26 streams by default; a `| tail` never returns); `scripts/verify-deploy.sh` resolves its target `$2` → `VERIFY_BASE_URL` → the environment's default domain and `EXPECT_SHA` defaults to `git rev-parse --short HEAD` (Step 1b's contract required both); the healthz probe is a real pipe so a failed fetch fails the check. **Hazard found and fixed:** `~/.railway/config.json` linked `/Users/johndean` itself to the CE.VIN project, so every unlinked directory under `$HOME` resolved to CE.VIN — an unguarded `railway up` would have deployed over CE.VIN's production API; the 🚦 guard caught it, and John ruled `railway unlink` in `/Users/johndean`. Task 9's `DEPLOY.md` documents the hazard and the guard.
+
 ---
 
 ### Task 9: CI and working docs
