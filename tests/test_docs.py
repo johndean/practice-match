@@ -38,6 +38,39 @@ REQUIRED_CI_COMMANDS = (
 # ad hoc inside the job.
 FORBIDDEN_CI_SUBSTRINGS = ("pip install", "npm install --no-save")
 
+# Fix round 1's frontend-coverage ruling (John, 2026-09-06) plus the app.setup.js addition
+# ratified in fix round 2 — the exact set frontend/vite.config.ts's coverage.exclude must carry.
+RATIFIED_COVERAGE_EXCLUDE = {
+    "src/App.vue",
+    "src/app.setup.js",
+    "src/logic.js",
+    "src/dc-logic.js",
+    "src/generated/**",
+    "src/lib/**",
+    "src/map/engine.ts",
+    "src/map/testing/**",
+    "src/**/*.test.ts",
+    "src/**/*.d.ts",
+}
+
+
+def _strip_line_comments(block: str) -> str:
+    # A `//` comment inside the exclude array can itself contain an apostrophe (e.g. "App.vue's
+    # <script setup>"), which would otherwise be misread as a string delimiter by the naive
+    # quote-matching regex below.
+    return "\n".join(line for line in block.splitlines() if not line.strip().startswith("//"))
+
+
+def _vite_coverage_config() -> tuple[dict[str, int], set[str]]:
+    text = (ROOT / "frontend" / "vite.config.ts").read_text()
+    thresholds_block = re.search(r"thresholds:\s*\{([^}]*)\}", text)
+    assert thresholds_block, "frontend/vite.config.ts: coverage.thresholds block not found"
+    thresholds = {k: int(v) for k, v in re.findall(r"(\w+):\s*(\d+)", thresholds_block.group(1))}
+    exclude_block = re.search(r"exclude:\s*\[(.*?)\]", text, re.DOTALL)
+    assert exclude_block, "frontend/vite.config.ts: coverage.exclude block not found"
+    exclude = set(re.findall(r"'([^']*)'", _strip_line_comments(exclude_block.group(1))))
+    return thresholds, exclude
+
 
 def env_names() -> set[str]:
     return {(f.alias or name).upper() for name, f in Settings.model_fields.items()}
@@ -98,8 +131,32 @@ def test_ruff_config_selects_a_rule_set_with_no_ignores():
     pyproject = tomllib.loads((ROOT / "pyproject.toml").read_text())
     ruff = pyproject.get("tool", {}).get("ruff")
     assert ruff, "pyproject.toml is missing [tool.ruff]"
-    lint = ruff.get("lint", ruff)  # accept either [tool.ruff.lint] or top-level [tool.ruff]
-    assert not lint.get("ignore") and not lint.get("extend-ignore"), "ruff config must carry no ignores (fix round 1)"
+    lint = ruff.get("lint", {})
+    # Checked independently at BOTH levels (fix round 3 hardening): ruff honours an ignore
+    # wherever it's written, so checking only [tool.ruff.lint] would miss one hiding in the
+    # top-level [tool.ruff] table even while [tool.ruff.lint] also exists.
+    for scope, table in (("[tool.ruff]", ruff), ("[tool.ruff.lint]", lint)):
+        assert not table.get("ignore"), f"{scope} must carry no ignore"
+        assert not table.get("extend-ignore"), f"{scope} must carry no extend-ignore"
+        assert not table.get("per-file-ignores"), f"{scope} must carry no per-file-ignores"
+    extend_select = set(lint.get("extend-select", []))
+    assert {"I", "RUF"} <= extend_select, "[tool.ruff.lint] extend-select must include I and RUF"
+
+
+def test_frontend_coverage_thresholds_are_100_and_exclude_is_the_ratified_set():
+    thresholds, exclude = _vite_coverage_config()
+    assert thresholds == {"lines": 100, "branches": 100, "functions": 100, "statements": 100}
+    assert exclude == RATIFIED_COVERAGE_EXCLUDE
+
+
+def test_policy_doc_ruff_paths_match_the_ci_workflow():
+    policy = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-quality-and-performance-policy.md").read_text()
+    workflow = (ROOT / ".github" / "workflows" / "quality.yml").read_text()
+    policy_m = re.search(r"poetry run ruff check ([\w/ ]+?)(?:`|&&)", policy)
+    workflow_m = re.search(r"poetry run ruff check ([\w/ ]+?)(?:\n|$)", workflow)
+    assert policy_m, "no `poetry run ruff check ...` invocation found in the policy doc"
+    assert workflow_m, "no `poetry run ruff check ...` step found in quality.yml"
+    assert policy_m.group(1).strip() == workflow_m.group(1).strip()
 
 
 def test_working_docs_carry_the_railway_status_rule_and_the_key_handling_rule():

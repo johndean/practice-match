@@ -505,7 +505,7 @@ describe('ImageSlot — credit attribution (renderCredit / withReferral)', () =>
 });
 
 describe('ImageSlot — ResizeObserver wiring', () => {
-  it('observes the host when ResizeObserver is available, re-renders on notify, and disconnects on unmount', () => {
+  it('observes the host when ResizeObserver is available, and its notify callback itself re-renders, and disconnects on unmount', () => {
     let capturedCallback: (() => void) | undefined;
     let observedTarget: Element | undefined;
     let disconnectCalls = 0;
@@ -516,12 +516,27 @@ describe('ImageSlot — ResizeObserver wiring', () => {
     }
     vi.stubGlobal('ResizeObserver', FakeResizeObserver);
     try {
-      const { wrapper, host, root } = slot({ id: 'x', shape: 'rect' });
+      const { wrapper, host, root } = slot({ id: 'x', src: PHOTO });
+      const img = imgOf(root);
       expect(observedTarget).toBe(host);
       expect(capturedCallback).toBeTypeOf('function');
+      expect(img.style.width).toBe('100%'); // no-geometry fallback, before — same as after if notify did nothing
 
-      expect(() => capturedCallback!()).not.toThrow(); // the notify callback re-renders
-      expect(frameOf(root).style.borderRadius).toBe(''); // rect: still square after the re-render
+      // Real geometry (naturalWidth/Height on the img, clientWidth/Height on the host) is not
+      // reactive — nothing but an actual render()/applyView() call picks it up. Stubbing it
+      // and firing only the captured notify callback (no prop change, no other trigger) is
+      // what makes the resulting width discriminating: '200%' could not appear here unless
+      // the ResizeObserver wiring genuinely re-rendered, unlike the previous version of this
+      // test, whose 'rect stays square' assertion held whether or not notify did anything.
+      Object.defineProperty(img, 'naturalWidth', { value: 400, configurable: true });
+      Object.defineProperty(img, 'naturalHeight', { value: 200, configurable: true });
+      Object.defineProperty(host, 'clientWidth', { value: 100, configurable: true });
+      Object.defineProperty(host, 'clientHeight', { value: 100, configurable: true });
+      capturedCallback!();
+
+      // cover (default fit): base = max(fw/iw, fh/ih) = max(100/400, 100/200) = 0.5
+      expect(img.style.width).toBe('200%');  // 400 * 0.5 / 100 * 100
+      expect(img.style.height).toBe('100%'); // 200 * 0.5 / 100 * 100
 
       wrapper.unmount();
       expect(disconnectCalls).toBe(1);

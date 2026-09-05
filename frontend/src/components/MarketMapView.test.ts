@@ -326,7 +326,7 @@ describe('MarketMapView — zoom/recenter controls and teardown', () => {
 
 describe('MarketMapView — onMounted guards and error handling', () => {
   it('unmounting before createEngine()/mount() settles hits the (!host.value) guard instead of crashing', async () => {
-    installLeafletStub();
+    const stub = installLeafletStub();
     const wrapper = mount(MarketMapView, {
       props: {
         practices: practices(1), communities: communities(1),
@@ -338,8 +338,11 @@ describe('MarketMapView — onMounted guards and error handling', () => {
     // e.mount()'s own await) has a chance to resume — `host.value` is null by then.
     wrapper.unmount();
     await flushPromises();
-    // Nothing to assert on the destroyed component; the absence of an unhandled rejection
-    // or thrown error (vitest fails the test on either) is the property under test.
+    // The absence of an unhandled rejection or thrown error (vitest fails the test on
+    // either) proves the guard was hit rather than a crash; asserting `L.map` was never
+    // called is the discriminating check that it's the (!host.value) guard doing that,
+    // not e.g. a mount that happened to complete harmlessly after unmount.
+    expect(stub.calls.filter((c) => c.fn === 'map')).toHaveLength(0);
   });
 
   it('shows "Map unavailable" when the engine fails to mount (onMounted\'s catch branch)', async () => {
@@ -461,7 +464,12 @@ describe('MarketMapView — practice pins: layer toggle, active state, click-thr
 
     const pinsGroup = (stub.map.added as { clearLayers?: unknown; added: unknown[] }[]).filter((g) => g.clearLayers)[1];
     const clickedPin = pinsGroup.added[0] as { on_click?: () => void };
+    const callsBefore = stub.calls.length;
     expect(() => clickedPin.on_click!()).not.toThrow();
+    // `not.toThrow()` alone would also pass a broken guard that quietly did something else on
+    // click; the call log being unchanged is the discriminating proof that nothing happened
+    // at all — `props.onSelect && …` really did short-circuit rather than reach the engine.
+    expect(stub.calls.length).toBe(callsBefore);
   });
 });
 

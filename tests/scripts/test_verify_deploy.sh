@@ -35,11 +35,17 @@ trap cleanup EXIT
 
 railway_calls() { wc -l < "$FAKE_RAILWAY_LOG" | tr -d ' '; }
 
-# start_server <mode> <port>. Modes: ok | spa_missing | deep_503 | no_postgis
+# start_server <mode>. Modes: ok | spa_missing | deep_503 | no_postgis
+# Binds port 0 (the OS picks a free ephemeral port) and prints it, once, before serving —
+# fixed ports (8765-8768) collided under a concurrent run of this same script (fix round 3,
+# re-review observation), and a bind failure in the backgrounded server was otherwise
+# invisible: the script never checked that its own server actually came up.
+PORTFILE_N=0
 start_server() {
-  PORT="$2"
-  MODE="$1" python3 - "$PORT" <<'PY' &
-import json, os, sys
+  PORTFILE_N=$((PORTFILE_N + 1))
+  local portfile="$tmp/port.$PORTFILE_N"
+  MODE="$1" python3 - > "$portfile" <<'PY' &
+import json, os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 MODE = os.environ.get("MODE", "ok")
@@ -63,14 +69,23 @@ class H(BaseHTTPRequestHandler):
             self._send(200, "text/html", SHELL_BAD if MODE == "spa_missing" else SHELL_OK)
     def log_message(self, *a): pass
 
-HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
+srv = HTTPServer(("127.0.0.1", 0), H)   # port 0: OS assigns a free ephemeral port
+print(srv.server_port, flush=True)      # announced once, read back by the shell caller
+srv.serve_forever()
 PY
   SRV=$!
-  sleep 0.6
+  # Poll (bounded) for the announced port instead of a fixed sleep: a concurrent run can
+  # never collide on a bind, but the server's own startup time still varies.
+  PORT=""
+  for _ in $(seq 1 50); do
+    [[ -s "$portfile" ]] && { PORT=$(cat "$portfile"); break; }
+    sleep 0.05
+  done
+  [[ -n "$PORT" ]] || fail "start_server ($1): the background server never announced a port"
 }
 
 # --- 1. healthy target verifies, and prints all three OK lines -----------------
-start_server ok 8765
+start_server ok
 : > "$FAKE_RAILWAY_LOG"
 out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA) || fail "a healthy target must verify; output: $out"
 for line in "healthz OK" "deep healthz OK" "SPA fallback OK"; do [[ "$out" == *"$line"* ]] || fail "missing '$line' in: $out"; done
@@ -90,7 +105,7 @@ if VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=deadbee bash scripts/veri
 stop_server
 
 # --- 4. the SPA shell is missing: healthz and deep are healthy, /browse is not --
-start_server spa_missing 8766
+start_server spa_missing
 if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
   fail "a missing SPA shell must fail the script; it exited 0 with: $out"
 fi
@@ -99,7 +114,7 @@ fi
 stop_server
 
 # --- 5. deep healthz 503 fails, and the message names deep ---------------------
-start_server deep_503 8767
+start_server deep_503
 if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
   fail "a 503 from /api/healthz/deep must fail the script; it exited 0 with: $out"
 fi
@@ -108,7 +123,7 @@ fi
 stop_server
 
 # --- 6. db.ok true but postgis_version absent: the pin/extension is not proven --
-start_server no_postgis 8768
+start_server no_postgis
 if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
   fail "a missing postgis_version must fail the script; it exited 0 with: $out"
 fi
