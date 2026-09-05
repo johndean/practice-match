@@ -3550,7 +3550,7 @@ Expected: `gitleaks`, `backend`, `frontend` all green in both repos. A red `fron
 - Modify: `DEPLOY.md` (DNS values), `docs/superpowers/specs/2026-09-05-practice-match-platform-design.md` (status line), `frontend/tests/playwright.config.ts` (live-target override)
 - Create: `frontend/tests/targets.ts`, `frontend/tests/targets.test.ts` *(added 2026-09-06: created by Steps 0–1 but missing from this list)*, `scripts/k6-smoke.js`, `.github/workflows/perf.yml` *(added 2026-09-06: mandated by the "Nightly load smoke" paragraph after Step 3; the k6 `MEMBER_TOKEN` is a GitHub Actions secret John sets — never a file)*
 
-**Interfaces:** `PW_APP_URL=<https://host>` makes the `app` project target a live deployment (no local dev server).
+**Interfaces:** `PW_APP_URL=<https://host>` makes the `app` project target a live deployment (no local dev server). `resolveTargets(env, ports)` returns `{ baseURL, webServer }` where each `webServer` entry carries Playwright's full `WebServer` options (`command, url, cwd, timeout, reuseExistingServer, stdout, stderr`) — the `{ command; url }` shape in Step 0 is the minimum the test asserts, not the whole type *(clarified 2026-09-06 after the Task 10 review)*.
 
 - [ ] **Step 0: Failing test for the live-target resolver**
 
