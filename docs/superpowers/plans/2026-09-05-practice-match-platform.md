@@ -23,7 +23,7 @@
 - `commit_sha` in `/api/healthz` is the deployed git SHA: `scripts/deploy.sh` sets the `COMMIT_SHA` service variable from `git rev-parse --short HEAD` before each `railway up`; the Dockerfile declares `ARG COMMIT_SHA`.
 - Visual tolerance: `maxDiffPixels: 0, threshold: 0.1`; ceiling if relaxed `maxDiffPixelRatio: 0.001`, recorded in `playwright.config.ts` with the reason.
 - Basemap tile hosts (`**/*.arcgisonline.com/**`) are intercepted on both harness targets and answered with a blank 1×1 image (`route.fulfill`, not `route.abort()` — an aborted request makes Chromium emit its own `console.error`, which the error gate forbids). *Amended 2026-09-05 by John's ruling on Task 3 deviation D2.*
-- Health body (exact keys): `status, version, environment, commit_sha, db{ok, postgis_version|error}, redis{ok|error}`. `/api/healthz` is always 200; `/api/healthz/deep` is 503 when `db.ok` or `redis.ok` is false.
+- Health body (exact keys): `status, version, environment, commit_sha, site_mode, db{ok, postgis_version|error}, redis{ok|error}` (`site_mode` added by Task 11b, spec 2026-09-06: `"app"` | `"coming_soon"`). `/api/healthz` is always 200; `/api/healthz/deep` is 503 when `db.ok` or `redis.ok` is false.
 - `frontend/package.json` `version` == `pyproject.toml` `[project].version` (starts `0.1.0`).
 - Fingerprinted build output goes to `dist/_app/` (Vite `build.assetsDir: '_app'`) so `/assets/*` (icons, photos, logo) is never served with immutable caching.
 - Every commit: conventional message, trailer `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`, pushed to both `origin` and `production`.
@@ -3617,6 +3617,8 @@ Expected: verify OK; smoke green; visual `25 passed` against the live QA build (
 - [ ] **Step 3b (added 2026-09-06): `DEPLOY.md` note** — `scripts/verify-deploy.sh` asserts the deployed `commit_sha` equals `EXPECT_SHA`; unset OR empty both fall back to the current checkout's `git rev-parse --short HEAD` (bash `${EXPECT_SHA:-…}` treats them identically — verified by the Task 8 round-2 re-review: `EXPECT_SHA=""` inside a checkout still asserts against local HEAD); a non-empty value is compared verbatim; the assertion is skipped ONLY when the script runs outside a git checkout. When the branch has moved past the deployed tree, pass `EXPECT_SHA=<deployed sha>` explicitly (as done for QA at `087acc1`). Two sentences next to the `SKIP_VERIFY` rule; the drift test asserts `EXPECT_SHA` appears in `DEPLOY.md`. The Task 8 report's "explicitly empty disables the check" wording is wrong and must not be copied.
 - [ ] **Step 4: Production** — *Gate added 2026-09-06 (John, after seeing the prototype jump bar on qa.foundation.vin): the bar stays on QA (`ENVIRONMENT=qa`) and must be OFF in production. Before `scripts/deploy.sh production`, the controller shows John the QA-verified state and gets his explicit go; after the deploy, the served production bundle must contain `prototypeBar:{type:Boolean,default:!1}` (the Task 8 check) and the gate screen must render without the bar — if either fails, roll back and STOP.*
 
+> **Superseded 2026-09-06 (John: production publishes a Coming Soon page, not the marketplace — spec `docs/superpowers/specs/2026-09-06-coming-soon-production-mode-design.md`).** The commands below are NOT run. Task 11 executes here (11a → 11f), and the production step at the end of Task 11f replaces this one: production deploys the same image with `SITE_MODE=coming_soon` and `PUBLIC_INDEXING=true`, and the served bundle check becomes the coming-soon title check. The prototype-bar gate is moot on production (no marketplace bundle is served) and stays in force for the launch flip (`DEPLOY.md` §Site mode). John's go for the coming-soon production deploy was given 2026-09-06 ("approved and push coming soon to production").
+
 ```bash
 git status --short | grep -q . && { echo "commit first"; exit 1; }
 scripts/deploy.sh production
@@ -3639,13 +3641,782 @@ cd frontend && PW_APP_URL=https://qa.foundation.vin npx playwright test --config
 ```
 (That regenerates six reference PNGs into `tests/visual.spec.ts-snapshots/` — they are pixel-identical to the live app by the suite above, so they double as the live screenshots.) Copy them to `/private/tmp/…/scratchpad/handback/` and send them to John with `SendUserFile`.
 
-Update the spec's status line to `Implemented 2026-09-__ — live on qa.foundation.vin and foundation.vin` and commit. Then write the hand-back:
-- **Forwardable summary** (no jargon): Practice Match is live at foundation.vin as the approved design with sample listings; the sign-in is a preview until member accounts arrive; the team test site is qa.foundation.vin.
+Update the spec's status line to `Implemented 2026-09-__ — live on qa.foundation.vin (marketplace) and foundation.vin (coming soon)` and commit. Then write the hand-back:
+- **Forwardable summary** (no jargon) *(amended 2026-09-06 for the coming-soon pivot)*: foundation.vin shows the VIN Foundation Coming Soon page and collects launch-notification sign-ups; the full marketplace is live for the team on qa.foundation.vin as the approved design with sample listings; the sign-in there is a preview until member accounts arrive; launching the marketplace on foundation.vin later is one setting change and a redeploy.
 - **Engineer's note:** version, commit, both remotes pushed, both hosts `noindex` until launch, the fact that production still exposes the design's "Prototype — access states" shortcuts (anyone can enter the fixture marketplace and its fictional admin console — accepted by John 2026-09-05, removed in Sub-project 2), CI green in both repos, visual suite 25/25 on QA, production smoke, worker ping; explicitly list anything not verified (e.g. Linux-vs-macOS rendering if the tolerance was relaxed) and the VIN Foundation open items (basemap licence, mobile breakpoint).
 
 - [ ] **Step 7: Finish the branch**
 
 Use superpowers:finishing-a-development-branch: merge `feat/platform` → `main`, push `main` to both remotes, delete the branch, then invoke the Census data-layer plan.
+
+---
+
+### Task 11: Coming Soon production mode — spec `docs/superpowers/specs/2026-09-06-coming-soon-production-mode-design.md` (John, 2026-09-06). Executed AFTER Task 10 Steps 0–3b and BEFORE Task 10 Step 4; sub-tasks 11a → 11f in order, one implementer at a time.
+
+**Why:** production (`foundation.vin`) publishes the VIN Foundation Coming Soon page, not the marketplace. QA keeps the marketplace; the coming-soon page never goes to QA. Same image, one `SITE_MODE` variable; launch later is a variable flip and a redeploy. John gave the production go on 2026-09-06 ("approved and push coming soon to production") — it is acted on once 11a–11d and 11f are green and re-reviewed; 11e (pixel gate) waits for the design file and does not block the deploy.
+
+**Source of the page:** `/Users/johndean/Downloads/VIN FOUNDATION/Coming Soon/coming_soon_vue` (identical to `Vin Foundation Marketplace Design (1).zip` → `coming_soon_vue/`, 21 files incl. `public/ds/fonts/ProximaNova-*`). Copy excludes `node_modules/` and `dist/`.
+
+---
+
+### Task 11a: Import the page and build it into the image
+
+**Files:**
+- Create: `coming-soon/**` (copied verbatim), `coming-soon/package-lock.json`
+- Modify: `Dockerfile`, `.dockerignore`, `.railwayignore`, `.gitignore`, `tests/test_build_config.py`
+
+**Interfaces:**
+- Produces: image path `/app/coming-soon/dist/` (Vite output with `index.html`, `_app/`, `assets/`, `ds/` after 11d sets `assetsDir`; until 11d the bundle dir is Vite's default `assets/` — 11b's serving code reads `index.html` and static files from the directory root, so both layouts serve).
+
+- [ ] **Step 1: Copy and lock**
+```bash
+rsync -a --exclude node_modules --exclude dist "/Users/johndean/Downloads/VIN FOUNDATION/Coming Soon/coming_soon_vue/" coming-soon/
+diff -r --exclude node_modules --exclude dist "/Users/johndean/Downloads/VIN FOUNDATION/Coming Soon/coming_soon_vue" coming-soon && echo identical
+cd coming-soon && npm install && npm run build && ls dist && cd ..
+```
+Expected: `identical`; `dist/index.html` exists. `.gitignore` gains:
+```
+coming-soon/dist/
+coming-soon/coverage/
+frontend/coverage/
+```
+(`node_modules/` is already ignored globally.) `.dockerignore` and `.railwayignore` gain `coming-soon/node_modules` and `coming-soon/dist`.
+
+- [ ] **Step 2: Failing build-config tests** — append to `tests/test_build_config.py`:
+```python
+def test_dockerfile_builds_the_coming_soon_page_in_its_own_stage():
+    d = (ROOT / "Dockerfile").read_text()
+    assert "FROM node:22-bookworm-slim AS coming-soon-build" in d
+    assert "COPY coming-soon/package.json coming-soon/package-lock.json ./" in d
+    assert "COPY --from=coming-soon-build /work/coming-soon/dist/ ./coming-soon/dist/" in d
+
+
+def test_ignore_files_keep_the_coming_soon_build_and_modules_out():
+    for name in (".railwayignore", ".dockerignore"):
+        text = (ROOT / name).read_text().split()
+        for entry in ("coming-soon/node_modules", "coming-soon/dist"):
+            assert entry in text, f"{name} lacks {entry}"
+    assert "coming-soon/dist/" in (ROOT / ".gitignore").read_text().split()
+    assert "frontend/coverage/" in (ROOT / ".gitignore").read_text().split()
+```
+Run: `poetry run pytest tests/test_build_config.py -q -W error` → FAIL (both new tests).
+
+- [ ] **Step 3: Dockerfile** — insert after the `frontend-build` stage (before `FROM python:3.12-slim-bookworm AS runtime`):
+```dockerfile
+# The VIN Foundation Coming Soon page (John's Vue project, coming-soon/): built into the
+# same image and served by the api when SITE_MODE=coming_soon (production until launch).
+FROM node:22-bookworm-slim AS coming-soon-build
+WORKDIR /work/coming-soon
+COPY coming-soon/package.json coming-soon/package-lock.json ./
+RUN npm ci
+COPY coming-soon/ ./
+RUN npm run build
+```
+and in the runtime stage, directly after the existing `COPY --from=frontend-build …` line:
+```dockerfile
+COPY --from=coming-soon-build /work/coming-soon/dist/ ./coming-soon/dist/
+```
+(The `chown -R app:app /app` that follows covers it.) Update the header comment: "Stages 1–2 build the two frontends; stage 3 serves the one SITE_MODE selects."
+
+- [ ] **Step 4: GREEN** — `poetry run pytest tests/test_build_config.py -q -W error` → all pass; `bash tests/scripts/test_verify_image_sh.sh` still OK; real `docker build --build-arg ENVIRONMENT=qa -t practice-match:local .` succeeds and `docker run --rm --entrypoint ls practice-match:local coming-soon/dist` lists `index.html`.
+
+- [ ] **Step 5: Commit**
+```bash
+git add coming-soon .gitignore .dockerignore .railwayignore Dockerfile tests/test_build_config.py
+git commit -m "feat(coming-soon): import the VIN Foundation coming-soon page and build it into the image
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+(`git add coming-soon` adds the copied files and the lockfile; `coming-soon/dist` and `node_modules` are ignored.)
+
+---
+
+### Task 11b: `SITE_MODE` — the api serves the site the mode selects; health reports it
+
+**Files:**
+- Modify: `app/config.py`, `app/static.py`, `app/main.py`, `app/api/health.py`, `tests/test_config.py`, `tests/test_static.py`, `tests/test_health.py`, `tests/conftest.py`, `.env.example`, `DEPLOY.md`, `CLAUDE.md`, `tests/test_docs.py`, `scripts/verify-image.sh`, `tests/scripts/test_verify_image_sh.sh`
+
+**Interfaces:**
+- Produces: `settings.site_mode: str` (`"app"` | `"coming_soon"`); `app.static.COMING_SOON_DIST: Path`; `app.static.dist_for(mode: str) -> Path`; `HealthBody.site_mode: str`.
+
+- [ ] **Step 1: Failing tests**
+
+`tests/test_config.py` — append:
+```python
+def test_site_mode_defaults_to_app_and_rejects_unknown_values():
+    from pydantic import ValidationError
+
+    from app.config import Settings
+    base = dict(database_url="postgresql://x", redis_url="redis://x", environment="test", api_secret_key="x")
+    assert Settings(**base).site_mode == "app"
+    assert Settings(**base, site_mode="coming_soon").site_mode == "coming_soon"
+    with pytest.raises(ValidationError):
+        Settings(**base, site_mode="marketplace")
+
+
+def test_invalid_site_mode_exits_1_and_names_it():
+    env = dict(os.environ, SITE_MODE="marketplace", PYTHONPATH=str(ROOT))
+    r = subprocess.run([sys.executable, "-c", "import app.config"], env=env, capture_output=True, text=True)
+    assert r.returncode == 1
+    assert "SITE_MODE" in r.stderr
+```
+(`import pytest` at the top of the file if absent.)
+
+`tests/conftest.py` — append a coming-soon dist fixture:
+```python
+@pytest.fixture
+def coming_dist(tmp_path: Path) -> Path:
+    d = tmp_path / "coming-soon-dist"
+    (d / "_app").mkdir(parents=True)
+    (d / "ds").mkdir()
+    (d / "index.html").write_text('<!doctype html><title>VIN Foundation — Coming Soon</title><div id="app"></div>')
+    (d / "_app" / "index-cs1.js").write_text("console.log(2)")
+    (d / "ds" / "colors_and_type.css").write_text(":root{}")
+    return d
+```
+
+`tests/test_static.py` — append:
+```python
+def test_dist_for_selects_the_directory_by_mode():
+    from app.static import COMING_SOON_DIST, DIST, dist_for
+    assert dist_for("app") == DIST
+    assert dist_for("coming_soon") == COMING_SOON_DIST
+
+
+async def test_coming_soon_mode_serves_the_coming_soon_shell_everywhere_but_the_api(coming_dist, monkeypatch):
+    import app.static
+    from app.config import settings
+    monkeypatch.setattr(settings, "site_mode", "coming_soon")
+    monkeypatch.setattr(app.static, "COMING_SOON_DIST", coming_dist)
+    async with httpx.AsyncClient(transport=ASGITransport(app=create_app()), base_url="http://test") as c:
+        for path in ("/", "/browse", "/practices/p1", "/..%2F..%2Fpyproject.toml"):
+            r = await c.get(path)
+            assert r.status_code == 200 and "VIN Foundation — Coming Soon" in r.text, path
+            assert r.headers["cache-control"] == "no-cache"
+        assert (await c.get("/_app/index-cs1.js")).headers["cache-control"] == "public, max-age=31536000, immutable"
+        assert (await c.get("/ds/colors_and_type.css")).headers["cache-control"] == "public, max-age=3600"
+        r = await c.get("/api/nope")
+        assert r.status_code == 404 and r.json()["error"]["code"] == "NOT_FOUND"
+        assert (await c.get("/api/healthz")).json()["site_mode"] == "coming_soon"
+
+
+async def test_app_mode_never_serves_the_coming_soon_shell(client):
+    r = await client.get("/")
+    assert "Coming Soon" not in r.text
+    assert (await client.get("/api/healthz")).json()["site_mode"] == "app"
+```
+
+`tests/test_health.py` — `KEYS` becomes `{"status", "version", "environment", "commit_sha", "db", "redis", "site_mode"}`.
+
+Run: `poetry run pytest tests/test_config.py tests/test_static.py tests/test_health.py -q -W error` → FAIL (`site_mode` unknown; `dist_for` missing; KEYS mismatch).
+
+- [ ] **Step 2: Implement**
+
+`app/config.py` — add the field and validator:
+```python
+from pydantic import ValidationError, field_validator
+…
+    public_indexing: bool = False  # flip to true at launch; until then every response is noindex
+    site_mode: str = "app"  # app | coming_soon — which built site the api serves (spec 2026-09-06)
+
+    @field_validator("site_mode")
+    @classmethod
+    def _site_mode_known(cls, v: str) -> str:
+        if v not in ("app", "coming_soon"):
+            raise ValueError("SITE_MODE must be 'app' or 'coming_soon'")
+        return v
+```
+(`load_settings`'s error path already prints the field name uppercased: `SITE_MODE`.)
+
+`app/static.py`:
+```python
+DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+COMING_SOON_DIST = Path(__file__).resolve().parent.parent / "coming-soon" / "dist"
+
+
+def dist_for(mode: str) -> Path:
+    """The built site the api serves: the marketplace, or the Coming Soon page (production until launch)."""
+    return COMING_SOON_DIST if mode == "coming_soon" else DIST
+```
+`mount_spa` is unchanged.
+
+`app/main.py`: `from app.static import dist_for, mount_spa` and `mount_spa(app, dist or dist_for(settings.site_mode))` (keep the `dist` override for tests).
+
+`app/api/health.py`: `HealthBody` gains `site_mode: str`; `_body` adds `"site_mode": settings.site_mode`.
+
+- [ ] **Step 3: Docs and drift**
+
+`.env.example` — add `SITE_MODE=app                                                            # app | coming_soon — production runs coming_soon until launch (QA never does)`.
+
+`DEPLOY.md` — variables table row `| \`SITE_MODE\` | ✓ | ✓ | \`app\` on QA, \`coming_soon\` on production until launch — selects the built site the api serves |`, plus a new section:
+```markdown
+## Site mode (Coming Soon on production)
+
+| Variable | QA | production |
+|---|---|---|
+| `ENVIRONMENT` | `qa` | `production` |
+| `SITE_MODE` | `app` | `coming_soon` |
+| `PUBLIC_INDEXING` | unset (noindex) | `true` |
+
+Production publishes the VIN Foundation Coming Soon page (`coming-soon/`); QA is the marketplace. The coming-soon page never goes to QA. **Launch:** `railway status` (Project: Practice Match) → `railway variable set SITE_MODE=app --service api --environment production --skip-deploys` (and `--service worker`) → decide `PUBLIC_INDEXING` → `scripts/deploy.sh production` → `scripts/verify-deploy.sh production` reports `site_mode app`.
+```
+`CLAUDE.md` — one line under the deploy notes: "`SITE_MODE` (`app` | `coming_soon`) selects which built site the api serves; production runs `coming_soon` until launch; QA never does."
+
+`tests/test_docs.py` — `test_every_setting_is_documented_in_env_example_and_deploy_md` already covers the new setting (RED until the docs are written). Append:
+```python
+def test_deploy_md_documents_the_site_mode_matrix():
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "SITE_MODE" in text and "coming_soon" in text
+    assert "never goes to QA" in text
+    for name in ("CLAUDE.md",):
+        assert "SITE_MODE" in (ROOT / name).read_text(), name
+```
+
+`scripts/verify-image.sh` — third container and a seventh check (the cleanup drops it too):
+```bash
+cleanup() { docker rm -f pm-api pm-worker pm-coming >/dev/null 2>&1 || true; }
+…
+docker run -d --name pm-coming "${COMMON[@]}" -e SITE_MODE=coming_soon -p 8012:8000 practice-match:local api >/dev/null
+…
+coming_body=$(curl -fsS http://localhost:8012/)
+[[ "$coming_body" == *'VIN Foundation — Coming Soon'* && "$coming_body" != *'<title>Practice Match'* ]] \
+  || { echo "FAIL: SITE_MODE=coming_soon did not serve the coming-soon shell"; exit 1; }
+coming_health=$(curl -fsS http://localhost:8012/api/healthz)
+[[ "$coming_health" == *'"site_mode":"coming_soon"'* ]] || { echo "FAIL: healthz did not report site_mode coming_soon"; exit 1; }
+echo "coming soon OK"
+```
+`tests/scripts/test_verify_image_sh.sh` — the fake `curl` gains two branches BEFORE the generic `/api/healthz` and index branches: `":8012/api/healthz"` → `{"status":"ok","site_mode":"coming_soon"}` and `":8012/"` → `<!doctype html><title>VIN Foundation — Coming Soon</title><div id="app"></div>`; the expected-lines loop gains `"coming soon OK"` (seven lines); the first-docker-call assertion becomes `docker rm -f pm-api pm-worker pm-coming`; the header comment says seven checks. RED first (the seventh line is absent today; the cleanup assertion fails once the script changes if the test is not updated — both directions are covered).
+
+- [ ] **Step 4: GREEN** — `poetry run pytest -q -W error` all green; `poetry run mypy app --strict` clean; `poetry run ruff check app tests scripts` clean; `bash tests/scripts/test_verify_image_sh.sh` OK; real `scripts/verify-image.sh` → seven OK lines (record).
+
+- [ ] **Step 5: Commit**
+```bash
+git add app/config.py app/static.py app/main.py app/api/health.py tests/test_config.py tests/test_static.py tests/test_health.py tests/conftest.py .env.example DEPLOY.md CLAUDE.md tests/test_docs.py scripts/verify-image.sh tests/scripts/test_verify_image_sh.sh
+git commit -m "feat(api): SITE_MODE selects the served site (marketplace or coming soon); health reports site_mode
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 11c: `POST /api/interest` — launch-notification sign-ups
+
+**Files:**
+- Create: `migrations/002_interest_signup.sql`, `app/ratelimit.py`, `app/api/interest.py`, `tests/api/__init__.py`, `tests/api/test_interest.py`
+- Modify: `app/main.py`, `tests/test_migrate.py`, `tests/perf/test_api_latency.py`
+
+**Interfaces:**
+- Consumes: `app.db.get_engine(url)`, `app.db.get_redis(url)`, `app.checks.async_dsn(url)`.
+- Produces: `POST /api/interest` → `202 {"status":"ok"}` | `422 {"error":"invalid_email"}` | `429 {"error":"rate_limited"}`; table `interest_signup`; `app.ratelimit.hit(client, scope, subject, limit, window_s) -> bool`; constant `app.api.interest.CONSENT_VERSION = "coming-soon-v1"`.
+
+- [ ] **Step 1: Failing tests**
+
+`migrations/002_interest_signup.sql` is created in Step 2; first the schema test — append to `tests/test_migrate.py`:
+```python
+def test_002_creates_interest_signup_with_a_unique_normalised_email(scratch_db):
+    applied = migrate.run(scratch_db)
+    assert applied == ["001_init.sql", "002_interest_signup.sql"]
+    with psycopg2.connect(scratch_db) as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO interest_signup (email, email_normalised, consent_version) VALUES ('A@x.com', 'a@x.com', 'coming-soon-v1')")
+        with pytest.raises(psycopg2.errors.UniqueViolation):
+            cur.execute("INSERT INTO interest_signup (email, email_normalised, consent_version) VALUES ('a@X.com', 'a@x.com', 'coming-soon-v1')")
+```
+(`test_applies_each_file_once_and_records_it` must now expect both files: update its two assertions to `["001_init.sql", "002_interest_signup.sql"]`.)
+
+`tests/api/__init__.py` empty. `tests/api/test_interest.py`:
+```python
+import uuid
+
+import psycopg2
+import pytest
+
+from app.api.interest import CONSENT_VERSION
+from app.config import settings
+
+
+def _rows(norm: str) -> list[tuple]:
+    with psycopg2.connect(settings.database_url) as conn, conn.cursor() as cur:
+        cur.execute("SELECT email, email_normalised, consent_version, source FROM interest_signup WHERE email_normalised = %s", (norm,))
+        return cur.fetchall()
+
+
+@pytest.fixture
+def addr():
+    """A unique address per test so rate-limit windows and rows never cross tests; rows are removed after."""
+    tag = uuid.uuid4().hex[:10]
+    yield f"Test-{tag}@Example.org"
+    with psycopg2.connect(settings.database_url) as conn, conn.cursor() as cur:
+        cur.execute("DELETE FROM interest_signup WHERE email_normalised LIKE %s", (f"test-{tag}@%",))
+
+
+def _ip() -> str:
+    """A fresh client address per call (16M values) so per-IP windows never collide across tests or reruns."""
+    n = uuid.uuid4().int
+    return "10." + ".".join(str((n >> s) & 255) for s in (16, 8, 0))
+
+
+async def test_new_address_is_stored_normalised_with_consent_and_source(client, db_ready, addr):
+    r = await client.post("/api/interest", json={"email": f"  {addr} "}, headers={"x-forwarded-for": _ip()})
+    assert r.status_code == 202 and r.json() == {"status": "ok"}
+    assert _rows(addr.lower()) == [(addr, addr.lower(), CONSENT_VERSION, "coming-soon")]
+
+
+async def test_duplicate_address_answers_the_same_and_keeps_one_row(client, db_ready, addr):
+    ip = _ip()
+    await client.post("/api/interest", json={"email": addr}, headers={"x-forwarded-for": ip})
+    r = await client.post("/api/interest", json={"email": addr.upper()}, headers={"x-forwarded-for": ip})
+    assert r.status_code == 202 and r.json() == {"status": "ok"}
+    assert len(_rows(addr.lower())) == 1
+
+
+@pytest.mark.parametrize("bad", ["", "   ", "nope", "a@b", "a b@c.com", "x@" + "y" * 250 + ".com"])
+async def test_invalid_address_is_422_and_writes_nothing(client, db_ready, bad):
+    r = await client.post("/api/interest", json={"email": bad}, headers={"x-forwarded-for": _ip()})
+    assert r.status_code == 422 and r.json() == {"error": "invalid_email"}
+    assert _rows(bad.strip().lower()) == []
+
+
+async def test_missing_body_field_is_422(client):
+    assert (await client.post("/api/interest", json={})).status_code == 422
+
+
+async def test_sixth_request_in_a_minute_from_one_client_is_429(client, db_ready):
+    ip = _ip()
+    for i in range(5):
+        r = await client.post("/api/interest", json={"email": f"rl-{uuid.uuid4().hex[:8]}@example.org"}, headers={"x-forwarded-for": ip})
+        assert r.status_code == 202, i
+    r = await client.post("/api/interest", json={"email": f"rl-{uuid.uuid4().hex[:8]}@example.org"}, headers={"x-forwarded-for": ip})
+    assert r.status_code == 429 and r.json() == {"error": "rate_limited"}
+
+
+async def test_fourth_attempt_for_one_address_in_a_day_is_429(client, db_ready, addr):
+    for i in range(3):
+        assert (await client.post("/api/interest", json={"email": addr}, headers={"x-forwarded-for": _ip()})).status_code == 202, i
+    r = await client.post("/api/interest", json={"email": addr}, headers={"x-forwarded-for": _ip()})
+    assert r.status_code == 429
+
+
+def test_hit_counts_within_a_window_and_denies_past_the_limit():
+    import asyncio
+
+    from app.db import get_redis
+    from app.ratelimit import hit
+
+    async def go() -> list[bool]:
+        client = get_redis(settings.redis_url)
+        subject = uuid.uuid4().hex
+        return [await hit(client, "unit", subject, 2, 60) for _ in range(3)]
+
+    assert asyncio.run(go()) == [True, True, False]
+```
+(The `rl-…@example.org` rows are cleaned by a module-level fixture: add `@pytest.fixture(autouse=True, scope="module")` that deletes `email_normalised LIKE 'rl-%'` after the module.)
+
+`tests/perf/test_api_latency.py` — `BUDGET_MS` stays GET-only (its parametrised test issues GETs); the POST row is its own test, appended (add `import uuid`, `import psycopg2`, `from app.config import settings` at the top):
+```python
+async def test_interest_stored_path_p95_within_budget(client, db_ready):
+    """Spec 2026-09-06 §3: the full path — validation, three Redis counters, one INSERT — at p95 ≤ 100 ms.
+    Every request carries a fresh client IP and a fresh address so no rate limit trips; rows are removed after."""
+    tag = uuid.uuid4().hex[:8]
+    samples: list[float] = []
+    try:
+        for i in range(50):
+            n = uuid.uuid4().int
+            ip = "10." + ".".join(str((n >> s) & 255) for s in (16, 8, 0))
+            t0 = time.perf_counter()
+            r = await client.post("/api/interest", json={"email": f"perf-{tag}-{i}@example.org"}, headers={"x-forwarded-for": ip})
+            samples.append((time.perf_counter() - t0) * 1000)
+            assert r.status_code == 202, r.text
+        assert statistics.quantiles(samples, n=20)[18] <= 100, "/api/interest p95 over 100 ms"
+    finally:
+        with psycopg2.connect(settings.database_url) as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM interest_signup WHERE email_normalised LIKE %s", (f"perf-{tag}-%",))
+```
+
+Run: `poetry run pytest tests/api tests/test_migrate.py tests/perf -q -W error` → FAIL (`app.api.interest` missing; migration missing).
+
+- [ ] **Step 2: Implement**
+
+`migrations/002_interest_signup.sql`:
+```sql
+-- Coming Soon production mode (spec 2026-09-06): launch-notification sign-ups from foundation.vin.
+-- No email is sent from here; the Identity wave's Resend pipeline reads this table at launch.
+CREATE TABLE IF NOT EXISTS interest_signup (
+  id               uuid        PRIMARY KEY DEFAULT gen_random_uuid(),
+  email            text        NOT NULL,
+  email_normalised text        NOT NULL UNIQUE,
+  consent_version  text        NOT NULL,
+  source           text        NOT NULL DEFAULT 'coming-soon',
+  created_at       timestamptz NOT NULL DEFAULT now()
+);
+```
+
+`app/ratelimit.py`:
+```python
+"""Fixed-window counters in Redis (INCR + EXPIRE) — the only state the sign-up endpoint shares
+across api instances. Subjects (client IP, normalised address) are hashed into the key."""
+from __future__ import annotations
+
+import hashlib
+import time
+
+from redis.asyncio import Redis
+
+
+async def hit(client: Redis, scope: str, subject: str, limit: int, window_s: int) -> bool:
+    """Counts one hit for `subject` in the current `window_s`-second window; True while within `limit`."""
+    bucket = int(time.time()) // window_s
+    key = f"rl:{scope}:{bucket}:{hashlib.sha256(subject.encode()).hexdigest()[:16]}"
+    count = int(await client.incr(key))
+    if count == 1:
+        await client.expire(key, window_s)
+    return count <= limit
+```
+
+`app/api/interest.py`:
+```python
+"""POST /api/interest — the Coming Soon page's launch-notification sign-up (spec 2026-09-06)."""
+from __future__ import annotations
+
+import re
+
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
+from pydantic import BaseModel
+from sqlalchemy import text
+
+from app.checks import async_dsn
+from app.config import settings
+from app.db import get_engine, get_redis
+from app.ratelimit import hit
+
+router = APIRouter(prefix="/api")
+CONSENT_VERSION = "coming-soon-v1"  # the page's promise: one message when it launches, never shared
+EMAIL_RE = re.compile(r"^[^\s@]+@[^\s@]+\.[A-Za-z]{2,}$")
+LIMITS: dict[str, tuple[int, int]] = {"ip_minute": (5, 60), "ip_day": (30, 86_400), "email_day": (3, 86_400)}
+
+
+class InterestIn(BaseModel):
+    email: str
+
+
+def normalise(email: str) -> str | None:
+    e = email.strip()
+    if len(e) > 254 or not EMAIL_RE.match(e):
+        return None
+    return e.lower()
+
+
+def client_ip(request: Request) -> str:
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+@router.post("/interest", status_code=202)
+async def interest(body: InterestIn, request: Request) -> JSONResponse:
+    norm = normalise(body.email)
+    if norm is None:
+        return JSONResponse({"error": "invalid_email"}, status_code=422)
+    redis_ = get_redis(settings.redis_url)
+    ip = client_ip(request)
+    for scope, subject in (("ip_minute", ip), ("ip_day", ip), ("email_day", norm)):
+        limit, window = LIMITS[scope]
+        if not await hit(redis_, scope, subject, limit, window):
+            return JSONResponse({"error": "rate_limited"}, status_code=429)
+    engine = get_engine(async_dsn(settings.database_url))
+    async with engine.begin() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO interest_signup (email, email_normalised, consent_version, source) "
+                "VALUES (:email, :norm, :consent, 'coming-soon') ON CONFLICT (email_normalised) DO NOTHING"
+            ),
+            {"email": body.email.strip(), "norm": norm, "consent": CONSENT_VERSION},
+        )
+    return JSONResponse({"status": "ok"}, status_code=202)
+```
+`app/main.py`: `from app.api.interest import router as interest_router` and `app.include_router(interest_router)` before `app.include_router(not_found_router)`.
+
+- [ ] **Step 3: GREEN** — `poetry run pytest -q -W error` all green with the compose containers up (`db_ready` applies `002`); `poetry run mypy app --strict` clean; `poetry run ruff check app tests scripts` clean.
+
+- [ ] **Step 4: Commit**
+```bash
+git add migrations/002_interest_signup.sql app/ratelimit.py app/api/interest.py app/main.py tests/api/__init__.py tests/api/test_interest.py tests/test_migrate.py tests/perf/test_api_latency.py
+git commit -m "feat(api): POST /api/interest — launch-notification sign-ups with Redis rate limits
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 11d: Wire the page — `submit()` posts to the API; Merriweather self-hosted; unit tests at 100 %
+
+**Files:**
+- Modify: `coming-soon/src/logic.js`, `coming-soon/index.html`, `coming-soon/vite.config.js`, `coming-soon/package.json` + `package-lock.json`, `.github/workflows/quality.yml`, `tests/test_docs.py`
+- Create: `coming-soon/src/logic.test.js`, `coming-soon/public/ds/merriweather.css`, `coming-soon/public/ds/fonts/Merriweather-Regular.woff2`, `coming-soon/public/ds/fonts/Merriweather-Bold.woff2`, `coming-soon/public/ds/fonts/OFL-Merriweather.txt`
+
+**Interfaces:**
+- Consumes: `POST /api/interest` (11c) — `202` success, `429` rate-limited, anything else failure.
+
+**Scope note:** the spec's three edits (§4) are the only changes to what the page ships. The test tooling this task adds — vitest devDependencies and a `test` script in `package.json`, the `test` block in `vite.config.js`, `src/logic.test.js` — is the §5 unit gate; none of it reaches `dist/`. The self-hosted font files and `merriweather.css` are edit 2 of §4.
+
+- [ ] **Step 1: Tooling** — `cd coming-soon && npm install --save-dev vitest@3.2.7 @vitest/coverage-v8@3.2.7 jsdom@30` and add `"test": "vitest run --coverage"` to `scripts`. `vite.config.js` becomes:
+```js
+import { defineConfig } from 'vite';
+import vue from '@vitejs/plugin-vue';
+
+export default defineConfig({
+  plugins: [vue()],
+  // `_app` matches the marketplace build so app/static.py's immutable-cache rule applies.
+  build: { assetsDir: '_app' },
+  test: {
+    environment: 'jsdom',
+    include: ['src/**/*.test.js'],
+    coverage: {
+      provider: 'v8',
+      include: ['src/logic.js'],   // the hand-written logic; App.vue, dc-logic.js and hover.js are the delivered page (pixel gate)
+      thresholds: { lines: 100, branches: 100, functions: 100, statements: 100 }
+    }
+  }
+});
+```
+
+- [ ] **Step 2: Failing tests** — `coming-soon/src/logic.test.js`:
+```js
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { Component } from './logic.js';
+
+const make = () => new Component();
+const respond = (status) => vi.fn(async () => ({ status }));
+
+afterEach(() => vi.unstubAllGlobals());
+
+describe('valid()', () => {
+  it('accepts ordinary addresses and rejects malformed ones', () => {
+    const c = make();
+    expect(c.valid('you@practice.com')).toBe(true);
+    expect(c.valid(' You@Practice.COM ')).toBe(true);
+    for (const bad of ['', 'nope', 'a@b', 'a b@c.com', null, undefined]) expect(c.valid(bad)).toBe(false);
+  });
+});
+
+describe('submit()', () => {
+  it('asks for an address when the field is empty and does not call the network', async () => {
+    const c = make(); vi.stubGlobal('fetch', respond(202));
+    await c.submit();
+    expect(c.state.error).toBe('Enter your email address.');
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('rejects a malformed address without calling the network', async () => {
+    const c = make(); c.state.email = 'nope'; vi.stubGlobal('fetch', respond(202));
+    await c.submit();
+    expect(c.state.error).toBe("That address doesn't look right. Check it and try again.");
+    expect(fetch).not.toHaveBeenCalled();
+  });
+  it('posts the trimmed address to /api/interest and shows the confirmed state on 202', async () => {
+    const c = make(); c.state.email = '  You@Practice.com '; vi.stubGlobal('fetch', respond(202));
+    await c.submit();
+    expect(fetch).toHaveBeenCalledWith('/api/interest', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ email: 'You@Practice.com' })
+    });
+    expect(c.state).toMatchObject({ done: true, error: '', email: 'You@Practice.com', sending: false });
+  });
+  it('explains a 429 in the error slot and stays on the form', async () => {
+    const c = make(); c.state.email = 'you@practice.com'; vi.stubGlobal('fetch', respond(429));
+    await c.submit();
+    expect(c.state).toMatchObject({ done: false, error: 'Too many attempts — please try again later.', sending: false });
+  });
+  it('treats any other status as a failure the visitor can retry', async () => {
+    const c = make(); c.state.email = 'you@practice.com'; vi.stubGlobal('fetch', respond(500));
+    await c.submit();
+    expect(c.state).toMatchObject({ done: false, error: 'Something went wrong. Please try again.', sending: false });
+  });
+  it('treats a network failure the same way', async () => {
+    const c = make(); c.state.email = 'you@practice.com';
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new TypeError('Failed to fetch'); }));
+    await c.submit();
+    expect(c.state).toMatchObject({ done: false, error: 'Something went wrong. Please try again.', sending: false });
+  });
+  it('ignores a second click while a request is in flight', async () => {
+    const c = make(); c.state.email = 'you@practice.com';
+    let release; vi.stubGlobal('fetch', vi.fn(() => new Promise((r) => { release = () => r({ status: 202 }); })));
+    const first = c.submit();
+    await c.submit();
+    expect(fetch).toHaveBeenCalledTimes(1);
+    release(); await first;
+    expect(c.state.done).toBe(true);
+  });
+});
+
+describe('renderVals()', () => {
+  it('maps state to the template: form/done flags, error, input border, five blocks, four rings', () => {
+    const c = make(); const v = c.renderVals();
+    expect(v.isForm).toBe(true); expect(v.isDone).toBe(false); expect(v.hasError).toBe(false);
+    expect(v.blocks).toHaveLength(5); expect(v.rings).toHaveLength(4);
+    expect(v.inputStyle).toContain('border: 1px solid #c3d4e2');
+    c.state.error = 'x';
+    expect(c.renderVals().inputStyle).toContain('var(--color-red)');
+  });
+  it('advances the teaser on poke and stops at the last quip', () => {
+    const c = make();
+    for (let i = 0; i < 10; i++) c.renderVals().poke();
+    expect(c.renderVals().tease).toBe(c.TEASES[c.TEASES.length - 1]);
+  });
+  it('setEmail clears a previous error; Enter submits; reset returns to the form', async () => {
+    const c = make(); c.state.error = 'old';
+    c.renderVals().setEmail({ target: { value: 'you@practice.com' } });
+    expect(c.state).toMatchObject({ email: 'you@practice.com', error: '' });
+    vi.stubGlobal('fetch', respond(202));
+    c.renderVals().onKey({ key: 'Enter' });
+    await new Promise((r) => setTimeout(r, 0));
+    expect(c.state.done).toBe(true);
+    c.renderVals().onKey({ key: 'a' });
+    c.renderVals().reset();
+    expect(c.state).toMatchObject({ done: false, email: '', error: '' });
+  });
+});
+```
+Run: `cd coming-soon && npx vitest run --coverage` → FAIL (`sending` undefined, no fetch, coverage below 100).
+
+- [ ] **Step 3: Wire `submit()`** — in `coming-soon/src/logic.js`, `state` becomes `{ email: "", error: "", done: false, pokes: 0, sending: false }` and `submit` becomes:
+```js
+  // Wired to the Practice Match API (spec 2026-09-06): the page's own validation runs first,
+  // then one POST; 202 confirms, 429 and any failure use the error slot below the field.
+  submit = async () => {
+    const e = this.state.email.trim();
+    if (!e) return this.setState({ error: "Enter your email address." });
+    if (!this.valid(e)) return this.setState({ error: "That address doesn't look right. Check it and try again." });
+    if (this.state.sending) return;
+    this.setState({ sending: true, error: "" });
+    try {
+      const res = await fetch("/api/interest", {
+        method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ email: e })
+      });
+      if (res.status === 202) return this.setState({ sending: false, error: "", done: true, email: e });
+      if (res.status === 429) return this.setState({ sending: false, error: "Too many attempts — please try again later." });
+      this.setState({ sending: false, error: "Something went wrong. Please try again." });
+    } catch {
+      this.setState({ sending: false, error: "Something went wrong. Please try again." });
+    }
+  };
+```
+Nothing else in the file changes (the README's inline-style rule stands).
+
+- [ ] **Step 4: Self-host Merriweather** — fetch the OFL font files once (Chrome UA gets woff2 URLs):
+```bash
+cd coming-soon/public/ds/fonts
+css=$(curl -fsS -A "Mozilla/5.0 Chrome/125" "https://fonts.googleapis.com/css2?family=Merriweather:wght@400;700&display=swap")
+curl -fsS -o Merriweather-Regular.woff2 "$(echo "$css" | awk '/font-weight: 400/{f=1} f&&/url\(/{gsub(/.*url\(|\).*/,""); print; exit}')"
+curl -fsS -o Merriweather-Bold.woff2    "$(echo "$css" | awk '/font-weight: 700/{f=1} f&&/url\(/{gsub(/.*url\(|\).*/,""); print; exit}')"
+curl -fsS -o OFL-Merriweather.txt https://raw.githubusercontent.com/SorkinType/Merriweather/master/OFL.txt
+file Merriweather-*.woff2   # both: Web Open Font Format (Version 2)
+```
+`coming-soon/public/ds/merriweather.css`:
+```css
+/* Merriweather (SIL Open Font License, see fonts/OFL-Merriweather.txt) — self-hosted so the page
+   makes no third-party request and pixel tests are deterministic (README: "self-host before launch"). */
+@font-face { font-family: 'Merriweather'; font-style: normal; font-weight: 400; font-display: swap; src: url('/ds/fonts/Merriweather-Regular.woff2') format('woff2'); }
+@font-face { font-family: 'Merriweather'; font-style: normal; font-weight: 700; font-display: swap; src: url('/ds/fonts/Merriweather-Bold.woff2') format('woff2'); }
+```
+`coming-soon/index.html`: replace the two `<link rel="preconnect" …>` lines and the Google Fonts `<link rel="stylesheet" …>` with `<link rel="stylesheet" href="/ds/merriweather.css" />`, and change the comment above them to `<!-- Merriweather carries headlines per the VIN Foundation Brand Style Guide 2026 §05 — self-hosted (OFL). -->`. No other change to the file.
+
+- [ ] **Step 5: CI** — `.github/workflows/quality.yml` gains a job:
+```yaml
+  coming-soon:
+    name: coming-soon (unit at 100% · build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run: { working-directory: coming-soon }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: '22', cache: 'npm', cache-dependency-path: coming-soon/package-lock.json }
+      - run: npm ci
+      - run: npx vitest run --coverage
+      - run: npm run build
+```
+`tests/test_docs.py` — in `test_ci_workflow_runs_every_gate` the job-set assertion becomes `assert {"gitleaks", "backend", "frontend", "coming-soon"} <= set(wf["jobs"])` (RED first). `REQUIRED_CI_COMMANDS` is unchanged: `npx vitest run --coverage` and `npm run build` already appear there and now describe both Node jobs. The timeout test iterates every job, so it covers the new one without change.
+
+- [ ] **Step 6: GREEN** — `cd coming-soon && npx vitest run --coverage` → all tests pass, coverage 100/100/100/100; `npm run build` → `dist/_app/*.js`; `poetry run pytest tests/test_docs.py -q -W error` green; the page in `npm run preview` renders Merriweather headlines with the network tab showing no `fonts.googleapis.com` request (record).
+
+- [ ] **Step 7: Commit**
+```bash
+git add coming-soon/src/logic.js coming-soon/src/logic.test.js coming-soon/index.html coming-soon/vite.config.js coming-soon/package.json coming-soon/package-lock.json coming-soon/public/ds/merriweather.css coming-soon/public/ds/fonts/Merriweather-Regular.woff2 coming-soon/public/ds/fonts/Merriweather-Bold.woff2 coming-soon/public/ds/fonts/OFL-Merriweather.txt .github/workflows/quality.yml tests/test_docs.py
+git commit -m "feat(coming-soon): sign-up posts to /api/interest; Merriweather self-hosted; logic unit-tested at 100 %
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+---
+
+### Task 11e: Pixel gate against `Coming Soon.dc.html` — WAITS for John's design export (NEEDS_HUMAN if `docs/design-reference/coming-soon/Coming Soon.dc.html` is absent); does not block 11f or the production deploy
+
+**Files:**
+- Create: `docs/design-reference/coming-soon/` (John's export: `Coming Soon.dc.html` + its runtime files as exported), `frontend/tests/coming-soon.screens.ts`, `frontend/tests/coming-soon-visual.spec.ts`, `frontend/tests/coming-soon-reference.spec.ts`
+- Modify: `frontend/tests/reference-server.mjs` (serve `/coming-soon/` from the new folder), `frontend/tests/playwright.config.ts` + `frontend/tests/targets.ts` (two more projects and a third local server), `.github/workflows/quality.yml` (run the two new projects after the existing ones)
+
+**Interfaces:**
+- Produces: Playwright projects `coming-soon-reference` (design at `http://localhost:5174/coming-soon/`) and `coming-soon` (Vite dev server for `coming-soon/` on `http://localhost:5175`, `npm run dev -- --port 5175 --strictPort` with `cwd: ../coming-soon`); baselines `frontend/tests/visual.spec.ts-snapshots/cs-<state>-<platform>.png`.
+
+- [ ] **Step 1:** If the design file is absent → STOP, `NEEDS_HUMAN`: "Provide the Claude Design export of `Coming Soon.dc.html` (with its support runtime) into `docs/design-reference/coming-soon/`." Otherwise continue.
+- [ ] **Step 2: Screens** — `frontend/tests/coming-soon.screens.ts`:
+```ts
+import type { Page } from '@playwright/test';
+
+export interface CsScreen { name: string; viewport?: { width: number; height: number }; steps: (page: Page) => Promise<void>; }
+const field = (p: Page) => p.getByLabel('Email address');
+const notify = (p: Page) => p.getByRole('button', { name: /notify/i }).first();
+
+export const CS_SCREENS: CsScreen[] = [
+  { name: 'cs-idle', steps: async () => {} },
+  { name: 'cs-invalid', steps: async (p) => { await field(p).fill('nope'); await notify(p).click(); } },
+  { name: 'cs-done', steps: async (p) => { await field(p).fill('you@practice.com'); await notify(p).click(); await p.getByText("You're on the list").waitFor(); } },
+  { name: 'cs-tease-2', steps: async (p) => { const b = p.getByRole('button', { name: /Redacted/ }); await b.click(); await b.click(); } },
+  { name: 'cs-mobile', viewport: { width: 390, height: 844 }, steps: async () => {} }
+];
+```
+(Read the exact button label from the design's `App.vue`/design file — `notify` matches the design's copy; if the copy differs, use the exact text.) The `coming-soon` project's `prepare()` routes `POST **/api/interest` → `route.fulfill({ status: 202, contentType: 'application/json', body: '{"status":"ok"}' })` so `cs-done` needs no backend; the design's own submit sets `done` without a network call.
+- [ ] **Step 3:** Reference spec writes `cs-*` baselines from the design (same pattern as `reference-baselines.spec.ts`, using `document.fonts.ready` + 600 ms settle); visual spec compares the app at `maxDiffPixels: 0`. Both projects added to `playwright.config.ts` via `targets.ts` (unit-tested: `PW_APP_URL` does not affect the coming-soon projects). CI runs `--project=coming-soon-reference` then `--project=coming-soon` in the frontend job.
+- [ ] **Step 4:** All `cs-*` states pass at 0 px. Commit — `test(coming-soon): zero-pixel parity with the approved Coming Soon design, five states`.
+
+---
+
+### Task 11f: Mode-aware deploy verification and the production step
+
+**Files:**
+- Modify: `scripts/verify-deploy.sh`, `tests/scripts/test_verify_deploy.sh`, `DEPLOY.md`, `tests/test_docs.py`; and Task 10 Step 4 (below) is superseded by this task's production procedure.
+
+- [ ] **Step 1: Failing shell cases** — in `tests/scripts/test_verify_deploy.sh` the fake server gains modes `coming_ok` (healthz `site_mode: "coming_soon"`, `/` and `/browse` bodies contain `<title>VIN Foundation — Coming Soon</title>`, `POST /api/interest` with an invalid address → 422), `coming_wrong_shell` (`site_mode: "coming_soon"` but the marketplace shell `id="app"` without the title), `coming_interest_500` (POST → 500), and the existing `ok` body gains `"site_mode": "app"`. Cases: coming_ok → exit 0, prints `coming-soon shell OK` and `interest endpoint OK`; coming_wrong_shell → non-zero, message `coming-soon shell missing`; coming_interest_500 → non-zero, message names `interest`; a body WITHOUT `site_mode` → non-zero, `site_mode missing`. Run → FAIL (today's script ignores `site_mode`).
+- [ ] **Step 2: Script** — after the healthz parse (which now also asserts `site_mode` is present and prints it), replace the SPA block with:
+```bash
+mode=$(curl -fsS --max-time 20 "$BASE/api/healthz" | python3 -c 'import sys,json; print(json.load(sys.stdin)["site_mode"])')
+if [[ "$mode" == "coming_soon" ]]; then
+  for path in / /browse; do
+    curl -fsS --max-time 20 "$BASE$path" | grep -q '<title>VIN Foundation — Coming Soon</title>' \
+      || { echo "FAIL: coming-soon shell missing at $BASE$path" >&2; exit 1; }
+  done
+  echo "coming-soon shell OK"
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H 'Content-Type: application/json' -d '{"email":"not-an-email"}' "$BASE/api/interest")
+  [[ "$code" == "422" ]] || { echo "FAIL: interest endpoint answered $code to an invalid address (expected 422)" >&2; exit 1; }
+  echo "interest endpoint OK"
+else
+  curl -fsS --max-time 20 "$BASE/browse" | grep -q 'id="app"' \
+    || { echo "FAIL: SPA fallback missing at $BASE/browse" >&2; exit 1; }
+  echo "SPA fallback OK"
+fi
+```
+(The healthz python block adds `mode = b.get("site_mode"); assert mode, f"FAIL: site_mode missing from healthz: {b}"` and prints `site_mode`, then the shell re-reads it as above — or export it from the python block via a temp file; either is fine, tested by the `site_mode missing` case.)
+- [ ] **Step 3: Docs** — `DEPLOY.md` "Deploy" section: expected verify output in coming-soon mode (`healthz OK … site_mode coming_soon`, `deep healthz OK`, `coming-soon shell OK`, `interest endpoint OK`); the drift test asserts `coming-soon shell OK` appears in `DEPLOY.md`.
+- [ ] **Step 4: GREEN** — both shell tests green; live: `EXPECT_SHA=<deployed> scripts/verify-deploy.sh QA https://qa.foundation.vin` still passes in app mode (QA is unchanged). Commit — `fix(deploy): verify-deploy is site-mode aware — coming-soon shell and interest endpoint on production, SPA shell on QA`.
+
+**Production step (supersedes Task 10 Step 4; John's go given 2026-09-06 — re-confirm the QA state to him in the pause report before running it):**
+1. 🚦 `railway status` → `Project: Practice Match`.
+2. `railway variable set SITE_MODE=coming_soon --service api --environment production --skip-deploys`; same for `--service worker`; `railway variable set PUBLIC_INDEXING=true --service api --environment production --skip-deploys`. QA gets `SITE_MODE=app` explicitly on both services (`--environment QA`) so the matrix is stated, not defaulted. List keys (redacted) and record.
+3. Tree clean → `scripts/deploy.sh production` (verifies at HEAD in coming-soon mode) — expected `healthz OK … site_mode coming_soon`, `deep healthz OK`, `coming-soon shell OK`, `interest endpoint OK`, `commit_sha == HEAD`. Then the same verify against `https://api-production-ebcf.up.railway.app`.
+4. Read-only checks: `curl -sI https://foundation.vin/` has no `X-Robots-Tag`; `curl -fsS https://foundation.vin/robots.txt` is `User-agent: *\nAllow: /`; the served `/` contains the coming-soon title and NOT `<title>Practice Match`; `curl -fsS https://qa.foundation.vin/api/healthz` still reports `site_mode app` (QA untouched).
+5. On any failure: roll back (dashboard → api → Deployments → last good → Redeploy; there is no previous production deployment, so instead `railway variable set SITE_MODE=…` is irrelevant — the failure state is Railway's fallback 404 page as before) and STOP with the logs.
+6. Task 10 Steps 5–6 (worker round-trip, spec status line "live on qa.foundation.vin (marketplace) and foundation.vin (coming soon)", hand-back) follow; the hand-back names both sites and the launch flip.
 
 ---
 
