@@ -34,8 +34,11 @@ export default defineConfig({
     }
   },
   projects: [
-    { name: 'app', testMatch: /(visual|smoke)\.spec\.ts/, use: { ...devices['Desktop Chrome'], viewport: VIEWPORT, baseURL: `http://localhost:${APP}` } },
-    { name: 'reference', testMatch: /reference-baselines\.spec\.ts/, use: { ...devices['Desktop Chrome'], viewport: VIEWPORT, baseURL: `http://localhost:${REF}` } }
+    // Anchored at a path boundary (start-or-slash) and the extension: an unanchored
+    // (visual|smoke|dom) would also match "reference-dom.spec.ts" as a substring, which
+    // belongs to the reference project only.
+    { name: 'app', testMatch: /(^|\/)(visual|smoke|dom)\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: VIEWPORT, baseURL: `http://localhost:${APP}` } },
+    { name: 'reference', testMatch: /(^|\/)reference-(baselines|dom)\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: VIEWPORT, baseURL: `http://localhost:${REF}` } }
   ],
   webServer: [
     { command: `npm run dev -- --port ${APP} --strictPort`, url: `http://localhost:${APP}`, cwd: '..', timeout: 60_000, reuseExistingServer: !process.env.CI, stdout: 'ignore', stderr: 'pipe' },
