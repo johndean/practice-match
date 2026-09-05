@@ -81,10 +81,21 @@ function kindOf(n: RawNode | DomNode): Kind {
 // ---------------------------------------------------------------------------------------
 const DROPPED_ATTRS = new Set(['data-dc-tpl', 'data-reactroot', 'key']);
 const isDroppedAttr = (name: string) => DROPPED_ATTRS.has(name) || name.startsWith('data-v-');
-// The design's runtime hooks its own pseudo-class rules to `scp…` tokens; the app's
-// generated pseudo.css does the same with `sch…` tokens (frontend/src/generated/pseudo.css).
-// Both are hover-hook identifiers, not meaningful content, so both fold to one placeholder.
-const PSEUDO_CLASS = /^sc[hp][0-9a-z]+$/;
+// The design's runtime hooks its own pseudo-class rules to `scp…` tokens (support.js
+// l.1579, `"scp" + (n++).toString(36)`); the app's generated pseudo.css does the same with
+// `sch…` tokens (convert-dc.mjs's pseudoClass(), `'sch' + pseudo.size.toString(36)`). Both
+// are hover-hook identifiers, not meaningful content, so both fold to one placeholder.
+//
+// Zero-gap audit, Phase 4 — this was one loose `^sc[hp][0-9a-z]+$` applied to both targets,
+// which is a masking pattern: it also swallowed any ordinary content class beginning with
+// either prefix (`school`, `scheme`, `schedule`, `scholar` are all sc[hp] + base-36
+// characters), so such a class on one target compared EQUAL to a generated hook on the
+// other. Each side now matches only its own generator's prefix, and the base-36 index is
+// bounded at two characters — 1296 hooks, against the one character both generators
+// actually use today (design: scp0/scp1/scp3/scp6 on Browse; app: sch0…scha, 11 rules).
+// Anything longer is content, not an index, and is compared verbatim.
+const PSEUDO_CLASS_APP = /^sch[0-9a-z]{1,2}$/;
+const PSEUDO_CLASS_DESIGN = /^scp[0-9a-z]{1,2}$/;
 
 const byString = ([a]: [string, string], [b]: [string, string]) => (a < b ? -1 : a > b ? 1 : 0);
 
@@ -135,12 +146,13 @@ export function normalise(raw: RawNode, opts: NormaliseOptions = {}): DomNode {
       return { tag: 'div', leaflet: true };
     default: {
       const el = raw as RawElement;
+      const pseudoHook = opts.design ? PSEUDO_CLASS_DESIGN : PSEUDO_CLASS_APP;
       let attrs = el.attrs.filter(([name]) => !isDroppedAttr(name)).slice().sort(byString);
       if (opts.design) attrs = attrs.map(rewriteDesignAttr);
       const node: DomElement = {
         tag: el.tag,
         attrs,
-        class: el.classList.map((c) => (PSEUDO_CLASS.test(c) ? '<pseudo>' : c)).sort(),
+        class: el.classList.map((c) => (pseudoHook.test(c) ? '<pseudo>' : c)).sort(),
         style: el.style.slice().sort(byString),
         children: el.children.filter((n) => !isWhitespaceOnlyText(n)).map((n) => normalise(n, opts))
       };
@@ -163,27 +175,37 @@ function show(pair: [string, string] | null): string {
 }
 type PairFmt = (name: string, av: [string, string] | null, bv: [string, string] | null) => string;
 // Walks two sorted [name, value] arrays (attrs, style declarations, or — rule C — props) in
-// lockstep and reports the first name whose value differs, or the first name present on
-// only one side. `fmt` supplies the message shape, which differs slightly by kind: attrs
-// and style use `label name: "a" ≠ "b"`; props use `prop name "a" ≠ "b"` (no colon after
-// the name), per the brief's own example.
-function firstPairDiff(a: [string, string][], b: [string, string][], fmt: PairFmt): string | null {
+// lockstep and reports EVERY name whose value differs, plus every name present on only one
+// side. `fmt` supplies the message shape, which differs slightly by kind: attrs and style
+// use `label name: "a" ≠ "b"`; props use `prop name "a" ≠ "b"` (no colon after the name),
+// per the brief's own example.
+//
+// Zero-gap audit, Phase 4: this used to return on the first difference. A first-error walk
+// never reports a WRONG result — the diff is non-empty either way, so the gate still fails —
+// but it hides the rest of the actionable evidence behind however many fix-and-rerun cycles
+// the element has faults, which is exactly the "failures must be diagnostic and complete,
+// not merely first-error" requirement. Names come back in sorted order because both inputs
+// are sorted by normalise().
+function pairDiffs(a: [string, string][], b: [string, string][], fmt: PairFmt): string[] {
+  const out: string[] = [];
   let i = 0;
   let j = 0;
   while (i < a.length || j < b.length) {
     const av = i < a.length ? a[i] : null;
     const bv = j < b.length ? b[j] : null;
     if (av && bv && av[0] === bv[0]) {
-      if (av[1] !== bv[1]) return fmt(av[0], av, bv);
+      if (av[1] !== bv[1]) out.push(fmt(av[0], av, bv));
       i++;
       j++;
     } else if (bv === null || (av !== null && av[0] < bv[0])) {
-      return fmt(av![0], av, null);
+      out.push(fmt(av![0], av, null));
+      i++;
     } else {
-      return fmt(bv![0], null, bv);
+      out.push(fmt(bv![0], null, bv));
+      j++;
     }
   }
-  return null;
+  return out;
 }
 const attrFmt: PairFmt = (name, av, bv) => `attr ${name}: ${show(av)} ≠ ${show(bv)}`;
 const styleFmt: PairFmt = (name, av, bv) => `style ${name}: ${show(av)} ≠ ${show(bv)}`;
@@ -191,6 +213,23 @@ const propFmt: PairFmt = (name, av, bv) => `prop ${name} ${show(av)} ≠ ${show(
 function classDiff(a: string[], b: string[]): string | null {
   if (a.length === b.length && a.every((c, i) => c === b[i])) return null;
   return `class [${a.join(' ')}] ≠ [${b.join(' ')}]`;
+}
+
+// How a node is named when it exists on one side only. Phase 4: "missing node must be
+// reported precisely" / "extra node must be reported" — a bare count says how many are
+// unaccounted for, never which, and a big missing subtree then reads as one anonymous
+// number instead of a list of names to go and look for.
+function nodeLabel(n: DomNode): string {
+  switch (kindOf(n)) {
+    case 'text':
+      return `text "${(n as DomText).text}"`;
+    case 'shadow':
+      return 'shadow';
+    case 'leaflet':
+      return '<div leaflet>';
+    default:
+      return `<${(n as DomElement).tag}>`;
+  }
 }
 
 function compareElements(a: DomElement, b: DomElement, selfPath: string, childBasePath: string, out: string[]): void {
@@ -201,14 +240,11 @@ function compareElements(a: DomElement, b: DomElement, selfPath: string, childBa
   // mismatched tag itself.
   const tagMismatch = a.tag !== b.tag;
   if (tagMismatch) out.push(`${selfPath}: tag <${a.tag}> ≠ <${b.tag}>`);
-  const attr = firstPairDiff(a.attrs, b.attrs, attrFmt);
-  if (attr) out.push(`${selfPath}: ${attr}`);
-  const prop = firstPairDiff(a.props ?? [], b.props ?? [], propFmt);
-  if (prop) out.push(`${selfPath}: ${prop}`);
+  for (const m of pairDiffs(a.attrs, b.attrs, attrFmt)) out.push(`${selfPath}: ${m}`);
+  for (const m of pairDiffs(a.props ?? [], b.props ?? [], propFmt)) out.push(`${selfPath}: ${m}`);
   const cls = classDiff(a.class, b.class);
   if (cls) out.push(`${selfPath}: ${cls}`);
-  const style = firstPairDiff(a.style, b.style, styleFmt);
-  if (style) out.push(`${selfPath}: ${style}`);
+  for (const m of pairDiffs(a.style, b.style, styleFmt)) out.push(`${selfPath}: ${m}`);
   if (tagMismatch) return; // nothing below a structurally incompatible tag is meaningful
   if (a.children.length !== b.children.length) {
     out.push(`${selfPath}: child count ${a.children.length} ≠ ${b.children.length}`);
@@ -219,6 +255,13 @@ function compareElements(a: DomElement, b: DomElement, selfPath: string, childBa
 function compareChildren(a: DomNode[], b: DomNode[], basePath: string, out: string[]): void {
   const len = Math.min(a.length, b.length);
   for (let i = 0; i < len; i++) compareChild(a[i], b[i], i, basePath, out);
+  // Phase 4: the positions past the shorter side are exactly the missing/extra nodes. They
+  // are named individually, at their own index, after the shared prefix has been compared —
+  // so a count line, the faults among the children both sides have, AND the identity of
+  // every unmatched node all arrive from one run.
+  const displayPath = basePath || '(root)';
+  for (let i = len; i < a.length; i++) out.push(`${displayPath}: child[${i}] ${nodeLabel(a[i])} ≠ (none)`);
+  for (let i = len; i < b.length; i++) out.push(`${displayPath}: child[${i}] (none) ≠ ${nodeLabel(b[i])}`);
 }
 
 // Reviewer finding (Important #1, fix round 1): compareChildren alone only ever walks

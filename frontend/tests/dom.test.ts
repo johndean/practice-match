@@ -28,8 +28,63 @@ const asEl = (n: DomNode): DomElement => n as DomElement;
 
 describe('normalise', () => {
   it('maps both scp… (design) and sch… (app) pseudo-class hooks to the same placeholder', () => {
-    expect(asEl(normalise(el({ classList: ['card', 'scp3'] }))).class).toEqual(['<pseudo>', 'card']);
+    expect(asEl(normalise(el({ classList: ['card', 'scp3'] }), { design: true })).class).toEqual(['<pseudo>', 'card']);
     expect(asEl(normalise(el({ classList: ['card', 'sch3'] }))).class).toEqual(['<pseudo>', 'card']);
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // Zero-gap audit, Phase 4 — oracle blind spot found and closed.
+  //
+  // The hook pattern used to be one loose `^sc[hp][0-9a-z]+$` applied to BOTH targets. Two
+  // consequences, neither of which can make the oracle report something false, but both of
+  // which let a real difference compare EQUAL — the only kind of oracle bug that matters:
+  //
+  //   (a) an ordinary content class that merely starts sch…/scp… — `school`, `scheme`,
+  //       `schedule`, `scholar` are all `sc[hp]` + base-36 characters — folded to
+  //       <pseudo> as well, so `class="schedule"` on one target and a generated hook on
+  //       the other looked identical;
+  //   (b) the app's prefix was accepted on the design side and vice versa, doubling the
+  //       surface for (a).
+  //
+  // Both generators emit `prefix + (n++).toString(36)` for a small n — support.js l.1579
+  // (scp) and convert-dc.mjs's pseudoClass() (sch). A live census of the design's Browse
+  // screen finds scp0/scp1/scp3/scp6 and the app's generated/pseudo.css defines sch0…scha:
+  // one base-36 character on both. Two characters is therefore an ample bound (1296 hooks)
+  // and it excludes every English word that starts with the prefix. Each side now accepts
+  // only its OWN generator's shape.
+  // ---------------------------------------------------------------------------------------
+  describe('pseudo-class hook substitution is side-aware and shape-bounded', () => {
+    it('collapses only the design\'s own prefix on the design side', () => {
+      expect(asEl(normalise(el({ classList: ['scp0'] }), { design: true })).class).toEqual(['<pseudo>']);
+      expect(asEl(normalise(el({ classList: ['sch0'] }), { design: true })).class).toEqual(['sch0']);
+    });
+
+    it('collapses only the app\'s own prefix on the app side', () => {
+      expect(asEl(normalise(el({ classList: ['sch0'] }))).class).toEqual(['<pseudo>']);
+      expect(asEl(normalise(el({ classList: ['scp0'] }))).class).toEqual(['scp0']);
+    });
+
+    it('never collapses an ordinary content class that happens to start with the prefix', () => {
+      for (const word of ['school', 'scheme', 'schedule', 'scholar', 'schema']) {
+        expect(asEl(normalise(el({ classList: [word] }))).class, `app side: ${word}`).toEqual([word]);
+        expect(asEl(normalise(el({ classList: [word] }), { design: true })).class, `design side: ${word}`).toEqual([word]);
+      }
+      expect(asEl(normalise(el({ classList: ['sc-host-x', 'sc-interp', 'scroll'] }))).class)
+        .toEqual(['sc-host-x', 'sc-interp', 'scroll']);
+    });
+
+    it('accepts a two-character base-36 index — well past either generator\'s live count', () => {
+      expect(asEl(normalise(el({ classList: ['schzz'] }))).class).toEqual(['<pseudo>']);
+      expect(asEl(normalise(el({ classList: ['scpzz'] }), { design: true })).class).toEqual(['<pseudo>']);
+    });
+
+    // The blind spot itself, as a diff: a design content class against an app hook. Before
+    // the fix both sides read `<pseudo>` and diff() returned [].
+    it('now REPORTS a design content class sitting where the app has a generated hook', () => {
+      const design = normalise(el({ tag: 'span', classList: ['schedule'] }), { design: true });
+      const app = normalise(el({ tag: 'span', classList: ['sch0'] }));
+      expect(diff(design, app)).toEqual(['(root): class [schedule] ≠ [<pseudo>]']);
+    });
   });
 
   it('sorts attributes by name and drops data-dc-tpl, data-reactroot, data-v-*, key', () => {
@@ -166,7 +221,9 @@ describe('normalise', () => {
   });
 
   it('recurses into shadow content', () => {
-    const raw: RawNode = { shadow: [el({ tag: 'span', classList: ['scp1'] })] };
+    // App-side normalise(): the hook prefix that side generates is sch… (see the side-aware
+    // substitution tests above); this test is about RECURSION, not about which prefix.
+    const raw: RawNode = { shadow: [el({ tag: 'span', classList: ['sch1'] })] };
     expect(normalise(raw)).toEqual({ shadow: [domEl({ tag: 'span', class: ['<pseudo>'] })] });
   });
 });
@@ -177,10 +234,57 @@ describe('diff', () => {
     expect(diff(tree, tree)).toEqual([]);
   });
 
-  it('reports the first differing attribute, with path', () => {
+  it('reports a differing attribute, with path', () => {
     const a = domEl({ children: [domEl({ tag: 'span', attrs: [['id', 'x']] })] });
     const b = domEl({ children: [domEl({ tag: 'span', attrs: [['id', 'y']] })] });
     expect(diff(a, b)).toEqual(['span[0]: attr id: "x" ≠ "y"']);
+  });
+
+  // Zero-gap audit, Phase 4: "a mismatch in one property must NEVER prevent the oracle from
+  // inspecting the remaining properties that can independently fail". The oracle used to
+  // stop at the FIRST differing attribute (and the first style declaration, and the first
+  // prop), so an element with three wrong attributes named one of them and the other two
+  // only surfaced on the next run, after the first was fixed — one round trip per defect.
+  it('reports EVERY differing attribute of one element, not just the first', () => {
+    const a = domEl({ children: [domEl({ tag: 'img', attrs: [['alt', 'a'], ['src', 'x.png'], ['width', '10']] })] });
+    const b = domEl({ children: [domEl({ tag: 'img', attrs: [['alt', 'b'], ['src', 'y.png'], ['width', '20']] })] });
+    expect(diff(a, b)).toEqual([
+      'img[0]: attr alt: "a" ≠ "b"',
+      'img[0]: attr src: "x.png" ≠ "y.png"',
+      'img[0]: attr width: "10" ≠ "20"'
+    ]);
+  });
+
+  it('reports every attribute present on only one side, in both directions, in one pass', () => {
+    const a = domEl({ attrs: [['alt', ''], ['id', 'x'], ['title', 't']] });
+    const b = domEl({ attrs: [['id', 'x'], ['role', 'button']] });
+    expect(diff(a, b)).toEqual([
+      '(root): attr alt: "" ≠ (none)',
+      '(root): attr role: (none) ≠ "button"',
+      '(root): attr title: "t" ≠ (none)'
+    ]);
+  });
+
+  it('reports every differing style declaration and every differing prop, not just the first', () => {
+    const a = domEl({ children: [domEl({ tag: 'input', style: [['color', 'red'], ['width', '1px']], props: [['checked', 'true'], ['value', 'a']] })] });
+    const b = domEl({ children: [domEl({ tag: 'input', style: [['color', 'blue'], ['width', '2px']], props: [['checked', 'false'], ['value', 'b']] })] });
+    expect(diff(a, b)).toEqual([
+      'input[0]: prop checked "true" ≠ "false"',
+      'input[0]: prop value "a" ≠ "b"',
+      'input[0]: style color: "red" ≠ "blue"',
+      'input[0]: style width: "1px" ≠ "2px"'
+    ]);
+  });
+
+  it('collects attr, prop, class and style faults on ONE element together, none masking another', () => {
+    const a = domEl({ children: [domEl({ tag: 'input', attrs: [['id', 'x']], class: ['a'], style: [['color', 'red']], props: [['value', 'p']] })] });
+    const b = domEl({ children: [domEl({ tag: 'input', attrs: [['id', 'y']], class: ['b'], style: [['color', 'blue']], props: [['value', 'q']] })] });
+    expect(diff(a, b)).toEqual([
+      'input[0]: attr id: "x" ≠ "y"',
+      'input[0]: prop value "p" ≠ "q"',
+      'input[0]: class [a] ≠ [b]',
+      'input[0]: style color: "red" ≠ "blue"'
+    ]);
   });
 
   it('reports an attribute present on only one side', () => {
@@ -235,12 +339,41 @@ describe('diff', () => {
     expect(diff(a, b)).toEqual(['(root): child[0] text "a" ≠ "A"', '(root): child[2] text "c" ≠ "C"']);
   });
 
-  it('reports a child-count mismatch, with path, and still compares the children both sides have', () => {
+  // Zero-gap audit, Phase 4: the count alone said HOW MANY nodes were unaccounted for but
+  // never WHICH — and the old fixture made the "still compares the children both sides
+  // have" half of the title vacuous, because the shared child was identical. Both halves
+  // are asserted now: the surviving child's own fault, and the missing node named.
+  it('reports a child-count mismatch, names the missing node, and still compares the shared children', () => {
     const a = domEl({
-      children: [domEl({ tag: 'span', attrs: [['id', 'a']] }), domEl({ tag: 'span', attrs: [['id', 'b']] })]
+      children: [domEl({ tag: 'span', attrs: [['id', 'a']] }), domEl({ tag: 'em', attrs: [['id', 'b']] })]
     });
-    const b = domEl({ children: [domEl({ tag: 'span', attrs: [['id', 'a']] })] });
-    expect(diff(a, b)).toEqual(['(root): child count 2 ≠ 1']);
+    const b = domEl({ children: [domEl({ tag: 'span', attrs: [['id', 'DIFFERENT']] })] });
+    expect(diff(a, b)).toEqual([
+      '(root): child count 2 ≠ 1',
+      'span[0]: attr id: "a" ≠ "DIFFERENT"',
+      '(root): child[1] <em> ≠ (none)'
+    ]);
+  });
+
+  it('reports an EXTRA node on the other side just as precisely', () => {
+    const a = domEl({ children: [domEl({ tag: 'span' })] });
+    const b = domEl({ children: [domEl({ tag: 'span' }), domEl({ tag: 'em' }), { text: 'tail' }] });
+    expect(diff(a, b)).toEqual([
+      '(root): child count 1 ≠ 3',
+      '(root): child[1] (none) ≠ <em>',
+      '(root): child[2] (none) ≠ text "tail"'
+    ]);
+  });
+
+  it('names missing and extra nodes inside a shadow root too, at the /shadow path', () => {
+    const host = (children: DomNode[]) => domEl({ children: [domEl({ tag: 'image-slot', children: [{ shadow: children }] })] });
+    const a = host([domEl({ tag: 'style' }), domEl({ tag: 'div' }), domEl({ tag: 'input' })]);
+    const b = host([domEl({ tag: 'style' })]);
+    expect(diff(a, b)).toEqual([
+      'image-slot[0]/shadow: child count 3 ≠ 1',
+      'image-slot[0]/shadow: child[1] <div> ≠ (none)',
+      'image-slot[0]/shadow: child[2] <input> ≠ (none)'
+    ]);
   });
 
   it('labels a node-kind mismatch among the ROOT\'s own children "(root)", not a blank prefix', () => {
@@ -267,13 +400,19 @@ describe('diff', () => {
       domEl({ children: [domEl({ tag: 'image-slot', children: [{ shadow: children }] })] });
     const a = shadowHost([domEl({ tag: 'img' }), domEl({ tag: 'span' })]);
     const b = shadowHost([domEl({ tag: 'img' })]);
-    expect(diff(a, b)).toEqual(['image-slot[0]/shadow: child count 2 ≠ 1']);
+    expect(diff(a, b)).toEqual([
+      'image-slot[0]/shadow: child count 2 ≠ 1',
+      'image-slot[0]/shadow: child[1] <span> ≠ (none)'
+    ]);
   });
 
   it('reports the same shadow-root child-count mismatch when the shadow root is the diffed root itself', () => {
     const a: DomNode = { shadow: [domEl({ tag: 'img' }), domEl({ tag: 'span' })] };
     const b: DomNode = { shadow: [domEl({ tag: 'img' })] };
-    expect(diff(a, b)).toEqual(['shadow: child count 2 ≠ 1']);
+    expect(diff(a, b)).toEqual([
+      'shadow: child count 2 ≠ 1',
+      'shadow: child[1] <span> ≠ (none)'
+    ]);
   });
 
   it('reports a differing props entry, with path (rule C)', () => {
@@ -317,7 +456,7 @@ describe('diff', () => {
 describe('normalise recursion into element children (fix round 2 — explicitly asserted)', () => {
   it('recurses into nested element children, substituting a pseudo-class several levels down', () => {
     const raw = el({
-      children: [el({ tag: 'section', children: [el({ tag: 'span', classList: ['scp4'] })] })]
+      children: [el({ tag: 'section', children: [el({ tag: 'span', classList: ['sch4'] })] })]
     });
     const result = normalise(raw) as DomElement;
     const section = result.children[0] as DomElement;
