@@ -38,13 +38,22 @@ def scratch_db():
 def test_applies_each_file_once_and_records_it(scratch_db):
     first = migrate.run(scratch_db)
     second = migrate.run(scratch_db)
-    assert first == ["001_init.sql"]
+    assert first == ["001_init.sql", "002_interest_signup.sql"]
     assert second == []
     with psycopg2.connect(scratch_db) as conn, conn.cursor() as cur:
         cur.execute("SELECT name FROM schema_migrations ORDER BY name")
-        assert [r[0] for r in cur.fetchall()] == ["001_init.sql"]
+        assert [r[0] for r in cur.fetchall()] == ["001_init.sql", "002_interest_signup.sql"]
         cur.execute("SELECT postgis_version()")
         assert cur.fetchone()[0].startswith("3.")
+
+
+def test_002_creates_interest_signup_with_a_unique_normalised_email(scratch_db):
+    applied = migrate.run(scratch_db)
+    assert applied == ["001_init.sql", "002_interest_signup.sql"]
+    with psycopg2.connect(scratch_db) as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO interest_signup (email, email_normalised, consent_version) VALUES ('A@x.com', 'a@x.com', 'coming-soon-v1')")
+        with pytest.raises(psycopg2.errors.UniqueViolation):
+            cur.execute("INSERT INTO interest_signup (email, email_normalised, consent_version) VALUES ('a@X.com', 'a@x.com', 'coming-soon-v1')")
 
 
 def test_failing_file_raises_and_is_not_recorded(scratch_db, tmp_path):
