@@ -4,6 +4,7 @@ import httpx
 import pytest
 from httpx import ASGITransport
 
+from app.checks import check_db, check_redis
 from app.config import settings
 from app.main import app
 from app.version import VERSION
@@ -58,6 +59,16 @@ async def test_deep_healthz_is_503_with_components_down(client, components_down)
     r = await client.get("/api/healthz/deep")
     assert r.status_code == 503
     assert r.json()["db"]["ok"] is False
+
+
+async def test_check_db_degrades_on_malformed_dsn_instead_of_raising():
+    result = await check_db("not-a-dsn")
+    assert result == {"ok": False, "error": "ArgumentError"}
+
+
+async def test_check_redis_degrades_on_malformed_url_instead_of_raising():
+    result = await check_redis("not-a-url")
+    assert result == {"ok": False, "error": "ValueError"}
 
 
 async def test_unknown_api_route_is_json_404_not_index(client):

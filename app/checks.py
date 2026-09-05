@@ -33,25 +33,29 @@ def _err(exc: Exception) -> ComponentStatus:
 
 async def check_db(url: str) -> ComponentStatus:
     # A fresh engine per call is deliberate for now; the Identity plan's app/db.py (Task I1) will own the pooled engine and this probe will use it then.
-    engine = create_async_engine(async_dsn(url), connect_args={"timeout": TIMEOUT_S})
+    engine = None
     try:
+        engine = create_async_engine(async_dsn(url), connect_args={"timeout": TIMEOUT_S})
         async with engine.connect() as conn:
             result = await asyncio.wait_for(conn.execute(text("SELECT postgis_version()")), TIMEOUT_S)
             return {"ok": True, "postgis_version": str(result.scalar_one())}
-    except Exception as exc:  # noqa: BLE001 — reported, never raised
+    except Exception as exc:  # noqa: BLE001 — reported, never raised (a malformed DSN raises here too, before any connection is attempted)
         return _err(exc)
     finally:
-        await engine.dispose()
+        if engine is not None:
+            await engine.dispose()
 
 
 async def check_redis(url: str) -> ComponentStatus:
-    client = aioredis.from_url(  # type: ignore[no-untyped-call]  # redis-py's from_url has no annotations upstream
-        url, socket_connect_timeout=TIMEOUT_S, socket_timeout=TIMEOUT_S
-    )
+    client = None
     try:
+        client = aioredis.from_url(  # type: ignore[no-untyped-call]  # redis-py's from_url has no annotations upstream
+            url, socket_connect_timeout=TIMEOUT_S, socket_timeout=TIMEOUT_S
+        )
         await asyncio.wait_for(client.ping(), TIMEOUT_S)
         return {"ok": True}
-    except Exception as exc:  # noqa: BLE001
+    except Exception as exc:  # noqa: BLE001 — a malformed URL raises here too, before any connection is attempted
         return _err(exc)
     finally:
-        await client.aclose()
+        if client is not None:
+            await client.aclose()
