@@ -32,6 +32,7 @@
 - **Schema (§13):** the DDL is applied verbatim as numbered migrations, in the order the spec gives (`ingest_run` → `dataset_registry` → FK back-fill → `geo_area` → measures → listing-dependent tables → `active_vintage`).
 - **Competition geography (red-team C1):** community-level competition comes from **ZIP Code Business Patterns** (`zbp`, same Census program, public domain) aggregated over the ZCTAs a catchment/place intersects; county CBP remains the county benchmark. `vets_per_10k_households` always divides establishments and households measured over the **same** geography. The UI must say the count is a proxy for competitive density (spec §5).
 - **Growth geography (red-team C2):** `population_growth_pct` is computed at **place** level (stable GEOIDs across the 2020 tract redefinition), county fallback; tract-level growth waits for the 2010→2020 tract crosswalk (Phase C).
+- **Google Maps Platform content (audit 2026-09-05, D15–D17):** no Google Places content is stored, analysed or rendered in V1. Google Maps Platform Terms §3.2.3(a)(iii) forbid saving "business names, addresses, or user reviews"; §3.2.3(c)(iv) forbids using "latitude/longitude values from the Places API as an input for point-in-polygon analysis"; Service Specific Terms §14.2 forbid Places content "in conjunction with a non-Google map" (the approved design is Leaflet). Only `place_id` may be kept indefinitely (SST §3) and latitude/longitude for 30 days (SST §14.3). Places Aggregate API POI counts may be cached 30 days solely to compute non-substitutable "Customer Values" (SST §13.1–13.2). The 2017 export `Report_Hospital_Competitor_All_US_ZipCode_FULL.csv` is a blocked source: never copied into the repository, the bucket or the database.
 - **Bands:** `market_metric.band ∈ {'place', 'drive_10', 'drive_20'}`. Community bubbles and the "community label" figures default to `place` (the approved design's numbers are city-level); the practice panel's drive-time context defaults to `drive_10`; every response names its band.
 - **Access (red-team C4):** every market endpoint requires an approved member session (Sub-project 2's `require_member`) unless `MARKET_DATA_PUBLIC=true` (VIN Foundation decision, spec §15). Coordinates returned are the **place centroid** unless the seller disclosed the location (`listing.location_disclosed`), never the geocoded point otherwise.
 - **Cache gate (red-team C5):** panel and community payloads are cached under a key that includes a global `market:gate:v` counter bumped on any licence decision, and metrics are re-filtered through the gate on read — a blocked layer disappears within 60 s even from cached payloads.
@@ -56,6 +57,9 @@
 | D12 | **Population growth at place level** (2014–2018 → 2019–2023 place rows), county fallback; tract growth deferred until the 2010→2020 tract relationship file is loaded. | 2010 and 2020 tract GEOIDs differ; joining prior-vintage tracts on 2020 GEOIDs is wrong (red-team C2). |
 | D13 | **Market endpoints are member-gated** via SP2's `require_member`, with `MARKET_DATA_PUBLIC` as the only way to open them (default false). | Spec §15 leaves public teaser vs gated to the VIN Foundation; default closed. |
 | D14 | **Migration ranges:** SP3-A `002`–`009`, SP2 `010`–`059`, SP3-B `060`+. | Phase B tables reference `listing(id)`, which SP2 creates; numbered ordering must guarantee it exists first. |
+| D15 | **The 2017 Google Places export is not a source.** `Report_Hospital_Competitor_All_US_ZipCode_FULL.csv` (audited 2026-09-05 — appendix below) stays out of the repository, bucket and database. The only content Google's terms let us keep is its 10,166 `place_id` values, and even those are not loaded until a Google-based mechanism (D17) is approved. The registry's `practice_locations` row names the file as blocked. | A 16-day snapshot (24 May–8 Jun 2017) covering 8,320 of ~41,700 ZIPs, Austin absent, 29.7 % individual-practitioner duplicates, ≈ 5 % non-veterinary rows; and Google Maps Platform Terms §3.2.3(a)/(c)(iv) + SST §14.2 forbid storing it, analysing it or drawing it on the Leaflet map. |
+| D16 | **Competitor points (Phase C) come from a permissively licensed, provenance-documented POI dataset, ranked:** (1) **Overture Maps Places** (CDLA-Permissive-2.0; Foursquare-sourced rows Apache-2.0; monthly GeoParquet on S3/Azure; per-feature `sources[]` and `confidence`; taxonomy entry `veterinarian`), (2) **Foursquare OS Places** (Apache-2.0; also an Overture source), (3) **VIN's member practice directory** (VIN-owned; consent review). OpenStreetMap `amenity=veterinary` (ODbL share-alike) is a coverage cross-check only, pending counsel. Google Places points are lawful only on a Google map (SST §14.1–14.2), which the approved Leaflet design excludes — not pursued. All candidate rows start `unresolved`. | Spec §12 excludes practice-location lists for undocumented provenance; these publish provenance and licence per record. They are storable, renderable on Leaflet and refreshable monthly — the three properties every Google route lacks. |
+| D17 | **Google's only role is a freshness signal through the Places Aggregate API** (Task C1, gated): `INSIGHT_COUNT` of `veterinary_care` places (Places type Table A) that are `OPERATIONAL`, per listing band; the count lives only in memory, is bucketed with the design thresholds into `level_live` (Low/Moderate/High) and compared with the ZBP level (`diverges`); those two values are the persisted "Customer Values" (SST §13.1). No count, ratio or place list is stored, returned or drawn. Registry row `google_places_aggregate` stays `unresolved` until VIN Foundation counsel accepts SST §13 and a Google Cloud billing account exists. | It is the one Google mechanism built for market counts whose terms permit derived metrics; Nearby/Text Search (20 results, no pagination, $32/1k) and Place Details refreshes return content we may not keep. V1 volume (4 markets × ~60 communities × 3 bands ≈ 720 requests/month) sits inside the 5,000 free requests; $10 per further 1,000. |
 
 ## API contract (consumed by Sub-project 2's frontend wiring)
 
@@ -85,7 +89,8 @@ GET /api/markets/{cbsa_geoid}/communities?band=place|drive_10   (default place)
     "communities": [
       { "listing_id": "…", "name": "Cedar Park", "lat": 30.5052, "lng": -97.8203, "location": "place_centroid|disclosed_point", "geo_precision": "rooftop",
         "pop": 81900, "hh": 27600, "income": 118400, "growth": 14.2, "pets": 15732, "econ": 685000, "vets": 7,
-        "competition": { "count": 7, "geo_level": "zcta", "zctas": 3, "per_10k_households": 2.54, "level": "Moderate" },
+        "competition": { "count": 7, "geo_level": "zcta", "zctas": 3, "per_10k_households": 2.54, "level": "High",
+                         "freshness": { "level_live": "High", "diverges": false, "as_of": "2026-09-02" } },   // `freshness` appears only in Phase C (D17) while `google_places_aggregate` is cleared — a bucket and a flag, never a count; selecting a listing whose signal is > 7 days old enqueues a background refresh
         "suppressed": [] } ] }
     # fixture field names (D6); numeric raw values; `level` uses the design's thresholds (<1.4 Low, <2.2 Moderate, else High).
 
@@ -264,7 +269,8 @@ def pytest_raises(exc):
 ```python
 from app.census.registry import attribution, is_cleared, load
 
-SPEC_KEYS = {"acs5", "acs5_subject", "acs5_prior", "cbp", "zbp", "qwi", "bds", "geocoder", "tiger_cb", "aies", "osm_tiles", "imagery", "pet_ownership", "practice_locations"}
+SPEC_KEYS = {"acs5", "acs5_subject", "acs5_prior", "cbp", "zbp", "qwi", "bds", "geocoder", "tiger_cb", "aies", "osm_tiles", "imagery", "pet_ownership", "practice_locations",
+             "google_places_aggregate", "overture_places", "fsq_os_places"}  # last three: D16/D17 candidates, never ingested until cleared
 
 
 def test_seed_matches_the_spec_dataset_register(conn):
@@ -279,6 +285,8 @@ def test_seed_matches_the_spec_dataset_register(conn):
     assert reg["aies"].license_status == "unresolved"  # "Verify ID" in the spec → not cleared until confirmed
     assert reg["zbp"].api_dataset_id == "2022/zbp" and reg["zbp"].naics_param == "NAICS2017" and reg["zbp"].license_status == "cleared"
     assert reg["practice_locations"].license_status == "blocked"  # spec §12: third-party practice-location data is out of scope for V1
+    for k in ("google_places_aggregate", "overture_places", "fsq_os_places"):
+        assert reg[k].license_status == "unresolved"  # D16/D17: candidates only; the gate keeps them out of every table and payload
     for k in ("acs5", "acs5_subject", "acs5_prior", "cbp", "qwi", "bds", "geocoder", "tiger_cb"):
         assert reg[k].license_status == "cleared" and reg[k].license_name == "Public domain"
 
@@ -372,7 +380,10 @@ INSERT INTO dataset_registry
   ('osm_tiles','Street basemap tiles (CARTO, OSM data)',NULL,'https://basemaps.cartocdn.com/light_all','live',NULL,'live','cleared','ODbL 1.0','https://www.openstreetmap.org/copyright','© OpenStreetMap contributors © CARTO','Registered by the spec; the approved design ships Esri tiles — VIN Foundation decision pending (Foundation spec §9)'),
   ('imagery','Satellite basemap',NULL,'vendor TBD','live',NULL,'live','unresolved',NULL,NULL,'Imagery attribution pending licence','Satellite toggle stays behind a feature flag until a written licence names commercial web display'),
   ('pet_ownership','Pet ownership incidence (commercial)',NULL,'licensed feed','n/a',NULL,'n/a','blocked',NULL,NULL,'Pet-ownership incidence (licensed) — not in use','Ship only the ACS-derived estimate (rate 0.57) until a licence is signed'),
-  ('practice_locations','Third-party practice location data',NULL,'n/a','n/a',NULL,'n/a','blocked',NULL,NULL,'Practice locations (third party) — not in use','Spec §12: purchased or scraped veterinary location lists are out of scope for V1 (undocumented provenance). Competition counts come from Census establishment totals only.');
+  ('practice_locations','Third-party practice location data',NULL,'n/a','n/a',NULL,'n/a','blocked',NULL,NULL,'Practice locations (third party) — not in use','Spec §12: purchased or scraped veterinary location lists are out of scope for V1 (undocumented provenance). Includes the 2017 Google Places export Report_Hospital_Competitor_All_US_ZipCode_FULL.csv (D15): Google Maps Platform Terms §3.2.3 and SST §14 forbid storing or rendering its content. Competition counts come from Census establishment totals only.'),
+  ('google_places_aggregate','Google Places Aggregate API (competition freshness signal)',NULL,'https://areainsights.googleapis.com/v1','live',NULL,'Monthly','unresolved','Google Maps Platform Terms + Service Specific Terms §13','https://cloud.google.com/maps-platform/terms/maps-service-terms','Competition freshness derived from Google Places counts (Google)','D17 / Task C1. The POI count is held in memory only (SST §13.2, 30-day ceiling); persisted values are level_live and diverges (SST §13.1 Customer Values). Clear only after VIN Foundation counsel accepts SST §13 and a Google Cloud billing account exists. Key GOOGLE_MAPS_API_KEY on the worker service only.'),
+  ('overture_places','Overture Maps Places (competitor points)',NULL,'s3://overturemaps-us-west-2/release','monthly release',NULL,'Monthly','unresolved','CDLA-Permissive-2.0 (Foursquare-sourced rows: Apache-2.0)','https://docs.overturemaps.org/attribution/','Practice locations: © Overture Maps Foundation contributors (CDLA-Permissive-2.0); portions © Foursquare (Apache-2.0)','D16 rank 1. Taxonomy entry veterinarian; per-feature sources[] and confidence retained. Clear after the VIN Foundation approves a competitor-points layer (Task C2).'),
+  ('fsq_os_places','Foursquare OS Places (competitor points, alternate)',NULL,'https://huggingface.co/datasets/foursquare/fsq-os-places','monthly release',NULL,'Monthly','unresolved','Apache-2.0','https://opensource.foursquare.com/os-places/','Practice locations: Foursquare OS Places (Apache-2.0)','D16 rank 2; category label Veterinarian. Redundant with overture_places unless Overture stops carrying Foursquare rows.');
 ```
 
 `migrations/003_census_geo.sql`:
@@ -3915,9 +3926,9 @@ Rendering stays exactly as the approved components do it (`MarketMapView.vue`, `
 | Population Growth (`growth`) | bubble, green ramp | `communities[].growth` | `population_growth_pct` (derived) | **place** (D12) | "ACS 2014–2018 → 2019–2023 …" | `acs5_prior` cleared |
 | Households (`households`) | bubble, blue ramp | `communities[].hh` | `households` | place | ACS attribution | `acs5` cleared |
 | Economic Profile (`econ`) | bubble, violet ramp; buckets `<$450K … >$900K` | `communities[].econ` | `revenue_per_establishment` (CBP payroll ÷ establishments) | **county** | CBP attribution; "Payroll per establishment, not revenue; county level." | `cbp` cleared |
-| Veterinary Competition (`competition`) | offset dot `[lat+.012, lng+.012]`, size `8 + min(n,14)`, `rgba(120,86,190,.75)`; tooltip "N veterinary establishments"; panel bars Low/Moderate/High | `communities[].vets`, `communities[].competition.{count, per_10k_households, level}` | `establishments` from **ZBP** ZIP counts aggregated over the community's ZCTAs (fallback: county CBP apportioned by household share, labelled derived) | ZCTA→place / catchment | ZBP attribution; "… proxy for competitive density, not a count of independent practices. ZIP-code counts aggregated to the community." | `zbp` cleared (fallback needs `cbp`) |
+| Veterinary Competition (`competition`) | offset dot `[lat+.012, lng+.012]`, size `8 + min(n,14)`, `rgba(120,86,190,.75)`; tooltip "N veterinary establishments"; panel bars Low/Moderate/High | `communities[].vets`, `communities[].competition.{count, per_10k_households, level}` | `establishments` from **ZBP** ZIP counts aggregated over the community's ZCTAs (fallback: county CBP apportioned by household share, labelled derived). Phase C (Task C1, D17): `competition.freshness.{level_live, diverges, as_of}` from the Places Aggregate API — a bucket and a flag, never a count | ZCTA→place / catchment | ZBP attribution; "… proxy for competitive density, not a count of independent practices. ZIP-code counts aggregated to the community." Freshness: the `google_places_aggregate` attribution text | `zbp` cleared (fallback needs `cbp`); `freshness` only while `google_places_aggregate` is cleared |
 
-Sources in one sentence for stakeholders: demographics, households, income and growth are the Census Bureau's American Community Survey; competition is the Census Bureau's count of veterinary establishments (NAICS 541940) by ZIP code, with the county total as a benchmark; the economic profile is Census payroll per establishment; pet ownership is our estimate from households; drive-time rings are straight-line approximations until a routing licence exists. No third-party practice list is used (spec §12).
+Sources in one sentence for stakeholders: demographics, households, income and growth are the Census Bureau's American Community Survey; competition is the Census Bureau's count of veterinary establishments (NAICS 541940) by ZIP code, with the county total as a benchmark; the economic profile is Census payroll per establishment; pet ownership is our estimate from households; drive-time rings are straight-line approximations until a routing licence exists. No third-party practice list is used (spec §12); no Google Maps data is used in V1 (D15), and the 2017 Google Places export is blocked.
 
 ## Phase C — Deferred by design (each has a stated trigger)
 
@@ -3930,13 +3941,427 @@ Sources in one sentence for stakeholders: demographics, households, income and g
 | AIES revenue benchmark | §2 aies, §15 | Dataset ID and geography confirmed | New loader + `revenue_per_establishment` v2 from AIES receipts |
 | Block groups (`150`) | §6 | A buyer-facing need for sub-tract detail | Add `150` to `GEOGRAPHIES` and `BOUNDARY_FILES`; off by default |
 | Auto-extend `market_state` | D4 | First listing geocoded outside TX/CA/FL/GA | `geocode.resolve` inserts the state and enqueues `census.load_tiger` + `census.load_acs` for it |
-| Individual competitor locations (points, not counts) | §12 "Practice location databases … out of scope for V1" | The VIN Foundation approves a provenance-clear source. Candidate with clear provenance: **VIN's own member practice directory** (VIN-owned data; needs VIN privacy/consent review and an opt-out). Purchased/scraped lists stay blocked. | New dataset row (`vin_practice_directory`), nightly sync, `competitor_location` table, points layer with per-point tooltips; `competition.count` then becomes a real count within the catchment rather than a ZIP aggregate |
+| Individual competitor locations (points, not counts) | §12 "Practice location databases … out of scope for V1"; D16 | The VIN Foundation approves a competitor-points layer and one source, in this order of preference: **Overture Maps Places** (`overture_places`), **Foursquare OS Places** (`fsq_os_places`), **VIN's member practice directory** (`vin_practice_directory`, VIN-owned; privacy/consent review and an opt-out). Purchased or scraped lists — including the 2017 Google Places export (D15) — stay blocked. | **Task C2 (sketch):** monthly Celery task downloads the release's `theme=places/type=place` GeoParquet for the market states' bounding boxes with pyarrow + shapely (no GDAL), asserts the release taxonomy contains `veterinarian` and aborts on drift (the ACS variable-check pattern), filters `categories.primary = 'veterinarian'` (or `taxonomy.primary` once Overture removes `categories`, September 2026), keeps `id, names.primary, addresses[0], geometry, confidence, sources[]`, writes `competitor_location(provider, provider_id, name, address, geom geography, confidence, sources jsonb, release, active bool)` behind a licence-gate trigger like `market_metric`'s; a member-gated `competition.points` layer (per-point tooltip: name, source, release); `competition.count` gains a second, labelled variant "practices located within the catchment (Overture, release YYYY-MM)" while the ZBP count remains the spec §5 figure; attribution from the registry row |
+| Competition freshness signal (Google) | D17; SST §13 | VIN Foundation counsel accepts SST §13 (Customer Values; 30-day count cache) and a Google Cloud billing account with the Places Aggregate API enabled exists; `google_places_aggregate` cleared in the registry; `GOOGLE_MAPS_API_KEY` set on `worker` out-of-band | Task C1 below — the only Google Maps Platform mechanism whose terms fit a stored, Leaflet-rendered market layer |
 | Tract-level growth (catchment bands) | D12 | Need for sub-place growth | Load the 2010→2020 tract relationship file (`tab20_tract20_tract10_natl.txt`), apportion 2014–2018 tract populations onto 2020 tracts by land-area share, then compute growth per catchment; `formula_version` → `v2` |
 | Population-weighted apportionment | §7 area-overlap weights | Catchments that cut large, unevenly populated tracts | Weight tract overlap by block-group population instead of area (`150` rows); `method` → `euclidean_buffer_v1_bgweighted` |
 
+### Task C1 (gated, Phase C): Places Aggregate freshness signal — D17
+
+**Gate:** start only when `dataset_registry.google_places_aggregate.license_status = 'cleared'` (VIN Foundation counsel has accepted SST §13; a Google Cloud project with the Places Aggregate API enabled and billing exists) and `GOOGLE_MAPS_API_KEY` is set on the `worker` service out-of-band — `railway variables --set GOOGLE_MAPS_API_KEY=<key> --service worker --environment <env>` after the 🚦 `railway status` check. The key never appears in chat, git or `.env.example`. Until then this task is documentation.
+
+**Files:**
+- Create: `migrations/062_market_freshness.sql`, `app/census/google_aggregate.py`, `app/census/freshness.py`, `app/tasks/freshness.py`, `tests/census/test_google_aggregate.py`, `tests/census/test_freshness.py`
+- Modify: `app/config.py` (add `google_maps_api_key: str | None = None`), `app/api/market.py:communities` (attach `freshness`), `app/api/market.py:layers` (attach `freshness_attribution`), `app/tasks/celery_app.py` (two beat entries), `tests/census/test_tasks.py`, `tests/api/test_market_api.py`
+
+**Interfaces:**
+- Consumes: `registry.is_cleared(conn, "google_places_aggregate")`, `registry.load(conn)["tiger_cb"].vintage`; `metrics.vets_per_10k(estab, hh)`, `metrics.competition_level(per10k)`; `catchment.BANDS`; `practice_location.point`, `practice_location.place_geoid`; `market_metric` rows `households` and `vets_per_10k_households` per band; `db.sync_conn()`; `gate.version()` (already in the B5 cache key — freshness rides the same key).
+- Produces: `google_aggregate.Circle(lat, lng, radius_m)`, `google_aggregate.Polygon(coords)`, `google_aggregate.request_body(area) -> dict`, `google_aggregate.count_operational(http, area, api_key) -> int`; `freshness.Freshness(level_live, diverges)`, `freshness.compute(count, households, zbp_level) -> Freshness`, `freshness.write(conn, listing_id, band, f, now=None)`, `freshness.purge_expired(conn) -> int`, `freshness.refresh_listing(conn, http, listing_id, api_key) -> int` (bands written); Celery tasks `freshness.refresh_all`, `freshness.refresh_one(listing_id)`, `freshness.purge_expired`; `freshness.STALE_AFTER_DAYS = 7`; table `market_freshness`.
+
+- [ ] **Step 1: Failing tests**
+
+`tests/census/test_google_aggregate.py`:
+```python
+import json
+
+import httpx
+import pytest
+
+from app.census import google_aggregate as G
+
+
+def _client(handler):
+    return httpx.Client(transport=httpx.MockTransport(handler))
+
+
+def test_count_operational_sends_a_count_insight_for_operational_veterinary_care_and_returns_the_count():
+    seen = {}
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        seen["url"], seen["key"], seen["json"] = str(req.url), req.headers["X-Goog-Api-Key"], json.loads(req.content)
+        return httpx.Response(200, json={"count": 7})
+
+    assert G.count_operational(_client(handler), G.Circle(30.27, -97.74, 8000), "k") == 7
+    assert seen["url"] == G.ENDPOINT and seen["key"] == "k"
+    assert seen["json"] == {
+        "insights": ["INSIGHT_COUNT"],
+        "filter": {
+            "locationFilter": {"circle": {"latLng": {"latitude": 30.27, "longitude": -97.74}, "radius": 8000}},
+            "typeFilter": {"includedTypes": ["veterinary_care"]},
+            "operatingStatus": ["OPERATING_STATUS_OPERATIONAL"],
+        },
+    }
+
+
+def test_polygon_filter_uses_lat_lng_objects_in_ring_order():
+    body = G.request_body(G.Polygon(((30.0, -97.0), (30.0, -97.1), (30.1, -97.1), (30.0, -97.0))))
+    assert body["filter"]["locationFilter"] == {"customArea": {"polygon": {"coordinates": [
+        {"latitude": 30.0, "longitude": -97.0}, {"latitude": 30.0, "longitude": -97.1},
+        {"latitude": 30.1, "longitude": -97.1}, {"latitude": 30.0, "longitude": -97.0}]}}}
+
+
+def test_non_2xx_raises_and_no_count_is_invented():
+    def handler(req: httpx.Request) -> httpx.Response:
+        return httpx.Response(429, json={"error": {"status": "RESOURCE_EXHAUSTED"}})
+
+    with pytest.raises(httpx.HTTPStatusError):
+        G.count_operational(_client(handler), G.Circle(1.0, 2.0, 8000), "k")
+```
+
+`tests/census/test_freshness.py` (uses the Phase B `conn` and `world` fixtures; `world` is the listing id):
+```python
+from datetime import datetime, timedelta, timezone
+
+import httpx
+import pytest
+
+from app.census import freshness as F
+
+
+@pytest.fixture
+def cleared_google(conn):
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET license_status='cleared' WHERE dataset_key='google_places_aggregate'")
+    conn.commit()
+
+
+def test_compute_buckets_with_the_design_thresholds_and_flags_divergence():
+    assert F.compute(7, 27600, "Moderate") == F.Freshness(level_live="High", diverges=True)   # 7 / 2.76 = 2.54 per 10k ≥ 2.2
+    assert F.compute(3, 27600, "Low") == F.Freshness(level_live="Low", diverges=False)        # 1.09 per 10k < 1.4
+
+
+def test_freshness_table_persists_no_count_ratio_or_place_ids(conn):
+    with conn.cursor() as cur:
+        cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'market_freshness'")
+        cols = {r[0] for r in cur.fetchall()}
+    assert cols == {"listing_id", "band", "provider", "level_live", "diverges", "fetched_at", "expires_at"}  # SST §13.2: the POI count never lands
+
+
+def test_write_sets_a_30_day_expiry_and_upserts(conn, world, cleared_google):
+    now = datetime(2026, 9, 5, tzinfo=timezone.utc)
+    F.write(conn, world, "place", F.Freshness("High", True), now=now)
+    F.write(conn, world, "place", F.Freshness("Moderate", False), now=now + timedelta(days=1))
+    with conn.cursor() as cur:
+        cur.execute("SELECT level_live, diverges, expires_at - fetched_at FROM market_freshness WHERE listing_id = %s", (world,))
+        assert cur.fetchall() == [("Moderate", False, timedelta(days=30))]
+
+
+def test_uncleared_provider_cannot_be_written(conn, world):
+    with pytest.raises(Exception) as e:
+        F.write(conn, world, "place", F.Freshness("Low", False))
+    assert "not cleared" in str(e.value)
+
+
+def test_purge_removes_only_expired_rows(conn, world, cleared_google):
+    F.write(conn, world, "place", F.Freshness("Low", False), now=datetime.now(timezone.utc) - timedelta(days=31))
+    F.write(conn, world, "drive_10", F.Freshness("Low", False))
+    assert F.purge_expired(conn) == 1
+
+
+def test_refresh_listing_writes_three_bands_and_falls_back_to_a_circle_when_the_polygon_is_rejected(conn, world, cleared_google, materialized):
+    calls = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        body = req.read().decode()
+        calls.append("polygon" if "customArea" in body else "circle")
+        if "customArea" in body:
+            return httpx.Response(400, json={"error": {"status": "INVALID_ARGUMENT"}})
+        return httpx.Response(200, json={"count": 9})
+
+    n = F.refresh_listing(conn, httpx.Client(transport=httpx.MockTransport(handler)), world, "k")
+    assert n == 3 and calls == ["polygon", "circle", "circle", "circle"]   # place polygon → 400 → 8 km circle; then drive_10, drive_20
+    with conn.cursor() as cur:
+        cur.execute("SELECT band, level_live FROM market_freshness WHERE listing_id = %s ORDER BY band", (world,))
+        rows = dict(cur.fetchall())
+    assert set(rows) == {"drive_10", "drive_20", "place"} and rows["place"] == "High"   # 9 / 2.76 = 3.26 per 10k
+
+
+def test_refresh_listing_is_a_no_op_while_the_gate_is_closed(conn, world, materialized):
+    def handler(req: httpx.Request) -> httpx.Response:
+        raise AssertionError("no Google call may leave the process while google_places_aggregate is uncleared")
+
+    assert F.refresh_listing(conn, httpx.Client(transport=httpx.MockTransport(handler)), world, "k") == 0
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `poetry run pytest tests/census/test_google_aggregate.py tests/census/test_freshness.py -q`
+Expected: FAIL — `ModuleNotFoundError: app.census.google_aggregate`, then `relation "market_freshness" does not exist`.
+
+- [ ] **Step 3: Migration and modules**
+
+`migrations/062_market_freshness.sql`:
+```sql
+-- D17: persisted "Customer Values" derived from Google Places Aggregate counts (SST §13.1).
+-- Deliberately no count, ratio or place-id column: the POI Count may live at most 30 days
+-- (SST §13.2) and never reaches this table; the API returns level_live and diverges only.
+CREATE TABLE market_freshness (
+  listing_id  uuid NOT NULL REFERENCES listing(id) ON DELETE CASCADE,
+  band        text NOT NULL CHECK (band IN ('place','drive_10','drive_20')),
+  provider    text NOT NULL DEFAULT 'google_places_aggregate' REFERENCES dataset_registry(dataset_key),
+  level_live  text NOT NULL CHECK (level_live IN ('Low','Moderate','High')),
+  diverges    boolean NOT NULL,
+  fetched_at  timestamptz NOT NULL,
+  expires_at  timestamptz NOT NULL,
+  PRIMARY KEY (listing_id, band, provider)
+);
+
+CREATE OR REPLACE FUNCTION market_freshness_license_gate() RETURNS trigger AS $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM dataset_registry WHERE dataset_key = NEW.provider AND license_status = 'cleared') THEN
+    RAISE EXCEPTION 'dataset % is not cleared for use', NEW.provider USING ERRCODE = 'check_violation';
+  END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+
+CREATE TRIGGER market_freshness_license_gate BEFORE INSERT OR UPDATE ON market_freshness
+  FOR EACH ROW EXECUTE FUNCTION market_freshness_license_gate();
+```
+
+`app/census/google_aggregate.py`:
+```python
+"""Places Aggregate API client (D17). Returns one integer and nothing else.
+
+Terms that shape this module: Google Maps Platform Service Specific Terms §13 — the POI Count may be
+cached for at most 30 days and only to compute a "Customer Value"; Terms §3.2.3(e) — nothing
+Google-authored is drawn on the Leaflet map. Callers therefore never persist the returned count.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import httpx
+
+ENDPOINT = "https://areainsights.googleapis.com/v1:computeInsights"
+PLACE_TYPE = "veterinary_care"  # Places API type, Table A
+
+
+@dataclass(frozen=True)
+class Circle:
+    lat: float
+    lng: float
+    radius_m: int
+
+    def location_filter(self) -> dict:
+        return {"circle": {"latLng": {"latitude": self.lat, "longitude": self.lng}, "radius": self.radius_m}}
+
+
+@dataclass(frozen=True)
+class Polygon:
+    coords: tuple[tuple[float, float], ...]  # (lat, lng) ring, counter-clockwise, closed
+
+    def location_filter(self) -> dict:
+        return {"customArea": {"polygon": {"coordinates": [{"latitude": a, "longitude": b} for a, b in self.coords]}}}
+
+
+def request_body(area: Circle | Polygon) -> dict:
+    return {
+        "insights": ["INSIGHT_COUNT"],
+        "filter": {
+            "locationFilter": area.location_filter(),
+            "typeFilter": {"includedTypes": [PLACE_TYPE]},
+            "operatingStatus": ["OPERATING_STATUS_OPERATIONAL"],
+        },
+    }
+
+
+def count_operational(http: httpx.Client, area: Circle | Polygon, api_key: str) -> int:
+    """One computeInsights call. Raises httpx.HTTPStatusError on any non-2xx (the monthly task logs and skips)."""
+    r = http.post(ENDPOINT, json=request_body(area), headers={"X-Goog-Api-Key": api_key},
+                  timeout=httpx.Timeout(45.0, connect=15.0))
+    r.raise_for_status()
+    return int(r.json().get("count", 0))
+```
+
+`app/census/freshness.py`:
+```python
+"""Customer Values from Google counts (D17): a level bucket and a divergence flag — nothing invertible."""
+from __future__ import annotations
+
+import json
+import logging
+from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
+
+import httpx
+
+from app.census import google_aggregate as G
+from app.census import metrics as M
+from app.census.catchment import BANDS
+from app.census.registry import is_cleared, load
+
+CACHE_DAYS = 30  # SST §13.2
+PROVIDER = "google_places_aggregate"
+PLACE_SIMPLIFY_DEG = 0.002  # ≈ 200 m; keeps city polygons to a few hundred vertices
+log = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class Freshness:
+    level_live: str
+    diverges: bool
+
+
+def compute(count: int, households: float, zbp_level: str) -> Freshness:
+    live = M.competition_level(M.vets_per_10k(count, households))
+    return Freshness(level_live=live, diverges=(live != zbp_level))
+
+
+def write(conn, listing_id, band: str, f: Freshness, now: datetime | None = None) -> None:
+    now = now or datetime.now(timezone.utc)
+    with conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO market_freshness (listing_id, band, provider, level_live, diverges, fetched_at, expires_at)
+               VALUES (%s, %s, %s, %s, %s, %s, %s)
+               ON CONFLICT (listing_id, band, provider) DO UPDATE
+                 SET level_live = EXCLUDED.level_live, diverges = EXCLUDED.diverges,
+                     fetched_at = EXCLUDED.fetched_at, expires_at = EXCLUDED.expires_at""",
+            (listing_id, band, PROVIDER, f.level_live, f.diverges, now, now + timedelta(days=CACHE_DAYS)),
+        )
+
+
+def purge_expired(conn) -> int:
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM market_freshness WHERE expires_at < now()")
+        return cur.rowcount
+
+
+def _shapes(cur, listing_id, band: str, geo_vintage: str) -> tuple[G.Circle | G.Polygon, G.Circle] | None:
+    """(area to query, circle to fall back to). Bands drive_10/drive_20 are circles; 'place' is the city polygon."""
+    cur.execute("SELECT ST_Y(ST_Transform(point, 4326)) AS lat, ST_X(ST_Transform(point, 4326)) AS lng, place_geoid "
+                "FROM practice_location WHERE listing_id = %s", (listing_id,))
+    row = cur.fetchone()
+    if not row or row["lat"] is None:
+        return None
+    circle = G.Circle(row["lat"], row["lng"], BANDS.get(band, BANDS["drive_10"]))
+    if band != "place" or not row["place_geoid"]:
+        return circle, circle
+    cur.execute(
+        """WITH parts AS (
+             SELECT (ST_Dump(ST_Transform(geom, 4326))).geom AS g
+               FROM geo_area WHERE summary_level = '160' AND geo_id = %s AND vintage = %s)
+           SELECT ST_AsGeoJSON(ST_ForcePolygonCCW(ST_SimplifyPreserveTopology(g, %s))) AS gj
+             FROM parts ORDER BY ST_Area(g) DESC LIMIT 1""",
+        (row["place_geoid"], geo_vintage, PLACE_SIMPLIFY_DEG),
+    )
+    g = cur.fetchone()
+    if not g:
+        return circle, circle
+    ring = json.loads(g["gj"])["coordinates"][0]
+    return G.Polygon(tuple((lat, lng) for lng, lat in ring)), circle
+
+
+def _inputs(cur, listing_id, band: str) -> tuple[float, str] | None:
+    cur.execute(
+        """SELECT metric_key, value_num FROM market_metric
+            WHERE listing_id = %s AND band = %s AND NOT suppressed
+              AND metric_key IN ('households', 'vets_per_10k_households')""",
+        (listing_id, band),
+    )
+    vals = {r["metric_key"]: float(r["value_num"]) for r in cur.fetchall() if r["value_num"] is not None}
+    if vals.get("households", 0) <= 0 or "vets_per_10k_households" not in vals:
+        return None
+    return vals["households"], M.competition_level(vals["vets_per_10k_households"])
+
+
+def refresh_listing(conn, http: httpx.Client, listing_id, api_key: str) -> int:
+    """Fetch, derive, persist the two Customer Values per band. The count dies with this stack frame."""
+    if not is_cleared(conn, PROVIDER):
+        return 0
+    geo_vintage = load(conn)["tiger_cb"].vintage
+    written = 0
+    with conn.cursor() as cur:
+        for band in ("place", "drive_10", "drive_20"):
+            shapes, inputs = _shapes(cur, listing_id, band, geo_vintage), _inputs(cur, listing_id, band)
+            if shapes is None or inputs is None:
+                continue
+            area, fallback = shapes
+            try:
+                count = G.count_operational(http, area, api_key)
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 400 and area is not fallback:
+                    count = G.count_operational(http, fallback, api_key)  # polygon rejected (size/vertex limit): 8 km circle
+                else:
+                    log.warning("freshness skipped listing=%s band=%s status=%s", listing_id, band, e.response.status_code)
+                    continue
+            households, zbp_level = inputs
+            write(conn, listing_id, band, compute(count, households, zbp_level))
+            written += 1
+    conn.commit()
+    return written
+```
+
+`app/config.py`: add `google_maps_api_key: str | None = None` beside `census_api_key` (optional; the worker is the only service that receives it).
+
+- [ ] **Step 4: Run to verify passing**
+
+Run: `poetry run pytest tests/census/test_google_aggregate.py tests/census/test_freshness.py -q` → all pass. The `market_freshness` column-set test is the compliance test: any later attempt to add a `count` column fails CI.
+
+- [ ] **Step 5: Tasks, beat, API**
+
+`app/tasks/freshness.py`:
+```python
+"""Monthly Google freshness signal (D17) and the 30-day purge (SST §13.2)."""
+import httpx
+
+from app.census import freshness as F
+from app.census.registry import is_cleared
+from app.config import settings
+from app.db import sync_conn
+from app.tasks.celery_app import celery_app
+
+
+@celery_app.task(name="freshness.refresh_all")
+def refresh_all() -> dict:
+    with sync_conn() as conn:
+        if not (settings.google_maps_api_key and is_cleared(conn, F.PROVIDER)):
+            return {"skipped": "gate closed or key missing"}
+        with conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT m.listing_id FROM market_metric m JOIN listing l ON l.id = m.listing_id WHERE l.status = 'published'")
+            ids = [r[0] for r in cur.fetchall()]
+        written = 0
+        with httpx.Client() as http:               # ≤ 1,200 QPM allowed; sequential calls stay far below it
+            for lid in ids:
+                written += F.refresh_listing(conn, http, lid, settings.google_maps_api_key)
+        return {"listings": len(ids), "bands_written": written}
+
+
+@celery_app.task(name="freshness.purge_expired")
+def purge_expired() -> dict:
+    with sync_conn() as conn:
+        n = F.purge_expired(conn)
+        conn.commit()
+        return {"purged": n}
+```
+
+Beat (`app/tasks/celery_app.py`): `"freshness-monthly": {"task": "freshness.refresh_all", "schedule": crontab(minute=0, hour=4, day_of_month="2")}` and `"freshness-purge-daily": {"task": "freshness.purge_expired", "schedule": crontab(minute=30, hour=4)}`. Extend `test_beat_schedules_only_the_automatic_cadences` with `assert beat["freshness-monthly"]["task"] == "freshness.refresh_all" and beat["freshness-purge-daily"]["task"] == "freshness.purge_expired"`.
+
+**Selection-triggered refresh (the "fetch when a location is selected" behaviour, without a Google call on the request path):** `app/tasks/freshness.py` also exposes `@celery_app.task(name="freshness.refresh_one") def refresh_one(listing_id: str)`, which opens `sync_conn()`, checks the gate and key exactly like `refresh_all`, and calls `F.refresh_listing` for that one listing. In `app/api/market.py`, the panel endpoint (`/api/listings/{id}/market`) and `communities` call `_touch_freshness(listing_id)` after reading: if the gate is cleared and the listing's `market_freshness` row is absent or `fetched_at < now() - STALE_AFTER_DAYS`, `redis.set(f"freshness:{listing_id}", "1", ex=86400, nx=True)` dedupes and, when it wins, `refresh_one.delay(str(listing_id))`. The response is served from the stored row (or without `freshness`) immediately; the next view shows the refreshed bucket. This is the B5 backfill-on-miss pattern applied to Google — the spec's rule "never call an external API at request time" holds, and a busy listing costs at most one Google call per band per day.
+
+`app/api/market.py:communities` — after `c["competition"]` is assembled, and only when `is_cleared(conn, "google_places_aggregate")` (gate re-filtered on read, as B5 does for every layer):
+```python
+    fresh = {(r["listing_id"], r["band"]): r for r in (await conn.execute(text(
+        "SELECT listing_id, band, level_live, diverges, fetched_at FROM market_freshness "
+        "WHERE provider = 'google_places_aggregate' AND expires_at > now()"))).mappings().all()} if google_ok else {}
+    ...
+    if (f := fresh.get((row["listing_id"], b))) and "competition" in c:
+        c["competition"]["freshness"] = {"level_live": f["level_live"], "diverges": f["diverges"], "as_of": f["fetched_at"].date().isoformat()}
+```
+`app/api/market.py:layers` — the `competition` entry gains `"freshness_attribution": reg["google_places_aggregate"].attribution_text` when cleared, else the key is absent. `tests/api/test_market_api.py` gains `test_communities_carry_freshness_only_when_google_is_cleared`: uncleared → `"freshness" not in c["competition"]`; after the `cleared_google` fixture and one `F.write(...)` → exactly the three keys `{"level_live", "diverges", "as_of"}`, and the response text never contains a Google count (assert `"poi_count" not in r.text`). Add `test_selecting_a_listing_with_a_stale_signal_enqueues_one_refresh`: with the gate cleared and a row written `fetched_at = now() - 8 days`, two panel requests enqueue `freshness.refresh_one` exactly once (`celery_app.send_task` patched; Redis key `freshness:{id}` present); with the gate closed nothing is enqueued.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add migrations/062_market_freshness.sql app/census/google_aggregate.py app/census/freshness.py app/tasks/freshness.py app/config.py app/api/market.py app/tasks/celery_app.py tests/census/test_google_aggregate.py tests/census/test_freshness.py tests/census/test_tasks.py tests/api/test_market_api.py
+git commit -m "feat(census): Places Aggregate freshness signal — Customer Values only (level_live, diverges), 30-day purge, gated on google_places_aggregate
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+git push origin HEAD && git push production HEAD
+```
+
 ## Open items for the VIN Foundation (carried from the spec §15 and the Foundation spec §9)
 
-Basemap licence (Esri in the design vs CARTO in the spec) · satellite vendor · licensed pet rate vs ACS-derived · isochrones vs straight-line · opportunity-score weights sign-off and publication · public teaser vs gated market data · AIES identifier · Census API key contact address to use in the User-Agent (`CENSUS_CONTACT_EMAIL`).
+Basemap licence (Esri in the design vs CARTO in the spec) · satellite vendor · licensed pet rate vs ACS-derived · isochrones vs straight-line · opportunity-score weights sign-off and publication · public teaser vs gated market data · AIES identifier · Census API key contact address to use in the User-Agent (`CENSUS_CONTACT_EMAIL`) · **Google Places Aggregate API (D17)** — counsel sign-off on SST §13 "Customer Values" (a Low/Moderate/High bucket and a divergence flag as the only persisted outputs) and a Google Cloud billing account · **competitor-points source (D16)** — approve Overture Maps Places (or Foursquare OS Places / VIN's directory) for a Phase C points layer · **disposition of the 2017 Google Places export (D15)** — delete its content from VIN systems or retain only the `place_id` column; confirm whether the 2017 Google Cloud project still exists (the legacy Places API stays available to existing projects only).
 
 ## Red-team review (2026-09-05) — findings and dispositions
 
@@ -3955,6 +4380,52 @@ Basemap licence (Esri in the design vs CARTO in the spec) · satellite vendor ·
 | C11 | `ingest.run` is all-or-nothing per run; §11's "resume from the last completed geography page" is not implemented. | Low | Accepted: atomic runs satisfy "no partial vintage ever goes active"; a rerun is cheap. |
 | C12 | Operator token = `API_SECRET_KEY` until SP2. | Low | Rotate `API_SECRET_KEY` when SP2 lands; `auth_stub.py` is deleted then. |
 | C13 | Business addresses are sent to the Census Geocoder (a public federal service). | Info | Acceptable for business premises; noted for the VIN Foundation's privacy notice. |
+| C14 | **A 2017 Google Places export (`Report_Hospital_Competitor_All_US_ZipCode_FULL.csv`) was proposed as the competition source.** Audit (appendix): 183,688 rows → 10,166 distinct places from 8,320 query ZIPs (≈ 20 % of the US; Texas 132 places, Austin absent, South Dakota none), swept 24 May–8 Jun 2017 with the legacy Nearby Search (the 60-result cap was hit in 645 ZIPs); 29.7 % of places are individual-practitioner listings, ≈ 5 % are pet retail, shelters or groomers, 38 % are unrated; addresses carry no state or ZIP; the geography column is corrupted; the file ends mid-record. Google Maps Platform Terms §3.2.3(a)(iii) and (c)(iv) and SST §14.2 forbid storing the content, using its coordinates in point-in-polygon analysis, or showing it on Leaflet. | High | D15: blocked source; audit appendix; registry note on `practice_locations`; `.gitignore` pattern so the file can never be committed. |
+| C15 | "Update via the Google Maps API" was requested without a lawful mechanism identified. Every Google route was checked (appendix): Nearby/Text Search, Place Details refresh at each SKU tier, Places Aggregate API, Places UI Kit, Maps JavaScript API, legacy Places API. Only the Aggregate API's Customer Values fit a stored, Leaflet-rendered layer. | Medium | D17 + Task C1 (gated on counsel and billing); D16 for points from permissively licensed POI data; the design's competition count stays Census ZBP (spec §5). |
+
+## Appendix — Audit of the 2017 Google Places export and the Google Maps Platform options (2026-09-05)
+
+**The file.** `Report_Hospital_Competitor_All_US_ZipCode_FULL.csv` (83 MB, 192,473 lines) is an unquoted SQL Server table export (`----` separator row, `NULL` literals, a raw `geography` blob in an unnamed column whose high bytes were replaced by U+FFFD on export, so it is unrecoverable and breaks line counts; the `Lat`/`Long` text columns are the usable geometry). Columns: `ReportId, Id (SHA-1), ZipCode (the query ZIP), PlaceId, Name, Icon, PhotoRef, Rating, Address (street + city only), Lat, Long, IsAssociated, <geography>, Processed, CreatedOn, UpdatedOn`. It is the result table of a **legacy Google Places API Nearby Search sweep, one query per ZIP code**, paged to the legacy 60-result cap (`Icon` URLs under `maps.gstatic.com/mapfiles/place_api/`, `PhotoRef` in the legacy `CmRaAAAA…` form, 645 ZIPs at 60+ rows). No business names are reproduced here: they are Google content.
+
+| Measure | Value |
+|---|---|
+| Rows / distinct `PlaceId` / distinct query ZIPs | 183,688 (ReportId 1–183,692, 4 gaps, last record truncated) / **10,166** / **8,320** of ~41,700 USPS ZIPs (461 of ~930 ZIP3 prefixes) |
+| Sweep window | 2017-05-24 22:49 → 2017-06-08 14:56 (16 days); `UpdatedOn` never later |
+| Rows per place | median 8, mean 18, max 585 (large search radius; every place recurs across neighbouring ZIP queries) |
+| Coverage by query ZIP (places found) | CA 1,745 (3,340) · AL 642 (1,347) · AR 591 (908) · CO 508 (1,182) · AZ 373 (891) · CT 282 (593) · FL 109 (563) · **TX 404 (132)** · NY 550 (62) · NJ 253 (3) · **SD 0** — 3,732 ZIPs hold exactly one row |
+| Austin–Round Rock (design market) | 0 Austin query ZIPs (787xx/733xx), 0 Austin addresses, 1 place inside the metro bounding box |
+| Name classification (distinct places) | veterinary practice 50.7 % · **individual practitioner listing 29.7 %** (Google's per-DVM entries double-count clinics) · corporate chain 4.4 % · pet retail/farm/equine 2.0 % · retail chain 1.7 % · shelter/rescue 0.6 % · grooming/boarding 0.5 % · human medical 0.2 % · unclassified 10.3 % |
+| Attribute quality | 38.0 % unrated (rating 0) · 43.4 % no photo · addresses lack state and ZIP in >99 % · 2 points outside US territory · `IsAssociated` = 0 everywhere · `Processed` = 1 for 1,175 rows |
+
+**Verdict.** Not a candidate. On merit: nine years stale, a fifth of the country, the design's own market absent, a third of rows are practitioner duplicates. On terms: Google Maps Platform Terms §3.2.3(a) "Customer will not … (iii) copy and save business names, addresses, or user reviews"; §3.2.3(c) "Customer will not … (iv) use latitude/longitude values from the Places API as an input for point-in-polygon analysis" (exactly what a catchment count is); §3.2.3(e) / SST §14.2 "Customer must not use Google Maps Content from the Places API in conjunction with a non-Google map" (the approved design is Leaflet with Esri/CARTO tiles); SST §3 and the Places policies allow only `place_id` to be stored indefinitely, and SST §14.3 allows latitude/longitude for 30 days. The same limits applied under the 2017 Maps APIs terms, so the export was outside them from the day it was written. Disposition (VIN Foundation): delete the content or keep a one-column `place_id` file; nothing from it enters this project (D15; `.gitignore` carries `Report_Hospital_Competitor*.csv`).
+
+**Every Google Maps Platform mechanism for "updating via the Google Maps API", verified 2026-09-05** (prices per 1,000 requests at the 0–100 K tier; free monthly caps by SKU tier: Essentials 10,000 · Pro 5,000 · Enterprise 1,000):
+
+| Mechanism | Returns | Price / free | May we store it? | May it reach the Leaflet map? | Verdict |
+|---|---|---|---|---|---|
+| Places API (New) **Nearby Search**, `includedTypes: ["veterinary_care"]` | ≤ 20 places per call (`maxResultCount` 1–20), radius ≤ 50,000 m, **no pagination** | Pro $32 / 5,000 (Enterprise $35 for rating, phone, hours) | `place_id` only; lat/lng 30 days | No (SST §14.2) | Enumerating a metro needs hundreds of overlapping circles and yields content we cannot keep — no |
+| Places API (New) **Text Search** | same tiers; IDs-only variant free | Pro $32 / 5,000; IDs Only $0 | same | No | no |
+| **Place Details (IDs Only)** on a stored `place_id` | confirms the ID still resolves (`NOT_FOUND` when obsolete); Google asks that stored IDs be refreshed every 12 months | $0, unlimited | `place_id` | n/a | The only free, compliant use of the 10,166 IDs: an existence census, not a layer |
+| Place Details Essentials / Pro / Enterprise | `location, formattedAddress, types` / `displayName, businessStatus, primaryType` / `rating, userRatingCount, websiteUri, nationalPhoneNumber, regularOpeningHours` | $5 / 10,000 · $17 / 5,000 · $20 / 1,000 | lat/lng 30 days; nothing else | No | no |
+| **Places Aggregate API** `computeInsights` | `INSIGHT_COUNT` (or place IDs when the count ≤ 100) for a circle, region or custom polygon, filtered by type, operating status, rating, price; 1,200 QPM | Pro $10 / 5,000 | POI Count 30 days, solely to compute Customer Values; Customer Values indefinitely (SST §13.1–13.2) | Customer Values are ours (§13.1); the raw count is Google Maps Content and is not | **Yes, as D17 / Task C1** — bucket + divergence flag; counsel confirms the Customer-Value reading and the attribution wording |
+| Places UI Kit | Google-rendered place list and details web components | per-request SKUs | nothing reaches our systems | Yes — SST §15.1 "prevails over the No Use with Non-Google Maps clause" | A "nearby practices" widget is lawful beside Leaflet, but no data reaches our tables or metrics — not a layer |
+| Maps JavaScript API + Places on a **Google** map | points with full Places content | Dynamic Maps $7 / 10,000 + Places SKUs | as Places above | Only by replacing the Leaflet/Esri map with a Google map | A design change the VIN Foundation could choose; not pursued under the pixel-fidelity rule |
+| Legacy Places API (`pagetoken`, 60 results) | what the 2017 sweep used | — | — | — | Closed to new Cloud projects since 1 March 2025; frozen for existing ones; 12-month notice before shutdown |
+
+**Point sources that can be stored, drawn on Leaflet and refreshed (D16):**
+
+| Source | Licence | Coverage / cadence | Provenance | Rank |
+|---|---|---|---|---|
+| Overture Maps Places | CDLA-Permissive-2.0; Foursquare-sourced rows Apache-2.0 | 64 M+ POIs worldwide; monthly GeoParquet (`s3://overturemaps-us-west-2/release/`); `categories` deprecated for `basic_category`/`taxonomy` (removal September 2026) | `sources[]` (dataset + record id) and `confidence` per feature | 1 |
+| Foursquare OS Places | Apache-2.0 | 100 M+ POIs; monthly; gated download (Hugging Face / Iceberg) | Foursquare | 2 |
+| VIN member practice directory | VIN-owned | VIN members only (a subset of practices) | VIN | 3 — consent review, opt-out |
+| OpenStreetMap `amenity=veterinary` | ODbL 1.0 (share-alike) | 65,152 features worldwide (taginfo 2026-09-04); US coverage uneven | OSM | cross-check only; counsel on share-alike for a mixed database |
+| State veterinary board premise registers | public records, per state | only states that license premises (e.g. CA, FL, CO, OR, NC) | official | supplementary, not national |
+| Purchased lists (Data Axle, Dewey/SafeGraph, …) | commercial | national | vendor | blocked by spec §12 unless licensed with display rights |
+
+The design's displayed competition **count** remains the Census ZBP establishment count (spec §5, D11) in every case; points and the Google freshness bucket are additive, gated layers.
+
+**OpenStreetMap, specifically.** OSM is one crowdsourced geodatabase, not a family of products; what it offers this project is (a) **POIs** tagged `amenity=veterinary` (65,152 features worldwide on 2026-09-04: 48,160 nodes, 16,866 building outlines, 126 relations) with optional `name`, `addr:*`, `phone`, `website`, `opening_hours`, `healthcare:speciality` — no ratings, no business status, closures lag; (b) **basemap tiles** rendered from it by CARTO (already the spec's `osm_tiles` row; the Esri-vs-CARTO question stands); (c) boundaries and roads, which Census TIGER already covers; (d) **Nominatim** geocoding, whose usage policy (1 request/s, no bulk) rules it out for backfills — the Census Geocoder stays. Access paths for POIs: **Geofabrik state extracts** (`.osm.pbf`, updated daily; parse with `pyosmium`, filter `amenity=veterinary`) for a reproducible monthly load, or the **Overpass API** for ad-hoc queries (the public instance is rate-limited and not for production traffic; self-host or pay for a hosted one). Licence: **ODbL 1.0** — attribution "© OpenStreetMap contributors" everywhere the data appears, and **share-alike** for any "derivative database"; keeping OSM POIs in their own table and joining at query time is the OSMF "collective database" pattern, but whether `competitor_location` rows enriched with Census metrics stay a collective database is a counsel question. That is why OSM ranks as a cross-check: Overture Places (CDLA-Permissive; sourced from Meta, Microsoft, Foursquare and others, not from OSM) gives comparable POI coverage without share-alike.
 
 ## Self-review
 
@@ -3962,3 +4433,4 @@ Basemap licence (Esri in the design vs CARTO in the spec) · satellite vendor ·
 - **Placeholder scan:** none. Two deliberate STOP conditions (Phase B precondition; SP2's `generalized_location` column name) are explicit instructions, not gaps.
 - **Type consistency:** `Dataset` fields (A1) used by A3/A5/A6; `CensusClient.fetch_table/validate_variables/build_url/request_count/concurrency` used consistently in A5/A6/A8; `ingest.run` yields `Run(id, rows, requests, raw_uri)` used identically in A5/A6; `ObjectStore.put_immutable(key, data, content_type)` matches the client's call; `catchment.build(conn, listing_id, geo_vintage)` matches B4/B5 tasks; `materialize_listing(conn, redis, listing_id)` matches B5 fixtures; `gate.layer_enabled(r, conn_factory, key)` signature matches A9 and B5 (`sync_conn` is a factory); metric keys in B4 rows match B5's `METRIC_FOR` and the API contract.
 - **Deviation from the spec, recorded:** D3 (tiles deferred), D9 (`inputs jsonb`), D10 (`place` band), D11 (`zbp` dataset — needs the VIN Foundation's nod as an addition to §2), D12 (place-level growth), D13 (member gate), D14 (migration ranges); `bds_measure`, `zbp_industry`, `geocode_review`, `license_audit_log`, `market_state` tables; the licence FK is a trigger; `us:1` national row for the income benchmark.
+- **Google / competitor additions (2026-09-05):** Task C1 reuses `metrics.vets_per_10k(estab, hh)`, `metrics.competition_level(per10k)`, `catchment.BANDS`, `registry.is_cleared`/`load`, `db.sync_conn` exactly as defined in A1, B3, B4, B5; the three new registry keys are in `SPEC_KEYS`; `market_freshness` has no count column by construction and a compliance test pins that; `.gitignore` blocks the 2017 export; the API example, layer contract, Phase C table and open items all point at D15–D17.
