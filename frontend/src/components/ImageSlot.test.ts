@@ -27,8 +27,14 @@ const SLOT_JS = join(import.meta.dirname, '..', '..', '..', 'docs', 'design-refe
 function designStylesheet(): string {
   const src = readFileSync(SLOT_JS, 'utf8');
   const start = src.indexOf('const stylesheet =');
-  const end = src.indexOf("';", src.indexOf(':host([data-attribution-error]) .ring{display:none}'));
-  if (start < 0 || end < 0) throw new Error('image-slot.js: stylesheet literal not found');
+  // The last rule marks the end of the concatenation. Its own indexOf must be checked
+  // BEFORE being used as a search offset: indexOf clamps a negative fromIndex to 0, so a
+  // missing marker would silently search from the top of the file, find some unrelated
+  // "';", and hand eval() an empty slice — a bare SyntaxError instead of this named one.
+  const lastRule = src.indexOf(':host([data-attribution-error]) .ring{display:none}');
+  if (start < 0 || lastRule < 0) throw new Error('image-slot.js: stylesheet literal not found');
+  const end = src.indexOf("';", lastRule);
+  if (end < 0) throw new Error('image-slot.js: stylesheet literal not found');
   const literals = src.slice(start + 'const stylesheet ='.length, end + 1).split('\n').filter((l) => !l.trim().startsWith('//')).join('\n');
   return eval('(' + literals + ')') as string;
 }
@@ -93,6 +99,22 @@ describe('ImageSlot — shadow root and structure', () => {
     // …and that file is the design's `stylesheet` string byte for byte — the concatenation
     // has no newlines, only the two-space runs its source literals begin with.
     expect(css).toBe(designStylesheet());
+  });
+
+  it('hides the ported chrome below the Popover floor, without adding a shadow child', () => {
+    // .spill and .ctl carry no display:none of their own — in Chromium they are invisible
+    // only because of the UA's `[popover]:not(:popover-open)` rule. Vite 5's default target
+    // is chrome87/safari14/firefox78, all below the Popover floor (Chrome 114 / Safari 17 /
+    // Firefox 125), where the four 12 px handles would paint and the Replace/Edit buttons
+    // would stay tab-focusable. The guard is a constructable sheet rather than a second
+    // <style> node so the shadow root keeps exactly the design's six children.
+    const { root } = slot({ id: 'x', src: PHOTO });
+    const sheets = (root as ShadowRoot & { adoptedStyleSheets?: CSSStyleSheet[] }).adoptedStyleSheets;
+
+    expect(sheets).toHaveLength(1);
+    const text = [...sheets![0].cssRules].map((r) => r.cssText).join('').replace(/\s+/g, ' ').trim();
+    expect(text).toBe('@supports not selector(:popover-open) { .spill, .ctl { display: none; } }');
+    expect(root.childNodes).toHaveLength(6);
   });
 
   it('builds the constructor\'s six shadow nodes, editor chrome included but inert', () => {

@@ -107,6 +107,12 @@ function drawPins() {
 // queued in the order their props are written during the parent's re-render (the design
 // template lists `practices` before `communities`), which put the pins first and let the
 // community bubbles repaint over them.
+//
+// The merged dep list is deliberately a superset of MarketMap.jsx's effect 5: the overlay
+// now also redraws when only `practices` or `activeId` change, which React would not do.
+// That over-trigger is the price of the guarantee — clearing and re-adding both groups in
+// one callback is the only way to fix their relative markerPane order — and it is safe
+// because both draws are idempotent full rebuilds of their own layer group.
 watch(
   [() => props.communities, () => props.layers.drive5, () => props.layers.drive10, () => props.layers.competition, () => props.valueLayer, () => props.driveCenter && props.driveCenter[0],
     () => props.practices, () => props.activeId, () => props.layers.practices, status],

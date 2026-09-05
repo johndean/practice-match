@@ -65,6 +65,10 @@ describe('convert — template constructs', () => {
       .toBe('<div><div class="sc-host-x" style="display: contents"><MarketMapView></MarketMapView></div></div>');
     expect(() => convert('<x-import component="MarketMap" from="./MarketMap.jsx" style="top: 0;"></x-import>'))
       .toThrow(/x-import .*style/);
+    // An unknown component is the more fundamental fault: it must be reported first even
+    // when the element also carries the unsupported style attribute.
+    expect(() => convert('<x-import component="NoSuchThing" from="./NoSuchThing.jsx" style="top: 0;"></x-import>'))
+      .toThrow('unknown x-import component NoSuchThing');
   });
   it('drops HTML comments and the helmet block, escapes text, keeps attribute case', () => {
     expect(extractTemplate('<html><x-dc><helmet><style>a{}</style></helmet>\n<div aria-label="Go">a &amp; b</div></x-dc><script data-dc-script></script></html>')).toBe('\n<div aria-label="Go">a &amp; b</div>');

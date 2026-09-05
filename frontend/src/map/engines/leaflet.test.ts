@@ -69,6 +69,24 @@ describe('LeafletMapEngine — teardown', () => {
     expect((stub.map as any).removed).toBe(true);
     expect(stub.map.invalidated).toBe(0);
   });
+
+  // Not firing is only half of it: the set that holds them must also be drained, or a
+  // long-lived engine would accumulate dead handles and a second destroy would re-clear
+  // ids the platform may already have recycled. Asserted through clearTimeout, since the
+  // set itself is private and this round may not touch engines/leaflet.ts.
+  it('drains the pending-timer set on destroy, so a second destroy clears nothing', async () => {
+    const { engine } = await mounted();
+    engine.show();
+    const cleared = vi.spyOn(globalThis, 'clearTimeout');
+
+    engine.destroy();
+    expect(cleared).toHaveBeenCalledTimes(2); // mount()'s 60 ms and show()'s 80 ms
+
+    cleared.mockClear();
+    engine.destroy();
+    expect(cleared).toHaveBeenCalledTimes(0);
+    cleared.mockRestore();
+  });
 });
 
 describe('LeafletMapEngine — ListingsMap shape', () => {

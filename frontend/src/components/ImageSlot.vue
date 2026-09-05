@@ -98,6 +98,13 @@ const markup =
   '  <button data-act="edit" title="Reframe image">Edit</button></div>' +
   '<input type="file" accept="' + ACCEPT.join(',') + '" hidden>';
 
+// The one rule of the fallback sheet attached in onMounted. .spill and .ctl carry no
+// display:none of their own: the design relies on the UA's closed-popover rule, which does
+// not exist below Chrome 114 / Safari 17 / Firefox 125 — and Vite 5's default build target
+// (`'modules'`: chrome87/safari14/firefox78) reaches well below that. @supports means the
+// rule is inert wherever Popover is real, so Chromium pixels are untouched.
+const POPOVER_FALLBACK = '@supports not selector(:popover-open) { .spill, .ctl { display: none } }';
+
 const host = ref(null);
 let el = null;   // the host element
 let frame = null;
@@ -265,6 +272,17 @@ onMounted(() => {
   tpl.innerHTML = markup;
   root.appendChild(style);
   root.appendChild(tpl.content);
+  // A constructable sheet, not a second <style> node: adoptedStyleSheets adds no shadow
+  // child, so the root keeps exactly the six the design's constructor builds and the DOM
+  // oracle's count still matches. Engines without constructable stylesheets (Safari < 16.4,
+  // Firefox < 101) throw on the constructor and simply get no guard — additive either way.
+  try {
+    const guard = new CSSStyleSheet();
+    guard.replaceSync(POPOVER_FALLBACK);
+    root.adoptedStyleSheets = [guard];
+  } catch {
+    /* no constructable stylesheets here — the chrome stays exactly as the UA renders it */
+  }
   frame = root.querySelector('.frame');
   ring = root.querySelector('.ring');
   img = root.querySelector('.frame img');
