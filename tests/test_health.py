@@ -76,3 +76,15 @@ async def test_unknown_api_route_is_json_404_not_index(client):
     assert r.status_code == 404
     assert r.headers["content-type"].startswith("application/json")
     assert r.json()["error"]["code"] == "NOT_FOUND"
+
+
+import re
+
+
+async def test_healthz_reports_postgis_and_redis_up(client, db_ready):
+    body = (await client.get("/api/healthz")).json()
+    assert body["db"]["ok"] is True, body["db"]
+    assert re.match(r"^3\.\d+", body["db"]["postgis_version"])
+    assert body["redis"]["ok"] is True, body["redis"]
+    r = await client.get("/api/healthz/deep")
+    assert r.status_code == 200

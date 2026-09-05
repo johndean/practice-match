@@ -29,3 +29,22 @@ async def client(dist):
 
     async with httpx.AsyncClient(transport=ASGITransport(app=create_app(dist=dist)), base_url="http://test") as c:
         yield c
+
+
+import psycopg2  # noqa: E402
+
+
+@pytest.fixture(scope="session")
+def db_ready():
+    """Fails loudly (never skips) when the local services are down."""
+    try:
+        psycopg2.connect(os.environ["DATABASE_URL"]).close()
+    except psycopg2.Error as exc:  # pragma: no cover
+        pytest.fail(f"Postgres not reachable at {os.environ['DATABASE_URL']}: {exc}\n"
+                    "Start it: docker compose -f docker-compose.dev.yml up -d")
+    import importlib.util
+    from pathlib import Path
+    spec = importlib.util.spec_from_file_location("migrate", Path(__file__).resolve().parent.parent / "scripts" / "migrate.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)  # type: ignore[union-attr]
+    mod.run(os.environ["DATABASE_URL"])

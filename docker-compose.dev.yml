@@ -1,0 +1,19 @@
+# Local PostGIS + Redis for pytest. John does not run the app locally; this exists
+# for the test suite (and CI mirrors these images in quality.yml).
+services:
+  db:
+    image: postgis/postgis:16-3.5
+    platform: linux/amd64  # the official PostGIS image ships no arm64 build; a no-op on amd64 CI/Railway (John's ruling 2026-09-05)
+    environment:
+      POSTGRES_USER: pm
+      POSTGRES_PASSWORD: pm_dev_pw
+      POSTGRES_DB: practice_match
+    ports: ["5433:5432"]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U pm -d practice_match"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+  redis:
+    image: redis:7-alpine
+    ports: ["6380:6379"]
