@@ -3127,6 +3127,9 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin fea
 - [ ] **Negative paths in `tests/scripts/test_verify_deploy.sh`**: add cases for `/api/healthz/deep` returning 503 (exit non-zero, message names deep) and the SPA-missing case above; keep the existing pass, environment-mismatch and commit-mismatch cases. Both shell tests green: `bash tests/scripts/test_deploy_guard.sh && bash tests/scripts/test_verify_deploy.sh`.
 - [ ] Re-run the verify against QA once more (`scripts/verify-deploy.sh QA https://qa.foundation.vin`) to prove the hardened gate still passes on the live deployment. Commit — `fix(deploy): verify-deploy fails on a missing SPA shell or PostGIS version; curl reports errors; negative-path tests`.
 
+**Fix round 2 (2026-09-06 — round-1 concern, closed per John's standing "no parking" preference; files: `scripts/verify-deploy.sh`, `tests/scripts/test_verify_deploy.sh`; one commit):**
+- [ ] **Hermetic shell test.** The trailing `railway logs --lines 20` makes the happy-path case call live Railway (and would print an auth error in CI). Tail logs only when no explicit base URL was given (the argument/`VERIFY_BASE_URL` path is the ad hoc probe the tests use) AND `railway whoami` succeeds; otherwise print `logs: skipped (explicit target)` / `logs: skipped (railway not logged in)`. RED: the shell test's fake `railway` on `PATH` records any invocation and the happy-path case asserts none happened (fails today); GREEN after. Commit — `fix(deploy): verify-deploy tails Railway logs only for the default target and a logged-in CLI`.
+
 ---
 
 ### Task 9: CI and working docs
@@ -3604,6 +3607,7 @@ Expected: verify OK; smoke green; visual `25 passed` against the live QA build (
 
 **Nightly load smoke (policy §3):** add `scripts/k6-smoke.js` from `docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md` §5 and `.github/workflows/perf.yml` (schedule `0 6 * * *`; installs k6; runs against `https://qa.foundation.vin` with `MEMBER_TOKEN` from a GitHub secret — the operator token until SP2). Test first: `tests/test_docs.py::test_perf_workflow_targets_qa_with_thresholds` asserts the workflow file exists, names `qa.foundation.vin`, and `k6-smoke.js` declares `p(95)<400` and `rate==0`. Run the workflow manually once (`gh workflow run perf.yml`) and record the p95 in `DEPLOY.md`.
 
+- [ ] **Step 3b (added 2026-09-06): `DEPLOY.md` note** — `scripts/verify-deploy.sh` asserts the deployed `commit_sha` equals `EXPECT_SHA` (default: the current `git rev-parse --short HEAD`); when the branch has moved past the deployed tree, pass `EXPECT_SHA=<deployed sha>` explicitly (as done for QA at `087acc1`). One sentence next to the `SKIP_VERIFY` rule; the drift test asserts `EXPECT_SHA` appears in `DEPLOY.md`.
 - [ ] **Step 4: Production** — *Gate added 2026-09-06 (John, after seeing the prototype jump bar on qa.foundation.vin): the bar stays on QA (`ENVIRONMENT=qa`) and must be OFF in production. Before `scripts/deploy.sh production`, the controller shows John the QA-verified state and gets his explicit go; after the deploy, the served production bundle must contain `prototypeBar:{type:Boolean,default:!1}` (the Task 8 check) and the gate screen must render without the bar — if either fails, roll back and STOP.*
 
 ```bash
