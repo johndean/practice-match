@@ -197,6 +197,14 @@ def test_perf_workflow_targets_qa_with_thresholds():
     assert "rate==0" in k6, "the zero-error-rate budget (policy §3) is gone"
 
 
+def test_deploy_md_documents_the_site_mode_matrix():
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "SITE_MODE" in text and "coming_soon" in text
+    assert "never goes to QA" in text
+    for name in ("CLAUDE.md",):
+        assert "SITE_MODE" in (ROOT / name).read_text(), name
+
+
 def test_deploy_md_documents_the_expect_sha_semantics():
     """verify-deploy.sh's `${EXPECT_SHA:-…}` treats unset and empty identically, so the
     runbook must not tell an operator that blanking it disables the check."""

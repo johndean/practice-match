@@ -9,7 +9,7 @@ from app.config import settings
 from app.main import app
 from app.version import VERSION
 
-KEYS = {"status", "version", "environment", "commit_sha", "db", "redis"}
+KEYS = {"status", "version", "environment", "commit_sha", "db", "redis", "site_mode"}
 
 
 @pytest.fixture

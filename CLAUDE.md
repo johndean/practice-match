@@ -11,7 +11,7 @@ VIN Foundation veterinary practice marketplace (internal working title). Read th
 
 `GET /api/healthz` on either host returns `environment`, `version`, `commit_sha`, `db.postgis_version`, `redis.ok`. **John does not run the app locally** — the loop is code → `scripts/deploy.sh QA` → verify on qa.foundation.vin → `scripts/deploy.sh production` → smoke on foundation.vin.
 
-Every environment variable is set only in Railway (per service, per environment) — see `.env.example` for the full list and `DEPLOY.md` for how each is set. `CENSUS_API_KEY` (worker only, Sub-project 3; John holds it) is the one that must never appear in git, chat, or a CI log — same rule as `API_SECRET_KEY`, just worth naming.
+Every environment variable is set only in Railway (per service, per environment) — see `.env.example` for the full list and `DEPLOY.md` for how each is set. `CENSUS_API_KEY` (worker only, Sub-project 3; John holds it) is the one that must never appear in git, chat, or a CI log — same rule as `API_SECRET_KEY`, just worth naming. `SITE_MODE` (`app` | `coming_soon`) selects which built site the api serves; production runs `coming_soon` until launch; QA never does.
 
 > ### 🚦 ALWAYS confirm the Railway target before uploading or changing anything
 > This machine runs 5+ Railway projects; `railway up` ships to whatever is linked. Before ANY `railway up`, variable change, or service mutation run `railway status` and read it back — it must say **Project: Practice Match**. `scripts/deploy.sh` enforces this; do not bypass it with a bare `railway up`. Never pass `--project` from memory. Never set a global `RAILWAY_TOKEN`.

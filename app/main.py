@@ -10,7 +10,7 @@ from app.api.health import not_found_router
 from app.api.health import router as health_router
 from app.config import settings
 from app.db import dispose_all
-from app.static import DIST, mount_spa
+from app.static import dist_for, mount_spa
 from app.version import VERSION
 
 
@@ -43,7 +43,7 @@ def create_app(dist: Path | None = None) -> FastAPI:
     app.include_router(health_router)
     # Future /api routers are included here, BEFORE the catch-all below.
     app.include_router(not_found_router)
-    mount_spa(app, dist or DIST)
+    mount_spa(app, dist or dist_for(settings.site_mode))
     return app
 
 

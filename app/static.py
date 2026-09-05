@@ -11,8 +11,14 @@ from starlette.staticfiles import PathLike
 from starlette.types import Scope
 
 DIST = Path(__file__).resolve().parent.parent / "frontend" / "dist"
+COMING_SOON_DIST = Path(__file__).resolve().parent.parent / "coming-soon" / "dist"
 INDEX_HEADERS = {"Cache-Control": "no-cache"}
 FILE_HEADERS = {"Cache-Control": "public, max-age=3600"}
+
+
+def dist_for(mode: str) -> Path:
+    """The built site the api serves: the marketplace, or the Coming Soon page (production until launch)."""
+    return COMING_SOON_DIST if mode == "coming_soon" else DIST
 
 
 class ImmutableStaticFiles(StaticFiles):

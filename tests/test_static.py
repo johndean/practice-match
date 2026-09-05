@@ -52,3 +52,32 @@ async def test_indexing_allowed_when_flag_is_set(dist, monkeypatch):
 async def test_path_traversal_never_escapes_dist(client):
     r = await client.get("/..%2F..%2Fpyproject.toml")
     assert r.status_code == 200 and 'id="app"' in r.text  # falls back to index, not the file
+
+
+def test_dist_for_selects_the_directory_by_mode():
+    from app.static import COMING_SOON_DIST, DIST, dist_for
+    assert dist_for("app") == DIST
+    assert dist_for("coming_soon") == COMING_SOON_DIST
+
+
+async def test_coming_soon_mode_serves_the_coming_soon_shell_everywhere_but_the_api(coming_dist, monkeypatch):
+    import app.static
+    from app.config import settings
+    monkeypatch.setattr(settings, "site_mode", "coming_soon")
+    monkeypatch.setattr(app.static, "COMING_SOON_DIST", coming_dist)
+    async with httpx.AsyncClient(transport=ASGITransport(app=create_app()), base_url="http://test") as c:
+        for path in ("/", "/browse", "/practices/p1", "/..%2F..%2Fpyproject.toml"):
+            r = await c.get(path)
+            assert r.status_code == 200 and "VIN Foundation — Coming Soon" in r.text, path
+            assert r.headers["cache-control"] == "no-cache"
+        assert (await c.get("/_app/index-cs1.js")).headers["cache-control"] == "public, max-age=31536000, immutable"
+        assert (await c.get("/ds/colors_and_type.css")).headers["cache-control"] == "public, max-age=3600"
+        r = await c.get("/api/nope")
+        assert r.status_code == 404 and r.json()["error"]["code"] == "NOT_FOUND"
+        assert (await c.get("/api/healthz")).json()["site_mode"] == "coming_soon"
+
+
+async def test_app_mode_never_serves_the_coming_soon_shell(client):
+    r = await client.get("/")
+    assert "Coming Soon" not in r.text
+    assert (await client.get("/api/healthz")).json()["site_mode"] == "app"

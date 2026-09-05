@@ -63,3 +63,8 @@ def test_ignore_files_keep_the_coming_soon_build_and_modules_out():
             assert entry in text, f"{name} lacks {entry}"
     assert "coming-soon/dist/" in (ROOT / ".gitignore").read_text().split()
     assert "frontend/coverage/" in (ROOT / ".gitignore").read_text().split()
+
+
+def test_coming_soon_build_emits_its_bundle_under_app_like_the_marketplace():
+    # app/static.py mounts /_app at boot; without this the api crashes in coming-soon mode (11b, 2026-09-06).
+    assert "assetsDir: '_app'" in (ROOT / "coming-soon" / "vite.config.js").read_text()

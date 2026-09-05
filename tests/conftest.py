@@ -26,6 +26,17 @@ def dist(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
+def coming_dist(tmp_path: Path) -> Path:
+    d = tmp_path / "coming-soon-dist"
+    (d / "_app").mkdir(parents=True)
+    (d / "ds").mkdir()
+    (d / "index.html").write_text('<!doctype html><title>VIN Foundation — Coming Soon</title><div id="app"></div>')
+    (d / "_app" / "index-cs1.js").write_text("console.log(2)")
+    (d / "ds" / "colors_and_type.css").write_text(":root{}")
+    return d
+
+
+@pytest.fixture
 async def client(dist):
     from app.main import create_app  # imported here so this conftest loads before app.main exists (Steps 2-3)
 

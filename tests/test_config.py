@@ -3,6 +3,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parent.parent
 
 
@@ -28,3 +30,21 @@ def test_origins_split_and_trimmed(monkeypatch):
     s = Settings(database_url="postgresql://x", redis_url="redis://x", environment="test",
                  api_secret_key="x", allowed_origins=" https://foundation.vin, https://qa.foundation.vin ")
     assert s.origins == ["https://foundation.vin", "https://qa.foundation.vin"]
+
+
+def test_site_mode_defaults_to_app_and_rejects_unknown_values():
+    from pydantic import ValidationError
+
+    from app.config import Settings
+    base = {"database_url": "postgresql://x", "redis_url": "redis://x", "environment": "test", "api_secret_key": "x"}
+    assert Settings(**base).site_mode == "app"
+    assert Settings(**base, site_mode="coming_soon").site_mode == "coming_soon"
+    with pytest.raises(ValidationError):
+        Settings(**base, site_mode="marketplace")
+
+
+def test_invalid_site_mode_exits_1_and_names_it():
+    env = dict(os.environ, SITE_MODE="marketplace", PYTHONPATH=str(ROOT))
+    r = subprocess.run([sys.executable, "-c", "import app.config"], env=env, capture_output=True, text=True, check=False)
+    assert r.returncode == 1
+    assert "SITE_MODE" in r.stderr

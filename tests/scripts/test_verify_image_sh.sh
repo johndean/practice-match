@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Exercises scripts/verify-image.sh's control flow (cleanup ordering, the six
+# Exercises scripts/verify-image.sh's control flow (cleanup ordering, the seven
 # OK-line checks) against fake `docker` and `curl` executables, so it never
 # touches the real Docker daemon or the compose services.
 set -euo pipefail; cd "$(dirname "$0")/../.."
@@ -35,6 +35,10 @@ if [[ "$args" == *"-w"* ]]; then
   printf '200'                             # the /_app/ -o /dev/null -w '%{http_code}' probe
 elif [[ "$args" == *":8011/api/healthz"* ]]; then
   echo '{"status":"ok","role":"worker"}'
+elif [[ "$args" == *":8012/api/healthz"* ]]; then
+  echo '{"status":"ok","site_mode":"coming_soon"}'
+elif [[ "$args" == *":8012/"* ]]; then
+  echo '<!doctype html><title>VIN Foundation — Coming Soon</title><div id="app"></div>'
 elif [[ "$args" == *"/api/healthz"* ]]; then
   echo '{"status":"ok","environment":"test","db":{"ok":true,"postgis_version":"3.5 fake"},"redis":{"ok":true}}'
 else
@@ -51,13 +55,13 @@ set -e
 [[ $code -eq 0 ]] || { cat "$WORKDIR/out"; fail "verify-image.sh exited $code against the fake docker/curl"; }
 
 out=$(cat "$WORKDIR/out")
-for line in "api healthz OK" "index.html served" "SPA fallback OK" "worker health OK" "celery booted" "non-root OK"; do
+for line in "api healthz OK" "index.html served" "SPA fallback OK" "worker health OK" "celery booted" "non-root OK" "coming soon OK"; do
   [[ "$out" == *"$line"* ]] || fail "missing expected output line: $line — got:
 $out"
 done
 
 first_docker=$(grep '^docker ' "$FAKE_LOG" | head -1)
-[[ "$first_docker" == "docker rm -f pm-api pm-worker" ]] || fail "first docker call must be the idempotent cleanup (rm -f pm-api pm-worker), got: $first_docker"
+[[ "$first_docker" == "docker rm -f pm-api pm-worker pm-coming" ]] || fail "first docker call must be the idempotent cleanup (rm -f pm-api pm-worker pm-coming), got: $first_docker"
 
 build_line=$(grep '^docker build ' "$FAKE_LOG" | head -1)
 [[ "$build_line" == *"--build-arg ENVIRONMENT=qa"* ]] || fail "docker build must receive --build-arg ENVIRONMENT=qa (no default now baked into the Dockerfile), got: $build_line"

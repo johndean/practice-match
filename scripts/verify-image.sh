@@ -2,7 +2,7 @@
 # Builds the image and runs both roles against the local compose services.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-cleanup() { docker rm -f pm-api pm-worker >/dev/null 2>&1 || true; }
+cleanup() { docker rm -f pm-api pm-worker pm-coming >/dev/null 2>&1 || true; }
 trap cleanup EXIT
 # Idempotent: a pm-api/pm-worker left behind by an aborted previous run would
 # otherwise make the `docker run --name` below fail, so clear them first —
@@ -14,6 +14,7 @@ COMMON=(-e PORT=8000 -e ENVIRONMENT=test -e API_SECRET_KEY=local_only
         -e REDIS_URL=redis://host.docker.internal:6380/0)
 docker run -d --name pm-api "${COMMON[@]}" -p 8010:8000 practice-match:local api >/dev/null
 docker run -d --name pm-worker "${COMMON[@]}" -e RAILWAY_SERVICE_NAME=worker -p 8011:8000 practice-match:local >/dev/null
+docker run -d --name pm-coming "${COMMON[@]}" -e SITE_MODE=coming_soon -p 8012:8000 practice-match:local api >/dev/null
 sleep 6
 api=$(curl -sf http://localhost:8010/api/healthz)
 echo "$api" | python3 -c 'import sys,json; b=json.load(sys.stdin); assert b["status"]=="ok" and b["environment"]=="test", b; assert b["db"]["ok"] and b["redis"]["ok"], b; print("api healthz OK", b["db"]["postgis_version"])'
@@ -39,3 +40,9 @@ worker_uid=$(docker exec pm-worker id -u)
   echo "FAIL: expected uid 10001 in both containers, got api=$api_uid worker=$worker_uid"; exit 1;
 }
 echo "non-root OK"
+coming_body=$(curl -fsS http://localhost:8012/)
+[[ "$coming_body" == *'VIN Foundation — Coming Soon'* && "$coming_body" != *'<title>Practice Match'* ]] \
+  || { echo "FAIL: SITE_MODE=coming_soon did not serve the coming-soon shell"; exit 1; }
+coming_health=$(curl -fsS http://localhost:8012/api/healthz)
+[[ "$coming_health" == *'"site_mode":"coming_soon"'* ]] || { echo "FAIL: healthz did not report site_mode coming_soon"; exit 1; }
+echo "coming soon OK"

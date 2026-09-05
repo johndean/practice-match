@@ -19,6 +19,7 @@ class HealthBody(TypedDict):
     commit_sha: str
     db: ComponentStatus
     redis: ComponentStatus
+    site_mode: str
 
 
 async def _body() -> HealthBody:
@@ -30,6 +31,7 @@ async def _body() -> HealthBody:
         "commit_sha": settings.commit_sha,
         "db": db,
         "redis": redis_,
+        "site_mode": settings.site_mode,
     }
 
 

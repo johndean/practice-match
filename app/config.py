@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import sys
 
-from pydantic import ValidationError
+from pydantic import ValidationError, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -19,6 +19,14 @@ class Settings(BaseSettings):
     allowed_origins: str = ""
     commit_sha: str = "dev"
     public_indexing: bool = False  # flip to true at launch; until then every response is noindex
+    site_mode: str = "app"  # app | coming_soon — which built site the api serves (spec 2026-09-06)
+
+    @field_validator("site_mode")
+    @classmethod
+    def _site_mode_known(cls, v: str) -> str:
+        if v not in ("app", "coming_soon"):
+            raise ValueError("SITE_MODE must be 'app' or 'coming_soon'")
+        return v
 
     @property
     def origins(self) -> list[str]:
