@@ -1,4 +1,6 @@
 import type { Page } from '@playwright/test';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 
 // The DOM oracle: a normalised, element-by-element serialisation of the rendered DOM,
 // so a structural/attribute/style/text difference between the app and the design is
@@ -28,9 +30,11 @@ export interface DomElement {
   attrs: [string, string][]; // sorted by name; excludes class, style and the dropped attrs
   class: string[]; // sorted tokens; scp…/sch… pseudo-class hooks collapse to '<pseudo>'
   style: [string, string][]; // sorted declarations read from el.style, not the attribute
-  // Rule C: only present on input/select/textarea — sorted [name, value] pairs from the
-  // LIVE el.value/el.checked/el.selected, standing in for the value/checked/selected
-  // attributes (which Vue mirrors onto the DOM but React does not set at all).
+  // Rule C, narrowed (fix round 2): sorted [name, value] pairs from the LIVE el.value on
+  // input/select/textarea, plus el.checked on an input whose type is checkbox or radio —
+  // standing in for the value/checked attributes (which Vue mirrors onto the DOM but React
+  // does not set at all). `selected` is never read — it belongs to <option>, not to any of
+  // these three tags.
   props?: [string, string][];
   children: DomNode[];
 }
@@ -56,8 +60,9 @@ export interface RawElement {
   attrs: [string, string][];
   classList: string[];
   style: [string, string][];
-  // Rule C: only populated by the in-page walk for input/select/textarea, from the live
-  // el.value/el.checked/el.selected properties (whichever exist on the element).
+  // Rule C, narrowed (fix round 2): populated by walkPage() for input/select/textarea
+  // (value) and, additionally, a checkbox/radio input (checked). Not sorted at this stage —
+  // that's normalise()'s job.
   props?: [string, string][];
   children: RawNode[];
 }
@@ -86,12 +91,19 @@ const byString = ([a]: [string, string], [b]: [string, string]) => (a < b ? -1 :
 // Rule C: only these three tags ever carry a `props` field (excluded attrs/live props).
 const FORM_TAGS = new Set(['input', 'select', 'textarea']);
 
-// Rule W: a text node with only spaces/tabs/newlines (or none at all) is dropped from its
-// parent's child list entirely — not collapsed to a single space (that was an earlier,
+// Rule W: a text node with only whitespace (or none at all) is dropped from its parent's
+// child list entirely — not collapsed to a single space (that was an earlier,
 // now-superseded draft of this rule). Vue's compiler removes/condenses these even under
 // `whitespace: 'preserve'`, while the design's React runtime renders every source
 // whitespace node, so no transpiler output can match them position-for-position.
-const isWhitespaceOnlyText = (n: RawNode): boolean => kindOf(n) === 'text' && /^\s*$/.test((n as RawText).text);
+//
+// Fix round 2: "whitespace" is exactly the compiler's set, not JS's `\s` — `@vue/compiler-
+// core`'s `isWhitespace` matches only char codes 32 (space), 9 (tab), 10 (LF), 13 (CR), 12
+// (FF). JS's `\s` additionally matches U+00A0 (non-breaking space) and other Unicode space
+// separators, which are real content the compiler does NOT strip — so `\s` would wrongly
+// drop a lone NBSP text node that the compiler (and thus both targets) actually renders.
+const isWhitespaceOnlyText = (n: RawNode): boolean =>
+  kindOf(n) === 'text' && /^[ \t\n\r\f]*$/.test((n as RawText).text);
 
 // Rule B: on the design (reference) target only, a `src`/`href` value beginning `assets/`
 // or `ds/` is read as if it began `/assets/`/`/ds/` (the plan's mandated path rewrite).
@@ -182,10 +194,13 @@ function classDiff(a: string[], b: string[]): string | null {
 }
 
 function compareElements(a: DomElement, b: DomElement, selfPath: string, childBasePath: string, out: string[]): void {
-  if (a.tag !== b.tag) {
-    out.push(`${selfPath}: tag <${a.tag}> ≠ <${b.tag}>`);
-    return; // structurally different subtrees below here — nothing further is meaningful
-  }
+  // Fix round 2: a tag mismatch no longer short-circuits the WHOLE node — its own
+  // attrs/props/class/style are still meaningful (e.g. a wrong `<image-slot>`-vs-`<div>`
+  // host that ALSO has a wrong `placeholder` attr should report both), only the CHILDREN
+  // stop being comparable, since the two subtrees are structurally incompatible below the
+  // mismatched tag itself.
+  const tagMismatch = a.tag !== b.tag;
+  if (tagMismatch) out.push(`${selfPath}: tag <${a.tag}> ≠ <${b.tag}>`);
   const attr = firstPairDiff(a.attrs, b.attrs, attrFmt);
   if (attr) out.push(`${selfPath}: ${attr}`);
   const prop = firstPairDiff(a.props ?? [], b.props ?? [], propFmt);
@@ -194,6 +209,7 @@ function compareElements(a: DomElement, b: DomElement, selfPath: string, childBa
   if (cls) out.push(`${selfPath}: ${cls}`);
   const style = firstPairDiff(a.style, b.style, styleFmt);
   if (style) out.push(`${selfPath}: ${style}`);
+  if (tagMismatch) return; // nothing below a structurally incompatible tag is meaningful
   if (a.children.length !== b.children.length) {
     out.push(`${selfPath}: child count ${a.children.length} ≠ ${b.children.length}`);
   }
@@ -236,7 +252,10 @@ function compareChild(a: DomNode, b: DomNode, index: number, parentPath: string,
     case 'text': {
       const ta = (a as DomText).text;
       const tb = (b as DomText).text;
-      if (ta !== tb) out.push(`${displayPath}: text "${ta}" ≠ "${tb}"`);
+      // Fix round 2: carries the same child[i] index the node-kind-mismatch case above
+      // already had, so two differing text children of one parent are distinguishable
+      // instead of colliding on one identical-looking path.
+      if (ta !== tb) out.push(`${displayPath}: child[${index}] text "${ta}" ≠ "${tb}"`);
       return;
     }
     case 'leaflet':
@@ -287,80 +306,120 @@ export function diff(a: DomNode, b: DomNode): string[] {
 }
 
 // ---------------------------------------------------------------------------------------
-// serialize(page) — the in-page walk is intentionally dumb (no filtering beyond which
-// node types exist at all, no sorting, no substitution): it only reads the live DOM into
-// a RawNode tree. All of the normalisation rules live in normalise() above, shared by
-// both this wrapper and dom.test.ts's unit tests.
+// walkPage(arg) — fix round 2, item 3: extracted out of an inline page.evaluate(() => {…})
+// closure so it can be unit-tested directly under jsdom (dom.walk.test.ts), without ever
+// going through Playwright. Playwright stringifies this function and re-runs it inside the
+// page, so it must be fully self-contained: it may reference only its own argument (`arg`),
+// its own inner functions, and browser globals — never anything from dom.ts's module scope
+// (that's also why FORM_TAGS above couldn't be reused directly; it's passed in instead).
+//
+// The walk itself is intentionally dumb (no filtering beyond which node types exist at
+// all, no sorting, no substitution): it only reads the live DOM into a RawNode tree. All
+// of the normalisation rules live in normalise() above, shared by both serialize() below
+// and dom.test.ts's unit tests; the narrowed rule C (value/checked selection) and the
+// !important read below are the two exceptions that must happen here, at the point the
+// live DOM is actually being read — normalise() only ever sees what this function chose to
+// record.
+// ---------------------------------------------------------------------------------------
+export function walkPage(arg: { rootSelector: string; formTags: string[] }): RawNode | null {
+  const formTags = new Set(arg.formTags);
+
+  // Comments (and any other non-element, non-text node) carry no rendered content and
+  // have no counterpart in either target's markup; they are simply not one of the two
+  // node shapes this oracle represents, so walk() returns null for them and callers
+  // filter the null out rather than record it as a child.
+  function walk(node: Node): RawNode | null {
+    if (node.nodeType === Node.TEXT_NODE) {
+      return { text: node.textContent ?? '' };
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      return null;
+    }
+    const el = node as Element;
+    if (el.classList.contains('leaflet-container')) {
+      return { tag: 'div', leaflet: true };
+    }
+    const tag = el.tagName.toLowerCase();
+    const isFormTag = formTags.has(tag);
+    // Rule C, narrowed (fix round 2): `checked` is only meaningful on a checkbox/radio
+    // <input> — reading it (as a property OR excluding its attribute) on a text/select/
+    // textarea makes no sense, since those never have a `checked` property at all.
+    // `selected` is never read here: it belongs to <option>, which isn't a form tag.
+    const isCheckableInput = tag === 'input' && ((el as HTMLInputElement).type === 'checkbox' || (el as HTMLInputElement).type === 'radio');
+    const attrs: [string, string][] = [];
+    for (const attr of Array.from(el.attributes)) {
+      if (attr.name === 'class' || attr.name === 'style') continue;
+      if (isFormTag && attr.name === 'value') continue;
+      if (isCheckableInput && attr.name === 'checked') continue;
+      attrs.push([attr.name, attr.value]);
+    }
+    const style: [string, string][] = [];
+    const decl = (el as HTMLElement).style;
+    for (let i = 0; i < decl.length; i++) {
+      const prop = decl[i];
+      const value = decl.getPropertyValue(prop);
+      // Fix round 2: an !important rule is invisible to getPropertyValue() alone — read
+      // getPropertyPriority() too, so a design-only (or app-only) !important is reported
+      // as a real style difference instead of silently comparing equal.
+      const suffix = decl.getPropertyPriority(prop) === 'important' ? ' !important' : '';
+      style.push([prop, value + suffix]);
+    }
+    let props: [string, string][] | undefined;
+    if (isFormTag || isCheckableInput) {
+      props = [];
+      const live = el as unknown as { value?: unknown; checked?: unknown };
+      // Pushed in name order ('checked' < 'value') so the raw walk already matches the
+      // sorted shape normalise() would produce anyway — avoids depending on normalise()'s
+      // sort to prove this function's own output, since walkPage is unit-tested directly.
+      if (isCheckableInput && 'checked' in live) props.push(['checked', String(live.checked)]);
+      if (isFormTag && 'value' in live) props.push(['value', String(live.value)]);
+    }
+    const children: RawNode[] = [];
+    if (el.shadowRoot) {
+      const shadowChildren: RawNode[] = [];
+      for (const child of Array.from(el.shadowRoot.childNodes)) {
+        const w = walk(child);
+        if (w) shadowChildren.push(w);
+      }
+      children.push({ shadow: shadowChildren });
+    }
+    for (const child of Array.from(el.childNodes)) {
+      const w = walk(child);
+      if (w) children.push(w);
+    }
+    return { tag, attrs, classList: Array.from(el.classList), style, children, ...(props ? { props } : {}) };
+  }
+
+  const root = document.querySelector(arg.rootSelector);
+  if (!root) return null;
+  return walk(root);
+}
+
+const ROOT_SELECTOR = 'div[style*="min-height: 100vh"]';
+
+// ---------------------------------------------------------------------------------------
+// serialize(page) — evaluates walkPage in the page (self-contained: see above), then
+// normalises the result in Node/Playwright context.
 // ---------------------------------------------------------------------------------------
 export async function serialize(page: Page, opts: NormaliseOptions = {}): Promise<DomNode> {
-  const raw = await page.evaluate<RawNode>(() => {
-    // Rule C: only these tags get value/checked/selected excluded from attrs and a `props`
-    // field of the live properties instead (Vue's runtime-dom mirrors form state onto the
-    // attribute; React sets only the property, so the attribute-based comparison can never
-    // agree — the live property is the thing that's actually true on both targets).
-    const FORM_TAGS = new Set(['input', 'select', 'textarea']);
-
-    // Comments (and any other non-element, non-text node) carry no rendered content and
-    // have no counterpart in either target's markup; they are simply not one of the two
-    // node shapes this oracle represents, so walk() returns null for them and callers
-    // filter the null out rather than record it as a child.
-    function walk(node: Node): RawNode | null {
-      if (node.nodeType === Node.TEXT_NODE) {
-        return { text: node.textContent ?? '' };
-      }
-      if (node.nodeType !== Node.ELEMENT_NODE) {
-        return null;
-      }
-      const el = node as Element;
-      if (el.classList.contains('leaflet-container')) {
-        return { tag: 'div', leaflet: true };
-      }
-      const tag = el.tagName.toLowerCase();
-      const isFormTag = FORM_TAGS.has(tag);
-      const attrs: [string, string][] = [];
-      for (const attr of Array.from(el.attributes)) {
-        if (attr.name === 'class' || attr.name === 'style') continue;
-        if (isFormTag && (attr.name === 'value' || attr.name === 'checked' || attr.name === 'selected')) continue;
-        attrs.push([attr.name, attr.value]);
-      }
-      const style: [string, string][] = [];
-      const decl = (el as HTMLElement).style;
-      for (let i = 0; i < decl.length; i++) {
-        const prop = decl[i];
-        style.push([prop, decl.getPropertyValue(prop)]);
-      }
-      let props: [string, string][] | undefined;
-      if (isFormTag) {
-        // Feature-detect rather than hard-code per tag: `checked` only exists on
-        // HTMLInputElement, `selected` on neither input/select/textarea today (it's an
-        // <option> property) but is read defensively in case that ever changes.
-        const live = el as unknown as { value?: unknown; checked?: unknown; selected?: unknown };
-        props = [];
-        if ('value' in live) props.push(['value', String(live.value)]);
-        if ('checked' in live) props.push(['checked', String(live.checked)]);
-        if ('selected' in live) props.push(['selected', String(live.selected)]);
-      }
-      const children: RawNode[] = [];
-      if (el.shadowRoot) {
-        const shadowChildren: RawNode[] = [];
-        for (const child of Array.from(el.shadowRoot.childNodes)) {
-          const w = walk(child);
-          if (w) shadowChildren.push(w);
-        }
-        children.push({ shadow: shadowChildren });
-      }
-      for (const child of Array.from(el.childNodes)) {
-        const w = walk(child);
-        if (w) children.push(w);
-      }
-      return { tag, attrs, classList: Array.from(el.classList), style, children, ...(props ? { props } : {}) };
-    }
-
-    const root = document.querySelector('div[style*="min-height: 100vh"]');
-    if (!root) throw new Error('dom oracle: root not found (div[style*="min-height: 100vh"])');
-    const walked = walk(root);
-    if (!walked) throw new Error('dom oracle: root failed to serialise');
-    return walked;
-  });
+  const raw = await page.evaluate(walkPage, { rootSelector: ROOT_SELECTOR, formTags: [...FORM_TAGS] });
+  if (!raw) throw new Error(`dom oracle: root not found (${ROOT_SELECTOR})`);
   return normalise(raw, opts);
+}
+
+// ---------------------------------------------------------------------------------------
+// readReferenceSnapshot() — fix round 2 moved this out of dom.spec.ts (which just called
+// it inline) so the missing-file error message lives with the rest of the oracle's logic,
+// not duplicated/hand-rolled in a spec. A missing snapshot means `--project=reference`
+// hasn't been run (or was run before this state existed) — name the fix, not just the
+// symptom.
+// ---------------------------------------------------------------------------------------
+export function readReferenceSnapshot(dir: string, name: string): DomNode {
+  const file = join(dir, `${name}.json`);
+  if (!existsSync(file)) {
+    throw new Error(
+      `Missing DOM snapshot "${name}" in ${dir} — run: npx playwright test --config=tests/playwright.config.ts --project=reference`
+    );
+  }
+  return JSON.parse(readFileSync(file, 'utf8')) as DomNode;
 }

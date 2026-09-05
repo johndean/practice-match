@@ -1,5 +1,8 @@
+import { mkdtempSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { diff, normalise, type DomElement, type DomNode, type RawElement, type RawNode } from './dom';
+import { diff, normalise, readReferenceSnapshot, type DomElement, type DomNode, type RawElement, type RawNode } from './dom';
 
 // Minimal element fixtures. Every field the interface requires is present so the tests
 // exercise normalise()/diff() exactly as serialize(page) would feed them, without a browser.
@@ -95,6 +98,22 @@ describe('normalise', () => {
 
   it('keeps text with any visible character verbatim, whitespace inside it untouched', () => {
     expect(normalise({ text: 'Approved buyer ' })).toEqual({ text: 'Approved buyer ' });
+  });
+
+  // Fix round 2: whitespace = exactly the compiler's set (char codes 32, 9, 10, 13, 12 —
+  // `@vue/compiler-core` `isWhitespace`), not JS's `\s` (which also matches U+00A0). A
+  // non-breaking space is content and must be KEPT, not dropped as whitespace-only.
+  it('rule W (fix round 2) — the whitespace set is exactly the compiler\'s; NBSP is content, not whitespace', () => {
+    const NBSP = '\u00a0';
+    const raw = el({
+      children: [
+        { text: NBSP }, // non-breaking space: content, must be KEPT
+        { text: ' \n\t\r\f' }, // compiler whitespace set (space/tab/LF/CR/FF): dropped
+        { text: '' }, // empty: dropped
+        el({ tag: 'span' })
+      ]
+    });
+    expect((normalise(raw) as DomElement).children).toEqual([{ text: NBSP }, domEl({ tag: 'span' })]);
   });
 
   // Rule B (John, 2026-09-05): on the DESIGN side only, src/href values beginning
@@ -204,7 +223,16 @@ describe('diff', () => {
       });
     const a = build('Approved buyer');
     const b = build('Approved buyer ');
-    expect(diff(a, b)).toEqual(['div[0]/div[2]/span[1]: text "Approved buyer" ≠ "Approved buyer "']);
+    // Fix round 2: the text case gains the same child[i] index the node-kind-mismatch case
+    // already had, so two differing text children of one parent are distinguishable (see
+    // the next test) instead of colliding on one path.
+    expect(diff(a, b)).toEqual(['div[0]/div[2]/span[1]: child[0] text "Approved buyer" ≠ "Approved buyer "']);
+  });
+
+  it('reports two differing text children of the same parent as distinguishable lines (fix round 2)', () => {
+    const a = domEl({ children: [{ text: 'a' }, domEl({ tag: 'span' }), { text: 'c' }] });
+    const b = domEl({ children: [{ text: 'A' }, domEl({ tag: 'span' }), { text: 'C' }] });
+    expect(diff(a, b)).toEqual(['(root): child[0] text "a" ≠ "A"', '(root): child[2] text "c" ≠ "C"']);
   });
 
   it('reports a child-count mismatch, with path, and still compares the children both sides have', () => {
@@ -256,15 +284,75 @@ describe('diff', () => {
     expect(diff(a, b)).toEqual(['select[1]: prop value "Austin, TX" ≠ "Any"']);
   });
 
-  it('reports a strict tag mismatch and does not cascade further diffs below it', () => {
-    const a = domEl({ children: [domEl({ tag: 'image-slot', attrs: [['id', 'p1']] })] });
-    const b = domEl({ children: [domEl({ tag: 'div', attrs: [['id', 'different']] })] });
-    expect(diff(a, b)).toEqual(['image-slot[0]: tag <image-slot> ≠ <div>']);
+  // Fix round 2: a tag mismatch still reports that node's own attrs/class/style/props —
+  // only its children stop being meaningful (structurally incompatible subtrees). The
+  // mismatched `em`/`span` children below prove children really are skipped: if they
+  // weren't, a third line (a child[0] tag or kind mismatch) would appear.
+  it('reports a strict tag mismatch, still compares that node\'s own attrs, and skips only its children', () => {
+    const a = domEl({
+      children: [
+        domEl({ tag: 'image-slot', attrs: [['placeholder', 'a']], children: [domEl({ tag: 'span' })] })
+      ]
+    });
+    const b = domEl({
+      children: [domEl({ tag: 'div', attrs: [['placeholder', 'b']], children: [domEl({ tag: 'em' })] })]
+    });
+    expect(diff(a, b)).toEqual([
+      'image-slot[0]: tag <image-slot> ≠ <div>',
+      'image-slot[0]: attr placeholder: "a" ≠ "b"'
+    ]);
   });
 
   it('reports a leaflet subtree as equal to another leaflet subtree regardless of contents', () => {
     const a = domEl({ children: [{ tag: 'div', leaflet: true }] });
     const b = domEl({ children: [{ tag: 'div', leaflet: true }] });
     expect(diff(a, b)).toEqual([]);
+  });
+});
+
+// Fix round 2: two items are test-only additions — the brief's own instruction for proving
+// a test that passes on the first write actually bites: write it, run it, and if it's green
+// immediately, break the branch it exercises once, watch it go red, then restore. Both are
+// recorded that way in the report; the deliberate-break step is not left in this file.
+describe('normalise recursion into element children (fix round 2 — explicitly asserted)', () => {
+  it('recurses into nested element children, substituting a pseudo-class several levels down', () => {
+    const raw = el({
+      children: [el({ tag: 'section', children: [el({ tag: 'span', classList: ['scp4'] })] })]
+    });
+    const result = normalise(raw) as DomElement;
+    const section = result.children[0] as DomElement;
+    const span = section.children[0] as DomElement;
+    expect(span.class).toEqual(['<pseudo>']);
+  });
+});
+
+describe('rule W + shadow + props combined (fix round 2 — explicitly asserted)', () => {
+  it('drops whitespace-only shadow text while a sibling form element keeps its props intact', () => {
+    const raw: RawNode = {
+      shadow: [
+        { text: '\n' },
+        el({ tag: 'input', attrs: [['type', 'text']], props: [['value', 'x']] }),
+        { text: '' }
+      ]
+    };
+    expect(normalise(raw)).toEqual({
+      shadow: [domEl({ tag: 'input', attrs: [['type', 'text']], props: [['value', 'x']] })]
+    });
+  });
+});
+
+describe('readReferenceSnapshot', () => {
+  it('throws a message naming the fix when the snapshot file is missing', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dom-snap-'));
+    expect(() => readReferenceSnapshot(dir, 'gate-signin')).toThrow(
+      `Missing DOM snapshot "gate-signin" in ${dir} — run: npx playwright test --config=tests/playwright.config.ts --project=reference`
+    );
+  });
+
+  it('reads and parses an existing snapshot file', () => {
+    const dir = mkdtempSync(join(tmpdir(), 'dom-snap-'));
+    const node = domEl({ tag: 'div' });
+    writeFileSync(join(dir, 'gate-signin.json'), JSON.stringify(node));
+    expect(readReferenceSnapshot(dir, 'gate-signin')).toEqual(node);
   });
 });
