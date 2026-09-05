@@ -6,6 +6,12 @@
 # EXPECT_SHA defaults to this checkout's HEAD: the point of the probe is to prove
 # the code now serving traffic is the code we just deployed, so a stale container
 # that answers 200 with an older commit_sha must fail the deploy.
+#
+# This script is the ONLY gate between a green `railway up` and a broken
+# deployment — /api/healthz is deliberately always-200, so Railway's own
+# healthcheck passes even with a dead database. Every probe below must therefore
+# be able to fail the script; see tests/scripts/test_verify_deploy.sh, whose
+# negative cases exist to keep it that way.
 set -euo pipefail
 ENV="${1:?usage: verify-deploy.sh QA|production [BASE_URL]}"
 case "$ENV" in
@@ -18,24 +24,36 @@ BASE="${BASE%/}"
 EXPECT_SHA="${EXPECT_SHA:-$(git rev-parse --short HEAD 2>/dev/null || true)}"
 
 echo "→ GET $BASE/api/healthz"
-# Piped, not process-substituted, so pipefail propagates a curl failure (-sf exits
-# non-zero on 4xx/5xx) instead of handing python an empty body.
-curl -sf --max-time 20 "$BASE/api/healthz" | WANT="$WANT" EXPECT_SHA="$EXPECT_SHA" python3 -c '
+# Piped, not process-substituted, so pipefail propagates a curl failure (-f exits
+# non-zero on 4xx/5xx) instead of handing python an empty body. -sS: no progress
+# meter, but real errors still reach stderr.
+curl -fsS --max-time 20 "$BASE/api/healthz" | WANT="$WANT" EXPECT_SHA="$EXPECT_SHA" python3 -c '
 import os, sys, json
 b = json.load(sys.stdin)
 want, expect = os.environ["WANT"], os.environ["EXPECT_SHA"]
 got = b["environment"]
 assert got == want, f"environment is {got!r}, expected {want!r}: {b}"
-assert b["db"]["ok"] and b["redis"]["ok"], b
+db = b["db"]
+assert db["ok"] and b["redis"]["ok"], b
+# A healthy db block without postgis_version means SELECT postgis_version() never
+# ran - the extension or the pinned PostGIS image is not what we think it is.
+pg = db.get("postgis_version")
+assert pg, f"FAIL: postgis_version missing from a healthy db block: {b}"
 sha = b["commit_sha"]
 if expect:
     assert sha == expect, f"commit_sha is {sha!r}, expected {expect!r} - a stale container is still serving"
-print("healthz OK  version", b["version"], " commit", sha, " postgis", b["db"].get("postgis_version"))
+print("healthz OK  version", b["version"], " commit", sha, " postgis", pg)
 '
-code=$(curl -s -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/healthz/deep")
-[[ "$code" == "200" ]] || { echo "deep healthz returned $code" >&2; exit 1; }
+code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/healthz/deep")
+[[ "$code" == "200" ]] || { echo "FAIL: deep healthz returned $code at $BASE/api/healthz/deep" >&2; exit 1; }
 echo "deep healthz OK"
-curl -sf --max-time 20 "$BASE/browse" | grep -q 'id="app"' && echo "SPA fallback OK"
+# `cmd | grep -q … && echo OK` cannot fail this script: under `set -e` a failing
+# left operand of && is exempt from errexit, so a missing SPA shell printed nothing
+# and still exited 0 (fix round 1). An explicit || … exit 1 is the only form that
+# actually gates.
+curl -fsS --max-time 20 "$BASE/browse" | grep -q 'id="app"' \
+  || { echo "FAIL: SPA fallback missing at $BASE/browse" >&2; exit 1; }
+echo "SPA fallback OK"
 # `railway logs` streams by default in CLI 5.26 and would hang a script; --lines
 # fetches history and exits. Best-effort only: never fail a good deploy on logs.
 if command -v railway >/dev/null 2>&1; then

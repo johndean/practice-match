@@ -1,23 +1,90 @@
 #!/usr/bin/env bash
+# verify-deploy.sh is the only gate between a green `railway up` and a broken
+# deployment: /api/healthz is deliberately always-200, so Railway's own healthcheck
+# passes even with a dead database. Every probe it makes must therefore be able to
+# FAIL the script — the negative cases below are the point of this file, not the
+# happy path.
 set -euo pipefail; cd "$(dirname "$0")/../.."
 fail() { echo "FAIL: $*"; exit 1; }
-PORT=8765
-python3 - "$PORT" <<'PY' &
-import json, sys
+
+SRV=""
+PORT=0
+stop_server() {
+  if [[ -n "$SRV" ]]; then kill "$SRV" 2>/dev/null || true; wait "$SRV" 2>/dev/null || true; SRV=""; fi
+}
+trap stop_server EXIT
+
+# start_server <mode> <port>. Modes: ok | spa_missing | deep_503 | no_postgis
+start_server() {
+  PORT="$2"
+  MODE="$1" python3 - "$PORT" <<'PY' &
+import json, os, sys
 from http.server import BaseHTTPRequestHandler, HTTPServer
-BODY = {"status": "ok", "version": "0.1.0", "environment": "qa", "commit_sha": "abc1234", "db": {"ok": True, "postgis_version": "3.5.2"}, "redis": {"ok": True}}
+
+MODE = os.environ.get("MODE", "ok")
+BODY = {"status": "ok", "version": "0.1.0", "environment": "qa", "commit_sha": "abc1234",
+        "db": {"ok": True, "postgis_version": "3.5.2"}, "redis": {"ok": True}}
+if MODE == "no_postgis":
+    del BODY["db"]["postgis_version"]
+SHELL_OK = b'<!doctype html><div id="app"></div>'
+SHELL_BAD = b'<!doctype html><p>404 - no app shell here</p>'
+
 class H(BaseHTTPRequestHandler):
+    def _send(self, code, ctype, payload):
+        self.send_response(code); self.send_header("Content-Type", ctype); self.end_headers()
+        self.wfile.write(payload)
     def do_GET(self):
-        if self.path.startswith("/api/healthz"):
-            self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers(); self.wfile.write(json.dumps(BODY).encode())
+        if self.path.startswith("/api/healthz/deep"):
+            self._send(503 if MODE == "deep_503" else 200, "application/json", json.dumps(BODY).encode())
+        elif self.path.startswith("/api/healthz"):
+            self._send(200, "application/json", json.dumps(BODY).encode())
         else:
-            self.send_response(200); self.send_header("Content-Type", "text/html"); self.end_headers(); self.wfile.write(b'<!doctype html><div id="app"></div>')
+            self._send(200, "text/html", SHELL_BAD if MODE == "spa_missing" else SHELL_OK)
     def log_message(self, *a): pass
+
 HTTPServer(("127.0.0.1", int(sys.argv[1])), H).serve_forever()
 PY
-SRV=$!; trap 'kill $SRV' EXIT; sleep 0.5
+  SRV=$!
+  sleep 0.6
+}
+
+# --- 1. healthy target verifies, and prints all three OK lines -----------------
+start_server ok 8765
 out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA) || fail "a healthy target must verify; output: $out"
 for line in "healthz OK" "deep healthz OK" "SPA fallback OK"; do [[ "$out" == *"$line"* ]] || fail "missing '$line' in: $out"; done
+[[ "$out" == *"3.5.2"* ]] || fail "the postgis version must be printed; got: $out"
+
+# --- 2. environment mismatch fails --------------------------------------------
 if VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh production >/dev/null 2>&1; then fail "environment mismatch must fail"; fi
+
+# --- 3. commit mismatch fails (a stale container still serving) ----------------
 if VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=deadbee bash scripts/verify-deploy.sh QA >/dev/null 2>&1; then fail "commit mismatch must fail"; fi
+stop_server
+
+# --- 4. the SPA shell is missing: healthz and deep are healthy, /browse is not --
+start_server spa_missing 8766
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
+  fail "a missing SPA shell must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"SPA fallback missing"* ]] || fail "the SPA failure must name itself; got: $out"
+[[ "$out" != *"SPA fallback OK"* ]] || fail "must not claim SPA fallback OK when the shell is missing; got: $out"
+stop_server
+
+# --- 5. deep healthz 503 fails, and the message names deep ---------------------
+start_server deep_503 8767
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
+  fail "a 503 from /api/healthz/deep must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"deep"* ]] || fail "the deep-healthz failure must name deep; got: $out"
+[[ "$out" == *"503"* ]] || fail "the deep-healthz failure should report the status code; got: $out"
+stop_server
+
+# --- 6. db.ok true but postgis_version absent: the pin/extension is not proven --
+start_server no_postgis 8768
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
+  fail "a missing postgis_version must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"postgis_version missing"* ]] || fail "the missing-postgis failure must name itself; got: $out"
+stop_server
+
 echo "verify-deploy.sh OK"
