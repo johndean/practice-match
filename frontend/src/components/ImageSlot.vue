@@ -73,9 +73,23 @@ const warnIcon =
   '<path d="M12 9v4"/><path d="M12 17h.01"/></svg>';
 
 // The constructor's shadow tree (l.501-529), verbatim — the reframe spill, the hover
-// controls and the file input included. Nothing in this port drives them (no window.omelette
-// → no data-editable, and the two popovers stay closed, so all three are display:none), but
-// they are part of the tree the design renders and the DOM oracle counts them.
+// controls and the file input included. Nothing in this port drives them: no window.omelette
+// → no data-editable, so `.ctl` never reaches opacity 1 and neither popover is ever shown.
+// They are part of the tree the design renders and the DOM oracle counts them.
+//
+// Correction (zero-gap audit, Phase 11 — measured, not assumed): an earlier version of this
+// comment said "the two popovers stay closed, so all three are display:none". That is true
+// of `.spill` and the file input, and FALSE of `.ctl`. The UA's
+// `[popover]:not(:popover-open){display:none}` is an ordinary author-beatable rule, and
+// `.ctl{…display:flex…}` in the design's own stylesheet overrides it — image-slot.js's own
+// comment at l.343-346 says so outright. Measured in Chromium 1440×940 on the Listing
+// screen: `.ctl` computes display:flex with a 108×21 box, and its two buttons are
+// tab-focusable and named in the accessibility tree (opacity:0 hides them from sight;
+// pointer-events:none stops the mouse; neither touches the keyboard). The reference design
+// page behaves identically, so this is inherited parity, not a port divergence — it is
+// carried to John as a NEEDS_CONTEXT item in the Task 4e zero-gap audit report, because
+// every remedy would either change `image-slot.css` (a byte-for-byte invariant, ruling D)
+// or add tree/attribute state the DOM oracle compares against the design.
 const ACCEPT = ['image/png', 'image/jpeg', 'image/webp', 'image/avif'];
 const markup =
   '<div class="frame" part="frame">' +

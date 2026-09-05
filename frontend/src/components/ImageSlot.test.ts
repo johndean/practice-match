@@ -133,6 +133,74 @@ describe('ImageSlot — shadow root and structure', () => {
     expect(root.childNodes).toHaveLength(6);
   });
 
+  // ---------------------------------------------------------------------------------------
+  // Zero-gap audit, Phase 11. `style.display === 'none'` on the two chrome hosts is only the
+  // first link. What the requirement actually is — the controls must be UNAVAILABLE, not
+  // merely invisible — needs the whole cascade closed, because a control that is
+  // visually gone but still tab-focusable and still in the accessibility tree is NOT fixed.
+  //
+  // jsdom cannot answer that directly: it models neither layout nor focusable-area rules
+  // (`b.focus()` succeeds inside a display:none subtree, `getComputedStyle` does not apply a
+  // shadow ancestor's cascade, `checkVisibility` is unimplemented). So the proof is
+  // structural instead, and it is a complete one — these four facts together force
+  // `display: none` to be the computed value in every engine that implements the cascade,
+  // and a `display: none` element generates no box, is not a focusable area (HTML §6.6.2
+  // requires a focusable area to be *being rendered*), is excluded from the accessibility
+  // tree, and receives no pointer events:
+  //
+  //   1. every interactive/painting node of the chrome sits under an inline display:none;
+  //   2. the shadow root's ONLY author stylesheet is image-slot.css (one <style>, asserted
+  //      byte-for-byte above), so nothing else in the root can compete;
+  //   3. that stylesheet's only `!important` declarations set display to `none` — an
+  //      inline declaration outranks every non-important author rule, so no rule in it can
+  //      restore a box;
+  //   4. the chrome carries no `part`, so no `::part()` rule from the outer document can
+  //      reach in either, and `display` is not inherited, so nothing else crosses the
+  //      shadow boundary.
+  // ---------------------------------------------------------------------------------------
+  // The nearest ancestor (the node itself included), up to but not through the shadow root,
+  // whose INLINE style hides it. Inline is the level the fallback writes at.
+  const hiddenAncestor = (node: Element, root: ShadowRoot): HTMLElement | null => {
+    for (let n: Node | null = node; n && n !== root; n = (n as Element).parentNode) {
+      const e = n as HTMLElement;
+      if (e.style && e.style.display === 'none') return e;
+    }
+    return null;
+  };
+
+  it('leaves no chrome node interactive below the Popover floor: every control sits under a display:none host', () => {
+    expect('popover' in HTMLElement.prototype).toBe(false);
+    const { root } = slot({ id: 'x', src: PHOTO });
+
+    // Everything the editor chrome can paint or focus: the two Replace/Edit buttons, the
+    // four resize handles, the translucent reframe ghost (which _render fills with the real
+    // src), and the file input. Queried from the root, so a node moved out of .spill/.ctl
+    // in some future edit would still have to be accounted for here.
+    const interactive = [...root.querySelectorAll('.ctl button, .spill .handle, .spill .ghost')];
+    expect(interactive.map((n) => n.tagName.toLowerCase() + '.' + (n.className || '')))
+      .toEqual(['img.ghost', 'div.handle', 'div.handle', 'div.handle', 'div.handle', 'button.', 'button.']);
+    for (const node of interactive) {
+      expect(hiddenAncestor(node, root), `${node.tagName}.${node.className} is still rendered`).not.toBeNull();
+    }
+    // The file input is hidden by the design's own `hidden` attribute, not by the fallback.
+    expect((root.querySelector('input') as HTMLInputElement).hasAttribute('hidden')).toBe(true);
+  });
+
+  it('cannot have that display:none overridden: the stylesheet\'s only !important declarations are display:none', () => {
+    // If the design ever gained, say, `.ctl{display:flex !important}`, the inline fallback
+    // would lose the cascade and the buttons would come back — silently, since jsdom shows
+    // no layout. Pin the complete !important set instead.
+    const important = [...css.matchAll(/[-a-z]+\s*:[^;{}]*?!important/g)].map((m) => m[0].replace(/\s+/g, ' '));
+    expect(important).toEqual(['display:none !important', 'display:none !important']);
+  });
+
+  it('exposes no ::part() handle on the chrome, so no outer rule can reach past the fallback', () => {
+    const { root } = slot({ id: 'x', src: PHOTO });
+    const parts = [...root.querySelectorAll('[part]')].map((n) => n.getAttribute('part'));
+    expect(parts).toEqual(['frame', 'image', 'empty', 'attribution-error', 'loading', 'ring', 'credit']);
+    expect([...root.querySelectorAll('.spill, .spill *, .ctl, .ctl *')].some((n) => n.hasAttribute('part'))).toBe(false);
+  });
+
   it('builds the constructor\'s six shadow nodes, editor chrome included but inert', () => {
     const { host, root } = slot({ id: 'x', src: PHOTO });
 
@@ -151,8 +219,14 @@ describe('ImageSlot — shadow root and structure', () => {
     const input = root.querySelector('input') as HTMLInputElement;
     expect([input.type, input.getAttribute('accept'), input.hasAttribute('hidden')]).toEqual(['file', 'image/png,image/jpeg,image/webp,image/avif', true]);
     // Read-only port: the chrome exists so the tree matches, but nothing drives it —
-    // without data-editable the .ctl stays opacity:0/pointer-events:none, and popover
-    // elements are display:none until shown.
+    // without data-editable the .ctl stays opacity:0/pointer-events:none, and .spill (which
+    // sets no display of its own) is display:none under the UA popover rule.
+    //
+    // "inert" in this test's title means "nothing drives it", NOT "unreachable": .ctl's own
+    // display:flex beats the UA popover rule, so above the Popover floor its two buttons
+    // remain tab-focusable and named in the accessibility tree — measured in Chromium on
+    // both targets, see the zero-gap audit report's NEEDS_CONTEXT item. Below the floor the
+    // feature-check branch above removes them entirely.
     expect(host.hasAttribute('data-editable')).toBe(false);
     // .sub ("or browse files") is the browse affordance: present in the tree, hidden by
     // _render's read-only branch (image-slot.js l.1088).
