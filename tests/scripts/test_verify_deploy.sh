@@ -4,15 +4,36 @@
 # passes even with a dead database. Every probe it makes must therefore be able to
 # FAIL the script — the negative cases below are the point of this file, not the
 # happy path.
+#
+# This suite is hermetic: a fake `railway` shadows the real CLI on PATH and records
+# every invocation, so the tests never touch the network or a Railway account (fix
+# round 2). Local HTTP servers stand in for the deployment.
 set -euo pipefail; cd "$(dirname "$0")/../.."
 fail() { echo "FAIL: $*"; exit 1; }
+
+tmp=$(mktemp -d)
+export FAKE_RAILWAY_LOG="$tmp/railway-calls"
+: > "$FAKE_RAILWAY_LOG"
+cat > "$tmp/railway" <<'F'
+#!/usr/bin/env bash
+echo "railway $*" >> "$FAKE_RAILWAY_LOG"
+case "$1" in
+  whoami) echo "Logged in as fake@example.com" ;;
+  logs)   echo "(fake log line)" ;;
+esac
+F
+chmod +x "$tmp/railway"
+export PATH="$tmp:$PATH"
 
 SRV=""
 PORT=0
 stop_server() {
   if [[ -n "$SRV" ]]; then kill "$SRV" 2>/dev/null || true; wait "$SRV" 2>/dev/null || true; SRV=""; fi
 }
-trap stop_server EXIT
+cleanup() { stop_server; rm -rf "$tmp"; }
+trap cleanup EXIT
+
+railway_calls() { wc -l < "$FAKE_RAILWAY_LOG" | tr -d ' '; }
 
 # start_server <mode> <port>. Modes: ok | spa_missing | deep_503 | no_postgis
 start_server() {
@@ -50,9 +71,16 @@ PY
 
 # --- 1. healthy target verifies, and prints all three OK lines -----------------
 start_server ok 8765
+: > "$FAKE_RAILWAY_LOG"
 out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA) || fail "a healthy target must verify; output: $out"
 for line in "healthz OK" "deep healthz OK" "SPA fallback OK"; do [[ "$out" == *"$line"* ]] || fail "missing '$line' in: $out"; done
 [[ "$out" == *"3.5.2"* ]] || fail "the postgis version must be printed; got: $out"
+
+# An explicit target is an ad hoc probe: the Railway CLI must not be invoked at all,
+# so this suite stays hermetic and CI never sees a Railway auth error.
+n=$(railway_calls)
+[[ "$n" -eq 0 ]] || fail "explicit target must not invoke the railway CLI; got $n invocation(s): $(cat "$FAKE_RAILWAY_LOG")"
+[[ "$out" == *"logs: skipped (explicit target)"* ]] || fail "must say why the log tail was skipped; got: $out"
 
 # --- 2. environment mismatch fails --------------------------------------------
 if VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh production >/dev/null 2>&1; then fail "environment mismatch must fail"; fi
@@ -86,5 +114,9 @@ if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash script
 fi
 [[ "$out" == *"postgis_version missing"* ]] || fail "the missing-postgis failure must name itself; got: $out"
 stop_server
+
+# --- no case anywhere in this suite may reach the Railway CLI ------------------
+n=$(railway_calls)
+[[ "$n" -eq 0 ]] || fail "the suite must be hermetic; railway was invoked $n time(s): $(cat "$FAKE_RAILWAY_LOG")"
 
 echo "verify-deploy.sh OK"

@@ -19,7 +19,17 @@ case "$ENV" in
   production) DEFAULT_BASE="https://foundation.vin";    WANT=production ;;
   *) echo "usage: verify-deploy.sh QA|production [BASE_URL]" >&2; exit 64 ;;
 esac
-BASE="${2:-${VERIFY_BASE_URL:-$DEFAULT_BASE}}"
+# An explicit target (positional arg or VERIFY_BASE_URL) means an ad hoc probe --
+# a *.up.railway.app host before DNS, or a local server in the tests. Only the
+# default target is known to correspond to the linked Railway project, so only it
+# earns the trailing log tail.
+if [[ -n "${2:-}" ]]; then
+  BASE="$2"; EXPLICIT_TARGET=1
+elif [[ -n "${VERIFY_BASE_URL:-}" ]]; then
+  BASE="$VERIFY_BASE_URL"; EXPLICIT_TARGET=1
+else
+  BASE="$DEFAULT_BASE"; EXPLICIT_TARGET=0
+fi
 BASE="${BASE%/}"
 EXPECT_SHA="${EXPECT_SHA:-$(git rev-parse --short HEAD 2>/dev/null || true)}"
 
@@ -55,8 +65,14 @@ curl -fsS --max-time 20 "$BASE/browse" | grep -q 'id="app"' \
   || { echo "FAIL: SPA fallback missing at $BASE/browse" >&2; exit 1; }
 echo "SPA fallback OK"
 # `railway logs` streams by default in CLI 5.26 and would hang a script; --lines
-# fetches history and exits. Best-effort only: never fail a good deploy on logs.
-if command -v railway >/dev/null 2>&1; then
+# fetches history and exits. Best-effort only: never fail a good deploy on logs --
+# and never invoked for an explicit target or a logged-out CLI, so the shell tests
+# stay hermetic and CI does not print a Railway auth error (fix round 2).
+if [[ "$EXPLICIT_TARGET" == 1 ]]; then
+  echo "logs: skipped (explicit target)"
+elif ! command -v railway >/dev/null 2>&1 || ! railway whoami >/dev/null 2>&1; then
+  echo "logs: skipped (railway not logged in)"
+else
   echo "→ recent api logs"
   railway logs --service api --environment "$ENV" --lines 20 2>/dev/null || true
 fi
