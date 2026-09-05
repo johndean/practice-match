@@ -230,6 +230,7 @@ Errors handled in this sub-project: component outages degrade `/api/healthz` ins
 - **Mobile activation width.** The design's mobile layout is a prototype toggle, not a breakpoint; the width at which real devices get it is undefined. Decide before SP2 ships to phones.
 - The spec's §15 open items: satellite imagery vendor; licensed pet-ownership rate vs ACS-derived; isochrones vs straight-line buffers; opportunity-score weights sign-off; public teaser vs gated market data; AIES dataset ID.
 - Public product name (replaces "Practice Match").
+- **Map engine (G0, added 2026-09-05).** The approved design is Leaflet with Esri tiles. Google Maps Platform's terms forbid Google Places content "with or near a non-Google Map", so any Google-based competition presentation means switching the whole application to the Maps JavaScript API (Google logo, attribution and controls change the map corners of every screen; satellite imagery and the basemap licence come with it). Options and costs: `docs/decisions/2026-09-05-competition-presentation-options.md`; the switch, if chosen, is planned in `docs/superpowers/plans/2026-09-05-practice-match-google-maps-greenfield.md` and must be decided **before** Task 1 of the Foundation plan vendors Leaflet.
 
 ## 10. Definition of done (Sub-project 1)
 
