@@ -61,6 +61,14 @@ def test_normalize_dsn_strips_the_asyncpg_dialect():
     assert migrate.normalize_dsn("postgresql://u:p@h/db") == "postgresql://u:p@h/db"
 
 
+def test_normalize_dsn_accepts_the_legacy_postgres_scheme():
+    """Railway's PostGIS template emits postgres://, not postgresql:// (fix round 5).
+    libpq/psycopg2 already accept it, but normalise it here too for robustness — same
+    psycopg2-ready form either way."""
+    assert migrate.normalize_dsn("postgres://u:p@h:5432/db") == migrate.normalize_dsn("postgresql://u:p@h:5432/db")
+    assert migrate.normalize_dsn("postgres://u:p@h:5432/db") == "postgresql://u:p@h:5432/db"
+
+
 class _RaisingOnLedgerInsertCursor(psycopg2.extensions.cursor):
     """A cursor that raises the moment the ledger row would be inserted, so a test can
     prove the migration file's own SQL rolls back too (they must commit as one

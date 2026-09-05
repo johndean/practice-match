@@ -20,7 +20,13 @@ class ComponentStatus(TypedDict, total=False):
 
 
 def async_dsn(url: str) -> str:
-    """Railway hands out postgresql://…; SQLAlchemy's asyncpg dialect wants postgresql+asyncpg://…"""
+    """SQLAlchemy's asyncpg dialect wants postgresql+asyncpg://…. Railway's PostGIS
+    template hands out the legacy postgres:// scheme (not postgresql://, despite what
+    this docstring used to claim) — libpq/psycopg2 accept both, SQLAlchemy 2.x's
+    `postgres` dialect alias does not exist, so it must be rewritten before the
+    dialect-suffix rewrite below (fix round 5)."""
+    if url.startswith("postgres://"):
+        url = "postgresql://" + url[len("postgres://"):]
     return url if url.startswith("postgresql+asyncpg://") else url.replace("postgresql://", "postgresql+asyncpg://", 1)
 
 

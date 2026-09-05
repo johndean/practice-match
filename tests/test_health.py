@@ -4,7 +4,7 @@ import httpx
 import pytest
 from httpx import ASGITransport
 
-from app.checks import check_db, check_redis
+from app.checks import async_dsn, check_db, check_redis
 from app.config import settings
 from app.main import app
 from app.version import VERSION
@@ -59,6 +59,13 @@ async def test_deep_healthz_is_503_with_components_down(client, components_down)
     r = await client.get("/api/healthz/deep")
     assert r.status_code == 503
     assert r.json()["db"]["ok"] is False
+
+
+def test_async_dsn_accepts_the_legacy_postgres_scheme():
+    """Railway's PostGIS template emits postgres://, not postgresql:// (fix round 5)."""
+    assert async_dsn("postgres://u:p@h:5432/db") == "postgresql+asyncpg://u:p@h:5432/db"
+    assert async_dsn("postgresql://u:p@h:5432/db") == "postgresql+asyncpg://u:p@h:5432/db"
+    assert async_dsn("postgresql+asyncpg://u:p@h:5432/db") == "postgresql+asyncpg://u:p@h:5432/db"
 
 
 async def test_check_db_degrades_on_malformed_dsn_instead_of_raising():

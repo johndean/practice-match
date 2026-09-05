@@ -25,7 +25,12 @@ LOCK_KEY = 0x504D4D47  # ASCII 'PMMG'
 
 
 def normalize_dsn(dsn: str) -> str:
-    """psycopg2 wants postgresql://; the app may hold postgresql+asyncpg://."""
+    """psycopg2 wants postgresql://; the app may hold postgresql+asyncpg://. Railway's
+    PostGIS template also hands out the legacy postgres:// scheme — libpq accepts it
+    unmodified, but normalise it here too for robustness/consistency with
+    app/checks.py's async_dsn (fix round 5)."""
+    if dsn.startswith("postgres://"):
+        dsn = "postgresql://" + dsn[len("postgres://"):]
     return dsn.replace("postgresql+asyncpg://", "postgresql://", 1)
 
 
