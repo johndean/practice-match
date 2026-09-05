@@ -276,6 +276,429 @@ git push origin feat/foundation && git push production feat/foundation
 
 ---
 
+### Task 1b: `MapEngine` interface and `LeafletMapEngine` — the Map-engines spec §11.1 amendment (pixels unchanged)
+
+The two Leaflet components stop calling Leaflet directly and call one `MapEngine` interface; the only implementation in SP1 is `LeafletMapEngine`, which passes the handoff's exact options through. The marker-HTML builders move out of `lib/leaflet.js` (which imports Leaflet) so that nothing outside `src/map/engines/` and `src/lib/leaflet.js` depends on Leaflet — the Map-engines sub-project adds `GoogleMapEngine` behind the same interface. No pixel changes: Task 4's visual gate is the proof.
+
+**Files:**
+- Create: `frontend/src/map/engine.ts`, `frontend/src/map/markers.js`, `frontend/src/map/engines/leaflet.ts`, `frontend/src/map/create.ts`, `frontend/src/map/testing/leaflet-stub.ts`, `frontend/src/map/engines/leaflet.test.ts`, `frontend/src/map/markers.test.ts`, `frontend/src/map/boundary.test.ts`
+- Modify: `frontend/src/lib/leaflet.js` (delete the five HTML builders `pill`, `clusterIcon`, `clusterize`, `pricePin`, `dot` — they move byte-identical to `markers.js`; keep `loadLeaflet`, `BASEMAPS`, `LABEL_TILES`), `frontend/src/components/MarketMapView.vue` (`<script setup>` and the three control buttons), `frontend/src/components/ListingsMap.vue` (`<script setup>`)
+
+**Interfaces:**
+- Consumes: `loadLeaflet()`, `BASEMAPS`, `LABEL_TILES` from `lib/leaflet.js` (Task 1).
+- Produces (used unchanged by the Map-engines plan): `LatLng = [number, number]` (lat, lng — the handoff's convention); `BaseKind = 'map' | 'satellite'` (the handoff's `basemap` prop values); `MountOptions { center: LatLng; zoom: number; basemap: BaseKind; zoomControl?: 'bottomright' | false; scaleControl?: boolean; groups?: string[] }`; `CircleStyle { fillColor: string; fillOpacity: number; stroke?: boolean; interactive?: boolean }`; `MarkerOptions { html: string; size: [number, number]; anchor: [number, number]; tooltip?: string; zIndexOffset?: number; interactive?: boolean; onClick?: () => void }`; `Handle { remove(): void }`; `MapEngine { readonly name: 'leaflet' | 'google'; mount(el, opts): Promise<void>; show(): void; setControls(opts): void; setView(center, zoom, animate?: boolean): void; getZoom(): number; zoomIn(): void; zoomOut(): void; fitBounds(points: LatLng[]): void; setBase(kind): void; circle(center, radiusM, style, group): Handle; marker(pos, opts, group): Handle; clear(group): void; onMove(cb: (center: LatLng, zoom: number) => void): () => void; destroy(): void }`; `LeafletMapEngine`; `createEngine(): Promise<MapEngine>`; `installLeafletStub(): LeafletStub` (tests); `pill`, `clusterIcon`, `clusterize`, `pricePin`, `dot` from `markers.js`.
+
+- [ ] **Step 1: Failing tests**
+
+`frontend/src/map/boundary.test.ts` — the import boundary (this project has no ESLint; the test is the rule):
+```ts
+import { describe, expect, it } from 'vitest';
+import { readFileSync, readdirSync, statSync } from 'node:fs';
+import { join, relative } from 'node:path';
+
+const SRC = join(import.meta.dirname, '..');
+const ALLOWED = [/^map\/engines\//, /^lib\/leaflet\.js$/, /^map\/testing\//];
+function walk(d: string): string[] { return readdirSync(d).flatMap((n) => { const p = join(d, n); return statSync(p).isDirectory() ? walk(p) : [p]; }); }
+
+describe('map engine import boundary (Map-engines spec §2.2)', () => {
+  it('only src/map/engines/* and src/lib/leaflet.js touch Leaflet or window.L', () => {
+    const offenders = walk(SRC).filter((f) => /\.(vue|js|ts)$/.test(f) && !f.endsWith('.test.ts')).filter((f) => {
+      const rel = relative(SRC, f);
+      if (ALLOWED.some((re) => re.test(rel))) return false;
+      const s = readFileSync(f, 'utf8');
+      return /from\s+['"]leaflet|require\(['"]leaflet|window\.L\b|\bL\.(map|tileLayer|marker|divIcon|circle|layerGroup|control)\(/.test(s);
+    }).map((f) => relative(SRC, f));
+    expect(offenders).toEqual([]);
+  });
+});
+```
+
+`frontend/src/map/markers.test.ts` — the builders moved byte-identical:
+```ts
+import { describe, expect, it } from 'vitest';
+import { clusterIcon, clusterize, dot, pill, pricePin } from './markers.js';
+
+describe('marker HTML builders (moved from lib/leaflet.js)', () => {
+  it('dot', () => {
+    expect(dot(20, '#003a70')).toBe('<div style="width:20px;height:20px;border-radius:999px;background:#003a70;border:2px solid rgba(255,255,255,.85);box-sizing:border-box;"></div>');
+    expect(dot(10, 'rgba(120,86,190,.75)', 'rgba(255,255,255,.9)')).toContain('border:2px solid rgba(255,255,255,.9)');
+  });
+  it('pricePin active/inactive', () => {
+    expect(pricePin('$1.45M', true)).toContain('background:var(--vf-navy);color:var(--vf-white);');
+    expect(pricePin('$1.45M', false)).toContain('border:1px solid #d4dde5;');
+  });
+  it('pill muted/active', () => {
+    expect(pill('$860K', false, true)).toContain('background:var(--color-steel);color:var(--color-white);');
+    expect(pill('$860K', true, false)).toContain('transform:translateY(-2px)');
+  });
+  it('clusterIcon and clusterize', () => {
+    expect(clusterIcon(3)).toContain('>3</div>');
+    const ms = [{ id: 'a', lat: 30.30, lng: -97.70 }, { id: 'b', lat: 30.31, lng: -97.71 }, { id: 'c', lat: 31.9, lng: -99.0 }];
+    expect(clusterize(ms, 10).map((e) => e.kind)).toEqual(['pin', 'pin', 'pin']);
+    const z8 = clusterize(ms, 8);
+    expect(z8.find((e) => e.kind === 'cluster')?.ids).toEqual(['a', 'b']);
+  });
+});
+```
+
+`frontend/src/map/testing/leaflet-stub.ts` — a recording stand-in installed as `window.L` (`loadLeaflet()` returns `window.L` when present):
+```ts
+export interface Call { fn: string; args: unknown[] }
+export interface LeafletStub { calls: Call[]; map: FakeMap; tiles: FakeTile[]; L: unknown }
+
+class FakeLayer { added: unknown[] = []; on(ev: string, cb: () => void) { (this as any)['on_' + ev] = cb; return this; } addTo(g: any) { g.added?.push(this); (this as any).parent = g; return this; } remove() { const p = (this as any).parent; if (p?.added) p.added = p.added.filter((x: unknown) => x !== this); } bindTooltip(text: string, opts: unknown) { (this as any).tooltip = { text, opts }; return this; } }
+export class FakeTile extends FakeLayer { url: string; options: Record<string, unknown>; constructor(url: string, options: Record<string, unknown>) { super(); this.url = url; this.options = options; } setUrl(u: string) { this.url = u; } }
+class FakeGroup extends FakeLayer { clearLayers() { this.added = []; } }
+export class FakeMap { added: unknown[] = []; handlers: Record<string, () => void> = {}; center: unknown; zoom: number; invalidated = 0; attributionControl = { _update: () => { (this as any).attrUpdated = ((this as any).attrUpdated ?? 0) + 1; } };
+  constructor(public el: HTMLElement, public opts: any) { this.center = opts.center; this.zoom = opts.zoom; el.dataset.leafletMounted = '1'; }
+  setView(c: unknown, z: number, o?: unknown) { this.center = c; this.zoom = z; (this as any).lastSetView = [c, z, o]; }
+  getZoom() { return this.zoom; } getCenter() { const c = this.center as [number, number]; return { lat: c[0], lng: c[1] }; }
+  zoomIn() { this.zoom += 1; } zoomOut() { this.zoom -= 1; } invalidateSize() { this.invalidated += 1; }
+  on(ev: string, cb: () => void) { ev.split(' ').forEach((e) => { this.handlers[e] = cb; }); } off(ev: string) { ev.split(' ').forEach((e) => { delete this.handlers[e]; }); }
+  removeLayer(l: unknown) { this.added = this.added.filter((x) => x !== l); } remove() { (this as any).removed = true; } fitBounds(b: unknown, o?: unknown) { (this as any).fitted = [b, o]; } }
+
+export function installLeafletStub(): LeafletStub {
+  const calls: Call[] = []; const tiles: FakeTile[] = []; let map: FakeMap;
+  const rec = (fn: string, ret: (...a: any[]) => unknown) => (...args: unknown[]) => { calls.push({ fn, args }); return ret(...args); };
+  const L = {
+    map: rec('map', (el: HTMLElement, opts: unknown) => (map = new FakeMap(el, opts))),
+    tileLayer: rec('tileLayer', (url: string, options: Record<string, unknown>) => { const t = new FakeTile(url, options); tiles.push(t); return t; }),
+    layerGroup: rec('layerGroup', () => new FakeGroup()),
+    circle: rec('circle', (center: unknown, options: unknown) => Object.assign(new FakeLayer(), { center, options })),
+    divIcon: rec('divIcon', (o: unknown) => ({ icon: o })),
+    marker: rec('marker', (pos: unknown, options: unknown) => Object.assign(new FakeLayer(), { pos, options })),
+    control: { zoom: rec('control.zoom', (o: unknown) => Object.assign(new FakeLayer(), { control: 'zoom', o })), scale: rec('control.scale', (o: unknown) => Object.assign(new FakeLayer(), { control: 'scale', o })) },
+    latLngBounds: rec('latLngBounds', (pts: unknown) => ({ pts })),
+  };
+  (window as any).L = L;
+  return { calls, get map() { return map; }, tiles, L };
+}
+```
+
+`frontend/src/map/engines/leaflet.test.ts` — the engine passes the handoff's exact options:
+```ts
+// @vitest-environment jsdom
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { LeafletMapEngine } from './leaflet';
+import { installLeafletStub } from '../testing/leaflet-stub';
+import { BASEMAPS, LABEL_TILES } from '../../lib/leaflet.js';
+
+afterEach(() => { vi.useRealTimers(); delete (window as any).L; });
+
+async function mounted(opts: Partial<Parameters<LeafletMapEngine['mount']>[1]> = {}) {
+  vi.useFakeTimers();
+  const stub = installLeafletStub(); const el = document.createElement('div');
+  const engine = new LeafletMapEngine();
+  await engine.mount(el, { center: [30.31, -97.75], zoom: 10, basemap: 'map', zoomControl: false, scaleControl: true, groups: ['overlay', 'pins'], ...opts });
+  return { stub, el, engine };
+}
+
+describe('LeafletMapEngine — MarketMapView shape', () => {
+  it('creates the map, tiles, labels, scale control and groups exactly as the handoff did', async () => {
+    const { stub, el } = await mounted();
+    expect(stub.calls[0]).toEqual({ fn: 'map', args: [el, { center: [30.31, -97.75], zoom: 10, zoomControl: false, attributionControl: true }] });
+    expect(stub.tiles[0].url).toBe(BASEMAPS.map.url); expect(stub.tiles[0].options).toEqual({ attribution: BASEMAPS.map.attribution, maxZoom: 18 });
+    expect(stub.tiles[1].url).toBe(LABEL_TILES); expect(stub.tiles[1].options).toEqual({ maxZoom: 18, pane: 'shadowPane' });
+    expect(stub.map.added).toContain(stub.tiles[1]);                       // labels shown on the gray canvas
+    expect(stub.calls.find((c) => c.fn === 'control.scale')?.args).toEqual([{ imperial: true, metric: false, position: 'bottomright' }]);
+    expect(stub.calls.filter((c) => c.fn === 'control.zoom')).toHaveLength(0);
+    expect(stub.calls.filter((c) => c.fn === 'layerGroup')).toHaveLength(2);   // overlay then pins, created at mount in order
+    expect(el.dataset.map).toBe('leaflet');
+    vi.advanceTimersByTime(60); expect(stub.map.invalidated).toBe(1);
+  });
+  it('circle and marker pass the exact options; tooltip uses the design placement; clear empties the group', async () => {
+    const { stub, engine } = await mounted();
+    engine.circle([30.3, -97.7], 16000, { fillColor: '#339dde', fillOpacity: 0.16 }, 'overlay');
+    expect(stub.calls.find((c) => c.fn === 'circle')?.args).toEqual([[30.3, -97.7], { radius: 16000, stroke: false, fillColor: '#339dde', fillOpacity: 0.16, interactive: false }]);
+    const onClick = () => {};
+    engine.marker([30.5, -97.8], { html: '<div>x</div>', size: [72, 26], anchor: [36, 13], zIndexOffset: 1000, onClick }, 'pins');
+    expect(stub.calls.find((c) => c.fn === 'divIcon')?.args).toEqual([{ html: '<div>x</div>', className: '', iconSize: [72, 26], iconAnchor: [36, 13] }]);
+    const m = stub.calls.find((c) => c.fn === 'marker')!;
+    expect(m.args[0]).toEqual([30.5, -97.8]); expect((m.args[1] as any).zIndexOffset).toBe(1000); expect((m.args[1] as any).interactive).toBe(true);
+    engine.marker([30.5, -97.8], { html: '<div>d</div>', size: [20, 20], anchor: [10, 10], tooltip: 'Cedar Park — $118K', interactive: true }, 'overlay');
+    const marked = stub.calls.filter((c) => c.fn === 'marker'); expect(marked).toHaveLength(2);
+    const groups = stub.calls.filter((c) => c.fn === 'layerGroup').length; expect(groups).toBe(2);
+    const overlayGroup = (stub.map.added as any[]).find((g) => g.clearLayers && g.added.some((l: any) => l.tooltip));
+    expect(overlayGroup.added[1].tooltip).toEqual({ text: 'Cedar Park — $118K', opts: { direction: 'top', offset: [0, -6] } });
+    engine.clear('overlay'); expect(overlayGroup.added).toEqual([]);
+  });
+  it('setBase swaps the tile URL, toggles labels and refreshes attribution; setView animates when asked; show() invalidates after 80 ms', async () => {
+    const { stub, engine } = await mounted();
+    engine.setBase('satellite');
+    expect(stub.tiles[0].url).toBe(BASEMAPS.satellite.url); expect(stub.map.added).not.toContain(stub.tiles[1]); expect((stub.map as any).attrUpdated).toBe(1);
+    engine.setBase('map'); expect(stub.map.added).toContain(stub.tiles[1]);
+    engine.setView([30.5, -97.8], 12, true); expect((stub.map as any).lastSetView).toEqual([[30.5, -97.8], 12, { animate: true }]);
+    engine.setView([30.5, -97.8], 13); expect((stub.map as any).lastSetView).toEqual([[30.5, -97.8], 13, undefined]);
+    engine.show(); vi.advanceTimersByTime(80); expect(stub.map.invalidated).toBe(2);
+    let seen = 0; const off = engine.onMove((_c, z) => { seen = z; }); stub.map.zoom = 11; stub.map.handlers.zoomend(); expect(seen).toBe(11); off(); expect(stub.map.handlers.zoomend).toBeUndefined();
+    engine.destroy(); expect((stub.map as any).removed).toBe(true);
+  });
+});
+
+describe('LeafletMapEngine — ListingsMap shape', () => {
+  it('adds the bottom-right zoom control and no scale control', async () => {
+    const { stub } = await mounted({ zoomControl: 'bottomright', scaleControl: false, groups: ['layer'] });
+    expect(stub.calls.find((c) => c.fn === 'control.zoom')?.args).toEqual([{ position: 'bottomright' }]);
+    expect(stub.calls.filter((c) => c.fn === 'control.scale')).toHaveLength(0);
+  });
+});
+```
+
+- [ ] **Step 2: Run to verify failure**
+
+Run: `cd frontend && npx vitest run src/map` → FAIL (`Cannot find module './markers.js'`, `'./leaflet'`); `boundary.test.ts` FAILS listing `components/MarketMapView.vue` and `components/ListingsMap.vue`.
+
+- [ ] **Step 3: Implement**
+
+`frontend/src/map/markers.js`: cut the five functions `pill`, `clusterIcon`, `clusterize`, `pricePin`, `dot` out of `lib/leaflet.js` verbatim (from the `export function pill` line to the end of `dot`) and paste them here with the header comment `// Marker HTML builders, ported verbatim from the approved prototype. Inline styles are intentional: divIcons live outside the app stylesheet scope.`
+
+`frontend/src/map/engine.ts`:
+```ts
+export type LatLng = [number, number];
+export type BaseKind = 'map' | 'satellite';
+export interface MountOptions { center: LatLng; zoom: number; basemap: BaseKind; zoomControl?: 'bottomright' | false; scaleControl?: boolean; groups?: string[] }
+export interface CircleStyle { fillColor: string; fillOpacity: number; stroke?: boolean; interactive?: boolean }
+export interface MarkerOptions { html: string; size: [number, number]; anchor: [number, number]; tooltip?: string; zIndexOffset?: number; interactive?: boolean; onClick?: () => void }
+export interface Handle { remove(): void }
+
+/** The only map API the components use — exactly the surface the handoff's two Leaflet components call. */
+export interface MapEngine {
+  readonly name: 'leaflet' | 'google';
+  mount(el: HTMLElement, opts: MountOptions): Promise<void>;
+  show(): void;
+  setControls(opts: Pick<MountOptions, 'zoomControl' | 'scaleControl'>): void;
+  setView(center: LatLng, zoom: number, animate?: boolean): void;
+  getZoom(): number;
+  zoomIn(): void;
+  zoomOut(): void;
+  fitBounds(points: LatLng[]): void;
+  setBase(kind: BaseKind): void;
+  circle(center: LatLng, radiusM: number, style: CircleStyle, group: string): Handle;
+  marker(pos: LatLng, opts: MarkerOptions, group: string): Handle;
+  clear(group: string): void;
+  onMove(cb: (center: LatLng, zoom: number) => void): () => void;
+  destroy(): void;
+}
+```
+
+`frontend/src/map/engines/leaflet.ts`:
+```ts
+import type { BaseKind, CircleStyle, Handle, LatLng, MapEngine, MarkerOptions, MountOptions } from '../engine';
+import { BASEMAPS, LABEL_TILES, loadLeaflet } from '../../lib/leaflet.js';
+
+/** Leaflet 1.9.4 behind MapEngine. Every option below is the handoff's, unchanged — Task 4's visual gate proves it. */
+export class LeafletMapEngine implements MapEngine {
+  readonly name = 'leaflet' as const;
+  private L!: any; private map!: any; private tile!: any; private labels!: any;
+  private zoomCtl: any = null; private scaleCtl: any = null;
+  private readonly groups = new Map<string, any>();
+
+  async mount(el: HTMLElement, opts: MountOptions): Promise<void> {
+    const L = await loadLeaflet(); this.L = L;
+    this.map = L.map(el, { center: opts.center, zoom: opts.zoom, zoomControl: false, attributionControl: true });
+    const cfg = BASEMAPS[opts.basemap] || BASEMAPS.map;
+    this.tile = L.tileLayer(cfg.url, { attribution: cfg.attribution, maxZoom: 18 }).addTo(this.map);
+    // The gray canvas carries almost no labels — Esri's matching reference layer supplies them.
+    this.labels = L.tileLayer(LABEL_TILES, { maxZoom: 18, pane: 'shadowPane' });
+    if (opts.basemap === 'map') this.labels.addTo(this.map);
+    for (const g of opts.groups ?? []) this.group(g);
+    this.setControls(opts);
+    el.dataset.map = 'leaflet';
+    setTimeout(() => this.map.invalidateSize(), 60);
+  }
+  show(): void { setTimeout(() => this.map.invalidateSize(), 80); }
+  setControls(opts: Pick<MountOptions, 'zoomControl' | 'scaleControl'>): void {
+    if (opts.zoomControl && !this.zoomCtl) this.zoomCtl = this.L.control.zoom({ position: opts.zoomControl }).addTo(this.map);
+    if (!opts.zoomControl && this.zoomCtl) { this.zoomCtl.remove(); this.zoomCtl = null; }
+    if (opts.scaleControl && !this.scaleCtl) this.scaleCtl = this.L.control.scale({ imperial: true, metric: false, position: 'bottomright' }).addTo(this.map);
+    if (!opts.scaleControl && this.scaleCtl) { this.scaleCtl.remove(); this.scaleCtl = null; }
+  }
+  setView(center: LatLng, zoom: number, animate?: boolean): void { this.map.setView(center, zoom, animate === undefined ? undefined : { animate }); }
+  getZoom(): number { return this.map.getZoom(); }
+  zoomIn(): void { this.map.zoomIn(); }
+  zoomOut(): void { this.map.zoomOut(); }
+  fitBounds(points: LatLng[]): void { this.map.fitBounds(this.L.latLngBounds(points), { padding: [24, 24] }); }
+  setBase(kind: BaseKind): void {
+    const cfg = BASEMAPS[kind] || BASEMAPS.map;
+    this.tile.setUrl(cfg.url);
+    if (kind === 'map') this.labels.addTo(this.map); else this.map.removeLayer(this.labels);
+    this.tile.options.attribution = cfg.attribution;
+    if (this.map.attributionControl._update) this.map.attributionControl._update();
+  }
+  circle(center: LatLng, radiusM: number, s: CircleStyle, group: string): Handle {
+    const c = this.L.circle(center, { radius: radiusM, stroke: s.stroke ?? false, fillColor: s.fillColor, fillOpacity: s.fillOpacity, interactive: s.interactive ?? false }).addTo(this.group(group));
+    return { remove: () => c.remove() };
+  }
+  marker(pos: LatLng, o: MarkerOptions, group: string): Handle {
+    const icon = this.L.divIcon({ html: o.html, className: '', iconSize: o.size, iconAnchor: o.anchor });
+    const m = this.L.marker(pos, { icon, zIndexOffset: o.zIndexOffset ?? 0, interactive: o.interactive ?? true });
+    if (o.tooltip) m.bindTooltip(o.tooltip, { direction: 'top', offset: [0, -6] });
+    if (o.onClick) m.on('click', o.onClick);
+    m.addTo(this.group(group));
+    return { remove: () => m.remove() };
+  }
+  clear(group: string): void { this.groups.get(group)?.clearLayers(); }
+  onMove(cb: (center: LatLng, zoom: number) => void): () => void {
+    const h = () => { const c = this.map.getCenter(); cb([c.lat, c.lng], this.map.getZoom()); };
+    this.map.on('moveend zoomend', h);
+    return () => this.map.off('moveend zoomend', h);
+  }
+  destroy(): void { this.map.remove(); }
+  private group(name: string) { let g = this.groups.get(name); if (!g) { g = this.L.layerGroup().addTo(this.map); this.groups.set(name, g); } return g; }
+}
+```
+
+`frontend/src/map/create.ts` (SP1 version; the Map-engines plan makes it config-driven):
+```ts
+import type { MapEngine } from './engine';
+export async function createEngine(): Promise<MapEngine> {
+  const { LeafletMapEngine } = await import('./engines/leaflet');
+  return new LeafletMapEngine();
+}
+```
+
+`frontend/src/components/MarketMapView.vue` — template: the three buttons become `@click="engine && engine.zoomIn()"`, `@click="engine && engine.zoomOut()"`, `@click="engine && engine.setView(props.center, props.zoom)"`. Replace the whole `<script setup>` with:
+```js
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { dot, pricePin } from '../map/markers.js';
+import { createEngine } from '../map/create';
+
+const props = defineProps({
+  practices: { type: Array, default: () => [] }, communities: { type: Array, default: () => [] }, layers: { type: Object, default: () => ({}) },
+  valueLayer: { type: String, default: null }, basemap: { type: String, default: 'map' }, activeId: { type: String, default: null },
+  onSelect: { type: Function, default: null }, center: { type: Array, default: () => [30.31, -97.75] }, zoom: { type: Number, default: 10 },
+  driveCenter: { type: Array, default: null }, resizeKey: { type: String, default: '' }
+});
+const host = ref(null);
+const status = ref('loading');
+let engine = null;
+const ctrlBtn = 'width: 32px; height: 32px; display: grid; place-items: center; background: none; border: 0; border-radius: 999px; cursor: pointer; padding: 0; filter: drop-shadow(0 1px 3px rgba(0,58,112,.3));';
+const ctrlIcon = 'display: block; opacity: .85;';
+
+onMounted(async () => {
+  try {
+    const e = await createEngine();
+    if (!host.value || engine) return;
+    await e.mount(host.value, { center: props.center, zoom: props.zoom, basemap: props.basemap, zoomControl: false, scaleControl: true, groups: ['overlay', 'pins'] });
+    engine = e;
+    status.value = 'ready';
+    drawOverlay();
+    drawPins();
+  } catch { status.value = 'error'; }
+});
+onBeforeUnmount(() => { if (engine) { engine.destroy(); engine = null; } });
+
+watch([() => props.basemap, status], () => { if (engine) engine.setBase(props.basemap); });
+watch([() => props.center && props.center[0], () => props.center && props.center[1], () => props.zoom, status], () => { if (engine && props.center) engine.setView(props.center, props.zoom, true); });
+watch(() => props.resizeKey, () => { if (engine) engine.show(); });
+
+// Drive-time rings + community data bubbles
+function drawOverlay() {
+  if (!engine) return;
+  engine.clear('overlay');
+  const hub = props.driveCenter || props.center;
+  if (props.layers.drive10 && hub) engine.circle(hub, 16000, { fillColor: '#339dde', fillOpacity: 0.16 }, 'overlay');
+  if (props.layers.drive5 && hub) engine.circle(hub, 8000, { fillColor: '#003a70', fillOpacity: 0.2 }, 'overlay');
+  if (props.valueLayer) {
+    props.communities.forEach((c) => {
+      const v = c.values[props.valueLayer];
+      if (v == null) return;
+      const size = 16 + Math.round(v.t * 30);
+      engine.marker([c.lat, c.lng], { html: dot(size, v.color), size: [size, size], anchor: [size / 2, size / 2], tooltip: c.name + ' — ' + v.label, interactive: true }, 'overlay');
+    });
+  }
+  if (props.layers.competition) {
+    props.communities.forEach((c) => {
+      const n = c.vets || 0;
+      if (!n) return;
+      const size = 8 + Math.min(n, 14);
+      engine.marker([c.lat + 0.012, c.lng + 0.012], { html: dot(size, 'rgba(120,86,190,.75)', 'rgba(255,255,255,.9)'), size: [size, size], anchor: [size / 2, size / 2], tooltip: c.name + ' — ' + n + ' veterinary establishments', interactive: true }, 'overlay');
+    });
+  }
+}
+
+// Practice price pins
+function drawPins() {
+  if (!engine) return;
+  engine.clear('pins');
+  if (!props.layers.practices) return;
+  props.practices.forEach((p) => {
+    const active = p.id === props.activeId;
+    engine.marker([p.lat, p.lng], { html: pricePin(p.priceLabel, active), size: [72, 26], anchor: [36, 13], zIndexOffset: active ? 1000 : 0, onClick: () => props.onSelect && props.onSelect(p.id) }, 'pins');
+  });
+}
+
+watch([() => props.communities, () => props.layers.drive5, () => props.layers.drive10, () => props.layers.competition, () => props.valueLayer, () => props.driveCenter && props.driveCenter[0], status], drawOverlay, { deep: true });
+watch([() => props.practices, () => props.activeId, () => props.layers.practices, status], drawPins, { deep: true });
+```
+
+`frontend/src/components/ListingsMap.vue` — replace the `<script setup>` with:
+```js
+import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { clusterIcon, clusterize, pill } from '../map/markers.js';
+import { createEngine } from '../map/create';
+
+const props = defineProps({
+  markers: { type: Array, default: () => [] }, activeId: { type: String, default: null }, hoverId: { type: String, default: null },
+  onSelect: { type: Function, default: null }, onClusterClick: { type: Function, default: null },
+  center: { type: Array, default: () => [30.31, -97.75] }, zoom: { type: Number, default: 10 }, dimmed: { type: Array, default: () => [] }, resizeKey: { type: String, default: '' }
+});
+const host = ref(null);
+const status = ref('loading');
+const z = ref(props.zoom);
+let engine = null;
+let offMove = null;
+
+onMounted(async () => {
+  try {
+    const e = await createEngine();
+    if (!host.value || engine) return;
+    await e.mount(host.value, { center: props.center, zoom: props.zoom, basemap: 'map', zoomControl: 'bottomright', scaleControl: false, groups: ['layer'] });
+    engine = e;
+    offMove = e.onMove((_c, zoom) => { z.value = zoom; });
+    status.value = 'ready';
+    draw();
+  } catch { status.value = 'error'; }
+});
+onBeforeUnmount(() => { if (offMove) offMove(); if (engine) { engine.destroy(); engine = null; } });
+
+function draw() {
+  if (!engine) return;
+  engine.clear('layer');
+  clusterize(props.markers, z.value).forEach((entry) => {
+    if (entry.kind === 'cluster') {
+      engine.marker([entry.lat, entry.lng], { html: clusterIcon(entry.count), size: [44, 44], anchor: [22, 22],
+        onClick: () => { engine.setView([entry.lat, entry.lng], Math.max(z.value + 2, 11)); if (props.onClusterClick) props.onClusterClick(entry.ids); } }, 'layer');
+    } else {
+      const m = entry.m;
+      const active = m.id === props.activeId || m.id === props.hoverId;
+      engine.marker([m.lat, m.lng], { html: pill(m.priceLabel, active, props.dimmed.indexOf(m.id) > -1), size: [70, 26], anchor: [35, 13], zIndexOffset: active ? 1000 : 0,
+        onClick: () => props.onSelect && props.onSelect(m.id) }, 'layer');
+    }
+  });
+}
+
+watch([() => props.markers, () => props.activeId, () => props.hoverId, z, status, () => props.dimmed], draw, { deep: true });
+watch(() => props.resizeKey, () => { if (engine) engine.show(); });
+watch([() => props.center && props.center[0], () => props.center && props.center[1], () => props.zoom, status], () => { if (engine && props.center) engine.setView(props.center, props.zoom, true); });
+```
+(The handoff's `zoomend` handler becomes `onMove`; `z` only changes on a zoom change, so redraws happen exactly when they did.)
+
+- [ ] **Step 4: Run to verify passing**
+
+Run: `cd frontend && npx vitest run && npm run build && npx vue-tsc --noEmit` → all pass; `dist/_app/` contains a separate `leaflet-*.js` chunk (the dynamic import) and the main bundle no longer contains `tileLayer`.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add frontend/src/map frontend/src/lib/leaflet.js frontend/src/components/MarketMapView.vue frontend/src/components/ListingsMap.vue
+git commit -m "refactor(map): MapEngine interface + LeafletMapEngine; marker builders moved out of lib/leaflet.js (pixels unchanged)
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+---
+
 ### Task 2: Router sync layer (vue-router around the untouched logic)
 
 **Files:**
@@ -816,6 +1239,8 @@ git push origin feat/foundation && git push production feat/foundation
 ```
 
 ---
+
+> **Task 1b check:** the `MapEngine` refactor (Task 1b) must produce zero pixel differences on every map state below; any map-region diff after Task 1b is a Task 1b bug, not a design mismatch.
 
 ### Task 4: Visual parity to GREEN, plus route smoke tests
 
