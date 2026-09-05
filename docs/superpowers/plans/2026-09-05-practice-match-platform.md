@@ -3597,7 +3597,7 @@ Expected: verify OK; smoke green; visual `25 passed` against the live QA build (
 
 **Nightly load smoke (policy §3):** add `scripts/k6-smoke.js` from `docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md` §5 and `.github/workflows/perf.yml` (schedule `0 6 * * *`; installs k6; runs against `https://qa.foundation.vin` with `MEMBER_TOKEN` from a GitHub secret — the operator token until SP2). Test first: `tests/test_docs.py::test_perf_workflow_targets_qa_with_thresholds` asserts the workflow file exists, names `qa.foundation.vin`, and `k6-smoke.js` declares `p(95)<400` and `rate==0`. Run the workflow manually once (`gh workflow run perf.yml`) and record the p95 in `DEPLOY.md`.
 
-- [ ] **Step 4: Production**
+- [ ] **Step 4: Production** — *Gate added 2026-09-06 (John, after seeing the prototype jump bar on qa.foundation.vin): the bar stays on QA (`ENVIRONMENT=qa`) and must be OFF in production. Before `scripts/deploy.sh production`, the controller shows John the QA-verified state and gets his explicit go; after the deploy, the served production bundle must contain `prototypeBar:{type:Boolean,default:!1}` (the Task 8 check) and the gate screen must render without the bar — if either fails, roll back and STOP.*
 
 ```bash
 git status --short | grep -q . && { echo "commit first"; exit 1; }
