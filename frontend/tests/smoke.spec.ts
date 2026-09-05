@@ -99,22 +99,33 @@ test.describe('smoke', () => {
     // 2. Behavioural: walk the real tab order and confirm focus never enters one. 60 presses
     //    comfortably exceeds one full cycle of this screen (28 stops when the chrome was
     //    still there, 16 without it).
+    //
+    //    Round 4: the walk records EVERY landing, inside a slot or not, and asserts a
+    //    positive as well as a negative. An emptiness assertion on its own is vacuous the
+    //    moment the loop stops running — a changed sign-in flow, a renamed button, a focus
+    //    trap, a Tab that goes nowhere would all leave `landedInside` empty and the gate
+    //    green while proving nothing. `landedOutside` is the evidence that the keyboard walk
+    //    happened at all, and that it actually moved rather than sticking on one element.
     await page.evaluate(() => document.body.focus());
-    const landings: string[] = [];
+    const landedInside: string[] = [];
+    const landedOutside: string[] = [];
     for (let i = 0; i < 60; i++) {
       await page.keyboard.press('Tab');
       const at = await page.evaluate(() => {
         const deep = (d: Document | ShadowRoot): Element | null =>
           d.activeElement && d.activeElement.shadowRoot ? deep(d.activeElement.shadowRoot) : d.activeElement;
         const el = deep(document);
-        if (!el) return null;
+        if (!el || el === document.body) return null;   // focus left the page's own controls
         const root = el.getRootNode();
-        if (!(root instanceof ShadowRoot) || root.host?.tagName !== 'IMAGE-SLOT') return null;
-        return el.tagName.toLowerCase() + (el.className ? '.' + el.className : '');
+        const inSlot = root instanceof ShadowRoot && root.host?.tagName === 'IMAGE-SLOT';
+        return { name: el.tagName.toLowerCase() + (el.className ? '.' + el.className : ''), inSlot };
       });
-      if (at) landings.push(at);
+      if (!at) continue;
+      (at.inSlot ? landedInside : landedOutside).push(at.name);
     }
-    expect(landings, 'the tab order still reaches inside an image-slot shadow root').toEqual([]);
+    expect(landedOutside.length, 'the tab walk landed on nothing at all — the keyboard gate proved nothing').toBeGreaterThan(0);
+    expect(new Set(landedOutside).size, 'the tab walk never moved — it landed on one element repeatedly').toBeGreaterThan(1);
+    expect(landedInside, 'the tab order still reaches inside an image-slot shadow root').toEqual([]);
     expect(errors).toEqual([]);
   });
 

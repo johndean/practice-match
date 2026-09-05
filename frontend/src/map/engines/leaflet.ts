@@ -93,7 +93,25 @@ export class LeafletMapEngine implements MapEngine {
   }
   // `this.map` is undefined until a mount() completes, so a destroy() before (or during)
   // the first mount must not reach for it — that was a plain TypeError before fix round 3.
-  destroy(): void { if (this.destroyed) return; this.destroyed = true; for (const t of this.timers) clearTimeout(t); this.timers.clear(); if (this.map) this.map.remove(); }
+  //
+  // Fix round 4: the timers were not the only state that outlived the map. `groups`,
+  // `zoomCtl` and `scaleCtl` all hold objects bound to the map being removed, and both
+  // lookups that use them are "create only if absent" — `group()` returns a cached group
+  // without addTo()-ing the new map, and setControls() adds no control when it already has
+  // one. A re-mounted instance therefore drew every marker, circle and clear() into layer
+  // groups attached to a map that no longer exists, and came up with no zoom or scale
+  // control, silently. mount() is the engine's single (re)initialisation point, so teardown
+  // must leave nothing behind for it to find.
+  destroy(): void {
+    if (this.destroyed) return;
+    this.destroyed = true;
+    for (const t of this.timers) clearTimeout(t);
+    this.timers.clear();
+    this.groups.clear();
+    this.zoomCtl = null;
+    this.scaleCtl = null;
+    if (this.map) this.map.remove();
+  }
   private later(ms: number): void { if (this.destroyed) return; const t = setTimeout(() => { this.timers.delete(t); this.map.invalidateSize(); }, ms); this.timers.add(t); }
   private group(name: string) { let g = this.groups.get(name); if (!g) { g = this.L.layerGroup().addTo(this.map); this.groups.set(name, g); } return g; }
 }

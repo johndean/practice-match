@@ -245,6 +245,71 @@ describe('LeafletMapEngine — teardown', () => {
     vi.advanceTimersByTime(60_000);
   });
 
+  // Round 4, item 2: every other guard is asserted directly, but getZoom()'s was only ever
+  // exercised inside the not.toThrow() block above — which would still pass if it returned a
+  // stale zoom read off the removed map. Pin the value and the no-touch property.
+  it('getZoom() after destroy returns 0 and reads nothing off the map', async () => {
+    const { stub, engine } = await mounted();
+    engine.setView([30.5, -97.8], 13);
+    expect(engine.getZoom()).toBe(13);          // live: the real value
+
+    stub.map.zoom = 99;                          // a value only a map read could return
+    engine.destroy();
+
+    expect(engine.getZoom()).toBe(0);
+    expect(stub.map.zoom, 'getZoom() reached the removed map').toBe(99);
+  });
+
+  // Round 4, item 1: destroy() drained the timers but left `groups`, `zoomCtl` and
+  // `scaleCtl` populated with objects bound to the REMOVED map. A re-mounted instance then
+  // found the stale entries — `group()` returns the cached group without addTo()-ing the new
+  // map, and setControls() sees a truthy control and adds none — so every marker, circle and
+  // clear() went to layer groups attached to a map that no longer exists, silently drawing
+  // nothing. mount() is the engine's single (re)initialisation point, so teardown has to
+  // leave nothing behind for it to trip over.
+  describe('re-mounting the same instance after destroy', () => {
+    const mountOn = (engine: LeafletMapEngine, el = document.createElement('div')) =>
+      engine.mount(el, { center: [30.31, -97.75], zoom: 10, basemap: 'map', zoomControl: 'bottomright', scaleControl: true, groups: ['overlay', 'pins'] });
+    const groupsOf = (stub: ReturnType<typeof installLeafletStub>) =>
+      (stub.map.added as { clearLayers?: unknown; added: unknown[] }[]).filter((g) => typeof g.clearLayers === 'function');
+
+    it('rebuilds the layer groups on the NEW map, so markers and clear() reach it', async () => {
+      vi.useFakeTimers();
+      const first = installLeafletStub();
+      const engine = new LeafletMapEngine();
+      await mountOn(engine);
+      engine.marker([30.5, -97.8], { html: '<i></i>', size: [1, 1], anchor: [0, 0] }, 'pins');
+      expect(groupsOf(first)[1].added).toHaveLength(1);
+      engine.destroy();
+
+      const second = installLeafletStub();
+      await mountOn(engine);
+      expect(groupsOf(second), 'the new map got no layer groups of its own').toHaveLength(2);
+
+      const firstPinsBefore = groupsOf(first)[1].added.length;
+      engine.marker([30.6, -97.9], { html: '<i></i>', size: [1, 1], anchor: [0, 0] }, 'pins');
+
+      expect(groupsOf(second)[1].added, 'the marker did not reach the new map\'s group').toHaveLength(1);
+      expect(groupsOf(first)[1].added, 'the marker went to the removed map\'s group').toHaveLength(firstPinsBefore);
+      // …and clear() drives the new group, not the stale one.
+      engine.clear('pins');
+      expect(groupsOf(second)[1].added).toEqual([]);
+    });
+
+    it('rebuilds the zoom and scale controls on the NEW map', async () => {
+      vi.useFakeTimers();
+      installLeafletStub();
+      const engine = new LeafletMapEngine();
+      await mountOn(engine);
+      engine.destroy();
+
+      const second = installLeafletStub();
+      await mountOn(engine);
+      expect(second.calls.filter((c) => c.fn === 'control.zoom'), 'the new map got no zoom control').toHaveLength(1);
+      expect(second.calls.filter((c) => c.fn === 'control.scale'), 'the new map got no scale control').toHaveLength(1);
+    });
+  });
+
   // …and "inert" must not mean "permanently dead": mount() is the single point that
   // (re)initialises the engine, so a fresh mount on the same instance works normally again.
   // Without this the destroyed-guard would silently swallow the new map's invalidateSize.
