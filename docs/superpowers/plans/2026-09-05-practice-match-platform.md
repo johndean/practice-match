@@ -3497,6 +3497,7 @@ Expected: `gitleaks`, `backend`, `frontend` all green in both repos. A red `fron
 
 **Files:**
 - Modify: `DEPLOY.md` (DNS values), `docs/superpowers/specs/2026-09-05-practice-match-platform-design.md` (status line), `frontend/tests/playwright.config.ts` (live-target override)
+- Create: `frontend/tests/targets.ts`, `frontend/tests/targets.test.ts` *(added 2026-09-06: created by Steps 0–1 but missing from this list)*
 
 **Interfaces:** `PW_APP_URL=<https://host>` makes the `app` project target a live deployment (no local dev server).
 
