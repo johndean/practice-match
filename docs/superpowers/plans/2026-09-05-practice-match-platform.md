@@ -22,7 +22,7 @@
 - Every response carries `X-Robots-Tag: noindex, nofollow` and `/robots.txt` disallows all, unless `PUBLIC_INDEXING=true` (never set before launch).
 - `commit_sha` in `/api/healthz` is the deployed git SHA: `scripts/deploy.sh` sets the `COMMIT_SHA` service variable from `git rev-parse --short HEAD` before each `railway up`; the Dockerfile declares `ARG COMMIT_SHA`.
 - Visual tolerance: `maxDiffPixels: 0, threshold: 0.1`; ceiling if relaxed `maxDiffPixelRatio: 0.001`, recorded in `playwright.config.ts` with the reason.
-- Basemap tile hosts are aborted in both harness targets: `**/*.arcgisonline.com/**`.
+- Basemap tile hosts (`**/*.arcgisonline.com/**`) are intercepted on both harness targets and answered with a blank 1×1 image (`route.fulfill`, not `route.abort()` — an aborted request makes Chromium emit its own `console.error`, which the error gate forbids). *Amended 2026-09-05 by John's ruling on Task 3 deviation D2.*
 - Health body (exact keys): `status, version, environment, commit_sha, db{ok, postgis_version|error}, redis{ok|error}`. `/api/healthz` is always 200; `/api/healthz/deep` is 503 when `db.ok` or `redis.ok` is false.
 - `frontend/package.json` `version` == `pyproject.toml` `[project].version` (starts `0.1.0`).
 - Fingerprinted build output goes to `dist/_app/` (Vite `build.assetsDir: '_app'`) so `/assets/*` (icons, photos, logo) is never served with immutable caching.
@@ -1076,7 +1076,9 @@ V="../docs/design-reference/design_handoff_practice_match_v2/vendor"; mkdir -p "
 curl -sSL -o "$V/react.production.min.js"     https://unpkg.com/react@18.3.1/umd/react.production.min.js
 curl -sSL -o "$V/react-dom.production.min.js" https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js
 curl -sSL -o "$V/babel.min.js"                https://unpkg.com/@babel/standalone@7.29.0/babel.min.js
-grep -oE 'https://unpkg.com/[^"]+' "$V/../support.js" | sort -u   # must list exactly these three URLs
+curl -sSL -o "$V/leaflet.css"                 https://unpkg.com/leaflet@1.9.4/dist/leaflet.css     # AustinMap.jsx / MarketMap.jsx load Leaflet from unpkg too (John's ruling, Task 3 D3)
+curl -sSL -o "$V/leaflet.js"                  https://unpkg.com/leaflet@1.9.4/dist/leaflet.js
+grep -ohE 'https://unpkg.com/[^"]+' "$V/../support.js" "$V/../AustinMap.jsx" "$V/../MarketMap.jsx" | sort -u   # must list exactly these five URLs; verify each file's SHA-384 against the SRI hash in the source
 ```
 
 **Error gate (policy §2):** `prepare()` also registers the `pageerror` and `console.error` handlers from `docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md` §5 — any browser error fails the test. RED: add a temporary `console.error('x')` to `main.ts` and watch the smoke test fail; remove it.
@@ -1180,11 +1182,14 @@ const VENDOR = join(fileURLToPath(new URL('.', import.meta.url)), '../../docs/de
 const VENDORED: Record<string, string> = {
   'https://unpkg.com/react@18.3.1/umd/react.production.min.js': 'react.production.min.js',
   'https://unpkg.com/react-dom@18.3.1/umd/react-dom.production.min.js': 'react-dom.production.min.js',
-  'https://unpkg.com/@babel/standalone@7.29.0/babel.min.js': 'babel.min.js'
+  'https://unpkg.com/@babel/standalone@7.29.0/babel.min.js': 'babel.min.js',
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css': 'leaflet.css',
+  'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js': 'leaflet.js'
 };
 
 export async function prepare(page: Page): Promise<void> {
-  await page.route(/arcgisonline\.com/, (route) => route.abort());
+  // Fulfil, don't abort: an aborted tile request makes Chromium log console.error, which the error gate fails on (John's ruling, Task 3 D2).
+  await page.route(/arcgisonline\.com/, (route) => route.fulfill({ status: 200, contentType: 'image/gif', body: BLANK_GIF }));
   // The reference runtime loads React/Babel from unpkg with SRI hashes; serve the vendored
   // identical bytes so the suite is deterministic and offline-safe (same hashes → SRI passes).
   await page.route('https://unpkg.com/**', (route) => {
@@ -1251,7 +1256,7 @@ export const SCREENS: Screen[] = [
   { name: 'browse-market-layers-closed', steps: async (p) => { await market(p); await click(p, 'Data Layers'); } },
   { name: 'browse-market-panel', steps: async (p) => { await market(p); await p.getByText('Cedar Park').first().click(); await p.waitForTimeout(400); } },
   { name: 'detail', steps: async (p) => { await jump(p, 'Listing'); } },
-  { name: 'interest-modal', steps: async (p) => { await jump(p, 'Listing'); await click(p, "I'm interested"); } },
+  { name: 'interest-modal', steps: async (p) => { await jump(p, 'Browse'); await click(p, 'Round Rock'); await click(p, "I'm interested"); } },   // p2: the default listing p1 already has a pending request in the seed data, so its button reads "Request pending" (John's ruling, Task 3 D4)
   { name: 'requests', steps: async (p) => { await jump(p, 'Requests'); } },
   { name: 'seller-dash', steps: async (p) => { await jump(p, 'Seller'); } },
   { name: 'wizard-step-1', steps: wizard },
