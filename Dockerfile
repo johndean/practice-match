@@ -2,7 +2,8 @@
 # Practice Match — one image for the api and worker services.
 # Stage 1 builds the Vue app; stage 2 serves it from FastAPI. Railway populates
 # declared ARGs from service variables: ENVIRONMENT (qa|production) drives the
-# frontend's VITE_ENVIRONMENT; RAILWAY_GIT_COMMIT_SHA stamps both layers.
+# frontend's VITE_ENVIRONMENT; RAILWAY_GIT_COMMIT_SHA stamps only the runtime
+# layer, as COMMIT_SHA (see below) — the frontend-build stage never receives it.
 FROM node:22-bookworm-slim AS frontend-build
 ARG ENVIRONMENT=qa
 WORKDIR /work/frontend
@@ -33,6 +34,11 @@ COPY app/ ./app/
 COPY migrations/ ./migrations/
 COPY scripts/ ./scripts/
 COPY --from=frontend-build /work/frontend/dist/ ./frontend/dist/
+# Nothing writes under /app at runtime (uvicorn and the Celery worker keep no
+# files there; `migrate` only reads), so a non-root user is a plain drop of
+# privilege — no volume or writable-path accommodation needed.
+RUN useradd --system --uid 10001 --create-home --shell /usr/sbin/nologin app && chown -R app:app /app
 EXPOSE 8000
+USER app
 ENTRYPOINT ["bash", "scripts/start.sh"]
 CMD ["api"]

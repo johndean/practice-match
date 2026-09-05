@@ -10,6 +10,19 @@ def test_dockerfile_declares_the_build_args_and_the_dispatcher_entrypoint():
     assert 'ENTRYPOINT ["bash", "scripts/start.sh"]' in d and 'CMD ["api"]' in d
 
 
+def test_dockerfile_runs_as_a_non_root_user_declared_after_the_last_copy():
+    lines = (ROOT / "Dockerfile").read_text().splitlines()
+    copy_lines = [i for i, line in enumerate(lines) if line.startswith("COPY")]
+    user_lines = [i for i, line in enumerate(lines) if line.strip() == "USER app"]
+    entrypoint_lines = [i for i, line in enumerate(lines) if line.startswith("ENTRYPOINT")]
+    assert copy_lines, "Dockerfile has no COPY instructions"
+    assert user_lines, "Dockerfile lacks a `USER app` line"
+    assert entrypoint_lines, "Dockerfile lacks an ENTRYPOINT"
+    assert max(copy_lines) < user_lines[0] < min(entrypoint_lines), (
+        "USER app must come after the last COPY and before ENTRYPOINT"
+    )
+
+
 def test_railway_json_points_at_the_dispatcher_migrations_and_healthz():
     cfg = json.loads((ROOT / "railway.json").read_text())
     assert cfg["deploy"]["startCommand"] == "bash scripts/start.sh api"
@@ -20,5 +33,5 @@ def test_railway_json_points_at_the_dispatcher_migrations_and_healthz():
 def test_ignore_files_keep_secrets_tests_and_node_modules_out_of_uploads_and_images():
     for name in (".railwayignore", ".dockerignore"):
         text = (ROOT / name).read_text().split()
-        for entry in ("frontend/node_modules", "tests", ".env", ".env.*"):
+        for entry in ("frontend/node_modules", "tests", ".env", ".env.*", ".venv"):
             assert entry in text, f"{name} lacks {entry}"

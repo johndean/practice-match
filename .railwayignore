@@ -3,6 +3,7 @@
 .superpowers
 docs
 tests
+.venv
 frontend/node_modules
 frontend/dist
 frontend/tests
