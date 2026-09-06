@@ -305,3 +305,15 @@ def test_deploy_md_records_the_nightly_load_smoke_baseline():
 def test_reference_server_serves_the_coming_soon_design():
     assert (ROOT / "docs" / "design-reference" / "coming-soon" / "Coming Soon.dc.html").exists()
     assert "docs/design-reference/coming-soon" in (ROOT / "frontend" / "tests" / "reference-server.mjs").read_text()
+
+
+def test_deploy_md_documents_automation_tokens_and_their_two_exceptions():
+    """Task I5b (controller ruling, 2026-09-07 — concern 2). An `api_token` may now carry `staff`
+    or `admin`, so the operator page has to say who mints one and — the part that makes a standing
+    administrative bearer safe to hand out — the two things it can never do."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "## Automation tokens" in text
+    assert "POST /api/admin/tokens" in text and "Bearer pm_<id>.<secret>" in text
+    assert "90 days" in text
+    assert "re-authenticate" in text and "manage tokens" in text
+    assert "/api/admin/tokens/{id}/revoke" in text

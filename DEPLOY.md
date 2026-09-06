@@ -57,6 +57,16 @@ Expected `verify-deploy.sh` output on QA (app mode, unchanged): `healthz OK  ver
 
 **`EXPECT_SHA`** is the commit `scripts/verify-deploy.sh` requires the live `/api/healthz` to report, so a stale container that answers 200 with yesterday's code fails the deploy: unset or empty both fall back to this checkout's `git rev-parse --short HEAD` (the script's `${EXPECT_SHA:-…}` cannot tell an empty value from an absent one), a non-empty value is compared verbatim, and the assertion is skipped only when the script runs outside a git checkout, where `git rev-parse` yields nothing to compare against. When the branch has moved past the tree that is actually deployed, pass the deployed commit explicitly — `EXPECT_SHA=087acc1 scripts/verify-deploy.sh QA` — because the default would otherwise demand a HEAD that was never shipped.
 
+## Automation tokens
+
+An `api_token` is how CI and the load smoke authenticate (`k6-qa`, `e2e-qa`, `deploy-verify`); it replaces `API_SECRET_KEY`, which goes away with `auth_stub.py` once those secrets are switched over.
+
+* **Minting** — an admin, with a password confirmation in the last 10 minutes: `POST /api/admin/tokens {"name": "e2e-qa", "role": "staff", "days": 90}`. The role may be any of `buyer`, `seller`, `staff` or `admin` (John's ruling, 2026-09-07); nobody may mint a token that administers more than they do. The mint is audited (`tokens.create`, with the role).
+* **The value is shown once** — the response is `{"token": "pm_<id>.<secret>"}` and only its SHA-256 is stored, so a token that is not copied out of that response is gone. Present it as `Authorization: Bearer pm_<id>.<secret>`; it needs no cookie and no CSRF header. Put it in the CI secret store, never in git or chat.
+* **Two things a token can never do**, whatever role it carries: it can never **re-authenticate** (Revoke, licence decisions, engine activation, role grants and token creation answer `403 REAUTH_TOKEN`), and it can never **manage tokens** (`403 TOKEN_SCOPE`). A leaked admin token cannot revoke a member or mint its own successor.
+* **Lifetime** — capped at 90 days (`days` is clamped into 1..90) and tied to its minter: suspending or revoking that account kills every token it minted, on the next request.
+* **Revoking** — `POST /api/admin/tokens/{id}/revoke` (audited, `404` if it is already revoked). Rotate by minting the replacement first, switching the CI secret, then revoking the old one.
+
 ## Site mode (Coming Soon on production)
 
 | Variable | QA | production |
