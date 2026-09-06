@@ -35,17 +35,23 @@ def test_effective_roles_require_an_active_account(monkeypatch):
     assert PM.allowed("engine.activate", P("staff")) is False and PM.allowed("engine.activate", P("admin")) is True
 
 
-def test_typescript_twin_is_current(tmp_path):
+def test_typescript_twin_is_current(tmp_path, monkeypatch):
     """Renamed in fix round 1 (Important 8): it only ever checked the twin. "Every permission is
     used by some route" — spec §4's exhaustive test (b) — needs routes that do not exist until
     I4-I6 and is scheduled in I9; `test_every_route_is_guarded_or_public` below is the half that
-    can bite today. The twin path is resolved from THIS file, not the CWD (Minor 7): pytest run
-    from anywhere still finds it."""
+    can bite today.
+
+    Nothing here depends on the CWD (Minor 7, completed in fix round 2 / NEW-4): the twin path is
+    resolved from THIS file, and the child process gets an explicit `cwd` too — without it
+    `python -m app.auth.permissions` resolves the `app` package from wherever pytest happened to be
+    started and dies with a CalledProcessError. `monkeypatch.chdir(tmp_path)` proves it."""
+    monkeypatch.chdir(tmp_path)
+    repo = Path(__file__).resolve().parents[2]
     ts = PM.to_typescript()
     assert "export const MATRIX" in ts and '"engine.activate": ["admin"]' in ts and "export type Permission =" in ts
-    out = subprocess.run([sys.executable, "-m", "app.auth.permissions", "--ts"], capture_output=True, text=True, check=True).stdout
+    out = subprocess.run([sys.executable, "-m", "app.auth.permissions", "--ts"], capture_output=True, text=True, check=True, cwd=repo).stdout
     assert out == ts
-    twin = Path(__file__).resolve().parents[2] / "frontend" / "src" / "auth" / "permissions.ts"
+    twin = repo / "frontend" / "src" / "auth" / "permissions.ts"
     assert twin.exists() and twin.read_text() == ts, "run: python -m app.auth.permissions --ts > frontend/src/auth/permissions.ts"
 
 
@@ -99,8 +105,12 @@ def _walk(routes, prefix=""):
     """(method, path, route) for everything mounted, spelled the way PUBLIC_ROUTES spells it — the
     raw path template (`/{path:path}`), not the compiled `path_format` (`/{path}`). FastAPI 0.141
     keeps an included router as a wrapper object rather than flattening its routes, so the walk
-    recurses through `original_router` and carries the include prefix; a StaticFiles mount serves
-    GET beneath its own prefix and has no methods of its own."""
+    recurses through `original_router` and carries the include prefix.
+
+    A `Mount` is recursed into when the mounted app exposes routes of its own (fix round 2
+    observation): `Mount.routes` is `getattr(self.app, "routes", [])`, so a StaticFiles mount
+    yields nothing and falls through to the GET-only line — while a mounted sub-application's
+    write routes are SEEN by the guard test instead of being invisible to it."""
     from starlette.routing import Mount
 
     for route in routes:
@@ -108,26 +118,65 @@ def _walk(routes, prefix=""):
         if included is not None:
             yield from _walk(included.routes, prefix + route.include_context.prefix)
         elif isinstance(route, Mount):
-            yield "GET", prefix + route.path + "/{path:path}", None
+            if route.routes:
+                yield from _walk(route.routes, prefix + route.path)
+            else:
+                yield "GET", prefix + route.path + "/{path:path}", None
         else:
             for method in sorted(route.methods):
                 yield method, prefix + route.path, route
 
 
-def _permissions_of(route):
-    """Every permission `require(...)` guards this route with, sub-dependencies included. A route
-    with no FastAPI dependant at all (a Mount, or a plain Starlette route) guards nothing."""
+def _came_from_require(call):
+    """True for `require()`'s own closure AND for anything wrapping it. Matched on where the
+    callable was defined, because `functools.wraps` copies `__module__`/`__qualname__` onto the
+    wrapper — so this still recognises a guard whose `__wrapped__` chain has been broken, which is
+    precisely the case the drift tests must treat as an error rather than as "no guard here"
+    (fix round 2, NEW-5)."""
+    return getattr(call, "__module__", None) == "app.auth.deps" and getattr(call, "__qualname__", "").startswith("require.")
+
+
+def _guards_of(route):
+    """(callable, permission or None) for every `require(...)` guard on the route, sub-dependencies
+    included. A `None` permission means "this came from `require` and we cannot read which one" —
+    never "there is no guard"."""
     from app.auth.deps import permission_of
 
     def _walk_dependant(dependant):
         for dep in dependant.dependencies:
             perm = permission_of(dep.call)
-            if perm is not None:
-                yield perm
+            if perm is not None or _came_from_require(dep.call):
+                yield dep.call, perm
             yield from _walk_dependant(dep)
 
     dependant = getattr(route, "dependant", None)
     return list(_walk_dependant(dependant)) if dependant is not None else []
+
+
+def _permissions_of(route):
+    return [perm for _, perm in _guards_of(route) if perm is not None]
+
+
+def _unguarded(app):
+    """(method, path) for every route that neither carries a readable `require(...)` guard nor is
+    listed in `PUBLIC_ROUTES`."""
+    return [(method, path) for method, path, route in _walk(app.routes)
+            if not any(perm in PM.MATRIX for perm in _permissions_of(route)) and (method, path) not in PM.PUBLIC_ROUTES]
+
+
+def _unresolvable(app):
+    """(method, path) for every route carrying something that came from `require(...)` whose
+    permission cannot be read back."""
+    return [(method, path) for method, path, route in _walk(app.routes) for _, perm in _guards_of(route) if perm is None]
+
+
+def _unaudited(app):
+    """(method, path) for every route guarded by an AUDITED permission whose handler's source never
+    calls `audit.write(`."""
+    import inspect
+
+    return [(method, path) for method, path, route in _walk(app.routes)
+            if any(perm in PM.AUDITED for perm in _permissions_of(route)) and "audit.write(" not in inspect.getsource(route.endpoint)]
 
 
 def test_every_route_is_guarded_or_public(dist):
@@ -138,13 +187,7 @@ def test_every_route_is_guarded_or_public(dist):
     because every route create_app() mounts is genuinely public, and starts earning its keep in I4."""
     from app.main import create_app
 
-    undeclared = [
-        (method, path)
-        for method, path, route in _walk(create_app(dist=dist).routes)
-        if not any(p in PM.MATRIX for p in _permissions_of(route))
-        and (method, path) not in PM.PUBLIC_ROUTES
-    ]
-    assert undeclared == [], "add a require(...) dependency, or list these in permissions.PUBLIC_ROUTES"
+    assert _unguarded(create_app(dist=dist)) == [], "add a require(...) dependency, or list these in permissions.PUBLIC_ROUTES"
     # ...and the OTHER half of the check is live too: a route that carries `require(...)` is
     # accepted without being listed, which is how every I4-I6 endpoint will pass.
     from fastapi import Depends, FastAPI
@@ -157,7 +200,36 @@ def test_every_route_is_guarded_or_public(dist):
     async def _guarded_endpoint() -> dict[str, bool]:
         return {"ok": True}
 
-    assert [(m, p) for m, p, r in _walk(guarded.routes) if not any(x in PM.MATRIX for x in _permissions_of(r))] == []
+    assert _unguarded(guarded) == []
+
+
+def test_a_mounted_sub_application_is_walked_rather_than_assumed_static(dist):
+    """Fix round 2 observation: every `Mount` was treated as a GET-only StaticFiles mount, so a
+    later task mounting a sub-application with write routes would have hidden them from the guard
+    test entirely. `/_app` (StaticFiles, no routes of its own) still reads as one public GET."""
+    from fastapi import FastAPI
+    from starlette.routing import Mount
+    from starlette.staticfiles import StaticFiles
+
+    from app.main import create_app
+
+    assert ("GET", "/_app/{path:path}") in [(m, p) for m, p, _ in _walk(create_app(dist=dist).routes)]
+
+    inner = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
+    @inner.post("/danger")
+    async def _danger() -> dict[str, bool]:
+        return {"ok": True}
+
+    host = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+    host.router.routes.append(Mount("/api/sub", app=inner))
+    host.router.routes.append(Mount("/files", app=StaticFiles(directory=str(dist))))
+    seen = [(m, p) for m, p, _ in _walk(host.routes)]
+    assert ("POST", "/api/sub/danger") in seen
+    assert ("GET", "/files/{path:path}") in seen
+    # Neither is in PUBLIC_ROUTES, so both are reported — the point being that the POST inside the
+    # mounted app is reported at all.
+    assert sorted(_unguarded(host)) == [("GET", "/files/{path:path}"), ("POST", "/api/sub/danger")]
 
 
 def test_audited_permissions_are_written_by_their_handlers(dist):
@@ -165,15 +237,78 @@ def test_audited_permissions_are_written_by_their_handlers(dist):
     handler write a richer one by hand, which means adding a permission to `AUDITED` audits
     nothing on its own (Important 8). This is what makes the list binding: a route guarded by an
     audited permission whose handler never calls `audit.write` fails here. Trivially true today —
-    no route uses `require` until I4."""
-    import inspect
+    no route uses `require` until I4.
 
+    It also fails CLOSED (fix round 2, NEW-5): a route carrying something that came from `require`
+    whose permission cannot be read back is an ERROR here, not a route quietly dropped from the
+    watch list."""
     from app.main import create_app
 
-    unaudited = [
-        (method, path)
-        for method, path, route in _walk(create_app(dist=dist).routes)
-        if any(p in PM.AUDITED for p in _permissions_of(route))
-        and "audit.write(" not in inspect.getsource(route.endpoint)
-    ]
-    assert unaudited == [], "an audited permission guards this route but its handler writes no audit row"
+    app = create_app(dist=dist)
+    assert _unresolvable(app) == [], "a require(...) guard on this route cannot be resolved to a permission — do not wrap require(...); hoist it to a module-level constant"
+    assert _unaudited(app) == [], "an audited permission guards this route but its handler writes no audit row"
+
+
+# --- fix round 2, NEW-5: a re-wrapped `require` guard must stay readable, and must be an ERROR
+# when it is not ---
+
+
+def _require_and_wrapper():
+    """A `require(...)` dependency and a `functools.wraps` wrapper around it — the shape I5 would
+    produce by decorating a guard (to add a log line, or to narrow the return type for mypy)."""
+    import functools
+
+    from app.auth.deps import require
+
+    guard = require("users.decide")
+
+    @functools.wraps(guard)
+    def wrapped(request):
+        return guard(request)
+
+    return guard, wrapped
+
+
+def test_permission_of_follows_the_wrapped_chain():
+    """`permission_of` is keyed by object identity, so any re-wrapping loses the entry. That fails
+    CLOSED for the route-guard test (the route reads as unguarded and it shouts) but fails OPEN for
+    the audit drift test, which simply stops watching a route it cannot read. Following
+    `__wrapped__` is the first half of the fix; `test_audited_permissions_are_written_by_their_handlers`
+    failing closed is the second."""
+    from app.auth.deps import permission_of
+
+    guard, wrapped = _require_and_wrapper()
+    assert permission_of(guard) == "users.decide"
+    assert permission_of(wrapped) == "users.decide"
+    assert permission_of(lambda request: None) is None
+
+
+def test_a_broken_guard_wrapper_is_an_error_not_a_silently_unwatched_route(conn, dist):
+    """NEW-5, the second half. `permission_of` now follows `__wrapped__`, so a `functools.wraps`
+    wrapper around a guard stays readable and both drift tests keep working. But a wrapper that
+    breaks that chain (a hand-rolled one, or `del wrapper.__wrapped__`) must not read as "no guard
+    here" — for the route-guard test that already failed closed, for the AUDIT test it failed OPEN:
+    the route quietly dropped off the watch list and its handler could then lose its `audit.write`
+    with a green suite. `_came_from_require` matches on where the callable was defined, which
+    `functools.wraps` copies onto the wrapper, so the guard is still recognised even when its
+    permission cannot be read."""
+    from fastapi import Depends, FastAPI
+
+    from app.auth import audit
+
+    guard, wrapped = _require_and_wrapper()
+    scratch = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
+
+    @scratch.post("/api/admin/users/decide", dependencies=[Depends(wrapped)])
+    async def decide() -> dict[str, bool]:
+        audit.write(conn, actor=None, action="users.decide", target_type="account")
+        return {"ok": True}
+
+    # Readable through the wrapper: guarded, resolvable, and its handler audits.
+    assert _unguarded(scratch) == [] and _unresolvable(scratch) == [] and _unaudited(scratch) == []
+    assert _permissions_of(next(r for m, p, r in _walk(scratch.routes) if p == "/api/admin/users/decide")) == ["users.decide"]
+
+    del wrapped.__wrapped__  # the chain is gone; the marker `functools.wraps` copied is not
+    assert _unresolvable(scratch) == [("POST", "/api/admin/users/decide")]
+    assert _unguarded(scratch) == [("POST", "/api/admin/users/decide")]
+    assert guard is not wrapped

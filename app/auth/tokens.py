@@ -56,10 +56,27 @@ def issue_api_token(conn: psycopg2.extensions.connection, *, name: str, role: st
     return f"pm_{tid}.{secret}"
 
 
-def verify_api_token(conn: psycopg2.extensions.connection, raw: str) -> ApiPrincipal | None:
+def parse(raw: str) -> tuple[UUID, str] | None:
+    """A presented api token split into `(token id, secret)`, or None when `raw` is not the
+    `pm_<uuid>.<secret>` shape `issue_api_token` mints.
+
+    Split out in I3 fix round 2 so a caller can refuse a malformed bearer BEFORE opening a
+    database connection: an anonymous request carrying any `Authorization: Bearer …` header
+    otherwise cost one un-pooled Postgres connect apiece, on every guarded route."""
     if not raw.startswith("pm_") or "." not in raw:
         return None
     tid, secret = raw[3:].split(".", 1)
+    try:
+        return UUID(tid), secret
+    except ValueError:
+        return None
+
+
+def verify_api_token(conn: psycopg2.extensions.connection, raw: str) -> ApiPrincipal | None:
+    parsed = parse(raw)
+    if parsed is None:
+        return None
+    tid, secret = parsed
     with conn.cursor() as cur:
         # Joined to the creating account and fail-closed on its state (I3 fix round 1, Important
         # 10): a token is a delegation of somebody's authority, so suspending or revoking that
@@ -68,7 +85,7 @@ def verify_api_token(conn: psycopg2.extensions.connection, raw: str) -> ApiPrinc
         cur.execute("""UPDATE api_token t SET last_used_at = now()
                          FROM account a
                         WHERE a.id = t.created_by
-                          AND t.id::text = %s AND t.token_hash = %s AND t.revoked_at IS NULL AND t.expires_at > now()
+                          AND t.id = %s AND t.token_hash = %s AND t.revoked_at IS NULL AND t.expires_at > now()
                           AND a.state NOT IN ('suspended', 'revoked')
                     RETURNING t.id, t.name, t.role, t.created_by""", (tid, hash(secret)))
         row = cur.fetchone()

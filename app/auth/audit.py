@@ -8,6 +8,7 @@ from typing import Any
 
 import psycopg2.extensions
 
+from app.auth.deps import client_ip
 from app.auth.sessions import Principal
 
 _SECRET_KEY_RE = re.compile(r"password|hash|secret|token", re.IGNORECASE)
@@ -53,8 +54,6 @@ def write(
 ) -> None:
     ip = ua = rid = None
     if request is not None:
-        from app.auth.deps import client_ip
-
         ip, ua, rid = client_ip(request), request.headers.get("user-agent"), request.headers.get("x-request-id")
     with conn.cursor() as cur:
         cur.execute(

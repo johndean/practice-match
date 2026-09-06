@@ -464,3 +464,64 @@ async def test_a_state_change_with_no_csrf_header_or_no_csrf_cookie_is_refused(c
     assert no_header.status_code == 403 and no_header.json()["error"]["code"] == "CSRF"
     no_cookie = await _as(client, pm_session=raw).post("/decide", headers={"X-CSRF-Token": "t", **origin})
     assert no_cookie.status_code == 403 and no_cookie.json()["error"]["code"] == "CSRF"
+
+
+async def test_a_malformed_bearer_is_refused_without_opening_a_postgres_connection(client, conn, redis, monkeypatch):
+    """Fix round 2 observation: any anonymous request carrying an `Authorization: Bearer …` header
+    opened one un-pooled Postgres connection before deciding the token was gibberish — from I4 an
+    unauthenticated lever on every guarded route, with no pool and no negative cache. The bearer's
+    SHAPE (`pm_<uuid>.<secret>`, `tokens.parse`) is checked first now. The legacy operator secret
+    never needed a connection either: it is a constant-time compare."""
+    def _no_postgres():
+        raise AssertionError("a malformed bearer opened a Postgres connection")
+
+    monkeypatch.setattr(deps, "sync_conn", _no_postgres)
+    generic = {"error": {"code": "UNAUTHORIZED", "message": "Sign in to continue."}}
+    for bad in ("not-even-a-token", "pm_", "pm_nodot", "pm_not-a-uuid.secret", "pm_.secret", ""):
+        r = await client.get("/read", headers={"Authorization": f"Bearer {bad}"})
+        assert r.status_code == 401 and r.json() == generic, f"{bad!r} was not the generic 401"
+    assert (await client.post("/activate", headers={"Authorization": f"Bearer {settings.api_secret_key}"})).status_code == 200
+
+
+async def test_a_well_formed_but_unknown_token_still_asks_postgres(client, conn, redis, monkeypatch):
+    """The other side of the same lever: a token that looks real must still be looked up, once.
+    (Rate-limiting that path is I4's perf work, not this task's.)"""
+    from uuid import uuid4
+
+    opened = []
+    real = deps.sync_conn
+
+    def _tracked():
+        c = real()
+        opened.append(c)
+        return c
+
+    monkeypatch.setattr(deps, "sync_conn", _tracked)
+    r = await client.get("/read", headers={"Authorization": f"Bearer pm_{uuid4()}.no-such-secret"})
+    assert r.status_code == 401
+    assert len(opened) == 1 and opened[0].closed
+
+
+async def test_revoking_an_accounts_sessions_makes_the_next_request_the_generic_401(client, conn, redis):
+    """The carried 403-vs-401 question, pinned (fix round 2 ruling). A LIVE session whose account
+    has been suspended or revoked gets `403 FORBIDDEN`, not the generic 401 — the brief's own given
+    test asserts that, and nothing new leaks by saying so, because the caller already holds that
+    account's session cookie. The generic body arrives one step later: I5 revokes the account's
+    sessions as part of the same decision (`S.revoke_all`, which is `invalidate_account` plus the
+    `revoked_at` write — note that `invalidate_account` ALONE only drops the principal cache, so
+    the cookie still resolves and the answer is still 403). After `revoke_all` the cookie resolves
+    to nothing at all and the response is byte-identical to one carrying no credential."""
+    aid = _member(conn, ["buyer"]); raw = S.create(conn, redis, aid, None, None)
+    assert (await _as(client, pm_session=raw).get("/read")).status_code == 200
+    with conn.cursor() as cur:
+        cur.execute("UPDATE account SET state='suspended' WHERE id=%s", (aid,))
+    S.invalidate_account(redis, aid)
+    dead_account = await _as(client, pm_session=raw).get("/read")
+    assert dead_account.status_code == 403 and dead_account.json()["error"]["code"] == "FORBIDDEN"
+
+    S.revoke_all(conn, redis, aid)
+    revoked = await _as(client, pm_session=raw).get("/read")
+    anonymous = await _as(client).get("/read")
+    assert revoked.status_code == anonymous.status_code == 401
+    assert revoked.json() == anonymous.json() == {"error": {"code": "UNAUTHORIZED", "message": "Sign in to continue."}}
+    assert revoked.headers.get("www-authenticate") == anonymous.headers.get("www-authenticate")

@@ -282,6 +282,15 @@ def test_declared_length_accepts_only_decimal_digits(value, expected):
     ([b"   "], "9.9.9.9"), ([b""], "9.9.9.9"), ([], "9.9.9.9"),
     ([b"203.0.113.7", b"evil-spoof"], "203.0.113.7"),  # repeated lines: the first line is the edge's
     ([b"", b"5.6.7.8"], "9.9.9.9"),                    # an empty first line is still the first field after the join → peer
+    # I3 fix round 1 (Minor 3) put `ipaddress.ip_address` validation inside the shared
+    # `app.auth.deps.client_ip`, which changed this module too and nothing pinned it (fix round 2,
+    # NEW-2): a NON-EMPTY first hop that is not an address used to be returned verbatim
+    # ("evil-spoof"), so an attacker reaching the api off the Railway edge could mint an unlimited
+    # number of distinct rate-limit buckets by varying one garbage header and bypass the per-IP
+    # limit entirely. Every unparseable value now shares the single "unknown" bucket. Note the
+    # empty-first-field rows above still fall back to the PEER, not to "unknown" — only a
+    # non-empty, unparseable hop lands here.
+    ([b"evil-spoof, 5.6.7.8"], "unknown"),
 ])
 def test_client_ip_is_the_first_field_of_the_joined_header_like_uvicorn(lines, expected):
     from starlette.requests import Request

@@ -86,9 +86,9 @@ def test_sync_redis_memoises_one_client_per_process(db_ready):
     assert sync_redis() is first  # from-imported at this module's top: same memo
 
 
-def test_the_redis_fixture_replaces_the_memo_and_leaves_a_key_behind(redis):
-    """Half one of the isolation pair: `cache.reset()` in the fixture must drop whatever the test
-    above memoised, or `sync_redis()` here would still be the REAL client."""
+def test_the_redis_fixture_owns_the_memo_for_its_own_test(redis):
+    """`cache.reset()` runs on the way IN, so whatever an earlier test memoised — the real client
+    two tests above, another test's fake — cannot shadow this test's fixture."""
     from app import cache
 
     assert cache.sync_redis() is redis
@@ -96,10 +96,64 @@ def test_the_redis_fixture_replaces_the_memo_and_leaves_a_key_behind(redis):
     assert cache.sync_redis().get(_LEAK_PROBE) == b"1"
 
 
-def test_the_redis_fixture_hands_the_next_test_a_fresh_fake(redis):
-    """Half two: a fakeredis instance never survives its own test."""
+def test_a_fakeredis_instance_never_outlives_the_test_that_asked_for_it(redis, monkeypatch):
+    """...and `cache.reset()` runs on the way OUT too. Self-contained (fix round 2 observation):
+    this used to be "assert the key the PREVIOUS test planted is gone", which is trivially true in
+    isolation and so silently vacuous under any shuffling plugin. The next test's fixture setup is
+    simulated here instead — a fresh fake server, the factory repointed at it, `reset()` — so the
+    assertion has something real to prove in any order."""
+    import fakeredis
+
     from app import cache
 
     assert cache.sync_redis() is redis
-    assert redis.get(_LEAK_PROBE) is None
+    redis.set(_LEAK_PROBE, b"1")
+
+    following = fakeredis.FakeRedis(server=fakeredis.FakeServer())
+    monkeypatch.setattr(cache, "_make_sync", lambda: following)
+    cache.reset()
+
+    assert cache.sync_redis() is following
     assert cache.sync_redis().get(_LEAK_PROBE) is None
+
+
+def test_two_racing_first_calls_build_exactly_one_sync_client(monkeypatch):
+    """Fix round 2 observation: the memo was an unlocked check-then-set. `current_principal` runs
+    in FastAPI's `def`-dependency threadpool (up to 40 workers), so two concurrent first calls could
+    each build a client and silently drop one — an unclosed connection pool, and a fake that leaks
+    past `reset()` in tests. The barrier releases both threads together and the factory is slow
+    enough that both are certain to be inside `sync_redis()` before either finishes building."""
+    import threading
+    import time
+
+    import fakeredis
+
+    from app import cache
+
+    built: list[object] = []
+
+    def _slow_factory():
+        time.sleep(0.02)
+        client = fakeredis.FakeRedis()
+        built.append(client)
+        return client
+
+    monkeypatch.setattr(cache, "_make_sync", _slow_factory)
+    cache.reset()
+    try:
+        start = threading.Barrier(2)
+        got: list[object] = []
+
+        def _race() -> None:
+            start.wait(timeout=5)
+            got.append(cache.sync_redis())
+
+        threads = [threading.Thread(target=_race) for _ in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=5)
+        assert len(built) == 1, f"{len(built)} clients were built for one memo"
+        assert got == [built[0], built[0]]
+    finally:
+        cache.reset()

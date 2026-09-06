@@ -100,3 +100,14 @@ def test_an_api_token_dies_with_its_creators_account(conn):
     with conn.cursor() as cur:
         cur.execute("UPDATE account SET state = 'active' WHERE id = %s", (creator,))
     assert T.verify_api_token(conn, raw) is not None
+
+
+def test_parse_accepts_only_the_minted_shape():
+    """`parse` is what lets `app.auth.deps` refuse a malformed bearer without a database round trip
+    (I3 fix round 2), so its "no" has to be exactly as wide as `verify_api_token`'s used to be."""
+    raw = "pm_" + str(UUID(int=7)) + ".s3cr3t"
+    assert T.parse(raw) == (UUID(int=7), "s3cr3t")
+    assert T.parse("pm_" + str(UUID(int=7)) + ".a.b") == (UUID(int=7), "a.b")  # only the FIRST dot splits
+    for bad in ("", "not-even-a-token", "pm_", "pm_nodot", "pm_not-a-uuid.secret", "pm_.secret",
+                str(UUID(int=7)) + ".secret", "PM_" + str(UUID(int=7)) + ".secret"):
+        assert T.parse(bad) is None, f"{bad!r} parsed as a token"

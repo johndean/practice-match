@@ -2,6 +2,7 @@
 operator bearer (until Task I9 deletes the legacy path)."""
 from __future__ import annotations
 
+import inspect
 import ipaddress
 import secrets
 import weakref
@@ -180,13 +181,18 @@ def current_principal(request: Request) -> S.Principal | None:
     if auth[:7].lower() != "bearer ":  # RFC 7235: the auth-scheme token is case-insensitive (Minor 1)
         return None
     raw = auth[7:]
-    with closing(sync_conn()) as conn, conn:
-        ap = T.verify_api_token(conn, raw)
-    if ap:
-        # `ap.created_by`, not `ap.token_id` (Important 10): the actor an audit row must name is
-        # the account that minted the token, and `verify_api_token` has already refused the token
-        # if that account is suspended or revoked.
-        return S.Principal(ap.created_by, "active", frozenset({ap.role}), None, "token")
+    # Shape first, Postgres second (fix round 2): only a `pm_<uuid>.<secret>` can be an api token,
+    # so anything else — including the legacy operator secret, which is a constant-time compare —
+    # is decided without a connection. Otherwise every anonymous request carrying any Bearer
+    # header cost one un-pooled connect on every guarded route.
+    if T.parse(raw) is not None:
+        with closing(sync_conn()) as conn, conn:
+            ap = T.verify_api_token(conn, raw)
+        if ap:
+            # `ap.created_by`, not `ap.token_id` (Important 10): the actor an audit row must name
+            # is the account that minted the token, and `verify_api_token` has already refused it
+            # if that account is suspended or revoked.
+            return S.Principal(ap.created_by, "active", frozenset({ap.role}), None, "token")
     if _matches(raw, settings.api_secret_key):
         return S.Principal(LEGACY_ADMIN, "active", frozenset({"admin"}), datetime.now(UTC), "legacy")
     return None
@@ -262,7 +268,7 @@ def check_origin_and_csrf(request: Request, principal: S.Principal | None) -> No
 _PERMISSION_OF: weakref.WeakKeyDictionary[Any, str] = weakref.WeakKeyDictionary()
 
 
-def permission_of(dependency: object) -> str | None:
+def permission_of(dependency: Any) -> str | None:
     """The permission a `require(...)` dependency enforces, or None for anything that is not one.
 
     Fix round 1, Important 8: a route's guard has to be readable from its dependant tree for
@@ -272,8 +278,13 @@ def permission_of(dependency: object) -> str | None:
     `setattr` with a constant name, mypy --strict rejects assigning an attribute a function does
     not declare, and neither `noqa` nor `type: ignore` is allowed. One entry per guarded route,
     written once at wiring time, and weakly held so a discarded route's closure still goes away.
-    """
-    return _PERMISSION_OF.get(dependency)
+
+    Fix round 2, NEW-5: `inspect.unwrap` first, because the registry is keyed by object IDENTITY.
+    A `functools.wraps` wrapper around a guard — the obvious way to decorate one — would otherwise
+    resolve to None, and the audit drift test only watches routes whose permission it can read, so
+    the wrapped route would silently stop being watched. Unwrapping keeps it readable; a wrapper
+    that breaks the chain is caught by that test failing closed."""
+    return _PERMISSION_OF.get(inspect.unwrap(dependency))
 
 
 def require(perm: str) -> Callable[[Request], S.Principal | None]:
