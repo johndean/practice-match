@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { prepare } from './harness';
+import { booted, click, jump, prepare, waitMap } from './harness';
 
 const ROUTES = ['/', '/browse', '/browse?tab=market', '/browse?tab=listings', '/practices/p1', '/requests', '/seller', '/admin?tab=data'];
 
@@ -141,5 +141,135 @@ test.describe('smoke', () => {
     await page.locator('[data-map]').waitFor();
     const elapsed = Date.now() - started;
     expect(elapsed, `first map paint took ${elapsed}ms`).toBeLessThanOrEqual(1500);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Mobile acceptance (README Task 9, verbatim): "at the prototype's mobile frame (390×800)
+// the Map tab shows choropleth shading; the key does not overlap the `+` / `−` cluster
+// (`document.elementFromPoint` on each button returns the button); the sheet opens
+// full-height and scrolls; every one of the five sections renders; tapping a pin twice
+// reaches the detail screen."
+//
+// And the tap-target rule (C13, verbatim): "every row in the sheet is `min-height: 46px`,
+// the basemap buttons are 46px, and the close button is a 44×44 hit area around a 16px
+// glyph. Nothing in the sheet is under 44px."
+// ---------------------------------------------------------------------------------------
+test.describe('mobile: the same map, market data in a sheet', () => {
+  const SHEET = 'div[style*="z-index: 700"]';
+
+  async function mobileMap(page: Page) {
+    await prepare(page);
+    await booted(page);
+    await click(page, 'Mobile view');
+    await jump(page, 'Browse');
+    await click(page, 'Map');
+    await waitMap(page);
+  }
+
+  test('the Map tab renders the market map inside the 390-wide phone frame', async ({ page }) => {
+    await mobileMap(page);
+    const box = (await page.locator('.leaflet-container').first().boundingBox())!;
+    expect(Math.round(box.width), 'the map is not inside the prototype\'s 390px mobile frame').toBeGreaterThanOrEqual(380);
+    expect(Math.round(box.width)).toBeLessThanOrEqual(392);
+  });
+
+  test('the Map tab shows community mosaic shading', async ({ page }) => {
+    await mobileMap(page);
+    // The mosaic is drawn on the engine's shared L.canvas renderer, so "shading is showing"
+    // means that canvas has painted pixels. Nothing is drawn from a cross-origin image, so
+    // the canvas is untainted and readable.
+    const painted = await page.evaluate(() => {
+      const c = document.querySelector('.leaflet-overlay-pane canvas') as HTMLCanvasElement | null;
+      if (!c) return -1;
+      const px = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+      let n = 0;
+      for (let i = 3; i < px.length; i += 4) if (px[i] > 0) n++;
+      return n;
+    });
+    expect(painted, 'no canvas in the Leaflet overlay pane — the mosaic never drew').toBeGreaterThan(0);
+  });
+
+  test('the key does not overlap the + / − cluster: elementFromPoint on each button returns the button', async ({ page }) => {
+    await mobileMap(page);
+    for (const label of ['Zoom in', 'Zoom out']) {
+      const btnLoc = page.getByRole('button', { name: label, exact: true });
+      const box = (await btnLoc.boundingBox())!;
+      const hit = await page.evaluate(([x, y, name]) => {
+        const el = document.elementFromPoint(x as number, y as number);
+        const target = document.querySelector(`button[aria-label="${name}"]`);
+        return { same: el === target, contained: !!target && !!el && target.contains(el), got: el ? el.tagName + (el.getAttribute('aria-label') ?? '') : 'null' };
+      }, [box.x + box.width / 2, box.y + box.height / 2, label] as const);
+      expect(hit.same || hit.contained, `something covers the "${label}" button — elementFromPoint returned ${hit.got}`).toBe(true);
+    }
+  });
+
+  test('one navy Market data button opens a full-height sheet that scrolls', async ({ page }) => {
+    await mobileMap(page);
+    const mapBox = (await page.locator('.leaflet-container').first().boundingBox())!;
+    await page.locator('button', { hasText: /of \d/ }).last().click();
+    const sheet = page.locator(SHEET);
+    await expect(sheet).toBeVisible();
+
+    const sheetBox = (await sheet.boundingBox())!;
+    expect(Math.round(sheetBox.width)).toBe(Math.round(mapBox.width));
+    expect(Math.round(sheetBox.height)).toBe(Math.round(mapBox.height));
+
+    const scrolls = await sheet.locator('.rf-scroll').evaluate((el) => el.scrollHeight > el.clientHeight);
+    expect(scrolls, 'the sheet body does not scroll — it cannot be carrying all five sections').toBe(true);
+  });
+
+  test('every one of the five sections renders, in order', async ({ page }) => {
+    await mobileMap(page);
+    await page.locator('button', { hasText: /of \d/ }).last().click();
+    const text = await page.locator(SHEET).innerText();
+    // innerText is the RENDERED text, and rendered is what "renders" has to mean here: a
+    // display:none section would drop out of it entirely. V3 sets `text-transform:
+    // uppercase` on all four of the sheet's micro-labels and on the footer button (Global
+    // Constraint (f): V3 preserves and EXTENDS micro-label uppercase while dropping it from
+    // display headings), so the strings that reach the screen are SHADING, COMPARE AGAINST,
+    // DATASETS, BASEMAP and SHOW MAP, while the "What this means" display heading is not
+    // transformed. They are matched here exactly as they render, which pins that styling as
+    // well as the section order. Confirmed character-for-character identical on the V3
+    // reference (`PW_APP_URL=http://localhost:5174`): reference and app return the same
+    // innerText for this sheet, so the case is the design's, not the port's.
+    const order = ['SHADING', 'COMPARE AGAINST', 'DATASETS', 'What this means', 'BASEMAP'];
+    let at = -1;
+    for (const section of order) {
+      const next = text.indexOf(section);
+      expect(next, `the sheet does not render the "${section}" section`).toBeGreaterThan(-1);
+      expect(next, `"${section}" is out of order in the sheet`).toBeGreaterThan(at);
+      at = next;
+    }
+    expect(text).toContain('Why it matters');
+    expect(text).toContain('SHOW MAP');
+  });
+
+  test('every tap target in the sheet is at least 44px', async ({ page }) => {
+    await mobileMap(page);
+    await page.locator('button', { hasText: /of \d/ }).last().click();
+    const sizes = await page.locator(SHEET).locator('button').evaluateAll((els) =>
+      els.map((el) => { const r = el.getBoundingClientRect(); return { label: (el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 40), w: r.width, h: r.height }; })
+    );
+    expect(sizes.length, 'the sheet rendered no buttons at all').toBeGreaterThan(5);
+    const small = sizes.filter((s) => s.h < 44 || s.w < 44);
+    expect(small, 'these sheet tap targets are under 44px').toEqual([]);
+
+    const close = (await page.getByRole('button', { name: 'Close market data' }).boundingBox())!;
+    expect(Math.round(close.width)).toBe(44);
+    expect(Math.round(close.height)).toBe(44);
+    const glyph = (await page.getByRole('button', { name: 'Close market data' }).locator('img').boundingBox())!;
+    expect(Math.round(glyph.width)).toBe(16);
+    expect(Math.round(glyph.height)).toBe(16);
+  });
+
+  test('tapping a pin twice reaches the detail screen — there is no peek card', async ({ page }) => {
+    await mobileMap(page);
+    const pin = page.locator('.leaflet-marker-icon').first();
+    await pin.click();
+    await page.waitForTimeout(500);
+    await expect(page).toHaveURL(/\/browse$/);              // first tap selects, it does not navigate
+    await page.locator('.leaflet-marker-icon').first().click();
+    await expect(page).toHaveURL(/\/practices\/p\d+$/);
   });
 });
