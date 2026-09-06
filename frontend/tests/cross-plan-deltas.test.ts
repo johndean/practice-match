@@ -39,9 +39,14 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
     expect(md).not.toContain('remove jump bar markup, `gateStates`, demo credentials');
   });
 
-  it('the map-engines plan no longer mentions ListingsMap anywhere and rebases onto V3\'s engine shape', () => {
+  it('the map-engines plan names ListingsMap.vue only inside a "deleted in Browse V3" clause (spec D19) and rebases onto V3\'s engine shape', () => {
     const md = read(MAP_ENGINES);
-    expect(md).not.toContain('ListingsMap');   // catches the M5 file list, the components paragraph AND the setControls parenthetical
+    // D19: naming the deleted file is fine — burying it behind a periphrasis is what V12 did and
+    // John asked corrected ("correct the wording as required"). The token is allowed only on a
+    // line that also says it was deleted in Browse V3; every other line naming it is an offender.
+    const offenders = md.split('\n').filter((l) => l.includes('ListingsMap') && !l.includes('deleted in Browse V3'));
+    expect(offenders, 'ListingsMap may be named only in a "deleted in Browse V3" clause').toEqual([]);
+    expect(md).toContain('`ListingsMap.vue` (deleted in Browse V3)');
     // …and the SPEC, which this case did not read: it still named `ListingsMap.vue` a live map
     // surface at :25 and :264 after the plan was swept clean (final review M6, 2026-09-07).
     expect(readSpec(MAP_ENGINES_SPEC)).not.toContain('ListingsMap');

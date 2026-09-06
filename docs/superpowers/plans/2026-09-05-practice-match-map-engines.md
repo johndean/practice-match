@@ -934,8 +934,8 @@ In `decide_license`, read the old status first (`SELECT license_status … FOR U
 > `MarketMapView.vue` is the V3 port (community mosaic shading on one shared canvas renderer,
 > `rf-tip`/`rf-callout`, one dashed 16 km ring, `scaleControl: false`). `GoogleMapEngine`
 > must implement `rectangle`, `ring` and `panInside` too, and `engines/contract.test.ts` must
-> cover them for both engines. The V2-era listings map component this task's file list used to
-> name was deleted in Browse V3 Task V11 and no longer exists.
+> cover them for both engines. `ListingsMap.vue` (deleted in Browse V3) is the V2-era listings
+> map component this task's file list used to name; it no longer exists.
 >
 > Browse V3 also restyled every display-size heading (V3 drops `text-transform: uppercase` and
 > its letter-spacing on all 26; micro labels keep theirs), so every visual baseline in
@@ -1307,7 +1307,7 @@ build: { assetsDir: '_app', manifest: true, rollupOptions: { output: { chunkFile
   if (id.includes('/src/map/engines/google')) return 'engine-google';
 } } } }
 ```
-Components: `MarketMapView.vue` — the only map component after Browse V3 Task V11 deleted the V2 listings map — replaces its `createEngine()` call (Task 1b) with `const host = useMapHost(); engine = await host.attach(hostEl, { center, zoom, basemap, zoomControl: false, scaleControl: false }); … onBeforeUnmount(() => host.detach())`. `main.ts`: `installGateWatcher(router, () => { /* next mount re-attaches on the new engine */ __resetHost(); })`.
+Components: `MarketMapView.vue` — the only map component, since `ListingsMap.vue` (deleted in Browse V3) no longer exists — replaces its `createEngine()` call (Task 1b) with `const host = useMapHost(); engine = await host.attach(hostEl, { center, zoom, basemap, zoomControl: false, scaleControl: false }); … onBeforeUnmount(() => host.detach())`. `main.ts`: `installGateWatcher(router, () => { /* next mount re-attaches on the new engine */ __resetHost(); })`.
 
 - [ ] **Step 4: Run to verify passing** — `cd frontend && npx vitest run && npm run build && ls dist/_app | grep -E 'engine-(leaflet|google)-'` → tests pass; both chunks exist; the main bundle contains no `leaflet` and no `maps.googleapis.com` string (`! grep -l 'maps.googleapis.com\|L.tileLayer' dist/_app/index-*.js`).
 
