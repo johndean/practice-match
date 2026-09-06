@@ -256,11 +256,17 @@ stop_server
 
 # --- 15. a deeply-nested-but-syntactically-valid healthz body fails, no traceback -
 # `except ValueError` around json.load does not catch RecursionError (round cap).
+# The property this protects is "a pathological body is one FAIL line, never a
+# traceback" - WHICH FAIL line is interpreter-dependent: CPython 3.12's pure-Python
+# decoder raises RecursionError on this depth ("healthz body is not JSON"), while
+# 3.14's C-accelerated scanner parses it into a plain list that the round-3 object
+# guard then rejects ("healthz body is not a JSON object"). Assert the common
+# prefix both share, not either interpreter's specific failure mode.
 start_server deep_json
 if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
   fail "a deeply-nested healthz body must fail the script; it exited 0 with: $out"
 fi
-[[ "$out" == *"FAIL: healthz body is not JSON"* ]] || fail "the deeply-nested-body failure must name itself; got: $out"
+[[ "$out" == *"FAIL: healthz body is not"* ]] || fail "the deeply-nested-body failure must name itself; got: $out"
 [[ "$out" != *"Traceback"* ]] || fail "the failure must be one clean FAIL line, not a Python traceback; got: $out"
 stop_server
 
