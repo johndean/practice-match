@@ -328,6 +328,13 @@ def test_a_broken_guard_wrapper_is_an_error_not_a_silently_unwatched_route(conn,
 # argued for in a diff rather than appearing by accident.
 MULTI_ACTION_PERMISSIONS = frozenset({"tokens.manage"})
 
+# An audited endpoint may also record an action from ANOTHER permission's namespace when it
+# cascades into it (I5b review, M1): removing a `staff`/`admin` grant revokes the api tokens that
+# account may no longer mint, and `grants` writes one `tokens.revoke` row per revoked token. The
+# action still names a real permission's namespace — it is simply not the one guarding the route,
+# so the pair is listed here rather than waved through by widening the rule.
+CASCADED_ACTIONS = {"roles.grant": frozenset({"tokens.revoke"})}
+
 
 def _action_strings(node):
     """Every string this expression can EVALUATE to. A conditional expression contributes both of
@@ -380,8 +387,9 @@ def test_every_audited_action_is_named_after_a_permission(dist):
         if not permissions:
             continue
         namespaces = {p.split(".")[0] for p in permissions if p in MULTI_ACTION_PERMISSIONS}
+        cascaded = {a for p in permissions for a in CASCADED_ACTIONS.get(p, frozenset())}
         for action in _audit_actions(route):
-            if action in PM.MATRIX or action.split(".")[0] in namespaces:
+            if action in PM.MATRIX or action.split(".")[0] in namespaces or action in cascaded:
                 continue
             drifted.append(f"{method} {path} writes action={action!r}, which names no permission")
     assert drifted == [], drifted
@@ -393,3 +401,7 @@ def test_the_audited_action_rule_rejects_a_near_miss_name(dist):
     near_miss = "users.view"
     assert "users.view_detail" in PM.MATRIX and near_miss not in PM.MATRIX
     assert near_miss.split(".")[0] not in {p.split(".")[0] for p in MULTI_ACTION_PERMISSIONS}
+    # ...and the cascade allowance is exact, not a namespace: `roles.grant` may write
+    # `tokens.revoke` and nothing else of its own accord.
+    assert near_miss not in {a for allowed in CASCADED_ACTIONS.values() for a in allowed}
+    assert CASCADED_ACTIONS["roles.grant"] == frozenset({"tokens.revoke"})

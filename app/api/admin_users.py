@@ -328,6 +328,31 @@ def _refuse_unsafe_target(
             raise LastAdmin
 
 
+def _revoke_unmintable_tokens(cur: Any, account_id: UUID, roles: frozenset[str]) -> list[tuple[UUID, str]]:
+    """Every live api token this account minted whose role it may no longer mint, revoked — the
+    `(id, role)` pairs, for the caller's audit rows and response (I5b review, M1).
+
+    "Nobody administers more than they do" was a MINT-time invariant that silently expired.
+    `T.verify_api_token` fails closed on the minter's account STATE (suspended, revoked), never on
+    their grants, so demoting an admin left the `admin` token they minted last week fully capable
+    for the rest of its 90 days — the one thing a leaked-then-demoted credential must not be. The
+    predicate is `may_mint` itself, not "a grant was removed": a `seller` grant carries no
+    administrative permission, so nothing it leaves behind becomes unmintable and nothing is
+    touched. `decide`'s `revoke` needs no cascade of its own — `verify_api_token` already refuses
+    every token whose creator is suspended or revoked.
+
+    Runs inside `grants`' transaction and behind its `FOR UPDATE` on the account row, so the
+    revocations commit with the grant removal or not at all.
+    """
+    cur.execute("SELECT id, role FROM api_token WHERE created_by=%s AND revoked_at IS NULL", (account_id,))
+    doomed = [tid for tid, role in cur.fetchall() if not PM.may_mint(role, roles)]
+    if not doomed:
+        return []
+    # RETURNING what was actually updated, so a token revoked concurrently is not reported twice.
+    cur.execute("UPDATE api_token SET revoked_at=now() WHERE id = ANY(%s) AND revoked_at IS NULL RETURNING id, role", (doomed,))
+    return cast("list[tuple[UUID, str]]", cur.fetchall())
+
+
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
@@ -571,7 +596,13 @@ async def grants(account_id: UUID, body: GrantIn, request: Request, principal: G
 
     Removing an `admin` grant is the one direction with a floor under it (fix round 1, F5): never
     from its own holder, and never the last live one — `roles.grant` is admin-only, so zero admins
-    is a state with no way back short of `bootstrap_admin.py` and database credentials."""
+    is a state with no way back short of `bootstrap_admin.py` and database credentials.
+
+    A removal also CASCADES to automation (I5b review, M1): every live api token this account
+    minted whose role it may no longer mint is revoked in the same transaction, each with its own
+    `tokens.revoke` audit row (`reason="grant_removed"`), and the ids come back in
+    `revoked_tokens` — there is no list endpoint, so the response and the trail are how an operator
+    sees which credentials just died."""
     if body.role not in GRANTABLE_ROLES:
         raise BadRole
     with closing(sync_conn()) as conn, conn:
@@ -590,10 +621,17 @@ async def grants(account_id: UUID, body: GrantIn, request: Request, principal: G
                 cur.execute("UPDATE role_grant SET revoked_at=now() WHERE account_id=%s AND role=%s AND revoked_at IS NULL",
                             (account_id, body.role))
             roles = _roles(cur, account_id)
+            # Only a removal can cost the account a role it minted with; granting one can only add.
+            revoked = _revoke_unmintable_tokens(cur, account_id, frozenset(roles)) if not body.grant else []
         S.invalidate_account(sync_redis(), account_id)
         audit.write(conn, actor=principal, action="roles.grant", target_type="account", target_id=account_id,
                     before={"roles": before}, after={"roles": roles}, reason=body.reason, request=request)
-    return {"roles": roles}
+        for token_id, token_role in revoked:
+            # Written here rather than inside the helper: the audit drift test reads THIS handler's
+            # source for `audit.write(`, and a row written out of sight of it does not count.
+            audit.write(conn, actor=principal, action="tokens.revoke", target_type="api_token", target_id=token_id,
+                        after={"role": token_role, "grant_removed": body.role}, reason="grant_removed", request=request)
+    return {"roles": roles, "revoked_tokens": [str(token_id) for token_id, _ in revoked]}
 
 
 @router.post("/tokens", status_code=201)
@@ -654,4 +692,9 @@ async def permissions_read() -> dict[str, Any]:
     check that the TypeScript twin (`python -m app.auth.permissions --ts`) has not drifted from
     the running server."""
     return {"roles": list(PM.ROLES), "matrix": {k: sorted(v) for k, v in sorted(PM.MATRIX.items())},
-            "reauth": sorted(PM.REAUTH), "audited": sorted(PM.AUDITED)}
+            "reauth": sorted(PM.REAUTH), "audited": sorted(PM.AUDITED),
+            # The two api-token facts the matrix cannot show on its own (I5b review, L2): a token
+            # principal's set is its role's minus `token_denied`, and no token can ever satisfy the
+            # `reauth` list. Without them the Permissions tab renders `tokens.manage → admin` and
+            # leaves a reader to assume an admin token can mint one.
+            "token_denied": sorted(PM.TOKEN_DENIED), "token_never_reauth": True}

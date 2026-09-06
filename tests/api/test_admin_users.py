@@ -362,6 +362,11 @@ async def test_the_permissions_endpoint_publishes_the_matrix_reauth_and_audited_
     assert body["matrix"]["users.revoke"] == ["admin", "staff"]
     assert body["reauth"] == sorted(PM.REAUTH) and body["audited"] == sorted(PM.AUDITED)
     assert "users.revoke" in body["reauth"] and "users.revoke" in body["audited"]
+    # I5b review, L2: the matrix alone would render `tokens.manage → admin` with no hint that an
+    # api token never holds it, and `reauth` with no hint that a token can never satisfy it. The
+    # admin Permissions tab (I7) reads these two facts rather than rediscovering them.
+    assert body["token_denied"] == sorted(PM.TOKEN_DENIED) == ["tokens.manage"]
+    assert body["token_never_reauth"] is True
 
 
 # --- the CLIs ---
@@ -629,8 +634,11 @@ async def test_a_minted_token_may_carry_any_of_the_four_roles(client, conn, memb
     r = await client.post("/api/admin/tokens", headers=auth_headers(cookies, hdr), json={"name": f"e2e-{role}", "role": role, "days": 30})
     assert r.status_code == 201 and r.json()["token"].startswith("pm_"), role
     with conn.cursor() as cur:
-        cur.execute("SELECT role FROM api_token WHERE name=%s", (f"e2e-{role}",))
-        assert cur.fetchone()[0] == role
+        cur.execute("""SELECT role, expires_at > now(), expires_at < now() + interval '31 days'
+                         FROM api_token WHERE name=%s""", (f"e2e-{role}",))
+        # L5: the <=90-day cap and the `days` the caller asked for are role-independent — asserted
+        # here for all four rather than only for the `buyer` token above.
+        assert cur.fetchone() == (role, True, True)
         # The audit row records the ROLE, which is the whole point of allowing privileged ones.
         cur.execute("SELECT after FROM audit_log WHERE action='tokens.create' ORDER BY id DESC LIMIT 1")
         assert cur.fetchone()[0] == {"name": f"e2e-{role}", "role": role, "days": 30}
@@ -1015,3 +1023,56 @@ def test_no_dead_dependency_aliases_remain(client):
     for alias in aliases:
         assert source.count(f": {alias}") >= 1, f"{alias} is defined but no route parameter uses it"
     assert "Reviewer" not in aliases and "DetailViewer" in aliases
+
+
+async def test_removing_an_administrative_grant_revokes_the_tokens_it_may_no_longer_mint(client, conn, member):
+    """M1 (I5b review, ruled fix at source). "Nobody administers more than they do" was a MINT-time
+    invariant that silently expired: `verify_api_token` fails closed on the minter's account state,
+    not on their grants, so demoting an admin left the `admin` token they minted last week fully
+    capable for the rest of its 90 days. Removing the grant now takes those tokens with it, in the
+    same transaction — and only those: a `buyer` token administers nothing, so it survives."""
+    demoted, cookies, hdr = member(("admin",), email="demoted@example.org")
+    _other, ocookies, ohdr = member(("admin",), email="other-admin@example.org")  # so the last-admin floor does not fire
+    await _reauth(client, cookies, hdr)
+
+    async def mint(name, role):
+        r = await client.post("/api/admin/tokens", headers=auth_headers(cookies, hdr), json={"name": name, "role": role, "days": 30})
+        return r.json()["token"]
+
+    admin_tok, buyer_tok = await mint("e2e-admin", "admin"), await mint("k6-qa", "buyer")
+    admin_id = admin_tok.split(".")[0][3:]
+    assert (await client.get("/api/admin/users", headers={"Authorization": f"Bearer {admin_tok}"})).status_code == 200
+
+    await _reauth(client, ocookies, ohdr)
+    r = await client.post(f"/api/admin/users/{demoted}/grants", headers=auth_headers(ocookies, ohdr),
+                          json={"role": "admin", "grant": False, "reason": "left the foundation"})
+    assert r.status_code == 200 and r.json() == {"roles": [], "revoked_tokens": [admin_id]}
+    # Dead on its very next use...
+    assert (await client.get("/api/admin/users", headers={"Authorization": f"Bearer {admin_tok}"})).status_code == 401
+    # ...while the automation token that administers nothing is untouched.
+    assert (await client.get("/api/me", headers={"Authorization": f"Bearer {buyer_tok}"})).status_code == 200
+    with conn.cursor() as cur:
+        cur.execute("SELECT name, revoked_at IS NULL FROM api_token ORDER BY name")
+        assert cur.fetchall() == [("e2e-admin", False), ("k6-qa", True)]
+        cur.execute("""SELECT action, target_id, after, reason FROM audit_log
+                        WHERE action IN ('roles.grant','tokens.revoke') ORDER BY id""")
+        assert cur.fetchall() == [
+            ("roles.grant", str(demoted), {"roles": []}, "left the foundation"),
+            ("tokens.revoke", admin_id, {"role": "admin", "grant_removed": "admin"}, "grant_removed"),
+        ]
+
+
+async def test_removing_a_grant_that_costs_no_token_revokes_none(client, conn, member):
+    """The other side of M1: the cascade is driven by `may_mint`, not by "a grant was removed". A
+    `seller` grant carries no administrative permission, so nothing the account minted becomes
+    unmintable and no `tokens.revoke` row is written."""
+    target, cookies, hdr = member(("admin", "seller"), email="still-admin@example.org")
+    await _reauth(client, cookies, hdr)
+    tok = (await client.post("/api/admin/tokens", headers=auth_headers(cookies, hdr),
+                             json={"name": "e2e-staff", "role": "staff", "days": 30})).json()["token"]
+    r = await client.post(f"/api/admin/users/{target}/grants", headers=auth_headers(cookies, hdr),
+                          json={"role": "seller", "grant": False, "reason": "sold the practice"})
+    assert r.json() == {"roles": ["admin"], "revoked_tokens": []}
+    assert (await client.get("/api/admin/users", headers={"Authorization": f"Bearer {tok}"})).status_code == 200
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM audit_log WHERE action='tokens.revoke'"); assert cur.fetchone()[0] == 0

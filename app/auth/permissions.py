@@ -50,11 +50,13 @@ AUDITED = frozenset({"users.view_detail", "users.decide", "users.revoke", "roles
 # A token principal's permission set is its ROLE's set minus these (spec §Automation tokens,
 # amended 2026-09-07; Task I5b). Automation may now carry `staff` and `admin`, so the containment
 # that used to come from "no privileged tokens exist" has to be written down: a leaked admin token
-# can neither mint another token nor revoke one. `allowed()` below is where it is subtracted, so
-# every consumer of the matrix — `require`, and the admin Permissions view through it — sees the
-# same set. The OTHER half of the same rule (a token never satisfies a re-auth gate, which puts
-# Revoke, licence decisions, engine activation and role grants out of its reach too) lives in
-# `deps.require`, because it is about a request's freshness rather than about the matrix.
+# can neither mint another token nor revoke one. `allowed()` below is the one place it is
+# subtracted, which is what `deps.require` — every guarded route — asks (I5b review, L2: the
+# earlier wording claimed "every consumer of the matrix", but `GET /api/admin/permissions` reads
+# MATRIX/REAUTH/AUDITED directly; it publishes `token_denied` beside them instead). The OTHER half
+# of the same rule (a token never satisfies a re-auth gate, which puts Revoke, licence decisions,
+# engine activation and role grants out of its reach too) lives in `deps.require`, because it is
+# about a request's freshness rather than about the matrix.
 # Not exported to the TypeScript twin: the browser only ever holds a session.
 TOKEN_DENIED = frozenset({"tokens.manage"})
 # (method, path template) for every route that is deliberately reachable without a permission.
@@ -119,9 +121,11 @@ def effective_roles(principal: Principal | None) -> frozenset[str]:
 
 
 def allowed(perm: str, principal: Principal | None) -> bool:
-    roles = effective_roles(principal)
+    # First, and before `effective_roles` (I5b review, L4): the answer needs neither the roles nor
+    # the settings read, and this is the hottest path in the app.
     if principal is not None and principal.kind == "token" and perm in TOKEN_DENIED:
         return False
+    roles = effective_roles(principal)
     if perm == "market.read" and settings.market_data_public and "anonymous" in roles:
         return True
     return bool(roles & MATRIX[perm])

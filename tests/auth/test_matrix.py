@@ -142,8 +142,14 @@ def test_a_minter_may_never_mint_a_token_that_administers_more_than_it_does():
     `seller.apply`, `page.seller`, `listing.manage_own` and `request.answer_own`, which NO
     administrator holds — a plain subset test would refuse the `k6-qa`/`e2e-qa`/`deploy-verify`
     tokens the spec names. A buyer token is not more powerful than the admin who minted it."""
-    assert PM.ADMINISTRATIVE == {p for p, holders in PM.MATRIX.items() if holders <= frozenset({"staff", "admin"})}
-    assert "users.decide" in PM.ADMINISTRATIVE and "tokens.manage" in PM.ADMINISTRATIVE
+    # L3: the expected set spelled out, not the implementation's own expression restated (which
+    # would have been true of any matrix). Sixteen rows today — every one of them staff/admin only.
+    assert PM.ADMINISTRATIVE == frozenset({
+        "abuse.investigate", "audit.read", "data_sources.read", "engine.activate", "licence.decide",
+        "listing.publish", "listing.review", "page.admin", "permissions.read", "request.oversee",
+        "roles.grant", "tokens.manage", "users.decide", "users.review", "users.revoke", "users.view_detail",
+    })
+    assert len(PM.ADMINISTRATIVE) == 16
     assert "market.read" not in PM.ADMINISTRATIVE and "request.create" not in PM.ADMINISTRATIVE
 
     admin, staff = frozenset({"admin"}), frozenset({"staff"})
@@ -157,3 +163,30 @@ def test_a_minter_may_never_mint_a_token_that_administers_more_than_it_does():
     # mintable by `admin` because staff's administrative permissions are a subset of admin's.
     assert PM.permissions_of(staff) & PM.ADMINISTRATIVE <= PM.permissions_of(admin)
     assert not PM.permissions_of(admin) & PM.ADMINISTRATIVE <= PM.permissions_of(staff)
+
+
+# The `PM.REAUTH` permissions the generated rows cannot see, each with why (L1). `_rows` reads a
+# route's DEPENDANT tree, so a guard invoked inside a handler body is invisible to it — the sweep's
+# one blind spot, and the reason this list is asserted EXACTLY: an entry that gains a route, or a
+# new in-handler guard, fails here instead of quietly leaving the sweep.
+REAUTH_OUTSIDE_THE_SWEEP = {
+    # `decide_route` calls `REQUIRE_REVOKE(request)` in its body for the `revoke` branch
+    # (app/api/admin_users.py). Driven over HTTP, as a token and as a session, by
+    # tests/api/test_admin_users.py::test_an_api_token_never_satisfies_a_reauth_gate.
+    "users.revoke": "in-handler guard",
+    # No route mounts these yet — they arrive with the Map-engines sub-project, and the rows above
+    # will pick them up on the commit that adds them.
+    "licence.decide": "no route yet",
+    "engine.activate": "no route yet",
+}
+
+
+def test_every_reauth_permission_is_either_swept_or_listed_with_its_reason(dist):
+    """L1. The file's claim is that a new route or a new REAUTH permission is picked up without
+    editing it; that is true only for route-level guards, so the exceptions are named rather than
+    silently missing."""
+    swept = {perm for _method, _path, perm in _rows(dist)}
+    assert set(REAUTH_OUTSIDE_THE_SWEEP) <= PM.REAUTH, "an entry here names no re-auth permission"
+    assert PM.REAUTH - swept == set(REAUTH_OUTSIDE_THE_SWEEP), (
+        "a REAUTH permission is neither swept by the generated rows nor listed above with its reason")
+    assert "tokens.manage" in swept and "roles.grant" in swept
