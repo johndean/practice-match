@@ -124,11 +124,21 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
     expect(browseV3).toContain('migrations start at `017`');
   });
 
-  it('CLAUDE.md records the V2 folder\'s role and V3\'s heading typography', () => {
+  // Re-pinned by Task V13 (option B, John 2026-09-07: "keep the V2 header and do not restyle
+  // header or fonts"): the design reference is the pristine Rev 2 bundle plus the local
+  // amendments, A1 put V2's display typography back, and option A's claim — that the thirteen
+  // moved for good and byte-identity was abandoned — is withdrawn from CLAUDE.md, both where it
+  // described the reference and in the verification gate.
+  it('CLAUDE.md records the V2 folder\'s role and the local amendment that restored its heading typography', () => {
     const md = readFileSync(join(ROOT, 'CLAUDE.md'), 'utf8');
     expect(md).toContain('design_handoff_practice_match_v2');
     expect(md).toContain('pre-V3 oracle');
     expect(md).toContain('display-size heading');
+    expect(md).toContain('LOCAL_AMENDMENTS.md');
+    expect(md).toContain('spec D15');
+    expect(md).toContain('byte-identical to V2 again');
+    expect(md).not.toContain('option A makes it the proof');
+    expect(md).not.toContain('V3 deliberately drops');
   });
 });
 

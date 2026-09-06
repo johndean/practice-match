@@ -19,8 +19,10 @@ function walk(dir: string): string[] {
 // server serves a blank map. The V2 folder itself stays: it is the oracle for the deployed
 // build and the only way to prove a regression came from this change.
 describe('the V3 design reference bundle', () => {
-  it('carries the authority file, the ported component and the four handoff documents', () => {
-    for (const f of ['Practice Match V3.dc.html', 'MarketMapV3.jsx', 'README.md', 'CHANGE_LOG.md', 'DEAD_CODE_CHECKLIST.md', 'FILE_INDEX.md', 'support.js', 'image-slot.js', 'Census Data Source Specification.dc.html']) {
+  // Task V13 added the local-amendment pair (spec D15): the pristine Rev 2 file the bundle
+  // shipped, frozen as `.rev2` and never edited, and the human-readable amendment log beside it.
+  it('carries the authority file, the frozen pristine copy, the amendment log, the ported component and the four handoff documents', () => {
+    for (const f of ['Practice Match V3.dc.html', 'Practice Match V3.rev2.dc.html', 'LOCAL_AMENDMENTS.md', 'MarketMapV3.jsx', 'README.md', 'CHANGE_LOG.md', 'DEAD_CODE_CHECKLIST.md', 'FILE_INDEX.md', 'support.js', 'image-slot.js', 'Census Data Source Specification.dc.html']) {
       expect(statSync(join(V3, f)).isFile(), `${f} is missing from the V3 bundle`).toBe(true);
     }
   });
