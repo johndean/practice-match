@@ -2403,7 +2403,7 @@ Run: `cd frontend && npm run test:smoke`
 Expected: PASS. (`prepare()` throws on any `console.error`, so this is also the end-to-end proof that no `/assets/icons/*` 404 remains — README Task 5.)
 
 > **Acceptance (README Task 7, verbatim):** "`/browse`, `/browse?tab=market` and `/browse?tab=listings` all render Browse Practices; the URL settles without a loop; `npm test` green."
-> **Zero-risk requirement (DEAD_CODE_CHECKLIST, verbatim):** "`/browse?tab=market` and `/browse?tab=listings` still resolve to Browse Practices — old links and bookmarks must not 404 or loop" and "no route was deleted: `router/routes.ts` is unchanged (every path already renders the one `App` component)". Confirm the second with `git diff --stat frontend/src/router/routes.ts` → empty.
+> **Zero-risk requirement (DEAD_CODE_CHECKLIST, verbatim):** "`/browse?tab=market` and `/browse?tab=listings` still resolve to Browse Practices — old links and bookmarks must not 404 or loop" and "no route was deleted: `router/routes.ts` is unchanged (every path already renders the one `App` component)". Confirm the second with `git diff --stat frontend/src/router/routes.ts` → one line, the stale `browseMode` comment only (controller ruling 2026-09-07; the acceptance protects behaviour, not a stale comment)
 
 - [ ] **Step 7: Re-run the grep gate**
 
