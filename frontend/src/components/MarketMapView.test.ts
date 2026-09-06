@@ -24,6 +24,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
 import { FakeMap, installLeafletStub, type LeafletStub } from '../map/testing/leaflet-stub';
+import { MOSAIC_STEP, mosaicBbox, mosaicCells } from '../map/mosaic.js';
 import MarketMapView from './MarketMapView.vue';
 
 // Hoisted above every import by vitest. `loadLeaflet` hands back whatever the stub installed
@@ -53,34 +54,31 @@ const community = (i: number) => ({
 const communities = (n: number) => Array.from({ length: n }, (_, i) => community(i));
 const practices = (n: number, priceLabel = '$1.45M') =>
   Array.from({ length: n }, (_, i) => ({ id: `p${i}`, lat: 30.31 + i / 100, lng: -97.75 + i / 100, priceLabel }));
+// V3 shades one rectangle per MOSAIC CELL, so the overlay's cardinality is the mosaic's and
+// not the community count. mosaic.js is the production geometry (covered by its own tests),
+// so the expectation stays a statement about the CURRENT communities rather than a number
+// pinned to one fixture shape.
+const cellCount = (n: number) => mosaicCells(communities(n), mosaicBbox(communities(n)), MOSAIC_STEP).length;
 
-// The two draws are told apart by the divIcon HTML they build: markers.js `dot()` opens
-// with the bubble's width/height, `pricePin()` with the pill's font-family.
+// V3 tells the two draws apart by the Leaflet factory each uses: the overlay is rectangles
+// and circles, the pins are divIcon markers.
 function drawOrder(stub: LeafletStub, from: number): string[] {
   return stub.calls
     .slice(from)
-    .filter((c) => c.fn === 'divIcon')
-    .map((c) => (/^<div style="width:/.test((c.args[0] as { html: string }).html) ? 'overlay' : 'pins'));
+    .filter((c) => c.fn === 'rectangle' || c.fn === 'circle' || c.fn === 'divIcon')
+    .map((c) => (c.fn === 'divIcon' ? 'pins' : 'overlay'));
 }
 
-// Re-review minor 5: the two layer groups used to be picked out by CONSTRUCTION ORDER —
-// `groups[0]` is overlay because MarketMapView passes `groups: ['overlay', 'pins']` at mount.
-// That is a second hidden coupling of exactly the kind this file exists to be free of: swap
-// the component's two group names and an index-keyed helper silently reads the invariant
-// backwards, failing (or worse, passing) for a reason that has nothing to do with ordering.
-//
-// Each group is identified by ITS ROLE instead — which production renderer filled it. The
-// engine keys its groups by name, so role is what the name means: `markers.js` `dot()` opens
-// a community bubble's HTML with the div's width, `pricePin()` opens the pill with a
-// font-family, and a drive-time ring is an L.circle carrying a radius. Creation order is
-// never consulted, and the helper asserts that each group holds exactly one role, so a
-// component change that mixed the two would fail here rather than be mislabelled.
-type StubLayer = { seq: number; options?: { radius?: number; icon?: { icon?: { html?: string } } } };
+// The two layer groups are identified by ROLE — which production renderer filled them —
+// never by construction order. In V3 the overlay group holds mosaic RECTANGLES and the
+// dashed drive-time circle; the pins group holds practice markers.
+type StubLayer = { seq: number; bounds?: unknown; options?: { radius?: number; icon?: { icon?: { html?: string } } } };
 type StubGroup = { clearLayers?: unknown; added: StubLayer[] };
 
 const roleOf = (l: StubLayer): 'overlay' | 'pins' => {
-  if (typeof l.options?.radius === 'number') return 'overlay';        // a drive-time L.circle
-  return /^<div style="width:/.test(l.options?.icon?.icon?.html ?? '') ? 'overlay' : 'pins';
+  if (l.bounds !== undefined) return 'overlay';                 // a mosaic L.rectangle
+  if (typeof l.options?.radius === 'number') return 'overlay';  // the dashed drive-time ring
+  return 'pins';
 };
 
 function layerGroups(stub: LeafletStub) {
@@ -106,8 +104,8 @@ async function mounted(n = { communities: 2, practices: 1 }) {
     props: {
       practices: practices(n.practices),
       communities: communities(n.communities),
-      layers: { practices: true, competition: false, drive5: false, drive10: false },
-      valueLayer: 'income',
+      activeLayer: 'income',
+      showDrive: false,
       center: [30.31, -97.75],
       zoom: 10
     }
@@ -178,7 +176,7 @@ describe('MarketMapView — redraw order', () => {
       expectOverlayBeforePins(stub); // and after a pins-only prop change
       // Both groups really were rebuilt (cleared and refilled), not merely appended to.
       const { overlay, pins } = layerGroups(stub);
-      expect(attachSeqs(overlay)).toHaveLength(n.communities);
+      expect(attachSeqs(overlay)).toHaveLength(cellCount(n.communities));
       expect(attachSeqs(pins)).toHaveLength(n.practices);
     });
   }
@@ -187,7 +185,7 @@ describe('MarketMapView — redraw order', () => {
   // TWO independent ways, and a probe with the overlay watcher declared FIRST (the faithful
   // mirror of MarketMap.jsx's effect 5 → effect 6) demonstrated both:
   //
-  //   1. an OVERLAY-ONLY trigger (`valueLayer`, `communities`, a drive-time toggle) fires
+  //   1. an OVERLAY-ONLY trigger (`activeLayer`, `communities`, a drive-time toggle) fires
   //      only the overlay watcher, so the community bubbles are re-attached to the shared
   //      markerPane AFTER the untouched pins and paint on top of them — overlay seq 12,13
   //      against a pin still at 11. Declaration order cannot help: the other watcher never
@@ -198,14 +196,14 @@ describe('MarketMapView — redraw order', () => {
   //
   // One merged watcher that always runs drawOverlay() then drawPins() is the only shape
   // that closes both. These two tests pin one failure mode each.
-  it('holds the order when the trigger is an OVERLAY-ONLY prop (valueLayer), which fires no pins work of its own', async () => {
+  it('holds the order when the trigger is an OVERLAY-ONLY prop (activeLayer), which fires no pins work of its own', async () => {
     const stub = installLeafletStub();
     const wrapper = mount(MarketMapView, {
       props: {
         practices: practices(2),
         communities: communities(3),
-        layers: { practices: true, competition: false, drive5: false, drive10: false },
-        valueLayer: 'income',
+        activeLayer: 'income',
+        showDrive: false,
         center: [30.31, -97.75],
         zoom: 10
       }
@@ -214,11 +212,11 @@ describe('MarketMapView — redraw order', () => {
     await flushPromises();
     expectOverlayBeforePins(stub);
 
-    await wrapper.setProps({ valueLayer: 'density' }); // touches nothing on the pins side
+    await wrapper.setProps({ activeLayer: 'density' }); // touches nothing on the pins side
     expectOverlayBeforePins(stub);
     const { overlay, pins } = layerGroups(stub);
-    expect(attachSeqs(overlay)).toHaveLength(3); // rebuilt…
-    expect(attachSeqs(pins)).toHaveLength(2);    // …and so were the pins, after them
+    expect(attachSeqs(overlay)).toHaveLength(cellCount(3)); // rebuilt…
+    expect(attachSeqs(pins)).toHaveLength(2);               // …and so were the pins, after them
   });
 
   it('holds the order when the trigger is a community change rather than a practice change', async () => {
@@ -226,7 +224,7 @@ describe('MarketMapView — redraw order', () => {
     await wrapper.setProps({ communities: communities(4) });
     expectOverlayBeforePins(stub);
     const { overlay, pins } = layerGroups(stub);
-    expect(attachSeqs(overlay)).toHaveLength(4);
+    expect(attachSeqs(overlay)).toHaveLength(cellCount(4)); // the mosaic of the NEW communities
     expect(attachSeqs(pins)).toHaveLength(3);
   });
 });
@@ -241,7 +239,8 @@ describe('MarketMapView — group identification is by role, not creation order'
     const { stub } = await mounted({ communities: 3, practices: 2 });
     const { overlay, pins } = layerGroups(stub);
 
-    expect(overlay.added.map(roleOf)).toEqual(['overlay', 'overlay', 'overlay']);
+    expect(overlay.added).toHaveLength(cellCount(3));
+    expect(new Set(overlay.added.map(roleOf))).toEqual(new Set(['overlay']));
     expect(pins.added.map(roleOf)).toEqual(['pins', 'pins']);
     expect(overlay).not.toBe(pins);
     // The labels track the CONTENT, so they cannot both come back as the same object even
@@ -251,69 +250,21 @@ describe('MarketMapView — group identification is by role, not creation order'
 
   it('recognises a drive-time ring as overlay content even though it is a circle, not a marker', async () => {
     const { stub, wrapper } = await mounted({ communities: 2, practices: 1 });
-    await wrapper.setProps({ layers: { practices: true, competition: false, drive5: true, drive10: true } });
+    await wrapper.setProps({ showDrive: true });
     const { overlay, pins } = layerGroups(stub);
-    expect(overlay.added.filter((l) => typeof l.options?.radius === 'number')).toHaveLength(2);
+    expect(overlay.added.filter((l) => typeof l.options?.radius === 'number')).toHaveLength(1);
     expect(pins.added).toHaveLength(1);
     expectOverlayBeforePins(stub);
   });
 });
 
-describe('MarketMapView — competition layer', () => {
-  it('draws a purple competition marker per community with vets > 0, skipping ones with none', async () => {
-    const stub = installLeafletStub();
-    const withNoVets = { ...community(2), vets: 0 };
-    const wrapper = mount(MarketMapView, {
-      props: {
-        practices: practices(1),
-        communities: [...communities(2), withNoVets],
-        layers: { practices: true, competition: true, drive5: false, drive10: false },
-        valueLayer: undefined,
-        center: [30.31, -97.75],
-        zoom: 10
-      }
-    });
-    await vi.waitUntil(() => wrapper.find('button[aria-label="Zoom in"]').exists(), { timeout: 5000, interval: 1 });
-    await flushPromises();
-
-    const { overlay } = layerGroups(stub);
-    // Two of the three communities have vets > 0 (community(0)=4, community(1)=5); the third
-    // (0 vets, the falsy-guard branch) is skipped, so exactly two markers get drawn.
-    expect(overlay.added).toHaveLength(2);
-    const html = (overlay.added[0] as { options?: { icon?: { icon?: { html?: string } } } }).options?.icon?.icon?.html ?? '';
-    expect(html).toContain('rgba(120,86,190,.75)'); // markers.js dot()'s competition colour
-  });
-});
-
-describe('MarketMapView — zoom/recenter controls and teardown', () => {
-  it('the zoom-in, zoom-out and recenter buttons drive the engine', async () => {
-    const stub = installLeafletStub();
-    const wrapper = mount(MarketMapView, {
-      props: {
-        practices: practices(1), communities: communities(1),
-        layers: { practices: true, competition: false, drive5: false, drive10: false },
-        valueLayer: undefined, center: [30.31, -97.75], zoom: 10
-      }
-    });
-    await vi.waitUntil(() => wrapper.find('button[aria-label="Zoom in"]').exists(), { timeout: 5000, interval: 1 });
-    await flushPromises();
-
-    const zoomBefore = stub.map.zoom;
-    await wrapper.find('button[aria-label="Zoom in"]').trigger('click');
-    expect(stub.map.zoom).toBe(zoomBefore + 1);
-    await wrapper.find('button[aria-label="Zoom out"]').trigger('click');
-    expect(stub.map.zoom).toBe(zoomBefore);
-    await wrapper.find('button[aria-label="Recenter"]').trigger('click');
-    expect((stub.map as { lastSetView?: unknown }).lastSetView).toEqual([[30.31, -97.75], 10, undefined]);
-  });
-
+describe('MarketMapView — teardown', () => {
   it('destroys the engine on unmount, once it exists', async () => {
     const stub = installLeafletStub();
     const wrapper = mount(MarketMapView, {
       props: {
         practices: practices(1), communities: communities(1),
-        layers: { practices: true, competition: false, drive5: false, drive10: false },
-        valueLayer: undefined, center: [30.31, -97.75], zoom: 10
+        center: [30.31, -97.75], zoom: 10
       }
     });
     await vi.waitUntil(() => wrapper.find('button[aria-label="Zoom in"]').exists(), { timeout: 5000, interval: 1 });
@@ -330,8 +281,7 @@ describe('MarketMapView — onMounted guards and error handling', () => {
     const wrapper = mount(MarketMapView, {
       props: {
         practices: practices(1), communities: communities(1),
-        layers: { practices: true, competition: false, drive5: false, drive10: false },
-        valueLayer: undefined, center: [30.31, -97.75], zoom: 10
+        center: [30.31, -97.75], zoom: 10
       }
     });
     // Unmount synchronously, before the async onMounted chain (createEngine() await, then
@@ -352,8 +302,7 @@ describe('MarketMapView — onMounted guards and error handling', () => {
     const wrapper = mount(MarketMapView, {
       props: {
         practices: practices(1), communities: communities(1),
-        layers: { practices: true, competition: false, drive5: false, drive10: false },
-        valueLayer: undefined, center: [30.31, -97.75], zoom: 10
+        center: [30.31, -97.75], zoom: 10
       }
     });
     await vi.waitUntil(() => wrapper.text().includes('Map unavailable'), { timeout: 5000, interval: 1 });
@@ -367,8 +316,7 @@ describe('MarketMapView — onMounted guards and error handling', () => {
     const wrapper = mount(MarketMapView, {
       props: {
         practices: practices(1), communities: communities(2),
-        layers: { practices: true, competition: false, drive5: false, drive10: false },
-        valueLayer: 'income', center: [30.31, -97.75], zoom: 10
+        activeLayer: 'income', center: [30.31, -97.75], zoom: 10
       }
     });
 
@@ -385,41 +333,35 @@ describe('MarketMapView — onMounted guards and error handling', () => {
   });
 });
 
-describe('MarketMapView — value-layer data gaps', () => {
-  it('skips a community missing a value for the active valueLayer, drawing nothing for it', async () => {
+describe('MarketMapView — active-layer data gaps', () => {
+  it('skips a community missing a value for the active layer, drawing nothing for it', async () => {
     const stub = installLeafletStub();
     const noIncomeData = { ...community(5), values: { density: community(5).values.density } }; // no `income` key
+    const sites = [community(0), noIncomeData];
     const wrapper = mount(MarketMapView, {
       props: {
-        practices: practices(1), communities: [community(0), noIncomeData],
-        layers: { practices: true, competition: false, drive5: false, drive10: false },
-        valueLayer: 'income', center: [30.31, -97.75], zoom: 10
+        practices: practices(1), communities: sites,
+        activeLayer: 'income', center: [30.31, -97.75], zoom: 10
       }
     });
     await vi.waitUntil(() => wrapper.find('button[aria-label="Zoom in"]').exists(), { timeout: 5000, interval: 1 });
     await flushPromises();
 
     const { overlay } = layerGroups(stub);
-    // Only community(0) has an `income` value; the other is skipped, not drawn as e.g. NaN-sized.
-    expect(overlay.added).toHaveLength(1);
+    // Only community(0) has an `income` value, so every shaded cell is one of ITS cells: the
+    // cells the mosaic assigned to the other community are dropped, not shaded with a
+    // missing value (a `v == null` cell would have drawn as `undefined`-coloured).
+    const tips = overlay.added.map((l) => (l as unknown as { tooltip: { text: string } }).tooltip.text);
+    expect(tips.length).toBeGreaterThan(0);
+    expect(tips.every((t) => t.includes('Community 0'))).toBe(true);
+    expect(tips.some((t) => t.includes('Community 5'))).toBe(false);
+    // …and strictly fewer than the mosaic's own cell count, which is the discriminating proof
+    // that cells really were skipped rather than reassigned to the community that has data.
+    expect(tips.length).toBeLessThan(mosaicCells(sites, mosaicBbox(sites), MOSAIC_STEP).length);
   });
 });
 
-describe('MarketMapView — practice pins: layer toggle, active state, click-through', () => {
-  it('draws no pins at all when the practices layer is off', async () => {
-    const stub = installLeafletStub();
-    const wrapper = mount(MarketMapView, {
-      props: {
-        practices: practices(2), communities: communities(1),
-        layers: { practices: false, competition: false, drive5: false, drive10: false },
-        valueLayer: undefined, center: [30.31, -97.75], zoom: 10
-      }
-    });
-    await vi.waitUntil(() => wrapper.find('button[aria-label="Zoom in"]').exists(), { timeout: 5000, interval: 1 });
-    await flushPromises();
-    expect(stub.calls.filter((c) => c.fn === 'marker')).toHaveLength(0);
-  });
-
+describe('MarketMapView — practice pins: active state, click-through', () => {
   it('stacks the active pin above the rest (zIndexOffset 1000) and calls onSelect when clicked', async () => {
     const stub = installLeafletStub();
     const onSelect = vi.fn();
@@ -427,8 +369,7 @@ describe('MarketMapView — practice pins: layer toggle, active state, click-thr
     const wrapper = mount(MarketMapView, {
       props: {
         practices: ps, communities: communities(1),
-        layers: { practices: true, competition: false, drive5: false, drive10: false },
-        valueLayer: undefined, activeId: ps[1].id, onSelect,
+        activeId: ps[1].id, onSelect,
         center: [30.31, -97.75], zoom: 10
       }
     });
@@ -455,8 +396,7 @@ describe('MarketMapView — practice pins: layer toggle, active state, click-thr
     const wrapper = mount(MarketMapView, {
       props: {
         practices: practices(1), communities: communities(1),
-        layers: { practices: true, competition: false, drive5: false, drive10: false },
-        valueLayer: undefined, center: [30.31, -97.75], zoom: 10
+        center: [30.31, -97.75], zoom: 10
       }
     });
     await vi.waitUntil(() => wrapper.find('button[aria-label="Zoom in"]').exists(), { timeout: 5000, interval: 1 });
@@ -474,13 +414,12 @@ describe('MarketMapView — practice pins: layer toggle, active state, click-thr
 });
 
 describe('MarketMapView — driveCenter reactivity', () => {
-  it('redraws the drive-time rings when driveCenter itself changes (not just the props it defaults from)', async () => {
+  it('redraws the drive-time ring when driveCenter itself changes (not just the props it defaults from)', async () => {
     const stub = installLeafletStub();
     const wrapper = mount(MarketMapView, {
       props: {
         practices: practices(1), communities: communities(1),
-        layers: { practices: true, competition: false, drive5: true, drive10: false },
-        valueLayer: undefined, driveCenter: [30.4, -97.6],
+        showDrive: true, driveCenter: [30.4, -97.6],
         center: [30.31, -97.75], zoom: 10
       }
     });
@@ -488,7 +427,7 @@ describe('MarketMapView — driveCenter reactivity', () => {
     await flushPromises();
 
     const overlayGroup = (stub.map.added as { clearLayers?: unknown; added: { center?: unknown }[] }[]).filter((g) => g.clearLayers)[0];
-    expect(overlayGroup.added).toHaveLength(1); // one drive5 ring, centred on driveCenter
+    expect(overlayGroup.added).toHaveLength(1); // one dashed ring, centred on driveCenter
     expect(overlayGroup.added[0].center).toEqual([30.4, -97.6]);
 
     await wrapper.setProps({ driveCenter: [30.9, -97.1] });
@@ -517,5 +456,231 @@ describe('MarketMapView — test isolation (no import-order or real-Leaflet coup
     expect(stub.calls[0].args[1]).toMatchObject({ zoomControl: false, attributionControl: true });
     // …and the divIcon payloads come from src/map/markers.js, the production renderer.
     expect(stub.calls.some((c) => c.fn === 'divIcon')).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// V3 (Rev 2). C5 community mosaic shading, C6 pins + persistent callout + panInside,
+// C7 the single dashed drive-time ring, C11 no scale control, C13 onBasemap gates the tabs.
+// ---------------------------------------------------------------------------------------
+describe('MarketMapView — the V3 map', () => {
+  // vue-tsc derives MarketMapView's public prop types from its runtime `defineProps`, where
+  // `{ type: String, default: null }` widens to `string | undefined` — plain JS cannot spell
+  // "String | null", which is what the design's own `data-props` declare (`Practice Match
+  // V3.dc.html:324`) and what the generated App.vue passes. The nulls are load-bearing at
+  // runtime (Vue substitutes a prop's default for `undefined`, so `center: undefined` would
+  // silently restore the Austin centre the no-centre case is asserting the absence of), so
+  // the fixtures keep them and cross into vue-tsc's view of the props through this one
+  // helper rather than a cast at each of fourteen call sites.
+  type MountProps = Record<string, never>;
+  const asProps = (o: Record<string, unknown>): MountProps => o as MountProps;
+
+  const v3Props = (over: Record<string, unknown> = {}) => asProps({
+    practices: practices(3), communities: communities(4), activeLayer: 'income', basemap: 'map',
+    activeId: null, onSelect: null, onArea: null, center: [30.31, -97.75], zoom: 10,
+    driveCenter: null, showDrive: false, resizeKey: '', recenterKey: 0, ...over
+  });
+
+  it('mounts with no scale control and attribution on — the app owns the bottom-right corner for the Layers button', async () => {
+    const stub = installLeafletStub();
+    mount(MarketMapView, { props: v3Props() });
+    await flushPromises();
+    expect(stub.calls[0].args[1]).toEqual({ center: [30.31, -97.75], zoom: 10, zoomControl: false, attributionControl: true });
+    expect(stub.calls.filter((c) => c.fn === 'control.scale')).toHaveLength(0);
+    expect(stub.calls.filter((c) => c.fn === 'control.zoom')).toHaveLength(0);
+  });
+
+  it('shades one mosaic cell per community cell for the active layer, on the shared canvas renderer', async () => {
+    const stub = installLeafletStub();
+    mount(MarketMapView, { props: v3Props() });
+    await flushPromises();
+    const rects = stub.calls.filter((c) => c.fn === 'rectangle');
+    expect(rects.length).toBeGreaterThan(0);
+    expect(stub.calls.filter((c) => c.fn === 'canvas')).toHaveLength(1);
+    for (const r of rects) {
+      expect((r.args[1] as { renderer: unknown; fillOpacity: number; stroke: boolean }).renderer).toBe(stub.canvas);
+      expect((r.args[1] as { fillOpacity: number }).fillOpacity).toBe(0.5);
+      expect((r.args[1] as { stroke: boolean }).stroke).toBe(false);
+      expect((r.args[1] as { fillColor: string }).fillColor).toBe('#4c9a6a');
+    }
+  });
+
+  it('draws nothing when no layer is active, and re-shades when the active layer changes', async () => {
+    const stub = installLeafletStub();
+    const w = mount(MarketMapView, { props: v3Props({ activeLayer: null }) });
+    await flushPromises();
+    expect(stub.calls.filter((c) => c.fn === 'rectangle')).toHaveLength(0);
+    await w.setProps({ activeLayer: 'income' });
+    await flushPromises();
+    expect(stub.calls.filter((c) => c.fn === 'rectangle').length).toBeGreaterThan(0);
+  });
+
+  it('skips a community with no value for the active layer rather than shading it', async () => {
+    const stub = installLeafletStub();
+    const blank = { name: 'Blank', lat: 30.5, lng: -97.8, values: {} };
+    mount(MarketMapView, { props: v3Props({ communities: [...communities(2), blank], activeLayer: 'density' }) });
+    await flushPromises();
+    for (const r of stub.calls.filter((c) => c.fn === 'rectangle')) {
+      expect((r.args[1] as { fillColor: string }).fillColor).toBe('#2f7d55');
+    }
+  });
+
+  it('binds the sticky rf-tip carrying name, metric name, value and source note', async () => {
+    const stub = installLeafletStub();
+    mount(MarketMapView, {
+      props: v3Props({ communities: [{ name: 'Cedar Park', lat: 30.5, lng: -97.8, metricName: 'Median household income', sourceNote: 'ACS 2019–2023', values: { income: { t: 0.5, label: '$118,400', color: '#4c9a6a' } } }] })
+    });
+    await flushPromises();
+    const overlay = (stub.map.added as StubGroup[]).filter((g) => g.clearLayers)[0];
+    const tip = (overlay.added[0] as unknown as { tooltip: { text: string; opts: unknown } }).tooltip;
+    expect(tip.opts).toEqual({ sticky: true, className: 'rf-tip' });
+    expect(tip.text).toContain('Cedar Park');
+    expect(tip.text).toContain('Median household income');
+    expect(tip.text).toContain('$118,400');
+    expect(tip.text).toContain('ACS 2019–2023');
+  });
+
+  it('clicking a mosaic cell reports its community through onArea', async () => {
+    const stub = installLeafletStub();
+    const seen: string[] = [];
+    mount(MarketMapView, {
+      props: v3Props({ communities: [{ name: 'Cedar Park', lat: 30.5, lng: -97.8, values: { income: { t: 0.5, label: '$118K', color: '#4c9a6a' } } }], onArea: (n: string) => seen.push(n) })
+    });
+    await flushPromises();
+    const overlay = (stub.map.added as StubGroup[]).filter((g) => g.clearLayers)[0];
+    (overlay.added[0] as unknown as { on_click: () => void }).on_click();
+    expect(seen).toEqual(['Cedar Park']);
+  });
+
+  it('draws ONE dashed unfilled drive-time ring at 16 000 m, not two filled circles (C7)', async () => {
+    const stub = installLeafletStub();
+    mount(MarketMapView, { props: v3Props({ showDrive: true, driveCenter: [30.5052, -97.8203] }) });
+    await flushPromises();
+    const overlay = (stub.map.added as StubGroup[]).filter((g) => g.clearLayers)[0];
+    expect(overlay.added.filter((l) => typeof l.options?.radius === 'number')).toHaveLength(1);
+    const circles = stub.calls.filter((c) => c.fn === 'circle');
+    expect(circles.length).toBeGreaterThan(0);
+    for (const c of circles) {
+      expect(c.args).toEqual([[30.5052, -97.8203], { radius: 16000, color: '#003a70', weight: 1.5, dashArray: '4 4', fill: false, interactive: false }]);
+    }
+  });
+
+  it('draws no ring when showDrive is false, and none when there is no centre to draw it around', async () => {
+    const stub = installLeafletStub();
+    const w = mount(MarketMapView, { props: v3Props({ showDrive: false, driveCenter: [30.5, -97.8] }) });
+    await flushPromises();
+    expect(stub.calls.filter((c) => c.fn === 'circle')).toHaveLength(0);
+    await w.setProps(asProps({ showDrive: true, driveCenter: null, center: null }));
+    await flushPromises();
+    expect(stub.calls.filter((c) => c.fn === 'circle')).toHaveLength(0);
+  });
+
+  it('uses practicePin at [78, 34] / [39, 34] and binds the rf-callout at the unselected offset', async () => {
+    const stub = installLeafletStub();
+    mount(MarketMapView, { props: v3Props({ practices: practices(1) }) });
+    await flushPromises();
+    expect(stub.calls.find((c) => c.fn === 'divIcon')!.args[0]).toMatchObject({ className: '', iconSize: [78, 34], iconAnchor: [39, 34] });
+    const pins = (stub.map.added as StubGroup[]).filter((g) => g.clearLayers)[1];
+    expect((pins.added[0] as unknown as { tooltip: { opts: unknown } }).tooltip.opts)
+      .toEqual({ direction: 'top', offset: [0, -34], className: 'rf-callout', permanent: false, opacity: 1 });
+  });
+
+  it('selecting a practice makes its callout permanent, opens it, and pans it inside with [48, 110]', async () => {
+    const stub = installLeafletStub();
+    mount(MarketMapView, { props: v3Props({ practices: practices(2), activeId: 'p1' }) });
+    await flushPromises();
+    const pins = (stub.map.added as StubGroup[]).filter((g) => g.clearLayers)[1];
+    const selected = pins.added.find((l) => (l as unknown as { tooltip?: { opts: { permanent: boolean } } }).tooltip?.opts.permanent)!;
+    expect((selected as unknown as { tooltip: { opts: unknown } }).tooltip.opts)
+      .toEqual({ direction: 'top', offset: [0, -22], className: 'rf-callout', permanent: true, opacity: 1 });
+    expect((selected as unknown as { tooltipOpened: number }).tooltipOpened).toBe(1);
+    expect((selected as unknown as { options: { zIndexOffset: number } }).options.zIndexOffset).toBe(1000);
+    expect((stub.map as unknown as { pannedInside: unknown }).pannedInside).toEqual([[30.32, -97.74], { padding: [48, 110], animate: true }]);
+  });
+
+  it('clicking a pin reports its id through onSelect', async () => {
+    const stub = installLeafletStub();
+    const seen: string[] = [];
+    mount(MarketMapView, { props: v3Props({ practices: practices(1), onSelect: (id: string) => seen.push(id) }) });
+    await flushPromises();
+    const pins = (stub.map.added as StubGroup[]).filter((g) => g.clearLayers)[1];
+    (pins.added[0] as unknown as { on_click: () => void }).on_click();
+    expect(seen).toEqual(['p0']);
+  });
+
+  it('renders the Map | Satellite tabs only when onBasemap is passed (desktop), never without it (mobile)', async () => {
+    installLeafletStub();
+    const desktop = mount(MarketMapView, { props: v3Props({ onBasemap: () => {} }) });
+    await flushPromises();
+    expect(desktop.findAll('button[aria-pressed]')).toHaveLength(2);
+    expect(desktop.find('button[aria-pressed="true"]').text()).toBe('Map');
+
+    installLeafletStub();
+    const mobile = mount(MarketMapView, { props: v3Props() });
+    await flushPromises();
+    expect(mobile.findAll('button[aria-pressed]')).toHaveLength(0);
+    expect(mobile.findAll('button[aria-label]').map((b) => b.attributes('aria-label'))).toEqual(['Zoom in', 'Zoom out']);
+  });
+
+  it('the basemap tabs call onBasemap and the zoom buttons drive the engine', async () => {
+    const stub = installLeafletStub();
+    const picked: string[] = [];
+    const w = mount(MarketMapView, { props: v3Props({ onBasemap: (k: string) => picked.push(k) }) });
+    await flushPromises();
+    await w.findAll('button[aria-pressed]')[1].trigger('click');
+    expect(picked).toEqual(['satellite']);
+    const before = stub.map.zoom;
+    await w.find('button[aria-label="Zoom in"]').trigger('click');
+    expect(stub.map.zoom).toBe(before + 1);
+    await w.find('button[aria-label="Zoom out"]').trigger('click');
+    expect(stub.map.zoom).toBe(before);
+  });
+
+  it('recenterKey re-applies the view without a prop change to centre or zoom', async () => {
+    const stub = installLeafletStub();
+    const w = mount(MarketMapView, { props: v3Props() });
+    await flushPromises();
+    stub.map.setView([1, 2], 3);
+    await w.setProps({ recenterKey: 1 });
+    await flushPromises();
+    expect(stub.map.center).toEqual([30.31, -97.75]);
+    expect(stub.map.zoom).toBe(10);
+  });
+
+  it('the zoom buttons carry the reference\'s own width:auto — the DOM oracle compares live el.style, not computed layout', async () => {
+    installLeafletStub();
+    const w = mount(MarketMapView, { props: v3Props(), attachTo: document.body });
+    await flushPromises();
+    for (const label of ['Zoom in', 'Zoom out']) {
+      expect((w.find(`button[aria-label="${label}"]`).element as HTMLElement).style.width).toBe('auto');
+    }
+    w.unmount();
+  });
+
+  it('a mosaic cell click is inert when onArea is absent, and the basemap tabs vanish when onBasemap is withdrawn', async () => {
+    const stub = installLeafletStub();
+    const w = mount(MarketMapView, { props: v3Props({ onBasemap: () => {}, onArea: null }) });
+    await flushPromises();
+    const overlay = (stub.map.added as StubGroup[]).filter((g) => g.clearLayers)[0];
+    expect(() => (overlay.added[0] as unknown as { on_click: () => void }).on_click()).not.toThrow();
+    await w.setProps(asProps({ onBasemap: null }));
+    expect(w.findAll('button[aria-pressed]')).toHaveLength(0);
+  });
+
+  it('renders at a 390 px phone width — no fixed widths keep the map from filling its host', async () => {
+    installLeafletStub();
+    const w = mount(MarketMapView, { props: v3Props(), attachTo: document.body });
+    await flushPromises();
+    const root = w.element as HTMLElement;
+    expect(root.style.position).toBe('absolute');
+    expect(root.style.inset).toBe('0px');
+    const hostEl = root.firstElementChild as HTMLElement;
+    expect(hostEl.style.position).toBe('absolute');
+    expect(hostEl.style.inset).toBe('0px');
+    expect(hostEl.outerHTML).not.toMatch(/width:\s*\d+px/);
+    const fixed = [...root.querySelectorAll<HTMLElement>('*')].map((el) => el.style.width).filter((wd) => /px$/.test(wd));
+    expect(fixed).toEqual(['132px', '1px']);          // the control cluster and its hairline
+    expect(fixed.every((wd) => parseFloat(wd) <= 390)).toBe(true);
+    w.unmount();
   });
 });
