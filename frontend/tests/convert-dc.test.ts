@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildAppVue, compileExpr, convert, extractTemplate } from '../scripts/convert-dc.mjs';
 
@@ -125,5 +127,51 @@ describe('convert — template constructs', () => {
     writeFileSync(join(dir, 'd.html'), '<html><x-dc><div>{{ a }}</div></x-dc></html>'); writeFileSync(join(dir, 'setup.js'), 'const x = 1;\n');
     execFileSync(process.execPath, [join(import.meta.dirname, '..', 'scripts', 'convert-dc.mjs'), join(dir, 'd.html'), join(dir, 'setup.js'), join(dir, 'App.vue'), join(dir, 'pseudo.css')]);
     expect(existsSync(join(dir, 'App.vue')) && readFileSync(join(dir, 'App.vue'), 'utf8').includes('sc-interp')).toBe(true);
+  });
+
+  // V3 (Rev 2) constructs. The bundle's README Task 6 flags three to check before
+  // regenerating; all three already convert, and are pinned here so a future generator edit
+  // cannot silently break the V3 reference. The fourth — the x-import component NAME — is
+  // the one that actually throws, because the design's map component was renamed
+  // AustinMap/MarketMap → MarketMapV3.
+  describe('V3 reference constructs', () => {
+    it('maps the V3 map component onto the same Vue component, with every kebab-case prop bound', () => {
+      const { template } = convert('<x-import component="MarketMapV3" from="./MarketMapV3.jsx" on-basemap="{{ md.setBasemap }}" practices="{{ md.practices }}" active-layer="{{ md.activeLayer }}" show-drive="{{ md.showDrive }}" on-area="{{ md.selectArea }}" recenter-key="{{ md.recenterKey }}" hint-size="100%,100%"></x-import>');
+      expect(template).toBe('<div class="sc-host-x" style="display: contents"><MarketMapView :on-basemap="v.md?.setBasemap" :practices="v.md?.practices" :active-layer="v.md?.activeLayer" :show-drive="v.md?.showDrive" :on-area="v.md?.selectArea" :recenter-key="v.md?.recenterKey"></MarketMapView></div>');
+    });
+
+    it('binds a ref callback (the compare menu scrolls itself into view on open)', () => {
+      expect(convert('<div role="listbox" aria-label="Comparison layer" ref="{{ md.compareMenuRef }}"></div>').template)
+        .toBe('<div role="listbox" aria-label="Comparison layer" :ref="v.md?.compareMenuRef"></div>');
+    });
+
+    it('binds aria-selected on a listbox option, keeping false as a rendered value rather than a dropped attribute', () => {
+      expect(convert('<button onClick="{{ o.go }}" role="option" aria-selected="{{ o.selected }}">x</button>').template)
+        .toBe('<button @click="v.o?.go" role="option" :aria-selected="v.o?.selected">x</button>');
+    });
+
+    it('converts a sibling sc-if pair switching an img between two static files into two independent v-if blocks with absolute asset paths', () => {
+      const { template } = convert('<button><sc-if value="{{ md.compareOpen }}" hint-placeholder-val="{{ false }}"><img src="assets/icons/sub-close-thin.svg" alt="" width="14" height="14" style="{{ md.comparePlusStyle }}"></sc-if><sc-if value="{{ md.compareClosed }}" hint-placeholder-val="{{ true }}"><img src="assets/icons/sub-plus-thin.svg" alt="" width="14" height="14" style="{{ md.comparePlusStyle }}"></sc-if></button>');
+      expect(template).toBe('<button><template v-if="v.md?.compareOpen"><img src="/assets/icons/sub-close-thin.svg" alt width="14" height="14" :style="v.md?.comparePlusStyle"></template><template v-if="v.md?.compareClosed"><img src="/assets/icons/sub-plus-thin.svg" alt width="14" height="14" :style="v.md?.comparePlusStyle"></template></button>');
+    });
+  });
+});
+
+describe('the whole V3 reference converts and compiles', () => {
+  const DC = join(import.meta.dirname, '..', '..', 'docs', 'design-reference', 'design_handoff_practice_match_v3', 'Practice Match V3.dc.html');
+
+  it('converts without throwing and produces a template the Vue SFC compiler accepts', async () => {
+    const { template, pseudoCss } = convert(extractTemplate(readFileSync(DC, 'utf8')));
+    expect(template.length).toBeGreaterThan(100_000);
+    expect(pseudoCss).toContain(':hover{');
+    const { compileTemplate } = await import('@vue/compiler-sfc');
+    const out = compileTemplate({ source: template, filename: 'App.vue', id: 'app', compilerOptions: { whitespace: 'preserve', isCustomElement: (tag: string) => tag === 'image-slot' } });
+    expect(out.errors).toEqual([]);
+  });
+
+  it('renders both V3 maps as MarketMapView and no ListingsMap — V3 has no listings map, on desktop or on mobile', () => {
+    const { template } = convert(extractTemplate(readFileSync(DC, 'utf8')));
+    expect(template.split('<MarketMapView').length - 1).toBe(2);
+    expect(template).not.toContain('<ListingsMap');
   });
 });

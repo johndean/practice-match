@@ -11,7 +11,7 @@ const NUMBER_RE = /^-?\d+(\.\d+)?$/;
 const EVENTS = { onClick: 'click', onInput: 'input', onSubmit: 'submit', onKeyDown: 'keydown', onKeyUp: 'keyup', onKeyPress: 'keypress', onMouseDown: 'mousedown', onMouseUp: 'mouseup',
   onMouseEnter: 'mouseenter', onMouseLeave: 'mouseleave', onFocus: 'focus', onBlur: 'blur', onDoubleClick: 'dblclick', onContextMenu: 'contextmenu', onMouseMove: 'mousemove',
   onMouseOver: 'mouseover', onMouseOut: 'mouseout', onPointerDown: 'pointerdown', onPointerUp: 'pointerup', onPointerMove: 'pointermove', onPointerEnter: 'pointerenter', onPointerLeave: 'pointerleave' };
-const COMPONENTS = { AustinMap: 'ListingsMap', MarketMap: 'MarketMapView', 'image-slot': 'ImageSlot' };
+const COMPONENTS = { AustinMap: 'ListingsMap', MarketMap: 'MarketMapView', MarketMapV3: 'MarketMapView', 'image-slot': 'ImageSlot' };
 const VOID = new Set(['area', 'base', 'br', 'col', 'embed', 'hr', 'img', 'input', 'link', 'meta', 'source', 'track', 'wbr']);
 const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 const escAttr = (s) => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;');
