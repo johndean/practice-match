@@ -283,3 +283,11 @@ def test_claude_md_lists_variable_names_only():
     text = (ROOT / "CLAUDE.md").read_text()
     assert "sed -E 's/(SECRET|KEY|URL)=.*/" not in text  # matched nothing on CLI 5.x's table output; values were printed
     assert "railway variable list --service api --environment QA --json" in text
+
+
+def test_deploy_md_records_the_nightly_load_smoke_baseline():
+    """Task 10c follow-up: the first manual run of the nightly load smoke (from main) is recorded
+    so later runs can be compared against a number, not a memory."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "Nightly load smoke baseline" in text
+    assert "p95" in text and "2026-09-06" in text
