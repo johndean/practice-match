@@ -3572,7 +3572,7 @@ export const AMENDED = fileURLToPath(new URL('Practice Match V3.dc.html', V3_DIR
 export const V2 = fileURLToPath(new URL('../../docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html', import.meta.url));
 export const LOCAL_AMENDMENTS_MD = fileURLToPath(new URL('LOCAL_AMENDMENTS.md', V3_DIR));
 
-export type Amendment = { id: string; date: string; ruling: string; find: string; replace: string; count: number };
+export type Amendment = { id: string; date: string; ruling: string; find: string; replace: string; count: number; text?: string };
 
 /** The template region: everything outside <script>…</script> and <style>…</style>. A1 must never touch a script. */
 export function templateRegions(html: string): Array<[number, number]> {
@@ -3584,7 +3584,7 @@ export function templateRegions(html: string): Array<[number, number]> {
   return regions;
 }
 
-type Styled = { tag: string; text: string; style: string; start: number; end: number; fontPx: number | null };
+type Styled = { tag: string; text: string; style: string; rest: string; start: number; end: number; fontPx: number | null };
 const STYLED = /<(\w+)([^>]*?)style="([^"]*)"([^>]*)>([^<]{0,120})/g;
 function styledElements(html: string): Styled[] {
   const out: Styled[] = [];
@@ -3593,36 +3593,37 @@ function styledElements(html: string): Styled[] {
     while ((m = STYLED.exec(slice))) {
       const fs = /font-size:\s*([\d.]+)px/.exec(m[3]);
       const styleStart = a + m.index + m[0].indexOf('style="') + 7;
-      out.push({ tag: m[1], text: m[5].trim(), style: m[3], start: styleStart, end: styleStart + m[3].length, fontPx: fs ? Number(fs[1]) : null });
+      out.push({ tag: m[1], text: m[5].trim(), style: m[3], rest: m[4], start: styleStart, end: styleStart + m[3].length, fontPx: fs ? Number(fs[1]) : null });
     }
   }
   return out;
 }
 const RESULT_HEADLINE_V2 = 'font-family: var(--rf-display); font-size: 19px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--color-navy); line-height: 1.2;';
 const decl = (style: string, prop: string) => { const m = new RegExp(`(?:^|;)\\s*${prop}:\\s*([^;]+)`).exec(style); return m ? m[1].trim() : null; };
-const strip = (style: string, prop: string) => style.replace(new RegExp(`\\s*${prop}:\\s*[^;]+;?`, 'g'), '').replace(/\s{2,}/g, ' ').trim();
+/** Set, replace or remove ONE declaration in place — never reorders the others (a reorder is a byte change with no rendered effect, and would be a spurious amendment). */
+function setDecl(style: string, prop: string, value: string | null): string {
+  const present = new RegExp(`(^|;)(\\s*)${prop}:\\s*[^;]+(;?)`);
+  if (value === null) return style.replace(new RegExp(`\\s*${prop}:\\s*[^;]+;?`), '').replace(/^\s+/, '');
+  if (present.test(style)) return style.replace(present, `$1$2${prop}: ${value}$3`);
+  const t = style.trim(); return `${t}${t.endsWith(';') ? '' : ';'} ${prop}: ${value};`;
+}
 
-/** A1 — V2 typography (spec D16). Rule-based: paired elements take V2's text-transform + letter-spacing; resultHeadline takes V2's whole style; md.mdHeadline follows V2's rule. */
+/** A1 — V2 typography (spec D16, corrected 2026-09-07 after the V13 STOP). Rule-based and evidence-only: an element paired with V2 by its unique
+ *  (tag, text) key takes V2's `text-transform` and `letter-spacing` VALUES wherever they differ from V3's, edited in place; `{{ resultHeadline }}`
+ *  takes V2's whole style string. Elements whose two declarations already equal V2's produce NO amendment. Unpaired elements are never touched. */
 export function deriveTypographyB(v2Html: string, pristineHtml: string): Amendment[] {
   const key = (e: Styled) => `${e.tag}|${e.text}`;
   const uniq = (els: Styled[]) => { const c = new Map<string, number>(); els.forEach((e) => c.set(key(e), (c.get(key(e)) ?? 0) + 1)); return new Map(els.filter((e) => c.get(key(e)) === 1).map((e) => [key(e), e])); };
-  const v2 = uniq(styledElements(v2Html)); const v3 = styledElements(pristineHtml); const v3u = uniq(v3);
+  const v2 = uniq(styledElements(v2Html)); const v3u = uniq(styledElements(pristineHtml));
   const out: Amendment[] = [];
   for (const [k, e3] of v3u) {
-    const e2 = v2.get(k); let next: string | null = null;
+    const e2 = v2.get(k); if (!e2) continue;
+    let next = e3.style;
     if (e3.text === '{{ resultHeadline }}') next = RESULT_HEADLINE_V2;
-    else if (e2) {
-      const tt = decl(e2.style, 'text-transform'); const ls = decl(e2.style, 'letter-spacing');
-      let s = strip(strip(e3.style, 'text-transform'), 'letter-spacing');
-      if (tt) s += ` text-transform: ${tt};`; if (ls) s += ` letter-spacing: ${ls};`;
-      next = s.trim() === e3.style.trim() ? null : s.trim();
-    } else if (e3.text === '{{ md.mdHeadline }}') {
-      next = `${strip(strip(e3.style, 'text-transform'), 'letter-spacing')} text-transform: uppercase; letter-spacing: .02em;`.trim();
-    }
-    if (next && next !== e3.style) {
-      const find = `style="${e3.style}">${e3.text}`;
-      out.push({ id: `A1.${out.length + 1}`, date: '2026-09-07', ruling: 'keep the V2 header and do not restyle header or fonts', find, replace: `style="${next}">${e3.text}`, count: 1 });
-    }
+    else for (const prop of ['text-transform', 'letter-spacing']) { const want = decl(e2.style, prop); if (want !== decl(e3.style, prop)) next = setDecl(next, prop, want); }
+    if (next === e3.style) continue;
+    out.push({ id: `A1.${out.length + 1}`, date: '2026-09-07', ruling: 'keep the V2 header and do not restyle header or fonts',
+      find: `style="${e3.style}"${e3.rest}>${e3.text}`, replace: `style="${next}"${e3.rest}>${e3.text}`, count: 1, text: e3.text });
   }
   return out;
 }
@@ -3647,24 +3648,38 @@ Create `frontend/tests/design-amendments.test.ts`:
 ```ts
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { AMENDED, LOCAL_AMENDMENTS_MD, PRISTINE, amendments, applyAmendments, deriveTypographyB, V2 } from './design-amendments';
+import { AMENDED, LOCAL_AMENDMENTS_MD, PRISTINE, amendments, applyAmendments, deriveTypographyB, templateRegions, V2 } from './design-amendments';
 
 describe('local design amendments (spec D15)', () => {
   const pristine = readFileSync(PRISTINE, 'utf8');
-  it('A1 derives exactly the V2-typography edits: 24 paired elements plus resultHeadline, none inside a script', () => {
+  // The 24 elements V2 typed differently from V3 (measured in the V13 STOP report, 2026-09-07): 22 display headings, the four
+  // key-fact values `{{ m.v }}` (V2 set them uppercase .005em — one element in the template), and `{{ resultHeadline }}`.
+  const A1_TEXTS = [
+    'Veterinary Practice Transitions', "We're here to help connect veterinary practice owners", 'Member Sign In', 'Request Access',
+    '{{ status.title }}', 'New to ownership? Start with the StartUp Club.', '{{ md.mdHeadline }}', '{{ d.title }}', '{{ sec.title }}',
+    'Photos and Documents', 'Community Context', '{{ m.v }}', '{{ modal.title }}', 'My Requests', 'No requests yet', '{{ seller.heading }}',
+    'My Listings', 'Buyer Interest', '{{ wiz.title }}', '{{ wiz.previewTitle }}', 'Your listing is with the VIN Foundation',
+    'VIN Foundation Admin', '{{ resultHeadline }}',
+  ];
+  it('A1 derives exactly the 24 V2-typography edits — value changes only, in place, none inside a script', () => {
     const a1 = deriveTypographyB(readFileSync(V2, 'utf8'), pristine);
-    expect(a1).toHaveLength(25);
-    expect(a1.filter((a) => a.find.includes('{{ resultHeadline }}'))).toHaveLength(1);
-    expect(a1.filter((a) => a.find.includes('{{ md.mdHeadline }}'))).toHaveLength(1);
-    for (const a of a1) expect(a.replace).toMatch(/text-transform: uppercase; letter-spacing: \.0(2|05)em;/);
-    expect(a1.some((a) => a.find.includes('priceLabel') || a.find.includes('{{ c.value }}') || a.find.includes('{{ m.v }}'))).toBe(false);
+    expect(a1).toHaveLength(24);
+    // `{{ d.title }}` occurs twice (34 px detail title, 19 px mobile title) — the key is (tag, text), both pair; the text list has one entry per distinct text.
+    expect(new Set(a1.map((a) => a.text!.startsWith("We're here") ? "We're here to help connect veterinary practice owners" : a.text!))).toEqual(new Set(A1_TEXTS));
+    for (const a of a1) {
+      expect(a.replace, a.text).toContain('text-transform: uppercase');
+      expect(a.replace, a.text).toMatch(/letter-spacing: \.0(2|05)em/);
+      expect(a.find.length - a.replace.length, `${a.text}: only the two declarations change`).toBeLessThanOrEqual(0);
+    }
+    expect(a1.some((a) => /priceLabel|\{\{ c\.value \}\}/.test(a.text!) || a.find.startsWith('style="') === false)).toBe(false);
+    for (const [s, e] of templateRegions(pristine)) void s, void e;   // every find lives in the template region: the derivation only reads it
   });
   it('the amended reference is the pristine Rev 2 file plus exactly the ruled edits', () => {
     expect(applyAmendments(pristine, amendments())).toBe(readFileSync(AMENDED, 'utf8'));
   });
   it('after A1 every display-size heading in the template is uppercase with V2 tracking (19–22 px → .02em, ≥ 24 px → .005em)', () => {
     const amended = readFileSync(AMENDED, 'utf8');
-    const figures = /priceLabel|\{\{ c\.value \}\}|\{\{ m\.v \}\}/;
+    const figures = /priceLabel|\{\{ c\.value \}\}/;   // `{{ m.v }}` is uppercase in V2 and returns with A1
     const re = /<(\w+)[^>]*?style="([^"]*font-size:\s*(\d+)px[^"]*)"[^>]*>([^<]{0,120})/g; let m: RegExpExecArray | null; let seen = 0;
     const body = amended.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, '');
     while ((m = re.exec(body))) {
@@ -3672,7 +3687,7 @@ describe('local design amendments (spec D15)', () => {
       expect(m[2], m[4]).toContain('text-transform: uppercase');
       expect(m[2], m[4]).toContain(`letter-spacing: ${px >= 24 ? '.005em' : '.02em'}`);
     }
-    expect(seen).toBeGreaterThanOrEqual(23);
+    expect(seen).toBeGreaterThanOrEqual(24);
   });
   it('LOCAL_AMENDMENTS.md names every amendment id', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
@@ -3681,7 +3696,7 @@ describe('local design amendments (spec D15)', () => {
 });
 ```
 
-- [ ] **Step 2: Run — RED** — `cd frontend && npx vitest run tests/design-amendments.test.ts`. Expected: the second case fails (`AMENDED` still equals the pristine file), the third fails (no uppercase on display headings), the fourth fails (`LOCAL_AMENDMENTS.md` missing). The first must PASS as written (it measures the derivation, not the tree) — if it fails, the derivation does not match the V7 review's numbers: stop and report the actual count and the unexpected elements, do not tune the number.
+- [ ] **Step 2: Run — RED** — `cd frontend && npx vitest run tests/design-amendments.test.ts`. Expected: the second case fails (`AMENDED` still equals the pristine file), the third fails (no uppercase on display headings), the fourth fails (`LOCAL_AMENDMENTS.md` missing). The first must PASS as written (it measures the derivation, not the tree; corrected 2026-09-07 after the first V13 attempt's STOP: the earlier code strip-and-appended declarations, which produced 35 reorder-only no-ops, and the spec wrongly excluded `{{ m.v }}`, which V2 does set uppercase) — if it fails, stop and report the actual count and the unexpected elements, do not tune the number.
 
 - [ ] **Step 3: Apply A1 and write `LOCAL_AMENDMENTS.md`**
 
@@ -3702,7 +3717,7 @@ writeFileSync(AMENDED, applyAmendments(readFileSync(PRISTINE, 'utf8'), amendment
 
 | Id | Date | John's ruling | What changes |
 |---|---|---|---|
-| A1 | 2026-09-07 | "keep the V2 header and do not restyle header or fonts" | 25 template elements: every display-size heading paired with V2 takes V2's `text-transform`/`letter-spacing`; `{{ resultHeadline }}` takes V2's whole style (19 px, 800, `.02em`, navy); `{{ md.mdHeadline }}` follows V2's rule. No script, no `_ds/**`, no site header (byte-identical V2↔V3 already). |
+| A1 | 2026-09-07 | "keep the V2 header and do not restyle header or fonts" | 24 template elements: every display-size heading paired with V2 takes V2's `text-transform`/`letter-spacing`; `{{ resultHeadline }}` takes V2's whole style (19 px, 800, `.02em`, navy); the key-fact values `{{ m.v }}` return to V2's uppercase `.005em`. No script, no `_ds/**`, no site header (byte-identical V2↔V3 already). |
 ```
 
 - [ ] **Step 4: Regenerate and re-baseline** — `npm run gen:app` (App.vue/pseudo.css/logic.js; `git diff --stat -- src/logic.js` must be EMPTY — A1 touches no script), `npx vitest run` (all drift tests green), `npm run test:visual:baselines && npm run test:e2e` (28 visual at zero diffs, 28 DOM, 24 smoke). Expected first run: visual/DOM RED on every heading screen until the baselines regenerate; GREEN after.
@@ -3717,7 +3732,7 @@ python3 -c "import json;a=json.load(open('/tmp/manifest-v2.json'))['screens'];b=
 
 Expected: `SAME` for every screen whose only V3 change was typography (the V7 review classified twelve movers as typography-only and `mobile-list` as unmoved). Commit the regenerated `baseline-manifest.json`; the `baseline-manifest.test.ts` platform detector stays. Any `MOVED` screen: run the DOM diff and the pixel diff for it, put the residual (changed properties, elements) in the report, and STOP on that screen for John — do not re-base it silently.
 
-- [ ] **Step 6: Docs** — CLAUDE.md: the paragraph beginning "`docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html` is kept as the **pre-V3 oracle**" becomes: the V3 file is the approved design **plus the local amendments listed in `LOCAL_AMENDMENTS.md` (spec D15)** — A1 restores V2's display typography on John's ruling, so the thirteen non-Browse screens are byte-identical to V2 again where Step 5 said SAME; the V2 file remains the pre-V3 oracle. `reference-bundle.test.ts`: file list gains the two new files. `cross-plan-deltas.test.ts`: pin the CLAUDE.md sentence.
+- [ ] **Step 6: Docs** — CLAUDE.md: the paragraph beginning "`docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html` is kept as the **pre-V3 oracle**" becomes: the V3 file is the approved design **plus the local amendments listed in `LOCAL_AMENDMENTS.md` (spec D15)** — A1 restores V2's display typography on John's ruling, so the thirteen non-Browse screens are byte-identical to V2 again where Step 5 said SAME; the V2 file remains the pre-V3 oracle. Also CLAUDE.md's gate item (2) sentence "option A makes it the proof of zero regression on the thirteen non-Browse screens" → "the DOM oracle is the secondary proof of zero regression on the thirteen non-Browse screens; after V13 they are byte-identical to V2 again". `reference-bundle.test.ts`: file list gains the two new files. `cross-plan-deltas.test.ts`: pin the CLAUDE.md sentence.
 
 - [ ] **Step 7: Gate and commit** — full frontend gate (`npm run typecheck && npx vitest run --coverage && npm run build && npm run test:smoke && npm run test:visual:baselines && npm run test:e2e`); backend untouched (`git diff --stat -- app scripts migrations tests` empty). Commits: `design(amend): A1 — V2 display typography on John's ruling; pristine Rev 2 frozen; amendment test`, then `test(visual): re-baseline from the amended reference; thirteen back to V2 hashes`, then `docs: CLAUDE.md option B`. Explicit pathspecs, trailer.
 
