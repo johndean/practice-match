@@ -9,7 +9,7 @@ from pathlib import Path
 import anyio
 import httpx
 from argon2 import PasswordHasher
-from argon2.exceptions import InvalidHashError, VerifyMismatchError
+from argon2.exceptions import InvalidHashError, VerificationError
 from zxcvbn import zxcvbn
 
 from app.config import settings
@@ -31,13 +31,45 @@ def validate(pw: str, *, privileged: bool) -> None:
         raise PasswordPolicyError(f"Use at least {floor} characters.")
     if len(pw) > MAX_LEN:
         raise PasswordPolicyError(f"Use at most {MAX_LEN} characters.")
-    if zxcvbn(pw)["score"] < MIN_SCORE:
+    # max_length: zxcvbn's own default is 72 and it raises a bare ValueError above it —
+    # the policy allows up to MAX_LEN, so the whole 73-MAX_LEN window must be scored (C1).
+    if zxcvbn(pw, max_length=MAX_LEN)["score"] < MIN_SCORE:
         raise PasswordPolicyError("Choose a stronger password — longer phrases beat symbols.")
 
 
 @lru_cache(maxsize=1)
 def _offline() -> frozenset[str]:
-    return frozenset(l.strip() for l in (Path(__file__).parent / "data" / "top100k.txt").read_text(encoding="utf-8", errors="ignore").splitlines())
+    """The bundled NCSC top-100k list (see data/PROVENANCE.md). Blank lines are skipped —
+    the file has one, and the empty string is junk in a security list (M1); decode errors
+    are NOT ignored, so a non-UTF-8 replacement fails loudly instead of corrupting entries
+    (M2). tests/auth/test_passwords.py pins the file's SHA-256 and the loaded count."""
+    text = (Path(__file__).parent / "data" / "top100k.txt").read_text(encoding="utf-8")
+    return frozenset(stripped for line in text.splitlines() if (stripped := line.strip()))
+
+
+_shared_client: httpx.Client | None = None
+
+
+def _make_client() -> httpx.Client:
+    return httpx.Client(timeout=2.0)
+
+
+def _client() -> httpx.Client:
+    """One lazily created, process-wide HIBP client — a fresh one per call leaked a
+    connection pool and paid a fresh TLS handshake on every signup/reset/change (I2).
+    Built through `_make_client`, the same factory seam app/cache.py uses, so tests can
+    patch it without reaching into httpx."""
+    global _shared_client
+    if _shared_client is None:
+        _shared_client = _make_client()
+    return _shared_client
+
+
+def _degrade(reason: str) -> None:
+    """Decision A4: on error OR when disabled, the bundled list is the screen and a
+    warning says so. `reason` is a module.Type or a setting name — never any part of the
+    password (I8)."""
+    log.warning("hibp screen unavailable (%s); using the bundled offline list", reason)
 
 
 def is_pwned(pw: str, http: httpx.Client | None = None) -> bool:
@@ -45,11 +77,17 @@ def is_pwned(pw: str, http: httpx.Client | None = None) -> bool:
     digest = hashlib.sha1(pw.encode()).hexdigest().upper()
     if settings.hibp_enabled:
         try:
-            client = http or httpx.Client(timeout=2.0)
+            client = http if http is not None else _client()
             r = client.get(HIBP_URL + digest[:5]); r.raise_for_status()
             return any(line.split(":")[0] == digest[5:] for line in r.text.splitlines())
-        except Exception as e:  # noqa: BLE001 — degrade to the offline list
-            log.warning("hibp unavailable (%s); using offline list", type(e).__name__)
+        # Deliberately broad: decision A4 is that nothing about the HIBP screen may fail a
+        # signup. The directive is load-bearing, not dead as fix round 1's finding M3
+        # assumed — BLE001 IS in ruff 0.16.6's enabled set for this config and
+        # `ruff check` fails without it. Referred back to the controller.
+        except Exception as e:  # noqa: BLE001
+            _degrade(f"{type(e).__module__}.{type(e).__qualname__}")
+    else:
+        _degrade("settings.hibp_enabled=False")
     return pw in _offline()
 
 
@@ -60,7 +98,9 @@ def hash_password(pw: str) -> str:
 def verify(pw: str, hashed: str) -> bool:
     try:
         return _ph.verify(hashed, pw)
-    except (VerifyMismatchError, InvalidHashError):
+    # VerifyMismatchError subclasses VerificationError, which also covers a stored hash
+    # with a parseable prefix but an undecodable body ("Decoding failed") — I1.
+    except (VerificationError, InvalidHashError):
         return False
 
 
@@ -77,3 +117,10 @@ async def hash_async(pw: str) -> str:
 
 async def verify_async(pw: str, hashed: str) -> bool:
     return await anyio.to_thread.run_sync(verify, pw, hashed)
+
+
+async def is_pwned_async(pw: str, *, http: httpx.Client | None = None) -> bool:
+    """`is_pwned` is a blocking network call with a 2 s timeout; async callers must not
+    run it on the event loop (I3) — every other request would queue behind a degraded
+    HIBP for the full timeout."""
+    return await anyio.to_thread.run_sync(is_pwned, pw, http)

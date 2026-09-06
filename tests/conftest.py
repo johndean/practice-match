@@ -13,6 +13,13 @@ import httpx
 import pytest
 from httpx import ASGITransport
 
+# Imported at module level, before any test runs: app.db calls psycopg2.extras.register_uuid()
+# at import (Task I2 ruling), and the `conn` fixture below connects with psycopg2 directly, so
+# without this the FIRST test of a fresh process reads uuid columns as str. The registration is
+# global and applies at fetch time, so this one import covers every direct psycopg2.connect() in
+# the suite. `_dispose_pools` uses the same module for dispose_all().
+import app.db
+
 
 @pytest.fixture
 def dist(tmp_path: Path) -> Path:
@@ -71,9 +78,7 @@ async def _dispose_pools():
     event loop before that loop closes at teardown (round 4: production code no
     longer monkeypatches loop.close to do this — see app/db.py)."""
     yield
-    from app.db import dispose_all  # imported lazily, as `client` does
-
-    await dispose_all()
+    await app.db.dispose_all()
 
 
 import uuid

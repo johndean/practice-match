@@ -3,15 +3,11 @@ from __future__ import annotations
 import hashlib
 import secrets
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import timedelta
 from typing import cast
 from uuid import UUID
 
 import psycopg2.extensions
-
-# app.db registers psycopg2.extras.register_uuid() at import (Task I2 ruling); every uuid
-# column this module and app.auth.sessions read/write must come back as uuid.UUID, not str.
-import app.db  # noqa: F401
 
 
 def new_secret(nbytes: int = 32) -> tuple[str, str]:
@@ -26,8 +22,10 @@ def hash(raw: str) -> str:  # the module's own name for it; A-rules are not enab
 def issue_email_token(conn: psycopg2.extensions.connection, account_id: UUID, purpose: str, ttl: timedelta) -> str:
     raw, h = new_secret()
     with conn.cursor() as cur:
-        cur.execute("INSERT INTO email_token (account_id, purpose, token_hash, expires_at) VALUES (%s,%s,%s,%s)",
-                    (account_id, purpose, h, datetime.now(UTC) + ttl))
+        # now() + interval, not the app clock: one clock owns both the write and the
+        # `expires_at > now()` read, so container drift cannot lengthen a link (M4).
+        cur.execute("INSERT INTO email_token (account_id, purpose, token_hash, expires_at) VALUES (%s,%s,%s, now() + %s::interval)",
+                    (account_id, purpose, h, ttl))
     return raw
 
 
@@ -50,8 +48,8 @@ class ApiPrincipal:
 def issue_api_token(conn: psycopg2.extensions.connection, *, name: str, role: str, created_by: UUID, ttl: timedelta) -> str:
     secret, h = new_secret()
     with conn.cursor() as cur:
-        cur.execute("INSERT INTO api_token (name, role, token_hash, created_by, expires_at) VALUES (%s,%s,%s,%s,%s) RETURNING id",
-                    (name, role, h, created_by, datetime.now(UTC) + ttl))
+        cur.execute("INSERT INTO api_token (name, role, token_hash, created_by, expires_at) VALUES (%s,%s,%s,%s, now() + %s::interval) RETURNING id",
+                    (name, role, h, created_by, ttl))
         # RETURNING id on a just-inserted row always yields exactly one row.
         tid = cast("tuple[UUID]", cur.fetchone())[0]
     return f"pm_{tid}.{secret}"

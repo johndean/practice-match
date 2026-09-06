@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import datetime, timedelta
 from typing import Literal, cast
 from uuid import UUID
 
@@ -42,18 +42,31 @@ def _load(conn: psycopg2.extensions.connection, h: str) -> Principal | None:
 
 def _cache_set(r: redis_sync.Redis, p: Principal) -> None:
     h = cast(str, p.session_hash)  # only ever called with a Principal freshly loaded/cached for a session, never None
+    index = f"account:{p.account_id}:sessions"
+    # Index FIRST, principal second (I4): a concurrent invalidate_account reads the index
+    # to find what to delete, so a principal that is written before it is indexed can be
+    # missed entirely and then survive the full CACHE_TTL — the account is suspended but
+    # keeps its state and roles for another minute.
+    r.sadd(index, h)
+    # The index cannot outlive the sessions it points at: without this it never expired
+    # and grew one dead 64-char hash per sign-in, forever (I5).
+    r.expire(index, int(ABSOLUTE.total_seconds()))
     r.set(f"session:{h}", json.dumps({"a": str(p.account_id), "s": p.state, "r": sorted(p.roles), "re": p.reauth_at.isoformat() if p.reauth_at else None}), ex=CACHE_TTL)
-    r.sadd(f"account:{p.account_id}:sessions", h)
 
 
 def create(conn: psycopg2.extensions.connection, r: redis_sync.Redis, account_id: UUID, ip: str | None, ua: str | None) -> str:
     raw, h = tokens.new_secret()
     with conn.cursor() as cur:
-        cur.execute("INSERT INTO session (id_hash, account_id, expires_at, ip, user_agent) VALUES (%s,%s,%s,%s,%s)",
-                    (h, account_id, datetime.now(UTC) + ABSOLUTE, ip, ua))
+        # now() + interval, not the app clock: `expires_at` is read back as
+        # `expires_at > now()`, so one clock must own both ends (M4).
+        cur.execute("INSERT INTO session (id_hash, account_id, expires_at, ip, user_agent) VALUES (%s,%s, now() + %s::interval,%s,%s)",
+                    (h, account_id, ABSOLUTE, ip, ua))
     p = _load(conn, h)
-    if p:
-        _cache_set(r, p)
+    # Not a guard: the row was just inserted on this autocommit connection, is not revoked
+    # and cannot be expired or idle, so _load matches it. Asserted rather than branched on
+    # so the impossible leg does not sit in the coverage report forever (review ⚠️ A).
+    assert p is not None, "_load cannot miss the session row create() just inserted"
+    _cache_set(r, p)
     return raw
 
 
@@ -84,15 +97,22 @@ def set_reauth(conn: psycopg2.extensions.connection, r: redis_sync.Redis, p: Pri
 def revoke(conn: psycopg2.extensions.connection, r: redis_sync.Redis, raw: str) -> None:
     h = hash_id(raw)
     with conn.cursor() as cur:
-        cur.execute("UPDATE session SET revoked_at = now() WHERE id_hash = %s", (h,))
+        cur.execute("UPDATE session SET revoked_at = now() WHERE id_hash = %s RETURNING account_id", (h,))
+        row = cur.fetchone()
     r.delete(f"session:{h}")
+    if row:
+        r.srem(f"account:{row[0]}:sessions", h)  # prune the index too, not just the cached principal (I5)
 
 
 def invalidate_account(r: redis_sync.Redis, account_id: UUID) -> None:
     key = f"account:{account_id}:sessions"
-    for h in cast("set[bytes | str]", r.smembers(key)):
-        r.delete(f"session:{h.decode() if isinstance(h, bytes) else h}")
+    members = cast("set[bytes | str]", r.smembers(key))
+    # Index FIRST, members second (I4): a `_cache_set` racing this then re-creates the
+    # index around its own session instead of having its SADD wiped a moment later, so
+    # the next invalidation can still find it.
     r.delete(key)
+    if members:  # one DELETE for every cached principal, not one round trip each (M10)
+        r.delete(*(f"session:{h.decode() if isinstance(h, bytes) else h}" for h in members))
 
 
 def revoke_all(conn: psycopg2.extensions.connection, r: redis_sync.Redis, account_id: UUID) -> None:
