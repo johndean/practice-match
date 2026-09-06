@@ -32,12 +32,20 @@ No other test is deleted anywhere in this plan.
 
 **(e) Zero pixel tolerance, never relaxed.** `frontend/tests/playwright.config.ts` stays at `maxDiffPixels: 0`. A failure is the change being wrong, not the gate being strict (spec D7). Relaxing it requires a recorded reason and John's sign-off, which this plan does not grant.
 
-**(f) The unchanged screens must be byte-identical.** Thirteen baseline names (spec D6):
+**(f) The thirteen non-Browse screens — how zero regression is proved (amended 2026-09-07, option A).** The screens the bundle names as untouched are:
 `mobile-list`, `mobile-detail`, `detail`, `requests`, `seller-dash`, `wizard-step-1`, `wizard-step-7`, `wizard-preview`, `wizard-done`, `admin-users`, `admin-listings`, `admin-requests`, `admin-data-sources`.
+(Thirteen, not fifteen: `header-1100` and `header-1000` run `steps: browse` — they are Browse screenshots at 1100 and 1000 px, and README §2 names those widths as the states that prove V3's short-column collapse.)
 
-**Thirteen, not fifteen.** `header-1100` and `header-1000` run `steps: browse` — they are Browse screenshots at 1100 and 1000 px and are *expected to change*, with `mobile-map` and the Browse states. The bundle's `DEAD_CODE_CHECKLIST` lists them as byte-identical, but its own `README.md` §2 requires those widths to prove V3's short-column collapse in the market panel; §2 wins (spec D6). They are re-baselined in Task V9 and eyeballed there for the collapse behaviour.
+**The byte-identical rule for these thirteen is retired for this sub-project.** V7's review established the cause: the V3 design deliberately drops `text-transform: uppercase` and its positive letter-spacing on **every** display-size heading — 26 of 26, with micro-label uppercase preserved and extended, and `_ds/**` byte-identical to V2's — so twelve of the thirteen move on typography alone, no matter how surgical the port is. The bundle's `CHANGE_LOG` C14 and `DEAD_CODE_CHECKLIST:60-62` are simply wrong about this, and **the approved design is the authority for every pixel** (controller ruling, John informed; spec D6/D11 amended).
 
-The thirteen baseline PNG SHA-256s are captured in a manifest **before** anything else changes (Task V1) and re-verified at the end of Tasks V7, V9, V10 and after **every** deletion commit in V11. `mobile-map` is expected to change completely (C13). A movement in any of the thirteen means the port leaked into shared code: **stop and diff** (C14, spec D6).
+Zero regression for the thirteen is therefore proved two ways instead, both regenerated from V3 in Task V9:
+
+1. **DOM oracle** — each of the thirteen must be **node-for-node identical** to the V3 reference's own DOM (`dom.spec.ts` against `dom-snapshots/`). V7's review verified this holds 13 of 13 today: the app's structure, attributes, classes, inline styles and text match the reference exactly. This is the real leak detector — a port that reached into shared code changes the DOM, not just the type.
+2. **Pixel gate** — each of the thirteen must match the **V3 reference** at `maxDiffPixels: 0` (`visual.spec.ts`). Tolerance is never relaxed (Global Constraint (e)).
+
+**The hash manifest survives, re-based.** `frontend/tests/baseline-manifest.json` was frozen in Task V1 over `main`'s V2 oracles and did its job as the leak detector through V7. In Task V9, after every state is re-baselined from V3 and both gates above are green, the manifest is **regenerated from the new V3 baselines** for the same thirteen screens and committed. From that point it is the leak detector for Task V10 and for **every** deletion commit in Task V11: a moved hash there means a code change moved a screen the design did not, which is still a stop-and-diff. Same platform, within the worktree, per spec D13 — it is not a CI oracle and is never re-run to make a mismatch disappear.
+
+`mobile-map`, the Browse states and the two header states change by design (C13, README §2) and are not in the manifest at all.
 
 **(g) 100 % hand-written frontend coverage.** `npx vitest run --coverage` at 100 % lines, branches, functions and statements on every hand-written file under `frontend/src/**`. **`npm test` is `vitest run` *without* `--coverage`, so it measures nothing** — every gate block in this plan therefore ends `npm run typecheck && npm test && npm run build && npx vitest run --coverage`, in that order (`bundle-budget.test.ts` reads `dist/_app`, so the build must precede the coverage run). The documented exclusions in `frontend/vite.config.ts` (`src/App.vue`, `src/app.setup.js`, `src/logic.js`, `src/dc-logic.js`, `src/generated/**`, `src/lib/**`, `src/map/engine.ts`, `src/map/testing/**`, tests and `.d.ts`) are the convention and are **not** widened by this plan. New hand-written files — `frontend/src/map/mosaic.js` — are covered at 100 %.
 
@@ -70,8 +78,8 @@ Push to both `origin` (vin-swe/practice-match) and `production` (johndean/practi
 | File | Kind | Responsibility | Task |
 |---|---|---|---|
 | `docs/design-reference/design_handoff_practice_match_v3/**` | reference (never shipped) | the V3 authority + mirrored `_ds/`, `vendor/`, `doc-page.js` | V1 |
-| `docs/design-reference/design_handoff_practice_match_v2/**` | reference (never shipped) | **kept** — the regression oracle for the thirteen unchanged screens | untouched |
-| `frontend/tests/baseline-manifest.mjs` / `.json` / `.test.ts` | gate (new) | SHA-256 manifest of the thirteen unchanged baselines; the within-worktree leak detector | V1 |
+| `docs/design-reference/design_handoff_practice_match_v2/**` | reference (never shipped) | **kept** — the pre-V3 oracle: it seeds Task V1's manifest and is what a regression is diffed against | untouched |
+| `frontend/tests/baseline-manifest.mjs` / `.json` / `.test.ts` | gate (new) | SHA-256 manifest of the thirteen non-Browse baselines: frozen over V2's oracles in V1 (leak detector through V7), **regenerated from the V3 baselines in V9**, then the leak detector for V10 and every V11 deletion | V1, V9 |
 | `frontend/tests/reference-bundle.test.ts` | gate (new) | the V3 folder is complete and its mirrored files are byte-identical to V2's | V1 |
 | `frontend/tests/design-source.test.ts` | gate (new) | every pointer at "the approved design" names V3 | V2, V7 |
 | `frontend/package.json` | tooling | `gen:app` reference path | V2 |
@@ -114,6 +122,8 @@ Push to both `origin` (vin-swe/practice-match) and `production` (johndean/practi
 **Interfaces:**
 - Consumes: nothing from an earlier task — this is the first task on the branch.
 - Produces: `frontend/tests/baseline-manifest.mjs` exports `UNCHANGED_SCREENS: string[]` (the thirteen names from Global Constraint (f)), `SNAPSHOT_DIR: string` (absolute path to `frontend/tests/visual.spec.ts-snapshots`), `MANIFEST_PATH: string` (absolute path to `frontend/tests/baseline-manifest.json`), `hashBaselines(): Record<string, string>` (screen name → lowercase hex SHA-256 of `<name>-<platform>.png`), and `writeManifest(): void`. Running the file as a script (`node tests/baseline-manifest.mjs`) calls `writeManifest()`. The manifest JSON is `{ "platform": string, "screens": Record<string, string> }`. Later tasks re-run `npx vitest run tests/baseline-manifest.test.ts` unchanged; **the manifest is written exactly once, here, and never regenerated by a later task.**
+
+> **Superseded in part (recorded 2026-09-07 — V1's steps below are exactly what was executed and are left as the record).** The Interfaces line above says the manifest is "written exactly once, here, and never regenerated by a later task", and Steps 3 and 5 say the same in the file's own comments and in prose. That held through Task V7 and the manifest did its job there. It no longer holds from Task V9: V7's review established that the V3 design deliberately restyles every display-size heading, so the V2 hashes frozen here cannot survive re-baselining and byte-identity is not how zero regression is proved for those screens any more (Global Constraint (f), spec D6 option A). **Task V9 Step 8 re-bases this manifest onto the V3 baselines — once — and rewrites both header comments to say so.** It is still never regenerated to make a test pass, and never a third time.
 
 - [ ] **Step 0: Produce the pre-V3 oracles in this worktree**
 
@@ -2205,6 +2215,12 @@ Expected: 13 passed, for the same reason.
 
 Expected RED, and made green in Task V9: `browse-listings`, `browse-market`, `browse-market-layers-closed`, `browse-market-panel`, `mobile-map`, `interest-modal`, **`header-1100` and `header-1000`** (visual + DOM), and `smoke.spec.ts`'s `'a deep link is honoured after the fixture sign-in'` and `'navigation writes the URL'` (they click `'Market Data'` and assert `'Data Layers'`). The two header states are Browse screenshots at 1100 and 1000 px — README §2 requires V3 to change them, so their failing here is the design working, not a leak (spec D6). Record the failing list; nothing else may be red.
 
+> **What actually happened at Step 8 (recorded 2026-09-07 — the step's prediction was wrong, and the finding is the reason V9 changed).** Not six states went red: **24 of the 25** did, and the thirteen "unchanged" screens were among them. The cause is not a leak. The V3 design deliberately drops `text-transform: uppercase` and its positive letter-spacing on every display-size heading (26 of 26; micro labels keep and extend theirs; `_ds/**` is byte-identical to V2's), so every screen carrying a display heading re-renders in mixed case against a V2 oracle. `mobile-list` alone survived, because it carries no display-size heading. `mobile-detail` failed for a second, unrelated reason: its harness step no longer navigates on the V3 reference's own runtime, which is a `screens.ts` defect fixed in V9 Step 1.
+>
+> Two things were verified before accepting it: the app's DOM is **node-for-node identical** to the V3 reference's on all thirteen (the DOM oracle, 13 of 13), and `_ds/**` did not move. So the app renders exactly what the approved design renders, and the bundle's C14 / `DEAD_CODE_CHECKLIST:60-62` byte-identical claim is wrong. Controller ruling, John informed: **option A — accept V3's typography; the approved design is the authority for every pixel** (spec D6/D11 amended).
+>
+> **No re-baselining happened in V7, and that was correct** — baselines and the manifest belong to Task V9, in one commit with the screen list (README §7's own mitigation). Read Step 8's expected-red list as superseded: it named the states that would go red *if only the port had changed*, and the design changed too.
+
 - [ ] **Step 9: Commit**
 
 ```bash
@@ -2416,14 +2432,18 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ### Task V9: The screen list and the regenerated oracles
 
 **Files:**
-- Modify: `frontend/tests/screens.ts`
-- Regenerate (git-ignored, worktree only): `frontend/tests/visual.spec.ts-snapshots/**` (PNGs)
-- Regenerate (git-ignored, worktree only): `frontend/tests/dom-snapshots/**`
+- Modify: `frontend/tests/screens.ts` (the Browse block, the `browse-layers-closed` rename, **and the `mobile-detail` step, which no longer navigates on the V3 reference**)
+- Regenerate (git-ignored, worktree only): `frontend/tests/visual.spec.ts-snapshots/**` (PNGs) — **every** state, not a subset
+- Regenerate (git-ignored, worktree only): `frontend/tests/dom-snapshots/**` — **every** state
 - Delete from the worktree: the `browse-listings`, `browse-market` and `browse-market-layers-closed` PNG/JSON pairs
+- Regenerate and commit: `frontend/tests/baseline-manifest.json` (the thirteen non-Browse screens, re-based on the V3 baselines)
+- Modify: `frontend/tests/baseline-manifest.mjs` and `frontend/tests/baseline-manifest.test.ts` (their header comments only — the script's logic and the three assertions are unchanged; the test reads whatever the manifest holds)
 
 **Interfaces:**
 - Consumes: the regenerated app (Task V7), the V3-serving reference server (Task V2), the V3 router (Task V8).
-- Produces: `SCREENS` with **27** entries (25 − 2 collapsed + 3 new). Names Tasks V10–V12 depend on: `browse`, `browse-layer-menu`, `browse-compare-open`, `browse-legend-collapsed`, `browse-layers-closed`, `browse-market-panel`, `mobile-map`. The `market` helper is deleted; `browse`, `wizard`, `admin` and `mobile` helpers stay.
+- Produces: `SCREENS` with **27** entries (25 − 2 collapsed + 3 new). Names Tasks V10–V12 depend on: `browse`, `browse-layer-menu`, `browse-compare-open`, `browse-legend-collapsed`, `browse-layers-closed`, `browse-market-panel`, `mobile-map`. The `market` helper is deleted; `browse`, `wizard`, `admin` and `mobile` helpers stay. Also produces the **re-based** `frontend/tests/baseline-manifest.json` — same thirteen screen names, same `{ platform, screens }` shape, new hashes taken from the V3 baselines — which Tasks V10 and V11 compare against unchanged.
+
+> **Every state is re-baselined here, not eight (amended 2026-09-07, option A; spec D6).** V7's review established that the V3 design deliberately drops `text-transform: uppercase` and its positive letter-spacing on all 26 display-size headings (micro labels keep and extend theirs; `_ds/**` unchanged), so the thirteen screens the bundle calls untouched move on typography alone — 24 of 25 states went red at V7 Step 8 for that one reason. The app's DOM was verified node-for-node identical to the V3 reference's on all thirteen, so this is the design changing, not the port leaking. `npm run test:visual:baselines` regenerates **all 27** oracles from V3; the thirteen are then proved by the DOM oracle and the pixel gate against V3 (Global Constraint (f)), and the hash manifest is re-based onto the new baselines in Step 8.
 
 > **`browse-market-layers-closed` is renamed `browse-layers-closed`** (spec D12). README Task 8 says only "update the label" (V3's button reads **Layers** with a count pill, `Practice Match V3.dc.html:519-524`), but with the Listings/Market Data split gone the `-market-` infix means nothing and the old name is actively misleading — V3's drawer *opens* on that click. The rename orphans a third baseline pair, disposed of in Step 4. `SCREENS` still holds **27** entries.
 
@@ -2488,7 +2508,19 @@ export const SCREENS: Screen[] = [
   { name: 'admin-data-sources', steps: async (p) => { await admin(p); await btn(p, /^Data Sources\s*\d/).click(); } },
   { name: 'mobile-list', steps: mobile },
   { name: 'mobile-map', steps: async (p) => { await mobile(p); await click(p, 'Map'); await waitMap(p); } },
-  { name: 'mobile-detail', steps: async (p) => { await mobile(p); await p.getByText('Cedar Park').first().click(); } },
+  // V3's mobile result card is the whole `<div onClick="{{ p.open }}">`
+  // (Practice Match V3.dc.html:1344-1355); the area name inside it is a plain <div>, and
+  // clicking that text alone no longer reaches the card's handler on the V3 reference's own
+  // runtime (V7 Step 8: `mobile-detail` failed to navigate on BOTH targets). Click the card
+  // itself — the design's own `cursor: pointer` inline style is on exactly that element and
+  // is ported byte-identically — then wait for the detail screen's own "Exterior photo" band
+  // (V3:1522), which exists on the reference and the app alike, so the step can never
+  // silently no-op again.
+  { name: 'mobile-detail', steps: async (p) => {
+      await mobile(p);
+      await p.locator('div[style*="cursor: pointer"]').filter({ hasText: 'Cedar Park' }).first().click();
+      await p.getByText('Exterior photo').first().waitFor({ state: 'visible' });
+    } },
   { name: 'header-1100', viewport: { width: 1100, height: 940 }, steps: browse },
   { name: 'header-1000', viewport: { width: 1000, height: 940 }, steps: browse }
 ];
@@ -2496,21 +2528,21 @@ export const SCREENS: Screen[] = [
 
 - [ ] **Step 2: Prove each new state's steps against the reference before trusting them**
 
-The steps run identically on the reference and the app, so a wrong selector fails on both and is invisible in a diff. Verify the three new states on the reference first:
+The steps run identically on the reference and the app, so a wrong selector fails on both and is invisible in a diff — which is exactly how `mobile-detail`'s broken step survived to V7. Verify the three new states **and the repaired `mobile-detail`** on the reference first:
 
 ```bash
 cd frontend
 npx playwright test --config=tests/playwright.config.ts --project=reference reference-baselines.spec.ts \
-  -g "browse-layer-menu|browse-compare-open|browse-legend-collapsed"
+  -g "browse-layer-menu|browse-compare-open|browse-legend-collapsed|mobile-detail"
 ```
-Then open the three PNGs under `frontend/tests/visual.spec.ts-snapshots/` and confirm by eye: the layer menu is open with its ramp chips; Compare is open showing the eyebrow, the second control and the six-row bar chart; the What-this-means card is gone. **If a step timed out or the state does not match the design, fix the step — never the tolerance** (Global Constraint (e)).
+Then open the four PNGs under `frontend/tests/visual.spec.ts-snapshots/` and confirm by eye: the layer menu is open with its ramp chips; Compare is open showing the eyebrow, the second control and the six-row bar chart; the What-this-means card is gone; and **`mobile-detail` shows the listing detail — the "Exterior photo" band, the title, the price — not the results list**. If `mobile-detail` still shows the list, the card selector is wrong: re-read `Practice Match V3.dc.html:1344-1355` and pin the element that carries `onClick="{{ p.open }}"`. **If a step timed out or the state does not match the design, fix the step — never the tolerance** (Global Constraint (e)).
 
 - [ ] **Step 3: Regenerate every baseline and DOM snapshot from the V3 reference**
 
 ```bash
 cd frontend && npm run test:visual:baselines
 ```
-This runs the whole `reference` project — `reference-baselines.spec.ts` (the PNGs) and `reference-dom.spec.ts` (the DOM oracle's snapshots) — against the V3 reference server, for all 27 states.
+This runs the whole `reference` project — `reference-baselines.spec.ts` (the PNGs) and `reference-dom.spec.ts` (the DOM oracle's snapshots) — against the V3 reference server, for **all 27 states**. That includes the thirteen the bundle calls untouched: they are re-baselined here like everything else (spec D6, option A), because the V3 design restyled their headings. Do not filter this run.
 
 - [ ] **Step 4: Remove the three orphaned oracle pairs**
 
@@ -2528,17 +2560,44 @@ ls frontend/tests/visual.spec.ts-snapshots | grep -E 'browse'
 ```
 Expected exactly: `browse-darwin.png`, `browse-layer-menu-darwin.png`, `browse-compare-open-darwin.png`, `browse-legend-collapsed-darwin.png`, `browse-layers-closed-darwin.png`, `browse-market-panel-darwin.png` — and no `browse-listings`, `browse-market-darwin` or `browse-market-layers-closed`. (DEAD_CODE_CHECKLIST: "the orphaned baseline PNG … for whichever screen name you dropped — a stale oracle image is dead weight".)
 
-- [ ] **Step 5: Run the leak detector before looking at anything else**
+- [ ] **Step 5: Prove zero regression the two ways that now apply — DOM parity and the pixel gate, every state**
 
-Run: `cd frontend && npx vitest run tests/baseline-manifest.test.ts`
-Expected: PASS — all thirteen frozen SHA-256s unchanged after a full baseline regeneration.
-**If any hash moved, STOP and diff.** Do not re-run `baseline-manifest.mjs`; the manifest is the evidence, not the target (C14, spec D6). `header-1100` and `header-1000` are deliberately *not* in the manifest — they are Browse screenshots and are expected to have moved.
+The V1 manifest cannot pass here and must not be run as a gate: it holds V2 hashes, and the V3 design restyled the headings on twelve of the thirteen screens it covers (Global Constraint (f), spec D6). It is re-based in Step 8, **after** these two gates are green — never before, and never to make a mismatch disappear.
+
+Run the DOM oracle first: it is the real leak detector, because a port that reached into shared code changes structure, attributes, inline styles or text, and typography alone does not.
+
+```bash
+cd frontend
+npx playwright test --config=tests/playwright.config.ts --project=app dom.spec.ts
+```
+Expected: **27 passed** — every state node-for-node identical to the V3 reference, including all thirteen non-Browse screens. **A DOM failure on any of the thirteen is a leak: STOP and diff.** (V7's review verified 13 of 13 pass today; a regression here is new.)
+
+Then the pixel gate, at zero tolerance, unfiltered:
+
+```bash
+npm run test:visual
+```
+Expected: **27 passed** at `maxDiffPixels: 0`. Every state is compared against the V3 oracle regenerated in Step 3, so this proves the app renders exactly what the approved design renders. **Do not relax the tolerance** (Global Constraint (e)); a failure here is the port being wrong.
+
+Then the smoke suite, which also re-proves the repaired `mobile-detail` navigation on the app:
+
+```bash
+npm run test:smoke
+```
+Expected: green.
 
 - [ ] **Step 6: Eyeball the Browse pair by hand**
 
 The risk register's own mitigation: "regenerate baselines and app screenshots in the **same** commit, and eyeball the Browse pair by hand." Open `browse-darwin.png` and `browse-market-panel-darwin.png` and confirm against `Practice Match V3.dc.html` at 1440×940: the 300 px scrolling market column (C2), the ramp-chip layer menu (C3), the merged legend/insight card at `left: 16px; bottom: 22px; width: 360px` (C8), the navy Layers button with its `6 of 6` pill (C9), the nine result cards with wrapping meta rows and no horizontal scroll (C12), the mosaic shading and the single dashed ring (C5, C7), and the "Tiles © Esri" attribution (Global Constraint (h)).
 
 Then open `header-1000-darwin.png` (and `header-1100-darwin.png`) and confirm the **short-column collapse**: the legend/insight card yields before the controls column does. README §2 names those two widths as the states that prove this behaviour, which is why they are re-baselined here rather than frozen (spec D6). If the controls column collapses first, or either card overflows its column, the market panel's flex sizing is wrong — STOP.
+
+Finally, confirm the typography change is the design's and not an accident, one screen per class, each against `Practice Match V3.dc.html` open beside it:
+
+- **A display-size heading** — open `detail-darwin.png` (or `seller-dash-darwin.png`) and check the page heading renders in **mixed case with no added letter-spacing**, exactly as the reference does. That is the change that moved twelve of the thirteen (V7's review: 26 of 26 display headings restyled).
+- **A micro label** — on the same screen, check an eyebrow/kicker (the uppercase 9.5px/800 `.11em`-tracked labels, e.g. the market column's `COMPARE AGAINST`, the admin tabs' section eyebrows) is **still uppercase and still tracked**. Micro-label uppercase is preserved and extended in V3; if a micro label has lost its case, that is a real defect — STOP.
+
+If either class disagrees with the reference, the port is wrong, not the design.
 
 - [ ] **Step 7: Run the full previous gate**
 
@@ -2549,27 +2608,75 @@ npm run test:smoke
 npm run test:visual
 npx playwright test --config=tests/playwright.config.ts --project=app dom.spec.ts
 ```
-Expected: all green — 27 visual states at `maxDiffPixels: 0`, 27 DOM-oracle states, the smoke suite, and the unit suite including `baseline-manifest.test.ts`.
+Expected: all green — 27 visual states at `maxDiffPixels: 0`, 27 DOM-oracle states, the smoke suite, 100 % coverage on every hand-written file. `baseline-manifest.test.ts` is the **one** expected failure in `npm test` at this point: it still holds V2 hashes. Step 8 re-bases it; do not re-base it earlier, and do not skip the failure — read it, confirm the mismatching names are the twelve display-heading screens, then proceed.
 
 > **Acceptance (README Task 8, verbatim):** "`npm run test:smoke && npm run test:visual` green at zero tolerance."
 > **Rule (README Task 8, verbatim):** "Do not relax the tolerance in `tests/playwright.config.ts`; a failure here is the change being wrong, not the gate being strict."
 > **Zero-risk requirement (DEAD_CODE_CHECKLIST, verbatim):** "`npm run test:visual` green at zero tolerance, baselines regenerated in the same commit" and "`npm run test:smoke` green."
 > **C12 acceptance (verbatim):** "at 1440×940 no card row overflows and the page has no horizontal scroll." Confirmed by `browse` passing at zero tolerance against the reference at that viewport.
 
-- [ ] **Step 8: Commit the screens and the oracles together**
+- [ ] **Step 8: Re-base the hash manifest onto the V3 baselines**
 
-Only `screens.ts` is committable — both snapshot directories are git-ignored (spec D13), so naming them in `git add` errors with "paths are ignored by one of your .gitignore files".
+Only now — with the DOM oracle and the pixel gate green for all 27 states — does the manifest get rewritten. It keeps the same thirteen screen names and the same `{ platform, screens }` shape; only the hashes move, from V2's oracles to V3's. From here it guards Task V10 and every deletion commit in Task V11: a moved hash *there* means code moved a screen the design did not.
+
+First update the file's own header comment so the next reader cannot mistake this for "re-run it until it passes". In `frontend/tests/baseline-manifest.mjs`, replace the block comment above `SNAPSHOT_DIR` with:
+
+```js
+// Freezes the SHA-256 of every baseline PNG for the thirteen non-Browse screens. Written
+// TWICE and only twice: in Task V1 over main's V2 oracles (the leak detector through V7), and
+// again in Task V9 Step 8 over the V3 oracles, after the DOM oracle and the pixel gate proved
+// all 27 states against V3 — because the V3 design deliberately restyled every display-size
+// heading (V7 review, spec D6 option A), so the V2 hashes could not survive and byte-identity
+// is not how zero regression is proved for these screens any more. Read by
+// baseline-manifest.test.ts at the end of V10 and after every deletion commit in V11: a moved
+// hash THERE means a code change moved a screen the design did not. The PNGs it hashes are
+// git-ignored (.gitignore:6-7), so this is a within-worktree leak detector, not a CI oracle.
+// Never regenerate it a third time to make a test pass.
+```
+
+and in `frontend/tests/baseline-manifest.test.ts` replace its own header comment with:
+
+```ts
+// Global Constraint (f) / spec D6 (option A): the thirteen non-Browse screens. Their pixels are
+// NOT expected to be identical to V2's — the V3 design restyled every display-size heading —
+// so byte-identity is proved against the V3 baselines, re-based in Task V9 Step 8, and zero
+// regression is proved by the DOM oracle (node-for-node identical to the V3 reference) plus the
+// zero-tolerance pixel gate. From V9 onward a moved hash means a CODE change moved a screen the
+// design did not: stop and diff, never re-write the manifest.
+```
+
+The three assertions are unchanged — they read whatever the manifest holds.
+
+Then regenerate and verify:
 
 ```bash
-git add frontend/tests/screens.ts
-git commit -m "test(visual): one Browse state, three new V3 states, oracles regenerated
+cd frontend && node tests/baseline-manifest.mjs && npx vitest run tests/baseline-manifest.test.ts
+```
+Expected: PASS, 3 tests, and `git diff --stat frontend/tests/baseline-manifest.json` shows thirteen changed hashes with the same thirteen keys. **If a key appeared or vanished, `UNCHANGED_SCREENS` was edited — STOP**; the screen set is not this step's business.
+
+- [ ] **Step 9: Commit the screens and the re-based manifest together**
+
+The snapshot directories are git-ignored (spec D13), so naming them in `git add` errors with "paths are ignored by one of your .gitignore files"; `screens.ts` and the manifest are the committable half.
+
+```bash
+git add frontend/tests/screens.ts frontend/tests/baseline-manifest.mjs frontend/tests/baseline-manifest.json frontend/tests/baseline-manifest.test.ts
+git commit -m "test(visual): one Browse state, three new V3 states, every oracle regenerated
 
 browse-listings and browse-market collapse into \`browse\`; the drawer state is
 renamed browse-layers-closed and its click target is now \`Layers\` (spec D12);
 browse-layer-menu, browse-compare-open and browse-legend-collapsed are added for
-the states V2 had no equivalent for. Baselines and DOM snapshots are regenerated
-from the V3 reference in the same working tree (both directories are
-git-ignored), and the thirteen frozen unchanged-screen hashes are byte-identical.
+the states V2 had no equivalent for; mobile-detail's step now clicks the V3
+card's own onClick host and waits for the detail screen, instead of silently not
+navigating on either target.
+
+Every baseline and DOM snapshot is regenerated from the V3 reference in the same
+working tree (both directories are git-ignored), including the thirteen screens
+the bundle called untouched: V3 deliberately drops uppercase and letter-spacing
+on all 26 display-size headings, so the bundle's C14 and
+DEAD_CODE_CHECKLIST:60-62 byte-identical claim is wrong (spec D6, option A).
+Zero regression for those thirteen is proved by the DOM oracle - node-for-node
+identical to the V3 reference, 13 of 13 - and the zero-tolerance pixel gate. The
+hash manifest is re-based onto the V3 baselines and guards V10 and V11.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -2750,7 +2857,7 @@ npm run test:visual
 npx playwright test --config=tests/playwright.config.ts --project=app dom.spec.ts
 npx vitest run tests/baseline-manifest.test.ts
 ```
-Expected: all green, including the thirteen frozen hashes. In particular `mobile-list` and `mobile-detail` must still be byte-identical — C13: "The three mobile baselines will all move. `mobile-map` changes completely; `mobile-list` and `mobile-detail` should not — check them by hand." The manifest test is that check, automated; also open `mobile-map-darwin.png` and confirm by eye that it shows the shaded map, the compact key, the navy Market data button and no price pills or clusters.
+Expected: all green, including the thirteen hashes in the **V9-regenerated** manifest. In particular `mobile-list` and `mobile-detail` must be byte-identical *to their V3 baselines* — C13: "The three mobile baselines will all move. `mobile-map` changes completely; `mobile-list` and `mobile-detail` should not — check them by hand." Since V9 re-based the manifest onto V3, that check is now exact and automated: a moved hash here means this task's code moved a screen the design did not (Global Constraint (f)). Also open `mobile-map-darwin.png` and confirm by eye that it shows the shaded map, the compact key, the navy Market data button and no price pills or clusters.
 
 - [ ] **Step 5: Commit**
 
@@ -2782,6 +2889,8 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 **Interfaces:**
 - Consumes: Task V10 green (the ordering rule: "delete it and its import at `app.setup.js:4`, but only after Task 9 is green, and **in its own commit so a revert is one `git revert`**").
 - Produces: `frontend/src/map/markers.js` — and `frontend/src/map/markers.d.ts` — exporting exactly `practicePin` and `practiceCallout`; `MarkerLike`/`ClusterEntry` go with `clusterize`. `frontend/scripts/convert-dc.mjs`'s `COMPONENTS` map holds exactly `MarketMap`, `MarketMapV3` and `image-slot`. No engine surface changes: `MountOptions.scaleControl` and `engines/leaflet.ts`'s scale-control lines are **kept** — "No component passes `true` after this work, but it is one tested line and re-adding a scale bar is a product decision, not a code one."
+
+> **The manifest that guards these deletions is V9's, not V1's.** It was re-based onto the V3 baselines in Task V9 Step 8 (Global Constraint (f), spec D6): the thirteen non-Browse screens are no longer expected to match V2's pixels, because the V3 design restyled their headings. A moved hash in any commit below therefore means **this task's** deletion moved a screen — the leak detector working exactly as intended. Never re-base it again to clear a failure.
 
 > **What is already discharged elsewhere, and must be re-verified here, not re-done:** `router/sync.ts`'s `BROWSE_TABS`, the `browseMode` branch in `stateToRoute` and `RoutedState.browseMode` (Task V8) · `screens.ts`'s `market` helper and one of `browse-listings`/`browse-market`, plus the orphaned baseline PNGs (Task V9) · `MarketMapView.vue`'s `layers.competition` bubble pass and its `layers`/`valueLayer` props (Task V5) · every "Removed for you by the generator" line (Task V7).
 
@@ -2820,7 +2929,7 @@ grep -rn "ListingsMap" frontend/src            # expect: no hits
 cd frontend && npm run typecheck && npm test && npm run build && npx vitest run --coverage
 npx vitest run tests/baseline-manifest.test.ts
 ```
-Expected: all green, including `app-generated.test.ts` (App.vue is byte-identical to a fresh generation) and the thirteen frozen hashes.
+Expected: all green, including `app-generated.test.ts` (App.vue is byte-identical to a fresh generation) and the thirteen hashes in the V9-regenerated manifest.
 
 - [ ] **Step 4: Commit**
 
@@ -3031,7 +3140,7 @@ npm run test:visual
 npx playwright test --config=tests/playwright.config.ts --project=app dom.spec.ts
 npx vitest run tests/baseline-manifest.test.ts
 ```
-Expected: all green — 27 visual states at zero tolerance, 27 DOM states, the smoke suite including the seven mobile acceptance tests, 100 % coverage on every hand-written file, and the thirteen frozen hashes unchanged.
+Expected: all green — 27 visual states at zero tolerance, 27 DOM states, the smoke suite including the seven mobile acceptance tests, 100 % coverage on every hand-written file, and the thirteen hashes in the V9-regenerated manifest unchanged across all five deletion commits.
 
 - [ ] **Step 3: Prove the backend was never touched**
 
@@ -3126,10 +3235,11 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
     expect(md).toContain('licence');
   });
 
-  it('CLAUDE.md names the V2 folder as the regression oracle for the unchanged screens', () => {
+  it('CLAUDE.md records the V2 folder\'s role and V3\'s heading typography', () => {
     const md = readFileSync(join(ROOT, 'CLAUDE.md'), 'utf8');
     expect(md).toContain('design_handoff_practice_match_v2');
-    expect(md).toContain('regression oracle');
+    expect(md).toContain('pre-V3 oracle');
+    expect(md).toContain('display-size heading');
   });
 });
 ```
@@ -3138,6 +3248,8 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
 
 Run: `cd frontend && npx vitest run tests/cross-plan-deltas.test.ts`
 Expected: FAIL — six failures, the first reading `expected '…' not to contain "patch.browseMode === 'market'"`.
+
+> **A sixth delta, for the record: the bundle is wrong about C14.** `CHANGE_LOG.md` C14 ("Their baselines must be byte-identical. If one moves, the port leaked into shared code — stop and diff") and `DEAD_CODE_CHECKLIST.md:60-62` (the same claim in the zero-risk list) are **factually incorrect** about the V3 design they ship with. V7's review measured it: V3 deliberately drops `text-transform: uppercase` and its positive letter-spacing on **26 of 26** display-size heading styles, keeps and extends micro-label uppercase, and leaves `_ds/**` byte-identical — so twelve of the thirteen screens C14 names move on typography alone, while the app's DOM stays node-for-node identical to the V3 reference on all thirteen. The design is the authority for every pixel (controller ruling, John informed; spec D6/D11, option A). This is recorded here rather than edited into the bundle: **the handoff bundle is a delivered artefact and is never rewritten** — `reference-bundle.test.ts` would fail, and the next reader must see what was actually delivered. Anyone reading C14 in future reads this delta beside it.
 
 - [ ] **Step 3: Amend the identity plan, Task I7**
 
@@ -3227,6 +3339,8 @@ Re-grep for `ListingsMap` across the whole plan — the file list and the compon
 per-attach `zoomControl`/`scaleControl` differences (the V3 market map mounts both `false`) are handled by each engine's `setControls(opts)`
 ```
 
+Add one sentence to M5's own "what has already changed" context, so a Map-engines implementer does not chase a phantom regression: *"Browse V3 also restyled every display-size heading (V3 drops `text-transform: uppercase` and its letter-spacing on all 26; micro labels keep theirs), so every visual baseline in `frontend/tests/visual.spec.ts-snapshots/` was regenerated from the V3 design in Browse V3 Task V9 — including the screens the V3 bundle listed as untouched. There is no pre-V3 pixel oracle to compare against any more; the V3 reference is the oracle."*
+
 Add a sequencing note at the top of M5:
 
 ```markdown
@@ -3295,6 +3409,8 @@ Replace the basemap-licence open item with a single decision record:
 
 Add the same one-line reference in the map-engines plan §12 in place of its own duplicate open item.
 
+Add one sentence to the census plan's own rendering section, beside the rewritten table: *"Copy and type come from the V3 design, which drops `text-transform: uppercase` and its letter-spacing on every display-size heading and keeps it on micro labels; any layer name, bucket label or eyebrow this plan specifies is rendered in that system, not V2's."*
+
 Finally, record README §5's unaddressed requirement as a census-plan amendment — no task in this sub-project can discharge it, because V3 ships against fixtures, but it must not be lost. Add to the census plan's Task B6 integration contract:
 
 ```
@@ -3312,7 +3428,7 @@ licence-blocked layer as unavailable with its reason, not as an unchecked checkb
 Under "## Source of truth for the UI", after the (already repointed, Task V2) first line, add:
 
 ```markdown
-`docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html` is kept as the **regression oracle** for the thirteen screens V3 does not touch (`mobile-list`, `mobile-detail`, `detail`, `requests`, `seller-dash`, the four `wizard-*`, the four `admin-*`) — their baseline hashes are frozen in `frontend/tests/baseline-manifest.json`. `header-1100` and `header-1000` are *not* among them: they are Browse screenshots, which V3 changes. Retire the V2 folder only when that manifest retires.
+`docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html` is kept as the **pre-V3 oracle** — what a suspected regression is diffed against, not what the gates compare to. **Every** visual and DOM oracle is regenerated from the V3 design: V3 deliberately drops `text-transform: uppercase` and its positive letter-spacing on all 26 display-size heading styles (micro labels keep and extend theirs), so even the screens V3's own bundle listed as untouched moved, and its `CHANGE_LOG` C14 / `DEAD_CODE_CHECKLIST` byte-identical claim is wrong. Zero regression on those thirteen non-Browse screens (`mobile-list`, `mobile-detail`, `detail`, `requests`, `seller-dash`, the four `wizard-*`, the four `admin-*`) is proved by the DOM oracle — node-for-node identical to the V3 reference — plus the zero-tolerance pixel gate, and their hashes in `frontend/tests/baseline-manifest.json` are re-based on the V3 baselines. `header-1100` and `header-1000` are not among them: they are Browse screenshots.
 ```
 
 - [ ] **Step 8: Run the drift test**
@@ -3353,8 +3469,11 @@ dashed ring, the econ layer is 'Average Practice Payroll', 'choropleth' is
 reserved for the Phase C tract tiles, migrations start at 015, and the
 Esri-vs-CARTO licence becomes one decision record; /api/layers gains README
 section 5's disabled-vs-blocked state so a licence gate can never be mistaken for
-a member's own toggle. A drift test keeps all of it true. CLAUDE.md names the V2
-folder as the regression oracle for the thirteen unchanged screens.
+a member's own toggle. Both plans also record that V3 restyled every display-size
+heading, so there is no pre-V3 pixel oracle left to compare against. A drift test
+keeps all of it true. CLAUDE.md names the V2 folder as the pre-V3 oracle and
+records the typography change and the bundle's incorrect C14 byte-identical
+claim.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -3409,11 +3528,13 @@ Plain language, for stakeholders, plus screenshots of the live QA screens:
 >
 > **On a phone**, the Map tab shows the same map. A navy **Market data** button opens a full-height panel with everything the desktop has — shading, sources, Compare, datasets, the explanation and the basemap switch — with every control comfortably tappable. Tapping a practice pin a second time opens its listing.
 >
+> **Headings across the site now read in normal sentence case** rather than all-capitals — that is part of the approved V3 design, and it is why screens outside Browse look slightly different even though nothing about how they work has changed. The small all-capital labels (section eyebrows, tags) are unchanged.
+>
 > **Nothing about the market numbers themselves has changed**: they are still the design's sample figures. The real Census-backed data is a separate, already-approved piece of work.
 >
 > This is on QA (https://qa.foundation.vin) only. Production is unchanged and still shows the Coming Soon page.
 
-> **Engineer's note.** Zero-tolerance pixel and DOM gates green on all 27 states; the thirteen screens V3 does not touch are byte-identical to before the port, verified by a SHA-256 manifest at four checkpoints (the two header states are Browse screenshots and were re-baselined by design). 100 % coverage on every hand-written frontend file. No backend file changed (`poetry run pytest` green, `git diff app/ migrations/ scripts/ tests/` empty). **Risks:** (1) the community mosaic is thousands of `L.rectangle`s on one shared canvas renderer — profiled at 1440×940 and 390×800, but it is the largest new code and the first thing to look at if the map ever feels slow on an older phone; (2) three approved plans (Identity, Map-engines, Census) were amended to match V3 and must be re-read before they are executed — the amendments are held true by `frontend/tests/cross-plan-deltas.test.ts`; (3) once Wave 2a's Task I8 lands, `npm run gen:app` must not be re-run for a production build — the launch build comes from `gen:app:launch`.
+> **Engineer's note.** Zero-tolerance pixel and DOM gates green on all 27 states against the V3 reference. The thirteen non-Browse screens are **not** byte-identical to their pre-V3 images, and that is the design, not a leak: V3 deliberately drops uppercase and letter-spacing on all 26 display-size heading styles (micro labels keep theirs), so their headings re-render in mixed case. What was verified instead is stronger for our purposes — their DOM is node-for-node identical to the V3 reference's, 13 of 13, and their pixels match the V3 reference at zero tolerance; the hash manifest was re-based on the V3 baselines in V9 and held across V10 and all five V11 deletion commits. The bundle's own C14 and DEAD_CODE_CHECKLIST say those screens should not move; that claim is wrong about the design it ships with, and the correction is recorded in the cross-plan deltas and in CLAUDE.md. 100 % coverage on every hand-written frontend file. No backend file changed (`poetry run pytest` green, `git diff app/ migrations/ scripts/ tests/` empty). **Risks:** (1) the community mosaic is thousands of `L.rectangle`s on one shared canvas renderer — profiled at 1440×940 and 390×800, but it is the largest new code and the first thing to look at if the map ever feels slow on an older phone; (2) three approved plans (Identity, Map-engines, Census) were amended to match V3 and must be re-read before they are executed — the amendments are held true by `frontend/tests/cross-plan-deltas.test.ts`; (3) once Wave 2a's Task I8 lands, `npm run gen:app` must not be re-run for a production build — the launch build comes from `gen:app:launch`.
 
 ---
 
@@ -3444,7 +3565,7 @@ Run against the spec with fresh eyes, per the writing-plans skill.
 | §4 D3 permissions on the merged Browse | V12 Step 3 |
 | §4 D4 map-engines follows V3 | V12 Step 5 |
 | §4 D5 census follows V3's rendering and copy | V12 Step 6 |
-| §4 D6 baselines regenerated, thirteen byte-identical, the two header states re-baselined | V1, V9 Steps 5–6, V10 Step 4, V11 |
+| §4 D6 (amended, option A) every state re-baselined from V3; the thirteen proved by DOM parity + the pixel gate; manifest re-based | V1, V9 Steps 3/5/8, V10 Step 4, V11 |
 | §4 D7 tolerance never relaxed | Global Constraint (e); V9 Step 7 |
 | §4 D8 dead-code order, one file per commit | V11 |
 | §4 D9 line numbers advisory | Global Constraint (l); repeated in V4, V8, V12 |
@@ -3460,7 +3581,7 @@ Run against the spec with fresh eyes, per the writing-plans skill.
 | §5 QA-only deployment | V12 Steps 13–14 |
 | §6 all five cross-plan delta rows | V12 Steps 3–7 |
 | §7 risk 1 (mosaic) | V4 (unit-tested before any baseline), V5, engineer's note |
-| §7 risk 2 (mobile rewrite; byte-identical leak detector) | V1, V10 Step 4 |
+| §7 risk 2 (mobile rewrite; the leak detector) | V1, V9 Step 8, V10 Step 4 |
 | §7 risk 3 (generator constructs before regeneration) | V3, ordered before V7 |
 | §7 risk 4 (two worktrees) | plan header; V12 Step 4 |
 | §7 risk 5 (stale plans) | V12 |
@@ -3490,9 +3611,9 @@ Every acceptance criterion, change-log entry, dead-code rule, file-index entry, 
 | 5 | Icons — no `/assets/icons/*` 404 | V6 | `icons.test.ts` (3) + `npm run test:smoke`'s `console.error` gate (V8 Step 6) |
 | 6 | Regenerate | V7 | `app-generated.test.ts` (6 cases: the 3 committed ones, the `data-props`-vs-`defineProps` drift test, and the two-case `logic.js` port describe — which also pins the reference's vestigial `isBrowse: false` at exactly one occurrence, README §7), `npm run typecheck && npm test && npm run build` |
 | 7 | Router | V8 | `sync.test.ts` (incl. the fixed-point no-loop case), `useStateRouteSync.test.ts`, `smoke.spec.ts` |
-| 8 | Test screens + baselines | V9 | `npm run test:smoke && npm run test:visual` at zero tolerance; `baseline-manifest.test.ts` (thirteen); oracles regenerated in the same working tree (git-ignored, spec D13) |
+| 8 | Test screens + baselines | V9 | `npm run test:smoke && npm run test:visual` at zero tolerance for **all 27** states + the 27-state DOM oracle (V9 Step 5); every oracle regenerated from V3 in the same working tree (git-ignored, spec D13); `baseline-manifest.json` re-based on the V3 baselines in Step 8 |
 | 9 | Mobile | V10 | `smoke.spec.ts`'s 7-case mobile describe (shading, `elementFromPoint`, full-height + scroll, five sections, tap targets, double-tap → detail) |
-| 10 | Dead code | V11 | per-commit grep gates + the full previous gate + `baseline-manifest.test.ts` after each |
+| 10 | Dead code | V11 | per-commit grep gates + the full previous gate + `baseline-manifest.test.ts` (the V9-regenerated manifest) after each |
 
 ### A.2 CHANGE_LOG C1–C14
 
@@ -3511,7 +3632,7 @@ Every acceptance criterion, change-log entry, dead-code rule, file-index entry, 
 | C11 No scale control, attribution on | V4, V5 | `MarketMapView.test.ts` mount case; `leaflet.test.ts` mount-contract block |
 | C12 Results rail, wrapping meta row | V7 | `browse` baseline at 1440×940 (zero tolerance = no overflow, no horizontal scroll) |
 | C13 Mobile map is the desktop map | V5 (`onBasemap` gate), V7 (generated), V10 (acceptance) | `MarketMapView.test.ts` onBasemap case; the 7-case mobile describe; `mobile-map` baseline |
-| C14 What did not change | V1, V9, V10, V11 | `baseline-manifest.test.ts` at four checkpoints |
+| C14 What did not change — "their baselines must be byte-identical" | V1 (through V7), V9, V10, V11 | **Superseded by V7's finding, and the entry is wrong about V3.** V3 restyles all 26 display-size headings, so twelve of the thirteen move on typography alone (spec D6, option A). Covered instead by V9's regenerated oracles: the 27-state DOM oracle (node-for-node identical to the V3 reference, 13 of 13) and the zero-tolerance pixel gate, with `baseline-manifest.test.ts` re-based on the V3 baselines in V9 Step 8 and guarding V10 and every V11 deletion. Recorded as the sixth cross-plan delta in V12 |
 
 ### A.3 DEAD_CODE_CHECKLIST
 
@@ -3529,7 +3650,8 @@ Every acceptance criterion, change-log entry, dead-code rule, file-index entry, 
 | **Keep:** `scaleControl` option; the renamed engine describe; `ADMIN_TABS.listings`; seller listings; the V2 folder | V4, V11, V12 | V11 closing greps; `reference-bundle.test.ts` "keeps the V2 folder" |
 | Spec D12: `convert-dc.mjs`'s `AustinMap: 'ListingsMap'` grammar entry + its `convert-dc.test.ts` half + `harness.ts`'s stale comment | V11 commit 5 | `grep -rn "AustinMap" frontend/` → no hits; full gate |
 | Spec D12: the `browse-market-layers-closed` state renamed `browse-layers-closed` | V9 | `SCREENS` (27 entries); the regenerated `browse-layers-closed` baseline; Step 4's disposal of the old pair |
-| Zero-risk: legacy `?tab=` resolves, no route deleted, the thirteen byte-identical, visual green at zero tolerance with baselines regenerated in the same run, smoke green, backend untouched | V8, V9, V10, V11, V12 | V8 Step 6; V9 Steps 5, 7, 8; V11 closing Steps 1–3; V12 Step 10 |
+| Zero-risk: legacy `?tab=` resolves, no route deleted, visual green at zero tolerance with baselines regenerated in the same run, smoke green, backend untouched | V8, V9, V10, V11, V12 | V8 Step 6; V9 Steps 5, 7, 8, 9; V11 closing Steps 1–3; V12 Step 10 |
+| Zero-risk: "the thirteen … baselines are **byte-identical** before and after" (`DEAD_CODE_CHECKLIST:60-62`) | V9 | **Superseded — the checklist is wrong about V3** (V7 finding; spec D6 option A). Replaced by DOM parity with the V3 reference (13 of 13, V9 Step 5) + the zero-tolerance pixel gate + the V3-re-based hash manifest guarding V10/V11 |
 
 ### A.4 FILE_INDEX
 
@@ -3559,7 +3681,7 @@ Every acceptance criterion, change-log entry, dead-code rule, file-index entry, 
 | Item | Owning task | Test / gate |
 |---|---|---|
 | §2 primary width 1440×940 must match | V9 | the `browse` baseline at zero tolerance |
-| §2 "the existing **1100** and **1000** header states" must match | V9 | `header-1100` / `header-1000` **re-baselined from V3** and compared at zero tolerance — they are Browse screenshots, so they are not in the frozen set (spec D6) |
+| §2 "the existing **1100** and **1000** header states" must match | V9 | `header-1100` / `header-1000` **re-baselined from V3** and compared at zero tolerance — they are Browse screenshots, so they are not in the manifest (spec D6) |
 | §2 short-column collapse: the legend/insight card yields before the controls column | V9 Step 6 | by-hand eyeball of `header-1000-darwin.png` / `header-1100-darwin.png`, plus their zero-tolerance baselines |
 | §3 generated files never hand-edited | Global Constraint (b), V7 | `app-generated.test.ts` byte-identity |
 | §3 "confirm `convert-dc.mjs` is committed before starting" | already satisfied at `c00bc37` (spec §3) | `design-source.test.ts` proves it is on disk and pointed at V3 |
@@ -3582,12 +3704,12 @@ Every acceptance criterion, change-log entry, dead-code rule, file-index entry, 
 | D3 permissions on the merged Browse | V12 Step 3 | `cross-plan-deltas.test.ts` I7 case |
 | D4 map-engines follows V3 | V12 Step 5 | `cross-plan-deltas.test.ts` map-engines case (`not.toContain('ListingsMap')`, `ring(`) |
 | D5 census follows V3's rendering and copy; migrations at `015` | V12 Step 6 | `cross-plan-deltas.test.ts` census case |
-| D6 baselines; **thirteen** byte-identical; the two header states re-baselined | V1, V9 Steps 5–6, V10 Step 4, V11 | `baseline-manifest.test.ts` (13) at four checkpoints |
+| D6 baselines (amended, option A): **every** state re-baselined from V3; zero regression on the thirteen proved by DOM parity + the pixel gate; the manifest re-based in V9 | V1 Step 0–5, V9 Steps 3, 5, 8, V10 Step 4, V11 | 27-state `dom.spec.ts` + 27-state `visual.spec.ts` at `maxDiffPixels: 0`; `baseline-manifest.test.ts` (13) after V10 and each V11 deletion |
 | D7 tolerance never relaxed | Global Constraint (e) | `playwright.config.ts` untouched; V9 Step 7 |
 | D8 dead-code order, one file per commit, after Task 9 | V11 | five commits, each with its grep gate and full gate |
 | D9 line numbers advisory | Global Constraint (l) | restated in V4, V8, V9, V11, V12 |
 | D10 Vue-only | Global Constraint (c), V5 | `vue-only.test.ts` (3 cases) |
-| D11 zero regression; the hash manifest; "zero gaps" defined | Global Constraints (a), (d), (f); V1 | `baseline-manifest.test.ts`; this appendix |
+| D11 zero regression; the hash manifest (frozen in V1, re-based in V9); "zero gaps" defined | Global Constraints (a), (d), (f); V1, V9 Step 8 | `baseline-manifest.test.ts`; the DOM oracle; this appendix |
 | D12 `browse-layers-closed`; the `AustinMap` grammar entry deleted | V9 (rename), V11 commit 5 | the regenerated baseline; `grep -rn "AustinMap" frontend/` → no hits |
 | D13 snapshot oracles stay git-ignored | Global Constraint (l2); V1 Step 0; V9 Steps 4, 8 | Step 0 regenerates and verifies them; V9 uses `rm -f`, and `git add` names `screens.ts` only |
 | D14 `ring()`; the `isBrowse` pin; the disabled-vs-blocked contract | V4 + V5; V7 Step 4; V12 Step 6 | `leaflet.test.ts` ring cases; `app-generated.test.ts` one-occurrence pin; `cross-plan-deltas.test.ts` disabled/blocked case |
