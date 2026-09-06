@@ -5498,7 +5498,7 @@ The next deploy (QA, then production) carries it.
     assert re.search(r"for \(const p of \['/api/healthz'\]\)", k6), "until SP2 the nightly hits only the health endpoint (John, 2026-09-06)"
     assert "MEMBER_TOKEN" not in k6
     policy = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-quality-and-performance-policy.md").read_text()
-    block = re.search(r"`scripts/k6-smoke.js`:\n\n```js\n(.*?)```", policy, re.S)
+    block = re.search(r"`scripts/k6-smoke.js`:\n+```js\n(.*?)```", policy, re.DOTALL)  # \n+ : the doc has no blank line before the fence; re.DOTALL, not re.S (ruff FURB167)
     assert block and block.group(1) == k6, "the policy's §5 block and scripts/k6-smoke.js must stay byte-identical"
 ```
 Run: `poetry run pytest tests/test_docs.py -q -W error` → FAIL.
