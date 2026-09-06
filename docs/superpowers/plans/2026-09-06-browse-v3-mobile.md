@@ -36,7 +36,7 @@ No other test is deleted anywhere in this plan.
 `mobile-list`, `mobile-detail`, `detail`, `requests`, `seller-dash`, `wizard-step-1`, `wizard-step-7`, `wizard-preview`, `wizard-done`, `admin-users`, `admin-listings`, `admin-requests`, `admin-data-sources`.
 (Thirteen, not fifteen: `header-1100` and `header-1000` run `steps: browse` — they are Browse screenshots at 1100 and 1000 px, and README §2 names those widths as the states that prove V3's short-column collapse.)
 
-**The byte-identical rule for these thirteen is retired for this sub-project.** V7's review established the cause: the V3 design deliberately drops `text-transform: uppercase` and its positive letter-spacing on **every** display-size heading — 26 of 26, with micro-label uppercase preserved and extended, and `_ds/**` byte-identical to V2's — so twelve of the thirteen move on typography alone, no matter how surgical the port is. The bundle's `CHANGE_LOG` C14 and `DEAD_CODE_CHECKLIST:60-62` are simply wrong about this, and **the approved design is the authority for every pixel** (controller ruling, John informed; spec D6/D11 amended).
+**The byte-identical rule for these thirteen is RESTORED by Task V13 (re-amended 2026-09-07, option B — John: "keep the V2 header and do not restyle header or fonts").** V7's review established that the V3 bundle deliberately dropped `text-transform: uppercase` and its positive letter-spacing on every display-size heading (26 of 26) and restyled `{{ resultHeadline }}`; twelve of the thirteen moved on typography alone. John rejected that restyle. Task V13 restores V2's typography in the reference through the local-amendment mechanism (spec D15/D16), regenerates every oracle, and compares the thirteen against the V1-era manifest (`git show b493cb5:frontend/tests/baseline-manifest.json`): screens that return to their V2 hashes are byte-identical again and the manifest committed after V13 carries those hashes; any screen that does not return is listed with its residual diff for John's ruling. Between V7 and V13 the two proofs below carried zero regression; after V13 they remain the secondary proof.
 
 Zero regression for the thirteen is therefore proved two ways instead, both regenerated from V3 in Task V9:
 
@@ -3538,6 +3538,242 @@ Plain language, for stakeholders, plus screenshots of the live QA screens:
 
 ---
 
+### Task V13: Option B — restore V2's display typography through a local design amendment (spec D15, D16)
+
+*Added 2026-09-07 on John's ruling: "keep the V2 header and do not restyle header or fonts". Executes after the final-review fix round, before the merge. Fresh implementer.*
+
+**Files:**
+- Create: `docs/design-reference/design_handoff_practice_match_v3/Practice Match V3.rev2.dc.html` (byte-for-byte copy of the pristine Rev 2 file — `cp`, never edited)
+- Create: `docs/design-reference/design_handoff_practice_match_v3/LOCAL_AMENDMENTS.md`
+- Create: `frontend/tests/design-amendments.ts`, `frontend/tests/design-amendments.test.ts`
+- Modify: `docs/design-reference/design_handoff_practice_match_v3/Practice Match V3.dc.html` (only through `applyAmendments`)
+- Modify (regenerated): `frontend/src/App.vue`, `frontend/src/generated/pseudo.css`, `frontend/src/logic.js` (byte-exact re-port; A1 touches no script, so `logic.js` must not change — assert it), `frontend/tests/baseline-manifest.json`
+- Modify: `CLAUDE.md` (the option-A paragraph after "Source of truth for the UI" becomes the option-B statement), `frontend/tests/reference-bundle.test.ts` (the bundle's file list gains the `.rev2` copy and `LOCAL_AMENDMENTS.md`)
+
+**Interfaces:**
+- Consumes: the generator (`npm run gen:app`), the reference server (serves `Practice Match V3.dc.html`), `screens.ts` (28), the V1-era manifest at `b493cb5`.
+- Produces: `AMENDMENTS: Amendment[]` and `applyAmendments(html, list): string` in `frontend/tests/design-amendments.ts`, consumed by V14 and V15; the amended reference every later task regenerates from.
+
+- [ ] **Step 1: Freeze the pristine file and write the failing amendment tests**
+
+```bash
+cd docs/design-reference/design_handoff_practice_match_v3 && cp "Practice Match V3.dc.html" "Practice Match V3.rev2.dc.html" && cd -
+```
+
+Create `frontend/tests/design-amendments.ts`:
+
+```ts
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+
+const V3_DIR = new URL('../../docs/design-reference/design_handoff_practice_match_v3/', import.meta.url);
+export const PRISTINE = fileURLToPath(new URL('Practice Match V3.rev2.dc.html', V3_DIR));
+export const AMENDED = fileURLToPath(new URL('Practice Match V3.dc.html', V3_DIR));
+export const V2 = fileURLToPath(new URL('../../docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html', import.meta.url));
+export const LOCAL_AMENDMENTS_MD = fileURLToPath(new URL('LOCAL_AMENDMENTS.md', V3_DIR));
+
+export type Amendment = { id: string; date: string; ruling: string; find: string; replace: string; count: number };
+
+/** The template region: everything outside <script>…</script> and <style>…</style>. A1 must never touch a script. */
+export function templateRegions(html: string): Array<[number, number]> {
+  const regions: Array<[number, number]> = [];
+  const skip = /<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g;
+  let last = 0; let m: RegExpExecArray | null;
+  while ((m = skip.exec(html))) { regions.push([last, m.index]); last = m.index + m[0].length; }
+  regions.push([last, html.length]);
+  return regions;
+}
+
+type Styled = { tag: string; text: string; style: string; start: number; end: number; fontPx: number | null };
+const STYLED = /<(\w+)([^>]*?)style="([^"]*)"([^>]*)>([^<]{0,120})/g;
+function styledElements(html: string): Styled[] {
+  const out: Styled[] = [];
+  for (const [a, b] of templateRegions(html)) {
+    const slice = html.slice(a, b); let m: RegExpExecArray | null; STYLED.lastIndex = 0;
+    while ((m = STYLED.exec(slice))) {
+      const fs = /font-size:\s*([\d.]+)px/.exec(m[3]);
+      const styleStart = a + m.index + m[0].indexOf('style="') + 7;
+      out.push({ tag: m[1], text: m[5].trim(), style: m[3], start: styleStart, end: styleStart + m[3].length, fontPx: fs ? Number(fs[1]) : null });
+    }
+  }
+  return out;
+}
+const RESULT_HEADLINE_V2 = 'font-family: var(--rf-display); font-size: 19px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--color-navy); line-height: 1.2;';
+const decl = (style: string, prop: string) => { const m = new RegExp(`(?:^|;)\\s*${prop}:\\s*([^;]+)`).exec(style); return m ? m[1].trim() : null; };
+const strip = (style: string, prop: string) => style.replace(new RegExp(`\\s*${prop}:\\s*[^;]+;?`, 'g'), '').replace(/\s{2,}/g, ' ').trim();
+
+/** A1 — V2 typography (spec D16). Rule-based: paired elements take V2's text-transform + letter-spacing; resultHeadline takes V2's whole style; md.mdHeadline follows V2's rule. */
+export function deriveTypographyB(v2Html: string, pristineHtml: string): Amendment[] {
+  const key = (e: Styled) => `${e.tag}|${e.text}`;
+  const uniq = (els: Styled[]) => { const c = new Map<string, number>(); els.forEach((e) => c.set(key(e), (c.get(key(e)) ?? 0) + 1)); return new Map(els.filter((e) => c.get(key(e)) === 1).map((e) => [key(e), e])); };
+  const v2 = uniq(styledElements(v2Html)); const v3 = styledElements(pristineHtml); const v3u = uniq(v3);
+  const out: Amendment[] = [];
+  for (const [k, e3] of v3u) {
+    const e2 = v2.get(k); let next: string | null = null;
+    if (e3.text === '{{ resultHeadline }}') next = RESULT_HEADLINE_V2;
+    else if (e2) {
+      const tt = decl(e2.style, 'text-transform'); const ls = decl(e2.style, 'letter-spacing');
+      let s = strip(strip(e3.style, 'text-transform'), 'letter-spacing');
+      if (tt) s += ` text-transform: ${tt};`; if (ls) s += ` letter-spacing: ${ls};`;
+      next = s.trim() === e3.style.trim() ? null : s.trim();
+    } else if (e3.text === '{{ md.mdHeadline }}') {
+      next = `${strip(strip(e3.style, 'text-transform'), 'letter-spacing')} text-transform: uppercase; letter-spacing: .02em;`.trim();
+    }
+    if (next && next !== e3.style) {
+      const find = `style="${e3.style}">${e3.text}`;
+      out.push({ id: `A1.${out.length + 1}`, date: '2026-09-07', ruling: 'keep the V2 header and do not restyle header or fonts', find, replace: `style="${next}">${e3.text}`, count: 1 });
+    }
+  }
+  return out;
+}
+
+export function applyAmendments(html: string, list: Amendment[]): string {
+  let out = html;
+  for (const a of list) {
+    const n = out.split(a.find).length - 1;
+    if (n !== a.count) throw new Error(`${a.id}: expected ${a.count} match(es) of ${JSON.stringify(a.find.slice(0, 60))}, found ${n}`);
+    out = out.split(a.find).join(a.replace);
+  }
+  return out;
+}
+
+export function amendments(): Amendment[] {
+  return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8'))];
+}
+```
+
+Create `frontend/tests/design-amendments.test.ts`:
+
+```ts
+import { readFileSync } from 'node:fs';
+import { describe, expect, it } from 'vitest';
+import { AMENDED, LOCAL_AMENDMENTS_MD, PRISTINE, amendments, applyAmendments, deriveTypographyB, V2 } from './design-amendments';
+
+describe('local design amendments (spec D15)', () => {
+  const pristine = readFileSync(PRISTINE, 'utf8');
+  it('A1 derives exactly the V2-typography edits: 24 paired elements plus resultHeadline, none inside a script', () => {
+    const a1 = deriveTypographyB(readFileSync(V2, 'utf8'), pristine);
+    expect(a1).toHaveLength(25);
+    expect(a1.filter((a) => a.find.includes('{{ resultHeadline }}'))).toHaveLength(1);
+    expect(a1.filter((a) => a.find.includes('{{ md.mdHeadline }}'))).toHaveLength(1);
+    for (const a of a1) expect(a.replace).toMatch(/text-transform: uppercase; letter-spacing: \.0(2|05)em;/);
+    expect(a1.some((a) => a.find.includes('priceLabel') || a.find.includes('{{ c.value }}') || a.find.includes('{{ m.v }}'))).toBe(false);
+  });
+  it('the amended reference is the pristine Rev 2 file plus exactly the ruled edits', () => {
+    expect(applyAmendments(pristine, amendments())).toBe(readFileSync(AMENDED, 'utf8'));
+  });
+  it('after A1 every display-size heading in the template is uppercase with V2 tracking (19–22 px → .02em, ≥ 24 px → .005em)', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    const figures = /priceLabel|\{\{ c\.value \}\}|\{\{ m\.v \}\}/;
+    const re = /<(\w+)[^>]*?style="([^"]*font-size:\s*(\d+)px[^"]*)"[^>]*>([^<]{0,120})/g; let m: RegExpExecArray | null; let seen = 0;
+    const body = amended.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, '');
+    while ((m = re.exec(body))) {
+      const px = Number(m[3]); if (px < 19 || m[1] === 'p' || figures.test(m[4])) continue; seen++;
+      expect(m[2], m[4]).toContain('text-transform: uppercase');
+      expect(m[2], m[4]).toContain(`letter-spacing: ${px >= 24 ? '.005em' : '.02em'}`);
+    }
+    expect(seen).toBeGreaterThanOrEqual(23);
+  });
+  it('LOCAL_AMENDMENTS.md names every amendment id', () => {
+    const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
+    for (const a of amendments()) expect(md).toContain(a.id.split('.')[0]);
+  });
+});
+```
+
+- [ ] **Step 2: Run — RED** — `cd frontend && npx vitest run tests/design-amendments.test.ts`. Expected: the second case fails (`AMENDED` still equals the pristine file), the third fails (no uppercase on display headings), the fourth fails (`LOCAL_AMENDMENTS.md` missing). The first must PASS as written (it measures the derivation, not the tree) — if it fails, the derivation does not match the V7 review's numbers: stop and report the actual count and the unexpected elements, do not tune the number.
+
+- [ ] **Step 3: Apply A1 and write `LOCAL_AMENDMENTS.md`**
+
+```bash
+cd frontend && node --input-type=module -e "
+import { readFileSync, writeFileSync } from 'node:fs';
+import { AMENDED, PRISTINE, amendments, applyAmendments } from './tests/design-amendments.ts';
+writeFileSync(AMENDED, applyAmendments(readFileSync(PRISTINE, 'utf8'), amendments()));
+" 2>/dev/null || npx tsx -e "import { readFileSync, writeFileSync } from 'node:fs'; import { AMENDED, PRISTINE, amendments, applyAmendments } from './tests/design-amendments.ts'; writeFileSync(AMENDED, applyAmendments(readFileSync(PRISTINE, 'utf8'), amendments()));"
+```
+
+`LOCAL_AMENDMENTS.md` (verbatim skeleton; keep John's words):
+
+```markdown
+# Local amendments to the V3 Rev 2 design (spec D15)
+
+`Practice Match V3.dc.html` = `Practice Match V3.rev2.dc.html` (pristine, never edited) + the entries below, applied by `frontend/tests/design-amendments.ts` and proved byte-for-byte by `frontend/tests/design-amendments.test.ts`. They retire when a re-issued bundle carries them.
+
+| Id | Date | John's ruling | What changes |
+|---|---|---|---|
+| A1 | 2026-09-07 | "keep the V2 header and do not restyle header or fonts" | 25 template elements: every display-size heading paired with V2 takes V2's `text-transform`/`letter-spacing`; `{{ resultHeadline }}` takes V2's whole style (19 px, 800, `.02em`, navy); `{{ md.mdHeadline }}` follows V2's rule. No script, no `_ds/**`, no site header (byte-identical V2↔V3 already). |
+```
+
+- [ ] **Step 4: Regenerate and re-baseline** — `npm run gen:app` (App.vue/pseudo.css/logic.js; `git diff --stat -- src/logic.js` must be EMPTY — A1 touches no script), `npx vitest run` (all drift tests green), `npm run test:visual:baselines && npm run test:e2e` (28 visual at zero diffs, 28 DOM, 24 smoke). Expected first run: visual/DOM RED on every heading screen until the baselines regenerate; GREEN after.
+
+- [ ] **Step 5: The thirteen against the V1-era manifest**
+
+```bash
+git show b493cb5:frontend/tests/baseline-manifest.json > /tmp/manifest-v2.json
+node tests/baseline-manifest.mjs > /tmp/manifest-now.json   # or the script's documented invocation
+python3 -c "import json;a=json.load(open('/tmp/manifest-v2.json'))['screens'];b=json.load(open('/tmp/manifest-now.json'))['screens'];[print(k,'SAME' if a[k]==b.get(k) else 'MOVED') for k in a]"
+```
+
+Expected: `SAME` for every screen whose only V3 change was typography (the V7 review classified twelve movers as typography-only and `mobile-list` as unmoved). Commit the regenerated `baseline-manifest.json`; the `baseline-manifest.test.ts` platform detector stays. Any `MOVED` screen: run the DOM diff and the pixel diff for it, put the residual (changed properties, elements) in the report, and STOP on that screen for John — do not re-base it silently.
+
+- [ ] **Step 6: Docs** — CLAUDE.md: the paragraph beginning "`docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html` is kept as the **pre-V3 oracle**" becomes: the V3 file is the approved design **plus the local amendments listed in `LOCAL_AMENDMENTS.md` (spec D15)** — A1 restores V2's display typography on John's ruling, so the thirteen non-Browse screens are byte-identical to V2 again where Step 5 said SAME; the V2 file remains the pre-V3 oracle. `reference-bundle.test.ts`: file list gains the two new files. `cross-plan-deltas.test.ts`: pin the CLAUDE.md sentence.
+
+- [ ] **Step 7: Gate and commit** — full frontend gate (`npm run typecheck && npx vitest run --coverage && npm run build && npm run test:smoke && npm run test:visual:baselines && npm run test:e2e`); backend untouched (`git diff --stat -- app scripts migrations tests` empty). Commits: `design(amend): A1 — V2 display typography on John's ruling; pristine Rev 2 frozen; amendment test`, then `test(visual): re-baseline from the amended reference; thirteen back to V2 hashes`, then `docs: CLAUDE.md option B`. Explicit pathspecs, trailer.
+
+### Task V14: The mobile practice card opens the detail (spec D17) — systematic debugging, then amendment A2
+
+*Added 2026-09-07 on John's ruling ("resolve this"). After V13. Fresh implementer. Follow superpowers:systematic-debugging; record each phase in the report.*
+
+**Files:**
+- Modify: `frontend/tests/design-amendments.ts` (A2 entry), `docs/design-reference/design_handoff_practice_match_v3/LOCAL_AMENDMENTS.md`, `docs/design-reference/design_handoff_practice_match_v3/Practice Match V3.dc.html` (through `applyAmendments`)
+- Modify (regenerated): `frontend/src/logic.js` (one line), `frontend/src/App.vue` (unchanged — assert)
+- Modify: `frontend/tests/smoke.spec.ts` (one case), `frontend/src/logic.test.ts` (one characterisation case)
+
+**Interfaces:**
+- Consumes: `applyAmendments`, `amendments()` from V13; `logic.js`'s mobile results list (`results`, `p.open`).
+- Produces: A2 in `amendments()`; the design's mobile card handler `open: () => this.setState({ screen: "detail", detailId: p.id })`.
+
+- [ ] **Step 1 (Phase 1 — reproduce):** on the reference server (`npm run reference:serve` or the harness's `reference` project) at 390×800: open Browse, tap the first result card, assert the screen is still the list (DOM unchanged, no "Exterior photo"). Paste the console/DOM evidence into the report. Then `git log -S'browseSel' -- frontend/src/logic.js` and the V3 `CHANGE_LOG` C13 for the change that orphaned `browseSel`.
+- [ ] **Step 2 (Phase 2 — compare):** V2's mobile card `open` (navigates: `screen: "detail"`), V3's desktop card `select` (docked panel), V3's `selectMarker` second tap (`screen: "detail", detailId`). List the differences in the report.
+- [ ] **Step 3 (Phase 3 — hypothesis):** "`browseSel` is set by `open` and read by nothing, so the tap is a no-op; routing `open` to the detail like C13's second tap makes the card work without touching pins or the panel." One variable.
+- [ ] **Step 4 (Phase 4 — failing tests):** `logic.test.ts`: the mobile results' `p.open()` yields `{ screen: "detail", detailId: p.id }` (RED: today it yields `{ browseSel, activeId }`). `smoke.spec.ts`: at 390×800, tapping the first result card reaches the detail screen ("Exterior photo" visible, the card's practice name in the title); the C13 pin double-tap case stays. RED on the current tree.
+- [ ] **Step 5: A2** — append to `amendments()`:
+
+```ts
+{ id: 'A2', date: '2026-09-07', ruling: 'resolve this — the mobile practice card opens the detail (spec D17)',
+  find: 'open: () => this.setState({ browseSel: p.id, activeId: p.id }),',
+  replace: 'open: () => this.setState({ screen: "detail", detailId: p.id }),', count: 1 }
+```
+
+Re-apply (`applyAmendments` from the pristine file with the full list), `npm run gen:app`: `logic.js` changes by exactly that line (`git diff -- src/logic.js` shows one hunk); `App.vue`/`pseudo.css` unchanged. `LOCAL_AMENDMENTS.md` gains the A2 row (John's words; root cause in one sentence).
+- [ ] **Step 6: GREEN and gate** — the two new tests pass; full frontend gate (28 visual at zero diffs — A2 changes no pixel; `baseline-manifest.json` unchanged). Commit `design(amend): A2 — mobile practice card opens the detail (root cause: browseSel unbound since C13)`.
+
+### Task V15: "View full listing" (spec D18) and the plans name `ListingsMap.vue` (spec D19)
+
+*Added 2026-09-07 on John's rulings. After V14. Fresh implementer (cheap tier — the plan text carries the code).*
+
+**Files:**
+- Modify: `frontend/tests/design-amendments.ts` (A3), `docs/design-reference/design_handoff_practice_match_v3/LOCAL_AMENDMENTS.md`, `Practice Match V3.dc.html` (through `applyAmendments`)
+- Modify (regenerated): `frontend/src/App.vue`, `frontend/tests/dom-snapshots/browse-market-panel.json` (regenerated oracle), visual baselines for the docked-panel states
+- Modify: `frontend/tests/screens.ts:70` (`click(p, 'View full market report')` → `click(p, 'View full listing')`), `frontend/tests/smoke.spec.ts` if it names the label
+- Modify: `docs/superpowers/plans/2026-09-05-practice-match-map-engines.md` (M5 prose names `ListingsMap.vue` "deleted in Browse V3"), `frontend/tests/cross-plan-deltas.test.ts`
+
+- [ ] **Step 1: RED** — `design-amendments.test.ts` gains: `expect(readFileSync(AMENDED,'utf8')).not.toContain('View full market report'); expect(...).toContain('View full listing');` and the A3 count case. `cross-plan-deltas.test.ts`: replace `expect(md).not.toContain('ListingsMap')` for the map-engines plan with:
+
+```ts
+    const offenders = md.split('\n').filter((l) => l.includes('ListingsMap') && !l.includes('deleted in Browse V3'));
+    expect(offenders, 'ListingsMap may be named only in a "deleted in Browse V3" clause').toEqual([]);
+    expect(md).toContain('`ListingsMap.vue` (deleted in Browse V3)');
+```
+
+Run: both RED (the label is still in the file; the map-engines plan does not yet carry the clause).
+- [ ] **Step 2: A3 + prose** — append `{ id: 'A3', date: '2026-09-07', ruling: 'update across the application "view full market report" to "View full listing"', find: 'View full market report', replace: 'View full listing', count: 1 }`; re-apply; `npm run gen:app`; update `screens.ts:70`; regenerate the DOM snapshot and baselines (`npm run test:visual:baselines`); in the map-engines plan restore the file name wherever V12 wrote a periphrasis for it, as `` `ListingsMap.vue` (deleted in Browse V3) ``; `LOCAL_AMENDMENTS.md` gains A3. Note for John in the report: the other panel tabs still read "Open full listing" (design as issued) — say "unify" to make them "View full listing" too.
+- [ ] **Step 3: GREEN and gate** — full frontend gate; the `interest-modal` state must still be reached (its step clicks the renamed button); the DOM oracle for `browse-market-panel` regenerates. Commits: `design(amend): A3 — "View full listing" on the Insights tab`, `docs(plan): map-engines names ListingsMap.vue (deleted in Browse V3); drift test allows the token only in that clause`.
+
+*After V15: one scoped whole-branch re-review of V13–V15 (the final review's verdict already covers V1–V12 and the fix round), then the gate, the QA deploy (controller, 🚦), the click-through with screenshots, the fast-forward merge under John's condition.*
+
+
 ## Self-Review
 
 Run against the spec with fresh eyes, per the writing-plans skill.
@@ -3713,10 +3949,17 @@ Every acceptance criterion, change-log entry, dead-code rule, file-index entry, 
 | D12 `browse-layers-open`; the `AustinMap` grammar entry deleted | V9 (rename), V11 commit 5 | the regenerated baseline; `grep -rn "AustinMap" frontend/` → no hits |
 | D13 snapshot oracles stay git-ignored | Global Constraint (l2); V1 Step 0; V9 Steps 4, 8 | Step 0 regenerates and verifies them; V9 uses `rm -f`, and `git add` names `screens.ts` only |
 | D14 `ring()`; the `isBrowse` pin; the disabled-vs-blocked contract | V4 + V5; V7 Step 4; V12 Step 6 | `leaflet.test.ts` ring cases; `app-generated.test.ts` one-occurrence pin; `cross-plan-deltas.test.ts` disabled/blocked case |
+| D15 local design amendments | V13 | `design-amendments.test.ts` (pristine + edits = amended, byte for byte) |
+| D16 A1 V2 typography (option B) | V13 | `design-amendments.test.ts` (25 edits; every display heading uppercase with V2 tracking) + the thirteen vs the V1-era manifest |
+| D17 A2 mobile card opens the detail | V14 | `logic.test.ts` (`p.open` → detail) + `smoke.spec.ts` (390×800 card tap → detail) |
+| D18 A3 "View full listing" | V15 | `design-amendments.test.ts` (label present/absent) + `screens.ts:70` reaches `interest-modal` |
+| D19 plans name `ListingsMap.vue` | V15 | `cross-plan-deltas.test.ts` (token allowed only in a "deleted in Browse V3" clause) |
 
 ---
 
 ## Execution Handoff
+
+*2026-09-07: Tasks V13–V15 were added after the final whole-branch review on John's rulings (typography option B; mobile card tap; "View full listing"; naming `ListingsMap.vue`). They run after the final-review fix round and before the merge, each with its own task review, then one scoped re-review of V13–V15.*
 
 Plan complete and saved to `docs/superpowers/plans/2026-09-06-browse-v3-mobile.md`. Two execution options:
 
