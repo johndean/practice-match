@@ -1722,7 +1722,7 @@ async def test_admin_grants_roles_and_issues_tokens_with_reauth(client, conn, me
     assert r.status_code == 200 and r.json()["roles"] == ["buyer", "staff"]
     t = await client.post("/api/admin/tokens", cookies=acookies, headers=ahdr, json={"name": "k6-qa", "role": "buyer", "days": 30})
     assert t.status_code == 201 and t.json()["token"].startswith("pm_")
-    assert (await client.get("/api/me", headers={"Authorization": f"Bearer {t.json()['token']}"})).status_code == 403   # a token has no account → account.self denied
+    assert (await client.get("/api/me", headers={"Authorization": f"Bearer {t.json()['token']}"})).status_code == 200   # spec §3 allows a token on /api/me; since the I3 review a token principal carries its minter's account id (ruling 2026-09-07 — the earlier 403 line was wrong)
     assert (await client.get("/api/layers", headers={"Authorization": f"Bearer {t.json()['token']}"})).status_code in (200, 404)  # market.read allowed (404 until Census lands)
     p = (await client.get("/api/admin/permissions", cookies=acookies)).json()
     assert p["matrix"]["engine.activate"] == ["admin"] and "roles" in p
