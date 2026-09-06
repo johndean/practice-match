@@ -2234,6 +2234,8 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Modify: `frontend/src/router/sync.test.ts`
 - Modify: `frontend/src/router/useStateRouteSync.test.ts`
 - Modify: `frontend/tests/smoke.spec.ts`
+- Modify: `frontend/src/router/useStateRouteSync.ts` — controller ruling 2026-09-07: the route watcher early-bailed on a stale `pending` when the auth watcher ran second; harmless while `?tab=market` round-tripped to the same URL, user-visible once V8 drops the query. Fixed at source here with a reproducing unit case.
+- Modify: `frontend/src/router/routes.ts` — one stale `browseMode` comment (prose only; ruled departure from Step 6's empty-diff acceptance).
 
 **Interfaces:**
 - Consumes: `frontend/src/logic.js` with no `browseMode` reader (Task V7).
