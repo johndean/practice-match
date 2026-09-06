@@ -1,3 +1,4 @@
+import hashlib
 import re
 import uuid
 from pathlib import Path
@@ -226,3 +227,50 @@ def test_scratch_dsn_normalises_an_asyncpg_style_dsn_with_a_query_string(request
     with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute("SELECT 1")
         assert cur.fetchone() == (1,)
+
+
+# --- Step 0 (I6 re-review O3, ruled 2026-09-07): an applied migration that changes refuses to run ---
+#
+# Two adaptations of the brief's literal Step 0 code, both forced by the runner that exists rather
+# than by anything this task decides: `run()` takes `directory=`, not `migrations_dir=`, and
+# returns the LIST of files it applied rather than a process exit code — so the exit code (4) is
+# asserted through `main()`, which is where every other exit code in this file is asserted too, and
+# the ledger's column is `name`, not `filename`. The brief's own assertions — the recorded sha256,
+# `rc == 4`, and both halves of the stderr line — are reproduced exactly.
+
+
+def test_ledger_records_sha256_and_refuses_a_changed_applied_file(scratch_db, tmp_path, monkeypatch, capsys):
+    mig = tmp_path / "migrations"
+    mig.mkdir()
+    (mig / "001_a.sql").write_text("CREATE TABLE t_a (id int);\n")
+    monkeypatch.setattr(migrate, "MIGRATIONS_DIR", mig)
+    monkeypatch.setenv("DATABASE_URL", scratch_db)
+
+    assert migrate.main() == 0
+    with psycopg2.connect(scratch_db) as conn, conn.cursor() as cur:
+        cur.execute("SELECT checksum FROM schema_migrations WHERE name = '001_a.sql'")
+        assert cur.fetchone()[0] == hashlib.sha256(b"CREATE TABLE t_a (id int);\n").hexdigest()
+
+    (mig / "001_a.sql").write_text("CREATE TABLE t_a (id int, extra text);\n")  # edited after it was applied
+    capsys.readouterr()
+    assert migrate.main() == 4
+    err = capsys.readouterr().err
+    assert "001_a.sql changed after it was applied" in err and "drop and recreate the database or restore the file" in err
+
+
+def test_ledger_upgrades_itself_when_the_checksum_column_is_missing(scratch_db, tmp_path):
+    """A ledger created before this change has no `checksum` column: the runner adds it (NULL for
+    rows already applied) and never refuses on NULL — otherwise the first deploy carrying this
+    change would refuse to run against every database that already exists."""
+    mig = tmp_path / "migrations"
+    mig.mkdir()
+    (mig / "001_a.sql").write_text("CREATE TABLE t_a (id int);\n")
+    with psycopg2.connect(scratch_db) as conn, conn.cursor() as cur:
+        cur.execute("CREATE TABLE schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())")
+        cur.execute("INSERT INTO schema_migrations (name) VALUES ('001_a.sql')")
+    (mig / "001_a.sql").write_text("CREATE TABLE t_a (id int, extra text);\n")  # changed — but the legacy row records no checksum
+
+    assert migrate.run(scratch_db, directory=mig) == []  # skipped, not refused
+    with psycopg2.connect(scratch_db) as conn, conn.cursor() as cur:
+        cur.execute("SELECT checksum FROM schema_migrations WHERE name = '001_a.sql'")
+        assert cur.fetchone()[0] is None

@@ -26,9 +26,12 @@ echo "[start.sh] role=$role (RAILWAY_SERVICE_NAME=${RAILWAY_SERVICE_NAME:-unset}
 case "$role" in
   api)
     # Migrations first (Task 11g): the container proves the schema before it serves, because
-    # Railway's pre-deploy hook has not been observed running. Exit 3 = database unreachable:
-    # retry, then serve anyway so the static site stays up (sign-ups fail closed with 503 and
-    # the next restart applies the files). Any other failure is a broken migration file: stop
+    # Railway's pre-deploy hook has not been observed running. The migrate role's exit codes:
+    #   0 = applied (or nothing to do)     2 = DATABASE_URL is not set
+    #   3 = database unreachable           4 = an applied migration's file has changed
+    # Exit 3 alone is retryable: retry, then serve anyway so the static site stays up (sign-ups
+    # fail closed with 503 and the next restart applies the files). Every other code — a broken
+    # migration file, or a 4 saying the tree disagrees with the database — stops the container
     # here, before uvicorn.
     cmd=(uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}" --proxy-headers --forwarded-allow-ips='*')
     if [[ "${DRY_RUN:-0}" == "1" ]]; then echo "python scripts/migrate.py"; echo "${cmd[*]}"; exit 0; fi
