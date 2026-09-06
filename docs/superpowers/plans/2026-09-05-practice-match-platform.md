@@ -5839,6 +5839,55 @@ and the guard compares `self.environment.lower() == "qa"` (M-6).
 
 ---
 
+### Task 13: FINAL phase — post-merge maintenance and close-out (added 2026-09-06 at John's request)
+
+Sub-project 1 is merged and both sites are live and gated. This phase holds the items that were deliberately left out of the merge and the close-out checklist. Runs on a short branch from `main`; each engineering item is one test-first commit.
+
+**13a — HEAD requests answer like GET (found during the production checks; final review rated it "fix soon").** Every route is declared GET-only and FastAPI does not add HEAD automatically, so `HEAD /`, `HEAD /api/healthz`, `HEAD /robots.txt` and every static file answer `405 Method Not Allowed`. Visitors and the deploy verifier use GET and are unaffected; uptime monitors and link checkers that default to HEAD would report the sites down. HEAD must answer exactly as GET, minus the body.
+
+**Files:** Modify `app/static.py`, `app/api/health.py`, `app/main.py`, `tests/test_static.py`, `tests/test_health.py`
+
+- [ ] **Step 1: Failing tests** — `tests/test_static.py`:
+```python
+async def test_head_answers_like_get_without_a_body(client):
+    """Uptime monitors and link checkers send HEAD; it must mirror GET (status and headers), body empty (Task 13a)."""
+    for path in ("/", "/browse", "/_app/index-abc123.js", "/assets/icons/pad-lock.svg", "/robots.txt"):
+        get = await client.get(path)
+        head = await client.head(path)
+        assert head.status_code == get.status_code == 200, path
+        assert head.headers.get("cache-control") == get.headers.get("cache-control"), path
+        assert head.headers.get("content-type") == get.headers.get("content-type"), path
+        assert head.content == b"", path
+```
+`tests/test_health.py`:
+```python
+async def test_head_on_health_endpoints_is_200_with_no_body(client):
+    for path in ("/api/healthz", "/api/healthz/deep"):
+        head = await client.head(path)
+        assert head.status_code in (200, 503), path  # deep may be 503 when a component is down; never 405
+        assert head.content == b"", path
+
+
+async def test_head_on_an_unknown_api_route_is_the_json_404_status(client):
+    head = await client.head("/api/does-not-exist")
+    assert head.status_code == 404 and head.content == b""
+```
+Run: `poetry run pytest tests/test_static.py tests/test_health.py -q -W error` → FAIL (405s).
+
+- [ ] **Step 2: Implement** — `app/static.py`: `@app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)` and `@app.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)` (FileResponse already omits the body for HEAD); `app/main.py`: `@app.api_route("/robots.txt", methods=["GET", "HEAD"], include_in_schema=False)`; `app/api/health.py`: `@router.api_route("/healthz", methods=["GET", "HEAD"])`, `@router.api_route("/healthz/deep", methods=["GET", "HEAD"])`, and add `"HEAD"` to the catch-all's `methods`. (Starlette strips the body from HEAD responses; the handlers do not change.)
+
+- [ ] **Step 3: GREEN** — `poetry run pytest -q -W error`; `poetry run mypy app --strict`; `poetry run ruff check app tests scripts`; real `scripts/verify-image.sh` (unchanged output); after deploy, `curl -sI https://foundation.vin/ | head -1` and `curl -sI https://foundation.vin/api/healthz | head -1` both `HTTP/2 200`.
+
+- [ ] **Step 4: Commit** — `git add app/static.py app/api/health.py app/main.py tests/test_static.py tests/test_health.py` · `fix(api): HEAD answers like GET on every route (uptime monitors, link checkers)` with the trailer. Deploy QA → verify → production → verify (the verifier's own checks use GET and are unchanged).
+
+**13b — Close-out checklist (John's items, tracked here so nothing is lost):**
+- [ ] ProximaNova webfonts are served publicly from both sites with no licence file (`.ttf` desktop files included); ask the VIN Foundation whether the design-system licence covers web serving — record the answer beside the fonts or drop the `.ttf` fallbacks.
+- [ ] Rotate `API_SECRET_KEY` (both environments) and the PostGIS passwords now that all phases are done (the CLI printed values to a terminal once on 2026-09-06; nothing was recorded).
+- [ ] Artifact Share menu → **Always share latest version**, so stakeholders see the live status page rather than the pinned 5 September version.
+- [ ] `.woff2` is served as `application/octet-stream` (browsers accept it for `@font-face`); one-liner if ever wanted: `mimetypes.add_type("font/woff2", ".woff2")` in `app/static.py`, with a header test.
+
+---
+
 ## Red-team review (2026-09-05) — findings and dispositions
 
 | # | Finding | Severity | Disposition |
