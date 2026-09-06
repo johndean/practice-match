@@ -23,6 +23,8 @@ class Settings(BaseSettings):
     hibp_enabled: bool = True  # Have I Been Pwned k-anonymity check on password change; falls back to the bundled offline list on any error
     market_data_public: bool = False  # anonymous visitors gain permissions.MATRIX["market.read"] only while true — QA evaluation only (spec's MARKET_DATA_PUBLIC), never production
     consolidator_keywords: str = ""  # comma-separated employer-domain keywords (VIN Foundation-supplied); an application-review hint only, never a decision (spec §6)
+    link_base_url: str = "https://qa.foundation.vin"  # origin the verify/reset links in transactional email point at; production sets https://foundation.vin
+    email_allowlist: str = ""  # comma-separated addresses/domains transactional email may be delivered to; empty means no allowlist (Task I6)
 
     @field_validator("site_mode")
     @classmethod
