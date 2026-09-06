@@ -317,3 +317,6 @@ def test_deploy_md_documents_automation_tokens_and_their_two_exceptions():
     assert "90 days" in text
     assert "re-authenticate" in text and "manage tokens" in text
     assert "/api/admin/tokens/{id}/revoke" in text
+    # I5b review M1: removing a staff/admin grant revokes the tokens that account may no longer
+    # mint, so the page must not leave an operator thinking they have to hunt them down by hand.
+    assert "grant_removed" in text

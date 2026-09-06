@@ -66,6 +66,7 @@ An `api_token` is how CI and the load smoke authenticate (`k6-qa`, `e2e-qa`, `de
 * **Two things a token can never do**, whatever role it carries: it can never **re-authenticate** (Revoke, licence decisions, engine activation, role grants and token creation answer `403 REAUTH_TOKEN`), and it can never **manage tokens** (`403 TOKEN_SCOPE`). A leaked admin token cannot revoke a member or mint its own successor.
 * **Lifetime** — capped at 90 days (`days` is clamped into 1..90) and tied to its minter: suspending or revoking that account kills every token it minted, on the next request.
 * **Revoking** — `POST /api/admin/tokens/{id}/revoke` (audited, `404` if it is already revoked). Rotate by minting the replacement first, switching the CI secret, then revoking the old one.
+* **Demotion revokes automatically** — removing someone's `staff` or `admin` grant (`POST /api/admin/users/{id}/grants` with `"grant": false`) revokes, in the same transaction, every live token they minted whose role they may no longer mint; a `buyer`/`seller` automation token is left alone. The ids come back in the response as `revoked_tokens`, and the trail carries one row per token: `GET /api/admin/audit` → `action='tokens.revoke'`, `reason='grant_removed'`, `after.role` = the token's role. There is no list-tokens endpoint, so that response and the audit trail are the record — check them when you demote someone, and mint replacements from an account that still holds the role.
 
 ## Site mode (Coming Soon on production)
 
