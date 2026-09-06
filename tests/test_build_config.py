@@ -38,7 +38,7 @@ def test_dockerfile_runs_as_a_non_root_user_declared_after_the_last_copy():
 def test_railway_json_points_at_the_dispatcher_migrations_and_healthz():
     cfg = json.loads((ROOT / "railway.json").read_text())
     assert cfg["deploy"]["startCommand"] == "bash scripts/start.sh api"
-    assert cfg["deploy"]["preDeployCommand"] == "python scripts/migrate.py"
+    assert cfg["deploy"]["preDeployCommand"] == ["python scripts/migrate.py"]
     assert cfg["deploy"]["healthcheckPath"] == "/api/healthz"
 
 

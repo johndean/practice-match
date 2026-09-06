@@ -25,8 +25,14 @@ echo "[start.sh] role=$role (RAILWAY_SERVICE_NAME=${RAILWAY_SERVICE_NAME:-unset}
 
 case "$role" in
   api)
+    # Migrations run here as well as in railway.json's pre-deploy hook: a QA probe
+    # (2026-09-06) found no schema_migrations table after several deploys and the CLI
+    # cannot show the hook's output, so the container proves the schema itself before
+    # it serves. scripts/migrate.py is idempotent and advisory-locked, so api restarts
+    # cannot collide; a failing file exits here (set -e) and uvicorn never starts.
+    mcmd=(python scripts/migrate.py)
     cmd=(uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}" --proxy-headers --forwarded-allow-ips='*')
-    if [[ "${DRY_RUN:-0}" == "1" ]]; then echo "${cmd[*]}"; else exec "${cmd[@]}"; fi
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then echo "${mcmd[*]}"; echo "${cmd[*]}"; else "${mcmd[@]}"; exec "${cmd[@]}"; fi
     ;;
   worker)
     wcmd=(celery -A app.tasks.celery_app:celery_app worker -B --loglevel=info --concurrency="${CELERY_CONCURRENCY:-2}" --queues=celery)

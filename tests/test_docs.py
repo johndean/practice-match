@@ -233,3 +233,9 @@ def test_deploy_md_documents_the_coming_soon_verify_output():
     assert "coming-soon shell OK" in text
     assert "interest endpoint OK" in text
     assert "site_mode coming_soon" in text
+
+
+def test_deploy_md_says_the_api_container_runs_migrations_at_start():
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "runs the migrations at start" in text
+    assert "Deploy aborted by the pre-deploy hook" not in text  # the old rollback row's claim was never true on Railway
