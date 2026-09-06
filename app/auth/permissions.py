@@ -36,7 +36,11 @@ MATRIX: dict[str, frozenset[str]] = {
     "audit.read": _STAFF, "permissions.read": _STAFF,
 }
 REAUTH = frozenset({"licence.decide", "engine.activate", "roles.grant", "tokens.manage", "users.revoke"})
-AUDITED = frozenset({"users.review", "users.decide", "roles.grant", "tokens.manage", "licence.decide", "engine.activate", "abuse.investigate"})
+# "users.revoke" joins the list in I3 fix round 1's follow-up (John, 2026-09-06): it is a staff
+# decision exactly like "users.decide", which is audited, and I5's decide endpoint writes the audit
+# row for its revoke branch. `tests/auth/test_permissions.py` pins both that membership and
+# `AUDITED <= set(MATRIX)`, so a name here can no longer drift away from a real permission.
+AUDITED = frozenset({"users.review", "users.decide", "users.revoke", "roles.grant", "tokens.manage", "licence.decide", "engine.activate", "abuse.investigate"})
 # (method, path template) for every route that is deliberately reachable without a permission.
 # `tests/auth/test_permissions.py::test_every_route_is_guarded_or_public` walks `create_app()` and
 # fails on anything here that is neither guarded by `require(...)` nor listed below (spec §4

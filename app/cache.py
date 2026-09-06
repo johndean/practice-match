@@ -21,15 +21,20 @@ import redis.asyncio as aioredis
 from app.config import settings
 
 
+# `Redis.from_url`, not the module-level `redis.from_url`/`redis.asyncio.from_url`: those two are
+# entirely unannotated one-line shims that do nothing but call this same classmethod
+# (redis/utils.py, redis/asyncio/utils.py), so under mypy --strict every call through them needed a
+# `# type: ignore[no-untyped-call]`. The classmethod itself is annotated. Same object, same
+# arguments, no suppression (I3 fix round 1 follow-up); `app.db.get_redis` does the same.
 def _make_sync() -> redis_sync.Redis:
-    client: redis_sync.Redis = redis_sync.from_url(  # type: ignore[no-untyped-call]  # redis-py's from_url has no annotations upstream
+    client: redis_sync.Redis = redis_sync.Redis.from_url(
         settings.redis_url, socket_connect_timeout=3, socket_timeout=3
     )
     return client
 
 
 def _make_async() -> aioredis.Redis:
-    client: aioredis.Redis = aioredis.from_url(  # type: ignore[no-untyped-call]  # redis-py's from_url has no annotations upstream
+    client: aioredis.Redis = aioredis.Redis.from_url(
         settings.redis_url, socket_connect_timeout=3, socket_timeout=3
     )
     return client

@@ -49,13 +49,22 @@ def test_typescript_twin_is_current(tmp_path):
     assert twin.exists() and twin.read_text() == ts, "run: python -m app.auth.permissions --ts > frontend/src/auth/permissions.ts"
 
 
-def test_every_reauth_permission_is_a_real_permission():
+def test_every_reauth_and_audited_permission_is_a_real_permission():
     """Important 1: `REAUTH` held "users.revoke", `MATRIX` did not, and `to_typescript()` quietly
     filtered the dangling name out with `REAUTH & set(MATRIX)` — so the twin shipped a REAUTH list
     missing the one entry, and `require("users.revoke")` would have raised KeyError at wiring time.
-    The filter is gone; this is what keeps the two in step."""
+    The filter is gone; this is what keeps the three lists in step, `AUDITED` included (nothing
+    filtered that one either — it was simply never checked).
+
+    Follow-up (John, 2026-09-06): `users.revoke` is audited as well as re-authenticated. It is a
+    staff decision exactly like `users.decide`, which is audited; I5's decide endpoint writes the
+    audit row for the revoke branch, and `test_audited_permissions_are_written_by_their_handlers`
+    below is what will hold it to that."""
     assert PM.REAUTH <= set(PM.MATRIX)
+    assert PM.AUDITED <= set(PM.MATRIX)
     assert PM.MATRIX["users.revoke"] == frozenset({"staff", "admin"})
+    assert "users.revoke" in PM.REAUTH
+    assert "users.revoke" in PM.AUDITED
 
 
 # --- supplemental (not in the brief's Step 1 — added for 100% branch coverage) ---

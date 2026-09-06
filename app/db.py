@@ -80,7 +80,11 @@ def get_redis(url: str) -> Redis:
     clients = _redis_clients.setdefault(loop, {})
     client = clients.get(url)
     if client is None:
-        client = aioredis.from_url(  # type: ignore[no-untyped-call]  # redis-py's from_url has no annotations upstream
+        # `aioredis.Redis.from_url`, not the module-level `aioredis.from_url`: the latter is a
+        # one-line, entirely unannotated shim around exactly this classmethod (redis/asyncio/utils.py),
+        # so calling it needed a `# type: ignore[no-untyped-call]`. Same object, same arguments,
+        # no suppression (I3 fix round 1 follow-up).
+        client = aioredis.Redis.from_url(
             url, socket_connect_timeout=TIMEOUT_S, socket_timeout=TIMEOUT_S
         )
         clients[url] = client

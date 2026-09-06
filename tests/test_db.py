@@ -77,13 +77,16 @@ async def test_get_engine_passes_a_connect_timeout(monkeypatch):
 
 async def test_get_redis_passes_socket_timeouts(monkeypatch):
     captured = {}
-    original_from_url = db.aioredis.from_url
+    # The seam is `Redis.from_url`, the annotated classmethod, since I3 fix round 1's follow-up:
+    # `get_redis` no longer goes through redis-py's unannotated module-level `from_url` shim (which
+    # only forwards to this very classmethod), so no `# type: ignore[no-untyped-call]` is needed.
+    original_from_url = db.aioredis.Redis.from_url
 
     def spy(url, **kwargs):
         captured.update(kwargs)
         return original_from_url(url, **kwargs)
 
-    monkeypatch.setattr(db.aioredis, "from_url", spy)
+    monkeypatch.setattr(db.aioredis.Redis, "from_url", spy)
     db.get_redis(REDIS_URL)
     assert captured.get("socket_connect_timeout") == db.TIMEOUT_S
     assert captured.get("socket_timeout") == db.TIMEOUT_S
