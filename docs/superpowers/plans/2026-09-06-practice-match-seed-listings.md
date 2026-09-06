@@ -4,7 +4,7 @@
 
 **Goal:** Replace the design's twenty-one anonymised fixture practices on qa.foundation.vin with **eighteen seeded demo hospitals** — John's names, real mapable street addresses, fake `555` phone numbers, opening hours and photographs — stored in a new `listing` table, served by three `listing.read`-guarded endpoints, and read by the Vue app at start-up.
 
-**Architecture:** Four artefacts move, in order. (1) `migrations/015_listing.sql` creates the `listing` table Wave 2b and the Census plan's Phase B build on. (2) `seeds/hospitals.json` carries John's eighteen rows verbatim, plus the fields the design needs that his table does not carry, plus coordinates the implementer geocodes **once** through the U.S. Census Bureau Geocoder and commits with the match tier. (3) `scripts/prepare_photos.py` turns John's curated photograph folders into committed WebP files under `seeds/hospitals/photos/`, and `scripts/seed_listings.py` (the new `seed` role of `scripts/start.sh`) upserts the rows into any environment's database. (4) `app/api/listings.py` serves them and `frontend/src/listings/load.ts` replaces the generated `P` / `MARKETS` fixture arrays in place, **keeping every field name the design's template reads**. The pixel gates keep running against a stub built from the design's own fixtures, so the zero-tolerance visual suite is unaffected; only QA sees the eighteen.
+**Architecture:** Four artefacts move, in order. (1) `migrations/016_listing.sql` creates the `listing` table Wave 2b and the Census plan's Phase B build on. (2) `seeds/hospitals.json` carries John's eighteen rows verbatim, plus the fields the design needs that his table does not carry, plus coordinates the implementer geocodes **once** through the U.S. Census Bureau Geocoder and commits with the match tier. (3) `scripts/prepare_photos.py` turns John's curated photograph folders into committed WebP files under `seeds/hospitals/photos/`, and `scripts/seed_listings.py` (the new `seed` role of `scripts/start.sh`) upserts the rows into any environment's database. (4) `app/api/listings.py` serves them and `frontend/src/listings/load.ts` replaces the generated `P` / `MARKETS` fixture arrays in place, **keeping every field name the design's template reads**. The pixel gates keep running against a stub built from the design's own fixtures, so the zero-tolerance visual suite is unaffected; only QA sees the eighteen.
 
 **Tech Stack:** PostgreSQL 16 + PostGIS 3.5 (`geography(Point,4326)`, GiST) · FastAPI + psycopg2 (`app.db.sync_conn`) · Redis (`app.cache.sync_redis`, 60 s list cache) · `app.auth.deps.require("listing.read")` from Wave 2a · Pillow (the one new dependency, dev group only) · Vue 3 + TypeScript 6 · Playwright 1.63 · Vitest 3.
 
@@ -18,7 +18,7 @@ Every task's requirements implicitly include this section.
 
 ### The spec's decisions, verbatim (`docs/superpowers/specs/2026-09-06-seed-listings-design.md` §3)
 
-- **D1 — Placement and order.** A plan of its own, executed after Browse V3 merges (it rewrites the Browse rail, pins and detail) and after Wave 2a Task I4 merges (it needs `require`), and before the rest of Wave 2b. It defines the `listing` table that Wave 2b and the Census plan's Phase B build on: `id uuid`, `slug`, `name`, `street`, `city`, `state`, `zip`, `phone`, `hours`, `status`, `location_disclosed`, `geom geography(Point,4326)`, the design's card and detail fields (`area`, `type`, `price`, `rev`, `docs`, `rooms`, `sqft`, `bldg`, `est`, `listed_at`, `note`, `staff`, `services`, `facility`, `ownership`, `market`), `photos jsonb`, `source` (`seed` | `seller`), timestamps. Migrations start at `015` (identity uses `010`–`014`; the Census plan's Phase B stays at `060`+).
+- **D1 — Placement and order.** A plan of its own, executed after Browse V3 merges (it rewrites the Browse rail, pins and detail) and after Wave 2a Task I4 merges (it needs `require`), and before the rest of Wave 2b. It defines the `listing` table that Wave 2b and the Census plan's Phase B build on: `id uuid`, `slug`, `name`, `street`, `city`, `state`, `zip`, `phone`, `hours`, `status`, `location_disclosed`, `geom geography(Point,4326)`, the design's card and detail fields (`area`, `type`, `price`, `rev`, `docs`, `rooms`, `sqft`, `bldg`, `est`, `listed_at`, `note`, `staff`, `services`, `facility`, `ownership`, `market`), `photos jsonb`, `source` (`seed` | `seller`), timestamps. Migrations start at `016` (identity uses `010`–`015`; the Census plan's Phase B stays at `060`+).
 - **D2 — Geocoding.** Addresses are geocoded once, offline, by the implementer through the **U.S. Census Bureau Geocoder** (public domain, no key, no Google), and the coordinates are committed in `seeds/hospitals.json` with the geocoder's match tier as provenance. A test asserts every point lies inside its state's bounding box and within 25 km of its city's centroid. No Google Places or Google Geocoding content is stored (standing rule).
 - **D3 — Photos.** `scripts/prepare_photos.py` reads the curated folders, keeps up to **four** photographs per hospital in folder order, converts each to WebP at ≤ 1600 px on the long edge and ≤ 250 KB, strips metadata, and writes `seeds/hospitals/photos/<slug>/1.webp … 4.webp` plus an inventory (`seeds/hospitals/photos/index.json` with SHA-256s). The outputs are committed (≈ 15 MB; the repository is public — John supplied these photographs for the demo hospitals). They are served by the API, not bundled into the frontend, through `GET /api/listings/{id}/photos/{n}` (`listing.read`), so an unpublished or anonymised listing's photographs are never public.
 - **D4 — Fields John's table does not carry.** `type` is derived from the name ("Specialist" → Specialty; "ER" / "Critical Care" / "24/7 emergency" hours → Emergency; otherwise Small animal); `price`, `rev`, `docs`, `rooms`, `sqft`, `bldg`, `est`, `staff`, `services`, `facility`, `ownership` are plausible demo values set per hospital in `seeds/hospitals.json` (visible, editable by John at any time, marked `"demo": true`); `note` reads "Demo listing seeded by the VIN Foundation." Community figures (`pop`, `growth`, `income`, `hh`) are left null until the Census plan supplies them; the UI shows its existing empty state for them.
@@ -113,7 +113,7 @@ Expected: PASS. This plan's per-task gate adds `--cov=scripts` to the scope Wave
 
 | File | Kind | Responsibility | Task |
 |---|---|---|---|
-| `migrations/015_listing.sql` | migration (new) | the `listing` table, its checks, its GiST and pagination indexes | L1 |
+| `migrations/016_listing.sql` | migration (new) | the `listing` table, its checks, its GiST and pagination indexes | L1 |
 | `tests/test_listing_schema.py` | test (new) | schema contract: columns, types, checks, indexes, SRID | L1 |
 | `seeds/hospitals.json` | data (new) | John's eighteen rows verbatim + derived + demo + geocoded | L2 |
 | `tests/seeds/test_hospitals_json.py` | test (new) | JSON schema, D4 type derivation, slug/folder agreement | L2 |
@@ -153,7 +153,7 @@ Expected: PASS. This plan's per-task gate adds `--cov=scripts` to the scope Wave
 ### Task L1: The `listing` table
 
 **Files:**
-- Create: `migrations/015_listing.sql`
+- Create: `migrations/016_listing.sql`
 - Create: `tests/test_listing_schema.py`
 - Unchanged: `scripts/migrate.py` (the ledger runner already applies `[0-9][0-9][0-9]_*.sql` in name order; nothing about this file needs new runner behaviour — it is a single transactional `CREATE TABLE` + `CREATE INDEX`, no `CREATE INDEX CONCURRENTLY`)
 
@@ -170,7 +170,7 @@ Expected: PASS. This plan's per-task gate adds `--cov=scripts` to the scope Wave
 Create `tests/test_listing_schema.py`:
 
 ```python
-"""Schema contract for migrations/015_listing.sql (spec 2026-09-06 D1).
+"""Schema contract for migrations/016_listing.sql (spec 2026-09-06 D1).
 
 Every column name here is read by scripts/seed_listings.py (L4) and app/api/listings.py
 (L5), and by Wave 2b and the Census plan's Phase B after them. A rename that does not
@@ -306,7 +306,7 @@ Expected: every test FAILS — `psycopg2.errors.UndefinedTable: relation "listin
 
 - [ ] **Step 3: Write the migration**
 
-Create `migrations/015_listing.sql`:
+Create `migrations/016_listing.sql`:
 
 ```sql
 -- Seed Listings (spec 2026-09-06, D1). The marketplace's listing table: the eighteen seeded
@@ -390,7 +390,7 @@ Expected: 0 findings, 0 errors, all green at 100 %.
 
 ```bash
 cd "/Users/johndean/Development/Practice Match"
-git add migrations/015_listing.sql tests/test_listing_schema.py
+git add migrations/016_listing.sql tests/test_listing_schema.py
 git commit -m "feat(db): listing table — geography point, status/source/type checks, photos jsonb
 
 Spec 2026-09-06 D1. Migrations start at 015 (identity holds 010-014). geom is
@@ -1760,7 +1760,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Modify: `tests/test_docs.py`
 
 **Interfaces:**
-- Consumes: `migrations/015_listing.sql`'s `listing` table (L1); `seeds/hospitals.json` (L2); `seeds/hospitals/photos/index.json` (L3). It imports **nothing from `scripts/`** — see the `normalize_dsn` docstring in Step 3 and the runnability note below.
+- Consumes: `migrations/016_listing.sql`'s `listing` table (L1); `seeds/hospitals.json` (L2); `seeds/hospitals/photos/index.json` (L3). It imports **nothing from `scripts/`** — see the `normalize_dsn` docstring in Step 3 and the runnability note below.
 - Produces: `scripts/seed_listings.py` exposing `SEEDS_FILE`, `PHOTO_INDEX`, `UPSERT`, `normalize_dsn(dsn: str) -> str`, `load_seed(path: Path) -> list[dict[str, Any]]`, `photo_paths(slug: str, index: dict[str, Any]) -> list[str]`, `row_params(hospital: dict[str, Any], photos: list[str]) -> dict[str, Any]`, `seed(dsn: str, *, reset: bool = False) -> int` (returns the number of rows upserted), `main(argv: list[str] | None = None) -> int`. Exit codes: `0` success, `2` `DATABASE_URL` unset, `3` database unreachable, `4` seed data missing or malformed. Task L5 reads the rows it writes.
 
 > **⚠️ This file must be importable AND runnable as a bare script.** `tests/scripts/test_seed_listings.py` imports it as `scripts.seed_listings` (pytest puts the repo root on `sys.path`), while the container runs `python scripts/seed_listings.py`, which puts `/app/scripts` on `sys.path[0]` and the repo root nowhere. `scripts/` has no `__init__.py`, the project is `package-mode = false`, and the image installs `--no-root`, so **any `from scripts.… import …` here is a QA-only crash that every test in this plan would miss** (pre-flight C1). The rule: this file imports stdlib and `psycopg2` only, exactly as `scripts/migrate.py` does. Step 5's subprocess test is what holds it to that. (`python -m scripts.seed_listings` from `/app` would also work — namespace packages make `scripts` importable when the repo root *is* `sys.path[0]` — but the plain-path invocation is what `start.sh` and DEPLOY.md use, so the plain-path invocation is what is tested.)
@@ -4212,7 +4212,7 @@ Three assertions were checked for honesty rather than presence: the slug/folder 
 
 The two places that read like gaps are deliberate and named: the `0.0` / `REPLACE FROM THE GEOCODER RUN` values in `seeds/hospitals.json` (they are the output of the one step that must be run live, and both the bounds test and the placeholder test fail until they are replaced — that is the mechanism, not an omission) and L6 Step 0's STOP (a decision that is John's, with all three options spelled out and one recommended).
 
-**Cross-plan note (pre-flight M7).** The Census plan's `tests/census/listing_fixtures.make_listing` inserts only `(id, street, city, state, zip, status)`, which will violate the `NOT NULL` on `slug`, `name`, `area`, `type`, `market` and `source` once `015_listing.sql` exists. The Census plan already anticipates this — "adapt the column list to SP2's schema in this one helper only" — so it is a note, not a defect, and no task here changes that file. Whoever executes the Census plan after this one should expect to add those six columns to that single helper.
+**Cross-plan note (pre-flight M7).** The Census plan's `tests/census/listing_fixtures.make_listing` inserts only `(id, street, city, state, zip, status)`, which will violate the `NOT NULL` on `slug`, `name`, `area`, `type`, `market` and `source` once `016_listing.sql` exists. The Census plan already anticipates this — "adapt the column list to SP2's schema in this one helper only" — so it is a note, not a defect, and no task here changes that file. Whoever executes the Census plan after this one should expect to add those six columns to that single helper.
 
 **3. Type consistency.** Checked end to end:
 - `slug` is the join between L2's seed file, L3's folder names and inventory keys, L4's `photo_paths`, and L6's `Practice.id`. One spelling throughout.
