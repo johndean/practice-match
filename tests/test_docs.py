@@ -22,7 +22,7 @@ REQUIRED_CI_COMMANDS = (
     "poetry run pytest -q -W error",
     "--cov=app",
     "--cov-report=xml",
-    "--cov-fail-under=90",
+    "--cov-fail-under=100",
     "bash tests/scripts/test_start_sh.sh",
     "bash tests/scripts/test_verify_image_sh.sh",
     "bash tests/scripts/test_deploy_guard.sh",
@@ -38,7 +38,7 @@ REQUIRED_CI_COMMANDS = (
 
 # Fix round 1, item 1: the tools quality.yml runs must be tracked dependencies, not installed
 # ad hoc inside the job.
-FORBIDDEN_CI_SUBSTRINGS = ("pip install", "npm install --no-save")
+FORBIDDEN_CI_SUBSTRINGS = ("pip install", "npm install --no-save", "--cov-fail-under=9")
 
 # Fix round 1's frontend-coverage ruling (John, 2026-09-06) plus the app.setup.js addition
 # ratified in fix round 2 — the exact set frontend/vite.config.ts's coverage.exclude must carry.
