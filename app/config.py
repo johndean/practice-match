@@ -25,6 +25,15 @@ class Settings(BaseSettings):
     consolidator_keywords: str = ""  # comma-separated employer-domain keywords (VIN Foundation-supplied); an application-review hint only, never a decision (spec §6)
     link_base_url: str = "https://qa.foundation.vin"  # origin the verify/reset links in transactional email point at; production sets https://foundation.vin
     email_allowlist: str = ""  # comma-separated addresses/domains transactional email may be delivered to; empty means no allowlist (Task I6)
+    # Resend (Task I6). The two secrets are set only in Railway — `RESEND_API_KEY` on the worker
+    # (the only service that sends) and `RESEND_WEBHOOK_SECRET` on the api (the only service that
+    # receives) — so each service boots with the other one unset, which is why both are optional
+    # here rather than required: a missing key is refused at the moment it is USED, naming itself
+    # (`app.mail.tasks.send_due`, `app.api.webhooks`), not at import on a service that never needs it.
+    resend_api_key: str | None = None
+    resend_webhook_secret: str | None = None
+    mail_from: str = "VIN Foundation — Practice Match <no-reply@foundation.vin>"  # spec §2: foundation.vin is the SENDER domain
+    mail_reply_to: str = "practicematch@vin.com"  # placeholder until the VIN Foundation names the mailbox (spec §10 open item)
     db_pool_max: int = 10  # size of the psycopg2 REUSE pool per DSN (app/db.py); past it a caller gets an un-pooled connection, so this does not cap the connection count
 
     @field_validator("site_mode")

@@ -12,6 +12,7 @@ from app.api.auth import router as auth_router
 from app.api.health import not_found_router
 from app.api.health import router as health_router
 from app.api.interest import router as interest_router
+from app.api.webhooks import router as webhooks_router
 from app.auth import deps
 from app.config import settings
 from app.db import dispose_all
@@ -73,6 +74,11 @@ def create_app(dist: Path | None = None) -> FastAPI:
         app.include_router(applications_router)
         app.include_router(admin_users_router)
     app.include_router(interest_router)
+    # Resend's delivery events (Task I6). NOT gated on `site_mode`, unlike the auth surface: the
+    # provider posts to whichever host sent the mail, and a bounce that arrives after a launch
+    # flip must still reach the suppression list. It is public by necessity and verified by
+    # signature on every request, so an unconfigured environment answers 401 rather than acting.
+    app.include_router(webhooks_router)
     app.include_router(not_found_router)
     mount_spa(app, dist or dist_for(settings.site_mode))
     return app
