@@ -1497,7 +1497,6 @@ import './generated/pseudo.css';
 import { computed, onMounted, onUnmounted, reactive } from 'vue';
 import { useRouter } from 'vue-router';
 import { Component } from './logic.js';
-import ListingsMap from './components/ListingsMap.vue';
 import MarketMapView from './components/MarketMapView.vue';
 import ImageSlot from './components/ImageSlot.vue';
 import { useStateRouteSync } from './router/useStateRouteSync';
