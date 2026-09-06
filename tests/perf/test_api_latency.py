@@ -5,31 +5,29 @@ import uuid
 import psycopg2
 import pytest
 
+from app import db
 from app.config import settings
 
 # --- Task I4 budgets ---------------------------------------------------------------------------
-# MEASURED on the dev stack, 2026-09-06 — p95 per round, four rounds, on Apple Silicon with Docker
-# Desktop and the PostGIS image pinned to linux/amd64 (so Postgres is EMULATED):
+# The brief's numbers, RESTORED in fix round 1 (Important 5). They were relaxed to 150/500 ms on the
+# argument that an un-pooled `psycopg2.connect()` made them physically unreachable; the connect was
+# 59 % of `GET /api/me` and `app.db` now pools it, so the argument no longer holds. Measured on the
+# dev stack (Apple Silicon, Docker Desktop, the PostGIS image pinned to linux/amd64 and therefore
+# EMULATED) — before -> after the pool:
 #
-#     /api/me, signed in ..............  58-62 ms    (brief: 20)
-#     GET /api/me, well-formed bearer .  77-96 ms    (a MALFORMED bearer is 0.9 ms — I3's shape check)
-#     POST /api/auth/signup ...........  202-213 ms  (brief: 100)
-#     POST /api/auth/signin ...........  215-254 ms, one 390 ms outlier observed  (brief: 300)
+#     /api/me, signed in ..............  58-62 ms  ->  see the report      (budget 20)
+#     GET /api/me, well-formed bearer .  77-96 ms  ->  see the report
+#     POST /api/auth/signin ...........  215-254   ->  see the report      (budget 300)
+#     POST /api/auth/signup ...........  202-213   ->  see the report      (budget 300, John's default)
 #
-# Two costs dominate, and neither belongs to Task I4:
-#   * one Argon2id hash or verify at the spec's 64 MiB / t=3 is ~97 ms here, so `signup <= 100 ms`
-#     cannot hold whatever else the request does;
-#   * `app.db.sync_conn()` opens an UN-POOLED psycopg2 connection — ~33-50 ms against the emulated
-#     Postgres — and EVERY guarded endpoint opens one, so `/api/me <= 20 ms` cannot hold either.
-#     A synchronous connection pool in app/db.py is the fix; app/db.py is outside this task's remit.
-#
-# The budgets below are set at roughly twice the measured steady state, because a gate that flakes
-# is worth less than a loose one. AWAITING JOHN'S RULING: adopt these, or pool `sync_conn()` and
-# restore the brief's 20/100 (a native-amd64 CI runner may well hold them as they stand).
-BEARER_BUDGET_MS = 250   # measured 77-96 ms steady; a cold un-pooled connect has been seen at 240 ms
-SIGNUP_BUDGET_MS = 500   # brief: 100 — unreachable, one Argon2id hash alone is ~97 ms here
-SIGNIN_BUDGET_MS = 500   # brief: 300 — held at the median (215-254), but a 390 ms round was observed
-BUDGET_MS = {"/api/healthz": 20, "/": 15, "/api/me": 150}   # /api/me: brief 20, measured 58-62. Census B5 and Map engines M3/M4 extend this dict
+# Only signup keeps a relaxed number, and it is John's ruling rather than an implementer's: one
+# Argon2id hash at the spec's 64 MiB / t=3 is ~97 ms on its own, so the brief's 100 ms leaves
+# nothing for the request around it. The CI-runner measurement the ruling asks for is in the report.
+BEARER_BUDGET_MS = 60
+SIGNUP_BUDGET_MS = 300   # brief: 100 — John's default in fix round 1; one Argon2id hash is ~97 ms
+SIGNIN_BUDGET_MS = 300   # the brief's number
+COLD_ME_BUDGET_MS = 60   # the review's ⚠️: /api/me with the principal cache MISSED (Redis -> Postgres)
+BUDGET_MS = {"/api/healthz": 20, "/": 15, "/api/me": 20}   # Census B5 and Map engines M3/M4 extend this dict
 # Paths BUDGET_MS measures through the SIGNED-IN client rather than the anonymous one (Task I4):
 # `/api/me` answered anonymously is a 401 that never opens a connection, which is not the path the
 # app serves. Everything else here is public and is measured as a visitor sees it.
@@ -186,3 +184,45 @@ async def test_interest_stored_path_p95_within_budget(client, db_ready):
     finally:
         with psycopg2.connect(settings.database_url) as conn, conn.cursor() as cur:
             cur.execute("DELETE FROM interest_signup WHERE email_normalised LIKE %s", (f"perf-{tag}-%",))
+
+
+async def test_cold_principal_cache_me_p95_within_budget(signed_in, db_ready):
+    """The review's ⚠️: every other probe ran with a WARM principal cache. On a miss
+    `deps._session_principal` falls through to Postgres and opens a connection of its own, on top of
+    the one `/api/me` opens — so this is the two-connection path, and the one that says whether the
+    pool actually removed the cost."""
+    from app.auth import sessions as S
+    from app.cache import sync_redis
+
+    raw = signed_in.headers["Cookie"].split("pm_session=", 1)[1].split(";")[0]
+    key = f"session:{S.hash_id(raw)}"
+    samples = []
+    await signed_in.get("/api/me")
+    for _ in range(30):
+        sync_redis().delete(key)           # force the miss half on every sample
+        t0 = time.perf_counter()
+        r = await signed_in.get("/api/me")
+        samples.append((time.perf_counter() - t0) * 1000)
+        assert r.status_code == 200, r.text
+    got = statistics.quantiles(samples, n=20)[18]
+    assert got <= COLD_ME_BUDGET_MS, f"/api/me with a cold principal cache p95 {got:.1f} ms over {COLD_ME_BUDGET_MS} ms"
+
+
+async def test_no_connection_is_held_across_the_argon2id_hop(client, db_ready, monkeypatch):
+    """Important 5's other half. `with conn:` opens a real transaction even on an autocommit
+    connection, so `signin` used to hold a Postgres backend idle-in-transaction across the ~97 ms
+    Argon2id verify — and `password/reset` across the HIBP screen's 2 s timeout. A burst of sign-ins
+    parks that many backends. The credential work now happens between two short connections."""
+    from app.auth import passwords as P
+
+    real, checked_out = P.verify_async, []
+
+    async def watched(pw, hashed):
+        checked_out.append(db.sync_pool_in_use())
+        return await real(pw, hashed)
+
+    monkeypatch.setattr(P, "verify_async", watched)
+    r = await client.post("/api/auth/signin", json={"email": f"perf-{uuid.uuid4().hex[:8]}@example.org", "password": PERF_PW},
+                          headers={"x-forwarded-for": _fresh_ip()})
+    assert r.status_code == 401
+    assert checked_out == [0], f"a connection was checked out across the Argon2id hop: {checked_out}"

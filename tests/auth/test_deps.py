@@ -6,6 +6,7 @@ import pytest
 from fastapi import Depends, FastAPI, Request
 from httpx import ASGITransport
 
+from app import db
 from app.auth import deps
 from app.auth import sessions as S
 from app.auth.deps import require
@@ -249,7 +250,11 @@ async def test_a_cache_hit_opens_no_postgres_connection(client, conn, redis, mon
 async def test_a_cache_miss_opens_one_connection_and_closes_it(client, conn, redis, monkeypatch):
     """Ruling (c): `with sync_conn() as conn:` is psycopg2's TRANSACTION context manager — it
     commits, it does not close — so the socket only went away when CPython happened to collect the
-    local. Every connection this dependency opens is now closed explicitly."""
+    local. Every connection this dependency opens is now released explicitly.
+
+    I4 fix round 1 pooled `sync_conn()`, so "released" no longer means `conn.closed`: a returned
+    connection is still open, waiting in the pool. `db.sync_pool_in_use()` is what says it is not
+    still checked out, which is the property this test always meant."""
     aid = _member(conn, ["buyer"]); raw = S.create(conn, redis, aid, None, None)
     redis.delete(f"session:{S.hash_id(raw)}")  # force the miss half
     opened = []
@@ -263,7 +268,7 @@ async def test_a_cache_miss_opens_one_connection_and_closes_it(client, conn, red
     monkeypatch.setattr(deps, "sync_conn", _tracked)
     assert (await _as(client, pm_session=raw).get("/read")).status_code == 200
     assert len(opened) == 1
-    assert opened[0].closed, "the per-request Postgres connection was left open"
+    assert db.sync_pool_in_use() == 0, "the per-request Postgres connection was left checked out"
 
 
 def test_current_principal_is_a_plain_def_so_fastapi_threadpools_it():
@@ -499,7 +504,7 @@ async def test_a_well_formed_but_unknown_token_still_asks_postgres(client, conn,
     monkeypatch.setattr(deps, "sync_conn", _tracked)
     r = await client.get("/read", headers={"Authorization": f"Bearer pm_{uuid4()}.no-such-secret"})
     assert r.status_code == 401
-    assert len(opened) == 1 and opened[0].closed
+    assert len(opened) == 1 and db.sync_pool_in_use() == 0
 
 
 async def test_revoking_an_accounts_sessions_makes_the_next_request_the_generic_401(client, conn, redis):

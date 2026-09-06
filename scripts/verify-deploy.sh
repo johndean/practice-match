@@ -122,6 +122,12 @@ if [[ "$mode" == "coming_soon" ]]; then
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H 'Content-Type: application/json' -d '{"email":"not-an-email"}' "$BASE/api/interest")
   [[ "$code" == "422" ]] || { echo "FAIL: interest endpoint answered $code to an invalid address (expected 422)" >&2; exit 1; }
   echo "interest endpoint OK"
+  # The auth surface must NOT be mounted behind the Coming Soon page: create_app() includes the
+  # router only when SITE_MODE=app, so anyone who guesses the path gets the JSON 404 rather than a
+  # real account row nothing can email yet (Identity plan Task I4, fix round 1).
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H 'Content-Type: application/json' -d '{"email":"probe@example.org","password":"x"}' "$BASE/api/auth/signup")
+  [[ "$code" == "404" ]] || { echo "FAIL: /api/auth/signup answered $code in coming-soon mode (expected 404 - the auth surface must not be mounted before launch)" >&2; exit 1; }
+  echo "auth endpoints absent OK"
 else
   body=$(curl -fsS --max-time 20 "$BASE/browse")
   [[ "$body" == *'id="app"'* ]] || { echo "FAIL: SPA fallback missing at $BASE/browse" >&2; exit 1; }

@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import time
 
+import psycopg2.extensions
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
@@ -150,3 +151,89 @@ async def test_engine_errors_never_carry_bound_parameters(db_ready):
             await conn.execute(text("SELECT 1 FROM no_such_table WHERE x = :p"), {"p": "victim-address@example.org"})
     assert "no_such_table" in str(info.value)
     assert "victim-address@example.org" not in str(info.value)
+
+
+# --- I4 fix round 1, Important 5: `sync_conn()` is pooled -------------------------------------
+# An un-pooled `psycopg2.connect()` measured 32.8 ms on the dev stack and EVERY guarded endpoint
+# opened one, which is 59 % of `GET /api/me`. These pin the pool that removes it.
+
+
+def test_sync_conn_reuses_one_underlying_connection_across_sequential_uses(db_ready):
+    first = db.sync_conn()
+    backend = first.get_backend_pid()
+    first.close()                      # "close" now means "return to the pool"
+    second = db.sync_conn()
+    try:
+        assert second.get_backend_pid() == backend, "the second use opened a new Postgres backend"
+    finally:
+        second.close()
+
+
+def test_a_returned_connection_is_no_longer_checked_out(db_ready):
+    conn = db.sync_conn()
+    assert db.sync_pool_in_use() == 1
+    conn.close()
+    assert db.sync_pool_in_use() == 0
+
+
+def test_a_broken_connection_is_discarded_rather_than_returned(db_ready):
+    """psycopg2's pool refuses to re-pool a connection whose socket has gone; the next caller must
+    get a live one, not the corpse."""
+    conn = db.sync_conn()
+    psycopg2.extensions.connection.close(conn)   # close the REAL socket, bypassing the return-to-pool override
+    assert conn.closed != 0
+    conn.close()                              # release the (dead) connection
+    fresh = db.sync_conn()
+    try:
+        assert fresh is not conn and fresh.closed == 0
+        with fresh.cursor() as cur:
+            cur.execute("SELECT 1")
+            assert cur.fetchone() == (1,)
+    finally:
+        fresh.close()
+
+
+async def test_dispose_all_closes_the_sync_pools(db_ready):
+    conn = db.sync_conn()
+    conn.close()
+    assert db.sync_pool_in_use() == 0
+    await db.dispose_all()
+    assert db._sync_pools == {}
+    again = db.sync_conn()
+    try:
+        assert again.closed == 0
+    finally:
+        again.close()
+
+
+def test_pools_are_keyed_by_dsn_so_a_scratch_database_gets_its_own(conn, db_ready, monkeypatch):
+    """The `conn` fixture patches `settings.database_url` to a scratch database; the pool must
+    follow it, or a test would be handed a connection to the shared dev database."""
+    scratch = db.sync_conn()
+    try:
+        with scratch.cursor() as cur:
+            cur.execute("SELECT current_database()")
+            assert cur.fetchone()[0] == settings.database_url.rsplit("/", 1)[1]
+    finally:
+        scratch.close()
+    assert settings.database_url in db._sync_pools
+
+
+def test_the_pool_overflows_to_a_direct_connection_rather_than_refusing(db_ready, monkeypatch):
+    """`maxconn` exhaustion used to be impossible (there was no pool); it must not become a 500.
+    Beyond the cap a caller gets an ordinary un-pooled connection whose `close()` really closes —
+    the behaviour that shipped before the pool, as the overflow path rather than the normal one."""
+    monkeypatch.setattr(settings, "db_pool_max", 1)
+    db.dispose_sync_pools()
+    held = db.sync_conn()
+    try:
+        overflow = db.sync_conn()
+        try:
+            with overflow.cursor() as cur:
+                cur.execute("SELECT 1")
+                assert cur.fetchone() == (1,)
+        finally:
+            overflow.close()
+            assert overflow.closed != 0, "an overflow connection must really close, not linger"
+    finally:
+        held.close()

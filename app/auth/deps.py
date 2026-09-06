@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 from uuid import UUID
 
 from fastapi import FastAPI, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import Response
 from starlette.responses import JSONResponse
 
@@ -117,11 +118,28 @@ async def _auth_error_handler(request: Request, exc: Exception) -> Response:
     return JSONResponse(err.detail, status_code=err.status_code, headers=err.headers)
 
 
+INVALID_REQUEST = {"error": {"code": "INVALID_REQUEST", "message": "The request could not be understood. Check the fields and try again."}}
+
+
+async def _validation_error_handler(request: Request, exc: Exception) -> Response:
+    """Decision A5's envelope for a request FastAPI itself refused — a field of the wrong type, a
+    string past its `max_length`, a body that is not JSON.
+
+    FastAPI's own handler renders `{"detail": [...]}` and echoes the submitted value straight back,
+    which was a second error envelope beside A5's (I4 fix round 1, Minor 1) and a defect of its own:
+    a body carrying a lone surrogate made the ECHO unencodable, so the 422 became a 500 out of
+    `ServerErrorMiddleware` carrying none of the four security headers (Critical 2). Nothing about
+    the input is reflected here — not its value, not its length, not its type."""
+    return JSONResponse(INVALID_REQUEST, status_code=422)
+
+
 def install(app: FastAPI) -> None:
-    """Registers the one handler that renders `AuthError` (`app.main.create_app()` calls this; so
-    does every test that mounts a `require`-guarded route). Idempotent — re-registering the same
-    exception class replaces the entry."""
+    """Registers the handlers that render decision A5's body: `AuthError` for every refusal this
+    module raises, and `RequestValidationError` for the ones FastAPI raises before a handler is
+    reached (`app.main.create_app()` calls this; so does every test that mounts a `require`-guarded
+    route). Idempotent — re-registering the same exception class replaces the entry."""
     app.add_exception_handler(AuthError, _auth_error_handler)
+    app.add_exception_handler(RequestValidationError, _validation_error_handler)
 
 
 def _host_only(field: str) -> str:

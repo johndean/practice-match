@@ -19,6 +19,7 @@ Railway project **Practice Match** (id `d20ecd90-2855-4b7d-957d-96a882b3a95d`) �
 | `CONSOLIDATOR_KEYWORDS` | ✓ | | comma-separated employer-domain keywords, VIN Foundation-supplied; an application-review hint only, never a decision — default empty |
 | `LINK_BASE_URL` | ✓ | ✓ | `https://qa.foundation.vin` / `https://foundation.vin` — the origin the verify and password-reset links in transactional email point at; a wrong value sends people to the other environment (Identity plan Task I4) |
 | `EMAIL_ALLOWLIST` | ✓ | ✓ | comma-separated addresses/domains transactional email may be delivered to; empty means no allowlist. Set on QA so test sign-ups cannot email real people (Identity plan Task I6) |
+| `DB_POOL_MAX` | ✓ | ✓ | `10` — ceiling on pooled psycopg2 connections per DSN (`app/db.py`). Keep the api and worker totals under PostGIS's `max_connections`; past the ceiling a caller gets an un-pooled connection rather than an error (Identity plan Task I4) |
 | `CENSUS_API_KEY` | | ✓ | Sub-project 3; John holds it — never in git, chat, or CI. `railway variable set CENSUS_API_KEY=… --service worker --environment <env>` |
 
 ## DNS (verbatim as Railway printed them — Task 8, 2026-09-06)

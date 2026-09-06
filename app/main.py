@@ -13,7 +13,7 @@ from app.api.interest import router as interest_router
 from app.auth import deps
 from app.config import settings
 from app.db import dispose_all
-from app.security_headers import SecurityHeadersMiddleware
+from app.security_headers import SecurityHeadersMiddleware, server_error
 from app.static import dist_for, mount_spa
 from app.version import VERSION
 
@@ -39,20 +39,32 @@ def create_app(dist: Path | None = None) -> FastAPI:
     async def robots() -> PlainTextResponse:
         return PlainTextResponse("User-agent: *\nAllow: /\n" if settings.public_indexing else "User-agent: *\nDisallow: /\n")
 
-    # Spec §3's four headers on every answer, whatever produced it.
-    app.add_middleware(SecurityHeadersMiddleware)
-
     if settings.origins:
         app.add_middleware(
             CORSMiddleware, allow_origins=settings.origins, allow_credentials=True,
             allow_methods=["*"], allow_headers=["*"],
         )
-    # The one handler that renders app.auth.deps.AuthError as decision A5's body; the installer
-    # lives with the dependency it serves (I3 fix round 1, ruling (a)). I4 adds the auth routers.
+    # Spec §3's four headers on EVERY answer. Added last, so it is the outermost user middleware
+    # and a CORS preflight carries them too; `server_error` carries them on the one response that
+    # never reaches any middleware, the 500 ServerErrorMiddleware generates itself (I4 fix round 1,
+    # Minor 2).
+    app.add_middleware(SecurityHeadersMiddleware)
+    app.add_exception_handler(Exception, server_error)
+    # The handlers that render decision A5's body for app.auth.deps.AuthError and for FastAPI's own
+    # request-validation refusals; the installer lives with the dependency it serves (I3 fix round
+    # 1, ruling (a)). I4 adds the auth routers.
     deps.install(app)
     app.include_router(health_router)
     # Future /api routers are included here, BEFORE the catch-all below.
-    app.include_router(auth_router)
+    #
+    # The auth surface exists only in `app` mode (I4 fix round 1, Important 6). Production runs
+    # `coming_soon` until launch (CLAUDE.md), and a router mounted there would have let anyone who
+    # guessed the path create real `account` rows behind the Coming Soon page — with nothing to
+    # email them until I6 lands, so the only visible effect would be unexplained rows. In
+    # `coming_soon` every /api/auth/* path and /api/me falls through to `not_found_router`'s JSON
+    # 404, which is what `scripts/verify-deploy.sh` now probes for on production.
+    if settings.site_mode == "app":
+        app.include_router(auth_router)
     app.include_router(interest_router)
     app.include_router(not_found_router)
     mount_spa(app, dist or dist_for(settings.site_mode))

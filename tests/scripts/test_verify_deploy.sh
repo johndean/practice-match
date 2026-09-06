@@ -36,7 +36,7 @@ trap cleanup EXIT
 railway_calls() { wc -l < "$FAKE_RAILWAY_LOG" | tr -d ' '; }
 
 # start_server <mode> [environment]. Modes: ok | spa_missing | deep_503 | no_postgis | no_site_mode |
-#   coming_ok | coming_wrong_shell | coming_interest_500 | coming_leak | missing_keys | db_null |
+#   coming_ok | coming_wrong_shell | coming_interest_500 | coming_leak | coming_auth_live | missing_keys | db_null |
 #   not_json | deep_json
 # [environment] overrides the fake body's `environment` field (default qa) — M1's production-mode
 # cases reuse the same MODE bodies (coming_ok, ok) with environment: production instead of duplicating
@@ -61,7 +61,7 @@ if MODE == "no_postgis":
     del BODY["db"]["postgis_version"]
 if MODE == "no_site_mode":
     del BODY["site_mode"]
-if MODE in ("coming_ok", "coming_wrong_shell", "coming_interest_500", "coming_leak"):
+if MODE in ("coming_ok", "coming_wrong_shell", "coming_interest_500", "coming_leak", "coming_auth_live"):
     BODY["site_mode"] = "coming_soon"
 if MODE == "missing_keys":
     BODY = {"status": "ok"}  # malformed: every other required key absent (fix round 2)
@@ -103,7 +103,7 @@ class H(BaseHTTPRequestHandler):
                 self._send(200, "text/html", SHELL_OK)  # marketplace shell, no coming-soon title
             elif MODE == "coming_leak":
                 self._send(200, "text/html", LEAK_SHELL)
-            elif MODE in ("coming_ok", "coming_interest_500"):
+            elif MODE in ("coming_ok", "coming_interest_500", "coming_auth_live"):
                 self._send(200, "text/html", COMING_SHELL)
             else:
                 self._send(200, "text/html", SHELL_BAD if MODE == "spa_missing" else SHELL_OK)
@@ -118,6 +118,9 @@ class H(BaseHTTPRequestHandler):
                 self._send(500, "application/json", b'{"error":"server_error"}')
             else:
                 self._send(422, "application/json", b'{"error":"invalid_email"}')
+        elif self.path == "/api/auth/signup" and MODE == "coming_auth_live":
+            # The auth router mounted behind the Coming Soon page (Task I4, fix round 1, I6).
+            self._send(202, "application/json", b'{"status":"check_email"}')
         else:
             self._send(404, "text/html", b"not found")
     def log_message(self, *a): pass
@@ -187,7 +190,7 @@ stop_server
 # is production's normal shape now — the coming-soon page never goes to QA) -----
 start_server coming_ok production
 out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh production 2>&1) || fail "coming-soon mode must verify; output: $out"
-for line in "site_mode coming_soon" "coming-soon shell OK" "interest endpoint OK"; do [[ "$out" == *"$line"* ]] || fail "missing '$line' in: $out"; done
+for line in "site_mode coming_soon" "coming-soon shell OK" "interest endpoint OK" "auth endpoints absent OK"; do [[ "$out" == *"$line"* ]] || fail "missing '$line' in: $out"; done
 stop_server
 
 # --- 7a. M1: QA must never accept site_mode coming_soon, whatever the environment
@@ -263,6 +266,14 @@ if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash script
   fail "a leaked marketplace shell in coming-soon mode must fail the script; it exited 0 with: $out"
 fi
 [[ "$out" == *"marketplace shell served in coming-soon mode"* ]] || fail "the leak failure must name itself; got: $out"
+stop_server
+
+# --- 11b. FR1 I6: the auth router reachable behind the Coming Soon page fails the deploy -------
+start_server coming_auth_live production
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh production 2>&1); then
+  stop_server; fail "/api/auth/signup answering 202 in coming-soon mode must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"/api/auth/signup answered 202 in coming-soon mode"* ]] || { stop_server; fail "the auth-surface failure must name itself; got: $out"; }
 stop_server
 
 # --- 12. malformed healthz body (required keys absent) fails, no traceback -----
