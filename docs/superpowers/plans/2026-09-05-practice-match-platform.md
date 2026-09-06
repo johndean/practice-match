@@ -3067,7 +3067,7 @@ for svc in api worker; do
   railway variable set "DATABASE_URL=\${{${DB}.${DBURLKEY}}}" --service $svc --environment production --skip-deploys
   railway variable set "REDIS_URL=\${{Redis.REDIS_URL}}" --service $svc --environment production --skip-deploys
 done
-railway variable list --service api --environment production --kv | sed -E 's/(SECRET_KEY|URL)=.*/\1=<redacted>/'
+railway variable list --service api --environment production --json | python3 -c 'import sys,json; print("\n".join(sorted(json.load(sys.stdin))))'  # names only — the original `sed` redaction matched nothing on CLI 5.x's table output and printed values (retired 2026-09-06, Task 12)
 ```
 Expected: five keys listed for `api` (values redacted in your output — never paste them).
 
@@ -3407,7 +3407,7 @@ cd frontend && npm run typecheck && npm test && npm run build                  #
 cd frontend && npm run test:smoke && npm run test:visual:baselines && npm run test:visual
 scripts/deploy.sh QA && scripts/deploy.sh production                           # after the gate
 railway logs --service api --environment QA | tail -50
-railway variable list --service api --environment QA | sed -E 's/(SECRET_KEY|URL)=.*/\1=<redacted>/'
+railway variable list --service api --environment QA --json | python3 -c 'import sys,json; print("\n".join(sorted(json.load(sys.stdin))))'  # names only — the original `sed` redaction matched nothing on CLI 5.x's table output and printed values (retired 2026-09-06, Task 12)
 ```
 ```
 
