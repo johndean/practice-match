@@ -39,8 +39,11 @@ def enqueue(conn: psycopg2.extensions.connection, *, to: str, template: str, par
 
 
 # How many rows one drain claims. Named (rather than only a default argument) because `LEASE_S`
-# below is derived from it and the two must be checkable against each other.
-DUE_LIMIT = 50
+# below is derived from it and the two must be checkable against each other. 50 -> 25 in round 2
+# (O2): the four-phase bound below does not hold at 50, and raising the lease instead would have
+# meant a crashed worker's rows waiting the best part of an hour. 25 a minute is ample here — the
+# outbox only ever holds one message per human action.
+DUE_LIMIT = 25
 
 # How long a claimed row is invisible to other workers (Task I6). `due()` stamps it onto
 # `next_attempt_at` in the SAME statement that selects the row, which is what lets the sender give
@@ -49,9 +52,15 @@ DUE_LIMIT = 50
 # after this long and the rows are picked up again — the provider's idempotency key is what stops
 # that becoming a second delivery.
 #
-# THE INVARIANT (fix round 1, F2): the lease must outlast the worst case wall time of ONE batch —
-# `DUE_LIMIT * (connect timeout + read timeout)`, i.e. 50 x 25 s = 1250 s against a provider that
-# times out on every request — plus margin. At 900 s the tail of such a batch lost its lease while
+# THE INVARIANT (fix round 1, F2; tightened in round 2, O2): the lease must outlast the worst case
+# wall time of ONE batch, plus a minute of margin —
+#
+#     LEASE_S >= DUE_LIMIT * (connect + read + write + pool) + 60
+#
+# — because httpx bounds those FOUR phases independently and `resend_client.TIMEOUT` sets each of
+# them (5 s to connect, 20 s for each of the rest). That is 65 s per row, so 25 x 65 + 60 = 1685 s
+# against the 1800 s below. The first version of this bound counted connect + read only and
+# understated the ceiling by 40 s a row. At 900 s the tail of such a batch lost its lease while
 # the first worker was still working through it, and since beat fires `mail.send` every 60 s a
 # second worker re-claimed those rows: two `mark()`s racing the ladder's `attempts`, two workers
 # doing the work, and the idempotency key left as the only thing between that and a double

@@ -11,7 +11,8 @@ Three rules shape what happens after verification:
 * **The payload's addresses are never trusted.** A bounce names a recipient; this route ignores it
   and suppresses the address on the OUTBOX ROW that carries the event's `email_id`. Signature or
   no, a body that could name any address it liked must not be able to blacklist a third party.
-* **Only two things are a 4xx: an unverifiable signature (401) and an oversized body (413).** An
+* **Only three things are a 4xx: an unverifiable signature (401), an oversized body (413) and a
+  caller that disconnects mid-body (422, the same quiet answer `app/api/interest.py` gives).** An
   event this route cannot act on — an unknown type, an `email_id` matching no row, a body that is
   not the shape Resend documents — answers `200`, because a provider that is told "error" retries
   the same thing for hours.
@@ -39,6 +40,7 @@ from contextlib import closing
 from hashlib import sha256
 
 from fastapi import APIRouter, Request
+from starlette.requests import ClientDisconnect
 
 from app.auth.deps import AuthError
 from app.config import settings
@@ -73,6 +75,16 @@ class PayloadTooLarge(AuthError):
     message = "The request body is too large."
 
 
+class RequestIncomplete(AuthError):
+    """The caller went away mid-body. Not an error and not a 500 (round 2, O1) — the same quiet 422
+    the other anonymous POST surface answers with (`app/api/interest.py`), carrying the app's one
+    existing 422 envelope (`app.auth.deps.INVALID_REQUEST`) rather than a second one invented here."""
+
+    status = 422
+    code = "INVALID_REQUEST"
+    message = "The request could not be understood. Check the fields and try again."
+
+
 def declared_length(request: Request) -> int | None:
     """Content-Length as an int (0 when absent — chunked bodies are capped while streaming); None
     when the header is not a plain decimal number. `isdecimal()`, not `isdigit()`: "²".isdigit() is
@@ -89,11 +101,16 @@ async def read_capped(request: Request) -> bytes:
         raise PayloadTooLarge()
     chunks: list[bytes] = []
     total = 0
-    async for chunk in request.stream():
-        total += len(chunk)
-        if total > MAX_BODY_BYTES:
-            raise PayloadTooLarge()
-        chunks.append(chunk)
+    try:
+        async for chunk in request.stream():
+            total += len(chunk)
+            if total > MAX_BODY_BYTES:
+                raise PayloadTooLarge()
+            chunks.append(chunk)
+    except ClientDisconnect:
+        # The peer aborted mid-body: there is no complete body to verify and nothing to apply, so
+        # this ends here — quietly, with no traceback and without opening a connection (O1).
+        raise RequestIncomplete() from None
     return b"".join(chunks)
 
 

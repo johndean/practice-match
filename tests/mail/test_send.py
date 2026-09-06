@@ -166,13 +166,16 @@ def test_purge_sessions_removes_expired_revoked_and_idle_rows_and_keeps_live_one
 
 
 def test_the_lease_outlasts_the_worst_case_batch():
-    """F2. The lease is what keeps a second worker off a row that is still being sent; if it can
-    expire while the FIRST worker is still working through the batch it protects, beat re-claims the
-    tail every 60 s and two `mark()`s race the ladder's `attempts`. The worst case is the whole
-    batch timing out — `limit` requests, each paying its connect and read timeout — so the constants
-    are pinned to each other here rather than left to drift apart in three different modules."""
-    worst_case_s = OB.DUE_LIMIT * (RC.TIMEOUT.connect + RC.TIMEOUT.read)
-    assert OB.LEASE_S >= worst_case_s + 300, (OB.LEASE_S, worst_case_s)
+    """F2, tightened by round 2's O2. The lease is what keeps a second worker off a row that is
+    still being sent; if it can expire while the FIRST worker is still working through the batch it
+    protects, beat re-claims the tail every 60 s and two `mark()`s race the ladder's `attempts`.
+
+    The worst case is the whole batch timing out, and httpx bounds FOUR phases independently —
+    connect, read, write and pool — each of them 20 s here except connect's 5 s. The first version
+    of this test counted only connect + read, which understated the ceiling by 40 s per row; the
+    bound is all four phases plus a minute of margin."""
+    per_request_s = RC.TIMEOUT.connect + RC.TIMEOUT.read + RC.TIMEOUT.write + RC.TIMEOUT.pool
+    assert OB.LEASE_S >= OB.DUE_LIMIT * per_request_s + 60, (OB.LEASE_S, OB.DUE_LIMIT, per_request_s)
 
 
 def test_one_unexpected_provider_response_burns_its_own_attempt_and_never_stops_the_batch(conn, monkeypatch):

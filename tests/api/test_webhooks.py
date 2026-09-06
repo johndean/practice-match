@@ -47,10 +47,10 @@ def _event(kind, email_id="re_9", to="b@example.org"):
     return json.dumps({"type": kind, "data": {"email_id": email_id, "to": [to]}}).encode()
 
 
-def _outbox_row(conn, provider_id="re_9", email="b@example.org", status="sent", sent_at="now()"):
+def _outbox_row(conn, provider_id="re_9", email="b@example.org", status="sent"):
     with conn.cursor() as cur:
-        cur.execute(f"INSERT INTO email_outbox (to_email, template, params, idempotency_key, status, provider_id, sent_at)"
-                    f" VALUES (%s,'verify_email','{{}}',%s,%s,%s,{sent_at})", (email, f"key-{provider_id}", status, provider_id))
+        cur.execute("INSERT INTO email_outbox (to_email, template, params, idempotency_key, status, provider_id, sent_at)"
+                    " VALUES (%s,'verify_email','{}',%s,%s,%s,now())", (email, f"key-{provider_id}", status, provider_id))
 
 
 async def test_a_complaint_suppresses_the_address_and_marks_the_row(client, conn, monkeypatch):
@@ -203,3 +203,48 @@ async def test_a_second_listed_signature_is_accepted_and_the_secret_may_be_bare(
     assert (await client.post("/api/webhooks/resend", content=body, headers=headers)).status_code == 200
     with conn.cursor() as cur:
         cur.execute("SELECT status FROM email_outbox WHERE provider_id='re_9'"); assert cur.fetchone() == ("bounced",)
+
+
+async def test_a_caller_that_disconnects_mid_body_is_answered_quietly(dist, monkeypatch, caplog):
+    """Round 2, O1. An aborted upload is not an error and must not be a 500: `request.stream()`
+    raises `ClientDisconnect` when the peer goes away mid-body, and this route — like the other
+    anonymous POST surface, `app/api/interest.py:106-108` — answers it with that endpoint's own
+    quiet 422 and no traceback. Nothing is read or written on the way out: the body never completed,
+    so there is no signature to verify and no event to apply."""
+    import logging
+
+    from app.api import webhooks as WH
+    from app.auth.deps import INVALID_REQUEST
+    from app.main import create_app
+
+    def _refuse():                      # nothing may reach Postgres on this path
+        raise AssertionError("the disconnect path opened a database connection")
+
+    monkeypatch.setattr(WH, "sync_conn", _refuse)
+    monkeypatch.setattr(settings, "resend_webhook_secret", SECRET)
+    app = create_app(dist=dist)
+    calls = 0
+
+    async def receive():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {"type": "http.request", "body": b'{"type":"email.', "more_body": True}
+        return {"type": "http.disconnect"}
+
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {"type": "http", "http_version": "1.1", "method": "POST", "scheme": "http",
+             "path": "/api/webhooks/resend", "raw_path": b"/api/webhooks/resend", "query_string": b"",
+             "root_path": "", "server": ("test", 80), "client": ("10.9.9.9", 1),
+             "headers": [(b"host", b"test"), (b"content-type", b"application/json"), (b"content-length", b"64"),
+                         (b"svix-id", b"msg_1"), (b"svix-timestamp", str(int(time.time())).encode()), (b"svix-signature", b"v1,AAAA")]}
+    caplog.set_level(logging.ERROR)
+    await app(scope, receive, send)
+
+    assert sent[0]["type"] == "http.response.start" and sent[0]["status"] == 422, sent[0]
+    assert json.loads(b"".join(m.get("body", b"") for m in sent[1:])) == INVALID_REQUEST
+    assert "Traceback" not in caplog.text
