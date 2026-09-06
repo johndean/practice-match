@@ -431,6 +431,8 @@ The fixture: `monkeypatch.setattr(cache, "_make_sync", lambda: fake_sync); monke
 
 ### Task I2: Passwords, tokens, sessions
 
+*Ruling 2026-09-06 (Task I2 deviation): psycopg2 returns `uuid` columns as `str` unless `psycopg2.extras.register_uuid()` has run; the plan's `Principal.account_id: UUID` and the cache-hit path assume it. `app/db.py` calls `register_uuid()` once at import (process-wide, so the `conn` fixture and `sync_conn()` both return `uuid.UUID`); `app/db.py` joins this task's Modify list for that one line, and `tests/auth/test_sessions.py` gains `test_uuid_columns_come_back_as_uuid_objects(conn)` (insert an account, `SELECT id` → `isinstance(row[0], uuid.UUID)`). Also accepted: `types-zxcvbn` dev dependency, `datetime.now(UTC)`, strict-typing annotations.*
+
 **Files:**
 - Create: `app/auth/__init__.py`, `app/auth/passwords.py`, `app/auth/tokens.py`, `app/auth/sessions.py`, `app/auth/data/top100k.txt`, `tests/auth/test_passwords.py`, `tests/auth/test_tokens.py`, `tests/auth/test_sessions.py`
 - Modify: `app/config.py` (`hibp_enabled: bool = True`)
