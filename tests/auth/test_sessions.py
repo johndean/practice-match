@@ -155,17 +155,110 @@ def test_a_principal_read_before_an_invalidation_is_never_cached_after_it(conn, 
     aid = _member(conn)
     raw = S.create(conn, redis, aid, None, None)
     h = S.hash_id(raw)
+    loaded_at = S._now_us(redis)
     stale = S._load(conn, h)                                        # read BEFORE the change
     assert stale is not None and stale.state == "active"
     with conn.cursor() as cur:
         cur.execute("UPDATE account SET state='suspended' WHERE id=%s", (aid,))
     S.invalidate_account(redis, aid)
-    S._cache_set(redis, stale)                                      # … the racing writer arrives late
+    S._cache_set(redis, stale, loaded_at)                           # … the racing writer arrives late
     assert redis.exists(f"session:{h}") == 0                        # refused, nothing stale is cached
     assert redis.exists(f"account:{aid}:invalidated")
     assert 0 < redis.ttl(f"account:{aid}:invalidated") <= S.CACHE_TTL
     p = S.resolve(conn, redis, raw)                                 # the next request re-reads Postgres
     assert p is not None and p.state == "suspended"
+
+
+def test_a_principal_read_before_a_sign_out_is_never_cached_after_it(conn, redis, monkeypatch):
+    """NEW-1, fix round 3: round 2's tombstone covered `invalidate_account` but not
+    `revoke()`, so ordinary sign-out kept the whole 60 s stale-principal window. A member
+    on a shared computer clicks Sign out while a second tab has a request in flight whose
+    principal read landed a moment earlier; that request finishes, re-caches the
+    principal, and the revoked session id resolves to an active member with full roles
+    for another minute without Postgres ever being consulted.
+
+    The interleaving is injected at the `_load` seam so the whole thing runs through the
+    real `resolve`: read the principal, sign out, then let the cache write arrive."""
+    aid = _member(conn)
+    raw = S.create(conn, redis, aid, None, None)
+    h = S.hash_id(raw)
+    redis.delete(f"session:{h}")                                    # force the cache-miss path
+    real_load, fired = S._load, []
+
+    def _load_then_sign_out(c, hh):
+        p = real_load(c, hh)                                        # … principal read from Postgres
+        if p is not None and not fired:
+            fired.append(True)
+            S.revoke(conn, redis, raw)                              # … member signs out
+        return p
+
+    monkeypatch.setattr(S, "_load", _load_then_sign_out)
+    assert S.resolve(conn, redis, raw) is not None                  # this request finishes with what it read
+    assert fired
+    assert redis.exists(f"session:{h}") == 0                        # but nothing stale is left behind …
+    assert S.resolve(conn, redis, raw) is None                      # … so the next request sees the sign-out
+
+
+def test_a_session_created_after_a_rotation_is_cached_at_once(conn, redis):
+    """NEW-3, fix round 3: round 2's tombstone was a bare EXISTS, so for 60 s after any
+    invalidation NOTHING could be cached for that account — including the brand-new
+    session issued microseconds later by the rotation itself. Every request from the
+    member who just changed their password read Postgres, against I3's 20 ms /api/me
+    budget. A timestamped tombstone only outranks principals read BEFORE it."""
+    aid = _member(conn)
+    S.create(conn, redis, aid, None, None)
+    S.revoke_all(conn, redis, aid)                                  # password change rotates every session …
+    raw = S.create(conn, redis, aid, None, None)                    # … and issues a new one
+    h = S.hash_id(raw)
+    assert redis.exists(f"session:{h}")                             # cached at once, not in 60 s
+    assert 0 < redis.ttl(f"session:{h}") <= S.CACHE_TTL
+    assert redis.sismember(f"account:{aid}:sessions", h)
+    assert S.resolve(conn, redis, raw) is not None
+
+
+def test_the_set_reauth_race_demands_step_up_again_rather_than_granting_it(conn, redis, monkeypatch):
+    """The same interleaving against `set_reauth`, recorded because it is the one case
+    that needs no tombstone: the racing writer caches a principal that LACKS the re-auth
+    stamp, so step-up is demanded a second time. Annoying, never a bypass. A tombstone
+    here would only trade that for a Postgres read; the dangerous direction — a stale
+    principal CARRYING a stamp it no longer has — cannot happen, because the stamp only
+    ever appears after the write it belongs to."""
+    aid = _member(conn)
+    raw = S.create(conn, redis, aid, None, None)
+    h = S.hash_id(raw)
+    redis.delete(f"session:{h}")
+    real_load, fired = S._load, []
+
+    def _load_then_reauth(c, hh):
+        p = real_load(c, hh)                                        # reauth_at is still None here
+        if p is not None and not fired:
+            fired.append(True)
+            S.set_reauth(conn, redis, p)                            # … the member re-authenticates
+        return p
+
+    monkeypatch.setattr(S, "_load", _load_then_reauth)
+    S.resolve(conn, redis, raw)
+    assert fired
+    p = S.resolve(conn, redis, raw)
+    assert p is not None and p.reauth_at is None                    # step-up will be demanded again
+    with conn.cursor() as cur:
+        cur.execute("SELECT reauth_at FROM session WHERE id_hash=%s", (h,)); assert cur.fetchone()[0] is not None
+
+
+def test_resolve_prunes_the_index_when_the_session_no_longer_resolves(conn, redis):
+    """O1, fix round 3: the account index only ever shrank on `revoke()`. A session that
+    simply expired left its 64-char hash behind for the index's full 30 days, and any
+    sign-in reset that TTL — so a regular signer-in accumulated dead members without
+    limit. `resolve` knows the hash is dead and the row still says whose it is: prune."""
+    aid = _member(conn)
+    raw = S.create(conn, redis, aid, None, None)
+    h = S.hash_id(raw)
+    assert redis.sismember(f"account:{aid}:sessions", h)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE session SET expires_at = now() - interval '1 day' WHERE id_hash=%s", (h,))
+    redis.delete(f"session:{h}")                                    # past the cache, onto Postgres
+    assert S.resolve(conn, redis, raw) is None
+    assert not redis.sismember(f"account:{aid}:sessions", h)
 
 
 def test_invalidate_account_is_one_round_trip_per_call(conn, redis):

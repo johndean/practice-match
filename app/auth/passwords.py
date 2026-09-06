@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import threading
 from functools import lru_cache
 from pathlib import Path
 
@@ -51,6 +52,7 @@ def _offline() -> frozenset[str]:
 
 
 _shared_client: httpx.Client | None = None
+_client_lock = threading.Lock()
 
 
 def _make_client() -> httpx.Client:
@@ -61,22 +63,33 @@ def _client() -> httpx.Client:
     """One lazily created, process-wide HIBP client — a fresh one per call leaked a
     connection pool and paid a fresh TLS handshake on every signup/reset/change (I2).
     Built through `_make_client`, the same factory seam app/cache.py uses, so tests can
-    patch it without reaching into httpx."""
+    patch it without reaching into httpx.
+
+    Double-checked locking (NEW-2): `is_pwned_async` offloads to worker threads, so two
+    concurrent first calls would otherwise each build a client and drop one unclosed. The
+    lock is taken only until the client exists; every later call is the bare read."""
     global _shared_client
     if _shared_client is None:
-        _shared_client = _make_client()
+        with _client_lock:
+            if _shared_client is None:
+                _shared_client = _make_client()
     return _shared_client
 
 
 def _matches(body: str, suffix: str) -> bool:
     """Each line of a range response is `SUFFIX:COUNT`. A line that is not raises
     ValueError, which `is_pwned` treats as an API failure: reading a malformed body as
-    "no match" would fail OPEN and let a breached password through (M3)."""
+    "no match" would fail OPEN and let a breached password through (M3).
+
+    EVERY line is parsed before answering (O2): returning on the first match made that
+    strictness positional — a mangled line after the match was never even looked at, so
+    whether a truncated body was noticed depended on where the damage happened to fall."""
+    found = False
     for line in body.splitlines():
-        found, _count = line.split(":")
-        if found == suffix:
-            return True
-    return False
+        candidate, _count = line.split(":")
+        if candidate == suffix:
+            found = True
+    return found
 
 
 def _degrade(reason: str) -> None:

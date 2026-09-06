@@ -86,6 +86,37 @@ def test_is_pwned_reuses_one_shared_http_client(monkeypatch):
     assert P._client() is made[0]
 
 
+def test_two_threads_racing_the_first_hibp_call_build_one_client(monkeypatch):
+    """NEW-2, fix round 3: `_client()` was an unsynchronised check-then-set on a module
+    global, and `is_pwned_async` offloads `is_pwned` to worker threads — so two concurrent
+    first signups could each construct an httpx.Client and silently drop one, unclosed.
+    That leaked connection pool is the miniature form of the very leak I2 was raised for."""
+    made: list[httpx.Client] = []
+
+    def _slow_client() -> httpx.Client:
+        time.sleep(0.05)                                            # widen the window
+        c = httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(200, text="")))
+        made.append(c)
+        return c
+
+    monkeypatch.setattr(P, "_shared_client", None)
+    monkeypatch.setattr(P, "_make_client", _slow_client)
+    start = threading.Barrier(2)
+    got: list[httpx.Client] = []
+
+    def _race() -> None:
+        start.wait(timeout=5)
+        got.append(P._client())
+
+    threads = [threading.Thread(target=_race) for _ in range(2)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join(timeout=5)
+    assert len(made) == 1, f"{len(made)} clients built for one lazy init"
+    assert got == [made[0], made[0]]
+
+
 def test_the_shared_client_carries_the_two_second_hibp_timeout():
     """The other half of I2: the client the factory actually builds (the one every
     non-test caller gets) still carries spec §3's 2 s budget — nothing may make a signup
@@ -119,6 +150,23 @@ def test_pwned_check_falls_back_when_the_range_body_is_malformed(caplog):
     http = httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(200, text="<html>we are down</html>\n")))
     with caplog.at_level(logging.WARNING, logger="app.auth.passwords"):
         assert P.is_pwned("password", http=http) is True            # from the bundled list, not "not breached"
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "ValueError" in warnings[0].getMessage()
+
+
+def test_every_line_of_the_range_body_is_parsed_before_answering(caplog):
+    """O2, fix round 3: `_matches` returned on the FIRST matching line, so its strictness
+    was positional — a malformed line before the match degraded the call, one after it was
+    never looked at. A body we cannot fully parse is a body we do not trust, wherever the
+    damage falls: parse it all, then answer."""
+    body = "1E4C9B93F3F0682250B6CF8331B7EE68FD8:3\n<html>truncated by a proxy</html>\n"
+    http = httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(200, text=body)))
+    with caplog.at_level(logging.WARNING, logger="app.auth.passwords"):
+        # "password" IS in that first line and in the bundled list, so the answer is True
+        # either way — what changes is HOW it was reached: a trusted API answer, or a
+        # refusal to trust a mangled body. The warning is the difference.
+        assert P.is_pwned("password", http=http) is True
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert len(warnings) == 1
     assert "ValueError" in warnings[0].getMessage()
