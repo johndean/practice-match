@@ -4760,6 +4760,77 @@ and in the handler:
 - [ ] **FR3 Step 3: GREEN** — every node id; `poetry run pytest -q -W error` twice; mypy; ruff.
 - [ ] **FR3 Step 4: Commit** — `git add app/api/interest.py tests/api/test_interest.py` · `fix(api): /api/interest joins repeated X-Forwarded-For lines, answers a mid-body disconnect by contract; cap boundary and streaming pinned by tests` with the trailer.
 
+#### Task 11c — fix round 4 (2026-09-06, from the live QA probe in Task 11f Step 4b: the review's F2 assumption was wrong for Railway)
+
+**Evidence.** Deployed 8ec6995 to QA and ran the probe twice — six sign-ups each with a different spoofed `X-Forwarded-For` first hop (one header line), then six with two header lines — and got `202 ×6` both times under the rightmost-hop rule: the limit never tripped, i.e. the rightmost hop the app saw was the caller's value. Meanwhile uvicorn's access log (started with `--proxy-headers --forwarded-allow-ips='*'`, whose rule under `*` is *take the FIRST host of the joined header*) recorded the real client `202.46.152.19:0` for every one of those requests, including one sent with `X-Forwarded-For: 10.1.1.1, 10.2.2.2`. Railway's edge therefore puts the accepted client's address **first** and leaves the caller's values after it — the spec's original "first hop as Railway sets it" was correct and the round-1 ruling (rightmost) inverted it. **Ruling:** the client is the first non-empty hop of the joined `X-Forwarded-For` header (mirroring uvicorn's rule for our start command), else the peer address; the spec's §3 and §8.1 are corrected with this evidence; the probe stays in Step 4b and is written into `DEPLOY.md` as the check to re-run if Railway's networking ever changes.
+
+**Files:** Modify `app/api/interest.py`, `tests/api/test_interest.py`, `DEPLOY.md`, `tests/test_docs.py`.
+
+- [ ] **FR4 Step 1: failing tests** (each watched fail on its own).
+
+Replace `test_rightmost_forwarded_hop_keys_the_ip_limit` with:
+```python
+async def test_edge_first_hop_keys_the_ip_limit(client, db_ready):
+    """F2 as Railway actually behaves (live probe 2026-09-06): the edge writes the client it accepted FIRST and
+    leaves the caller's own X-Forwarded-For values after it — so only the first hop may key a limit."""
+    edge_saw = _ip()
+    for i in range(5):
+        r = await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": f"{edge_saw}, {_ip()}"})
+        assert r.status_code == 202, i  # a different caller-supplied trailing hop every time must not reset the count
+    r = await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": f"{edge_saw}, {_ip()}"})
+    assert r.status_code == 429 and r.json() == {"error": "rate_limited"}
+```
+Replace `test_client_ip_uses_the_rightmost_hop_or_falls_back_to_the_peer` with:
+```python
+@pytest.mark.parametrize("header, expected", [
+    ("1.2.3.4, 5.6.7.8", "1.2.3.4"),      # the edge's hop first, the caller's after
+    ("1.2.3.4", "1.2.3.4"),
+    (", 5.6.7.8", "5.6.7.8"),             # an empty first entry is skipped, not used as a subject
+    ("   ", "9.9.9.9"), ("", "9.9.9.9"), (None, "9.9.9.9"),
+])
+def test_client_ip_uses_the_first_hop_or_falls_back_to_the_peer(header, expected):
+    from starlette.requests import Request
+
+    from app.api.interest import client_ip
+
+    scope = {"type": "http", "method": "POST", "path": "/api/interest", "query_string": b"", "client": ("9.9.9.9", 1),
+             "headers": [] if header is None else [(b"x-forwarded-for", header.encode())]}
+    assert client_ip(Request(scope)) == expected
+```
+`test_client_ip_joins_repeated_forwarded_header_lines` becomes: lines `[(b"x-forwarded-for", b"203.0.113.7"), (b"x-forwarded-for", b"evil-spoof")]` (the edge's line arrives first) → `"203.0.113.7"`; the docstring says the join keeps the rule identical to uvicorn's, which also joins repeated lines.
+
+`tests/test_docs.py` — append:
+```python
+def test_deploy_md_records_the_forwarded_for_rule_and_its_probe():
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "first X-Forwarded-For hop" in text
+    assert "203.0.113" in text  # the probe recipe
+```
+
+- [ ] **FR4 Step 2: implement.** `app/api/interest.py`:
+```python
+def client_ip(request: Request) -> str:
+    """The client as Railway's edge saw it: the FIRST non-empty X-Forwarded-For hop. Verified live on QA
+    (2026-09-06, Task 11f Step 4b): Railway writes the accepted client's address first and leaves any values the
+    caller sent after it, and uvicorn (`--forwarded-allow-ips='*'`) applies the same first-hop rule to
+    request.client. Repeated header lines are joined first, as uvicorn does. No header → the peer address.
+    DEPLOY.md carries the probe to re-run if Railway's networking changes."""
+    hops = [h.strip() for h in ",".join(request.headers.getlist("x-forwarded-for")).split(",")]
+    for hop in hops:
+        if hop:
+            return hop
+    return request.client.host if request.client else "unknown"
+```
+`DEPLOY.md` — new paragraph at the end of "## Site mode (Coming Soon on production)":
+> **Client address for the sign-up rate limits.** `/api/interest` keys its per-IP limits on the **first X-Forwarded-For hop**: Railway's edge writes the client it accepted first and leaves any caller-supplied values after it (verified 2026-09-06 — uvicorn, started with `--forwarded-allow-ips='*'`, logs the real client for spoofed headers). Re-run this probe against QA whenever Railway's networking changes; expected `202 ×5` then `429`, both with one header line and with two:
+> ```bash
+> for i in 1 2 3 4 5 6; do curl -sS -o /dev/null -w "%{http_code} " -X POST -H 'Content-Type: application/json' -H "X-Forwarded-For: 203.0.113.$i" -d "{\"email\":\"probe-$(date +%s)-$i@example.invalid\"}" https://qa.foundation.vin/api/interest; done
+> ```
+> If the sixth answer is `202`, the edge no longer puts the client first — stop and revisit `client_ip()` before any production deploy.
+
+- [ ] **FR4 Step 3: GREEN** — every node id; `poetry run pytest -q -W error` twice; mypy; ruff.
+- [ ] **FR4 Step 4: Commit** — `git add app/api/interest.py tests/api/test_interest.py DEPLOY.md tests/test_docs.py` · `fix(api): rate limits key on the FIRST X-Forwarded-For hop — Railway's edge puts the accepted client first (live probe); runbook carries the probe` with the trailer.
+
 ---
 
 ### Task 11d: Wire the page — `submit()` posts to the API; Merriweather self-hosted; unit tests at 100 %
@@ -5116,7 +5187,7 @@ for i in 1 2 3 4 5 6; do
     -d "{\"email\":\"qa-probe-$(date +%s)-$i@example.invalid\"}" https://qa.foundation.vin/api/interest
 done
 ```
-Expected: `202` ×5 then `429` — a different spoofed first hop on every request did not reset the per-IP count, so the edge appends (or overwrites with) the real peer and the rightmost hop is the client. If the sixth is `202`, STOP: the edge passes the header through untouched, `client_ip()` must change, and production waits. **Second pass (added after the round-2 re-review, O1):** the same six requests but with TWO `X-Forwarded-For` header lines each (`-H "X-Forwarded-For: 198.51.100.$i" -H "X-Forwarded-For: 198.51.100.99"`, fresh addresses) — expected `202` ×5 then `429` again: whether the edge appends to the caller's line or adds its own, the joined-then-rightmost rule keys on what the edge saw. Record the six codes in the Task 11f report and delete the probe rows afterwards (`railway run --service api --environment QA -- python -c "..."` or leave them: QA is disposable — say which).
+Expected: `202` ×5 then `429` — a different caller-supplied hop on every request did not reset the per-IP count, because the edge puts the client it accepted FIRST and the app keys on that first hop (11c fix round 4; the first run of this probe, under the rightmost rule, returned `202` ×6 and uvicorn's access log showed the real client for every spoofed request — that is how the rule was corrected). If the sixth is `202`, STOP: the edge's behaviour has changed, `client_ip()` must change, and production waits. **Second pass (added after the round-2 re-review, O1):** the same six requests but with TWO `X-Forwarded-For` header lines each (`-H "X-Forwarded-For: 198.51.100.$i" -H "X-Forwarded-For: 198.51.100.99"`, fresh addresses) — expected `202` ×5 then `429` again: whether the edge appends to the caller's line or adds its own, the joined-then-rightmost rule keys on what the edge saw. Record the six codes in the Task 11f report and delete the probe rows afterwards (`railway run --service api --environment QA -- python -c "..."` or leave them: QA is disposable — say which).
 
 **Production step (supersedes Task 10 Step 4; John's go given 2026-09-06 — re-confirm the QA state to him in the pause report before running it):**
 1. 🚦 `railway status` → `Project: Practice Match`.
