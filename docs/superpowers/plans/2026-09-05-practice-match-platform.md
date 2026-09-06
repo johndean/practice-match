@@ -4343,7 +4343,7 @@ Run: each node id → observed failures: control-character cases 500/202 not 422
 Each hit is one MULTI (INCR + EXPIRE), so a key can never outlive its window even if the process dies between
 the two commands. Subjects (client IP, normalised address) enter the key as a truncated SHA-256: a pseudonym
 that keeps raw addresses out of Redis, NOT an anonymisation (a dictionary attack reverses it). Fixed windows
-allow up to 2×limit across one window boundary; spec §3 accepts that."""
+allow up to twice the limit across one window boundary; spec §3 accepts that."""
 from __future__ import annotations
 
 import hashlib
