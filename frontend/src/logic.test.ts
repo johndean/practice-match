@@ -63,4 +63,15 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     expect(c.money(1450000)).toBe('$1.45M');
     expect(c.money(860000)).toBe('$860K');
   });
+
+  it('mobileVals exposes the market-data sheet and no peek card (C13)', () => {
+    const mob = c.renderVals().mob;
+    expect(typeof mob.openSheet).toBe('function');
+    expect(typeof mob.closeSheet).toBe('function');
+    expect(mob.sheetOpen).toBe(false);
+    expect(typeof mob.layerLabel).toBe('string');
+    expect(Array.isArray(mob.basemaps)).toBe(true);
+    expect(mob).not.toHaveProperty('hasPeek');
+    expect(mob).not.toHaveProperty('peek');
+  });
 });

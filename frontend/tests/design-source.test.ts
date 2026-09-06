@@ -34,6 +34,14 @@ describe('every pointer at the approved design names V3', () => {
     expect(readFileSync(join(FRONTEND, 'src', 'components', 'ImageSlot.test.ts'), 'utf8')).toContain(`'${V3}', 'image-slot.js'`);
   });
 
+  it('the generator stamps the V3 path into every file it writes', () => {
+    expect(readFileSync(join(FRONTEND, 'scripts', 'convert-dc.mjs'), 'utf8')).toContain(`design-reference/${V3}/${V3_FILE}`);
+  });
+
+  it('the byte-identity gate compares against V3', () => {
+    expect(readFileSync(join(FRONTEND, 'tests', 'app-generated.test.ts'), 'utf8')).toContain(`'${V3}'`);
+  });
+
   it('CLAUDE.md names the V3 design file as the source of truth for the UI', () => {
     const md = readFileSync(join(ROOT, 'CLAUDE.md'), 'utf8');
     expect(md).toContain(`docs/design-reference/${V3}/${V3_FILE}\` is the approved design`);

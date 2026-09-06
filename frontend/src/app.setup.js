@@ -10,7 +10,9 @@ import { useStateRouteSync } from './router/useStateRouteSync';
 const props = defineProps({
   prototypeBar: { type: Boolean, default: import.meta.env.VITE_ENVIRONMENT !== 'production' },
   startScreen: { type: String, default: 'gate' },
-  startViewport: { type: String, default: 'desktop' }
+  startViewport: { type: String, default: 'desktop' },
+  // V3 C10: three named palettes — `distinct` (default), `cool`, `colorblind`.
+  layerPalette: { type: String, default: 'distinct' }
 });
 
 // The approved prototype logic runs verbatim; `state` is made reactive so that

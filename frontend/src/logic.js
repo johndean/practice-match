@@ -1,4 +1,4 @@
-// Ported verbatim from the approved prototype 'Practice Match V2.dc.html'.
+// Ported verbatim from the approved prototype 'Practice Match V3.dc.html'.
 // Do not restyle or restructure: every value here is design-approved.
 import { DCLogic } from './dc-logic.js';
 
@@ -74,22 +74,117 @@ const ECON_K = {
 };
 
 const BRAND_RAMP = ["#deecf7", "#9dc9e9", "#339dde", "#003a70"];
-const RAMPS = {
-  income: ["#e6f2e8", "#a8d5b5", "#4c9a6a", "#1b6b3a"],
-  pets: ["#fdf0dc", "#f6c886", "#e89331", "#b3630f"],
-  growth: ["#eaf4ec", "#b7ddc2", "#66b380", "#2e7d4f"],
-  households: ["#e4eff8", "#a9cfe9", "#5aa2d0", "#1f6fa8"],
-  econ: ["#efe9fa", "#cfc0ee", "#a98ade", "#8f6fd0"],
-  vets: ["#e9e2f6", "#c3b0e6", "#9a7ed4", "#7856be"]
+// PALETTES — one hue per layer, no duplicates. Selectable via the layerPalette prop
+// so the Foundation can pick the set that reads best on the gray basemap.
+const PALETTES = {
+  distinct: {
+    income:     ["#e6f2e8", "#c2e0cd", "#a8d5b5", "#4c9a6a", "#1b6b3a"],  /* green, 5 classes */
+    pets:       ["#fdf0dc", "#f6c886", "#e89331", "#b3630f"],  /* orange  */
+    competition:["#e9e2f6", "#c3b0e6", "#9a7ed4", "#7856be"],  /* purple  */
+    growth:     ["#efe6dd", "#d2b696", "#a3764a", "#5f3a1e"],  /* brown   */
+    households: ["#e4eff8", "#a9cfe9", "#5aa2d0", "#1f6fa8"],  /* blue    */
+    econ:       ["#fce8ef", "#f2b8cd", "#dd7ba1", "#b0446e"]   /* rose    */
+  },
+  cool: {
+    income:     ["#e4eff8", "#c6dff1", "#a9cfe9", "#5aa2d0", "#1f6fa8"],
+    pets:       ["#e0f2f1", "#a3ddd8", "#4bb3ab", "#127c74"],
+    competition:["#e9e2f6", "#c3b0e6", "#9a7ed4", "#7856be"],
+    growth:     ["#e6f2e8", "#a8d5b5", "#4c9a6a", "#1b6b3a"],
+    households: ["#e5e9f5", "#b3bde3", "#7183c9", "#3b4c9c"],
+    econ:       ["#ddeef4", "#a6d3e2", "#5aa8c4", "#1d7391"]
+  },
+  colorblind: {
+    /* Okabe–Ito derived: distinguishable under deuteranopia and protanopia. */
+    income:     ["#e3f0f4", "#c6e2e9", "#a8d3dd", "#5aa7b8", "#0f6b7d"],
+    pets:       ["#fdefe0", "#f7ce9e", "#e69f41", "#b06d0d"],
+    competition:["#efe6f3", "#cdb2dd", "#a377bd", "#7a4a94"],
+    growth:     ["#e8f1e3", "#bcd9ad", "#84b96c", "#4a8b32"],
+    households: ["#e4e9f6", "#b0bde6", "#6d84cd", "#33509e"],
+    econ:       ["#fce9e6", "#f4bdb3", "#e2857a", "#b0453a"]
+  }
 };
 
 const VALUE_LAYERS = {
-  income: { label: "Median Household Income (ACS)", short: "Median household income", unit: "usd", buckets: ["< $60K", "$60K–100K", "$100K–150K", "> $150K"], stops: [60000, 100000, 150000] },
+  income: { label: "Median Household Income (ACS)", short: "Median household income", unit: "usd", buckets: ["< $50K", "$50–75K", "$75–100K", "$100–150K", "> $150K"], stops: [50000, 75000, 100000, 150000] },
   pets: { label: "Estimated Pet Households", short: "Est. pet households", unit: "count", buckets: ["< 10K", "10K–25K", "25K–40K", "> 40K"], stops: [10000, 25000, 40000] },
   growth: { label: "Population Growth Since 2015 (ACS)", short: "Projected growth (5 yrs)", unit: "pct", buckets: ["< 10%", "10–20%", "20–35%", "> 35%"], stops: [10, 20, 35] },
   households: { label: "Households (ACS)", short: "Total households", unit: "count", buckets: ["< 10K", "10K–25K", "25K–45K", "> 45K"], stops: [10000, 25000, 45000] },
-  econ: { label: "Payroll per Veterinary Establishment (CBP)", short: "Revenue per establishment", unit: "usd", buckets: ["< $450K", "$450–650K", "$650–900K", "> $900K"], stops: [450000, 650000, 900000] }
+  econ: { label: "Average Practice Payroll (CBP)", short: "Avg. payroll per practice", unit: "usd", buckets: ["< $450K", "$450–650K", "$650–900K", "> $900K"], stops: [450000, 650000, 900000] },
+  competition: { label: "Veterinary Establishments (CBP)", short: "Vet establishments", unit: "count", buckets: ["1–2", "3–5", "6–9", "10+"], stops: [3, 6, 10] }
 };
+
+// Rates and medians belong to the area → choropleth fill (one at a time: two
+// translucent fills mix into a third colour that means nothing).
+const FILL_KEYS = ["income", "growth", "econ"];
+// Counts → graduated symbols, sized by value. These stack freely, because size and
+// position are a different visual channel from the fill beneath them.
+const SYMBOL_KEYS = ["pets", "households", "competition"];
+const SYMBOL_STYLE = {
+  pets: { color: "rgba(232,147,49,.85)", label: "Est. pet households" },
+  households: { color: "rgba(31,111,168,.85)", label: "Households" },
+  competition: { color: "rgba(120,86,190,.85)", label: "Vet establishments" }
+};
+
+// Graduated-size key. Pixel values mirror the renderer's 11 + t·22 sizing at t = 0, .5, 1.
+const SYMBOL_SCALE = {
+  pets: [{ px: 6, label: "10K" }, { px: 9, label: "25K" }, { px: 13, label: "40K+" }],
+  households: [{ px: 6, label: "10K" }, { px: 9, label: "25K" }, { px: 13, label: "45K+" }],
+  competition: [{ px: 6, label: "2" }, { px: 9, label: "8" }, { px: 13, label: "14+" }]
+};
+
+// One catalogue per market layer: what it is, where it comes from, and how to read it.
+// "derived" marks metrics that are modelled rather than observed.
+const LAYER_META = {
+  income: {
+    title: "Median household income",
+    sub: "Household income by community · ACS 5-year",
+    updated: "Updated: ACS 2023 release (Jan 2025)",
+    source: "U.S. Census ACS 5-year estimates (2023) · community level",
+    means: "Higher-income areas may support stronger demand, but income alone does not indicate practice performance.",
+    why: "Household income can correlate with pet care spending and service mix, helping you identify attractive markets to explore further."
+  },
+  pets: {
+    title: "Pet ownership (estimated)",
+    sub: "Estimated pet households · derived from ACS households",
+    updated: "Updated: derived Jan 2025 from ACS 2023",
+    source: "Derived estimate from ACS household counts (2023) · not an observed count",
+    means: "This is a modelled estimate of how many households in an area keep pets, not a measured figure.",
+    why: "Pet-household concentration is a rough proxy for the size of the potential client base near a practice."
+  },
+  competition: {
+    title: "Veterinary competition",
+    sub: "Veterinary establishments · CBP, NAICS 541940",
+    updated: "Updated: CBP 2023 release (Nov 2024)",
+    source: "U.S. Census County Business Patterns (2023), NAICS 541940 · community level",
+    means: "Establishment counts show how many veterinary businesses operate nearby. They say nothing about size, quality or overlap in services.",
+    why: "Competitive density helps you judge whether a market is underserved or already crowded."
+  },
+  growth: {
+    title: "Population growth",
+    sub: "Change since 2015 · ACS population estimates",
+    updated: "Updated: ACS 2023 release (Jan 2025)",
+    source: "U.S. Census ACS population estimates, 2015–2023 · community level",
+    means: "Growth describes how fast an area's population changed. Past growth is not a forecast.",
+    why: "Areas adding households may add pet owners, which matters more for a practice you intend to hold for years."
+  },
+  households: {
+    title: "Households",
+    sub: "Total households · ACS 5-year",
+    updated: "Updated: ACS 2023 release (Jan 2025)",
+    source: "U.S. Census ACS 5-year estimates (2023) · community level",
+    means: "The count of occupied housing units in each community — the denominator behind most other figures here.",
+    why: "Household counts give scale: two areas can share an income level and differ tenfold in size."
+  },
+  econ: {
+    title: "Average practice payroll",
+    sub: "Derived · total CBP payroll ÷ establishments",
+    updated: "Updated: derived from CBP 2023 (Nov 2024)",
+    source: "Derived from Census CBP payroll and establishment counts (2023) · market level, not practice level",
+    means: "A derived market-level indicator of how large the typical veterinary employer in an area is. It is not revenue, and not any individual practice's figures.",
+    why: "Typical employer scale hints at the staffing model a market supports, which is context for a practice's own numbers."
+  }
+};
+
 
 const num = (s) => (s == null ? 0 : Number(String(s).replace(/[^0-9.]/g, "")) || 0);
 
@@ -159,7 +254,7 @@ class Component extends DCLogic {
     this._t = setTimeout(() => this.setState({ loading: false }), 320);
   };
 
-  // ---- Market Data tab -------------------------------------------------
+  // ---- Browse Practices: map, market layers, results -------------------------------------------------
 
   communities() {
     const market = this.state.market || "Austin, TX";
@@ -178,7 +273,8 @@ class Component extends DCLogic {
 
   bucket(metric, v) {
     const cfg = VALUE_LAYERS[metric];
-    const ramp = RAMPS[metric];
+    const pal = PALETTES[this.props.layerPalette] || PALETTES.distinct;
+    const ramp = pal[metric === "vets" ? "competition" : metric] || BRAND_RAMP;
     let i = 0;
     while (i < cfg.stops.length && v >= cfg.stops[i]) i++;
     return { color: ramp[i], t: i / (ramp.length - 1) };
@@ -197,8 +293,17 @@ class Component extends DCLogic {
     const cfg = MARKETS[market];
     const comms = this.communities();
     const valueLayer = s.mdValue === undefined ? "income" : s.mdValue;
-    const layers = Object.assign({ practices: true, drive5: true, drive10: true, competition: true }, s.mdLayers || {});
+    const layers = Object.assign(
+      { practices: true, drive5: true, drive10: true, competition: true, households: false, pets: false },
+      s.mdLayers || {}
+    );
     const sel = s.mdSel ? P.filter((x) => x.id === s.mdSel)[0] : null;
+    const pal = PALETTES[this.props.layerPalette] || PALETTES.distinct;
+    const ramp = (k) => pal[k] || BRAND_RAMP;
+    const tightColumn = !!s.mdStrip;
+    const activeSymbols = SYMBOL_KEYS.filter(
+      (k) => layers[k] && !(s.mdOff || {})[k === "competition" ? "vets" : k]
+    );
     const selComm = sel ? comms.filter((c) => c.id === sel.id)[0] : null;
 
     const lats = comms.map((c) => c.lat), lngs = comms.map((c) => c.lng);
@@ -213,6 +318,16 @@ class Component extends DCLogic {
         (on ? color : "#c4ccd6") + "; background: " + (on ? color : "var(--vf-white)") + ";",
       tickStyle: "display: block; opacity: " + (on ? "1" : "0") + ";",
       textStyle: "font-size: 13px; font-weight: " + (on ? "500" : "400") + "; color: " + (on ? "var(--vf-navy)" : "var(--vf-text)") + ";"
+    });
+
+    const radioRow = (key, label, on, color, toggle) => ({
+      label, on, toggle,
+      boxStyle: "flex: none; width: 15px; height: 15px; border-radius: 999px; display: grid; place-items: center; border: 1.5px solid " +
+        (on ? "var(--vf-navy)" : "#c3d4e2") + "; background: var(--vf-white);",
+      dotStyle: "width: 7px; height: 7px; border-radius: 999px; background: var(--vf-navy); opacity: " + (on ? "1" : "0") + ";",
+      swatchStyle: "flex: none; width: 12px; height: 12px; border-radius: 2px; background: " + (color || "transparent") +
+        "; opacity: " + (color ? (on ? "1" : ".4") : "0") + ";",
+      labelStyle: "font-size: 12.5px; font-weight: " + (on ? "500" : "400") + "; color: " + (on ? "var(--vf-navy)" : "var(--vf-text)") + ";"
     });
 
     const setValue = (k) => () => this.setState({ mdValue: s.mdValue === k ? null : k });
@@ -238,11 +353,11 @@ class Component extends DCLogic {
       { n: "3", title: "Veterinary Competition", blurb: "Veterinary establishments", src: "Census CBP, NAICS 541940", metric: "vets", caption: "Number of vet establishments", layerName: "Veterinary Competition" },
       { n: "4", title: "Population Growth", blurb: "Change since 2015", src: "Census ACS population estimates", metric: "growth", caption: "Growth since 2015", layerName: "Population Growth" },
       { n: "5", title: "Households", blurb: "Occupied housing units", src: "Census ACS 5-year", metric: "households", caption: "Total households", layerName: "Households" },
-      { n: "6", title: "Economic Profile", blurb: "Payroll per establishment", src: "Census CBP payroll ÷ establishments", metric: "econ", caption: "Payroll per establishment", layerName: "Economic Profile" }
+      { n: "6", title: "Avg. Practice Payroll", blurb: "Typical practice size proxy", help: "Total industry payroll ÷ number of practices — a proxy for how large the typical practice is. Not revenue, and not any one practice's figures.", src: "Census CBP payroll ÷ establishments", metric: "econ", caption: "Avg. payroll per practice", layerName: "Average Practice Profile" }
     ].map((c) => Object.assign({}, c, { on: enabled(c.metric) }));
 
     return {
-      isMarket: s.screen === "browse" && (s.browseMode || "listings") === "market",
+      isMarket: s.screen === "browse",
       activeId: s.mdSel || null,
       resizeKey: s.screen + s.viewport + market + (s.mdSel || "") ,
       selectFromMap: (id) => this.setState({ mdSel: id, mdTab: "insights", mdPhoto: 0 }),
@@ -253,12 +368,13 @@ class Component extends DCLogic {
       stripCaretStyle: "flex: none; display: grid; place-items: center; width: 22px; height: 22px; border-radius: 4px; background: var(--vf-neutral); transform: rotate(" +
         (s.mdStrip ? "0deg" : "-90deg") + "); transition: transform 150ms var(--easing-out);",
       basemap: s.mdBasemap || "map",
+      setBasemap: (k) => this.setState({ mdBasemap: k }),
       railStyle: (() => {
         const vw = s.vw || (typeof window !== "undefined" ? window.innerWidth : 1440);
         // Panel open on a narrow viewport: the detail replaces the list rather than
         // squeezing the map below the width its own overlay chrome needs.
         const hide = !!sel && vw < 1320;
-        return "flex: 1 1 420px; max-width: 420px; min-width: 300px; overflow-y: auto; border-left: 1px solid #e6e6e6; background: var(--vf-white); display: " +
+        return "flex: 1 1 470px; max-width: 470px; min-width: 320px; overflow-y: auto; border-left: 1px solid #e6e6e6; background: var(--vf-white); display: " +
           (hide ? "none" : "block") + ";";
       })(),
       mapCenter: cfg.center,
@@ -268,49 +384,256 @@ class Component extends DCLogic {
       valueLayer,
       communities: comms.map((c) => {
         const vals = {};
-        ["income", "pets", "growth", "households", "econ"].forEach((k) => {
-          const raw = k === "households" ? c.hh : c[k];
+        ["income", "pets", "growth", "households", "econ", "competition"].forEach((k) => {
+          const raw = k === "households" ? c.hh : k === "competition" ? c.vets : c[k];
           const b = this.bucket(k, raw);
           vals[k] = { t: b.t, color: b.color, label: this.fmtMetric(k, raw) };
         });
-        return { name: c.name, lat: c.lat, lng: c.lng, vets: c.vets, values: vals };
+        return {
+          name: c.name, lat: c.lat, lng: c.lng, vets: c.vets, values: vals,
+          metricName: valueLayer ? LAYER_META[valueLayer].title : "",
+          sourceNote: valueLayer ? LAYER_META[valueLayer].source : ""
+        };
       }),
-      practices: list.map((p) => ({ id: p.id, lat: p.lat, lng: p.lng, priceLabel: this.money(p.price) })),
-      basemapTabs: [
-        { key: "map", label: "Map" },
-        { key: "satellite", label: "Satellite" }
-      ].map((t) => ({
-        label: t.label,
-        go: () => this.setState({ mdBasemap: t.key }),
-        style: "font-family: var(--rf-display); font-size: 13px; font-weight: 500; padding: 9px 22px; border: 0; cursor: pointer; color: " +
-          ((s.mdBasemap || "map") === t.key ? "var(--vf-navy)" : "var(--vf-text)") + "; background: " +
-          ((s.mdBasemap || "map") === t.key ? "var(--vf-white)" : "transparent") + "; border-bottom: 2px solid " +
-          ((s.mdBasemap || "map") === t.key ? "var(--vf-accent)" : "transparent") + ";"
+      practices: list.map((p) => ({
+        id: p.id, lat: p.lat, lng: p.lng,
+        priceLabel: this.money(p.price),
+        name: this.practiceName(p),
+        photoSrc: this.thumbSrc(p),
+        meta: p.docs + (p.docs === 1 ? " doctor" : " doctors") + " · " + this.money(p.rev) + " revenue"
       })),
-      layersOpen: s.mdPanel !== false,
-      toggleLayersPanel: () => this.setState({ mdPanel: s.mdPanel === false }),
-      layerRows: [
+      activeLayer: valueLayer,
+      active: (() => {
+        const meta = LAYER_META[valueLayer] || {};
+        const cfg = valueLayer ? VALUE_LAYERS[valueLayer] : null;
+        return {
+          title: meta.title || "No layer active",
+          sub: meta.sub || "Choose a layer to shade the map",
+          sourceLine: meta.source ? "Source: " + meta.source : "",
+          sourceShort: meta.source ? "Source: " + meta.source.split(" · ")[0] : "",
+          updatedLine: meta.updated || "",
+          means: meta.means || "",
+          why: meta.why || "",
+          hasRamp: !!valueLayer,
+          ramp: valueLayer
+            ? ramp(valueLayer).map((c, i) => ({
+                style: "flex: 1; height: 9px; background: " + c + ";",
+                label: cfg.buckets[i]
+              }))
+            : []
+        };
+      })(),
+      activeCountLabel: (() => {
+        const n = ["income", "pets", "competition", "growth", "households", "econ"]
+          .filter((k) => enabled(k === "competition" ? "vets" : k)).length;
+        return n + " of 6";
+      })(),
+
+      // The layer SELECT in the Market layer card — switching layers happens here, not
+      // buried in a drawer. It lists exactly the datasets enabled under Layers.
+      activeLayerKey: valueLayer || "none",
+      activeLayerLabel: valueLayer ? LAYER_META[valueLayer].title : "No shading — practices only",
+      layerMenuOpen: !!s.mdLayerMenu,
+      toggleLayerMenu: () => this.setState({ mdLayerMenu: !s.mdLayerMenu }),
+      layerSelectStyle: "display: flex; align-items: center; gap: 8px; width: 100%; height: 40px; padding: 0 11px; font-family: var(--rf-display); font-size: 14px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid " +
+        (s.mdLayerMenu ? "var(--vf-accent)" : "var(--border-subtle)") + "; border-radius: 6px; cursor: pointer;",
+      layerMenuCaretStyle: "flex: none; display: block; transition: transform 150ms var(--easing-out); transform: rotate(" +
+        (s.mdLayerMenu ? "180deg" : "0deg") + ");",
+      layerOptions: [{ v: "none", label: "No shading — practices only" }].concat(
+        ["income", "pets", "competition", "growth", "households", "econ"]
+          .filter((k) => enabled(k === "competition" ? "vets" : k))
+          .map((k) => ({ v: k, label: LAYER_META[k].title }))
+      ).map((o) => {
+        const on = (valueLayer || "none") === o.v;
+        return {
+          label: o.label,
+          selected: on,
+          go: () => this.setState({
+            mdValue: o.v === "none" ? null : o.v,
+            mdLayerMenu: false,
+            mdInsightOff: false
+          }),
+          rowStyle: "display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 8px; font-family: var(--rf-display); font-size: 13px; font-weight: " +
+            (on ? "800" : "500") + "; color: var(--vf-navy); background: " +
+            (on ? "var(--vf-accent-bg)" : "none") + "; border: 0; border-radius: 6px; cursor: pointer;",
+          chipStyle: "flex: none; width: 20px; height: 20px; border-radius: 4px; overflow: hidden; display: flex; flex-direction: column; border: 1px solid rgba(0,58,112,.12);",
+          chips: (o.v === "none" ? ["var(--vf-neutral)", "var(--vf-neutral)"] : ramp(o.v)).map((c) => ({
+            style: "flex: 1; background: " + c + ";"
+          })),
+          tickStyle: "flex: none; display: block; filter: brightness(0) saturate(100%) invert(23%) sepia(89%) saturate(1352%) hue-rotate(184deg) brightness(94%) contrast(101%); opacity: " +
+            (on ? "1" : "0") + ";"
+        };
+      }),
+
+      // Compare — optional second metric, shown as paired bars rather than a second fill.
+      compareOpen: !!s.mdCompareOpen,
+      toggleCompare: () => this.setState({ mdCompareOpen: !s.mdCompareOpen }),
+      compareNote: s.mdCompareOpen ? "close" : s.mdCompare ? "1 metric" : "(optional)",
+      compareClosed: !s.mdCompareOpen,
+      compareStyle: "display: flex; align-items: center; gap: 10px; width: 100%; margin-top: 8px; padding: 12px 14px; text-align: left; background: var(--vf-white); border: 1px solid " +
+        (s.mdCompareOpen ? "var(--vf-accent)" : "var(--border-subtle)") +
+        "; border-radius: 8px; box-shadow: 0 3px 12px rgba(0,58,112,.1); cursor: pointer;",
+      comparePlusStyle: "flex: none; display: block; opacity: .7;",
+      compareMenuOpen: !!s.mdCompareMenu,
+      compareCaretStyle: "flex: none; opacity: .5; transition: transform .15s; transform: rotate(" + (s.mdCompareMenu ? "180deg" : "0deg") + ");",
+      compareTriggerLabel: s.mdCompare && s.mdCompare !== valueLayer ? LAYER_META[s.mdCompare].title : "Choose a metric…",
+      toggleCompareMenu: () => this.setState((st) => ({ mdCompareMenu: !st.mdCompareMenu })),
+      compareMenuRef: (el) => {
+        if (!el || !el.parentElement) return;
+        const host = el.parentElement.closest(".rf-scroll");
+        if (!host) return;
+        requestAnimationFrame(() => {
+          const over = el.getBoundingClientRect().bottom - host.getBoundingClientRect().bottom;
+          if (over > 0) host.scrollTop += over + 10;
+        });
+      },
+      compareOptions: [{ v: "none", label: "Choose a metric…" }].concat(
+        ["income", "pets", "competition", "growth", "households", "econ"]
+          .filter((k) => k !== valueLayer && enabled(k === "competition" ? "vets" : k))
+          .map((k) => ({ v: k, label: LAYER_META[k].title }))
+      ).map((o) => {
+        const on = o.v === "none" ? !s.mdCompare || s.mdCompare === valueLayer : s.mdCompare === o.v;
+        return {
+          label: o.label,
+          selected: on,
+          go: () => this.setState({ mdCompare: o.v === "none" ? null : o.v, mdCompareMenu: false }),
+          rowStyle: "display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 8px; text-align: left; font-size: 12.5px; font-weight: " +
+            (on ? "700" : "500") + "; color: var(--vf-navy); background: " + (on ? "var(--vf-accent-bg)" : "none") +
+            "; border: 0; border-radius: 6px; cursor: pointer;",
+          chipStyle: "flex: none; width: 20px; height: 20px; border-radius: 4px; overflow: hidden; display: flex; flex-direction: column; border: 1px solid rgba(0,58,112,.12);",
+          chips: (o.v === "none" ? ["var(--vf-white)", "var(--vf-white)"] : ramp(o.v)).map((c) => ({ style: "flex: 1; background: " + c + ";" })),
+          tickStyle: "flex: none; display: block; opacity: " + (on ? "1" : "0") + ";"
+        };
+      }),
+      hasCompare: !!s.mdCompare && !!valueLayer && s.mdCompare !== valueLayer,
+      compareLabelA: valueLayer ? LAYER_META[valueLayer].title : "",
+      compareLabelB: s.mdCompare ? LAYER_META[s.mdCompare].title : "",
+      compareKeyA: "flex: none; width: 26px; height: 9px; border-radius: 2px; border: 1px solid rgba(0,58,112,.14); background: linear-gradient(to right, " + (valueLayer ? ramp(valueLayer).join(", ") : "transparent, transparent") + ");",
+      compareKeyB: "flex: none; width: 26px; height: 9px; border-radius: 2px; border: 1px solid rgba(0,58,112,.14); background: linear-gradient(to right, " + (s.mdCompare ? ramp(s.mdCompare).join(", ") : "transparent, transparent") + ");",
+      compareRows: (!s.mdCompare || !valueLayer || s.mdCompare === valueLayer) ? [] : comms.slice(0, 6).map((c) => {
+        const raw = (k) => (k === "households" ? c.hh : k === "competition" ? c.vets : c[k]);
+        const ta = this.bucket(valueLayer, num(raw(valueLayer))).t;
+        const tb = this.bucket(s.mdCompare, num(raw(s.mdCompare))).t;
+        const fillA = this.bucket(valueLayer, num(raw(valueLayer))).color;
+        const fillB = this.bucket(s.mdCompare, num(raw(s.mdCompare))).color;
+        return {
+          name: c.name,
+          aStyle: "display: block; height: 7px; border-radius: 2px; border: 1px solid rgba(0,58,112,.14); width: " + Math.round(8 + ta * 92) + "%; background: " + fillA + ";",
+          bStyle: "display: block; height: 7px; border-radius: 2px; border: 1px solid rgba(0,58,112,.14); width: " + Math.round(8 + tb * 92) + "%; background: " + fillB + ";"
+        };
+      }),
+
+      layerChoices: ["income", "pets", "competition", "growth", "households", "econ"].map((k) => {
+        const srcKey = k === "competition" ? "vets" : k;
+        const on = enabled(srcKey);
+        return {
+          title: LAYER_META[k].title,
+          sub: LAYER_META[k].sub,
+          // Enable/disable the dataset. Turning off the layer currently shading the map
+          // hands shading to the next enabled one, so the map is never left in a state
+          // the dropdown cannot describe.
+          go: () => {
+            const nextOff = Object.assign({}, s.mdOff || {}, { [srcKey]: on });
+            const stillOn = ["income", "pets", "competition", "growth", "households", "econ"]
+              .filter((x) => !nextOff[x === "competition" ? "vets" : x]);
+            const nextValue = stillOn.indexOf(valueLayer) > -1 ? valueLayer : (stillOn[0] || null);
+            this.setState({ mdOff: nextOff, mdValue: nextValue, mdInsightOff: false });
+          },
+          rowStyle: "display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 8px; text-align: left; background: none; border: 0; border-radius: 6px; cursor: pointer;",
+          chips: ramp(k).map((c) => ({
+            style: "flex: 1; background: " + c + "; opacity: " + (on ? "1" : ".35") + ";"
+          })),
+          swatchStyle: "flex: none; width: 28px; height: 28px; border-radius: 5px; overflow: hidden; display: flex; flex-direction: column; border: 1px solid rgba(0,58,112,.12);",
+          titleStyle: "display: block; font-family: var(--rf-display); font-size: 12.5px; font-weight: 500; color: var(--vf-navy);",
+          isOn: on,
+          radioStyle: "flex: none; width: 17px; height: 17px; border-radius: 4px; display: grid; place-items: center; border: 1.5px solid " +
+            (on ? "var(--vf-accent)" : "#c3d4e2") + "; background: " + (on ? "var(--vf-accent)" : "var(--vf-white)") + ";",
+          dotStyle: "display: block; opacity: " + (on ? "1" : "0") + ";"
+        };
+      }),
+      layersOpen: !!s.mdLayersOpen,
+      toggleLayers: () => this.setState({ mdLayersOpen: !s.mdLayersOpen }),
+      layersBtnStyle: "display: flex; align-items: center; gap: 9px; width: 100%; height: 40px; padding: 0 12px; font-family: var(--rf-display); font-size: 13.5px; font-weight: 500; color: var(--vf-white); background: var(--vf-accent); border: 0; border-radius: 8px; cursor: pointer; box-shadow: 0 4px 14px rgba(0,58,112,.22);",
+      layersCaretStyle: "flex: none; filter: brightness(0) invert(1); opacity: .8; transform: rotate(" +
+        (s.mdLayersOpen ? "0deg" : "180deg") + "); transition: transform 150ms var(--easing-out);",
+      legendOpen: s.mdLegendOff !== true,
+      legendExpanded: s.mdLegendOff !== true,
+      legendToggleLabel: s.mdLegendOff === true ? "Expand market layer panel" : "Collapse market layer panel",
+      legendCaretStyle: "display: block; transition: transform 150ms var(--easing-out); transform: rotate(" +
+        (s.mdLegendOff === true ? "180deg" : "0deg") + ");",
+      toggleLegend: () => this.setState({ mdLegendOff: s.mdLegendOff !== true }),
+
+      legendBtnStyle: "display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; font-family: var(--rf-display); font-size: 12.5px; font-weight: 500; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,58,112,.14); color: " +
+        (s.mdLegendOff !== true ? "var(--vf-navy)" : "var(--vf-text)") +
+        "; background: var(--vf-white); border: 1px solid " +
+        (s.mdLegendOff !== true ? "var(--vf-accent)" : "var(--border-subtle)") +
+        "; border-radius: 6px; cursor: pointer;",
+      insightOpen: (() => {
+        const vw = s.vw || (typeof window !== "undefined" ? window.innerWidth : 1440);
+        // map column ≈ viewport − results rail − open detail panel
+        const mapW = vw - 470 - (s.mdSel ? 366 : 0);
+        return !!valueLayer && !s.mdInsightOff && s.mdLegendOff !== true && mapW >= 810;
+      })(),
+      dismissInsight: () => this.setState({ mdInsightOff: true }),
+      showDrive: !!sel,
+      recenterKey: s.mdRecenter || 0,
+      resetView: () => this.setState({ mdSel: null, mdRecenter: (s.mdRecenter || 0) + 1 }),
+      selectArea: (name) => this.setState({ mdArea: name }),
+      snapshotCount: "6 indicators · Census-sourced",
+      // GROUP 1 — retained for the legacy panel; the compact control above is canonical.
+      layerHelp: "Area shading: rates and medians shade the whole community, so only one can show at a time — two fills blend into a colour that means nothing. Overlays: counts drawn as sized circles, which stack freely on each other and on the shading.",
+      fillRows: [radioRow("none", "No shading", !valueLayer, null, () => this.setState({ mdValue: null }))].concat(
+        enabled("income") ? [radioRow("income", "Median Household Income", valueLayer === "income", ramp("income")[3], setValue("income"))] : [],
+        enabled("growth") ? [radioRow("growth", "Population Growth", valueLayer === "growth", ramp("growth")[3], setValue("growth"))] : [],
+        enabled("econ") ? [radioRow("econ", "Average Practice Payroll", valueLayer === "econ", ramp("econ")[3], setValue("econ"))] : []
+      ),
+      // GROUP 2 — everything that can coexist with a fill and with each other.
+      overlayRows: [
         layerRow("practices", "Practice Listings", !!layers.practices, "#003a70", setLayer("practices")),
         layerRow("drive5", "5–10 min drive time", !!layers.drive5, "#003a70", setLayer("drive5")),
         layerRow("drive10", "10–20 min drive time", !!layers.drive10, "#339dde", setLayer("drive10"))
       ].concat(
-        enabled("pets") ? [layerRow("pets", "Pet Ownership (est.)", valueLayer === "pets", "#e89331", setValue("pets"))] : [],
-        enabled("income") ? [layerRow("income", "Median Household Income", valueLayer === "income", "#4c9a6a", setValue("income"))] : [],
-        enabled("growth") ? [layerRow("growth", "Population Growth", valueLayer === "growth", "#2e7d4f", setValue("growth"))] : [],
-        enabled("vets") ? [layerRow("competition", "Veterinary Competition", !!layers.competition, "#7856be", setLayer("competition"))] : [],
-        enabled("households") ? [layerRow("households", "Households", valueLayer === "households", "#1f6fa8", setValue("households"))] : [],
-        enabled("econ") ? [layerRow("econ", "Economic Profile", valueLayer === "econ", "#8f6fd0", setValue("econ"))] : []
+        enabled("households") ? [layerRow("households", "Households", !!layers.households, ramp("households")[3], setLayer("households"))] : [],
+        enabled("pets") ? [layerRow("pets", "Estimated Pet Households", !!layers.pets, ramp("pets")[3], setLayer("pets"))] : [],
+        enabled("vets") ? [layerRow("competition", "Veterinary Establishments", !!layers.competition, ramp("competition")[3], setLayer("competition"))] : []
       ),
+      symbols: activeSymbols,
+      symbolColors: SYMBOL_KEYS.reduce((o, k) => { o[k] = ramp(k)[3]; return o; }, {}),
       hiddenLayers: ["pets", "income", "growth", "vets", "households", "econ"].filter((k) => off[k]).length,
       hasHiddenLayers: ["pets", "income", "growth", "vets", "households", "econ"].some((k) => off[k]),
-      hasLegend: !!valueLayer,
-      legend: valueLayer ? {
-        title: VALUE_LAYERS[valueLayer].label,
-        swatches: RAMPS[valueLayer].map((c, i) => ({
-          style: "flex: 1; height: 10px; background: " + c + ";",
-          label: VALUE_LAYERS[valueLayer].buckets[i]
-        }))
-      } : { title: "", swatches: [] },
+      // Legend yields before the controls panel does: below a short map column the symbol
+      // rows fold away and the key shows the fill ramp only.
+      legendBoxStyle: "flex: 0 1 auto; width: 276px; pointer-events: auto; overflow: hidden; padding: 10px 12px 11px; " +
+        "background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; box-shadow: 0 2px 8px rgba(0,58,112,.16);",
+      // Every mark on the map gets a key: the fill ramp with its real class breaks, plus
+      // a hue + graduated-size row for each active count layer.
+      hasLegend: !!valueLayer || activeSymbols.length > 0,
+      legend: {
+        hasFill: !!valueLayer,
+        title: valueLayer ? VALUE_LAYERS[valueLayer].label : "",
+        swatches: valueLayer
+          ? ramp(valueLayer).map((c, i) => ({
+              style: "flex: 1; height: 10px; background: " + c + ";",
+              label: VALUE_LAYERS[valueLayer].buckets[i]
+            }))
+          : [],
+        hasSymbols: activeSymbols.length > 0 && !tightColumn,
+        symbolWrapStyle: "margin-top: " + (valueLayer ? "10px" : "0") +
+          "; padding-top: " + (valueLayer ? "9px" : "0") +
+          "; border-top: " + (valueLayer ? "1px solid #e6e6e6" : "0") + ";",
+        symbols: activeSymbols.map((k) => {
+          const hue = ramp(k)[3];
+          return {
+            label: SYMBOL_STYLE[k].label,
+            swatchStyle: "flex: none; width: 10px; height: 10px; border-radius: 999px; background: " + hue + ";",
+            sizes: SYMBOL_SCALE[k].map((row) => ({
+              label: row.label,
+              dotStyle: "display: block; width: " + row.px + "px; height: " + row.px +
+                "px; border-radius: 999px; background: " + hue + "; opacity: .85;"
+            }))
+          };
+        })
+      },
       mdHeadline: list.length + (list.length === 1 ? " practice available" : " practices available"),
       mdSubline: market + " metro · within 20 miles",
       mdResults: list.map((p) => {
@@ -329,8 +652,17 @@ class Component extends DCLogic {
           ebitdaLabel: this.money(Math.round(p.rev * 0.19)),
           docs: String(p.docs),
           sqft: p.sqft.toLocaleString(),
+          meta: [
+            { value: this.money(p.rev), unit: "revenue" },
+            { value: String(p.docs), unit: p.docs === 1 ? "doctor" : "doctors" },
+            { value: p.sqft.toLocaleString(), unit: "sq ft" }
+          ].map((mm, mi) => Object.assign({}, mm, {
+            // A thin rule separates items; it sits inside each item so it survives wrapping.
+            wrapStyle: "display: inline-flex; align-items: center; flex: none;" +
+              (mi > 0 ? " padding-left: 10px; border-left: 1px solid #e6e6e6;" : "")
+          })),
           saved: (s.mdSaved || []).indexOf(p.id) > -1,
-          heartIconStyle: "display: block; filter: " + ((s.mdSaved || []).indexOf(p.id) > -1 ? "none" : "brightness(0) invert(.62)") + ";",
+          heartIconStyle: "display: block; filter: " + ((s.mdSaved || []).indexOf(p.id) > -1 ? "none" : "brightness(0) invert(.78)") + ";",
           heartStyle: "position: absolute; left: 8px; bottom: 8px; width: 26px; height: 26px; border-radius: 999px; display: grid; place-items: center; border: 0; cursor: pointer; background: var(--vf-white); box-shadow: 0 1px 4px rgba(0,58,112,.25); color: " +
             ((s.mdSaved || []).indexOf(p.id) > -1 ? "var(--vf-navy)" : "#8d99a6") + "; font-size: 13px; line-height: 1;",
           toggleSave: (e) => {
@@ -339,49 +671,59 @@ class Component extends DCLogic {
             this.setState({ mdSaved: saved.indexOf(p.id) > -1 ? saved.filter((x) => x !== p.id) : saved.concat([p.id]) });
           },
           select: () => this.setState({ mdSel: p.id, mdTab: "insights", mdPhoto: 0 }),
-          cardStyle: "display: flex; gap: 12px; padding: 12px; background: var(--vf-white); border: 1.5px solid " +
-            (s.mdSel === p.id ? "var(--vf-accent)" : "#e6e6e6") + "; border-radius: 8px; cursor: pointer; box-shadow: " +
-            (s.mdSel === p.id ? "0 2px 8px rgba(51,157,222,.18)" : "none") + "; transition: border-color 150ms linear, box-shadow 150ms linear;"
+          cardStyle: "display: flex; gap: 13px; padding: 12px; border: 1.5px solid " +
+            (s.mdSel === p.id ? "var(--vf-accent)" : "#e6e6e6") + "; background: " +
+            (s.mdSel === p.id ? "#f2f8fd" : "var(--vf-white)") +
+            "; border-radius: 8px; cursor: pointer; box-shadow: " +
+            (s.mdSel === p.id ? "0 2px 8px rgba(51,157,222,.16)" : "none") +
+            "; transition: border-color 150ms linear, background 150ms linear, box-shadow 150ms linear;"
         };
       }),
+      showingLabel: "Showing 1–" + Math.min(5, list.length) + " of " + list.length + " practices",
+      pager: [
+        { label: "‹", aria: "Previous page", page: 0 },
+        { label: "1", aria: "Page 1", page: 1 },
+        { label: "2", aria: "Page 2", page: 2 },
+        { label: "›", aria: "Next page", page: 0 }
+      ].map((p) => ({
+        label: p.label, aria: p.aria,
+        go: () => this.setState({ mdPage: p.page || s.mdPage || 1 }),
+        style: "width: 28px; height: 28px; display: grid; place-items: center; font-size: 12px; font-weight: 500; border-radius: 5px; cursor: pointer; border: 1px solid " +
+          ((s.mdPage || 1) === p.page ? "var(--vf-accent)" : "var(--border-subtle)") + "; background: " +
+          ((s.mdPage || 1) === p.page ? "var(--vf-accent)" : "var(--vf-white)") + "; color: " +
+          ((s.mdPage || 1) === p.page ? "var(--vf-white)" : "var(--vf-navy)") + ";"
+      })),
       hasSel: !!sel,
       panel: sel ? this.marketPanel(sel, selComm, comms, market) : null,
       closePanel: () => this.setState({ mdSel: null }),
-      stripCards: cards.map((c) => {
-        const metric = c.metric;
-        const dots = comms.map((cm) => {
-          const raw = metric === "vets" ? cm.vets : metric === "households" ? cm.hh : cm[metric];
-          const b = metric === "vets"
-            ? { color: "rgba(120,86,190,.8)", t: Math.min(raw / 12, 1) }
-            : this.bucket(metric, raw);
-          const size = 10 + Math.round(b.t * 16);
+      stripCards: ["income", "pets", "competition", "growth", "households", "econ"]
+        .filter((k) => enabled(k === "competition" ? "vets" : k))
+        .map((k) => {
+          const meta = LAYER_META[k];
+          const cfg = VALUE_LAYERS[k];
+          const on = valueLayer === k;
+          const vals = comms.map((c) => {
+            const raw = k === "households" ? c.hh : k === "competition" ? c.vets : c[k];
+            return { raw: num(raw), t: this.bucket(k, num(raw)).t };
+          });
+          const mid = vals.map((v) => v.raw).sort((a, b) => a - b)[Math.floor(vals.length / 2)] || 0;
           return {
-            style: "position: absolute; width: " + size + "px; height: " + size + "px; margin: " + (-size / 2) + "px 0 0 " + (-size / 2) +
-              "px; border-radius: 999px; background: " + b.color + "; border: 1.5px solid rgba(255,255,255,.85); left: " +
-              (((cm.lng - minLng) / (maxLng - minLng)) * 100).toFixed(1) + "%; top: " +
-              ((1 - (cm.lat - minLat) / (maxLat - minLat)) * 100).toFixed(1) + "%;"
+            title: meta.title,
+            value: this.fmtMetric(k, mid),
+            valueNote: "metro median",
+            src: meta.source,
+            bars: vals.slice(0, 7).map((v) => ({
+              style: "flex: 1; height: " + Math.max(4, Math.round(6 + v.t * 24)) +
+                "px; border-radius: 2px 2px 0 0; background: " + ramp(k)[Math.min(3, Math.round(v.t * 3))] + ";"
+            })),
+            activate: () => this.setState({ mdValue: k, mdInsightOff: false, mdLegendOff: false }),
+            linkLabel: on ? "Showing on map" : "View on map \u2192",
+            linkStyle: "flex: none; margin-top: auto; padding-top: 9px; text-align: left; font-family: var(--rf-display); font-size: 11.5px; font-weight: 500; background: none; border: 0; cursor: pointer; color: " +
+              (on ? "var(--vf-navy)" : "var(--vf-accent)") + ";",
+            cardStyle: "display: flex; flex-direction: column; height: 100%; padding: 13px 14px; background: var(--vf-white); border: 1px solid " +
+              (on ? "var(--vf-accent)" : "#e6e6e6") + "; border-radius: 8px;"
           };
-        });
-        const ramp = RAMPS[metric] || BRAND_RAMP;
-        return {
-          n: c.n, title: c.title, blurb: c.blurb, src: c.src, caption: c.caption,
-          dots,
-          cityLabel: market.split(",")[0],
-          ramp: ramp.map((col) => ({ style: "flex: 1; height: 9px; background: " + col + ";" })),
-          on: c.on,
-          trackStyle: "position: relative; flex: none; width: 34px; height: 19px; border-radius: 999px; border: 0; cursor: pointer; background: " +
-            (c.on ? "var(--vf-accent)" : "#d4dde5") + "; transition: background 150ms linear;",
-          knobStyle: "position: absolute; top: 2px; left: " + (c.on ? "17px" : "2px") +
-            "; width: 15px; height: 15px; border-radius: 999px; background: var(--vf-white); transition: left 150ms var(--easing-out);",
-          toggle: setSource(metric),
-          hasLayerNote: !!c.layerName,
-          layerNote: c.on ? "In Data Layers as “" + c.layerName + "”" : "Hidden from Data Layers",
-          noLayerNote: !c.layerName,
-          layerNoteStyle: "font-size: 10px; line-height: 1.4; margin-top: 6px; color: " +
-            (c.on ? "var(--vf-accent)" : "var(--vf-text)") + ";",
-          bodyStyle: "opacity: " + (c.on ? "1" : ".45") + "; transition: opacity 150ms linear;"
-        };
-      })
+        })
     };
   }
 
@@ -429,6 +771,11 @@ class Component extends DCLogic {
 
   heroSrc(p) {
     return p.id === "p2" ? "/assets/photos/round-rock-exterior-street.webp" : "";
+  }
+
+  // Thumbnail-safe variant: reads at small sizes where the wide street view does not.
+  thumbSrc(p) {
+    return p.id === "p2" ? "/assets/photos/round-rock-exterior-parking.jpeg" : "";
   }
 
   practiceName(p) {
@@ -619,13 +966,30 @@ class Component extends DCLogic {
         chip(s.f.doctors === "Any" ? "Any size" : s.f.doctors + "+ doctors", s.f.doctors !== "Any"),
         chip("Property", s.f.building !== "Any")
       ],
-      hasPeek: !!peek,
-      peek: peek ? {
-        area: peek.area + ", TX",
-        meta: this.money(peek.price) + " · " + peek.docs + " doctors · " + peek.sqft.toLocaleString() + " sq ft",
-        open: () => this.setState({ screen: "detail", detailId: peek.id })
-      } : { area: "", meta: "", open: () => {} },
-      selectMarker: (id) => this.setState({ activeId: id }),
+      // Callout only on the phone: the map's own callout carries the practice, and tapping
+      // a selected pin again opens the detail screen. No peek card competing for the
+      // bottom of the screen with the market-data button.
+      selectMarker: (id) => (s.activeId === id
+        ? this.setState({ screen: "detail", detailId: id })
+        : this.setState({ activeId: id })),
+      sheetOpen: !!s.mobSheet,
+      openSheet: () => this.setState({ mobSheet: true }),
+      closeSheet: () => this.setState({ mobSheet: false }),
+      layerLabel: s.mdValue === null ? "Market data" : (LAYER_META[s.mdValue === undefined ? "income" : s.mdValue] || {}).title || "Market data",
+      resizeKey: s.screen + s.viewport + (s.mobSheet ? "-sheet" : "") + (s.mobileTab || ""),
+      rowStyle: "display: flex; align-items: center; gap: 11px; width: 100%; min-height: 46px; padding: 12px 4px; text-align: left; font-size: 13.5px; font-weight: 500; color: var(--vf-navy); background: none; border: 0; border-bottom: 1px solid var(--rf-line); cursor: pointer;",
+      datasetRowStyle: "display: flex; align-items: center; gap: 11px; width: 100%; min-height: 46px; padding: 12px 4px; text-align: left; background: none; border: 0; border-bottom: 1px solid var(--rf-line); cursor: pointer;",
+      basemaps: [
+        { key: "map", label: "Map" },
+        { key: "satellite", label: "Satellite" }
+      ].map((b) => ({
+        label: b.label,
+        go: () => this.setState({ mdBasemap: b.key }),
+        style: "flex: 1; height: 46px; font-family: var(--rf-display); font-size: 13px; font-weight: 500; border-radius: 6px; cursor: pointer; color: " +
+          ((s.mdBasemap || "map") === b.key ? "var(--vf-white)" : "var(--vf-navy)") + "; background: " +
+          ((s.mdBasemap || "map") === b.key ? "var(--vf-navy)" : "var(--vf-white)") + "; border: 1px solid " +
+          ((s.mdBasemap || "map") === b.key ? "var(--vf-navy)" : "var(--border-subtle)") + ";"
+      })),
       toggle: [
         { key: "list", label: "List" },
         { key: "map", label: "Map" }
@@ -1071,20 +1435,32 @@ class Component extends DCLogic {
       },
       resultCount: list.length,
 
-      isBrowse: s.screen === "browse" && (s.browseMode || "listings") === "listings",
-      browseToggle: [
-        { key: "listings", label: "Listings" },
-        { key: "market", label: "Market Data" }
-      ].map((t) => {
-        const on = (s.browseMode || "listings") === t.key;
+      isBrowse: false,
+      hasBrowseSel: !!s.browseSel,
+      closeBrowseSel: () => this.setState({ browseSel: null }),
+      bsel: (() => {
+        const p = P.filter((x) => x.id === s.browseSel)[0];
+        if (!p) return { facts: [] };
+        const bldg = p.bldg === "Included" ? "Included in sale" : p.bldg === "Separate" ? "Available separately" : "Leased — assignable";
         return {
-          label: t.label,
-          go: () => this.setState({ browseMode: t.key }),
-          style: "font-family: var(--rf-display); font-size: 13px; font-weight: 500; padding: 8px 16px; border: 0; border-radius: 5px; cursor: pointer; white-space: nowrap; color: " +
-            (on ? "var(--vf-navy)" : "var(--vf-text)") + "; background: " + (on ? "var(--vf-white)" : "transparent") +
-            "; box-shadow: " + (on ? "0 1px 3px rgba(0,58,112,.16)" : "none") + ";"
+          eyebrow: p.type,
+          name: this.practiceName(p),
+          place: p.area + ", " + this.stateOf(p.market || "Austin, TX"),
+          priceLabel: this.money(p.price),
+          photoId: "ph-" + p.id + "-exterior",
+          photoSrc: this.heroSrc(p),
+          note: p.note,
+          facts: [
+            { k: "Gross revenue", v: this.money(p.rev) + " (seller-stated)" },
+            { k: "Doctors", v: p.docs + " full-time equivalent" },
+            { k: "Exam rooms", v: String(p.rooms) },
+            { k: "Square feet", v: p.sqft.toLocaleString() },
+            { k: "Property", v: bldg },
+            { k: "Established", v: String(p.est) }
+          ],
+          openFull: () => this.setState({ screen: "detail", detailId: p.id })
         };
-      }),
+      })(),
       market: s.market || "Austin, TX",
       marketOptions: Object.keys(MARKETS).map((m) => ({ v: m, label: m + " metro" })),
       setMarket: (e) => this.setState({ market: e.target.value, activeId: null, hoverId: null, loading: true }, () => {
@@ -1150,7 +1526,8 @@ class Component extends DCLogic {
         photoSrc: this.heroSrc(p),
         hasPhotoSrc: !!this.heroSrc(p),
         noPhotoSrc: !this.heroSrc(p),
-        open: () => this.setState({ screen: "detail", detailId: p.id, activeId: p.id }),
+        // Select into the docked side panel rather than navigating to a separate page.
+        open: () => this.setState({ browseSel: p.id, activeId: p.id }),
         hover: () => this.setState({ hoverId: p.id }),
         unhover: () => this.setState({ hoverId: null }),
         cardStyle: "background: var(--color-white); border: 1px solid " +
@@ -1161,7 +1538,7 @@ class Component extends DCLogic {
       markers: list.map((p) => ({ id: p.id, lat: p.lat, lng: p.lng, priceLabel: this.money(p.price) })),
       activeId: s.activeId, hoverId: s.hoverId,
       resizeKey: s.screen + s.viewport,
-      selectMarker: (id) => this.setState({ screen: "detail", detailId: id, activeId: id }),
+      selectMarker: (id) => this.setState({ browseSel: id, activeId: id }),
 
       isDetail: s.screen === "detail",
       backToBrowse: () => this.setState({ screen: "browse" }),
