@@ -4749,6 +4749,84 @@ fi
 - [ ] **Step 3: Docs** — `DEPLOY.md` "Deploy" section: expected verify output in coming-soon mode (`healthz OK … site_mode coming_soon`, `deep healthz OK`, `coming-soon shell OK`, `interest endpoint OK`); the drift test asserts `coming-soon shell OK` appears in `DEPLOY.md`.
 - [ ] **Step 4: GREEN** — both shell tests green; live: `EXPECT_SHA=<deployed> scripts/verify-deploy.sh QA https://qa.foundation.vin` still passes in app mode (QA is unchanged). Commit — `fix(deploy): verify-deploy is site-mode aware — coming-soon shell and interest endpoint on production, SPA shell on QA`.
 
+
+#### Task 11f — fix round 1 (2026-09-06, from the review: 1 Critical, 2 Minor; fixed at source)
+
+**C1 — spec §5 says the coming-soon check asserts the served page "does not carry the marketplace shell"; the brief's Step 2 only checked the title.** Both shells mount on `<div id="app">`, so the marketplace is recognised by what only it carries: `<title>Practice Match` and its UI-kit stylesheet `/ds/ui_kits/vin/kit.css` (`frontend/index.html`). **M1** — `/api/healthz` was fetched twice; fetch once and reuse the body. **M2** — the Python-side checks failed with raw `AssertionError` tracebacks; they now exit with one clean `FAIL: …` line (same message texts, so the shell test's substrings still match).
+
+- [ ] **FR1 Step 1: failing shell case.** `tests/scripts/test_verify_deploy.sh`: add mode `coming_leak` to the fake server — healthz body as `coming_ok` (`site_mode: "coming_soon"`), and `/` and `/browse` serve `<!doctype html><title>VIN Foundation — Coming Soon</title><link rel="stylesheet" href="/ds/ui_kits/vin/kit.css"><div id="app"></div>` (the coming-soon title AND a marketplace-only marker). New case: `start_server coming_leak` → the script must exit non-zero and its output must contain `marketplace shell served in coming-soon mode`. Also assert, for the existing `no_site_mode` case, that the output does NOT contain `Traceback` (M2 — RED today). Run `bash tests/scripts/test_verify_deploy.sh` → FAIL on both (today the leak body passes; the missing-key failure is a traceback).
+
+- [ ] **FR1 Step 2: script.** In `scripts/verify-deploy.sh` replace the healthz block and the mode branch with exactly:
+```bash
+echo "→ GET $BASE/api/healthz"
+# Captured once and reused for the mode decision below (fix round 1). -f fails the
+# assignment (and, under set -e, the script) on a 4xx/5xx instead of handing python
+# an empty body. -sS: no progress meter, but real errors still reach stderr.
+health=$(curl -fsS --max-time 20 "$BASE/api/healthz")
+printf '%s' "$health" | WANT="$WANT" EXPECT_SHA="$EXPECT_SHA" python3 -c '
+import os, sys, json
+b = json.load(sys.stdin)
+want, expect = os.environ["WANT"], os.environ["EXPECT_SHA"]
+
+def fail(msg):  # one clean line on stderr, exit 1 - no traceback (fix round 1)
+    sys.exit(f"FAIL: {msg}")
+
+got = b["environment"]
+if got != want:
+    fail(f"environment is {got!r}, expected {want!r}: {b}")
+db = b["db"]
+if not (db["ok"] and b["redis"]["ok"]):
+    fail(f"db or redis not ok: {b}")
+# A healthy db block without postgis_version means SELECT postgis_version() never
+# ran - the extension or the pinned PostGIS image is not what we think it is.
+pg = db.get("postgis_version")
+if not pg:
+    fail(f"postgis_version missing from a healthy db block: {b}")
+mode = b.get("site_mode")
+if not mode:
+    fail(f"site_mode missing from healthz: {b}")
+sha = b["commit_sha"]
+if expect and sha != expect:
+    fail(f"commit_sha is {sha!r}, expected {expect!r} - a stale container is still serving")
+print("healthz OK  version", b["version"], " commit", sha, " postgis", pg, " site_mode", mode)
+'
+code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/healthz/deep")
+[[ "$code" == "200" ]] || { echo "FAIL: deep healthz returned $code at $BASE/api/healthz/deep" >&2; exit 1; }
+echo "deep healthz OK"
+# Which shell to probe depends on SITE_MODE: production runs the coming-soon page
+# (probed by its title, the ABSENCE of the marketplace shell, and the /api/interest
+# contract), QA and app mode run the marketplace SPA (probed by its #app shell on the
+# SPA-fallback route). Bodies are captured, then matched: `cmd | grep -q … && echo OK`
+# cannot fail this script under set -e (fix round 1 of Task 8), and a grep -q that
+# exits early can SIGPIPE its producer under pipefail.
+mode=$(printf '%s' "$health" | python3 -c 'import sys, json; print(json.load(sys.stdin)["site_mode"])')
+if [[ "$mode" == "coming_soon" ]]; then
+  for path in / /browse; do
+    body=$(curl -fsS --max-time 20 "$BASE$path")
+    [[ "$body" == *'<title>VIN Foundation — Coming Soon</title>'* ]] \
+      || { echo "FAIL: coming-soon shell missing at $BASE$path" >&2; exit 1; }
+    # Both shells mount on #app, so the marketplace is recognised by what only it
+    # carries: its title and its UI-kit stylesheet (frontend/index.html).
+    if [[ "$body" == *'<title>Practice Match'* || "$body" == *'/ds/ui_kits/vin/kit.css'* ]]; then
+      echo "FAIL: marketplace shell served in coming-soon mode at $BASE$path" >&2; exit 1
+    fi
+  done
+  echo "coming-soon shell OK"
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H 'Content-Type: application/json' -d '{"email":"not-an-email"}' "$BASE/api/interest")
+  [[ "$code" == "422" ]] || { echo "FAIL: interest endpoint answered $code to an invalid address (expected 422)" >&2; exit 1; }
+  echo "interest endpoint OK"
+else
+  body=$(curl -fsS --max-time 20 "$BASE/browse")
+  [[ "$body" == *'id="app"'* ]] || { echo "FAIL: SPA fallback missing at $BASE/browse" >&2; exit 1; }
+  echo "SPA fallback OK"
+fi
+```
+(Everything above `echo "→ GET …"` and the `railway logs` tail below stay as they are.)
+
+- [ ] **FR1 Step 3: GREEN** — `bash tests/scripts/test_verify_deploy.sh` (all cases incl. `coming_leak`; the `no_site_mode` output carries `FAIL: site_mode missing` and no `Traceback`); `bash tests/scripts/test_deploy_guard.sh`; `poetry run pytest tests/test_docs.py -q -W error`; `poetry run ruff check app tests scripts`. Re-run the live read-only probe `EXPECT_SHA=087acc1 scripts/verify-deploy.sh QA https://qa.foundation.vin` and record its output — until Step 4b redeploys QA it must end with exactly one line, `FAIL: site_mode missing from healthz: {…}`, and no traceback.
+
+- [ ] **FR1 Step 4: Commit** — `git add scripts/verify-deploy.sh tests/scripts/test_verify_deploy.sh` · `fix(deploy): coming-soon verification rejects a leaked marketplace shell; one healthz fetch; clean FAIL lines` with the trailer.
+
 - [ ] **Step 4b (added 2026-09-06 — 11c review F2, controller): QA deploy of the new image and the forwarded-hop probe.** Run by the controller, not the implementer. 🚦 `railway status` → `Project: Practice Match`; `scripts/deploy.sh QA` (app mode; the coming-soon page does not appear on QA — `curl -fsS https://qa.foundation.vin/api/healthz` reports `site_mode app` and `/` still serves the marketplace shell). Then the probe that decides whether `client_ip()`'s rightmost-hop rule holds on Railway's edge:
 ```bash
 for i in 1 2 3 4 5 6; do
