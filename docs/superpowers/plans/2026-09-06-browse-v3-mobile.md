@@ -3543,7 +3543,7 @@ Plain language, for stakeholders, plus screenshots of the live QA screens:
 
 ### Task V13: Option B — restore V2's display typography through a local design amendment (spec D15, D16)
 
-*Added 2026-09-07 on John's ruling: "keep the V2 header and do not restyle header or fonts". Executes after the final-review fix round, before the merge. Fresh implementer. Corrected twice the same day on the implementer's STOPs: the set is 23 in-place value edits (not 25/24) — `{{ m.v }}` is in (V2 uppercased the key-fact values), `{{ resultHeadline }}` is out (V3 never restyled it; its only V3 occurrence is the mobile list's, byte-identical to V2's).*
+*Added 2026-09-07 on John's ruling: "keep the V2 header and do not restyle header or fonts". Executes after the final-review fix round, before the merge. Fresh implementer. Corrected three times the same day on the implementer's STOPs and Step 5: the set is 24 in-place value edits — `{{ m.v }}` is in (V2 uppercased the key-fact values), `{{ resultHeadline }}` is out (V3 never restyled it; its only V3 occurrence is the mobile list's, byte-identical to V2's), and the 28 px mobile asking price is in (pairing by tag+text+size; it was the one element keeping `mobile-detail` off its V2 hash).*
 
 **Files:**
 - Create: `docs/design-reference/design_handoff_practice_match_v3/Practice Match V3.rev2.dc.html` (byte-for-byte copy of the pristine Rev 2 file — `cp`, never edited)
@@ -3614,9 +3614,10 @@ function setDecl(style: string, prop: string, value: string | null): string {
  *  (tag, text) key takes V2's `text-transform` and `letter-spacing` VALUES wherever they differ from V3's, edited in place. Elements whose two
  *  declarations already equal V2's produce NO amendment. Unpaired elements — and elements whose key is not unique on one side — are never touched
  *  (that rule is what keeps `{{ resultHeadline }}` alone: V3's only occurrence is the mobile list's, byte-identical to V2's; V2's 19 px desktop one
- *  lived in the Browse column V3 replaced by design). */
+ *  lived in the Browse column V3 replaced by design). The key carries the font size so that same-text elements V2 sized and styled
+ *  differently (the 34 px and 28 px `{{ d.priceLabel }}`) pair with their own counterpart instead of being dropped as ambiguous. */
 export function deriveTypographyB(v2Html: string, pristineHtml: string): Amendment[] {
-  const key = (e: Styled) => `${e.tag}|${e.text}`;
+  const key = (e: Styled) => `${e.tag}|${e.text}|${e.fontPx ?? ''}`;   // the size disambiguates the two `{{ d.priceLabel }}` (34 px desktop, 28 px mobile) — V2 styles them differently on purpose
   const uniq = (els: Styled[]) => { const c = new Map<string, number>(); els.forEach((e) => c.set(key(e), (c.get(key(e)) ?? 0) + 1)); return new Map(els.filter((e) => c.get(key(e)) === 1).map((e) => [key(e), e])); };
   const v2 = uniq(styledElements(v2Html)); const v3u = uniq(styledElements(pristineHtml));
   const out: Amendment[] = [];
@@ -3655,19 +3656,21 @@ import { AMENDED, LOCAL_AMENDMENTS_MD, PRISTINE, amendments, applyAmendments, de
 
 describe('local design amendments (spec D15)', () => {
   const pristine = readFileSync(PRISTINE, 'utf8');
-  // The 23 elements V2 typed differently from V3 (measured in the V13 STOP reports, 2026-09-07): 22 display headings and the
-  // key-fact values `{{ m.v }}` (V2 set them uppercase .005em — one element in the template). `{{ resultHeadline }}` is NOT among them:
+  // The 24 elements V2 typed differently from V3 (measured in the V13 STOP reports and Step 5, 2026-09-07): 22 display headings, the
+  // key-fact values `{{ m.v }}` (V2 set them uppercase .005em — one element in the template) and the 28 px mobile asking price
+  // `{{ d.priceLabel }}` (V2: uppercase .005em; the 34 px desktop price is styled like V3 already). `{{ resultHeadline }}` is NOT among them:
   // V3's only occurrence is the mobile list's, byte-identical to V2's (the V7 review had paired it with V2's desktop Browse element).
   const A1_TEXTS = [
     'Veterinary Practice Transitions', "We're here to help connect veterinary practice owners", 'Member Sign In', 'Request Access',
     '{{ status.title }}', 'New to ownership? Start with the StartUp Club.', '{{ md.mdHeadline }}', '{{ d.title }}', '{{ sec.title }}',
     'Photos and Documents', 'Community Context', '{{ m.v }}', '{{ modal.title }}', 'My Requests', 'No requests yet', '{{ seller.heading }}',
     'My Listings', 'Buyer Interest', '{{ wiz.title }}', '{{ wiz.previewTitle }}', 'Your listing is with the VIN Foundation',
-    'VIN Foundation Admin',
+    'VIN Foundation Admin', '{{ d.priceLabel }}',
   ];
-  it('A1 derives exactly the 23 V2-typography edits — value changes only, in place, none inside a script', () => {
+  it('A1 derives exactly the 24 V2-typography edits — value changes only, in place, none inside a script', () => {
     const a1 = deriveTypographyB(readFileSync(V2, 'utf8'), pristine);
-    expect(a1).toHaveLength(23);
+    expect(a1).toHaveLength(24);
+    expect(a1.filter((a) => a.text === '{{ d.priceLabel }}').map((a) => /font-size:\s*(\d+)px/.exec(a.find)?.[1])).toEqual(['28']);
     // `{{ d.title }}` occurs twice (34 px detail title, 19 px mobile title) — the key is (tag, text), both pair; the text list has one entry per distinct text.
     expect(new Set(a1.map((a) => a.text!.startsWith("We're here") ? "We're here to help connect veterinary practice owners" : a.text!))).toEqual(new Set(A1_TEXTS));
     for (const a of a1) {
@@ -3675,7 +3678,7 @@ describe('local design amendments (spec D15)', () => {
       expect(a.replace, a.text).toMatch(/letter-spacing: \.0(2|05)em/);
       expect(a.find.length - a.replace.length, `${a.text}: only the two declarations change`).toBeLessThanOrEqual(0);
     }
-    expect(a1.some((a) => /priceLabel|\{\{ c\.value \}\}/.test(a.text!) || a.find.startsWith('style="') === false)).toBe(false);
+    expect(a1.some((a) => /p\.priceLabel|\{\{ c\.value \}\}/.test(a.text!) || a.find.startsWith('style="') === false)).toBe(false);
     for (const [s, e] of templateRegions(pristine)) void s, void e;   // every find lives in the template region: the derivation only reads it
   });
   it('the amended reference is the pristine Rev 2 file plus exactly the ruled edits', () => {
@@ -3683,15 +3686,15 @@ describe('local design amendments (spec D15)', () => {
   });
   it('after A1 every display-size heading in the template is uppercase with V2 tracking (19–22 px → .02em, ≥ 24 px → .005em)', () => {
     const amended = readFileSync(AMENDED, 'utf8');
-    const figures = /priceLabel|\{\{ c\.value \}\}/;   // `{{ m.v }}` is uppercase in V2 and returns with A1
+    const figures = /p\.priceLabel|\{\{ c\.value \}\}/;   // `{{ m.v }}` and the 28 px `{{ d.priceLabel }}` are uppercase in V2 and return with A1; the 34 px price is not and V3 already matches it
     const re = /<(\w+)[^>]*?style="([^"]*font-size:\s*(\d+)px[^"]*)"[^>]*>([^<]{0,120})/g; let m: RegExpExecArray | null; let seen = 0;
     const body = amended.replace(/<script[\s\S]*?<\/script>|<style[\s\S]*?<\/style>/g, '');
     while ((m = re.exec(body))) {
-      const px = Number(m[3]); if (px < 19 || m[1] === 'p' || figures.test(m[4])) continue; seen++;
+      const px = Number(m[3]); if (px < 19 || m[1] === 'p' || figures.test(m[4]) || (m[4].includes('{{ d.priceLabel }}') && px === 34)) continue; seen++;
       expect(m[2], m[4]).toContain('text-transform: uppercase');
       expect(m[2], m[4]).toContain(`letter-spacing: ${px >= 24 ? '.005em' : '.02em'}`);
     }
-    expect(seen).toBeGreaterThanOrEqual(23);
+    expect(seen).toBeGreaterThanOrEqual(24);
   });
   it('LOCAL_AMENDMENTS.md names every amendment id', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
@@ -3721,7 +3724,7 @@ writeFileSync(AMENDED, applyAmendments(readFileSync(PRISTINE, 'utf8'), amendment
 
 | Id | Date | John's ruling | What changes |
 |---|---|---|---|
-| A1 | 2026-09-07 | "keep the V2 header and do not restyle header or fonts" | 23 template elements: every display-size heading paired with V2 takes V2's `text-transform`/`letter-spacing` values in place; the key-fact values `{{ m.v }}` return to V2's uppercase `.005em`; `{{ resultHeadline }}` is untouched (V3's only occurrence, in the mobile list, already equals V2's). No script, no `_ds/**`, no site header (byte-identical V2↔V3 already). |
+| A1 | 2026-09-07 | "keep the V2 header and do not restyle header or fonts" | 24 template elements: every display-size heading paired with V2 (by tag, text and size) takes V2's `text-transform`/`letter-spacing` values in place; the key-fact values `{{ m.v }}` and the 28 px mobile asking price return to V2's uppercase `.005em`; `{{ resultHeadline }}` is untouched (V3's only occurrence, in the mobile list, already equals V2's). No script, no `_ds/**`, no site header (byte-identical V2↔V3 already). |
 ```
 
 - [ ] **Step 4: Regenerate and re-baseline** — `npm run gen:app` (App.vue/pseudo.css/logic.js; `git diff --stat -- src/logic.js` must be EMPTY — A1 touches no script), `npx vitest run` (all drift tests green), `npm run test:visual:baselines && npm run test:e2e` (28 visual at zero diffs, 28 DOM, 24 smoke). Expected first run: visual/DOM RED on every heading screen until the baselines regenerate; GREEN after.
@@ -3734,7 +3737,7 @@ node tests/baseline-manifest.mjs > /tmp/manifest-now.json   # or the script's do
 python3 -c "import json;a=json.load(open('/tmp/manifest-v2.json'))['screens'];b=json.load(open('/tmp/manifest-now.json'))['screens'];[print(k,'SAME' if a[k]==b.get(k) else 'MOVED') for k in a]"
 ```
 
-Expected: `SAME` for every screen whose only V3 change was typography (the V7 review classified twelve movers as typography-only and `mobile-list` as unmoved). Commit the regenerated `baseline-manifest.json`; the `baseline-manifest.test.ts` platform detector stays. Any `MOVED` screen: run the DOM diff and the pixel diff for it, put the residual (changed properties, elements) in the report, and STOP on that screen for John — do not re-base it silently.
+Expected: `SAME` for all thirteen (the V7 review classified twelve movers as typography-only and `mobile-list` as unmoved; with the 28 px mobile price in A1, `mobile-detail` returns too). `baseline-manifest.mjs`/`.test.ts` comments must not count manifest writes — say "regenerated whenever the design reference changes by ruling". Commit the regenerated `baseline-manifest.json`; the `baseline-manifest.test.ts` platform detector stays. Any `MOVED` screen: run the DOM diff and the pixel diff for it, put the residual (changed properties, elements) in the report, and STOP on that screen for John — do not re-base it silently.
 
 - [ ] **Step 6: Docs** — CLAUDE.md: the paragraph beginning "`docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html` is kept as the **pre-V3 oracle**" becomes: the V3 file is the approved design **plus the local amendments listed in `LOCAL_AMENDMENTS.md` (spec D15)** — A1 restores V2's display typography on John's ruling, so the thirteen non-Browse screens are byte-identical to V2 again where Step 5 said SAME; the V2 file remains the pre-V3 oracle. Also CLAUDE.md's gate item (2) sentence "option A makes it the proof of zero regression on the thirteen non-Browse screens" → "the DOM oracle is the secondary proof of zero regression on the thirteen non-Browse screens; after V13 they are byte-identical to V2 again". `reference-bundle.test.ts`: file list gains the two new files. `cross-plan-deltas.test.ts`: pin the CLAUDE.md sentence.
 
