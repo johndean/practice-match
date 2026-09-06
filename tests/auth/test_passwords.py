@@ -37,6 +37,25 @@ def test_long_passphrases_are_scored_not_crashed():
             P.validate(weak, privileged=False)
 
 
+def test_strength_scoring_is_bounded_to_seventy_two_characters(monkeypatch):
+    """C1, fix round 2: zxcvbn's matching is quadratic — 256 characters cost 141-311 ms of
+    CPU on `POST /api/auth/signup`, an unauthenticated route, and the caller picks the
+    length. Its own 72-char default cap is the bound; length up to MAX_LEN is still
+    accepted, only the SCORING input is clipped."""
+    seen: list[str] = []
+    real = P.zxcvbn
+
+    def _spy(pw: str, *args: object, **kwargs: object) -> object:
+        seen.append(pw)
+        return real(pw, *args, **kwargs)
+
+    monkeypatch.setattr(P, "zxcvbn", _spy)
+    longest = ("orbit-lantern-quiet-42-" * 40)[:P.MAX_LEN]
+    assert len(longest) == 256
+    P.validate(longest, privileged=True)                            # accepted at full length …
+    assert seen == [longest[:72]]                                   # … but scored on 72 characters
+
+
 def test_pwned_check_uses_k_anonymity_and_never_sends_the_password():
     seen = {}
     def handler(req: httpx.Request) -> httpx.Response:
@@ -55,7 +74,7 @@ def test_is_pwned_reuses_one_shared_http_client(monkeypatch):
     made: list[httpx.Client] = []
 
     def _fake_client() -> httpx.Client:
-        c = httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(200, text="")))
+        c = httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(200, text="0000000000000000000000000000000000A:1\n")))
         made.append(c)
         return c
 
@@ -78,11 +97,42 @@ def test_the_shared_client_carries_the_two_second_hibp_timeout():
         client.close()
 
 
-def test_pwned_check_falls_back_to_bundled_list_on_error(monkeypatch):
+def test_pwned_check_falls_back_to_bundled_list_on_error(monkeypatch, caplog):
     def boom(req): raise httpx.ConnectError("down", request=req)
     http = httpx.Client(transport=httpx.MockTransport(boom))
-    assert P.is_pwned("password", http=http) is True              # in top100k
-    assert P.is_pwned("orbit-lantern-quiet-42", http=http) is False
+    with caplog.at_level(logging.WARNING, logger="app.auth.passwords"):
+        assert P.is_pwned("password", http=http) is True           # in top100k
+        assert P.is_pwned("orbit-lantern-quiet-42", http=http) is False
+    # M3, fix round 2: httpx wraps every transport/timeout/status failure in HTTPError, and
+    # each degradation says so with a module.Type reason — never the password.
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 2
+    assert "httpx.ConnectError" in warnings[0].getMessage()
+    assert all("password" not in r.getMessage() for r in warnings)
+
+
+def test_pwned_check_falls_back_when_the_range_body_is_malformed(caplog):
+    """M3, fix round 2: a body that is not `SUFFIX:COUNT` per line used to be read as
+    "no match" — a silent FAIL-OPEN: a breached password sailed through because the API
+    answered with garbage (a captive portal's HTML, a truncated response). Parsing it
+    must raise, be treated as an API failure, and fall back to the bundled list."""
+    http = httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(200, text="<html>we are down</html>\n")))
+    with caplog.at_level(logging.WARNING, logger="app.auth.passwords"):
+        assert P.is_pwned("password", http=http) is True            # from the bundled list, not "not breached"
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "ValueError" in warnings[0].getMessage()
+
+
+def test_a_bug_in_our_own_code_is_not_an_api_failure_and_propagates(caplog):
+    """M3, fix round 2: the old blind `except Exception` swallowed our own bugs into a
+    silent downgrade of the breach screen. Only the concrete failure modes of an
+    unreachable or misbehaving HIBP degrade; anything else must surface."""
+    def boom(req): raise RuntimeError("a bug in our own code")
+    http = httpx.Client(transport=httpx.MockTransport(boom))
+    with caplog.at_level(logging.WARNING, logger="app.auth.passwords"), pytest.raises(RuntimeError, match="a bug in our own code"):
+        P.is_pwned("password", http=http)
+    assert [r for r in caplog.records if r.levelno == logging.WARNING] == []
 
 
 def test_pwned_check_warns_and_uses_the_bundled_list_when_hibp_is_disabled(monkeypatch, caplog):
@@ -168,6 +218,25 @@ def test_offline_list_matches_its_recorded_provenance():
     assert hashlib.sha256(raw).hexdigest() == LIST_SHA256
     assert len(raw.decode("utf-8").splitlines()) == LIST_LINES        # M2: decodes as UTF-8, nothing dropped
     assert (data.parent / "PROVENANCE.md").is_file()
+
+
+# The OGL v3.0 acknowledgement, verbatim as the licence requires it (concern 5, round 2).
+OGL_ATTRIBUTION = "Contains public sector information licensed under the Open Government Licence v3.0."
+LIST_COMMIT = "1a7bb9127eca9e6ff2fc0301c597fe6e16a0cb56"
+
+
+def test_provenance_carries_the_ogl_attribution_and_the_pinned_source():
+    """The NCSC list is Crown copyright released under the Open Government Licence v3.0,
+    which requires that acknowledgement wherever the information is reused. Nothing in the
+    product displays this list, so PROVENANCE.md is where it lives — and a test keeps it
+    there through future refreshes, in the same spirit as the project's "attribution stays
+    visible" rule for map tiles and Census data."""
+    text = (Path(P.__file__).parent / "data" / "PROVENANCE.md").read_text(encoding="utf-8")
+    assert OGL_ATTRIBUTION in text
+    assert LIST_SHA256 in text
+    assert LIST_COMMIT in text
+    assert "100k-most-used-passwords-NCSC.txt" in text
+    assert "99 840" in text
 
 
 def test_offline_list_loads_every_entry_and_no_blanks():

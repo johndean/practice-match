@@ -92,6 +92,82 @@ def test_invalidation_racing_a_cache_write_leaves_no_stale_principal(conn, redis
     assert redis.ttl(f"session:{h}") < 0                   # … and none is sitting on a TTL
 
 
+class _RecordingCursor:
+    def __init__(self, cur, log):
+        self._cur, self._log = cur, log
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return self._cur.__exit__(*exc)
+
+    def execute(self, sql, params=None):
+        self._log.append(sql)
+        return self._cur.execute(sql, params)
+
+    def fetchone(self):
+        return self._cur.fetchone()
+
+
+class _RecordingConn:
+    """Records every statement the code under test executes through this connection."""
+
+    def __init__(self, real):
+        self._real, self.statements = real, []
+
+    def cursor(self):
+        return _RecordingCursor(self._real.cursor(), self.statements)
+
+
+def test_create_builds_its_principal_from_the_insert_itself(conn, redis):
+    """Concern 4, fix round 2: `create()` inserted the row and then SELECTed it straight
+    back, which needed an `if p:`/`assert` for a case that cannot happen — an unreachable
+    branch propped up by a runtime assertion that `python -O` would strip. The INSERT now
+    RETURNS the columns the principal is built from, through the same row mapper `_load`
+    uses, so there is no Optional, no assert, and no second round trip to the database."""
+    aid = _member(conn)
+    with conn.cursor() as cur:                                      # a second member, with a role of its own
+        cur.execute("INSERT INTO account (email, password_hash, state) VALUES ('other@x.io','h','active') RETURNING id")
+        other = cur.fetchone()[0]
+        cur.execute("INSERT INTO role_grant (account_id, role, granted_by) VALUES (%s,'staff',%s)", (other, other))
+    rec = _RecordingConn(conn)
+    raw = S.create(rec, redis, aid, "203.0.113.5", "UA")
+    assert len(rec.statements) == 1, f"create() must issue exactly one statement, got {rec.statements}"
+    assert rec.statements[0].lstrip().upper().startswith("INSERT")
+    assert "RETURNING" in rec.statements[0].upper()
+    # …and what it cached is exactly what a fresh read of the same session yields.
+    cached = S.resolve(conn, redis, raw)
+    redis.delete(f"session:{S.hash_id(raw)}")
+    assert cached == S.resolve(conn, redis, raw)
+    assert cached is not None and cached.account_id == aid and cached.state == "active"
+    assert cached.roles == frozenset({"buyer"}) and cached.reauth_at is None and cached.kind == "session"
+
+
+def test_a_principal_read_before_an_invalidation_is_never_cached_after_it(conn, redis):
+    """I4, fix round 2 — closing the window rather than narrowing it. Round 1 fixed the
+    orderings, but a request that had ALREADY read its principal from Postgres before
+    staff suspended the account could still reach `_cache_set` afterwards and install
+    that pre-change principal for the full 60 s. No ordering can prevent that: the read
+    is already done. `invalidate_account` therefore leaves a tombstone that lives exactly
+    as long as a cache entry could have, and `_cache_set` declines while it is there —
+    those requests re-read Postgres instead."""
+    aid = _member(conn)
+    raw = S.create(conn, redis, aid, None, None)
+    h = S.hash_id(raw)
+    stale = S._load(conn, h)                                        # read BEFORE the change
+    assert stale is not None and stale.state == "active"
+    with conn.cursor() as cur:
+        cur.execute("UPDATE account SET state='suspended' WHERE id=%s", (aid,))
+    S.invalidate_account(redis, aid)
+    S._cache_set(redis, stale)                                      # … the racing writer arrives late
+    assert redis.exists(f"session:{h}") == 0                        # refused, nothing stale is cached
+    assert redis.exists(f"account:{aid}:invalidated")
+    assert 0 < redis.ttl(f"account:{aid}:invalidated") <= S.CACHE_TTL
+    p = S.resolve(conn, redis, raw)                                 # the next request re-reads Postgres
+    assert p is not None and p.state == "suspended"
+
+
 def test_invalidate_account_is_one_round_trip_per_call(conn, redis):
     """M10, fix round 1: invalidate_account issued one DELETE per indexed session. Every
     sign-out-everywhere, suspension and role change on a busy account paid N round trips

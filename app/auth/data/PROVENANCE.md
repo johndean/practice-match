@@ -16,22 +16,28 @@ also degrade it to nothing.
 
 ## Licence and attribution
 
+**Required acknowledgement, verbatim:**
+
+> Contains public sector information licensed under the Open Government Licence v3.0.
+
 - **The list itself** is the National Cyber Security Centre's "Top 100,000 passwords"
   (derived from the Have I Been Pwned corpus), published by the NCSC as **Crown copyright**
   under the **Open Government Licence v3.0**
   (https://www.nationalarchives.gov.uk/doc/open-government-licence/version/3/), which
-  permits copying, publishing and adapting it provided the source is acknowledged.
-  Acknowledgement: *Contains public sector information licensed under the Open Government
-  Licence v3.0 — NCSC "Top 100,000 passwords".*
+  permits copying, publishing and adapting it provided the source is acknowledged with the
+  sentence above.
 - **The SecLists repository** that redistributes it is **MIT** licensed
   (https://github.com/danielmiessler/SecLists/blob/master/LICENSE).
 
 Neither licence requires attribution in the product UI — this list is never displayed, only
 compared against — so the acknowledgement lives here rather than on a screen.
+`tests/auth/test_passwords.py::test_provenance_carries_the_ogl_attribution_and_the_pinned_source`
+keeps that sentence, the SHA-256 and the pinned commit in this file through any refresh.
 
 ## Refreshing it
 
 Re-download from the raw URL above (pinning the new commit), update the SHA-256, line count
 and entry count here **and** in `tests/auth/test_passwords.py`
-(`LIST_SHA256`/`LIST_LINES`/`LIST_ENTRIES`), and re-run `poetry run pytest tests/auth`. Those
-pins exist so that a silent swap of a security-critical list fails the suite.
+(`LIST_SHA256`/`LIST_LINES`/`LIST_ENTRIES`/`LIST_COMMIT`), and re-run `poetry run pytest tests/auth`.
+Those pins exist so that a silent swap of a security-critical list fails the suite. The OGL
+acknowledgement above must survive any refresh — the list stays Crown copyright.

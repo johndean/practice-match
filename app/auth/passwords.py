@@ -17,6 +17,7 @@ from app.config import settings
 log = logging.getLogger(__name__)
 _ph = PasswordHasher(time_cost=3, memory_cost=65536, parallelism=1, hash_len=32, salt_len=16)
 MIN_LEN, MIN_LEN_PRIVILEGED, MAX_LEN, MIN_SCORE = 12, 14, 256, 3
+SCORE_LEN = 72  # zxcvbn's own default cap; its matching is quadratic, and the caller picks the length
 HIBP_URL = "https://api.pwnedpasswords.com/range/"
 DUMMY_HASH = _ph.hash("dummy-work-factor-only-never-a-real-password-7f3a")
 
@@ -26,14 +27,16 @@ class PasswordPolicyError(ValueError):
 
 
 def validate(pw: str, *, privileged: bool) -> None:
+    """Strength is scored on the first 72 characters; length up to 256 is accepted."""
     floor = MIN_LEN_PRIVILEGED if privileged else MIN_LEN
     if len(pw) < floor:
         raise PasswordPolicyError(f"Use at least {floor} characters.")
     if len(pw) > MAX_LEN:
         raise PasswordPolicyError(f"Use at most {MAX_LEN} characters.")
-    # max_length: zxcvbn's own default is 72 and it raises a bare ValueError above it —
-    # the policy allows up to MAX_LEN, so the whole 73-MAX_LEN window must be scored (C1).
-    if zxcvbn(pw, max_length=MAX_LEN)["score"] < MIN_SCORE:
+    # Scored on the first SCORE_LEN characters: zxcvbn raises a bare ValueError above its
+    # own 72-char cap (so the 73-MAX_LEN window used to 500), and raising that cap instead
+    # would hand an unauthenticated caller 141-311 ms of quadratic CPU per request (C1).
+    if zxcvbn(pw[:SCORE_LEN])["score"] < MIN_SCORE:
         raise PasswordPolicyError("Choose a stronger password — longer phrases beat symbols.")
 
 
@@ -65,6 +68,17 @@ def _client() -> httpx.Client:
     return _shared_client
 
 
+def _matches(body: str, suffix: str) -> bool:
+    """Each line of a range response is `SUFFIX:COUNT`. A line that is not raises
+    ValueError, which `is_pwned` treats as an API failure: reading a malformed body as
+    "no match" would fail OPEN and let a breached password through (M3)."""
+    for line in body.splitlines():
+        found, _count = line.split(":")
+        if found == suffix:
+            return True
+    return False
+
+
 def _degrade(reason: str) -> None:
     """Decision A4: on error OR when disabled, the bundled list is the screen and a
     warning says so. `reason` is a module.Type or a setting name — never any part of the
@@ -79,12 +93,12 @@ def is_pwned(pw: str, http: httpx.Client | None = None) -> bool:
         try:
             client = http if http is not None else _client()
             r = client.get(HIBP_URL + digest[:5]); r.raise_for_status()
-            return any(line.split(":")[0] == digest[5:] for line in r.text.splitlines())
-        # Deliberately broad: decision A4 is that nothing about the HIBP screen may fail a
-        # signup. The directive is load-bearing, not dead as fix round 1's finding M3
-        # assumed — BLE001 IS in ruff 0.16.6's enabled set for this config and
-        # `ruff check` fails without it. Referred back to the controller.
-        except Exception as e:  # noqa: BLE001
+            return _matches(r.text, digest[5:])
+        # The concrete failure modes of an unreachable or misbehaving HIBP: httpx wraps
+        # every transport, timeout and status failure in HTTPError, and ValueError covers
+        # a body we cannot parse. A bug in our own code is not an "API failure" under A4
+        # and must surface rather than silently downgrade the screen (M3, round 2).
+        except (httpx.HTTPError, ValueError) as e:
             _degrade(f"{type(e).__module__}.{type(e).__qualname__}")
     else:
         _degrade("settings.hibp_enabled=False")
