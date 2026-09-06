@@ -54,6 +54,12 @@ Expected `verify-deploy.sh` output on QA (app mode, unchanged): `healthz OK  ver
 
 Production publishes the VIN Foundation Coming Soon page (`coming-soon/`); QA is the marketplace. The coming-soon page never goes to QA. **Launch:** `railway status` (Project: Practice Match) → `railway variable set SITE_MODE=app --service api --environment production --skip-deploys` (and `--service worker`) → decide `PUBLIC_INDEXING` → `scripts/deploy.sh production` → `scripts/verify-deploy.sh production` reports `site_mode app`.
 
+**Client address for the sign-up rate limits.** `/api/interest` keys its per-IP limits on the **first X-Forwarded-For hop**: Railway's edge writes the client it accepted first and leaves any caller-supplied values after it (verified 2026-09-06 — uvicorn, started with `--forwarded-allow-ips='*'`, logs the real client for spoofed headers). Re-run this probe against QA whenever Railway's networking changes; expected `202 ×5` then `429`, both with one header line and with two:
+```bash
+for i in 1 2 3 4 5 6; do curl -sS -o /dev/null -w "%{http_code} " -X POST -H 'Content-Type: application/json' -H "X-Forwarded-For: 203.0.113.$i" -d "{\"email\":\"probe-$(date +%s)-$i@example.invalid\"}" https://qa.foundation.vin/api/interest; done
+```
+If the sixth answer is `202`, the edge no longer puts the client first — stop and revisit `client_ip()` before any production deploy.
+
 ## Rollback
 
 Redeploy the previous image/deployment for the service — Railway dashboard → the service → **Deployments** → pick the last good one → **Redeploy** — then re-run `scripts/verify-deploy.sh <env>` to confirm.

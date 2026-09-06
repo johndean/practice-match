@@ -120,13 +120,14 @@ async def test_sixth_request_in_a_minute_from_one_client_is_429(client, db_ready
     assert r.status_code == 429 and r.json() == {"error": "rate_limited"}
 
 
-async def test_rightmost_forwarded_hop_keys_the_ip_limit(client, db_ready):
-    """F2: the edge appends the peer it accepted, so the rightmost hop is the client; earlier hops are caller text."""
+async def test_edge_first_hop_keys_the_ip_limit(client, db_ready):
+    """F2 as Railway actually behaves (live probe 2026-09-06): the edge writes the client it accepted FIRST and
+    leaves the caller's own X-Forwarded-For values after it — so only the first hop may key a limit."""
     edge_saw = _ip()
     for i in range(5):
-        r = await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": f"{_ip()}, {edge_saw}"})
-        assert r.status_code == 202, i  # a different spoofed first hop every time — must not reset the count
-    r = await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": f"{_ip()}, {edge_saw}"})
+        r = await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": f"{edge_saw}, {_ip()}"})
+        assert r.status_code == 202, i  # a different caller-supplied trailing hop every time must not reset the count
+    r = await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": f"{edge_saw}, {_ip()}"})
     assert r.status_code == 429 and r.json() == {"error": "rate_limited"}
 
 
@@ -248,26 +249,31 @@ def test_declared_length_accepts_only_decimal_digits(value, expected):
     assert declared_length(Request(scope)) == expected  # N4: "²".isdigit() is True but int("²") raises
 
 
-@pytest.mark.parametrize("header, expected", [("1.2.3.4, 5.6.7.8", "5.6.7.8"), ("1.2.3.4,", "9.9.9.9"), ("   ", "9.9.9.9"), ("", "9.9.9.9"), (None, "9.9.9.9")])
-def test_client_ip_uses_the_rightmost_hop_or_falls_back_to_the_peer(header, expected):
+@pytest.mark.parametrize("header, expected", [
+    ("1.2.3.4, 5.6.7.8", "1.2.3.4"),      # the edge's hop first, the caller's after
+    ("1.2.3.4", "1.2.3.4"),
+    (", 5.6.7.8", "5.6.7.8"),             # an empty first entry is skipped, not used as a subject
+    ("   ", "9.9.9.9"), ("", "9.9.9.9"), (None, "9.9.9.9"),
+])
+def test_client_ip_uses_the_first_hop_or_falls_back_to_the_peer(header, expected):
     from starlette.requests import Request
 
     from app.api.interest import client_ip
 
     scope = {"type": "http", "method": "POST", "path": "/api/interest", "query_string": b"", "client": ("9.9.9.9", 1),
              "headers": [] if header is None else [(b"x-forwarded-for", header.encode())]}
-    assert client_ip(Request(scope)) == expected  # N7: an empty rightmost hop is not a subject
+    assert client_ip(Request(scope)) == expected
 
 
 def test_client_ip_joins_repeated_forwarded_header_lines():
-    """O1: HTTP allows the field to repeat and Starlette returns only the first line — an edge that adds its own
-    line instead of appending would hand the subject back to the caller. All lines are joined first."""
+    """O1: HTTP allows the field to repeat and Starlette returns only the first line — joining keeps the rule
+    identical to uvicorn's, which also joins repeated lines. The edge's line arrives first."""
     from starlette.requests import Request
 
     from app.api.interest import client_ip
 
     scope = {"type": "http", "method": "POST", "path": "/api/interest", "query_string": b"", "client": ("9.9.9.9", 1),
-             "headers": [(b"x-forwarded-for", b"evil-spoof"), (b"x-forwarded-for", b"203.0.113.7")]}
+             "headers": [(b"x-forwarded-for", b"203.0.113.7"), (b"x-forwarded-for", b"evil-spoof")]}
     assert client_ip(Request(scope)) == "203.0.113.7"
 
 

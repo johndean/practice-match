@@ -48,14 +48,15 @@ def normalise(email: str) -> tuple[str, str] | None:
 
 
 def client_ip(request: Request) -> str:
-    """The client as Railway's edge saw it: the RIGHTMOST X-Forwarded-For hop. A reverse proxy appends the peer
-    it accepted, so every earlier hop is caller-supplied text and must not key a rate limit (11c review F2;
-    spec §3 amended 2026-09-06, proven live on QA in Task 11f). Repeated header lines are joined first — an
-    edge that adds its own line instead of appending must still win (O1). An empty rightmost hop or no header
-    falls back to the peer address (N7)."""
-    hop = ",".join(request.headers.getlist("x-forwarded-for")).rsplit(",", 1)[-1].strip()
-    if hop:
-        return hop
+    """The client as Railway's edge saw it: the FIRST non-empty X-Forwarded-For hop. Verified live on QA
+    (2026-09-06, Task 11f Step 4b): Railway writes the accepted client's address first and leaves any values the
+    caller sent after it, and uvicorn (`--forwarded-allow-ips='*'`) applies the same first-hop rule to
+    request.client. Repeated header lines are joined first, as uvicorn does. No header → the peer address.
+    DEPLOY.md carries the probe to re-run if Railway's networking changes."""
+    hops = [h.strip() for h in ",".join(request.headers.getlist("x-forwarded-for")).split(",")]
+    for hop in hops:
+        if hop:
+            return hop
     return request.client.host if request.client else "unknown"
 
 

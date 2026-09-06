@@ -241,3 +241,9 @@ def test_deploy_md_says_the_api_container_runs_migrations_at_start():
     assert "Deploy aborted by the pre-deploy hook" not in text  # the old rollback row's claim was never true on Railway
     assert "unreachable at boot" in text
     assert "keeps serving" not in text
+
+
+def test_deploy_md_records_the_forwarded_for_rule_and_its_probe():
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "first X-Forwarded-For hop" in text
+    assert "203.0.113" in text  # the probe recipe
