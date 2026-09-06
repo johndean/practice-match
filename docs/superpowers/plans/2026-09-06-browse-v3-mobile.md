@@ -89,7 +89,7 @@ Push to both `origin` (vin-swe/practice-match) and `production` (johndean/practi
 
 ---
 
-## Task V1: Land the V3 reference bundle, behind a baseline hash manifest
+### Task V1: Land the V3 reference bundle, behind a baseline hash manifest
 
 **Files:**
 - Create: `frontend/tests/baseline-manifest.mjs`
@@ -300,7 +300,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
-## Task V2: Repoint the generator, the reference server, the harness and CLAUDE.md at V3
+### Task V2: Repoint the generator, the reference server, the harness and CLAUDE.md at V3
 
 **Files:**
 - Create: `frontend/tests/design-source.test.ts`
@@ -470,7 +470,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
-## Task V3: Teach the generator V3's constructs (must precede any regeneration)
+### Task V3: Teach the generator V3's constructs (must precede any regeneration)
 
 **Files:**
 - Modify: `frontend/scripts/convert-dc.mjs` (the `COMPONENTS` map)
@@ -598,7 +598,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
-## Task V4: Extend the map engine — rectangles on one shared canvas, tooltip specs, `panInside`
+### Task V4: Extend the map engine — rectangles on one shared canvas, tooltip specs, `panInside`
 
 **Files:**
 - Create: `frontend/src/map/mosaic.js`
@@ -1126,7 +1126,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
-## Task V5: Port `MarketMapView.vue` and `markers.js` to the V3 map
+### Task V5: Port `MarketMapView.vue` and `markers.js` to the V3 map
 
 **Files:**
 - Modify: `frontend/src/map/markers.js`
@@ -1731,7 +1731,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
-## Task V6: The seven new icons
+### Task V6: The seven new icons
 
 **Files:**
 - Create: `frontend/public/assets/icons/sub-chevron.svg`, `sub-close-thin.svg`, `sub-plus-thin.svg`, `sub-bar-chart.svg`, `sub-reset-view.svg`, `sub-legend-list.svg`, `sub-layers-stack.svg`
@@ -1823,7 +1823,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
-## Task V7: Regenerate the app from V3 — `App.vue`, `pseudo.css`, `app.setup.js`, `logic.js`
+### Task V7: Regenerate the app from V3 — `App.vue`, `pseudo.css`, `app.setup.js`, `logic.js`
 
 **Files:**
 - Modify: `frontend/scripts/convert-dc.mjs` (the generated-header literal in `buildAppVue`)
@@ -2069,7 +2069,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
-## Task V8: The router loses `/browse`'s `tab` query, without breaking a single old link
+### Task V8: The router loses `/browse`'s `tab` query, without breaking a single old link
 
 **Files:**
 - Modify: `frontend/src/router/sync.ts`
@@ -2229,7 +2229,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
-## Task V9: The screen list and the regenerated oracles
+### Task V9: The screen list and the regenerated oracles
 
 **Files:**
 - Modify: `frontend/tests/screens.ts`
@@ -2379,7 +2379,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
-## Task V10: Mobile — the same map, market data in a full-height sheet
+### Task V10: Mobile — the same map, market data in a full-height sheet
 
 **Files:**
 - Modify: `frontend/tests/smoke.spec.ts` (a new `test.describe` block)
@@ -2573,7 +2573,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
-## Task V11: The dead-code sweep — one deletion per commit, in the checklist's order
+### Task V11: The dead-code sweep — one deletion per commit, in the checklist's order
 
 **Files (one commit each, in this order):**
 1. Delete: `frontend/src/components/ListingsMap.vue` · Modify: `frontend/src/app.setup.js`, `frontend/src/App.vue` (regenerated)
@@ -2788,7 +2788,7 @@ Expected: empty output.
 
 ---
 
-## Task V12: Cross-plan deltas, the version bump, and the QA hand-back
+### Task V12: Cross-plan deltas, the version bump, and the QA hand-back
 
 **Files:**
 - Create: `frontend/tests/cross-plan-deltas.test.ts`
