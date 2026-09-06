@@ -3793,6 +3793,32 @@ Run: both RED (the label is still in the file; the map-engines plan does not yet
 *After V15: one scoped whole-branch re-review of V13–V15 (the final review's verdict already covers V1–V12 and the fix round), then the gate, the QA deploy (controller, 🚦), the click-through with screenshots, the fast-forward merge under John's condition.*
 
 
+### Task V16: Compare hides the "What this means" card (spec D21) — amendment A4
+
+*Added 2026-09-07 on John's ruling ("if user clicks + Compare that action closes the 'What this means' card, and when X Compare is clicked it closes the compare and the card appears again"). After V15. Fresh implementer (cheap tier — the plan text carries the code).*
+
+**Files:**
+- Modify: `frontend/tests/design-amendments.ts` (A4), `docs/design-reference/design_handoff_practice_match_v3/LOCAL_AMENDMENTS.md`, `docs/design-reference/design_handoff_practice_match_v3/Practice Match V3.dc.html` (through `applyAmendments`)
+- Modify (regenerated): `frontend/src/logic.js` (one line); `frontend/src/App.vue`/`pseudo.css` unchanged (assert)
+- Modify: `frontend/src/logic.test.ts` (one characterisation case), `frontend/tests/smoke.spec.ts` (one case at 1440×940); regenerated oracle for `browse-compare-open` (visual + DOM)
+
+**Interfaces:**
+- Consumes: `amendments()`/`applyAmendments` (V13); the design script's `insightOpen` IIFE (`return !!valueLayer && !s.mdInsightOff && s.mdLegendOff !== true && mapW >= 810;`), `toggleCompare` (`mdCompareOpen`), `dismissInsight` (`mdInsightOff`).
+- Produces: A4 in `amendments()`; `insightOpen` false while `mdCompareOpen` is true.
+
+- [ ] **Step 1: Failing tests.** `frontend/src/logic.test.ts` — with a value layer active at 1440 wide and the interpretation not dismissed: `insightOpen` is `true`; after `toggleCompare()` it is `false`; after `toggleCompare()` again it is `true`; after `dismissInsight()` it stays `false` regardless of Compare (RED: today Compare does not affect it). `frontend/tests/smoke.spec.ts` at 1440×940 — open Browse; the floating card's dismiss button (`button[aria-label="Dismiss interpretation"]`, unique to that card) is visible; click `Compare`; the button is gone; click the same toggle (its note reads "close"); the button is visible again (RED: today it stays visible throughout). Run both: RED for those reasons.
+- [ ] **Step 2: A4.** Append to `amendments()`:
+
+```ts
+{ id: 'A4', date: '2026-09-07', ruling: "if user clicks + Compare that action closes the 'What this means' card; when X Compare is clicked it closes the compare and the card appears again (spec D21)",
+  find: '        return !!valueLayer && !s.mdInsightOff && s.mdLegendOff !== true && mapW >= 810;',
+  replace: '        return !!valueLayer && !s.mdInsightOff && s.mdLegendOff !== true && !s.mdCompareOpen && mapW >= 810;', count: 1 }
+```
+
+Re-apply from the pristine file with the full list; `npm run gen:app`: `logic.js` changes by exactly that line; `App.vue`/`pseudo.css` unchanged. `LOCAL_AMENDMENTS.md` gains the A4 row (John's words; the overlap it resolves).
+- [ ] **Step 3: GREEN, re-baseline, gate.** The two new tests pass. `npm run test:visual:baselines` (the `browse-compare-open` oracle changes: no interpretation card; all other 27 unchanged — compare the regenerated PNG set against the previous run's hashes and list any other mover as a STOP) then the full frontend gate (`npm run typecheck && npx vitest run --coverage && npm run build && npm run test:smoke && npm run test:visual:baselines && npm run test:e2e`); `baseline-manifest.json` unmoved (Browse states are not in it); backend diff empty. Commit `design(amend): A4 — Compare hides the "What this means" card (John's ruling)`.
+
+
 ## Self-Review
 
 Run against the spec with fresh eyes, per the writing-plans skill.
@@ -3973,12 +3999,13 @@ Every acceptance criterion, change-log entry, dead-code rule, file-index entry, 
 | D17 A2 mobile card opens the detail | V14 | `logic.test.ts` (`p.open` → detail) + `smoke.spec.ts` (390×800 card tap → detail) |
 | D18 A3 "View full listing" | V15 | `design-amendments.test.ts` (label present/absent) + `screens.ts:70` reaches `interest-modal` |
 | D19 plans name `ListingsMap.vue` | V15 | `cross-plan-deltas.test.ts` (token allowed only in a "deleted in Browse V3" clause) |
+| D21 A4 Compare hides "What this means" | V16 | `logic.test.ts` (`insightOpen` false while Compare is open, true again after) + `smoke.spec.ts` (1440×940 dismiss button gone/back) + re-baselined `browse-compare-open` |
 
 ---
 
 ## Execution Handoff
 
-*2026-09-07: Tasks V13–V15 were added after the final whole-branch review on John's rulings (typography option B; mobile card tap; "View full listing"; naming `ListingsMap.vue`). They run after the final-review fix round and before the merge, each with its own task review, then one scoped re-review of V13–V15.*
+*2026-09-07: Tasks V13–V16 were added after the final whole-branch review on John's rulings (typography option B; mobile card tap; "View full listing"; naming `ListingsMap.vue`). They run after the final-review fix round and before the merge, each with its own task review, then one scoped re-review of V13–V16.*
 
 Plan complete and saved to `docs/superpowers/plans/2026-09-06-browse-v3-mobile.md`. Two execution options:
 
