@@ -88,6 +88,39 @@ const A2: Amendment = {
   replace: 'open: () => this.setState({ screen: "detail", detailId: p.id }),', count: 1
 };
 
+/** A2.2 — the comment above the handler A2 just changed described the OLD (dead) behaviour;
+ *  it now describes what the handler actually does (zero-gaps review). */
+const A2_2: Amendment = {
+  id: 'A2.2', date: '2026-09-07', ruling: 'the amended handler’s comment now matches what it does (zero-gaps review)',
+  find: '// Select into the docked side panel rather than navigating to a separate page.',
+  replace: "// Open the practice detail (John's ruling, 2026-09-07; C13 left no peek card to select into).",
+  count: 1
+};
+
+/** A2.3 — the bundle's own dead-code rule (spec D8/D12: a dead mapping is dead code), applied to
+ *  the design's script through the amendment mechanism. `hasBrowseSel`, `closeBrowseSel` and `bsel`
+ *  all read or wrote `browseSel`; C13 removed the peek card that was their only template reader, and
+ *  none of the three is referenced anywhere else (verified: zero matches outside the script for
+ *  `hasBrowseSel`, `closeBrowseSel` or `bsel`). All three keys are deleted outright. `isBrowse:
+ *  false` immediately above them is a DIFFERENT, still-vestigial-but-unrelated key (README §7 risk
+ *  register) and is left untouched. */
+const A2_3: Amendment = {
+  id: 'A2.3', date: '2026-09-07', ruling: 'delete the orphaned browseSel helpers (zero-gaps review, spec D8/D12)',
+  find: "      hasBrowseSel: !!s.browseSel,\n      closeBrowseSel: () => this.setState({ browseSel: null }),\n      bsel: (() => {\n        const p = P.filter((x) => x.id === s.browseSel)[0];\n        if (!p) return { facts: [] };\n        const bldg = p.bldg === \"Included\" ? \"Included in sale\" : p.bldg === \"Separate\" ? \"Available separately\" : \"Leased — assignable\";\n        return {\n          eyebrow: p.type,\n          name: this.practiceName(p),\n          place: p.area + \", \" + this.stateOf(p.market || \"Austin, TX\"),\n          priceLabel: this.money(p.price),\n          photoId: \"ph-\" + p.id + \"-exterior\",\n          photoSrc: this.heroSrc(p),\n          note: p.note,\n          facts: [\n            { k: \"Gross revenue\", v: this.money(p.rev) + \" (seller-stated)\" },\n            { k: \"Doctors\", v: p.docs + \" full-time equivalent\" },\n            { k: \"Exam rooms\", v: String(p.rooms) },\n            { k: \"Square feet\", v: p.sqft.toLocaleString() },\n            { k: \"Property\", v: bldg },\n            { k: \"Established\", v: String(p.est) }\n          ],\n          openFull: () => this.setState({ screen: \"detail\", detailId: p.id })\n        };\n      })(),\n",
+  replace: '', count: 1
+};
+
+/** A2.4 — the top-level `selectMarker` (distinct from `mobileVals.selectMarker`, which C13 already
+ *  points at the detail screen) is not wired to any template prop, but it still wrote the same dead
+ *  `browseSel` key on every call, alongside the live `activeId` key. The dead key is dropped; the
+ *  live key and the handler itself are otherwise untouched — this is not the "select into the docked
+ *  panel" flow (`md.selectFromMap`), which A2/A2.2/A2.3 do not touch. */
+const A2_4: Amendment = {
+  id: 'A2.4', date: '2026-09-07', ruling: 'drop the dead browseSel key, keep the live activeId key (zero-gaps review, spec D8/D12)',
+  find: 'selectMarker: (id) => this.setState({ browseSel: id, activeId: id }),',
+  replace: 'selectMarker: (id) => this.setState({ activeId: id }),', count: 1
+};
+
 export function amendments(): Amendment[] {
-  return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2];
+  return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4];
 }

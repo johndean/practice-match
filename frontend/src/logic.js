@@ -1436,31 +1436,6 @@ class Component extends DCLogic {
       resultCount: list.length,
 
       isBrowse: false,
-      hasBrowseSel: !!s.browseSel,
-      closeBrowseSel: () => this.setState({ browseSel: null }),
-      bsel: (() => {
-        const p = P.filter((x) => x.id === s.browseSel)[0];
-        if (!p) return { facts: [] };
-        const bldg = p.bldg === "Included" ? "Included in sale" : p.bldg === "Separate" ? "Available separately" : "Leased — assignable";
-        return {
-          eyebrow: p.type,
-          name: this.practiceName(p),
-          place: p.area + ", " + this.stateOf(p.market || "Austin, TX"),
-          priceLabel: this.money(p.price),
-          photoId: "ph-" + p.id + "-exterior",
-          photoSrc: this.heroSrc(p),
-          note: p.note,
-          facts: [
-            { k: "Gross revenue", v: this.money(p.rev) + " (seller-stated)" },
-            { k: "Doctors", v: p.docs + " full-time equivalent" },
-            { k: "Exam rooms", v: String(p.rooms) },
-            { k: "Square feet", v: p.sqft.toLocaleString() },
-            { k: "Property", v: bldg },
-            { k: "Established", v: String(p.est) }
-          ],
-          openFull: () => this.setState({ screen: "detail", detailId: p.id })
-        };
-      })(),
       market: s.market || "Austin, TX",
       marketOptions: Object.keys(MARKETS).map((m) => ({ v: m, label: m + " metro" })),
       setMarket: (e) => this.setState({ market: e.target.value, activeId: null, hoverId: null, loading: true }, () => {
@@ -1526,7 +1501,7 @@ class Component extends DCLogic {
         photoSrc: this.heroSrc(p),
         hasPhotoSrc: !!this.heroSrc(p),
         noPhotoSrc: !this.heroSrc(p),
-        // Select into the docked side panel rather than navigating to a separate page.
+        // Open the practice detail (John's ruling, 2026-09-07; C13 left no peek card to select into).
         open: () => this.setState({ screen: "detail", detailId: p.id }),
         hover: () => this.setState({ hoverId: p.id }),
         unhover: () => this.setState({ hoverId: null }),
@@ -1538,7 +1513,7 @@ class Component extends DCLogic {
       markers: list.map((p) => ({ id: p.id, lat: p.lat, lng: p.lng, priceLabel: this.money(p.price) })),
       activeId: s.activeId, hoverId: s.hoverId,
       resizeKey: s.screen + s.viewport,
-      selectMarker: (id) => this.setState({ browseSel: id, activeId: id }),
+      selectMarker: (id) => this.setState({ activeId: id }),
 
       isDetail: s.screen === "detail",
       backToBrowse: () => this.setState({ screen: "browse" }),

@@ -86,4 +86,31 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     expect(c.state).toMatchObject({ screen: 'detail', detailId: 'p1' });
     expect(c.state).not.toHaveProperty('browseSel');
   });
+
+  // A2.3 (zero-gaps review, spec D8/D12: a dead mapping is dead code). `hasBrowseSel`,
+  // `closeBrowseSel` and `bsel` all read or wrote the same orphaned `browseSel` key — C13
+  // removed the peek card that was their only reader in the template, and nothing else
+  // referenced any of the three (verified: zero matches for `hasBrowseSel`/`bsel`/
+  // `closeBrowseSel` outside the design's own script). Deleted outright, not merely renamed.
+  it('renderVals no longer exposes the orphaned browseSel helpers (A2.3)', () => {
+    const v = c.renderVals();
+    expect(v).not.toHaveProperty('hasBrowseSel');
+    expect(v).not.toHaveProperty('closeBrowseSel');
+    expect(v).not.toHaveProperty('bsel');
+    // isBrowse is a DIFFERENT, still-vestigial-but-untouched key (app-generated.test.ts pins
+    // it separately) — this asserts A2.3 did not reach past its own three names.
+    expect(v).toHaveProperty('isBrowse', false);
+  });
+
+  // A2.4. The top-level `selectMarker` (distinct from `mobileVals.selectMarker`, which C13
+  // already fixed) is never wired to any template prop, but it still wrote the dead
+  // `browseSel` key alongside the live `activeId` key on every call. Per the ruling, the
+  // dead key is dropped and the live key is kept — the handler itself is untouched otherwise.
+  it('the top-level selectMarker keeps setting activeId but drops the dead browseSel key (A2.4)', () => {
+    const v = c.renderVals();
+    expect(typeof v.selectMarker).toBe('function');
+    v.selectMarker('p2');
+    expect(c.state).toMatchObject({ activeId: 'p2' });
+    expect(c.state).not.toHaveProperty('browseSel');
+  });
 });
