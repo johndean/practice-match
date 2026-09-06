@@ -4723,8 +4723,9 @@ async def test_oversized_chunked_body_is_not_buffered(dist):
 `test_invalid_address_is_422_and_writes_nothing` gains a `finally` that deletes any row a broken build might have written (O5):
 ```python
     finally:
-        with psycopg2.connect(settings.database_url) as conn, conn.cursor() as cur:
-            cur.execute("DELETE FROM interest_signup WHERE email = %s", (bad.strip(),))
+        if "\x00" not in bad:  # Postgres cannot store NUL in text, and psycopg2 refuses to bind it — nothing to clean (FR3 ruling)
+            with psycopg2.connect(settings.database_url) as conn, conn.cursor() as cur:
+                cur.execute("DELETE FROM interest_signup WHERE email = %s", (bad.strip(),))
 ```
 (wrap the existing body in `try:`; also delete the stray row `a​b@example.com` once — the same statement removes it on the first run of that case).
 
