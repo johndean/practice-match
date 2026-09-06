@@ -1,6 +1,23 @@
+import re
+from pathlib import Path
+
 import pytest
 
 from app.mail import templates as TP
+
+DESIGN = Path(__file__).resolve().parents[2] / "docs" / "design-reference" / "design_handoff_practice_match_v2" / "Practice Match V2.dc.html"
+
+
+def design_status_body(key: str) -> str:
+    """The `body:` string of one `statusMap` entry in the APPROVED DESIGN, read out of the design
+    file itself (`logic.js`'s `gate` screen, `pending` and `rejected`).
+
+    Read rather than copied because CLAUDE.md's first rule is "reference open first, port
+    verbatim", and spec §5 says the mail copy "follows the design's pending/declined screens".
+    A copy pasted into an assertion drifts the moment the screen is re-worded; this cannot."""
+    match = re.search(rf'\n\s+{key}: \{{.*?\n\s+body: "(.*?)",\n', DESIGN.read_text(), re.DOTALL)
+    assert match, f"the design's statusMap has no {key} body — has the reference moved?"
+    return match.group(1)
 
 
 @pytest.mark.parametrize("key", sorted(TP.TEMPLATES))
@@ -14,6 +31,14 @@ def test_every_template_renders_text_and_html_with_the_environment_host(key):
 def test_application_received_uses_the_design_copy():
     r = TP.render("application_received", {}, base_url="https://foundation.vin")
     assert "usually within two business days" in r.text and r.subject == "Your Practice Match application was received"
+    # ...and VERBATIM, not merely in the same spirit: the design's own "under review" body
+    # (`Practice Match V2.dc.html`, statusMap.pending). Both the buyer and the seller
+    # acknowledgement echo the same screen.
+    body = design_status_body("pending")
+    for key in ("application_received", "seller_application_received"):
+        rendered = TP.render(key, {}, base_url="https://foundation.vin")
+        assert body in rendered.text, key
+        assert body in rendered.html, key
 
 
 # --- supplemental (not in the brief's Step 1 — the spec's escaping/no-pixel rules, and branches) ---
@@ -31,10 +56,14 @@ def test_the_fourteen_keys_are_exactly_the_ones_the_outbox_accepts():
 
 
 def test_application_declined_uses_the_designs_declined_screen():
-    r = TP.render("application_declined", {"note": "Affiliation not verified"}, base_url="https://foundation.vin")
-    assert "could not be approved as submitted" in r.text
-    assert "an affiliation the VIN Foundation could not confirm" in r.text
-    assert "Affiliation not verified" in r.text and "Affiliation not verified" in r.html
+    """Verbatim from the design's `rejected` gate screen — the buyer and the seller decline share it."""
+    body = design_status_body("rejected")
+    assert "ask for a second review" in body                       # the design's words, not "a second look"
+    for key in ("application_declined", "seller_application_declined"):
+        r = TP.render(key, {"note": "Affiliation not verified"}, base_url="https://foundation.vin")
+        assert body in r.text, key
+        assert body in r.html, key
+        assert "Affiliation not verified" in r.text and "Affiliation not verified" in r.html, key
 
 
 def test_free_text_from_a_reviewer_or_a_browser_is_escaped_in_the_html():

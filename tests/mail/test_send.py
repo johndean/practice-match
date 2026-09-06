@@ -43,13 +43,21 @@ def test_failure_backs_off_then_fails_and_suppressed_addresses_are_refused(conn,
     monkeypatch.setattr(settings, "resend_api_key", "re_test"); monkeypatch.setattr(settings, "email_allowlist", ""); monkeypatch.setattr(settings, "environment", "production")
     monkeypatch.setattr(MT, "_http", lambda: httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(500, json={"message": "boom"}))))
     _queue(conn)
-    for attempt, delay in enumerate(MT.BACKOFF, start=1):
+    # Spec §5: "retries at 1 min, 10 min, 1 h, 6 h, then failed" — so FIVE failures, the first four
+    # of them re-queued with BACKOFF[attempt-1] and only the fifth terminal (controller ruling,
+    # 2026-09-07: the spec governs where the brief's own code and test disagreed).
+    for attempt in range(1, len(MT.BACKOFF) + 2):
         with conn.cursor() as cur:
             cur.execute("UPDATE email_outbox SET next_attempt_at = now()")
         MT.send_due()
         with conn.cursor() as cur:
             cur.execute("SELECT status, attempts, EXTRACT(EPOCH FROM next_attempt_at - now()) FROM email_outbox"); status, n, secs = cur.fetchone()
-        assert n == attempt and (status == "queued" and abs(float(secs) - delay) < 5 if attempt < len(MT.BACKOFF) else status == "failed")
+        assert n == attempt, (attempt, n)
+        if attempt <= len(MT.BACKOFF):
+            assert status == "queued" and abs(float(secs) - MT.BACKOFF[attempt - 1]) < 5, (attempt, status, secs)
+        else:
+            assert status == "failed", (attempt, status)
+    assert MT.send_due() == {"sent": 0, "suppressed": 0, "failed": 0}   # a `failed` row is never picked up again
     with conn.cursor() as cur:
         cur.execute("INSERT INTO email_suppression (email, reason) VALUES ('bounced@example.org','bounce')")
     _queue(conn, to="bounced@example.org", key="k2")

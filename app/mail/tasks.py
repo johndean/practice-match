@@ -26,8 +26,11 @@ from app.mail import templates as TP
 from app.mail.resend_client import ResendClient, ResendError
 from app.tasks.celery_app import celery_app
 
-# Spec §5's ladder: 1 min, 10 min, 1 h, 6 h. The Nth failure of a row waits BACKOFF[N-1]; a row that
-# has used the whole ladder is `failed`, which is what Admin shows staff.
+# Spec §5's ladder, in full: "retries at 1 min, 10 min, 1 h, 6 h, then failed". The Nth failure of a
+# row waits BACKOFF[N-1], so four failures are re-queued and the FIFTH is terminal — `failed`,
+# which is what Admin shows staff. (The brief's sketch and its own test disagreed about both the
+# index and the terminal condition, and between them lost the 6 h rung; John's ruling of
+# 2026-09-07 is that the spec governs.)
 BACKOFF = (60, 600, 3600, 21600)
 # `email_outbox.last_error` is read by humans in Admin, not parsed; 500 characters is a provider
 # message, not a stack trace.
@@ -82,7 +85,7 @@ def send_due() -> dict[str, int]:
                                           html=rendered.html, idempotency_key=row["key"])
             except (ResendError, httpx.HTTPError) as exc:
                 attempt = int(row["attempts"]) + 1
-                if attempt >= len(BACKOFF):
+                if attempt > len(BACKOFF):
                     _record(row["id"], status="failed", error=str(exc)[:MAX_ERROR])
                     counts["failed"] += 1
                 else:

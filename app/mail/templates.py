@@ -79,13 +79,20 @@ HTML_DOC = (
     "</div></body></html>"
 )
 
+# The two bodies below are PORTED VERBATIM from the approved design's gate screen
+# (`docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html`,
+# `statusMap.pending` line 2344 and `statusMap.rejected` line 2351) — spec §5: "Copy follows the
+# design's pending/declined screens", CLAUDE.md: "reference open first, port verbatim". The brief
+# paraphrased both ("The VIN Foundation reviews each request…", "…ask for a second look"); John's
+# ruling of 2026-09-07 is that the design governs. `tests/mail/test_templates.py` reads the
+# strings out of the design file rather than repeating them, so neither can drift alone.
 _HAND_REVIEW = (
-    "The VIN Foundation reviews each request by hand, usually within two business days. "
+    "VIN Foundation staff review each request by hand, usually within two business days. "
     "You will get an email the moment a decision is made. Nothing else is needed from you right now."
 )
 _DECLINED = (
     "Your request could not be approved as submitted. The most common reason is an affiliation the "
-    "VIN Foundation could not confirm. You may reply with additional information and ask for a second look."
+    "VIN Foundation could not confirm. You may reply with additional information and ask for a second review."
 )
 _NOT_YOU_PASSWORD = "If this was not you, reset your password and tell the VIN Foundation."
 
