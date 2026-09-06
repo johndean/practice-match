@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Date | 2026-09-05 |
-| Status | Approved in conversation; awaiting written-spec review |
+| Status | Implemented 2026-09-06 — live on qa.foundation.vin (marketplace) and foundation.vin (Coming Soon mode; the marketplace launches there with a `SITE_MODE` flip) |
 | Owner | John Dean |
 | Product | Practice Match — VIN Foundation veterinary practice marketplace (internal working title; public name TBD by the VIN Foundation) |
 | Domains | Production `https://foundation.vin` · QA `https://qa.foundation.vin` |

@@ -1,6 +1,6 @@
 # Coming Soon production mode — design
 
-**Date:** 2026-09-06 · **Owner:** John · **Scope:** Platform plan, new Task 11 (before Task 10's production step) · **Status:** approved in conversation 2026-09-06; spec for John's review
+**Date:** 2026-09-06 · **Owner:** John · **Scope:** Platform plan, new Task 11 (before Task 10's production step) · **Status:** Implemented 2026-09-06 — live on foundation.vin (commit f6d7150); the pixel gate (Task 11e) waits for the design export
 
 ## 1. Decision
 
