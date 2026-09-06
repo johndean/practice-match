@@ -1,4 +1,3 @@
-import importlib.util
 import re
 import uuid
 from pathlib import Path
@@ -8,11 +7,21 @@ import psycopg2.extensions
 import pytest
 
 from app.config import settings
+from scripts import migrate
 
 ROOT = Path(__file__).resolve().parent.parent
-spec = importlib.util.spec_from_file_location("migrate", ROOT / "scripts" / "migrate.py")
-migrate = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(migrate)  # type: ignore[union-attr]
+
+
+def test_migrate_module_is_the_one_shared_scripts_migrate_module():
+    """Regression guard (Task I1 re-review, hygiene item 1): this file used to load
+    scripts/migrate.py a second time under a detached module name via
+    importlib.util.spec_from_file_location, distinct from the `scripts.migrate` that
+    tests/conftest.py's `scratch_dsn` fixture (and app code) import normally — a patch
+    applied to one was invisible through the other. `migrate` above must now be the
+    exact same module object."""
+    import scripts.migrate as shared
+
+    assert migrate is shared
 
 
 def _maintenance_dsn(dsn: str) -> str:
@@ -170,8 +179,6 @@ def test_scratch_dsn_cleans_up_when_migrate_run_fails(request, monkeypatch):
     Postgres is shared with other concurrently-running test processes on this port, so
     a global scan can see (and misattribute) an unrelated, legitimately in-flight
     scratch database from one of those."""
-    from scripts import migrate as shared_migrate
-
     fixed = uuid.UUID("00000000-0000-0000-0000-0000000000fe")
     monkeypatch.setattr(uuid, "uuid4", lambda: fixed)
     expected_name = f"pm_test_{fixed.hex[:8]}"
@@ -179,7 +186,7 @@ def test_scratch_dsn_cleans_up_when_migrate_run_fails(request, monkeypatch):
     def _raise(dsn):
         raise RuntimeError("forced failure (RED/behavioural test): migrate.run")
 
-    monkeypatch.setattr(shared_migrate, "run", _raise)
+    monkeypatch.setattr(migrate, "run", _raise)
 
     with pytest.raises(RuntimeError):
         request.getfixturevalue("scratch_dsn")
