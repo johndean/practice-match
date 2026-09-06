@@ -397,6 +397,36 @@ def async_redis() -> aioredis.Redis:
 
 - [ ] **Step 5: Commit** — `feat(identity): schema 010–014, db/cache seams, scratch-database fixtures`.
 
+#### Task I1 — fix round 1 (2026-09-06, from the review: C1–C2 Critical, I4–I7 Important, M8–M11 Minor; I3 branch coverage → Task I1b after I2 lands)
+
+**Rulings.** C1 — `app/cache.py` resolves its client through module-level factories `_make_sync()` / `_make_async()` so a `from app.cache import sync_redis` binding still goes through the patch; the `redis` fixture patches those two factories; a test proves interception through BOTH import styles, sync and async, with `settings.redis_url` pointed at a closed port so a leak to the real Redis fails loudly. C2 — `014_audit_log.sql` also revokes TRUNCATE and adds a `BEFORE TRUNCATE … FOR EACH STATEMENT` trigger (same function); the test asserts `TRUNCATE audit_log` raises and the row survives. I5 — `scratch_dsn` runs `migrate.run` inside the `try`, and `admin.close()` always runs. I6 — `tests/auth/test_schema.py` pins the four indexes (by name via `pg_indexes`), the `ON DELETE CASCADE` FKs (insert account + child rows, delete the account, children gone), `citext` on `email_outbox.to_email` and `email_suppression.email` (case-insensitive lookups succeed), `timestamptz` on every `*_at` column (`information_schema.columns.data_type = 'timestamp with time zone'`), and the CHECKs on `email_token.purpose`, `api_token.role`, `email_outbox.status`, `application.status` (one bad value each → `CheckViolation`). I7 — `tests/test_migrate.py::test_migration_files_never_manage_their_own_transaction` asserts no `migrations/*.sql` contains a `BEGIN`, `COMMIT` or `ROLLBACK` statement (regex on statement starts, case-insensitive, ignoring `--` comments). M8 — `tests/auth/test_db_cache.py` tests request `db_ready`. M9 — `scratch_dsn`/`_maintenance()` normalise the DSN through `migrate.normalize_dsn()` and strip any query string before the `rsplit`. M10 — recorded (the ledger read-back is the independent assertion). M11 — restore `pyproject.toml`'s sqlalchemy constraint to the original `>=2.0` notation ONLY if the file is not being edited by the concurrent Task I2 implementer at that moment (`git status` must show `pyproject.toml` unmodified before you touch it; otherwise leave M11 for Task I1b). **I3 (branch coverage: `[tool.coverage.run] branch = true`, CI `--cov-branch`, the two `dispose_all` edges) is deliberately deferred to Task I1b, dispatched after Task I2 commits, because it edits `pyproject.toml` and `quality.yml` which I2 and the CI-gate task share.**
+
+**Files:** Modify `app/cache.py`, `tests/conftest.py`, `migrations/014_audit_log.sql`, `tests/auth/test_schema.py`, `tests/auth/test_db_cache.py`, `tests/test_migrate.py`. (`pyproject.toml` only under the M11 condition.)
+
+- [ ] **FR1 Step 1: failing tests, each watched fail for its own reason** — C1: `tests/auth/test_db_cache.py::test_redis_fixture_intercepts_both_import_styles(redis, monkeypatch)`: `monkeypatch.setattr(settings, "redis_url", "redis://127.0.0.1:1/0")`; `from app.cache import sync_redis, async_redis` at module top; assert `sync_redis() is redis` (or pings the fake — `redis.set("k","v")` then `sync_redis().get("k") == b"v"`), and `await async_redis().ping()` succeeds; RED today: the from-imported function builds a real client → `ConnectionError`. C2: extend `test_outbox_idempotency_and_audit_is_append_only` with `TRUNCATE audit_log` → `RaiseException`, count still 1 (RED: truncate succeeds). I5: a test that makes `migrate.run` raise (monkeypatch a migrations directory containing a broken `999_bad.sql` via `directory=`? — `scratch_dsn` calls `migrate.run(dsn)` without `directory`; instead monkeypatch `migrate.run` on the fixture's module object to raise, request `scratch_dsn`, expect the fixture to raise AND `pg_database` to contain no `pm_test_%` row afterwards — implement as a test that drives the fixture function directly through `request.getfixturevalue` inside `pytest.raises`, then queries the maintenance database). I6: the assertions listed above (each RED-provable by reading the migration; run them — they pass on the correct schema, so RED is demonstrated by temporarily editing a scratch copy of one migration? No: for schema-pinning tests the RED is a deliberately wrong assertion first (e.g. expect the index name misspelled), watched fail, then corrected — record that). I7: RED by adding a scratch `migrations/zz_probe.sql` containing `BEGIN;`, watching the test fail, deleting it. M8/M9: covered by the changed fixtures (M9: a test that `scratch_dsn` works when `settings.database_url` is monkeypatched to the `postgresql+asyncpg://…?sslmode=disable` form of the same DSN — RED today).
+- [ ] **FR1 Step 2: implement** as ruled. `app/cache.py`:
+```python
+def _make_sync() -> redis_sync.Redis:
+    return redis_sync.from_url(settings.redis_url, socket_connect_timeout=3, socket_timeout=3)
+
+
+def _make_async() -> aioredis.Redis:
+    return aioredis.from_url(settings.redis_url, socket_connect_timeout=3, socket_timeout=3)
+
+
+def sync_redis() -> redis_sync.Redis:
+    """Resolved through the module factory at call time so tests (and `from app.cache import sync_redis`
+    consumers) all see one patch point: the `redis` fixture replaces `_make_sync`/`_make_async`."""
+    return _make_sync()
+
+
+def async_redis() -> aioredis.Redis:
+    return _make_async()
+```
+The fixture: `monkeypatch.setattr(cache, "_make_sync", lambda: fake_sync); monkeypatch.setattr(cache, "_make_async", lambda: fake_async)` with `fakeredis.FakeRedis(server=server)` and `fakeredis.aioredis.FakeRedis(server=server)` sharing one `fakeredis.FakeServer()`.
+- [ ] **FR1 Step 3: GREEN** — `poetry run pytest -q -W error --cov=app --cov-report=term-missing --cov-fail-under=100`; mypy; ruff. (Statement coverage; branch coverage becomes the gate in I1b.)
+- [ ] **FR1 Step 4: Commit** — explicit pathspecs of the files above · `fix(identity): cache seams patchable under from-imports; audit log refuses TRUNCATE; scratch_dsn cleans up on a failed migration and normalises the DSN; schema contract and migration-transaction drift pinned` with the trailer.
+
 ---
 
 ### Task I2: Passwords, tokens, sessions
