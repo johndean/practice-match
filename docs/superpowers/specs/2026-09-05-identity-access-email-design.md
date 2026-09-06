@@ -85,7 +85,7 @@ Roles: `anonymous · applicant · buyer · seller · staff · admin`. `anonymous
 | `request.create` · `request.read_own` | `/requests`; express interest; own threads (2b) | — | — | ✅ | ✅ | — | — |
 | `seller.apply` | file the seller application | — | — | ✅ | — | — | — |
 | `page.seller` · `listing.manage_own` · `request.answer_own` | `/seller`, wizard, own listings, answer own requests (2b) | — | — | — | ✅ | — | — |
-| `page.admin` · `users.review` | `/admin?tab=users`; list applications/members; **view an application** (audited) | — | — | — | — | ✅ | ✅ |
+| `page.admin` · `users.review` · `users.view_detail` | `/admin?tab=users`; list applications/members (`users.review`, not audited); **view an application's detail** (`users.view_detail`, audited — split 2026-09-08 after the I5 review so that polling the list does not write an audit row per call) | — | — | — | — | ✅ | ✅ |
 | `users.decide` | Approve · Decline · Request info · Suspend · Revoke (re-auth for Revoke) | — | — | — | — | ✅ | ✅ |
 | `listing.review` · `listing.publish` | `/admin?tab=listings`; publish/unpublish/flag (2b) | — | — | — | — | ✅ | ✅ |
 | `request.oversee` | `/admin?tab=activity`; request metadata only | — | — | — | — | ✅ | ✅ |
