@@ -2,8 +2,9 @@
 (nightly). Never called from a request — the request path writes a row and returns (spec §5).
 
 **No Postgres connection is ever held across the call to Resend.** `app.db.sync_conn()` hands out a
-POOLED connection, so a task that kept one for the length of an HTTP round-trip — 20 s at the
-timeout, times a batch of 50 — would empty the pool the api shares. Instead `outbox.due()` claims
+POOLED connection, so a task that kept one for the length of an HTTP round-trip — up to
+`resend_client.TIMEOUT`'s bound per row, times `outbox.DUE_LIMIT` rows in a batch — would empty
+the pool the api shares. Instead `outbox.due()` claims
 its batch in one committed statement (lease + `FOR UPDATE SKIP LOCKED`), the connection goes back,
 and each row's outcome is recorded on a freshly borrowed connection afterwards. The brief's sketch
 held one connection for the whole loop; this is the same behaviour without that.

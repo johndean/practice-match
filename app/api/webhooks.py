@@ -12,7 +12,9 @@ Three rules shape what happens after verification:
   and suppresses the address on the OUTBOX ROW that carries the event's `email_id`. Signature or
   no, a body that could name any address it liked must not be able to blacklist a third party.
 * **Only three things are a 4xx: an unverifiable signature (401), an oversized body (413) and a
-  caller that disconnects mid-body (422, the same quiet answer `app/api/interest.py` gives).** An
+  caller that disconnects mid-body (422 — the status and the quiet handling `app/api/interest.py`
+  chose for the same case; the body is this module's own `INVALID_REQUEST`, not that endpoint's
+  `{"error": "invalid_email"}`).** An
   event this route cannot act on — an unknown type, an `email_id` matching no row, a body that is
   not the shape Resend documents — answers `200`, because a provider that is told "error" retries
   the same thing for hours.
@@ -76,9 +78,13 @@ class PayloadTooLarge(AuthError):
 
 
 class RequestIncomplete(AuthError):
-    """The caller went away mid-body. Not an error and not a 500 (round 2, O1) — the same quiet 422
-    the other anonymous POST surface answers with (`app/api/interest.py`), carrying the app's one
-    existing 422 envelope (`app.auth.deps.INVALID_REQUEST`) rather than a second one invented here."""
+    """The caller went away mid-body. Not an error and not a 500 (round 2, O1).
+
+    The STATUS and the handling are `app/api/interest.py`'s, which faced the same case first: 422,
+    answered quietly, nothing logged, nothing read or written. The BODY is not — that endpoint
+    predates decision A5 and still answers its own `{"error": "invalid_email"}`, which would be
+    nonsense on a webhook, so this carries the app's general 422 envelope
+    (`app.auth.deps.INVALID_REQUEST`) rather than inventing a third one."""
 
     status = 422
     code = "INVALID_REQUEST"
