@@ -34,7 +34,14 @@ export const SCREENS: Screen[] = [
   // The Market data card's layer select (V3's `md.toggleLayerMenu` trigger). It is the first
   // aria-haspopup="listbox" on the screen; Compare's identical control is the second, and
   // only exists once Compare is open.
-  { name: 'browse-layer-menu', steps: async (p) => { await browse(p); await p.locator('button[aria-haspopup="listbox"]').first().click(); await p.waitForTimeout(400); } },
+  //
+  // This state and the three below it (`browse-legend-collapsed`, `browse-layers-open`,
+  // `browse-market-panel`) each wait for the thing the state exists to SHOW before the settle
+  // (review M9, 2026-09-07). A bare `waitForTimeout` cannot tell "the click worked" from "the
+  // click no-opped on both targets", which is exactly how the old `mobile-detail` step passed
+  // while capturing the wrong screen (V9). The 400 ms settle stays after it: it is what the
+  // committed baselines were taken through, and every one of them must stay byte-identical.
+  { name: 'browse-layer-menu', steps: async (p) => { await browse(p); await p.locator('button[aria-haspopup="listbox"]').first().click(); await p.getByRole('listbox', { name: 'Active market layer' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
   // C4: Compare is collapsed by default; opening it reveals the shared layer-select control
   // and the six-row bar chart. Picking the metric that already shades the map would reset the
   // comparison (no self-compare), so pick the second option — the menu's first row is
@@ -44,14 +51,14 @@ export const SCREENS: Screen[] = [
   // to a collapsed <select>'s hidden child on BOTH targets and never clicks.
   { name: 'browse-compare-open', steps: async (p) => { await browse(p); await click(p, 'Compare'); await p.locator('button[aria-haspopup="listbox"]').nth(1).click(); await p.getByRole('listbox', { name: 'Comparison layer' }).getByRole('option').nth(1).click(); await p.waitForTimeout(400); } },
   // C8: the merged legend/insight card is dismissible.
-  { name: 'browse-legend-collapsed', steps: async (p) => { await browse(p); await p.getByRole('button', { name: 'Dismiss interpretation' }).click(); await p.waitForTimeout(400); } },
+  { name: 'browse-legend-collapsed', steps: async (p) => { await browse(p); await p.getByRole('button', { name: 'Dismiss interpretation' }).click(); await p.getByRole('button', { name: 'Dismiss interpretation' }).waitFor({ state: 'detached' }); await p.waitForTimeout(400); } },
   // C9: V3's drawer button reads "Layers" with a count pill, where V2's read "Data Layers".
   // The `-market-` infix went with the Listings/Market Data split (spec D12) and the state is
   // `browse-layers-OPEN` because that is what it shows: under V2 the drawer stood open and the
   // click closed it, under V3 the click opens it, so the inherited `-closed` suffix described
   // the opposite of the screenshot (review L2; controller ruling 2026-09-07 amending D12).
-  { name: 'browse-layers-open', steps: async (p) => { await browse(p); await click(p, 'Layers'); await p.waitForTimeout(400); } },
-  { name: 'browse-market-panel', steps: async (p) => { await browse(p); await p.getByText('Cedar Park').first().click(); await p.waitForTimeout(400); } },
+  { name: 'browse-layers-open', steps: async (p) => { await browse(p); await click(p, 'Layers'); await p.getByRole('button', { name: 'Close layers' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
+  { name: 'browse-market-panel', steps: async (p) => { await browse(p); await p.getByText('Cedar Park').first().click(); await p.getByText('View full market report').first().waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
   { name: 'detail', steps: async (p) => { await jump(p, 'Listing'); } },
   // The jump bar's default listing (Cedar Park / p1) always carries a pre-seeded pending
   // request in the prototype's demo data (logic.js `state.requests`), so it never shows
