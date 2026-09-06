@@ -19,6 +19,7 @@ DOCS = [ROOT / "README.md", ROOT / "CLAUDE.md", ROOT / "DEPLOY.md", *sorted((ROO
 REQUIRED_CI_COMMANDS = (
     "poetry run ruff check app tests scripts",
     "poetry run mypy app --strict",
+    "scripts/bootstrap_admin.py scripts/seed_persona.py --strict",
     "poetry run pytest -q -W error",
     "--cov=app",
     "--cov-branch",
@@ -28,6 +29,7 @@ REQUIRED_CI_COMMANDS = (
     "bash tests/scripts/test_verify_image_sh.sh",
     "bash tests/scripts/test_deploy_guard.sh",
     "bash tests/scripts/test_verify_deploy.sh",
+    "bash tests/scripts/test_bootstrap_admin.sh",
     "diff-cover coverage.xml --compare-branch=origin/main --fail-under=100",
     "npx vue-tsc --noEmit",
     "npm run build",

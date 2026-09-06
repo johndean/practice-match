@@ -21,6 +21,7 @@ Railway project **Practice Match** (id `d20ecd90-2855-4b7d-957d-96a882b3a95d`) �
 | `EMAIL_ALLOWLIST` | ✓ | ✓ | comma-separated addresses/domains transactional email may be delivered to; empty means no allowlist. Set on QA so test sign-ups cannot email real people (Identity plan Task I6) |
 | `DB_POOL_MAX` | ✓ | ✓ | `10` — the size of the psycopg2 **reuse pool** per DSN (`app/db.py`), which is what removes the per-request connect. It does **not** cap how many connections exist: past the pool a caller gets an un-pooled connection rather than an error, so the ceiling on backends is request concurrency, not this number. Bounding that overflow is Sub-project 2's concurrency work (Identity plan Task I9); raise this only if the pool is measured to be the bottleneck (Identity plan Task I4) |
 | `CENSUS_API_KEY` | | ✓ | Sub-project 3; John holds it — never in git, chat, or CI. `railway variable set CENSUS_API_KEY=… --service worker --environment <env>` |
+| `PERSONA_PASSWORD` | | | **Not a service variable.** Read from the shell by `scripts/seed_persona.py` only, and only outside production: `PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py`. Unset it and the script uses its documented default (`.env.example`). Never set it in Railway — nothing in the api or worker reads it (Identity plan Task I5) |
 
 ## DNS (verbatim as Railway printed them — Task 8, 2026-09-06)
 

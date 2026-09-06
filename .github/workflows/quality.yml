@@ -60,12 +60,13 @@ jobs:
       - run: poetry run python scripts/migrate.py
       - run: poetry run ruff check app tests scripts
       - run: poetry run mypy app --strict
-      - run: poetry run mypy scripts/migrate.py --strict
+      - run: poetry run mypy scripts/migrate.py scripts/bootstrap_admin.py scripts/seed_persona.py --strict
       - run: poetry run pytest -q -W error --cov=app --cov-branch --cov-report=xml --cov-fail-under=100
       - run: bash tests/scripts/test_start_sh.sh
       - run: bash tests/scripts/test_verify_image_sh.sh
       - run: bash tests/scripts/test_deploy_guard.sh
       - run: bash tests/scripts/test_verify_deploy.sh
+      - run: bash tests/scripts/test_bootstrap_admin.sh
       - name: Coverage on the diff (pull requests only)
         if: github.event_name == 'pull_request'
         run: poetry run diff-cover coverage.xml --compare-branch=origin/main --fail-under=100

@@ -482,6 +482,39 @@ async def reset(body: ResetIn, request: Request) -> dict[str, str]:
     return {"status": "reset"}
 
 
+@router.post("/auth/accept-invite")
+async def accept_invite(body: ResetIn, request: Request) -> dict[str, str]:
+    """The other half of `scripts/bootstrap_admin.py` (Task I5): the bootstrap CLI creates the
+    account with the `admin` grant and NO usable password (`!invite-pending` is not an Argon2id
+    hash, so nothing can verify against it) and prints a single-use 24 h `invite` link. This
+    consumes it and sets the first password.
+
+    Anonymous by construction — the token IS the credential — so it is in `PUBLIC_ROUTES`, exactly
+    like `password/reset`, whose shape it otherwise follows: the same per-IP token limiter, the
+    same breach screen before any connection, the same privileged floor re-checked from the
+    database (a bootstrap admin is always privileged, but a future invite need not be), and the
+    same `revoke_all` so nothing that existed before the password does survives it."""
+    limits.hit(sync_redis(), "invite:ip", rate_limit_subject(request), *limits.TOKEN_IP)
+    await _screen(body.password)
+    hashed = await P.hash_async(body.password)
+    with closing(sync_conn()) as conn, conn:
+        account_id = T.consume_email_token(conn, body.token, "invite")
+        if not account_id:
+            raise TokenInvalid
+        with conn.cursor() as cur:
+            cur.execute("SELECT EXISTS (SELECT 1 FROM role_grant WHERE account_id=%s AND role IN ('staff','admin') AND revoked_at IS NULL)", (account_id,))
+            privileged = cast("tuple[bool]", cur.fetchone())[0]
+        # A policy refusal here rolls the token consumption back with it, so an invite is never
+        # burnt by a password the policy was always going to reject.
+        _floor(body.password, privileged=privileged)
+        with conn.cursor() as cur:
+            cur.execute("UPDATE account SET password_hash=%s WHERE id=%s", (hashed, account_id))
+        S.revoke_all(conn, sync_redis(), account_id)
+        audit.write(conn, actor=None, action="invite.accept", target_type="account", target_id=account_id, request=request)
+        enqueue(conn, to=_email_of(conn, account_id), template="password_changed", params={}, idempotency_key=_outbox_key())
+    return {"status": "accepted"}
+
+
 @router.post("/auth/password/change")
 async def change(body: ChangeIn, request: Request, response: Response, principal: Self) -> dict[str, str]:
     """Supplying the current password IS the re-authentication spec §3's Auth column asks for here;

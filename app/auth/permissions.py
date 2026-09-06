@@ -50,6 +50,9 @@ PUBLIC_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/api/healthz"), ("GET", "/api/healthz/deep"), ("GET", "/robots.txt"), ("GET", "/"), ("GET", "/{path:path}"),
     ("POST", "/api/auth/signup"), ("POST", "/api/auth/verify"), ("POST", "/api/auth/signin"),
     ("POST", "/api/auth/password/forgot"), ("POST", "/api/auth/password/reset"), ("POST", "/api/webhooks/resend"),
+    # The other half of `scripts/bootstrap_admin.py` (Task I5): the single-use `invite` token IS
+    # the credential, so the caller is anonymous by construction — exactly like `password/reset`.
+    ("POST", "/api/auth/accept-invite"),
     ("GET", "/_app/{path:path}"),      # the built bundle (StaticFiles), same public surface as "/" and the SPA catch-all
     ("POST", "/api/interest"),         # the Coming Soon launch-notification sign-up: anonymous by design, rate-limited instead
     # `app.api.health.not_found_router`'s catch-all: it exists so an unknown /api/* path answers a

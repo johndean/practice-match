@@ -41,3 +41,36 @@ and entry count here **and** in `tests/auth/test_passwords.py`
 (`LIST_SHA256`/`LIST_LINES`/`LIST_ENTRIES`/`LIST_COMMIT`), and re-run `poetry run pytest tests/auth`.
 Those pins exist so that a silent swap of a security-critical list fails the suite. The OGL
 acknowledgement above must survive any refresh — the list stays Crown copyright.
+
+---
+
+# `disposable_domains.txt` — provenance
+
+The reviewer hint behind `app.auth.flags.compute`'s `disposable_domain` flag (spec §6). A flag is
+**never** a decision: it is shown to the human reviewing an application and nothing in the code
+path branches on one, so a stale or over-broad entry costs a reviewer a second glance, never an
+applicant their account.
+
+| | |
+|---|---|
+| Source | https://github.com/disposable-email-domains/disposable-email-domains — `disposable_email_blocklist.conf` |
+| Raw URL | https://raw.githubusercontent.com/disposable-email-domains/disposable-email-domains/main/disposable_email_blocklist.conf |
+| Commit | `b4c9e0b23f1bc9c4799d957a1cbb99fe8e339301` (2026-09-06, "Add missing domains from sources (#1154)") |
+| SHA-256 | `d3a8b8550c2edd25fe8fb9de07e30d9451dfb9ff5cfbd6bc8b984e3e26ce2389` |
+| Size | 124 352 bytes · 8 737 lines · 8 737 domains loaded |
+| Verified | 2026-09-07 — the vendored file is byte-identical to that raw URL on that commit |
+
+## Licence and attribution
+
+The list is dedicated to the public domain under **CC0 1.0 Universal**
+(https://creativecommons.org/publicdomain/zero/1.0/): "You can copy, modify, distribute and use the
+work, even for commercial purposes, all without asking permission." No attribution is required and
+the list is never displayed, so — as with `top100k.txt` — the record lives here rather than on a
+screen.
+
+## Refreshing it
+
+Re-download from the raw URL above (pinning the new commit), update the SHA-256, line count and
+commit here **and** in `tests/api/test_applications.py`
+(`LIST_SHA256`/`LIST_COMMIT`/`LIST_LINES`), and re-run `poetry run pytest tests/api/test_applications.py`.
+Those pins exist so that a silent swap of the list fails the suite instead of passing quietly.

@@ -6,6 +6,8 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
+from app.api.admin_users import router as admin_users_router
+from app.api.applications import router as applications_router
 from app.api.auth import router as auth_router
 from app.api.health import not_found_router
 from app.api.health import router as health_router
@@ -65,6 +67,11 @@ def create_app(dist: Path | None = None) -> FastAPI:
     # 404, which is what `scripts/verify-deploy.sh` now probes for on production.
     if settings.site_mode == "app":
         app.include_router(auth_router)
+        # Same gate, same reason (I4 fix round 1, Important 6): in `coming_soon` there is nobody to
+        # apply, nobody to review an application and no mail to send, so every /api/applications
+        # and /api/admin/* path falls through to `not_found_router`'s JSON 404.
+        app.include_router(applications_router)
+        app.include_router(admin_users_router)
     app.include_router(interest_router)
     app.include_router(not_found_router)
     mount_spa(app, dist or dist_for(settings.site_mode))
