@@ -26,7 +26,7 @@ Every task's requirements implicitly include this section.
 
 - **Task V5** — three `MarketMapView.test.ts` cases covering behaviour V3 deletes outright: `'draws a purple competition marker per community with vets > 0, skipping ones with none'` (C5 removes the competition bubble pass), `'draws no pins at all when the practices layer is off'` (the `layers` prop is gone) and `'the zoom-in, zoom-out and recenter buttons drive the engine'` (V3's control cluster has no recenter button — `MarketMapV3.jsx:340-405`; the surviving thirds are superseded by the V3 block's own zoom case).
 - **Task V8** — the two `stateToRoute` browse cases, folded into one, since V3 has one Browse route.
-- **Task V11** — seven test deletions, each in the commit that removes the code it covered: `markers.test.ts`'s `'pill muted/active'`, `'pill neither muted nor active falls back to the default (unselected) palette'`, `'clusterIcon and clusterize'`, `'clusterize uses the wider cell below zoom 8'`, `'pricePin active/inactive'` and `'dot'`; and `convert-dc.test.ts`'s `'maps x-import and image-slot to the Vue components with bound props and drops hint-* attributes'` AustinMap half (commit 5, spec D12).
+- **Task V11** — seven test removals (six cases and one case-half), each in the commit that removes the code it covered: `markers.test.ts`'s `'pill muted/active'`, `'pill neither muted nor active falls back to the default (unselected) palette'`, `'clusterIcon and clusterize'`, `'clusterize uses the wider cell below zoom 8'`, `'pricePin active/inactive'` and `'dot'`; and `convert-dc.test.ts`'s `'maps x-import and image-slot to the Vue components with bound props and drops hint-* attributes'` AustinMap half (commit 5, spec D12).
 
 No other test is deleted anywhere in this plan.
 
@@ -1989,7 +1989,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: `convert`, `extractTemplate`, `buildAppVue` from `frontend/scripts/convert-dc.mjs` with the `MarketMapV3` mapping (Task V3); `MarketMapView.vue`'s V3 prop list (Task V5); the seven icons (Task V6); `frontend/tests/baseline-manifest.test.ts` (Task V1).
-- Produces: `frontend/src/logic.js` exporting `Component` with V3's `renderVals()` — `md.isMarket` unconditional for `screen === 'browse'`, the three named palettes on `layerPalette`, the `econ` layer labelled **"Average Practice Payroll" / "Avg. payroll per practice"**, `mobileVals` carrying `sheetOpen`, `openSheet`, `closeSheet`, `layerLabel`, `basemaps`, `rowStyle`, `datasetRowStyle` and **no** `hasPeek`/`peek`, and **no** `isBrowse`/`browseToggle`/`browseMode`. `frontend/src/app.setup.js` gains `layerPalette: { type: String, default: 'distinct' }`. Task V8 depends on `browseMode` having no reader; Tasks V9 and V10 depend on the regenerated template.
+- Produces: `frontend/src/logic.js` exporting `Component` with V3's `renderVals()` — `md.isMarket` unconditional for `screen === 'browse'`, the three named palettes on `layerPalette`, the `econ` layer labelled **"Average Practice Payroll" / "Avg. payroll per practice"**, `mobileVals` carrying `sheetOpen`, `openSheet`, `closeSheet`, `layerLabel`, `basemaps`, `rowStyle`, `datasetRowStyle` and **no** `hasPeek`/`peek`, and **no** `browseToggle`/`browseMode`. `isBrowse` survives as the reference's own vestigial `isBrowse: false` — a render value nothing reads (README §7) — pinned at exactly one occurrence by Step 4 (spec D14); it is not a defect and must not be cleaned out of a verbatim port. `frontend/src/app.setup.js` gains `layerPalette: { type: String, default: 'distinct' }`. Task V8 depends on `browseMode` having no reader; Tasks V9 and V10 depend on the regenerated template.
 
 > **`logic.js` is a hand-executed, fully specified transform, not a `gen:app` output.** `npm run gen:app` writes only `src/App.vue` and `src/generated/pseudo.css`; it *reads* `src/app.setup.js` and inlines it. `src/logic.js` is the design file's `<script type="text/x-dc" data-dc-script>` block with exactly three edits: the two-line provenance header plus `import { DCLogic } from './dc-logic.js';`, the platform spec §3 rule-1 asset rewrite (`"assets/` → `"/assets/`, five occurrences in V3), and a trailing `export { Component };`. The bundle's `FILE_INDEX.md` files `logic.js` under "Generated — never hand-edit", which is true in spirit and wrong in mechanism — Step 4 below adds the drift test that makes the transform machine-checked, so "never hand-edit" becomes enforceable rather than aspirational.
 
@@ -2980,7 +2980,7 @@ In `frontend/tests/harness.ts`, correct the stale comment to name the file the V
 - [ ] **Step 3: Verify**
 
 ```bash
-cd "/Users/johndean/Development/Practice Match/frontend" && grep -rn "AustinMap" . --exclude-dir=node_modules --exclude-dir=dist   # expect: no hits
+grep -rn "AustinMap" frontend/src frontend/tests frontend/scripts   # expect: no hits
 cd frontend && npm run typecheck && npm test && npm run build && npx vitest run --coverage
 npx vitest run tests/baseline-manifest.test.ts
 ```
