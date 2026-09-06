@@ -5186,6 +5186,101 @@ git commit -m "fix(deploy): the api container runs migrations at start — Railw
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
+
+#### Task 11g — fix round 1 (2026-09-06, from the review: 2 Important, 1 Minor; fixed at source)
+
+**Findings.** (1) `DEPLOY.md`'s rollback row asserts a health-gated rollout ("the previous one keeps serving") that Railway has not been observed honouring for this service (the deployment manifest showed `healthcheckPath: null`). (2) Running migrations at boot makes the api container hard-depend on the database being reachable at start — a transient outage at deploy or restart time would crash-loop the container and take the static coming-soon page down with it, where before the page served and only sign-ups failed closed. (3) The worker-role shell check lost its positive `celery` assertion.
+
+**Design.** `scripts/migrate.py` distinguishes *unreachable* from *broken*: exit **3** when the database cannot be reached (`psycopg2.OperationalError` on connect), unchanged non-zero for a failing SQL file. `scripts/start.sh`'s api role retries exit 3 a bounded number of times, then serves anyway (the static site stays up; sign-ups fail closed with 503 until the next restart applies the migrations); any other failure stops the container before uvicorn. The runbook says exactly this and stops claiming what Railway has not shown.
+
+**Files:** Modify `scripts/migrate.py`, `tests/test_migrate.py`, `scripts/start.sh`, `tests/scripts/test_start_sh.sh`, `DEPLOY.md`, `tests/test_docs.py`.
+
+- [ ] **FR1 Step 1: failing tests.**
+
+`tests/test_migrate.py` — append:
+```python
+def test_main_returns_3_when_the_database_is_unreachable(monkeypatch, capsys):
+    """start.sh retries exit 3 (unreachable) but stops on any other failure (a broken migration file)."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql://x:x@127.0.0.1:1/x")
+    code = migrate.main()
+    assert code == 3
+    err = capsys.readouterr().err
+    assert "unreachable" in err and "OperationalError" in err
+```
+`tests/scripts/test_start_sh.sh` — restore the worker assertion and add the retry cases (a fake `python` and a fake `uvicorn` on PATH; the fake python's exit code comes from a file so a sequence can be scripted):
+```bash
+out=$(DRY_RUN=1 RAILWAY_SERVICE_NAME=worker bash scripts/start.sh) || fail "worker role via RAILWAY_SERVICE_NAME exited non-zero"
+[[ "$out" == *celery* && "$out" == *worker* ]] || fail "worker role should start a celery worker, got: $out"
+[[ "$out" != *migrate.py* ]] || fail "the worker must not run migrations (the api does, under the advisory lock)"
+
+# --- migration outcomes at api boot (fake python + fake uvicorn on PATH; no DRY_RUN) ---
+FAKE=$(mktemp -d); trap 'rm -rf "$FAKE"' EXIT
+cat > "$FAKE/python" <<'PY'
+#!/usr/bin/env bash
+# exit with the first code listed in $CODES_FILE, consuming it; 0 when the file is empty
+code=$(head -1 "$CODES_FILE"); sed -i.bak 1d "$CODES_FILE"; echo "fake migrate exit ${code:-0}" >&2; exit "${code:-0}"
+PY
+printf '#!/usr/bin/env bash\necho "fake uvicorn $*"\n' > "$FAKE/uvicorn"; chmod +x "$FAKE/python" "$FAKE/uvicorn"
+run_api() { CODES_FILE="$FAKE/codes" PATH="$FAKE:$PATH" MIGRATE_RETRIES=3 MIGRATE_RETRY_SLEEP=0 bash scripts/start.sh api 2>&1; }
+
+printf '3\n3\n' > "$FAKE/codes"; out=$(run_api) || fail "unreachable-then-ok must serve, exited $?"
+[[ "$out" == *"fake uvicorn"* ]] || fail "after the database comes back the api must start uvicorn, got: $out"
+[[ $(grep -c "fake migrate exit 3" <<<"$out") -eq 2 ]] || fail "expected two retries before success, got: $out"
+
+printf '3\n3\n3\n3\n' > "$FAKE/codes"; out=$(run_api) || fail "persistently unreachable must still serve, exited $?"
+[[ "$out" == *"serving without migrations"* && "$out" == *"fake uvicorn"* ]] || fail "after MIGRATE_RETRIES the api must serve and say so, got: $out"
+
+printf '1\n' > "$FAKE/codes"; set +e; out=$(run_api); code=$?; set -e
+[[ $code -ne 0 && "$out" != *"fake uvicorn"* && "$out" == *"migration failed"* ]] || fail "a failing migration file must stop the container before uvicorn (exit $code), got: $out"
+```
+`tests/test_docs.py` — the 11g drift test additionally asserts `"unreachable at boot" in text` and `"keeps serving" not in text`.
+
+Run: `poetry run pytest tests/test_migrate.py -q -W error` → FAIL (`main()` raises `OperationalError` instead of returning 3); `bash tests/scripts/test_start_sh.sh` → FAIL (no retry loop: exit 3 stops the container); `poetry run pytest tests/test_docs.py -q -W error` → FAIL.
+
+- [ ] **FR1 Step 2: implement.**
+
+`scripts/migrate.py` `main()`:
+```python
+    print(f"[migrate] applying from {MIGRATIONS_DIR}")
+    try:
+        applied = run(dsn)
+    except psycopg2.OperationalError as exc:  # cannot reach the database: retryable, distinct from a broken file
+        print(f"[migrate] database unreachable: {type(exc).__name__}", file=sys.stderr)
+        return 3
+    print(f"[migrate] done — {len(applied)} applied")
+    return 0
+```
+`scripts/start.sh` api case:
+```bash
+  api)
+    # Migrations first (Task 11g): the container proves the schema before it serves, because
+    # Railway's pre-deploy hook has not been observed running. Exit 3 = database unreachable:
+    # retry, then serve anyway so the static site stays up (sign-ups fail closed with 503 and
+    # the next restart applies the files). Any other failure is a broken migration file: stop
+    # here, before uvicorn.
+    cmd=(uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}" --proxy-headers --forwarded-allow-ips='*')
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then echo "python scripts/migrate.py"; echo "${cmd[*]}"; exit 0; fi
+    attempt=0
+    until python scripts/migrate.py; do
+      code=$?
+      if [[ "$code" -ne 3 ]]; then echo "[start.sh] migration failed (exit $code) — not serving" >&2; exit "$code"; fi
+      attempt=$((attempt + 1))
+      if [[ "$attempt" -ge "${MIGRATE_RETRIES:-5}" ]]; then
+        echo "[start.sh] database unreachable after $attempt attempts — serving without migrations; sign-ups fail closed until the next restart" >&2
+        break
+      fi
+      sleep "${MIGRATE_RETRY_SLEEP:-5}"
+    done
+    exec "${cmd[@]}"
+    ;;
+```
+`DEPLOY.md` rollback rows (replace the "Migration failed" row with two):
+`| Migration failed (a SQL file errors) | The api container runs the migrations at start and exits before uvicorn (` `[start.sh] migration failed` `), so the new container never serves; the failed file was not recorded. Fix the SQL and redeploy. Whether Railway keeps the previous deployment serving meanwhile depends on its health-gated rollout, which the deployment manifest has not shown honouring railway.json — check the dashboard, and if the old deployment is gone, redeploy the last good one (row above). | — |`
+`| Database unreachable at boot | The api retries the migrations (` `MIGRATE_RETRIES` `×` `MIGRATE_RETRY_SLEEP` `, default 5 × 5 s), then serves anyway so the static site stays up; sign-ups answer 503 until the database returns and a restart applies the files (` `railway restart --service api` `). | — |`
+
+- [ ] **FR1 Step 3: GREEN** — `bash tests/scripts/test_start_sh.sh`; `poetry run pytest -q -W error`; ruff; real `scripts/verify-image.sh` still seven OK lines (record the api log: `[migrate] done — 0 applied` then uvicorn).
+- [ ] **FR1 Step 4: Commit** — `git add scripts/migrate.py tests/test_migrate.py scripts/start.sh tests/scripts/test_start_sh.sh DEPLOY.md tests/test_docs.py` · `fix(deploy): api boot retries an unreachable database and then serves; a broken migration still stops the container; runbook stops overclaiming Railway's rollout` with the trailer.
+
 **Controller follow-up (Task 11f Step 4b, resumed):** redeploy QA; prove via the read-only proxy query that `schema_migrations` lists `001_init.sql, 002_interest_signup.sql` and `interest_signup` exists; `railway logs --service api --environment QA` shows `[migrate] applying` / `[migrate] done — 2 applied`; then the forwarded-hop probe.
 
 ---
