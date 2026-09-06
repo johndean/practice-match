@@ -1076,3 +1076,98 @@ async def test_removing_a_grant_that_costs_no_token_revokes_none(client, conn, m
     assert (await client.get("/api/admin/users", headers={"Authorization": f"Bearer {tok}"})).status_code == 200
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM audit_log WHERE action='tokens.revoke'"); assert cur.fetchone()[0] == 0
+
+
+async def test_the_cascade_leaves_an_already_expired_token_alone(client, conn, member):
+    """Re-review N2. The cascade's SELECT filtered on `revoked_at IS NULL` alone, so a token that
+    had already run out its 90 days was revoked and audited exactly like a live one — a
+    `tokens.revoke` row, in a table whose triggers refuse DELETE, for a credential that had not
+    worked for weeks. Only live credentials are cascaded, so the trail says what was really killed."""
+    demoted, cookies, hdr = member(("admin",), email="expiring-tokens@example.org")
+    _other, ocookies, ohdr = member(("admin",), email="second-admin@example.org")  # the last-admin floor
+    await _reauth(client, cookies, hdr)
+
+    async def mint(name):
+        r = await client.post("/api/admin/tokens", headers=auth_headers(cookies, hdr), json={"name": name, "role": "admin", "days": 30})
+        return r.json()["token"]
+
+    live, stale = await mint("live-admin"), await mint("stale-admin")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE api_token SET expires_at = now() - interval '1 day' WHERE name='stale-admin'")
+    assert (await client.get("/api/admin/users", headers={"Authorization": f"Bearer {stale}"})).status_code == 401, "already dead"
+
+    await _reauth(client, ocookies, ohdr)
+    r = await client.post(f"/api/admin/users/{demoted}/grants", headers=auth_headers(ocookies, ohdr),
+                          json={"role": "admin", "grant": False, "reason": "left the foundation"})
+    assert r.json() == {"roles": [], "revoked_tokens": [live.split(".")[0][3:]]}
+    with conn.cursor() as cur:
+        cur.execute("SELECT name, revoked_at IS NULL FROM api_token ORDER BY name")
+        assert cur.fetchall() == [("live-admin", False), ("stale-admin", True)], "the expired token is not touched"
+        cur.execute("SELECT count(*) FROM audit_log WHERE action='tokens.revoke'")
+        assert cur.fetchone()[0] == 1, "one row, for the one credential that was actually alive"
+
+
+def _mint_in_its_own_loop(dist, cookies, hdr, result):
+    """One `POST /api/admin/tokens` on its OWN event loop, in this thread — the same reason
+    `_decide_in_its_own_loop` exists: the handler blocks on a Postgres row lock, and a request that
+    waits on one blocks the whole loop it runs on, so it cannot share the test's."""
+    import asyncio
+
+    import httpx
+    from httpx import ASGITransport
+
+    from app.main import create_app
+
+    async def go():
+        async with httpx.AsyncClient(transport=ASGITransport(app=create_app(dist=dist)), base_url=ORIGIN) as c:
+            return await c.post("/api/admin/tokens", headers=auth_headers(cookies, hdr),
+                                json={"name": "e2e-race", "role": "admin", "days": 30})
+
+    result["response"] = asyncio.run(go())
+
+
+def test_minting_a_token_serialises_against_a_demotion_of_the_minter(conn, scratch_dsn, dist, member):
+    """Re-review N1 (TOCTOU). `create_token` read the minter's live grants without locking their
+    account row, while `grants` locks only its TARGET — so a mint could read "still an admin",
+    wait out the demotion on the `created_by` foreign key alone, and then INSERT a brand-new
+    `admin` token behind the very demotion meant to end them. (The FK's KEY SHARE lock orders the
+    insert after the commit; it does nothing about the stale READ that authorised it.)
+
+    The mint now takes the same `SELECT … FOR UPDATE` on the minter's own account row that `grants`
+    takes on its target, BEFORE reading the grants — so under READ COMMITTED the grant read happens
+    on the other side of the demotion's commit and the mint is refused. The blocker below does
+    exactly what `grants` does, in that order, from another connection: the mint waits on it and
+    then answers 403 instead of 201, which is the whole difference.
+    """
+    import threading
+
+    import psycopg2
+
+    minter, cookies, hdr = member(("admin",), email="race-minter@example.org")
+    with conn.cursor() as cur:   # `tokens.manage` is in REAUTH
+        cur.execute("UPDATE session SET reauth_at = now() WHERE account_id = %s", (minter,))
+    from app.cache import sync_redis
+    sync_redis().flushall()      # ...so the cached principal is re-read with that stamp
+
+    result: dict[str, Any] = {}
+    thread = threading.Thread(target=_mint_in_its_own_loop, args=(dist, cookies, hdr, result))
+    blocker = psycopg2.connect(scratch_dsn)          # NOT autocommit: the locks are held until commit
+    try:
+        with blocker, blocker.cursor() as cur:
+            cur.execute("SELECT 1 FROM account WHERE id=%s FOR UPDATE", (minter,))
+            cur.execute("UPDATE role_grant SET revoked_at=now() WHERE account_id=%s AND role='admin' AND revoked_at IS NULL", (minter,))
+            thread.start()
+            thread.join(timeout=2)
+            assert thread.is_alive(), "the mint must wait on the minter's own account row"
+            assert "response" not in result
+        thread.join(timeout=60)
+        assert not thread.is_alive(), "the mint must proceed once the row is released"
+    finally:
+        blocker.close()
+        if thread.is_alive():
+            thread.join(timeout=60)
+    response = result["response"]
+    assert (response.status_code, response.json()["error"]["code"]) == (403, "ROLE_NOT_HELD"), \
+        "the mint read the grants from before the demotion"
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM api_token"); assert cur.fetchone()[0] == 0

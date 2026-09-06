@@ -344,7 +344,11 @@ def _revoke_unmintable_tokens(cur: Any, account_id: UUID, roles: frozenset[str])
     Runs inside `grants`' transaction and behind its `FOR UPDATE` on the account row, so the
     revocations commit with the grant removal or not at all.
     """
-    cur.execute("SELECT id, role FROM api_token WHERE created_by=%s AND revoked_at IS NULL", (account_id,))
+    # `expires_at > now()` as well as `revoked_at IS NULL` (re-review, N2): a token that has already
+    # run out its 90 days is refused by `T.verify_api_token` anyway, so revoking it changes nothing
+    # and writes a `tokens.revoke` row — into a table whose triggers refuse DELETE — for a
+    # credential that has not worked for weeks. The trail should say what was really killed.
+    cur.execute("SELECT id, role FROM api_token WHERE created_by=%s AND revoked_at IS NULL AND expires_at > now()", (account_id,))
     doomed = [tid for tid, role in cur.fetchall() if not PM.may_mint(role, roles)]
     if not doomed:
         return []
@@ -651,6 +655,16 @@ async def create_token(body: TokenIn, request: Request, principal: TokenManager)
     with closing(sync_conn()) as conn, conn:
         actor_account = _actor_account(conn, principal)
         with conn.cursor() as cur:
+            # The minter's OWN account row, locked exactly as `grants` locks its target, and BEFORE
+            # the grants are read (re-review, N1): without it the mint read "still an admin", waited
+            # out a concurrent demotion on the `created_by` foreign key alone, and then inserted a
+            # brand-new `admin` token behind the demotion meant to end them — the FK's KEY SHARE
+            # lock orders the INSERT after that commit but says nothing about the stale read that
+            # authorised it. Under READ COMMITTED the `_roles` read below now happens on the other
+            # side of that commit, so the mint is refused instead. One lock, taken on one row, with
+            # nothing held while it waits: `grants` locks its target then the advisory lock, so no
+            # cycle exists between them.
+            cur.execute("SELECT 1 FROM account WHERE id=%s FOR UPDATE", (actor_account,))
             held = frozenset(_roles(cur, actor_account))
         if not PM.may_mint(body.role, held):
             raise RoleNotHeld
