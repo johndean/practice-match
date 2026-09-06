@@ -4573,7 +4573,7 @@ def test_client_ip_uses_the_rightmost_hop_or_falls_back_to_the_peer(header, expe
              "headers": [] if header is None else [(b"x-forwarded-for", header.encode())]}
     assert client_ip(Request(scope)) == expected  # N7: an empty rightmost hop is not a subject
 ```
-`bad` parametrise list gains `"a​b@example.com"` (zero-width space, N10 — written as an escape). The log test additionally asserts `"builtins.RuntimeError" in caplog.text` (N12).
+`bad` parametrise list gains `"a\u200bb@example.com"` (zero-width space, N10 — written as an escape). The log test additionally asserts `"builtins.RuntimeError" in caplog.text` (N12).
 
 `tests/perf/test_api_latency.py`: the warm-up POST uses a fresh address for its header (N8): `headers={"x-forwarded-for": "10." + ".".join(str((uuid.uuid4().int >> s) & 255) for s in (16, 8, 0))}` — or hoist the loop's ip expression into a tiny local helper and use it for both.
 
@@ -4581,7 +4581,7 @@ def test_client_ip_uses_the_rightmost_hop_or_falls_back_to_the_peer(header, expe
 
 `app/api/interest.py`:
 ```python
-_FORBIDDEN = r"\s@\x00-\x1f\x7f​-‍‎‏‪-‮⁦-⁩"  # + zero-width space/joiners (N10)
+_FORBIDDEN = r"\s@\x00-\x1f\x7f\u200b-\u200d\u200e\u200f\u202a-\u202e\u2066-\u2069"  # + zero-width space/joiners U+200B-D (N10)
 ```
 ```python
 def client_ip(request: Request) -> str:
