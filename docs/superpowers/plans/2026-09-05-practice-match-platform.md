@@ -5443,6 +5443,9 @@ import App from './App.vue';
 import { vHover } from './directives/hover.js';
 
 const mountApp = () => mount(App, { global: { directives: { hover: vHover } } });
+// A real keystroke: the DOM value changes and ONLY an `input` event fires — `change` waits for blur or
+// Enter. (`setValue()` is not used: @vue/test-utils fires both events, which would hide the difference.)
+const type = async (field, text) => { field.element.value = text; await field.trigger('input'); };
 afterEach(() => vi.unstubAllGlobals());
 
 describe('the email field', () => {
@@ -5450,7 +5453,7 @@ describe('the email field', () => {
     vi.stubGlobal('fetch', vi.fn(async () => ({ status: 202 })));
     const w = mountApp();
     const field = w.find('input[type="email"]');
-    await field.setValue('you@practice.com');          // fires `input`, never `change`
+    await type(field, 'you@practice.com');
     await field.trigger('keydown', { key: 'Enter' });
     await new Promise((r) => setTimeout(r, 0));
     await w.vm.$nextTick();
@@ -5459,16 +5462,16 @@ describe('the email field', () => {
   });
   it('clears a previous error as soon as the visitor types', async () => {
     const w = mountApp();
-    await w.find('button[aria-label]').exists();
-    await w.find('input[type="email"]').setValue('nope');
-    await w.find('input[type="email"]').trigger('keydown', { key: 'Enter' });
+    const field = w.find('input[type="email"]');
+    await type(field, 'nope');
+    await field.trigger('keydown', { key: 'Enter' });
     expect(w.text()).toContain("That address doesn't look right");
-    await w.find('input[type="email"]').setValue('you@practice.com');
+    await type(field, 'you@practice.com');
     expect(w.text()).not.toContain("That address doesn't look right");
   });
 });
 ```
-Run: `cd coming-soon && npx vitest run --coverage` → FAIL (with `@change`, `setValue` does not reach `setEmail`; Enter submits an empty address → "Enter your email address."). Coverage stays scoped to `src/logic.js` and remains 100 %.
+Run: `cd coming-soon && npx vitest run --coverage` → FAIL (with `@change`, an `input` event never reaches `setEmail`; Enter submits an empty address → "Enter your email address."). *Corrected 2026-09-06: the first draft used `setValue()`, which @vue/test-utils implements by firing BOTH `input` and `change`, so it could not tell the bindings apart.* Coverage stays scoped to `src/logic.js` and remains 100 %.
 
 - [ ] **Step 3: Implement** — in `coming-soon/src/App.vue` line 39 change `@change="v.setEmail"` to `@input="v.setEmail"`. Nothing else in the file changes. Run the tests → PASS; `npm run build` still emits `dist/_app/`.
 
