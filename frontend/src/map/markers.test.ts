@@ -1,11 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { dot, practiceCallout, practicePin } from './markers.js';
+import { practiceCallout, practicePin } from './markers.js';
 
 describe('marker HTML builders (moved from lib/leaflet.js)', () => {
-  it('dot', () => {
-    expect(dot(20, '#003a70')).toBe('<div style="width:20px;height:20px;border-radius:999px;background:#003a70;border:2px solid rgba(255,255,255,.85);box-sizing:border-box;"></div>');
-    expect(dot(10, 'rgba(120,86,190,.75)', 'rgba(255,255,255,.9)')).toContain('border:2px solid rgba(255,255,255,.9)');
-  });
   it('practicePin unselected: a label chip above a small navy dot', () => {
     const html = practicePin('$1.45M', false);
     expect(html).toContain('flex-direction:column;align-items:center;gap:3px;');

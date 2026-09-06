@@ -1,12 +1,5 @@
 // Marker HTML builders, ported verbatim from the approved prototype. Inline styles are intentional: divIcons live outside the app stylesheet scope.
 
-export function dot(size, color, border) {
-  return (
-    '<div style="width:' + size + "px;height:" + size + "px;border-radius:999px;background:" + color +
-    ";border:2px solid " + (border || "rgba(255,255,255,.85)") + ';box-sizing:border-box;"></div>'
-  );
-}
-
 export function practicePin(label, selected) {
   // Selected: a single prominent dot — the open callout above it carries the price, so a
   // pill as well would duplicate it.
