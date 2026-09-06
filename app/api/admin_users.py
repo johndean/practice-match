@@ -409,7 +409,8 @@ async def list_users(
 
 @router.get("/users/{account_id}")
 async def detail(account_id: UUID, request: Request, principal: DetailViewer) -> dict[str, Any]:
-    """Spec §4: viewing an application detail is audited — this is the read that leaves a row."""
+    """Spec §4: viewing an application detail is audited — this is the read that leaves a row, and
+    the row is named after the permission (`users.view_detail`) rather than after the route."""
     with closing(sync_conn()) as conn, conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id, email, state, display_name, affiliation_label, created_at, last_sign_in_at FROM account WHERE id=%s", (account_id,))
@@ -424,7 +425,10 @@ async def detail(account_id: UUID, request: Request, principal: DetailViewer) ->
                 for r in cur.fetchall()
             ]
             grants = _grants(cur, account_id)
-        audit.write(conn, actor=principal, action="users.view", target_type="account", target_id=account_id, request=request)
+        # `users.view_detail`, the name of the permission that guards this route — an auditor greps
+        # `audit_log` for the permission, and the shortened `users.view` this used to write matched
+        # nothing (I5 follow-up; `tests/auth/test_permissions.py::test_every_audited_action_is_named_after_a_permission`).
+        audit.write(conn, actor=principal, action="users.view_detail", target_type="account", target_id=account_id, request=request)
     return {
         "account": {"id": str(account[0]), "email": account[1], "state": account[2], "name": account[3],
                     "affiliation_label": account[4], "created_at": account[5].isoformat(), "last_sign_in_at": _iso(account[6])},

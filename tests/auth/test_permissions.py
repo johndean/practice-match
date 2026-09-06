@@ -318,3 +318,78 @@ def test_a_broken_guard_wrapper_is_an_error_not_a_silently_unwatched_route(conn,
     assert _unresolvable(scratch) == [("POST", "/api/admin/users/decide")]
     assert _unguarded(scratch) == [("POST", "/api/admin/users/decide")]
     assert guard is not wrapped
+
+
+# --- I5 follow-up (2026-09-07): an audit ACTION must stay named after the permission it records ---
+
+# `tokens.manage` is one permission over two distinct operations (mint, revoke), so its handlers
+# write `tokens.create`/`tokens.revoke` rather than one indistinguishable `tokens.manage` row. That
+# is a refinement, not drift — and it is the ONLY one, listed here so a second exception has to be
+# argued for in a diff rather than appearing by accident.
+MULTI_ACTION_PERMISSIONS = frozenset({"tokens.manage"})
+
+
+def _action_strings(node):
+    """Every string this expression can EVALUATE to. A conditional expression contributes both of
+    its branches and NOT its test: `decide_route` writes
+    `action="users.revoke" if body.action == "revoke" else "users.decide"`, and the `"revoke"` being
+    compared against is a value of `body.action`, not an audit action."""
+    import ast
+
+    if isinstance(node, ast.Constant):
+        return {node.value} if isinstance(node.value, str) else set()
+    if isinstance(node, ast.IfExp):
+        return _action_strings(node.body) | _action_strings(node.orelse)
+    strings: set[str] = set()
+    for child in ast.iter_child_nodes(node):
+        strings |= _action_strings(child)
+    return strings
+
+
+def _audit_actions(route):
+    """Every string an audited endpoint passes as `audit.write(action=...)`, read from its own
+    source with `ast` rather than a regex — the action can be a conditional expression, and both
+    of its branches have to be seen."""
+    import ast
+    import inspect
+    import textwrap
+
+    actions: set[str] = set()
+    tree = ast.parse(textwrap.dedent(inspect.getsource(route.endpoint)))
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call) and getattr(node.func, "attr", None) == "write":
+            for keyword in node.keywords:
+                if keyword.arg == "action":
+                    actions |= _action_strings(keyword.value)
+    return actions
+
+
+def test_every_audited_action_is_named_after_a_permission(dist):
+    """The detail view was guarded by `users.view_detail` (renamed from `users.review` in I5 fix
+    round 1) and went on writing `action="users.view"`, so an auditor grepping `audit_log` for the
+    permission found nothing. Nothing caught it: the audit drift test above matches on the literal
+    `audit.write(`, not on what is written.
+
+    The rule: every action an audited endpoint records either IS a permission, or refines one of
+    the few permissions that cover several operations. A shortened, near-miss name is neither."""
+    from app.main import create_app
+
+    drifted = []
+    for method, path, route in _walk(create_app(dist=dist).routes):
+        permissions = [p for p in _permissions_of(route) if p in PM.AUDITED]
+        if not permissions:
+            continue
+        namespaces = {p.split(".")[0] for p in permissions if p in MULTI_ACTION_PERMISSIONS}
+        for action in _audit_actions(route):
+            if action in PM.MATRIX or action.split(".")[0] in namespaces:
+                continue
+            drifted.append(f"{method} {path} writes action={action!r}, which names no permission")
+    assert drifted == [], drifted
+
+
+def test_the_audited_action_rule_rejects_a_near_miss_name(dist):
+    """The rule above has to bite on the exact shape that shipped — a plausible shortening of the
+    guarding permission — or it is only a spelling check."""
+    near_miss = "users.view"
+    assert "users.view_detail" in PM.MATRIX and near_miss not in PM.MATRIX
+    assert near_miss.split(".")[0] not in {p.split(".")[0] for p in MULTI_ACTION_PERMISSIONS}

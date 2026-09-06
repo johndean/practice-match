@@ -54,8 +54,11 @@ async def test_staff_lists_pending_and_views_are_audited(client, conn, member):
     assert r.status_code == 200 and r.json()["items"][0]["account_id"] == str(aid) and r.json()["items"][0]["kind"] == "buyer"
     assert (await client.get(f"/api/admin/users/{aid}", headers=auth_headers(scookies))).status_code == 200
     with conn.cursor() as cur:
-        cur.execute("SELECT action, actor_id::text, target_id FROM audit_log WHERE action='users.view'")
-        assert cur.fetchone() == ("users.view", str(sid), str(aid))
+        # The action is named after the permission that guards the route (`users.view_detail`),
+        # not after a shortened form of it: an auditor greps `audit_log` for the permission.
+        cur.execute("SELECT action, actor_id::text, target_id FROM audit_log WHERE action='users.view_detail'")
+        assert cur.fetchone() == ("users.view_detail", str(sid), str(aid))
+        cur.execute("SELECT count(*) FROM audit_log WHERE action='users.view'"); assert cur.fetchone()[0] == 0
     _bid, bcookies, _ = member(("buyer",), email="b@example.org")
     assert (await client.get("/api/admin/users", headers=auth_headers(bcookies))).status_code == 403
 
@@ -327,7 +330,7 @@ async def test_the_audit_endpoint_reads_the_trail_newest_first_and_bounds_its_li
     sid, scookies, _shdr = member(("staff",), email="staff@example.org")
     await client.get(f"/api/admin/users/{aid}", headers=auth_headers(scookies))
     rows = (await client.get("/api/admin/audit?limit=5000", headers=auth_headers(scookies))).json()
-    assert rows[0]["action"] == "users.view" and rows[0]["actor_id"] == str(sid) and rows[0]["target_id"] == str(aid)
+    assert rows[0]["action"] == "users.view_detail" and rows[0]["actor_id"] == str(sid) and rows[0]["target_id"] == str(aid)
     assert rows[0]["actor_role"] == "staff" and rows[0]["at"]
     assert len((await client.get("/api/admin/audit?limit=0", headers=auth_headers(scookies))).json()) == 1
 
@@ -647,13 +650,20 @@ async def test_issuing_an_invite_retires_the_ones_before_it(client, conn):
     assert (await client.post("/api/auth/accept-invite", json={"token": second, "password": INVITE_PW})).status_code == 200
 
 
-def test_bootstrap_admin_refuses_a_suspended_or_revoked_account_without_reactivate(conn, capsys):
+def test_bootstrap_admin_refuses_a_declined_suspended_or_revoked_account_without_reactivate(conn, capsys):
     """F8. `ON CONFLICT (email) DO UPDATE SET state='active'` applies to ANY existing address, so
-    the script would silently undo a `suspend` or `revoke` that has an audit trail behind it — and
-    print a link that sets that account's password. Both outcomes are audited."""
+    the script would silently undo a staff decision that has an audit trail behind it — and print a
+    link that sets that account's password. Both outcomes are audited.
+
+    `declined` is in the list for the same reason `suspended` and `revoked` are (re-review
+    observation 1, 2026-09-07): all three are the recorded outcome of a staff decision, and a
+    declined applicant's address bootstrapped to `active` with an `admin` grant is the loudest
+    version of exactly that. Every state in `BLOCKED_STATES` is covered here, so adding one
+    without a test is not possible."""
     from scripts import bootstrap_admin
 
-    for state in ("suspended", "revoked"):
+    assert bootstrap_admin.BLOCKED_STATES == ("declined", "suspended", "revoked")
+    for state in bootstrap_admin.BLOCKED_STATES:
         email = f"{state}@example.org"
         with conn.cursor() as cur:
             cur.execute("INSERT INTO account (email, password_hash, state) VALUES (%s,'x',%s) RETURNING id", (email, state))

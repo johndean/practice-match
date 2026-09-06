@@ -19,10 +19,11 @@ code so a wrapper can tell them apart:
 * **2 — `ENVIRONMENT=production` without `--production`.** The same "say it out loud" shape as
   `scripts/deploy.sh`'s Railway-project guard, for the same reason: this machine speaks to more
   than one environment.
-* **3 — the address already exists and is `suspended` or `revoked`, without `--reactivate`**
-  (fix round 1, F8). `ON CONFLICT (email) DO UPDATE SET state='active'` applies to ANY existing
-  address, so without this the script silently undid a suspension or revocation that has an audit
-  trail behind it, granted that account `admin`, and printed a link that sets its password.
+* **3 — the address already exists in one of `BLOCKED_STATES`, without `--reactivate`**
+  (fix round 1, F8; `declined` added in the follow-up). `ON CONFLICT (email) DO UPDATE SET
+  state='active'` applies to ANY existing address, so without this the script silently undid a
+  staff decision that has an audit trail behind it, granted that account `admin`, and printed a
+  link that sets its password.
 
 Issuing a link retires every unused `invite` token the account already has (fix round 1, F4) —
 the statement `POST /api/auth/password/forgot` uses three files away, for the same reason: a link
@@ -54,8 +55,12 @@ INVITE_TTL = timedelta(hours=24)
 # Never a valid Argon2id encoded hash, so nothing can ever verify against it. The account exists
 # and holds `admin`; it simply has no password until the invite link is used.
 NO_PASSWORD = "!invite-pending"
-# States a bootstrap must not walk over silently: both are the recorded outcome of a staff decision.
-BLOCKED_STATES = ("suspended", "revoked")
+# States a bootstrap must not walk over silently: each is the recorded outcome of a staff decision,
+# with an `audit_log` row behind it that this script would otherwise contradict without saying so.
+# `declined` joined the list in the I5 follow-up (re-review observation 1): a declined applicant's
+# address upserted straight to `active` with an `admin` grant, and a link that sets its password,
+# is the loudest version of exactly what this guard exists to stop.
+BLOCKED_STATES = ("declined", "suspended", "revoked")
 
 
 def main(argv: Sequence[str] | None = None) -> int:
