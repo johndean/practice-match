@@ -4,13 +4,18 @@ import { join } from 'node:path';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const PLANS = join(ROOT, 'docs', 'superpowers', 'plans');
+const SPECS = join(ROOT, 'docs', 'superpowers', 'specs');
 const read = (f: string) => readFileSync(join(PLANS, f), 'utf8');
+const readSpec = (f: string) => readFileSync(join(SPECS, f), 'utf8');
 
 const IDENTITY = '2026-09-05-practice-match-identity-access-email.md';
 const MAP_ENGINES = '2026-09-05-practice-match-map-engines.md';
 const CENSUS = '2026-09-05-practice-match-census-data-layer.md';
 const SEED = '2026-09-06-practice-match-seed-listings.md';
 const BROWSE_V3 = '2026-09-06-browse-v3-mobile.md';
+const IDENTITY_SPEC = '2026-09-05-identity-access-email-design.md';
+const MAP_ENGINES_SPEC = '2026-09-05-map-engines-design.md';
+const BROWSE_V3_SPEC = '2026-09-06-browse-v3-mobile-design.md';
 
 // Browse V3 spec §6. These three plans were written against V2's Browse screen and go stale
 // the moment V3 merges; this test is what stops them being executed against the old shape.
@@ -81,8 +86,33 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
     expect(identity).toContain('migrations `010`–`015`');
     expect(identity).toContain('015_admin_list_indexes');
     expect(identity).not.toContain('this wave uses `010`–`014`');
+    // Final review I2 (2026-09-07): the reservation clause, not just the wave clause. The
+    // plan reserved `010`–`019` for SP2 while the census plan took `017`–`059`, so two plans
+    // directed an implementer to create `017`, `018` and `019` — and this case passed, because
+    // it read the half of the sentence that was already right.
+    expect(identity).not.toContain('`010`–`019`');
 
-    expect(read(MAP_ENGINES)).toContain('Census SP3-A `017`–`059`');
+    // The census plan's own range row, and the gap it leaves.
+    const census = read(CENSUS);
+    expect(census).toContain('`003`–`009` are unassigned');
+  });
+
+  // Same sequence, in the SPECS. A reader meets whichever document they open first, and three
+  // of them still carried the superseded ranges after V12 corrected the four plans (I2).
+  it('the three specs state the same one migration sequence as the plans', () => {
+    const identity = readSpec(IDENTITY_SPEC);
+    expect(identity).not.toContain('`010`–`019`');
+    expect(identity).toContain('migrations `010`–`015`');
+
+    const mapEngines = readSpec(MAP_ENGINES_SPEC);
+    expect(mapEngines).not.toContain('SP2 `010`–`059`');
+    expect(mapEngines).not.toContain('Census SP3-A `002`–`009`');
+    expect(mapEngines).toContain('Census SP3-A `017`–`059`');
+
+    const browseV3 = readSpec(BROWSE_V3_SPEC);
+    expect(browseV3).not.toContain('renumber to start at `015`');
+    expect(browseV3).not.toContain('migrations start at `015`');
+    expect(browseV3).toContain('migrations start at `017`');
   });
 
   it('CLAUDE.md records the V2 folder\'s role and V3\'s heading typography', () => {

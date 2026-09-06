@@ -84,7 +84,7 @@ The Google column is slower because Google's runtime is larger — a property of
 
 ## 3. Data model
 
-Migration `080_map_engines.sql` (this sub-project owns `080`–`089`; Census SP3-A `002`–`009`, SP2 `010`–`059`, SP3-B `060`+). It alters `dataset_registry` (Census plan A1) and adds one table.
+Migration `080_map_engines.sql` (this sub-project owns `080`–`089`; amended 2026-09-07 to the one sequence the plans now state: `001`–`002` taken, `003`–`009` unassigned, SP2/identity `010`–`015`, Seed Listings `016`, Census SP3-A `017`–`059`, SP3-B `060`+). It alters `dataset_registry` (Census plan A1) and adds one table.
 
 ```sql
 ALTER TABLE dataset_registry

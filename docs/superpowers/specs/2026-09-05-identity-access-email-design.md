@@ -26,7 +26,7 @@
 
 **Two orthogonal facts.** `account.state ∈ {unverified, verified, pending, needs_review, declined, active, suspended, revoked}` and `role_grant(role ∈ {buyer, seller, staff, admin})`. Effective permissions = union of active grants **only while `state = active`**; every other state sees the gate screens.
 
-**Tables (migrations `010`–`019`):**
+**Tables (migrations `010`–`015` — amended 2026-09-07: the reserved range used to end at `019`, which overlaps Census SP3-A's `017`–`059`):**
 
 | Table | Columns (essentials) |
 |---|---|
@@ -140,7 +140,7 @@ Unit: password policy, token hashing/expiry, matrix rules, row filters, template
 
 ## 10. Plan impacts
 
-Census plan: `require_member`/`auth_stub.py` → `require(perm)`; `MARKET_DATA_PUBLIC` → anonymous `market.read`; A9 `actor` → account id; C12 rotation replaced by deletion of `API_SECRET_KEY` after CI switches to `api_token`. Map-engines plan: `require_operator` → `require("licence.decide")`/`require("engine.activate")` with re-auth; `require_csrf` stays; `registry_change_log.actor` = account id; the Permissions tab joins the Admin tab set. Platform plan: `guard()` gains permissions; the visual harness gains API sign-in; the launch-removal list executes here. Migrations `010`–`019`.
+Census plan: `require_member`/`auth_stub.py` → `require(perm)`; `MARKET_DATA_PUBLIC` → anonymous `market.read`; A9 `actor` → account id; C12 rotation replaced by deletion of `API_SECRET_KEY` after CI switches to `api_token`. Map-engines plan: `require_operator` → `require("licence.decide")`/`require("engine.activate")` with re-auth; `require_csrf` stays; `registry_change_log.actor` = account id; the Permissions tab joins the Admin tab set. Platform plan: `guard()` gains permissions; the visual harness gains API sign-in; the launch-removal list executes here. Migrations `010`–`015` (amended 2026-09-07: `016` is the Seed Listings plan's and `017`–`059` are Census SP3-A's).
 
 ## 11. Open items
 
