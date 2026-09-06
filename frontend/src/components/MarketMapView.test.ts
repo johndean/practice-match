@@ -408,7 +408,9 @@ describe('MarketMapView — onMounted guards and error handling', () => {
     release();
     await vi.waitUntil(() => wrapper.find('button[aria-label="Zoom in"]').exists(), { timeout: 5000, interval: 1 });
     await flushPromises();
-    // Once the engine is ready, onMounted's own drawOverlay()/drawPins() paint the final props.
+    // Once the engine is ready, the `status` flip runs the merged watcher and THAT paints the
+    // final props: onMounted has not called drawOverlay()/drawPins() itself since V5 (see the
+    // watcher's own comment in MarketMapView.vue) — calling them there built every layer twice.
     expect(stub.calls.some((c) => c.fn === 'marker'), 'the engine should draw once it exists').toBe(true);
   });
 });
@@ -458,7 +460,10 @@ describe('MarketMapView — practice pins: active state, click-through', () => {
 
     // Read the group's current CONTENTS, not the raw call log: drawPins() clears before it
     // refills, so the group is the state of the map while the log is its whole history.
-    // (Every other test in this file asserts the same way, via .added snapshots.)
+    // (This case and the next reach for the group BY INDEX rather than through
+    // `layerGroups(stub)`, which every V3 case uses: neither fixture passes an `activeLayer`,
+    // so nothing fills the overlay group and a helper that labels each group by the renderer
+    // that filled it has nothing to read. Everywhere the overlay is drawn, use the helper.)
     const pinsGroup = (stub.map.added as { clearLayers?: unknown; added: unknown[] }[]).filter((g) => g.clearLayers)[1];
     expect(pinsGroup.added).toHaveLength(2);
     expect((pinsGroup.added[0] as { options: { zIndexOffset: number } }).options.zIndexOffset).toBe(0);    // ps[0], not active
@@ -618,7 +623,7 @@ describe('MarketMapView — the V3 map', () => {
       props: v3Props({ communities: [{ name: 'Cedar Park', lat: 30.5, lng: -97.8, metricName: 'Median household income', sourceNote: 'ACS 2019–2023', values: { income: { t: 0.5, label: '$118,400', color: '#4c9a6a' } } }] })
     });
     await flushPromises();
-    const overlay = (stub.map.added as StubGroup[]).filter((g) => g.clearLayers)[0];
+    const overlay = layerGroups(stub).overlay;
     const tip = (overlay.added[0] as unknown as { tooltip: { text: string; opts: unknown } }).tooltip;
     expect(tip.opts).toEqual({ sticky: true, className: 'rf-tip' });
     // L6: the WHOLE string, against the reference's literal (MarketMapV3.jsx:256-264). Four
@@ -641,7 +646,7 @@ describe('MarketMapView — the V3 map', () => {
       props: v3Props({ communities: [{ name: 'Cedar Park', lat: 30.5, lng: -97.8, values: { income: { t: 0.5, label: '$118K', color: '#4c9a6a' } } }], onArea: (n: string) => seen.push(n) })
     });
     await flushPromises();
-    const overlay = (stub.map.added as StubGroup[]).filter((g) => g.clearLayers)[0];
+    const overlay = layerGroups(stub).overlay;
     (overlay.added[0] as unknown as { on_click: () => void }).on_click();
     expect(seen).toEqual(['Cedar Park']);
   });
@@ -650,7 +655,7 @@ describe('MarketMapView — the V3 map', () => {
     const stub = installLeafletStub();
     mount(MarketMapView, { props: v3Props({ showDrive: true, driveCenter: [30.5052, -97.8203] }) });
     await flushPromises();
-    const overlay = (stub.map.added as StubGroup[]).filter((g) => g.clearLayers)[0];
+    const overlay = layerGroups(stub).overlay;
     expect(overlay.added.filter((l) => typeof l.options?.radius === 'number')).toHaveLength(1);
     const circles = stub.calls.filter((c) => c.fn === 'circle');
     expect(circles).toHaveLength(1);
@@ -678,7 +683,7 @@ describe('MarketMapView — the V3 map', () => {
     mount(MarketMapView, { props: v3Props({ practices: practices(1) }) });
     await flushPromises();
     expect(stub.calls.find((c) => c.fn === 'divIcon')!.args[0]).toMatchObject({ className: '', iconSize: [78, 34], iconAnchor: [39, 34] });
-    const pins = (stub.map.added as StubGroup[]).filter((g) => g.clearLayers)[1];
+    const pins = layerGroups(stub).pins;
     expect((pins.added[0] as unknown as { tooltip: { opts: unknown } }).tooltip.opts)
       .toEqual({ direction: 'top', offset: [0, -34], className: 'rf-callout', permanent: false, opacity: 1 });
   });
@@ -687,7 +692,7 @@ describe('MarketMapView — the V3 map', () => {
     const stub = installLeafletStub();
     mount(MarketMapView, { props: v3Props({ practices: practices(2), activeId: 'p1' }) });
     await flushPromises();
-    const pins = (stub.map.added as StubGroup[]).filter((g) => g.clearLayers)[1];
+    const pins = layerGroups(stub).pins;
     const selected = pins.added.find((l) => (l as unknown as { tooltip?: { opts: { permanent: boolean } } }).tooltip?.opts.permanent)!;
     expect((selected as unknown as { tooltip: { opts: unknown } }).tooltip.opts)
       .toEqual({ direction: 'top', offset: [0, -22], className: 'rf-callout', permanent: true, opacity: 1 });
@@ -727,7 +732,7 @@ describe('MarketMapView — the V3 map', () => {
     const seen: string[] = [];
     mount(MarketMapView, { props: v3Props({ practices: practices(1), onSelect: (id: string) => seen.push(id) }) });
     await flushPromises();
-    const pins = (stub.map.added as StubGroup[]).filter((g) => g.clearLayers)[1];
+    const pins = layerGroups(stub).pins;
     (pins.added[0] as unknown as { on_click: () => void }).on_click();
     expect(seen).toEqual(['p0']);
   });
@@ -785,7 +790,7 @@ describe('MarketMapView — the V3 map', () => {
     const stub = installLeafletStub();
     const w = mount(MarketMapView, { props: v3Props({ onBasemap: () => {}, onArea: null }) });
     await flushPromises();
-    const overlay = (stub.map.added as StubGroup[]).filter((g) => g.clearLayers)[0];
+    const overlay = layerGroups(stub).overlay;
     expect(() => (overlay.added[0] as unknown as { on_click: () => void }).on_click()).not.toThrow();
     await w.setProps({ onBasemap: NO_FN });
     expect(w.findAll('button[aria-pressed]')).toHaveLength(0);
