@@ -121,6 +121,18 @@ const A2_4: Amendment = {
   replace: 'selectMarker: (id) => this.setState({ activeId: id }),', count: 1
 };
 
+/** A2.5 — same dead-code rule again: the top-level `selectMarker` A2.4 just trimmed is itself
+ *  never wired to any template prop. The only `on-select` bindings in the whole design are
+ *  `mob.selectMarker` (the mobileVals one, C13's own fix) on the mobile map mount and
+ *  `md.selectFromMap` on the desktop one — confirmed by grep against both the template region
+ *  and the built `App.vue`. Deleted outright, together with the now-orphaned blank line above
+ *  `isDetail:` it would otherwise leave doubled. */
+const A2_5: Amendment = {
+  id: 'A2.5', date: '2026-09-07', ruling: 'delete the unwired top-level selectMarker (zero-gaps review, same dead-code rule as A2.3)',
+  find: '      selectMarker: (id) => this.setState({ activeId: id }),\n',
+  replace: '', count: 1
+};
+
 export function amendments(): Amendment[] {
-  return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4];
+  return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5];
 }

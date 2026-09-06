@@ -102,15 +102,28 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     expect(v).toHaveProperty('isBrowse', false);
   });
 
-  // A2.4. The top-level `selectMarker` (distinct from `mobileVals.selectMarker`, which C13
-  // already fixed) is never wired to any template prop, but it still wrote the dead
-  // `browseSel` key alongside the live `activeId` key on every call. Per the ruling, the
-  // dead key is dropped and the live key is kept — the handler itself is untouched otherwise.
-  it('the top-level selectMarker keeps setting activeId but drops the dead browseSel key (A2.4)', () => {
+  // A2.5 (zero-gaps review, same dead-code rule as A2.3: a dead handler is dead code). The
+  // top-level `selectMarker` A2.4 trimmed is never wired to any template prop — App.vue's
+  // only `on-select` binding is `v.mob?.selectMarker`, the mobileVals one (`logic.js:972`) —
+  // so it is deleted outright. This supersedes A2.4's characterisation of its trimmed body:
+  // that test is retired here, in the same commit that removes the property it pinned.
+  it('the top-level selectMarker is gone; only the wired mobileVals one remains (A2.5)', () => {
     const v = c.renderVals();
-    expect(typeof v.selectMarker).toBe('function');
-    v.selectMarker('p2');
+    expect(v).not.toHaveProperty('selectMarker');
+    expect(typeof v.mob.selectMarker).toBe('function');
+  });
+
+  // C13 (unchanged by A2.5 — pinned here at the unit level for the first time, alongside the
+  // sibling handler's deletion, so the suite proves the deletion did not disturb it): tapping
+  // an already-selected pin a second time opens the detail; selecting a different id only
+  // updates the selection. `renderVals()` is re-derived between taps because `mobileVals`
+  // closes over `this.state` at call time, exactly as the real Vue render does.
+  it('mobileVals.selectMarker opens the detail on a second tap of the same pin (C13)', () => {
+    c.renderVals().mob.selectMarker('p2');
     expect(c.state).toMatchObject({ activeId: 'p2' });
-    expect(c.state).not.toHaveProperty('browseSel');
+    expect(c.state.screen).not.toBe('detail');
+
+    c.renderVals().mob.selectMarker('p2');
+    expect(c.state).toMatchObject({ screen: 'detail', detailId: 'p2' });
   });
 });

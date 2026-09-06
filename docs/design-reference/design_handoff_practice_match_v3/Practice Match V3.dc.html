@@ -3070,7 +3070,6 @@ class Component extends DCLogic {
       markers: list.map((p) => ({ id: p.id, lat: p.lat, lng: p.lng, priceLabel: this.money(p.price) })),
       activeId: s.activeId, hoverId: s.hoverId,
       resizeKey: s.screen + s.viewport,
-      selectMarker: (id) => this.setState({ activeId: id }),
 
       isDetail: s.screen === "detail",
       backToBrowse: () => this.setState({ screen: "browse" }),
