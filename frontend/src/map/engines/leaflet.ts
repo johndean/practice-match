@@ -99,7 +99,11 @@ export class LeafletMapEngine implements MapEngine {
   marker(pos: LatLng, o: MarkerOptions, group: string): Handle {
     if (this.destroyed) return NOOP_HANDLE;
     const icon = this.L.divIcon({ html: o.html, className: '', iconSize: o.size, iconAnchor: o.anchor });
-    const m = this.L.marker(pos, { icon, zIndexOffset: o.zIndexOffset ?? 0, interactive: o.interactive ?? true });
+    const m = this.L.marker(pos, {
+      icon, zIndexOffset: o.zIndexOffset ?? 0, interactive: o.interactive ?? true,
+      ...(o.keyboard === undefined ? {} : { keyboard: o.keyboard }),
+      ...(o.title === undefined ? {} : { title: o.title })
+    });
     if (typeof o.tooltip === 'string') m.bindTooltip(o.tooltip, { direction: 'top', offset: [0, -6] });
     else if (o.tooltip) m.bindTooltip(o.tooltip.html, tipOptions(o.tooltip));
     if (o.onClick) m.on('click', o.onClick);

@@ -598,6 +598,18 @@ describe('MarketMapView — the V3 map', () => {
     expect((stub.map as unknown as { pannedInside: unknown }).pannedInside).toEqual([[30.32, -97.74], { padding: [48, 110], animate: true }]);
   });
 
+  it('every practice pin is focusable and carries the reference\'s native title (MarketMapV3.jsx:288-289)', async () => {
+    const stub = installLeafletStub();
+    const one = { id: 'p0', lat: 30.31, lng: -97.75, name: 'Cedar Park Veterinary', priceLabel: '$1.45M' };
+    mount(MarketMapView, { props: v3Props({ practices: [one] }) });
+    await flushPromises();
+    // Leaflet turns these into the icon's tabindex and title attribute, so they are part of
+    // the design's DOM and the DOM oracle compares them.
+    const m = stub.calls.find((c) => c.fn === 'marker')!;
+    expect((m.args[1] as { keyboard: boolean }).keyboard).toBe(true);
+    expect((m.args[1] as { title: string }).title).toBe('Cedar Park Veterinary — $1.45M');
+  });
+
   it('clicking a pin reports its id through onSelect', async () => {
     const stub = installLeafletStub();
     const seen: string[] = [];

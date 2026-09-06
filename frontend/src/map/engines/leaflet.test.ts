@@ -462,6 +462,29 @@ describe('LeafletMapEngine — V3 area shading, tooltip specs and panInside', ()
     expect(pins[1].tooltip).toEqual({ text: 'Cedar Park — $118K', opts: { direction: 'top', offset: [0, -6] } });
   });
 
+  // MarketMapV3.jsx:288-289 — a practice pin is a FOCUSABLE icon carrying a native title
+  // ("<name> — <price>"). Leaflet renders `keyboard` as the icon's tabindex and `title` as its
+  // title attribute, so both are part of the design's DOM and V9's oracle compares them.
+  it('a marker forwards keyboard and title verbatim when the caller gives them', async () => {
+    const { stub, engine } = await mounted({ scaleControl: false, groups: ['pins'] });
+    engine.marker([30.5, -97.8], {
+      html: '<i></i>', size: [78, 34], anchor: [39, 34], zIndexOffset: 1000,
+      keyboard: true, title: 'Cedar Park Veterinary — $1.45M'
+    }, 'pins');
+    const m = stub.calls.find((c) => c.fn === 'marker')!;
+    expect(m.args[1]).toEqual({
+      icon: { icon: { html: '<i></i>', className: '', iconSize: [78, 34], iconAnchor: [39, 34] } },
+      zIndexOffset: 1000, interactive: true, keyboard: true, title: 'Cedar Park Veterinary — $1.45M'
+    });
+  });
+
+  it('a marker given neither keyboard nor title passes neither key, so nothing else on the map moves', async () => {
+    const { stub, engine } = await mounted({ scaleControl: false, groups: ['pins'] });
+    engine.marker([30.5, -97.8], { html: '<i></i>', size: [78, 34], anchor: [39, 34] }, 'pins');
+    const opts = stub.calls.find((c) => c.fn === 'marker')!.args[1] as Record<string, unknown>;
+    expect(Object.keys(opts).sort()).toEqual(['icon', 'interactive', 'zIndexOffset']);
+  });
+
   it('a marker handle can open its own tooltip — selection opens the callout programmatically, not only on hover', async () => {
     const { stub, engine } = await mounted({ scaleControl: false, groups: ['pins'] });
     const handle = engine.marker([30.5, -97.8], { html: '<i></i>', size: [78, 34], anchor: [39, 34], tooltip: { html: '<div>c</div>', permanent: true } }, 'pins');

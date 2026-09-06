@@ -121,7 +121,7 @@ function drawPins() {
     const selected = p.id === props.activeId;
     const handle = engine.marker([p.lat, p.lng], {
       html: practicePin(p.priceLabel, selected), size: [78, 34], anchor: [39, 34],
-      zIndexOffset: selected ? 1000 : 0,
+      zIndexOffset: selected ? 1000 : 0, keyboard: true, title: p.name + ' — ' + p.priceLabel,
       tooltip: { html: practiceCallout(p), direction: 'top', offset: [0, selected ? -22 : -34], className: 'rf-callout', permanent: selected, opacity: 1 },
       onClick: () => props.onSelect && props.onSelect(p.id)
     }, 'pins');

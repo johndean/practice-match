@@ -10,7 +10,9 @@ export interface TooltipSpec { html: string; sticky?: boolean; permanent?: boole
 /** V3's drive-time ring (C7): an unfilled, dashed, stroked circle. Deliberately NOT CircleStyle,
  *  which describes a filled, strokeless disc — the two option sets are mutually exclusive. */
 export interface RingStyle { color: string; weight: number; dashArray?: string; fill: false; interactive?: boolean }
-export interface MarkerOptions { html: string; size: [number, number]; anchor: [number, number]; tooltip?: string | TooltipSpec; zIndexOffset?: number; interactive?: boolean; onClick?: () => void }
+/** `keyboard` and `title` are part of the design's DOM, not decoration: Leaflet renders the
+ *  first as the icon's tabindex and the second as its title attribute (MarketMapV3.jsx:288-289). */
+export interface MarkerOptions { html: string; size: [number, number]; anchor: [number, number]; tooltip?: string | TooltipSpec; zIndexOffset?: number; interactive?: boolean; keyboard?: boolean; title?: string; onClick?: () => void }
 export interface Handle { remove(): void; openTooltip?(): void }
 
 /** The only map API the components use — exactly the surface the handoff's map components call. */
