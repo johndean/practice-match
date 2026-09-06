@@ -53,7 +53,12 @@ describe('convert — template constructs', () => {
   it('maps x-import and image-slot to the Vue components with bound props and drops hint-* attributes', () => {
     const { template } = convert('<x-import component="MarketMapV3" from="./MarketMapV3.jsx" practices="{{ md.practices }}" active-id="{{ md.activeId }}" on-select="{{ md.selectFromMap }}" hint-size="100%,100%"></x-import><image-slot id="{{ p.photoId }}" shape="rect" src="{{ p.photoSrc }}" placeholder="{{ p.photoLabel }}"></image-slot>');
     expect(template).toBe('<div class="sc-host-x" style="display: contents"><MarketMapView :practices="v.md?.practices" :active-id="v.md?.activeId" :on-select="v.md?.selectFromMap"></MarketMapView></div><ImageSlot :id="v.p?.photoId" shape="rect" :src="v.p?.photoSrc" :placeholder="v.p?.photoLabel"></ImageSlot>');
-    expect(convert('<x-import component="MarketMap" from="./MarketMap.jsx" practices="{{ md.practices }}"></x-import>').template).toBe('<div class="sc-host-x" style="display: contents"><MarketMapView :practices="v.md?.practices"></MarketMapView></div>');
+    // `MarketMap` was V2's name for the same component and is no longer grammar: V3's design
+    // file contains zero occurrences of the token, so the mapping was dead code by spec D12's
+    // own reasoning and went the way `AustinMap` did (final review M4, ruling 2026-09-07).
+    // Anchored: an unanchored string would also match `MarketMapV3`, which is still known.
+    expect(() => convert('<x-import component="MarketMap" from="./MarketMap.jsx" practices="{{ md.practices }}"></x-import>'))
+      .toThrow(/^unknown x-import component MarketMap$/);
   });
 
   // support.js `walkXImport` wraps every <x-import> in a host div — `wrap` is
@@ -63,9 +68,9 @@ describe('convert — template constructs', () => {
   // the host style is always exactly `display: contents`. Rather than half-implement
   // hostPositionStyle for a case the design never exercises, the transpiler refuses it.
   it('wraps every x-import in the runtime\'s sc-host-x display:contents host, and refuses an x-import style attribute', () => {
-    expect(convert('<div><x-import component="MarketMap" from="./MarketMap.jsx"></x-import></div>').template)
+    expect(convert('<div><x-import component="MarketMapV3" from="./MarketMapV3.jsx"></x-import></div>').template)
       .toBe('<div><div class="sc-host-x" style="display: contents"><MarketMapView></MarketMapView></div></div>');
-    expect(() => convert('<x-import component="MarketMap" from="./MarketMap.jsx" style="top: 0;"></x-import>'))
+    expect(() => convert('<x-import component="MarketMapV3" from="./MarketMapV3.jsx" style="top: 0;"></x-import>'))
       .toThrow(/x-import .*style/);
     // An unknown component is the more fundamental fault: it must be reported first even
     // when the element also carries the unsupported style attribute.
@@ -83,8 +88,8 @@ describe('convert — template constructs', () => {
       { name: 'plain element, with style', src: '<div style="top: 0;"></div>', expected: 'ok' },
       { name: 'image-slot (known), no style', src: '<image-slot id="x"></image-slot>', expected: 'ok' },
       { name: 'image-slot (known), with style', src: '<image-slot id="x" style="top: 0;"></image-slot>', expected: 'ok' },
-      { name: 'x-import known, no style', src: '<x-import component="MarketMap" from="./m.jsx"></x-import>', expected: 'ok' },
-      { name: 'x-import known, with style', src: '<x-import component="MarketMap" from="./m.jsx" style="top: 0;"></x-import>', expected: /^x-import with a style attribute is unsupported/ },
+      { name: 'x-import known, no style', src: '<x-import component="MarketMapV3" from="./m.jsx"></x-import>', expected: 'ok' },
+      { name: 'x-import known, with style', src: '<x-import component="MarketMapV3" from="./m.jsx" style="top: 0;"></x-import>', expected: /^x-import with a style attribute is unsupported/ },
       { name: 'x-import UNKNOWN, no style', src: '<x-import component="NoSuchThing" from="./n.jsx"></x-import>', expected: /^unknown x-import component NoSuchThing$/ },
       { name: 'x-import UNKNOWN, with style', src: '<x-import component="NoSuchThing" from="./n.jsx" style="top: 0;"></x-import>', expected: /^unknown x-import component NoSuchThing$/ },
       // The degenerate case: no `component` attribute at all is still an unknown component,

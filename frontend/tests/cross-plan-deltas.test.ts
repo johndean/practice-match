@@ -148,6 +148,13 @@ describe('the Browse V3 plan describes what shipped', () => {
     expect(md).toContain('the `mobile-sheet` state');
   });
 
+  // The sixth dead-code entry, recorded where the other five are (M4).
+  it('the V11 checklist carries the `MarketMap` grammar entry as its sixth deletion (M4)', () => {
+    const md = read(BROWSE_V3);
+    expect(md).toContain("*(added 2026-09-07, final review M4)*");
+    expect(readSpec(BROWSE_V3_SPEC)).toContain("its `MarketMap: 'MarketMapView'` entry follows in its own commit");
+  });
+
   // The basemap licence is one decision record (Census plan). V12 Step 6's own prose named
   // three anchors, none of which is where the record or its references landed (M3).
   it('V12 Step 6 names the anchors the record actually uses (M3)', () => {
