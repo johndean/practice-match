@@ -5650,6 +5650,45 @@ concurrency = ["thread", "greenlet"]
 - [ ] **Step 3: GREEN** — `bash tests/scripts/test_verify_deploy.sh`; `bash tests/scripts/test_verify_image_sh.sh`; `poetry run pytest -q -W error --cov=app --cov-report=term-missing` (record the `app/static.py`, `app/config.py`, `app/api/interest.py` lines: all 100 %); `poetry run diff-cover coverage.xml --compare-branch=origin/main --fail-under=100` after `--cov-report=xml` (if `origin/main` is fetched); mypy; ruff; gitleaks; the real `scripts/verify-image.sh` (seven OK lines).
 - [ ] **Step 4: Commit** — `git add` the fifteen files listed · `fix(review): verifier asserts site_mode per environment (QA never coming_soon, production coming_soon unless EXPECT_SITE_MODE); PUBLIC_INDEXING documented as shipped; names-only variable listing; coverage gaps closed; verify-image checks can fail; no minute-boundary flake; gitleaks allowlist narrowed` with the trailer.
 
+#### Task 12 — fix round 1 (2026-09-06, from the review: I1–I2 Important, M-3…M-7 Minor; fixed at source)
+
+**Files:** Modify `app/config.py`, `tests/test_config.py`, `DEPLOY.md`, `tests/test_docs.py`, `tests/scripts/test_verify_deploy.sh`, `tests/api/test_interest.py`. (M-5, the stale `sed` in this plan's historical steps, is fixed by the controller in the plan commit.)
+
+- [ ] **FR1 Step 1: failing tests.**
+
+I1 — `tests/test_config.py`:
+```python
+def test_load_settings_names_a_model_level_error_cleanly(monkeypatch, capsys):
+    """A model_validator error has an empty loc; the boot message must still be one clean line (I1)."""
+    from app.config import load_settings
+    monkeypatch.setenv("ENVIRONMENT", "qa")
+    monkeypatch.setenv("SITE_MODE", "coming_soon")
+    with pytest.raises(SystemExit) as info:
+        load_settings()
+    assert info.value.code == 1
+    err = capsys.readouterr().err
+    assert "SITE_MODE=coming_soon is never valid on QA" in err and "Traceback" not in err and "IndexError" not in err
+```
+(RED: `IndexError: tuple index out of range`.) M-6 — in `test_qa_never_runs_coming_soon_mode` add `Settings(**base, environment="QA", site_mode="coming_soon")` to the cases that must raise.
+I2 — `tests/test_docs.py`: assert `"EXPECT_SITE_MODE=app scripts/deploy.sh production" in DEPLOY.md` and `"EXPECT_SITE_MODE=app scripts/verify-deploy.sh production" not in DEPLOY.md` (RED).
+M-3 — `tests/scripts/test_verify_deploy.sh`: case `EXPECT_SITE_MODE=coming_soon … verify-deploy.sh QA` against the `coming_ok` server → must still FAIL naming `site_mode` (QA takes no override). (Passes today — record it; it pins the invariant.)
+M-4 — `tests/api/test_interest.py`: in the three retried endpoint tests the subject is created INSIDE `run()` (`ip = _ip()` / `edge_saw = _ip()` as `run`'s first line; the peer test constructs its `AsyncClient` inside `run`), so a retry gets a fresh bucket. Prove with a probe (not committed): a subject with 3 hits already in the bucket → the old helper's retry fails at i=2, the new one passes.
+M-7 — `tests/test_docs.py::test_gitleaks_config_parses`: also assert `(?i)^frontend/tests/.*` is absent.
+
+- [ ] **FR1 Step 2: implement.**
+`app/config.py` `load_settings`:
+```python
+    except ValidationError as exc:
+        names = ", ".join(sorted({str(e["loc"][0]).upper() if e["loc"] else e["msg"] for e in exc.errors()}))
+        print(f"[config] missing or invalid environment variables: {names}", file=sys.stderr)
+        raise SystemExit(1) from None
+```
+and the guard compares `self.environment.lower() == "qa"` (M-6).
+`DEPLOY.md` launch flip: "`railway variable set SITE_MODE=app --service api --environment production --skip-deploys` (and `--service worker`) → decide `PUBLIC_INDEXING` → `EXPECT_SITE_MODE=app scripts/deploy.sh production` (the prefix reaches the verifier `deploy.sh` runs; without it the deploy's own verification refuses `app` on production) → change the verifier's production default to `app` in the same release."
+
+- [ ] **FR1 Step 3: GREEN** — shell test (19 cases); `poetry run pytest -q -W error --cov=app --cov-report=term-missing` (config.py 100 %); mypy; ruff.
+- [ ] **FR1 Step 4: Commit** — `git add app/config.py tests/test_config.py DEPLOY.md tests/test_docs.py tests/scripts/test_verify_deploy.sh tests/api/test_interest.py` · `fix(review): boot message stays one line for model-level errors; launch flip documented through deploy.sh; QA-no-override pinned; retry gets a fresh bucket; case-insensitive guard` with the trailer.
+
 ---
 
 ## Red-team review (2026-09-05) — findings and dispositions
