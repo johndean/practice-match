@@ -1,0 +1,7 @@
+# Local amendments to the V3 Rev 2 design (spec D15)
+
+`Practice Match V3.dc.html` = `Practice Match V3.rev2.dc.html` (pristine, never edited) + the entries below, applied by `frontend/tests/design-amendments.ts` and proved byte-for-byte by `frontend/tests/design-amendments.test.ts`. They retire when a re-issued bundle carries them.
+
+| Id | Date | John's ruling | What changes |
+|---|---|---|---|
+| A1 | 2026-09-07 | "keep the V2 header and do not restyle header or fonts" | 23 template elements: every display-size heading paired with V2 takes V2's `text-transform`/`letter-spacing` values in place; the key-fact values `{{ m.v }}` return to V2's uppercase `.005em`; `{{ resultHeadline }}` is untouched (V3's only occurrence, in the mobile list, already equals V2's). No script, no `_ds/**`, no site header (byte-identical V2↔V3 already). |
