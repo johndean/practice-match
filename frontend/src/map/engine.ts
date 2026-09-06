@@ -8,7 +8,9 @@ export interface AreaStyle { fillColor: string; fillOpacity: number; stroke?: bo
  *  mosaic cell, and the persistent `rf-callout` above a selected practice pin (C5, C6). */
 export interface TooltipSpec { html: string; sticky?: boolean; permanent?: boolean; direction?: 'top' | 'bottom'; offset?: [number, number]; className?: string; opacity?: number }
 /** V3's drive-time ring (C7): an unfilled, dashed, stroked circle. Deliberately NOT CircleStyle,
- *  which describes a filled, strokeless disc — the two option sets are mutually exclusive. */
+ *  which describes a filled, strokeless disc — the two option sets are mutually exclusive.
+ *  `fill: false` DOCUMENTS that contract rather than carrying an input: `ring()` always draws
+ *  unfilled and never reads this field, so a call site cannot switch the fill on. */
 export interface RingStyle { color: string; weight: number; dashArray?: string; fill: false; interactive?: boolean }
 /** `keyboard` and `title` are part of the design's DOM, not decoration: Leaflet renders the
  *  first as the icon's tabindex and the second as its title attribute (MarketMapV3.jsx:288-289). */

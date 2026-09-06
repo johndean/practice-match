@@ -71,9 +71,11 @@ onMounted(async () => {
     // and NO scale control — Leaflet pins it bottom-right, directly under V3's Layers button.
     await e.mount(host.value, { center: props.center, zoom: props.zoom, basemap: props.basemap, zoomControl: false, scaleControl: false, groups: ['overlay', 'pins'] });
     engine = e;
+    // The merged watcher below has `status` among its deps, so flipping it here IS the initial
+    // draw — exactly MarketMapV3.jsx's shape, whose effects run at mount, bail on
+    // `!mapRef.current`, and run once when status flips. Calling drawOverlay()/drawPins()
+    // here as well (the V2 shape this file carried) built every layer twice per mount.
     status.value = 'ready';
-    drawOverlay();
-    drawPins();
   } catch { status.value = 'error'; }
 });
 onBeforeUnmount(() => { if (engine) { engine.destroy(); engine = null; } });
@@ -86,9 +88,8 @@ watch(() => props.resizeKey, () => { if (engine) engine.show(); });
 function drawOverlay() {
   if (!engine) return;
   engine.clear('overlay');
-  const hub = props.driveCenter || props.center;
-  if (props.showDrive && hub) {
-    engine.ring(hub, 16000, { color: '#003a70', weight: 1.5, dashArray: '4 4', fill: false, interactive: false }, 'overlay');
+  if (props.showDrive && props.driveCenter) {
+    engine.ring(props.driveCenter, 16000, { color: '#003a70', weight: 1.5, dashArray: '4 4', fill: false, interactive: false }, 'overlay');
   }
   if (!props.activeLayer || !props.communities.length) return;
   const bbox = mosaicBbox(props.communities);

@@ -1,12 +1,13 @@
 // @vitest-environment jsdom
 //
 // The one thing about MarketMapView that no other test can see: the ORDER in which the
-// overlay (community bubbles, drive-time rings) and the price pins are redrawn. Leaflet
-// gives every marker `z-index = pos.y + zIndexOffset`, so a bubble and the pin above it
-// tie and DOM order in the shared markerPane decides which paints on top — and a layer
-// group's markers move to the end of that pane every time the group is cleared and
-// refilled. MarketMap.jsx runs effect 5 (overlay) before effect 6 (pins) on every commit,
-// so the pins are always re-added last. The Vue port must do the same on every trigger.
+// overlay (V3's community mosaic rectangles and the dashed drive-time ring) and the practice
+// pins are redrawn. Leaflet gives every marker `z-index = pos.y + zIndexOffset`, so two
+// layers can tie and DOM order in the shared panes decides which paints on top — and a layer
+// group's layers move to the end of their pane every time the group is cleared and refilled.
+// MarketMapV3.jsx runs its area effect (`:220-268`) before its pin effect (`:270-310`) on
+// every commit, so the pins are always re-added last. The Vue port must do the same on every
+// trigger, which is why one merged watcher owns both draws.
 //
 // The engine is NOT mocked: the component obtains it through `createEngine()` exactly as it
 // does in the app, and the real `LeafletMapEngine` runs against a recording fake of the
@@ -143,9 +144,9 @@ describe('MarketMapView — redraw order', () => {
     const from = stub.calls.length;
     await wrapper.setProps({ practices: practices(1, '$1.50M') });
 
-    // Both groups rebuild, overlay first — MarketMap.jsx's effect 5 then effect 6. That the
-    // overlay redraws at all on a pins-only change is the deliberate superset documented on
-    // the watcher: one callback is the only way to promise the relative order.
+    // Both groups rebuild, overlay first — MarketMapV3.jsx's area effect then its pin effect.
+    // That the overlay redraws at all on a pins-only change is the deliberate superset
+    // documented on the watcher: one callback is the only way to promise the relative order.
     expectOverlayBeforePins(stub);
 
     // The same invariant read off the divIcon stream, stated semantically rather than as a
@@ -183,11 +184,11 @@ describe('MarketMapView — redraw order', () => {
 
   // Phase 2/6, root cause measured rather than assumed. Two separate watchers are unsafe in
   // TWO independent ways, and a probe with the overlay watcher declared FIRST (the faithful
-  // mirror of MarketMap.jsx's effect 5 → effect 6) demonstrated both:
+  // mirror of MarketMapV3.jsx's area effect → pin effect) demonstrated both:
   //
   //   1. an OVERLAY-ONLY trigger (`activeLayer`, `communities`, a drive-time toggle) fires
-  //      only the overlay watcher, so the community bubbles are re-attached to the shared
-  //      markerPane AFTER the untouched pins and paint on top of them — overlay seq 12,13
+  //      only the overlay watcher, so the mosaic rectangles are re-attached to the shared
+  //      panes AFTER the untouched pins and paint on top of them — overlay seq 12,13
   //      against a pin still at 11. Declaration order cannot help: the other watcher never
   //      ran at all;
   //   2. when BOTH fire, Vue's pre-flush queue orders the two jobs by when their sources
@@ -250,7 +251,7 @@ describe('MarketMapView — group identification is by role, not creation order'
 
   it('recognises a drive-time ring as overlay content even though it is a circle, not a marker', async () => {
     const { stub, wrapper } = await mounted({ communities: 2, practices: 1 });
-    await wrapper.setProps({ showDrive: true });
+    await wrapper.setProps({ showDrive: true, driveCenter: [30.5, -97.8] });
     const { overlay, pins } = layerGroups(stub);
     expect(overlay.added.filter((l) => typeof l.options?.radius === 'number')).toHaveLength(1);
     expect(pins.added).toHaveLength(1);
@@ -376,9 +377,8 @@ describe('MarketMapView — practice pins: active state, click-through', () => {
     await vi.waitUntil(() => wrapper.find('button[aria-label="Zoom in"]').exists(), { timeout: 5000, interval: 1 });
     await flushPromises();
 
-    // Read the group's current CONTENTS, not the raw call log: `status` flipping to 'ready'
-    // is itself one of the merged watcher's deps, so it redraws once more right after
-    // onMounted's own direct call — idempotently, since drawPins() clears before it refills.
+    // Read the group's current CONTENTS, not the raw call log: drawPins() clears before it
+    // refills, so the group is the state of the map while the log is its whole history.
     // (Every other test in this file asserts the same way, via .added snapshots.)
     const pinsGroup = (stub.map.added as { clearLayers?: unknown; added: unknown[] }[]).filter((g) => g.clearLayers)[1];
     expect(pinsGroup.added).toHaveLength(2);
@@ -468,17 +468,20 @@ describe('MarketMapView — the V3 map', () => {
   // `{ type: String, default: null }` widens to `string | undefined` — plain JS cannot spell
   // "String | null", which is what the design's own `data-props` declare (`Practice Match
   // V3.dc.html:324`) and what the generated App.vue passes. The nulls are load-bearing at
-  // runtime (Vue substitutes a prop's default for `undefined`, so `center: undefined` would
-  // silently restore the Austin centre the no-centre case is asserting the absence of), so
-  // the fixtures keep them and cross into vue-tsc's view of the props through this one
-  // helper rather than a cast at each of fourteen call sites.
-  type MountProps = Record<string, never>;
-  const asProps = (o: Record<string, unknown>): MountProps => o as MountProps;
+  // runtime: Vue substitutes a prop's DEFAULT for `undefined`, so `center: undefined` would
+  // silently restore the Austin centre the no-centre case asserts the absence of.
+  //
+  // So each null is cast on its own VALUE and the props object itself is left un-cast: a
+  // whole-object cast (`as Record<string, never>`) also silenced prop value typing, and
+  // `zoom: 'ten'` typechecked clean (fix round 1, L4). It no longer does.
+  const NO_ID = null as unknown as string;
+  const NO_FN = null as unknown as (...args: never[]) => unknown;
+  const NO_LATLNG = null as unknown as unknown[];
 
-  const v3Props = (over: Record<string, unknown> = {}) => asProps({
+  const v3Props = (over: Record<string, unknown> = {}) => ({
     practices: practices(3), communities: communities(4), activeLayer: 'income', basemap: 'map',
-    activeId: null, onSelect: null, onArea: null, center: [30.31, -97.75], zoom: 10,
-    driveCenter: null, showDrive: false, resizeKey: '', recenterKey: 0, ...over
+    activeId: NO_ID, onSelect: NO_FN, onArea: NO_FN, center: [30.31, -97.75], zoom: 10,
+    driveCenter: NO_LATLNG, showDrive: false, resizeKey: '', recenterKey: 0, ...over
   });
 
   it('mounts with no scale control and attribution on — the app owns the bottom-right corner for the Layers button', async () => {
@@ -495,13 +498,18 @@ describe('MarketMapView — the V3 map', () => {
     mount(MarketMapView, { props: v3Props() });
     await flushPromises();
     const rects = stub.calls.filter((c) => c.fn === 'rectangle');
-    expect(rects.length).toBeGreaterThan(0);
+    // Exactly one rectangle per mosaic cell, built ONCE — `toBeGreaterThan(0)` could not tell
+    // one draw from two, which is how the double draw at mount hid (M2).
+    expect(rects).toHaveLength(cellCount(4));
     expect(stub.calls.filter((c) => c.fn === 'canvas')).toHaveLength(1);
     for (const r of rects) {
       expect((r.args[1] as { renderer: unknown; fillOpacity: number; stroke: boolean }).renderer).toBe(stub.canvas);
       expect((r.args[1] as { fillOpacity: number }).fillOpacity).toBe(0.5);
       expect((r.args[1] as { stroke: boolean }).stroke).toBe(false);
       expect((r.args[1] as { fillColor: string }).fillColor).toBe('#4c9a6a');
+      // M1: a non-interactive Path takes no pointer events, so the rf-tip would never open
+      // and the cell click would never fire — the README acceptance criterion, in one word.
+      expect((r.args[1] as { interactive: boolean }).interactive).toBe(true);
     }
   });
 
@@ -534,10 +542,17 @@ describe('MarketMapView — the V3 map', () => {
     const overlay = (stub.map.added as StubGroup[]).filter((g) => g.clearLayers)[0];
     const tip = (overlay.added[0] as unknown as { tooltip: { text: string; opts: unknown } }).tooltip;
     expect(tip.opts).toEqual({ sticky: true, className: 'rf-tip' });
-    expect(tip.text).toContain('Cedar Park');
-    expect(tip.text).toContain('Median household income');
-    expect(tip.text).toContain('$118,400');
-    expect(tip.text).toContain('ACS 2019–2023');
+    // L6: the WHOLE string, against the reference's literal (MarketMapV3.jsx:256-264). Four
+    // substrings left the tip's own inline styles unguarded — `min-width:150px → 140px` used
+    // to survive — and tooltips are absent from V9's DOM oracle, so nothing else would notice.
+    expect(tip.text).toBe(
+      '<div style="font-family:ProximaNova,Arial,Helvetica,sans-serif;min-width:150px">' +
+        '<div style="font-size:12.5px;font-weight:800;color:#003a70">Cedar Park</div>' +
+        '<div style="font-size:11px;color:#494949;margin-top:3px">Median household income</div>' +
+        '<div style="font-size:15px;font-weight:800;color:#003a70;margin-top:1px">$118,400</div>' +
+        '<div style="font-size:10px;color:#767676;margin-top:5px">ACS 2019–2023</div>' +
+      '</div>'
+    );
   });
 
   it('clicking a mosaic cell reports its community through onArea', async () => {
@@ -559,18 +574,22 @@ describe('MarketMapView — the V3 map', () => {
     const overlay = (stub.map.added as StubGroup[]).filter((g) => g.clearLayers)[0];
     expect(overlay.added.filter((l) => typeof l.options?.radius === 'number')).toHaveLength(1);
     const circles = stub.calls.filter((c) => c.fn === 'circle');
-    expect(circles.length).toBeGreaterThan(0);
-    for (const c of circles) {
-      expect(c.args).toEqual([[30.5052, -97.8203], { radius: 16000, color: '#003a70', weight: 1.5, dashArray: '4 4', fill: false, interactive: false }]);
-    }
+    expect(circles).toHaveLength(1);
+    expect(circles[0].args).toEqual([[30.5052, -97.8203], { radius: 16000, color: '#003a70', weight: 1.5, dashArray: '4 4', fill: false, interactive: false }]);
   });
 
-  it('draws no ring when showDrive is false, and none when there is no centre to draw it around', async () => {
+  it('draws no ring when showDrive is false, and none when there is no drive centre to draw it around', async () => {
     const stub = installLeafletStub();
     const w = mount(MarketMapView, { props: v3Props({ showDrive: false, driveCenter: [30.5, -97.8] }) });
     await flushPromises();
     expect(stub.calls.filter((c) => c.fn === 'circle')).toHaveLength(0);
-    await w.setProps(asProps({ showDrive: true, driveCenter: null, center: null }));
+    // L1: the reference draws only for a real drive centre (MarketMapV3.jsx:230). The map's
+    // own centre is NOT a fallback, so turning the ring on without one still draws nothing.
+    await w.setProps({ showDrive: true, driveCenter: NO_LATLNG });
+    await flushPromises();
+    expect(stub.calls.filter((c) => c.fn === 'circle')).toHaveLength(0);
+    // …and with no map centre either, the view watcher's own `props.center &&` guards hold.
+    await w.setProps({ center: NO_LATLNG });
     await flushPromises();
     expect(stub.calls.filter((c) => c.fn === 'circle')).toHaveLength(0);
   });
@@ -608,6 +627,20 @@ describe('MarketMapView — the V3 map', () => {
     const m = stub.calls.find((c) => c.fn === 'marker')!;
     expect((m.args[1] as { keyboard: boolean }).keyboard).toBe(true);
     expect((m.args[1] as { title: string }).title).toBe('Cedar Park Veterinary — $1.45M');
+  });
+
+  it('draws each layer exactly ONCE per mount — the merged watcher owns the initial draw, as the reference\'s effects do', async () => {
+    const stub = installLeafletStub();
+    mount(MarketMapView, { props: v3Props({ practices: practices(1), activeId: 'p0', showDrive: true, driveCenter: [30.5, -97.8] }) });
+    await flushPromises();
+    // MarketMapV3.jsx's effects run at mount, bail on `!mapRef.current`, and run once when
+    // status flips. The port's merged watcher has `status` among its deps and does the same:
+    // onMounted must NOT also call drawOverlay()/drawPins() itself, or every layer — ~2 000
+    // canvas rectangles here — is built twice on a screen V10 mounts on a 390 px phone.
+    expect(stub.calls.filter((c) => c.fn === 'rectangle')).toHaveLength(cellCount(4));
+    expect(stub.calls.filter((c) => c.fn === 'circle')).toHaveLength(1);
+    expect(stub.calls.filter((c) => c.fn === 'marker')).toHaveLength(1);
+    expect((stub.map as unknown as { pannedInsideCount: number }).pannedInsideCount).toBe(1);
   });
 
   it('clicking a pin reports its id through onSelect', async () => {
@@ -675,7 +708,7 @@ describe('MarketMapView — the V3 map', () => {
     await flushPromises();
     const overlay = (stub.map.added as StubGroup[]).filter((g) => g.clearLayers)[0];
     expect(() => (overlay.added[0] as unknown as { on_click: () => void }).on_click()).not.toThrow();
-    await w.setProps(asProps({ onBasemap: null }));
+    await w.setProps({ onBasemap: NO_FN });
     expect(w.findAll('button[aria-pressed]')).toHaveLength(0);
   });
 

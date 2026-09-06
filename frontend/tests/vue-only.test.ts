@@ -22,8 +22,13 @@ describe('the app is Vue-only', () => {
     for (const f of walk(SRC).filter((f) => /\.(vue|ts|js)$/.test(f))) {
       const src = readFileSync(f, 'utf8');
       if (/\bfrom\s+['"]react(-dom)?(\/[^'"]*)?['"]/.test(src)) offenders.push(`${relative(SRC, f)}: react import`);
+      // A side-effect import (`import 'react';`) and a dynamic one (`import('react')`) both
+      // bundle React without the word `from` anywhere near it.
+      if (/\bimport\s+['"]react(-dom)?(\/[^'"]*)?['"]/.test(src)) offenders.push(`${relative(SRC, f)}: bare react import`);
+      if (/\bimport\(\s*['"]react(-dom)?(\/[^'"]*)?['"]\s*\)/.test(src)) offenders.push(`${relative(SRC, f)}: dynamic react import`);
       if (/\brequire\(\s*['"]react(-dom)?['"]\s*\)/.test(src)) offenders.push(`${relative(SRC, f)}: react require`);
       if (/\bfrom\s+['"][^'"]+\.jsx['"]/.test(src)) offenders.push(`${relative(SRC, f)}: .jsx import`);
+      if (/\bimport\(\s*['"][^'"]+\.jsx['"]\s*\)/.test(src)) offenders.push(`${relative(SRC, f)}: dynamic .jsx import`);
     }
     expect(offenders).toEqual([]);
   });
@@ -41,7 +46,12 @@ describe('the app is Vue-only', () => {
     expect(js.length, 'no built bundle to check — run npm run build first').toBeGreaterThan(0);
     const offenders = js.filter((f) => {
       const text = readFileSync(join(DIST, f), 'utf8');
-      return text.includes('__REACT_DEVTOOLS_GLOBAL_HOOK__') || text.includes('react-dom') || /\breact\.production\.min\b/.test(text);
+      // The first three markers are react-dom-centric; the element symbol is React itself, so
+      // a bundled plain `react` (no DOM renderer) is caught too, minified either way.
+      return text.includes('__REACT_DEVTOOLS_GLOBAL_HOOK__') || text.includes('react-dom')
+        || /\breact\.production\.min\b/.test(text)
+        || text.includes('Symbol.for("react.') || text.includes("Symbol.for('react.")
+        || /\breact\.element\b/.test(text);
     });
     expect(offenders).toEqual([]);
   });

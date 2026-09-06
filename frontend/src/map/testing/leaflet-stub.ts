@@ -17,7 +17,7 @@ export class FakeMap { added: unknown[] = []; handlers: Record<string, () => voi
   getZoom() { return this.zoom; } getCenter() { const c = this.center as [number, number]; return { lat: c[0], lng: c[1] }; }
   zoomIn() { this.zoom += 1; } zoomOut() { this.zoom -= 1; } invalidateSize() { this.invalidated += 1; }
   on(ev: string, cb: () => void) { ev.split(' ').forEach((e) => { this.handlers[e] = cb; }); } off(ev: string) { ev.split(' ').forEach((e) => { delete this.handlers[e]; }); }
-  removeLayer(l: unknown) { this.added = this.added.filter((x) => x !== l); } remove() { (this as any).removed = true; } fitBounds(b: unknown, o?: unknown) { (this as any).fitted = [b, o]; } panInside(pos: unknown, o?: unknown) { (this as any).pannedInside = [pos, o]; } }
+  removeLayer(l: unknown) { this.added = this.added.filter((x) => x !== l); } remove() { (this as any).removed = true; } fitBounds(b: unknown, o?: unknown) { (this as any).fitted = [b, o]; } panInside(pos: unknown, o?: unknown) { (this as any).pannedInside = [pos, o]; (this as any).pannedInsideCount = ((this as any).pannedInsideCount ?? 0) + 1; } }
 
 export function installLeafletStub(): LeafletStub {
   SEQ = 0;
