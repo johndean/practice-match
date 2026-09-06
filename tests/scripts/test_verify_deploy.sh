@@ -36,7 +36,7 @@ trap cleanup EXIT
 railway_calls() { wc -l < "$FAKE_RAILWAY_LOG" | tr -d ' '; }
 
 # start_server <mode>. Modes: ok | spa_missing | deep_503 | no_postgis | no_site_mode |
-#   coming_ok | coming_wrong_shell | coming_interest_500
+#   coming_ok | coming_wrong_shell | coming_interest_500 | coming_leak
 # Binds port 0 (the OS picks a free ephemeral port) and prints it, once, before serving —
 # fixed ports (8765-8768) collided under a concurrent run of this same script (fix round 3,
 # re-review observation), and a bind failure in the backgrounded server was otherwise
@@ -57,12 +57,19 @@ if MODE == "no_postgis":
     del BODY["db"]["postgis_version"]
 if MODE == "no_site_mode":
     del BODY["site_mode"]
-if MODE in ("coming_ok", "coming_wrong_shell", "coming_interest_500"):
+if MODE in ("coming_ok", "coming_wrong_shell", "coming_interest_500", "coming_leak"):
     BODY["site_mode"] = "coming_soon"
 
 SHELL_OK = b'<!doctype html><div id="app"></div>'
 SHELL_BAD = b'<!doctype html><p>404 - no app shell here</p>'
 COMING_SHELL = "<!doctype html><title>VIN Foundation — Coming Soon</title>".encode("utf-8")
+# Carries the coming-soon title AND a marketplace-only marker (its UI-kit stylesheet,
+# frontend/index.html) plus the shared #app mount point both shells use — a leaked
+# marketplace bundle behind a patched <title> (FR1 C1).
+LEAK_SHELL = (
+    "<!doctype html><title>VIN Foundation — Coming Soon</title>"
+    '<link rel="stylesheet" href="/ds/ui_kits/vin/kit.css"><div id="app"></div>'
+).encode("utf-8")
 
 class H(BaseHTTPRequestHandler):
     def _send(self, code, ctype, payload):
@@ -76,6 +83,8 @@ class H(BaseHTTPRequestHandler):
         elif self.path in ("/", "/browse"):
             if MODE == "coming_wrong_shell":
                 self._send(200, "text/html", SHELL_OK)  # marketplace shell, no coming-soon title
+            elif MODE == "coming_leak":
+                self._send(200, "text/html", LEAK_SHELL)
             elif MODE in ("coming_ok", "coming_interest_500"):
                 self._send(200, "text/html", COMING_SHELL)
             else:
@@ -184,6 +193,18 @@ if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash script
   fail "a healthz body missing site_mode must fail the script; it exited 0 with: $out"
 fi
 [[ "$out" == *"site_mode missing"* ]] || fail "the missing-site_mode failure must name itself; got: $out"
+[[ "$out" != *"Traceback"* ]] || fail "the failure must be one clean FAIL line, not a Python traceback; got: $out"
+stop_server
+
+# --- 11. coming-soon mode but the marketplace shell leaks through (FR1 C1) ------
+# Both shells mount on #app, so a patched <title> alone cannot prove the marketplace
+# bundle isn't also being served; the script must also check for absence of the
+# marketplace-only markers (its own title, its UI-kit stylesheet).
+start_server coming_leak
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
+  fail "a leaked marketplace shell in coming-soon mode must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"marketplace shell served in coming-soon mode"* ]] || fail "the leak failure must name itself; got: $out"
 stop_server
 
 # --- no case anywhere in this suite may reach the Railway CLI ------------------

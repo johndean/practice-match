@@ -34,51 +34,65 @@ BASE="${BASE%/}"
 EXPECT_SHA="${EXPECT_SHA:-$(git rev-parse --short HEAD 2>/dev/null || true)}"
 
 echo "→ GET $BASE/api/healthz"
-# Piped, not process-substituted, so pipefail propagates a curl failure (-f exits
-# non-zero on 4xx/5xx) instead of handing python an empty body. -sS: no progress
-# meter, but real errors still reach stderr.
-curl -fsS --max-time 20 "$BASE/api/healthz" | WANT="$WANT" EXPECT_SHA="$EXPECT_SHA" python3 -c '
+# Captured once and reused for the mode decision below (fix round 1). -f fails the
+# assignment (and, under set -e, the script) on a 4xx/5xx instead of handing python
+# an empty body. -sS: no progress meter, but real errors still reach stderr.
+health=$(curl -fsS --max-time 20 "$BASE/api/healthz")
+printf '%s' "$health" | WANT="$WANT" EXPECT_SHA="$EXPECT_SHA" python3 -c '
 import os, sys, json
 b = json.load(sys.stdin)
 want, expect = os.environ["WANT"], os.environ["EXPECT_SHA"]
+
+def fail(msg):  # one clean line on stderr, exit 1 - no traceback (fix round 1)
+    sys.exit(f"FAIL: {msg}")
+
 got = b["environment"]
-assert got == want, f"environment is {got!r}, expected {want!r}: {b}"
+if got != want:
+    fail(f"environment is {got!r}, expected {want!r}: {b}")
 db = b["db"]
-assert db["ok"] and b["redis"]["ok"], b
+if not (db["ok"] and b["redis"]["ok"]):
+    fail(f"db or redis not ok: {b}")
 # A healthy db block without postgis_version means SELECT postgis_version() never
 # ran - the extension or the pinned PostGIS image is not what we think it is.
 pg = db.get("postgis_version")
-assert pg, f"FAIL: postgis_version missing from a healthy db block: {b}"
+if not pg:
+    fail(f"postgis_version missing from a healthy db block: {b}")
 mode = b.get("site_mode")
-assert mode, f"FAIL: site_mode missing from healthz: {b}"
+if not mode:
+    fail(f"site_mode missing from healthz: {b}")
 sha = b["commit_sha"]
-if expect:
-    assert sha == expect, f"commit_sha is {sha!r}, expected {expect!r} - a stale container is still serving"
+if expect and sha != expect:
+    fail(f"commit_sha is {sha!r}, expected {expect!r} - a stale container is still serving")
 print("healthz OK  version", b["version"], " commit", sha, " postgis", pg, " site_mode", mode)
 '
 code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/healthz/deep")
 [[ "$code" == "200" ]] || { echo "FAIL: deep healthz returned $code at $BASE/api/healthz/deep" >&2; exit 1; }
 echo "deep healthz OK"
 # Which shell to probe depends on SITE_MODE: production runs the coming-soon page
-# (probed by its title and the /api/interest contract), QA and app mode run the
-# marketplace SPA (probed by its #app shell on the SPA-fallback route).
-# `cmd | grep -q … && echo OK` cannot fail this script: under `set -e` a failing
-# left operand of && is exempt from errexit, so a missing shell printed nothing
-# and still exited 0 (fix round 1). An explicit || … exit 1 is the only form that
-# actually gates.
-mode=$(curl -fsS --max-time 20 "$BASE/api/healthz" | python3 -c 'import sys,json; print(json.load(sys.stdin)["site_mode"])')
+# (probed by its title, the ABSENCE of the marketplace shell, and the /api/interest
+# contract), QA and app mode run the marketplace SPA (probed by its #app shell on the
+# SPA-fallback route). Bodies are captured, then matched: `cmd | grep -q … && echo OK`
+# cannot fail this script under set -e (fix round 1 of Task 8), and a grep -q that
+# exits early can SIGPIPE its producer under pipefail.
+mode=$(printf '%s' "$health" | python3 -c 'import sys, json; print(json.load(sys.stdin)["site_mode"])')
 if [[ "$mode" == "coming_soon" ]]; then
   for path in / /browse; do
-    curl -fsS --max-time 20 "$BASE$path" | grep -q '<title>VIN Foundation — Coming Soon</title>' \
+    body=$(curl -fsS --max-time 20 "$BASE$path")
+    [[ "$body" == *'<title>VIN Foundation — Coming Soon</title>'* ]] \
       || { echo "FAIL: coming-soon shell missing at $BASE$path" >&2; exit 1; }
+    # Both shells mount on #app, so the marketplace is recognised by what only it
+    # carries: its title and its UI-kit stylesheet (frontend/index.html).
+    if [[ "$body" == *'<title>Practice Match'* || "$body" == *'/ds/ui_kits/vin/kit.css'* ]]; then
+      echo "FAIL: marketplace shell served in coming-soon mode at $BASE$path" >&2; exit 1
+    fi
   done
   echo "coming-soon shell OK"
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H 'Content-Type: application/json' -d '{"email":"not-an-email"}' "$BASE/api/interest")
   [[ "$code" == "422" ]] || { echo "FAIL: interest endpoint answered $code to an invalid address (expected 422)" >&2; exit 1; }
   echo "interest endpoint OK"
 else
-  curl -fsS --max-time 20 "$BASE/browse" | grep -q 'id="app"' \
-    || { echo "FAIL: SPA fallback missing at $BASE/browse" >&2; exit 1; }
+  body=$(curl -fsS --max-time 20 "$BASE/browse")
+  [[ "$body" == *'id="app"'* ]] || { echo "FAIL: SPA fallback missing at $BASE/browse" >&2; exit 1; }
   echo "SPA fallback OK"
 fi
 # `railway logs` streams by default in CLI 5.26 and would hang a script; --lines
