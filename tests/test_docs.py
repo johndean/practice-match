@@ -32,6 +32,8 @@ REQUIRED_CI_COMMANDS = (
     "npm run build",
     "npx vitest run --coverage",
     "npx playwright test",
+    "--project=coming-soon-reference",
+    "--project=coming-soon\n",
 )
 
 # Fix round 1, item 1: the tools quality.yml runs must be tracked dependencies, not installed
@@ -291,3 +293,8 @@ def test_deploy_md_records_the_nightly_load_smoke_baseline():
     text = (ROOT / "DEPLOY.md").read_text()
     assert "Nightly load smoke baseline" in text
     assert "p95" in text and "2026-09-06" in text
+
+
+def test_reference_server_serves_the_coming_soon_design():
+    assert (ROOT / "docs" / "design-reference" / "coming-soon" / "Coming Soon.dc.html").exists()
+    assert "docs/design-reference/coming-soon" in (ROOT / "frontend" / "tests" / "reference-server.mjs").read_text()

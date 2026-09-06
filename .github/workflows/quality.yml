@@ -81,6 +81,8 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '22', cache: 'npm', cache-dependency-path: frontend/package-lock.json }
       - run: npm ci
+      - run: npm ci
+        working-directory: coming-soon
       - run: npx vue-tsc --noEmit -p tsconfig.json
       - name: Generated-from-design drift check
         run: |
@@ -97,6 +99,10 @@ jobs:
         run: npx playwright test --config=tests/playwright.config.ts --project=reference
       - name: App project — must match the design (visual, dom, smoke)
         run: npx playwright test --config=tests/playwright.config.ts --project=app
+      - name: Coming Soon reference — generates its baselines from the approved design
+        run: npx playwright test --config=tests/playwright.config.ts --project=coming-soon-reference
+      - name: Coming Soon page — must match the design (visual)
+        run: npx playwright test --config=tests/playwright.config.ts --project=coming-soon
       - uses: actions/upload-artifact@v4
         if: always()
         with:

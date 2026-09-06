@@ -3,11 +3,13 @@ import { resolveTargets } from './targets';
 
 const APP = Number(process.env.PW_APP_PORT) || 5173;
 const REF = Number(process.env.PW_REF_PORT) || 5174;
+const CS = Number(process.env.PW_CS_PORT) || 5175;
 const VIEWPORT = { width: 1440, height: 940 }; // the design's preview size
+const CS_VIEWPORT = { width: 1440, height: 900 }; // the Coming Soon design's $preview
 // PW_APP_URL=https://<host> runs the `app` project against a live deployment and skips the
 // local Vite server; the reference server (the design oracle) always runs locally. See
 // tests/targets.ts, unit-tested in tests/targets.test.ts.
-const { baseURL, webServer } = resolveTargets(process.env, { app: APP, ref: REF });
+const { baseURL, csBaseURL, webServer } = resolveTargets(process.env, { app: APP, ref: REF, cs: CS });
 
 export default defineConfig({
   testDir: '.',
@@ -43,7 +45,9 @@ export default defineConfig({
     // (visual|smoke|dom) would also match "reference-dom.spec.ts" as a substring, which
     // belongs to the reference project only.
     { name: 'app', testMatch: /(^|\/)(visual|smoke|dom)\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: VIEWPORT, baseURL } },
-    { name: 'reference', testMatch: /(^|\/)reference-(baselines|dom)\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: VIEWPORT, baseURL: `http://localhost:${REF}` } }
+    { name: 'reference', testMatch: /(^|\/)reference-(baselines|dom)\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: VIEWPORT, baseURL: `http://localhost:${REF}` } },
+    { name: 'coming-soon-reference', testMatch: /(^|\/)coming-soon-reference\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: CS_VIEWPORT, baseURL: `http://localhost:${REF}` } },
+    { name: 'coming-soon', testMatch: /(^|\/)coming-soon-visual\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: CS_VIEWPORT, baseURL: csBaseURL } }
   ],
   webServer
 });

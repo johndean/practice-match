@@ -8,7 +8,8 @@
  * at the built image serving real traffic. The Vite web server is then not started at all.
  * The reference server always runs locally: it serves the approved design from disk and is
  * the oracle the visual baselines and DOM snapshots are generated from, so it must never
- * follow the app to a remote host.
+ * follow the app to a remote host. The coming-soon Vite dev server likewise always runs
+ * locally — there is no live-deployment mode for it.
  */
 
 /** The subset of Playwright's `webServer` entry shape this config uses. */
@@ -25,10 +26,12 @@ export interface WebServerSpec {
 export interface Targets {
   /** baseURL for the `app` project only — `reference` always targets the local design server. */
   baseURL: string;
+  /** baseURL for the `coming-soon` project — the coming-soon Vite dev server, always local. */
+  csBaseURL: string;
   webServer: WebServerSpec[];
 }
 
-export function resolveTargets(env: NodeJS.ProcessEnv, ports: { app: number; ref: number }): Targets {
+export function resolveTargets(env: NodeJS.ProcessEnv, ports: { app: number; ref: number; cs: number }): Targets {
   const live = env.PW_APP_URL;
   const reuseExistingServer = !env.CI;
   const vite: WebServerSpec = {
@@ -49,8 +52,18 @@ export function resolveTargets(env: NodeJS.ProcessEnv, ports: { app: number; ref
     stdout: 'ignore',
     stderr: 'pipe'
   };
+  const comingSoon: WebServerSpec = {
+    command: `npm run dev -- --port ${ports.cs} --strictPort`,
+    url: `http://localhost:${ports.cs}`,
+    cwd: '../../coming-soon',
+    timeout: 60_000,
+    reuseExistingServer,
+    stdout: 'ignore',
+    stderr: 'pipe'
+  };
   return {
     baseURL: live ?? `http://localhost:${ports.app}`,
-    webServer: live ? [reference] : [vite, reference]
+    csBaseURL: `http://localhost:${ports.cs}`,
+    webServer: live ? [reference, comingSoon] : [vite, reference, comingSoon]
   };
 }
