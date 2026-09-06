@@ -36,7 +36,7 @@
           <template v-if="v.isForm">
             <div>
               <div style="display: flex; gap: 10px; flex-wrap: wrap;">
-                <input :value="v.email" @change="v.setEmail" @keydown="v.onKey" type="email" autocomplete="email" placeholder="you@practice.com" aria-label="Email address" :style="v.inputStyle">
+                <input :value="v.email" @input="v.setEmail" @keydown="v.onKey" type="email" autocomplete="email" placeholder="you@practice.com" aria-label="Email address" :style="v.inputStyle">
                 <button @click="v.submit" style="flex: none; height: 54px; padding: 0 26px; font-size: 15px; font-weight: 500; letter-spacing: .03em; color: var(--vf-white); background: var(--vf-navy); border: 0; border-radius: 6px; cursor: pointer; transition: background 150ms var(--easing-out);" v-hover="'background: #002a52;'">Notify me</button>
               </div>
               <template v-if="v.hasError">
