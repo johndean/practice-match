@@ -42,6 +42,9 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
   it('the map-engines plan no longer mentions ListingsMap anywhere and rebases onto V3\'s engine shape', () => {
     const md = read(MAP_ENGINES);
     expect(md).not.toContain('ListingsMap');   // catches the M5 file list, the components paragraph AND the setControls parenthetical
+    // …and the SPEC, which this case did not read: it still named `ListingsMap.vue` a live map
+    // surface at :25 and :264 after the plan was swept clean (final review M6, 2026-09-07).
+    expect(readSpec(MAP_ENGINES_SPEC)).not.toContain('ListingsMap');
     expect(md).toContain('rectangle');
     expect(md).toContain('ring(');
     expect(md).toContain('panInside');
