@@ -17,9 +17,10 @@ import type { RoutedState } from './sync';
 // await nextTick() between steps that involve a navigation.
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 
-// logic.js's initial state literal never assigns `browseMode` (only go()/routing ever sets
-// it), so TypeScript infers Component['state'] without that key. This test-only view widens
-// the type for the routing-relevant fields without touching logic.js.
+// logic.js's initial state literal never assigns `auth` (only go()/signIn() ever sets it),
+// so TypeScript infers Component['state'] without that key. After V3, no state ever carries
+// `browseMode` — Browse is one screen, not two tabs — so this test-only view's widening
+// exists only for `auth`, without touching logic.js.
 const routed = (c: InstanceType<typeof Component>) => c.state as unknown as RoutedState & { auth?: boolean };
 
 let apps: ReturnType<typeof createApp>[] = [];
@@ -44,11 +45,11 @@ async function setup(initialPath = '/') {
 }
 
 describe('useStateRouteSync — state → route', () => {
-  it('pushes the URL when state changes: browse+market, then admin+data', async () => {
+  it('pushes the URL when state changes: browse, then admin+data', async () => {
     const { c, router } = await setup('/');
-    c.setState({ screen: 'browse', browseMode: 'market', auth: true });
+    c.setState({ screen: 'browse', auth: true });
     await flush(); await nextTick();
-    expect(router.currentRoute.value.fullPath).toBe('/browse?tab=market');
+    expect(router.currentRoute.value.fullPath).toBe('/browse');
 
     c.setState({ screen: 'admin', adminTab: 'data' });
     await flush(); await nextTick();
@@ -82,8 +83,7 @@ describe('useStateRouteSync — signed-out deep link + pending route on auth', (
     // logic.js:1039-1041 signIn(): this.setState({ screen: "browse", formError: "", auth: true });
     c.setState({ screen: 'browse', formError: '', auth: true });
     await flush(); await nextTick();
-    expect(routed(c).browseMode).toBe('market');
-    expect(router.currentRoute.value.fullPath).toBe('/browse?tab=market');
+    expect(router.currentRoute.value.fullPath).toBe('/browse');
   });
 
   it('applies the pending route when only auth flips (no screen change in the same setState)', async () => {
@@ -91,23 +91,49 @@ describe('useStateRouteSync — signed-out deep link + pending route on auth', (
     c.setState({ auth: true });
     await flush(); await nextTick();
     expect(c.state.screen).toBe('browse');
-    expect(routed(c).browseMode).toBe('market');
+  });
+
+  // Regression: dc-logic.js's setState() is Object.assign(state, patch), which sets keys in
+  // the patch object's own order. `screen` here comes before `auth`, so both `auth` and
+  // `loc` change in the same synchronous block, in that order — the composable's one
+  // watcher must not assume `auth` was already true by the time it reasons about `screen`,
+  // or vice versa; it must read `c.state.auth` fresh, not trust an argument captured at a
+  // stale moment.
+  it('settles at /browse regardless of setState key order (screen before auth)', async () => {
+    const { c, router } = await setup('/browse?tab=market');
+    c.setState({ screen: 'browse', auth: true });
+    await flush(); await nextTick();
+    expect(router.currentRoute.value.fullPath).toBe('/browse');
+  });
+
+  it('keeps withholding the pending route if something else re-triggers the watcher before auth arrives', async () => {
+    const { c, router } = await setup('/browse?tab=market');
+    // Nothing in logic.js changes `screen` away from 'gate' without also flipping `auth`
+    // true in the same setState (guard() enforces that invariant on every real transition)
+    // — this bypasses that invariant on purpose, as a direct test of the watcher's own
+    // resilience: whatever caused the retrigger, it must still withhold navigation while
+    // genuinely signed out, rather than trusting that a retrigger only ever means auth
+    // has arrived.
+    c.setState({ screen: 'detail', detailId: 'p9' });
+    await flush(); await nextTick();
+    expect(router.currentRoute.value.fullPath).toBe('/browse?tab=market');
+    expect(c.state.screen).toBe('detail');
   });
 });
 
 describe('useStateRouteSync — replace vs. push', () => {
   it('uses router.replace (not push) when only the query changes and the path stays the same', async () => {
     const { c, router } = await setup('/');
-    c.setState({ screen: 'browse', browseMode: 'listings', auth: true });
+    c.setState({ screen: 'admin', adminTab: 'users', auth: true });
     await flush(); await nextTick();
-    expect(router.currentRoute.value.fullPath).toBe('/browse');
+    expect(router.currentRoute.value.fullPath).toBe('/admin');
 
     const pushSpy = vi.spyOn(router, 'push');
     const replaceSpy = vi.spyOn(router, 'replace');
-    c.setState({ browseMode: 'market' }); // same screen/path, only the query changes
+    c.setState({ adminTab: 'data' }); // same screen/path, only the query changes
     await flush(); await nextTick();
 
-    expect(router.currentRoute.value.fullPath).toBe('/browse?tab=market');
+    expect(router.currentRoute.value.fullPath).toBe('/admin?tab=data');
     expect(replaceSpy).toHaveBeenCalledTimes(1);
     expect(pushSpy).not.toHaveBeenCalled();
   });

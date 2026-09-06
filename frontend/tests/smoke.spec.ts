@@ -21,12 +21,12 @@ test.describe('smoke', () => {
     });
   }
 
-  test('a deep link is honoured after the fixture sign-in', async ({ page }) => {
+  test('a deep link is honoured after the fixture sign-in, and a legacy ?tab= settles on Browse', async ({ page }) => {
     await prepare(page);
     await page.goto('/browse?tab=market');
     await page.getByRole('button', { name: 'Approved — enter', exact: true }).click();
-    await expect(page).toHaveURL(/\/browse\?tab=market$/);
-    await expect(page.getByRole('button', { name: 'Data Layers', exact: true })).toBeVisible();
+    await expect(page).toHaveURL(/\/browse$/);
+    await expect(page.getByRole('button', { name: /^Layers/ })).toBeVisible();
   });
 
   test('navigation writes the URL', async ({ page }) => {
@@ -34,8 +34,6 @@ test.describe('smoke', () => {
     await page.goto('/');
     await page.getByRole('button', { name: 'Browse', exact: true }).first().click();
     await expect(page).toHaveURL(/\/browse$/);
-    await page.getByText('Market Data', { exact: true }).first().click();
-    await expect(page).toHaveURL(/\/browse\?tab=market$/);
     await page.getByRole('button', { name: 'Listing', exact: true }).first().click();
     await expect(page).toHaveURL(/\/practices\/p1$/);
     await page.getByRole('button', { name: 'Admin', exact: true }).first().click();
@@ -130,10 +128,11 @@ test.describe('smoke', () => {
   });
 
   // Performance gate (policy §3): the market map's first paint. The clock starts on the
-  // navigation, not after it — the deep link is signed in through the gate's fixture
-  // button, which is the only way `/browse?tab=market` survives a cold load, so the
-  // budget covers boot + gate + the pending deep link + Leaflet's first paint.
-  // `[data-map]` is set by LeafletMapEngine.mount() once the map is on the page.
+  // navigation, not after it — the deep link is signed in through the gate's fixture button,
+  // which is the only way this URL survives a cold load, so the budget covers boot + gate +
+  // the pending deep link + Leaflet's first paint. The `?tab=market` is a legacy no-op kept
+  // here deliberately: V3's Browse always shows market data. `[data-map]` is set by
+  // LeafletMapEngine.mount() once the map is on the page.
   test('first map paint within budget', async ({ page }) => {
     await prepare(page);
     const started = Date.now();

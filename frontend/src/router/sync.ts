@@ -1,17 +1,13 @@
 export type Screen = 'gate' | 'browse' | 'detail' | 'requests' | 'seller' | 'admin';
-export interface RoutedState { screen: string; browseMode?: string; detailId?: string; adminTab?: string; gate?: string; auth?: boolean }
+export interface RoutedState { screen: string; detailId?: string; adminTab?: string; gate?: string; auth?: boolean }
 export interface RouteTarget { path: string; query: Record<string, string> }
 interface RouteLike { path: string; params: Record<string, unknown>; query: Record<string, unknown> }
 
-const BROWSE_TABS = ['listings', 'market'] as const;
 const ADMIN_TABS = ['users', 'listings', 'activity', 'data'] as const;
 
 export function stateToRoute(s: RoutedState): RouteTarget {
   switch (s.screen) {
-    case 'browse': {
-      const mode = s.browseMode || 'listings';
-      return { path: '/browse', query: mode === 'market' ? { tab: 'market' } : {} };
-    }
+    case 'browse': return { path: '/browse', query: {} };
     case 'detail': return { path: `/practices/${s.detailId || 'p1'}`, query: {} };
     case 'requests': return { path: '/requests', query: {} };
     case 'seller': return { path: '/seller', query: {} };
@@ -28,7 +24,10 @@ function pick<T extends string>(v: unknown, allowed: readonly T[], fallback: T):
 }
 
 export function routeToPatch(to: RouteLike): Partial<RoutedState> {
-  if (to.path === '/browse') return { screen: 'browse', browseMode: pick(to.query.tab, BROWSE_TABS, 'listings') };
+  // Any legacy ?tab= is ignored: Browse Practices is one screen in V3, so /browse,
+  // /browse?tab=market and /browse?tab=listings all land here and the URL settles to
+  // /browse without a second navigation. Old links and bookmarks must not 404 or loop.
+  if (to.path === '/browse') return { screen: 'browse' };
   if (to.path.startsWith('/practices/') && typeof to.params.id === 'string') return { screen: 'detail', detailId: to.params.id };
   if (to.path === '/requests') return { screen: 'requests' };
   if (to.path === '/seller') return { screen: 'seller' };
