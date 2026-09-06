@@ -224,3 +224,12 @@ def test_deploy_md_documents_the_expect_sha_semantics():
     assert "outside a git checkout" in lowered, "the only skip condition is undocumented"
     for wrong in ("disables the check", "disable the check"):
         assert wrong not in lowered, f"DEPLOY.md repeats the wrong EXPECT_SHA semantics: {wrong!r}"
+
+
+def test_deploy_md_documents_the_coming_soon_verify_output():
+    """verify-deploy.sh is site-mode aware (Task 11f): production's coming-soon shell and
+    /api/interest probe replace the SPA fallback check, and the runbook must say so."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "coming-soon shell OK" in text
+    assert "interest endpoint OK" in text
+    assert "site_mode coming_soon" in text

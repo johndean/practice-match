@@ -35,7 +35,8 @@ trap cleanup EXIT
 
 railway_calls() { wc -l < "$FAKE_RAILWAY_LOG" | tr -d ' '; }
 
-# start_server <mode>. Modes: ok | spa_missing | deep_503 | no_postgis
+# start_server <mode>. Modes: ok | spa_missing | deep_503 | no_postgis | no_site_mode |
+#   coming_ok | coming_wrong_shell | coming_interest_500
 # Binds port 0 (the OS picks a free ephemeral port) and prints it, once, before serving —
 # fixed ports (8765-8768) collided under a concurrent run of this same script (fix round 3,
 # re-review observation), and a bind failure in the backgrounded server was otherwise
@@ -50,11 +51,18 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 MODE = os.environ.get("MODE", "ok")
 BODY = {"status": "ok", "version": "0.1.0", "environment": "qa", "commit_sha": "abc1234",
+        "site_mode": "app",
         "db": {"ok": True, "postgis_version": "3.5.2"}, "redis": {"ok": True}}
 if MODE == "no_postgis":
     del BODY["db"]["postgis_version"]
+if MODE == "no_site_mode":
+    del BODY["site_mode"]
+if MODE in ("coming_ok", "coming_wrong_shell", "coming_interest_500"):
+    BODY["site_mode"] = "coming_soon"
+
 SHELL_OK = b'<!doctype html><div id="app"></div>'
 SHELL_BAD = b'<!doctype html><p>404 - no app shell here</p>'
+COMING_SHELL = "<!doctype html><title>VIN Foundation — Coming Soon</title>".encode("utf-8")
 
 class H(BaseHTTPRequestHandler):
     def _send(self, code, ctype, payload):
@@ -65,8 +73,26 @@ class H(BaseHTTPRequestHandler):
             self._send(503 if MODE == "deep_503" else 200, "application/json", json.dumps(BODY).encode())
         elif self.path.startswith("/api/healthz"):
             self._send(200, "application/json", json.dumps(BODY).encode())
+        elif self.path in ("/", "/browse"):
+            if MODE == "coming_wrong_shell":
+                self._send(200, "text/html", SHELL_OK)  # marketplace shell, no coming-soon title
+            elif MODE in ("coming_ok", "coming_interest_500"):
+                self._send(200, "text/html", COMING_SHELL)
+            else:
+                self._send(200, "text/html", SHELL_BAD if MODE == "spa_missing" else SHELL_OK)
         else:
-            self._send(200, "text/html", SHELL_BAD if MODE == "spa_missing" else SHELL_OK)
+            self._send(404, "text/html", b"not found")
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0) or 0)
+        if length:
+            self.rfile.read(length)
+        if self.path == "/api/interest":
+            if MODE == "coming_interest_500":
+                self._send(500, "application/json", b'{"error":"server_error"}')
+            else:
+                self._send(422, "application/json", b'{"error":"invalid_email"}')
+        else:
+            self._send(404, "text/html", b"not found")
     def log_message(self, *a): pass
 
 srv = HTTPServer(("127.0.0.1", 0), H)   # port 0: OS assigns a free ephemeral port
@@ -128,6 +154,36 @@ if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash script
   fail "a missing postgis_version must fail the script; it exited 0 with: $out"
 fi
 [[ "$out" == *"postgis_version missing"* ]] || fail "the missing-postgis failure must name itself; got: $out"
+stop_server
+
+# --- 7. coming-soon mode: shell present at / and /browse, interest 422s --------
+start_server coming_ok
+out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1) || fail "coming-soon mode must verify; output: $out"
+for line in "site_mode coming_soon" "coming-soon shell OK" "interest endpoint OK"; do [[ "$out" == *"$line"* ]] || fail "missing '$line' in: $out"; done
+stop_server
+
+# --- 8. coming-soon mode but the marketplace shell is served, not the title -----
+start_server coming_wrong_shell
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
+  fail "the wrong shell in coming-soon mode must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"coming-soon shell missing"* ]] || fail "the coming-soon shell failure must name itself; got: $out"
+stop_server
+
+# --- 9. coming-soon mode, /api/interest 500s ------------------------------------
+start_server coming_interest_500
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
+  fail "an interest-endpoint 500 must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"interest"* ]] || fail "the interest failure must name itself; got: $out"
+stop_server
+
+# --- 10. healthz body without site_mode fails, and the message names it --------
+start_server no_site_mode
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
+  fail "a healthz body missing site_mode must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"site_mode missing"* ]] || fail "the missing-site_mode failure must name itself; got: $out"
 stop_server
 
 # --- no case anywhere in this suite may reach the Railway CLI ------------------

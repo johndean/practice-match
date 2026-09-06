@@ -49,21 +49,38 @@ assert db["ok"] and b["redis"]["ok"], b
 # ran - the extension or the pinned PostGIS image is not what we think it is.
 pg = db.get("postgis_version")
 assert pg, f"FAIL: postgis_version missing from a healthy db block: {b}"
+mode = b.get("site_mode")
+assert mode, f"FAIL: site_mode missing from healthz: {b}"
 sha = b["commit_sha"]
 if expect:
     assert sha == expect, f"commit_sha is {sha!r}, expected {expect!r} - a stale container is still serving"
-print("healthz OK  version", b["version"], " commit", sha, " postgis", pg)
+print("healthz OK  version", b["version"], " commit", sha, " postgis", pg, " site_mode", mode)
 '
 code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/healthz/deep")
 [[ "$code" == "200" ]] || { echo "FAIL: deep healthz returned $code at $BASE/api/healthz/deep" >&2; exit 1; }
 echo "deep healthz OK"
+# Which shell to probe depends on SITE_MODE: production runs the coming-soon page
+# (probed by its title and the /api/interest contract), QA and app mode run the
+# marketplace SPA (probed by its #app shell on the SPA-fallback route).
 # `cmd | grep -q … && echo OK` cannot fail this script: under `set -e` a failing
-# left operand of && is exempt from errexit, so a missing SPA shell printed nothing
+# left operand of && is exempt from errexit, so a missing shell printed nothing
 # and still exited 0 (fix round 1). An explicit || … exit 1 is the only form that
 # actually gates.
-curl -fsS --max-time 20 "$BASE/browse" | grep -q 'id="app"' \
-  || { echo "FAIL: SPA fallback missing at $BASE/browse" >&2; exit 1; }
-echo "SPA fallback OK"
+mode=$(curl -fsS --max-time 20 "$BASE/api/healthz" | python3 -c 'import sys,json; print(json.load(sys.stdin)["site_mode"])')
+if [[ "$mode" == "coming_soon" ]]; then
+  for path in / /browse; do
+    curl -fsS --max-time 20 "$BASE$path" | grep -q '<title>VIN Foundation — Coming Soon</title>' \
+      || { echo "FAIL: coming-soon shell missing at $BASE$path" >&2; exit 1; }
+  done
+  echo "coming-soon shell OK"
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H 'Content-Type: application/json' -d '{"email":"not-an-email"}' "$BASE/api/interest")
+  [[ "$code" == "422" ]] || { echo "FAIL: interest endpoint answered $code to an invalid address (expected 422)" >&2; exit 1; }
+  echo "interest endpoint OK"
+else
+  curl -fsS --max-time 20 "$BASE/browse" | grep -q 'id="app"' \
+    || { echo "FAIL: SPA fallback missing at $BASE/browse" >&2; exit 1; }
+  echo "SPA fallback OK"
+fi
 # `railway logs` streams by default in CLI 5.26 and would hang a script; --lines
 # fetches history and exits. Best-effort only: never fail a good deploy on logs --
 # and never invoked for an explicit target or a logged-out CLI, so the shell tests
