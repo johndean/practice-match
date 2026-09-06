@@ -123,9 +123,8 @@ async def test_composed_and_decomposed_spellings_share_one_row(client, db_ready)
 
 
 async def test_sixth_request_in_a_minute_from_one_client_is_429(client, db_ready):
-    ip = _ip()
-
     async def run():
+        ip = _ip()  # M-4: created inside run() so a retry gets a fresh bucket, not the one the flake polluted
         for i in range(5):
             r = await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": ip})
             assert r.status_code == 202, i
@@ -138,9 +137,8 @@ async def test_sixth_request_in_a_minute_from_one_client_is_429(client, db_ready
 async def test_edge_first_hop_keys_the_ip_limit(client, db_ready):
     """F2 as Railway actually behaves (live probe 2026-09-06): the edge writes the client it accepted FIRST and
     leaves the caller's own X-Forwarded-For values after it — so only the first hop may key a limit."""
-    edge_saw = _ip()
-
     async def run():
+        edge_saw = _ip()  # M-4: created inside run() so a retry gets a fresh bucket
         for i in range(5):
             r = await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": f"{edge_saw}, {_ip()}"})
             assert r.status_code == 202, i  # a different caller-supplied trailing hop every time must not reset the count
@@ -157,15 +155,16 @@ async def test_without_a_forwarded_header_the_peer_address_is_used(dist, db_read
 
     from app.main import create_app
 
-    async with AsyncClient(transport=ASGITransport(app=create_app(dist=dist), client=(_ip(), 40000)), base_url="http://test") as c:
-
-        async def run():
+    async def run():
+        # M-4: a fresh AsyncClient (and so a fresh peer/bucket) inside run() so a retry never inherits
+        # the tail hits a rolled-over first attempt already deposited in the new bucket.
+        async with AsyncClient(transport=ASGITransport(app=create_app(dist=dist), client=(_ip(), 40000)), base_url="http://test") as c:
             for i in range(5):
                 assert (await c.post("/api/interest", json={"email": _probe_email()})).status_code == 202, i
             return await c.post("/api/interest", json={"email": _probe_email()})
 
-        r = await _within_one_minute(run)
-        assert r.status_code == 429
+    r = await _within_one_minute(run)
+    assert r.status_code == 429
     async with AsyncClient(transport=ASGITransport(app=create_app(dist=dist), client=(_ip(), 40000)), base_url="http://test") as other:
         assert (await other.post("/api/interest", json={"email": _probe_email()})).status_code == 202  # a different peer is a different bucket
 

@@ -199,6 +199,16 @@ fi
 [[ "$out" == *"site_mode is 'coming_soon', expected 'app'"* ]] || fail "the QA site_mode mismatch must name itself; got: $out"
 stop_server
 
+# --- 7a2. M-3: QA takes no override — EXPECT_SITE_MODE must not let a coming_soon
+# body pass on QA (pins the invariant so a future edit can't re-open John's merge
+# condition by teaching QA to read the override) ---------------------------------
+start_server coming_ok
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 EXPECT_SITE_MODE=coming_soon bash scripts/verify-deploy.sh QA 2>&1); then
+  fail "QA must ignore EXPECT_SITE_MODE; it exited 0 with: $out"
+fi
+[[ "$out" == *"site_mode is 'coming_soon', expected 'app'"* ]] || fail "the QA site_mode mismatch must name itself even with an override set; got: $out"
+stop_server
+
 # --- 7b. M1: production defaults to expecting coming_soon; a body reporting site_mode
 # app (the marketplace, leaked to the public launch host) must fail unless overridden --
 start_server ok production

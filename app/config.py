@@ -30,7 +30,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _qa_never_serves_the_coming_soon_page(self) -> Settings:
-        if self.environment == "qa" and self.site_mode == "coming_soon":
+        if self.environment.lower() == "qa" and self.site_mode == "coming_soon":
             raise ValueError("SITE_MODE=coming_soon is never valid on QA (John, 2026-09-06)")
         return self
 
@@ -43,7 +43,7 @@ def load_settings() -> Settings:
     try:
         return Settings()  # type: ignore[call-arg]  # required fields come from the environment at runtime, not this call site (fix round 1, incidental)
     except ValidationError as exc:
-        names = ", ".join(sorted({str(e["loc"][0]).upper() for e in exc.errors()}))
+        names = ", ".join(sorted({str(e["loc"][0]).upper() if e["loc"] else e["msg"] for e in exc.errors()}))
         print(f"[config] missing or invalid environment variables: {names}", file=sys.stderr)
         raise SystemExit(1) from None
 

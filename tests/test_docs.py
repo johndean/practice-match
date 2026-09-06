@@ -128,6 +128,7 @@ def test_gitleaks_config_parses():
     paths = data["allowlist"]["paths"]
     assert "(?i)^docs/.*" not in paths
     assert "(?i)^tests/.*" not in paths
+    assert "(?i)^frontend/tests/.*" not in paths  # M-7: the broad frontend/tests allowlist is gone too
     assert "(?i)^docs/design-reference/.*" in paths
 
 
@@ -262,9 +263,12 @@ def test_deploy_md_records_the_forwarded_for_rule_and_its_probe():
 
 
 def test_deploy_md_documents_expect_site_mode():
-    """M1: the launch flip is EXPECT_SITE_MODE=app scripts/verify-deploy.sh production — the verifier
-    now refuses a mismatched site_mode outright, so the runbook must name the override."""
-    assert "EXPECT_SITE_MODE" in (ROOT / "DEPLOY.md").read_text()
+    """I2: deploy.sh runs verify-deploy.sh itself (scripts/deploy.sh:26), so the launch flip must
+    prefix EXPECT_SITE_MODE=app onto `scripts/deploy.sh production` — prefixing verify-deploy.sh alone
+    would still fail at deploy.sh's own internal verification step first."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "EXPECT_SITE_MODE=app scripts/deploy.sh production" in text
+    assert "EXPECT_SITE_MODE=app scripts/verify-deploy.sh production" not in text
 
 
 def test_public_indexing_row_matches_the_site_mode_matrix():

@@ -57,6 +57,8 @@ def test_qa_never_runs_coming_soon_mode():
     base = {"database_url": "postgresql://x", "redis_url": "redis://x", "api_secret_key": "x"}
     with pytest.raises(ValidationError):
         Settings(**base, environment="qa", site_mode="coming_soon")
+    with pytest.raises(ValidationError):
+        Settings(**base, environment="QA", site_mode="coming_soon")  # M-6: the guard is case-insensitive
     assert Settings(**base, environment="production", site_mode="coming_soon").site_mode == "coming_soon"
     assert Settings(**base, environment="test", site_mode="coming_soon").site_mode == "coming_soon"
 
@@ -70,3 +72,15 @@ def test_load_settings_exits_1_in_process_and_names_the_variables(monkeypatch, c
     assert info.value.code == 1
     err = capsys.readouterr().err
     assert "DATABASE_URL" in err and "REDIS_URL" in err
+
+
+def test_load_settings_names_a_model_level_error_cleanly(monkeypatch, capsys):
+    """A model_validator error has an empty loc; the boot message must still be one clean line (I1)."""
+    from app.config import load_settings
+    monkeypatch.setenv("ENVIRONMENT", "qa")
+    monkeypatch.setenv("SITE_MODE", "coming_soon")
+    with pytest.raises(SystemExit) as info:
+        load_settings()
+    assert info.value.code == 1
+    err = capsys.readouterr().err
+    assert "SITE_MODE=coming_soon is never valid on QA" in err and "Traceback" not in err and "IndexError" not in err
