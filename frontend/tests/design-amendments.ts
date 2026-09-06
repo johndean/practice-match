@@ -46,9 +46,10 @@ function setDecl(style: string, prop: string, value: string | null): string {
  *  (tag, text) key takes V2's `text-transform` and `letter-spacing` VALUES wherever they differ from V3's, edited in place. Elements whose two
  *  declarations already equal V2's produce NO amendment. Unpaired elements — and elements whose key is not unique on one side — are never touched
  *  (that rule is what keeps `{{ resultHeadline }}` alone: V3's only occurrence is the mobile list's, byte-identical to V2's; V2's 19 px desktop one
- *  lived in the Browse column V3 replaced by design). */
+ *  lived in the Browse column V3 replaced by design). The key carries the font size so that same-text elements V2 sized and styled
+ *  differently (the 34 px and 28 px `{{ d.priceLabel }}`) pair with their own counterpart instead of being dropped as ambiguous. */
 export function deriveTypographyB(v2Html: string, pristineHtml: string): Amendment[] {
-  const key = (e: Styled) => `${e.tag}|${e.text}`;
+  const key = (e: Styled) => `${e.tag}|${e.text}|${e.fontPx ?? ''}`;   // the size disambiguates the two `{{ d.priceLabel }}` (34 px desktop, 28 px mobile) — V2 styles them differently on purpose
   const uniq = (els: Styled[]) => { const c = new Map<string, number>(); els.forEach((e) => c.set(key(e), (c.get(key(e)) ?? 0) + 1)); return new Map(els.filter((e) => c.get(key(e)) === 1).map((e) => [key(e), e])); };
   const v2 = uniq(styledElements(v2Html)); const v3u = uniq(styledElements(pristineHtml));
   const out: Amendment[] = [];

@@ -1455,7 +1455,7 @@
             <div style="padding: 16px;">
               <div style="font-family: var(--rf-display); font-size: 19px; font-weight: 800; line-height: 1.25; color: var(--color-navy); text-transform: uppercase; letter-spacing: .02em;"><span v-if="__s(v.d?.title) !== null" class="sc-interp">{{ __s(v.d?.title) }}</span></div>
               <div style="font-size: 13px; color: var(--color-steel); margin-top: 4px;"><span v-if="__s(v.d?.subtitle) !== null" class="sc-interp">{{ __s(v.d?.subtitle) }}</span></div>
-              <div style="font-family: var(--rf-display); font-size: 28px; font-weight: 800; color: var(--color-navy); margin-top: 12px;"><span v-if="__s(v.d?.priceLabel) !== null" class="sc-interp">{{ __s(v.d?.priceLabel) }}</span></div>
+              <div style="font-family: var(--rf-display); font-size: 28px; font-weight: 800; color: var(--color-navy); margin-top: 12px; text-transform: uppercase; letter-spacing: .005em;"><span v-if="__s(v.d?.priceLabel) !== null" class="sc-interp">{{ __s(v.d?.priceLabel) }}</span></div>
               <div style="display: flex; flex-direction: column; margin-top: 12px;">
                 <template v-for="(k, $index) in __arr(v.d?.keyFacts)" :key="$index">
                   <div style="display: flex; justify-content: space-between; gap: 14px; padding: 9px 0; border-bottom: 1px solid var(--rf-line);">

@@ -4,4 +4,4 @@
 
 | Id | Date | John's ruling | What changes |
 |---|---|---|---|
-| A1 | 2026-09-07 | "keep the V2 header and do not restyle header or fonts" | 23 template elements: every display-size heading paired with V2 takes V2's `text-transform`/`letter-spacing` values in place; the key-fact values `{{ m.v }}` return to V2's uppercase `.005em`; `{{ resultHeadline }}` is untouched (V3's only occurrence, in the mobile list, already equals V2's). No script, no `_ds/**`, no site header (byte-identical V2↔V3 already). |
+| A1 | 2026-09-07 | "keep the V2 header and do not restyle header or fonts" | 24 template elements: every display-size heading paired with V2 (by tag, text and size) takes V2's `text-transform`/`letter-spacing` values in place; the key-fact values `{{ m.v }}` and the 28 px mobile asking price return to V2's uppercase `.005em`; `{{ resultHeadline }}` is untouched (V3's only occurrence, in the mobile list, already equals V2's). No script, no `_ds/**`, no site header (byte-identical V2↔V3 already). |
