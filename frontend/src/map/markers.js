@@ -1,16 +1,5 @@
 // Marker HTML builders, ported verbatim from the approved prototype. Inline styles are intentional: divIcons live outside the app stylesheet scope.
 
-export function pricePin(label, active) {
-  const bg = active ? "var(--vf-navy)" : "var(--vf-white)";
-  const fg = active ? "var(--vf-white)" : "var(--vf-navy)";
-  return (
-    '<div style="font-family:ProximaNova,Arial,Helvetica,sans-serif;font-size:12px;font-weight:800;' +
-    "white-space:nowrap;padding:5px 10px;border-radius:999px;background:" + bg + ";color:" + fg + ";" +
-    "border:1px solid " + (active ? "var(--vf-navy)" : "#d4dde5") + ";" +
-    'box-shadow:0 2px 6px rgba(0,58,112,.25);">' + label + "</div>"
-  );
-}
-
 export function dot(size, color, border) {
   return (
     '<div style="width:' + size + "px;height:" + size + "px;border-radius:999px;background:" + color +
