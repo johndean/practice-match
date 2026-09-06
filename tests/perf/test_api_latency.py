@@ -195,12 +195,27 @@ async def test_signup_p95_within_budget(client, db_ready, monkeypatch):
 # POST budgets live here as their own tests; BUDGET_MS (GET) is what Census B5 / Map M3-M4 extend (M7 ruling).
 async def test_interest_stored_path_p95_within_budget(client, db_ready):
     """Spec 2026-09-06 §3: the full path — validation, three Redis counters, one INSERT — at p95 ≤ 100 ms.
-    Every request carries a fresh client IP and a fresh address so no rate limit trips; rows are removed after."""
+    Every request carries a fresh client IP and a fresh address so no rate limit trips; rows are removed after.
+
+    THREE warm-up requests, none of them measured (2026-09-07). One was not enough, and for the same
+    reason the sign-in gate needed the same correction in fix round 3: the autouse `_dispose_pools`
+    teardown closes the sync pool after EVERY test, so the first request here pays a fresh psycopg2
+    connect, the next pays a cold anyio worker thread, and the Redis client is built on the way
+    through as well — three distinct one-off costs, and the first sample is reproducibly the slowest
+    of the fifty (6.0-7.3 ms against a 4.2-4.8 ms median, ten runs on the dev stack).
+
+    The measured numbers are printed — captured by pytest unless `-s`, and repeated in the assertion
+    message — because this gate failed once on a shared GitHub runner at p95 110.3 ms while the same
+    commit passed everywhere else. That is twenty times this machine's steady state (p95 4.7-6.8 ms
+    over ten runs; 6.3-7.3 ms with three suites racing each other), so it was the box and not the
+    endpoint — but "over 100 ms" on its own could not say so. The next failure will arrive with its
+    samples attached: a warm-up artefact shows as one outlier, a stalled runner as a whole block.
+    """
     tag = uuid.uuid4().hex[:8]
     samples: list[float] = []
     try:
-        warm_ip = "10." + ".".join(str((uuid.uuid4().int >> s) & 255) for s in (16, 8, 0))
-        await client.post("/api/interest", json={"email": f"perf-{tag}-warm@example.org"}, headers={"x-forwarded-for": warm_ip})  # warm-up (M6, N8: fresh address)
+        for w in range(3):   # warm-ups (M6, N8: a fresh address each, so no rate limit sees them twice)
+            await client.post("/api/interest", json={"email": f"perf-{tag}-warm{w}@example.org"}, headers={"x-forwarded-for": _fresh_ip()})
         for i in range(50):
             n = uuid.uuid4().int
             ip = "10." + ".".join(str((n >> s) & 255) for s in (16, 8, 0))
@@ -208,7 +223,9 @@ async def test_interest_stored_path_p95_within_budget(client, db_ready):
             r = await client.post("/api/interest", json={"email": f"perf-{tag}-{i}@example.org"}, headers={"x-forwarded-for": ip})
             samples.append((time.perf_counter() - t0) * 1000)
             assert r.status_code == 202, r.text
-        assert p95_of(samples) <= 100, "/api/interest p95 over 100 ms"
+        got = p95_of(samples)
+        print(f"\ninterest p95 {got:.1f} ms  samples {[round(x) for x in samples]} (3 warm-ups discarded)")
+        assert got <= 100, f"/api/interest p95 {got:.1f} ms over 100 ms; samples {[round(x) for x in samples]}"
     finally:
         with psycopg2.connect(settings.database_url) as conn, conn.cursor() as cur:
             cur.execute("DELETE FROM interest_signup WHERE email_normalised LIKE %s", (f"perf-{tag}-%",))
