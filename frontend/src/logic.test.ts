@@ -74,4 +74,16 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     expect(mob).not.toHaveProperty('hasPeek');
     expect(mob).not.toHaveProperty('peek');
   });
+
+  // A2 (spec D17, John: "resolve this"). Root cause: the mobile results card's `open` set
+  // `browseSel`, which C13 left nothing to read (the peek card it once opened is gone), so
+  // the tap was a no-op. `open` now navigates to the detail — the same navigation C13's
+  // second pin tap performs (`mobileVals.selectMarker`, above).
+  it('the mobile results card\'s open() navigates to the detail (A2 — was a dead browseSel/activeId no-op)', () => {
+    const first = c.renderVals().results[0];
+    expect(first.open).toBeInstanceOf(Function);
+    first.open();
+    expect(c.state).toMatchObject({ screen: 'detail', detailId: 'p1' });
+    expect(c.state).not.toHaveProperty('browseSel');
+  });
 });

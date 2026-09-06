@@ -3084,7 +3084,7 @@ class Component extends DCLogic {
         hasPhotoSrc: !!this.heroSrc(p),
         noPhotoSrc: !this.heroSrc(p),
         // Select into the docked side panel rather than navigating to a separate page.
-        open: () => this.setState({ browseSel: p.id, activeId: p.id }),
+        open: () => this.setState({ screen: "detail", detailId: p.id }),
         hover: () => this.setState({ hoverId: p.id }),
         unhover: () => this.setState({ hoverId: null }),
         cardStyle: "background: var(--color-white); border: 1px solid " +

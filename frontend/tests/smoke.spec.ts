@@ -399,6 +399,27 @@ test.describe('mobile: the same map, market data in a sheet', () => {
     await page.locator('.leaflet-marker-icon').first().click();
     await expect(page).toHaveURL(/\/practices\/p\d+$/);
   });
+
+  // A2 (spec D17, John: "resolve this"). Root cause (systematic-debugging, task V14 report):
+  // the mobile results card's `open` set `browseSel`, which nothing has read since C13
+  // removed the peek card it used to open — the tap was a no-op, unlike every other route
+  // to the detail screen (a desktop card, a request row, a second pin tap). `open` now
+  // navigates directly, the same way V2's card and C13's second pin tap both do.
+  test('tapping the first result card in the list reaches the detail screen (A2)', async ({ page }) => {
+    await prepare(page);
+    await booted(page);
+    await click(page, 'Mobile view');
+    await jump(page, 'Browse');
+    await phone(page).getByText('Revenue', { exact: false }).first().waitFor();
+
+    const card = phone(page).locator('div[style*="cursor: pointer"]').filter({ hasText: 'Revenue' }).first();
+    const name = (await card.locator('div[style*="font-size: 15px"]').innerText()).trim();
+
+    await card.click();
+    await expect(page).toHaveURL(/\/practices\/p\d+$/);
+    await expect(page.getByText('Exterior photo').first()).toBeVisible();
+    await expect(phone(page).getByText(name, { exact: false }).first()).toBeVisible();
+  });
 });
 
 // ---------------------------------------------------------------------------------------

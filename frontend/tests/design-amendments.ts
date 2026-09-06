@@ -74,6 +74,20 @@ export function applyAmendments(html: string, list: Amendment[]): string {
   return out;
 }
 
+/** A2 — the mobile practice card opens the detail (spec D17, John: "resolve this"). A literal, not
+ *  rule-derived, entry: it edits the design's SCRIPT (the mobile card's `open` handler in `results`),
+ *  not the template, so it is exempt from A1's "inside a template region" check (that check runs
+ *  only over `deriveTypographyB`'s own output, never over the combined `amendments()` list). Root
+ *  cause (task V14 report): `open` set `browseSel`, which C13 left nothing to read once it removed
+ *  the peek card that used to display it — the tap was a no-op. It now navigates directly, the way
+ *  V2's card and C13's own second-pin-tap (`mobileVals.selectMarker`) both do.
+ */
+const A2: Amendment = {
+  id: 'A2', date: '2026-09-07', ruling: 'resolve this — the mobile practice card opens the detail (spec D17)',
+  find: 'open: () => this.setState({ browseSel: p.id, activeId: p.id }),',
+  replace: 'open: () => this.setState({ screen: "detail", detailId: p.id }),', count: 1
+};
+
 export function amendments(): Amendment[] {
-  return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8'))];
+  return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2];
 }
