@@ -607,21 +607,103 @@ async def test_filters_outside_their_enums_are_refused_rather_than_answered_empt
         assert (await client.get(f"/api/admin/users?{query}", headers=auth_headers(cookies))).status_code == 200, query
 
 
-async def test_a_minted_token_may_only_carry_a_buyer_or_seller_role(client, conn, member):
-    """F6 (John, 2026-09-07). A `staff`/`admin` bearer is a <=90-day credential with no session, no
-    CSRF and — because `require` only enforces freshness for `kind == "session"` — no re-auth for
-    anything outside `REAUTH`. Probed before the fix: a `role=staff` token read the whole audit
-    trail and suspended a member. Automation gets member roles only."""
-    _admin, cookies, hdr = member(("admin",), email="tokens@example.org")
+# ============================ Task I5b (John's ruling, 2026-09-07) ============================
+#
+# "i asked several times, Admin and Staff must be handled in wave 2a … must include Staff/Admin
+# tokens." This reverses I5 fix round 1's F6, which had restricted `TOKEN_ROLES` to the member
+# roles. What replaces that restriction is three safeguards, one test each below: the minter must
+# already hold a privileged role to mint one, a token principal never satisfies a re-auth gate, and
+# a token principal never holds `tokens.manage`.
+
+
+@pytest.mark.parametrize("role", ["buyer", "seller", "staff", "admin"])
+async def test_a_minted_token_may_carry_any_of_the_four_roles(client, conn, member, role):
+    """Spec §Automation tokens, amended: an `api_token` carries "any one of the four roles"."""
+    _admin, cookies, hdr = member(("admin", "staff"), email="tokens@example.org")
     await _reauth(client, cookies, hdr)
-    for role in ("staff", "admin", "superadmin"):
-        r = await client.post("/api/admin/tokens", headers=auth_headers(cookies, hdr), json={"name": "k6", "role": role, "days": 30})
-        assert (r.status_code, r.json()["error"]["code"]) == (422, "BAD_ROLE"), role
-    for role in ("buyer", "seller"):
-        assert (await client.post("/api/admin/tokens", headers=auth_headers(cookies, hdr),
-                                  json={"name": "k6", "role": role, "days": 30})).status_code == 201, role
+    r = await client.post("/api/admin/tokens", headers=auth_headers(cookies, hdr), json={"name": f"e2e-{role}", "role": role, "days": 30})
+    assert r.status_code == 201 and r.json()["token"].startswith("pm_"), role
     with conn.cursor() as cur:
-        cur.execute("SELECT count(*) FROM api_token WHERE role IN ('staff','admin')"); assert cur.fetchone()[0] == 0
+        cur.execute("SELECT role FROM api_token WHERE name=%s", (f"e2e-{role}",))
+        assert cur.fetchone()[0] == role
+        # The audit row records the ROLE, which is the whole point of allowing privileged ones.
+        cur.execute("SELECT after FROM audit_log WHERE action='tokens.create' ORDER BY id DESC LIMIT 1")
+        assert cur.fetchone()[0] == {"name": f"e2e-{role}", "role": role, "days": 30}
+    bad = await client.post("/api/admin/tokens", headers=auth_headers(cookies, hdr), json={"name": "k6", "role": "superadmin", "days": 30})
+    assert (bad.status_code, bad.json()["error"]["code"]) == (422, "BAD_ROLE")
+
+
+async def test_a_privileged_token_is_minted_only_by_an_account_that_holds_that_role(client, conn, member):
+    """No escalation (spec §Automation tokens): `tokens.manage` is admin-only, and an admin who
+    does NOT hold `staff` cannot mint a `staff` token — `permissions.py` has no role lattice, only
+    per-permission role sets, so holding admin is not holding staff. `buyer`/`seller` stay
+    mintable by any token manager: they are automation roles strictly below the minter's own, and
+    that is the behaviour every deploy/CI token has relied on since I5."""
+    _admin, cookies, hdr = member(("admin",), email="admin-only@example.org")
+    await _reauth(client, cookies, hdr)
+
+    async def mint(role, name="e2e"):
+        return await client.post("/api/admin/tokens", headers=auth_headers(cookies, hdr), json={"name": name, "role": role, "days": 30})
+
+    refused = await mint("staff", name="e2e-staff")
+    assert (refused.status_code, refused.json()["error"]["message"]) == (403, "you can only mint a token for a role you hold")
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM api_token WHERE role='staff'"); assert cur.fetchone()[0] == 0
+    assert (await mint("buyer")).status_code == 201
+    assert (await mint("seller")).status_code == 201
+    assert (await mint("admin")).status_code == 201, "the minter holds admin"
+    # ...and the grant is what unlocks it, read from the grants table rather than from the session.
+    assert (await client.post(f"/api/admin/users/{_admin}/grants", headers=auth_headers(cookies, hdr),
+                              json={"role": "staff", "grant": True, "reason": "reviews the queue too"})).status_code == 200
+    assert (await mint("staff", name="e2e-staff")).status_code == 201
+
+
+async def test_an_api_token_never_manages_tokens_whatever_role_it_carries(client, conn, member):
+    """The first of the two token exceptions: a token principal's permissions are its role's minus
+    `tokens.manage`, so a leaked admin token cannot mint another token or revoke one — and it says
+    so, rather than answering the generic "your account cannot do this"."""
+    _admin, cookies, hdr = member(("admin",), email="tokens-mgr@example.org")
+    await _reauth(client, cookies, hdr)
+    minted = await client.post("/api/admin/tokens", headers=auth_headers(cookies, hdr), json={"name": "e2e-admin", "role": "admin", "days": 30})
+    raw = minted.json()["token"]
+    bearer = {"Authorization": f"Bearer {raw}"}
+    # Everything else the role carries is intact...
+    assert (await client.get("/api/admin/users", headers=bearer)).status_code == 200
+    r = await client.post("/api/admin/tokens", headers=bearer, json={"name": "second", "role": "buyer", "days": 30})
+    assert (r.status_code, r.json()["error"]["message"]) == (403, "api tokens cannot manage tokens")
+    revoke = await client.post(f"/api/admin/tokens/{raw.split('.')[0][3:]}/revoke", headers=bearer)
+    assert (revoke.status_code, revoke.json()["error"]["message"]) == (403, "api tokens cannot manage tokens")
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM api_token WHERE name='second'"); assert cur.fetchone()[0] == 0
+
+
+async def test_an_api_token_never_satisfies_a_reauth_gate(client, conn, member):
+    """The second exception, and the one that makes a standing staff/admin bearer survivable: a
+    token has no password to confirm, so every REAUTH action — Revoke, role grants, licence
+    decisions, engine activation, token creation — is out of its reach, with a message an
+    automation author can act on instead of the ordinary "Confirm your password to continue."
+    """
+    _admin, cookies, hdr = member(("admin", "staff"), email="tokens-reauth@example.org")
+    await _reauth(client, cookies, hdr)
+
+    async def mint(role):
+        r = await client.post("/api/admin/tokens", headers=auth_headers(cookies, hdr), json={"name": f"e2e-{role}", "role": role, "days": 30})
+        return {"Authorization": f"Bearer {r.json()['token']}"}
+
+    staff_bearer, admin_bearer = await mint("staff"), await mint("admin")
+    target, _cookies = await _applicant(client, member, email="reauth-target@example.org")
+    # A staff decision that is NOT in REAUTH still works from a token — the exception is narrow.
+    assert (await client.post(f"/api/admin/users/{target}/decide", headers=staff_bearer,
+                              json={"action": "request_info", "note": "which practice?"})).status_code == 200
+    revoke = await client.post(f"/api/admin/users/{target}/decide", headers=staff_bearer, json={"action": "revoke", "note": "no"})
+    assert (revoke.status_code, revoke.json()["error"]["message"]) == (
+        403, "this action needs a re-authenticated session — api tokens cannot re-authenticate")
+    grant = await client.post(f"/api/admin/users/{target}/grants", headers=admin_bearer, json={"role": "staff", "grant": True, "reason": "no"})
+    assert (grant.status_code, grant.json()["error"]["message"]) == (
+        403, "this action needs a re-authenticated session — api tokens cannot re-authenticate")
+    with conn.cursor() as cur:
+        cur.execute("SELECT state FROM account WHERE id=%s", (target,)); assert cur.fetchone()[0] == "needs_review"
+        cur.execute("SELECT count(*) FROM role_grant WHERE account_id=%s AND role='staff'", (target,)); assert cur.fetchone()[0] == 0
 
 
 async def test_accept_invite_sets_the_password_without_creating_a_session(client, conn):

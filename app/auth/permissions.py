@@ -47,6 +47,16 @@ REAUTH = frozenset({"licence.decide", "engine.activate", "roles.grant", "tokens.
 # row for its revoke branch. `tests/auth/test_permissions.py` pins both that membership and
 # `AUDITED <= set(MATRIX)`, so a name here can no longer drift away from a real permission.
 AUDITED = frozenset({"users.view_detail", "users.decide", "users.revoke", "roles.grant", "tokens.manage", "licence.decide", "engine.activate", "abuse.investigate"})
+# A token principal's permission set is its ROLE's set minus these (spec §Automation tokens,
+# amended 2026-09-07; Task I5b). Automation may now carry `staff` and `admin`, so the containment
+# that used to come from "no privileged tokens exist" has to be written down: a leaked admin token
+# can neither mint another token nor revoke one. `allowed()` below is where it is subtracted, so
+# every consumer of the matrix — `require`, and the admin Permissions view through it — sees the
+# same set. The OTHER half of the same rule (a token never satisfies a re-auth gate, which puts
+# Revoke, licence decisions, engine activation and role grants out of its reach too) lives in
+# `deps.require`, because it is about a request's freshness rather than about the matrix.
+# Not exported to the TypeScript twin: the browser only ever holds a session.
+TOKEN_DENIED = frozenset({"tokens.manage"})
 # (method, path template) for every route that is deliberately reachable without a permission.
 # `tests/auth/test_permissions.py::test_every_route_is_guarded_or_public` walks `create_app()` and
 # fails on anything here that is neither guarded by `require(...)` nor listed below (spec §4
@@ -78,6 +88,8 @@ def effective_roles(principal: Principal | None) -> frozenset[str]:
 
 def allowed(perm: str, principal: Principal | None) -> bool:
     roles = effective_roles(principal)
+    if principal is not None and principal.kind == "token" and perm in TOKEN_DENIED:
+        return False
     if perm == "market.read" and settings.market_data_public and "anonymous" in roles:
         return True
     return bool(roles & MATRIX[perm])

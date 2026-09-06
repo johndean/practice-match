@@ -286,7 +286,11 @@ async def test_an_admin_api_token_can_never_satisfy_re_authentication(client, co
     exfiltrated CI token with `role='admin'` (the api_token CHECK constraint allows it) could
     activate map engines, decide licences, grant roles and mint further tokens with one request.
     Fail closed: REAUTH permissions are unreachable for every non-session principal except the
-    legacy operator secret, which the brief exempts explicitly until I9 deletes it."""
+    legacy operator secret, which the brief exempts explicitly until I9 deletes it.
+
+    I5b (John's ruling, 2026-09-07) keeps the refusal and changes only what it SAYS: staff and
+    admin tokens are legitimate now, so an automation author meets this gate in normal use and
+    "Confirm your password to continue." is advice their credential cannot take."""
     from datetime import timedelta
 
     from app.auth import tokens as T
@@ -294,7 +298,8 @@ async def test_an_admin_api_token_can_never_satisfy_re_authentication(client, co
     raw = T.issue_api_token(conn, name="e2e-qa", role="admin", created_by=admin, ttl=timedelta(days=90)).raw
     hdr = {"Authorization": f"Bearer {raw}"}
     r = await client.post("/activate", headers=hdr)
-    assert r.status_code == 403 and r.json()["error"]["code"] == "REAUTH_REQUIRED"
+    assert r.status_code == 403 and r.json()["error"]["code"] == "REAUTH_TOKEN"
+    assert r.json()["error"]["message"] == deps.REAUTH_TOKEN_MESSAGE == "this action needs a re-authenticated session — api tokens cannot re-authenticate"
     assert (await client.get("/read", headers=hdr)).status_code == 200          # non-REAUTH permissions still work
     assert (await client.post("/decide", headers=hdr)).status_code == 200       # ...including staff ones
 

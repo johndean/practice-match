@@ -32,6 +32,8 @@ __all__ = [
     "PermissionDenied",
     "RateLimited",
     "ReauthRequired",
+    "TokenCannotManageTokens",
+    "TokenCannotReauth",
     "Unauthenticated",
     "check_origin_and_csrf",
     "client_ip",
@@ -43,6 +45,13 @@ __all__ = [
 
 REAUTH_WINDOW = timedelta(minutes=10)
 LEGACY_ADMIN = UUID("00000000-0000-0000-0000-000000000001")
+# The two things an `api_token` can never do, whatever role it carries (spec §Automation tokens,
+# amended 2026-09-07 — John: "Admin and Staff must be handled in wave 2a"; Task I5b). They are what
+# makes a standing staff/admin bearer survivable, so each refusal says which one it is rather than
+# answering the generic 403: an automation author reading "Confirm your password to continue."
+# cannot act on it — no api token has a password to confirm.
+REAUTH_TOKEN_MESSAGE = "this action needs a re-authenticated session — api tokens cannot re-authenticate"
+TOKENS_MANAGE_MESSAGE = "api tokens cannot manage tokens"
 
 
 class AuthError(HTTPException):
@@ -95,6 +104,31 @@ class ReauthRequired(AuthError):
 
     code = "REAUTH_REQUIRED"
     message = "Confirm your password to continue."
+
+
+class TokenCannotReauth(AuthError):
+    """A `permissions.REAUTH` action attempted with an `api_token` (Task I5b).
+
+    Distinct from `ReauthRequired` because it is not a step the caller can take: a token has no
+    session and no password, so Revoke, licence decisions, engine activation, role grants and token
+    creation are permanently out of its reach — which is the containment that lets an admin token
+    exist at all. The refusal itself predates this class (I3 fix round 1, Critical 2, fail closed);
+    what I5b adds is saying why."""
+
+    code = "REAUTH_TOKEN"
+    message = REAUTH_TOKEN_MESSAGE
+
+
+class TokenCannotManageTokens(AuthError):
+    """A `tokens.manage` route reached by an `api_token` (Task I5b).
+
+    `permissions.allowed` has already subtracted `tokens.manage` from every token principal's set
+    (`permissions.TOKEN_DENIED`), so this is an ordinary permission denial with a specific reason:
+    a leaked token cannot mint itself a successor or revoke the tokens around it. It answers for a
+    token of ANY role, `buyer` included, because the rule is about the KIND of credential."""
+
+    code = "TOKEN_SCOPE"
+    message = TOKENS_MANAGE_MESSAGE
 
 
 class RateLimited(AuthError):
@@ -326,17 +360,23 @@ def require(perm: str) -> Callable[[Request], S.Principal | None]:
         if not PM.allowed(perm, principal):
             if principal is None:
                 raise Unauthenticated
+            # `allowed` subtracts PM.TOKEN_DENIED from a token principal's set (I5b), so an
+            # `api_token` lands here on exactly the routes a leaked one must not reach. Naming that
+            # reason is the difference between an automation author fixing their call and filing a
+            # bug about an admin credential that is refused as if it were an ordinary member.
+            if principal.kind == "token" and perm in PM.TOKEN_DENIED:
+                raise TokenCannotManageTokens
             raise PermissionDenied
         # Fail CLOSED for every kind that cannot re-authenticate (Critical 2). A `token` principal
         # has no password to confirm, so "not a session" is a refusal, not an exemption; the
         # `legacy` operator secret is the one exemption and the brief time-boxes it to I9.
-        if (
-            perm in PM.REAUTH
-            and principal is not None
-            and principal.kind != "legacy"
-            and (principal.kind != "session" or not principal.reauth_at or datetime.now(UTC) - principal.reauth_at > REAUTH_WINDOW)
-        ):
-            raise ReauthRequired
+        if perm in PM.REAUTH and principal is not None and principal.kind != "legacy":
+            # Since I5b a `staff`/`admin` token is legitimate, so this gate is now met in ordinary
+            # use rather than only by an exfiltrated credential — it says which of the two it is.
+            if principal.kind == "token":
+                raise TokenCannotReauth
+            if principal.kind != "session" or not principal.reauth_at or datetime.now(UTC) - principal.reauth_at > REAUTH_WINDOW:
+                raise ReauthRequired
         request.state.principal = principal
         return principal
 
