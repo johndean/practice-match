@@ -4,12 +4,11 @@ import { join } from 'node:path';
 import { MANIFEST_PATH, SNAPSHOT_DIR, UNCHANGED_SCREENS, hashBaselines } from './baseline-manifest.mjs';
 
 // Global Constraint (f) / spec D6 (option B, Task V13): the thirteen non-Browse screens. Local
-// design amendment A1 put V2's display typography back, so twelve of them hash to their V1-era
-// V2 baselines again and byte-identity is the primary proof once more; `mobile-detail` is the
-// one screen A1's (tag, text) pairing rule could not reach. Zero regression is proved as well by
-// the DOM oracle (node-for-node identical to the amended V3 reference) plus the zero-tolerance
-// pixel gate. A moved hash means a CODE change moved a screen the design did not: stop and
-// diff, never re-write the manifest.
+// design amendment A1 put V2's display typography back, so all thirteen hash to their V1-era V2
+// baselines again and byte-identity is the primary proof once more. Zero regression is proved
+// as well by the DOM oracle (node-for-node identical to the amended V3 reference) plus the
+// zero-tolerance pixel gate. A moved hash means a CODE change moved a screen the design did
+// not: stop and diff, never re-write the manifest.
 const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as { platform: string; screens: Record<string, string> };
 
 // The manifest is a within-worktree leak detector (spec D13 / Global Constraint (l2)), not a
