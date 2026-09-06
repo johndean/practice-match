@@ -45,33 +45,46 @@ def fail(msg):  # one clean line on stderr, exit 1 - no traceback (fix round 1)
     sys.exit(f"FAIL: {msg}")
 
 b = json.load(sys.stdin)
+if not isinstance(b, dict):
+    fail("healthz body is not a JSON object")
 want, expect = os.environ["WANT"], os.environ["EXPECT_SHA"]
 
-# Every bare subscript below (b["environment"], db["ok"], b["commit_sha"], ...) would
-# otherwise raise a raw KeyError traceback on a malformed body (fix round 2) - check
-# the whole required set up front so a missing key gets the same clean FAIL line.
-missing = [k for k in ("status", "version", "environment", "commit_sha", "site_mode", "db", "redis") if k not in b]
-if missing:
-    fail(f"healthz body missing keys {missing}: {b}")
+# Belt and braces (fix round 3): every check below assumes a well-shaped body, but a
+# malformed one can still take a shape none of the specific checks anticipated (e.g.
+# db/redis present as something other than an object). Catch anything that slips
+# past the checks below too, so no malformed shape can ever surface as a traceback.
+try:
+    # Every bare subscript below (b["environment"], db["ok"], b["commit_sha"], ...) would
+    # otherwise raise a raw KeyError traceback on a malformed body (fix round 2) - check
+    # the whole required set up front so a missing key gets the same clean FAIL line.
+    missing = [k for k in ("status", "version", "environment", "commit_sha", "site_mode", "db", "redis") if k not in b]
+    if missing:
+        fail(f"healthz body missing keys {missing}: {b}")
+    if not isinstance(b.get("db"), dict) or not isinstance(b.get("redis"), dict):
+        fail(f"healthz db/redis blocks are not objects: {b}")
 
-got = b.get("environment")
-if got != want:
-    fail(f"environment is {got!r}, expected {want!r}: {b}")
-db = b.get("db")
-if not (db.get("ok") and b["redis"].get("ok")):
-    fail(f"db or redis not ok: {b}")
-# A healthy db block without postgis_version means SELECT postgis_version() never
-# ran - the extension or the pinned PostGIS image is not what we think it is.
-pg = db.get("postgis_version")
-if not pg:
-    fail(f"postgis_version missing from a healthy db block: {b}")
-mode = b.get("site_mode")
-if not mode:
-    fail(f"site_mode missing from healthz: {b}")
-sha = b.get("commit_sha")
-if expect and sha != expect:
-    fail(f"commit_sha is {sha!r}, expected {expect!r} - a stale container is still serving")
-print("healthz OK  version", b.get("version"), " commit", sha, " postgis", pg, " site_mode", mode)
+    got = b.get("environment")
+    if got != want:
+        fail(f"environment is {got!r}, expected {want!r}: {b}")
+    db = b.get("db")
+    if not (db.get("ok") and b["redis"].get("ok")):
+        fail(f"db or redis not ok: {b}")
+    # A healthy db block without postgis_version means SELECT postgis_version() never
+    # ran - the extension or the pinned PostGIS image is not what we think it is.
+    pg = db.get("postgis_version")
+    if not pg:
+        fail(f"postgis_version missing from a healthy db block: {b}")
+    mode = b.get("site_mode")
+    if not mode:
+        fail(f"site_mode missing from healthz: {b}")
+    sha = b.get("commit_sha")
+    if expect and sha != expect:
+        fail(f"commit_sha is {sha!r}, expected {expect!r} - a stale container is still serving")
+    print("healthz OK  version", b.get("version"), " commit", sha, " postgis", pg, " site_mode", mode)
+except SystemExit:
+    raise
+except Exception as exc:
+    fail(f"unexpected health body ({type(exc).__name__}): {b}")
 '
 code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/healthz/deep")
 [[ "$code" == "200" ]] || { echo "FAIL: deep healthz returned $code at $BASE/api/healthz/deep" >&2; exit 1; }
