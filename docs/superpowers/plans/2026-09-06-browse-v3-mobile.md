@@ -2634,6 +2634,8 @@ First update the file's own header comment so the next reader cannot mistake thi
 // Never regenerate it a third time to make a test pass.
 ```
 
+Amended 2026-09-07 (final review M1): (28 states after V10's `mobile-sheet`; the comment records V9's count.) The block above stays **verbatim** — it is what `frontend/tests/baseline-manifest.mjs` carries, and 27 was the count when V9 Step 8 wrote it.
+
 and in `frontend/tests/baseline-manifest.test.ts` replace its own header comment with:
 
 ```ts
@@ -3373,10 +3375,10 @@ Replace decision **D3**:
 Replace decision **D14**:
 
 ```
-| D14 | **Migration ranges:** SP3-A `015`–`059`, SP3-B `060`+. `001`–`002` are taken (`001_init`, `002_interest_signup`) and SP2/identity holds `010`–`014`. | Phase B tables reference `listing(id)`, which SP2 creates; numbered ordering must guarantee it exists first. |
+| D14 | **Migration ranges:** SP3-A `017`–`059`, SP3-B `060`+. `001`–`002` are taken (`001_init`, `002_interest_signup`), SP2/identity holds `010`–`015` and the Seed Listings plan holds `016` (`016_listing.sql`). `003`–`009` are unassigned; anything that takes one must be a Platform-level migration with no dependency on later tables. | Phase B tables reference `listing(id)`, which SP2 creates; numbered ordering must guarantee it exists first. |
 ```
 
-Renumber every migration filename in the plan accordingly — `migrations/002_census_registry.sql` → `migrations/015_census_registry.sql`, `003_census_geo.sql` → `016_census_geo.sql`, `004_census_measures.sql` → `017_census_measures.sql` — and update **every** citation of SP2's `010`–`059` range to `010`–`014`: the Global-constraints bullet, the `060_geocode_cache.sql` row and the pre-B1 precondition (three sites; re-grep `010\`–\`059` and `002_census_registry` to be sure none is missed).
+Renumber every migration filename in the plan accordingly — `migrations/002_census_registry.sql` → `migrations/017_census_registry.sql`, `003_census_geo.sql` → `018_census_geo.sql`, `004_census_measures.sql` → `019_census_measures.sql` — and update **every** citation of SP2's `010`–`059` range to `010`–`015`: the Global-constraints bullet, the `060_geocode_cache.sql` row and the pre-B1 precondition (three sites; re-grep `010\`–\`059` and `002_census_registry` to be sure none is missed). *Amended 2026-09-07 (final review I2): this instruction read `015`/`016`/`017` and `010`–`014` before the I5 fix round gave identity `015` and the Seed Listings plan took `016`; the numbers above are the ones V12 shipped and the census plan carries.*
 
 Rewrite the **Layer rendering contract** table's rendering column against V3 (C5, C7). The five rows that name a bubble become:
 
@@ -3704,7 +3706,7 @@ Every acceptance criterion, change-log entry, dead-code rule, file-index entry, 
 | D2 I8 via `convert-dc.mjs --launch` | V12 Step 4 | `cross-plan-deltas.test.ts` I8 case |
 | D3 permissions on the merged Browse | V12 Step 3 | `cross-plan-deltas.test.ts` I7 case |
 | D4 map-engines follows V3 | V12 Step 5 | `cross-plan-deltas.test.ts` map-engines case (`not.toContain('ListingsMap')`, `ring(`) |
-| D5 census follows V3's rendering and copy; migrations at `015` | V12 Step 6 | `cross-plan-deltas.test.ts` census case |
+| D5 census follows V3's rendering and copy; migrations at `017` (amended 2026-09-07: `015` until the I5 fix round gave identity `015` and the Seed Listings plan took `016`) | V12 Step 6 | `cross-plan-deltas.test.ts` census case |
 | D6 baselines (amended, option A): **every** state re-baselined from V3; zero regression on the thirteen proved by DOM parity + the pixel gate; the manifest re-based in V9; the 28th state, the `mobile-sheet` state, added in V10 fix round 1 as the oracle for the OPENED sheet | V1 Step 0–5, V9 Steps 3, 5, 8, V10 Step 4, V11 | 28-state `dom.spec.ts` + 28-state `visual.spec.ts` at `maxDiffPixels: 0`; `baseline-manifest.test.ts` (13) after V10 and each V11 deletion |
 | D7 tolerance never relaxed | Global Constraint (e) | `playwright.config.ts` untouched; V9 Step 7 |
 | D8 dead-code order, one file per commit, after Task 9 | V11 | five commits, each with its grep gate and full gate |

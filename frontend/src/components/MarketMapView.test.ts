@@ -510,13 +510,14 @@ describe('MarketMapView — driveCenter reactivity', () => {
     await vi.waitUntil(() => wrapper.find('button[aria-label="Zoom in"]').exists(), { timeout: 5000, interval: 1 });
     await flushPromises();
 
-    const overlayGroup = (stub.map.added as { clearLayers?: unknown; added: { center?: unknown }[] }[]).filter((g) => g.clearLayers)[0];
+    const overlayGroup = layerGroups(stub).overlay;
+    const ringCentre = () => (overlayGroup.added[0] as unknown as { center: unknown }).center;
     expect(overlayGroup.added).toHaveLength(1); // one dashed ring, centred on driveCenter
-    expect(overlayGroup.added[0].center).toEqual([30.4, -97.6]);
+    expect(ringCentre()).toEqual([30.4, -97.6]);
 
     await wrapper.setProps({ driveCenter: [30.9, -97.1] });
     expect(overlayGroup.added).toHaveLength(1); // cleared and rebuilt, still exactly one ring
-    expect(overlayGroup.added[0].center, 'the ring did not move to the new driveCenter').toEqual([30.9, -97.1]);
+    expect(ringCentre(), 'the ring did not move to the new driveCenter').toEqual([30.9, -97.1]);
   });
 });
 

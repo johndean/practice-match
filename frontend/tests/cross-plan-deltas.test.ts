@@ -149,6 +149,19 @@ describe('the Browse V3 plan describes what shipped', () => {
     expect(md).toContain('for **all 28** states + the 28-state DOM oracle');
     // …and Appendix A names V10's oracle for the OPENED sheet, which is what the 28th state is.
     expect(md).toContain('the `mobile-sheet` state');
+    // The one site that keeps V9's count is the verbatim quotation of
+    // `baseline-manifest.mjs`'s own historical header comment; the plan states the fact beside
+    // it rather than editing the quotation (addendum ruling 1, 2026-09-07).
+    expect(md).toContain("(28 states after V10's `mobile-sheet`; the comment records V9's count.)");
+  });
+
+  // The superseded migration number, in the two places V12's own instructions and Appendix A
+  // still carried it (addendum ruling 2, 2026-09-07).
+  it('states the one migration sequence in its own instructions and audit table too (I2)', () => {
+    const plan = read(BROWSE_V3);
+    expect(plan).not.toMatch(/renumber to start at `015`|migrations at `015`/);
+    expect(plan).toContain('`017`–`059`');
+    expect(plan).toContain('migrations/017_census_registry.sql');
   });
 
   // The sixth dead-code entry, recorded where the other five are (M4).
