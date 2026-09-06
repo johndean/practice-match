@@ -5248,6 +5248,42 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 (The design reference is committed by the controller before dispatch; the implementer's commit carries the rest.)
 
+#### Task 11e — fix round 1 (2026-09-06: CI failure on Linux + review findings I-1, I-2, M-1, M-2)
+
+**CI (both repositories, run 34011218783):** `cs-done` failed on Linux Chromium with 83 pixels over threshold (2 720 differing exactly), in two bands only — rows 545–557 (the five `cs-shimmer` redacted blocks, an *infinite* animation) and rows 840–847 (the panel caption); everything else, including the done panel itself, was pixel-identical. Locally on macOS all five passed. Diagnosis: infinite animations are cancelled by Playwright at screenshot time, and the frame at which each side is cancelled is timing-dependent on Linux; the entrance animations (`cs-rise … both`) and the ring/pulse loops are the same class of hazard. **Fix:** both coming-soon projects kill animations and transitions at document start with an init script, so every frame is the resting frame regardless of timing — `page.addInitScript` that appends `<style>*,*::before,*::after{animation:none!important;transition:none!important}</style>` as soon as `document.head` exists (use a `MutationObserver`/`DOMContentLoaded` fallback so it also works for the design, whose `<helmet>` styles are injected by its runtime). The base styles ARE the resting frames: `cs-rise`/`cs-rule` end at the unanimated values, `cs-shimmer` blocks rest at `opacity: .16`, rings at `opacity: 0`, the pulse dot at `opacity: 1`. Keep `animations: 'disabled'` in the config as belt and braces.
+
+**Review findings.** I-1: `reference-server.mjs` must answer a bare `/coming-soon` (no trailing slash) with a `301` to `/coming-soon/` — today relative asset URLs would resolve against the marketplace root and only work because the two bundles happen to be byte-identical. I-2: the discrimination proof must be a *small, localised* defect, not an inverted page — inject `margin-left: 1px` on the h1 (app side only, via a test-only `addStyleTag` in a scratch copy of the spec, never committed) and record the per-state diff-pixel counts; they must be non-zero for every state that shows the h1, and the counts go into the report. Record separately (no change): the shared `threshold: 0.1` let a page-wide `hue-rotate(8deg)` pass with 0 diff pixels — that is Playwright's per-pixel colour tolerance, shared with the marketplace gate; it is noted for John as a property of both gates, not changed here. M-1: the spec's "desktop and mobile viewports and the four form states" is read literally — **eight** states: `cs-idle`, `cs-invalid`, `cs-done`, `cs-tease-2` at 1440×900 and `cs-mobile-idle`, `cs-mobile-invalid`, `cs-mobile-done`, `cs-mobile-tease-2` at 390×844 (the `steps` functions are shared; `cs-mobile` is renamed `cs-mobile-idle`). M-2: the Google Fonts routes are registered only for `target === 'reference'`; the doc-comment says so.
+
+**Files:** Modify `frontend/tests/coming-soon-harness.ts`, `frontend/tests/coming-soon.screens.ts`, `frontend/tests/reference-server.mjs`; report only for the proof.
+
+- [ ] **FR1 Step 1: RED.** (a) Reproduce the Linux failure's *class* locally: run `npm run test:cs` five times in a row and record any non-zero diff; if macOS never shows it, the RED is the CI run itself (link the run id in the report). (b) `curl -sI http://localhost:5174/coming-soon` (with the reference server running) → today `200`; the test is the expectation `301` + `Location: /coming-soon/` — add a case to `frontend/tests/targets.test.ts`? No: the server is a script; add a small node assertion script instead — `frontend/tests/reference-server.test.mjs`? Keep it in vitest: create `frontend/tests/reference-server.test.ts` that spawns `node tests/reference-server.mjs <port>` on an ephemeral port, fetches `/coming-soon` (expect 301 → `/coming-soon/`), `/coming-soon/` (200, body contains `<title>VIN Foundation — Coming Soon</title>`), `/` (200, marketplace title), `/coming-soon/../Practice%20Match%20V2.dc.html` (403 or 404, never the marketplace file), then kills the server. Run → FAIL on the 301 case. (c) Screens: the four mobile states listed do not exist yet — `npm run test:cs:baselines` lists 5, not 8.
+
+- [ ] **FR1 Step 2: implement.** Harness:
+```ts
+const KILL_MOTION = '*,*::before,*::after{animation:none!important;transition:none!important}';
+export async function prepareComingSoon(page: Page, target: 'reference' | 'app'): Promise<void> {
+  await prepare(page);
+  // Every frame is the resting frame: infinite animations (the redacted blocks, the rings) are otherwise
+  // cancelled by Playwright at a timing-dependent frame — cs-done differed on Linux CI in exactly those rows.
+  await page.addInitScript((css: string) => {
+    const inject = () => { if (document.head && !document.getElementById('pw-kill-motion')) { const s = document.createElement('style'); s.id = 'pw-kill-motion'; s.textContent = css; document.head.appendChild(s); } };
+    inject(); new MutationObserver(inject).observe(document, { childList: true, subtree: true });
+  }, KILL_MOTION);
+  if (target === 'reference') {
+    // The design loads Merriweather from Google Fonts; answer with the app's own self-hosted file so both
+    // targets render identical glyphs (the app never requests Google Fonts).
+    await page.route('https://fonts.googleapis.com/**', (route) => route.fulfill({ status: 200, contentType: 'text/css', body: FONT_CSS }));
+    await page.route('https://fonts.gstatic.com/**', (route) => route.fulfill({ status: 200, path: FONT, contentType: 'font/woff2' }));
+  } else {
+    await page.route('**/api/interest', (route) => route.fulfill({ status: 202, contentType: 'application/json', body: '{"status":"ok"}' }));
+  }
+}
+```
+Screens: export the four step functions once and build `CS_SCREENS` as the 4×2 product (`name: \`cs-${state}\`` at desktop, `\`cs-mobile-${state}\`` with `viewport: { width: 390, height: 844 }`). Reference server: before root resolution, `if (pathname === '/coming-soon') { res.writeHead(301, { Location: '/coming-soon/' }); return res.end(); }`.
+
+- [ ] **FR1 Step 3: GREEN + proof.** `npm run test:cs:baselines` (8) then `npm run test:cs` (8/8 at 0 px, run three times); `npx vitest run tests/reference-server.test.ts tests/targets.test.ts`; marketplace `npm run test:visual:baselines && npm run test:visual` still 25/25; the 1-px h1 shift proof with per-state counts (then the scratch edit removed — `git status` clean apart from the intended files); `npx vue-tsc --noEmit -p tsconfig.json`; `npx vitest run --coverage` (thresholds hold — `reference-server.test.ts` is a test file, excluded).
+- [ ] **FR1 Step 4: Commit** — `git add frontend/tests/coming-soon-harness.ts frontend/tests/coming-soon.screens.ts frontend/tests/reference-server.mjs frontend/tests/reference-server.test.ts` · `fix(coming-soon): pixel gate is timing-independent (motion killed at document start), eight states, design root redirects its bare prefix; fonts routed on the reference only` with the trailer. The controller pushes and watches CI on Linux — the gate must pass there before the merge.
+
 ---
 
 ### Task 11f: Mode-aware deploy verification and the production step
