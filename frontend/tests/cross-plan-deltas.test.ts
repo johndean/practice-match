@@ -71,6 +71,16 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
     expect(md).toContain('one decision record');
   });
 
+  // V12 wrote these two paragraphs under option A ("V3 drops uppercase on every display-size
+  // heading; there is no pre-V3 pixel oracle any more"). Task V13 withdrew that premise: A1 put
+  // V2's typography back and all thirteen non-Browse screens hash to their V2 baselines again, so
+  // both documents were instructing the next implementer with a retired rule (V13 review M2).
+  it('the map-engines and census plans carry V13\'s correction, not option A\'s typography rule', () => {
+    const correction = "Amended 2026-09-07: Task V13 restored V2's typography through local amendment A1 (Browse V3 spec D15/D16); the thirteen non-Browse screens are byte-identical to V2 again, so a pre-V3 pixel oracle exists for them. Browse-only elements keep V3's type.";
+    expect(read(MAP_ENGINES)).toContain(correction);
+    expect(read(CENSUS)).toContain(correction);
+  });
+
   it('the census plan carries README §5\'s disabled-vs-blocked contract, which V3\'s fixtures conflate', () => {
     const md = read(CENSUS);
     expect(md).toContain('"disabled"');
