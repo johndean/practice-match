@@ -30,7 +30,21 @@ function resolve(pathname) {
 }
 
 createServer(async (req, res) => {
+  // Reject a literal ".." path segment outright, before the WHATWG URL parser below gets a
+  // chance to normalize it away: normalizing first would make a bare-prefix traversal attempt
+  // like "/coming-soon/../Practice Match V2.dc.html" collapse straight to that file's own real,
+  // legitimately-servable top-level path (200, not a leak — but not the loud rejection a
+  // traversal probe should get either). Checked on the raw request path, so percent-encoded
+  // attempts (e.g. "%2e%2e", not literally ".." until decoded) still reach the resolve()+
+  // startsWith guard below, which independently blocks them once decoded.
+  const rawPath = req.url.split('?')[0];
+  if (rawPath.split('/').some((seg) => seg === '..')) { res.writeHead(403); return res.end(); }
   const pathname = decodeURIComponent(new URL(req.url, 'http://localhost').pathname);
+  // A bare "/coming-soon" (no trailing slash) is one path segment: the browser resolves this
+  // page's relative asset URLs (./support.js, _ds/…, assets/…) against "/", not "/coming-soon/"
+  // — i.e. against the OTHER root. Today the two design exports happen to ship byte-identical
+  // copies of those shared paths, so it works by coincidence; redirect instead of relying on that.
+  if (pathname === '/coming-soon') { res.writeHead(301, { Location: '/coming-soon/' }); return res.end(); }
   const { root, file } = resolve(pathname);
   if (!file.startsWith(root.dir)) { res.writeHead(403); return res.end(); }
   try {
