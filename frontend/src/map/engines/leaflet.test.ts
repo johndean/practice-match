@@ -25,7 +25,7 @@ async function mounted(opts: Partial<Parameters<LeafletMapEngine['mount']>[1]> =
   return { stub, el, engine };
 }
 
-describe('LeafletMapEngine — MarketMapView shape', () => {
+describe('LeafletMapEngine — mount contract, scaleControl option kept', () => {
   it('creates the map, tiles, labels, scale control and groups exactly as the handoff did', async () => {
     const { stub, el } = await mounted();
     expect(stub.calls[0]).toEqual({ fn: 'map', args: [el, { center: [30.31, -97.75], zoom: 10, zoomControl: false, attributionControl: true }] });
@@ -327,7 +327,7 @@ describe('LeafletMapEngine — teardown', () => {
   });
 });
 
-describe('LeafletMapEngine — ListingsMap shape', () => {
+describe('LeafletMapEngine — bottom-right zoom control, no scale control', () => {
   it('adds the bottom-right zoom control and no scale control', async () => {
     const { stub } = await mounted({ zoomControl: 'bottomright', scaleControl: false, groups: ['layer'] });
     expect(stub.calls.find((c) => c.fn === 'control.zoom')?.args).toEqual([{ position: 'bottomright' }]);
@@ -386,5 +386,154 @@ describe('LeafletMapEngine — branch coverage: basemap fallback, control toggli
     expect(pinsGroup.added).toHaveLength(1);
     markerHandle.remove();
     expect(pinsGroup.added).toHaveLength(0);
+  });
+});
+
+// C5/C6/C7 (README Task 3): the four primitives V3's market map needs and the shipped engine
+// did not have. One canvas renderer per MOUNT is the load-bearing one — a renderer per
+// rectangle makes a mosaic this dense unusable.
+describe('LeafletMapEngine — V3 area shading, tooltip specs and panInside', () => {
+  it('creates exactly one canvas renderer per mount and hands it to every rectangle', async () => {
+    const { stub, engine } = await mounted({ scaleControl: false, groups: ['overlay', 'pins'] });
+    expect(stub.calls.filter((c) => c.fn === 'canvas')).toHaveLength(1);
+    expect(stub.calls.find((c) => c.fn === 'canvas')?.args).toEqual([{ padding: 0.3 }]);
+
+    const renderer = stub.canvas;
+    engine.rectangle([[30.1, -97.9], [30.2, -97.8]], { fillColor: '#4c9a6a', fillOpacity: 0.5 }, 'overlay');
+    engine.rectangle([[30.2, -97.9], [30.3, -97.8]], { fillColor: '#1b6b3a', fillOpacity: 0.5 }, 'overlay');
+    expect(stub.calls.filter((c) => c.fn === 'canvas')).toHaveLength(1);
+    for (const r of stub.calls.filter((c) => c.fn === 'rectangle')) {
+      expect((r.args[1] as { renderer: unknown }).renderer).toBe(renderer);
+    }
+  });
+
+  it('passes the design\'s rectangle options and defaults stroke off, interactive on', async () => {
+    const { stub, engine } = await mounted({ scaleControl: false });
+    engine.rectangle([[30.1, -97.9], [30.2, -97.8]], { fillColor: '#4c9a6a', fillOpacity: 0.5 }, 'overlay');
+    const args = stub.calls.find((c) => c.fn === 'rectangle')!.args;
+    expect(args[0]).toEqual([[30.1, -97.9], [30.2, -97.8]]);
+    expect(args[1]).toMatchObject({ stroke: false, fillColor: '#4c9a6a', fillOpacity: 0.5, interactive: true });
+
+    engine.rectangle([[1, 2], [3, 4]], { fillColor: '#000', fillOpacity: 1, stroke: true, interactive: false }, 'overlay');
+    expect(stub.calls.filter((c) => c.fn === 'rectangle')[1].args[1]).toMatchObject({ stroke: true, interactive: false });
+  });
+
+  it('adds the rectangle to the NAMED group and removes it by its handle', async () => {
+    const { stub, engine } = await mounted({ scaleControl: false, groups: ['overlay', 'pins'] });
+    const groups = (stub.map.added as { clearLayers?: unknown; added: unknown[] }[]).filter((g) => g.clearLayers);
+    const handle = engine.rectangle([[1, 2], [3, 4]], { fillColor: '#000', fillOpacity: 1 }, 'pins');
+    expect(groups[0].added).toHaveLength(0);          // 'overlay' untouched
+    expect(groups[1].added).toHaveLength(1);          // 'pins' is the named group
+    handle.remove();
+    expect(groups[1].added).toHaveLength(0);
+  });
+
+  it('forwards a rectangle tooltip spec verbatim, minus its html, and wires the area click', async () => {
+    const { stub, engine } = await mounted({ scaleControl: false });
+    let clicked = '';
+    engine.rectangle([[1, 2], [3, 4]], { fillColor: '#000', fillOpacity: 1 }, 'overlay',
+      { html: '<div>Cedar Park</div>', sticky: true, className: 'rf-tip' },
+      () => { clicked = 'Cedar Park'; });
+    const rect = (stub.map.added as { clearLayers?: unknown; added: { tooltip?: unknown; on_click?: () => void }[] }[])
+      .filter((g) => g.clearLayers)[0].added[0];
+    expect(rect.tooltip).toEqual({ text: '<div>Cedar Park</div>', opts: { sticky: true, className: 'rf-tip' } });
+    rect.on_click!();
+    expect(clicked).toBe('Cedar Park');
+  });
+
+  it('a rectangle with neither tooltip nor click binds neither', async () => {
+    const { stub, engine } = await mounted({ scaleControl: false });
+    engine.rectangle([[1, 2], [3, 4]], { fillColor: '#000', fillOpacity: 1 }, 'overlay');
+    const rect = (stub.map.added as { clearLayers?: unknown; added: { tooltip?: unknown; on_click?: unknown }[] }[])
+      .filter((g) => g.clearLayers)[0].added[0];
+    expect(rect.tooltip).toBeUndefined();
+    expect(rect.on_click).toBeUndefined();
+  });
+
+  it('a marker tooltip spec is forwarded verbatim; a bare string keeps the old defaults', async () => {
+    const { stub, engine } = await mounted({ scaleControl: false, groups: ['pins'] });
+    engine.marker([30.5, -97.8], {
+      html: '<i></i>', size: [78, 34], anchor: [39, 34],
+      tooltip: { html: '<div>callout</div>', direction: 'top', offset: [0, -22], className: 'rf-callout', permanent: true, opacity: 1 }
+    }, 'pins');
+    engine.marker([30.6, -97.8], { html: '<i></i>', size: [78, 34], anchor: [39, 34], tooltip: 'Cedar Park — $118K' }, 'pins');
+    const pins = (stub.map.added as { clearLayers?: unknown; added: { tooltip?: unknown }[] }[]).filter((g) => g.clearLayers)[0].added;
+    expect(pins[0].tooltip).toEqual({ text: '<div>callout</div>', opts: { direction: 'top', offset: [0, -22], className: 'rf-callout', permanent: true, opacity: 1 } });
+    expect(pins[1].tooltip).toEqual({ text: 'Cedar Park — $118K', opts: { direction: 'top', offset: [0, -6] } });
+  });
+
+  it('a marker handle can open its own tooltip — selection opens the callout programmatically, not only on hover', async () => {
+    const { stub, engine } = await mounted({ scaleControl: false, groups: ['pins'] });
+    const handle = engine.marker([30.5, -97.8], { html: '<i></i>', size: [78, 34], anchor: [39, 34], tooltip: { html: '<div>c</div>', permanent: true } }, 'pins');
+    handle.openTooltip!();
+    const pin = (stub.map.added as { clearLayers?: unknown; added: { tooltipOpened?: number }[] }[]).filter((g) => g.clearLayers)[0].added[0];
+    expect(pin.tooltipOpened).toBe(1);
+  });
+
+  it('ring() draws one dashed unfilled circle with the design\'s stroke, and never a fill (C7)', async () => {
+    const { stub, engine } = await mounted({ scaleControl: false });
+    engine.ring([30.5052, -97.8203], 16000, { color: '#003a70', weight: 1.5, dashArray: '4 4', fill: false }, 'overlay');
+    expect(stub.calls.find((c) => c.fn === 'circle')!.args).toEqual([[30.5052, -97.8203], { radius: 16000, color: '#003a70', weight: 1.5, dashArray: '4 4', fill: false, interactive: false }]);
+  });
+
+  it('ring() is inert after destroy()', async () => {
+    const { stub, engine } = await mounted({ scaleControl: false });
+    engine.destroy();
+    const before = stub.calls.length;
+    engine.ring([1, 2], 100, { color: '#000', weight: 1, fill: false }, 'overlay');
+    expect(stub.calls).toHaveLength(before);
+  });
+
+  it('a handle handed back after destroy() is safe to call in full — remove() AND openTooltip()', async () => {
+    const { engine } = await mounted({ scaleControl: false, groups: ['pins'] });
+    engine.destroy();
+    const handle = engine.marker([30.5, -97.8], { html: '<i></i>', size: [78, 34], anchor: [39, 34], tooltip: { html: '<div>c</div>', permanent: true } }, 'pins');
+    // drawPins() calls openTooltip() unconditionally for the selected practice; a selection
+    // landing after destroy() must be inert, not a TypeError on the no-op handle.
+    expect(() => { handle.remove(); handle.openTooltip!(); }).not.toThrow();
+  });
+
+  it('panInside pans with the design\'s padding and animation', async () => {
+    const { stub, engine } = await mounted({ scaleControl: false });
+    engine.panInside([30.5052, -97.8203], [48, 110]);
+    expect((stub.map as { pannedInside?: unknown }).pannedInside).toEqual([[30.5052, -97.8203], { padding: [48, 110], animate: true }]);
+  });
+
+  it('rectangle and panInside are inert after destroy(), like every other method', async () => {
+    const { stub, engine } = await mounted({ scaleControl: false });
+    engine.destroy();
+    const before = stub.calls.length;
+    const handle = engine.rectangle([[1, 2], [3, 4]], { fillColor: '#000', fillOpacity: 1 }, 'overlay');
+    engine.panInside([30.5, -97.8], [48, 110]);
+    expect(stub.calls).toHaveLength(before);
+    expect((stub.map as { pannedInside?: unknown }).pannedInside).toBeUndefined();
+    expect(() => handle.remove()).not.toThrow();     // the no-op handle is still safe to call
+  });
+
+  // Constraint (g), 100 % functions: the cases above assert what rectangle() and ring() DRAW.
+  // These are the handles they hand back — the same three arrows MarketMapView will call to
+  // open a cell's tooltip and to drop the drive-time ring when the toggle goes off.
+  it('the rectangle and ring handles act on their own layer — openTooltip() and remove()', async () => {
+    const { stub, engine } = await mounted({ scaleControl: false });
+    const group = (stub.map.added as { clearLayers?: unknown; added: { tooltipOpened?: number }[] }[]).filter((g) => g.clearLayers)[0];
+    const rect = engine.rectangle([[1, 2], [3, 4]], { fillColor: '#000', fillOpacity: 1 }, 'overlay', { html: '<div>a</div>', sticky: true });
+    rect.openTooltip!();
+    expect(group.added[0].tooltipOpened).toBe(1);
+    const ring = engine.ring([30.5, -97.8], 16000, { color: '#003a70', weight: 1.5, fill: false }, 'overlay');
+    ring.openTooltip!();
+    expect(group.added[1].tooltipOpened).toBe(1);
+    ring.remove();
+    expect(group.added).toHaveLength(1);
+  });
+
+  it('a re-mount builds a fresh canvas renderer rather than drawing into the removed map\'s', async () => {
+    const { stub, engine } = await mounted({ scaleControl: false });
+    const first = stub.canvas;
+    engine.destroy();
+    const stub2 = installLeafletStub();
+    await engine.mount(document.createElement('div'), { center: [30.31, -97.75], zoom: 10, basemap: 'map', zoomControl: false, scaleControl: false, groups: ['overlay'] });
+    expect(stub2.canvas).not.toBe(first);
+    engine.rectangle([[1, 2], [3, 4]], { fillColor: '#000', fillOpacity: 1 }, 'overlay');
+    expect((stub2.calls.find((c) => c.fn === 'rectangle')!.args[1] as { renderer: unknown }).renderer).toBe(stub2.canvas);
   });
 });

@@ -1,16 +1,20 @@
-import type { BaseKind, CircleStyle, Handle, LatLng, MapEngine, MarkerOptions, MountOptions } from '../engine';
+import type { AreaStyle, BaseKind, CircleStyle, Handle, LatLng, MapEngine, MarkerOptions, MountOptions, RingStyle, TooltipSpec } from '../engine';
 import { BASEMAPS, LABEL_TILES, loadLeaflet } from '../../lib/leaflet.js';
 
 // Handed back by the handle-returning methods once the engine is destroyed: callers keep
 // these and call them later, so they must be safe to use rather than undefined.
-const NOOP_HANDLE: Handle = { remove() {} };
+const NOOP_HANDLE: Handle = { remove() {}, openTooltip() {} };
 const NOOP_UNSUBSCRIBE = () => {};
+// "Tooltip options forwarded verbatim" (README Task 3b): everything on the spec except the
+// html itself is handed to Leaflet untouched, so a new option in the design needs no engine
+// change. A bare string keeps the pre-V3 defaults, so nothing else on the map moves.
+const tipOptions = (t: TooltipSpec) => { const { html: _html, ...rest } = t; return rest; };
 
 /** Leaflet 1.9.4 behind MapEngine. Every option below is the handoff's, unchanged — Task 4's visual gate proves it. */
 export class LeafletMapEngine implements MapEngine {
   readonly name = 'leaflet' as const;
   private L!: any; private map!: any; private tile!: any; private labels!: any;
-  private zoomCtl: any = null; private scaleCtl: any = null;
+  private zoomCtl: any = null; private scaleCtl: any = null; private canvas: any = null;
   private readonly groups = new Map<string, any>();
   // Ruling F: mount()'s and show()'s deferred invalidateSize() must never reach a map that
   // destroy() has already removed — Leaflet throws on `_leaflet_pos` of the detached
@@ -42,6 +46,9 @@ export class LeafletMapEngine implements MapEngine {
     // The gray canvas carries almost no labels — Esri's matching reference layer supplies them.
     this.labels = L.tileLayer(LABEL_TILES, { maxZoom: 18, pane: 'shadowPane' });
     if (opts.basemap === 'map') this.labels.addTo(this.map);
+    // ONE canvas renderer per mount, shared by every mosaic cell (MarketMapV3.jsx:248). A
+    // renderer per rectangle is what makes a mosaic this dense unusable.
+    this.canvas = L.canvas({ padding: 0.3 });
     for (const g of opts.groups ?? []) this.group(g);
     this.setControls(opts);
     el.dataset.map = 'leaflet';
@@ -75,15 +82,34 @@ export class LeafletMapEngine implements MapEngine {
     const c = this.L.circle(center, { radius: radiusM, stroke: s.stroke ?? false, fillColor: s.fillColor, fillOpacity: s.fillOpacity, interactive: s.interactive ?? false }).addTo(this.group(group));
     return { remove: () => c.remove() };
   }
+  rectangle(bounds: [LatLng, LatLng], s: AreaStyle, group: string, tooltip?: TooltipSpec, onClick?: () => void): Handle {
+    if (this.destroyed) return NOOP_HANDLE;
+    const r = this.L.rectangle(bounds, { renderer: this.canvas, stroke: s.stroke ?? false, fillColor: s.fillColor, fillOpacity: s.fillOpacity, interactive: s.interactive ?? true });
+    if (tooltip) r.bindTooltip(tooltip.html, tipOptions(tooltip));
+    if (onClick) r.on('click', onClick);
+    r.addTo(this.group(group));
+    return { remove: () => r.remove(), openTooltip: () => r.openTooltip() };
+  }
+  // C7 (MarketMapV3.jsx:230-235): one dashed, unfilled ring, not two filled circles.
+  ring(center: LatLng, radiusM: number, s: RingStyle, group: string): Handle {
+    if (this.destroyed) return NOOP_HANDLE;
+    const c = this.L.circle(center, { radius: radiusM, color: s.color, weight: s.weight, dashArray: s.dashArray, fill: false, interactive: s.interactive ?? false }).addTo(this.group(group));
+    return { remove: () => c.remove(), openTooltip: () => c.openTooltip() };
+  }
   marker(pos: LatLng, o: MarkerOptions, group: string): Handle {
     if (this.destroyed) return NOOP_HANDLE;
     const icon = this.L.divIcon({ html: o.html, className: '', iconSize: o.size, iconAnchor: o.anchor });
     const m = this.L.marker(pos, { icon, zIndexOffset: o.zIndexOffset ?? 0, interactive: o.interactive ?? true });
-    if (o.tooltip) m.bindTooltip(o.tooltip, { direction: 'top', offset: [0, -6] });
+    if (typeof o.tooltip === 'string') m.bindTooltip(o.tooltip, { direction: 'top', offset: [0, -6] });
+    else if (o.tooltip) m.bindTooltip(o.tooltip.html, tipOptions(o.tooltip));
     if (o.onClick) m.on('click', o.onClick);
     m.addTo(this.group(group));
-    return { remove: () => m.remove() };
+    return { remove: () => m.remove(), openTooltip: () => m.openTooltip() };
   }
+  // MarketMapV3.jsx:303-306 — selecting a practice opens its callout and pans just enough to
+  // bring the callout into view. The 110 px vertical padding is deliberate: ~70 px callout
+  // plus the 34 px pin.
+  panInside(pos: LatLng, padding: [number, number]): void { if (this.destroyed) return; this.map.panInside(pos, { padding, animate: true }); }
   clear(group: string): void { if (this.destroyed) return; this.groups.get(group)?.clearLayers(); }
   onMove(cb: (center: LatLng, zoom: number) => void): () => void {
     if (this.destroyed) return NOOP_UNSUBSCRIBE;
@@ -110,6 +136,7 @@ export class LeafletMapEngine implements MapEngine {
     this.groups.clear();
     this.zoomCtl = null;
     this.scaleCtl = null;
+    this.canvas = null;
     if (this.map) this.map.remove();
   }
   private later(ms: number): void { if (this.destroyed) return; const t = setTimeout(() => { this.timers.delete(t); this.map.invalidateSize(); }, ms); this.timers.add(t); }
