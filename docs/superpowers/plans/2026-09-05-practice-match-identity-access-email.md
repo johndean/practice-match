@@ -77,6 +77,8 @@
 
 ### Task I1: Schema (`010`–`014`), `app/db.py`, `app/cache.py`, root test fixtures
 
+*Ruling 2026-09-06 (Task I1 deviation 1): the connecting Postgres role is a superuser on compose (`pm`) and on Railway (`postgres`), so `REVOKE` cannot make `audit_log` append-only; `014_audit_log.sql` adds a `BEFORE UPDATE OR DELETE` trigger that raises, the REVOKEs stay as belt and braces, and the test asserts the refusal for the current role. A dedicated non-superuser application role is recorded as a later ops improvement. Also ruled: `tests/test_migrate.py`'s expected list is derived from `migrate.migration_files()`; `tests/auth/test_db_cache.py` covers the real `db`/`cache` bodies for the 100 % rule; `db.engine()` is an accessor over `get_engine(async_dsn(settings.database_url))`.*
+
 *Cross-plan delta (2026-09-05): Platform Task 5 fix round 3 created `app/db.py` — `get_engine(url)`, `get_redis(url)` (one instance per running event loop and URL) and `dispose_all()` — so the health probes reuse pooled connections. Task I1 EXTENDS that module (schema/session helpers) rather than creating it; keep those three names and semantics. Migration files (`010`–`014` and later) run under `scripts/migrate.py`, which commits each file and its ledger row as ONE transaction: a migration file must not contain its own `BEGIN`/`COMMIT`/`ROLLBACK`, and statements that cannot run inside a transaction (`CREATE INDEX CONCURRENTLY`, `VACUUM`, `CREATE DATABASE`) need their own runner path — add the rule to the `scripts/migrate.py` docstring in I1.*
 
 **Files:**
@@ -195,8 +197,16 @@ def test_outbox_idempotency_and_audit_is_append_only(conn):
         cur.execute("INSERT INTO email_outbox (to_email, template, params, idempotency_key) VALUES ('a@b.co','verify_email','{}','k1')")
         with pytest.raises(psycopg2.errors.UniqueViolation):
             cur.execute("INSERT INTO email_outbox (to_email, template, params, idempotency_key) VALUES ('a@b.co','verify_email','{}','k1')")
-        cur.execute("SELECT has_table_privilege(current_user,'audit_log','UPDATE'), has_table_privilege(current_user,'audit_log','DELETE')")
-        assert cur.fetchone() == (False, False)
+        cur.execute("INSERT INTO audit_log (action, target_type) VALUES ('probe', 'probe') RETURNING id")
+        (aid,) = cur.fetchone()
+        # The connecting role is a superuser on compose and on Railway, so ACLs alone cannot enforce
+        # append-only; the trigger must refuse both statements for ANY role (Task I1 ruling).
+        with pytest.raises(psycopg2.errors.RaiseException):
+            cur.execute("UPDATE audit_log SET reason = 'tamper' WHERE id = %s", (aid,))
+        with pytest.raises(psycopg2.errors.RaiseException):
+            cur.execute("DELETE FROM audit_log WHERE id = %s", (aid,))
+        cur.execute("SELECT count(*) FROM audit_log WHERE id = %s", (aid,))
+        assert cur.fetchone() == (1,)
 
 
 def test_session_and_token_tables_store_hashes_only(conn):
@@ -337,6 +347,16 @@ CREATE TABLE audit_log (
 CREATE INDEX audit_log_target_idx ON audit_log (target_type, target_id, at DESC);
 REVOKE UPDATE, DELETE ON audit_log FROM PUBLIC;
 REVOKE UPDATE, DELETE ON audit_log FROM CURRENT_USER;
+-- Append-only must hold for the role that actually connects. Both the compose role (pm) and
+-- Railway's template role (postgres) are SUPERUSERS, which bypass ACLs, so the REVOKEs above are
+-- belt and braces only; the trigger is the control (Task I1 ruling, 2026-09-06).
+CREATE FUNCTION audit_log_is_append_only() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'audit_log is append-only' USING ERRCODE = 'P0001';
+END $$;
+CREATE TRIGGER audit_log_append_only
+  BEFORE UPDATE OR DELETE ON audit_log
+  FOR EACH ROW EXECUTE FUNCTION audit_log_is_append_only();
 ```
 
 `app/db.py`:
