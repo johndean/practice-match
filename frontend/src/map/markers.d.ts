@@ -9,3 +9,6 @@ export function clusterIcon(count: number): string;
 export function clusterize(markers: MarkerLike[], zoom: number): ClusterEntry[];
 export function pricePin(label: string, active: boolean): string;
 export function dot(size: number, color: string, border?: string): string;
+
+export function practicePin(label: string, selected: boolean): string;
+export function practiceCallout(p: { name: string; priceLabel: string; meta?: string; photoSrc?: string }): string;
