@@ -1,13 +1,16 @@
 // Freezes the SHA-256 of every baseline PNG for the thirteen non-Browse screens. Written
-// TWICE and only twice: in Task V1 over main's V2 oracles (the leak detector through V7), and
-// again in Task V9 Step 8 over the V3 oracles, after the DOM oracle and the pixel gate proved
-// all 27 states against V3 — because the V3 design deliberately restyled every display-size
-// heading (V7 review, spec D6 option A), so the V2 hashes could not survive and byte-identity
-// is not how zero regression is proved for these screens any more. Read by
-// baseline-manifest.test.ts at the end of V10 and after every deletion commit in V11: a moved
-// hash THERE means a code change moved a screen the design did not. The PNGs it hashes are
+// THREE times and only three times: in Task V1 over main's V2 oracles (the leak detector
+// through V7); in Task V9 Step 8 over the V3 oracles, after the DOM oracle and the pixel gate
+// proved all 27 states against V3 (the V3 design had restyled every display-size heading, so
+// the V2 hashes could not survive — spec D6 option A); and in Task V13 Step 5, after John's
+// ruling "keep the V2 header and do not restyle header or fonts" put V2's typography back
+// through local design amendment A1 (spec D15/D16, option B), which returned twelve of the
+// thirteen to their V1-era V2 hashes. (`mobile-detail` is the exception: its 28 px
+// `{{ d.priceLabel }}` shares a (tag, text) key, so A1's pairing rule could not reach it —
+// recorded for John, not re-based silently.) Read by baseline-manifest.test.ts: a moved hash
+// there means a code change moved a screen the design did not. The PNGs it hashes are
 // git-ignored (.gitignore:6-7), so this is a within-worktree leak detector, not a CI oracle.
-// Never regenerate it a third time to make a test pass.
+// Never regenerate it again to make a test pass.
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
