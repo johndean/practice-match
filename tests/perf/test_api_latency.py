@@ -82,6 +82,16 @@ async def signed_in(dist, db_ready):
         conn.close()
 
 
+def p95_of(samples: list[float]) -> float:
+    """The 95th percentile, `method="inclusive"` — never above the largest observed sample.
+
+    The default (exclusive) method EXTRAPOLATES past the data, which on the ten samples the sign-in
+    gate takes made the assertion `1.2 x max(10) <= budget` rather than `p95 <= budget`: a measured
+    max of 213.1 ms came out as a "p95" of 255.3 ms (fix round 2, NEW-2). Every gate in this file
+    goes through here, so none of them can report a latency nothing actually took."""
+    return statistics.quantiles(samples, n=20, method="inclusive")[18]
+
+
 async def p95(client, path: str, n: int = 50) -> float:
     await client.get(path)  # warm-up
     samples = []
@@ -90,7 +100,7 @@ async def p95(client, path: str, n: int = 50) -> float:
         r = await client.get(path)
         samples.append((time.perf_counter() - t0) * 1000)
         assert r.status_code < 500, path
-    return statistics.quantiles(samples, n=20)[18]
+    return p95_of(samples)
 
 
 @pytest.mark.parametrize("path, budget", sorted(BUDGET_MS.items()))
@@ -116,7 +126,7 @@ async def test_anonymous_well_formed_bearer_p95_within_budget(client, db_ready):
         r = await client.get("/api/me", headers=bearer)
         samples.append((time.perf_counter() - t0) * 1000)
         assert r.status_code == 401, r.text
-    got = statistics.quantiles(samples, n=20)[18]
+    got = p95_of(samples)
     assert got <= BEARER_BUDGET_MS, f"anonymous well-formed bearer p95 {got:.1f} ms over {BEARER_BUDGET_MS} ms"
 
 
@@ -157,7 +167,7 @@ async def test_signup_p95_within_budget(client, db_ready, monkeypatch):
                                   headers={"x-forwarded-for": _fresh_ip()})
             samples.append((time.perf_counter() - t0) * 1000)
             assert r.status_code == 202, r.text
-        got = statistics.quantiles(samples, n=20)[18]
+        got = p95_of(samples)
         assert got <= SIGNUP_BUDGET_MS, f"/api/auth/signup p95 {got:.1f} ms over {SIGNUP_BUDGET_MS} ms"
     finally:
         _sql("DELETE FROM email_outbox WHERE to_email LIKE %s", (f"perf-{tag}-%",))
@@ -180,7 +190,7 @@ async def test_interest_stored_path_p95_within_budget(client, db_ready):
             r = await client.post("/api/interest", json={"email": f"perf-{tag}-{i}@example.org"}, headers={"x-forwarded-for": ip})
             samples.append((time.perf_counter() - t0) * 1000)
             assert r.status_code == 202, r.text
-        assert statistics.quantiles(samples, n=20)[18] <= 100, "/api/interest p95 over 100 ms"
+        assert p95_of(samples) <= 100, "/api/interest p95 over 100 ms"
     finally:
         with psycopg2.connect(settings.database_url) as conn, conn.cursor() as cur:
             cur.execute("DELETE FROM interest_signup WHERE email_normalised LIKE %s", (f"perf-{tag}-%",))
@@ -204,7 +214,7 @@ async def test_cold_principal_cache_me_p95_within_budget(signed_in, db_ready):
         r = await signed_in.get("/api/me")
         samples.append((time.perf_counter() - t0) * 1000)
         assert r.status_code == 200, r.text
-    got = statistics.quantiles(samples, n=20)[18]
+    got = p95_of(samples)
     assert got <= COLD_ME_BUDGET_MS, f"/api/me with a cold principal cache p95 {got:.1f} ms over {COLD_ME_BUDGET_MS} ms"
 
 

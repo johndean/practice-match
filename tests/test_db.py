@@ -7,6 +7,7 @@ monkeypatched `loop.close` (round 4: production code must not do that)."""
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 
 import psycopg2.extensions
@@ -237,3 +238,55 @@ def test_the_pool_overflows_to_a_direct_connection_rather_than_refusing(db_ready
             assert overflow.closed != 0, "an overflow connection must really close, not linger"
     finally:
         held.close()
+
+
+# --- I4 fix round 2, NEW-1: disposal must not re-enter the pool --------------------------------
+# `_SyncPool.release()` calls `pool.putconn()`, which takes ThreadedConnectionPool's own
+# non-reentrant lock — and `closeall()` holds that lock while calling `conn.close()` on every
+# connection it knows about. A CHECKED-OUT connection still carried its `_holder`, so its `close()`
+# re-entered `putconn()` and blocked on the lock its own caller was holding. `_closeall` wraps that
+# call in `try/except Exception`, which cannot catch a deadlock.
+#
+# Both tests run the disposal on a DAEMON thread with a bounded join: a regression has to FAIL here,
+# not hang the run. That matters more than it sounds — `dispose_all()` is an autouse teardown after
+# every test, so before this fix any pool regression that left a connection checked out turned a
+# one-line assertion failure into a CI job that burned to its wall-clock limit with no diagnosis.
+
+
+def _dispose_on_a_watchdog_thread(timeout: float = 2.0) -> bool:
+    done = threading.Event()
+
+    def _run() -> None:
+        db.dispose_sync_pools()
+        done.set()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return done.wait(timeout)
+
+
+def test_dispose_returns_while_a_connection_is_still_checked_out(db_ready):
+    conn = db.sync_conn()
+    assert db.sync_pool_in_use() == 1
+    assert _dispose_on_a_watchdog_thread(), "dispose_sync_pools() deadlocked with a connection checked out"
+    conn.close()
+
+
+def test_a_release_after_dispose_closes_the_connection_instead_of_raising(db_ready):
+    """The secondary path: `putconn()` on a closed pool raises `PoolError`, which on a request path
+    would be a 500 raised while merely cleaning up — and would leak the `in_use` count with it."""
+    conn = db.sync_conn()
+    holder = db._sync_pools[db.sync_dsn()]
+    assert _dispose_on_a_watchdog_thread()
+    conn.close()                      # must not raise
+    assert conn.closed != 0
+    assert holder.in_use == 0
+
+
+async def test_dispose_all_returns_while_a_connection_is_still_checked_out(db_ready):
+    """The production path: `app/main.py`'s lifespan calls `dispose_all()` on shutdown, and a
+    `force_exit` (a second SIGTERM) reaches it with requests still in flight. A hang there is a
+    container Railway has to SIGKILL, with the async engine and the Redis client never disposed."""
+    conn = db.sync_conn()
+    await asyncio.wait_for(db.dispose_all(), timeout=5)
+    conn.close()
+    assert db.sync_pool_in_use() == 0

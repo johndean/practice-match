@@ -70,13 +70,24 @@ async def test_signin_sets_cookies_and_me_returns_the_design_shape(client, membe
 
 
 async def test_signin_failures_are_generic_for_wrong_unknown_suspended_and_revoked(client, member):
+    """One warm-up request, then FIVE samples per case compared as medians (fix round 2, NEW-5).
+
+    The brief compared the single-shot min and max of four samples, and the first sample is always
+    the outlier — a warm-up cost, not unequal work, so widening the tolerance would only hide it.
+    Six concurrent runs of the old shape failed six times, every one with the same signature: first
+    ~230-280 ms, the other three within ~17 ms of each other. The tolerance is unchanged."""
     member(("buyer",), state="suspended", email="s@example.org"); member(("buyer",), state="revoked", email="r@example.org")
-    bodies = set(); times = []
+    await client.post("/api/auth/signin", json={"email": "warm-up@example.org", "password": PW})   # discarded
+    bodies, medians = set(), []
     for email, pw in [("buyer-active@example.org", "wrong-password-xx"), ("nobody@example.org", PW), ("s@example.org", PW), ("r@example.org", PW)]:
-        t0 = time.perf_counter(); r = await client.post("/api/auth/signin", json={"email": email, "password": pw}); times.append(time.perf_counter() - t0)
-        assert r.status_code == 401; bodies.add(r.text)
+        samples = []
+        for _ in range(5):
+            t0 = time.perf_counter(); r = await client.post("/api/auth/signin", json={"email": email, "password": pw})
+            samples.append(time.perf_counter() - t0)
+            assert r.status_code == 401; bodies.add(r.text)
+        medians.append(statistics.median(samples))
     assert len(bodies) == 1 and "Email or password is incorrect" in bodies.pop()
-    assert max(times) - min(times) < 0.02 * 5    # equal hash work (generous factor for CI jitter)
+    assert max(medians) - min(medians) < 0.02 * 5    # equal hash work; pairwise, so this is every pair
 
 
 async def test_lockout_after_ten_failures_per_email(client, member):
@@ -294,7 +305,10 @@ async def test_signup_does_the_same_work_for_a_new_and_an_existing_address(clien
             assert r.status_code == 202 and r.json() == {"status": "check_email"}, email
     templates = sorted(row[1] for row in await _outbox(conn))
     assert templates == ["account_exists"] * 10 + ["verify_email"] * 10
-    assert abs(statistics.median(new_s) - statistics.median(old_s)) < 0.02 * 5, (statistics.median(new_s), statistics.median(old_s))
+    # 20 ms, not the sign-in test's 100 ms (fix round 2, O-1): what separates the two branches is a
+    # WAL flush, which is single-digit milliseconds, so the ruling's borrowed tolerance made this
+    # assertion inert — it passed with the `account_exists` enqueue removed (delta 2.8 ms).
+    assert abs(statistics.median(new_s) - statistics.median(old_s)) < 0.020, (statistics.median(new_s), statistics.median(old_s))
 
 
 @pytest.mark.parametrize("bad", ["a\x00b@example.org", "a\x01b@example.org", "a\u202eb@example.org", "a\ud800b@example.org"])
@@ -612,3 +626,25 @@ def test_the_conn_fixture_guard_refuses_the_database(client):
     `sync_conn` in the process is the refusal."""
     with pytest.raises(RuntimeError, match="without the conn fixture"):
         A.sync_conn()
+
+
+async def test_malformed_addresses_do_not_share_one_rate_limit_bucket(client, conn):
+    """NEW-3. Everything `_normalised` rejects maps to `NO_MATCH`, so every malformed address shared
+    ONE `signin:email` / `forgot:email` subject process-wide (`sha256("")[:16]`). Three requests an
+    hour therefore pinned `password/forgot` at "Too many attempts" for every caller who submitted a
+    malformed address, from any source IP — a pasted non-breaking space or a stray control character
+    out of a PDF is enough to spend the budget. C2's "same answer as an unknown address" held only
+    for the first three (forgot) or ten (signin) per window, globally.
+
+    The per-address limiters are skipped for `NO_MATCH`; the per-IP ones still bound the caller, and
+    nothing is disclosed by it — malformedness is knowable client-side without asking the server."""
+    for i in range(4):
+        r = await client.post("/api/auth/password/forgot", json={"email": f"malformed-{i}"}, headers={"x-forwarded-for": _ip()})
+        assert r.status_code == 202, i
+    fresh = await client.post("/api/auth/password/forgot", json={"email": "unknown-but-well-formed@example.org"}, headers={"x-forwarded-for": _ip()})
+    assert fresh.status_code == 202, "a well-formed unknown address was spent by the malformed ones"
+    for i in range(11):
+        r = await client.post("/api/auth/signin", json={"email": f"malformed-s-{i}", "password": PW}, headers={"x-forwarded-for": _ip()})
+        assert r.status_code == 401, i
+    # ...and the burst row that used to identify nothing but the constant pseudonym of "" is gone.
+    assert _rows(conn, "SELECT count(*) FROM audit_log WHERE action='signin.failure_burst'")[0][0] == 0

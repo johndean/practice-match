@@ -54,6 +54,10 @@ to today's behaviour — never worse — under concurrency; and `maxconn` exhaus
 `PoolError`, which would turn a burst into 500s where there was no cap before, so beyond
 the cap `sync_conn()` hands out an ordinary un-pooled connection instead (the overflow
 path SQLAlchemy spells `max_overflow`).
+
+`settings.db_pool_max` therefore sizes the REUSE pool, not the connection count: with it
+set to 2 and six concurrent callers, seven backends are open and `sync_pool_in_use()`
+reports 2 (fix round 2, NEW-4). Bounding the overflow is I9's concurrency work.
 """
 from __future__ import annotations
 
@@ -163,11 +167,20 @@ class _SyncPool:
 
     The count is kept here rather than read off `pool._used` so nothing depends on psycopg2's
     private attributes; the lock guards it because FastAPI runs `def` dependencies (and therefore
-    `sync_conn`) in the anyio worker threadpool."""
+    `sync_conn`) in the anyio worker threadpool.
+
+    `closing` is what makes disposal safe (fix round 2, NEW-1). `putconn()` takes
+    `ThreadedConnectionPool`'s own NON-reentrant lock, and `closeall()` holds that same lock while
+    calling `conn.close()` on everything it knows about — so a CHECKED-OUT connection, which still
+    carried its `_holder`, re-entered `putconn()` and blocked on the lock its own caller held. The
+    flag is set before `closeall()` runs, so from that moment `release()` closes the socket directly
+    and never touches the pool again. It also covers the secondary path: a connection released after
+    disposal used to raise `PoolError`, which on a request path is a 500 thrown while cleaning up."""
 
     pool: psycopg2.pool.ThreadedConnectionPool
     in_use: int = 0
     lock: threading.Lock = field(default_factory=threading.Lock)
+    closing: bool = False
 
     def acquire(self) -> psycopg2.extensions.connection | None:
         """A pooled connection, or None when the pool is at `maxconn` (the caller overflows)."""
@@ -185,9 +198,22 @@ class _SyncPool:
         return conn
 
     def release(self, conn: psycopg2.extensions.connection) -> None:
-        self.pool.putconn(conn)
         with self.lock:
+            closing = self.closing
             self.in_use -= 1
+        if closing:
+            # Straight to psycopg2's own close: `putconn()` would either deadlock (we are inside
+            # `closeall()`, which holds the pool's lock) or raise `PoolError: connection pool is
+            # closed` (we are after it). The connection is going away either way.
+            psycopg2.extensions.connection.close(conn)
+            return
+        self.pool.putconn(conn)
+
+    def close(self) -> None:
+        """Closes every connection this pool owns, checked out or not, without re-entering it."""
+        with self.lock:
+            self.closing = True
+        self.pool.closeall()
 
 
 _sync_pools: dict[str, _SyncPool] = {}
@@ -241,7 +267,7 @@ def dispose_sync_pools() -> None:
         pools = list(_sync_pools.values())
         _sync_pools.clear()
     for holder in pools:
-        holder.pool.closeall()
+        holder.close()
 
 
 def engine() -> AsyncEngine:

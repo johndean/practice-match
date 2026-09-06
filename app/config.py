@@ -25,7 +25,7 @@ class Settings(BaseSettings):
     consolidator_keywords: str = ""  # comma-separated employer-domain keywords (VIN Foundation-supplied); an application-review hint only, never a decision (spec §6)
     link_base_url: str = "https://qa.foundation.vin"  # origin the verify/reset links in transactional email point at; production sets https://foundation.vin
     email_allowlist: str = ""  # comma-separated addresses/domains transactional email may be delivered to; empty means no allowlist (Task I6)
-    db_pool_max: int = 10  # ceiling on pooled psycopg2 connections per DSN (app/db.py); beyond it a caller gets an un-pooled connection rather than an error
+    db_pool_max: int = 10  # size of the psycopg2 REUSE pool per DSN (app/db.py); past it a caller gets an un-pooled connection, so this does not cap the connection count
 
     @field_validator("site_mode")
     @classmethod

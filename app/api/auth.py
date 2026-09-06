@@ -345,7 +345,13 @@ async def signin(body: Creds, request: Request, response: Response) -> dict[str,
     key = _lookup_key(body.email)
     # CHECKED, not counted: spec §3's lockout is ten FAILURES per address per 15 minutes, so this
     # attempt is counted only if the credential turns out to be wrong (fix round 1, Important 1).
-    limits.check(r, "signin:email", key, LOCKOUT_LIMIT, LOCKOUT_WINDOW_S)
+    #
+    # `NO_MATCH` is exempt (fix round 2, NEW-3): every malformed address normalises to the same
+    # empty key, so counting them together locked ONE shared bucket for every caller in the window,
+    # from any source IP. The per-IP limiter below still bounds the caller, and skipping the
+    # per-address one discloses nothing — an address's malformedness is knowable client-side.
+    if key:
+        limits.check(r, "signin:email", key, LOCKOUT_LIMIT, LOCKOUT_WINDOW_S)
     limits.hit(r, "signin:ip", rate_limit_subject(request), *limits.SIGNIN_IP)
     with closing(sync_conn()) as lookup, lookup, lookup.cursor() as cur:
         cur.execute("""SELECT a.id, a.password_hash, a.state,
@@ -364,7 +370,9 @@ async def signin(body: Creds, request: Request, response: Response) -> dict[str,
 
     if row is None or not ok or row[2] in REFUSED_STATES:
         with closing(sync_conn()) as conn, conn:
-            fails = limits.count_failure(r, "signin:email", key, LOCKOUT_WINDOW_S)
+            # 0 for `NO_MATCH`, so a burst of malformed addresses neither fills a shared bucket nor
+            # writes an audit row identifying nothing but the pseudonym of the empty string (NEW-3).
+            fails = limits.count_failure(r, "signin:email", key, LOCKOUT_WINDOW_S) if key else 0
             if fails == FAILURE_BURST:
                 audit.write(conn, actor=None, action="signin.failure_burst", target_type="account",
                             target_id=row[0] if row else _pseudonym(key), request=request)
@@ -431,7 +439,8 @@ async def forgot(body: EmailIn, request: Request) -> dict[str, str]:
     r = sync_redis()
     key = _lookup_key(body.email)
     limits.hit(r, "forgot:ip", rate_limit_subject(request), *limits.FORGOT_IP)
-    limits.hit(r, "forgot:email", key, *limits.FORGOT_EMAIL)
+    if key:   # `NO_MATCH` is exempt — see `signin` (fix round 2, NEW-3)
+        limits.hit(r, "forgot:email", key, *limits.FORGOT_EMAIL)
     with closing(sync_conn()) as conn, conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM account WHERE email=%s AND state = ANY(%s)", (key, list(RESETTABLE_STATES)))
