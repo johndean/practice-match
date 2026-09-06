@@ -4637,6 +4637,128 @@ git commit -m "fix(api): /api/interest caps chunked bodies while streaming, trus
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
+#### Task 11c — fix round 3 (2026-09-06, from the opus re-review of round 2: O1 Important, O2–O5 Minor; O6–O11 recorded)
+
+**Rulings:** O6 (`declared_length` accepts surrounding whitespace, leading zeros, non-ASCII decimal digits — `int()` parses all of them correctly), O7 (an empty `Content-Length:` → 413 rather than "absent"), O8 (single-use stream), O9 (bandwidth is the platform's job), O10 (coverage numbers → hand-back), O11 (dev Redis housekeeping — controller flushes `rl:*` on the compose Redis) — recorded, no change. O1–O5 fixed below. Also: Task 11f Step 4b's live probe gains a second pass that sends TWO `X-Forwarded-For` header lines, the only place Railway's edge behaviour can be observed.
+
+**Files:** Modify `app/api/interest.py`, `tests/api/test_interest.py`.
+
+- [ ] **FR3 Step 1: failing tests — each watched fail on its own.**
+```python
+def test_client_ip_joins_repeated_forwarded_header_lines():
+    """O1: HTTP allows the field to repeat and Starlette returns only the first line — an edge that adds its own
+    line instead of appending would hand the subject back to the caller. All lines are joined first."""
+    from starlette.requests import Request
+
+    from app.api.interest import client_ip
+
+    scope = {"type": "http", "method": "POST", "path": "/api/interest", "query_string": b"", "client": ("9.9.9.9", 1),
+             "headers": [(b"x-forwarded-for", b"evil-spoof"), (b"x-forwarded-for", b"203.0.113.7")]}
+    assert client_ip(Request(scope)) == "203.0.113.7"
+
+
+async def test_client_disconnect_mid_body_is_answered_without_a_traceback(dist, caplog):
+    """O2: an aborted upload is not an error — it is answered by this endpoint's contract, not a 500."""
+    import logging
+
+    from app.main import create_app
+
+    app = create_app(dist=dist)
+    calls = 0
+
+    async def receive():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {"type": "http.request", "body": b'{"email":"', "more_body": True}
+        return {"type": "http.disconnect"}
+
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {"type": "http", "http_version": "1.1", "method": "POST", "scheme": "http", "path": "/api/interest", "raw_path": b"/api/interest",
+             "query_string": b"", "root_path": "", "server": ("test", 80), "client": ("10.9.9.9", 1),
+             "headers": [(b"host", b"test"), (b"content-type", b"application/json"), (b"content-length", b"64")]}
+    caplog.set_level(logging.ERROR)
+    await app(scope, receive, send)
+    assert sent[0]["type"] == "http.response.start" and sent[0]["status"] == 422
+    assert "Traceback" not in caplog.text
+
+
+@pytest.mark.parametrize("size, status", [(4096, 422), (4097, 413)])
+async def test_body_cap_boundary(client, db_ready, size, status):
+    """O3: exactly MAX_BODY_BYTES is accepted (and then rejected as an invalid address), one more byte is 413."""
+    body = b'{"email":"' + b"a" * (size - len(b'{"email":""}')) + b'"}'
+    assert len(body) == size
+    r = await client.post("/api/interest", content=body, headers={"x-forwarded-for": _ip(), "content-type": "application/json"})
+    assert r.status_code == status
+
+
+async def test_oversized_chunked_body_is_not_buffered(dist):
+    """N3/O4: the cap trips while streaming — the app stops pulling chunks long before a 100 KiB body ends."""
+    from app.main import create_app
+
+    app = create_app(dist=dist)
+    pulled = 0
+
+    async def receive():
+        nonlocal pulled
+        pulled += 1
+        return {"type": "http.request", "body": b"a" * 1024, "more_body": pulled < 100}
+
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {"type": "http", "http_version": "1.1", "method": "POST", "scheme": "http", "path": "/api/interest", "raw_path": b"/api/interest",
+             "query_string": b"", "root_path": "", "server": ("test", 80), "client": ("10.9.9.8", 1),
+             "headers": [(b"host", b"test"), (b"content-type", b"application/json")]}
+    await app(scope, receive, send)
+    assert sent[0]["status"] == 413
+    assert pulled < 20, pulled  # 4 KiB cap: a handful of 1 KiB chunks, never all 100
+```
+`test_invalid_address_is_422_and_writes_nothing` gains a `finally` that deletes any row a broken build might have written (O5):
+```python
+    finally:
+        with psycopg2.connect(settings.database_url) as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM interest_signup WHERE email = %s", (bad.strip(),))
+```
+(wrap the existing body in `try:`; also delete the stray row `a​b@example.com` once — the same statement removes it on the first run of that case).
+
+RED: the first test returns `"evil-spoof"`; the disconnect test raises `ClientDisconnect` out of the app (or records a traceback); the boundary test passes for 4097 and fails for 4096 only if the cap were `>=` — run it and record (it is expected to pass on the current code: its job is to pin the boundary; say so); the streaming test — record `pulled` on the current code (expected small: the round-2 streaming cap is in place; the test pins it).
+
+- [ ] **FR3 Step 2: production code** (`app/api/interest.py`):
+```python
+from starlette.requests import ClientDisconnect
+```
+```python
+def client_ip(request: Request) -> str:
+    """The client as Railway's edge saw it: the RIGHTMOST X-Forwarded-For hop. A reverse proxy appends the peer
+    it accepted, so every earlier hop is caller-supplied text and must not key a rate limit (11c review F2;
+    spec §3 amended 2026-09-06, proven live on QA in Task 11f). Repeated header lines are joined first — an
+    edge that adds its own line instead of appending must still win (O1). An empty rightmost hop or no header
+    falls back to the peer address (N7)."""
+    hop = ",".join(request.headers.getlist("x-forwarded-for")).rsplit(",", 1)[-1].strip()
+    if hop:
+        return hop
+    return request.client.host if request.client else "unknown"
+```
+and in the handler:
+```python
+    try:
+        raw = await _read_capped(request)
+    except ClientDisconnect:
+        return _error("invalid_email", 422)  # the caller went away mid-body: not an error, not a 500 (O2)
+    if raw is None:
+        return _error("too_large", 413)
+```
+
+- [ ] **FR3 Step 3: GREEN** — every node id; `poetry run pytest -q -W error` twice; mypy; ruff.
+- [ ] **FR3 Step 4: Commit** — `git add app/api/interest.py tests/api/test_interest.py` · `fix(api): /api/interest joins repeated X-Forwarded-For lines, answers a mid-body disconnect by contract; cap boundary and streaming pinned by tests` with the trailer.
+
 ---
 
 ### Task 11d: Wire the page — `submit()` posts to the API; Merriweather self-hosted; unit tests at 100 %
@@ -4993,7 +5115,7 @@ for i in 1 2 3 4 5 6; do
     -d "{\"email\":\"qa-probe-$(date +%s)-$i@example.invalid\"}" https://qa.foundation.vin/api/interest
 done
 ```
-Expected: `202` ×5 then `429` — a different spoofed first hop on every request did not reset the per-IP count, so the edge appends (or overwrites with) the real peer and the rightmost hop is the client. If the sixth is `202`, STOP: the edge passes the header through untouched, `client_ip()` must change, and production waits. Record the six codes in the Task 11f report and delete the probe rows afterwards (`railway run --service api --environment QA -- python -c "..."` or leave them: QA is disposable — say which).
+Expected: `202` ×5 then `429` — a different spoofed first hop on every request did not reset the per-IP count, so the edge appends (or overwrites with) the real peer and the rightmost hop is the client. If the sixth is `202`, STOP: the edge passes the header through untouched, `client_ip()` must change, and production waits. **Second pass (added after the round-2 re-review, O1):** the same six requests but with TWO `X-Forwarded-For` header lines each (`-H "X-Forwarded-For: 198.51.100.$i" -H "X-Forwarded-For: 198.51.100.99"`, fresh addresses) — expected `202` ×5 then `429` again: whether the edge appends to the caller's line or adds its own, the joined-then-rightmost rule keys on what the edge saw. Record the six codes in the Task 11f report and delete the probe rows afterwards (`railway run --service api --environment QA -- python -c "..."` or leave them: QA is disposable — say which).
 
 **Production step (supersedes Task 10 Step 4; John's go given 2026-09-06 — re-confirm the QA state to him in the pause report before running it):**
 1. 🚦 `railway status` → `Project: Practice Match`.
