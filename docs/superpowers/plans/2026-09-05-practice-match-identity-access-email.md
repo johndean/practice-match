@@ -831,7 +831,7 @@ def test_matrix_matches_the_spec_table():
     assert PM.MATRIX["users.decide"] == frozenset({"staff", "admin"})
     assert PM.MATRIX["engine.activate"] == frozenset({"admin"}) and "engine.activate" in PM.REAUTH
     assert PM.MATRIX["abuse.investigate"] == frozenset({"admin"}) and "abuse.investigate" in PM.AUDITED
-    assert {"users.decide", "roles.grant", "tokens.manage", "licence.decide", "users.review"} <= PM.AUDITED
+    assert {"users.decide", "roles.grant", "tokens.manage", "licence.decide", "users.view_detail"} <= PM.AUDITED   # users.review (the list) is NOT audited — I5 review ruling 2026-09-08
     assert {"licence.decide", "engine.activate", "roles.grant", "tokens.manage"} <= PM.REAUTH
 
 
@@ -999,7 +999,7 @@ MATRIX: dict[str, frozenset[str]] = {
     "request.create": frozenset({"buyer", "seller"}), "request.read_own": frozenset({"buyer", "seller"}),
     "seller.apply": frozenset({"buyer"}),
     "page.seller": frozenset({"seller"}), "listing.manage_own": frozenset({"seller"}), "request.answer_own": frozenset({"seller"}),
-    "page.admin": _STAFF, "users.review": _STAFF, "users.decide": _STAFF,
+    "page.admin": _STAFF, "users.review": _STAFF, "users.view_detail": _STAFF, "users.decide": _STAFF,
     "listing.review": _STAFF, "listing.publish": _STAFF, "request.oversee": _STAFF,
     "abuse.investigate": _ADMIN,
     "data_sources.read": _STAFF,
@@ -1007,7 +1007,7 @@ MATRIX: dict[str, frozenset[str]] = {
     "audit.read": _STAFF, "permissions.read": _STAFF,
 }
 REAUTH = frozenset({"licence.decide", "engine.activate", "roles.grant", "tokens.manage", "users.revoke"})
-AUDITED = frozenset({"users.review", "users.decide", "roles.grant", "tokens.manage", "licence.decide", "engine.activate", "abuse.investigate"})
+AUDITED = frozenset({"users.view_detail", "users.decide", "users.revoke", "roles.grant", "tokens.manage", "licence.decide", "engine.activate", "abuse.investigate"})   # amended 2026-09-08: the list (users.review) is not audited; the detail view (users.view_detail) and users.revoke are
 PUBLIC_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/api/healthz"), ("GET", "/api/healthz/deep"), ("GET", "/robots.txt"), ("GET", "/"), ("GET", "/{path:path}"),
     ("POST", "/api/auth/signup"), ("POST", "/api/auth/verify"), ("POST", "/api/auth/signin"),
@@ -1604,7 +1604,7 @@ Settings: `link_base_url: str = "https://qa.foundation.vin"` (production sets `h
 - Modify: `app/main.py` (routers)
 
 **Interfaces:**
-- Produces: `POST /api/applications {kind, fields}` (`account.self`; buyer requires `state=verified`, seller requires role buyer and `seller.apply`) → `202 {id, status}`; `GET /api/applications/me` → latest per kind; `GET /api/admin/users?state=&kind=&cursor=&limit=` (`users.review`) → `{items: [...], next_cursor}`; `GET /api/admin/users/{id}` (`users.review`, audited view) → account + applications + grants; `POST /api/admin/users/{id}/decide {action, note}` (`users.decide`; `revoke` → permission `users.revoke` requiring re-auth) → `{state, roles}`; `POST /api/admin/users/{id}/grants {role, grant: bool, reason}` (`roles.grant`); `POST /api/admin/tokens {name, role, days}` (`tokens.manage`) → `{token}` once; `POST /api/admin/tokens/{id}/revoke`; `GET /api/admin/audit?limit=` (`audit.read`); `GET /api/admin/permissions` (`permissions.read`) → `{roles, matrix, reauth, audited}`; `flags.compute(fields: dict, email: str) -> list[str]`; `decide(conn, r, *, actor, account_id, action, note, request) -> tuple[str, list[str]]` (the transition table below); CLI `bootstrap_admin.py --email …` prints an invite link (`/accept-invite?token=`), `seed_persona.py` refuses on production.
+- Produces: `POST /api/applications {kind, fields}` (`account.self`; buyer requires `state=verified`, seller requires role buyer and `seller.apply`) → `202 {id, status}`; `GET /api/applications/me` → latest per kind; `GET /api/admin/users?state=&kind=&cursor=&limit=` (`users.review`) → `{items: [...], next_cursor}`; `GET /api/admin/users/{id}` (`users.view_detail`, audited view) → account + applications + grants; `POST /api/admin/users/{id}/decide {action, note}` (`users.decide`; `revoke` → permission `users.revoke` requiring re-auth) → `{state, roles}`; `POST /api/admin/users/{id}/grants {role, grant: bool, reason}` (`roles.grant`); `POST /api/admin/tokens {name, role, days}` (`tokens.manage`) → `{token}` once; `POST /api/admin/tokens/{id}/revoke`; `GET /api/admin/audit?limit=` (`audit.read`); `GET /api/admin/permissions` (`permissions.read`) → `{roles, matrix, reauth, audited}`; `flags.compute(fields: dict, email: str) -> list[str]`; `decide(conn, r, *, actor, account_id, action, note, request) -> tuple[str, list[str]]` (the transition table below); CLI `bootstrap_admin.py --email …` prints an invite link (`/accept-invite?token=`), `seed_persona.py` refuses on production.
 
 Decision transitions (buyer application; seller analogous with `seller` grant only):
 
@@ -1722,7 +1722,7 @@ async def test_admin_grants_roles_and_issues_tokens_with_reauth(client, conn, me
     assert r.status_code == 200 and r.json()["roles"] == ["buyer", "staff"]
     t = await client.post("/api/admin/tokens", cookies=acookies, headers=ahdr, json={"name": "k6-qa", "role": "buyer", "days": 30})
     assert t.status_code == 201 and t.json()["token"].startswith("pm_")
-    assert (await client.get("/api/me", headers={"Authorization": f"Bearer {t.json()['token']}"})).status_code == 403   # a token has no account → account.self denied
+    assert (await client.get("/api/me", headers={"Authorization": f"Bearer {t.json()['token']}"})).status_code == 200   # spec §3 allows a token on /api/me; since the I3 review a token principal carries its minter's account id (ruling 2026-09-07 — the earlier 403 line was wrong)
     assert (await client.get("/api/layers", headers={"Authorization": f"Bearer {t.json()['token']}"})).status_code in (200, 404)  # market.read allowed (404 until Census lands)
     p = (await client.get("/api/admin/permissions", cookies=acookies)).json()
     assert p["matrix"]["engine.activate"] == ["admin"] and "roles" in p
@@ -1889,7 +1889,7 @@ async def list_users(state: str | None = None, kind: str | None = None, cursor: 
 
 
 @router.get("/users/{account_id}")
-async def detail(account_id: UUID, request: Request, principal=Depends(require("users.review"))) -> dict:
+async def detail(account_id: UUID, request: Request, principal=Depends(require("users.view_detail"))) -> dict:
     with sync_conn() as conn, conn.cursor() as cur:
         cur.execute("SELECT id, email, state, display_name, affiliation_label, created_at, last_sign_in_at FROM account WHERE id=%s", (account_id,)); a = cur.fetchone()
         if not a:
@@ -2540,4 +2540,4 @@ Run: `poetry run pytest tests/test_docs.py tests/perf -q` → **FAIL**.
 
 - **Spec coverage:** §2 → I1, I5; §3 → I2, I3, I4; §4 → I3, I7; §5 → I6; §6 → I5, I7, I8; §7 S1–S13 → I3 (S2 uniform, S11 origin, S12 ip), I4 (S3 tokens, S6 sessions), I5 (S5 audited views, S10 bootstrap), I6 (S7), I1/I3 (S8), I9 (S9), I5 (S13 flags), I2/I4 (S1 compensations), I2 (S4 next-request); §8 → I4/I9 budgets; §9 → every task; §10 → I9; §11 open items → I10 Step 1 and the deltas; §12 DoD → I10.
 - **Placeholders:** none; `mail_reply_to` carries a default value the VIN Foundation replaces (an open item, not a TBD); the Resend DNS values come from the Resend dashboard at I10.
-- **Type consistency:** `Principal` (I2) is what `require` returns (I3) and what `me_payload`/`decide` consume (I4, I5); `enqueue(conn, to=, template=, params=, idempotency_key=)` is identical in I4, I5, I6; `Me` (I7) matches `me_payload`'s keys (I4); `guard(state, patch, ctx)` (I7) is what `useStateRouteSync` calls; the permission strings used by routers (`users.review`, `users.decide`, `users.revoke`, `roles.grant`, `tokens.manage`, `audit.read`, `permissions.read`, `account.self`) all exist in `MATRIX` (I3, with `users.revoke` added in I5).
+- **Type consistency:** `Principal` (I2) is what `require` returns (I3) and what `me_payload`/`decide` consume (I4, I5); `enqueue(conn, to=, template=, params=, idempotency_key=)` is identical in I4, I5, I6; `Me` (I7) matches `me_payload`'s keys (I4); `guard(state, patch, ctx)` (I7) is what `useStateRouteSync` calls; the permission strings used by routers (`users.review`, `users.view_detail`, `users.decide`, `users.revoke`, `roles.grant`, `tokens.manage`, `audit.read`, `permissions.read`, `account.self`) all exist in `MATRIX` (I3, with `users.revoke` added in I5).
