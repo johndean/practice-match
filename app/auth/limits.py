@@ -1,61 +1,36 @@
 """Fixed-window rate-limit helpers for the synchronous auth endpoints (signin/signup/
-forgot-password, Task I4), and the shared client-IP rule.
+forgot-password, Task I4).
 
-`hit()` is the same fixed-window shape as `app.ratelimit.hit` (INCR then EXPIRE only on
-the very first hit, so a key always carries a TTL even if the process dies between the
-two commands) — adapted here for a synchronous Redis client (`app.cache.sync_redis()`,
-which is what a `require`/session-cookie request holds) and raising the shared 429
-response instead of returning a bool. It is not a second, differently-shaped counter:
-the auth endpoints call it with a single, already-scoped key (e.g. `f"rl:signin:ip:{ip}"`)
-the same way `app.ratelimit.bucket_key` scopes its own keys.
+`hit()` is `app.ratelimit.hit` for a SYNCHRONOUS Redis client: the same key from the same
+`bucket_key()` (so subjects — client IPs, normalised email addresses — enter Redis only as a
+truncated SHA-256 pseudonym, and one bucket index owns one window), the same MULTI(INCR, EXPIRE)
+so a key always carries a TTL even if the process dies between the two commands. The only
+differences are the client and that going over the limit raises `deps.RateLimited` (decision A5's
+429 body plus `Retry-After`) instead of returning a bool.
 
-`client_ip` implements the spec's client-IP rule — FIRST non-empty X-Forwarded-For hop
-across every X-Forwarded-For header line, port stripped, else the peer — verified live
-on Railway for `/api/interest` (see DEPLOY.md). `app.api.interest` re-exports this same
-function (Task I3) so there is exactly one implementation; its own extensive parametrised
-tests (`tests/api/test_interest.py`) exercise it against real Starlette `Request` objects,
-whose `Headers.getlist` sees every repeated header line. The `deps`/`audit` callers here
-sometimes pass a minimal request stand-in instead (headers as a plain mapping) — the
-function is duck-typed so both land on the same first-hop rule."""
+Fix round 1, Important 5: this module used to carry its OWN counter — a plain key handed in by the
+caller, INCR-then-EXPIRE-only-on-1 — so the interest endpoint and the auth endpoints would have
+limited the same IP under two different key schemes, and the pre-built key in its own documented
+example (`f"rl:signin:ip:{ip}"`) would have put raw addresses into Redis."""
 from __future__ import annotations
 
 from typing import Any
 
-from fastapi import HTTPException
+from app.auth.deps import RateLimited
+from app.ratelimit import bucket_key
 
 SIGNIN_EMAIL, SIGNIN_IP, SIGNUP_IP, SIGNUP_EMAIL, FORGOT_EMAIL = (10, 900), (30, 900), (5, 3600), (3, 86400), (3, 3600)
 
 
-def hit(r: Any, key: str, limit: int, window_s: int) -> None:
-    n = r.incr(key)
-    if n == 1:
-        r.expire(key, window_s)
-    if n > limit:
-        ttl = r.ttl(key)
-        raise HTTPException(
-            429,
-            detail={"error": {"code": "RATE_LIMITED", "message": "Too many attempts. Try again later."}},
-            headers={"Retry-After": str(ttl if ttl and ttl > 0 else window_s)},
-        )
-
-
-def _host_only(field: str) -> str:
-    """uvicorn's `_parse_host_port` rule: `[v6]:port` and `v4:port` lose the port; a bare
-    IPv6 address (more than one colon, no brackets) is returned as is."""
-    if field.startswith("["):
-        end = field.find("]")
-        return field[1:end] if end != -1 else field
-    if field.count(":") == 1:
-        return field.rsplit(":", 1)[0]
-    return field
-
-
-def client_ip(request: Any) -> str | None:
-    headers = request.headers
-    getlist = getattr(headers, "getlist", None)
-    raw = ",".join(getlist("x-forwarded-for")) if getlist is not None else (headers.get("x-forwarded-for") or "")
-    first = raw.split(",")[0].strip()
-    if first:
-        return _host_only(first)
-    client = getattr(request, "client", None)
-    return client.host if client else None
+def hit(r: Any, scope: str, subject: str, limit: int, window_s: int) -> None:
+    """Counts one hit for `subject` in the current `window_s`-second window; raises `RateLimited`
+    once the count is past `limit`. `Retry-After` is the whole window: the bucket rolls over at
+    most one window from now, so it is an upper bound that never tells a caller to come back while
+    it would still be refused."""
+    key = bucket_key(scope, subject, window_s)
+    with r.pipeline(transaction=True) as pipe:
+        pipe.incr(key)
+        pipe.expire(key, window_s)
+        count, _ = pipe.execute()
+    if int(count) > limit:
+        raise RateLimited(window_s)

@@ -81,3 +81,22 @@ def test_expiries_follow_the_database_clock_not_the_app_clock(conn, monkeypatch)
 # Coverage-only, per John's 100 %-coverage ruling (2026-09-06) — not in the brief's Step 1.
 def test_verify_api_token_rejects_a_malformed_raw_token(conn):
     assert T.verify_api_token(conn, "not-a-token-at-all") is None
+
+
+def test_an_api_token_dies_with_its_creators_account(conn):
+    """I3 fix round 1, Important 10: `verify_api_token` looked at the token row alone, so
+    suspending the staff account that minted a CI token — and revoking every role grant it had —
+    left the token fully capable; only revoking the token row itself stopped it. The token now
+    joins `account` through `created_by` and fails closed when that account is suspended or
+    revoked, which is also what makes `created_by` available as the principal's real actor id."""
+    creator = _account(conn, "creator@x.io", "active")
+    raw = T.issue_api_token(conn, name="deploy-verify", role="admin", created_by=creator, ttl=timedelta(days=90))
+    p = T.verify_api_token(conn, raw)
+    assert p is not None and p.created_by == creator and isinstance(p.created_by, UUID)
+    for dead in ("suspended", "revoked"):
+        with conn.cursor() as cur:
+            cur.execute("UPDATE account SET state = %s WHERE id = %s", (dead, creator))
+        assert T.verify_api_token(conn, raw) is None, f"a {dead} creator's token still verified"
+    with conn.cursor() as cur:
+        cur.execute("UPDATE account SET state = 'active' WHERE id = %s", (creator,))
+    assert T.verify_api_token(conn, raw) is not None

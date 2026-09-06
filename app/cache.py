@@ -35,12 +35,37 @@ def _make_async() -> aioredis.Redis:
     return client
 
 
+_sync_client: redis_sync.Redis | None = None
+
+
 def sync_redis() -> redis_sync.Redis:
-    """Resolved through the module factory at call time so tests (and `from app.cache
-    import sync_redis` consumers) all see one patch point: the `redis` fixture
-    replaces `_make_sync`/`_make_async`."""
-    return _make_sync()
+    """One client per process, built through the module factory on first use so tests (and
+    `from app.cache import sync_redis` consumers) all see one patch point: the `redis` fixture
+    replaces `_make_sync`/`_make_async` and calls `reset()`.
+
+    Memoised in I3 fix round 1 (Critical 3): `app.auth.deps.current_principal` calls this on
+    every authenticated request, and a fresh client per call means a fresh TCP connection per
+    call — a second connect on the hot path the session cache exists to keep cheap. redis-py's
+    sync client is thread-safe (it hands each command a connection from its own pool), which is
+    what makes one shared instance safe under FastAPI's `def`-dependency threadpool.
+
+    `async_redis` is deliberately NOT memoised: a redis-py asyncio client binds its connections
+    to the event loop that opened them, so one shared instance would break exactly the way
+    `app.db`'s per-loop caches exist to avoid."""
+    global _sync_client
+    if _sync_client is None:
+        _sync_client = _make_sync()
+    return _sync_client
 
 
 def async_redis() -> aioredis.Redis:
     return _make_async()
+
+
+def reset() -> None:
+    """Drops the memoised sync client so the next `sync_redis()` rebuilds it through `_make_sync`.
+    The test suite's `redis` fixture calls this on both sides of its yield, so a fakeredis instance
+    can neither be shadowed by an earlier client nor outlive its own test (Critical 3(ii)); nothing
+    in production calls it (a process keeps one client for its life)."""
+    global _sync_client
+    _sync_client = None

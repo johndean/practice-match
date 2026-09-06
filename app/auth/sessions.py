@@ -121,13 +121,25 @@ def create(conn: psycopg2.extensions.connection, r: redis_sync.Redis, account_id
     return raw
 
 
-def resolve(conn: psycopg2.extensions.connection, r: redis_sync.Redis, raw: str) -> Principal | None:
+def resolve_cached(r: redis_sync.Redis, raw: str) -> Principal | None:
+    """The cache half of `resolve`, split out (not duplicated) in I3 fix round 1, Critical 3: it is
+    the ONLY half an authenticated request needs while the 60 s principal cache is warm, and
+    `app.auth.deps.current_principal` calls it first so the hot path opens no Postgres connection.
+    A miss here is not "no session" — only `resolve` can say that; it means "ask Postgres"."""
     h = hash_id(raw)
     # redis-py's sync/async command mixins share one ResponseT stub (Awaitable[Any] | Any); this client is sync.
     cached = cast("bytes | str | None", r.get(f"session:{h}"))
+    if not cached:
+        return None
+    d = json.loads(cached)
+    return Principal(UUID(d["a"]), d["s"], frozenset(d["r"]), datetime.fromisoformat(d["re"]) if d["re"] else None, "session", h)
+
+
+def resolve(conn: psycopg2.extensions.connection, r: redis_sync.Redis, raw: str) -> Principal | None:
+    cached = resolve_cached(r, raw)
     if cached:
-        d = json.loads(cached)
-        return Principal(UUID(d["a"]), d["s"], frozenset(d["r"]), datetime.fromisoformat(d["re"]) if d["re"] else None, "session", h)
+        return cached
+    h = hash_id(raw)
     # The clock is read BEFORE Postgres: any sign-out or invalidation stamped at or after
     # this instant must outrank the principal we are about to read (NEW-1).
     loaded_at = _now_us(r)

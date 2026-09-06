@@ -3,11 +3,40 @@
 from __future__ import annotations
 
 import json
+import re
 from typing import Any
 
 import psycopg2.extensions
 
 from app.auth.sessions import Principal
+
+_SECRET_KEY_RE = re.compile(r"password|hash|secret|token", re.IGNORECASE)
+
+
+def _redacted(value: Any) -> Any:
+    """`value` with every key whose NAME mentions a password, hash, secret or token dropped, at any
+    depth (Important 2). `audit_log` is append-only by trigger, so a secret written here can never
+    be removed without dropping the table; the `before`/`after` API invites callers to hand it a
+    fetched row, and `account`/`api_token` rows carry exactly those columns. Names, not values: a
+    heuristic on the value would be both slower and far easier to fool."""
+    if isinstance(value, dict):
+        return {k: _redacted(v) for k, v in value.items() if not _SECRET_KEY_RE.search(str(k))}
+    if isinstance(value, list):
+        return [_redacted(v) for v in value]
+    return value
+
+
+def _actor_role(actor: Principal | None) -> str | None:
+    """The roles an audit row records, prefixed with the KIND of caller (Important 10). `actor_id`
+    carries no foreign key and, for a token, is the account that minted it — so without this an
+    auditor cannot tell an action a staff member took from one their CI token took on their
+    behalf. The legacy operator secret has no account at all, so it says so."""
+    if actor is None:
+        return None
+    if actor.kind == "legacy":
+        return "legacy:operator"
+    roles = ",".join(sorted(actor.roles))
+    return f"token:{roles}" if actor.kind == "token" else roles
 
 
 def write(
@@ -24,7 +53,7 @@ def write(
 ) -> None:
     ip = ua = rid = None
     if request is not None:
-        from app.auth.limits import client_ip
+        from app.auth.deps import client_ip
 
         ip, ua, rid = client_ip(request), request.headers.get("user-agent"), request.headers.get("x-request-id")
     with conn.cursor() as cur:
@@ -34,12 +63,12 @@ def write(
             (
                 rid,
                 actor.account_id if actor else None,
-                ",".join(sorted(actor.roles)) if actor else None,
+                _actor_role(actor),
                 action,
                 target_type,
                 str(target_id) if target_id is not None else None,
-                json.dumps(before) if before is not None else None,
-                json.dumps(after) if after is not None else None,
+                json.dumps(_redacted(before)) if before is not None else None,
+                json.dumps(_redacted(after)) if after is not None else None,
                 ip,
                 ua,
                 reason,

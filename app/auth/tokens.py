@@ -43,6 +43,7 @@ class ApiPrincipal:
     token_id: UUID
     name: str
     role: str
+    created_by: UUID  # the account that minted it — the principal's real actor id (I3 fix round 1, Important 10)
 
 
 def issue_api_token(conn: psycopg2.extensions.connection, *, name: str, role: str, created_by: UUID, ttl: timedelta) -> str:
@@ -60,8 +61,15 @@ def verify_api_token(conn: psycopg2.extensions.connection, raw: str) -> ApiPrinc
         return None
     tid, secret = raw[3:].split(".", 1)
     with conn.cursor() as cur:
-        cur.execute("""UPDATE api_token SET last_used_at = now()
-                        WHERE id::text = %s AND token_hash = %s AND revoked_at IS NULL AND expires_at > now()
-                        RETURNING id, name, role""", (tid, hash(secret)))
+        # Joined to the creating account and fail-closed on its state (I3 fix round 1, Important
+        # 10): a token is a delegation of somebody's authority, so suspending or revoking that
+        # somebody must take the token with it. A CI token whose owner has left otherwise stays
+        # fully capable for the rest of its 90 days.
+        cur.execute("""UPDATE api_token t SET last_used_at = now()
+                         FROM account a
+                        WHERE a.id = t.created_by
+                          AND t.id::text = %s AND t.token_hash = %s AND t.revoked_at IS NULL AND t.expires_at > now()
+                          AND a.state NOT IN ('suspended', 'revoked')
+                    RETURNING t.id, t.name, t.role, t.created_by""", (tid, hash(secret)))
         row = cur.fetchone()
     return ApiPrincipal(*row) if row else None

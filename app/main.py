@@ -9,6 +9,7 @@ from fastapi.responses import PlainTextResponse
 from app.api.health import not_found_router
 from app.api.health import router as health_router
 from app.api.interest import router as interest_router
+from app.auth import deps
 from app.config import settings
 from app.db import dispose_all
 from app.static import dist_for, mount_spa
@@ -41,6 +42,9 @@ def create_app(dist: Path | None = None) -> FastAPI:
             CORSMiddleware, allow_origins=settings.origins, allow_credentials=True,
             allow_methods=["*"], allow_headers=["*"],
         )
+    # The one handler that renders app.auth.deps.AuthError as decision A5's body; the installer
+    # lives with the dependency it serves (I3 fix round 1, ruling (a)). I4 adds the auth routers.
+    deps.install(app)
     app.include_router(health_router)
     # Future /api routers are included here, BEFORE the catch-all below.
     app.include_router(interest_router)

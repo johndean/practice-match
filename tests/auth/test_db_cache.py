@@ -68,3 +68,38 @@ async def test_redis_fixture_intercepts_both_import_styles(redis, monkeypatch):
     assert sync_redis().get("k") == b"v"  # from-imported at this module's top
     assert await cache.async_redis().ping() is True
     assert await async_redis().ping() is True
+
+
+# --- fix round 1, Critical 3(ii): one sync client per process, and no fake outliving its test ---
+
+_LEAK_PROBE = "fix-round-1-leak-probe"
+
+
+def test_sync_redis_memoises_one_client_per_process(db_ready):
+    """`current_principal` calls `sync_redis()` on every authenticated request; building a fresh
+    client (and so a fresh TCP connection) each time was a second connect on the hot path. The
+    `_make_sync` seam the `redis` fixture patches is unchanged — only the memo is new."""
+    from app import cache
+
+    first = cache.sync_redis()
+    assert cache.sync_redis() is first
+    assert sync_redis() is first  # from-imported at this module's top: same memo
+
+
+def test_the_redis_fixture_replaces_the_memo_and_leaves_a_key_behind(redis):
+    """Half one of the isolation pair: `cache.reset()` in the fixture must drop whatever the test
+    above memoised, or `sync_redis()` here would still be the REAL client."""
+    from app import cache
+
+    assert cache.sync_redis() is redis
+    redis.set(_LEAK_PROBE, b"1")
+    assert cache.sync_redis().get(_LEAK_PROBE) == b"1"
+
+
+def test_the_redis_fixture_hands_the_next_test_a_fresh_fake(redis):
+    """Half two: a fakeredis instance never survives its own test."""
+    from app import cache
+
+    assert cache.sync_redis() is redis
+    assert redis.get(_LEAK_PROBE) is None
+    assert cache.sync_redis().get(_LEAK_PROBE) is None

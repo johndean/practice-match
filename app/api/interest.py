@@ -15,7 +15,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from starlette.requests import ClientDisconnect
 
-from app.auth.limits import client_ip as _client_ip
+from app.auth.deps import client_ip as _client_ip
 from app.checks import async_dsn
 from app.config import settings
 from app.db import get_engine, get_redis
@@ -55,7 +55,7 @@ def client_ip(request: Request) -> str:
     Railway writes the accepted client first and leaves caller-supplied values after it — six spoofed sign-ups
     were limited on the sixth, with one header line and with two. DEPLOY.md carries the probe.
 
-    The rule itself now lives in `app.auth.limits.client_ip` (Task I3), so `require`/`audit.write` share the
+    The rule itself now lives in `app.auth.deps.client_ip` (Task I3), so `require`/`audit.write` share the
     exact same implementation instead of a second copy; this wrapper only keeps this module's own public name
     and its never-None ("unknown" peer) return type, so every existing caller/test here is unaffected."""
     ip = _client_ip(request)

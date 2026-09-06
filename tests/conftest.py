@@ -7,7 +7,6 @@ os.environ.setdefault("API_SECRET_KEY", "test_only_secret_change_me")
 
 # Env defaults above must precede any app.* import (E402 no longer enforced by ruff's
 # config here, but the ordering itself still matters — see the module docstring intent).
-import warnings
 from pathlib import Path
 
 import httpx
@@ -157,19 +156,9 @@ def redis(monkeypatch):
     # own globals on every call, so patching those two intercepts every caller.
     monkeypatch.setattr(cache, "_make_sync", lambda: sync)
     monkeypatch.setattr(cache, "_make_async", lambda: aio)
-    return sync
-
-
-@pytest.fixture(autouse=True)
-def _ignore_httpx_per_request_cookies_deprecation():
-    """Task I3's tests/auth/test_deps.py (brief-verbatim, not to be edited) sends `pm_session`/
-    `pm_csrf` via per-request `cookies=` on `client.get/post(...)` — httpx itself deprecates that
-    exact call shape, and the CI gate's `-W error` turns the DeprecationWarning into a failure.
-    There is no way to silence it from inside that test file, so it is silenced here: a `-W`
-    command-line filter is applied before ini/fixture filters (pytest's own precedence — see
-    `_pytest.warnings.apply_warning_filters`) and so cannot be overridden from pyproject.toml, but
-    a filter added here, during a test's own setup, runs INSIDE pytest's per-item
-    `catch_warnings_for_item` context and is prepended ahead of it. Narrow on purpose (this exact
-    message only); every other warning in the suite still fails under `-W error`."""
-    warnings.filterwarnings("ignore", message=r"Setting per-request cookies=<\.\.\.>.*", category=DeprecationWarning)
-    yield
+    # `sync_redis()` memoises one client per process (I3 fix round 1, C3): reset on both sides of
+    # the yield so an earlier test's client cannot shadow this fake, and this fake cannot outlive
+    # the test that asked for it.
+    cache.reset()
+    yield sync
+    cache.reset()

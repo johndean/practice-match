@@ -23,6 +23,12 @@ MATRIX: dict[str, frozenset[str]] = {
     "seller.apply": frozenset({"buyer"}),
     "page.seller": frozenset({"seller"}), "listing.manage_own": frozenset({"seller"}), "request.answer_own": frozenset({"seller"}),
     "page.admin": _STAFF, "users.review": _STAFF, "users.decide": _STAFF,
+    # Revoke is one branch of the admin Users screen's decide action, split out as its own
+    # permission because it — and only it — is in REAUTH (spec §4: "Approve · Decline · Request
+    # info · Suspend · Revoke (re-auth for Revoke)"). Fix round 1, Important 1: it was in REAUTH
+    # and in no MATRIX row, so `require("users.revoke")` would have raised KeyError at wiring time
+    # and the twin's REAUTH list silently omitted it.
+    "users.revoke": _STAFF,
     "listing.review": _STAFF, "listing.publish": _STAFF, "request.oversee": _STAFF,
     "abuse.investigate": _ADMIN,
     "data_sources.read": _STAFF,
@@ -31,10 +37,21 @@ MATRIX: dict[str, frozenset[str]] = {
 }
 REAUTH = frozenset({"licence.decide", "engine.activate", "roles.grant", "tokens.manage", "users.revoke"})
 AUDITED = frozenset({"users.review", "users.decide", "roles.grant", "tokens.manage", "licence.decide", "engine.activate", "abuse.investigate"})
+# (method, path template) for every route that is deliberately reachable without a permission.
+# `tests/auth/test_permissions.py::test_every_route_is_guarded_or_public` walks `create_app()` and
+# fails on anything here that is neither guarded by `require(...)` nor listed below (spec §4
+# Enforcement) — fix round 1, Important 8, which is also why the routes that already shipped are
+# spelled out rather than waved through by the test.
 PUBLIC_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/api/healthz"), ("GET", "/api/healthz/deep"), ("GET", "/robots.txt"), ("GET", "/"), ("GET", "/{path:path}"),
     ("POST", "/api/auth/signup"), ("POST", "/api/auth/verify"), ("POST", "/api/auth/signin"),
     ("POST", "/api/auth/password/forgot"), ("POST", "/api/auth/password/reset"), ("POST", "/api/webhooks/resend"),
+    ("GET", "/_app/{path:path}"),      # the built bundle (StaticFiles), same public surface as "/" and the SPA catch-all
+    ("POST", "/api/interest"),         # the Coming Soon launch-notification sign-up: anonymous by design, rate-limited instead
+    # `app.api.health.not_found_router`'s catch-all: it exists so an unknown /api/* path answers a
+    # JSON 404 instead of falling through to the SPA's index.html. It reads nothing and writes
+    # nothing, on any method.
+    *((method, "/api/{path:path}") for method in ("DELETE", "GET", "PATCH", "POST", "PUT")),
 })
 
 
@@ -61,7 +78,10 @@ def to_typescript() -> str:
              "export type Permission =\n  " + " |\n  ".join(json.dumps(p) for p in perms) + ";",
              "export const MATRIX: Record<Permission, readonly Role[]> = {"]
     lines += [f"  {json.dumps(p)}: {json.dumps(sorted(MATRIX[p]))}," for p in perms]
-    lines += ["};", f"export const REAUTH: readonly Permission[] = {json.dumps(sorted(REAUTH & set(MATRIX)))};", ""]
+    # `sorted(REAUTH)`, not `sorted(REAUTH & set(MATRIX))`: the intersection quietly dropped a
+    # REAUTH entry that named no permission instead of failing (Important 1). The invariant is
+    # pinned by tests/auth/test_permissions.py::test_every_reauth_permission_is_a_real_permission.
+    lines += ["};", f"export const REAUTH: readonly Permission[] = {json.dumps(sorted(REAUTH))};", ""]
     return "\n".join(lines)
 
 
