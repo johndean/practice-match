@@ -99,6 +99,11 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
     // The census plan's own range row, and the gap it leaves.
     const census = read(CENSUS);
     expect(census).toContain('`003`–`009` are unassigned');
+
+    // The FOURTH plan. This assertion was dropped when the I2 pins were added (re-review,
+    // 2026-09-07): the map-engines SPEC pin below is not a substitute for it — the plan and the
+    // spec are two documents, and the case's title claims four plans.
+    expect(read(MAP_ENGINES)).toContain('Census SP3-A `017`–`059`');
   });
 
   // Same sequence, in the SPECS. A reader meets whichever document they open first, and three
