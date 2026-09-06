@@ -21,6 +21,8 @@ class Settings(BaseSettings):
     public_indexing: bool = False  # QA leaves this unset (noindex); production runs true — the Coming Soon page is meant to be found
     site_mode: str = "app"  # app | coming_soon — which built site the api serves (spec 2026-09-06)
     hibp_enabled: bool = True  # Have I Been Pwned k-anonymity check on password change; falls back to the bundled offline list on any error
+    market_data_public: bool = False  # anonymous visitors gain permissions.MATRIX["market.read"] only while true — QA evaluation only (spec's MARKET_DATA_PUBLIC), never production
+    consolidator_keywords: str = ""  # comma-separated employer-domain keywords (VIN Foundation-supplied); an application-review hint only, never a decision (spec §6)
 
     @field_validator("site_mode")
     @classmethod

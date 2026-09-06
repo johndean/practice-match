@@ -15,6 +15,7 @@ from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from starlette.requests import ClientDisconnect
 
+from app.auth.limits import client_ip as _client_ip
 from app.checks import async_dsn
 from app.config import settings
 from app.db import get_engine, get_redis
@@ -47,27 +48,18 @@ def normalise(email: str) -> tuple[str, str] | None:
     return e, e.lower()
 
 
-def _host_only(field: str) -> str:
-    """uvicorn's `_parse_host_port` rule: `[v6]:port` and `v4:port` lose the port; a bare IPv6 address (more than
-    one colon, no brackets) is returned as is (OBS-3)."""
-    if field.startswith("["):
-        end = field.find("]")
-        return field[1:end] if end != -1 else field
-    if field.count(":") == 1:
-        return field.rsplit(":", 1)[0]
-    return field
-
-
 def client_ip(request: Request) -> str:
     """The client as Railway's edge saw it, computed exactly as uvicorn does under `--forwarded-allow-ips='*'`:
     repeated X-Forwarded-For lines are joined, the FIRST field is the client, a port on it is stripped, and an
     empty first field (or no header) means the peer address. Verified live on QA (2026-09-06, Task 11f Step 4b):
     Railway writes the accepted client first and leaves caller-supplied values after it — six spoofed sign-ups
-    were limited on the sixth, with one header line and with two. DEPLOY.md carries the probe."""
-    first = ",".join(request.headers.getlist("x-forwarded-for")).split(",")[0].strip()
-    if first:
-        return _host_only(first)
-    return request.client.host if request.client else "unknown"
+    were limited on the sixth, with one header line and with two. DEPLOY.md carries the probe.
+
+    The rule itself now lives in `app.auth.limits.client_ip` (Task I3), so `require`/`audit.write` share the
+    exact same implementation instead of a second copy; this wrapper only keeps this module's own public name
+    and its never-None ("unknown" peer) return type, so every existing caller/test here is unaffected."""
+    ip = _client_ip(request)
+    return ip if ip is not None else "unknown"
 
 
 def declared_length(request: Request) -> int | None:

@@ -15,6 +15,8 @@ Railway project **Practice Match** (id `d20ecd90-2855-4b7d-957d-96a882b3a95d`) �
 | `PUBLIC_INDEXING` | ✓ | | `true` on production (the Coming Soon page is meant to be found); unset on QA → every response carries `X-Robots-Tag: noindex, nofollow` |
 | `SITE_MODE` | ✓ | ✓ | `app` on QA, `coming_soon` on production until launch — selects the built site the api serves |
 | `HIBP_ENABLED` | ✓ | | `true` in every environment; Have I Been Pwned k-anonymity password screen — falls back to the bundled offline list on any error (never disabled to skip the offline fallback, only to skip the network call in constrained environments) |
+| `MARKET_DATA_PUBLIC` | ✓ | | `false` — anonymous visitors gain `market.read` only while `true`; QA evaluation only, **never** production (Identity plan Task I3) |
+| `CONSOLIDATOR_KEYWORDS` | ✓ | | comma-separated employer-domain keywords, VIN Foundation-supplied; an application-review hint only, never a decision — default empty |
 | `CENSUS_API_KEY` | | ✓ | Sub-project 3; John holds it — never in git, chat, or CI. `railway variable set CENSUS_API_KEY=… --service worker --environment <env>` |
 
 ## DNS (verbatim as Railway printed them — Task 8, 2026-09-06)
