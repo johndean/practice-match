@@ -5527,6 +5527,131 @@ The policy's §5 fenced block becomes the same text; its §3 row reads "p95 ≤ 
 
 ---
 
+### Task 12: Final whole-branch review fixes (2026-09-06) — M1–M4 must-fix, O1/O2/O4 medium; O3 to John
+
+**Source:** `.superpowers/sdd/2026-09-05-practice-match-platform/final-review.md`. Verdict FIX FIRST. All gates were green; these close the review's findings before the merge. O3 (ProximaNova webfonts served publicly without a licence file, `.ttf` desktop files included) is a licence question for the VIN Foundation — hand-back item, no change here. The six Low findings are recorded in the review file.
+
+**Files:**
+- Modify: `scripts/verify-deploy.sh`, `tests/scripts/test_verify_deploy.sh`, `app/config.py`, `tests/test_config.py`, `DEPLOY.md`, `.env.example`, `CLAUDE.md`, `tests/test_docs.py`, `pyproject.toml`, `tests/test_static.py`, `scripts/verify-image.sh`, `tests/scripts/test_verify_image_sh.sh`, `app/ratelimit.py`, `tests/api/test_interest.py`, `.gitleaks.toml`
+
+- [ ] **Step 1: Failing tests (each watched fail).**
+
+**M1 — the verifier asserts `site_mode` per environment.** `tests/scripts/test_verify_deploy.sh`: the existing `coming_ok` case (line ~184) currently runs `verify-deploy.sh QA` and expects success — that pins the opposite of "the coming-soon page never goes to QA". Change it to run `verify-deploy.sh production` and expect success (same `coming_ok` server; note `WANT=production` means the fake body's `environment` must be `production` for that case — add a `coming_ok_prod` mode if the fake body's environment is fixed to `qa`, or make the fake take the environment from `MODE`). Add three cases: (a) `verify-deploy.sh QA` against `coming_ok` → non-zero, output contains `site_mode is 'coming_soon', expected 'app'`; (b) `verify-deploy.sh production` against a body with `environment: production, site_mode: app` serving the marketplace shell → non-zero, `site_mode is 'app', expected 'coming_soon'`; (c) the same target with `EXPECT_SITE_MODE=app` → success (the launch flip). Also `tests/test_config.py`:
+```python
+def test_qa_never_runs_coming_soon_mode():
+    from pydantic import ValidationError
+
+    from app.config import Settings
+    base = {"database_url": "postgresql://x", "redis_url": "redis://x", "api_secret_key": "x"}
+    with pytest.raises(ValidationError):
+        Settings(**base, environment="qa", site_mode="coming_soon")
+    assert Settings(**base, environment="production", site_mode="coming_soon").site_mode == "coming_soon"
+    assert Settings(**base, environment="test", site_mode="coming_soon").site_mode == "coming_soon"
+```
+`tests/test_docs.py` — assert `"EXPECT_SITE_MODE" in DEPLOY.md`.
+
+**M2 — `PUBLIC_INDEXING` documented consistently.** `tests/test_docs.py`:
+```python
+def test_public_indexing_row_matches_the_site_mode_matrix():
+    text = (ROOT / "DEPLOY.md").read_text()
+    row = next(line for line in text.splitlines() if line.startswith("| `PUBLIC_INDEXING`"))
+    assert "`true` on production" in row and "noindex" in row
+    assert "flip to true at launch" not in (ROOT / ".env.example").read_text()
+    assert "flip to true at launch" not in (ROOT / "app" / "config.py").read_text()
+```
+
+**M3 — the documented variable listing cannot print a value.** `tests/test_docs.py`:
+```python
+def test_claude_md_lists_variable_names_only():
+    text = (ROOT / "CLAUDE.md").read_text()
+    assert "sed -E 's/(SECRET|KEY|URL)=.*/" not in text  # matched nothing on CLI 5.x's table output; values were printed
+    assert "railway variable list --service api --environment QA --json" in text
+```
+
+**M4 — coverage.** `tests/test_config.py`:
+```python
+def test_load_settings_exits_1_in_process_and_names_the_variables(monkeypatch, capsys):
+    from app.config import load_settings
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    with pytest.raises(SystemExit) as info:
+        load_settings()
+    assert info.value.code == 1
+    err = capsys.readouterr().err
+    assert "DATABASE_URL" in err and "REDIS_URL" in err
+```
+`tests/test_static.py`:
+```python
+def test_mount_spa_mounts_nothing_when_the_built_site_is_missing(tmp_path):
+    from fastapi import FastAPI
+
+    from app.static import mount_spa
+    app = FastAPI()
+    before = len(app.routes)
+    mount_spa(app, tmp_path / "no-such-dist")
+    assert len(app.routes) == before  # nothing served, nothing crashes; the health probe still answers
+```
+(both pass today — they exist to make coverage see behaviour the subprocess tests already prove; record that.)
+
+**O1 — `verify-image.sh` checks that can fail.** `tests/scripts/test_verify_image_sh.sh`: add a negative case — a fake `curl` whose `/` body lacks `id="app"` → the script must exit non-zero with `FAIL: index.html` in its output (RED today: the `&& echo` form prints nothing and exits 0).
+
+**O2 — no minute-boundary flake.** `tests/api/test_interest.py`: the three six-request endpoint tests wrap their loop in a helper that re-runs once if the minute rolled over during the requests:
+```python
+async def _within_one_minute(run):
+    """Fixed windows: if the minute rolls over inside the six requests the counter resets; re-run once (O2)."""
+    for _ in range(2):
+        start = int(time.time()) // 60
+        result = await run()
+        if int(time.time()) // 60 == start:
+            return result
+    return result
+```
+(`import time`). The TTL test passes one `now = time.time()` to both `hit(..., now=now)` and `bucket_key(..., now=now)` — RED: `hit()` has no `now` parameter.
+
+**O4 — gitleaks allowlist narrowed.** `tests/test_docs.py::test_gitleaks_config_parses` additionally asserts no allowlist path equals `(?i)^docs/.*` or `(?i)^tests/.*`, and that `(?i)^docs/design-reference/.*` is present.
+
+Run each new/changed test → FAIL for its own reason (the two coverage tests pass immediately — say so).
+
+- [ ] **Step 2: Implement.**
+
+`scripts/verify-deploy.sh`:
+```bash
+case "$ENV" in
+  QA)         DEFAULT_BASE="https://qa.foundation.vin"; WANT=qa;         WANT_MODE=app ;;                                  # the coming-soon page never goes to QA
+  production) DEFAULT_BASE="https://foundation.vin";    WANT=production; WANT_MODE="${EXPECT_SITE_MODE:-coming_soon}" ;;  # launch flip: EXPECT_SITE_MODE=app
+```
+and directly after `mode=$(…)`:
+```bash
+[[ "$mode" == "$WANT_MODE" ]] || { echo "FAIL: site_mode is '$mode', expected '$WANT_MODE' for $ENV" >&2; exit 1; }
+```
+`app/config.py` — a model validator (pydantic v2):
+```python
+    @model_validator(mode="after")
+    def _qa_never_serves_the_coming_soon_page(self) -> Settings:
+        if self.environment == "qa" and self.site_mode == "coming_soon":
+            raise ValueError("SITE_MODE=coming_soon is never valid on QA (John, 2026-09-06)")
+        return self
+```
+(import `model_validator`; the comment on `public_indexing` becomes `# QA leaves this unset (noindex); production runs true — the Coming Soon page is meant to be found`.)
+`DEPLOY.md`: `PUBLIC_INDEXING` row Value → `` `true` on production (the Coming Soon page is meant to be found); unset on QA → every response carries `X-Robots-Tag: noindex, nofollow` ``; the launch flip sentence in "## Site mode" gains `EXPECT_SITE_MODE=app scripts/verify-deploy.sh production` (until the default is changed) and a note that the verifier now refuses `coming_soon` on QA and, by default, `app` on production. `.env.example`: `PUBLIC_INDEXING=false  # QA leaves this unset/false (noindex); production runs true`. `CLAUDE.md` line 59 becomes:
+```bash
+railway variable list --service api --environment QA --json | python3 -c 'import sys,json; print("\n".join(sorted(json.load(sys.stdin))))'   # names only — never pipe values to a terminal
+```
+(run it ONCE for real — it prints names only — and record that it does.)
+`pyproject.toml`: add
+```toml
+[tool.coverage.run]
+concurrency = ["thread", "greenlet"]
+```
+`scripts/verify-image.sh`: the four `[[ … ]] && echo "…"` lines become `[[ … ]] || { echo "FAIL: <what> at <url>" >&2; exit 1; }` followed by `echo "… OK"` (keep the exact OK strings the shell test asserts: `index.html served`, `SPA fallback OK`, `worker health OK`, `celery booted`).
+`app/ratelimit.py`: `async def hit(client, scope, subject, limit, window_s, now: float | None = None)` passing `now` to `bucket_key`.
+`.gitleaks.toml` paths → `'''(?i)\.env\.example$'''`, `'''(?i)^docs/design-reference/.*'''`, `'''(?i)^frontend/tests/visual\.spec\.ts-snapshots/.*'''` (drop `^docs/.*`, `^tests/.*`, `^frontend/tests/.*`); then run `gitleaks detect --source . --config .gitleaks.toml --no-git` (installed at `/opt/homebrew/bin/gitleaks`) → no leaks; if it flags a placeholder, add THAT placeholder to `regexes`, never a path.
+
+- [ ] **Step 3: GREEN** — `bash tests/scripts/test_verify_deploy.sh`; `bash tests/scripts/test_verify_image_sh.sh`; `poetry run pytest -q -W error --cov=app --cov-report=term-missing` (record the `app/static.py`, `app/config.py`, `app/api/interest.py` lines: all 100 %); `poetry run diff-cover coverage.xml --compare-branch=origin/main --fail-under=100` after `--cov-report=xml` (if `origin/main` is fetched); mypy; ruff; gitleaks; the real `scripts/verify-image.sh` (seven OK lines).
+- [ ] **Step 4: Commit** — `git add` the fifteen files listed · `fix(review): verifier asserts site_mode per environment (QA never coming_soon, production coming_soon unless EXPECT_SITE_MODE); PUBLIC_INDEXING documented as shipped; names-only variable listing; coverage gaps closed; verify-image checks can fail; no minute-boundary flake; gitleaks allowlist narrowed` with the trailer.
+
+---
+
 ## Red-team review (2026-09-05) — findings and dispositions
 
 | # | Finding | Severity | Disposition |
