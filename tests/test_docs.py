@@ -21,6 +21,7 @@ REQUIRED_CI_COMMANDS = (
     "poetry run mypy app --strict",
     "poetry run pytest -q -W error",
     "--cov=app",
+    "--cov-branch",
     "--cov-report=xml",
     "--cov-fail-under=100",
     "bash tests/scripts/test_start_sh.sh",

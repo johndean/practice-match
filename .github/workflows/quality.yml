@@ -61,7 +61,7 @@ jobs:
       - run: poetry run ruff check app tests scripts
       - run: poetry run mypy app --strict
       - run: poetry run mypy scripts/migrate.py --strict
-      - run: poetry run pytest -q -W error --cov=app --cov-report=xml --cov-fail-under=100
+      - run: poetry run pytest -q -W error --cov=app --cov-branch --cov-report=xml --cov-fail-under=100
       - run: bash tests/scripts/test_start_sh.sh
       - run: bash tests/scripts/test_verify_image_sh.sh
       - run: bash tests/scripts/test_deploy_guard.sh

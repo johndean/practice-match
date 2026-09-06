@@ -6,7 +6,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.32",
-  "sqlalchemy[asyncio] (>=2.0.52,<3.0.0)",
+  "sqlalchemy[asyncio]>=2.0",
   "asyncpg>=0.30",
   "psycopg2-binary>=2.9",
   "celery[redis]>=5.4",
@@ -15,6 +15,7 @@ dependencies = [
   "httpx>=0.27",
   "structlog>=24.4",
   "greenlet>=3.0",  # explicit: SQLAlchemy's platform marker omits arm64 and Poetry 2.4.1 does not honour the asyncio-extra marker (John's ruling 2026-09-05)
+  "anyio>=4.0",  # explicit: app/auth/passwords.py calls anyio.to_thread.run_sync directly; previously only a transitive dep of httpx/starlette (I2 review M5)
   "argon2-cffi (>=25.1.0,<26.0.0)",
   "zxcvbn (>=4.5.0,<5.0.0)",
 ]
@@ -39,6 +40,7 @@ asyncio_mode = "auto"
 testpaths = ["tests"]
 
 [tool.coverage.run]
+branch = true
 concurrency = ["thread", "greenlet"]
 
 [tool.ruff]
