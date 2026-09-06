@@ -18,8 +18,17 @@ const VENDORED: Record<string, { file: string; type: string }> = {
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js': { file: 'leaflet.js', type: 'text/javascript' }
 };
 
-// 1×1 transparent GIF, used to answer the reference's pre-hydration image-slot noise below.
-const BLANK_GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==', 'base64');
+// 1×1 fully transparent GIF, used for the stubbed basemap tiles and to answer the
+// reference's pre-hydration image-slot noise below. It MUST be transparent, not merely
+// blank-looking: MarketMapV3.jsx:190 puts the Esri label tiles in `shadowPane` (z-index
+// 500), deliberately ABOVE the community mosaic in the overlay pane (z-index 400), so an
+// opaque stub paints 24 solid squares over the C5/C7 shading and the zero-tolerance gate
+// compares two unshaded maps. The previous constant
+// (R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==) carried no Graphic Control Extension
+// and was therefore opaque white — harmless under V2, which drew nothing beneath the
+// labels. Guarded by harness.test.ts (controller ruling 2026-09-07). With a transparent
+// tile the basemap area is Leaflet's own #ddd rather than white, on both targets.
+export const BLANK_GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
 
 export async function prepare(page: Page): Promise<void> {
   page.on('pageerror', (e) => { throw new Error(`page error: ${e.message}`); });

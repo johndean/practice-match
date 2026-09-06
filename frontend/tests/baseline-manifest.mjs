@@ -1,11 +1,13 @@
-// Freezes the SHA-256 of every baseline PNG that the Browse V3 port must not move
-// (CHANGE_LOG C14 + DEAD_CODE_CHECKLIST "Zero-risk requirements", minus header-1100 and
-// header-1000: those run `steps: browse` and are Browse screenshots, which README §2 requires
-// V3 to change — spec D6). Written ONCE, over the Step-0 oracles regenerated from main's V2
-// reference, before Task V1 lands the bundle; read by baseline-manifest.test.ts at the end of
-// V7, V9, V10 and after every deletion commit in V11. The PNGs it hashes are git-ignored
-// (.gitignore:6-7), so this is a within-worktree leak detector, not a CI oracle. Never
-// regenerate it to make a test pass — a changed hash is the leak detector doing its job.
+// Freezes the SHA-256 of every baseline PNG for the thirteen non-Browse screens. Written
+// TWICE and only twice: in Task V1 over main's V2 oracles (the leak detector through V7), and
+// again in Task V9 Step 8 over the V3 oracles, after the DOM oracle and the pixel gate proved
+// all 27 states against V3 — because the V3 design deliberately restyled every display-size
+// heading (V7 review, spec D6 option A), so the V2 hashes could not survive and byte-identity
+// is not how zero regression is proved for these screens any more. Read by
+// baseline-manifest.test.ts at the end of V10 and after every deletion commit in V11: a moved
+// hash THERE means a code change moved a screen the design did not. The PNGs it hashes are
+// git-ignored (.gitignore:6-7), so this is a within-worktree leak detector, not a CI oracle.
+// Never regenerate it a third time to make a test pass.
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';

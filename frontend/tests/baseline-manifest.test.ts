@@ -3,12 +3,12 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { MANIFEST_PATH, SNAPSHOT_DIR, UNCHANGED_SCREENS, hashBaselines } from './baseline-manifest.mjs';
 
-// Global Constraint (f) / spec D6: the thirteen screens V3 does not touch (CHANGE_LOG C14 +
-// DEAD_CODE_CHECKLIST "Zero-risk requirements", minus the two header states, which are Browse
-// screenshots) must be BYTE-identical before and after the port. Their SHA-256s are frozen
-// here, once, on `main`'s Step-0 baselines, before any V3 change lands. Every later task
-// re-runs this file; a single moved byte means the port leaked into shared code — stop and
-// diff, do not re-write the manifest.
+// Global Constraint (f) / spec D6 (option A): the thirteen non-Browse screens. Their pixels are
+// NOT expected to be identical to V2's — the V3 design restyled every display-size heading —
+// so byte-identity is proved against the V3 baselines, re-based in Task V9 Step 8, and zero
+// regression is proved by the DOM oracle (node-for-node identical to the V3 reference) plus the
+// zero-tolerance pixel gate. From V9 onward a moved hash means a CODE change moved a screen the
+// design did not: stop and diff, never re-write the manifest.
 const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as { platform: string; screens: Record<string, string> };
 
 // The manifest is a within-worktree leak detector (spec D13 / Global Constraint (l2)), not a

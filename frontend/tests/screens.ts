@@ -7,8 +7,10 @@ export interface Screen {
   steps: (page: Page) => Promise<void>;         // identical clicks on reference and app, from the gate
 }
 
+// V3 (C1): Browse Practices is ONE screen — map with market data on the left, the results
+// rail on the right. There is no Listings / Market Data toggle and therefore no `market`
+// helper: every Browse state starts from `browse`.
 const browse = async (p: Page) => { await jump(p, 'Browse'); await waitMap(p); };
-const market = async (p: Page) => { await browse(p); await click(p, 'Market Data'); await waitMap(p); };
 const wizard = async (p: Page) => { await jump(p, 'Seller'); await click(p, 'Create a listing'); };
 const admin = async (p: Page) => { await jump(p, 'Admin'); };
 const mobile = async (p: Page) => { await click(p, 'Mobile view'); await jump(p, 'Browse'); };
@@ -18,16 +20,42 @@ export const SCREENS: Screen[] = [
   { name: 'gate-apply', steps: async (p) => { await click(p, 'Request access'); } },
   { name: 'gate-pending', steps: async (p) => { await click(p, 'Pending approval'); } },
   { name: 'gate-declined', steps: async (p) => { await click(p, 'Request declined'); } },
-  { name: 'browse-listings', steps: browse },
-  { name: 'browse-market', steps: market },
-  { name: 'browse-market-layers-closed', steps: async (p) => { await market(p); await click(p, 'Data Layers'); } },
-  { name: 'browse-market-panel', steps: async (p) => { await market(p); await p.getByText('Cedar Park').first().click(); await p.waitForTimeout(400); } },
+  { name: 'browse', steps: browse },
+  // The Market data card's layer select (V3's `md.toggleLayerMenu` trigger). It is the first
+  // aria-haspopup="listbox" on the screen; Compare's identical control is the second, and
+  // only exists once Compare is open.
+  { name: 'browse-layer-menu', steps: async (p) => { await browse(p); await p.locator('button[aria-haspopup="listbox"]').first().click(); await p.waitForTimeout(400); } },
+  // C4: Compare is collapsed by default; opening it reveals the shared layer-select control
+  // and the six-row bar chart. Picking the metric that already shades the map would reset the
+  // comparison (no self-compare), so pick the second option — the menu's first row is
+  // "Choose a metric…" (logic.js `compareOptions`). The option lookup is scoped to the
+  // compare menu's own listbox: Browse's native <select>s (market, filters, sort) own the
+  // `option` role too and come first in the DOM, so an unscoped getByRole('option') resolves
+  // to a collapsed <select>'s hidden child on BOTH targets and never clicks.
+  { name: 'browse-compare-open', steps: async (p) => { await browse(p); await click(p, 'Compare'); await p.locator('button[aria-haspopup="listbox"]').nth(1).click(); await p.getByRole('listbox', { name: 'Comparison layer' }).getByRole('option').nth(1).click(); await p.waitForTimeout(400); } },
+  // C8: the merged legend/insight card is dismissible.
+  { name: 'browse-legend-collapsed', steps: async (p) => { await browse(p); await p.getByRole('button', { name: 'Dismiss interpretation' }).click(); await p.waitForTimeout(400); } },
+  // C9: V3's drawer button reads "Layers" with a count pill, where V2's read "Data Layers";
+  // the state is `browse-layers-closed` now that there is no Listings/Market Data split
+  // to disambiguate (spec D12).
+  { name: 'browse-layers-closed', steps: async (p) => { await browse(p); await click(p, 'Layers'); await p.waitForTimeout(400); } },
+  { name: 'browse-market-panel', steps: async (p) => { await browse(p); await p.getByText('Cedar Park').first().click(); await p.waitForTimeout(400); } },
   { name: 'detail', steps: async (p) => { await jump(p, 'Listing'); } },
   // The jump bar's default listing (Cedar Park / p1) always carries a pre-seeded pending
   // request in the prototype's demo data (logic.js `state.requests`), so it never shows
   // "I'm interested" — only "Request sent". Open a listing with no seeded request instead
-  // (Round Rock / p2) via the Browse Listings card, which does show the button.
-  { name: 'interest-modal', steps: async (p) => { await browse(p); await p.getByText('Round Rock').first().click(); await click(p, "I'm interested"); } },
+  // (Round Rock / p2) via a Browse results card.
+  //
+  // V3 needs the middle step the card alone used to cover: a card tap opens the DOCKED
+  // practice-detail panel (`md.rows[].select` → `mdSel`, logic.js:673) on its Insights tab,
+  // and that panel's own primary button is what reaches the listing screen
+  // (`md.panel.openListing`, V3:704-705 / logic.js:879). The design labels it "View full
+  // market report" there; the identically-wired "Open full listing" (V3:717) exists only on
+  // the panel's other tabs. Without this step the state timed out on the V3 reference itself
+  // waiting for "I'm interested" — the same dead `results[].open` handler that broke
+  // `mobile-detail`, and the same ruling applies: use the design's own route (controller,
+  // 2026-09-07).
+  { name: 'interest-modal', steps: async (p) => { await browse(p); await p.getByText('Round Rock').first().click(); await click(p, 'View full market report'); await click(p, "I'm interested"); } },
   { name: 'requests', steps: async (p) => { await jump(p, 'Requests'); } },
   { name: 'seller-dash', steps: async (p) => { await jump(p, 'Seller'); } },
   { name: 'wizard-step-1', steps: wizard },
@@ -40,7 +68,25 @@ export const SCREENS: Screen[] = [
   { name: 'admin-data-sources', steps: async (p) => { await admin(p); await btn(p, /^Data Sources\s*\d/).click(); } },
   { name: 'mobile-list', steps: mobile },
   { name: 'mobile-map', steps: async (p) => { await mobile(p); await click(p, 'Map'); await waitMap(p); } },
-  { name: 'mobile-detail', steps: async (p) => { await mobile(p); await p.getByText('Cedar Park').first().click(); } },
+  // The phone reaches this screen from the MAP, not the list. CHANGE_LOG C13, verbatim:
+  // "No peek card — tapping an already-selected pin opens the detail screen"
+  // (logic.js `mobileVals.selectMarker`: the same id twice → `{ screen: "detail" }`). V3's
+  // result card cannot get here at all — `results[].open` was repurposed to
+  // `{ browseSel, activeId }` (V3 design script:3087, ported at logic.js:1530) where V2's
+  // set `screen: "detail"`, and `browseSel` is bound by no markup, so the card tap is a dead
+  // handler on the reference and the app alike (V7 Step 8: `mobile-detail` failed to
+  // navigate on BOTH targets; controller ruling 2026-09-07 — the harness must not invent a
+  // card navigation the design does not have). Waiting for the detail screen's own
+  // "Exterior photo" band (V3:1522) keeps the step from ever silently no-opping again.
+  { name: 'mobile-detail', steps: async (p) => {
+      await mobile(p);
+      await click(p, 'Map');
+      await waitMap(p);
+      await p.locator('.leaflet-marker-icon').first().click();   // select
+      await p.waitForTimeout(400);
+      await p.locator('.leaflet-marker-icon').first().click();   // tap the selected pin again
+      await p.getByText('Exterior photo').first().waitFor({ state: 'visible' });
+    } },
   { name: 'header-1100', viewport: { width: 1100, height: 940 }, steps: browse },
   { name: 'header-1000', viewport: { width: 1000, height: 940 }, steps: browse }
 ];
