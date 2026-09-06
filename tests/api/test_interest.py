@@ -249,32 +249,25 @@ def test_declared_length_accepts_only_decimal_digits(value, expected):
     assert declared_length(Request(scope)) == expected  # N4: "²".isdigit() is True but int("²") raises
 
 
-@pytest.mark.parametrize("header, expected", [
-    ("1.2.3.4, 5.6.7.8", "1.2.3.4"),      # the edge's hop first, the caller's after
-    ("1.2.3.4", "1.2.3.4"),
-    (", 5.6.7.8", "5.6.7.8"),             # an empty first entry is skipped, not used as a subject
-    ("   ", "9.9.9.9"), ("", "9.9.9.9"), (None, "9.9.9.9"),
+@pytest.mark.parametrize("lines, expected", [
+    ([b"1.2.3.4, 5.6.7.8"], "1.2.3.4"),               # the edge's hop first, the caller's after
+    ([b"1.2.3.4"], "1.2.3.4"),
+    ([b"1.2.3.4:51234"], "1.2.3.4"),                   # OBS-3: a port never makes a fresh bucket
+    ([b"[2001:db8::1]:4711"], "2001:db8::1"),
+    ([b"2001:db8::1"], "2001:db8::1"),                 # bare IPv6 is not a host:port pair
+    ([b", 5.6.7.8"], "9.9.9.9"),                       # OBS-1: an empty first field means the peer, exactly as uvicorn does
+    ([b"   "], "9.9.9.9"), ([b""], "9.9.9.9"), ([], "9.9.9.9"),
+    ([b"203.0.113.7", b"evil-spoof"], "203.0.113.7"),  # repeated lines: the first line is the edge's
+    ([b"", b"5.6.7.8"], "9.9.9.9"),                    # an empty first line is still the first field after the join → peer
 ])
-def test_client_ip_uses_the_first_hop_or_falls_back_to_the_peer(header, expected):
+def test_client_ip_is_the_first_field_of_the_joined_header_like_uvicorn(lines, expected):
     from starlette.requests import Request
 
     from app.api.interest import client_ip
 
     scope = {"type": "http", "method": "POST", "path": "/api/interest", "query_string": b"", "client": ("9.9.9.9", 1),
-             "headers": [] if header is None else [(b"x-forwarded-for", header.encode())]}
+             "headers": [(b"x-forwarded-for", line) for line in lines]}
     assert client_ip(Request(scope)) == expected
-
-
-def test_client_ip_joins_repeated_forwarded_header_lines():
-    """O1: HTTP allows the field to repeat and Starlette returns only the first line — joining keeps the rule
-    identical to uvicorn's, which also joins repeated lines. The edge's line arrives first."""
-    from starlette.requests import Request
-
-    from app.api.interest import client_ip
-
-    scope = {"type": "http", "method": "POST", "path": "/api/interest", "query_string": b"", "client": ("9.9.9.9", 1),
-             "headers": [(b"x-forwarded-for", b"203.0.113.7"), (b"x-forwarded-for", b"evil-spoof")]}
-    assert client_ip(Request(scope)) == "203.0.113.7"
 
 
 async def test_unreachable_redis_fails_closed_with_503(client, db_ready, monkeypatch):

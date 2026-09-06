@@ -247,3 +247,6 @@ def test_deploy_md_records_the_forwarded_for_rule_and_its_probe():
     text = (ROOT / "DEPLOY.md").read_text()
     assert "first X-Forwarded-For hop" in text
     assert "203.0.113" in text  # the probe recipe
+    assert "anything other than" in text
+    assert "198.51.100" in text  # the second pass
+    assert "30/day" in text  # OBS-7

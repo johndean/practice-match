@@ -47,16 +47,26 @@ def normalise(email: str) -> tuple[str, str] | None:
     return e, e.lower()
 
 
+def _host_only(field: str) -> str:
+    """uvicorn's `_parse_host_port` rule: `[v6]:port` and `v4:port` lose the port; a bare IPv6 address (more than
+    one colon, no brackets) is returned as is (OBS-3)."""
+    if field.startswith("["):
+        end = field.find("]")
+        return field[1:end] if end != -1 else field
+    if field.count(":") == 1:
+        return field.rsplit(":", 1)[0]
+    return field
+
+
 def client_ip(request: Request) -> str:
-    """The client as Railway's edge saw it: the FIRST non-empty X-Forwarded-For hop. Verified live on QA
-    (2026-09-06, Task 11f Step 4b): Railway writes the accepted client's address first and leaves any values the
-    caller sent after it, and uvicorn (`--forwarded-allow-ips='*'`) applies the same first-hop rule to
-    request.client. Repeated header lines are joined first, as uvicorn does. No header → the peer address.
-    DEPLOY.md carries the probe to re-run if Railway's networking changes."""
-    hops = [h.strip() for h in ",".join(request.headers.getlist("x-forwarded-for")).split(",")]
-    for hop in hops:
-        if hop:
-            return hop
+    """The client as Railway's edge saw it, computed exactly as uvicorn does under `--forwarded-allow-ips='*'`:
+    repeated X-Forwarded-For lines are joined, the FIRST field is the client, a port on it is stripped, and an
+    empty first field (or no header) means the peer address. Verified live on QA (2026-09-06, Task 11f Step 4b):
+    Railway writes the accepted client first and leaves caller-supplied values after it — six spoofed sign-ups
+    were limited on the sixth, with one header line and with two. DEPLOY.md carries the probe."""
+    first = ",".join(request.headers.getlist("x-forwarded-for")).split(",")[0].strip()
+    if first:
+        return _host_only(first)
     return request.client.host if request.client else "unknown"
 
 
