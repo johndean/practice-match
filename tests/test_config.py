@@ -48,3 +48,25 @@ def test_invalid_site_mode_exits_1_and_names_it():
     r = subprocess.run([sys.executable, "-c", "import app.config"], env=env, capture_output=True, text=True, check=False)
     assert r.returncode == 1
     assert "SITE_MODE" in r.stderr
+
+
+def test_qa_never_runs_coming_soon_mode():
+    from pydantic import ValidationError
+
+    from app.config import Settings
+    base = {"database_url": "postgresql://x", "redis_url": "redis://x", "api_secret_key": "x"}
+    with pytest.raises(ValidationError):
+        Settings(**base, environment="qa", site_mode="coming_soon")
+    assert Settings(**base, environment="production", site_mode="coming_soon").site_mode == "coming_soon"
+    assert Settings(**base, environment="test", site_mode="coming_soon").site_mode == "coming_soon"
+
+
+def test_load_settings_exits_1_in_process_and_names_the_variables(monkeypatch, capsys):
+    from app.config import load_settings
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.delenv("REDIS_URL", raising=False)
+    with pytest.raises(SystemExit) as info:
+        load_settings()
+    assert info.value.code == 1
+    err = capsys.readouterr().err
+    assert "DATABASE_URL" in err and "REDIS_URL" in err

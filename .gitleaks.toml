@@ -8,9 +8,8 @@ useDefault = true
 description = "Placeholders in example/test files; design-reference is vendored design source"
 paths = [
   '''(?i)\.env\.example$''',
-  '''(?i)^docs/.*''',
-  '''(?i)^frontend/tests/.*''',
-  '''(?i)^tests/.*''',
+  '''(?i)^docs/design-reference/.*''',
+  '''(?i)^frontend/tests/visual\.spec\.ts-snapshots/.*''',
 ]
 regexes = [
   '''pm_dev_pw''',

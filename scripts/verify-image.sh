@@ -23,17 +23,21 @@ echo "$api" | python3 -c 'import sys,json; b=json.load(sys.stdin); assert b["sta
 # and SIGPIPE it — under `set -o pipefail` that poisons the exit status even
 # though the match itself succeeded.
 index_body=$(curl -sf http://localhost:8010/)
-[[ "$index_body" == *'id="app"'* ]] && echo "index.html served"
+[[ "$index_body" == *'id="app"'* ]] || { echo "FAIL: index.html missing id=\"app\" at http://localhost:8010/" >&2; exit 1; }
+echo "index.html served"
 browse_body=$(curl -sf http://localhost:8010/browse)
-[[ "$browse_body" == *'id="app"'* ]] && echo "SPA fallback OK"
+[[ "$browse_body" == *'id="app"'* ]] || { echo "FAIL: SPA fallback missing id=\"app\" at http://localhost:8010/browse" >&2; exit 1; }
+echo "SPA fallback OK"
 # curl -f also exits nonzero on a 404 body, which would independently poison a
 # piped pipefail check even when the code itself is an accepted one (200/404).
 app_code=$(curl -s -o /dev/null -w '%{http_code}' http://localhost:8010/_app/)
 [[ "$app_code" =~ ^(200|404)$ ]] || { echo "FAIL: /_app/ returned $app_code, expected 200 or 404"; exit 1; }
 worker_body=$(curl -sf http://localhost:8011/api/healthz)
-[[ "$worker_body" == *'"role":"worker"'* ]] && echo "worker health OK"
+[[ "$worker_body" == *'"role":"worker"'* ]] || { echo "FAIL: worker healthz missing role=worker at http://localhost:8011/api/healthz" >&2; exit 1; }
+echo "worker health OK"
 worker_logs=$(docker logs pm-worker 2>&1)
-[[ "$worker_logs" == *'celery@'* ]] && echo "celery booted"
+[[ "$worker_logs" == *'celery@'* ]] || { echo "FAIL: celery not booted (no celery@ in docker logs pm-worker)" >&2; exit 1; }
+echo "celery booted"
 api_uid=$(docker exec pm-api id -u)
 worker_uid=$(docker exec pm-worker id -u)
 [[ "$api_uid" == "10001" && "$worker_uid" == "10001" ]] || {

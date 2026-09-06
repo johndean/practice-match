@@ -15,8 +15,8 @@
 set -euo pipefail
 ENV="${1:?usage: verify-deploy.sh QA|production [BASE_URL]}"
 case "$ENV" in
-  QA)         DEFAULT_BASE="https://qa.foundation.vin"; WANT=qa ;;
-  production) DEFAULT_BASE="https://foundation.vin";    WANT=production ;;
+  QA)         DEFAULT_BASE="https://qa.foundation.vin"; WANT=qa;         WANT_MODE=app ;;                                  # the coming-soon page never goes to QA
+  production) DEFAULT_BASE="https://foundation.vin";    WANT=production; WANT_MODE="${EXPECT_SITE_MODE:-coming_soon}" ;;  # launch flip: EXPECT_SITE_MODE=app
   *) echo "usage: verify-deploy.sh QA|production [BASE_URL]" >&2; exit 64 ;;
 esac
 # An explicit target (positional arg or VERIFY_BASE_URL) means an ad hoc probe --
@@ -106,6 +106,7 @@ echo "deep healthz OK"
 # cannot fail this script under set -e (fix round 1 of Task 8), and a grep -q that
 # exits early can SIGPIPE its producer under pipefail.
 mode=$(printf '%s' "$health" | python3 -c 'import sys, json; print(json.load(sys.stdin)["site_mode"])')
+[[ "$mode" == "$WANT_MODE" ]] || { echo "FAIL: site_mode is '$mode', expected '$WANT_MODE' for $ENV" >&2; exit 1; }
 if [[ "$mode" == "coming_soon" ]]; then
   for path in / /browse; do
     body=$(curl -fsS --max-time 20 "$BASE$path")

@@ -18,9 +18,9 @@ def bucket_key(scope: str, subject: str, window_s: int, now: float | None = None
     return f"rl:{scope}:{bucket}:{hashlib.sha256(subject.encode()).hexdigest()[:16]}"
 
 
-async def hit(client: Redis, scope: str, subject: str, limit: int, window_s: int) -> bool:
+async def hit(client: Redis, scope: str, subject: str, limit: int, window_s: int, now: float | None = None) -> bool:
     """Counts one hit for `subject` in the current `window_s`-second window; True while within `limit`."""
-    key = bucket_key(scope, subject, window_s)
+    key = bucket_key(scope, subject, window_s, now)
     async with client.pipeline(transaction=True) as pipe:
         pipe.incr(key)
         pipe.expire(key, window_s)

@@ -35,9 +35,12 @@ trap cleanup EXIT
 
 railway_calls() { wc -l < "$FAKE_RAILWAY_LOG" | tr -d ' '; }
 
-# start_server <mode>. Modes: ok | spa_missing | deep_503 | no_postgis | no_site_mode |
+# start_server <mode> [environment]. Modes: ok | spa_missing | deep_503 | no_postgis | no_site_mode |
 #   coming_ok | coming_wrong_shell | coming_interest_500 | coming_leak | missing_keys | db_null |
 #   not_json | deep_json
+# [environment] overrides the fake body's `environment` field (default qa) — M1's production-mode
+# cases reuse the same MODE bodies (coming_ok, ok) with environment: production instead of duplicating
+# them under new mode names.
 # Binds port 0 (the OS picks a free ephemeral port) and prints it, once, before serving —
 # fixed ports (8765-8768) collided under a concurrent run of this same script (fix round 3,
 # re-review observation), and a bind failure in the backgrounded server was otherwise
@@ -46,12 +49,12 @@ PORTFILE_N=0
 start_server() {
   PORTFILE_N=$((PORTFILE_N + 1))
   local portfile="$tmp/port.$PORTFILE_N"
-  MODE="$1" python3 - > "$portfile" <<'PY' &
+  MODE="$1" HEALTH_ENV="${2:-qa}" python3 - > "$portfile" <<'PY' &
 import json, os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 MODE = os.environ.get("MODE", "ok")
-BODY = {"status": "ok", "version": "0.1.0", "environment": "qa", "commit_sha": "abc1234",
+BODY = {"status": "ok", "version": "0.1.0", "environment": os.environ.get("HEALTH_ENV", "qa"), "commit_sha": "abc1234",
         "site_mode": "app",
         "db": {"ok": True, "postgis_version": "3.5.2"}, "redis": {"ok": True}}
 if MODE == "no_postgis":
@@ -180,23 +183,49 @@ fi
 [[ "$out" == *"postgis_version missing"* ]] || fail "the missing-postgis failure must name itself; got: $out"
 stop_server
 
-# --- 7. coming-soon mode: shell present at / and /browse, interest 422s --------
-start_server coming_ok
-out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1) || fail "coming-soon mode must verify; output: $out"
+# --- 7. coming-soon mode: shell present at / and /browse, interest 422s (M1: this
+# is production's normal shape now — the coming-soon page never goes to QA) -----
+start_server coming_ok production
+out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh production 2>&1) || fail "coming-soon mode must verify; output: $out"
 for line in "site_mode coming_soon" "coming-soon shell OK" "interest endpoint OK"; do [[ "$out" == *"$line"* ]] || fail "missing '$line' in: $out"; done
 stop_server
 
-# --- 8. coming-soon mode but the marketplace shell is served, not the title -----
-start_server coming_wrong_shell
+# --- 7a. M1: QA must never accept site_mode coming_soon, whatever the environment
+# field says — the same server as case 7, probed as QA this time -----------------
+start_server coming_ok
 if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
+  fail "coming_soon on QA must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"site_mode is 'coming_soon', expected 'app'"* ]] || fail "the QA site_mode mismatch must name itself; got: $out"
+stop_server
+
+# --- 7b. M1: production defaults to expecting coming_soon; a body reporting site_mode
+# app (the marketplace, leaked to the public launch host) must fail unless overridden --
+start_server ok production
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh production 2>&1); then
+  fail "an app body on production must fail by default; it exited 0 with: $out"
+fi
+[[ "$out" == *"site_mode is 'app', expected 'coming_soon'"* ]] || fail "the production site_mode mismatch must name itself; got: $out"
+
+# --- 7c. M1: EXPECT_SITE_MODE=app is the documented launch-flip override, against the
+# same server as 7b ---------------------------------------------------------------
+out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 EXPECT_SITE_MODE=app bash scripts/verify-deploy.sh production 2>&1) || fail "EXPECT_SITE_MODE=app must let an app body verify on production; output: $out"
+[[ "$out" == *"SPA fallback OK"* ]] || fail "missing 'SPA fallback OK' in: $out"
+stop_server
+
+# --- 8. coming-soon mode but the marketplace shell is served, not the title -----
+# (M1: the coming-soon probes are only reachable in production mode now — QA rejects
+# any coming_soon body outright at the site_mode check above, so this must run there.)
+start_server coming_wrong_shell production
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh production 2>&1); then
   fail "the wrong shell in coming-soon mode must fail the script; it exited 0 with: $out"
 fi
 [[ "$out" == *"coming-soon shell missing"* ]] || fail "the coming-soon shell failure must name itself; got: $out"
 stop_server
 
-# --- 9. coming-soon mode, /api/interest 500s ------------------------------------
-start_server coming_interest_500
-if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
+# --- 9. coming-soon mode, /api/interest 500s (M1: production, see case 8's note) -
+start_server coming_interest_500 production
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh production 2>&1); then
   fail "an interest-endpoint 500 must fail the script; it exited 0 with: $out"
 fi
 [[ "$out" == *"interest"* ]] || fail "the interest failure must name itself; got: $out"
@@ -217,9 +246,10 @@ stop_server
 # --- 11. coming-soon mode but the marketplace shell leaks through (FR1 C1) ------
 # Both shells mount on #app, so a patched <title> alone cannot prove the marketplace
 # bundle isn't also being served; the script must also check for absence of the
-# marketplace-only markers (its own title, its UI-kit stylesheet).
-start_server coming_leak
-if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
+# marketplace-only markers (its own title, its UI-kit stylesheet). (M1: production,
+# see case 8's note.)
+start_server coming_leak production
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh production 2>&1); then
   fail "a leaked marketplace shell in coming-soon mode must fail the script; it exited 0 with: $out"
 fi
 [[ "$out" == *"marketplace shell served in coming-soon mode"* ]] || fail "the leak failure must name itself; got: $out"

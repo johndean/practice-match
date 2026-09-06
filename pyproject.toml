@@ -34,6 +34,9 @@ diff-cover = "10.5.1"
 asyncio_mode = "auto"
 testpaths = ["tests"]
 
+[tool.coverage.run]
+concurrency = ["thread", "greenlet"]
+
 [tool.ruff]
 target-version = "py312"
 line-length = 160

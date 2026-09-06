@@ -56,5 +56,5 @@ cd frontend && npm run typecheck && npm test && npm run build                  #
 cd frontend && npm run test:smoke && npm run test:visual:baselines && npm run test:visual
 scripts/deploy.sh QA && scripts/deploy.sh production                           # after the gate
 railway logs --service api --environment QA --lines 50
-railway variable list --service api --environment QA | sed -E 's/(SECRET|KEY|URL)=.*/\1=<redacted>/'
+railway variable list --service api --environment QA --json | python3 -c 'import sys,json; print("\n".join(sorted(json.load(sys.stdin))))'   # names only — never pipe values to a terminal
 ```

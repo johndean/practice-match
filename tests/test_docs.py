@@ -124,7 +124,11 @@ def test_ci_workflow_jobs_have_a_timeout_and_the_backend_checkout_has_full_histo
 
 
 def test_gitleaks_config_parses():
-    tomllib.loads((ROOT / ".gitleaks.toml").read_text())
+    data = tomllib.loads((ROOT / ".gitleaks.toml").read_text())
+    paths = data["allowlist"]["paths"]
+    assert "(?i)^docs/.*" not in paths
+    assert "(?i)^tests/.*" not in paths
+    assert "(?i)^docs/design-reference/.*" in paths
 
 
 def test_ruff_config_selects_a_rule_set_with_no_ignores():
@@ -255,3 +259,23 @@ def test_deploy_md_records_the_forwarded_for_rule_and_its_probe():
     assert "anything other than" in text
     assert "198.51.100" in text  # the second pass
     assert "30/day" in text  # OBS-7
+
+
+def test_deploy_md_documents_expect_site_mode():
+    """M1: the launch flip is EXPECT_SITE_MODE=app scripts/verify-deploy.sh production — the verifier
+    now refuses a mismatched site_mode outright, so the runbook must name the override."""
+    assert "EXPECT_SITE_MODE" in (ROOT / "DEPLOY.md").read_text()
+
+
+def test_public_indexing_row_matches_the_site_mode_matrix():
+    text = (ROOT / "DEPLOY.md").read_text()
+    row = next(line for line in text.splitlines() if line.startswith("| `PUBLIC_INDEXING`"))
+    assert "`true` on production" in row and "noindex" in row
+    assert "flip to true at launch" not in (ROOT / ".env.example").read_text()
+    assert "flip to true at launch" not in (ROOT / "app" / "config.py").read_text()
+
+
+def test_claude_md_lists_variable_names_only():
+    text = (ROOT / "CLAUDE.md").read_text()
+    assert "sed -E 's/(SECRET|KEY|URL)=.*/" not in text  # matched nothing on CLI 5.x's table output; values were printed
+    assert "railway variable list --service api --environment QA --json" in text

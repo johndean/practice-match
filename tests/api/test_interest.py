@@ -1,4 +1,5 @@
 import logging
+import time
 import unicodedata
 import uuid
 
@@ -42,6 +43,16 @@ def _ip() -> str:
     """A fresh client address per call (16M values) so per-IP windows never collide across tests or reruns."""
     n = uuid.uuid4().int
     return "10." + ".".join(str((n >> s) & 255) for s in (16, 8, 0))
+
+
+async def _within_one_minute(run):
+    """Fixed windows: if the minute rolls over inside the six requests the counter resets; re-run once (O2)."""
+    for _ in range(2):
+        start = int(time.time()) // 60
+        result = await run()
+        if int(time.time()) // 60 == start:
+            return result
+    return result
 
 
 async def test_new_address_is_stored_normalised_with_consent_and_source(client, db_ready, addr):
@@ -113,10 +124,14 @@ async def test_composed_and_decomposed_spellings_share_one_row(client, db_ready)
 
 async def test_sixth_request_in_a_minute_from_one_client_is_429(client, db_ready):
     ip = _ip()
-    for i in range(5):
-        r = await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": ip})
-        assert r.status_code == 202, i
-    r = await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": ip})
+
+    async def run():
+        for i in range(5):
+            r = await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": ip})
+            assert r.status_code == 202, i
+        return await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": ip})
+
+    r = await _within_one_minute(run)
     assert r.status_code == 429 and r.json() == {"error": "rate_limited"}
 
 
@@ -124,10 +139,14 @@ async def test_edge_first_hop_keys_the_ip_limit(client, db_ready):
     """F2 as Railway actually behaves (live probe 2026-09-06): the edge writes the client it accepted FIRST and
     leaves the caller's own X-Forwarded-For values after it — so only the first hop may key a limit."""
     edge_saw = _ip()
-    for i in range(5):
-        r = await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": f"{edge_saw}, {_ip()}"})
-        assert r.status_code == 202, i  # a different caller-supplied trailing hop every time must not reset the count
-    r = await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": f"{edge_saw}, {_ip()}"})
+
+    async def run():
+        for i in range(5):
+            r = await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": f"{edge_saw}, {_ip()}"})
+            assert r.status_code == 202, i  # a different caller-supplied trailing hop every time must not reset the count
+        return await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": f"{edge_saw}, {_ip()}"})
+
+    r = await _within_one_minute(run)
     assert r.status_code == 429 and r.json() == {"error": "rate_limited"}
 
 
@@ -139,9 +158,14 @@ async def test_without_a_forwarded_header_the_peer_address_is_used(dist, db_read
     from app.main import create_app
 
     async with AsyncClient(transport=ASGITransport(app=create_app(dist=dist), client=(_ip(), 40000)), base_url="http://test") as c:
-        for i in range(5):
-            assert (await c.post("/api/interest", json={"email": _probe_email()})).status_code == 202, i
-        assert (await c.post("/api/interest", json={"email": _probe_email()})).status_code == 429
+
+        async def run():
+            for i in range(5):
+                assert (await c.post("/api/interest", json={"email": _probe_email()})).status_code == 202, i
+            return await c.post("/api/interest", json={"email": _probe_email()})
+
+        r = await _within_one_minute(run)
+        assert r.status_code == 429
     async with AsyncClient(transport=ASGITransport(app=create_app(dist=dist), client=(_ip(), 40000)), base_url="http://test") as other:
         assert (await other.post("/api/interest", json={"email": _probe_email()})).status_code == 202  # a different peer is a different bucket
 
@@ -315,8 +339,9 @@ async def test_hit_counts_within_a_window_and_denies_past_the_limit():
 async def test_hit_sets_a_ttl_no_longer_than_the_window():
     redis_ = get_redis(settings.redis_url)
     subject = uuid.uuid4().hex
-    assert await hit(redis_, "unit", subject, 2, 60) is True
-    ttl = await redis_.ttl(bucket_key("unit", subject, 60))
+    now = time.time()
+    assert await hit(redis_, "unit", subject, 2, 60, now=now) is True
+    ttl = await redis_.ttl(bucket_key("unit", subject, 60, now=now))
     assert 0 < ttl <= 60  # F6: the key cannot outlive its window
 
 

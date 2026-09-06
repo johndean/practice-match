@@ -82,3 +82,13 @@ async def test_app_mode_never_serves_the_coming_soon_shell(client):
     r = await client.get("/")
     assert "Coming Soon" not in r.text
     assert (await client.get("/api/healthz")).json()["site_mode"] == "app"
+
+
+def test_mount_spa_mounts_nothing_when_the_built_site_is_missing(tmp_path):
+    from fastapi import FastAPI
+
+    from app.static import mount_spa
+    app = FastAPI()
+    before = len(app.routes)
+    mount_spa(app, tmp_path / "no-such-dist")
+    assert len(app.routes) == before  # nothing served, nothing crashes; the health probe still answers
