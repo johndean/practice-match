@@ -28,7 +28,7 @@
 - **Reconciliation:** every `/api/*` response carries `X-PM-Gate: <version>`; clients refetch `/api/layers` and `/api/map-config` on the next route change when it changes — **no polling**; a map component enables only layers whose `engines` include the engine it **mounted**.
 - **Runtime rules:** one long-lived map instance per session (re-parented between screens; `show()` after re-parenting); Places calls debounced 300 ms and memoised per (hub, band); **no client-side engine swap** — a failed engine shows the design's "Map unavailable" panel.
 - **`/api/layers` response shape becomes `{ "engine": "leaflet", "gate": 42, "layers": [ … each entry with "engines": [...] ] }`** (Census plan API contract and B5 tests updated in Task M9).
-- **Migration numbering:** this sub-project owns `080`–`089`. Census SP3-A `002`–`009`, SP2 `010`–`059`, SP3-B `060`+. The Google plan's `009_google_registry.sql` (Task G5) is **not** created — superseded by `080`.
+- **Migration numbering:** this sub-project owns `080`–`089`. SP2/identity `010`–`015`, Seed Listings `016`, Census SP3-A `017`–`059`, SP3-B `060`+. The Google plan's `009_google_registry.sql` (Task G5) is **not** created — superseded by `080`.
 - **Testing:** `app-leaflet` (the existing `app` project) keeps the full visual gate at `maxDiffPixels: 0`; `app-google` runs smoke, the map screens and the no-mixing assertions with the map viewport masked; no live Google key in CI or GitHub — the stub only.
 - Every commit: conventional message, `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`, pushed to `origin` and `production`. Work on `feat/map-engines` in a worktree. Before any `railway up` or variable change: `railway status` must print `Project: Practice Match`.
 
@@ -350,6 +350,9 @@ def test_csp_is_the_union_of_enabled_rows():
 async def test_anonymous_shell_has_config_preload_csp_and_no_key(client, monkeypatch):
     monkeypatch.setattr(settings, "google_maps_browser_key", "browser-k")
     monkeypatch.setattr(settings, "market_data_public", False)
+    # `?tab=market` is a legacy no-op after Browse V3 (spec D4): Browse Practices is one
+    # screen and always shows market data. The URL is kept here because it is the shape old
+    # links take, and it must keep resolving.
     r = await client.get("/browse?tab=market")
     assert r.status_code == 200 and r.headers["cache-control"] == "no-cache" and r.headers["etag"].startswith('W/"')
     cfg = json.loads(r.text.split('<script id="pm-config" type="application/json">')[1].split("</script>")[0])
@@ -715,7 +718,7 @@ async def map_config() -> dict:
 ```
 (The Leaflet tile URLs are the design's; when `esri_tiles` is cleared or CARTO is chosen, this constant follows the registry row's `base_url` — Task M9 records that follow-up for SP2's wiring.)
 
-**Basemap licence — one decision record, owned by John and the VIN Foundation.** Esri (the approved design) vs CARTO (the Census spec) is **one** open question, recorded in the Census plan (`docs/superpowers/plans/2026-09-05-practice-match-census-data-layer.md`, "Basemap licence — one decision record") and referenced, not restated, here and in the Browse V3 spec's "Legally load-bearing" section. Do not swap either way without that decision; attribution stays visible on every map regardless (`attributionControl: true`).
+**Basemap licence — one decision record, owned by John and the VIN Foundation.** Esri (the approved design) vs CARTO (the Census spec) is **one** open question, recorded in the Census plan (`docs/superpowers/plans/2026-09-05-practice-match-census-data-layer.md`, "Basemap licence — one decision record") and referenced, not restated, here and in CLAUDE.md's "Legally load-bearing" section. Do not swap either way without that decision; attribution stays visible on every map regardless (`attributionControl: true`).
 
 `app/api/market.py` — `_registry` selects `kind, engines, active` too; `layers()` becomes:
 ```python
