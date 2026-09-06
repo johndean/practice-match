@@ -942,6 +942,8 @@ In `decide_license`, read the old status first (`SELECT license_status … FOR U
 > `frontend/tests/visual.spec.ts-snapshots/` was regenerated from the V3 design in Browse V3
 > Task V9 — including the screens the V3 bundle listed as untouched. There is no pre-V3 pixel
 > oracle to compare against any more; the V3 reference is the oracle.
+>
+> Amended 2026-09-07: Task V13 restored V2's typography through local amendment A1 (Browse V3 spec D15/D16); the thirteen non-Browse screens are byte-identical to V2 again, so a pre-V3 pixel oracle exists for them. Browse-only elements keep V3's type.
 
 **Files:**
 - Create: `frontend/src/map/config.ts`, `frontend/src/map/gate.ts`, `frontend/src/map/host.ts`, `frontend/src/map/eligibility.ts`, `frontend/src/map/engines/google.ts`, `frontend/src/map/engines/google-loader.ts`, `frontend/src/map/engines/google.css`, `frontend/src/map/testing/google-stub.ts`, tests `config.test.ts`, `gate.test.ts`, `host.test.ts`, `eligibility.test.ts`, `engines/google.test.ts`, `engines/contract.test.ts`
