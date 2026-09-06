@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { btn, click, jump, waitMap } from './harness';
+import { atTop, btn, click, jump, waitMap } from './harness';
 
 export interface Screen {
   name: string;
@@ -14,6 +14,9 @@ const browse = async (p: Page) => { await jump(p, 'Browse'); await waitMap(p); }
 const wizard = async (p: Page) => { await jump(p, 'Seller'); await click(p, 'Create a listing'); };
 const admin = async (p: Page) => { await jump(p, 'Admin'); };
 const mobile = async (p: Page) => { await click(p, 'Mobile view'); await jump(p, 'Browse'); };
+// App.vue's single position:fixed element — the interest modal's backdrop (see harness.ts's
+// `atTop`, which explains why this one state has to be pinned to the top of the page).
+const MODAL = 'div[style*="z-index: 900"]';
 
 export const SCREENS: Screen[] = [
   { name: 'gate-signin', steps: async () => {} },
@@ -57,7 +60,7 @@ export const SCREENS: Screen[] = [
   // waiting for "I'm interested" — the same dead `results[].open` handler that broke
   // `mobile-detail`, and the same ruling applies: use the design's own route (controller,
   // 2026-09-07).
-  { name: 'interest-modal', steps: async (p) => { await browse(p); await p.getByText('Round Rock').first().click(); await click(p, 'View full market report'); await click(p, "I'm interested"); } },
+  { name: 'interest-modal', steps: async (p) => { await browse(p); await p.getByText('Round Rock').first().click(); await click(p, 'View full market report'); await click(p, "I'm interested"); await atTop(p, MODAL); } },
   { name: 'requests', steps: async (p) => { await jump(p, 'Requests'); } },
   { name: 'seller-dash', steps: async (p) => { await jump(p, 'Seller'); } },
   { name: 'wizard-step-1', steps: wizard },

@@ -89,6 +89,54 @@ export function btn(page: Page, name: RegExp) {
   return page.getByRole('button', { name }).first();
 }
 
+// ---------------------------------------------------------------------------------------
+// The one state whose capture a page scroll can move.
+//
+// App.vue has exactly ONE `position: fixed` element — the interest modal's overlay
+// (`position: fixed; inset: 0; z-index: 900; … place-items: center`). Everything else on all
+// 27 approved states is in normal flow, and a fullPage screenshot captures flow content
+// whole regardless of where the page happens to be scrolled. A fixed element is different:
+// it is composited at the offset it PAINTS at, so a page scrolled by N pixels puts the whole
+// overlay — backdrop and the dialog centred inside it — N pixels down the screenshot while
+// the dimmed content behind it does not move.
+//
+// That is what failed CI on the vin-swe runner at fa17a91 (`interest-modal`, 23,441 pixels,
+// 1 %), and only there: comparing that run's own expected/actual pair pixel by pixel, the
+// actual aligns with the expected EXACTLY at dy = +5 and dx = 0 (zero mismatching samples
+// across the dialog) — a pure translation, nothing reflowed, no animation mid-flight (the
+// runner's log even says "captured a stable screenshot"). The backdrop's top edge sits at
+// y = 0 in one and y = 5 in the other, its bottom edge at 939 and 943.
+//
+// The scroll comes from the click itself: Playwright scrolls a target into view before
+// clicking it, and the listing page is ~20 px taller on the Linux runner than on darwin
+// (2375 vs 2355 for the same commit, font metrics), which is enough to push "I'm interested"
+// past the fold and scroll the page a few pixels first. Reproduced on darwin by scrolling
+// 5 px by hand before the capture: 23,608 pixels, the same failure.
+//
+// So the capture is pinned instead of hoped for: scroll back to the top, then hold until the
+// overlay's own box has been identical across two consecutive animation frames with the page
+// still at the top. Nothing is relaxed and no tolerance moves — the screenshot is simply
+// taken from the one viewport position the design's centred dialog is drawn for.
+export async function atTop(page: Page, selector: string): Promise<void> {
+  await page.locator(selector).first().waitFor({ state: 'visible' });
+  await page.evaluate(() => window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }));
+  await page.waitForFunction(
+    (sel) =>
+      new Promise<boolean>((resolve) => {
+        const el = document.querySelector(sel);
+        if (!el) return resolve(false);
+        const a = el.getBoundingClientRect();
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            const b = el.getBoundingClientRect();
+            resolve(window.scrollY === 0 && a.top === b.top && a.left === b.left && a.width === b.width && a.height === b.height);
+          })
+        );
+      }),
+    selector
+  );
+}
+
 export async function waitMap(page: Page): Promise<void> {
   await page.locator('.leaflet-container').first().waitFor({ state: 'visible' });
   await page.waitForTimeout(700); // Leaflet setView + marker layer
