@@ -132,21 +132,39 @@ async def test_anonymous_well_formed_bearer_p95_within_budget(client, db_ready):
 
 async def test_signin_p95_under_300ms(client, db_ready):
     """Spec §3. One Argon2id verify (64 MiB, t=3) dominates; the session write and the principal
-    cache are the rest. Ten attempts is what the brief asks for AND the most `limits.SIGNIN_EMAIL`
-    (10 per 15 min) allows on one address, so there is no warm-up sample to discard."""
+    cache are the rest.
+
+    ELEVEN samples, the first discarded, through `p95_of` (fix round 2's NEW-2, actually applied in
+    round 3 — see the report). Two things were wrong with the old shape, and both are visible in a
+    single passing run of it:
+
+      signin p95 261.2 ms  samples [223, 115, 137, 114, 110, 109, 113, 110, 111, 112]
+
+    The first sample is ~2x the rest, because the autouse `_dispose_pools` teardown closed the pool
+    after the previous test, so it pays the pool's own connect and a cold anyio threadpool. And the
+    reported "p95" is ABOVE every sample ever taken (261.2 > 223), because `statistics.quantiles`'s
+    default method extrapolates past ten data points — so the assertion was really
+    `1.2 x max(10) <= 300 ms`, and it tripped whenever the warm-up sample reached ~250 ms.
+
+    The old docstring justified taking no warm-up by saying ten was the most `limits.SIGNIN_EMAIL`
+    allowed on one address. That stopped being true in fix round 1, when the lockout began counting
+    FAILURES only: successful sign-ins no longer touch that bucket at all."""
     email = f"perf-{uuid.uuid4().hex[:10]}@example.org"
     ip, samples = _fresh_ip(), []
     from app.auth import passwords as P
 
     _sql("INSERT INTO account (email, password_hash, state) VALUES (%s,%s,'active')", (email, P.hash_password(PERF_PW)))
     try:
-        for _ in range(10):
+        for _ in range(11):
             t0 = time.perf_counter()
             r = await client.post("/api/auth/signin", json={"email": email, "password": PERF_PW}, headers={"x-forwarded-for": ip})
             samples.append((time.perf_counter() - t0) * 1000)
             assert r.status_code == 200, r.text
-        got = statistics.quantiles(samples, n=20)[18]
-        assert got <= SIGNIN_BUDGET_MS, f"/api/auth/signin p95 {got:.1f} ms over {SIGNIN_BUDGET_MS} ms"
+        got = p95_of(samples[1:])
+        # Captured by pytest unless -s: invisible in a normal run, and the numbers are right there
+        # when the gate trips or when somebody needs to see what it is actually measuring.
+        print(f"\nsignin p95 {got:.1f} ms  samples {[round(x) for x in samples]} (first discarded)")
+        assert got <= SIGNIN_BUDGET_MS, f"/api/auth/signin p95 {got:.1f} ms over {SIGNIN_BUDGET_MS} ms; samples {[round(x) for x in samples]}"
     finally:
         _sql("DELETE FROM account WHERE email=%s", (email,))
 
