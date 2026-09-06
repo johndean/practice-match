@@ -9,9 +9,14 @@ from __future__ import annotations
 import asyncio
 import time
 
+import pytest
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
+
 from app import db
 from app.checks import async_dsn, check_db, check_redis
 from app.config import settings
+from app.db import get_engine
 
 DSN = async_dsn(settings.database_url)
 OTHER_DSN = "postgresql+asyncpg://x:x@127.0.0.1:1/x"
@@ -129,3 +134,16 @@ async def test_check_db_and_check_redis_time_out_against_a_black_hole():
     assert db_elapsed < budget, f"check_db took {db_elapsed:.2f}s against a black hole"
     assert redis_result["ok"] is False
     assert redis_elapsed < budget, f"check_redis took {redis_elapsed:.2f}s against a black hole"
+
+
+async def test_engine_errors_never_carry_bound_parameters(db_ready):
+    """11c review F3: SQLAlchemy's own `[parameters: ...]` echo is suppressed (hide_parameters), so a failed
+    statement's text never carries a bound value. The statement's driver message must not itself embed the
+    value (asyncpg's DataError messages do — that channel is guarded at the endpoint, which logs exception
+    types only; see tests/api/test_interest.py), so the assertion discriminates on the echo alone."""
+    engine = get_engine(async_dsn(settings.database_url))
+    with pytest.raises(DBAPIError) as info:
+        async with engine.begin() as conn:
+            await conn.execute(text("SELECT 1 FROM no_such_table WHERE x = :p"), {"p": "victim-address@example.org"})
+    assert "no_such_table" in str(info.value)
+    assert "victim-address@example.org" not in str(info.value)

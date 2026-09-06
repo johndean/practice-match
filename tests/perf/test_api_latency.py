@@ -26,12 +26,14 @@ async def test_p95_within_budget(client, path, budget):
     assert await p95(client, path) <= budget, f"{path} p95 over {budget} ms"
 
 
+# POST budgets live here as their own tests; BUDGET_MS (GET) is what Census B5 / Map M3-M4 extend (M7 ruling).
 async def test_interest_stored_path_p95_within_budget(client, db_ready):
     """Spec 2026-09-06 §3: the full path — validation, three Redis counters, one INSERT — at p95 ≤ 100 ms.
     Every request carries a fresh client IP and a fresh address so no rate limit trips; rows are removed after."""
     tag = uuid.uuid4().hex[:8]
     samples: list[float] = []
     try:
+        await client.post("/api/interest", json={"email": f"perf-{tag}-warm@example.org"}, headers={"x-forwarded-for": "10.0.0.1"})  # warm-up (M6)
         for i in range(50):
             n = uuid.uuid4().int
             ip = "10." + ".".join(str((n >> s) & 255) for s in (16, 8, 0))

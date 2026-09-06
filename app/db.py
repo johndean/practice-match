@@ -44,8 +44,9 @@ def get_engine(url: str) -> AsyncEngine:
     engines = _engines.setdefault(loop, {})
     engine = engines.get(url)
     if engine is None:
+        # hide_parameters: a failed statement's log line never carries bound values (sign-up addresses) — 11c fix round 1
         engine = create_async_engine(
-            url, pool_pre_ping=True, pool_size=5, max_overflow=5, connect_args={"timeout": TIMEOUT_S}
+            url, pool_pre_ping=True, pool_size=5, max_overflow=5, connect_args={"timeout": TIMEOUT_S}, hide_parameters=True
         )
         engines[url] = engine
     return engine
