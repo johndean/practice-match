@@ -17,6 +17,13 @@ const mobile = async (p: Page) => { await click(p, 'Mobile view'); await jump(p,
 // App.vue's single position:fixed element — the interest modal's backdrop (see harness.ts's
 // `atTop`, which explains why this one state has to be pinned to the top of the page).
 const MODAL = 'div[style*="z-index: 900"]';
+// The prototype's own 390×800 phone frame (App.vue:1242) and the market-data sheet inside it.
+// `z-index: 700` is not unique in App.vue on its own — the desktop "More filters" popover
+// carries it too — so the sheet is always addressed through the frame. `atTop` takes a plain
+// CSS selector (it runs document.querySelector in the page), and the popover is not in the DOM
+// while the mobile frame is showing, so the bare selector is unambiguous there.
+const PHONE = 'div[style*="width: 390px"][style*="height: 800px"]';
+const SHEET = 'div[style*="z-index: 700"]';
 
 export const SCREENS: Screen[] = [
   { name: 'gate-signin', steps: async () => {} },
@@ -73,6 +80,24 @@ export const SCREENS: Screen[] = [
   { name: 'admin-data-sources', steps: async (p) => { await admin(p); await btn(p, /^Data Sources\s*\d/).click(); } },
   { name: 'mobile-list', steps: mobile },
   { name: 'mobile-map', steps: async (p) => { await mobile(p); await click(p, 'Map'); await waitMap(p); } },
+  // V10 review, minor 1: the OPENED sheet had no oracle of its own. `mobile-map` captures it
+  // closed, so C13's five sections, the ramp, and the "Source:" / "Updated:" lines — the
+  // attribution CLAUDE.md marks legally load-bearing — were gated only by the smoke block.
+  // This state puts the sheet itself under the same zero-tolerance pixel gate and the same
+  // node-for-node DOM oracle as every other approved screen.
+  //
+  // The harness viewport stays the design's 1440×940, exactly as the other three mobile states
+  // do: 390×800 is the PROTOTYPE's phone frame, drawn inside that page, not a browser resize.
+  // `atTop` pins the page at scroll 0 and waits for the sheet's box to settle, so the capture
+  // cannot drift the way interest-modal's did on the Linux runner.
+  { name: 'mobile-sheet', steps: async (p) => {
+      await mobile(p);
+      await click(p, 'Map');
+      await waitMap(p);
+      await p.locator(PHONE).locator('button', { hasText: /of \d/ }).click();
+      await p.locator(PHONE).locator(SHEET).waitFor({ state: 'visible' });
+      await atTop(p, SHEET);
+    } },
   // The phone reaches this screen from the MAP, not the list. CHANGE_LOG C13, verbatim:
   // "No peek card — tapping an already-selected pin opens the detail screen"
   // (logic.js `mobileVals.selectMarker`: the same id twice → `{ screen: "detail" }`). V3's

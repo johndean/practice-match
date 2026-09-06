@@ -94,7 +94,7 @@ export function btn(page: Page, name: RegExp) {
 //
 // App.vue has exactly ONE `position: fixed` element — the interest modal's overlay
 // (`position: fixed; inset: 0; z-index: 900; … place-items: center`). Everything else on all
-// 27 approved states is in normal flow, and a fullPage screenshot captures flow content
+// 28 approved states is in normal flow, and a fullPage screenshot captures flow content
 // whole regardless of where the page happens to be scrolled. A fixed element is different:
 // it is composited at the offset it PAINTS at, so a page scrolled by N pixels puts the whole
 // overlay — backdrop and the dialog centred inside it — N pixels down the screenshot while

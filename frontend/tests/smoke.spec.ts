@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { booted, click, jump, prepare, waitMap } from './harness';
+import { SCREENS } from './screens';
 
 const ROUTES = ['/', '/browse', '/browse?tab=market', '/browse?tab=listings', '/practices/p1', '/requests', '/seller', '/admin?tab=data'];
 
@@ -156,7 +157,22 @@ test.describe('smoke', () => {
 // glyph. Nothing in the sheet is under 44px."
 // ---------------------------------------------------------------------------------------
 test.describe('mobile: the same map, market data in a sheet', () => {
+  // Fix round 1, nit 5: scoped to the prototype's own 390×800 phone frame (App.vue:1242).
+  // `z-index: 700` alone is NOT unique in App.vue — the desktop "More filters" popover
+  // (App.vue:237) carries it too. That popover is not in the DOM while the mobile frame is
+  // showing, so the bare selector is unambiguous today; scoping it means a future state that
+  // renders both fails readably here instead of as a strict-mode violation everywhere.
+  const PHONE = 'div[style*="width: 390px"][style*="height: 800px"]';
   const SHEET = 'div[style*="z-index: 700"]';
+  const phone = (page: Page) => page.locator(PHONE);
+  const sheet = (page: Page) => phone(page).locator(SHEET);
+  /** The one navy Market data button, addressed by its dataset-count pill. */
+  const dataButton = (page: Page) => phone(page).locator('button', { hasText: /of \d/ });
+
+  async function openSheet(page: Page) {
+    await dataButton(page).click();
+    await expect(sheet(page)).toBeVisible();
+  }
 
   async function mobileMap(page: Page) {
     await prepare(page);
@@ -207,22 +223,29 @@ test.describe('mobile: the same map, market data in a sheet', () => {
   test('one navy Market data button opens a full-height sheet that scrolls', async ({ page }) => {
     await mobileMap(page);
     const mapBox = (await page.locator('.leaflet-container').first().boundingBox())!;
-    await page.locator('button', { hasText: /of \d/ }).last().click();
-    const sheet = page.locator(SHEET);
-    await expect(sheet).toBeVisible();
 
-    const sheetBox = (await sheet.boundingBox())!;
+    // Fix round 1, minor 3: "ONE navy Market data button" is the C13 wording, so assert the
+    // count rather than reaching for `.last()` of however many there are, and assert the
+    // colour the design gives it (`var(--vf-navy)` → #003a70) rather than only its text.
+    await expect(dataButton(page), 'C13 gives the phone exactly one Market data button').toHaveCount(1);
+    const navy = await dataButton(page).evaluate((el) => getComputedStyle(el).backgroundColor);
+    expect(navy, 'the Market data button is not the design\'s navy').toBe('rgb(0, 58, 112)');
+    const buttonBox = (await dataButton(page).boundingBox())!;
+    expect(Math.round(buttonBox.height), 'the Market data button is not 44px tall').toBe(44);
+
+    await openSheet(page);
+    const sheetBox = (await sheet(page).boundingBox())!;
     expect(Math.round(sheetBox.width)).toBe(Math.round(mapBox.width));
     expect(Math.round(sheetBox.height)).toBe(Math.round(mapBox.height));
 
-    const scrolls = await sheet.locator('.rf-scroll').evaluate((el) => el.scrollHeight > el.clientHeight);
+    const scrolls = await sheet(page).locator('.rf-scroll').evaluate((el) => el.scrollHeight > el.clientHeight);
     expect(scrolls, 'the sheet body does not scroll — it cannot be carrying all five sections').toBe(true);
   });
 
   test('every one of the five sections renders, in order', async ({ page }) => {
     await mobileMap(page);
-    await page.locator('button', { hasText: /of \d/ }).last().click();
-    const text = await page.locator(SHEET).innerText();
+    await openSheet(page);
+    const text = await sheet(page).innerText();
     // innerText is the RENDERED text, and rendered is what "renders" has to mean here: a
     // display:none section would drop out of it entirely. V3 sets `text-transform:
     // uppercase` on all four of the sheet's micro-labels and on the footer button (Global
@@ -243,12 +266,27 @@ test.describe('mobile: the same map, market data in a sheet', () => {
     }
     expect(text).toContain('Why it matters');
     expect(text).toContain('SHOW MAP');
+
+    // Fix round 1, minor 1: bullet 2 of C13's six-item list — "ramp + source/updated" — was
+    // asserted nowhere, and the source line is the attribution CLAUDE.md marks legally load
+    // bearing ("Source: U.S. Census Bureau, …" under Community Context). It sits between the
+    // Shading rows and Compare against, which is where the design puts it
+    // (Practice Match V3.dc.html:1417-1424).
+    const ramp = text.indexOf('< $50K');            // the first class of the default income ramp
+    const source = text.indexOf('Source:');
+    const updated = text.indexOf('Updated:');
+    expect(ramp, 'the sheet renders no ramp under the Shading rows').toBeGreaterThan(text.indexOf('SHADING'));
+    expect(source, 'the sheet renders no "Source:" attribution line').toBeGreaterThan(ramp);
+    expect(updated, 'the sheet renders no "Updated:" line').toBeGreaterThan(source);
+    expect(updated, 'the ramp + source/updated block is not between Shading and Compare against')
+      .toBeLessThan(text.indexOf('COMPARE AGAINST'));
+    expect(text).toContain('Source: U.S. Census ACS 5-year estimates (2023) · community level');
   });
 
   test('every tap target in the sheet is at least 44px', async ({ page }) => {
     await mobileMap(page);
-    await page.locator('button', { hasText: /of \d/ }).last().click();
-    const sizes = await page.locator(SHEET).locator('button').evaluateAll((els) =>
+    await openSheet(page);
+    const sizes = await sheet(page).locator('button').evaluateAll((els) =>
       els.map((el) => { const r = el.getBoundingClientRect(); return { label: (el.getAttribute('aria-label') || el.textContent || '').trim().slice(0, 40), w: r.width, h: r.height }; })
     );
     expect(sizes.length, 'the sheet rendered no buttons at all').toBeGreaterThan(5);
@@ -263,6 +301,61 @@ test.describe('mobile: the same map, market data in a sheet', () => {
     expect(Math.round(glyph.height)).toBe(16);
   });
 
+  // Fix round 1, minor 2. The >= 44px rule above is real, but it passes on padding alone:
+  // setting `rowStyle`/`datasetRowStyle` to `min-height: 1px` leaves it green, because 24px of
+  // padding plus 22px of row content already clears 44. C13's stated means — "option and
+  // dataset rows `min-height: 46px`, basemap buttons 46px" — was therefore verified only by
+  // reading logic.js. Asserted here from the COMPUTED style, so the rule survives a change to
+  // how the value is written.
+  test('the sheet rows carry the design\'s 46px minimums, not merely enough padding', async ({ page }) => {
+    await mobileMap(page);
+    await openSheet(page);
+    const rows = await sheet(page).locator('button').evaluateAll((els) =>
+      els.map((el) => ({
+        role: el.getAttribute('role'),
+        label: (el.getAttribute('aria-label') || el.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 32),
+        minHeight: parseFloat(getComputedStyle(el).minHeight) || 0,
+        height: el.getBoundingClientRect().height
+      }))
+    );
+    // Shading (7) + Compare against (6) are the design's role="option" rows; the Datasets rows
+    // are the only other buttons the design gives a min-height to (`mob.datasetRowStyle`).
+    const options = rows.filter((r) => r.role === 'option');
+    const datasets = rows.filter((r) => !r.role && r.minHeight > 0);
+    expect(options.length, 'the Shading + Compare against option rows').toBe(13);
+    expect(datasets.length, 'the Datasets rows').toBe(6);
+    for (const r of [...options, ...datasets]) {
+      expect(r.minHeight, `"${r.label}" computes to min-height ${r.minHeight}px, under the design's 46px`).toBeGreaterThanOrEqual(46);
+    }
+    const basemaps = rows.filter((r) => r.label === 'Map' || r.label === 'Satellite');
+    expect(basemaps.length, 'the Basemap section\'s two buttons').toBe(2);
+    for (const b of basemaps) {
+      expect(Math.round(b.height), `the "${b.label}" basemap button is ${b.height}px, not the design's 46px`).toBe(46);
+    }
+  });
+
+  // Fix round 1, minor 4. C13's whole point: the mobile mount omits `on-basemap`
+  // (Practice Match V3.dc.html:1359 vs the desktop's :324), so the map's 132px Map|Satellite
+  // cluster cannot fight a full-width key on a 388px map — the SHEET owns basemap switching
+  // instead. That was gated only by `mobile-map` at zero tolerance, which names the failure as
+  // a pixel diff; this names it in words, on both sides of the contrast.
+  test('the phone has no basemap tabs on the map — the sheet owns basemap switching', async ({ page }) => {
+    await mobileMap(page);
+    const tabs = page.getByRole('button', { name: 'Satellite', exact: true });
+    await expect(tabs, 'a Map|Satellite tab pair leaked onto the phone map — on-basemap reached the mobile mount').toHaveCount(0);
+    await openSheet(page);
+    await expect(sheet(page).getByRole('button', { name: 'Satellite', exact: true }), 'the sheet does not own basemap switching').toHaveCount(1);
+  });
+
+  test('the desktop map keeps the basemap tabs the phone gives up', async ({ page }) => {
+    await prepare(page);
+    await booted(page);
+    await jump(page, 'Browse');
+    await waitMap(page);
+    await expect(page.getByRole('button', { name: 'Satellite', exact: true }), 'the desktop map lost its basemap tabs').toHaveCount(1);
+    await expect(page.getByRole('button', { name: 'Map', exact: true }), 'the desktop map lost its basemap tabs').toHaveCount(1);
+  });
+
   test('tapping a pin twice reaches the detail screen — there is no peek card', async ({ page }) => {
     await mobileMap(page);
     const pin = page.locator('.leaflet-marker-icon').first();
@@ -271,5 +364,55 @@ test.describe('mobile: the same map, market data in a sheet', () => {
     await expect(page).toHaveURL(/\/browse$/);              // first tap selects, it does not navigate
     await page.locator('.leaflet-marker-icon').first().click();
     await expect(page).toHaveURL(/\/practices\/p\d+$/);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Fix round 1, nit 7: a permanent guard for `atTop`.
+//
+// The Linux flake it fixes (interest-modal, 23,441 px on the vin-swe runner) cannot be
+// reproduced on darwin by running the suite — the app's one position:fixed element only
+// drifts when the page happens to be scrolled at capture time, and darwin never scrolls it.
+// So deleting `atTop(p, MODAL)` from screens.ts would fail nothing here and silently re-open
+// the flake on the runner that has it.
+//
+// This case forces the runner's behaviour instead of waiting for it: an init script scrolls
+// the page 5px on EVERY click, which is exactly what Playwright's scroll-into-view does on
+// Linux when the taller listing page pushes "I'm interested" past the fold. It then drives
+// the real `SCREENS` step — not a copy of it — and asserts the page is back at the top with
+// the overlay's box settled, which is the state the fullPage capture needs. Remove the
+// `atTop` call and this fails on every platform.
+// ---------------------------------------------------------------------------------------
+test.describe('harness: atTop pins the interest modal against a scrolled capture', () => {
+  test('the interest-modal step ends at scrollY 0 with the overlay settled, even when every click scrolls', async ({ page }) => {
+    await prepare(page);
+    // Capture phase, so it lands before the app's own handler and before Playwright's next
+    // action — the same ordering a real scroll-into-view has.
+    await page.addInitScript(() => document.addEventListener('click', () => window.scrollTo(0, 5), true));
+    await booted(page);
+
+    const step = SCREENS.find((s) => s.name === 'interest-modal');
+    expect(step, 'there is no interest-modal state left to guard').toBeTruthy();
+    await step!.steps(page);
+
+    const settled = await page.evaluate(() =>
+      new Promise<{ scrollY: number; overlays: number; stable: boolean }>((resolve) => {
+        const el = document.querySelector('div[style*="z-index: 900"]');
+        if (!el) return resolve({ scrollY: window.scrollY, overlays: 0, stable: false });
+        const a = el.getBoundingClientRect();
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            const b = el.getBoundingClientRect();
+            resolve({ scrollY: window.scrollY, overlays: 1, stable: a.top === b.top && a.left === b.left && a.height === b.height });
+          })
+        );
+      })
+    );
+    expect(settled.overlays, 'the interest modal never opened, so this guard proved nothing').toBe(1);
+    expect(
+      settled.scrollY,
+      'the interest-modal step left the page scrolled: its atTop() call is missing, so the modal\'s position:fixed overlay will be composited off-origin in the fullPage capture — the vin-swe Linux flake, back'
+    ).toBe(0);
+    expect(settled.stable, 'the overlay is still moving at the moment the capture would be taken').toBe(true);
   });
 });
