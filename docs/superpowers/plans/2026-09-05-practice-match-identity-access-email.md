@@ -859,8 +859,10 @@ Add `hibp_enabled: bool = True` to `Settings`.
 - Modify: `app/config.py` (`market_data_public: bool = False`, `consolidator_keywords: str = ""`), `app/api/csrf.py` (from the Map-engines plan — if absent, create it here with the same body)
 
 **Interfaces:**
-- Produces: `permissions.ROLES = ("anonymous","applicant","buyer","seller","staff","admin")`; `permissions.MATRIX: dict[str, frozenset[str]]` (perm → roles) exactly as spec §4; `permissions.PUBLIC_ROUTES: frozenset[tuple[str, str]]` (method, path template); `permissions.REAUTH: frozenset[str]`; `permissions.AUDITED: frozenset[str]`; `permissions.effective_roles(principal: Principal | None) -> frozenset[str]`; `permissions.allowed(perm, principal) -> bool`; `permissions.to_typescript() -> str`; CLI `python -m app.auth.permissions --ts > frontend/src/auth/permissions.ts`; `deps.current_principal(request) -> Principal | None` (session cookie → `api_token` → legacy bearer as admin); `deps.require(perm: str)` FastAPI dependency returning the `Principal`; `deps.PermissionDenied` → `403 {"error":{"code":"FORBIDDEN"}}`, unauthenticated → `401 {"error":{"code":"UNAUTHORIZED"}}`, re-auth needed → `403 {"error":{"code":"REAUTH_REQUIRED"}}`; `deps.check_origin_and_csrf(request, principal)`; `audit.write(conn, *, actor: Principal | None, action, target_type, target_id=None, before=None, after=None, reason=None, request=None)`; `limits.hit(r, key, limit, window_s) -> None` raising `HTTPException(429)` with `Retry-After`; `limits.SIGNIN_EMAIL=(10,900)`, `SIGNIN_IP=(30,900)`, `SIGNUP_IP=(5,3600)`, `SIGNUP_EMAIL=(3,86400)`, `FORGOT_EMAIL=(3,3600)`; `labels.role_label(roles, affiliation) -> str`; `labels.initials(name) -> str`; `deps.client_ip(request) -> str | None`.
+- Produces: `permissions.ROLES = ("anonymous","applicant","buyer","seller","staff","admin")`; `permissions.MATRIX: dict[str, frozenset[str]]` (perm → roles) exactly as spec §4; `permissions.PUBLIC_ROUTES: frozenset[tuple[str, str]]` (method, path template); `permissions.REAUTH: frozenset[str]`; `permissions.AUDITED: frozenset[str]`; `permissions.effective_roles(principal: Principal | None) -> frozenset[str]`; `permissions.allowed(perm, principal) -> bool`; `permissions.to_typescript() -> str`; CLI `python -m app.auth.permissions --ts > frontend/src/auth/permissions.ts`; `deps.current_principal(request) -> Principal | None` (session cookie → `api_token` → legacy bearer as admin); `deps.require(perm: str)` FastAPI dependency returning the `Principal`; `deps.PermissionDenied` → `403 {"error":{"code":"FORBIDDEN"}}`, unauthenticated → `401 {"error":{"code":"UNAUTHORIZED"}}`, re-auth needed → `403 {"error":{"code":"REAUTH_REQUIRED"}}`; `deps.check_origin_and_csrf(request, principal)`; `audit.write(conn, *, actor: Principal | None, action, target_type, target_id=None, before=None, after=None, reason=None, request=None)`; `limits.hit(r, scope, subject, limit, window_s) -> None` raising a 429 `deps.AuthError` (`RATE_LIMITED`, `Retry-After`) — the key is built by `app.ratelimit.bucket_key(scope, subject, window_s)`, so raw IPs and e-mail addresses never enter Redis (I3 review ruling, 2026-09-06); `limits.SIGNIN_EMAIL=(10,900)`, `SIGNIN_IP=(30,900)`, `SIGNUP_IP=(5,3600)`, `SIGNUP_EMAIL=(3,86400)`, `FORGOT_EMAIL=(3,3600)`; `labels.role_label(roles, affiliation) -> str`; `labels.initials(name) -> str`; `deps.client_ip(request) -> str | None`.
 
+
+*Rulings after the I3 review and re-review (2026-09-06, zero-gaps): `deps` raises an `AuthError` hierarchy (`Unauthenticated` 401, `PermissionDenied` 403, CSRF/Origin/re-auth/429 codes as before) and exposes `deps.install(app)` — called in `create_app()` — which renders the A5 body `{"error":{"code","message"}}` for those exceptions only (no global patching of FastAPI). Resolution order is the prose order: session cookie → `api_token` → legacy bearer (a valid cookie wins over any `Authorization` header). REAUTH permissions are unreachable for non-session principals except the legacy operator (tokens fail closed). `users.revoke` is a real staff permission in `MATRIX`, `REAUTH` and `AUDITED`. `api_token` principals carry `account_id = created_by`, are refused when the creator is suspended/revoked, and audit as `actor_role = "token:<role>"`. `audit.write` redacts keys matching password/hash/secret/token. `limits.hit` takes `(scope, subject)` and pseudonymises through `app.ratelimit.bucket_key`. `current_principal` consults the Redis cache before opening any Postgres connection. `tests/auth/test_permissions.py::test_every_route_is_guarded_or_public` walks `create_app().routes`; later tasks hoist `REQUIRE_X = require("x")` to module constants and never wrap a `require` dependency. A live session whose account is suspended/revoked returns 403 `FORBIDDEN`; I5 invalidates all sessions on suspend/revoke so the next request is the generic 401.*
 - [ ] **Step 1: Failing tests**
 
 `tests/auth/test_permissions.py`:
@@ -1499,7 +1501,7 @@ def _link(path: str, token: str) -> str:
 @router.post("/auth/signup", status_code=202)
 async def signup(body: Creds, request: Request) -> dict:
     r = sync_redis(); ip = client_ip(request)
-    limits.hit(r, f"rl:signup:ip:{ip}", *limits.SIGNUP_IP); limits.hit(r, f"rl:signup:email:{body.email.lower()}", *limits.SIGNUP_EMAIL)
+    limits.hit(r, "signup:ip", ip, *limits.SIGNUP_IP); limits.hit(r, "signup:email", body.email.lower(), *limits.SIGNUP_EMAIL)
     _policy(body.password, privileged=False)
     hashed = await P.hash_async(body.password)
     with sync_conn() as conn:
@@ -1526,7 +1528,7 @@ async def verify(body: TokenIn) -> dict:
 @router.post("/auth/signin")
 async def signin(body: Creds, request: Request, response: Response) -> dict:
     r = sync_redis(); ip = client_ip(request); email = str(body.email).lower()
-    limits.hit(r, f"rl:signin:email:{email}", *limits.SIGNIN_EMAIL); limits.hit(r, f"rl:signin:ip:{ip}", *limits.SIGNIN_IP)
+    limits.hit(r, "signin:email", email, *limits.SIGNIN_EMAIL); limits.hit(r, "signin:ip", ip, *limits.SIGNIN_IP)
     with sync_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id, password_hash, state FROM account WHERE email=%s", (email,)); row = cur.fetchone()
@@ -1566,7 +1568,7 @@ async def signout_all(response: Response, principal=Depends(require("account.sel
 @router.post("/auth/password/forgot", status_code=202)
 async def forgot(body: EmailIn, request: Request) -> dict:
     r = sync_redis(); email = str(body.email).lower()
-    limits.hit(r, f"rl:forgot:email:{email}", *limits.FORGOT_EMAIL)
+    limits.hit(r, "forgot:email", email, *limits.FORGOT_EMAIL)
     with sync_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM account WHERE email=%s AND state NOT IN ('unverified','revoked')", (email,)); row = cur.fetchone()
