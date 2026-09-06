@@ -26,6 +26,8 @@
 - **Email:** never a network call on the request path; outbox idempotency key `"{account_id}:{template}:{cause_id}"`; retries at 1 min, 10 min, 1 h, 6 h then `failed`; on QA only addresses in `EMAIL_ALLOWLIST` are sent, others are recorded `suppressed`; sender `no-reply@foundation.vin`, display name `VIN Foundation — Practice Match`; link base `https://qa.foundation.vin` on QA and `https://foundation.vin` on production; webhook signatures verified with `RESEND_WEBHOOK_SECRET`.
 - **Secrets** (`RESEND_API_KEY` on `worker`, `RESEND_WEBHOOK_SECRET` on `api`, `EMAIL_ALLOWLIST` on QA `api`+`worker`, `HIBP_ENABLED`) are Railway variables set out-of-band after `railway status` prints `Project: Practice Match`; never in chat, git or `.env.example` values.
 - **Operator token overlap:** `require(perm)` accepts a session, an `api_token`, **or** the legacy `Authorization: Bearer {API_SECRET_KEY}` (as admin) until Task I9 deletes `auth_stub.py` and `API_SECRET_KEY` after CI secrets switch to an `api_token`.
+- **Automation tokens carry any of the four roles (John, 2026-09-07).** Staff and admin tokens are minted only by an admin who holds that role, under re-auth, audited with the role; token principals never satisfy a re-auth gate and never hold `tokens.manage` (spec §Automation tokens, amended). Task I5b.
+- **The applicant's path back (John, 2026-09-07: YES).** `needs_review` → answer in the app + re-submit → `pending`; `declined` → re-apply → new application row, `pending`; one open application per account; audited; `application_received` re-sent. API in Task I5c; the screens wait for a Rev 3 design (John's queue) and are wired in I8 only when it exists.
 - **Migrations `010`–`015`** belong to this wave; `016` is the Seed Listings plan's, `017`–`059` are Census SP3-A's.
 - **Design persona** (`design@practice-match.test`, roles buyer+seller+staff+admin) exists only in test and QA databases (seeded by `scripts/seed_persona.py`, refused when `ENVIRONMENT=production`).
 - **Zero-regression order** for the prototype: harness API sign-in first, then `logic.js` wiring (RED-then-GREEN against the characterisation suite), then jump bar / demo credentials / `gateStates` / `startViewport` removal, then the sign-in copy change.
@@ -2019,6 +2021,111 @@ print(f"{settings.link_base_url}/accept-invite?token={token}")
 - [ ] **Step 5: Commit** — `feat(identity): applications with reviewer flags, staff decisions with next-request revocation, grants, api tokens, admin reads, bootstrap admin and design persona`.
 
 ---
+
+### Task I5b: Staff and admin automation tokens (John's ruling, 2026-09-07)
+
+*Added 2026-09-07. John: "i asked several times, Admin and Staff must be handled in wave 2a … must include Staff/Admin tokens". Reverses I5 fix round 1's F6 (`TOKEN_ROLES = ("buyer", "seller")`). Executes after I6 closes, before I7. Standard-tier implementer.*
+
+**Files:**
+- Modify: `app/api/admin_users.py` (`TOKEN_ROLES`, `create_token`, the refusal message and docstring at the F6 sites), `app/auth/deps.py` (the re-auth gate refuses token principals with a distinct 403 message), `app/auth/permissions.py` only if `tokens.manage` needs a "session-only" marker for the generated matrix
+- Test: `tests/api/test_admin_users.py` (token creation cases), `tests/auth/test_matrix.py` (token principals × four roles), `tests/api/test_reauth.py` (or the existing re-auth test module)
+
+**Interfaces:**
+- Consumes: `TokenIn(name, role, expires_at)`, `create_token`, `TokenManager` (= `require("tokens.manage")` + re-auth), `S.Principal` (kind `session` | `token`), `require(perm)` and its re-auth path in `app/auth/deps.py`, the audit helper (`tokens.create`).
+- Produces: `TOKEN_ROLES = ("buyer", "seller", "staff", "admin")`; `REAUTH_TOKEN_MESSAGE = "this action needs a re-authenticated session — api tokens cannot re-authenticate"`; a token principal's `permissions` = its role's set minus `{"tokens.manage"}`.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+# tests/api/test_admin_users.py (append)
+@pytest.mark.parametrize("role", ["staff", "admin"])
+async def test_admin_mints_staff_and_admin_tokens(client, admin_session_reauthed, role):
+    r = await client.post("/api/admin/tokens", json={"name": f"e2e-{role}", "role": role}, headers=admin_session_reauthed)
+    assert r.status_code == 201
+    assert r.json()["role"] == role
+    row = audit_last(kind="tokens.create")
+    assert row["details"]["role"] == role
+
+async def test_minter_must_hold_the_role(client, staff_only_admin_session_reauthed):
+    # an admin whose grants are {admin} but not {staff}? — admins hold every role by the matrix; use a session whose account holds admin only and mint a seller token: allowed.
+    # The escalation case: a principal with tokens.manage but WITHOUT the requested role must not exist by the matrix; pin it structurally:
+    assert "tokens.manage" not in P.PERMISSIONS["staff"]
+
+async def test_token_principal_holds_role_permissions_but_never_tokens_manage(client, token_for):
+    admin_tok = await token_for("admin")
+    assert (await client.get("/api/admin/users", headers=admin_tok)).status_code == 200
+    r = await client.post("/api/admin/tokens", json={"name": "x", "role": "buyer"}, headers=admin_tok)
+    assert r.status_code == 403 and r.json()["detail"] == "api tokens cannot manage tokens"
+
+async def test_token_principal_never_satisfies_reauth(client, token_for, declined_account):
+    staff_tok = await token_for("staff")
+    r = await client.post(f"/api/admin/users/{declined_account}/decide", json={"action": "revoke", "reason": "x"}, headers=staff_tok)
+    assert r.status_code == 403 and r.json()["detail"] == "this action needs a re-authenticated session — api tokens cannot re-authenticate"
+```
+
+`tests/auth/test_matrix.py`: extend the generated role × endpoint matrix so every row runs twice — as a session principal and as a token principal of the same role — with the two token exceptions (re-auth-gated routes → 403 with `REAUTH_TOKEN_MESSAGE`; `tokens.manage` routes → 403 "api tokens cannot manage tokens"); everything else identical.
+
+- [ ] **Step 2: Run — RED** — `poetry run pytest -q tests/api/test_admin_users.py tests/auth/test_matrix.py -k "token"`. Expected: 403 on minting staff/admin (today's `TOKEN_ROLES`), and the matrix's token rows missing.
+- [ ] **Step 3: Implement** — `TOKEN_ROLES = ("buyer", "seller", "staff", "admin")`; in `create_token`: `if body.role not in _roles(cur, minter_account_id) and body.role not in ("buyer", "seller"): raise 403 "you can only mint a token for a role you hold"` (admins hold admin; `staff` is minted by an admin who also holds staff, or by the matrix rule that admin ⊇ staff — follow `permissions.py`'s role lattice, do not invent one); audit `tokens.create` with `{"role": body.role, "name": body.name}`; in `deps.py`'s re-auth check: `if principal.kind == "token": raise AuthError(403, REAUTH_TOKEN_MESSAGE)`; in the principal builder for tokens: `perms = PERMISSIONS[role] - {"tokens.manage"}`; `tokens.manage` handlers return 403 "api tokens cannot manage tokens" for token principals (the permission set already lacks it — assert the message, not just the status). Update the F6 docstring/message sites.
+- [ ] **Step 4: Run — GREEN** — the two files, then the full gate (`--cov-fail-under=100`, ruff, mypy). Regenerate `frontend/src/auth/permissions.ts` if the matrix export changed (`python -m app.auth.permissions --ts`).
+- [ ] **Step 5: Docs + commit** — `DEPLOY.md`/`.env.example` token notes (roles); `feat(identity): api tokens may carry staff and admin (John's ruling); tokens never re-authenticate or manage tokens`.
+
+### Task I5c: The applicant's path back — answer a request for information and re-submit; re-apply after a decline (John: YES, 2026-09-07)
+
+*Added 2026-09-07. API only; the screens wait for a Rev 3 design (spec §Lifecycle amendment). After I5b, before I7. Standard-tier implementer.*
+
+**Files:**
+- Modify: `migrations/012_applications.sql` **in place** (or whichever `01x` file creates `application` — never applied to a persistent database: QA and production serve `main` at `b9d01ad`; say so in the commit) — add `answer text`, `answered_at timestamptz`, `resubmitted_at timestamptz`
+- Modify: `app/api/applications.py` (`POST /api/applications/{id}/answer`; re-apply branch in `POST /api/applications`; `GET /api/applications/me` returns `history`), `app/api/admin_users.py` (detail shows `answer`, `answered_at`, `history`), `app/auth/audit.py` action names (`applications.answer`, `applications.reapply`) + the AST drift test list
+- Test: `tests/api/test_applications.py`, `tests/api/test_admin_users.py` (detail history), `tests/mail/test_send.py` (a second `application_received` with a new cause)
+
+**Interfaces:**
+- Consumes: `OPEN_STATUSES`, `info_request` on the `needs_review` row, the transitions dict in `admin_users.py` (`request_info: pending → needs_review`), `outbox.enqueue(account_id, template, cause_id, params)`.
+- Produces: `POST /api/applications/{id}/answer {answer: str (≤ 4000)}` → 200 `{status: "pending"}`; `POST /api/applications` on a `declined` account → 201 new row + `account.state = pending`; `GET /api/applications/me` → `{current, history: [...]}`; account state transitions `needs_review → pending` (answer) and `declined → pending` (re-apply).
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+async def test_applicant_answers_and_resubmits(client, needs_review_applicant):
+    sess, app_id = needs_review_applicant  # staff asked "Which practice?" via request_info
+    r = await client.post(f"/api/applications/{app_id}/answer", json={"answer": "Cedar Park Animal Hospital, 2 DVMs"}, headers=sess)
+    assert r.status_code == 200 and r.json() == {"status": "pending"}
+    me = (await client.get("/api/me", headers=sess)).json(); assert me["state"] == "pending"
+    row = application(app_id); assert row["status"] == "pending" and row["answer"].startswith("Cedar Park") and row["resubmitted_at"] is not None
+    assert audit_last(kind="applications.answer")["target"] == app_id
+    assert outbox_last()["template"] == "application_received" and outbox_last()["idempotency_key"].endswith(f":{app_id}:2")
+
+async def test_answer_requires_needs_review_and_ownership(client, pending_applicant, needs_review_applicant, other_session):
+    sess, app_id = pending_applicant
+    assert (await client.post(f"/api/applications/{app_id}/answer", json={"answer": "x"}, headers=sess)).status_code == 409
+    _, nr_id = needs_review_applicant
+    assert (await client.post(f"/api/applications/{nr_id}/answer", json={"answer": "x"}, headers=other_session)).status_code == 404  # not yours: uniform not-found
+
+async def test_declined_applicant_reapplies(client, declined_applicant, buyer_application_body):
+    sess, old_id = declined_applicant
+    r = await client.post("/api/applications", json=buyer_application_body, headers=sess)
+    assert r.status_code == 201 and r.json()["id"] != old_id
+    me = (await client.get("/api/me", headers=sess)).json(); assert me["state"] == "pending"
+    hist = (await client.get("/api/applications/me", headers=sess)).json()
+    assert [h["status"] for h in hist["history"]] == ["declined"] and hist["current"]["status"] == "pending"
+    assert audit_last(kind="applications.reapply")["target"] == r.json()["id"]
+
+async def test_one_open_application_per_account(client, pending_applicant, buyer_application_body):
+    sess, _ = pending_applicant
+    assert (await client.post("/api/applications", json=buyer_application_body, headers=sess)).status_code == 409
+
+async def test_staff_detail_shows_answer_and_history(client, staff_session, answered_then_declined_then_reapplied_account):
+    acct = answered_then_declined_then_reapplied_account
+    d = (await client.get(f"/api/admin/users/{acct}", headers=staff_session)).json()
+    assert d["application"]["answer"] and len(d["application_history"]) == 1 and d["application_history"][0]["decision"] == "decline"
+```
+
+- [ ] **Step 2: Run — RED** — `poetry run pytest -q tests/api/test_applications.py -k "answer or reappl or one_open"`. Expected: 404 (route missing) / 409 today for re-apply.
+- [ ] **Step 3: Implement** — migration columns; `answer` route: load the row for the session's account (`404` if not owned — uniform with the design's non-enumeration stance), `409` unless `status == "needs_review"`, set `answer`, `answered_at = now()`, `resubmitted_at = now()`, `status = "pending"`, `account.state = "pending"`, audit, enqueue `application_received` with cause `f"{app_id}:{n}"` where `n` = 1 + count of prior submissions of that row; re-apply: in `POST /api/applications`, when the account's latest application is `declined` and `account.state == "declined"`, insert a new row and move the account to `pending` (existing validation and the `application_received` enqueue apply), audit `applications.reapply`; `409` when an open row exists; `GET /api/applications/me` = current open row (or the latest) + `history` (closed rows, newest first, with decision, reason, decided_at); admin detail adds `application.answer/answered_at/resubmitted_at` and `application_history`.
+- [ ] **Step 4: Run — GREEN**, then the full gate (`--cov-fail-under=100`, ruff, mypy); the AST audit-name drift test sees the two new action names.
+- [ ] **Step 5: Docs + commit** — spec/plan already amended; `DEPLOY.md` unchanged; `feat(identity): applicants answer a request for information and re-submit; declined applicants re-apply (John's ruling); one open application per account`.
+
+*Notes for I7/I8 (2026-09-07): the applicant-facing answer field and Re-apply action are wired only when John supplies the Rev 3 gate-state design; until then I8 leaves the gate screens as designed and the report lists the two API paths as "reachable by API, not by UI".*
 
 ### Task I6: Resend pipeline — templates, outbox sending, worker tasks, webhook, allowlist, suppression
 
