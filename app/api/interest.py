@@ -26,7 +26,7 @@ CONSENT_VERSION = "coming-soon-v1"  # the page's promise: one message when it la
 # characters (U+0000 cannot be stored in Postgres text; U+0001-U+001F and U+007F would be stored verbatim),
 # no Unicode bidi controls (U+200E/F, U+202A-E, U+2066-9). Quoting, brackets and emoji are left to the consumer
 # to escape (Wave 2a) — rejecting them would reject valid addresses.
-_FORBIDDEN = r"\s@\x00-\x1f\x7f\u200e\u200f\u202a-\u202e\u2066-\u2069"
+_FORBIDDEN = r"\s@\x00-\x1f\x7f\u200b-\u200d\u200e\u200f\u202a-\u202e\u2066-\u2069"  # + zero-width space/joiners U+200B-D (N10)
 EMAIL_RE = re.compile(rf"^[^{_FORBIDDEN}]+@[^{_FORBIDDEN}]+\.[A-Za-z]{{2,}}$")
 MAX_EMAIL_LEN = 254
 MAX_BODY_BYTES = 4096  # a JSON object holding one address; anything larger is not this form (F9)
@@ -49,11 +49,32 @@ def normalise(email: str) -> tuple[str, str] | None:
 def client_ip(request: Request) -> str:
     """The client as Railway's edge saw it: the RIGHTMOST X-Forwarded-For hop. A reverse proxy appends the peer
     it accepted, so every earlier hop is caller-supplied text and must not key a rate limit (11c review F2;
-    spec §3 amended 2026-09-06, proven live on QA in Task 11f). Without the header the peer address is used."""
-    forwarded = request.headers.get("x-forwarded-for", "")
-    if forwarded:
-        return forwarded.rsplit(",", 1)[-1].strip()
+    spec §3 amended 2026-09-06, proven live on QA in Task 11f). An empty rightmost hop (trailing comma,
+    blank header) or no header at all falls back to the peer address (N7)."""
+    hop = request.headers.get("x-forwarded-for", "").rsplit(",", 1)[-1].strip()
+    if hop:
+        return hop
     return request.client.host if request.client else "unknown"
+
+
+def declared_length(request: Request) -> int | None:
+    """Content-Length as an int (0 when absent — chunked bodies are capped while streaming); None when the
+    header is not a plain decimal number. isdecimal(), not isdigit(): "²".isdigit() is True but int("²") raises (N4)."""
+    value = request.headers.get("content-length", "0").strip()
+    return int(value) if value.isdecimal() else None
+
+
+async def _read_capped(request: Request) -> bytes | None:
+    """The body, or None once more than MAX_BODY_BYTES have arrived. Chunked requests declare no length, so the
+    cap is enforced while streaming rather than after buffering the whole body (N3)."""
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > MAX_BODY_BYTES:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 def _error(code: str, status: int) -> JSONResponse:
@@ -73,11 +94,11 @@ def _email_from(raw: bytes) -> str | None:
 
 @router.post("/interest", status_code=202)
 async def interest(request: Request) -> JSONResponse:
-    declared = request.headers.get("content-length", "0")
-    if not declared.isdigit() or int(declared) > MAX_BODY_BYTES:
+    declared = declared_length(request)
+    if declared is None or declared > MAX_BODY_BYTES:
         return _error("too_large", 413)
-    raw = await request.body()
-    if len(raw) > MAX_BODY_BYTES:
+    raw = await _read_capped(request)
+    if raw is None:
         return _error("too_large", 413)
     email = _email_from(raw)
     parsed = normalise(email) if email is not None else None
@@ -95,6 +116,6 @@ async def interest(request: Request) -> JSONResponse:
         async with engine.begin() as conn:
             await conn.execute(INSERT, {"email": as_typed, "norm": norm, "consent": CONSENT_VERSION})
     except Exception as exc:  # noqa: BLE001 — fail closed: any limiter or store failure is a 503, logged by type only (never the address)
-        logger.warning("interest sign-up unavailable: %s", type(exc).__name__)
+        logger.warning("interest sign-up unavailable: %s.%s", type(exc).__module__, type(exc).__name__)
         return _error("unavailable", 503)
     return JSONResponse({"status": "ok"}, status_code=202)

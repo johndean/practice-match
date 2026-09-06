@@ -1,9 +1,10 @@
 """Fixed-window counters in Redis — the only state the sign-up endpoint shares across api instances.
 
-Each hit is one MULTI (INCR + EXPIRE), so a key can never outlive its window even if the process dies between
-the two commands. Subjects (client IP, normalised address) enter the key as a truncated SHA-256: a pseudonym
-that keeps raw addresses out of Redis, NOT an anonymisation (a dictionary attack reverses it). Fixed windows
-allow up to twice the limit across one window boundary; spec §3 accepts that."""
+Each hit is one MULTI (INCR + EXPIRE), so every key carries a TTL even if the process dies between the two
+commands; the bucket index is part of the key, so a key is never consulted after its window even though late
+hits refresh its TTL by up to one more window. Subjects (client IP, normalised address) enter the key as a
+truncated SHA-256: a pseudonym that keeps raw addresses out of Redis, NOT an anonymisation (a dictionary attack
+reverses it). Fixed windows allow up to twice the limit across one window boundary; spec §3 accepts that."""
 from __future__ import annotations
 
 import hashlib

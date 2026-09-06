@@ -33,7 +33,8 @@ async def test_interest_stored_path_p95_within_budget(client, db_ready):
     tag = uuid.uuid4().hex[:8]
     samples: list[float] = []
     try:
-        await client.post("/api/interest", json={"email": f"perf-{tag}-warm@example.org"}, headers={"x-forwarded-for": "10.0.0.1"})  # warm-up (M6)
+        warm_ip = "10." + ".".join(str((uuid.uuid4().int >> s) & 255) for s in (16, 8, 0))
+        await client.post("/api/interest", json={"email": f"perf-{tag}-warm@example.org"}, headers={"x-forwarded-for": warm_ip})  # warm-up (M6, N8: fresh address)
         for i in range(50):
             n = uuid.uuid4().int
             ip = "10." + ".".join(str((n >> s) & 255) for s in (16, 8, 0))
