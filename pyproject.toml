@@ -6,7 +6,7 @@ requires-python = ">=3.12,<3.13"
 dependencies = [
   "fastapi>=0.115",
   "uvicorn[standard]>=0.32",
-  "sqlalchemy[asyncio]>=2.0",
+  "sqlalchemy[asyncio] (>=2.0.52,<3.0.0)",
   "asyncpg>=0.30",
   "psycopg2-binary>=2.9",
   "celery[redis]>=5.4",
@@ -15,6 +15,8 @@ dependencies = [
   "httpx>=0.27",
   "structlog>=24.4",
   "greenlet>=3.0",  # explicit: SQLAlchemy's platform marker omits arm64 and Poetry 2.4.1 does not honour the asyncio-extra marker (John's ruling 2026-09-05)
+  "argon2-cffi (>=25.1.0,<26.0.0)",
+  "zxcvbn (>=4.5.0,<5.0.0)",
 ]
 
 [tool.poetry]
@@ -29,6 +31,7 @@ pyyaml = "^6.0.3"
 ruff = "0.16.6"
 pytest-cov = "7.1.0"
 diff-cover = "10.5.1"
+fakeredis = {extras = ["aioredis"], version = "^2.37.1"}
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

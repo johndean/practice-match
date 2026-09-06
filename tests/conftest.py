@@ -74,3 +74,63 @@ async def _dispose_pools():
     from app.db import dispose_all  # imported lazily, as `client` does
 
     await dispose_all()
+
+
+import uuid
+
+import fakeredis
+
+
+def _maintenance(dsn: str) -> str:
+    return dsn.rsplit("/", 1)[0] + "/postgres"
+
+
+@pytest.fixture
+def scratch_dsn():
+    """Fresh database with every migration applied; dropped afterwards."""
+    import importlib.util
+    from pathlib import Path
+
+    from app.config import settings
+
+    spec = importlib.util.spec_from_file_location("migrate", Path(__file__).resolve().parent.parent / "scripts" / "migrate.py")
+    migrate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migrate)  # type: ignore[union-attr]
+    name = f"pm_test_{uuid.uuid4().hex[:8]}"
+    admin = psycopg2.connect(_maintenance(settings.database_url))
+    admin.autocommit = True
+    with admin.cursor() as cur:
+        cur.execute(f'CREATE DATABASE "{name}"')
+    dsn = settings.database_url.rsplit("/", 1)[0] + f"/{name}"
+    migrate.run(dsn)
+    try:
+        yield dsn
+    finally:
+        with admin.cursor() as cur:
+            cur.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
+        admin.close()
+
+
+@pytest.fixture
+def conn(scratch_dsn, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "database_url", scratch_dsn)
+    c = psycopg2.connect(scratch_dsn)
+    c.autocommit = True
+    try:
+        yield c
+    finally:
+        c.close()
+
+
+@pytest.fixture
+def redis(monkeypatch):
+    server = fakeredis.FakeServer()
+    sync = fakeredis.FakeRedis(server=server)
+    aio = fakeredis.aioredis.FakeRedis(server=server)
+    from app import cache
+
+    monkeypatch.setattr(cache, "sync_redis", lambda: sync)
+    monkeypatch.setattr(cache, "async_redis", lambda: aio)
+    return sync

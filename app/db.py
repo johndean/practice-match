@@ -22,15 +22,25 @@ loop).
 belt-and-braces alongside the outer `asyncio.wait_for` in `app.checks`) — round 3 lost
 these when engine/client construction moved into this module; a black-holed host would
 otherwise hang a probe for asyncpg's 60s default.
+
+Task I1 (Identity plan) extends this module rather than replacing it: `engine()` and
+`sync_conn()` below are additions, `get_engine`/`get_redis`/`dispose_all`/`TIMEOUT_S`
+keep their Task 5 names and semantics unchanged. `engine()` imports `app.checks.async_dsn`
+lazily (inside the function) because `app.checks` imports `get_engine`/`get_redis`/
+`TIMEOUT_S` from this module at its own top level — a module-level import here would be
+circular.
 """
 from __future__ import annotations
 
 import asyncio
 import weakref
 
+import psycopg2
 import redis.asyncio as aioredis
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+
+from app.config import settings
 
 TIMEOUT_S = 3.0
 
@@ -82,3 +92,22 @@ async def dispose_all() -> None:
         if loop is current:
             for client in clients.values():
                 await client.aclose()
+
+
+def sync_conn() -> psycopg2.extensions.connection:
+    """psycopg2 connection for migrations, Celery tasks and tests. Autocommit;
+    callers manage explicit transactions with `with conn:`."""
+    c = psycopg2.connect(settings.database_url.replace("postgresql+asyncpg://", "postgresql://", 1))
+    c.autocommit = True
+    return c
+
+
+def engine() -> AsyncEngine:
+    """`get_engine` bound to `settings.database_url` — the pooled async engine for
+    ordinary request-time DB access outside the health probes. Imports
+    `app.checks.async_dsn` lazily: `app.checks` imports `get_engine`/`get_redis`/
+    `TIMEOUT_S` from this module at its own top level, so a module-level import here
+    would be circular."""
+    from app.checks import async_dsn
+
+    return get_engine(async_dsn(settings.database_url))

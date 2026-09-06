@@ -6,9 +6,13 @@ schema_migrations, under a Postgres advisory lock (api and worker share one
 railway.json, so two pre-deploy runs can overlap). A failing file raises and
 aborts the deploy; it is not recorded, so the next deploy retries it.
 
-Not supported yet: statements that cannot run inside a transaction
-(CREATE INDEX CONCURRENTLY). Add statement splitting when the first such
-migration is written.
+Each file's own SQL and its `schema_migrations` ledger row commit as ONE
+transaction (see `run` below) — a migration file must therefore never contain
+its own `BEGIN`/`COMMIT`/`ROLLBACK`. Statements that cannot run inside a
+transaction at all (`CREATE INDEX CONCURRENTLY`, `VACUUM`, `CREATE DATABASE`)
+are not supported by this runner and need their own runner path — add
+statement splitting (or a separate non-transactional runner) when the first
+such migration is written (Identity plan, Task I1).
 """
 from __future__ import annotations
 
