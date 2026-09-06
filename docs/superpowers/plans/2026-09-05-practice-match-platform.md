@@ -5005,6 +5005,68 @@ Expected: `202` ×5 then `429` — a different spoofed first hop on every reques
 
 ---
 
+### Task 11g: Migrations run when the api container starts — found by the QA probe (2026-09-06)
+
+**Why:** Task 11f Step 4b deployed d038f92 to QA and every `POST /api/interest` failed closed with `sqlalchemy.exc.ProgrammingError`. A read-only query through the PostGIS service's public proxy showed the QA database has **no `schema_migrations` table and no `interest_signup`** — `railway.json`'s `preDeployCommand` has never run on Railway (the deployment manifest lists `preDeployCommand: null`, `healthcheckPath: null`, `startCommand: null`, and the CLI exposes no pre-deploy log section). Task 8's "proof" that migrations ran — `postgis_version()` resolving — was not one: the PostGIS image installs the extension itself. The container now proves the schema before it serves: the `api` role runs the idempotent, advisory-locked `scripts/migrate.py` and only then starts uvicorn. The pre-deploy hook stays (array form, as Railway's own examples write it) as belt and braces.
+
+**Files:**
+- Modify: `scripts/start.sh`, `tests/scripts/test_start_sh.sh`, `railway.json`, `tests/test_build_config.py`, `DEPLOY.md`, `tests/test_docs.py`
+
+- [ ] **Step 1: Failing tests**
+
+`tests/scripts/test_start_sh.sh` — replace the api-role check with an ordering check:
+```bash
+out=$(DRY_RUN=1 bash scripts/start.sh api) || fail "api role exited non-zero"
+first=$(printf '%s\n' "$out" | sed -n 1p); second=$(printf '%s\n' "$out" | sed -n 2p)
+[[ "$first" == *"python scripts/migrate.py"* ]] || fail "api role must run the migrations before serving, got first line: $first"
+[[ "$second" == *uvicorn* && "$second" == *app.main:app* ]] || fail "api role should then start uvicorn app.main:app, got: $second"
+out=$(DRY_RUN=1 RAILWAY_SERVICE_NAME=worker bash scripts/start.sh) || fail "worker role via RAILWAY_SERVICE_NAME exited non-zero"
+[[ "$out" != *migrate.py* ]] || fail "the worker must not run migrations (the api does, under the advisory lock)"
+```
+`tests/test_build_config.py` — the pre-deploy assertion becomes `assert cfg["deploy"]["preDeployCommand"] == ["python scripts/migrate.py"]` (the array form Railway's documentation uses).
+
+`tests/test_docs.py` — append:
+```python
+def test_deploy_md_says_the_api_container_runs_migrations_at_start():
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "runs the migrations at start" in text
+    assert "Deploy aborted by the pre-deploy hook" not in text  # the old rollback row's claim was never true on Railway
+```
+Run: `bash tests/scripts/test_start_sh.sh` → FAIL (first line is uvicorn); `poetry run pytest tests/test_build_config.py tests/test_docs.py -q -W error` → FAIL (string vs list; DEPLOY.md text).
+
+- [ ] **Step 2: Implement**
+
+`scripts/start.sh`, the `api` case becomes:
+```bash
+  api)
+    # Migrations run here as well as in railway.json's pre-deploy hook: a QA probe
+    # (2026-09-06) found no schema_migrations table after several deploys and the CLI
+    # cannot show the hook's output, so the container proves the schema itself before
+    # it serves. scripts/migrate.py is idempotent and advisory-locked, so api restarts
+    # cannot collide; a failing file exits here (set -e) and uvicorn never starts.
+    mcmd=(python scripts/migrate.py)
+    cmd=(uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}" --proxy-headers --forwarded-allow-ips='*')
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then echo "${mcmd[*]}"; echo "${cmd[*]}"; else "${mcmd[@]}"; exec "${cmd[@]}"; fi
+    ;;
+```
+`railway.json`: `"preDeployCommand": ["python scripts/migrate.py"],`.
+
+`DEPLOY.md`: in the first paragraph, `railway.json`: pre-deploy `python scripts/migrate.py` → "`railway.json`: pre-deploy `python scripts/migrate.py`; the api container also runs the migrations at start (`scripts/start.sh`), which is the run that is actually observable in `railway logs`". Rollback table row: `| Migration failed | The api container runs the migrations at start and exits before uvicorn if a file fails, so the new deployment never comes up healthy and the previous one keeps serving; the failed file was not recorded. Fix the SQL and redeploy. (The pre-deploy hook, when Railway runs it, aborts earlier with the same effect.) | — |`.
+
+- [ ] **Step 3: GREEN** — `bash tests/scripts/test_start_sh.sh`; `bash tests/scripts/test_verify_image_sh.sh`; `poetry run pytest -q -W error`; `poetry run ruff check app tests scripts`; real `scripts/verify-image.sh` (the api container now applies migrations against the compose database at start — its log shows `[migrate] done — 0 applied` and all seven OK lines still print; record).
+
+- [ ] **Step 4: Commit**
+```bash
+git add scripts/start.sh tests/scripts/test_start_sh.sh railway.json tests/test_build_config.py DEPLOY.md tests/test_docs.py
+git commit -m "fix(deploy): the api container runs migrations at start — Railway's pre-deploy hook never ran on QA; hook kept in array form
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+**Controller follow-up (Task 11f Step 4b, resumed):** redeploy QA; prove via the read-only proxy query that `schema_migrations` lists `001_init.sql, 002_interest_signup.sql` and `interest_signup` exists; `railway logs --service api --environment QA` shows `[migrate] applying` / `[migrate] done — 2 applied`; then the forwarded-hop probe.
+
+---
+
 ## Red-team review (2026-09-05) — findings and dispositions
 
 | # | Finding | Severity | Disposition |
