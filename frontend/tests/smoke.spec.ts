@@ -356,6 +356,40 @@ test.describe('mobile: the same map, market data in a sheet', () => {
     await expect(page.getByRole('button', { name: 'Map', exact: true }), 'the desktop map lost its basemap tabs').toHaveCount(1);
   });
 
+  // Review I1 (controller ruling, 2026-09-07): redraw-after-selection, MEASURED. What this
+  // suite profiled before was mount only ('first map paint within budget' above); nothing
+  // timed the interaction the design exercises most on the phone — tap a pin, tap another.
+  //
+  // A selection moves `driveCenter` (`sel ? [sel.lat, sel.lng] : cfg.center`, logic.js:382)
+  // and `showDrive` (`!!sel`, :578), which are two of the five deps of MarketMapV3.jsx's own
+  // area effect (`:268`), so the community mosaic really is rebuilt on the second tap. That
+  // is the DESIGN's redraw cost on a 390×800 frame, not an over-trigger the port added:
+  // MarketMapView.vue gates the overlay rebuild on exactly those five. The first tap is an
+  // unmeasured warm-up, and it is a DIFFERENT pin from the second — tapping the same pin
+  // twice navigates to the detail screen (C13), which is the case above, not this one.
+  // The budget is the first-paint gate's 1500 ms, in the same spirit.
+  test('a second pin tap repaints the map within budget', async ({ page }) => {
+    await mobileMap(page);
+    const pins = page.locator('.leaflet-marker-icon');
+    await expect(pins.nth(1)).toBeVisible();
+    // Leaflet writes each marker's `title` from `p.name + ' — ' + p.priceLabel`
+    // (MarketMapView.vue's drawPins), so the callout to wait for can be named from the page
+    // rather than from a copy of the fixture.
+    const nameB = (await pins.nth(1).getAttribute('title'))!.split(' — ')[0];
+
+    await pins.nth(0).click();
+    await page.waitForTimeout(500);
+
+    const started = Date.now();
+    await pins.nth(1).click();
+    await page.waitForFunction(
+      (n) => [...document.querySelectorAll('.rf-callout')].some((el) => (el as HTMLElement).innerText.includes(n)),
+      nameB
+    );
+    const elapsed = Date.now() - started;
+    expect(elapsed, `the second pin tap took ${elapsed}ms to bring up "${nameB}"'s callout`).toBeLessThanOrEqual(1500);
+  });
+
   test('tapping a pin twice reaches the detail screen — there is no peek card', async ({ page }) => {
     await mobileMap(page);
     const pin = page.locator('.leaflet-marker-icon').first();

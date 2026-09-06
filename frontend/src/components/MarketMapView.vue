@@ -141,15 +141,30 @@ function drawPins() {
 // `practices` before `communities`), which put the pins first and let the shading repaint
 // over them.
 //
-// The merged dep list is deliberately a superset of the reference's area effect: the overlay
-// now also redraws when only `practices` or `activeId` change, which React would not do.
-// That over-trigger is the price of the guarantee — clearing and re-adding both groups in
-// one callback is the only way to fix their relative pane order — and it is safe because
-// both draws are idempotent full rebuilds of their own layer group.
+// The merged dep list is deliberately a superset of the reference's area effect, so that one
+// callback owns both draws; the OVERLAY REBUILD is then gated on the reference's own five
+// area-effect deps, compared the way React compares them (`communities` by identity, the rest
+// by value). The pins redraw on every trigger, and always after an overlay redraw, so the
+// pane order still holds: clearing and refilling the pins group alone moves the pins to the
+// end of the shared panes, and a skipped overlay has not moved at all.
+//
+// A pin or card SELECTION still rebuilds the mosaic and that cost is the DESIGN's: selecting
+// moves `driveCenter` (`sel ? [sel.lat, sel.lng] : cfg.center`, logic.js:382) and `showDrive`
+// (`!!sel`, :578), so the reference re-runs its area effect too. What no longer rebuilds
+// 12,560 rectangles is a trigger that leaves all five untouched — `practices` and `activeId`
+// (`s.mdSel`, logic.js:361) are the two the superset added (review I1, ruling 2026-09-07).
+let lastArea = null;
+function areaChanged() {
+  const next = [props.communities, props.activeLayer, props.showDrive, props.driveCenter && props.driveCenter[0], status.value];
+  const changed = lastArea === null || next.some((d, i) => !Object.is(d, lastArea[i]));
+  lastArea = next;
+  return changed;
+}
+
 watch(
   [() => props.communities, () => props.activeLayer, () => props.showDrive, () => props.driveCenter && props.driveCenter[0],
     () => props.practices, () => props.activeId, status],
-  () => { drawOverlay(); drawPins(); },
+  () => { if (areaChanged()) drawOverlay(); drawPins(); },
   { deep: true }
 );
 </script>

@@ -144,9 +144,11 @@ describe('MarketMapView — redraw order', () => {
     const from = stub.calls.length;
     await wrapper.setProps({ practices: practices(1, '$1.50M') });
 
-    // Both groups rebuild, overlay first — MarketMapV3.jsx's area effect then its pin effect.
-    // That the overlay redraws at all on a pins-only change is the deliberate superset
-    // documented on the watcher: one callback is the only way to promise the relative order.
+    // The invariant, whether or not the overlay redrew: every overlay layer on the map was
+    // attached before every pin. `practices` is not one of the reference's five area-effect
+    // deps, so since the I1 ruling (2026-09-07) the overlay is NOT rebuilt here — it simply
+    // stays where it is, and refilling the pins group moves the pins to the end of the shared
+    // panes on their own. Before that ruling this same trigger rebuilt all 12,560 rectangles.
     expectOverlayBeforePins(stub);
 
     // The same invariant read off the divIcon stream, stated semantically rather than as a
@@ -154,9 +156,8 @@ describe('MarketMapView — redraw order', () => {
     // (two communities, one practice) into the expectation, so adding a third community
     // would have failed a test about ORDER for a reason that has nothing to do with order.
     const order = drawOrder(stub, from);
-    expect(order).toContain('overlay');
+    expect(order, 'a pins-only change rebuilt the mosaic — the reference\'s area effect would not have').not.toContain('overlay');
     expect(order).toContain('pins');
-    expect(order.indexOf('pins'), 'a pin was drawn before an overlay').toBeGreaterThan(order.lastIndexOf('overlay'));
     expect(order.slice(order.indexOf('pins')), 'an overlay was drawn after the first pin').not.toContain('overlay');
   });
 
@@ -227,6 +228,84 @@ describe('MarketMapView — redraw order', () => {
     const { overlay, pins } = layerGroups(stub);
     expect(attachSeqs(overlay)).toHaveLength(cellCount(4)); // the mosaic of the NEW communities
     expect(attachSeqs(pins)).toHaveLength(3);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Review I1 (controller ruling, 2026-09-07): the overlay rebuild is REFERENCE-EXACT.
+//
+// MarketMapV3.jsx's area effect (`:268`) has five deps — [communities, activeLayer,
+// showDrive, driveCenter && driveCenter[0], status] — and React re-runs it only when one of
+// them changed. The merged watcher above keeps its deliberate superset of those deps,
+// because one callback is the only shape that can promise the overlay-then-pins pane order;
+// the overlay REBUILD is gated on the reference's own five instead, compared the way React
+// compares them (`communities` by identity, the rest by value).
+//
+// A pin or card SELECTION still rebuilds the mosaic, and that cost is the DESIGN's, not the
+// port's: selecting moves `driveCenter` (`sel ? [sel.lat, sel.lng] : cfg.center`,
+// logic.js:382) and `showDrive` (`!!sel`, :578), so React re-runs its area effect too. What
+// no longer happens is a full 12,560-rectangle rebuild on a trigger that leaves all five
+// untouched — `practices` and `activeId` (logic.js:361, `s.mdSel`) are the two deps the
+// superset added.
+// ---------------------------------------------------------------------------------------
+describe('MarketMapView — the overlay redraws on the reference\'s five area deps, and only those', () => {
+  it('rebuilds no mosaic rectangle when only activeId changes, and redraws the pins with the new selection', async () => {
+    const stub = installLeafletStub();
+    const ps = practices(3);
+    const wrapper = mount(MarketMapView, {
+      props: {
+        practices: ps, communities: communities(4), activeLayer: 'income',
+        showDrive: false, center: [30.31, -97.75], zoom: 10
+      }
+    });
+    await vi.waitUntil(() => wrapper.find('button[aria-label="Zoom in"]').exists(), { timeout: 5000, interval: 1 });
+    await flushPromises();
+    const rectsAtMount = stub.calls.filter((c) => c.fn === 'rectangle').length;
+    expect(rectsAtMount, 'the fixture never shaded a mosaic, so it cannot show one being skipped').toBe(cellCount(4));
+    const overlayAtMount = attachSeqs(layerGroups(stub).overlay);
+    const from = stub.calls.length;
+
+    await wrapper.setProps({ activeId: ps[2].id });
+
+    const rebuilt = stub.calls.filter((c) => c.fn === 'rectangle').length - rectsAtMount;
+    expect(rebuilt, `an activeId-only change rebuilt ${rebuilt} mosaic rectangles; the reference's area effect would have drawn none`).toBe(0);
+    // A SKIP, not a silent loss: the same layer objects are still on the map (`seq` is
+    // stamped once per addTo, so an identical seq list is the same attachments), with the
+    // pins re-added after them.
+    const { overlay, pins } = layerGroups(stub);
+    expect(attachSeqs(overlay), 'the mosaic left the map — it was cleared and not refilled').toEqual(overlayAtMount);
+    expect(drawOrder(stub, from), 'the pins did not redraw for the new selection').toEqual(['pins', 'pins', 'pins']);
+    expectOverlayBeforePins(stub);
+    expect((pins.added[2] as unknown as { options: { zIndexOffset: number } }).options.zIndexOffset).toBe(1000);
+  });
+
+  it('rebuilds the overlay and THEN the pins when driveCenter[0] moves — which is what a selection does', async () => {
+    const stub = installLeafletStub();
+    const wrapper = mount(MarketMapView, {
+      props: {
+        practices: practices(2), communities: communities(4), activeLayer: 'income',
+        showDrive: true, driveCenter: [30.4, -97.6], center: [30.31, -97.75], zoom: 10
+      }
+    });
+    await vi.waitUntil(() => wrapper.find('button[aria-label="Zoom in"]').exists(), { timeout: 5000, interval: 1 });
+    await flushPromises();
+    const rectsAtMount = stub.calls.filter((c) => c.fn === 'rectangle').length;
+    const from = stub.calls.length;
+
+    await wrapper.setProps({ driveCenter: [30.9, -97.1] });
+
+    expect(
+      stub.calls.filter((c) => c.fn === 'rectangle').length - rectsAtMount,
+      'driveCenter moved and the mosaic did not redraw — the gate is skipping one of the reference\'s own five deps'
+    ).toBe(cellCount(4));
+    const order = drawOrder(stub, from);
+    expect(order).toContain('overlay');
+    expect(order).toContain('pins');
+    expect(order.indexOf('pins'), 'a pin was drawn before an overlay').toBeGreaterThan(order.lastIndexOf('overlay'));
+    expectOverlayBeforePins(stub);
+    const { overlay } = layerGroups(stub);
+    expect((overlay.added.find((l) => typeof l.options?.radius === 'number') as unknown as { center: unknown }).center,
+      'the ring did not move to the new driveCenter').toEqual([30.9, -97.1]);
   });
 });
 

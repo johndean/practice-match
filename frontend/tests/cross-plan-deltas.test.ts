@@ -10,6 +10,7 @@ const IDENTITY = '2026-09-05-practice-match-identity-access-email.md';
 const MAP_ENGINES = '2026-09-05-practice-match-map-engines.md';
 const CENSUS = '2026-09-05-practice-match-census-data-layer.md';
 const SEED = '2026-09-06-practice-match-seed-listings.md';
+const BROWSE_V3 = '2026-09-06-browse-v3-mobile.md';
 
 // Browse V3 spec §6. These three plans were written against V2's Browse screen and go stale
 // the moment V3 merges; this test is what stops them being executed against the old shape.
@@ -89,5 +90,17 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
     expect(md).toContain('design_handoff_practice_match_v2');
     expect(md).toContain('pre-V3 oracle');
     expect(md).toContain('display-size heading');
+  });
+});
+
+// This sub-project's OWN plan is the artefact Global Constraint (a) is discharged against and
+// the one a reviewer is told to audit coverage from without re-reading the design bundle, so
+// where it describes what shipped it has to be right about it. Each pin below sits at a
+// sentence the final review (2026-09-07) found describing something else.
+describe('the Browse V3 plan describes what shipped', () => {
+  it('the engineer\'s note records the mosaic redraw as measured and reference-exact (I1)', () => {
+    const md = read(BROWSE_V3);
+    expect(md).toContain('a second pin tap repaints the map within budget');
+    expect(md).toContain('reference-exact');
   });
 });
