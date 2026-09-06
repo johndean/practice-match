@@ -4508,6 +4508,135 @@ git commit -m "fix(api): /api/interest fails closed, rejects control characters,
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
+#### Task 11c — fix round 2 (2026-09-06, from the opus re-review of round 1: N1–N2 Important, N3–N8 Minor, N9–N12 informational; fixed at source)
+
+**Rulings:** N6 (MULTI atomicity not cheaply testable) — recorded, no test. N9 (diff-cover 97 % on a PR; the INSERT line is a greenlet tracing artifact, pre-existing misses in `config.py`/`static.py`) — recorded for hand-back; the chunked-413 line is covered by this round. N11 (spec §3 still says "first hop"; §8 sits before §7) — controller fixes the spec in this commit. Everything else below is fixed. A malformed `Content-Length` (digits that `int()` rejects) is answered `413 too_large` — the declared length cannot be trusted, so the request is refused as oversized rather than a new error code being added to the contract.
+
+**Files:** Modify `app/api/interest.py`, `app/ratelimit.py`, `tests/api/test_interest.py`, `tests/perf/test_api_latency.py`.
+
+- [ ] **FR2 Step 1: failing tests — each watched fail on its own.** This round introduces no new import (all names exist), so every node id must fail for its own reason; record each.
+
+`tests/api/test_interest.py`:
+```python
+async def test_without_a_forwarded_header_the_peer_address_is_used(dist, db_ready):
+    """F8/N1: the fallback path runs and is keyed on the PEER — a fresh peer per run, because the transport's
+    default peer is a constant and the shared dev Redis would otherwise poison reruns (30/day, 5/min)."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.main import create_app
+
+    async with AsyncClient(transport=ASGITransport(app=create_app(dist=dist), client=(_ip(), 40000)), base_url="http://test") as c:
+        for i in range(5):
+            assert (await c.post("/api/interest", json={"email": _probe_email()})).status_code == 202, i
+        assert (await c.post("/api/interest", json={"email": _probe_email()})).status_code == 429
+    async with AsyncClient(transport=ASGITransport(app=create_app(dist=dist), client=(_ip(), 40000)), base_url="http://test") as other:
+        assert (await other.post("/api/interest", json={"email": _probe_email()})).status_code == 202  # a different peer is a different bucket
+```
+(replaces the round-1 version of the same test; RED today only in the sense that the old test is red on a poisoned Redis — run the new one and record its pass, then keep it: its second block is what discriminates a constant subject from the peer.)
+
+`test_composed_and_decomposed_spellings_share_one_row` — replace the `len(_rows(...)) == 1` assertion with a count over the tag (N2):
+```python
+        with psycopg2.connect(settings.database_url) as conn, conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM interest_signup WHERE email_normalised LIKE %s", (f"%-{tag}@example.org",))
+            assert cur.fetchone()[0] == 1  # M2/N2: the two spellings produced ONE row, whatever key they normalised to
+```
+RED proof: temporarily remove the `unicodedata.normalize("NFKC", …)` call → the test must FAIL (count 2); restore.
+
+New tests:
+```python
+async def test_chunked_body_over_the_cap_is_413(client, db_ready):
+    async def body():  # no Content-Length: httpx sends Transfer-Encoding: chunked (N3)
+        for _ in range(6):
+            yield b'{"email":"' + b"a" * 1000
+    r = await client.post("/api/interest", content=body(), headers={"x-forwarded-for": _ip(), "content-type": "application/json"})
+    assert r.status_code == 413 and r.json() == {"error": "too_large"}
+
+
+@pytest.mark.parametrize("value, expected", [("19", 19), ("0", 0), ("\xb2", None), ("abc", None), ("-5", None), ("1 9", None)])
+def test_declared_length_accepts_only_decimal_digits(value, expected):
+    from starlette.requests import Request
+
+    from app.api.interest import declared_length
+
+    scope = {"type": "http", "method": "POST", "path": "/api/interest", "query_string": b"",
+             "headers": [(b"content-length", value.encode("latin-1"))]}
+    assert declared_length(Request(scope)) == expected  # N4: "²".isdigit() is True but int("²") raises
+
+
+@pytest.mark.parametrize("header, expected", [("1.2.3.4, 5.6.7.8", "5.6.7.8"), ("1.2.3.4,", "9.9.9.9"), ("   ", "9.9.9.9"), ("", "9.9.9.9"), (None, "9.9.9.9")])
+def test_client_ip_uses_the_rightmost_hop_or_falls_back_to_the_peer(header, expected):
+    from starlette.requests import Request
+
+    from app.api.interest import client_ip
+
+    scope = {"type": "http", "method": "POST", "path": "/api/interest", "query_string": b"", "client": ("9.9.9.9", 1),
+             "headers": [] if header is None else [(b"x-forwarded-for", header.encode())]}
+    assert client_ip(Request(scope)) == expected  # N7: an empty rightmost hop is not a subject
+```
+`bad` parametrise list gains `"a​b@example.com"` (zero-width space, N10 — written as an escape). The log test additionally asserts `"builtins.RuntimeError" in caplog.text` (N12).
+
+`tests/perf/test_api_latency.py`: the warm-up POST uses a fresh address for its header (N8): `headers={"x-forwarded-for": "10." + ".".join(str((uuid.uuid4().int >> s) & 255) for s in (16, 8, 0))}` — or hoist the loop's ip expression into a tiny local helper and use it for both.
+
+- [ ] **FR2 Step 2: production code.**
+
+`app/api/interest.py`:
+```python
+_FORBIDDEN = r"\s@\x00-\x1f\x7f​-‍‎‏‪-‮⁦-⁩"  # + zero-width space/joiners (N10)
+```
+```python
+def client_ip(request: Request) -> str:
+    """The client as Railway's edge saw it: the RIGHTMOST X-Forwarded-For hop. A reverse proxy appends the peer
+    it accepted, so every earlier hop is caller-supplied text and must not key a rate limit (11c review F2;
+    spec §3 amended 2026-09-06, proven live on QA in Task 11f). An empty rightmost hop (trailing comma,
+    blank header) or no header at all falls back to the peer address (N7)."""
+    hop = request.headers.get("x-forwarded-for", "").rsplit(",", 1)[-1].strip()
+    if hop:
+        return hop
+    return request.client.host if request.client else "unknown"
+
+
+def declared_length(request: Request) -> int | None:
+    """Content-Length as an int (0 when absent — chunked bodies are capped while streaming); None when the
+    header is not a plain decimal number. isdecimal(), not isdigit(): "²".isdigit() is True but int("²") raises (N4)."""
+    value = request.headers.get("content-length", "0").strip()
+    return int(value) if value.isdecimal() else None
+
+
+async def _read_capped(request: Request) -> bytes | None:
+    """The body, or None once more than MAX_BODY_BYTES have arrived. Chunked requests declare no length, so the
+    cap is enforced while streaming rather than after buffering the whole body (N3)."""
+    chunks: list[bytes] = []
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > MAX_BODY_BYTES:
+            return None
+        chunks.append(chunk)
+    return b"".join(chunks)
+```
+and the handler's opening becomes:
+```python
+    declared = declared_length(request)
+    if declared is None or declared > MAX_BODY_BYTES:
+        return _error("too_large", 413)
+    raw = await _read_capped(request)
+    if raw is None:
+        return _error("too_large", 413)
+```
+The fail-closed log line becomes `logger.warning("interest sign-up unavailable: %s.%s", type(exc).__module__, type(exc).__name__)` (N12).
+
+`app/ratelimit.py` docstring, second sentence (N5): "Each hit is one MULTI (INCR + EXPIRE), so every key carries a TTL even if the process dies between the two commands; the bucket index is part of the key, so a key is never consulted after its window even though late hits refresh its TTL by up to one more window."
+
+- [ ] **FR2 Step 3: GREEN** — every node id; `poetry run pytest -q -W error` TWICE in a row (the second run proves N1 is gone); `poetry run mypy app --strict`; `poetry run ruff check app tests scripts`.
+
+- [ ] **FR2 Step 4: Commit**
+```bash
+git add app/api/interest.py app/ratelimit.py tests/api/test_interest.py tests/perf/test_api_latency.py
+git commit -m "fix(api): /api/interest caps chunked bodies while streaming, trusts only decimal Content-Length, falls back to the peer on an empty hop, rejects zero-width characters; tests isolated per run
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
 ---
 
 ### Task 11d: Wire the page — `submit()` posts to the API; Merriweather self-hosted; unit tests at 100 %
@@ -4851,6 +4980,11 @@ fi
 - [ ] **FR1 Step 3: GREEN** — `bash tests/scripts/test_verify_deploy.sh` (all cases incl. `coming_leak`; the `no_site_mode` output carries `FAIL: site_mode missing` and no `Traceback`); `bash tests/scripts/test_deploy_guard.sh`; `poetry run pytest tests/test_docs.py -q -W error`; `poetry run ruff check app tests scripts`. Re-run the live read-only probe `EXPECT_SHA=087acc1 scripts/verify-deploy.sh QA https://qa.foundation.vin` and record its output — until Step 4b redeploys QA it must end with exactly one line, `FAIL: site_mode missing from healthz: {…}`, and no traceback.
 
 - [ ] **FR1 Step 4: Commit** — `git add scripts/verify-deploy.sh tests/scripts/test_verify_deploy.sh` · `fix(deploy): coming-soon verification rejects a leaked marketplace shell; one healthz fetch; clean FAIL lines` with the trailer.
+
+
+#### Task 11f — fix round 5 (2026-09-06; the round cap — any later observation is adjudicated, not looped)
+
+The parse's `except ValueError` does not catch `RecursionError` (a ~10 000-level nested JSON body on Python 3.12), so one traceback path remains. Widen it: `except Exception: fail("healthz body is not JSON")` around `json.load` (the ruff `BLE001` rule does not apply inside the inline script; if it did, the same `# noqa: BLE001` justification as `app/checks.py` would). RED first: fake-server mode `deep_json` answering 200 with `"[" * 20000 + "]" * 20000` → non-zero exit, `FAIL: healthz body is not JSON`, no `Traceback`. GREEN on all 15 cases, deploy-guard test, `pytest tests/test_docs.py -q -W error`, ruff. Commit only the two files: `fix(deploy): any unparseable health body is one FAIL line (round cap)` with the trailer.
 
 - [ ] **Step 4b (added 2026-09-06 — 11c review F2, controller): QA deploy of the new image and the forwarded-hop probe.** Run by the controller, not the implementer. 🚦 `railway status` → `Project: Practice Match`; `scripts/deploy.sh QA` (app mode; the coming-soon page does not appear on QA — `curl -fsS https://qa.foundation.vin/api/healthz` reports `site_mode app` and `/` still serves the marketplace shell). Then the probe that decides whether `client_ip()`'s rightmost-hop rule holds on Railway's edge:
 ```bash

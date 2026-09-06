@@ -31,7 +31,7 @@ Launch later: set production `SITE_MODE=app` (and decide `PUBLIC_INDEXING`), `sc
 `POST /api/interest`, JSON body `{"email": "<address>"}` (the page has no consent checkbox; consent is the page's own promise — one message, never shared — recorded as `consent_version = "coming-soon-v1"` on every row).
 
 - Normalise: trim, lowercase; validate with a conservative pattern (one `@`, a dot in the domain, no whitespace, ≤ 254 chars). Invalid → `422 {"error": "invalid_email"}` (generic; the page shows its own copy).
-- Rate limits via Redis (the pooled client from `app/db.py`): 5 requests per minute and 30 per day per client IP (`X-Forwarded-For` first hop as Railway sets it, else peer address), and 3 per day per normalised address. Exceeded → `429 {"error": "rate_limited"}`.
+- Rate limits via Redis (the pooled client from `app/db.py`): 5 requests per minute and 30 per day per client IP (the **rightmost** `X-Forwarded-For` hop — the one Railway's edge appends — else the peer address; *amended 2026-09-06, see §8.1*), and 3 per day per normalised address. Exceeded → `429 {"error": "rate_limited"}`. Unreachable Redis or Postgres → `503 {"error": "unavailable"}` (fail closed, §8.2); bodies over 4096 bytes → `413 {"error": "too_large"}` (§8.4).
 - Store: table `interest_signup` (migration `002_interest_signup.sql`): `id uuid primary key default gen_random_uuid()`, `email text not null`, `email_normalised text not null unique`, `consent_version text not null`, `source text not null default 'coming-soon'`, `created_at timestamptz not null default now()`. Duplicate normalised address → no new row.
 - Response: `202 {"status": "ok"}` for both a new and an already-registered address (no list enumeration). No email is sent; the Identity wave's Resend pipeline (Wave 2a) reads this table for the launch notification.
 - Performance: `/api/interest` joins the latency budget table at p95 ≤ 100 ms (in-process, scratch DB).
@@ -60,6 +60,10 @@ Favicon and Open Graph image (the README's "worth adding before launch") are Joh
 
 Task 10's production step deploys the same image with the production variables above, then `scripts/verify-deploy.sh production` (coming-soon mode): health OK with `site_mode: "coming_soon"`, deep 200, the coming-soon title served at `/`, and the sign-up endpoint answering 422 to an invalid address (no row written). The production deploy still requires John's explicit go, and rollback is the dashboard route in `DEPLOY.md`.
 
+## 7. Out of scope
+
+Sending any email; favicon and Open Graph assets (John supplies); analytics; any change to the marketplace or to QA.
+
 ## 8. Amendments (2026-09-06, from the Task 11c review — controller rulings, surfaced to John)
 
 1. **Client address for the per-IP limits (§3) — RIGHTMOST `X-Forwarded-For` hop, not the first.** A reverse proxy appends the peer it accepted, so every earlier hop is caller-supplied text; keying on it made the 5/min and 30/day limits bypassable by rotating a header. The rightmost hop is the client as Railway's edge saw it. Proven live on QA before production (Task 11f Step 4b: six requests with different spoofed first hops → the sixth is 429); without the header the peer address is used.
@@ -67,7 +71,3 @@ Task 10's production step deploys the same image with the production variables a
 3. **One 422 body.** Every malformed request — missing or non-string `email`, non-object or unparseable JSON — answers `422 {"error": "invalid_email"}`; FastAPI's echoing `detail` envelope is never returned.
 4. **Body cap.** Bodies over 4096 bytes answer `413 {"error": "too_large"}` before parsing.
 5. **Validation.** NFKC normalisation before trim/lowercase (one human address, one row); ASCII control characters and Unicode bidi controls are rejected (U+0000 is unstorable in Postgres; the rest would be stored verbatim for the Wave-2a pipeline to read).
-
-## 7. Out of scope
-
-Sending any email; favicon and Open Graph assets (John supplies); analytics; any change to the marketplace or to QA.
