@@ -44,9 +44,13 @@ import os, sys, json
 def fail(msg):  # one clean line on stderr, exit 1 - no traceback (fix round 1)
     sys.exit(f"FAIL: {msg}")
 
-b = json.load(sys.stdin)
-if not isinstance(b, dict):
-    fail("healthz body is not a JSON object")
+# A 200 response is not proof of a JSON body - curl -f only blocks on 4xx/5xx, so a
+# proxy that swaps in an HTML error page on a 200 must be caught by the parse itself
+# (fix round 4), not just by the checks that assume a well-shaped object below.
+try:
+    b = json.load(sys.stdin)
+except ValueError:
+    fail("healthz body is not JSON")
 want, expect = os.environ["WANT"], os.environ["EXPECT_SHA"]
 
 # Belt and braces (fix round 3): every check below assumes a well-shaped body, but a
@@ -54,6 +58,8 @@ want, expect = os.environ["WANT"], os.environ["EXPECT_SHA"]
 # db/redis present as something other than an object). Catch anything that slips
 # past the checks below too, so no malformed shape can ever surface as a traceback.
 try:
+    if not isinstance(b, dict):
+        fail("healthz body is not a JSON object")
     # Every bare subscript below (b["environment"], db["ok"], b["commit_sha"], ...) would
     # otherwise raise a raw KeyError traceback on a malformed body (fix round 2) - check
     # the whole required set up front so a missing key gets the same clean FAIL line.

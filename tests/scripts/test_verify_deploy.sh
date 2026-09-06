@@ -36,7 +36,8 @@ trap cleanup EXIT
 railway_calls() { wc -l < "$FAKE_RAILWAY_LOG" | tr -d ' '; }
 
 # start_server <mode>. Modes: ok | spa_missing | deep_503 | no_postgis | no_site_mode |
-#   coming_ok | coming_wrong_shell | coming_interest_500 | coming_leak | missing_keys | db_null
+#   coming_ok | coming_wrong_shell | coming_interest_500 | coming_leak | missing_keys | db_null |
+#   not_json
 # Binds port 0 (the OS picks a free ephemeral port) and prints it, once, before serving —
 # fixed ports (8765-8768) collided under a concurrent run of this same script (fix round 3,
 # re-review observation), and a bind failure in the backgrounded server was otherwise
@@ -83,7 +84,12 @@ class H(BaseHTTPRequestHandler):
         if self.path.startswith("/api/healthz/deep"):
             self._send(503 if MODE == "deep_503" else 200, "application/json", json.dumps(BODY).encode())
         elif self.path.startswith("/api/healthz"):
-            self._send(200, "application/json", json.dumps(BODY).encode())
+            if MODE == "not_json":
+                # A 200 that curl -f does not block, but whose body a proxy's HTML
+                # error page replaced instead of the real JSON (fix round 4).
+                self._send(200, "text/html", b"<html>upstream error</html>")
+            else:
+                self._send(200, "application/json", json.dumps(BODY).encode())
         elif self.path in ("/", "/browse"):
             if MODE == "coming_wrong_shell":
                 self._send(200, "text/html", SHELL_OK)  # marketplace shell, no coming-soon title
@@ -229,6 +235,17 @@ if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash script
   fail "a null db block must fail the script; it exited 0 with: $out"
 fi
 [[ "$out" == *"FAIL: healthz db/redis blocks are not objects"* ]] || fail "the non-object db/redis failure must name itself; got: $out"
+[[ "$out" != *"Traceback"* ]] || fail "the failure must be one clean FAIL line, not a Python traceback; got: $out"
+stop_server
+
+# --- 14. a 200 healthz response whose body isn't JSON fails, no traceback ------
+# curl -f only blocks on 4xx/5xx; a proxy that swaps in an HTML error page on a 200
+# must still be caught by the parse itself, not just by the checks after it.
+start_server not_json
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
+  fail "a non-JSON healthz body must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"FAIL: healthz body is not JSON"* ]] || fail "the non-JSON failure must name itself; got: $out"
 [[ "$out" != *"Traceback"* ]] || fail "the failure must be one clean FAIL line, not a Python traceback; got: $out"
 stop_server
 
