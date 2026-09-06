@@ -5106,35 +5106,147 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
-### Task 11e: Pixel gate against `Coming Soon.dc.html` — WAITS for John's design export (NEEDS_HUMAN if `docs/design-reference/coming-soon/Coming Soon.dc.html` is absent); does not block 11f or the production deploy
+### Task 11e: Pixel gate against `Coming Soon.dc.html` — the design export arrived 2026-09-06 (`/Users/johndean/Desktop/vin-foundation-marketplace-design/project/`); runs on branch `feat/coming-soon-pixel-gate` from `main`
+
+**What is already in place (controller, this commit):** `docs/design-reference/coming-soon/` holds `Coming Soon.dc.html`, `support.js` (byte-identical to the marketplace handoff's, so the vendored React/Babel routes in `frontend/tests/harness.ts` apply unchanged), `assets/vin-foundation-logo.png` and `_ds/vin-design-system-…/{colors_and_type.css, preview/_preview.css, ui_kits/vin/kit.css, fonts/*, _ds_bundle.js}`. The design's `$preview` is 1440×900. It loads Merriweather from Google Fonts; the app self-hosts one variable woff2 — the harness serves the app's file to the design so both render identical glyphs. Tokens the page uses (`--color-red`, `--easing-out`) come from `colors_and_type.css`, which both targets load.
 
 **Files:**
-- Create: `docs/design-reference/coming-soon/` (John's export: `Coming Soon.dc.html` + its runtime files as exported), `frontend/tests/coming-soon.screens.ts`, `frontend/tests/coming-soon-visual.spec.ts`, `frontend/tests/coming-soon-reference.spec.ts`
-- Modify: `frontend/tests/reference-server.mjs` (serve `/coming-soon/` from the new folder), `frontend/tests/playwright.config.ts` + `frontend/tests/targets.ts` (two more projects and a third local server), `.github/workflows/quality.yml` (run the two new projects after the existing ones)
+- Create: `frontend/tests/coming-soon-harness.ts`, `frontend/tests/coming-soon.screens.ts`, `frontend/tests/coming-soon-reference.spec.ts`, `frontend/tests/coming-soon-visual.spec.ts`
+- Modify: `frontend/tests/targets.ts`, `frontend/tests/targets.test.ts`, `frontend/tests/reference-server.mjs`, `frontend/tests/playwright.config.ts`, `frontend/package.json`, `.github/workflows/quality.yml`, `tests/test_docs.py`
 
 **Interfaces:**
-- Produces: Playwright projects `coming-soon-reference` (design at `http://localhost:5174/coming-soon/`) and `coming-soon` (Vite dev server for `coming-soon/` on `http://localhost:5175`, `npm run dev -- --port 5175 --strictPort` with `cwd: ../coming-soon`); baselines `frontend/tests/visual.spec.ts-snapshots/cs-<state>-<platform>.png`.
+- Produces: Playwright projects `coming-soon-reference` (design at `http://localhost:<REF>/coming-soon/`) and `coming-soon` (Vite dev server for `coming-soon/` at `http://localhost:<CS>`, default port 5175); baselines `frontend/tests/visual.spec.ts-snapshots/cs-<state>-<platform>.png` (generated per run, git-ignored like the marketplace's); npm scripts `test:cs:baselines`, `test:cs`.
 
-- [ ] **Step 1:** If the design file is absent → STOP, `NEEDS_HUMAN`: "Provide the Claude Design export of `Coming Soon.dc.html` (with its support runtime) into `docs/design-reference/coming-soon/`." Otherwise continue.
-- [ ] **Step 2: Screens** — `frontend/tests/coming-soon.screens.ts`:
+- [ ] **Step 1: Failing unit + drift tests.**
+
+`frontend/tests/targets.test.ts` — the `ports` argument gains `cs`; replace the two tests:
+```ts
+describe('resolveTargets', () => {
+  const ports = { app: 5173, ref: 4174, cs: 4175 };
+  it('runs against localhost with all three servers when PW_APP_URL is unset', () => {
+    const t = resolveTargets({}, ports);
+    expect(t.baseURL).toBe('http://localhost:5173');
+    expect(t.csBaseURL).toBe('http://localhost:4175');
+    expect(t.webServer.map((w) => w.url)).toEqual(['http://localhost:5173', 'http://localhost:4174/', 'http://localhost:4175']);
+    expect(t.webServer[2].cwd).toBe('../../coming-soon');
+  });
+  it('runs the app against the live deployment but keeps the reference and coming-soon servers local when PW_APP_URL is set', () => {
+    const t = resolveTargets({ PW_APP_URL: 'https://qa.foundation.vin' }, ports);
+    expect(t.baseURL).toBe('https://qa.foundation.vin');
+    expect(t.csBaseURL).toBe('http://localhost:4175');
+    expect(t.webServer.map((w) => w.url)).toEqual(['http://localhost:4174/', 'http://localhost:4175']);
+  });
+});
+```
+`tests/test_docs.py` — `REQUIRED_CI_COMMANDS` gains `"--project=coming-soon-reference"` and `"--project=coming-soon "` (trailing space: the plain project, not a prefix of the reference one — make sure the workflow line has trailing text or a newline; if the command ends the line, assert `"--project=coming-soon\n"` instead); append:
+```python
+def test_reference_server_serves_the_coming_soon_design():
+    assert (ROOT / "docs" / "design-reference" / "coming-soon" / "Coming Soon.dc.html").exists()
+    assert "docs/design-reference/coming-soon" in (ROOT / "frontend" / "tests" / "reference-server.mjs").read_text()
+```
+Run: `cd frontend && npx vitest run tests/targets.test.ts` → FAIL; `poetry run pytest tests/test_docs.py -q -W error` → FAIL (server root, CI commands).
+
+- [ ] **Step 2: Targets, reference server, config, scripts.**
+
+`frontend/tests/targets.ts`: `resolveTargets(env, ports: { app: number; ref: number; cs: number })` returns `{ baseURL, csBaseURL, webServer }`; add
+```ts
+  const comingSoon: WebServerSpec = {
+    command: `npm run dev -- --port ${ports.cs} --strictPort`,
+    url: `http://localhost:${ports.cs}`,
+    cwd: '../../coming-soon',
+    timeout: 60_000,
+    reuseExistingServer,
+    stdout: 'ignore',
+    stderr: 'pipe'
+  };
+  return { baseURL: live ?? `http://localhost:${ports.app}`, csBaseURL: `http://localhost:${ports.cs}`, webServer: live ? [reference, comingSoon] : [vite, reference, comingSoon] };
+```
+(`cwd` is resolved by Playwright relative to the config file's directory, `frontend/tests/`, hence `../../coming-soon`; the existing `'..'` means `frontend/`.)
+
+`frontend/tests/reference-server.mjs`: two roots —
+```js
+const ROOTS = [
+  { prefix: '/coming-soon', dir: normalize(join(HERE, '../../docs/design-reference/coming-soon')), index: '/Coming Soon.dc.html' },
+  { prefix: '', dir: normalize(join(HERE, '../../docs/design-reference/design_handoff_practice_match_v2')), index: '/Practice Match V2.dc.html' }
+];
+```
+resolve: pick the first root whose `prefix` the pathname starts with (`/coming-soon` or `/coming-soon/…`); `rel` = pathname minus prefix, or the root's `index` when that is empty or `/`; traversal guard against that root's `dir`; add `'.woff2': 'font/woff2'` to `MIME`. Log both roots on start.
+
+`frontend/tests/playwright.config.ts`: `const CS = Number(process.env.PW_CS_PORT) || 5175;` `const CS_VIEWPORT = { width: 1440, height: 900 }; // the Coming Soon design's $preview`; destructure `csBaseURL`; add projects
+```ts
+    { name: 'coming-soon-reference', testMatch: /(^|\/)coming-soon-reference\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: CS_VIEWPORT, baseURL: `http://localhost:${REF}` } },
+    { name: 'coming-soon', testMatch: /(^|\/)coming-soon-visual\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: CS_VIEWPORT, baseURL: csBaseURL } }
+```
+(the `app` project's regex `(visual|smoke|dom)\.spec\.ts` does not match `coming-soon-visual.spec.ts` because of the anchored `(^|\/)`; verify with `npx playwright test --list --project=app | grep -c coming-soon` → 0.)
+`frontend/package.json` scripts: `"test:cs:baselines": "playwright test --config=tests/playwright.config.ts --project=coming-soon-reference"`, `"test:cs": "playwright test --config=tests/playwright.config.ts --project=coming-soon"`.
+
+- [ ] **Step 3: Harness, screens, specs.**
+
+`frontend/tests/coming-soon-harness.ts`:
+```ts
+import type { Page } from '@playwright/test';
+import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { prepare, settle } from './harness';
+
+export { settle };
+const FONT = join(fileURLToPath(new URL('.', import.meta.url)), '../../coming-soon/public/ds/fonts/Merriweather-Latin.woff2');
+const FONT_CSS = "@font-face{font-family:'Merriweather';font-style:normal;font-weight:400 700;font-display:swap;src:url('https://fonts.gstatic.com/merriweather-latin.woff2') format('woff2');}";
+
+/** Same error gates and vendored runtime as the marketplace harness, plus: the design's Google Fonts
+ *  request is answered with the app's own self-hosted Merriweather (identical glyphs on both targets,
+ *  offline-safe), and on the app the sign-up POST is answered 202 so the confirmed state needs no backend. */
+export async function prepareComingSoon(page: Page, target: 'reference' | 'app'): Promise<void> {
+  await prepare(page);
+  await page.route('https://fonts.googleapis.com/**', (route) => route.fulfill({ status: 200, contentType: 'text/css', body: FONT_CSS }));
+  await page.route('https://fonts.gstatic.com/**', (route) => route.fulfill({ status: 200, path: FONT, contentType: 'font/woff2' }));
+  if (target === 'app') {
+    await page.route('**/api/interest', (route) => route.fulfill({ status: 202, contentType: 'application/json', body: '{"status":"ok"}' }));
+  }
+}
+
+export async function bootedComingSoon(page: Page, url: string): Promise<void> {
+  await page.goto(url);
+  await page.getByRole('button', { name: 'Notify me', exact: true }).waitFor({ state: 'visible' });
+}
+```
+`frontend/tests/coming-soon.screens.ts`:
 ```ts
 import type { Page } from '@playwright/test';
 
 export interface CsScreen { name: string; viewport?: { width: number; height: number }; steps: (page: Page) => Promise<void>; }
 const field = (p: Page) => p.getByLabel('Email address');
-const notify = (p: Page) => p.getByRole('button', { name: /notify/i }).first();
+const notify = (p: Page) => p.getByRole('button', { name: 'Notify me', exact: true });
+const redacted = (p: Page) => p.getByRole('button', { name: /^Redacted/ });
 
+/** The approved states (spec §5): idle, invalid address, confirmed, teaser advanced twice, and mobile. */
 export const CS_SCREENS: CsScreen[] = [
   { name: 'cs-idle', steps: async () => {} },
-  { name: 'cs-invalid', steps: async (p) => { await field(p).fill('nope'); await notify(p).click(); } },
+  { name: 'cs-invalid', steps: async (p) => { await field(p).fill('nope'); await notify(p).click(); await p.getByText("That address doesn't look right").waitFor(); } },
   { name: 'cs-done', steps: async (p) => { await field(p).fill('you@practice.com'); await notify(p).click(); await p.getByText("You're on the list").waitFor(); } },
-  { name: 'cs-tease-2', steps: async (p) => { const b = p.getByRole('button', { name: /Redacted/ }); await b.click(); await b.click(); } },
+  { name: 'cs-tease-2', steps: async (p) => { await redacted(p).click(); await redacted(p).click(); await p.getByText('You can keep clicking. We admire the persistence.').waitFor(); } },
   { name: 'cs-mobile', viewport: { width: 390, height: 844 }, steps: async () => {} }
 ];
 ```
-(Read the exact button label from the design's `App.vue`/design file — `notify` matches the design's copy; if the copy differs, use the exact text.) The `coming-soon` project's `prepare()` routes `POST **/api/interest` → `route.fulfill({ status: 202, contentType: 'application/json', body: '{"status":"ok"}' })` so `cs-done` needs no backend; the design's own submit sets `done` without a network call.
-- [ ] **Step 3:** Reference spec writes `cs-*` baselines from the design (same pattern as `reference-baselines.spec.ts`, using `document.fonts.ready` + 600 ms settle); visual spec compares the app at `maxDiffPixels: 0`. Both projects added to `playwright.config.ts` via `targets.ts` (unit-tested: `PW_APP_URL` does not affect the coming-soon projects). CI runs `--project=coming-soon-reference` then `--project=coming-soon` in the frontend job.
-- [ ] **Step 4:** All `cs-*` states pass at 0 px. Commit — `test(coming-soon): zero-pixel parity with the approved Coming Soon design, five states`.
+`frontend/tests/coming-soon-reference.spec.ts` (writes `cs-<name>-<platform>.png` into `visual.spec.ts-snapshots`, mirroring `reference-baselines.spec.ts`; boots at `'/coming-soon/'`) and `frontend/tests/coming-soon-visual.spec.ts` (boots at `'/'`, `await expect(page).toHaveScreenshot(\`${s.name}.png\`, { fullPage: true })`). Both: `prepareComingSoon(page, target)`; `if (s.viewport) await page.setViewportSize(s.viewport)` BEFORE booting; `await s.steps(page)`; `await settle(page)`.
+
+- [ ] **Step 4: RED → GREEN on the pixels.** `cd coming-soon && npm ci` if `node_modules` is absent; `cd frontend && npm run test:cs:baselines` (5 PNGs written) then `npm run test:cs`. Any failing state is a real difference between the Vue page and the design (or a harness artefact — fonts not loaded on one side, an animation not settled). Read Playwright's diff images (`frontend/test-results/**/*-diff.png`), identify each difference, and:
+  - harness artefact → fix the harness and rerun;
+  - a difference in the Vue page → **STOP and report it** with the diff image path and the CSS/markup involved (the page is John's and byte-identical by spec except the four ruled edits; a parity fix is John's ruling). Do not edit `coming-soon/src/App.vue` or styles yourself.
+  Expected end state: `5 passed` at `maxDiffPixels: 0`, recorded in the report with the per-state pixel counts from a deliberately broken run (e.g. temporarily set `maxDiffPixels` to 100000 once, read the reported diff pixels for each state, restore) — that is the proof the gate discriminates.
+
+- [ ] **Step 5: CI.** `.github/workflows/quality.yml` frontend job: after `npm ci`, add `- run: npm ci` with `working-directory: coming-soon` (step-level override of the job default); after the "App project" step add two steps named "Coming Soon reference — generates its baselines from the approved design" (`npx playwright test --config=tests/playwright.config.ts --project=coming-soon-reference`) and "Coming Soon page — must match the design (visual)" (`npx playwright test --config=tests/playwright.config.ts --project=coming-soon`). `poetry run pytest tests/test_docs.py -q -W error` → GREEN.
+
+- [ ] **Step 6: GREEN everywhere** — `cd frontend && npx vitest run --coverage` (236+ tests, 100 %), `npx vue-tsc --noEmit -p tsconfig.json`, `npm run test:visual:baselines && npm run test:visual` (marketplace suite still 25/25 — the reference server change must not disturb it), `npm run test:cs:baselines && npm run test:cs` (5/5), `poetry run pytest tests/test_docs.py -q -W error`, `poetry run ruff check app tests scripts`.
+
+- [ ] **Step 7: Commit**
+```bash
+git add docs/design-reference/coming-soon frontend/tests/coming-soon-harness.ts frontend/tests/coming-soon.screens.ts frontend/tests/coming-soon-reference.spec.ts frontend/tests/coming-soon-visual.spec.ts frontend/tests/targets.ts frontend/tests/targets.test.ts frontend/tests/reference-server.mjs frontend/tests/playwright.config.ts frontend/package.json .github/workflows/quality.yml tests/test_docs.py
+git commit -m "test(coming-soon): zero-pixel parity with the approved Coming Soon design — five states, desktop and mobile
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+(The design reference is committed by the controller before dispatch; the implementer's commit carries the rest.)
 
 ---
 
