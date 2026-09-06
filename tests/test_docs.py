@@ -1,3 +1,4 @@
+import json
 import re
 import tomllib
 from pathlib import Path
@@ -298,3 +299,21 @@ def test_deploy_md_records_the_nightly_load_smoke_baseline():
 def test_reference_server_serves_the_coming_soon_design():
     assert (ROOT / "docs" / "design-reference" / "coming-soon" / "Coming Soon.dc.html").exists()
     assert "docs/design-reference/coming-soon" in (ROOT / "frontend" / "tests" / "reference-server.mjs").read_text()
+
+
+def test_claude_md_gate_includes_the_dom_oracle():
+    """Final review M2 (2026-09-07). Option A made the DOM oracle THE proof of zero regression
+    for the thirteen non-Browse screens (CLAUDE.md's own "Source of truth" paragraph says so),
+    and it runs under neither `npm run test:smoke` nor `npm run test:visual` — only under
+    `npm run test:e2e`, whose `--project=app` matches visual|smoke|dom. CI runs it; an operator
+    following CLAUDE.md's four-item gate by hand did not."""
+    text = (ROOT / "CLAUDE.md").read_text()
+    gate = next(line for line in text.splitlines() if line.startswith("- **Verification gate"))
+    assert "npm run test:visual:baselines" in gate, "the hand-run gate does not regenerate the oracles first"
+    assert "npm run test:e2e" in gate, "the hand-run gate still skips the DOM oracle"
+    scripts = json.loads((ROOT / "frontend" / "package.json").read_text())["scripts"]
+    assert "--project=app" in scripts["test:e2e"], scripts["test:e2e"]
+    # …and no spec filter, or it would not be all three suites.
+    assert "spec.ts" not in scripts["test:e2e"], scripts["test:e2e"]
+    ops = [line for line in text.splitlines() if line.startswith("cd frontend &&") and "test:" in line]
+    assert any("npm run test:e2e" in line for line in ops), "the Common operations block still runs the pixel gate alone"

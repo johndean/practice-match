@@ -31,7 +31,7 @@ Every environment variable is set only in Railway (per service, per environment)
 
 - **Surgical diffs.** The change contains the ask and nothing else. Never remove a function or feature while doing unrelated work. No drive-by refactors or reformatting.
 - **No destructive actions** without explicit instruction in the current conversation.
-- **Verification gate before every production deploy — all four:** (1) `poetry run pytest` + `npm run typecheck && npm test && npm run build`; (2) `npm run test:smoke` and `npm run test:visual` green; (3) click-through on https://qa.foundation.vin of the changed flow; (4) post-deploy smoke on https://foundation.vin (`scripts/verify-deploy.sh production`). Verified = ship; no need to ask.
+- **Verification gate before every production deploy — all four:** (1) `poetry run pytest` + `npm run typecheck && npm test && npm run build`; (2) `npm run test:visual:baselines` then `npm run test:e2e` (the `app` project: visual + DOM oracle + smoke) green — the DOM oracle runs under neither `test:smoke` nor `test:visual`, and option A makes it the proof of zero regression on the thirteen non-Browse screens; (3) click-through on https://qa.foundation.vin of the changed flow; (4) post-deploy smoke on https://foundation.vin (`scripts/verify-deploy.sh production`). Verified = ship; no need to ask.
 - **Push every commit to both remotes:** `origin` (vin-swe/practice-match) and `production` (johndean/practice-match). Conventional commits; trailer `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
 - **Versions in lockstep:** `frontend/package.json` and `pyproject.toml`, one patch per release (`tests/test_versions.py`).
 - **Close the loop:** forwardable plain-language summary + screenshots of the live screens + a one-line engineer's note with any risk.
@@ -55,7 +55,7 @@ Prototype jump bar markup (`prototypeBar`, already off in production) · "Protot
 ```bash
 docker compose -f docker-compose.dev.yml up -d && poetry run pytest            # backend tests
 cd frontend && npm run typecheck && npm test && npm run build                  # frontend gates
-cd frontend && npm run test:smoke && npm run test:visual:baselines && npm run test:visual
+cd frontend && npm run test:visual:baselines && npm run test:e2e            # oracles from V3, then visual + DOM + smoke
 scripts/deploy.sh QA && scripts/deploy.sh production                           # after the gate
 railway logs --service api --environment QA --lines 50
 railway variable list --service api --environment QA --json | python3 -c 'import sys,json; print("\n".join(sorted(json.load(sys.stdin))))'   # names only — never pipe values to a terminal
