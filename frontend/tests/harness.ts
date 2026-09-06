@@ -6,7 +6,7 @@ export type JumpLabel = 'Access' | 'Browse' | 'Listing' | 'Requests' | 'Seller' 
 
 // Deterministic rendering on both targets: no basemap tiles (markers still draw
 // over the blank canvas), fonts loaded, pointer parked, animations settled.
-const VENDOR = join(fileURLToPath(new URL('.', import.meta.url)), '../../docs/design-reference/design_handoff_practice_match_v2/vendor');
+const VENDOR = join(fileURLToPath(new URL('.', import.meta.url)), '../../docs/design-reference/design_handoff_practice_match_v3/vendor');
 // support.js loads React/ReactDOM/Babel from unpkg with SRI; AustinMap.jsx and MarketMap.jsx
 // (loaded by the reference's Browse/Listing/Market screens) separately load Leaflet from
 // unpkg the same SRI-pinned way — all five must be vendored or the map screens never boot.

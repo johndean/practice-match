@@ -18,7 +18,7 @@ Every environment variable is set only in Railway (per service, per environment)
 
 ## Source of truth for the UI
 
-`docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html` is the approved design. Rules, each violated by an assistant somewhere before:
+`docs/design-reference/design_handoff_practice_match_v3/Practice Match V3.dc.html` is the approved design. Rules, each violated by an assistant somewhere before:
 
 - **Reference open first, port verbatim, absent beats faked.** No invented UI, no placeholder banners, no "TODO Phase X", no simplifications.
 - **Ported files are byte-identical** except the edits listed in `docs/superpowers/specs/2026-09-05-practice-match-platform-design.md` §3. `logic.js` is never restructured. Inline styles stay inline. No CSS framework, no Pinia, no per-screen split without a visual diff per screen.

@@ -15,7 +15,7 @@
     "test:visual:baselines": "playwright test --config=tests/playwright.config.ts --project=reference",
     "test:cs:baselines": "playwright test --config=tests/playwright.config.ts --project=coming-soon-reference",
     "test:cs": "playwright test --config=tests/playwright.config.ts --project=coming-soon",
-    "gen:app": "node scripts/convert-dc.mjs ../docs/design-reference/design_handoff_practice_match_v2/'Practice Match V2.dc.html' src/app.setup.js src/App.vue src/generated/pseudo.css"
+    "gen:app": "node scripts/convert-dc.mjs ../docs/design-reference/design_handoff_practice_match_v3/'Practice Match V3.dc.html' src/app.setup.js src/App.vue src/generated/pseudo.css"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

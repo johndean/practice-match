@@ -15,11 +15,11 @@ const MIME = {
 };
 
 // docs/design-reference/coming-soon serves the Coming Soon design (Task 11e); the
-// Practice Match V2 handoff keeps serving from "/" as before. The first root whose
+// Practice Match V3 handoff keeps serving from "/" as before. The first root whose
 // prefix the request path starts with wins, so "/coming-soon" is listed first.
 const ROOTS = [
   { prefix: '/coming-soon', dir: normalize(join(HERE, '../../docs/design-reference/coming-soon')), index: '/Coming Soon.dc.html' },
-  { prefix: '', dir: normalize(join(HERE, '../../docs/design-reference/design_handoff_practice_match_v2')), index: '/Practice Match V2.dc.html' }
+  { prefix: '', dir: normalize(join(HERE, '../../docs/design-reference/design_handoff_practice_match_v3')), index: '/Practice Match V3.dc.html' }
 ];
 
 function resolve(pathname) {
