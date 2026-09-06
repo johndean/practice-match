@@ -128,6 +128,14 @@ if [[ "$mode" == "coming_soon" ]]; then
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H 'Content-Type: application/json' -d '{"email":"probe@example.org","password":"x"}' "$BASE/api/auth/signup")
   [[ "$code" == "404" ]] || { echo "FAIL: /api/auth/signup answered $code in coming-soon mode (expected 404 - the auth surface must not be mounted before launch)" >&2; exit 1; }
   echo "auth endpoints absent OK"
+  # ...and so must the member surface Task I5 added behind the same gate. One probe per router:
+  # /api/auth/signup alone could not detect the applications or admin routers being un-gated on
+  # their own (Identity plan Task I5, fix round 1, N2).
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/admin/users")
+  [[ "$code" == "404" ]] || { echo "FAIL: /api/admin/users answered $code in coming-soon mode (expected 404 - the admin surface must not be mounted before launch)" >&2; exit 1; }
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H 'Content-Type: application/json' -d '{"kind":"buyer","fields":{}}' "$BASE/api/applications")
+  [[ "$code" == "404" ]] || { echo "FAIL: /api/applications answered $code in coming-soon mode (expected 404 - the applications surface must not be mounted before launch)" >&2; exit 1; }
+  echo "member endpoints absent OK"
 else
   body=$(curl -fsS --max-time 20 "$BASE/browse")
   [[ "$body" == *'id="app"'* ]] || { echo "FAIL: SPA fallback missing at $BASE/browse" >&2; exit 1; }

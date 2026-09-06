@@ -18,7 +18,13 @@ def test_matrix_matches_the_spec_table():
     assert PM.MATRIX["users.decide"] == frozenset({"staff", "admin"})
     assert PM.MATRIX["engine.activate"] == frozenset({"admin"}) and "engine.activate" in PM.REAUTH
     assert PM.MATRIX["abuse.investigate"] == frozenset({"admin"}) and "abuse.investigate" in PM.AUDITED
-    assert {"users.decide", "roles.grant", "tokens.manage", "licence.decide", "users.review"} <= PM.AUDITED
+    # I5 fix round 1 (John, 2026-09-07): spec §4 audits "viewing an application DETAIL", so the
+    # audited permission is `users.view_detail`. `users.review` — LISTING the queue — is not
+    # audited: one row per poll of the I7 Users tab, into a table whose triggers refuse DELETE and
+    # which has no retention path, was a slow leak with no spec mandate behind it.
+    assert {"users.decide", "roles.grant", "tokens.manage", "licence.decide", "users.view_detail"} <= PM.AUDITED
+    assert "users.review" not in PM.AUDITED
+    assert PM.MATRIX["users.view_detail"] == frozenset({"staff", "admin"})
     assert {"licence.decide", "engine.activate", "roles.grant", "tokens.manage"} <= PM.REAUTH
 
 

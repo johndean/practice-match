@@ -94,7 +94,7 @@ async def test_api_token_and_legacy_operator_token(client, conn, redis, monkeypa
 
     from app.auth import tokens as T
     admin = _member(conn, ["admin"])
-    raw = T.issue_api_token(conn, name="e2e", role="buyer", created_by=admin, ttl=timedelta(days=1))
+    raw = T.issue_api_token(conn, name="e2e", role="buyer", created_by=admin, ttl=timedelta(days=1)).raw
     assert (await client.get("/read", headers={"Authorization": f"Bearer {raw}"})).status_code == 200
     assert (await client.post("/decide", headers={"Authorization": f"Bearer {raw}"})).status_code == 403   # buyer token, no CSRF needed
     legacy = {"Authorization": f"Bearer {settings.api_secret_key}"}
@@ -291,7 +291,7 @@ async def test_an_admin_api_token_can_never_satisfy_re_authentication(client, co
 
     from app.auth import tokens as T
     admin = _member(conn, ["admin"])
-    raw = T.issue_api_token(conn, name="e2e-qa", role="admin", created_by=admin, ttl=timedelta(days=90))
+    raw = T.issue_api_token(conn, name="e2e-qa", role="admin", created_by=admin, ttl=timedelta(days=90)).raw
     hdr = {"Authorization": f"Bearer {raw}"}
     r = await client.post("/activate", headers=hdr)
     assert r.status_code == 403 and r.json()["error"]["code"] == "REAUTH_REQUIRED"
@@ -375,7 +375,7 @@ async def test_a_valid_session_cookie_wins_over_any_authorization_header(client,
     hdr = {"Authorization": "Bearer garbage", "X-CSRF-Token": "t", "Origin": "https://qa.foundation.vin"}
     assert (await ok.post("/decide", headers=hdr)).status_code == 200
     # With no VALID cookie the bearer is still tried, in the brief's order: api token, then legacy.
-    token = T.issue_api_token(conn, name="e2e", role="buyer", created_by=_member(conn, ["admin"]), ttl=timedelta(days=1))
+    token = T.issue_api_token(conn, name="e2e", role="buyer", created_by=_member(conn, ["admin"]), ttl=timedelta(days=1)).raw
     stale = _as(client, pm_session="no-longer-a-session")
     assert (await stale.get("/read", headers={"Authorization": f"Bearer {token}"})).status_code == 200
     assert (await stale.post("/activate", headers={"Authorization": f"Bearer {settings.api_secret_key}"})).status_code == 200
@@ -388,7 +388,7 @@ async def test_the_bearer_scheme_is_matched_case_insensitively(client, conn, red
     from datetime import timedelta
 
     from app.auth import tokens as T
-    token = T.issue_api_token(conn, name="e2e", role="buyer", created_by=_member(conn, ["admin"]), ttl=timedelta(days=1))
+    token = T.issue_api_token(conn, name="e2e", role="buyer", created_by=_member(conn, ["admin"]), ttl=timedelta(days=1)).raw
     for scheme in ("Bearer", "bearer", "BEARER", "BeArEr"):
         assert (await client.get("/read", headers={"Authorization": f"{scheme} {token}"})).status_code == 200
     assert (await client.get("/read", headers={"Authorization": f"Basic {token}"})).status_code == 401
@@ -434,7 +434,7 @@ def test_a_token_principal_carries_its_creators_account_id_not_the_token_id(conn
 
     from app.auth import tokens as T
     creator = _member(conn, ["admin"])
-    raw = T.issue_api_token(conn, name="e2e-qa", role="buyer", created_by=creator, ttl=timedelta(days=1))
+    raw = T.issue_api_token(conn, name="e2e-qa", role="buyer", created_by=creator, ttl=timedelta(days=1)).raw
     request = Request({"type": "http", "method": "GET", "path": "/read", "raw_path": b"/read", "query_string": b"", "root_path": "",
                        "scheme": "https", "server": ("qa.foundation.vin", 443), "client": ("198.51.100.7", 1),
                        "headers": [(b"host", b"qa.foundation.vin"), (b"authorization", f"Bearer {raw}".encode())]})

@@ -161,8 +161,13 @@ async def test_admin_users_lists_every_account_in_every_state_and_role_including
     assert sorted(i["account_id"] for i in admins) == sorted([str(other_admin), str(caller)])
     only_staff = (await client.get("/api/admin/users?role=staff", headers=auth_headers(cookies))).json()["items"]
     assert [i["account_id"] for i in only_staff] == [str(staff)]
+    # C2 (John, 2026-09-07): spec §4 audits "viewing an application DETAIL", not the list. Listing
+    # the queue is guarded by `users.review`, which is no longer in `AUDITED`, so three page reads
+    # leave no rows — one per poll of the I7 Users tab, into an append-only table, was a slow leak
+    # with no spec mandate behind it.
     with conn.cursor() as cur:
-        cur.execute("SELECT count(*) FROM audit_log WHERE action='users.list'"); assert cur.fetchone()[0] == 3
+        cur.execute("SELECT count(*) FROM audit_log WHERE action IN ('users.list','users.review')")
+        assert cur.fetchone()[0] == 0
 
 
 async def test_admin_users_paginates_by_cursor_and_filters_by_kind(client, conn, member):
@@ -411,7 +416,10 @@ def test_bootstrap_admin_is_idempotent_refuses_production_without_the_flag_and_i
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM account WHERE email='founder@example.org'"); assert cur.fetchone()[0] == 1
         cur.execute("SELECT count(*) FROM role_grant WHERE role='admin' AND revoked_at IS NULL"); assert cur.fetchone()[0] == 1
+        # F4: two rows, but only the newest is LIVE — issuing an invite retires the ones before it,
+        # exactly as `POST /api/auth/password/forgot` retires an unused reset link.
         cur.execute("SELECT count(*) FROM email_token WHERE purpose='invite'"); assert cur.fetchone()[0] == 2
+        cur.execute("SELECT count(*) FROM email_token WHERE purpose='invite' AND used_at IS NULL"); assert cur.fetchone()[0] == 1
         cur.execute("SELECT count(*) FROM audit_log WHERE action='admin.bootstrap'"); assert cur.fetchone()[0] == 2
         cur.execute("SELECT password_hash FROM account WHERE email='founder@example.org'")
         assert cur.fetchone() == (bootstrap_admin.NO_PASSWORD,), "never a default password — the invite link is the only way in"
@@ -459,3 +467,223 @@ def test_the_cli_entry_points_run_as___main__(conn, monkeypatch, script, argv):
     with pytest.raises(SystemExit) as exc:
         runpy.run_path(str(ROOT / "scripts" / f"{script}.py"), run_name="__main__")
     assert exc.value.code == 0
+
+
+# ============================ fix round 1 ============================
+
+
+async def _reauth(client, cookies, hdr):
+    assert (await client.post("/api/auth/reauth", headers=auth_headers(cookies, hdr), json={"password": PW})).status_code == 200
+
+
+async def test_staff_cannot_decide_against_a_staff_or_admin_target_or_against_itself(client, conn, member):
+    """F1 + F2. `users.decide`/`users.revoke` are both `{staff, admin}`, so before this guard any
+    staff account could revoke every Admin in a loop — and `revoke` is terminal in the API, so
+    recovery meant `bootstrap_admin.py` with production database credentials. Staff is the LEAST
+    privileged administrative role; it must not be able to unseat the most privileged one."""
+    sid, scookies, shdr = member(("staff",), email="staff@example.org")
+    staff2, _c1, _h1 = member(("staff",), email="staff2@example.org")
+    admin, acookies, ahdr = member(("admin",), email="admin@example.org")
+    await _reauth(client, scookies, shdr)                    # so the refusals below are NOT REAUTH_REQUIRED
+
+    async def staff_decides(target, action, note="because"):
+        return await client.post(f"/api/admin/users/{target}/decide", headers=auth_headers(scookies, shdr),
+                                 json={"action": action, "note": note})
+
+    revoked = await staff_decides(admin, "revoke")
+    assert (revoked.status_code, revoked.json()["error"]["code"]) == (403, "PRIVILEGED_TARGET")
+    assert (await staff_decides(admin, "suspend")).status_code == 403
+    assert (await staff_decides(staff2, "suspend")).status_code == 403
+    mine = await staff_decides(sid, "suspend")
+    assert (mine.status_code, mine.json()["error"]["code"]) == (403, "SELF_ACTION")
+    assert (await staff_decides(sid, "revoke")).status_code == 403
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT state FROM account WHERE id IN (%s,%s,%s)", (admin, staff2, sid))
+        assert cur.fetchall() == [("active",)], "no target row was touched"
+        cur.execute("SELECT count(*) FROM role_grant WHERE revoked_at IS NULL"); assert cur.fetchone()[0] == 3
+    # ...and the legitimate path stays open: an ADMIN may still suspend a staff member and revoke
+    # another admin. The guard is about the actor's role, not about protecting a row for ever.
+    await _reauth(client, acookies, ahdr)
+    ok = await client.post(f"/api/admin/users/{staff2}/decide", headers=auth_headers(acookies, ahdr),
+                           json={"action": "suspend", "note": "n"})
+    assert ok.json()["state"] == "suspended"
+    other, _c2, _h2 = member(("admin",), email="admin2@example.org")
+    assert (await client.post(f"/api/admin/users/{other}/decide", headers=auth_headers(acookies, ahdr),
+                              json={"action": "revoke", "note": "left"})).json() == {"state": "revoked", "roles": []}
+
+
+async def test_an_admin_grant_is_never_removed_from_its_holder_or_from_the_last_admin(client, conn, member):
+    """F5. Probed before the fix: a single admin could `grant=false` their own `admin` row and was
+    then locked out of `roles.grant` for ever — zero admins, no in-app way back."""
+    first, cookies, hdr = member(("admin",), email="first-admin@example.org")
+    await _reauth(client, cookies, hdr)
+
+    async def ungrant(target, role="admin"):
+        return await client.post(f"/api/admin/users/{target}/grants", headers=auth_headers(cookies, hdr),
+                                 json={"role": role, "grant": False, "reason": "fix round 1"})
+
+    own = await ungrant(first)
+    assert (own.status_code, own.json()["error"]["code"]) == (403, "LAST_ADMIN")
+    second, _c, _h = member(("admin",), email="second-admin@example.org")
+    own_again = await ungrant(first)
+    assert own_again.status_code == 403, "your own admin grant is yours to keep even when another admin exists"
+    assert (await ungrant(second)).json()["roles"] == [], "a SECOND admin may be ungranted by another admin"
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM role_grant WHERE role='admin' AND revoked_at IS NULL")
+        assert cur.fetchone()[0] == 1, "exactly one admin survives every refusal above"
+
+
+def test_the_last_admin_guard_does_not_depend_on_the_actor_being_the_admin_removed(conn):
+    """The other arm of the same rule, reached directly because it cannot be reached over HTTP
+    today: `roles.grant` is admin-only, so an actor able to call it always holds a live admin grant
+    of their own and the count can never be 1 for a target that is not them. The guard is defensive
+    — it is what keeps the invariant true if `roles.grant` is ever widened — so it is tested where
+    it lives rather than left as an unexercised claim."""
+    from uuid import uuid4
+
+    from app.api import admin_users as A
+    from app.auth import passwords as P
+    from app.auth import sessions as S
+
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO account (email, password_hash, state) VALUES ('only@example.org', %s, 'active') RETURNING id", (P.hash_password(PW),))
+        only_admin = cur.fetchone()[0]
+        cur.execute("INSERT INTO role_grant (account_id, role, granted_by) VALUES (%s,'admin',%s)", (only_admin, only_admin))
+        actor = S.Principal(uuid4(), "active", frozenset({"admin"}), None, "session", "h")
+        with pytest.raises(A.LastAdmin):
+            A._refuse_unsafe_target(cur, actor=actor, actor_account=actor.account_id, account_id=only_admin,
+                                    self_forbidden=False, removing_admin=True)
+
+
+async def test_the_cursor_walk_returns_every_account_when_created_at_ties(client, conn, member):
+    """F3. `ORDER BY (created_at DESC, id DESC)` with a cursor carrying only `created_at` and the
+    predicate `created_at < cursor` DROPPED every row sharing the last row's timestamp, and then
+    reported `next_cursor: null` — the caller was told the list was complete. Probed before the
+    fix: 3 of 6 accounts returned. That is a direct contradiction of John's binding condition, so
+    the cursor is now the keyset `"<created_at>|<id>"`."""
+    _admin, cookies, _hdr = member(("admin",), email="pager@example.org")
+    with conn.cursor() as cur:
+        # ONE statement, so `now()` — which is TRANSACTION time — is a single instant for all five.
+        # (The `conn` fixture is autocommit, so a Python loop would give five distinct timestamps
+        # and prove nothing.) A bulk import or a fixture loader produces exactly this shape.
+        cur.execute("""INSERT INTO account (email, password_hash, state)
+                       SELECT 'tie' || g || '@example.org', 'x', 'active' FROM generate_series(0, 4) AS g""")
+        cur.execute("SELECT count(DISTINCT created_at) FROM account WHERE email LIKE 'tie%%'")
+        assert cur.fetchone()[0] == 1, "the fixture must really produce tied timestamps"
+        cur.execute("SELECT count(*) FROM account"); total = cur.fetchone()[0]
+
+    seen, cursor, pages = [], None, 0
+    while pages <= total + 1:
+        query = "/api/admin/users?limit=1" + (f"&cursor={cursor}" if cursor else "")
+        body = (await client.get(query, headers=auth_headers(cookies))).json()
+        seen += [i["account_id"] for i in body["items"]]
+        cursor, pages = body["next_cursor"], pages + 1
+        if cursor is None:
+            break
+    assert len(seen) == len(set(seen)) == total == 6, f"the walk must yield every account exactly once, got {seen}"
+    assert "|" in (await client.get("/api/admin/users?limit=1", headers=auth_headers(cookies))).json()["next_cursor"]
+
+
+async def test_a_malformed_keyset_cursor_is_refused(client, conn, member):
+    _admin, cookies, _hdr = member(("admin",), email="cursor@example.org")
+    for bad in ("yesterday", "yesterday|nope", "2026-09-07T00:00:00Z", "2026-09-07T00:00:00Z|not-a-uuid", "|", "a|b|c"):
+        r = await client.get(f"/api/admin/users?cursor={bad}", headers=auth_headers(cookies))
+        assert (r.status_code, r.json()["error"]["code"]) == (422, "BAD_CURSOR"), bad
+
+
+async def test_filters_outside_their_enums_are_refused_rather_than_answered_empty(client, conn, member):
+    """F10. `?role=superadmin` used to return `200 {"items": []}` — a typo in the Admin Users tab
+    read as "no such users" rather than "no such filter", and inconsistently with the same
+    handler's `cursor=` and with `grants`/`tokens`."""
+    _admin, cookies, _hdr = member(("admin",), email="filters@example.org")
+    for query in ("role=superadmin", "state=nonsense", "kind=whatever", "role=admin'--", "state=", "role=anonymous"):
+        r = await client.get(f"/api/admin/users?{query}", headers=auth_headers(cookies))
+        assert (r.status_code, r.json()["error"]["code"]) == (422, "BAD_FILTER"), query
+    for query in ("role=admin", "state=active", "kind=buyer", "state=pending&kind=buyer&role=staff"):
+        assert (await client.get(f"/api/admin/users?{query}", headers=auth_headers(cookies))).status_code == 200, query
+
+
+async def test_a_minted_token_may_only_carry_a_buyer_or_seller_role(client, conn, member):
+    """F6 (John, 2026-09-07). A `staff`/`admin` bearer is a <=90-day credential with no session, no
+    CSRF and — because `require` only enforces freshness for `kind == "session"` — no re-auth for
+    anything outside `REAUTH`. Probed before the fix: a `role=staff` token read the whole audit
+    trail and suspended a member. Automation gets member roles only."""
+    _admin, cookies, hdr = member(("admin",), email="tokens@example.org")
+    await _reauth(client, cookies, hdr)
+    for role in ("staff", "admin", "superadmin"):
+        r = await client.post("/api/admin/tokens", headers=auth_headers(cookies, hdr), json={"name": "k6", "role": role, "days": 30})
+        assert (r.status_code, r.json()["error"]["code"]) == (422, "BAD_ROLE"), role
+    for role in ("buyer", "seller"):
+        assert (await client.post("/api/admin/tokens", headers=auth_headers(cookies, hdr),
+                                  json={"name": "k6", "role": role, "days": 30})).status_code == 201, role
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM api_token WHERE role IN ('staff','admin')"); assert cur.fetchone()[0] == 0
+
+
+async def test_accept_invite_sets_the_password_without_creating_a_session(client, conn):
+    """F7 (John, 2026-09-07): `accept-invite` keeps `password/reset`'s shape — it sets the password
+    and the new admin then signs in. No `Set-Cookie`, so a link forwarded through a chat window
+    cannot hand somebody a live session by being opened."""
+    from scripts import bootstrap_admin
+
+    token = _run_cli(bootstrap_admin, ["--email", "nosession@example.org"]).strip().split("token=")[1]
+    r = await client.post("/api/auth/accept-invite", json={"token": token, "password": INVITE_PW})
+    assert r.status_code == 200 and r.headers.get_list("set-cookie") == [] and len(r.cookies) == 0
+    assert (await client.post("/api/auth/signin", json={"email": "nosession@example.org", "password": INVITE_PW})).status_code == 200
+
+
+async def test_issuing_an_invite_retires_the_ones_before_it(client, conn):
+    """F4. `POST /api/auth/password/forgot` sets the precedent three files away: one live link per
+    account. Probed before the fix: invite #1 was accepted and a password set, and invite #2 — a
+    link printed to a terminal or a CI log 23 hours earlier — then reset that password again."""
+    from scripts import bootstrap_admin
+
+    first = _run_cli(bootstrap_admin, ["--email", "retire@example.org"]).strip().split("token=")[1]
+    second = _run_cli(bootstrap_admin, ["--email", "retire@example.org"]).strip().split("token=")[1]
+    assert first != second
+    stale = await client.post("/api/auth/accept-invite", json={"token": first, "password": INVITE_PW})
+    assert (stale.status_code, stale.json()["error"]["code"]) == (400, "TOKEN_INVALID")
+    assert (await client.post("/api/auth/accept-invite", json={"token": second, "password": INVITE_PW})).status_code == 200
+
+
+def test_bootstrap_admin_refuses_a_suspended_or_revoked_account_without_reactivate(conn, capsys):
+    """F8. `ON CONFLICT (email) DO UPDATE SET state='active'` applies to ANY existing address, so
+    the script would silently undo a `suspend` or `revoke` that has an audit trail behind it — and
+    print a link that sets that account's password. Both outcomes are audited."""
+    from scripts import bootstrap_admin
+
+    for state in ("suspended", "revoked"):
+        email = f"{state}@example.org"
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO account (email, password_hash, state) VALUES (%s,'x',%s) RETURNING id", (email, state))
+            aid = cur.fetchone()[0]
+        assert bootstrap_admin.main(["--email", email]) == 3
+        err = capsys.readouterr().err
+        assert state in err and "--reactivate" in err
+        with conn.cursor() as cur:
+            cur.execute("SELECT state FROM account WHERE id=%s", (aid,)); assert cur.fetchone() == (state,)
+            cur.execute("SELECT count(*) FROM email_token WHERE account_id=%s", (aid,)); assert cur.fetchone()[0] == 0
+            cur.execute("SELECT reason FROM audit_log WHERE action='admin.bootstrap.refused' AND target_id=%s", (str(aid),))
+            assert state in cur.fetchone()[0]
+
+        assert _run_cli(bootstrap_admin, ["--email", email, "--reactivate"]).startswith("https://")
+        with conn.cursor() as cur:
+            cur.execute("SELECT state FROM account WHERE id=%s", (aid,)); assert cur.fetchone() == ("active",)
+            cur.execute("SELECT reason FROM audit_log WHERE action='admin.bootstrap' AND target_id=%s", (str(aid),))
+            assert "--reactivate" in cur.fetchone()[0]
+
+
+def test_issue_api_token_returns_the_id_beside_the_raw_value(conn):
+    """N5. `create_token` derived the audit `target_id` with `raw.split(".", 1)[0][3:]`, hard-coding
+    the `pm_` prefix length in a second place."""
+    from datetime import timedelta
+
+    from app.auth import tokens as T
+
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO account (email, password_hash, state) VALUES ('n5@example.org','x','active') RETURNING id")
+        aid = cur.fetchone()[0]
+    issued = T.issue_api_token(conn, name="k6", role="buyer", created_by=aid, ttl=timedelta(days=1))
+    assert issued.raw == f"pm_{issued.token_id}.{issued.raw.split('.', 1)[1]}"
+    assert T.parse(issued.raw) == (issued.token_id, issued.raw.split(".", 1)[1])
+    assert T.verify_api_token(conn, issued.raw).token_id == issued.token_id

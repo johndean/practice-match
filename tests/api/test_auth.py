@@ -364,7 +364,7 @@ async def test_an_api_token_cannot_use_the_session_only_routes(client, conn, mem
     for a non-session principal, so neither the double-submit nor the Origin check applied. A leaked
     `k6-qa` token could hold its creating admin signed out of every device indefinitely."""
     aid, cookies, _hdr = member()
-    token = T.issue_api_token(conn, name="ci", role="buyer", created_by=aid, ttl=timedelta(days=1))
+    token = T.issue_api_token(conn, name="ci", role="buyer", created_by=aid, ttl=timedelta(days=1)).raw
     auth = {"Authorization": f"Bearer {token}"}
     before = _password_hash(conn, aid)
     generic = {"error": {"code": "UNAUTHORIZED", "message": "Sign in to continue."}}

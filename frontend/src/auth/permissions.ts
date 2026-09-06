@@ -29,7 +29,8 @@ export type Permission =
   "tokens.manage" |
   "users.decide" |
   "users.review" |
-  "users.revoke";
+  "users.revoke" |
+  "users.view_detail";
 export const MATRIX: Record<Permission, readonly Role[]> = {
   "abuse.investigate": ["admin"],
   "account.self": ["admin", "applicant", "buyer", "seller", "staff"],
@@ -59,5 +60,6 @@ export const MATRIX: Record<Permission, readonly Role[]> = {
   "users.decide": ["admin", "staff"],
   "users.review": ["admin", "staff"],
   "users.revoke": ["admin", "staff"],
+  "users.view_detail": ["admin", "staff"],
 };
 export const REAUTH: readonly Permission[] = ["engine.activate", "licence.decide", "roles.grant", "tokens.manage", "users.revoke"];

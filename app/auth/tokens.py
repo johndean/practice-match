@@ -4,7 +4,7 @@ import hashlib
 import secrets
 from dataclasses import dataclass
 from datetime import timedelta
-from typing import cast
+from typing import NamedTuple, cast
 from uuid import UUID
 
 import psycopg2.extensions
@@ -46,14 +46,27 @@ class ApiPrincipal:
     created_by: UUID  # the account that minted it — the principal's real actor id (I3 fix round 1, Important 10)
 
 
-def issue_api_token(conn: psycopg2.extensions.connection, *, name: str, role: str, created_by: UUID, ttl: timedelta) -> str:
+class IssuedToken(NamedTuple):
+    """What `issue_api_token` mints: the raw `pm_<uuid>.<secret>` value — shown once and never
+    stored — beside the row id it was built from.
+
+    The id is returned rather than left to be sliced back out of `raw` (I5 fix round 1, N5): its
+    caller writes that id to `audit_log.target_id`, and `raw.split(".", 1)[0][3:]` hard-coded the
+    `pm_` prefix length in a second place, where a change to the prefix would have silently started
+    recording a mangled id on the one table that cannot be corrected."""
+
+    raw: str
+    token_id: UUID
+
+
+def issue_api_token(conn: psycopg2.extensions.connection, *, name: str, role: str, created_by: UUID, ttl: timedelta) -> IssuedToken:
     secret, h = new_secret()
     with conn.cursor() as cur:
         cur.execute("INSERT INTO api_token (name, role, token_hash, created_by, expires_at) VALUES (%s,%s,%s,%s, now() + %s::interval) RETURNING id",
                     (name, role, h, created_by, ttl))
         # RETURNING id on a just-inserted row always yields exactly one row.
         tid = cast("tuple[UUID]", cur.fetchone())[0]
-    return f"pm_{tid}.{secret}"
+    return IssuedToken(f"pm_{tid}.{secret}", tid)
 
 
 def parse(raw: str) -> tuple[UUID, str] | None:

@@ -18,6 +18,16 @@ Two shapes here are load-bearing and easy to undo by accident:
 * **`audit.write(` is called in each audited endpoint's OWN body,** never through a helper: the
   drift test reads `inspect.getsource(route.endpoint)`, so delegating the write to `decide()` would
   make every one of these routes read as unaudited.
+* **`users.review` LISTS and `users.view_detail` VIEWS,** and only the second is in `AUDITED`
+  (fix round 1, C2 — spec §4 audits "viewing an application detail"). Auditing the list wrote one
+  row per poll of the I7 Users tab into a table whose triggers refuse DELETE.
+
+One ordering is deliberate and worth stating rather than discovering (fix round 1, N3): inside
+`decide` the Redis work (`S.revoke_all` / `S.invalidate_account`) and the outbox `enqueue` both run
+BEFORE `decide_route`'s `audit.write`. A failure in the audit insert therefore rolls back the
+Postgres side — the decision, the grants, the outbox row — while the Redis session keys stay
+deleted. That is the fail-safe direction (the sessions end, the decision does not) and it is the
+one place in the app where the two stores can diverge, so the order stays as it is.
 """
 from __future__ import annotations
 
@@ -43,6 +53,7 @@ from app.mail.outbox import enqueue
 router = APIRouter(prefix="/api/admin")
 
 REQUIRE_REVIEW = require("users.review")
+REQUIRE_VIEW_DETAIL = require("users.view_detail")
 REQUIRE_DECIDE = require("users.decide")
 REQUIRE_REVOKE = require("users.revoke")      # in REAUTH: the one decision that needs a fresh password
 REQUIRE_GRANT = require("roles.grant")
@@ -51,12 +62,25 @@ REQUIRE_AUDIT = require("audit.read")
 REQUIRE_PERMISSIONS = require("permissions.read")
 
 Reviewer = Annotated[S.Principal, Depends(REQUIRE_REVIEW)]
+DetailViewer = Annotated[S.Principal, Depends(REQUIRE_VIEW_DETAIL)]
 Decider = Annotated[S.Principal, Depends(REQUIRE_DECIDE)]
 Granter = Annotated[S.Principal, Depends(REQUIRE_GRANT)]
 TokenManager = Annotated[S.Principal, Depends(REQUIRE_TOKENS)]
 AuditReader = Annotated[S.Principal, Depends(REQUIRE_AUDIT)]
 
 GRANTABLE_ROLES = ("buyer", "seller", "staff", "admin")
+# What an api token may carry (fix round 1, F6 — John, 2026-09-07). A token is a <=90-day bearer
+# credential with no session and no CSRF, and `deps.require` only enforces re-auth freshness for
+# `kind == "session"`, so a `staff`/`admin` token would be a standing exemption from re-auth for
+# every permission outside REAUTH. Automation gets member roles; administration keeps its sessions.
+TOKEN_ROLES = ("buyer", "seller")
+# The roles that make a target too privileged for a non-admin actor to touch (F1).
+PRIVILEGED_ROLES = frozenset({"staff", "admin"})
+# The two decisions nobody may aim at their own account (F2).
+SELF_FORBIDDEN_ACTIONS = ("suspend", "revoke")
+# `account.state`'s CHECK constraint (migrations/010) — the enum `state=` is validated against.
+ACCOUNT_STATES = ("unverified", "verified", "pending", "needs_review", "declined", "active", "suspended", "revoked")
+APPLICATION_KINDS = ("buyer", "seller")
 OPEN_STATUSES = ("pending", "needs_review")
 APPLICATION_ACTIONS = ("approve", "decline", "request_info")
 NOTE_REQUIRED = ("decline", "request_info", "suspend", "revoke")
@@ -117,10 +141,53 @@ class BadRole(AuthError):
     message = f"role must be one of {', '.join(GRANTABLE_ROLES)}"
 
 
+class BadTokenRole(AuthError):
+    status = 422
+    code = "BAD_ROLE"
+    message = f"an api token may only carry {' or '.join(TOKEN_ROLES)} — administration keeps its sessions"
+
+
 class BadCursor(AuthError):
     status = 422
     code = "BAD_CURSOR"
-    message = "cursor must be an ISO 8601 timestamp from a previous page."
+    message = "cursor must be a `<timestamp>|<id>` value from a previous page's next_cursor."
+
+
+class BadFilter(AuthError):
+    """A `state=`/`kind=`/`role=` outside its enum. It used to answer `200 {"items": []}`, so a
+    typo in the Admin Users tab read as "no such users" rather than "no such filter" — and
+    inconsistently with this handler's own `cursor=` and with `grants`/`tokens` (fix round 1, F10)."""
+
+    status = 422
+    code = "BAD_FILTER"
+
+    def __init__(self, name: str, allowed: tuple[str, ...]) -> None:
+        self.message = f"{name} must be one of {', '.join(allowed)}"
+        super().__init__()
+
+
+class PrivilegedTarget(AuthError):
+    """Spec §4 makes `users.decide` and `users.revoke` `{staff, admin}` alike, so without this any
+    staff account could revoke every admin in a loop — and `revoke` is terminal in the API, leaving
+    recovery to `bootstrap_admin.py` with production database credentials (fix round 1, F1)."""
+
+    code = "PRIVILEGED_TARGET"
+    message = "Only an admin may act on a staff or admin account."
+
+
+class SelfAction(AuthError):
+    """A one-request self-lockout of an administrative account (fix round 1, F2)."""
+
+    code = "SELF_ACTION"
+    message = "You cannot suspend or revoke your own account."
+
+
+class LastAdmin(AuthError):
+    """`roles.grant` is admin-only, so zero admins is a state with no way back inside the app
+    (fix round 1, F5)."""
+
+    code = "LAST_ADMIN"
+    message = "An admin grant cannot be removed from its own holder, or from the last admin."
 
 
 class StateConflict(AuthError):
@@ -177,16 +244,88 @@ def _actor_account(conn: psycopg2.extensions.connection, actor: S.Principal) -> 
     return cast("UUID", row[0])
 
 
+def _refuse_unsafe_target(
+    cur: Any,
+    *,
+    actor: S.Principal,
+    actor_account: UUID,
+    account_id: UUID,
+    self_forbidden: bool,
+    removing_admin: bool,
+) -> None:
+    """The one place `decide` and `grants` agree on who may be acted upon (fix round 1, F1/F2/F5).
+
+    Three rules, all of them refusals BEFORE any write, all with decision A5's body:
+
+    1. **A non-admin actor may not act on a `staff` or `admin` target.** Staff is the least
+       privileged administrative role and could otherwise unseat the most privileged one.
+    2. **Nobody may suspend or revoke themselves.** Not an escalation — a one-request lockout.
+    3. **An `admin` grant is never removed from its own holder, nor when it is the last live one.**
+
+    Rule 3's two halves are one expression on purpose. The second half cannot be reached over HTTP
+    today — `roles.grant` is admin-only, so any actor who gets here holds a live admin grant of
+    their own and the count can never be 1 for a target that is not them — so a separate branch for
+    it could never be exercised. It is kept because it is what makes the invariant hold if
+    `roles.grant` is ever widened, and it is exercised directly by
+    `tests/api/test_admin_users.py::test_the_last_admin_guard_does_not_depend_on_the_actor_being_the_admin_removed`.
+
+    Rule 3 also covers `revoke`, which strips every grant: an actor may only revoke somebody else
+    (rule 2), and a staff actor cannot reach an admin target at all (rule 1), so the only account
+    that could revoke the last admin's grant is that admin — which rule 2 refuses.
+    """
+    if self_forbidden and account_id == actor_account:
+        raise SelfAction
+    if "admin" not in actor.roles and PRIVILEGED_ROLES & set(_roles(cur, account_id)):
+        raise PrivilegedTarget
+    if removing_admin:
+        cur.execute("SELECT count(*) FROM role_grant WHERE role='admin' AND revoked_at IS NULL")
+        if account_id == actor_account or cast("tuple[int]", cur.fetchone())[0] <= 1:
+            raise LastAdmin
+
+
 def _iso(value: datetime | None) -> str | None:
     return value.isoformat() if value is not None else None
 
 
-def _cursor(value: str) -> str:
-    """`created_at` as the next page's cursor, URL-SAFE: an ISO offset of `+00:00` arrives back as
-    a space, because `+` in a query string decodes to one, and the refusal that follows would look
-    like a bug in whatever built the link. `Z` is the same instant, survives the round trip, and is
-    what `datetime.fromisoformat` and Postgres both accept on the way in."""
-    return datetime.fromisoformat(value).astimezone(UTC).isoformat().replace("+00:00", "Z")
+CURSOR_SEPARATOR = "|"
+
+
+def _cursor(created_at: str, account_id: str) -> str:
+    """The next page's KEYSET cursor, `"<created_at>|<id>"` (fix round 1, F3).
+
+    It carries the id as well as the timestamp because the sort does: with `created_at` alone and
+    the predicate `created_at < cursor`, every row sharing the last row's timestamp was DROPPED and
+    the caller was then handed `next_cursor: null` — told the list was complete. Probed on the
+    shipped code: 3 of 6 accounts returned. `now()` is TRANSACTION time, so any bulk import or
+    fixture loader makes ties routine, and silent omission contradicts John's binding condition
+    outright.
+
+    URL-safe: an ISO offset of `+00:00` arrives back as a space, because `+` in a query string
+    decodes to one. `Z` is the same instant, survives the round trip, and is what both
+    `datetime.fromisoformat` and Postgres accept on the way in."""
+    return f"{datetime.fromisoformat(created_at).astimezone(UTC).isoformat().replace('+00:00', 'Z')}{CURSOR_SEPARATOR}{account_id}"
+
+
+def _keyset(cursor: str | None) -> tuple[str | None, UUID | None]:
+    """`cursor` split back into `(created_at, id)`, or `(None, None)` for the first page. Anything
+    that is not a `<timestamp>|<uuid>` pair is a 422 — never a `DataError`-shaped 500 out of an
+    attacker-supplied query string."""
+    if cursor is None:
+        return None, None
+    at, separator, raw_id = cursor.partition(CURSOR_SEPARATOR)
+    if not separator:
+        raise BadCursor
+    try:
+        datetime.fromisoformat(at)
+        return at, UUID(raw_id)
+    except ValueError:
+        raise BadCursor from None
+
+
+def _filter(name: str, value: str | None, allowed: tuple[str, ...]) -> str | None:
+    if value is not None and value not in allowed:
+        raise BadFilter(name, allowed)
+    return value
 
 
 LIST_SQL = """
@@ -201,16 +340,15 @@ SELECT a.id, a.email, a.state, a.display_name, a.affiliation_label, a.created_at
    AND (%(kind)s::text IS NULL OR ap.kind = %(kind)s)
    AND (%(role)s::text IS NULL OR EXISTS (SELECT 1 FROM role_grant g
                                            WHERE g.account_id = a.id AND g.role = %(role)s AND g.revoked_at IS NULL))
-   AND (%(cursor)s::timestamptz IS NULL OR a.created_at < %(cursor)s::timestamptz)
+   AND (%(cursor_at)s::timestamptz IS NULL
+        OR (a.created_at, a.id) < (%(cursor_at)s::timestamptz, %(cursor_id)s::uuid))
  ORDER BY a.created_at DESC, a.id DESC
  LIMIT %(limit)s
 """
 
 
-@router.get("/users")
+@router.get("/users", dependencies=[Depends(REQUIRE_REVIEW)])
 async def list_users(
-    request: Request,
-    principal: Reviewer,
     state: str | None = None,
     kind: str | None = None,
     role: str | None = None,
@@ -219,19 +357,20 @@ async def list_users(
 ) -> dict[str, Any]:
     """Every account, in every state and every role — the caller's own included (John, 2026-09-06).
 
-    `state=`, `kind=` and `role=` narrow it; `cursor=` is the previous page's last `created_at`.
-    Accounts created in the same microsecond would straddle a page boundary; nothing here writes
-    two accounts in one transaction, so that is a theoretical edge rather than a live one, and it
-    is recorded rather than papered over with a composite cursor the Admin tab has no use for."""
-    if cursor is not None:
-        try:
-            datetime.fromisoformat(cursor)
-        except ValueError:
-            raise BadCursor from None
+    `state=`, `kind=` and `role=` narrow it, each validated against its own enum; `cursor=` is the
+    previous page's `next_cursor`, a `(created_at, id)` keyset that walks tied timestamps without
+    dropping a row (fix round 1, F3).
+
+    Guarded by `users.review` and NOT audited (fix round 1, C2): spec §4 audits viewing an
+    application DETAIL, which is `users.view_detail` on the route below."""
+    keyset_at, keyset_id = _keyset(cursor)
+    filters = {"state": _filter("state", state, ACCOUNT_STATES),
+               "kind": _filter("kind", kind, APPLICATION_KINDS),
+               "role": _filter("role", role, GRANTABLE_ROLES)}
     capped = min(max(limit, 1), MAX_LIST)
     with closing(sync_conn()) as conn, conn:
         with conn.cursor() as cur:
-            cur.execute(LIST_SQL, {"state": state, "kind": kind, "role": role, "cursor": cursor, "limit": capped + 1})
+            cur.execute(LIST_SQL, {**filters, "cursor_at": keyset_at, "cursor_id": keyset_id, "limit": capped + 1})
             rows = cur.fetchall()
         items = [
             {"account_id": str(r[0]), "email": r[1], "state": r[2], "name": r[3], "affiliation_label": r[4],
@@ -241,15 +380,14 @@ async def list_users(
              "roles": [g["role"] for g in r[13]], "grants": r[13]}
             for r in rows[:capped]
         ]
-        # `users.review` is in `permissions.AUDITED`: reading the queue is itself a recorded act,
-        # because the queue is other people's applications.
-        audit.write(conn, actor=principal, action="users.list", target_type="account",
-                    after={"state": state, "kind": kind, "role": role, "returned": len(items)}, request=request)
-    return {"items": items, "next_cursor": _cursor(cast("str", items[-1]["created_at"])) if len(rows) > capped else None}
+    last = items[-1] if len(rows) > capped else None
+    return {"items": items,
+            "next_cursor": _cursor(cast("str", last["created_at"]), cast("str", last["account_id"])) if last is not None else None}
 
 
 @router.get("/users/{account_id}")
-async def detail(account_id: UUID, request: Request, principal: Reviewer) -> dict[str, Any]:
+async def detail(account_id: UUID, request: Request, principal: DetailViewer) -> dict[str, Any]:
+    """Spec §4: viewing an application detail is audited — this is the read that leaves a row."""
     with closing(sync_conn()) as conn, conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id, email, state, display_name, affiliation_label, created_at, last_sign_in_at FROM account WHERE id=%s", (account_id,))
@@ -304,6 +442,10 @@ def decide(
         if row is None:
             raise NotFound
         state, email = row
+        # Before the application lookup and before every INSERT/UPDATE below: a refusal here
+        # leaves the target row exactly as it was (fix round 1, F1/F2).
+        _refuse_unsafe_target(cur, actor=actor, actor_account=actor_account, account_id=account_id,
+                              self_forbidden=action in SELF_FORBIDDEN_ACTIONS, removing_admin=False)
         cur.execute("""SELECT id, kind FROM application WHERE account_id=%s AND status = ANY(%s)
                         ORDER BY submitted_at DESC LIMIT 1""", (account_id, list(OPEN_STATUSES)))
         application = cur.fetchone()
@@ -371,7 +513,11 @@ async def decide_route(account_id: UUID, body: Decision, request: Request, princ
 async def grants(account_id: UUID, body: GrantIn, request: Request, principal: Granter) -> dict[str, list[str]]:
     """`roles.grant` is `admin` only and in REAUTH: every grant — Staff and Admin included — is
     made by a named admin who has just re-entered their password, and is audited with the roles
-    before and after."""
+    before and after.
+
+    Removing an `admin` grant is the one direction with a floor under it (fix round 1, F5): never
+    from its own holder, and never the last live one — `roles.grant` is admin-only, so zero admins
+    is a state with no way back short of `bootstrap_admin.py` and database credentials."""
     if body.role not in GRANTABLE_ROLES:
         raise BadRole
     with closing(sync_conn()) as conn, conn:
@@ -380,6 +526,8 @@ async def grants(account_id: UUID, body: GrantIn, request: Request, principal: G
             cur.execute("SELECT 1 FROM account WHERE id=%s FOR UPDATE", (account_id,))
             if cur.fetchone() is None:
                 raise NotFound
+            _refuse_unsafe_target(cur, actor=principal, actor_account=actor_account, account_id=account_id,
+                                  self_forbidden=False, removing_admin=not body.grant and body.role == "admin")
             before = _roles(cur, account_id)
             if body.grant:
                 cur.execute("INSERT INTO role_grant (account_id, role, granted_by) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
@@ -398,19 +546,21 @@ async def grants(account_id: UUID, body: GrantIn, request: Request, principal: G
 async def create_token(body: TokenIn, request: Request, principal: TokenManager) -> dict[str, str]:
     """Minted once and shown once: only the SHA-256 is stored (`app.auth.tokens`), so a token that
     is not copied out of this response is gone. The audit row records the token's id, name, role
-    and lifetime — never the secret half."""
-    if body.role not in GRANTABLE_ROLES:
-        raise BadRole
+    and lifetime — never the secret half.
+
+    `buyer` or `seller` only (fix round 1, F6): see `TOKEN_ROLES`."""
+    if body.role not in TOKEN_ROLES:
+        raise BadTokenRole
     days = min(max(body.days, 1), MAX_TOKEN_DAYS)
     with closing(sync_conn()) as conn, conn:
         actor_account = _actor_account(conn, principal)
-        raw = T.issue_api_token(conn, name=body.name, role=body.role, created_by=actor_account, ttl=timedelta(days=days))
-        # `pm_<uuid>.<secret>` — the id half only. Sliced rather than parsed so there is no
-        # "impossible" None branch on a value this line has just minted.
-        token_id = raw.split(".", 1)[0][3:]
-        audit.write(conn, actor=principal, action="tokens.create", target_type="api_token", target_id=token_id,
+        issued = T.issue_api_token(conn, name=body.name, role=body.role, created_by=actor_account, ttl=timedelta(days=days))
+        # The id comes back from the mint (fix round 1, N5) rather than being sliced back out of
+        # `raw`, which hard-coded the `pm_` prefix length in a second place. Only the id — never
+        # the secret half — reaches a table whose triggers refuse DELETE.
+        audit.write(conn, actor=principal, action="tokens.create", target_type="api_token", target_id=issued.token_id,
                     after={"name": body.name, "role": body.role, "days": days}, request=request)
-    return {"token": raw}
+    return {"token": issued.raw}
 
 
 @router.post("/tokens/{token_id}/revoke")

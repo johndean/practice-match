@@ -22,6 +22,10 @@ REQUIRED_CI_COMMANDS = (
     "scripts/bootstrap_admin.py scripts/seed_persona.py --strict",
     "poetry run pytest -q -W error",
     "--cov=app",
+    # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
+    # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
+    # `tests/test_migrate.py::test_cli_entrypoint_runs_main_when_executed_as___main__`.
+    "--cov=scripts",
     "--cov-branch",
     "--cov-report=xml",
     "--cov-fail-under=100",

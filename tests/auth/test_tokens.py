@@ -33,7 +33,7 @@ def test_email_token_is_single_use_purpose_bound_and_expiring(conn):
 
 def test_api_token_round_trip_role_expiry_and_revocation(conn):
     admin = _account(conn, "a@x.io", "active")
-    raw = T.issue_api_token(conn, name="k6-qa", role="buyer", created_by=admin, ttl=timedelta(days=90))
+    raw = T.issue_api_token(conn, name="k6-qa", role="buyer", created_by=admin, ttl=timedelta(days=90)).raw
     assert raw.startswith("pm_")
     secret = raw.split(".", 1)[1]
     with conn.cursor() as cur:
@@ -90,7 +90,7 @@ def test_an_api_token_dies_with_its_creators_account(conn):
     joins `account` through `created_by` and fails closed when that account is suspended or
     revoked, which is also what makes `created_by` available as the principal's real actor id."""
     creator = _account(conn, "creator@x.io", "active")
-    raw = T.issue_api_token(conn, name="deploy-verify", role="admin", created_by=creator, ttl=timedelta(days=90))
+    raw = T.issue_api_token(conn, name="deploy-verify", role="admin", created_by=creator, ttl=timedelta(days=90)).raw
     p = T.verify_api_token(conn, raw)
     assert p is not None and p.created_by == creator and isinstance(p.created_by, UUID)
     for dead in ("suspended", "revoked"):

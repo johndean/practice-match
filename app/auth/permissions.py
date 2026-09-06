@@ -23,6 +23,12 @@ MATRIX: dict[str, frozenset[str]] = {
     "seller.apply": frozenset({"buyer"}),
     "page.seller": frozenset({"seller"}), "listing.manage_own": frozenset({"seller"}), "request.answer_own": frozenset({"seller"}),
     "page.admin": _STAFF, "users.review": _STAFF, "users.decide": _STAFF,
+    # Split from "users.review" in I5 fix round 1 (John, 2026-09-07). Spec §4 audits "viewing an
+    # application DETAIL" — the detail, not the list — and everything in AUDITED writes a row from
+    # its own handler, so leaving the LIST audited meant one row per poll of the Admin > Users tab
+    # into a table whose triggers refuse DELETE and which has no retention path. Same roles; the
+    # difference is only which of the two reads leaves a trace.
+    "users.view_detail": _STAFF,
     # Revoke is one branch of the admin Users screen's decide action, split out as its own
     # permission because it — and only it — is in REAUTH (spec §4: "Approve · Decline · Request
     # info · Suspend · Revoke (re-auth for Revoke)"). Fix round 1, Important 1: it was in REAUTH
@@ -40,7 +46,7 @@ REAUTH = frozenset({"licence.decide", "engine.activate", "roles.grant", "tokens.
 # decision exactly like "users.decide", which is audited, and I5's decide endpoint writes the audit
 # row for its revoke branch. `tests/auth/test_permissions.py` pins both that membership and
 # `AUDITED <= set(MATRIX)`, so a name here can no longer drift away from a real permission.
-AUDITED = frozenset({"users.review", "users.decide", "users.revoke", "roles.grant", "tokens.manage", "licence.decide", "engine.activate", "abuse.investigate"})
+AUDITED = frozenset({"users.view_detail", "users.decide", "users.revoke", "roles.grant", "tokens.manage", "licence.decide", "engine.activate", "abuse.investigate"})
 # (method, path template) for every route that is deliberately reachable without a permission.
 # `tests/auth/test_permissions.py::test_every_route_is_guarded_or_public` walks `create_app()` and
 # fails on anything here that is neither guarded by `require(...)` nor listed below (spec §4

@@ -154,6 +154,20 @@ def test_main_returns_3_when_the_database_is_unreachable(monkeypatch, capsys):
     assert "unreachable" in err and "OperationalError" in err
 
 
+def test_cli_entrypoint_runs_main_when_executed_as___main__(scratch_db, monkeypatch):
+    """I5 fix round 1, C1. `if __name__ == "__main__": sys.exit(main())` never executes on import,
+    and `railway.json`'s pre-deploy hook runs exactly that line — so it was the one uncovered arm
+    in the whole tree once `--cov=scripts` joined the gate. `runpy.run_path(..., run_name="__main__")`
+    re-execs the file IN this process (so pytest-cov sees it); `run_path`, not `run_module`, because
+    `run_module` on an already-imported dotted name raises a RuntimeWarning that `-W error` fails."""
+    import runpy
+
+    monkeypatch.setenv("DATABASE_URL", scratch_db)
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(migrate.__file__, run_name="__main__")
+    assert exc.value.code == 0
+
+
 def test_migration_files_never_manage_their_own_transaction():
     """I7 fix round 1: scripts/migrate.py commits each file's own SQL and its ledger
     row as ONE transaction; a migration that opened/closed its own transaction would

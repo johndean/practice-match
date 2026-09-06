@@ -77,6 +77,10 @@ def test_indexes_exist(conn):
         cur.execute("SELECT indexname FROM pg_indexes WHERE schemaname = 'public'")
         names = {r[0] for r in cur.fetchall()}
     assert {"session_account_idx", "application_queue_idx", "email_outbox_due_idx", "audit_log_target_idx"} <= names
+    # I5 fix round 1, F9 (migrations/015): `GET /api/admin/users` sorts the whole `account` table
+    # and its LEFT JOIN LATERAL had no index on `application(account_id, …)` at all — one
+    # sequential scan of `application` per account row, against spec §6's 150 ms budget.
+    assert {"account_listing_idx", "application_account_idx"} <= names
 
 
 def test_account_delete_cascades_to_child_rows(conn):
