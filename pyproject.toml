@@ -1,6 +1,6 @@
 [project]
 name = "practice-match"
-version = "0.1.0"
+version = "0.1.1"
 description = "VIN Foundation veterinary practice marketplace — API and worker"
 requires-python = ">=3.12,<3.13"
 dependencies = [

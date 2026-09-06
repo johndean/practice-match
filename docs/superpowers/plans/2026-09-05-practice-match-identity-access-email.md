@@ -2279,7 +2279,7 @@ Beat: `"mail-send-minutely": {"task": "mail.send", "schedule": 60.0}`, `"session
 
 **Interfaces:**
 - Consumes: `frontend/src/auth/permissions.ts` (generated: `ROLES`, `Permission`, `MATRIX`, `REAUTH`), Platform Task 2's `RoutedState`, `guard(state, patch)`, `routes.ts`.
-- Produces: `can(perm: Permission, me: Me | null, opts?: { marketDataPublic?: boolean }) -> boolean`; `Me { id, email, name, role, initials, state, roles: string[], affiliation_label: string | null }`; `api.signIn(email, password) -> Promise<Me>` (throws `AuthError(code, message)` with the server's code), `api.signUp`, `api.verify(token)`, `api.apply(kind, fields)`, `api.me() -> Promise<Me | null>` (null on 401), `api.signOut()`, `api.reauth(password)`; `me.ts`: `useMe()` store (`me`, `load()`, `set()`, `clear()`); `guard(state, patch, ctx: { me: Me | null; marketDataPublic?: boolean })` — signed out + member route → gate/signin with `pending = patch`; signed in but lacking the route's permission → `apply = { screen: 'gate', gate: 'unavailable' }` (a new gate state rendered with the design's declined-screen layout and copy "This page is not available to your account"), `pending = null`; `ROUTE_PERMS: Record<string, Permission>` (`browse-listings → page.browse`, `browse-market → market.read`, `detail → listing.read`, `requests → request.read_own`, `seller → page.seller`, `admin-* → page.admin`); `toUserRows(items, ui)` and `toPermissionRows(matrix)` in the Data-tab `cell()` shape; harness `signInAsPersona(page)` (POST `/api/auth/signin` via `page.request`, then reload) replacing jump-bar sign-in in `screens.ts`.
+- Produces: `can(perm: Permission, me: Me | null, opts?: { marketDataPublic?: boolean }) -> boolean`; `Me { id, email, name, role, initials, state, roles: string[], affiliation_label: string | null }`; `api.signIn(email, password) -> Promise<Me>` (throws `AuthError(code, message)` with the server's code), `api.signUp`, `api.verify(token)`, `api.apply(kind, fields)`, `api.me() -> Promise<Me | null>` (null on 401), `api.signOut()`, `api.reauth(password)`; `me.ts`: `useMe()` store (`me`, `load()`, `set()`, `clear()`); `guard(state, patch, ctx: { me: Me | null; marketDataPublic?: boolean })` — signed out + member route → gate/signin with `pending = patch`; signed in but lacking the route's permission → `apply = { screen: 'gate', gate: 'unavailable' }` (a new gate state rendered with the design's declined-screen layout and copy "This page is not available to your account"), `pending = null`; `ROUTE_PERMS: Record<string, Permission>` (`browse → page.browse`, `detail → listing.read`, `requests → request.read_own`, `seller → page.seller`, `admin-* → page.admin`); the market column inside Browse checks `can('market.read')` separately, honouring `MARKET_DATA_PUBLIC` (when false, anonymous and applicant visitors see the map and results without shading and a sign-in prompt in the market column); `toUserRows(items, ui)` and `toPermissionRows(matrix)` in the Data-tab `cell()` shape; harness `signInAsPersona(page)` (POST `/api/auth/signin` via `page.request`, then reload) replacing jump-bar sign-in in `screens.ts`.
 
 - [ ] **Step 1: Failing tests**
 
@@ -2323,7 +2323,7 @@ describe('guard with permissions', () => {
     expect(guard({ ...base, auth: true }, { screen: 'admin', adminTab: 'users' }, { me: buyer })).toEqual({ apply: { screen: 'gate', gate: 'unavailable' }, pending: null });
   });
   it('signed in with the permission → the patch applies', () => {
-    expect(guard({ ...base, auth: true }, { screen: 'browse', browseMode: 'listings' }, { me: buyer })).toEqual({ apply: { screen: 'browse', browseMode: 'listings' }, pending: null });
+    expect(guard({ ...base, auth: true }, { screen: 'browse' }, { me: buyer })).toEqual({ apply: { screen: 'browse' }, pending: null });
   });
 });
 ```
@@ -2363,11 +2363,13 @@ import { can } from '../auth/can';
 import type { Me } from '../auth/me';
 import type { Permission } from '../auth/permissions';
 
-export const ROUTE_PERMS: Record<string, Permission> = { browse: 'page.browse', 'browse-market': 'market.read', detail: 'listing.read', requests: 'request.read_own', seller: 'page.seller', admin: 'page.admin' };
+export const ROUTE_PERMS: Record<string, Permission> = { browse: 'page.browse', detail: 'listing.read', requests: 'request.read_own', seller: 'page.seller', admin: 'page.admin' };
 
 function permFor(patch: Partial<RoutedState>): Permission | null {
   if (!patch.screen || patch.screen === 'gate') return null;
-  if (patch.screen === 'browse') return patch.browseMode === 'market' ? ROUTE_PERMS['browse-market'] : ROUTE_PERMS.browse;
+  // Browse V3 (spec D3): Browse Practices is ONE screen, so the route permission keys on
+  // `patch.screen` alone — there is no browseMode to branch on. The market-data column
+  // inside the screen checks can('market.read') itself, honouring MARKET_DATA_PUBLIC.
   return ROUTE_PERMS[patch.screen] ?? null;
 }
 
@@ -2379,7 +2381,7 @@ export function guard(state: RoutedState & { auth?: boolean }, patch: Partial<Ro
   return { apply: patch, pending: null };
 }
 ```
-`useStateRouteSync` passes `{ me: useMe().me }`. `api.ts` wraps `fetch` (same-origin credentials, JSON, `X-CSRF-Token` from `document.cookie`), `me.ts` is a small module-level store (`ref<Me | null>`). `admin/users.ts` and `admin/permissions.ts` follow the Map-engines M6 pattern (the `cell()`/`A()` shapes and pill tones copied verbatim from `logic.js`). Harness: `signInAsPersona(page)` posts `{email: 'design@practice-match.test', password: process.env.PERSONA_PASSWORD}` through `page.request` (cookies flow into the browser context), then `page.goto(url)`; `screens.ts` replaces every jump-bar step with it; the reference project is unchanged (the design still uses its own shortcuts).
+`useStateRouteSync` passes `{ me: useMe().me }`. `api.ts` wraps `fetch` (same-origin credentials, JSON, `X-CSRF-Token` from `document.cookie`), `me.ts` is a small module-level store (`ref<Me | null>`). `admin/users.ts` and `admin/permissions.ts` follow the Map-engines M6 pattern (the `cell()`/`A()` shapes and pill tones copied verbatim from `logic.js`). Harness: `signInAsPersona(page)` posts `{email: 'design@practice-match.test', password: process.env.PERSONA_PASSWORD}` through `page.request` (cookies flow into the browser context), then `page.goto(url)`; `screens.ts` replaces every jump-bar step with it; the reference project is unchanged (the design still uses its own shortcuts). `screens.ts` edits apply **on top of** Browse V3's screen list (docs/superpowers/plans/2026-09-06-browse-v3-mobile.md, Task V9): there is one `browse` state, not `browse-listings`/`browse-market`, and three new states — `browse-layer-menu`, `browse-compare-open`, `browse-legend-collapsed`.
 
 - [ ] **Step 4: Run to verify passing** — `npx vitest run && npx vue-tsc --noEmit && npx playwright test --project=app` → green (the jump bar still exists at this point; both sign-in paths work).
 
@@ -2390,7 +2392,7 @@ export function guard(state: RoutedState & { auth?: boolean }, patch: Partial<Ro
 ### Task I8: Wire the prototype to the API and execute the launch-removal list (zero-regression order)
 
 **Files:**
-- Modify: `frontend/src/logic.js` (`signIn`, `submitApply`, `signOut`, `me`/`auth` bootstrap, gate state), `frontend/src/logic.test.ts` (characterisation updates, RED then GREEN), `frontend/src/App.vue` (remove jump bar markup, `gateStates`, demo credentials; add the `unavailable` gate state using the declined-screen layout), `frontend/src/main.ts` (`useMe().load()` before mount; `startViewport` removed), `frontend/tests/screens.ts` (`gate-unavailable` state), `frontend/tests/harness.ts` (mask the sign-in copy string until the design reference changes — `DESIGN_HAS_EMAIL_COPY=false`)
+- Modify: `frontend/src/logic.js` (`signIn`, `submitApply`, `signOut`, `me`/`auth` bootstrap, gate state), `frontend/src/logic.test.ts` (characterisation updates, RED then GREEN), `frontend/scripts/convert-dc.mjs` (a `--launch` mode that strips the prototype blocks during conversion), `frontend/package.json` (a `gen:app:launch` twin of `gen:app`), `frontend/tests/app-generated.test.ts` (asserts BOTH modes are byte-identical to a fresh conversion), `frontend/tests/convert-dc.test.ts` (unit tests for the stripping rules), `frontend/src/main.ts` (`useMe().load()` before mount; `startViewport` removed), `frontend/tests/screens.ts` (`gate-unavailable` state), `frontend/tests/harness.ts` (mask the sign-in copy string until the design reference changes — `DESIGN_HAS_EMAIL_COPY=false`)
 
 **Interfaces:**
 - Consumes: `api.signIn/signUp/verify/apply/me/signOut` (Task I7), `useMe()`.
@@ -2430,9 +2432,21 @@ Delete the old `jumpTo` characterisation tests. Run: `npx vitest run src/logic.t
 
 `signIn` becomes `async`: validates as before, then `try { const me = await api.signIn(s.email, s.pw); this.setState({ auth: true, screen: this.pendingScreen || 'browse', me: { name: me.name, role: me.role, initials: me.initials }, email: me.email, formError: '' }); } catch (e) { this.setState({ formError: e.message || 'Sign-in failed.', auth: false, screen: 'gate' }); }`. `submitApply` maps `apply` fields → `{ name, vin_member_id: vin, school_year: grad, license_state: state, employer, intent, affirm }` and calls `api.apply('buyer', …)`, then `gate: 'pending'`. `signOut` awaits `api.signOut()` first. `componentDidMount` bootstrap: read `useMe().me` (loaded in `main.ts`) → `auth`/`gate` per the interface above. Remove `jumpTo` and the `jumps` array from `renderVals`. Run: `npx vitest run src/logic.test.ts` → pass.
 
-- [ ] **Step 3: Remove the prototype affordances (App.vue, main.ts) and add the `unavailable` gate**
+- [ ] **Step 3: Execute the launch-removal list through the generator (`convert-dc.mjs --launch`), never by hand**
 
-Delete the jump-bar markup block, the `gateStates` shortcuts block and the pre-filled demo credentials (`email`/`pw` defaults become `''`) — the launch-removal list from the handoff README. Add `gateUnavailable` (`s.screen === 'gate' && s.gate === 'unavailable'`) rendered with the declined-screen layout: kicker "Not available", title "This page is not available to your account", body "Your access level does not include this page. If you think it should, reply to your approval email.", primary "Back to Browse" → `go('browse')`. `screens.ts` adds `gate-unavailable` (sign in as a buyer-only test account seeded by `seed_persona.py --buyer-only`, visit `/admin`). Harness: while `DESIGN_HAS_EMAIL_COPY !== 'true'`, mask the sign-in label element in `gate-signin` (the design says "VIN username", the app says "Email").
+Browse V3 spec D2: `frontend/src/App.vue` is generated, so a hand edit is undone by the next
+`npm run gen:app` and breaks `frontend/tests/app-generated.test.ts`. Add a `--launch` flag to
+`convert-dc.mjs` that, during conversion, drops the jump-bar markup block, the
+"Prototype — access states" shortcuts block and the pre-filled demo credentials, and add a
+`gen:app:launch` script that writes the same three outputs. `app-generated.test.ts` asserts
+both modes reproduce their committed output byte-for-byte, so the launch build stays honest
+and `npm run gen:app` still reproduces the prototype build. `startScreen`/`startViewport` are
+dropped from `app.setup.js`'s `defineProps` in the same change. The `unavailable` gate state
+is added to the design reference (a Claude Design update) and reaches the app by
+regeneration — not by editing `App.vue`.
+
+**After this task lands, `npm run gen:app` must not be re-run for a production build**: the
+launch build comes from `npm run gen:app:launch`.
 
 - [ ] **Step 4: Run — GREEN across the board**
 

@@ -715,6 +715,8 @@ async def map_config() -> dict:
 ```
 (The Leaflet tile URLs are the design's; when `esri_tiles` is cleared or CARTO is chosen, this constant follows the registry row's `base_url` — Task M9 records that follow-up for SP2's wiring.)
 
+**Basemap licence — one decision record, owned by John and the VIN Foundation.** Esri (the approved design) vs CARTO (the Census spec) is **one** open question, recorded in the Census plan (`docs/superpowers/plans/2026-09-05-practice-match-census-data-layer.md`, "Basemap licence — one decision record") and referenced, not restated, here and in the Browse V3 spec's "Legally load-bearing" section. Do not swap either way without that decision; attribution stays visible on every map regardless (`attributionControl: true`).
+
 `app/api/market.py` — `_registry` selects `kind, engines, active` too; `layers()` becomes:
 ```python
 LAYERS += [
@@ -923,9 +925,24 @@ In `decide_license`, read the old status first (`SELECT license_status … FOR U
 
 ### Task M5: Frontend — shell config, one-engine import, `GoogleMapEngine`, shared host, gate watcher, eligibility
 
+> **Rebase note (Browse V3, spec D4).** This task lands **after** the Browse V3 sub-project.
+> `engine.ts` by then already carries `AreaStyle`, `RingStyle`, `TooltipSpec`, `Handle.openTooltip`,
+> `rectangle(bounds, style, group, tooltip?, onClick?)`, `ring(center, radiusM, style, group)` and `panInside(pos, padding)`, and
+> `MarketMapView.vue` is the V3 port (community mosaic shading on one shared canvas renderer,
+> `rf-tip`/`rf-callout`, one dashed 16 km ring, `scaleControl: false`). `GoogleMapEngine`
+> must implement `rectangle`, `ring` and `panInside` too, and `engines/contract.test.ts` must
+> cover them for both engines. The V2-era listings map component this task's file list used to
+> name was deleted in Browse V3 Task V11 and no longer exists.
+>
+> Browse V3 also restyled every display-size heading (V3 drops `text-transform: uppercase` and
+> its letter-spacing on all 26; micro labels keep theirs), so every visual baseline in
+> `frontend/tests/visual.spec.ts-snapshots/` was regenerated from the V3 design in Browse V3
+> Task V9 — including the screens the V3 bundle listed as untouched. There is no pre-V3 pixel
+> oracle to compare against any more; the V3 reference is the oracle.
+
 **Files:**
 - Create: `frontend/src/map/config.ts`, `frontend/src/map/gate.ts`, `frontend/src/map/host.ts`, `frontend/src/map/eligibility.ts`, `frontend/src/map/engines/google.ts`, `frontend/src/map/engines/google-loader.ts`, `frontend/src/map/engines/google.css`, `frontend/src/map/testing/google-stub.ts`, tests `config.test.ts`, `gate.test.ts`, `host.test.ts`, `eligibility.test.ts`, `engines/google.test.ts`, `engines/contract.test.ts`
-- Modify: `frontend/src/map/create.ts` (config-driven), `frontend/vite.config.ts` (`manualChunks`, `build.manifest`), `frontend/src/components/MarketMapView.vue` and `ListingsMap.vue` (use `useMapHost()`), `frontend/src/main.ts` (`installGateWatcher(router)`), `frontend/src/map/boundary.test.ts` (allow the Google loader in `engines/`)
+- Modify: `frontend/src/map/create.ts` (config-driven), `frontend/vite.config.ts` (`manualChunks`, `build.manifest`), `frontend/src/components/MarketMapView.vue` (use `useMapHost()`), `frontend/src/main.ts` (`installGateWatcher(router)`), `frontend/src/map/boundary.test.ts` (allow the Google loader in `engines/`)
 
 **Interfaces:**
 - Consumes: `MapEngine`, `MountOptions`, `MarkerOptions`, `CircleStyle`, `LatLng`, `BaseKind` from `frontend/src/map/engine.ts` and `LeafletMapEngine` (Platform Task 1b); `router` from Platform Task 2.
@@ -1201,7 +1218,7 @@ export function useMapHost(deps: { create: () => Promise<MapEngine> } = { create
   };
 }
 ```
-(`MountOptions.basemap` is applied on re-attach; per-attach `zoomControl`/`scaleControl` differences between `ListingsMap` and `MarketMapView` are handled by each engine's `setControls(opts)` — add `setControls(opts: Pick<MountOptions, 'zoomControl' | 'scaleControl'>): void` to `MapEngine` in `engine.ts`, implemented in Leaflet by adding/removing `L.control.zoom`/`L.control.scale` and in Google by `map.setOptions({ zoomControl, scaleControl })`; `attach` calls it after `setBase`.)
+(`MountOptions.basemap` is applied on re-attach; per-attach `zoomControl`/`scaleControl` differences (the V3 market map mounts both `false`) are handled by each engine's `setControls(opts)` — add `setControls(opts: Pick<MountOptions, 'zoomControl' | 'scaleControl'>): void` to `MapEngine` in `engine.ts`, implemented in Leaflet by adding/removing `L.control.zoom`/`L.control.scale` and in Google by `map.setOptions({ zoomControl, scaleControl })`; `attach` calls it after `setBase`.)
 
 `frontend/src/map/engines/google-loader.ts`:
 ```ts
@@ -1285,7 +1302,7 @@ build: { assetsDir: '_app', manifest: true, rollupOptions: { output: { chunkFile
   if (id.includes('/src/map/engines/google')) return 'engine-google';
 } } } }
 ```
-Components: `MarketMapView.vue` and `ListingsMap.vue` replace their `createEngine()` call (Task 1b) with `const host = useMapHost(); engine = await host.attach(hostEl, { center, zoom, basemap, zoomControl, scaleControl }); … onBeforeUnmount(() => host.detach())`, and gate `props.layers.*` through `enabledFor(layerInfo, engine.name)` once SP2 supplies `layerInfo` from `/api/layers` (until then fixtures carry `enabled: true, engines: ['leaflet','google']`). `main.ts`: `installGateWatcher(router, () => { /* next mount re-attaches on the new engine */ __resetHost(); })`.
+Components: `MarketMapView.vue` — the only map component after Browse V3 Task V11 deleted the V2 listings map — replaces its `createEngine()` call (Task 1b) with `const host = useMapHost(); engine = await host.attach(hostEl, { center, zoom, basemap, zoomControl: false, scaleControl: false }); … onBeforeUnmount(() => host.detach())`. `main.ts`: `installGateWatcher(router, () => { /* next mount re-attaches on the new engine */ __resetHost(); })`.
 
 - [ ] **Step 4: Run to verify passing** — `cd frontend && npx vitest run && npm run build && ls dist/_app | grep -E 'engine-(leaflet|google)-'` → tests pass; both chunks exist; the main bundle contains no `leaflet` and no `maps.googleapis.com` string (`! grep -l 'maps.googleapis.com\|L.tileLayer' dist/_app/index-*.js`).
 
@@ -1389,6 +1406,9 @@ test.describe.serial('map engines', () => {
   test('Leaflet active: shell preloads the Leaflet chunk, Google is never requested, CSP names Leaflet hosts only', async ({ page }) => {
     await prepare(page);
     const rec = recorder(page);
+    // `?tab=market` is a legacy no-op after Browse V3 (spec D4): Browse Practices is one
+    // screen and always shows market data. The URL is kept here because it is the shape old
+    // links take, and it must keep resolving.
     const resp = await page.goto(`${API}/browse?tab=market`);
     const html = await resp!.text();
     expect(html).toMatch(/<link rel="modulepreload" href="\/_app\/engine-leaflet-[a-z0-9]+\.js">/);
@@ -1405,6 +1425,9 @@ test.describe.serial('map engines', () => {
     await activate(request, 'map_engine_google');
     await prepare(page);   // routes https://maps.googleapis.com/maps/api/js** to the stub
     const rec = recorder(page);
+    // `?tab=market` is a legacy no-op after Browse V3 (spec D4): Browse Practices is one
+    // screen and always shows market data. The URL is kept here because it is the shape old
+    // links take, and it must keep resolving.
     const resp = await page.goto(`${API}/browse?tab=market`);
     expect(await resp!.text()).toMatch(/engine-google-[a-z0-9]+\.js/);
     expect(resp!.headers()['content-security-policy']).toContain('https://maps.googleapis.com');
@@ -1422,6 +1445,9 @@ test.describe.serial('map engines', () => {
   test('activating Leaflet again restores the design engine', async ({ page, request }) => {
     await activate(request, 'map_engine_leaflet');
     await prepare(page);
+    // `?tab=market` is a legacy no-op after Browse V3 (spec D4): Browse Practices is one
+    // screen and always shows market data. The URL is kept here because it is the shape old
+    // links take, and it must keep resolving.
     await page.goto(`${API}/browse?tab=market`);
     await page.getByRole('button', { name: /sign in/i }).click();
     await expect(page.locator('[data-map="leaflet"]')).toHaveCount(1);

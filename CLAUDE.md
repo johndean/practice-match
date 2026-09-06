@@ -25,6 +25,8 @@ Every environment variable is set only in Railway (per service, per environment)
 - **`npm run test:visual` is the arbiter.** Baselines are generated from the reference in the same run (`npm run test:visual:baselines`). Tolerance is zero (`playwright.config.ts`); relaxing it requires a recorded reason.
 - The design-system cascade matters: `frontend/index.html` links `colors_and_type.css`, `preview/_preview.css`, `ui_kits/vin/kit.css` in that order, before the app styles.
 
+`docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html` is kept as the **pre-V3 oracle** — what a suspected regression is diffed against, not what the gates compare to. **Every** visual and DOM oracle is regenerated from the V3 design: V3 deliberately drops `text-transform: uppercase` and its positive letter-spacing on all 26 display-size heading styles (micro labels keep and extend theirs), so even the screens V3's own bundle listed as untouched moved, and its `CHANGE_LOG` C14 / `DEAD_CODE_CHECKLIST` byte-identical claim is wrong. Zero regression on those thirteen non-Browse screens (`mobile-list`, `mobile-detail`, `detail`, `requests`, `seller-dash`, the four `wizard-*`, the four `admin-*`) is proved by the DOM oracle — node-for-node identical to the V3 reference — plus the zero-tolerance pixel gate, and their hashes in `frontend/tests/baseline-manifest.json` are re-based on the V3 baselines. `header-1100` and `header-1000` are not among them: they are Browse screenshots.
+
 ## Non-negotiables (from po.vin / rounds.vin, still true here)
 
 - **Surgical diffs.** The change contains the ask and nothing else. Never remove a function or feature while doing unrelated work. No drive-by refactors or reformatting.
@@ -46,7 +48,7 @@ Prototype jump bar markup (`prototypeBar`, already off in production) · "Protot
 
 ## Layout
 
-`frontend/` Vue app · `frontend/tests/` Playwright (`screens.ts` = the 25 approved states) · `app/` FastAPI (`api/health.py`, `static.py`, `checks.py`, `tasks/celery_app.py`) · `migrations/` numbered SQL (ledger runner `scripts/migrate.py`) · `scripts/` `start.sh` (roles api|worker|migrate), `deploy.sh`, `verify-deploy.sh`, `verify-image.sh` · `tests/` pytest · `docs/design-reference/` the handoff bundle (never shipped) · `docs/superpowers/{specs,plans}/`.
+`frontend/` Vue app · `frontend/tests/` Playwright (`screens.ts` = the 28 approved states) · `app/` FastAPI (`api/health.py`, `static.py`, `checks.py`, `tasks/celery_app.py`) · `migrations/` numbered SQL (ledger runner `scripts/migrate.py`) · `scripts/` `start.sh` (roles api|worker|migrate), `deploy.sh`, `verify-deploy.sh`, `verify-image.sh` · `tests/` pytest · `docs/design-reference/` the handoff bundle (never shipped) · `docs/superpowers/{specs,plans}/`.
 
 ## Common operations
 
