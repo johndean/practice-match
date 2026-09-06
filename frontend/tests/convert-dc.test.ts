@@ -51,8 +51,8 @@ describe('convert — template constructs', () => {
     expect(template).toBe('<template v-if="v.isDesktop"><template v-for="(n, $index) in __arr(v.nav)" :key="$index"><button @click="n?.go" :style="n?.style"><span v-if="__s(n?.label) !== null" class="sc-interp">{{ __s(n?.label) }}</span> <span v-if="__s(v.title) !== null" class="sc-interp">{{ __s(v.title) }}</span></button></template></template>');
   });
   it('maps x-import and image-slot to the Vue components with bound props and drops hint-* attributes', () => {
-    const { template } = convert('<x-import component="AustinMap" from="./AustinMap.jsx" markers="{{ markers }}" active-id="{{ activeId }}" on-select="{{ selectMarker }}" hint-size="100%,100%"></x-import><image-slot id="{{ p.photoId }}" shape="rect" src="{{ p.photoSrc }}" placeholder="{{ p.photoLabel }}"></image-slot>');
-    expect(template).toBe('<div class="sc-host-x" style="display: contents"><ListingsMap :markers="v.markers" :active-id="v.activeId" :on-select="v.selectMarker"></ListingsMap></div><ImageSlot :id="v.p?.photoId" shape="rect" :src="v.p?.photoSrc" :placeholder="v.p?.photoLabel"></ImageSlot>');
+    const { template } = convert('<x-import component="MarketMapV3" from="./MarketMapV3.jsx" practices="{{ md.practices }}" active-id="{{ md.activeId }}" on-select="{{ md.selectFromMap }}" hint-size="100%,100%"></x-import><image-slot id="{{ p.photoId }}" shape="rect" src="{{ p.photoSrc }}" placeholder="{{ p.photoLabel }}"></image-slot>');
+    expect(template).toBe('<div class="sc-host-x" style="display: contents"><MarketMapView :practices="v.md?.practices" :active-id="v.md?.activeId" :on-select="v.md?.selectFromMap"></MarketMapView></div><ImageSlot :id="v.p?.photoId" shape="rect" :src="v.p?.photoSrc" :placeholder="v.p?.photoLabel"></ImageSlot>');
     expect(convert('<x-import component="MarketMap" from="./MarketMap.jsx" practices="{{ md.practices }}"></x-import>').template).toBe('<div class="sc-host-x" style="display: contents"><MarketMapView :practices="v.md?.practices"></MarketMapView></div>');
   });
 
@@ -133,7 +133,7 @@ describe('convert — template constructs', () => {
   // regenerating; all three already convert, and are pinned here so a future generator edit
   // cannot silently break the V3 reference. The fourth — the x-import component NAME — is
   // the one that actually throws, because the design's map component was renamed
-  // AustinMap/MarketMap → MarketMapV3.
+  // MarketMap → MarketMapV3.
   describe('V3 reference constructs', () => {
     it('maps the V3 map component onto the same Vue component, with every kebab-case prop bound', () => {
       const { template } = convert('<x-import component="MarketMapV3" from="./MarketMapV3.jsx" on-basemap="{{ md.setBasemap }}" practices="{{ md.practices }}" active-layer="{{ md.activeLayer }}" show-drive="{{ md.showDrive }}" on-area="{{ md.selectArea }}" recenter-key="{{ md.recenterKey }}" hint-size="100%,100%"></x-import>');
