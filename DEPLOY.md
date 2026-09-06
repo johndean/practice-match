@@ -62,7 +62,8 @@ Redeploy the previous image/deployment for the service — Railway dashboard →
 |---|---|---|
 | Bad build on QA | fix forward; QA is disposable | — |
 | Regression on production | redeploy the previous deployment (dashboard → service → Deployments → Redeploy); `scripts/verify-deploy.sh production` | ~5 min |
-| Migration failed | The api container runs the migrations at start and exits before uvicorn if a file fails, so the new deployment never comes up healthy and the previous one keeps serving; the failed file was not recorded. Fix the SQL and redeploy. (The pre-deploy hook, when Railway runs it, aborts earlier with the same effect.) | — |
+| Migration failed (a SQL file errors) | The api container runs the migrations at start and exits before uvicorn (`[start.sh] migration failed`), so the new container never serves; the failed file was not recorded. Fix the SQL and redeploy. Whether Railway keeps the previous deployment serving meanwhile depends on its health-gated rollout, which the deployment manifest has not shown honouring railway.json — check the dashboard, and if the old deployment is gone, redeploy the last good one (row above). | — |
+| Database unreachable at boot | The api retries the migrations (`MIGRATE_RETRIES`×`MIGRATE_RETRY_SLEEP`, default 5 × 5 s), then serves anyway so the static site stays up; sign-ups answer 503 until the database returns and a restart applies the files (`railway restart --service api`). | — |
 | Worker crash-loop | `railway logs --service worker --environment <env> --lines 50`; the health server exits with Celery so Railway restarts it — check `REDIS_URL` reference and Redis service health | — |
 | Wrong project deployed | `scripts/deploy.sh` refuses; if a bare `railway up` was used, redeploy the affected project's own last good commit | — |
 

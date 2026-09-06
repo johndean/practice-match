@@ -239,3 +239,5 @@ def test_deploy_md_says_the_api_container_runs_migrations_at_start():
     text = (ROOT / "DEPLOY.md").read_text()
     assert "runs the migrations at start" in text
     assert "Deploy aborted by the pre-deploy hook" not in text  # the old rollback row's claim was never true on Railway
+    assert "unreachable at boot" in text
+    assert "keeps serving" not in text

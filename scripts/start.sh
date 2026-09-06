@@ -25,14 +25,25 @@ echo "[start.sh] role=$role (RAILWAY_SERVICE_NAME=${RAILWAY_SERVICE_NAME:-unset}
 
 case "$role" in
   api)
-    # Migrations run here as well as in railway.json's pre-deploy hook: a QA probe
-    # (2026-09-06) found no schema_migrations table after several deploys and the CLI
-    # cannot show the hook's output, so the container proves the schema itself before
-    # it serves. scripts/migrate.py is idempotent and advisory-locked, so api restarts
-    # cannot collide; a failing file exits here (set -e) and uvicorn never starts.
-    mcmd=(python scripts/migrate.py)
+    # Migrations first (Task 11g): the container proves the schema before it serves, because
+    # Railway's pre-deploy hook has not been observed running. Exit 3 = database unreachable:
+    # retry, then serve anyway so the static site stays up (sign-ups fail closed with 503 and
+    # the next restart applies the files). Any other failure is a broken migration file: stop
+    # here, before uvicorn.
     cmd=(uvicorn app.main:app --host 0.0.0.0 --port "${PORT:-8000}" --proxy-headers --forwarded-allow-ips='*')
-    if [[ "${DRY_RUN:-0}" == "1" ]]; then echo "${mcmd[*]}"; echo "${cmd[*]}"; else "${mcmd[@]}"; exec "${cmd[@]}"; fi
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then echo "python scripts/migrate.py"; echo "${cmd[*]}"; exit 0; fi
+    attempt=0
+    until python scripts/migrate.py; do
+      code=$?
+      if [[ "$code" -ne 3 ]]; then echo "[start.sh] migration failed (exit $code) — not serving" >&2; exit "$code"; fi
+      attempt=$((attempt + 1))
+      if [[ "$attempt" -ge "${MIGRATE_RETRIES:-5}" ]]; then
+        echo "[start.sh] database unreachable after $attempt attempts — serving without migrations; sign-ups fail closed until the next restart" >&2
+        break
+      fi
+      sleep "${MIGRATE_RETRY_SLEEP:-5}"
+    done
+    exec "${cmd[@]}"
     ;;
   worker)
     wcmd=(celery -A app.tasks.celery_app:celery_app worker -B --loglevel=info --concurrency="${CELERY_CONCURRENCY:-2}" --queues=celery)

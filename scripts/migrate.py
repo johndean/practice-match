@@ -83,7 +83,11 @@ def main() -> int:
         print("[migrate] DATABASE_URL is not set", file=sys.stderr)
         return 2
     print(f"[migrate] applying from {MIGRATIONS_DIR}")
-    applied = run(dsn)
+    try:
+        applied = run(dsn)
+    except psycopg2.OperationalError as exc:  # cannot reach the database: retryable, distinct from a broken file
+        print(f"[migrate] database unreachable: {type(exc).__name__}", file=sys.stderr)
+        return 3
     print(f"[migrate] done — {len(applied)} applied")
     return 0
 

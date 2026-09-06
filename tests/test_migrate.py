@@ -126,3 +126,12 @@ def test_main_returns_0_and_applies_nothing_on_a_second_run(scratch_db, monkeypa
     second_code = migrate.main()
     assert second_code == 0
     assert "done — 0 applied" in capsys.readouterr().out
+
+
+def test_main_returns_3_when_the_database_is_unreachable(monkeypatch, capsys):
+    """start.sh retries exit 3 (unreachable) but stops on any other failure (a broken migration file)."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql://x:x@127.0.0.1:1/x")
+    code = migrate.main()
+    assert code == 3
+    err = capsys.readouterr().err
+    assert "unreachable" in err and "OperationalError" in err
