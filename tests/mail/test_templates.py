@@ -1,3 +1,4 @@
+import html
 import re
 from pathlib import Path
 
@@ -38,7 +39,7 @@ def test_application_received_uses_the_design_copy():
     for key in ("application_received", "seller_application_received"):
         rendered = TP.render(key, {}, base_url="https://foundation.vin")
         assert body in rendered.text, key
-        assert body in rendered.html, key
+        assert html.escape(body) in rendered.html, key
 
 
 # --- supplemental (not in the brief's Step 1 — the spec's escaping/no-pixel rules, and branches) ---
@@ -62,7 +63,7 @@ def test_application_declined_uses_the_designs_declined_screen():
     for key in ("application_declined", "seller_application_declined"):
         r = TP.render(key, {"note": "Affiliation not verified"}, base_url="https://foundation.vin")
         assert body in r.text, key
-        assert body in r.html, key
+        assert html.escape(body) in r.html, key
         assert "Affiliation not verified" in r.text and "Affiliation not verified" in r.html, key
 
 
@@ -99,3 +100,21 @@ def test_the_footer_names_the_environment_the_mail_came_from():
     """A QA message must be visibly a QA message: `base_url` is the environment's own origin."""
     r = TP.render("password_changed", {}, base_url="https://qa.foundation.vin")
     assert "https://qa.foundation.vin" in r.text and 'href="https://qa.foundation.vin"' in r.html
+
+
+def test_no_subject_carries_a_placeholder_at_all():
+    """F11. "No token in a subject" (spec §5) holds because `render()` never `format`s the subject —
+    but the brief's test only checks `"token=" not in r.subject`, which is a proxy for the property
+    rather than the property. This is the property: a subject has no substitution point, so nothing
+    a caller passes can ever reach one."""
+    for key, template in TP.TEMPLATES.items():
+        assert "{" not in template.subject and "}" not in template.subject, key
+
+
+def test_a_design_body_containing_markup_would_be_escaped_when_embedded():
+    """F15. The two design-sourced bodies are compile-time constants, so this is not an injection
+    vector today — but a future re-word of the gate screen containing `&` or `<` would be ported
+    into the HTML part verbatim and ship malformed markup, and the design oracle above would still
+    pass, because it would find the raw string. Escaping at the point of embedding is what closes
+    that; this is what proves the embedding does it."""
+    assert TP.design_paragraph("Tom & Jerry <b>") == '<p style="' + TP.PARA + '">Tom &amp; Jerry &lt;b&gt;</p>'

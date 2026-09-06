@@ -41,6 +41,17 @@ def _p(inner: str, style: str = PARA) -> str:
     return '<p style="' + style + '">' + inner + "</p>"
 
 
+def design_paragraph(body: str) -> str:
+    """One paragraph of copy PORTED FROM THE DESIGN, escaped.
+
+    The design bodies are compile-time constants, so this is not an injection vector — but they are
+    also the one kind of literal in this module that is expected to change without a developer
+    rewriting it, and a re-word of the gate screen containing `&` or `<` would otherwise be ported
+    into the HTML part verbatim and ship malformed markup, with the design oracle still green
+    because it would find the raw string (fix round 1, F15)."""
+    return _p(html.escape(body))
+
+
 def _link_block(label: str) -> str:
     """The call to action, then the same URL in full — mail clients that strip anchors, and people
     who would rather see where a link goes before following it, both need the plain form."""
@@ -121,7 +132,7 @@ TEMPLATES: dict[str, Template] = {
     "application_received": Template(
         subject="Your Practice Match application was received",
         text=_HAND_REVIEW,
-        html=_p(_HAND_REVIEW),
+        html=design_paragraph(_HAND_REVIEW),
     ),
     "application_approved": Template(
         subject="Your Practice Match application was approved",
@@ -133,7 +144,7 @@ TEMPLATES: dict[str, Template] = {
     "application_declined": Template(
         subject="A decision on your Practice Match application",
         text=_DECLINED + "\n\nWhat the reviewer wrote:\n\n{note}",
-        html=_p(_DECLINED) + _p("What the reviewer wrote:") + _p("{note}", NOTE_BOX),
+        html=design_paragraph(_DECLINED) + _p("What the reviewer wrote:") + _p("{note}", NOTE_BOX),
         params=("note",),
     ),
     "application_info_requested": Template(
@@ -148,7 +159,7 @@ TEMPLATES: dict[str, Template] = {
     "seller_application_received": Template(
         subject="Your Practice Match seller application was received",
         text=_HAND_REVIEW,
-        html=_p(_HAND_REVIEW),
+        html=design_paragraph(_HAND_REVIEW),
     ),
     "seller_application_approved": Template(
         subject="Your Practice Match seller application was approved",
@@ -160,7 +171,7 @@ TEMPLATES: dict[str, Template] = {
     "seller_application_declined": Template(
         subject="A decision on your Practice Match seller application",
         text=_DECLINED + "\n\nWhat the reviewer wrote:\n\n{note}",
-        html=_p(_DECLINED) + _p("What the reviewer wrote:") + _p("{note}", NOTE_BOX),
+        html=design_paragraph(_DECLINED) + _p("What the reviewer wrote:") + _p("{note}", NOTE_BOX),
         params=("note",),
     ),
     "password_reset": Template(

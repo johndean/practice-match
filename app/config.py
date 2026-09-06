@@ -24,7 +24,11 @@ class Settings(BaseSettings):
     market_data_public: bool = False  # anonymous visitors gain permissions.MATRIX["market.read"] only while true — QA evaluation only (spec's MARKET_DATA_PUBLIC), never production
     consolidator_keywords: str = ""  # comma-separated employer-domain keywords (VIN Foundation-supplied); an application-review hint only, never a decision (spec §6)
     link_base_url: str = "https://qa.foundation.vin"  # origin the verify/reset links in transactional email point at; production sets https://foundation.vin
-    email_allowlist: str = ""  # comma-separated addresses/domains transactional email may be delivered to; empty means no allowlist (Task I6)
+    # Comma-separated WHOLE ADDRESSES (not domains) transactional email may be delivered to outside
+    # production. Fail-closed: an EMPTY list on QA delivers to nobody — every row is recorded
+    # `suppressed` — which is what stops a QA sign-up emailing a real person. Ignored on production
+    # (spec §5 QA safety; Task I6, comment corrected in fix round 1 F5).
+    email_allowlist: str = ""
     # Resend (Task I6). The two secrets are set only in Railway — `RESEND_API_KEY` on the worker
     # (the only service that sends) and `RESEND_WEBHOOK_SECRET` on the api (the only service that
     # receives) — so each service boots with the other one unset, which is why both are optional

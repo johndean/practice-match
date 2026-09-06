@@ -16,14 +16,16 @@ to everybody. Anything refused is recorded `suppressed` — never silently dropp
 from __future__ import annotations
 
 from contextlib import closing
+from typing import Any
 
 import httpx
 
+from app.auth import sessions as S
 from app.config import settings
 from app.db import sync_conn
 from app.mail import outbox as OB
 from app.mail import templates as TP
-from app.mail.resend_client import ResendClient, ResendError
+from app.mail.resend_client import TIMEOUT, ResendClient
 from app.tasks.celery_app import celery_app
 
 # Spec §5's ladder, in full: "retries at 1 min, 10 min, 1 h, 6 h, then failed". The Nth failure of a
@@ -38,13 +40,21 @@ MAX_ERROR = 500
 # A delivered row is deleted once the longest-lived thing it could have carried — a 24 h verify link
 # — has expired anyway (`app.api.auth.VERIFY_TTL`, `scripts.bootstrap_admin.INVITE_TTL`).
 SENT_TTL_S = 24 * 60 * 60
-SUPPRESSED_REASON = "address is suppressed or not on this environment's allowlist"
+# Two reasons, not one (fix round 1, F7): Admin (Task I7) must be able to tell a hard-bounce
+# refusal — which is permanent and about the address — from a QA allowlist refusal, which is
+# about the environment and means nothing was wrong with the message at all.
+REASON_SUPPRESSED = "address is on the suppression list (bounce, complaint or manual)"
+REASON_NOT_ALLOWLISTED = "address is not on this environment's EMAIL_ALLOWLIST"
 
 
 def _http() -> httpx.Client:
     """The HTTP client the sender uses. A function so the test suite can hand `send_due` a
-    `MockTransport` — nothing in this suite ever reaches Resend."""
-    return httpx.Client(timeout=httpx.Timeout(20.0, connect=5.0))
+    `MockTransport` — nothing in this suite ever reaches Resend.
+
+    `resend_client.TIMEOUT`, not a second copy of the same numbers: `outbox.LEASE_S` is sized from
+    that constant (F2's invariant), and an invariant computed from a timeout the sender does not
+    actually use would prove nothing."""
+    return httpx.Client(timeout=TIMEOUT)
 
 
 def allowlisted(email: str) -> bool:
@@ -55,6 +65,33 @@ def allowlisted(email: str) -> bool:
     return email.lower() in {entry.strip().lower() for entry in settings.email_allowlist.split(",") if entry.strip()}
 
 
+class SendFailed(RuntimeError):
+    """One row's attempt did not produce a provider id. Carries `"<ExceptionType>: <message>"`, which
+    is what `email_outbox.last_error` shows staff in Admin."""
+
+
+def _send_one(client: ResendClient, row: dict[str, Any]) -> str:
+    """The provider id for one row, or `SendFailed`.
+
+    The guard is TOTAL (fix round 1, F4). It used to catch only `ResendError` and
+    `httpx.HTTPError`, and `ResendClient.send` reads `r.json()["id"]` — so a 2xx carrying an
+    interposed proxy's HTML raised `JSONDecodeError` and a 2xx without `id` raised `KeyError`,
+    neither of them caught. Such an answer abandoned the rest of the claimed batch mid-flight and
+    left its own row `queued` with no `attempts`, no `last_error` and no route to `failed`; since
+    `due()` orders by id, that row was then claimed FIRST on every later tick and the whole outbox
+    stalled behind it, indefinitely, with nothing in the table to say why. The failure that matters
+    here is by definition the one nobody predicted, so the handler names no types — it normalises
+    everything into one exception the ladder knows how to spend a retry on. `render()` is inside it
+    for the same reason, though the parametrized template test means nothing it can raise is known.
+    """
+    try:
+        rendered = TP.render(row["template"], row["params"], base_url=settings.link_base_url)
+        return client.send(to=row["to"], subject=rendered.subject, text=rendered.text,
+                           html=rendered.html, idempotency_key=row["key"])
+    except Exception as exc:
+        raise SendFailed(f"{type(exc).__name__}: {exc}") from exc
+
+
 def _record(row_id: int, *, status: str, provider_id: str | None = None, error: str | None = None, delay_s: int | None = None) -> None:
     """One row's outcome, on its own borrowed connection (see the module note)."""
     with closing(sync_conn()) as conn, conn:
@@ -62,34 +99,41 @@ def _record(row_id: int, *, status: str, provider_id: str | None = None, error: 
 
 
 def send_due() -> dict[str, int]:
-    """Sends every outbox row that is ready, and returns what happened to each."""
+    """Sends every outbox row that is ready, and returns what happened to each.
+
+    Four counters, not three: without `retried` a tick in which forty rows failed transiently and
+    were re-queued reported `{"sent": 0, "suppressed": 0, "failed": 0}` — indistinguishable in the
+    beat log from a tick with nothing to do (fix round 1, F14)."""
     if not settings.resend_api_key:
         # Loud, not silent: a worker whose key is missing would otherwise leave every verification
         # and reset link sitting `queued` while sign-up kept answering "check your email".
         raise RuntimeError("RESEND_API_KEY is not set on this service")
-    counts = {"sent": 0, "suppressed": 0, "failed": 0}
+    counts = {"sent": 0, "suppressed": 0, "failed": 0, "retried": 0}
     with closing(sync_conn()) as conn, conn:
         sendable = []
         for row in OB.due(conn):
-            if OB.suppressed(conn, row["to"]) or not allowlisted(row["to"]):
-                OB.mark(conn, row["id"], status="suppressed", error=SUPPRESSED_REASON)
+            if OB.suppressed(conn, row["to"]):
+                OB.mark(conn, row["id"], status="suppressed", error=REASON_SUPPRESSED)
+                counts["suppressed"] += 1
+            elif not allowlisted(row["to"]):
+                OB.mark(conn, row["id"], status="suppressed", error=REASON_NOT_ALLOWLISTED)
                 counts["suppressed"] += 1
             else:
                 sendable.append(row)
     with closing(_http()) as http:
         client = ResendClient(settings.resend_api_key, http)
         for row in sendable:
-            rendered = TP.render(row["template"], row["params"], base_url=settings.link_base_url)
             try:
-                provider_id = client.send(to=row["to"], subject=rendered.subject, text=rendered.text,
-                                          html=rendered.html, idempotency_key=row["key"])
-            except (ResendError, httpx.HTTPError) as exc:
+                provider_id = _send_one(client, row)
+            except SendFailed as exc:
                 attempt = int(row["attempts"]) + 1
+                error = str(exc)[:MAX_ERROR]
                 if attempt > len(BACKOFF):
-                    _record(row["id"], status="failed", error=str(exc)[:MAX_ERROR])
+                    _record(row["id"], status="failed", error=error)
                     counts["failed"] += 1
                 else:
-                    _record(row["id"], status="queued", error=str(exc)[:MAX_ERROR], delay_s=BACKOFF[attempt - 1])
+                    _record(row["id"], status="queued", error=error, delay_s=BACKOFF[attempt - 1])
+                    counts["retried"] += 1
             else:
                 _record(row["id"], status="sent", provider_id=provider_id)
                 counts["sent"] += 1
@@ -97,11 +141,16 @@ def send_due() -> dict[str, int]:
 
 
 def purge_sessions() -> dict[str, int]:
-    """Spec §7's nightly session purge: expired, long-revoked and long-idle rows."""
+    """Spec §7's nightly session purge: expired, long-revoked and long-idle rows.
+
+    The two windows are `app.auth.sessions`'s own constants, passed as parameters rather than
+    repeated as SQL literals (fix round 1, F8) — a purge that disagreed with the resolver about
+    which sessions still exist would either keep rows the app already refuses or delete rows it
+    still honours, and nothing would have caught the divergence."""
     with closing(sync_conn()) as conn, conn, conn.cursor() as cur:
         cur.execute("""DELETE FROM session WHERE expires_at < now()
-                          OR revoked_at < now() - interval '30 days'
-                          OR last_seen_at < now() - interval '14 days'""")
+                          OR revoked_at < now() - %s
+                          OR last_seen_at < now() - %s""", (S.ABSOLUTE, S.IDLE))
         return {"purged": int(cur.rowcount)}
 
 

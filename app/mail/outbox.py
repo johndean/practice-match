@@ -38,13 +38,26 @@ def enqueue(conn: psycopg2.extensions.connection, *, to: str, template: str, par
         return cur.fetchone() is not None
 
 
+# How many rows one drain claims. Named (rather than only a default argument) because `LEASE_S`
+# below is derived from it and the two must be checkable against each other.
+DUE_LIMIT = 50
+
 # How long a claimed row is invisible to other workers (Task I6). `due()` stamps it onto
 # `next_attempt_at` in the SAME statement that selects the row, which is what lets the sender give
 # the connection back to the pool BEFORE it calls Resend: the rows are already reserved, so no
 # transaction has to stay open across a network call. A worker that dies mid-batch loses its lease
 # after this long and the rows are picked up again — the provider's idempotency key is what stops
 # that becoming a second delivery.
-LEASE_S = 900
+#
+# THE INVARIANT (fix round 1, F2): the lease must outlast the worst case wall time of ONE batch —
+# `DUE_LIMIT * (connect timeout + read timeout)`, i.e. 50 x 25 s = 1250 s against a provider that
+# times out on every request — plus margin. At 900 s the tail of such a batch lost its lease while
+# the first worker was still working through it, and since beat fires `mail.send` every 60 s a
+# second worker re-claimed those rows: two `mark()`s racing the ladder's `attempts`, two workers
+# doing the work, and the idempotency key left as the only thing between that and a double
+# delivery. `tests/mail/test_send.py::test_the_lease_outlasts_the_worst_case_batch` pins the
+# arithmetic so the three constants (here, and `resend_client.TIMEOUT`) cannot drift apart.
+LEASE_S = 1800
 
 # The statuses a row never leaves. `mark()` empties `params` on all of them: the outbox is the one
 # place the RAW verify/reset link exists (this module's header note; I4 fix round 1, Minor 4), and
@@ -73,7 +86,7 @@ MARK = """UPDATE email_outbox
            WHERE id = %(id)s"""
 
 
-def due(conn: psycopg2.extensions.connection, limit: int = 50) -> list[dict[str, Any]]:
+def due(conn: psycopg2.extensions.connection, limit: int = DUE_LIMIT) -> list[dict[str, Any]]:
     """Claims up to `limit` rows that are ready to send, and returns them.
 
     Claiming and reading are one statement on purpose: `FOR UPDATE SKIP LOCKED` keeps two workers

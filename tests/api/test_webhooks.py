@@ -4,7 +4,11 @@ import hmac
 import json
 import time
 
+import httpx
+
 from app.config import settings
+from app.mail import outbox as OB
+from app.mail import tasks as MT
 
 SECRET = "whsec_" + base64.b64encode(b"0123456789abcdef0123456789abcdef").decode()
 
@@ -59,16 +63,74 @@ async def test_a_complaint_suppresses_the_address_and_marks_the_row(client, conn
         cur.execute("SELECT reason FROM email_suppression WHERE email='b@example.org'"); assert cur.fetchone() == ("complaint",)
 
 
-async def test_delivery_confirms_the_row_without_changing_its_status(client, conn, monkeypatch):
+async def test_delivery_stamps_delivered_at_on_a_row_the_pipeline_really_produced(client, conn, monkeypatch):
+    """F3. `sent_at` is already set by `outbox.mark()` the moment a row reaches `sent`, so the old
+    branch (`sent_at = COALESCE(sent_at, now())`) changed nothing on any row production can make —
+    and the old test hid that by hand-inserting `sent_at = NULL`, a state the pipeline cannot
+    produce. Spec §5 asks the webhook to record `delivered`, and "Resend accepted it" is not the
+    same fact as "the recipient's mail server accepted it": `delivered_at` is the second one, and it
+    is what staff need when a member says the email never arrived.
+
+    So the row here is made the way production makes one — enqueue, then `send_due()` — and the
+    assertion is that delivery stamps `delivered_at` and leaves `status` and `sent_at` alone."""
     monkeypatch.setattr(settings, "resend_webhook_secret", SECRET)
-    _outbox_row(conn, sent_at="NULL")
+    monkeypatch.setattr(settings, "resend_api_key", "re_test")
+    monkeypatch.setattr(settings, "email_allowlist", "b@example.org")
+    monkeypatch.setattr(settings, "environment", "qa")
+    monkeypatch.setattr(MT, "_http", lambda: httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"id": "re_9"}))))
+    OB.enqueue(conn, to="b@example.org", template="verify_email",
+               params={"link": "https://qa.foundation.vin/verify?token=t"}, idempotency_key="k-delivered")
+    assert MT.send_due()["sent"] == 1
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, sent_at, delivered_at FROM email_outbox WHERE provider_id='re_9'")
+        status, sent_at, delivered_at = cur.fetchone()
+    assert (status, delivered_at) == ("sent", None), "a sent row has not been delivered yet"
+
     body = _event("email.delivered")
     assert (await client.post("/api/webhooks/resend", content=body, headers=_sig(body))).status_code == 200
     with conn.cursor() as cur:
-        cur.execute("SELECT status, sent_at IS NOT NULL FROM email_outbox WHERE provider_id='re_9'")
-        assert cur.fetchone() == ("sent", True)
-    with conn.cursor() as cur:
+        cur.execute("SELECT status, sent_at, delivered_at IS NOT NULL FROM email_outbox WHERE provider_id='re_9'")
+        assert cur.fetchone() == ("sent", sent_at, True)
         cur.execute("SELECT count(*) FROM email_suppression"); assert cur.fetchone() == (0,)
+
+
+async def test_a_second_delivery_event_keeps_the_first_delivered_at(client, conn, monkeypatch):
+    """Resend may repeat an event, and F10's reasoning — replay inside the 300 s window is harmless —
+    rests on every effect being idempotent. `COALESCE` is what makes this one so."""
+    monkeypatch.setattr(settings, "resend_webhook_secret", SECRET)
+    _outbox_row(conn)
+    body = _event("email.delivered")
+    assert (await client.post("/api/webhooks/resend", content=body, headers=_sig(body))).status_code == 200
+    with conn.cursor() as cur:
+        cur.execute("SELECT delivered_at FROM email_outbox WHERE provider_id='re_9'"); first = cur.fetchone()[0]
+    assert first is not None
+    assert (await client.post("/api/webhooks/resend", content=body, headers=_sig(body, msg_id="msg_2"))).status_code == 200
+    with conn.cursor() as cur:
+        cur.execute("SELECT delivered_at FROM email_outbox WHERE provider_id='re_9'"); assert cur.fetchone()[0] == first
+
+
+async def test_an_oversized_body_is_refused_before_it_is_buffered(client, monkeypatch):
+    """F9. A public, unauthenticated POST that buffers whatever it is given is a free memory tap;
+    `app/api/interest.py` — the only other anonymous POST surface — caps its body the same two ways,
+    and this route now matches it. The cap is checked BEFORE any signature work, so an oversized
+    request never reaches the HMAC either."""
+    monkeypatch.setattr(settings, "resend_webhook_secret", SECRET)
+    from app.api import webhooks as WH
+
+    oversized = b'{"padding":"' + b"x" * (WH.MAX_BODY_BYTES + 1) + b'"}'
+    declared = await client.post("/api/webhooks/resend", content=oversized, headers=_sig(oversized))
+
+    async def _stream():                       # no Content-Length: the cap has to hold while streaming
+        yield b'{"padding":"'
+        for _ in range((WH.MAX_BODY_BYTES // 1024) + 2):
+            yield b"x" * 1024
+        yield b'"}'
+
+    chunked = await client.post("/api/webhooks/resend", content=_stream(), headers={"svix-id": "msg_1", "svix-timestamp": str(int(time.time())),
+                                                                                    "svix-signature": "v1,AAAA", "Content-Type": "application/json"})
+    for r in (declared, chunked):
+        assert r.status_code == 413, r.text
+        assert r.json() == {"error": {"code": "PAYLOAD_TOO_LARGE", "message": "The request body is too large."}}
 
 
 async def test_a_bounce_never_suppresses_an_address_the_payload_merely_names(client, conn, monkeypatch):
@@ -111,7 +173,16 @@ async def test_every_way_of_failing_verification_is_the_same_401_with_the_a5_bod
     refused.append(await client.post("/api/webhooks/resend", content=body, headers={**good, "svix-timestamp": "not-a-time"}))
     refused.append(await client.post("/api/webhooks/resend", content=body, headers={**good, "svix-signature": good["svix-signature"].replace("v1,", "v2,")}))
     refused.append(await client.post("/api/webhooks/resend", content=body + b" ", headers=good))  # a body that was tampered with in flight
+    # F1: h11's header grammar admits any byte in 0x80-0xff and Starlette decodes headers as latin-1,
+    # so an unauthenticated caller can put a non-ASCII character in front of `hmac.compare_digest`.
+    # Comparing two `str`s raises TypeError there, which on a public route is a 500 — this route's
+    # whole contract is that every verification failure is the same 401.
+    refused.append(await client.post("/api/webhooks/resend", content=body, headers={**good, "svix-signature": b"v1,\xc3\xa9bad"}))
+    refused.append(await client.post("/api/webhooks/resend", content=body, headers={**good, "svix-signature": "v1,not!base64!"}))
     monkeypatch.setattr(settings, "resend_webhook_secret", "whsec_not!base64!")
+    refused.append(await client.post("/api/webhooks/resend", content=body, headers=good))
+    # F6: a non-ASCII secret raises a plain ValueError, not the binascii.Error subclass.
+    monkeypatch.setattr(settings, "resend_webhook_secret", "whsec_\u00c3bad")
     refused.append(await client.post("/api/webhooks/resend", content=body, headers=good))
     monkeypatch.setattr(settings, "resend_webhook_secret", None)
     refused.append(await client.post("/api/webhooks/resend", content=body, headers=good))

@@ -1,4 +1,5 @@
 import json
+from datetime import timedelta
 
 import httpx
 import pytest
@@ -20,8 +21,8 @@ def test_send_due_posts_once_with_idempotency_and_marks_sent(conn, monkeypatch):
     monkeypatch.setattr(settings, "resend_api_key", "re_test"); monkeypatch.setattr(settings, "email_allowlist", "a@example.org"); monkeypatch.setattr(settings, "environment", "qa")
     monkeypatch.setattr(MT, "_http", lambda: httpx.Client(transport=httpx.MockTransport(handler)))
     _queue(conn)
-    assert MT.send_due() == {"sent": 1, "suppressed": 0, "failed": 0}
-    assert MT.send_due() == {"sent": 0, "suppressed": 0, "failed": 0}
+    assert MT.send_due() == {"sent": 1, "suppressed": 0, "failed": 0, "retried": 0}
+    assert MT.send_due() == {"sent": 0, "suppressed": 0, "failed": 0, "retried": 0}
     assert len(calls) == 1 and calls[0].headers["Idempotency-Key"] == "k1" and calls[0].headers["Authorization"] == "Bearer re_test"
     body = json.loads(calls[0].content)
     assert body["from"] == "VIN Foundation — Practice Match <no-reply@foundation.vin>" and body["to"] == ["a@example.org"] and body["reply_to"] == settings.mail_reply_to
@@ -33,10 +34,10 @@ def test_qa_allowlist_suppresses_everyone_else(conn, monkeypatch):
     monkeypatch.setattr(settings, "resend_api_key", "re_test"); monkeypatch.setattr(settings, "email_allowlist", "john@example.org"); monkeypatch.setattr(settings, "environment", "qa")
     monkeypatch.setattr(MT, "_http", lambda: httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(500))))
     _queue(conn, to="stranger@example.org")
-    assert MT.send_due() == {"sent": 0, "suppressed": 1, "failed": 0}
+    assert MT.send_due() == {"sent": 0, "suppressed": 1, "failed": 0, "retried": 0}
     monkeypatch.setattr(settings, "email_allowlist", "")            # an EMPTY list outside production sends to nobody (R5)
     _queue(conn, to="john@example.org", key="k-empty")
-    assert MT.send_due() == {"sent": 0, "suppressed": 1, "failed": 0}
+    assert MT.send_due() == {"sent": 0, "suppressed": 1, "failed": 0, "retried": 0}
 
 
 def test_failure_backs_off_then_fails_and_suppressed_addresses_are_refused(conn, monkeypatch):
@@ -57,11 +58,16 @@ def test_failure_backs_off_then_fails_and_suppressed_addresses_are_refused(conn,
             assert status == "queued" and abs(float(secs) - MT.BACKOFF[attempt - 1]) < 5, (attempt, status, secs)
         else:
             assert status == "failed", (attempt, status)
-    assert MT.send_due() == {"sent": 0, "suppressed": 0, "failed": 0}   # a `failed` row is never picked up again
+    assert MT.send_due() == {"sent": 0, "suppressed": 0, "failed": 0, "retried": 0}   # a `failed` row is never picked up again
     with conn.cursor() as cur:
         cur.execute("INSERT INTO email_suppression (email, reason) VALUES ('bounced@example.org','bounce')")
     _queue(conn, to="bounced@example.org", key="k2")
-    assert MT.send_due() == {"sent": 0, "suppressed": 1, "failed": 0}
+    assert MT.send_due() == {"sent": 0, "suppressed": 1, "failed": 0, "retried": 0}
+    # F7: Admin (I7) must be able to tell a hard-bounce refusal from a QA allowlist refusal.
+    with conn.cursor() as cur:
+        cur.execute("SELECT last_error FROM email_outbox WHERE to_email='bounced@example.org'")
+        assert cur.fetchone() == (MT.REASON_SUPPRESSED,)
+    assert MT.REASON_SUPPRESSED != MT.REASON_NOT_ALLOWLISTED
 
 
 def test_missing_api_key_is_a_hard_failure_not_a_silent_queue(conn, monkeypatch):
@@ -102,7 +108,7 @@ def test_a_sent_row_keeps_no_link_and_is_purged_once_the_token_would_have_expire
     monkeypatch.setattr(settings, "resend_api_key", "re_test"); monkeypatch.setattr(settings, "email_allowlist", "a@example.org"); monkeypatch.setattr(settings, "environment", "qa")
     monkeypatch.setattr(MT, "_http", lambda: httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"id": "re_p"}))))
     _queue(conn)
-    assert MT.send_due() == {"sent": 1, "suppressed": 0, "failed": 0}
+    assert MT.send_due() == {"sent": 1, "suppressed": 0, "failed": 0, "retried": 0}
     with conn.cursor() as cur:
         cur.execute("SELECT params FROM email_outbox"); assert cur.fetchone() == ({},)
 
@@ -118,10 +124,10 @@ def test_a_suppressed_row_keeps_no_link_either(conn, monkeypatch):
     monkeypatch.setattr(settings, "resend_api_key", "re_test"); monkeypatch.setattr(settings, "email_allowlist", ""); monkeypatch.setattr(settings, "environment", "qa")
     monkeypatch.setattr(MT, "_http", lambda: httpx.Client(transport=httpx.MockTransport(lambda req: httpx.Response(200, json={"id": "re_x"}))))
     _queue(conn, to="stranger@example.org")
-    assert MT.send_due() == {"sent": 0, "suppressed": 1, "failed": 0}
+    assert MT.send_due() == {"sent": 0, "suppressed": 1, "failed": 0, "retried": 0}
     with conn.cursor() as cur:
         cur.execute("SELECT status, params, last_error FROM email_outbox"); status, params, error = cur.fetchone()
-    assert (status, params) == ("suppressed", {}) and "allowlist" in error
+    assert (status, params) == ("suppressed", {}) and error == MT.REASON_NOT_ALLOWLISTED
 
 
 def test_a_claimed_row_is_leased_so_a_second_worker_leaves_it_alone(conn):
@@ -155,5 +161,72 @@ def test_purge_sessions_removes_expired_revoked_and_idle_rows_and_keeps_live_one
             cur.execute(f"INSERT INTO session (id_hash, account_id, expires_at, revoked_at, last_seen_at) VALUES (%s,%s,{expires},{revoked},{seen})",
                         (name, account_id))
     assert MT.purge_sessions() == {"purged": 3}
+    with conn.cursor() as cur:
+        cur.execute("SELECT id_hash FROM session"); assert cur.fetchall() == [("live",)]
+
+
+def test_the_lease_outlasts_the_worst_case_batch():
+    """F2. The lease is what keeps a second worker off a row that is still being sent; if it can
+    expire while the FIRST worker is still working through the batch it protects, beat re-claims the
+    tail every 60 s and two `mark()`s race the ladder's `attempts`. The worst case is the whole
+    batch timing out — `limit` requests, each paying its connect and read timeout — so the constants
+    are pinned to each other here rather than left to drift apart in three different modules."""
+    worst_case_s = OB.DUE_LIMIT * (RC.TIMEOUT.connect + RC.TIMEOUT.read)
+    assert OB.LEASE_S >= worst_case_s + 300, (OB.LEASE_S, worst_case_s)
+
+
+def test_one_unexpected_provider_response_burns_its_own_attempt_and_never_stops_the_batch(conn, monkeypatch):
+    """F4. `ResendClient.send` reads `r.json()["id"]`: a 2xx whose body is an interposed proxy's HTML
+    raises JSONDecodeError, and a 2xx JSON without `id` raises KeyError. Neither is a `ResendError`
+    nor an `httpx.HTTPError`, so both used to escape `send_due()` — abandoning the rest of the
+    claimed batch and leaving the offending row `queued` with no `attempts`, no `last_error` and no
+    route to `failed`. Since `due()` orders by id, that row was then claimed FIRST on every
+    subsequent tick, so the whole outbox stalled behind it, indefinitely, with nothing in the table
+    to say why."""
+    monkeypatch.setattr(settings, "resend_api_key", "re_test"); monkeypatch.setattr(settings, "environment", "production")
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        to = json.loads(req.content)["to"][0]
+        if to == "html@example.org":
+            return httpx.Response(200, text="<html>a proxy said hello</html>")
+        if to == "noid@example.org":
+            return httpx.Response(200, json={"object": "email"})
+        return httpx.Response(200, json={"id": "re_ok"})
+
+    monkeypatch.setattr(MT, "_http", lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+    for i, to in enumerate(("html@example.org", "noid@example.org", "good@example.org")):
+        _queue(conn, to=to, key=f"poison-{i}")
+
+    assert MT.send_due() == {"sent": 1, "suppressed": 0, "failed": 0, "retried": 2}
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_email, status, attempts, last_error FROM email_outbox ORDER BY id")
+        rows = {r[0]: r[1:] for r in cur.fetchall()}
+    assert rows["good@example.org"][:2] == ("sent", 1), "the batch continued past the poison rows"
+    for to, exception in (("html@example.org", "JSONDecodeError"), ("noid@example.org", "KeyError")):
+        status, attempts, error = rows[to]
+        assert (status, attempts) == ("queued", 1), (to, status, attempts)
+        assert exception in error, (to, error)
+
+
+def test_the_session_purge_follows_the_resolvers_windows_rather_than_a_copy(conn, monkeypatch):
+    """F8. The purge duplicated `interval '30 days'` / `interval '14 days'` as SQL literals, so
+    changing `app.auth.sessions` would have left the nightly job quietly disagreeing with the
+    resolver about which sessions still exist — sessions the resolver refuses but the purge keeps,
+    or the reverse. The constants are passed in now, which this proves by moving them: with a
+    one-day idle window, a two-day-idle session must go."""
+    from app.auth import sessions as S
+
+    assert (S.ABSOLUTE, S.IDLE) == (timedelta(days=30), timedelta(days=14))   # the shipped windows, pinned
+    monkeypatch.setattr(S, "IDLE", timedelta(days=1))
+    monkeypatch.setattr(S, "ABSOLUTE", timedelta(days=2))
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO account (email, password_hash, state) VALUES ('w@example.org','x','active') RETURNING id")
+        account_id = cur.fetchone()[0]
+        for name, revoked, seen in (("live", "NULL", "now()"),
+                                    ("idle-2-days", "NULL", "now() - interval '2 days'"),
+                                    ("revoked-3-days", "now() - interval '3 days'", "now()")):
+            cur.execute(f"INSERT INTO session (id_hash, account_id, expires_at, revoked_at, last_seen_at) "
+                        f"VALUES (%s,%s, now() + interval '10 days', {revoked}, {seen})", (name, account_id))
+    assert MT.purge_sessions() == {"purged": 2}
     with conn.cursor() as cur:
         cur.execute("SELECT id_hash FROM session"); assert cur.fetchall() == [("live",)]

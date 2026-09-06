@@ -123,7 +123,10 @@ def test_every_at_column_is_timestamptz(conn):
             (tables,),
         )
         rows = cur.fetchall()
-    assert len(rows) == 22, rows  # every *_at/at column across the nine identity tables — a fixed, known count
+    # Every *_at/at column across the nine identity tables — a fixed, known count, which is the
+    # point: a new one has to be acknowledged here. 22 -> 23 in Task I6 fix round 1, when
+    # `email_outbox.delivered_at` was added (F3).
+    assert len(rows) == 23, rows
     for table_name, column_name, data_type in rows:
         assert data_type == "timestamp with time zone", f"{table_name}.{column_name} is {data_type}"
 
