@@ -22,15 +22,24 @@ Every task's requirements implicitly include this section.
 
 **(c) Vue-only conversion (John, 2026-09-06: "convert to vue.js zero-gaps zero-regression").** The app stays Vue 3. `MarketMapV3.jsx`, `AustinMap.jsx`, `MarketMap.jsx`, `support.js`, `image-slot.js` and every other React or design-runtime file in the bundle are **reference material to PORT into Vue** (`MarketMapView.vue`, `markers.js`, `mosaic.js`, the generated `App.vue`/`logic.js`) — never imported, never bundled, never shipped. `frontend/src/**` contains no `react`/`react-dom`/`.jsx` import; `frontend/dist/_app/*.js` contains no React runtime marker. `convert-dc.mjs` remains the only path from the design file to Vue. Proven by `frontend/tests/vue-only.test.ts` (Task V5) and guarded on size by `frontend/tests/bundle-budget.test.ts`.
 
-**(d) Zero regression.** Every existing test keeps passing. The test count only grows, **except** where a task explicitly deletes a test with the dead code it covered; the only such deletions in this plan are named in Task V11 (`markers.test.ts`: `'pill muted/active'`, `'pill neither muted nor active falls back to the default (unselected) palette'`, `'clusterIcon and clusterize'`, `'clusterize uses the wider cell below zoom 8'`, `'pricePin active/inactive'`, `'dot'`). No other test is deleted anywhere in this plan.
+**(d) Zero regression.** Every existing test keeps passing. The test count only grows, **except** where a task explicitly folds or deletes a case with the behaviour it covered. Those are, exhaustively:
+
+- **Task V5** — three `MarketMapView.test.ts` cases covering behaviour V3 deletes outright: `'draws a purple competition marker per community with vets > 0, skipping ones with none'` (C5 removes the competition bubble pass), `'draws no pins at all when the practices layer is off'` (the `layers` prop is gone) and `'the zoom-in, zoom-out and recenter buttons drive the engine'` (V3's control cluster has no recenter button — `MarketMapV3.jsx:340-405`; the surviving thirds are superseded by the V3 block's own zoom case).
+- **Task V8** — the two `stateToRoute` browse cases, folded into one, since V3 has one Browse route.
+- **Task V11** — seven test deletions, each in the commit that removes the code it covered: `markers.test.ts`'s `'pill muted/active'`, `'pill neither muted nor active falls back to the default (unselected) palette'`, `'clusterIcon and clusterize'`, `'clusterize uses the wider cell below zoom 8'`, `'pricePin active/inactive'` and `'dot'`; and `convert-dc.test.ts`'s `'maps x-import and image-slot to the Vue components with bound props and drops hint-* attributes'` AustinMap half (commit 5, spec D12).
+
+No other test is deleted anywhere in this plan.
 
 **(e) Zero pixel tolerance, never relaxed.** `frontend/tests/playwright.config.ts` stays at `maxDiffPixels: 0`. A failure is the change being wrong, not the gate being strict (spec D7). Relaxing it requires a recorded reason and John's sign-off, which this plan does not grant.
 
-**(f) The unchanged screens must be byte-identical.** The spec calls these "the fourteen screens the bundle names as unchanged"; enumerating them yields **fifteen** baseline names, and all fifteen are held byte-identical:
-`mobile-list`, `mobile-detail`, `header-1100`, `header-1000`, `detail`, `requests`, `seller-dash`, `wizard-step-1`, `wizard-step-7`, `wizard-preview`, `wizard-done`, `admin-users`, `admin-listings`, `admin-requests`, `admin-data-sources`.
-Their baseline PNG SHA-256s are captured in a committed manifest **before** anything else changes (Task V1) and re-verified at the end of Tasks V7, V9, V10 and after **every** deletion commit in V11. `mobile-map` is expected to change completely (C13). A movement in any of the fifteen means the port leaked into shared code: **stop and diff** (C14, spec D6).
+**(f) The unchanged screens must be byte-identical.** Thirteen baseline names (spec D6):
+`mobile-list`, `mobile-detail`, `detail`, `requests`, `seller-dash`, `wizard-step-1`, `wizard-step-7`, `wizard-preview`, `wizard-done`, `admin-users`, `admin-listings`, `admin-requests`, `admin-data-sources`.
 
-**(g) 100 % hand-written frontend coverage.** `npx vitest run --coverage` at 100 % lines, branches, functions and statements on every hand-written file under `frontend/src/**`. The documented exclusions in `frontend/vite.config.ts` (`src/App.vue`, `src/app.setup.js`, `src/logic.js`, `src/dc-logic.js`, `src/generated/**`, `src/lib/**`, `src/map/engine.ts`, `src/map/testing/**`, tests and `.d.ts`) are the convention and are **not** widened by this plan. New hand-written files — `frontend/src/map/mosaic.js` — are covered at 100 %.
+**Thirteen, not fifteen.** `header-1100` and `header-1000` run `steps: browse` — they are Browse screenshots at 1100 and 1000 px and are *expected to change*, with `mobile-map` and the Browse states. The bundle's `DEAD_CODE_CHECKLIST` lists them as byte-identical, but its own `README.md` §2 requires those widths to prove V3's short-column collapse in the market panel; §2 wins (spec D6). They are re-baselined in Task V9 and eyeballed there for the collapse behaviour.
+
+The thirteen baseline PNG SHA-256s are captured in a manifest **before** anything else changes (Task V1) and re-verified at the end of Tasks V7, V9, V10 and after **every** deletion commit in V11. `mobile-map` is expected to change completely (C13). A movement in any of the thirteen means the port leaked into shared code: **stop and diff** (C14, spec D6).
+
+**(g) 100 % hand-written frontend coverage.** `npx vitest run --coverage` at 100 % lines, branches, functions and statements on every hand-written file under `frontend/src/**`. **`npm test` is `vitest run` *without* `--coverage`, so it measures nothing** — every gate block in this plan therefore ends `npm run typecheck && npm test && npm run build && npx vitest run --coverage`, in that order (`bundle-budget.test.ts` reads `dist/_app`, so the build must precede the coverage run). The documented exclusions in `frontend/vite.config.ts` (`src/App.vue`, `src/app.setup.js`, `src/logic.js`, `src/dc-logic.js`, `src/generated/**`, `src/lib/**`, `src/map/engine.ts`, `src/map/testing/**`, tests and `.d.ts`) are the convention and are **not** widened by this plan. New hand-written files — `frontend/src/map/mosaic.js` — are covered at 100 %.
 
 **(h) Attribution stays visible on every map.** `attributionControl: true` on every mount; "Tiles © Esri" on the map basemap, "Imagery © Esri, Maxar, Earthstar Geographics" on satellite. Legally load-bearing (CLAUDE.md); not a style choice.
 
@@ -48,6 +57,8 @@ Push to both `origin` (vin-swe/practice-match) and `production` (johndean/practi
 
 **(l) Line numbers in the bundle are advisory (spec D9).** The bundle's `file:line` citations run one to three lines high against the live tree. **Re-grep for the cited symbol before editing**; never edit by line number.
 
+**(l2) Snapshot oracles are git-ignored (spec D13).** `frontend/tests/visual.spec.ts-snapshots/` and `frontend/tests/dom-snapshots/` are listed in `.gitignore:6-7`, so a fresh worktree has neither and no `git add`/`git rm` may name them. They are regenerated in the working tree by `npm run test:visual:baselines`. The unchanged-screen hash manifest (Task V1) is committed, but the PNGs it hashes are not: it is a **within-worktree leak detector** for this branch, seeded from `main`'s V2 reference in Task V1 Step 0 — never a CI oracle, and never re-run to make a mismatch disappear.
+
 **(m) Deviations STOP.** Any divergence from this plan or the bundle — a value that does not match, an acceptance criterion that cannot be met as written, a file the bundle did not anticipate — stops work and is reported to John. Do not improvise a substitute.
 
 **(n) Surgical diffs.** The change contains the ask and nothing else. No drive-by refactors, no reformatting, no removal of a function or feature while doing unrelated work.
@@ -59,8 +70,8 @@ Push to both `origin` (vin-swe/practice-match) and `production` (johndean/practi
 | File | Kind | Responsibility | Task |
 |---|---|---|---|
 | `docs/design-reference/design_handoff_practice_match_v3/**` | reference (never shipped) | the V3 authority + mirrored `_ds/`, `vendor/`, `doc-page.js` | V1 |
-| `docs/design-reference/design_handoff_practice_match_v2/**` | reference (never shipped) | **kept** — the regression oracle for the fifteen unchanged screens | untouched |
-| `frontend/tests/baseline-manifest.mjs` / `.json` / `.test.ts` | gate (new) | SHA-256 manifest of the fifteen unchanged baselines; the leak detector | V1 |
+| `docs/design-reference/design_handoff_practice_match_v2/**` | reference (never shipped) | **kept** — the regression oracle for the thirteen unchanged screens | untouched |
+| `frontend/tests/baseline-manifest.mjs` / `.json` / `.test.ts` | gate (new) | SHA-256 manifest of the thirteen unchanged baselines; the within-worktree leak detector | V1 |
 | `frontend/tests/reference-bundle.test.ts` | gate (new) | the V3 folder is complete and its mirrored files are byte-identical to V2's | V1 |
 | `frontend/tests/design-source.test.ts` | gate (new) | every pointer at "the approved design" names V3 | V2, V7 |
 | `frontend/package.json` | tooling | `gen:app` reference path | V2 |
@@ -74,6 +85,8 @@ Push to both `origin` (vin-swe/practice-match) and `production` (johndean/practi
 | `frontend/src/map/testing/leaflet-stub.ts` | test double | `rectangle`, `canvas`, `panInside`, `openTooltip` | V4 |
 | `frontend/src/styles/global.css` | hand-written | the four `.rf-tip` / `.rf-callout` rules from the reference helmet | V4 |
 | `frontend/src/map/markers.js` + `.test.ts` | hand-written | `practicePin`, `practiceCallout`; later loses `pill`/`clusterIcon`/`clusterize`/`pricePin`/`dot` | V5, V11 |
+| `frontend/src/map/markers.d.ts` | hand-written | the type surface `vue-tsc` resolves `markers.js` against; gains the two new builders, then loses the five deleted ones | V5, V11 |
+| `frontend/src/map/boundary.test.ts` | gate | its Leaflet detector widens to catch `L.rectangle(` and `L.canvas(` | V4 |
 | `frontend/src/components/MarketMapView.vue` + `.test.ts` | hand-written | the V3 map: mosaic shading, `rf-tip`, persistent `rf-callout` + `panInside`, one dashed ring, `onBasemap`-gated tabs | V5 |
 | `frontend/tests/vue-only.test.ts` | gate (new) | no React in `src/**` or in the built bundle | V5 |
 | `frontend/public/assets/icons/*.svg` | assets | the seven new `sub-*` glyphs | V6 |
@@ -100,7 +113,21 @@ Push to both `origin` (vin-swe/practice-match) and `production` (johndean/practi
 
 **Interfaces:**
 - Consumes: nothing from an earlier task — this is the first task on the branch.
-- Produces: `frontend/tests/baseline-manifest.mjs` exports `UNCHANGED_SCREENS: string[]` (the fifteen names from Global Constraint (f)), `SNAPSHOT_DIR: string` (absolute path to `frontend/tests/visual.spec.ts-snapshots`), `MANIFEST_PATH: string` (absolute path to `frontend/tests/baseline-manifest.json`), `hashBaselines(): Record<string, string>` (screen name → lowercase hex SHA-256 of `<name>-<platform>.png`), and `writeManifest(): void`. Running the file as a script (`node tests/baseline-manifest.mjs`) calls `writeManifest()`. The manifest JSON is `{ "platform": string, "screens": Record<string, string> }`. Later tasks re-run `npx vitest run tests/baseline-manifest.test.ts` unchanged; **the manifest is written exactly once, here, and never regenerated by a later task.**
+- Produces: `frontend/tests/baseline-manifest.mjs` exports `UNCHANGED_SCREENS: string[]` (the thirteen names from Global Constraint (f)), `SNAPSHOT_DIR: string` (absolute path to `frontend/tests/visual.spec.ts-snapshots`), `MANIFEST_PATH: string` (absolute path to `frontend/tests/baseline-manifest.json`), `hashBaselines(): Record<string, string>` (screen name → lowercase hex SHA-256 of `<name>-<platform>.png`), and `writeManifest(): void`. Running the file as a script (`node tests/baseline-manifest.mjs`) calls `writeManifest()`. The manifest JSON is `{ "platform": string, "screens": Record<string, string> }`. Later tasks re-run `npx vitest run tests/baseline-manifest.test.ts` unchanged; **the manifest is written exactly once, here, and never regenerated by a later task.**
+
+- [ ] **Step 0: Produce the pre-V3 oracles in this worktree**
+
+`frontend/tests/visual.spec.ts-snapshots/` and `frontend/tests/dom-snapshots/` are git-ignored
+(`.gitignore:6-7`), so a fresh worktree has neither. Generate them from the **V2** reference —
+the generator, the reference server and `screens.ts` all still point at V2 at this moment, so
+this is exactly `main`'s oracle:
+
+Run: `cd frontend && npm run test:visual:baselines`
+Expected: 25 PNGs under `visual.spec.ts-snapshots/` and 25 JSON files under `dom-snapshots/`.
+
+Run: `cd frontend && npm run test:visual && npx playwright test --config=tests/playwright.config.ts --project=app dom.spec.ts`
+Expected: 25 + 25 green. **If any state fails here the worktree baseline is dirty — STOP**; a
+manifest frozen over a dirty oracle proves nothing.
 
 - [ ] **Step 1: Write the failing manifest test**
 
@@ -111,17 +138,18 @@ import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { MANIFEST_PATH, UNCHANGED_SCREENS, hashBaselines } from './baseline-manifest.mjs';
 
-// Global Constraint (f): the fifteen screens V3 does not touch (CHANGE_LOG C14 +
-// DEAD_CODE_CHECKLIST "Zero-risk requirements") must be BYTE-identical before and after the
-// port. Their SHA-256s are frozen here, once, on `main`'s baselines, before any V3 change
-// lands. Every later task re-runs this file; a single moved byte means the port leaked into
-// shared code — stop and diff, do not re-write the manifest.
+// Global Constraint (f) / spec D6: the thirteen screens V3 does not touch (CHANGE_LOG C14 +
+// DEAD_CODE_CHECKLIST "Zero-risk requirements", minus the two header states, which are Browse
+// screenshots) must be BYTE-identical before and after the port. Their SHA-256s are frozen
+// here, once, on `main`'s Step-0 baselines, before any V3 change lands. Every later task
+// re-runs this file; a single moved byte means the port leaked into shared code — stop and
+// diff, do not re-write the manifest.
 describe('unchanged-screen baseline manifest', () => {
   const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as { platform: string; screens: Record<string, string> };
 
-  it('covers exactly the fifteen screens V3 must not move', () => {
+  it('covers exactly the thirteen screens V3 must not move', () => {
     expect(Object.keys(manifest.screens).sort()).toEqual([...UNCHANGED_SCREENS].sort());
-    expect(UNCHANGED_SCREENS).toHaveLength(15);
+    expect(UNCHANGED_SCREENS).toHaveLength(13);
   });
 
   it('was captured on this platform, so the hashes are comparable', () => {
@@ -145,10 +173,13 @@ Create `frontend/tests/baseline-manifest.mjs`:
 
 ```js
 // Freezes the SHA-256 of every baseline PNG that the Browse V3 port must not move
-// (CHANGE_LOG C14 + DEAD_CODE_CHECKLIST "Zero-risk requirements"). Written ONCE, on main's
-// baselines, before Task V1 lands the bundle; read by baseline-manifest.test.ts at the end
-// of V7, V9, V10 and after every deletion commit in V11. Never regenerate it to make a test
-// pass — a changed hash is the leak detector doing its job.
+// (CHANGE_LOG C14 + DEAD_CODE_CHECKLIST "Zero-risk requirements", minus header-1100 and
+// header-1000: those run `steps: browse` and are Browse screenshots, which README §2 requires
+// V3 to change — spec D6). Written ONCE, over the Step-0 oracles regenerated from main's V2
+// reference, before Task V1 lands the bundle; read by baseline-manifest.test.ts at the end of
+// V7, V9, V10 and after every deletion commit in V11. The PNGs it hashes are git-ignored
+// (.gitignore:6-7), so this is a within-worktree leak detector, not a CI oracle. Never
+// regenerate it to make a test pass — a changed hash is the leak detector doing its job.
 import { createHash } from 'node:crypto';
 import { readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -161,7 +192,6 @@ export const MANIFEST_PATH = join(HERE, 'baseline-manifest.json');
 
 export const UNCHANGED_SCREENS = [
   'mobile-list', 'mobile-detail',
-  'header-1100', 'header-1000',
   'detail', 'requests', 'seller-dash',
   'wizard-step-1', 'wizard-step-7', 'wizard-preview', 'wizard-done',
   'admin-users', 'admin-listings', 'admin-requests', 'admin-data-sources'
@@ -184,7 +214,7 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) write
 ```
 
 Run: `cd frontend && node tests/baseline-manifest.mjs`
-Expected: writes `frontend/tests/baseline-manifest.json` with fifteen entries.
+Expected: writes `frontend/tests/baseline-manifest.json` with thirteen entries.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -195,14 +225,17 @@ Expected: PASS, 3 tests.
 
 ```bash
 git add frontend/tests/baseline-manifest.mjs frontend/tests/baseline-manifest.json frontend/tests/baseline-manifest.test.ts
-git commit -m "test(visual): freeze the SHA-256 of the fifteen baselines V3 must not move
+git commit -m "test(visual): freeze the SHA-256 of the thirteen baselines V3 must not move
 
 The leak detector for the Browse V3 port: CHANGE_LOG C14 and the
-DEAD_CODE_CHECKLIST name these screens as untouched, so a moved byte in any
-of them means the port reached into shared code.
+DEAD_CODE_CHECKLIST name these screens as untouched (minus header-1100 and
+header-1000, which are Browse screenshots README section 2 requires V3 to
+change), so a moved byte in any of them means the port reached into shared code.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
+
+The manifest JSON is committed; the PNGs it hashes are **not** (`.gitignore:6-7`). It is therefore a within-worktree leak detector for this branch, regenerated from `main`'s reference in Step 0 — not a CI oracle. Do not "fix" a hash mismatch by re-running `baseline-manifest.mjs`.
 
 - [ ] **Step 6: Write the failing bundle test**
 
@@ -293,7 +326,7 @@ git commit -m "feat(design): land the Practice Match V3 Rev 2 handoff bundle
 
 Mirrors _ds/, vendor/ and doc-page.js from the V2 folder unchanged (README
 Task 1); drops the macOS .DS_Store. The V2 folder stays as the regression
-oracle for the fifteen screens V3 does not touch.
+oracle for the thirteen screens V3 does not touch.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -308,6 +341,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Modify: `frontend/tests/reference-server.mjs` (the `''` root's `dir` and `index`)
 - Modify: `frontend/tests/reference-server.test.ts` (the V2 title test's name; the two traversal tests' attack paths)
 - Modify: `frontend/tests/harness.ts` (the `VENDOR` constant)
+- Modify: `frontend/src/components/ImageSlot.test.ts` (the `SLOT_JS` constant)
 - Modify: `CLAUDE.md` (the "Source of truth for the UI" line)
 
 **Interfaces:**
@@ -353,6 +387,10 @@ describe('every pointer at the approved design names V3', () => {
     expect(readFileSync(join(FRONTEND, 'tests', 'harness.ts'), 'utf8')).toContain(`${V3}/vendor`);
   });
 
+  it('the ImageSlot parity fixture reads the V3 bundle\'s image-slot.js', () => {
+    expect(readFileSync(join(FRONTEND, 'src', 'components', 'ImageSlot.test.ts'), 'utf8')).toContain(`'${V3}', 'image-slot.js'`);
+  });
+
   it('CLAUDE.md names the V3 design file as the source of truth for the UI', () => {
     const md = readFileSync(join(ROOT, 'CLAUDE.md'), 'utf8');
     expect(md).toContain(`docs/design-reference/${V3}/${V3_FILE}\` is the approved design`);
@@ -363,7 +401,7 @@ describe('every pointer at the approved design names V3', () => {
 - [ ] **Step 2: Run it to make sure it fails**
 
 Run: `cd frontend && npx vitest run tests/design-source.test.ts`
-Expected: FAIL — four failures, the first reading `expected '…design_handoff_practice_match_v2/'Practice Match V2.dc.html'…' to contain "design_handoff_practice_match_v3/'Practice Match V3.dc.html'"`.
+Expected: FAIL — five failures, the first reading `expected '…design_handoff_practice_match_v2/'Practice Match V2.dc.html'…' to contain "design_handoff_practice_match_v3/'Practice Match V3.dc.html'"`.
 
 - [ ] **Step 3: Repoint `package.json`**
 
@@ -421,6 +459,13 @@ In `frontend/tests/harness.ts`, change the `VENDOR` constant (the mirrored files
 const VENDOR = join(fileURLToPath(new URL('.', import.meta.url)), '../../docs/design-reference/design_handoff_practice_match_v3/vendor');
 ```
 
+- [ ] **Step 6b: Repoint the ImageSlot parity fixture**
+
+`frontend/src/components/ImageSlot.test.ts` reads the design tool's `image-slot.js` runtime out of the **V2** folder to prove the Vue port renders the same pixels. The V3 bundle ships its own copy. Re-grep for `design_handoff_practice_match_v2` in that file (the constant is `SLOT_JS`) and change the path segment to `design_handoff_practice_match_v3`, so `design-source.test.ts`'s "one folder" rule holds for the whole toolchain.
+
+Run: `cd frontend && npx vitest run src/components/ImageSlot.test.ts`
+Expected: PASS, unchanged. The two `image-slot.js` files are byte-identical (verified 2026-09-06: `cmp` reports no difference), so this is a pointer move with no behavioural effect. **If the test fails, the two runtimes differ — STOP and report**; a changed design-tool runtime is a real finding, not something to absorb here.
+
 - [ ] **Step 7: Repoint CLAUDE.md**
 
 In `CLAUDE.md`, under "## Source of truth for the UI", replace the first line with:
@@ -434,7 +479,7 @@ Leave every rule beneath it intact — they all still apply.
 - [ ] **Step 8: Run the drift test and the whole unit suite**
 
 Run: `cd frontend && npx vitest run tests/design-source.test.ts`
-Expected: PASS, 4 tests.
+Expected: PASS, 5 tests.
 
 Run: `cd frontend && npm run typecheck && npm test`
 Expected: PASS. `app-generated.test.ts` still compares against V2 and `src/App.vue` is still V2-generated, so it stays green (see the ordering note above).
@@ -456,11 +501,12 @@ Expected: FAIL with `Error: unknown x-import component MarketMapV3`. Nothing is 
 - [ ] **Step 11: Commit**
 
 ```bash
-git add frontend/package.json frontend/tests/reference-server.mjs frontend/tests/reference-server.test.ts frontend/tests/harness.ts frontend/tests/design-source.test.ts CLAUDE.md
+git add frontend/package.json frontend/tests/reference-server.mjs frontend/tests/reference-server.test.ts frontend/tests/harness.ts frontend/src/components/ImageSlot.test.ts frontend/tests/design-source.test.ts CLAUDE.md
 git commit -m "chore(design): point the generator, reference server and harness at V3
 
 package.json gen:app, tests/reference-server.mjs, tests/harness.ts's vendored
-bytes and CLAUDE.md's source-of-truth line all name the V3 bundle; a new
+bytes, ImageSlot.test.ts's image-slot.js fixture and CLAUDE.md's source-of-truth
+line all name the V3 bundle; a new
 design-source drift test keeps them pointing at one folder. app-generated.test.ts
 and convert-dc.mjs's generated header move in the regeneration commit, so the
 byte-identity gate stays green throughout.
@@ -552,7 +598,7 @@ Expected: FAIL — 3 failures, all `Error: unknown x-import component MarketMapV
 
 - [ ] **Step 3: Write the minimal implementation**
 
-In `frontend/scripts/convert-dc.mjs`, extend the `COMPONENTS` map (one entry added; the two existing entries stay — `AustinMap` is inert grammar once V3 lands and is not on the dead-code checklist):
+In `frontend/scripts/convert-dc.mjs`, extend the `COMPONENTS` map (one entry added; both existing entries stay **for now** — `MarketMap` keeps the V2 reference convertible, and `AustinMap: 'ListingsMap'` is deleted in Task V11 commit 5, once `ListingsMap.vue` is gone (spec D12). Deleting it here would break Task V3's own regression cases before the component it names is removed):
 
 ```js
 const COMPONENTS = { AustinMap: 'ListingsMap', MarketMap: 'MarketMapView', MarketMapV3: 'MarketMapView', 'image-slot': 'ImageSlot' };
@@ -579,7 +625,7 @@ Then: `git status --porcelain frontend/src` → empty.
 
 - [ ] **Step 6: Run the frontend gate**
 
-Run: `cd frontend && npm run typecheck && npm test && npm run build`
+Run: `cd frontend && npm run typecheck && npm test && npm run build && npx vitest run --coverage`
 Expected: PASS on all three; coverage thresholds unchanged (`convert-dc.mjs` lives under `scripts/`, outside the coverage `include`).
 
 - [ ] **Step 7: Commit**
@@ -609,6 +655,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Modify: `frontend/src/map/testing/leaflet-stub.ts`
 - Modify: `frontend/src/styles/global.css`
 - Create: `frontend/src/styles/global.test.ts`
+- Modify: `frontend/src/map/boundary.test.ts`
 
 **Interfaces:**
 - Consumes: nothing from V1–V3 at runtime; `docs/design-reference/design_handoff_practice_match_v3/` (Task V1) is read by `global.test.ts`.
@@ -617,10 +664,14 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
   - `export interface TooltipSpec { html: string; sticky?: boolean; permanent?: boolean; direction?: 'top' | 'bottom'; offset?: [number, number]; className?: string; opacity?: number }`
   - `export interface Handle { remove(): void; openTooltip?(): void }`
   - `MarkerOptions.tooltip?: string | TooltipSpec` (was `string`)
+  - `export interface RingStyle { color: string; weight: number; dashArray?: string; fill: false; interactive?: boolean }`
   - `MapEngine.rectangle(bounds: [LatLng, LatLng], style: AreaStyle, group: string, tooltip?: TooltipSpec, onClick?: () => void): Handle`
+  - `MapEngine.ring(center: LatLng, radiusM: number, style: RingStyle, group: string): Handle`
   - `MapEngine.panInside(pos: LatLng, padding: [number, number]): void`
   - `MountOptions` is unchanged; its `scaleControl?: boolean` option is **kept** (DEAD_CODE_CHECKLIST: "Keep it. No component passes `true` after this work, but it is one tested line and re-adding a scale bar is a product decision, not a code one.")
 - Produces, from `frontend/src/map/mosaic.js`: `MOSAIC_STEP = 0.0055`, `BBOX_PAD_LAT = 0.13`, `BBOX_PAD_LNG = 0.15`, `mosaicBbox(sites) -> { minLat, maxLat, minLng, maxLng }`, `mosaicCells(sites, bbox, step) -> Array<{ site, bounds: [[number, number], [number, number]] }>`.
+
+> **Recorded interface extension — `ring()` (spec D14).** C7's drive-time ring is an *unfilled, stroked* circle. `CircleStyle` describes a filled, strokeless disc and `circle()` builds its Leaflet option object from exactly those four keys (`radius`, `stroke`, `fillColor`, `fillOpacity`, `interactive`), so the ring cannot travel through it without either widening `CircleStyle` into a shape whose two halves are mutually exclusive or spreading caller-supplied Leaflet options through the engine — which is precisely what the import boundary exists to prevent. A second named primitive is the smaller change; `circle()` and `CircleStyle` are **untouched**.
 
 > **Recorded interface extension.** The README's §3a signature is `rectangle(bounds, style, group, tooltip?)`. A fifth optional `onClick` is appended because the same README snippet's ported code ends `.on("click", () => onArea && onArea(site.name))` (`MarketMapV3.jsx:268`) — the click is part of the behaviour being ported, and the engine is the only place it can live under the import boundary (`frontend/src/map/boundary.test.ts`). This is a strict superset of the bundle's signature, not a change to it.
 
@@ -848,6 +899,29 @@ describe('LeafletMapEngine — V3 area shading, tooltip specs and panInside', ()
     expect(pin.tooltipOpened).toBe(1);
   });
 
+  it('ring() draws one dashed unfilled circle with the design\'s stroke, and never a fill (C7)', async () => {
+    const { stub, engine } = await mounted({ scaleControl: false });
+    engine.ring([30.5052, -97.8203], 16000, { color: '#003a70', weight: 1.5, dashArray: '4 4', fill: false }, 'overlay');
+    expect(stub.calls.find((c) => c.fn === 'circle')!.args).toEqual([[30.5052, -97.8203], { radius: 16000, color: '#003a70', weight: 1.5, dashArray: '4 4', fill: false, interactive: false }]);
+  });
+
+  it('ring() is inert after destroy()', async () => {
+    const { stub, engine } = await mounted({ scaleControl: false });
+    engine.destroy();
+    const before = stub.calls.length;
+    engine.ring([1, 2], 100, { color: '#000', weight: 1, fill: false }, 'overlay');
+    expect(stub.calls).toHaveLength(before);
+  });
+
+  it('a handle handed back after destroy() is safe to call in full — remove() AND openTooltip()', async () => {
+    const { engine } = await mounted({ scaleControl: false, groups: ['pins'] });
+    engine.destroy();
+    const handle = engine.marker([30.5, -97.8], { html: '<i></i>', size: [78, 34], anchor: [39, 34], tooltip: { html: '<div>c</div>', permanent: true } }, 'pins');
+    // drawPins() calls openTooltip() unconditionally for the selected practice; a selection
+    // landing after destroy() must be inert, not a TypeError on the no-op handle.
+    expect(() => { handle.remove(); handle.openTooltip!(); }).not.toThrow();
+  });
+
   it('panInside pans with the design\'s padding and animation', async () => {
     const { stub, engine } = await mounted({ scaleControl: false });
     engine.panInside([30.5052, -97.8203], [48, 110]);
@@ -894,7 +968,7 @@ describe('LeafletMapEngine — bottom-right zoom control, no scale control', () 
 - [ ] **Step 7: Run them to verify they fail**
 
 Run: `cd frontend && npx vitest run src/map/engines/leaflet.test.ts`
-Expected: FAIL — the new block fails with `TypeError: engine.rectangle is not a function`, and `stub.canvas` is `undefined`.
+Expected: FAIL — the new block fails with `TypeError: engine.rectangle is not a function` (and `engine.ring is not a function`, `engine.panInside is not a function`), and `stub.canvas` is `undefined`.
 
 - [ ] **Step 8: Extend the Leaflet stub**
 
@@ -949,6 +1023,9 @@ export interface AreaStyle { fillColor: string; fillOpacity: number; stroke?: bo
 /** V3 needs two tooltip shapes the hard-coded one could not express: the sticky `rf-tip` on a
  *  mosaic cell, and the persistent `rf-callout` above a selected practice pin (C5, C6). */
 export interface TooltipSpec { html: string; sticky?: boolean; permanent?: boolean; direction?: 'top' | 'bottom'; offset?: [number, number]; className?: string; opacity?: number }
+/** V3's drive-time ring (C7): an unfilled, dashed, stroked circle. Deliberately NOT CircleStyle,
+ *  which describes a filled, strokeless disc — the two option sets are mutually exclusive. */
+export interface RingStyle { color: string; weight: number; dashArray?: string; fill: false; interactive?: boolean }
 export interface MarkerOptions { html: string; size: [number, number]; anchor: [number, number]; tooltip?: string | TooltipSpec; zIndexOffset?: number; interactive?: boolean; onClick?: () => void }
 export interface Handle { remove(): void; openTooltip?(): void }
 
@@ -966,6 +1043,7 @@ export interface MapEngine {
   setBase(kind: BaseKind): void;
   circle(center: LatLng, radiusM: number, style: CircleStyle, group: string): Handle;
   rectangle(bounds: [LatLng, LatLng], style: AreaStyle, group: string, tooltip?: TooltipSpec, onClick?: () => void): Handle;
+  ring(center: LatLng, radiusM: number, style: RingStyle, group: string): Handle;
   marker(pos: LatLng, opts: MarkerOptions, group: string): Handle;
   panInside(pos: LatLng, padding: [number, number]): void;
   clear(group: string): void;
@@ -981,7 +1059,7 @@ In `frontend/src/map/engines/leaflet.ts`:
 Widen the import and add the tooltip helper below `NOOP_UNSUBSCRIBE`:
 
 ```ts
-import type { AreaStyle, BaseKind, CircleStyle, Handle, LatLng, MapEngine, MarkerOptions, MountOptions, TooltipSpec } from '../engine';
+import type { AreaStyle, BaseKind, CircleStyle, Handle, LatLng, MapEngine, MarkerOptions, MountOptions, RingStyle, TooltipSpec } from '../engine';
 ```
 
 ```ts
@@ -1005,6 +1083,12 @@ In `mount()`, create it once — immediately after the label tile layer is set u
     this.canvas = L.canvas({ padding: 0.3 });
 ```
 
+Widen the no-op handle so a post-`destroy()` selection cannot throw (`drawPins` calls `openTooltip()` unconditionally for the selected pin):
+
+```ts
+const NOOP_HANDLE: Handle = { remove() {}, openTooltip() {} };
+```
+
 Add `rectangle()` immediately after `circle()`:
 
 ```ts
@@ -1015,6 +1099,17 @@ Add `rectangle()` immediately after `circle()`:
     if (onClick) r.on('click', onClick);
     r.addTo(this.group(group));
     return { remove: () => r.remove(), openTooltip: () => r.openTooltip() };
+  }
+```
+
+Add `ring()` immediately after `rectangle()` — `circle()` above it is untouched:
+
+```ts
+  // C7 (MarketMapV3.jsx:230-235): one dashed, unfilled ring, not two filled circles.
+  ring(center: LatLng, radiusM: number, s: RingStyle, group: string): Handle {
+    if (this.destroyed) return NOOP_HANDLE;
+    const c = this.L.circle(center, { radius: radiusM, color: s.color, weight: s.weight, dashArray: s.dashArray, fill: false, interactive: s.interactive ?? false }).addTo(this.group(group));
+    return { remove: () => c.remove(), openTooltip: () => c.openTooltip() };
   }
 ```
 
@@ -1043,10 +1138,18 @@ In `destroy()`, drop the renderer with the rest of the map-bound state — add o
     this.canvas = null;
 ```
 
+Finally, widen the import-boundary detector so the two new primitives are inside the boundary it guards. In `frontend/src/map/boundary.test.ts`, the `ALLOWED` list is unchanged; the regex gains `rectangle` and `canvas`:
+
+```ts
+      return /from\s+['"]leaflet|require\(['"]leaflet|window\.L\b|\bL\.(map|tileLayer|marker|divIcon|circle|rectangle|canvas|layerGroup|control)\(/.test(s);
+```
+
+Without this, a component calling `L.rectangle(` or `L.canvas(` directly would slip past the only test that keeps Leaflet inside `map/engines/`.
+
 - [ ] **Step 11: Run the tests to verify they pass**
 
 Run: `cd frontend && npm run typecheck && npx vitest run src/map/engines/leaflet.test.ts`
-Expected: PASS — the whole file, including the ten new cases.
+Expected: PASS — the whole file, including the thirteen new cases (canvas-per-mount, rectangle options/group/handle, rectangle tooltip + area click, the bare-rectangle no-tooltip/no-click case, marker tooltip spec vs bare string, handle.openTooltip, the two `ring()` cases, the post-`destroy()` full-handle case, `panInside`, the post-`destroy()` inertness case and the re-mount renderer case).
 
 > **Acceptance (README Task 3, verbatim):** "new unit tests in `frontend/src/map/engines/leaflet.test.ts` (the stub in `frontend/src/map/testing/leaflet-stub.ts` needs `rectangle`, `canvas` and `panInside` added) covering: one canvas renderer per mount; rectangle added to the named group and removed by its handle; tooltip options forwarded verbatim; `panInside` no-ops after `destroy()`. `npm run typecheck && npm test` green."
 
@@ -1105,20 +1208,23 @@ Append to `frontend/src/styles/global.css`, after the `.leaflet-container` rule:
 
 - [ ] **Step 15: Run the whole frontend gate**
 
-Run: `cd frontend && npm run typecheck && npm test && npm run build`
+Run: `cd frontend && npm run typecheck && npm test && npm run build && npx vitest run --coverage`
 Expected: PASS on all three, coverage thresholds met (`leaflet.ts` and `mosaic.js` at 100 %).
 
 - [ ] **Step 16: Commit**
 
 ```bash
-git add frontend/src/map/engine.ts frontend/src/map/engines/leaflet.ts frontend/src/map/engines/leaflet.test.ts frontend/src/map/testing/leaflet-stub.ts frontend/src/styles/global.css frontend/src/styles/global.test.ts
-git commit -m "feat(map): rectangles on one shared canvas, tooltip specs, panInside
+git add frontend/src/map/engine.ts frontend/src/map/engines/leaflet.ts frontend/src/map/engines/leaflet.test.ts frontend/src/map/testing/leaflet-stub.ts frontend/src/map/boundary.test.ts frontend/src/styles/global.css frontend/src/styles/global.test.ts
+git commit -m "feat(map): rectangles on one shared canvas, ring, tooltip specs, panInside
 
-The four primitives V3's market map needs (README Task 3): AreaStyle +
-rectangle() on a single L.canvas({padding: 0.3}) per mount, TooltipSpec
-forwarded verbatim with a bare string keeping the old defaults, Handle.openTooltip
-so selection can open a callout programmatically, and panInside([48, 110]).
-The scaleControl option is kept, per the dead-code checklist. .rf-tip and
+The primitives V3's market map needs (README Task 3): AreaStyle + rectangle() on
+a single L.canvas({padding: 0.3}) per mount, RingStyle + ring() for C7's dashed
+unfilled drive-time circle (spec D14 - CircleStyle and circle() are untouched),
+TooltipSpec forwarded verbatim with a bare string keeping the old defaults,
+Handle.openTooltip so selection can open a callout programmatically, and
+panInside([48, 110]). NOOP_HANDLE gains openTooltip so a selection landing after
+destroy() is inert. The scaleControl option is kept, per the dead-code checklist.
+boundary.test.ts's detector widens to L.rectangle(/L.canvas(. .rf-tip and
 .rf-callout are copied out of the reference helmet into global.css.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
@@ -1130,15 +1236,16 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `frontend/src/map/markers.js`
+- Modify: `frontend/src/map/markers.d.ts`
 - Modify: `frontend/src/map/markers.test.ts`
 - Modify: `frontend/src/components/MarketMapView.vue`
 - Modify: `frontend/src/components/MarketMapView.test.ts`
 - Create: `frontend/tests/vue-only.test.ts`
 
 **Interfaces:**
-- Consumes: `rectangle`, `panInside`, `TooltipSpec`, `AreaStyle`, `Handle.openTooltip` from `frontend/src/map/engine.ts` and `frontend/src/map/engines/leaflet.ts` (Task V4); `MOSAIC_STEP`, `mosaicBbox`, `mosaicCells` from `frontend/src/map/mosaic.js` (Task V4); `createEngine()` from `frontend/src/map/create.ts` (unchanged).
+- Consumes: `rectangle`, `ring`, `panInside`, `TooltipSpec`, `AreaStyle`, `RingStyle`, `Handle.openTooltip` from `frontend/src/map/engine.ts` and `frontend/src/map/engines/leaflet.ts` (Task V4); `MOSAIC_STEP`, `mosaicBbox`, `mosaicCells` from `frontend/src/map/mosaic.js` (Task V4); `createEngine()` from `frontend/src/map/create.ts` (unchanged).
 - Produces:
-  - `frontend/src/map/markers.js` gains `practicePin(label: string, selected: boolean) -> string` and `practiceCallout(p: { name, priceLabel, meta?, photoSrc? }) -> string`.
+  - `frontend/src/map/markers.js` gains `practicePin(label: string, selected: boolean) -> string` and `practiceCallout(p: { name, priceLabel, meta?, photoSrc? }) -> string`, declared in `frontend/src/map/markers.d.ts` as `practicePin(label: string, selected: boolean): string` and `practiceCallout(p: { name: string; priceLabel: string; meta?: string; photoSrc?: string }): string`.
   - `frontend/src/components/MarketMapView.vue` accepts exactly the props the generated `App.vue` will pass, from `Practice Match V3.dc.html:324` (desktop) and `:1359` (mobile):
     `practices: Array`, `communities: Array`, `activeLayer: String|null`, `basemap: String`, `onBasemap: Function|null`, `activeId: String|null`, `onSelect: Function|null`, `onArea: Function|null`, `center: Array`, `zoom: Number`, `driveCenter: Array|null`, `showDrive: Boolean`, `resizeKey: String`, `recenterKey: Number`.
     The props `layers` and `valueLayer` are **removed** (DEAD_CODE_CHECKLIST, "Delete by hand").
@@ -1234,15 +1341,24 @@ export function practiceCallout(p) {
 }
 ```
 
+- [ ] **Step 3b: Declare the two new builders**
+
+`frontend/src/map/markers.d.ts` is the type surface for `markers.js` (the JS itself stays byte-identical to the ported prototype, which is why the declarations live apart). `tsconfig.json` sets `allowJs: true, checkJs: false`, so `vue-tsc` resolves `import { practicePin } from '../map/markers.js'` against **this file**, not the JS — an undeclared export is a typecheck error, not an inferred `any`. Append:
+
+```ts
+export function practicePin(label: string, selected: boolean): string;
+export function practiceCallout(p: { name: string; priceLabel: string; meta?: string; photoSrc?: string }): string;
+```
+
 - [ ] **Step 4: Run them to verify they pass**
 
-Run: `cd frontend && npx vitest run src/map/markers.test.ts`
-Expected: PASS, 9 tests.
+Run: `cd frontend && npm run typecheck && npx vitest run src/map/markers.test.ts`
+Expected: PASS, 10 tests (the file's six existing cases plus the four above), and `vue-tsc` clean.
 
 - [ ] **Step 5: Commit the marker builders**
 
 ```bash
-git add frontend/src/map/markers.js frontend/src/map/markers.test.ts
+git add frontend/src/map/markers.js frontend/src/map/markers.d.ts frontend/src/map/markers.test.ts
 git commit -m "feat(map): port practicePin and practiceCallout from MarketMapV3.jsx
 
 C6: pin geometry [78,34]/[39,34], a selected pin reduced to one prominent dot,
@@ -1458,6 +1574,26 @@ describe('MarketMapView — the V3 map', () => {
     expect(stub.map.zoom).toBe(10);
   });
 
+  it('the zoom buttons carry the reference\'s own width:auto — the DOM oracle compares live el.style, not computed layout', async () => {
+    installLeafletStub();
+    const w = mount(MarketMapView, { props: v3Props(), attachTo: document.body });
+    await flushPromises();
+    for (const label of ['Zoom in', 'Zoom out']) {
+      expect((w.find(`button[aria-label="${label}"]`).element as HTMLElement).style.width).toBe('auto');
+    }
+    w.unmount();
+  });
+
+  it('a mosaic cell click is inert when onArea is absent, and the basemap tabs vanish when onBasemap is withdrawn', async () => {
+    const stub = installLeafletStub();
+    const w = mount(MarketMapView, { props: v3Props({ onBasemap: () => {}, onArea: null }) });
+    await flushPromises();
+    const overlay = (stub.map.added as StubGroup[]).filter((g) => g.clearLayers)[0];
+    expect(() => (overlay.added[0] as unknown as { on_click: () => void }).on_click()).not.toThrow();
+    await w.setProps({ onBasemap: null });
+    expect(w.findAll('button[aria-pressed]')).toHaveLength(0);
+  });
+
   it('renders at a 390 px phone width — no fixed widths keep the map from filling its host', async () => {
     installLeafletStub();
     const w = mount(MarketMapView, { props: v3Props(), attachTo: document.body });
@@ -1471,7 +1607,23 @@ describe('MarketMapView — the V3 map', () => {
 });
 ```
 
-Delete nothing else in this file: every pre-V3 case that still describes behaviour V3 keeps (mount/unmount lifecycle, the merged watcher's ordering invariant, the `!engine` guards, `resizeKey`, `setBase`) stays and must stay green. Where an existing case asserts a bubble, a `pricePin`, `scaleControl: true` or the `layers`/`valueLayer` props, rewrite its **expectation** to the V3 behaviour above — do not delete the case (Global Constraint (d)).
+Then work the existing cases through this disposition table — every case in the file is named, so nothing is left to judgement. Three are deleted, authorised in Global Constraint (d); the rest are kept, with only their fixture props and expectations moved to V3's shape.
+
+| Existing case | V3 disposition |
+|---|---|
+| `redraws every overlay layer before every pin when only \`practices\` changes` · the parameterised `holds the overlay-before-pins order with N communities and M practices` cases · `holds the order when the trigger is a community change rather than a practice change` | **keep** — only the fixture props change (`layers`/`valueLayer` → `activeLayer`/`showDrive`) |
+| `holds the order when the trigger is an OVERLAY-ONLY prop (valueLayer), which fires no pins work of its own` | **keep** — the trigger becomes `activeLayer`; rename the parenthetical accordingly |
+| `labels each group by the renderer that filled it, and refuses a group holding both` | **keep** — `roleOf` is rewritten above |
+| `recognises a drive-time ring as overlay content even though it is a circle, not a marker` | **keep** — `layers.drive10` → `showDrive: true`; `roleOf`'s `typeof l.options?.radius === 'number'` still classifies `engine.ring`'s `L.circle` as overlay |
+| `draws a purple competition marker per community with vets > 0, skipping ones with none` (and its `describe('MarketMapView — competition layer')`) | **delete** — C5 removes the competition bubble pass outright; there is no V3 expectation to rewrite it to. Authorised in Global Constraint (d) |
+| `the zoom-in, zoom-out and recenter buttons drive the engine` | **delete** — V3's control cluster (`MarketMapV3.jsx:340-405`) has **no recenter button**, so the `aria-label="Recenter"` third has no V3 counterpart; the zoom thirds are superseded by the V3 block's `the basemap tabs call onBasemap and the zoom buttons drive the engine`. Authorised in Global Constraint (d) |
+| `destroys the engine on unmount, once it exists` · `unmounting before createEngine()/mount() settles hits the (!host.value) guard instead of crashing` · `shows "Map unavailable" when the engine fails to mount (onMounted's catch branch)` · `a watched prop change that lands before the engine finishes mounting hits drawOverlay/drawPins' (!engine) guards, not a crash` | **keep unchanged** |
+| `skips a community missing a value for the active valueLayer, drawing nothing for it` | **keep** — rewritten to `activeLayer` and rectangles; the V3 block's own `skips a community with no value for the active layer` supersedes its assertions |
+| `draws no pins at all when the practices layer is off` | **delete** — it depends on `props.layers.practices`, a prop V3 removes. Authorised in Global Constraint (d) |
+| `stacks the active pin above the rest (zIndexOffset 1000) and calls onSelect when clicked` | **keep** — geometry becomes `[78, 34]` / `[39, 34]` |
+| `a click does nothing (and does not throw) when no onSelect prop is given` | **keep unchanged** — it is the `props.onSelect &&` false-branch cover that Global Constraint (g) needs |
+| `redraws the drive-time rings when driveCenter itself changes (not just the props it defaults from)` | **keep** — one ring now, drawn through `engine.ring` |
+| `never instantiates real Leaflet: the map is the stub's FakeMap and window.L is the stub` · `exercises the real MarketMapView and the real LeafletMapEngine, not a stand-in` | **keep unchanged** |
 
 - [ ] **Step 7: Run them to verify they fail**
 
@@ -1498,7 +1650,7 @@ Replace `frontend/src/components/MarketMapView.vue` entirely. The control cluste
             :key="k"
             :aria-pressed="props.basemap === k"
             :style="basemapTabStyle(k)"
-            @click="props.onBasemap && props.onBasemap(k)"
+            @click="props.onBasemap(k)"
           >{{ k === 'map' ? 'Map' : 'Satellite' }}</button>
         </div>
         <span v-if="props.onBasemap" style="height: 1px; background: #e6e6e6;"></span>
@@ -1543,7 +1695,7 @@ const status = ref('loading');
 let engine = null;
 
 const BASEMAP_KEYS = ['map', 'satellite'];
-const stackBtn = 'flex: 1; height: 32px; display: grid; place-items: center; padding: 0; background: none; border: 0; cursor: pointer; font-family: ProximaNova, Arial, Helvetica, sans-serif; font-size: 17px; font-weight: 500; color: #003a70; line-height: 1;';
+const stackBtn = 'width: auto; height: 32px; display: grid; place-items: center; padding: 0; background: none; border: 0; cursor: pointer; font-family: ProximaNova, Arial, Helvetica, sans-serif; font-size: 17px; font-weight: 500; color: #003a70; line-height: 1; flex: 1;';
 const basemapTabStyle = (k) =>
   'flex: 1; height: 28px; border: 0; border-radius: 5px; cursor: pointer; font-family: ProximaNova, Arial, Helvetica, sans-serif; font-size: 12px; font-weight: 500; line-height: 1; color: ' +
   (props.basemap === k ? '#003a70' : '#7a8590') + '; background: ' + (props.basemap === k ? '#deecf7' : 'transparent') + ';';
@@ -1573,7 +1725,7 @@ function drawOverlay() {
   engine.clear('overlay');
   const hub = props.driveCenter || props.center;
   if (props.showDrive && hub) {
-    engine.circle(hub, 16000, { radius: 16000, color: '#003a70', weight: 1.5, dashArray: '4 4', fill: false, interactive: false }, 'overlay');
+    engine.ring(hub, 16000, { color: '#003a70', weight: 1.5, dashArray: '4 4', fill: false, interactive: false }, 'overlay');
   }
   if (!props.activeLayer || !props.communities.length) return;
   const bbox = mosaicBbox(props.communities);
@@ -1639,7 +1791,7 @@ watch(
 </script>
 ```
 
-> The dashed ring is passed through `engine.circle()`, whose `CircleStyle` carries `fillColor`/`fillOpacity`. V3's ring has no fill at all, so the design's own option object (`radius`, `color`, `weight`, `dashArray`, `fill: false`, `interactive: false`) is handed through verbatim and the engine's `circle()` spreads it. **If `circle()` as implemented in Task V4 does not forward these keys unchanged, STOP** — that is a real gap between the engine and C7 and John decides whether `circle()` widens or a `ring()` primitive is added. Do not silently approximate the ring with a filled circle.
+> **Two deliberate divergences from `MarketMapV3.jsx`, both recorded.** (1) The ring goes through `engine.ring()`, added in Task V4 (spec D14): `circle()`/`CircleStyle` describe a *filled, strokeless* disc and cannot carry `color`/`weight`/`dashArray`/`fill: false`. The Leaflet call the engine ends up making is byte-for-byte the reference's. (2) The basemap tab's handler is `props.onBasemap(k)`, not the reference's belt-and-braces `onBasemap && onBasemap(k)` (`MarketMapV3.jsx:361`): the enclosing `v-if="props.onBasemap"` already discharges the guard, so keeping it would leave a branch no test can reach and fail Global Constraint (g)'s `branches: 100`. The rendered DOM is identical either way. `props.onArea &&` and `props.onSelect &&` keep their guards — both props are genuinely optional and both false branches are covered.
 
 - [ ] **Step 9: Run them to verify they pass**
 
@@ -1710,7 +1862,7 @@ Expected: PASS, 3 tests. (If it fails, a React import reached `src/` — that is
 
 - [ ] **Step 12: Run the frontend gate**
 
-Run: `cd frontend && npm run typecheck && npm test && npm run build`
+Run: `cd frontend && npm run typecheck && npm test && npm run build && npx vitest run --coverage`
 Expected: PASS on all three; 100 % coverage on `src/components/MarketMapView.vue`, `src/map/markers.js`, `src/map/mosaic.js`, `src/map/engines/leaflet.ts`.
 
 - [ ] **Step 13: Commit**
@@ -1803,7 +1955,7 @@ Expected: PASS, 3 tests. (The third passes vacuously until Task V7 regenerates `
 
 - [ ] **Step 5: Run the frontend gate**
 
-Run: `cd frontend && npm run typecheck && npm test && npm run build`
+Run: `cd frontend && npm run typecheck && npm test && npm run build && npx vitest run --coverage`
 Expected: PASS.
 
 > **Acceptance (README Task 5, verbatim):** "no 404 for `/assets/icons/*` in the browser network log on any screen." The static test above is the fast gate; the end-to-end proof is `npm run test:smoke` and `npm run test:visual`, whose `prepare()` throws on any `console.error` and a missing `<img>` logs one. Both are run in Task V9.
@@ -1964,9 +2116,14 @@ describe('logic.js is the design script block, ported verbatim', () => {
 
   it('carries V3\'s market-data shape and none of V2\'s Listings tab', () => {
     const logic = readFileSync(join(ROOT, 'src/logic.js'), 'utf8');
-    for (const gone of ['browseMode', 'browseToggle', 'isBrowse', 'hasPeek']) {
+    for (const gone of ['browseMode', 'browseToggle', 'hasPeek']) {
       expect(logic, `logic.js still carries ${gone}`).not.toContain(gone);
     }
+    // README §7, risk register: the V3 reference still declares a vestigial `isBrowse: false`
+    // (V3 script block line 1435) that nothing reads. logic.js is a VERBATIM port, so it ships
+    // too. Pinned as a fact, not a defect — it goes when the design reference drops it.
+    expect((logic.match(/isBrowse/g) ?? []).length, 'isBrowse should appear exactly once — the reference\'s vestigial `isBrowse: false`').toBe(1);
+    expect(logic).toContain('isBrowse: false');
     for (const present of ['sheetOpen', 'openSheet', 'closeSheet', 'layerLabel', 'datasetRowStyle', 'layerPalette', 'Average Practice Payroll', 'Avg. payroll per practice']) {
       expect(logic, `logic.js is missing ${present}`).toContain(present);
     }
@@ -2003,7 +2160,8 @@ Expected: PASS on all three files.
 - [ ] **Step 6: Update the logic characterisation suite where V3 changed a value**
 
 Run: `cd frontend && npx vitest run src/logic.test.ts`
-For each failure, change the **expectation** to V3's value and leave the case in place (Global Constraint (d)). The known movers are the `econ` layer's label and metric copy (C10: "Payroll per Veterinary Establishment (CBP)" / "Revenue per establishment" → **"Average Practice Payroll"** / **"Avg. payroll per practice"**) and any assertion that reads `browseMode`, `browseToggle`, `isBrowse`, `hasPeek` or `peek`. The admin-tabs case (`logic.test.ts:41`) and the seller-listings cases (`:49-51`) are **unaffected** — "My Listings" is the seller dashboard, a different feature with the same word (DEAD_CODE_CHECKLIST). Add one case for each new `mobileVals` member:
+
+`frontend/src/logic.test.ts` asserts **none** of V3's movers today — its nine cases cover the gate, the jump bar, navigation, admin tabs, seller status, filters and money formatting; there is no `econ` copy assertion and no `browseMode` read anywhere in it. **Expect it to stay green.** Verify that first, then add the new `mobileVals` case below. If a case *does* fail, change the expectation to V3's value and leave the case in place (Global Constraint (d)); the only plausible mover is the `econ` label copy (C10: "Payroll per Veterinary Establishment (CBP)" / "Revenue per establishment" → **"Average Practice Payroll"** / **"Avg. payroll per practice"**). The admin-tabs case (`logic.test.ts:41`) and the seller-listings cases (`:49-51`) are **unaffected** — "My Listings" is the seller dashboard, a different feature with the same word (DEAD_CODE_CHECKLIST). Add one case for each new `mobileVals` member:
 
 ```ts
 it('mobileVals exposes the market-data sheet and no peek card (C13)', () => {
@@ -2023,29 +2181,29 @@ Expected: PASS.
 
 - [ ] **Step 7: Run the frontend gate and the leak detector**
 
-Run: `cd frontend && npm run typecheck && npm test && npm run build`
+Run: `cd frontend && npm run typecheck && npm test && npm run build && npx vitest run --coverage`
 Expected: PASS on all three, including `baseline-manifest.test.ts`, `vue-only.test.ts`, `icons.test.ts`, `app-generated.test.ts`, `convert-dc.test.ts`, `reference-bundle.test.ts`, `design-source.test.ts`.
 
 > **Acceptance (README Task 6, verbatim):** "`npm run typecheck && npm test && npm run build` green; `frontend/tests/app-generated.test.ts` green (it asserts the generated files match the reference — that is the test that catches a hand edit)."
 
 - [ ] **Step 8: Run the full previous gate, and record precisely what is expected to be red**
 
-The Playwright suites cannot all be green here: the screen list still clicks `'Market Data'` and the baselines and DOM snapshots are still V2's. Those are regenerated in Task V9. What **must** be green now is the leak detector — the fifteen unchanged screens, whose oracles have not been touched:
+The Playwright suites cannot all be green here: the screen list still clicks `'Market Data'` and the baselines and DOM snapshots are still V2's. Those are regenerated in Task V9. What **must** be green now is the leak detector — the thirteen unchanged screens, whose oracles have not been touched:
 
 ```bash
 cd frontend
 npx playwright test --config=tests/playwright.config.ts --project=app visual.spec.ts \
-  -g "mobile-list|mobile-detail|header-1100|header-1000|detail|requests|seller-dash|wizard-|admin-"
+  -g "mobile-list|mobile-detail|detail|requests|seller-dash|wizard-|admin-"
 ```
-Expected: 15 passed. **If any of the fifteen fails here, the port leaked into shared code — STOP and diff** (C14, Global Constraint (f)).
+Expected: 13 passed. **If any of the thirteen fails here, the port leaked into shared code — STOP and diff** (C14, Global Constraint (f)).
 
 ```bash
 npx playwright test --config=tests/playwright.config.ts --project=app dom.spec.ts \
-  -g "mobile-list|mobile-detail|header-1100|header-1000|detail|requests|seller-dash|wizard-|admin-"
+  -g "mobile-list|mobile-detail|detail|requests|seller-dash|wizard-|admin-"
 ```
-Expected: 15 passed, for the same reason.
+Expected: 13 passed, for the same reason.
 
-Expected RED, and made green in Task V9: `browse-listings`, `browse-market`, `browse-market-layers-closed`, `browse-market-panel`, `mobile-map`, `interest-modal` (visual + DOM), and `smoke.spec.ts`'s `'a deep link is honoured after the fixture sign-in'` and `'navigation writes the URL'` (they click `'Market Data'` and assert `'Data Layers'`). Record the failing list; nothing else may be red.
+Expected RED, and made green in Task V9: `browse-listings`, `browse-market`, `browse-market-layers-closed`, `browse-market-panel`, `mobile-map`, `interest-modal`, **`header-1100` and `header-1000`** (visual + DOM), and `smoke.spec.ts`'s `'a deep link is honoured after the fixture sign-in'` and `'navigation writes the URL'` (they click `'Market Data'` and assert `'Data Layers'`). The two header states are Browse screenshots at 1100 and 1000 px — README §2 requires V3 to change them, so their failing here is the design working, not a leak (spec D6). Record the failing list; nothing else may be red.
 
 - [ ] **Step 9: Commit**
 
@@ -2125,7 +2283,31 @@ Replace the three `routeToPatch` browse cases with:
 
 In the `round-trips every screen` case, replace `{ ...base, screen: 'browse', browseMode: 'market' }` with `{ ...base, screen: 'browse' }`. In the `guard` and `needsPatch` cases, replace `{ screen: 'browse', browseMode: 'market' }` / `{ screen: 'browse', browseMode: 'listings' }` with `{ screen: 'browse' }`.
 
-In `frontend/src/router/useStateRouteSync.test.ts`, re-grep for `browseMode` (the bundle cites line 101; Global Constraint (l)) and drop the field from the state it seeds.
+In `frontend/src/router/useStateRouteSync.test.ts` (re-grep; the bundle cites only line 101 and undercounts — there are five live references plus a comment):
+
+- `'pushes the URL when state changes: browse+market, then admin+data'` → seed `c.setState({ screen: 'browse', auth: true })` and expect `/browse`; rename the case to `'pushes the URL when state changes: browse, then admin+data'`.
+- `'keeps the URL and shows the sign-in gate for a signed-out deep link into a member route'` → **unchanged**: signed out, no patch applies, the URL stays `/browse?tab=market`.
+- `'applies the pending route the instant auth flips true — the real signIn() pattern (screen + auth in one setState)'` → expect `router.currentRoute.value.fullPath` to be **`/browse`** (the legacy query is dropped as the state settles) and delete the `expect(routed(c).browseMode).toBe('market')` line.
+- `'applies the pending route when only auth flips (no screen change in the same setState)'` → keep `expect(c.state.screen).toBe('browse')` and delete the `routed(c).browseMode` assertion.
+- `'uses router.replace (not push) when only the query changes and the path stays the same'` → after V3, `/browse` has no query at all, so this scenario is unreproducible on Browse. It **is** reproducible on Admin, whose query survives, so re-point it rather than lose the replace-vs-push branch coverage:
+
+```ts
+    const { c, router } = await setup('/');
+    c.setState({ screen: 'admin', adminTab: 'users', auth: true });
+    await flush(); await nextTick();
+    expect(router.currentRoute.value.fullPath).toBe('/admin');
+
+    const pushSpy = vi.spyOn(router, 'push');
+    const replaceSpy = vi.spyOn(router, 'replace');
+    c.setState({ adminTab: 'data' }); // same screen/path, only the query changes
+    await flush(); await nextTick();
+
+    expect(router.currentRoute.value.fullPath).toBe('/admin?tab=data');
+    expect(replaceSpy).toHaveBeenCalledTimes(1);
+    expect(pushSpy).not.toHaveBeenCalled();
+```
+
+- Update the file's line-20 comment, which explains that `logic.js`'s initial state never assigns `browseMode`: after V3 no state ever carries it, so the `routed()` widening exists only for `auth`.
 
 Run: `cd frontend && npx vitest run src/router`
 Expected: FAIL — `expected { screen: 'browse', browseMode: 'listings' } to deeply equal { screen: 'browse' }`.
@@ -2233,15 +2415,15 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 **Files:**
 - Modify: `frontend/tests/screens.ts`
-- Regenerate: `frontend/tests/visual.spec.ts-snapshots/**` (PNGs)
-- Regenerate: `frontend/tests/dom-snapshots/**`
-- Delete: `frontend/tests/visual.spec.ts-snapshots/browse-listings-darwin.png`, `browse-market-darwin.png` and their DOM snapshots
+- Regenerate (git-ignored, worktree only): `frontend/tests/visual.spec.ts-snapshots/**` (PNGs)
+- Regenerate (git-ignored, worktree only): `frontend/tests/dom-snapshots/**`
+- Delete from the worktree: the `browse-listings`, `browse-market` and `browse-market-layers-closed` PNG/JSON pairs
 
 **Interfaces:**
 - Consumes: the regenerated app (Task V7), the V3-serving reference server (Task V2), the V3 router (Task V8).
-- Produces: `SCREENS` with **27** entries (25 − 2 collapsed + 3 new). Names Tasks V10–V12 depend on: `browse`, `browse-layer-menu`, `browse-compare-open`, `browse-legend-collapsed`, `browse-market-layers-closed`, `browse-market-panel`, `mobile-map`. The `market` helper is deleted; `browse`, `wizard`, `admin` and `mobile` helpers stay.
+- Produces: `SCREENS` with **27** entries (25 − 2 collapsed + 3 new). Names Tasks V10–V12 depend on: `browse`, `browse-layer-menu`, `browse-compare-open`, `browse-legend-collapsed`, `browse-layers-closed`, `browse-market-panel`, `mobile-map`. The `market` helper is deleted; `browse`, `wizard`, `admin` and `mobile` helpers stay.
 
-> **`browse-market-layers-closed` keeps its name.** README Task 8 says only "update the label" (V3's button reads **Layers** with a count pill, `Practice Match V3.dc.html:519-524`), not "rename the state". The name is now imprecise — V3's drawer *opens* on that click — but renaming it is an unrequested deviation that would orphan a third baseline. **STOP and ask John** if a rename is wanted; do not do it unilaterally.
+> **`browse-market-layers-closed` is renamed `browse-layers-closed`** (spec D12). README Task 8 says only "update the label" (V3's button reads **Layers** with a count pill, `Practice Match V3.dc.html:519-524`), but with the Listings/Market Data split gone the `-market-` infix means nothing and the old name is actively misleading — V3's drawer *opens* on that click. The rename orphans a third baseline pair, disposed of in Step 4. `SCREENS` still holds **27** entries.
 
 - [ ] **Step 1: Rewrite the screen list**
 
@@ -2281,8 +2463,10 @@ export const SCREENS: Screen[] = [
   { name: 'browse-compare-open', steps: async (p) => { await browse(p); await click(p, 'Compare'); await p.locator('button[aria-haspopup="listbox"]').nth(1).click(); await p.getByRole('option').nth(1).click(); await p.waitForTimeout(400); } },
   // C8: the merged legend/insight card is dismissible.
   { name: 'browse-legend-collapsed', steps: async (p) => { await browse(p); await p.getByRole('button', { name: 'Dismiss interpretation' }).click(); await p.waitForTimeout(400); } },
-  // C9: V3's drawer button reads "Layers" with a count pill, where V2's read "Data Layers".
-  { name: 'browse-market-layers-closed', steps: async (p) => { await browse(p); await click(p, 'Layers'); await p.waitForTimeout(400); } },
+  // C9: V3's drawer button reads "Layers" with a count pill, where V2's read "Data Layers";
+  // the state is `browse-layers-closed` now that there is no Listings/Market Data split
+  // to disambiguate (spec D12).
+  { name: 'browse-layers-closed', steps: async (p) => { await browse(p); await click(p, 'Layers'); await p.waitForTimeout(400); } },
   { name: 'browse-market-panel', steps: async (p) => { await browse(p); await p.getByText('Cedar Park').first().click(); await p.waitForTimeout(400); } },
   { name: 'detail', steps: async (p) => { await jump(p, 'Listing'); } },
   // The jump bar's default listing (Cedar Park / p1) always carries a pre-seeded pending
@@ -2326,31 +2510,39 @@ cd frontend && npm run test:visual:baselines
 ```
 This runs the whole `reference` project — `reference-baselines.spec.ts` (the PNGs) and `reference-dom.spec.ts` (the DOM oracle's snapshots) — against the V3 reference server, for all 27 states.
 
-- [ ] **Step 4: Remove the two orphaned oracles**
+- [ ] **Step 4: Remove the three orphaned oracle pairs**
+
+Both snapshot directories are git-ignored (`.gitignore:6-7`, spec D13), so a stale image is worktree dead weight, not committed dead weight — `git rm` would fail on an untracked path. Delete them from the working tree:
 
 ```bash
 cd "/Users/johndean/Development/Practice Match"
-git rm frontend/tests/visual.spec.ts-snapshots/browse-listings-darwin.png frontend/tests/visual.spec.ts-snapshots/browse-market-darwin.png
-git rm frontend/tests/dom-snapshots/browse-listings.json frontend/tests/dom-snapshots/browse-market.json
-git status --porcelain frontend/tests/visual.spec.ts-snapshots frontend/tests/dom-snapshots
+rm -f frontend/tests/visual.spec.ts-snapshots/browse-listings-darwin.png \
+      frontend/tests/visual.spec.ts-snapshots/browse-market-darwin.png \
+      frontend/tests/visual.spec.ts-snapshots/browse-market-layers-closed-darwin.png \
+      frontend/tests/dom-snapshots/browse-listings.json \
+      frontend/tests/dom-snapshots/browse-market.json \
+      frontend/tests/dom-snapshots/browse-market-layers-closed.json
+ls frontend/tests/visual.spec.ts-snapshots | grep -E 'browse'
 ```
-Expected: the two Browse names are gone and `browse-darwin.png`, `browse-layer-menu-darwin.png`, `browse-compare-open-darwin.png`, `browse-legend-collapsed-darwin.png` are new. (DEAD_CODE_CHECKLIST: "the orphaned baseline PNG … for whichever screen name you dropped — a stale oracle image is dead weight that still gets committed.")
+Expected exactly: `browse-darwin.png`, `browse-layer-menu-darwin.png`, `browse-compare-open-darwin.png`, `browse-legend-collapsed-darwin.png`, `browse-layers-closed-darwin.png`, `browse-market-panel-darwin.png` — and no `browse-listings`, `browse-market-darwin` or `browse-market-layers-closed`. (DEAD_CODE_CHECKLIST: "the orphaned baseline PNG … for whichever screen name you dropped — a stale oracle image is dead weight".)
 
 - [ ] **Step 5: Run the leak detector before looking at anything else**
 
 Run: `cd frontend && npx vitest run tests/baseline-manifest.test.ts`
-Expected: PASS — all fifteen frozen SHA-256s unchanged after a full baseline regeneration.
-**If any hash moved, STOP and diff.** Do not re-run `baseline-manifest.mjs`; the manifest is the evidence, not the target (C14, spec D6).
+Expected: PASS — all thirteen frozen SHA-256s unchanged after a full baseline regeneration.
+**If any hash moved, STOP and diff.** Do not re-run `baseline-manifest.mjs`; the manifest is the evidence, not the target (C14, spec D6). `header-1100` and `header-1000` are deliberately *not* in the manifest — they are Browse screenshots and are expected to have moved.
 
 - [ ] **Step 6: Eyeball the Browse pair by hand**
 
 The risk register's own mitigation: "regenerate baselines and app screenshots in the **same** commit, and eyeball the Browse pair by hand." Open `browse-darwin.png` and `browse-market-panel-darwin.png` and confirm against `Practice Match V3.dc.html` at 1440×940: the 300 px scrolling market column (C2), the ramp-chip layer menu (C3), the merged legend/insight card at `left: 16px; bottom: 22px; width: 360px` (C8), the navy Layers button with its `6 of 6` pill (C9), the nine result cards with wrapping meta rows and no horizontal scroll (C12), the mosaic shading and the single dashed ring (C5, C7), and the "Tiles © Esri" attribution (Global Constraint (h)).
 
+Then open `header-1000-darwin.png` (and `header-1100-darwin.png`) and confirm the **short-column collapse**: the legend/insight card yields before the controls column does. README §2 names those two widths as the states that prove this behaviour, which is why they are re-baselined here rather than frozen (spec D6). If the controls column collapses first, or either card overflows its column, the market panel's flex sizing is wrong — STOP.
+
 - [ ] **Step 7: Run the full previous gate**
 
 ```bash
 cd frontend
-npm run typecheck && npm test && npm run build
+npm run typecheck && npm test && npm run build && npx vitest run --coverage
 npm run test:smoke
 npm run test:visual
 npx playwright test --config=tests/playwright.config.ts --project=app dom.spec.ts
@@ -2364,15 +2556,18 @@ Expected: all green — 27 visual states at `maxDiffPixels: 0`, 27 DOM-oracle st
 
 - [ ] **Step 8: Commit the screens and the oracles together**
 
+Only `screens.ts` is committable — both snapshot directories are git-ignored (spec D13), so naming them in `git add` errors with "paths are ignored by one of your .gitignore files".
+
 ```bash
-git add frontend/tests/screens.ts frontend/tests/visual.spec.ts-snapshots frontend/tests/dom-snapshots
+git add frontend/tests/screens.ts
 git commit -m "test(visual): one Browse state, three new V3 states, oracles regenerated
 
-browse-listings and browse-market collapse into `browse`; the drawer click
-target is now `Layers`; browse-layer-menu, browse-compare-open and
-browse-legend-collapsed are added for the states V2 had no equivalent for.
-Baselines and DOM snapshots are regenerated from the V3 reference in this same
-commit, and the fifteen frozen unchanged-screen hashes are byte-identical.
+browse-listings and browse-market collapse into \`browse\`; the drawer state is
+renamed browse-layers-closed and its click target is now \`Layers\` (spec D12);
+browse-layer-menu, browse-compare-open and browse-legend-collapsed are added for
+the states V2 had no equivalent for. Baselines and DOM snapshots are regenerated
+from the V3 reference in the same working tree (both directories are
+git-ignored), and the thirteen frozen unchanged-screen hashes are byte-identical.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -2547,13 +2742,13 @@ Expected: PASS, all seven new tests plus the pre-existing smoke cases.
 
 ```bash
 cd frontend
-npm run typecheck && npm test && npm run build
+npm run typecheck && npm test && npm run build && npx vitest run --coverage
 npm run test:smoke
 npm run test:visual
 npx playwright test --config=tests/playwright.config.ts --project=app dom.spec.ts
 npx vitest run tests/baseline-manifest.test.ts
 ```
-Expected: all green. In particular `mobile-list` and `mobile-detail` must still be byte-identical — C13: "The three mobile baselines will all move. `mobile-map` changes completely; `mobile-list` and `mobile-detail` should not — check them by hand." The manifest test is that check, automated; also open `mobile-map-darwin.png` and confirm by eye that it shows the shaded map, the compact key, the navy Market data button and no price pills or clusters.
+Expected: all green, including the thirteen frozen hashes. In particular `mobile-list` and `mobile-detail` must still be byte-identical — C13: "The three mobile baselines will all move. `mobile-map` changes completely; `mobile-list` and `mobile-detail` should not — check them by hand." The manifest test is that check, automated; also open `mobile-map-darwin.png` and confirm by eye that it shows the shaded map, the compact key, the navy Market data button and no price pills or clusters.
 
 - [ ] **Step 5: Commit**
 
@@ -2577,18 +2772,19 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 **Files (one commit each, in this order):**
 1. Delete: `frontend/src/components/ListingsMap.vue` · Modify: `frontend/src/app.setup.js`, `frontend/src/App.vue` (regenerated)
-2. Modify: `frontend/src/map/markers.js` (`pill`, `clusterIcon`, `clusterize`), `frontend/src/map/markers.test.ts`
-3. Modify: `frontend/src/map/markers.js` (`pricePin`), `frontend/src/map/markers.test.ts`
-4. Modify: `frontend/src/map/markers.js` (`dot`), `frontend/src/map/markers.test.ts`
+2. Modify: `frontend/src/map/markers.js` (`pill`, `clusterIcon`, `clusterize`), `frontend/src/map/markers.d.ts`, `frontend/src/map/markers.test.ts`
+3. Modify: `frontend/src/map/markers.js` (`pricePin`), `frontend/src/map/markers.d.ts`, `frontend/src/map/markers.test.ts`
+4. Modify: `frontend/src/map/markers.js` (`dot`), `frontend/src/map/markers.d.ts`, `frontend/src/map/markers.test.ts`
+5. Modify: `frontend/scripts/convert-dc.mjs` (`COMPONENTS`), `frontend/tests/convert-dc.test.ts`
 
 **Interfaces:**
 - Consumes: Task V10 green (the ordering rule: "delete it and its import at `app.setup.js:4`, but only after Task 9 is green, and **in its own commit so a revert is one `git revert`**").
-- Produces: `frontend/src/map/markers.js` exporting exactly `practicePin` and `practiceCallout`. No engine surface changes: `MountOptions.scaleControl` and `engines/leaflet.ts`'s scale-control lines are **kept** — "No component passes `true` after this work, but it is one tested line and re-adding a scale bar is a product decision, not a code one."
+- Produces: `frontend/src/map/markers.js` — and `frontend/src/map/markers.d.ts` — exporting exactly `practicePin` and `practiceCallout`; `MarkerLike`/`ClusterEntry` go with `clusterize`. `frontend/scripts/convert-dc.mjs`'s `COMPONENTS` map holds exactly `MarketMap`, `MarketMapV3` and `image-slot`. No engine surface changes: `MountOptions.scaleControl` and `engines/leaflet.ts`'s scale-control lines are **kept** — "No component passes `true` after this work, but it is one tested line and re-adding a scale bar is a product decision, not a code one."
 
 > **What is already discharged elsewhere, and must be re-verified here, not re-done:** `router/sync.ts`'s `BROWSE_TABS`, the `browseMode` branch in `stateToRoute` and `RoutedState.browseMode` (Task V8) · `screens.ts`'s `market` helper and one of `browse-listings`/`browse-market`, plus the orphaned baseline PNGs (Task V9) · `MarketMapView.vue`'s `layers.competition` bubble pass and its `layers`/`valueLayer` props (Task V5) · every "Removed for you by the generator" line (Task V7).
 
 > **Explicitly kept, and why** (DEAD_CODE_CHECKLIST, "Do NOT delete — looks dead, isn't"): `engine.ts`'s `scaleControl` option and `engines/leaflet.ts`'s scale-control lines · `engines/leaflet.test.ts`'s mount-contract block (renamed in Task V4, not deleted) · `ADMIN_TABS`'s `'listings'` member · `logic.js`'s seller listings and `logic.test.ts`'s seller cases · `docs/design-reference/design_handoff_practice_match_v2/`.
-> **One recorded judgement the checklist does not cover:** `convert-dc.mjs`'s `COMPONENTS` entry `AustinMap: 'ListingsMap'` and the `convert-dc.test.ts` case that exercises it are **kept**. They are generator grammar, not app code — a pure string transform, exercised by a unit test that never imports the component — and V3 emits no `AustinMap`. Removing them is not on any checklist and would be an unrequested deviation. Flagged for John in the hand-back note.
+> **One item the bundle's checklist does not cover, settled by spec D12:** `convert-dc.mjs`'s `COMPONENTS` entry `AustinMap: 'ListingsMap'` maps a design component onto a Vue component that commit 1 deletes. A mapping to a file that no longer exists is dead code whatever else it is, so it goes in **commit 5**, last, once `ListingsMap.vue` is gone — with its own grep gate. `MarketMap: 'MarketMapView'` stays: the V2 folder is still the regression oracle and must remain convertible.
 
 ### Commit 1 — `ListingsMap.vue`
 
@@ -2597,7 +2793,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```bash
 grep -rn "ListingsMap" frontend/src
 ```
-Expected: exactly two hits — `frontend/src/app.setup.js` (the import) and `frontend/src/App.vue` (the same import line, inlined by the generator). **No `<ListingsMap>` element anywhere.** If a mount remains, Task V7 did not regenerate cleanly: STOP.
+Expected: exactly two hits — `frontend/src/app.setup.js` (the import) and `frontend/src/App.vue` (the same import line, inlined by the generator). **No `<ListingsMap>` element anywhere.** If a mount remains, Task V7 did not regenerate cleanly: STOP. (`frontend/scripts/convert-dc.mjs` and `frontend/tests/convert-dc.test.ts` still name it; they are commit 5's business, not this one's.)
 
 - [ ] **Step 2: Delete the component and its import**
 
@@ -2619,10 +2815,10 @@ Run: `cd frontend && npm run gen:app`
 
 ```bash
 grep -rn "ListingsMap" frontend/src            # expect: no hits
-cd frontend && npm run typecheck && npm test && npm run build
+cd frontend && npm run typecheck && npm test && npm run build && npx vitest run --coverage
 npx vitest run tests/baseline-manifest.test.ts
 ```
-Expected: all green, including `app-generated.test.ts` (App.vue is byte-identical to a fresh generation) and the fifteen frozen hashes.
+Expected: all green, including `app-generated.test.ts` (App.vue is byte-identical to a fresh generation) and the thirteen frozen hashes.
 
 - [ ] **Step 4: Commit**
 
@@ -2650,6 +2846,8 @@ Expected: hits only in `frontend/src/map/markers.js` (the definitions) and `fron
 
 From `frontend/src/map/markers.js`, delete `pill`, `clusterIcon` and `clusterize` in full.
 
+From `frontend/src/map/markers.d.ts`, delete the three matching declarations **and** the `MarkerLike` / `ClusterEntry` interfaces, which exist only for `clusterize`'s signature. Leaving a declaration behind is worse than leaving the JS: `checkJs: false` means `vue-tsc` believes the `.d.ts`, so a phantom export typechecks happily and crashes at runtime.
+
 From `frontend/src/map/markers.test.ts`, delete exactly these four cases (Global Constraint (d) — these are the named, authorised test deletions; "`clusterize` has unit tests in `map/markers.test.ts` — delete those with it, never leave orphan tests"):
 - `'pill muted/active'`
 - `'pill neither muted nor active falls back to the default (unselected) palette'`
@@ -2661,8 +2859,8 @@ and remove `clusterIcon, clusterize, pill` from the file's import list.
 - [ ] **Step 3: Verify**
 
 ```bash
-grep -rn "clusterize\|clusterIcon\|\bpill\b" frontend/src   # expect: no hits
-cd frontend && npm run typecheck && npm test && npm run build
+grep -rn "clusterize\|clusterIcon\|\bpill\b\|MarkerLike\|ClusterEntry" frontend/src   # expect: no hits
+cd frontend && npm run typecheck && npm test && npm run build && npx vitest run --coverage
 npx vitest run tests/baseline-manifest.test.ts
 ```
 Expected: green, `markers.js` still at 100 % coverage.
@@ -2670,7 +2868,7 @@ Expected: green, `markers.js` still at 100 % coverage.
 - [ ] **Step 4: Commit**
 
 ```bash
-git add frontend/src/map/markers.js frontend/src/map/markers.test.ts
+git add frontend/src/map/markers.js frontend/src/map/markers.d.ts frontend/src/map/markers.test.ts
 git commit -m "refactor(map): delete pill, clusterIcon and clusterize with ListingsMap
 
 Dead with the listings map. Their four unit tests are deleted with them — never
@@ -2690,20 +2888,20 @@ Expected: hits only in `frontend/src/map/markers.js` and `frontend/src/map/marke
 
 - [ ] **Step 2: Delete `pricePin` and its test**
 
-Delete `pricePin` from `frontend/src/map/markers.js`, delete the case `'pricePin active/inactive'` from `frontend/src/map/markers.test.ts`, and drop `pricePin` from the import list.
+Delete `pricePin` from `frontend/src/map/markers.js` **and its declaration from `frontend/src/map/markers.d.ts`**, delete the case `'pricePin active/inactive'` from `frontend/src/map/markers.test.ts`, and drop `pricePin` from the import list.
 
 - [ ] **Step 3: Verify**
 
 ```bash
 grep -rn "pricePin" frontend/src                            # expect: no hits
-cd frontend && npm run typecheck && npm test && npm run build
+cd frontend && npm run typecheck && npm test && npm run build && npx vitest run --coverage
 npx vitest run tests/baseline-manifest.test.ts
 ```
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add frontend/src/map/markers.js frontend/src/map/markers.test.ts
+git add frontend/src/map/markers.js frontend/src/map/markers.d.ts frontend/src/map/markers.test.ts
 git commit -m "refactor(map): delete pricePin, replaced by practicePin
 
 C6: V3's pin is practicePin at [78,34]/[39,34]; nothing renders the V2 price
@@ -2724,24 +2922,82 @@ Expected: hits only in `frontend/src/map/markers.js` and `frontend/src/map/marke
 
 - [ ] **Step 2: Delete `dot` and its test**
 
-Delete `dot` from `frontend/src/map/markers.js`, delete the case `'dot'` from `frontend/src/map/markers.test.ts`, and drop `dot` from the import list. The file now exports exactly `practicePin` and `practiceCallout`; update its header comment's scope if it names the removed builders.
+Delete `dot` from `frontend/src/map/markers.js` **and its declaration from `frontend/src/map/markers.d.ts`**, delete the case `'dot'` from `frontend/src/map/markers.test.ts`, and drop `dot` from the import list. Both files now carry exactly `practicePin` and `practiceCallout`; update `markers.js`'s header comment's scope if it names the removed builders.
 
 - [ ] **Step 3: Verify**
 
 ```bash
-grep -rn "\bdot(" frontend/src                              # expect: no hits
-cd frontend && npm run typecheck && npm test && npm run build
+grep -rn "\bpill\b\|clusterIcon\|clusterize\|pricePin\|\bdot(" frontend/src   # expect: no hits, markers.d.ts included
+cd frontend && npm run typecheck && npm test && npm run build && npx vitest run --coverage
 npx vitest run tests/baseline-manifest.test.ts
 ```
 
 - [ ] **Step 4: Commit**
 
 ```bash
-git add frontend/src/map/markers.js frontend/src/map/markers.test.ts
+git add frontend/src/map/markers.js frontend/src/map/markers.d.ts frontend/src/map/markers.test.ts
 git commit -m "refactor(map): delete dot, replaced by community mosaic shading
 
 C5: V3 shades contiguous area with rectangles on a canvas renderer rather than
 drawing one sized bubble per community. Own commit, one \`git revert\`.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
+### Commit 5 — the `AustinMap: 'ListingsMap'` generator grammar (spec D12)
+
+- [ ] **Step 1: See what still names it**
+
+```bash
+cd "/Users/johndean/Development/Practice Match/frontend" && grep -rn "AustinMap" . --exclude-dir=node_modules --exclude-dir=dist
+```
+Expected: exactly three hits — `scripts/convert-dc.mjs:14` (the `COMPONENTS` entry), `tests/convert-dc.test.ts:52` (the case that exercises it) and `tests/harness.ts:10` (a stale comment: the V3 reference loads `MarketMapV3.jsx`, not `AustinMap.jsx`/`MarketMap.jsx`). Nothing under `src/` — commit 1 removed the component the entry maps to.
+
+- [ ] **Step 2: Delete the mapping, its test half and the stale comment**
+
+In `frontend/scripts/convert-dc.mjs`, drop the entry — `MarketMap` stays, because the V2 folder is still the regression oracle and must remain convertible:
+
+```js
+const COMPONENTS = { MarketMap: 'MarketMapView', MarketMapV3: 'MarketMapView', 'image-slot': 'ImageSlot' };
+```
+
+In `frontend/tests/convert-dc.test.ts`, rewrite the case `'maps x-import and image-slot to the Vue components with bound props and drops hint-* attributes'` so its first assertion uses the live V3 component instead of the deleted `AustinMap` — the `image-slot` and `MarketMap` assertions in the same case are untouched (this is the seventh authorised test deletion in Global Constraint (d): the AustinMap half of one case, not the case):
+
+```ts
+  it('maps x-import and image-slot to the Vue components with bound props and drops hint-* attributes', () => {
+    const { template } = convert('<x-import component="MarketMapV3" from="./MarketMapV3.jsx" practices="{{ md.practices }}" active-id="{{ md.activeId }}" on-select="{{ md.selectFromMap }}" hint-size="100%,100%"></x-import><image-slot id="{{ p.photoId }}" shape="rect" src="{{ p.photoSrc }}" placeholder="{{ p.photoLabel }}"></image-slot>');
+    expect(template).toBe('<div class="sc-host-x" style="display: contents"><MarketMapView :practices="v.md?.practices" :active-id="v.md?.activeId" :on-select="v.md?.selectFromMap"></MarketMapView></div><ImageSlot :id="v.p?.photoId" shape="rect" :src="v.p?.photoSrc" :placeholder="v.p?.photoLabel"></ImageSlot>');
+    expect(convert('<x-import component="MarketMap" from="./MarketMap.jsx" practices="{{ md.practices }}"></x-import>').template).toBe('<div class="sc-host-x" style="display: contents"><MarketMapView :practices="v.md?.practices"></MarketMapView></div>');
+  });
+```
+
+In `frontend/tests/harness.ts`, correct the stale comment to name the file the V3 reference actually loads:
+
+```ts
+// support.js loads React/ReactDOM/Babel from unpkg with SRI; MarketMapV3.jsx (loaded by the
+```
+
+- [ ] **Step 3: Verify**
+
+```bash
+cd "/Users/johndean/Development/Practice Match/frontend" && grep -rn "AustinMap" . --exclude-dir=node_modules --exclude-dir=dist   # expect: no hits
+cd frontend && npm run typecheck && npm test && npm run build && npx vitest run --coverage
+npx vitest run tests/baseline-manifest.test.ts
+```
+Expected: green, including `app-generated.test.ts` (the generator's output for V3 is unchanged — `AustinMap` never appears in the V3 reference).
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add frontend/scripts/convert-dc.mjs frontend/tests/convert-dc.test.ts frontend/tests/harness.ts
+git commit -m "refactor(gen): delete the AustinMap grammar entry with ListingsMap
+
+Spec D12. COMPONENTS mapped AustinMap onto a Vue component that commit 1
+deleted; a mapping to a file that no longer exists is dead code. MarketMap stays
+- the V2 folder is still the regression oracle and must remain convertible. The
+convert-dc case keeps its image-slot and MarketMap assertions and swaps its
+AustinMap half for MarketMapV3; harness.ts's comment names MarketMapV3.jsx, the
+file the V3 reference actually loads.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -2752,7 +3008,8 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ```bash
 cd "/Users/johndean/Development/Practice Match"
-grep -rn "browseMode\|browseToggle\|BROWSE_TABS\|isBrowse\|hasPeek\|basemapTabs" frontend/src frontend/tests   # expect: no hits
+grep -rn "browseMode\|browseToggle\|BROWSE_TABS\|hasPeek\|basemapTabs" frontend/src frontend/tests   # expect: no hits
+grep -rn "isBrowse" frontend/src   # expect: exactly one — logic.js's vestigial `isBrowse: false`, ported verbatim (README §7 risk register)
 grep -rn "Market Data tab" frontend/src                                                                        # expect: no hits
 grep -rn "valueLayer\|layers.competition" frontend/src                                                          # expect: no hits
 git diff --stat main -- frontend/src/router/routes.ts                                                           # expect: empty
@@ -2766,13 +3023,13 @@ ls docs/design-reference/design_handoff_practice_match_v2 >/dev/null            
 
 ```bash
 cd frontend
-npm run typecheck && npm test && npm run build
+npm run typecheck && npm test && npm run build && npx vitest run --coverage
 npm run test:smoke
 npm run test:visual
 npx playwright test --config=tests/playwright.config.ts --project=app dom.spec.ts
 npx vitest run tests/baseline-manifest.test.ts
 ```
-Expected: all green — 27 visual states at zero tolerance, 27 DOM states, the smoke suite including the seven mobile acceptance tests, 100 % coverage on every hand-written file, and the fifteen frozen hashes unchanged.
+Expected: all green — 27 visual states at zero tolerance, 27 DOM states, the smoke suite including the seven mobile acceptance tests, 100 % coverage on every hand-written file, and the thirteen frozen hashes unchanged.
 
 - [ ] **Step 3: Prove the backend was never touched**
 
@@ -2840,11 +3097,11 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
     expect(md).not.toContain('remove jump bar markup, `gateStates`, demo credentials');
   });
 
-  it('the map-engines plan no longer edits ListingsMap.vue and rebases onto V3\'s engine shape', () => {
+  it('the map-engines plan no longer mentions ListingsMap anywhere and rebases onto V3\'s engine shape', () => {
     const md = read(MAP_ENGINES);
-    expect(md).not.toContain('`ListingsMap.vue` (use `useMapHost()`)');
-    expect(md).not.toContain('and `ListingsMap.vue`');
+    expect(md).not.toContain('ListingsMap');   // catches the M5 file list, the components paragraph AND the setControls parenthetical
     expect(md).toContain('rectangle');
+    expect(md).toContain('ring(');
     expect(md).toContain('panInside');
     expect(md).toContain('TooltipSpec');
   });
@@ -2855,8 +3112,16 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
     expect(md).toContain('Average Practice Payroll');
     expect(md).toContain('Avg. payroll per practice');
     expect(md).not.toMatch(/community bubble `dot\(/);
-    expect(md).toContain('015');
+    expect(md).toContain('`015`');
+    expect(md).not.toContain('`010`–`059`');   // every citation of SP2's old range is renumbered
     expect(md).toContain('one decision record');
+  });
+
+  it('the census plan carries README §5\'s disabled-vs-blocked contract, which V3\'s fixtures conflate', () => {
+    const md = read(CENSUS);
+    expect(md).toContain('"disabled"');
+    expect(md).toContain('"blocked"');
+    expect(md).toContain('licence');
   });
 
   it('CLAUDE.md names the V2 folder as the regression oracle for the unchanged screens', () => {
@@ -2870,7 +3135,7 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
 - [ ] **Step 2: Run it to verify it fails**
 
 Run: `cd frontend && npx vitest run tests/cross-plan-deltas.test.ts`
-Expected: FAIL — five failures, the first reading `expected '…' not to contain "patch.browseMode === 'market'"`.
+Expected: FAIL — six failures, the first reading `expected '…' not to contain "patch.browseMode === 'market'"`.
 
 - [ ] **Step 3: Amend the identity plan, Task I7**
 
@@ -2954,16 +3219,22 @@ In M5's components paragraph, replace the sentence naming both components:
 Components: `MarketMapView.vue` — the only map component after Browse V3 deleted `ListingsMap.vue` — replaces its `createEngine()` call (Task 1b) with `const host = useMapHost(); engine = await host.attach(hostEl, { center, zoom, basemap, zoomControl: false, scaleControl: false }); … onBeforeUnmount(() => host.detach())`.
 ```
 
+Re-grep for `ListingsMap` across the whole plan — the file list and the components paragraph are not the only mentions. The `setControls` parenthetical (cited around line 1204) reads *"per-attach `zoomControl`/`scaleControl` differences between `ListingsMap` and `MarketMapView` are handled by each engine's `setControls(opts)`"*; replace that clause with:
+
+```
+per-attach `zoomControl`/`scaleControl` differences (the V3 market map mounts both `false`) are handled by each engine's `setControls(opts)`
+```
+
 Add a sequencing note at the top of M5:
 
 ```markdown
 > **Rebase note (Browse V3, spec D4).** This task lands **after** the Browse V3 sub-project.
-> `engine.ts` by then already carries `AreaStyle`, `TooltipSpec`, `Handle.openTooltip`,
-> `rectangle(bounds, style, group, tooltip?, onClick?)` and `panInside(pos, padding)`, and
+> `engine.ts` by then already carries `AreaStyle`, `RingStyle`, `TooltipSpec`, `Handle.openTooltip`,
+> `rectangle(bounds, style, group, tooltip?, onClick?)`, `ring(center, radiusM, style, group)` and `panInside(pos, padding)`, and
 > `MarketMapView.vue` is the V3 port (community mosaic shading on one shared canvas renderer,
 > `rf-tip`/`rf-callout`, one dashed 16 km ring, `scaleControl: false`). `GoogleMapEngine`
-> must implement `rectangle` and `panInside` too, and `engines/contract.test.ts` must cover
-> them for both engines. `ListingsMap.vue` no longer exists.
+> must implement `rectangle`, `ring` and `panInside` too, and `engines/contract.test.ts` must
+> cover them for both engines. `ListingsMap.vue` no longer exists.
 ```
 
 In M7, correct the three `?tab=market` comments (the URLs still work — they are legacy no-ops):
@@ -2988,9 +3259,9 @@ Replace decision **D14**:
 | D14 | **Migration ranges:** SP3-A `015`–`059`, SP3-B `060`+. `001`–`002` are taken (`001_init`, `002_interest_signup`) and SP2/identity holds `010`–`014`. | Phase B tables reference `listing(id)`, which SP2 creates; numbered ordering must guarantee it exists first. |
 ```
 
-Renumber every migration filename in the plan accordingly — `migrations/002_census_registry.sql` → `migrations/015_census_registry.sql`, `003_census_geo.sql` → `016_census_geo.sql`, `004_census_measures.sql` → `017_census_measures.sql` — and update the precondition note that cites the `010`–`059` range. Re-grep for `002_census_registry` to be sure none is missed.
+Renumber every migration filename in the plan accordingly — `migrations/002_census_registry.sql` → `migrations/015_census_registry.sql`, `003_census_geo.sql` → `016_census_geo.sql`, `004_census_measures.sql` → `017_census_measures.sql` — and update **every** citation of SP2's `010`–`059` range to `010`–`014`: the Global-constraints bullet, the `060_geocode_cache.sql` row and the pre-B1 precondition (three sites; re-grep `010\`–\`059` and `002_census_registry` to be sure none is missed).
 
-Rewrite the **Layer rendering contract** table's rendering column against V3 (C5, C7). The four rows that name a bubble become:
+Rewrite the **Layer rendering contract** table's rendering column against V3 (C5, C7). The five rows that name a bubble become:
 
 ```
 | Median Household Income (`income`) | community mosaic shading, green ramp (`L.rectangle` cells, `fillOpacity: 0.5`, step 0.0055); legend buckets `<$60K … >$150K` | … |
@@ -3012,7 +3283,7 @@ Add a sentence under the table:
 Rendering follows the approved V3 design (`docs/design-reference/design_handoff_practice_match_v3/Practice Match V3.dc.html`, `MarketMapV3.jsx`) and the shipped `frontend/src/components/MarketMapView.vue` / `frontend/src/map/mosaic.js`, not V2's bubbles.
 ```
 
-Rename the econ layer everywhere the API and the UI meet (`LAYERS`, `/api/layers` fixtures, `LABELS`, the metric-label test): `"label": "Economic Profile"` → `"label": "Average Practice Payroll"`, and `"Payroll per establishment"` → `"Avg. payroll per practice"`. The metric key `revenue_per_establishment` is unchanged — only the human copy moves. Add this rename to the plan's existing "Design-vs-spec copy conflicts" list in Task B6.
+Rename the econ layer's **label strings** — `LAYERS[].label`, `LABELS`, the `/api/layers` response fixture and the metric-label test — `"label": "Economic Profile"` → `"label": "Average Practice Payroll"`, and `"Payroll per establishment"` → `"Avg. payroll per practice"`. The metric key `revenue_per_establishment` is unchanged: only the human copy moves. **Leave the caveat prose alone** — the sentences reading `Payroll per establishment (NAICS 541940), not revenue; county level.` explain what the metric *is*, they are not its label, and rewriting them to "Avg. payroll per practice, not revenue" makes them circular. Add this rename to the plan's existing "Design-vs-spec copy conflicts" list in Task B6.
 
 Replace the basemap-licence open item with a single decision record:
 
@@ -3022,18 +3293,30 @@ Replace the basemap-licence open item with a single decision record:
 
 Add the same one-line reference in the map-engines plan §12 in place of its own duplicate open item.
 
+Finally, record README §5's unaddressed requirement as a census-plan amendment — no task in this sub-project can discharge it, because V3 ships against fixtures, but it must not be lost. Add to the census plan's Task B6 integration contract:
+
+```
+**"Disabled" and "blocked" are different states and stay distinguishable** (V3 README §5). V3's
+Layers drawer lets a member turn a dataset off, and the admin Data Sources tab separately gates
+pet-ownership estimates on an unresolved licence; V3's fixtures conflate the two into one
+boolean. `/api/layers` therefore carries `state: "enabled" | "disabled" | "blocked"` per layer
+(plus `blocked_reason` when `blocked`), never a bare `enabled: boolean`: a member may re-enable
+what they disabled, and may never enable what the licence blocks. The frontend renders a
+licence-blocked layer as unavailable with its reason, not as an unchecked checkbox.
+```
+
 - [ ] **Step 7: Amend CLAUDE.md**
 
 Under "## Source of truth for the UI", after the (already repointed, Task V2) first line, add:
 
 ```markdown
-`docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html` is kept as the **regression oracle** for the fifteen screens V3 does not touch (`mobile-list`, `mobile-detail`, `header-1100`, `header-1000`, `detail`, `requests`, `seller-dash`, the four `wizard-*`, the four `admin-*`) — their baseline hashes are frozen in `frontend/tests/baseline-manifest.json`. Retire it only when that manifest retires.
+`docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html` is kept as the **regression oracle** for the thirteen screens V3 does not touch (`mobile-list`, `mobile-detail`, `detail`, `requests`, `seller-dash`, the four `wizard-*`, the four `admin-*`) — their baseline hashes are frozen in `frontend/tests/baseline-manifest.json`. `header-1100` and `header-1000` are *not* among them: they are Browse screenshots, which V3 changes. Retire the V2 folder only when that manifest retires.
 ```
 
 - [ ] **Step 8: Run the drift test**
 
 Run: `cd frontend && npx vitest run tests/cross-plan-deltas.test.ts`
-Expected: PASS, 5 tests.
+Expected: PASS, 6 tests.
 
 - [ ] **Step 9: Bump the version in lockstep**
 
@@ -3066,8 +3349,10 @@ shape; M7's ?tab=market comments say it is a legacy no-op. The census plan's
 layer-rendering table is rewritten for community mosaic shading and the single
 dashed ring, the econ layer is 'Average Practice Payroll', 'choropleth' is
 reserved for the Phase C tract tiles, migrations start at 015, and the
-Esri-vs-CARTO licence becomes one decision record. A drift test keeps all of it
-true. CLAUDE.md names the V2 folder as the regression oracle.
+Esri-vs-CARTO licence becomes one decision record; /api/layers gains README
+section 5's disabled-vs-blocked state so a licence gate can never be mistaken for
+a member's own toggle. A drift test keeps all of it true. CLAUDE.md names the V2
+folder as the regression oracle for the thirteen unchanged screens.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
@@ -3076,7 +3361,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ```bash
 cd frontend
-npm run typecheck && npm test && npm run build
+npm run typecheck && npm test && npm run build && npx vitest run --coverage
 npm run test:smoke
 npm run test:visual
 npx playwright test --config=tests/playwright.config.ts --project=app dom.spec.ts
@@ -3126,7 +3411,7 @@ Plain language, for stakeholders, plus screenshots of the live QA screens:
 >
 > This is on QA (https://qa.foundation.vin) only. Production is unchanged and still shows the Coming Soon page.
 
-> **Engineer's note.** Zero-tolerance pixel and DOM gates green on all 27 states; the fifteen screens V3 does not touch are byte-identical to before the port, verified by a committed SHA-256 manifest at four checkpoints. 100 % coverage on every hand-written frontend file. No backend file changed (`poetry run pytest` green, `git diff app/ migrations/ scripts/ tests/` empty). **Risks:** (1) the community mosaic is thousands of `L.rectangle`s on one shared canvas renderer — profiled at 1440×940 and 390×800, but it is the largest new code and the first thing to look at if the map ever feels slow on an older phone; (2) three approved plans (Identity, Map-engines, Census) were amended to match V3 and must be re-read before they are executed — the amendments are held true by `frontend/tests/cross-plan-deltas.test.ts`; (3) once Wave 2a's Task I8 lands, `npm run gen:app` must not be re-run for a production build — the launch build comes from `gen:app:launch`.
+> **Engineer's note.** Zero-tolerance pixel and DOM gates green on all 27 states; the thirteen screens V3 does not touch are byte-identical to before the port, verified by a SHA-256 manifest at four checkpoints (the two header states are Browse screenshots and were re-baselined by design). 100 % coverage on every hand-written frontend file. No backend file changed (`poetry run pytest` green, `git diff app/ migrations/ scripts/ tests/` empty). **Risks:** (1) the community mosaic is thousands of `L.rectangle`s on one shared canvas renderer — profiled at 1440×940 and 390×800, but it is the largest new code and the first thing to look at if the map ever feels slow on an older phone; (2) three approved plans (Identity, Map-engines, Census) were amended to match V3 and must be re-read before they are executed — the amendments are held true by `frontend/tests/cross-plan-deltas.test.ts`; (3) once Wave 2a's Task I8 lands, `npm run gen:app` must not be re-run for a production build — the launch build comes from `gen:app:launch`.
 
 ---
 
@@ -3157,10 +3442,15 @@ Run against the spec with fresh eyes, per the writing-plans skill.
 | §4 D3 permissions on the merged Browse | V12 Step 3 |
 | §4 D4 map-engines follows V3 | V12 Step 5 |
 | §4 D5 census follows V3's rendering and copy | V12 Step 6 |
-| §4 D6 baselines regenerated, fifteen byte-identical | V1, V9 Step 5, V10 Step 4, V11 |
+| §4 D6 baselines regenerated, thirteen byte-identical, the two header states re-baselined | V1, V9 Steps 5–6, V10 Step 4, V11 |
 | §4 D7 tolerance never relaxed | Global Constraint (e); V9 Step 7 |
 | §4 D8 dead-code order, one file per commit | V11 |
 | §4 D9 line numbers advisory | Global Constraint (l); repeated in V4, V8, V12 |
+| §4 D10 Vue-only | Global Constraint (c); V5 `vue-only.test.ts` |
+| §4 D11 zero regression; hash manifest; "zero gaps" defined | Global Constraints (a), (d), (f); V1; Appendix A |
+| §4 D12 `browse-layers-closed`; the `AustinMap` grammar entry deleted | V9 note + SCREENS entry; V11 commit 5 |
+| §4 D13 snapshot oracles stay git-ignored | Global Constraint (l2); V1 Step 0; V9 Steps 4, 8 |
+| §4 D14 `ring()`; the `isBrowse` pin; disabled-vs-blocked | V4 (interface, impl, 2 tests) + V5 `drawOverlay`; V7 Step 4; V12 Step 6 |
 | §5 quality gates (unit, typecheck, build, smoke, visual, DOM, bundle budget, drift tests) | end of V3, V4, V5, V6, V7, V9, V10, V11, V12 |
 | §5 mobile acceptance at 390×800 | V10 |
 | §5 backend suite unaffected | V11 closing Step 3; V12 Step 10 |
@@ -3173,17 +3463,19 @@ Run against the spec with fresh eyes, per the writing-plans skill.
 | §7 risk 4 (two worktrees) | plan header; V12 Step 4 |
 | §7 risk 5 (stale plans) | V12 |
 
-**Gaps found and closed inline:** (i) the spec and `FILE_INDEX.md` both call `logic.js` "generated", but `gen:app` writes only `App.vue` and `pseudo.css` — V7 Steps 4–5 add the explicit port and a drift test that makes it machine-checked. (ii) Neither the spec nor the bundle mentions V3's new `layerPalette` prop, which must be declared in `app.setup.js` or `PALETTES[props.layerPalette]` reads `undefined` — V7 Step 3 adds it plus a `data-props`-vs-`defineProps` drift test. (iii) The bundle's Task-2 acceptance ("`gen:app` runs without error") is unsatisfiable before the generator learns `MarketMapV3` — V2 Step 10 records the exact expected failure and V3 Step 5 discharges it. (iv) `convert-dc.mjs`'s generated-header literal and `app-generated.test.ts`'s `DC` constant both name V2 and are not in the bundle's Task-2 file list — moved into V7 so the byte-identity gate never goes red between tasks.
+The same mapping, item by item with its proving test, is Appendix A.6.
+
+**Gaps found and closed inline:** (i) the spec and `FILE_INDEX.md` both call `logic.js` "generated", but `gen:app` writes only `App.vue` and `pseudo.css` — V7 Steps 4–5 add the explicit port and a drift test that makes it machine-checked. (ii) Neither the spec nor the bundle mentions V3's new `layerPalette` prop, which must be declared in `app.setup.js` or `PALETTES[props.layerPalette]` reads `undefined` — V7 Step 3 adds it plus a `data-props`-vs-`defineProps` drift test. (iii) The bundle's Task-2 acceptance ("`gen:app` runs without error") is unsatisfiable before the generator learns `MarketMapV3` — V2 Step 10 records the exact expected failure and V3 Step 5 discharges it. (iv) `convert-dc.mjs`'s generated-header literal and `app-generated.test.ts`'s `DC` constant both name V2 and are not in the bundle's Task-2 file list — moved into V7 so the byte-identity gate never goes red between tasks. (v) `frontend/src/map/markers.d.ts` is the type surface `vue-tsc` resolves `markers.js` against and appears in neither the spec nor `FILE_INDEX.md`; without it V5's typecheck fails and V11 would leave phantom exports — V5 Step 3b and V11 commits 2–4 own it. (vi) `frontend/src/components/ImageSlot.test.ts` reads the design runtime out of the V2 folder — V2 Step 6b re-points it, and the two files were confirmed byte-identical first. (vii) `npm test` runs `vitest run` without `--coverage`, so Global Constraint (g) measured nothing — every gate block now ends `&& npx vitest run --coverage`, after the build.
 
 **2. Placeholder scan.** No "TBD", "TODO", "implement later", "add appropriate error handling", "write tests for the above" or "similar to Task N" appears. Every code step carries real code; every repeated construct is repeated in full rather than cross-referenced. Two steps deliberately say "record what fails and fix the port" (V10 Step 2, V7 Step 6) — both enumerate the specific expected failures and the specific fix for each, and both forbid softening the test.
 
-**3. Type consistency.** Checked across tasks: `rectangle(bounds, style, group, tooltip?, onClick?)` is declared in V4's Interfaces, implemented in V4 Step 10, called in V5's `drawOverlay` and asserted in V4's tests with the same five arguments. `panInside(pos, padding)` is a two-argument engine method throughout (the `{ padding, animate: true }` object is built inside the engine, never by the caller). `Handle.openTooltip?()` is declared optional in `engine.ts`, always returned by `marker()` and `rectangle()`, and called as `handle.openTooltip()` in `MarketMapView.vue` and `handle.openTooltip!()` in the TypeScript test. `TooltipSpec.html` is the only key stripped by `tipOptions`, and every test's expected `opts` object omits exactly `html`. `mosaicBbox`/`mosaicCells`/`MOSAIC_STEP` keep the same names in `mosaic.js`, its test and `MarketMapView.vue`. `UNCHANGED_SCREENS`/`MANIFEST_PATH`/`hashBaselines` keep the same names in `baseline-manifest.mjs` and its test. `MarketMapView.vue`'s prop names match `Practice Match V3.dc.html:324` kebab-for-camel, one for one, and the V3 generator test asserts that mapping.
+**3. Type consistency.** Checked across tasks: `rectangle(bounds, style, group, tooltip?, onClick?)` is declared in V4's Interfaces, implemented in V4 Step 10, called in V5's `drawOverlay` and asserted in V4's tests with the same five arguments. `ring(center, radiusM, style, group)` and `RingStyle { color; weight; dashArray?; fill: false; interactive? }` are declared once in V4's Interfaces and in the `engine.ts` block, implemented in V4 Step 10, exercised by V4's two new `ring()` cases, called with exactly four arguments in V5's `drawOverlay`, asserted by V5's C7 case (which reads the `L.circle` args the engine builds, so the caller never names `radius`), and carried into the Map-engines rebase note in V12 Step 5 — `circle()`/`CircleStyle` are named nowhere as the ring's carrier. `practicePin(label, selected)` and `practiceCallout(p)` keep the same names and the same parameter shape in `markers.js` (V5 Step 3), `markers.d.ts` (V5 Step 3b), `markers.test.ts` (V5 Step 1) and `MarketMapView.vue`'s `drawPins` (V5 Step 8); `markers.d.ts` is edited in exactly the same commits as `markers.js`, in V5 Step 5 and V11 commits 2, 3 and 4, so the two never disagree. `panInside(pos, padding)` is a two-argument engine method throughout (the `{ padding, animate: true }` object is built inside the engine, never by the caller). `Handle.openTooltip?()` is declared optional in `engine.ts`, always returned by `marker()` and `rectangle()`, and called as `handle.openTooltip()` in `MarketMapView.vue` and `handle.openTooltip!()` in the TypeScript test. `TooltipSpec.html` is the only key stripped by `tipOptions`, and every test's expected `opts` object omits exactly `html`. `mosaicBbox`/`mosaicCells`/`MOSAIC_STEP` keep the same names in `mosaic.js`, its test and `MarketMapView.vue`. `UNCHANGED_SCREENS`/`MANIFEST_PATH`/`hashBaselines` keep the same names in `baseline-manifest.mjs` and its test. `MarketMapView.vue`'s prop names match `Practice Match V3.dc.html:324` kebab-for-camel, one for one, and the V3 generator test asserts that mapping.
 
 ---
 
 ## Appendix A — Zero-gap coverage map
 
-Every acceptance criterion, change-log entry, dead-code rule and file-index entry in the bundle, with the task that owns it and the test that proves it.
+Every acceptance criterion, change-log entry, dead-code rule, file-index entry, non-task README rule and risk-register line in the bundle, plus every spec decision, with the task that owns it and the test that proves it. Global Constraint (a) is discharged here.
 
 ### A.1 README acceptance criteria
 
@@ -3191,12 +3483,12 @@ Every acceptance criterion, change-log entry, dead-code rule and file-index entr
 |---|---|---|---|
 | 1 | Land the reference bundle | V1 | `reference-bundle.test.ts` (4 cases) + the by-hand `python3 -m http.server` render |
 | 2 | Repoint generator, reference server, CLAUDE.md | V2 (+V3 Step 5 for the `gen:app` clause) | `design-source.test.ts`, `reference-server.test.ts`, `npm test`, the by-hand `:4174` check |
-| 3 | Extend the map engine | V4 | `leaflet.test.ts` V3 block (10 cases), `mosaic.test.ts` (6), `global.test.ts` (2), `npm run typecheck && npm test` |
-| 4 | Port `MarketMapView.vue` | V5 | `MarketMapView.test.ts` V3 block (15 cases), `markers.test.ts` (4 new); 1440×940 via `browse-market-panel` in V9 |
+| 3 | Extend the map engine | V4 | `leaflet.test.ts` V3 block (13 cases: canvas/rectangle/tooltip/panInside + `ring()` ×2 + the post-`destroy()` handle), `mosaic.test.ts` (6), `global.test.ts` (2), the widened `boundary.test.ts`, `npm run typecheck && npm test` |
+| 4 | Port `MarketMapView.vue` | V5 | `MarketMapView.test.ts` V3 block (17 cases, incl. the C7 ring through `engine.ring`, `width: auto`, and the `&&`-guard cover) + the per-case disposition table; `markers.test.ts` (4 new) + `markers.d.ts`; 1440×940 via `browse-market-panel` in V9 |
 | 5 | Icons — no `/assets/icons/*` 404 | V6 | `icons.test.ts` (3) + `npm run test:smoke`'s `console.error` gate (V8 Step 6) |
-| 6 | Regenerate | V7 | `app-generated.test.ts` (5 cases incl. the new logic.js and defineProps drift tests), `npm run typecheck && npm test && npm run build` |
+| 6 | Regenerate | V7 | `app-generated.test.ts` (6 cases: the 3 committed ones, the `data-props`-vs-`defineProps` drift test, and the two-case `logic.js` port describe — which also pins the reference's vestigial `isBrowse: false` at exactly one occurrence, README §7), `npm run typecheck && npm test && npm run build` |
 | 7 | Router | V8 | `sync.test.ts` (incl. the fixed-point no-loop case), `useStateRouteSync.test.ts`, `smoke.spec.ts` |
-| 8 | Test screens + baselines | V9 | `npm run test:smoke && npm run test:visual` at zero tolerance; `baseline-manifest.test.ts` |
+| 8 | Test screens + baselines | V9 | `npm run test:smoke && npm run test:visual` at zero tolerance; `baseline-manifest.test.ts` (thirteen); oracles regenerated in the same working tree (git-ignored, spec D13) |
 | 9 | Mobile | V10 | `smoke.spec.ts`'s 7-case mobile describe (shading, `elementFromPoint`, full-height + scroll, five sections, tap targets, double-tap → detail) |
 | 10 | Dead code | V11 | per-commit grep gates + the full previous gate + `baseline-manifest.test.ts` after each |
 
@@ -3210,9 +3502,9 @@ Every acceptance criterion, change-log entry, dead-code rule and file-index entr
 | C4 Compare against | V7, V3 (`:ref` support) | `browse-compare-open` baseline; `convert-dc.test.ts` ref case |
 | C5 Community mosaic shading replaces bubbles | V4, V5 | `mosaic.test.ts`; `leaflet.test.ts` canvas/rectangle cases; `MarketMapView.test.ts` mosaic + `rf-tip` cases |
 | C6 Practice pins and callouts | V4, V5 | `markers.test.ts` `practicePin`/`practiceCallout`; `MarketMapView.test.ts` selection/panInside case |
-| C7 One dashed 16 000 m ring | V5 | `MarketMapView.test.ts` "ONE dashed unfilled drive-time ring" case |
+| C7 One dashed 16 000 m ring | V4 (`ring()`), V5 | `leaflet.test.ts` "ring() draws one dashed unfilled circle"; `MarketMapView.test.ts` "ONE dashed unfilled drive-time ring" |
 | C8 Legend + interpretation merged | V7, V6 | `browse-legend-collapsed` baseline; `icons.test.ts` (`sub-bar-chart`, `sub-legend-list`) |
-| C9 Layers drawer | V7, V6 | `browse-market-layers-closed` baseline; `icons.test.ts` (`sub-layers-stack`) |
+| C9 Layers drawer | V7, V6 | `browse-layers-closed` baseline; `icons.test.ts` (`sub-layers-stack`) |
 | C10 Three palettes; econ renamed | V7 | `app-generated.test.ts` logic-shape case (`layerPalette`, "Average Practice Payroll"); `logic.test.ts` |
 | C11 No scale control, attribution on | V4, V5 | `MarketMapView.test.ts` mount case; `leaflet.test.ts` mount-contract block |
 | C12 Results rail, wrapping meta row | V7 | `browse` baseline at 1440×940 (zero tolerance = no overflow, no horizontal scroll) |
@@ -3226,14 +3518,16 @@ Every acceptance criterion, change-log entry, dead-code rule and file-index entr
 | Generator removes: desktop `v-if="v.isBrowse"` branch, both `browseToggle` loops, desktop `<ListingsMap>`, mobile `<ListingsMap>` → `<MarketMapView>`, `mobileVals.hasPeek`/`peek`, `basemapTabs`, `isBrowse`+`browseToggle`, every `browseMode` read, the "Market Data tab" header | V7 | V7 Step 2 greps; `app-generated.test.ts` logic-shape case; V11 closing greps |
 | `grep -rn "browseMode\|browseToggle" frontend/src` → no hits outside tests | V8 | V8 Steps 1, 7 |
 | By hand: `BROWSE_TABS`, the `stateToRoute` branch, `RoutedState.browseMode` (only if no grep hit) | V8 | V8 Steps 1, 3, 7 |
-| By hand: `screens.ts` `market` helper; one of `browse-listings`/`browse-market`; the orphaned baseline PNG | V9 | V9 Steps 1, 4 |
+| By hand: `screens.ts` `market` helper; one of `browse-listings`/`browse-market`; the orphaned baseline PNG | V9 | V9 Steps 1, 4 — three orphaned pairs `rm -f`'d from the worktree (`browse-listings`, `browse-market`, `browse-market-layers-closed`); both snapshot dirs are git-ignored, so `git rm` does not apply (spec D13) |
 | By hand: `MarketMapView.vue`'s `layers.competition` pass and its `layers`/`valueLayer` props | V5 | V5 Step 8 (rewritten file); V11 closing grep |
 | After Task 9, own commit: `ListingsMap.vue` + `app.setup.js` import | V11 commit 1 | grep gate + full gate |
 | After Task 9, own commit: `pill`, `clusterIcon`, `clusterize` + their unit tests | V11 commit 2 | grep gate + named test deletions |
 | `pricePin` (verify by grep first) | V11 commit 3 | grep gate |
 | `dot` (check `MarketMapView.test.ts` first) | V11 commit 4 | grep gate + the `MarketMapView.test.ts` grep |
 | **Keep:** `scaleControl` option; the renamed engine describe; `ADMIN_TABS.listings`; seller listings; the V2 folder | V4, V11, V12 | V11 closing greps; `reference-bundle.test.ts` "keeps the V2 folder" |
-| Zero-risk: legacy `?tab=` resolves, no route deleted, the fifteen byte-identical, visual green at zero tolerance with baselines in the same commit, smoke green, backend untouched | V8, V9, V10, V11, V12 | V8 Step 6; V9 Steps 5, 7, 8; V11 closing Steps 1–3; V12 Step 10 |
+| Spec D12: `convert-dc.mjs`'s `AustinMap: 'ListingsMap'` grammar entry + its `convert-dc.test.ts` half + `harness.ts`'s stale comment | V11 commit 5 | `grep -rn "AustinMap" frontend/` → no hits; full gate |
+| Spec D12: the `browse-market-layers-closed` state renamed `browse-layers-closed` | V9 | `SCREENS` (27 entries); the regenerated `browse-layers-closed` baseline; Step 4's disposal of the old pair |
+| Zero-risk: legacy `?tab=` resolves, no route deleted, the thirteen byte-identical, visual green at zero tolerance with baselines regenerated in the same run, smoke green, backend untouched | V8, V9, V10, V11, V12 | V8 Step 6; V9 Steps 5, 7, 8; V11 closing Steps 1–3; V12 Step 10 |
 
 ### A.4 FILE_INDEX
 
@@ -3244,6 +3538,8 @@ Every acceptance criterion, change-log entry, dead-code rule and file-index entr
 | `map/engine.ts`, `map/engines/leaflet.ts`, `map/testing/leaflet-stub.ts` | V4 |
 | `map/mosaic.js` (new) | V4 |
 | `map/markers.js` (`practicePin`, `practiceCallout`) | V5 |
+| `map/markers.d.ts` — in **neither** FILE_INDEX nor the spec; `vue-tsc` resolves `markers.js` against it | V5 Step 3b, V11 commits 2–4 |
+| `map/boundary.test.ts` — detector widened to `L.rectangle(` / `L.canvas(` | V4 |
 | `components/MarketMapView.vue` | V5 |
 | `styles/global.css` (`.rf-callout`, `.rf-tip`) | V4 |
 | `router/sync.ts` | V8 |
@@ -3251,9 +3547,48 @@ Every acceptance criterion, change-log entry, dead-code rule and file-index entr
 | `components/ListingsMap.vue` (deleted) | V11 |
 | `tests/reference-server.mjs` | V2 |
 | `CLAUDE.md` | V2, V12 |
-| Tests that assert the old behaviour: `sync.test.ts`, `useStateRouteSync.test.ts`, `reference-server.test.ts`, `MarketMapView.test.ts`, `leaflet.test.ts`, `app-generated.test.ts`, `dom.spec.ts`/`dom.ts`/`dom.walk.test.ts` | V8, V2, V5, V4, V7, V9 |
+| Tests that assert the old behaviour: `sync.test.ts` (V8), `useStateRouteSync.test.ts` (V8 Step 2 — five concrete rewrites; the replace-vs-push case re-pointed from Browse to Admin, whose query survives V3), `reference-server.test.ts` (V2), `ImageSlot.test.ts` (V2 Step 6b), `MarketMapView.test.ts` (V5 Step 6's disposition table), `leaflet.test.ts` (V4), `app-generated.test.ts` (V7), `dom.spec.ts` (V9) | V2, V4, V5, V7, V8, V9 |
+| `dom.ts` / `dom.walk.test.ts` — the serializer and its own unit tests need **no** change; only the snapshots they compare against are regenerated | V9 (snapshots only) |
 | `logic.test.ts` (admin/seller cases unaffected) | V7 Step 6 |
 | Untouched deliberately: `index.html`, `lib/leaflet.js`, `ImageSlot.vue`, `dc-logic.js`, `tokens.css`, all of `app/`, `migrations/`, `scripts/`, `tests/`, `coming-soon/`, the V2 folder | verified in V11 closing Steps 1–3 and V12 Step 10 |
+
+### A.5 README non-task rules and risk register
+
+| Item | Owning task | Test / gate |
+|---|---|---|
+| §2 primary width 1440×940 must match | V9 | the `browse` baseline at zero tolerance |
+| §2 "the existing **1100** and **1000** header states" must match | V9 | `header-1100` / `header-1000` **re-baselined from V3** and compared at zero tolerance — they are Browse screenshots, so they are not in the frozen set (spec D6) |
+| §2 short-column collapse: the legend/insight card yields before the controls column | V9 Step 6 | by-hand eyeball of `header-1000-darwin.png` / `header-1100-darwin.png`, plus their zero-tolerance baselines |
+| §3 generated files never hand-edited | Global Constraint (b), V7 | `app-generated.test.ts` byte-identity |
+| §3 "confirm `convert-dc.mjs` is committed before starting" | already satisfied at `c00bc37` (spec §3) | `design-source.test.ts` proves it is on disk and pointed at V3 |
+| §5 the six datasets do not exist; V3 ships against fixtures | statement of fact (spec §1) | — |
+| §5 "'disabled by the user' and 'blocked by licence' must stay distinguishable — V3's fixtures conflate them" | V12 Step 6 (a Census-plan amendment: `/api/layers` carries `state: "enabled" \| "disabled" \| "blocked"` + `blocked_reason`) | `cross-plan-deltas.test.ts` "carries README §5's disabled-vs-blocked contract" |
+| §6 no map-library swap needed; V3's map is stock Leaflet 1.9.4 | V4 (additive engine work only) | `vue-only.test.ts`; `bundle-budget.test.ts`; no dependency change in `package.json` |
+| §6 Esri-vs-CARTO licence still open | V12 Step 6 | `cross-plan-deltas.test.ts` "one decision record" |
+| §7 risk: generator can't parse V3's constructs | V3 | `convert-dc.test.ts`, 6 new cases + the whole-reference conversion |
+| §7 risk: mosaic performance — "profile at 1440×940 before shipping" | V9 Step 7, V10 Step 4 | the `browse` and `mobile-map` states must render inside Playwright's 15 s action timeout, and `smoke.spec.ts`'s `'first map paint within budget'` holds the 1500 ms first-paint gate on the mosaic-shaded Browse screen |
+| §7 risk: baseline churn — regenerate in the same run and eyeball the Browse pair | V9 Steps 3, 6, 8 | by-hand eyeball; oracles regenerated in the same working tree (git-ignored, spec D13) |
+| §7 risk: **vestigial `isBrowse: false`** at the reference — "a render value nothing reads" | V7 Step 4 | `app-generated.test.ts` pins **exactly one** occurrence in `logic.js` (spec D14). It is not a defect and must not be "cleaned": `logic.js` is a verbatim port, so it goes when the design reference drops it |
+| §8 prototype scaffolding stays; Sub-project 2 removes it | V7 note, V10 note, V12 Step 4 | `cross-plan-deltas.test.ts` I8 case |
+
+### A.6 Spec decisions D1–D14
+
+| Decision | Owning task | Test / gate |
+|---|---|---|
+| D1 sequencing / worktree | plan header ("Branch") | — (a controller ruling, not a code fact) |
+| D2 I8 via `convert-dc.mjs --launch` | V12 Step 4 | `cross-plan-deltas.test.ts` I8 case |
+| D3 permissions on the merged Browse | V12 Step 3 | `cross-plan-deltas.test.ts` I7 case |
+| D4 map-engines follows V3 | V12 Step 5 | `cross-plan-deltas.test.ts` map-engines case (`not.toContain('ListingsMap')`, `ring(`) |
+| D5 census follows V3's rendering and copy; migrations at `015` | V12 Step 6 | `cross-plan-deltas.test.ts` census case |
+| D6 baselines; **thirteen** byte-identical; the two header states re-baselined | V1, V9 Steps 5–6, V10 Step 4, V11 | `baseline-manifest.test.ts` (13) at four checkpoints |
+| D7 tolerance never relaxed | Global Constraint (e) | `playwright.config.ts` untouched; V9 Step 7 |
+| D8 dead-code order, one file per commit, after Task 9 | V11 | five commits, each with its grep gate and full gate |
+| D9 line numbers advisory | Global Constraint (l) | restated in V4, V8, V9, V11, V12 |
+| D10 Vue-only | Global Constraint (c), V5 | `vue-only.test.ts` (3 cases) |
+| D11 zero regression; the hash manifest; "zero gaps" defined | Global Constraints (a), (d), (f); V1 | `baseline-manifest.test.ts`; this appendix |
+| D12 `browse-layers-closed`; the `AustinMap` grammar entry deleted | V9 (rename), V11 commit 5 | the regenerated baseline; `grep -rn "AustinMap" frontend/` → no hits |
+| D13 snapshot oracles stay git-ignored | Global Constraint (l2); V1 Step 0; V9 Steps 4, 8 | Step 0 regenerates and verifies them; V9 uses `rm -f`, and `git add` names `screens.ts` only |
+| D14 `ring()`; the `isBrowse` pin; the disabled-vs-blocked contract | V4 + V5; V7 Step 4; V12 Step 6 | `leaflet.test.ts` ring cases; `app-generated.test.ts` one-occurrence pin; `cross-plan-deltas.test.ts` disabled/blocked case |
 
 ---
 
