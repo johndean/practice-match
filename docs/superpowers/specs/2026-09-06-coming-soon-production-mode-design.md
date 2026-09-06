@@ -60,6 +60,14 @@ Favicon and Open Graph image (the README's "worth adding before launch") are Joh
 
 Task 10's production step deploys the same image with the production variables above, then `scripts/verify-deploy.sh production` (coming-soon mode): health OK with `site_mode: "coming_soon"`, deep 200, the coming-soon title served at `/`, and the sign-up endpoint answering 422 to an invalid address (no row written). The production deploy still requires John's explicit go, and rollback is the dashboard route in `DEPLOY.md`.
 
+## 8. Amendments (2026-09-06, from the Task 11c review — controller rulings, surfaced to John)
+
+1. **Client address for the per-IP limits (§3) — RIGHTMOST `X-Forwarded-For` hop, not the first.** A reverse proxy appends the peer it accepted, so every earlier hop is caller-supplied text; keying on it made the 5/min and 30/day limits bypassable by rotating a header. The rightmost hop is the client as Railway's edge saw it. Proven live on QA before production (Task 11f Step 4b: six requests with different spoofed first hops → the sixth is 429); without the header the peer address is used.
+2. **Fail closed.** If Redis or Postgres is unreachable the endpoint answers `503 {"error": "unavailable"}` and stores nothing; failures are logged by exception type only, never with the address (the engine hides bound parameters).
+3. **One 422 body.** Every malformed request — missing or non-string `email`, non-object or unparseable JSON — answers `422 {"error": "invalid_email"}`; FastAPI's echoing `detail` envelope is never returned.
+4. **Body cap.** Bodies over 4096 bytes answer `413 {"error": "too_large"}` before parsing.
+5. **Validation.** NFKC normalisation before trim/lowercase (one human address, one row); ASCII control characters and Unicode bidi controls are rejected (U+0000 is unstorable in Postgres; the rest would be stored verbatim for the Wave-2a pipeline to read).
+
 ## 7. Out of scope
 
 Sending any email; favicon and Open Graph assets (John supplies); analytics; any change to the marketplace or to QA.

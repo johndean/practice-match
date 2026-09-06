@@ -4164,6 +4164,325 @@ git commit -m "feat(api): POST /api/interest — launch-notification sign-ups wi
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
 
+#### Task 11c — fix round 1 (2026-09-06, from the opus review: 2 Critical, 7 Important, 14 Minor; John's rule — fix at source)
+
+**Rulings recorded here (controller, surfaced to John):** F2 is a spec defect — spec §3's "first hop" of `X-Forwarded-For` is caller-controlled; the RIGHTMOST hop is used (amended in the spec) and proven live on QA in Task 11f before production. M5 (pgcrypto) — declined: both Railway databases are pinned to PostgreSQL 16 (`gen_random_uuid()` is built in from 13), and `CREATE EXTENSION` would add a privilege dependency; a comment records the requirement. M12 (`IF NOT EXISTS`) — kept, matching `001_init.sql`. M7 — recorded: `BUDGET_MS` stays GET-only; POST budgets are their own tests beside it. `ip_day` end-to-end — recorded as a deliberate gap: the 5/min limit sits in front of it; `hit()`'s window semantics and the `LIMITS` values are tested directly. Everything else below is fixed.
+
+**Files:** Modify `app/api/interest.py`, `app/ratelimit.py`, `app/db.py`, `migrations/002_interest_signup.sql`, `tests/api/test_interest.py`, `tests/perf/test_api_latency.py`; Create `tests/test_db.py`.
+
+- [ ] **FR1 Step 1: failing tests — each watched fail on its own (M13).** Run each new/changed test by node id and record the failure line before touching production code.
+
+`tests/api/test_interest.py` — module-level additions and changes:
+```python
+import unicodedata
+
+from app.api.interest import CONSENT_VERSION, LIMITS
+from app.db import get_redis
+from app.ratelimit import bucket_key, hit
+
+RUN = uuid.uuid4().hex[:8]  # every rate-limit probe address carries this tag, so cleanup is scoped to this run (M8)
+
+
+def _count() -> int:
+    with psycopg2.connect(settings.database_url) as conn, conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM interest_signup")
+        return int(cur.fetchone()[0])
+
+
+def _probe_email() -> str:
+    return f"rl-{RUN}-{uuid.uuid4().hex[:8]}@example.org"
+```
+The module cleanup fixture deletes `email_normalised LIKE %s` with `(f"rl-{RUN}-%",)` (not `"rl-%"`). Every existing `f"rl-{uuid.uuid4().hex[:8]}@example.org"` becomes `_probe_email()`. The existing unit test's local `client` is renamed `redis_` (M11).
+
+Changed tests:
+```python
+async def test_new_address_is_stored_normalised_with_consent_and_source(client, db_ready, addr):
+    assert CONSENT_VERSION == "coming-soon-v1"  # the promise the page makes; pinned, not compared to itself (F5)
+    r = await client.post("/api/interest", json={"email": f"  {addr} "}, headers={"x-forwarded-for": _ip()})
+    assert r.status_code == 202 and r.json() == {"status": "ok"}
+    assert _rows(addr.lower()) == [(addr, addr.lower(), CONSENT_VERSION, "coming-soon")]
+
+
+async def test_duplicate_address_answers_the_same_and_keeps_one_row(client, db_ready, addr):
+    ip = _ip()
+    first = await client.post("/api/interest", json={"email": addr}, headers={"x-forwarded-for": ip})
+    assert first.status_code == 202  # M9
+    r = await client.post("/api/interest", json={"email": addr.upper()}, headers={"x-forwarded-for": ip})
+    assert r.status_code == 202 and r.json() == {"status": "ok"}
+    assert len(_rows(addr.lower())) == 1
+
+
+@pytest.mark.parametrize(
+    "bad",
+    ["", "   ", "nope", "a@b", "a b@c.com", "x@" + "y" * 250 + ".com",
+     "a\x00b@example.com", "a\x01b@example.com", "a\x7fb@example.com", "a\u202eb@example.com"],  # F1, M3 (bidi override, written as an escape)
+)
+async def test_invalid_address_is_422_and_writes_nothing(client, db_ready, bad):
+    before = _count()  # M10: a row count, not a lookup that could never match
+    r = await client.post("/api/interest", json={"email": bad}, headers={"x-forwarded-for": _ip()})
+    assert r.status_code == 422 and r.json() == {"error": "invalid_email"}
+    assert _count() == before
+```
+New tests:
+```python
+@pytest.mark.parametrize("body", [{}, {"email": None}, {"email": 123}, {"email": ["a@b.com"]}, [], "a@b.com"])
+async def test_every_malformed_body_gets_the_one_422_body(client, db_ready, body):
+    r = await client.post("/api/interest", json=body, headers={"x-forwarded-for": _ip()})
+    assert r.status_code == 422 and r.json() == {"error": "invalid_email"}  # F4: never FastAPI's detail envelope
+
+
+@pytest.mark.parametrize("raw", [b"", b"not json", b"{", b"\xff\xfe"])
+async def test_unparseable_bodies_get_the_one_422_body(client, db_ready, raw):
+    r = await client.post("/api/interest", content=raw, headers={"x-forwarded-for": _ip(), "content-type": "application/json"})
+    assert r.status_code == 422 and r.json() == {"error": "invalid_email"}
+
+
+async def test_composed_and_decomposed_spellings_share_one_row(client, db_ready):
+    tag = uuid.uuid4().hex[:8]
+    nfc = unicodedata.normalize("NFC", f"jöhn-{tag}@example.org")
+    nfd = unicodedata.normalize("NFD", nfc)
+    assert nfc != nfd
+    try:
+        for spelling in (nfc, nfd):
+            assert (await client.post("/api/interest", json={"email": spelling}, headers={"x-forwarded-for": _ip()})).status_code == 202
+        assert len(_rows(unicodedata.normalize("NFKC", nfc).lower())) == 1  # M2
+    finally:
+        with psycopg2.connect(settings.database_url) as conn, conn.cursor() as cur:
+            cur.execute("DELETE FROM interest_signup WHERE email_normalised LIKE %s", (f"%-{tag}@example.org",))
+
+
+async def test_rightmost_forwarded_hop_keys_the_ip_limit(client, db_ready):
+    """F2: the edge appends the peer it accepted, so the rightmost hop is the client; earlier hops are caller text."""
+    edge_saw = _ip()
+    for i in range(5):
+        r = await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": f"{_ip()}, {edge_saw}"})
+        assert r.status_code == 202, i  # a different spoofed first hop every time — must not reset the count
+    r = await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": f"{_ip()}, {edge_saw}"})
+    assert r.status_code == 429 and r.json() == {"error": "rate_limited"}
+
+
+async def test_without_a_forwarded_header_the_peer_address_is_used(client, db_ready):
+    for i in range(5):
+        assert (await client.post("/api/interest", json={"email": _probe_email()})).status_code == 202, i
+    assert (await client.post("/api/interest", json={"email": _probe_email()})).status_code == 429  # F8: fallback path runs
+
+
+def test_limits_are_the_spec_values():
+    # ip_day is not exercised end-to-end (the 5/min limit sits in front of it) — hit()'s window semantics are tested
+    # directly below and the values are pinned here (11c fix round 1 ruling).
+    assert LIMITS == {"ip_minute": (5, 60), "ip_day": (30, 86_400), "email_day": (3, 86_400)}
+
+
+async def test_body_over_the_cap_is_413_and_writes_nothing(client, db_ready):
+    before = _count()
+    r = await client.post("/api/interest", json={"email": "a" * 5000 + "@example.org"}, headers={"x-forwarded-for": _ip()})
+    assert r.status_code == 413 and r.json() == {"error": "too_large"}  # F9
+    assert _count() == before
+
+
+async def test_unreachable_redis_fails_closed_with_503(client, db_ready, monkeypatch):
+    monkeypatch.setattr(settings, "redis_url", "redis://127.0.0.1:1/0")  # F7: a closed port, not a mock
+    before = _count()
+    r = await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": _ip()})
+    assert r.status_code == 503 and r.json() == {"error": "unavailable"}
+    assert _count() == before
+
+
+async def test_unreachable_database_fails_closed_with_503(client, db_ready, monkeypatch):
+    monkeypatch.setattr(settings, "database_url", "postgresql://x:x@127.0.0.1:1/x")
+    r = await client.post("/api/interest", json={"email": _probe_email()}, headers={"x-forwarded-for": _ip()})
+    assert r.status_code == 503 and r.json() == {"error": "unavailable"}
+
+
+async def test_hit_sets_a_ttl_no_longer_than_the_window():
+    redis_ = get_redis(settings.redis_url)
+    subject = uuid.uuid4().hex
+    assert await hit(redis_, "unit", subject, 2, 60) is True
+    ttl = await redis_.ttl(bucket_key("unit", subject, 60))
+    assert 0 < ttl <= 60  # F6: the key cannot outlive its window
+
+
+def test_bucket_key_rolls_over_with_the_window_and_hides_the_subject():
+    assert bucket_key("unit", "s", 60, now=0) == bucket_key("unit", "s", 60, now=59)
+    assert bucket_key("unit", "s", 60, now=0) != bucket_key("unit", "s", 60, now=60)
+    assert "victim@example.org" not in bucket_key("email_day", "victim@example.org", 86_400, now=0)
+```
+`tests/test_db.py` (new):
+```python
+import pytest
+from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
+
+from app.checks import async_dsn
+from app.config import settings
+from app.db import get_engine
+
+
+async def test_engine_errors_never_carry_bound_parameters(db_ready):
+    """11c review F3: a failed INSERT must not put the sign-up address into the log line (hide_parameters)."""
+    engine = get_engine(async_dsn(settings.database_url))
+    with pytest.raises(DBAPIError) as info:
+        async with engine.begin() as conn:
+            await conn.execute(text("SELECT cast(:p as int)"), {"p": "victim-address@example.org"})
+    assert "victim-address@example.org" not in str(info.value)
+```
+`tests/perf/test_api_latency.py` — the POST test gains a warm-up before sampling (M6) and this comment above it: `# POST budgets live here as their own tests; BUDGET_MS (GET) is what Census B5 / Map M3-M4 extend (M7 ruling).`:
+```python
+    await client.post("/api/interest", json={"email": f"perf-{tag}-warm@example.org"}, headers={"x-forwarded-for": "10.0.0.1"})  # warm-up (M6)
+```
+(the cleanup's `LIKE f"perf-{tag}-%"` already removes it).
+
+Run: each node id → observed failures: control-character cases 500/202 not 422; malformed bodies return FastAPI's `detail` envelope; `bucket_key` ImportError; TTL test ImportError; 413 test gets 422 (the string is > 254 so it is invalid — RED is the status 422 ≠ 413); Redis/DB-down tests raise (500 / exception) instead of 503; rightmost-hop test gets 202 on the sixth request; `test_db` shows the address in the error string.
+
+- [ ] **FR1 Step 2: production code.**
+
+`app/ratelimit.py` becomes exactly:
+```python
+"""Fixed-window counters in Redis — the only state the sign-up endpoint shares across api instances.
+
+Each hit is one MULTI (INCR + EXPIRE), so a key can never outlive its window even if the process dies between
+the two commands. Subjects (client IP, normalised address) enter the key as a truncated SHA-256: a pseudonym
+that keeps raw addresses out of Redis, NOT an anonymisation (a dictionary attack reverses it). Fixed windows
+allow up to 2×limit across one window boundary; spec §3 accepts that."""
+from __future__ import annotations
+
+import hashlib
+import time
+
+from redis.asyncio import Redis
+
+
+def bucket_key(scope: str, subject: str, window_s: int, now: float | None = None) -> str:
+    bucket = int(time.time() if now is None else now) // window_s
+    return f"rl:{scope}:{bucket}:{hashlib.sha256(subject.encode()).hexdigest()[:16]}"
+
+
+async def hit(client: Redis, scope: str, subject: str, limit: int, window_s: int) -> bool:
+    """Counts one hit for `subject` in the current `window_s`-second window; True while within `limit`."""
+    key = bucket_key(scope, subject, window_s)
+    async with client.pipeline(transaction=True) as pipe:
+        pipe.incr(key)
+        pipe.expire(key, window_s)
+        count, _ = await pipe.execute()
+    return int(count) <= limit
+```
+`app/db.py`: `create_async_engine(url, pool_pre_ping=True, pool_size=5, max_overflow=5, connect_args={"timeout": TIMEOUT_S}, hide_parameters=True)` with the comment `# hide_parameters: a failed statement's log line never carries bound values (sign-up addresses) — 11c fix round 1`.
+
+`app/api/interest.py` becomes exactly:
+```python
+"""POST /api/interest — the Coming Soon page's launch-notification sign-up (spec 2026-09-06).
+
+Failure policy (11c fix round 1): FAIL CLOSED. When Redis (the rate limiter) or Postgres is unreachable the
+request is answered 503 {"error": "unavailable"} and nothing is stored; the page shows its generic retry copy.
+Failures are logged by exception type only — an address never reaches a log line."""
+from __future__ import annotations
+
+import json
+import logging
+import re
+import unicodedata
+
+from fastapi import APIRouter, Request
+from fastapi.responses import JSONResponse
+from sqlalchemy import text
+
+from app.checks import async_dsn
+from app.config import settings
+from app.db import get_engine, get_redis
+from app.ratelimit import hit
+
+logger = logging.getLogger(__name__)
+router = APIRouter(prefix="/api")
+CONSENT_VERSION = "coming-soon-v1"  # the page's promise: one message when it launches, never shared
+# Conservative on purpose: one @, a dot and an alphabetic TLD in the domain, no whitespace, no ASCII control
+# characters (U+0000 cannot be stored in Postgres text; U+0001-U+001F and U+007F would be stored verbatim),
+# no Unicode bidi controls (U+200E/F, U+202A-E, U+2066-9). Quoting, brackets and emoji are left to the consumer
+# to escape (Wave 2a) — rejecting them would reject valid addresses.
+_FORBIDDEN = r"\s@\x00-\x1f\x7f\u200e\u200f\u202a-\u202e\u2066-\u2069"
+EMAIL_RE = re.compile(rf"^[^{_FORBIDDEN}]+@[^{_FORBIDDEN}]+\.[A-Za-z]{{2,}}$")
+MAX_EMAIL_LEN = 254
+MAX_BODY_BYTES = 4096  # a JSON object holding one address; anything larger is not this form (F9)
+LIMITS: dict[str, tuple[int, int]] = {"ip_minute": (5, 60), "ip_day": (30, 86_400), "email_day": (3, 86_400)}
+INSERT = text(
+    "INSERT INTO interest_signup (email, email_normalised, consent_version, source) "
+    "VALUES (:email, :norm, :consent, 'coming-soon') ON CONFLICT (email_normalised) DO NOTHING"
+)
+
+
+def normalise(email: str) -> tuple[str, str] | None:
+    """(address as typed, trimmed; normalised key) or None when invalid. NFKC first, so composed and
+    decomposed spellings of one address cannot occupy two rows (M2); the length check runs before the regex."""
+    e = unicodedata.normalize("NFKC", email).strip()
+    if len(e) > MAX_EMAIL_LEN or not EMAIL_RE.match(e):
+        return None
+    return e, e.lower()
+
+
+def client_ip(request: Request) -> str:
+    """The client as Railway's edge saw it: the RIGHTMOST X-Forwarded-For hop. A reverse proxy appends the peer
+    it accepted, so every earlier hop is caller-supplied text and must not key a rate limit (11c review F2;
+    spec §3 amended 2026-09-06, proven live on QA in Task 11f). Without the header the peer address is used."""
+    forwarded = request.headers.get("x-forwarded-for", "")
+    if forwarded:
+        return forwarded.rsplit(",", 1)[-1].strip()
+    return request.client.host if request.client else "unknown"
+
+
+def _error(code: str, status: int) -> JSONResponse:
+    return JSONResponse({"error": code}, status_code=status)
+
+
+def _email_from(raw: bytes) -> str | None:
+    """The `email` string from a JSON object body, or None for anything else — one 422 body for every
+    malformed request instead of FastAPI's echoing `detail` envelope (F4)."""
+    try:
+        payload = json.loads(raw)
+    except ValueError:
+        return None
+    email = payload.get("email") if isinstance(payload, dict) else None
+    return email if isinstance(email, str) else None
+
+
+@router.post("/interest", status_code=202)
+async def interest(request: Request) -> JSONResponse:
+    declared = request.headers.get("content-length", "0")
+    if not declared.isdigit() or int(declared) > MAX_BODY_BYTES:
+        return _error("too_large", 413)
+    raw = await request.body()
+    if len(raw) > MAX_BODY_BYTES:
+        return _error("too_large", 413)
+    email = _email_from(raw)
+    parsed = normalise(email) if email is not None else None
+    if parsed is None:
+        return _error("invalid_email", 422)
+    as_typed, norm = parsed
+    ip = client_ip(request)
+    try:
+        redis_ = get_redis(settings.redis_url)
+        for scope, subject in (("ip_minute", ip), ("ip_day", ip), ("email_day", norm)):
+            limit, window = LIMITS[scope]
+            if not await hit(redis_, scope, subject, limit, window):
+                return _error("rate_limited", 429)
+        engine = get_engine(async_dsn(settings.database_url))
+        async with engine.begin() as conn:
+            await conn.execute(INSERT, {"email": as_typed, "norm": norm, "consent": CONSENT_VERSION})
+    except Exception as exc:  # noqa: BLE001 — fail closed: any limiter or store failure is a 503, logged by type only (never the address)
+        logger.warning("interest sign-up unavailable: %s", type(exc).__name__)
+        return _error("unavailable", 503)
+    return JSONResponse({"status": "ok"}, status_code=202)
+```
+`migrations/002_interest_signup.sql` gains, after the first comment line: `-- gen_random_uuid() is built in from PostgreSQL 13; both Railway databases are pinned to postgis/postgis:16-3.5 (DEPLOY.md). IF NOT EXISTS matches 001_init.sql.`
+
+- [ ] **FR1 Step 3: GREEN** — every node id from Step 1 passes; `poetry run pytest -q -W error` all green; `poetry run mypy app --strict`; `poetry run ruff check app tests scripts`. The Redis-down and DB-down tests must each finish in well under a second (closed port → connection refused).
+
+- [ ] **FR1 Step 4: Commit**
+```bash
+git add app/api/interest.py app/ratelimit.py app/db.py migrations/002_interest_signup.sql tests/api/test_interest.py tests/perf/test_api_latency.py tests/test_db.py
+git commit -m "fix(api): /api/interest fails closed, rejects control characters, keys limits on the edge-seen hop, one 422 body, body cap; engine hides bound parameters
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+
 ---
 
 ### Task 11d: Wire the page — `submit()` posts to the API; Merriweather self-hosted; unit tests at 100 %
@@ -4429,6 +4748,15 @@ fi
 (The healthz python block adds `mode = b.get("site_mode"); assert mode, f"FAIL: site_mode missing from healthz: {b}"` and prints `site_mode`, then the shell re-reads it as above — or export it from the python block via a temp file; either is fine, tested by the `site_mode missing` case.)
 - [ ] **Step 3: Docs** — `DEPLOY.md` "Deploy" section: expected verify output in coming-soon mode (`healthz OK … site_mode coming_soon`, `deep healthz OK`, `coming-soon shell OK`, `interest endpoint OK`); the drift test asserts `coming-soon shell OK` appears in `DEPLOY.md`.
 - [ ] **Step 4: GREEN** — both shell tests green; live: `EXPECT_SHA=<deployed> scripts/verify-deploy.sh QA https://qa.foundation.vin` still passes in app mode (QA is unchanged). Commit — `fix(deploy): verify-deploy is site-mode aware — coming-soon shell and interest endpoint on production, SPA shell on QA`.
+
+- [ ] **Step 4b (added 2026-09-06 — 11c review F2, controller): QA deploy of the new image and the forwarded-hop probe.** Run by the controller, not the implementer. 🚦 `railway status` → `Project: Practice Match`; `scripts/deploy.sh QA` (app mode; the coming-soon page does not appear on QA — `curl -fsS https://qa.foundation.vin/api/healthz` reports `site_mode app` and `/` still serves the marketplace shell). Then the probe that decides whether `client_ip()`'s rightmost-hop rule holds on Railway's edge:
+```bash
+for i in 1 2 3 4 5 6; do
+  curl -sS -o /dev/null -w "%{http_code}\n" -X POST -H 'Content-Type: application/json' -H "X-Forwarded-For: 203.0.113.$i" \
+    -d "{\"email\":\"qa-probe-$(date +%s)-$i@example.invalid\"}" https://qa.foundation.vin/api/interest
+done
+```
+Expected: `202` ×5 then `429` — a different spoofed first hop on every request did not reset the per-IP count, so the edge appends (or overwrites with) the real peer and the rightmost hop is the client. If the sixth is `202`, STOP: the edge passes the header through untouched, `client_ip()` must change, and production waits. Record the six codes in the Task 11f report and delete the probe rows afterwards (`railway run --service api --environment QA -- python -c "..."` or leave them: QA is disposable — say which).
 
 **Production step (supersedes Task 10 Step 4; John's go given 2026-09-06 — re-confirm the QA state to him in the pause report before running it):**
 1. 🚦 `railway status` → `Project: Practice Match`.
