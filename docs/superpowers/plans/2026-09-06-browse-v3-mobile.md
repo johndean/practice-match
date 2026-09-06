@@ -2432,7 +2432,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ### Task V9: The screen list and the regenerated oracles
 
 **Files:**
-- Modify: `frontend/tests/screens.ts` (the Browse block, the `browse-layers-closed` rename, **and the `mobile-detail` step, which no longer navigates on the V3 reference**)
+- Modify: `frontend/tests/screens.ts` (the Browse block, the `browse-layers-open` rename, **and the `mobile-detail` step, which no longer navigates on the V3 reference**)
 - Regenerate (git-ignored, worktree only): `frontend/tests/visual.spec.ts-snapshots/**` (PNGs) — **every** state, not a subset
 - Regenerate (git-ignored, worktree only): `frontend/tests/dom-snapshots/**` — **every** state
 - Delete from the worktree: the `browse-listings`, `browse-market` and `browse-market-layers-closed` PNG/JSON pairs
@@ -2441,11 +2441,11 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Consumes: the regenerated app (Task V7), the V3-serving reference server (Task V2), the V3 router (Task V8).
-- Produces: `SCREENS` with **27** entries (25 − 2 collapsed + 3 new). Names Tasks V10–V12 depend on: `browse`, `browse-layer-menu`, `browse-compare-open`, `browse-legend-collapsed`, `browse-layers-closed`, `browse-market-panel`, `mobile-map`. The `market` helper is deleted; `browse`, `wizard`, `admin` and `mobile` helpers stay. Also produces the **re-based** `frontend/tests/baseline-manifest.json` — same thirteen screen names, same `{ platform, screens }` shape, new hashes taken from the V3 baselines — which Tasks V10 and V11 compare against unchanged.
+- Produces: `SCREENS` with **27** entries (25 − 2 collapsed + 3 new). Names Tasks V10–V12 depend on: `browse`, `browse-layer-menu`, `browse-compare-open`, `browse-legend-collapsed`, `browse-layers-open`, `browse-market-panel`, `mobile-map`. The `market` helper is deleted; `browse`, `wizard`, `admin` and `mobile` helpers stay. Also produces the **re-based** `frontend/tests/baseline-manifest.json` — same thirteen screen names, same `{ platform, screens }` shape, new hashes taken from the V3 baselines — which Tasks V10 and V11 compare against unchanged.
 
 > **Every state is re-baselined here, not eight (amended 2026-09-07, option A; spec D6).** V7's review established that the V3 design deliberately drops `text-transform: uppercase` and its positive letter-spacing on all 26 display-size headings (micro labels keep and extend theirs; `_ds/**` unchanged), so the thirteen screens the bundle calls untouched move on typography alone — 24 of 25 states went red at V7 Step 8 for that one reason. The app's DOM was verified node-for-node identical to the V3 reference's on all thirteen, so this is the design changing, not the port leaking. `npm run test:visual:baselines` regenerates **all 27** oracles from V3; the thirteen are then proved by the DOM oracle and the pixel gate against V3 (Global Constraint (f)), and the hash manifest is re-based onto the new baselines in Step 8.
 
-> **`browse-market-layers-closed` is renamed `browse-layers-closed`** (spec D12). README Task 8 says only "update the label" (V3's button reads **Layers** with a count pill, `Practice Match V3.dc.html:519-524`), but with the Listings/Market Data split gone the `-market-` infix means nothing and the old name is actively misleading — V3's drawer *opens* on that click. The rename orphans a third baseline pair, disposed of in Step 4. `SCREENS` still holds **27** entries.
+> **`browse-market-layers-closed` is renamed `browse-layers-open`** (spec D12). README Task 8 says only "update the label" (V3's button reads **Layers** with a count pill, `Practice Match V3.dc.html:519-524`), but with the Listings/Market Data split gone the `-market-` infix means nothing and the old name is actively misleading — V3's drawer *opens* on that click. The rename orphans a third baseline pair, disposed of in Step 4. `SCREENS` still holds **27** entries.
 
 - [ ] **Step 1: Rewrite the screen list**
 
@@ -2486,9 +2486,9 @@ export const SCREENS: Screen[] = [
   // C8: the merged legend/insight card is dismissible.
   { name: 'browse-legend-collapsed', steps: async (p) => { await browse(p); await p.getByRole('button', { name: 'Dismiss interpretation' }).click(); await p.waitForTimeout(400); } },
   // C9: V3's drawer button reads "Layers" with a count pill, where V2's read "Data Layers";
-  // the state is `browse-layers-closed` now that there is no Listings/Market Data split
+  // the state is `browse-layers-open` now that there is no Listings/Market Data split
   // to disambiguate (spec D12).
-  { name: 'browse-layers-closed', steps: async (p) => { await browse(p); await click(p, 'Layers'); await p.waitForTimeout(400); } },
+  { name: 'browse-layers-open', steps: async (p) => { await browse(p); await click(p, 'Layers'); await p.waitForTimeout(400); } },
   { name: 'browse-market-panel', steps: async (p) => { await browse(p); await p.getByText('Cedar Park').first().click(); await p.waitForTimeout(400); } },
   { name: 'detail', steps: async (p) => { await jump(p, 'Listing'); } },
   // The jump bar's default listing (Cedar Park / p1) always carries a pre-seeded pending
@@ -2558,7 +2558,7 @@ rm -f frontend/tests/visual.spec.ts-snapshots/browse-listings-darwin.png \
       frontend/tests/dom-snapshots/browse-market-layers-closed.json
 ls frontend/tests/visual.spec.ts-snapshots | grep -E 'browse'
 ```
-Expected exactly: `browse-darwin.png`, `browse-layer-menu-darwin.png`, `browse-compare-open-darwin.png`, `browse-legend-collapsed-darwin.png`, `browse-layers-closed-darwin.png`, `browse-market-panel-darwin.png` — and no `browse-listings`, `browse-market-darwin` or `browse-market-layers-closed`. (DEAD_CODE_CHECKLIST: "the orphaned baseline PNG … for whichever screen name you dropped — a stale oracle image is dead weight".)
+Expected exactly: `browse-darwin.png`, `browse-layer-menu-darwin.png`, `browse-compare-open-darwin.png`, `browse-legend-collapsed-darwin.png`, `browse-layers-open-darwin.png`, `browse-market-panel-darwin.png` — and no `browse-listings`, `browse-market-darwin` or `browse-market-layers-closed`. (DEAD_CODE_CHECKLIST: "the orphaned baseline PNG … for whichever screen name you dropped — a stale oracle image is dead weight".)
 
 - [ ] **Step 5: Prove zero regression the two ways that now apply — DOM parity and the pixel gate, every state**
 
@@ -2663,7 +2663,7 @@ git add frontend/tests/screens.ts frontend/tests/baseline-manifest.mjs frontend/
 git commit -m "test(visual): one Browse state, three new V3 states, every oracle regenerated
 
 browse-listings and browse-market collapse into \`browse\`; the drawer state is
-renamed browse-layers-closed and its click target is now \`Layers\` (spec D12);
+renamed browse-layers-open and its click target is now \`Layers\` (spec D12);
 browse-layer-menu, browse-compare-open and browse-legend-collapsed are added for
 the states V2 had no equivalent for; mobile-detail's step now clicks the V3
 card's own onClick host and waits for the detail screen, instead of silently not
@@ -3571,7 +3571,7 @@ Run against the spec with fresh eyes, per the writing-plans skill.
 | §4 D9 line numbers advisory | Global Constraint (l); repeated in V4, V8, V12 |
 | §4 D10 Vue-only | Global Constraint (c); V5 `vue-only.test.ts` |
 | §4 D11 zero regression; hash manifest; "zero gaps" defined | Global Constraints (a), (d), (f); V1; Appendix A |
-| §4 D12 `browse-layers-closed`; the `AustinMap` grammar entry deleted | V9 note + SCREENS entry; V11 commit 5 |
+| §4 D12 `browse-layers-open`; the `AustinMap` grammar entry deleted | V9 note + SCREENS entry; V11 commit 5 |
 | §4 D13 snapshot oracles stay git-ignored | Global Constraint (l2); V1 Step 0; V9 Steps 4, 8 |
 | §4 D14 `ring()`; the `isBrowse` pin; disabled-vs-blocked | V4 (interface, impl, 2 tests) + V5 `drawOverlay`; V7 Step 4; V12 Step 6 |
 | §5 quality gates (unit, typecheck, build, smoke, visual, DOM, bundle budget, drift tests) | end of V3, V4, V5, V6, V7, V9, V10, V11, V12 |
@@ -3627,7 +3627,7 @@ Every acceptance criterion, change-log entry, dead-code rule, file-index entry, 
 | C6 Practice pins and callouts | V4, V5 | `markers.test.ts` `practicePin`/`practiceCallout`; `MarketMapView.test.ts` selection/panInside case |
 | C7 One dashed 16 000 m ring | V4 (`ring()`), V5 | `leaflet.test.ts` "ring() draws one dashed unfilled circle"; `MarketMapView.test.ts` "ONE dashed unfilled drive-time ring" |
 | C8 Legend + interpretation merged | V7, V6 | `browse-legend-collapsed` baseline; `icons.test.ts` (`sub-bar-chart`, `sub-legend-list`) |
-| C9 Layers drawer | V7, V6 | `browse-layers-closed` baseline; `icons.test.ts` (`sub-layers-stack`) |
+| C9 Layers drawer | V7, V6 | `browse-layers-open` baseline; `icons.test.ts` (`sub-layers-stack`) |
 | C10 Three palettes; econ renamed | V7 | `app-generated.test.ts` logic-shape case (`layerPalette`, "Average Practice Payroll"); `logic.test.ts` |
 | C11 No scale control, attribution on | V4, V5 | `MarketMapView.test.ts` mount case; `leaflet.test.ts` mount-contract block |
 | C12 Results rail, wrapping meta row | V7 | `browse` baseline at 1440×940 (zero tolerance = no overflow, no horizontal scroll) |
@@ -3649,7 +3649,7 @@ Every acceptance criterion, change-log entry, dead-code rule, file-index entry, 
 | `dot` (check `MarketMapView.test.ts` first) | V11 commit 4 | grep gate + the `MarketMapView.test.ts` grep |
 | **Keep:** `scaleControl` option; the renamed engine describe; `ADMIN_TABS.listings`; seller listings; the V2 folder | V4, V11, V12 | V11 closing greps; `reference-bundle.test.ts` "keeps the V2 folder" |
 | Spec D12: `convert-dc.mjs`'s `AustinMap: 'ListingsMap'` grammar entry + its `convert-dc.test.ts` half + `harness.ts`'s stale comment | V11 commit 5 | `grep -rn "AustinMap" frontend/` → no hits; full gate |
-| Spec D12: the `browse-market-layers-closed` state renamed `browse-layers-closed` | V9 | `SCREENS` (27 entries); the regenerated `browse-layers-closed` baseline; Step 4's disposal of the old pair |
+| Spec D12: the `browse-market-layers-closed` state renamed `browse-layers-open` | V9 | `SCREENS` (27 entries); the regenerated `browse-layers-open` baseline; Step 4's disposal of the old pair |
 | Zero-risk: legacy `?tab=` resolves, no route deleted, visual green at zero tolerance with baselines regenerated in the same run, smoke green, backend untouched | V8, V9, V10, V11, V12 | V8 Step 6; V9 Steps 5, 7, 8, 9; V11 closing Steps 1–3; V12 Step 10 |
 | Zero-risk: "the thirteen … baselines are **byte-identical** before and after" (`DEAD_CODE_CHECKLIST:60-62`) | V9 | **Superseded — the checklist is wrong about V3** (V7 finding; spec D6 option A). Replaced by DOM parity with the V3 reference (13 of 13, V9 Step 5) + the zero-tolerance pixel gate + the V3-re-based hash manifest guarding V10/V11 |
 
@@ -3710,7 +3710,7 @@ Every acceptance criterion, change-log entry, dead-code rule, file-index entry, 
 | D9 line numbers advisory | Global Constraint (l) | restated in V4, V8, V9, V11, V12 |
 | D10 Vue-only | Global Constraint (c), V5 | `vue-only.test.ts` (3 cases) |
 | D11 zero regression; the hash manifest (frozen in V1, re-based in V9); "zero gaps" defined | Global Constraints (a), (d), (f); V1, V9 Step 8 | `baseline-manifest.test.ts`; the DOM oracle; this appendix |
-| D12 `browse-layers-closed`; the `AustinMap` grammar entry deleted | V9 (rename), V11 commit 5 | the regenerated baseline; `grep -rn "AustinMap" frontend/` → no hits |
+| D12 `browse-layers-open`; the `AustinMap` grammar entry deleted | V9 (rename), V11 commit 5 | the regenerated baseline; `grep -rn "AustinMap" frontend/` → no hits |
 | D13 snapshot oracles stay git-ignored | Global Constraint (l2); V1 Step 0; V9 Steps 4, 8 | Step 0 regenerates and verifies them; V9 uses `rm -f`, and `git add` names `screens.ts` only |
 | D14 `ring()`; the `isBrowse` pin; the disabled-vs-blocked contract | V4 + V5; V7 Step 4; V12 Step 6 | `leaflet.test.ts` ring cases; `app-generated.test.ts` one-occurrence pin; `cross-plan-deltas.test.ts` disabled/blocked case |
 
