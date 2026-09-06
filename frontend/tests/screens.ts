@@ -35,10 +35,12 @@ export const SCREENS: Screen[] = [
   { name: 'browse-compare-open', steps: async (p) => { await browse(p); await click(p, 'Compare'); await p.locator('button[aria-haspopup="listbox"]').nth(1).click(); await p.getByRole('listbox', { name: 'Comparison layer' }).getByRole('option').nth(1).click(); await p.waitForTimeout(400); } },
   // C8: the merged legend/insight card is dismissible.
   { name: 'browse-legend-collapsed', steps: async (p) => { await browse(p); await p.getByRole('button', { name: 'Dismiss interpretation' }).click(); await p.waitForTimeout(400); } },
-  // C9: V3's drawer button reads "Layers" with a count pill, where V2's read "Data Layers";
-  // the state is `browse-layers-closed` now that there is no Listings/Market Data split
-  // to disambiguate (spec D12).
-  { name: 'browse-layers-closed', steps: async (p) => { await browse(p); await click(p, 'Layers'); await p.waitForTimeout(400); } },
+  // C9: V3's drawer button reads "Layers" with a count pill, where V2's read "Data Layers".
+  // The `-market-` infix went with the Listings/Market Data split (spec D12) and the state is
+  // `browse-layers-OPEN` because that is what it shows: under V2 the drawer stood open and the
+  // click closed it, under V3 the click opens it, so the inherited `-closed` suffix described
+  // the opposite of the screenshot (review L2; controller ruling 2026-09-07 amending D12).
+  { name: 'browse-layers-open', steps: async (p) => { await browse(p); await click(p, 'Layers'); await p.waitForTimeout(400); } },
   { name: 'browse-market-panel', steps: async (p) => { await browse(p); await p.getByText('Cedar Park').first().click(); await p.waitForTimeout(400); } },
   { name: 'detail', steps: async (p) => { await jump(p, 'Listing'); } },
   // The jump bar's default listing (Cedar Park / p1) always carries a pre-seeded pending
@@ -78,6 +80,11 @@ export const SCREENS: Screen[] = [
   // navigate on BOTH targets; controller ruling 2026-09-07 — the harness must not invent a
   // card navigation the design does not have). Waiting for the detail screen's own
   // "Exterior photo" band (V3:1522) keeps the step from ever silently no-opping again.
+  //
+  // The ORDER is load-bearing: go straight to Map. A result-card tap first is not inert even
+  // though nothing visible changes — it sets `activeId` (logic.js:1530), which makes the next
+  // single pin tap open the detail where a fresh session needs two, so the step would still
+  // pass while exercising half of C13's route (review I1).
   { name: 'mobile-detail', steps: async (p) => {
       await mobile(p);
       await click(p, 'Map');
