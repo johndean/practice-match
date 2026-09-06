@@ -197,13 +197,18 @@ def test_perf_workflow_targets_qa_with_thresholds():
     # message names the offender.
     hosts = {h.lower() for h in re.findall(r"[\w.-]*foundation\.vin", text, re.IGNORECASE)}
     assert hosts == {"qa.foundation.vin"}, f"production must not be a target: {sorted(hosts)}"
-    # The member token is a GitHub Actions secret John sets; it must never become a literal.
-    assert "${{ secrets.MEMBER_TOKEN }}" in text
+    # No member token until Sub-project 2 restores the four-endpoint list (John, 2026-09-06).
+    assert "MEMBER_TOKEN" not in text, "no member token until Sub-project 2 restores the four-endpoint list (John, 2026-09-06)"
     assert "scripts/k6-smoke.js" in text
 
     k6 = (ROOT / "scripts" / "k6-smoke.js").read_text()
     assert "p(95)<400" in k6, "the p95 budget (policy §3) is gone"
     assert "rate==0" in k6, "the zero-error-rate budget (policy §3) is gone"
+    assert re.search(r"for \(const p of \['/api/healthz'\]\)", k6), "until SP2 the nightly hits only the health endpoint (John, 2026-09-06)"
+    assert "MEMBER_TOKEN" not in k6
+    policy = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-quality-and-performance-policy.md").read_text()
+    block = re.search(r"`scripts/k6-smoke.js`:\n+```js\n(.*?)```", policy, re.DOTALL)
+    assert block and block.group(1) == k6, "the policy's §5 block and scripts/k6-smoke.js must stay byte-identical"
 
 
 def test_deploy_md_documents_the_site_mode_matrix():

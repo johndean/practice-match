@@ -39,7 +39,7 @@ Target shape — roughly **70 % unit · 20 % integration · 10 % end-to-end** by
 | Bundle size | `frontend/tests/bundle-budget.test.ts` — gzip sizes of `dist/_app/*.js` after `npm run build` | main bundle ≤ 220 KB gz · `engine-leaflet` ≤ 60 KB gz · `engine-google` ≤ 12 KB gz · total JS on first load ≤ 300 KB gz |
 | First map paint (e2e, stubs) | Playwright: time from `goto` to `[data-map]` present | ≤ 1,500 ms local/CI |
 | No request on the critical path | Map engines M7 | engine chunk request starts before the app bundle finishes |
-| Live QA load smoke (nightly) | `scripts/k6-smoke.js` via `.github/workflows/perf.yml` (schedule `0 6 * * *`), 20 virtual users, 2 minutes, member token from a QA secret | p95 ≤ 400 ms on the four read endpoints, error rate 0 %, no 5xx |
+| Live QA load smoke (nightly) | `scripts/k6-smoke.js` via `.github/workflows/perf.yml` (schedule `0 6 * * *`), 20 virtual users, 2 minutes | p95 ≤ 400 ms on the read endpoints (health only until SP2), error rate 0 %, no 5xx |
 | Google spend | Quotas + budget (Google plan G1) | daily caps; $50/month alert |
 
 Budgets are numbers in tests. Raising a budget is a reviewed change with a reason in the commit message, never a silent edit.
@@ -145,10 +145,12 @@ def test_hot_query_uses_an_index(conn, name):
 import http from 'k6/http';
 import { check } from 'k6';
 export const options = { vus: 20, duration: '2m', thresholds: { http_req_duration: ['p(95)<400'], http_req_failed: ['rate==0'] } };
-const BASE = __ENV.BASE_URL; const H = { headers: { Authorization: `Bearer ${__ENV.MEMBER_TOKEN}` } };
+const BASE = __ENV.BASE_URL;
+// Until Sub-project 2 ships its read endpoints (/api/layers, /api/map-config, /api/markets) only the
+// health endpoint exists; the four-endpoint list and the member token return with SP2 (John, 2026-09-06).
 export default function () {
-  for (const p of ['/api/healthz', '/api/layers', '/api/map-config', '/api/markets']) {
-    const r = http.get(`${BASE}${p}`, H);
+  for (const p of ['/api/healthz']) {
+    const r = http.get(`${BASE}${p}`);
     check(r, { 'status < 500': (x) => x.status < 500 });
   }
 }

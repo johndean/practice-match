@@ -1,8 +1,8 @@
 # Nightly load smoke (quality policy §3). QA only, never production: this drives 20 virtual
 # users for two minutes against a live host, and the budgets it enforces (p95 < 400 ms, 0 %
-# errors) are the policy's numbers, not advisory. MEMBER_TOKEN is a repository secret John
-# sets — the operator token until Sub-project 2 issues member accounts; it is never a file
-# and never a literal here.
+# errors) are the policy's numbers, not advisory. Until Sub-project 2 the script hits only
+# `/api/healthz`, so no member token is needed; the four-endpoint list and the token secret
+# return with SP2.
 name: Perf
 
 on:
@@ -35,5 +35,4 @@ jobs:
       - name: k6 smoke — 20 VUs · 2 min · p95 < 400 ms · error rate 0 %
         env:
           BASE_URL: https://qa.foundation.vin
-          MEMBER_TOKEN: ${{ secrets.MEMBER_TOKEN }}
         run: k6 run scripts/k6-smoke.js
