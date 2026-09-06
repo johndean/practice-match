@@ -10,18 +10,11 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { Component } from '../logic.js';
 import { routes } from './routes';
 import { useStateRouteSync } from './useStateRouteSync';
-import type { RoutedState } from './sync';
 
 // Vue's watchers flush on a microtask; router navigation resolves on a promise chain too.
 // A macrotask tick (setTimeout) drains both, which is why this is used instead of a bare
 // await nextTick() between steps that involve a navigation.
 const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
-
-// logic.js's initial state literal never assigns `auth` (only go()/signIn() ever sets it),
-// so TypeScript infers Component['state'] without that key. After V3, no state ever carries
-// `browseMode` — Browse is one screen, not two tabs — so this test-only view's widening
-// exists only for `auth`, without touching logic.js.
-const routed = (c: InstanceType<typeof Component>) => c.state as unknown as RoutedState & { auth?: boolean };
 
 let apps: ReturnType<typeof createApp>[] = [];
 afterEach(() => { apps.forEach((a) => a.unmount()); apps = []; });
@@ -106,18 +99,37 @@ describe('useStateRouteSync — signed-out deep link + pending route on auth', (
     expect(router.currentRoute.value.fullPath).toBe('/browse');
   });
 
-  it('keeps withholding the pending route if something else re-triggers the watcher before auth arrives', async () => {
-    const { c, router } = await setup('/browse?tab=market');
+  it('a signed-out deep link into a NON-Browse member route survives signIn()\'s hardcoded browse', async () => {
+    const { c, router } = await setup('/practices/p1');
+    const push = vi.spyOn(router, 'push'), replace = vi.spyOn(router, 'replace');
+    c.setState({ screen: 'browse', formError: '', auth: true }); // logic.js:1404 verbatim
+    await flush(); await nextTick(); await flush(); await nextTick();
+    expect(c.state.screen).toBe('detail');
+    expect(c.state.detailId).toBe('p1');
+    expect(router.currentRoute.value.fullPath).toBe('/practices/p1');
+    expect(push.mock.calls.length + replace.mock.calls.length).toBe(0); // no transitional /browse hop
+  });
+
+  it('keeps withholding the pending route if something else re-triggers the watcher before auth arrives, and pending survives to be applied once auth arrives', async () => {
+    const { c, router } = await setup('/practices/p4');
     // Nothing in logic.js changes `screen` away from 'gate' without also flipping `auth`
     // true in the same setState (guard() enforces that invariant on every real transition)
     // — this bypasses that invariant on purpose, as a direct test of the watcher's own
     // resilience: whatever caused the retrigger, it must still withhold navigation while
     // genuinely signed out, rather than trusting that a retrigger only ever means auth
-    // has arrived.
+    // has arrived. `p9` (not the deep-linked `p4`) makes the eventual winner distinguishable.
     c.setState({ screen: 'detail', detailId: 'p9' });
     await flush(); await nextTick();
-    expect(router.currentRoute.value.fullPath).toBe('/browse?tab=market');
+    expect(router.currentRoute.value.fullPath).toBe('/practices/p4');
     expect(c.state.screen).toBe('detail');
+
+    // The withheld retrigger above must not have consumed `pending` — the original
+    // deep-linked target (p4) is what actually gets applied once auth arrives, not the p9
+    // used only to force the retrigger.
+    c.setState({ auth: true });
+    await flush(); await nextTick();
+    expect(router.currentRoute.value.fullPath).toBe('/practices/p4');
+    expect(c.state.detailId).toBe('p4');
   });
 });
 
@@ -152,6 +164,66 @@ describe('useStateRouteSync — no state↔route loop', () => {
     c.setState({ screen: 'requests', auth: true }); // identical values — no reactive change, no navigation
     await flush(); await nextTick();
     expect(pushSpy.mock.calls.length + replaceSpy.mock.calls.length).toBe(1);
+  });
+
+  it('a burst of five setState calls navigates a bounded number of times, with no oscillation', async () => {
+    const { c, router } = await setup('/');
+    c.setState({ auth: true });
+    await flush(); await nextTick();
+
+    const pushSpy = vi.spyOn(router, 'push');
+    const replaceSpy = vi.spyOn(router, 'replace');
+
+    c.setState({ screen: 'browse' });
+    await flush(); await nextTick();
+    c.setState({ screen: 'requests' });
+    await flush(); await nextTick();
+    c.setState({ screen: 'seller' });
+    await flush(); await nextTick();
+    c.setState({ screen: 'admin', adminTab: 'data' });
+    await flush(); await nextTick();
+    c.setState({ screen: 'browse' });
+    await flush(); await nextTick();
+
+    const total = pushSpy.mock.calls.length + replaceSpy.mock.calls.length;
+    expect(total).toBeGreaterThan(0);
+    expect(total).toBeLessThanOrEqual(5);
+    expect(router.currentRoute.value.fullPath).toBe('/browse');
+
+    // Quiescent afterwards — no oscillation/self-retriggering.
+    await flush(); await nextTick();
+    expect(pushSpy.mock.calls.length + replaceSpy.mock.calls.length).toBe(total);
+  });
+});
+
+// F4: signed in and already on Browse, an in-session router.push('/browse?tab=market')
+// (e.g. a stale bookmark or a Back/Forward navigation within the same session) used to
+// leave the URL at the legacy query forever: routeToPatch strips ?tab=, so the resulting
+// patch ({screen:'browse'}) never differs from the current state, needsPatch is false, no
+// setState fires, and the state→route watcher — which only reacts to state changes — never
+// runs. apply() now also settles the URL directly against the current state after the
+// needsPatch check, whenever there is no pending gate to protect.
+describe('useStateRouteSync — a stale in-session ?tab= on Browse settles', () => {
+  it('signed in on Browse, an in-session router.push(\'/browse?tab=market\') settles to /browse with exactly one replace, then stays quiescent', async () => {
+    const { c, router } = await setup('/');
+    c.setState({ screen: 'browse', auth: true });
+    await flush(); await nextTick();
+    expect(router.currentRoute.value.fullPath).toBe('/browse');
+
+    const pushSpy = vi.spyOn(router, 'push');
+    const replaceSpy = vi.spyOn(router, 'replace');
+    await router.push('/browse?tab=market');
+    await flush(); await nextTick();
+    expect(router.currentRoute.value.fullPath).toBe('/browse');
+    expect(pushSpy).toHaveBeenCalledTimes(1);       // our own initiating push
+    expect(replaceSpy).toHaveBeenCalledTimes(1);    // the composable settling the stale query
+
+    // Quiescence: no further navigation across two more flushes.
+    await flush(); await nextTick();
+    await flush(); await nextTick();
+    expect(pushSpy).toHaveBeenCalledTimes(1);
+    expect(replaceSpy).toHaveBeenCalledTimes(1);
+    expect(router.currentRoute.value.fullPath).toBe('/browse');
   });
 });
 

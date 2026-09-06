@@ -1,7 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { prepare } from './harness';
 
-const ROUTES = ['/', '/browse', '/browse?tab=market', '/practices/p1', '/requests', '/seller', '/admin?tab=data'];
+const ROUTES = ['/', '/browse', '/browse?tab=market', '/browse?tab=listings', '/practices/p1', '/requests', '/seller', '/admin?tab=data'];
 
 function trapErrors(page: Page): string[] {
   const errors: string[] = [];

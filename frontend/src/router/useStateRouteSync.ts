@@ -31,6 +31,17 @@ export function useStateRouteSync(c: StatefulComponent, router: Router): void {
     const g = guard(c.state, routeToPatch(to));
     pending = g.pending;
     if (needsPatch(c.state, g.apply)) c.setState(g.apply);
+    // A stale in-session URL (e.g. a legacy ?tab= link visited via router.push while already
+    // signed in and already on the target screen) resolves, via routeToPatch, to a patch
+    // that never differs from state — needsPatch is false above, no setState fires, and the
+    // state → route watcher (which only reacts to state CHANGES) never gets a chance to
+    // settle it. Settle it here instead, by comparing what the current state resolves to
+    // against the URL actually navigated to. Skipped while a gate is pending: the URL must
+    // stay exactly as the visitor typed it until auth arrives (the watcher's own bail).
+    if (!pending) {
+      const loc = stateToRoute(c.state);
+      if (!sameLocation(loc, to)) router.replace(loc);
+    }
   };
   apply(router.currentRoute.value);
   router.afterEach((to) => apply(to));
