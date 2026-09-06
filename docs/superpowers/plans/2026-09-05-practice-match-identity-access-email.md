@@ -2091,6 +2091,7 @@ print(f"{settings.link_base_url}/accept-invite?token={token}")
 **Interfaces:**
 - Consumes: `TokenIn(name, role, expires_at)`, `create_token`, `TokenManager` (= `require("tokens.manage")` + re-auth), `S.Principal` (kind `session` | `token`), `require(perm)` and its re-auth path in `app/auth/deps.py`, the audit helper (`tokens.create`).
 - Produces: `TOKEN_ROLES = ("buyer", "seller", "staff", "admin")`; `REAUTH_TOKEN_MESSAGE = "this action needs a re-authenticated session — api tokens cannot re-authenticate"`; a token principal's `permissions` = its role's set minus `{"tokens.manage"}`.
+- "The minter holds the role" is the PERMISSION-SUBSET rule, not a `role_grant` row (controller ruling, 2026-09-07): `permissions.may_mint(role, minter_roles)` is true when every `ADMINISTRATIVE` permission `role` carries is already the minter's — so an admin mints all four roles without granting itself `staff`, and the `403 ROLE_NOT_HELD` branch is unreachable over HTTP while `tokens.manage` is admin-only.
 
 - [ ] **Step 1: Write the failing tests**
 

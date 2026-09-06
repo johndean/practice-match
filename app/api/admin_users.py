@@ -75,8 +75,10 @@ GRANTABLE_ROLES = ("buyer", "seller", "staff", "admin")
 # must be handled in wave 2a … must include Staff/Admin tokens"), reversing fix round 1's F6, which
 # had cut this to the member roles. All four, held safe by three things rather than by the absence
 # of privileged tokens:
-#   1. no escalation — `staff`/`admin` is minted only by an account that already holds that role
-#      (`create_token` below reads the live grants, not the session's cached roles);
+#   1. no escalation — a token may carry a role only when every ADMINISTRATIVE permission that role
+#      carries is already the minter's (`permissions.may_mint`, read from the live grants rather
+#      than from the session's cached roles), so nobody mints a token that administers more than
+#      they do;
 #   2. the mint is re-authenticated (`tokens.manage` is in REAUTH) and audited with the role;
 #   3. the principal it produces neither satisfies a re-auth gate nor holds `tokens.manage`
 #      (`permissions.TOKEN_DENIED`, `deps.TokenCannotReauth`/`TokenCannotManageTokens`) — so a
@@ -161,13 +163,14 @@ class BadTokenRole(AuthError):
 
 
 class RoleNotHeld(AuthError):
-    """No escalation (spec §Automation tokens, amended 2026-09-07): a `staff`/`admin` token is a
-    <=90-day bearer credential carrying an administrative role, so the account minting it must
-    already hold that role. `permissions.py` defines no role lattice — only which roles carry which
-    permission — so holding `admin` is not holding `staff`: an admin who does not review the queue
-    grants themselves `staff` first, in a re-authenticated, audited grant, and that grant is the
-    record of why the token exists. `buyer`/`seller` need no such holding: they are automation
-    roles strictly below the minter's own and every CI token since I5 has carried one."""
+    """No escalation (spec §Automation tokens, amended 2026-09-07): nobody mints a token that
+    administers more than they do. "Holds the role" is the PERMISSION-SUBSET rule and not a
+    `role_grant` row (controller ruling, 2026-09-07) — the comparison lives in
+    `permissions.may_mint`, over `permissions.ADMINISTRATIVE`, so an admin mints all four roles
+    without first granting itself `staff`. `tokens.manage` is admin-only and an admin's
+    administrative permissions are the whole set, which makes this refusal unreachable over HTTP
+    today: it is the floor under any future widening of `tokens.manage`, exercised by construction
+    in `tests/api/test_admin_users.py` and `tests/auth/test_matrix.py`."""
 
     code = "ROLE_NOT_HELD"
     message = "you can only mint a token for a role you hold"
@@ -600,19 +603,19 @@ async def create_token(body: TokenIn, request: Request, principal: TokenManager)
     and lifetime — never the secret half.
 
     Any of the four roles (Task I5b — John, 2026-09-07): see `TOKEN_ROLES` for the three safeguards
-    that replace fix round 1's `buyer`/`seller` restriction. The first of them is here — a `staff`
-    or `admin` token is minted only by an account that holds that role, read from `role_grant` and
-    not from the caller's session, so a grant revoked a minute ago cannot mint one more token."""
+    that replace fix round 1's `buyer`/`seller` restriction. The first of them is here — the minter
+    may not mint a token that administers more than it does (`permissions.may_mint`) — and it reads
+    the LIVE grants rather than the caller's session, so a role revoked a minute ago, inside the
+    60 s principal cache, cannot mint one more privileged token."""
     if body.role not in TOKEN_ROLES:
         raise BadTokenRole
     days = min(max(body.days, 1), MAX_TOKEN_DAYS)
     with closing(sync_conn()) as conn, conn:
         actor_account = _actor_account(conn, principal)
-        if body.role in PRIVILEGED_ROLES:
-            with conn.cursor() as cur:
-                held = _roles(cur, actor_account)
-            if body.role not in held:
-                raise RoleNotHeld
+        with conn.cursor() as cur:
+            held = frozenset(_roles(cur, actor_account))
+        if not PM.may_mint(body.role, held):
+            raise RoleNotHeld
         issued = T.issue_api_token(conn, name=body.name, role=body.role, created_by=actor_account, ttl=timedelta(days=days))
         # The id comes back from the mint (fix round 1, N5) rather than being sliced back out of
         # `raw`, which hard-coded the `pm_` prefix length in a second place. Only the id — never

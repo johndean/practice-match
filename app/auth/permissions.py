@@ -78,6 +78,38 @@ PUBLIC_ROUTES: frozenset[tuple[str, str]] = frozenset({
 })
 
 
+# The permissions no ordinary member can hold — the matrix rows whose holders are staff/admin only.
+# Derived, never listed: a permission added to an admin-only row is administrative from that commit,
+# with nothing to keep in step by hand.
+ADMINISTRATIVE = frozenset(perm for perm, holders in MATRIX.items() if holders <= _STAFF)
+
+
+def permissions_of(roles: frozenset[str]) -> frozenset[str]:
+    """Every permission this set of roles carries — `MATRIX` read the other way round."""
+    return frozenset(perm for perm, holders in MATRIX.items() if holders & roles)
+
+
+def may_mint(role: str, minter_roles: frozenset[str]) -> bool:
+    """Whether an account holding `minter_roles` may mint an api token carrying `role`.
+
+    "The minter must hold the role being granted (no escalation)" (spec §Automation tokens) is the
+    PERMISSION-SUBSET rule, not a `role_grant` row (controller ruling, 2026-09-07): every
+    administrative permission the minted role carries must already be the minter's, so nobody can
+    mint a token that administers more than they do. `tokens.manage` is admin-only and an admin's
+    administrative set is all of `ADMINISTRATIVE`, so an admin mints any of the four roles without
+    granting itself `staff` first — and no principal that can reach `POST /api/admin/tokens` today
+    can be refused. The guard is what keeps that true if `tokens.manage` ever widens.
+
+    Compared over `ADMINISTRATIVE` rather than over the whole permission set because the matrix is
+    not a ladder: `buyer`/`seller` carry `request.create`, `request.read_own`, `seller.apply`,
+    `page.seller`, `listing.manage_own` and `request.answer_own`, which no administrator holds, so
+    a plain subset test would refuse the `k6-qa`/`e2e-qa`/`deploy-verify` tokens the spec names. A
+    buyer token is not more powerful than the admin who minted it, only different; escalation here
+    means administrative reach, and that is exactly what this compares.
+    """
+    return permissions_of(frozenset({role})) & ADMINISTRATIVE <= permissions_of(minter_roles)
+
+
 def effective_roles(principal: Principal | None) -> frozenset[str]:
     if principal is None:
         return frozenset({"anonymous"})

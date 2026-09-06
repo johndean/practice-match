@@ -618,8 +618,13 @@ async def test_filters_outside_their_enums_are_refused_rather_than_answered_empt
 
 @pytest.mark.parametrize("role", ["buyer", "seller", "staff", "admin"])
 async def test_a_minted_token_may_carry_any_of_the_four_roles(client, conn, member, role):
-    """Spec §Automation tokens, amended: an `api_token` carries "any one of the four roles"."""
-    _admin, cookies, hdr = member(("admin", "staff"), email="tokens@example.org")
+    """Spec §Automation tokens, amended: an `api_token` carries "any one of the four roles".
+
+    The minter here holds `admin` and nothing else — the ordinary bootstrap admin. "The minter must
+    hold the role being granted" is the PERMISSION-SUBSET rule (controller ruling, 2026-09-07,
+    concern 4), not a `role_grant` row, so no self-grant of `staff` stands between an admin and an
+    `e2e-staff` token."""
+    _admin, cookies, hdr = member(("admin",), email="tokens@example.org")
     await _reauth(client, cookies, hdr)
     r = await client.post("/api/admin/tokens", headers=auth_headers(cookies, hdr), json={"name": f"e2e-{role}", "role": role, "days": 30})
     assert r.status_code == 201 and r.json()["token"].startswith("pm_"), role
@@ -629,33 +634,42 @@ async def test_a_minted_token_may_carry_any_of_the_four_roles(client, conn, memb
         # The audit row records the ROLE, which is the whole point of allowing privileged ones.
         cur.execute("SELECT after FROM audit_log WHERE action='tokens.create' ORDER BY id DESC LIMIT 1")
         assert cur.fetchone()[0] == {"name": f"e2e-{role}", "role": role, "days": 30}
+        cur.execute("SELECT role FROM role_grant WHERE account_id=%s AND revoked_at IS NULL", (_admin,))
+        assert [g[0] for g in cur.fetchall()] == ["admin"], "minting granted the minter nothing"
     bad = await client.post("/api/admin/tokens", headers=auth_headers(cookies, hdr), json={"name": "k6", "role": "superadmin", "days": 30})
     assert (bad.status_code, bad.json()["error"]["code"]) == (422, "BAD_ROLE")
 
 
-async def test_a_privileged_token_is_minted_only_by_an_account_that_holds_that_role(client, conn, member):
-    """No escalation (spec §Automation tokens): `tokens.manage` is admin-only, and an admin who
-    does NOT hold `staff` cannot mint a `staff` token — `permissions.py` has no role lattice, only
-    per-permission role sets, so holding admin is not holding staff. `buyer`/`seller` stay
-    mintable by any token manager: they are automation roles strictly below the minter's own, and
-    that is the behaviour every deploy/CI token has relied on since I5."""
-    _admin, cookies, hdr = member(("admin",), email="admin-only@example.org")
-    await _reauth(client, cookies, hdr)
+async def test_a_token_that_would_administer_more_than_its_minter_is_refused(conn):
+    """The `ROLE_NOT_HELD` branch, reached the only way it can be (controller ruling, 2026-09-07):
+    by construction. `tokens.manage` is admin-only and `permissions.may_mint` compares
+    ADMINISTRATIVE permissions, so every principal that can reach `POST /api/admin/tokens` over
+    HTTP passes the check — the guard exists for the day `tokens.manage` widens, and it is the
+    refusal a `staff` minter would meet. The handler is called directly with a staff principal and
+    a real account behind it, so the branch, its 403 body and the absence of any write are all
+    exercised rather than asserted about."""
+    from starlette.requests import Request
 
-    async def mint(role, name="e2e"):
-        return await client.post("/api/admin/tokens", headers=auth_headers(cookies, hdr), json={"name": name, "role": role, "days": 30})
+    from app.api import admin_users as A
+    from app.auth import sessions as S
 
-    refused = await mint("staff", name="e2e-staff")
-    assert (refused.status_code, refused.json()["error"]["message"]) == (403, "you can only mint a token for a role you hold")
     with conn.cursor() as cur:
-        cur.execute("SELECT count(*) FROM api_token WHERE role='staff'"); assert cur.fetchone()[0] == 0
-    assert (await mint("buyer")).status_code == 201
-    assert (await mint("seller")).status_code == 201
-    assert (await mint("admin")).status_code == 201, "the minter holds admin"
-    # ...and the grant is what unlocks it, read from the grants table rather than from the session.
-    assert (await client.post(f"/api/admin/users/{_admin}/grants", headers=auth_headers(cookies, hdr),
-                              json={"role": "staff", "grant": True, "reason": "reviews the queue too"})).status_code == 200
-    assert (await mint("staff", name="e2e-staff")).status_code == 201
+        cur.execute("INSERT INTO account (email, password_hash, state) VALUES ('minter@example.org','h','active') RETURNING id")
+        aid = cur.fetchone()[0]
+        cur.execute("INSERT INTO role_grant (account_id, role, granted_by) VALUES (%s,'staff',%s)", (aid, aid))
+    principal = S.Principal(aid, "active", frozenset({"staff"}), None, "session", "h")
+    request = Request({"type": "http", "method": "POST", "path": "/api/admin/tokens", "raw_path": b"/api/admin/tokens",
+                       "query_string": b"", "root_path": "", "scheme": "https", "server": ("qa.foundation.vin", 443),
+                       "client": ("198.51.100.7", 1), "headers": [(b"host", b"qa.foundation.vin")]})
+    with pytest.raises(A.RoleNotHeld) as refused:
+        await A.create_token(A.TokenIn(name="escalate", role="admin", days=30), request, principal)
+    assert refused.value.status_code == 403
+    assert refused.value.detail == {"error": {"code": "ROLE_NOT_HELD", "message": "you can only mint a token for a role you hold"}}
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM api_token"); assert cur.fetchone()[0] == 0
+        cur.execute("SELECT count(*) FROM audit_log WHERE action='tokens.create'"); assert cur.fetchone()[0] == 0
+    # ...and the same minter mints what it does administer.
+    assert (await A.create_token(A.TokenIn(name="e2e-staff", role="staff", days=30), request, principal))["token"].startswith("pm_")
 
 
 async def test_an_api_token_never_manages_tokens_whatever_role_it_carries(client, conn, member):

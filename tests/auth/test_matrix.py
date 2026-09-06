@@ -120,3 +120,40 @@ def test_a_token_principal_holds_its_roles_permissions_minus_tokens_manage():
         for perm in PM.MATRIX:
             if perm not in PM.TOKEN_DENIED:
                 assert PM.allowed(perm, token) == PM.allowed(perm, session), (role, perm)
+
+
+# --- controller ruling, 2026-09-07 (concern 4): what "the minter holds the role" means ---
+
+
+def test_permissions_of_reads_the_matrix_the_other_way_round():
+    assert PM.permissions_of(frozenset({"admin"})) == {p for p, holders in PM.MATRIX.items() if "admin" in holders}
+    assert PM.permissions_of(frozenset()) == frozenset()
+    assert PM.permissions_of(frozenset({"buyer", "seller"})) == PM.permissions_of(frozenset({"buyer"})) | PM.permissions_of(frozenset({"seller"}))
+
+
+def test_a_minter_may_never_mint_a_token_that_administers_more_than_it_does():
+    """"Holds the role" is the permission-subset rule, not a `role_grant` row: a token may carry
+    role R only when every ADMINISTRATIVE permission R carries is already the minter's. No live
+    principal can be refused by it — `tokens.manage` is admin-only and an admin's administrative
+    set is the whole of it — so the inputs are constructed here rather than driven through a route.
+
+    The comparison is over `ADMINISTRATIVE` and not over the whole permission set because the
+    matrix is not a ladder: `buyer`/`seller` carry `request.create`, `request.read_own`,
+    `seller.apply`, `page.seller`, `listing.manage_own` and `request.answer_own`, which NO
+    administrator holds — a plain subset test would refuse the `k6-qa`/`e2e-qa`/`deploy-verify`
+    tokens the spec names. A buyer token is not more powerful than the admin who minted it."""
+    assert PM.ADMINISTRATIVE == {p for p, holders in PM.MATRIX.items() if holders <= frozenset({"staff", "admin"})}
+    assert "users.decide" in PM.ADMINISTRATIVE and "tokens.manage" in PM.ADMINISTRATIVE
+    assert "market.read" not in PM.ADMINISTRATIVE and "request.create" not in PM.ADMINISTRATIVE
+
+    admin, staff = frozenset({"admin"}), frozenset({"staff"})
+    for role in MEMBER_ROLES:
+        assert PM.may_mint(role, admin) is True, role                 # an admin mints all four...
+    assert PM.may_mint("admin", staff) is False                       # ...and nobody mints upward
+    assert PM.may_mint("staff", staff) is True
+    assert PM.may_mint("buyer", frozenset()) is True                  # a member role administers nothing
+    assert PM.may_mint("staff", frozenset({"buyer", "seller"})) is False
+    # The rule is a statement about permissions, so it survives a matrix change: `staff` is
+    # mintable by `admin` because staff's administrative permissions are a subset of admin's.
+    assert PM.permissions_of(staff) & PM.ADMINISTRATIVE <= PM.permissions_of(admin)
+    assert not PM.permissions_of(admin) & PM.ADMINISTRATIVE <= PM.permissions_of(staff)
