@@ -37,7 +37,7 @@ railway_calls() { wc -l < "$FAKE_RAILWAY_LOG" | tr -d ' '; }
 
 # start_server <mode>. Modes: ok | spa_missing | deep_503 | no_postgis | no_site_mode |
 #   coming_ok | coming_wrong_shell | coming_interest_500 | coming_leak | missing_keys | db_null |
-#   not_json
+#   not_json | deep_json
 # Binds port 0 (the OS picks a free ephemeral port) and prints it, once, before serving —
 # fixed ports (8765-8768) collided under a concurrent run of this same script (fix round 3,
 # re-review observation), and a bind failure in the backgrounded server was otherwise
@@ -88,6 +88,11 @@ class H(BaseHTTPRequestHandler):
                 # A 200 that curl -f does not block, but whose body a proxy's HTML
                 # error page replaced instead of the real JSON (fix round 4).
                 self._send(200, "text/html", b"<html>upstream error</html>")
+            elif MODE == "deep_json":
+                # Valid JSON syntax, but nested deep enough to blow Python's json
+                # module's recursion limit (RecursionError, a ValueError sibling
+                # that a bare `except ValueError` does not catch - fix round 5).
+                self._send(200, "application/json", ("[" * 20000 + "]" * 20000).encode())
             else:
                 self._send(200, "application/json", json.dumps(BODY).encode())
         elif self.path in ("/", "/browse"):
@@ -246,6 +251,16 @@ if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash script
   fail "a non-JSON healthz body must fail the script; it exited 0 with: $out"
 fi
 [[ "$out" == *"FAIL: healthz body is not JSON"* ]] || fail "the non-JSON failure must name itself; got: $out"
+[[ "$out" != *"Traceback"* ]] || fail "the failure must be one clean FAIL line, not a Python traceback; got: $out"
+stop_server
+
+# --- 15. a deeply-nested-but-syntactically-valid healthz body fails, no traceback -
+# `except ValueError` around json.load does not catch RecursionError (round cap).
+start_server deep_json
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
+  fail "a deeply-nested healthz body must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"FAIL: healthz body is not JSON"* ]] || fail "the deeply-nested-body failure must name itself; got: $out"
 [[ "$out" != *"Traceback"* ]] || fail "the failure must be one clean FAIL line, not a Python traceback; got: $out"
 stop_server
 

@@ -47,9 +47,13 @@ def fail(msg):  # one clean line on stderr, exit 1 - no traceback (fix round 1)
 # A 200 response is not proof of a JSON body - curl -f only blocks on 4xx/5xx, so a
 # proxy that swaps in an HTML error page on a 200 must be caught by the parse itself
 # (fix round 4), not just by the checks that assume a well-shaped object below.
+# Bare except: a plain ValueError (fix round 4) does not catch RecursionError, which
+# a deeply-nested-but-syntactically-valid body can still raise (fix round 5, the round
+# cap) - nothing json.load can throw may surface as a traceback. noqa BLE001 would
+# apply outside this inline script the same way it does in app/checks.py.
 try:
     b = json.load(sys.stdin)
-except ValueError:
+except Exception:
     fail("healthz body is not JSON")
 want, expect = os.environ["WANT"], os.environ["EXPECT_SHA"]
 
