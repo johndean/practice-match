@@ -2083,6 +2083,34 @@ async def test_token_principal_never_satisfies_reauth(client, token_for, decline
 - Consumes: `OPEN_STATUSES`, `info_request` on the `needs_review` row, the transitions dict in `admin_users.py` (`request_info: pending → needs_review`), `outbox.enqueue(account_id, template, cause_id, params)`.
 - Produces: `POST /api/applications/{id}/answer {answer: str (≤ 4000)}` → 200 `{status: "pending"}`; `POST /api/applications` on a `declined` account → 201 new row + `account.state = pending`; `GET /api/applications/me` → `{current, history: [...]}`; account state transitions `needs_review → pending` (answer) and `declined → pending` (re-apply).
 
+- [ ] **Step 0: Migration checksums (I6 re-review O3, ruled 2026-09-07) — before touching any migration in place**
+
+`scripts/migrate.py` records nothing about a file's content, so an in-place edit of an already-applied migration is silent until a runtime `UndefinedColumn`. Add a checksum to the ledger and refuse to run when an applied file has changed.
+
+Test first (`tests/test_migrate.py`, beside the existing runner tests):
+
+```python
+def test_ledger_records_sha256_and_refuses_a_changed_applied_file(tmp_path, scratch_dsn):
+    mig = tmp_path / "migrations"; mig.mkdir()
+    (mig / "001_a.sql").write_text("CREATE TABLE t_a (id int);\n")
+    assert run(scratch_dsn, migrations_dir=mig) == 0
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT checksum FROM schema_migrations WHERE filename = '001_a.sql'")
+        assert cur.fetchone()[0] == hashlib.sha256(b"CREATE TABLE t_a (id int);\n").hexdigest()
+    (mig / "001_a.sql").write_text("CREATE TABLE t_a (id int, extra text);\n")   # edited after it was applied
+    rc, err = run_capturing(scratch_dsn, migrations_dir=mig)
+    assert rc == 4
+    assert "001_a.sql changed after it was applied" in err and "drop and recreate the database or restore the file" in err
+
+def test_ledger_upgrades_itself_when_the_checksum_column_is_missing(tmp_path, legacy_ledger_dsn):
+    # a ledger created before this change has no checksum column: the runner adds it (NULL for rows already applied) and never refuses on NULL
+    assert run(legacy_ledger_dsn, migrations_dir=tmp_path / "migrations") == 0
+```
+
+Run: `poetry run pytest -q tests/test_migrate.py -k checksum` → RED (`column "checksum" does not exist` / rc 0 instead of 4).
+
+Implement in `scripts/migrate.py`: `CREATE TABLE IF NOT EXISTS schema_migrations (...)` gains `checksum text`; on start `ALTER TABLE schema_migrations ADD COLUMN IF NOT EXISTS checksum text`; before applying, for every already-applied filename whose stored checksum is NOT NULL and differs from `sha256(file bytes)`, print `[migrate] {filename} changed after it was applied — drop and recreate the database or restore the file` to stderr and `return 4` (distinct from 3 = unreachable); on apply, store the checksum in the same transaction as the file. Docstring gains the rule: "an applied migration is immutable; amend a never-deployed file only while no persistent database has run it, and say so in the commit". `mypy scripts/migrate.py --strict` clean; the shell test `tests/scripts/test_start_sh.sh` still passes (the migrate role's exit codes: add 4 to its table). Commit: `feat(migrate): ledger checksums — an applied migration that changes refuses to run (exit 4)`.
+
 - [ ] **Step 1: Write the failing tests**
 
 ```python
