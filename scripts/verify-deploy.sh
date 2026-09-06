@@ -40,17 +40,25 @@ echo "→ GET $BASE/api/healthz"
 health=$(curl -fsS --max-time 20 "$BASE/api/healthz")
 printf '%s' "$health" | WANT="$WANT" EXPECT_SHA="$EXPECT_SHA" python3 -c '
 import os, sys, json
-b = json.load(sys.stdin)
-want, expect = os.environ["WANT"], os.environ["EXPECT_SHA"]
 
 def fail(msg):  # one clean line on stderr, exit 1 - no traceback (fix round 1)
     sys.exit(f"FAIL: {msg}")
 
-got = b["environment"]
+b = json.load(sys.stdin)
+want, expect = os.environ["WANT"], os.environ["EXPECT_SHA"]
+
+# Every bare subscript below (b["environment"], db["ok"], b["commit_sha"], ...) would
+# otherwise raise a raw KeyError traceback on a malformed body (fix round 2) - check
+# the whole required set up front so a missing key gets the same clean FAIL line.
+missing = [k for k in ("status", "version", "environment", "commit_sha", "site_mode", "db", "redis") if k not in b]
+if missing:
+    fail(f"healthz body missing keys {missing}: {b}")
+
+got = b.get("environment")
 if got != want:
     fail(f"environment is {got!r}, expected {want!r}: {b}")
-db = b["db"]
-if not (db["ok"] and b["redis"]["ok"]):
+db = b.get("db")
+if not (db.get("ok") and b["redis"].get("ok")):
     fail(f"db or redis not ok: {b}")
 # A healthy db block without postgis_version means SELECT postgis_version() never
 # ran - the extension or the pinned PostGIS image is not what we think it is.
@@ -60,10 +68,10 @@ if not pg:
 mode = b.get("site_mode")
 if not mode:
     fail(f"site_mode missing from healthz: {b}")
-sha = b["commit_sha"]
+sha = b.get("commit_sha")
 if expect and sha != expect:
     fail(f"commit_sha is {sha!r}, expected {expect!r} - a stale container is still serving")
-print("healthz OK  version", b["version"], " commit", sha, " postgis", pg, " site_mode", mode)
+print("healthz OK  version", b.get("version"), " commit", sha, " postgis", pg, " site_mode", mode)
 '
 code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/healthz/deep")
 [[ "$code" == "200" ]] || { echo "FAIL: deep healthz returned $code at $BASE/api/healthz/deep" >&2; exit 1; }

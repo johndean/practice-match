@@ -36,7 +36,7 @@ trap cleanup EXIT
 railway_calls() { wc -l < "$FAKE_RAILWAY_LOG" | tr -d ' '; }
 
 # start_server <mode>. Modes: ok | spa_missing | deep_503 | no_postgis | no_site_mode |
-#   coming_ok | coming_wrong_shell | coming_interest_500 | coming_leak
+#   coming_ok | coming_wrong_shell | coming_interest_500 | coming_leak | missing_keys
 # Binds port 0 (the OS picks a free ephemeral port) and prints it, once, before serving —
 # fixed ports (8765-8768) collided under a concurrent run of this same script (fix round 3,
 # re-review observation), and a bind failure in the backgrounded server was otherwise
@@ -59,6 +59,8 @@ if MODE == "no_site_mode":
     del BODY["site_mode"]
 if MODE in ("coming_ok", "coming_wrong_shell", "coming_interest_500", "coming_leak"):
     BODY["site_mode"] = "coming_soon"
+if MODE == "missing_keys":
+    BODY = {"status": "ok"}  # malformed: every other required key absent (fix round 2)
 
 SHELL_OK = b'<!doctype html><div id="app"></div>'
 SHELL_BAD = b'<!doctype html><p>404 - no app shell here</p>'
@@ -192,7 +194,10 @@ start_server no_site_mode
 if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
   fail "a healthz body missing site_mode must fail the script; it exited 0 with: $out"
 fi
-[[ "$out" == *"site_mode missing"* ]] || fail "the missing-site_mode failure must name itself; got: $out"
+# fix round 2 folded the site_mode presence check into the generic missing-keys
+# check (site_mode is one of the required keys), so an absent site_mode now reports
+# via that same clean path rather than its own bespoke message.
+[[ "$out" == *"missing keys"* && "$out" == *"site_mode"* ]] || fail "the missing-site_mode failure must name itself; got: $out"
 [[ "$out" != *"Traceback"* ]] || fail "the failure must be one clean FAIL line, not a Python traceback; got: $out"
 stop_server
 
@@ -205,6 +210,15 @@ if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash script
   fail "a leaked marketplace shell in coming-soon mode must fail the script; it exited 0 with: $out"
 fi
 [[ "$out" == *"marketplace shell served in coming-soon mode"* ]] || fail "the leak failure must name itself; got: $out"
+stop_server
+
+# --- 12. malformed healthz body (required keys absent) fails, no traceback -----
+start_server missing_keys
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
+  fail "a malformed healthz body must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"FAIL: healthz body missing keys"* ]] || fail "the malformed-body failure must name itself; got: $out"
+[[ "$out" != *"Traceback"* ]] || fail "the failure must be one clean FAIL line, not a Python traceback; got: $out"
 stop_server
 
 # --- no case anywhere in this suite may reach the Railway CLI ------------------
