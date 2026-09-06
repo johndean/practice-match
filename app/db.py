@@ -29,6 +29,15 @@ keep their Task 5 names and semantics unchanged. `engine()` imports `app.checks.
 lazily (inside the function) because `app.checks` imports `get_engine`/`get_redis`/
 `TIMEOUT_S` from this module at its own top level — a module-level import here would be
 circular.
+
+Task I2 (Identity plan) registers `psycopg2.extras.register_uuid()` once at import,
+process-wide: without it psycopg2 returns `uuid` columns as plain `str`, not
+`uuid.UUID`, which silently breaks any interface that types a database-sourced id as
+`UUID` (`app.auth.sessions.Principal.account_id`, `app.auth.tokens.ApiPrincipal.token_id`,
+…). Registering here — rather than per-connection in `sync_conn()` — is deliberate: it
+also covers connections opened directly with `psycopg2.connect()` (the test suite's
+`conn` fixture in `tests/conftest.py` included), not only ones that go through this
+module.
 """
 from __future__ import annotations
 
@@ -36,11 +45,14 @@ import asyncio
 import weakref
 
 import psycopg2
+import psycopg2.extras
 import redis.asyncio as aioredis
 from redis.asyncio import Redis
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
 
 from app.config import settings
+
+psycopg2.extras.register_uuid()  # type: ignore[no-untyped-call]  # psycopg2's stubs leave register_uuid untyped upstream
 
 TIMEOUT_S = 3.0
 

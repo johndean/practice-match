@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     commit_sha: str = "dev"
     public_indexing: bool = False  # QA leaves this unset (noindex); production runs true — the Coming Soon page is meant to be found
     site_mode: str = "app"  # app | coming_soon — which built site the api serves (spec 2026-09-06)
+    hibp_enabled: bool = True  # Have I Been Pwned k-anonymity check on password change; falls back to the bundled offline list on any error
 
     @field_validator("site_mode")
     @classmethod

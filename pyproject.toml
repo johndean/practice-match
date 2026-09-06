@@ -32,6 +32,7 @@ ruff = "0.16.6"
 pytest-cov = "7.1.0"
 diff-cover = "10.5.1"
 fakeredis = {extras = ["aioredis"], version = "^2.37.1"}
+types-zxcvbn = "^4.5.0.20260518"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
