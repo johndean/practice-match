@@ -4319,12 +4319,37 @@ from app.db import get_engine
 
 
 async def test_engine_errors_never_carry_bound_parameters(db_ready):
-    """11c review F3: a failed INSERT must not put the sign-up address into the log line (hide_parameters)."""
+    """11c review F3: SQLAlchemy's own `[parameters: ...]` echo is suppressed (hide_parameters), so a failed
+    statement's text never carries a bound value. The statement's driver message must not itself embed the
+    value (asyncpg's DataError messages do — that channel is guarded at the endpoint, which logs exception
+    types only; see tests/api/test_interest.py), so the assertion discriminates on the echo alone."""
     engine = get_engine(async_dsn(settings.database_url))
     with pytest.raises(DBAPIError) as info:
         async with engine.begin() as conn:
-            await conn.execute(text("SELECT cast(:p as int)"), {"p": "victim-address@example.org"})
+            await conn.execute(text("SELECT 1 FROM no_such_table WHERE x = :p"), {"p": "victim-address@example.org"})
+    assert "no_such_table" in str(info.value)
     assert "victim-address@example.org" not in str(info.value)
+```
+*(FR1 ruling 2026-09-06: the first draft used `SELECT cast(:p as int)`, whose asyncpg message embeds the value itself — `hide_parameters` cannot reach a driver message, so that test could never pass. The endpoint is where the address is kept out of the log; this test now covers only SQLAlchemy's echo, and the endpoint test below covers the log line.)*
+
+Also in `tests/api/test_interest.py` (add `import logging` at the top):
+```python
+async def test_store_failures_are_logged_by_type_only(client, db_ready, caplog, monkeypatch):
+    """F3 at the endpoint: whatever a driver embeds in its message, our warning carries the exception type only."""
+    import app.api.interest as interest_module
+
+    secret = f"victim-{uuid.uuid4().hex[:8]}@example.org"
+
+    class ExplodingEngine:
+        def begin(self):
+            raise RuntimeError(f"driver message embedding {secret}")
+
+    monkeypatch.setattr(interest_module, "get_engine", lambda _url: ExplodingEngine())
+    caplog.set_level(logging.WARNING, logger="app.api.interest")
+    r = await client.post("/api/interest", json={"email": secret}, headers={"x-forwarded-for": _ip()})
+    assert r.status_code == 503 and r.json() == {"error": "unavailable"}
+    assert "RuntimeError" in caplog.text
+    assert secret not in caplog.text
 ```
 `tests/perf/test_api_latency.py` — the POST test gains a warm-up before sampling (M6) and this comment above it: `# POST budgets live here as their own tests; BUDGET_MS (GET) is what Census B5 / Map M3-M4 extend (M7 ruling).`:
 ```python
