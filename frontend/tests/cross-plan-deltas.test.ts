@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { SCREENS } from './screens';
 
 const ROOT = join(import.meta.dirname, '..', '..');
 const PLANS = join(ROOT, 'docs', 'superpowers', 'plans');
@@ -132,5 +133,59 @@ describe('the Browse V3 plan describes what shipped', () => {
     const md = read(BROWSE_V3);
     expect(md).toContain('a second pin tap repaints the map within budget');
     expect(md).toContain('reference-exact');
+  });
+
+  // V10's fix round added the 28th state after V9 had written the plan's prose; CLAUDE.md was
+  // updated and the plan was not, so Appendix A — the table Global Constraint (a) is discharged
+  // against — counted 27 (M1).
+  it('counts the 28 states that shipped, not the 27 V9 produced (M1)', () => {
+    const md = read(BROWSE_V3);
+    expect(SCREENS, 'the approved screen list itself moved').toHaveLength(28);
+    expect(md).toContain('`SCREENS` (28 entries)');
+    expect(md).toContain('28-state `dom.spec.ts` + 28-state `visual.spec.ts`');
+    expect(md).toContain('for **all 28** states + the 28-state DOM oracle');
+    // …and Appendix A names V10's oracle for the OPENED sheet, which is what the 28th state is.
+    expect(md).toContain('the `mobile-sheet` state');
+  });
+
+  // The basemap licence is one decision record (Census plan). V12 Step 6's own prose named
+  // three anchors, none of which is where the record or its references landed (M3).
+  it('V12 Step 6 names the anchors the record actually uses (M3)', () => {
+    const md = read(BROWSE_V3);
+    expect(md).not.toContain('the Map-engines plan §12');
+    expect(md).not.toContain('the Browse V3 spec §"Legally load-bearing"');
+    expect(md).toContain('`LEAFLET` tile-constant note');
+  });
+});
+
+// CLAUDE.md is the document every session reads first, so a pointer that is wrong there is
+// wrong everywhere. Each pin below is one final-review finding (2026-09-07).
+describe('CLAUDE.md points at what shipped', () => {
+  const claude = () => readFileSync(join(ROOT, 'CLAUDE.md'), 'utf8');
+
+  it('names the Browse V3 spec §3 and the drift test that enforces it, not the Platform spec (M5)', () => {
+    expect(claude()).toContain('docs/superpowers/specs/2026-09-06-browse-v3-mobile-design.md` §3');
+    expect(claude()).toContain('frontend/tests/app-generated.test.ts');
+    expect(claude()).not.toContain('2026-09-05-practice-match-platform-design.md');
+  });
+
+  it('points at the one basemap decision record by name, and no longer restates the question (M3)', () => {
+    expect(claude()).toContain('Basemap licence — one decision record');
+    expect(claude()).not.toContain('Platform spec §9');
+    // The census plan's own registry seed comment restated it too.
+    expect(read(CENSUS)).not.toContain('VIN Foundation decision pending (Platform spec §9)');
+  });
+
+  it('describes zero tolerance precisely: no pixel differs, and what "differs" means (M10)', () => {
+    expect(claude()).toContain('maxDiffPixels: 0');
+    expect(claude()).toContain('threshold: 0.1');
+    expect(claude()).toContain('YIQ');
+  });
+});
+
+// M8: the byte-exact drift test performs a FOURTH normalisation the documented list omits.
+describe('the logic.js port lists every normalisation it performs', () => {
+  it('the Browse V3 spec \u00a73 names the trailing-newline normalisation as well (M8)', () => {
+    expect(readSpec(BROWSE_V3_SPEC)).toContain('trailing-newline');
   });
 });

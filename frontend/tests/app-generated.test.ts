@@ -51,6 +51,9 @@ describe('logic.js is the design script block, ported verbatim', () => {
   }
 
   it('matches byte-for-byte, header and export aside, with only the documented asset rewrite', () => {
+    // FOUR normalisations, and all four are now listed in the Browse V3 spec §3 (review M8):
+    // the HEADER and FOOTER above, the asset rewrite, and `\n+$` → `\n` — the design's script
+    // block ends with two newlines and the ported file with one.
     const body = designScript(readFileSync(DC, 'utf8')).replace(/"assets\//g, '"/assets/').replace(/\n+$/, '\n');
     expect(readFileSync(join(ROOT, 'src/logic.js'), 'utf8')).toBe(HEADER + body + FOOTER);
   });
