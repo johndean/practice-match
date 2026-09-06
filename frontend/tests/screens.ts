@@ -58,7 +58,7 @@ export const SCREENS: Screen[] = [
   // click closed it, under V3 the click opens it, so the inherited `-closed` suffix described
   // the opposite of the screenshot (review L2; controller ruling 2026-09-07 amending D12).
   { name: 'browse-layers-open', steps: async (p) => { await browse(p); await click(p, 'Layers'); await p.getByRole('button', { name: 'Close layers' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
-  { name: 'browse-market-panel', steps: async (p) => { await browse(p); await p.getByText('Cedar Park').first().click(); await p.getByText('View full market report').first().waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
+  { name: 'browse-market-panel', steps: async (p) => { await browse(p); await p.getByText('Cedar Park').first().click(); await p.getByText('View full listing').first().waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
   { name: 'detail', steps: async (p) => { await jump(p, 'Listing'); } },
   // The jump bar's default listing (Cedar Park / p1) always carries a pre-seeded pending
   // request in the prototype's demo data (logic.js `state.requests`), so it never shows
@@ -69,12 +69,12 @@ export const SCREENS: Screen[] = [
   // practice-detail panel (`md.rows[].select` → `mdSel`, logic.js:673) on its Insights tab,
   // and that panel's own primary button is what reaches the listing screen
   // (`md.panel.openListing`, V3:704-705 / logic.js:879). The design labels it "View full
-  // market report" there; the identically-wired "Open full listing" (V3:717) exists only on
-  // the panel's other tabs. Without this step the state timed out on the V3 reference itself
-  // waiting for "I'm interested" — the same dead `results[].open` handler that broke
-  // `mobile-detail`, and the same ruling applies: use the design's own route (controller,
-  // 2026-09-07).
-  { name: 'interest-modal', steps: async (p) => { await browse(p); await p.getByText('Round Rock').first().click(); await click(p, 'View full market report'); await click(p, "I'm interested"); await atTop(p, MODAL); } },
+  // listing" there (spec D18, A3 — was "View full market report"); the identically-wired
+  // "Open full listing" (V3:717) exists only on the panel's other tabs. Without this step the
+  // state timed out on the V3 reference itself waiting for "I'm interested" — the same dead
+  // `results[].open` handler that broke `mobile-detail`, and the same ruling applies: use the
+  // design's own route (controller, 2026-09-07).
+  { name: 'interest-modal', steps: async (p) => { await browse(p); await p.getByText('Round Rock').first().click(); await click(p, 'View full listing'); await click(p, "I'm interested"); await atTop(p, MODAL); } },
   { name: 'requests', steps: async (p) => { await jump(p, 'Requests'); } },
   { name: 'seller-dash', steps: async (p) => { await jump(p, 'Seller'); } },
   { name: 'wizard-step-1', steps: wizard },

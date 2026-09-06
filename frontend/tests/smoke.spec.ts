@@ -413,12 +413,12 @@ test.describe('mobile: the same map, market data in a sheet', () => {
     await phone(page).getByText('Revenue', { exact: false }).first().waitFor();
 
     const card = phone(page).locator('div[style*="cursor: pointer"]').filter({ hasText: 'Revenue' }).first();
-    const name = (await card.locator('div[style*="font-size: 15px"]').innerText()).trim();
+    const area = (await card.locator('div[style*="font-size: 15px"]').innerText()).trim();
 
     await card.click();
     await expect(page).toHaveURL(/\/practices\/p\d+$/);
     await expect(page.getByText('Exterior photo').first()).toBeVisible();
-    await expect(phone(page).getByText(name, { exact: false }).first()).toBeVisible();
+    await expect(phone(page).getByText(area, { exact: false }).first()).toBeVisible();
   });
 });
 

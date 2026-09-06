@@ -133,6 +133,16 @@ const A2_5: Amendment = {
   replace: '', count: 1
 };
 
+/** A3 — the Insights-tab primary button of the docked panel (spec D18, John: "update across the
+ *  application 'view full market report' to 'View full listing'"). A literal template edit (a
+ *  text node, V3:705): one occurrence in the pristine file. The other tabs' "Open full listing"
+ *  (V3:717) is not part of John's instruction and is left as designed — flagged to John in the
+ *  V15 report for possible unification. */
+const A3: Amendment = {
+  id: 'A3', date: '2026-09-07', ruling: 'update across the application "view full market report" to "View full listing"',
+  find: 'View full market report', replace: 'View full listing', count: 1
+};
+
 export function amendments(): Amendment[] {
-  return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5];
+  return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3];
 }

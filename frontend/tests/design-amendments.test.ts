@@ -52,6 +52,14 @@ describe('local design amendments (spec D15)', () => {
   it('the amended reference is the pristine Rev 2 file plus exactly the ruled edits', () => {
     expect(applyAmendments(pristine, amendments())).toBe(readFileSync(AMENDED, 'utf8'));
   });
+  // D18 (John, 2026-09-07: "update across the application"). One occurrence in the pristine
+  // file — the Insights-tab primary button of the docked panel (V3:705) opens the listing;
+  // its label was wrong. The other tabs' "Open full listing" (V3:717) is untouched.
+  it('A3 replaces the Insights tab\'s "View full market report" with "View full listing" (spec D18), exactly once', () => {
+    expect(pristine.split('View full market report').length - 1).toBe(1);
+    expect(readFileSync(AMENDED, 'utf8')).not.toContain('View full market report');
+    expect(readFileSync(AMENDED, 'utf8')).toContain('View full listing');
+  });
   it('after A1 every display-size heading in the template is uppercase with V2 tracking (19–22 px → .02em, ≥ 24 px → .005em)', () => {
     const amended = readFileSync(AMENDED, 'utf8');
     const figures = /p\.priceLabel|\{\{ c\.value \}\}/;   // `{{ m.v }}` and the 28 px `{{ d.priceLabel }}` are uppercase in V2 and return with A1; the 34 px price is not and V3 already matches it
