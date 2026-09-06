@@ -81,33 +81,47 @@ import uuid
 import fakeredis
 
 
-def _maintenance(dsn: str) -> str:
-    return dsn.rsplit("/", 1)[0] + "/postgres"
+def _normalized_base(migrate, dsn: str) -> str:
+    """The DSN's scheme/dialect normalised through `migrate.normalize_dsn()` (as
+    `db.sync_conn()` also does), with any query string stripped, then split down to
+    everything before the database name — M9, fix round 1: a raw `rsplit` on an
+    asyncpg-style or query-stringed DSN breaks outright or bakes the query string
+    into a database name."""
+    return migrate.normalize_dsn(dsn).split("?", 1)[0].rsplit("/", 1)[0]
+
+
+def _maintenance(migrate, dsn: str) -> str:
+    return _normalized_base(migrate, dsn) + "/postgres"
 
 
 @pytest.fixture
 def scratch_dsn():
-    """Fresh database with every migration applied; dropped afterwards."""
-    import importlib.util
-    from pathlib import Path
-
+    """Fresh database with every migration applied; dropped afterwards. Loads
+    scripts/migrate.py via a normal `import scripts.migrate` (scripts/ is a namespace
+    package, no __init__.py needed) rather than a fresh throwaway module object per
+    call, so a test can reach the exact `run` function this fixture calls through, by
+    patching `scripts.migrate.run` directly (I5 fix round 1's failure-injection test
+    does this)."""
     from app.config import settings
+    from scripts import migrate
 
-    spec = importlib.util.spec_from_file_location("migrate", Path(__file__).resolve().parent.parent / "scripts" / "migrate.py")
-    migrate = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migrate)  # type: ignore[union-attr]
     name = f"pm_test_{uuid.uuid4().hex[:8]}"
-    admin = psycopg2.connect(_maintenance(settings.database_url))
+    admin = psycopg2.connect(_maintenance(migrate, settings.database_url))
     admin.autocommit = True
-    with admin.cursor() as cur:
-        cur.execute(f'CREATE DATABASE "{name}"')
-    dsn = settings.database_url.rsplit("/", 1)[0] + f"/{name}"
-    migrate.run(dsn)
     try:
-        yield dsn
-    finally:
         with admin.cursor() as cur:
-            cur.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
+            cur.execute(f'CREATE DATABASE "{name}"')
+        dsn = _normalized_base(migrate, settings.database_url) + f"/{name}"
+        try:
+            # I5, fix round 1: migrate.run must run INSIDE this try — previously it ran
+            # before the try/finally, so a failing migration left the just-created
+            # database (and this admin connection) leaked on the shared compose Postgres.
+            migrate.run(dsn)
+            yield dsn
+        finally:
+            with admin.cursor() as cur:
+                cur.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
+    finally:
         admin.close()
 
 
@@ -131,6 +145,10 @@ def redis(monkeypatch):
     aio = fakeredis.aioredis.FakeRedis(server=server)
     from app import cache
 
-    monkeypatch.setattr(cache, "sync_redis", lambda: sync)
-    monkeypatch.setattr(cache, "async_redis", lambda: aio)
+    # Patch the factories, not sync_redis/async_redis themselves (fix round 1, C1):
+    # a `from app.cache import sync_redis` consumer binds the function object once,
+    # but that function still resolves `_make_sync`/`_make_async` from `app.cache`'s
+    # own globals on every call, so patching those two intercepts every caller.
+    monkeypatch.setattr(cache, "_make_sync", lambda: sync)
+    monkeypatch.setattr(cache, "_make_async", lambda: aio)
     return sync

@@ -1,4 +1,5 @@
 import importlib.util
+import re
 import uuid
 from pathlib import Path
 
@@ -142,3 +143,65 @@ def test_main_returns_3_when_the_database_is_unreachable(monkeypatch, capsys):
     assert code == 3
     err = capsys.readouterr().err
     assert "unreachable" in err and "OperationalError" in err
+
+
+def test_migration_files_never_manage_their_own_transaction():
+    """I7 fix round 1: scripts/migrate.py commits each file's own SQL and its ledger
+    row as ONE transaction; a migration that opened/closed its own transaction would
+    silently break that atomicity. Regex matches BEGIN/COMMIT/ROLLBACK at a statement
+    start (start of file or right after a `;`), case-insensitive, ignoring `--`
+    line comments — a migration's own transaction-control statement, not the `BEGIN`
+    a PL/pgSQL function body uses as a block delimiter (014_audit_log.sql has one)."""
+    forbidden = re.compile(r"(?:^|;)\s*(begin|commit|rollback)\b", re.IGNORECASE)
+    for path in sorted(ROOT.glob("migrations/*.sql")):
+        text = "\n".join(line.split("--", 1)[0] for line in path.read_text(encoding="utf-8").splitlines())
+        match = forbidden.search(text)
+        assert not match, f"{path.name} must not manage its own transaction: {match.group(0)!r}"
+
+
+def test_scratch_dsn_cleans_up_when_migrate_run_fails(request, monkeypatch):
+    """I5 fix round 1: tests/conftest.py's `scratch_dsn` fixture must run `migrate.run`
+    inside its `try` so a failing migration doesn't leak the just-created `pm_test_*`
+    database (or the admin connection) on the compose Postgres every worktree on port
+    5433 shares. `scratch_dsn` resolves `scripts.migrate` via a normal, cached import
+    (scripts/ is a namespace package), so patching `.run` here reaches the exact
+    function it calls through. `uuid.uuid4` is pinned so this test checks one specific,
+    deterministic database name rather than scanning for any `pm_test_%` — the compose
+    Postgres is shared with other concurrently-running test processes on this port, so
+    a global scan can see (and misattribute) an unrelated, legitimately in-flight
+    scratch database from one of those."""
+    from scripts import migrate as shared_migrate
+
+    fixed = uuid.UUID("00000000-0000-0000-0000-0000000000fe")
+    monkeypatch.setattr(uuid, "uuid4", lambda: fixed)
+    expected_name = f"pm_test_{fixed.hex[:8]}"
+
+    def _raise(dsn):
+        raise RuntimeError("forced failure (RED/behavioural test): migrate.run")
+
+    monkeypatch.setattr(shared_migrate, "run", _raise)
+
+    with pytest.raises(RuntimeError):
+        request.getfixturevalue("scratch_dsn")
+
+    admin = psycopg2.connect(_maintenance_dsn(settings.database_url))
+    try:
+        with admin.cursor() as cur:
+            cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (expected_name,))
+            assert cur.fetchall() == []
+    finally:
+        admin.close()
+
+
+def test_scratch_dsn_normalises_an_asyncpg_style_dsn_with_a_query_string(request, monkeypatch):
+    """M9 fix round 1: `settings.database_url` may be in the asyncpg-dialect,
+    query-string form `app/db.py`/`app/checks.py` already accept — `scratch_dsn` must
+    normalise it (as `db.sync_conn()`/`migrate.normalize_dsn()` do) rather than handing
+    psycopg2 a scheme/query string it cannot parse."""
+    asyncpg_style = settings.database_url.replace("postgresql://", "postgresql+asyncpg://", 1) + "?sslmode=disable"
+    monkeypatch.setattr(settings, "database_url", asyncpg_style)
+
+    dsn = request.getfixturevalue("scratch_dsn")
+    with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1")
+        assert cur.fetchone() == (1,)
