@@ -13,6 +13,7 @@ import unicodedata
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
+from starlette.requests import ClientDisconnect
 
 from app.checks import async_dsn
 from app.config import settings
@@ -49,9 +50,10 @@ def normalise(email: str) -> tuple[str, str] | None:
 def client_ip(request: Request) -> str:
     """The client as Railway's edge saw it: the RIGHTMOST X-Forwarded-For hop. A reverse proxy appends the peer
     it accepted, so every earlier hop is caller-supplied text and must not key a rate limit (11c review F2;
-    spec §3 amended 2026-09-06, proven live on QA in Task 11f). An empty rightmost hop (trailing comma,
-    blank header) or no header at all falls back to the peer address (N7)."""
-    hop = request.headers.get("x-forwarded-for", "").rsplit(",", 1)[-1].strip()
+    spec §3 amended 2026-09-06, proven live on QA in Task 11f). Repeated header lines are joined first — an
+    edge that adds its own line instead of appending must still win (O1). An empty rightmost hop or no header
+    falls back to the peer address (N7)."""
+    hop = ",".join(request.headers.getlist("x-forwarded-for")).rsplit(",", 1)[-1].strip()
     if hop:
         return hop
     return request.client.host if request.client else "unknown"
@@ -97,7 +99,10 @@ async def interest(request: Request) -> JSONResponse:
     declared = declared_length(request)
     if declared is None or declared > MAX_BODY_BYTES:
         return _error("too_large", 413)
-    raw = await _read_capped(request)
+    try:
+        raw = await _read_capped(request)
+    except ClientDisconnect:
+        return _error("invalid_email", 422)  # the caller went away mid-body: not an error, not a 500 (O2)
     if raw is None:
         return _error("too_large", 413)
     email = _email_from(raw)

@@ -68,9 +68,15 @@ async def test_duplicate_address_answers_the_same_and_keeps_one_row(client, db_r
 )
 async def test_invalid_address_is_422_and_writes_nothing(client, db_ready, bad):
     before = _count()  # M10: a row count, not a lookup that could never match
-    r = await client.post("/api/interest", json={"email": bad}, headers={"x-forwarded-for": _ip()})
-    assert r.status_code == 422 and r.json() == {"error": "invalid_email"}
-    assert _count() == before
+    try:
+        r = await client.post("/api/interest", json={"email": bad}, headers={"x-forwarded-for": _ip()})
+        assert r.status_code == 422 and r.json() == {"error": "invalid_email"}
+        assert _count() == before
+    finally:
+        # Postgres cannot store NUL in text, and psycopg2 refuses to bind it — nothing to clean (FR3 ruling)
+        if "\x00" not in bad:
+            with psycopg2.connect(settings.database_url) as conn, conn.cursor() as cur:
+                cur.execute("DELETE FROM interest_signup WHERE email = %s", (bad.strip(),))
 
 
 async def test_missing_body_field_is_422(client):
@@ -159,12 +165,76 @@ async def test_body_over_the_cap_is_413_and_writes_nothing(client, db_ready):
     assert _count() == before
 
 
+@pytest.mark.parametrize("size, status", [(4096, 422), (4097, 413)])
+async def test_body_cap_boundary(client, db_ready, size, status):
+    """O3: exactly MAX_BODY_BYTES is accepted (and then rejected as an invalid address), one more byte is 413."""
+    body = b'{"email":"' + b"a" * (size - len(b'{"email":""}')) + b'"}'
+    assert len(body) == size
+    r = await client.post("/api/interest", content=body, headers={"x-forwarded-for": _ip(), "content-type": "application/json"})
+    assert r.status_code == status
+
+
 async def test_chunked_body_over_the_cap_is_413(client, db_ready):
     async def body():  # no Content-Length: httpx sends Transfer-Encoding: chunked (N3)
         for _ in range(6):
             yield b'{"email":"' + b"a" * 1000
     r = await client.post("/api/interest", content=body(), headers={"x-forwarded-for": _ip(), "content-type": "application/json"})
     assert r.status_code == 413 and r.json() == {"error": "too_large"}
+
+
+async def test_oversized_chunked_body_is_not_buffered(dist):
+    """N3/O4: the cap trips while streaming — the app stops pulling chunks long before a 100 KiB body ends."""
+    from app.main import create_app
+
+    app = create_app(dist=dist)
+    pulled = 0
+
+    async def receive():
+        nonlocal pulled
+        pulled += 1
+        return {"type": "http.request", "body": b"a" * 1024, "more_body": pulled < 100}
+
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {"type": "http", "http_version": "1.1", "method": "POST", "scheme": "http", "path": "/api/interest", "raw_path": b"/api/interest",
+             "query_string": b"", "root_path": "", "server": ("test", 80), "client": ("10.9.9.8", 1),
+             "headers": [(b"host", b"test"), (b"content-type", b"application/json")]}
+    await app(scope, receive, send)
+    assert sent[0]["status"] == 413
+    assert pulled < 20, pulled  # 4 KiB cap: a handful of 1 KiB chunks, never all 100
+
+
+async def test_client_disconnect_mid_body_is_answered_without_a_traceback(dist, caplog):
+    """O2: an aborted upload is not an error — it is answered by this endpoint's contract, not a 500."""
+    import logging
+
+    from app.main import create_app
+
+    app = create_app(dist=dist)
+    calls = 0
+
+    async def receive():
+        nonlocal calls
+        calls += 1
+        if calls == 1:
+            return {"type": "http.request", "body": b'{"email":"', "more_body": True}
+        return {"type": "http.disconnect"}
+
+    sent = []
+
+    async def send(message):
+        sent.append(message)
+
+    scope = {"type": "http", "http_version": "1.1", "method": "POST", "scheme": "http", "path": "/api/interest", "raw_path": b"/api/interest",
+             "query_string": b"", "root_path": "", "server": ("test", 80), "client": ("10.9.9.9", 1),
+             "headers": [(b"host", b"test"), (b"content-type", b"application/json"), (b"content-length", b"64")]}
+    caplog.set_level(logging.ERROR)
+    await app(scope, receive, send)
+    assert sent[0]["type"] == "http.response.start" and sent[0]["status"] == 422
+    assert "Traceback" not in caplog.text
 
 
 @pytest.mark.parametrize("value, expected", [("19", 19), ("0", 0), ("\xb2", None), ("abc", None), ("-5", None), ("1 9", None)])
@@ -187,6 +257,18 @@ def test_client_ip_uses_the_rightmost_hop_or_falls_back_to_the_peer(header, expe
     scope = {"type": "http", "method": "POST", "path": "/api/interest", "query_string": b"", "client": ("9.9.9.9", 1),
              "headers": [] if header is None else [(b"x-forwarded-for", header.encode())]}
     assert client_ip(Request(scope)) == expected  # N7: an empty rightmost hop is not a subject
+
+
+def test_client_ip_joins_repeated_forwarded_header_lines():
+    """O1: HTTP allows the field to repeat and Starlette returns only the first line — an edge that adds its own
+    line instead of appending would hand the subject back to the caller. All lines are joined first."""
+    from starlette.requests import Request
+
+    from app.api.interest import client_ip
+
+    scope = {"type": "http", "method": "POST", "path": "/api/interest", "query_string": b"", "client": ("9.9.9.9", 1),
+             "headers": [(b"x-forwarded-for", b"evil-spoof"), (b"x-forwarded-for", b"203.0.113.7")]}
+    assert client_ip(Request(scope)) == "203.0.113.7"
 
 
 async def test_unreachable_redis_fails_closed_with_503(client, db_ready, monkeypatch):
