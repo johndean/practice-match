@@ -61,7 +61,9 @@ REQUIRE_TOKENS = require("tokens.manage")
 REQUIRE_AUDIT = require("audit.read")
 REQUIRE_PERMISSIONS = require("permissions.read")
 
-Reviewer = Annotated[S.Principal, Depends(REQUIRE_REVIEW)]
+# (No `Reviewer` alias: `list_users` carries `REQUIRE_REVIEW` as a route-level dependency rather
+# than a handler parameter, so an alias for it would be dead — and ruff does not flag an unused
+# module-level assignment, so nothing else would catch it. Fix round 2, NEW-2.)
 DetailViewer = Annotated[S.Principal, Depends(REQUIRE_VIEW_DETAIL)]
 Decider = Annotated[S.Principal, Depends(REQUIRE_DECIDE)]
 Granter = Annotated[S.Principal, Depends(REQUIRE_GRANT)]
@@ -78,6 +80,10 @@ TOKEN_ROLES = ("buyer", "seller")
 PRIVILEGED_ROLES = frozenset({"staff", "admin"})
 # The two decisions nobody may aim at their own account (F2).
 SELF_FORBIDDEN_ACTIONS = ("suspend", "revoke")
+# The transaction-scoped advisory lock every removal of an `admin` grant takes before counting the
+# survivors (fix round 2, NEW-1). ASCII 'PMAG' — Practice Match Admin Grants — in the same shape as
+# `scripts/migrate.py`'s LOCK_KEY ('PMMG'), and deliberately a different value.
+ADMIN_GRANT_LOCK = 0x504D4147
 # `account.state`'s CHECK constraint (migrations/010) — the enum `state=` is validated against.
 ACCOUNT_STATES = ("unverified", "verified", "pending", "needs_review", "declined", "active", "suspended", "revoked")
 APPLICATION_KINDS = ("buyer", "seller")
@@ -262,22 +268,38 @@ def _refuse_unsafe_target(
     2. **Nobody may suspend or revoke themselves.** Not an escalation — a one-request lockout.
     3. **An `admin` grant is never removed from its own holder, nor when it is the last live one.**
 
-    Rule 3's two halves are one expression on purpose. The second half cannot be reached over HTTP
-    today — `roles.grant` is admin-only, so any actor who gets here holds a live admin grant of
-    their own and the count can never be 1 for a target that is not them — so a separate branch for
-    it could never be exercised. It is kept because it is what makes the invariant hold if
-    `roles.grant` is ever widened, and it is exercised directly by
-    `tests/api/test_admin_users.py::test_the_last_admin_guard_does_not_depend_on_the_actor_being_the_admin_removed`.
+    `removing_admin` says the OPERATION removes admin grants — `grants` with `grant=false` on
+    `admin`, or `decide`'s `revoke`, which strips every grant the target holds. Rule 3 then applies
+    only when the target actually holds `admin`: it is a floor under the admin population, not a
+    restriction on `revoke`, and reading it the other way would refuse a lone staff member revoking
+    an ordinary applicant.
 
-    Rule 3 also covers `revoke`, which strips every grant: an actor may only revoke somebody else
-    (rule 2), and a staff actor cannot reach an admin target at all (rule 1), so the only account
-    that could revoke the last admin's grant is that admin — which rule 2 refuses.
+    **Rule 3 serialises (fix round 2, NEW-1).** The count was read with no lock over `role_grant`,
+    while each caller locks only its own TARGET account row — so two admins ungranting or revoking
+    *each other* locked different rows, both saw `count = 2`, and both committed: zero live admins,
+    the exact state this rule exists to prevent, with recovery meaning `bootstrap_admin.py` and
+    production database credentials. `pg_advisory_xact_lock` is held for the rest of the
+    transaction, so the second caller waits, then re-reads `count = 1` and is refused. It is taken
+    only on the path that removes an admin grant, so ordinary decisions and grants never queue
+    behind it; adding an admin needs no lock, because it can only raise the count. Deadlock-free:
+    it is a single lock taken after the per-row locks, so no two transactions can hold what the
+    other wants.
+
+    Rule 3's two halves are one expression on purpose. The second half cannot be reached over HTTP
+    in a single request — `roles.grant` is admin-only, so any actor who gets here holds a live admin
+    grant of their own and the count can never be 1 for a target that is not them — so a separate
+    branch for it could never be exercised. It is what the concurrent case above resolves to, and
+    what makes the invariant hold if `roles.grant` is ever widened; it is exercised directly by
+    `tests/api/test_admin_users.py::test_the_last_admin_guard_does_not_depend_on_the_actor_being_the_admin_removed`
+    and concurrently by the two `..._cannot_reach_zero` tests beside it.
     """
     if self_forbidden and account_id == actor_account:
         raise SelfAction
-    if "admin" not in actor.roles and PRIVILEGED_ROLES & set(_roles(cur, account_id)):
+    target_roles = set(_roles(cur, account_id))
+    if "admin" not in actor.roles and PRIVILEGED_ROLES & target_roles:
         raise PrivilegedTarget
-    if removing_admin:
+    if removing_admin and "admin" in target_roles:
+        cur.execute("SELECT pg_advisory_xact_lock(%s)", (ADMIN_GRANT_LOCK,))
         cur.execute("SELECT count(*) FROM role_grant WHERE role='admin' AND revoked_at IS NULL")
         if account_id == actor_account or cast("tuple[int]", cur.fetchone())[0] <= 1:
             raise LastAdmin
@@ -444,8 +466,13 @@ def decide(
         state, email = row
         # Before the application lookup and before every INSERT/UPDATE below: a refusal here
         # leaves the target row exactly as it was (fix round 1, F1/F2).
+        #
+        # `revoke` strips EVERY grant the target holds, so it removes an admin grant whenever the
+        # target has one — and takes rule 3's lock and count with it (fix round 2, NEW-1). Without
+        # that, two admins revoking each other concurrently reached zero admins by exactly the
+        # route the re-review demonstrated for `grants`.
         _refuse_unsafe_target(cur, actor=actor, actor_account=actor_account, account_id=account_id,
-                              self_forbidden=action in SELF_FORBIDDEN_ACTIONS, removing_admin=False)
+                              self_forbidden=action in SELF_FORBIDDEN_ACTIONS, removing_admin=action == "revoke")
         cur.execute("""SELECT id, kind FROM application WHERE account_id=%s AND status = ANY(%s)
                         ORDER BY submitted_at DESC LIMIT 1""", (account_id, list(OPEN_STATUSES)))
         application = cur.fetchone()

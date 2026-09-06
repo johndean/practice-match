@@ -26,11 +26,12 @@ import subprocess
 import sys
 from datetime import timedelta
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 import pytest
 
-from tests.api.conftest import PW, auth_headers
+from tests.api.conftest import ORIGIN, PW, auth_headers
 
 ROOT = Path(__file__).resolve().parents[2]
 FIELDS = {"name": "Priya Raghavan, DVM", "vin_member_id": "", "school_year": "Texas A&M, 2016", "license_state": "TX",
@@ -687,3 +688,224 @@ def test_issue_api_token_returns_the_id_beside_the_raw_value(conn):
     assert issued.raw == f"pm_{issued.token_id}.{issued.raw.split('.', 1)[1]}"
     assert T.parse(issued.raw) == (issued.token_id, issued.raw.split(".", 1)[1])
     assert T.verify_api_token(conn, issued.raw).token_id == issued.token_id
+
+
+# ============================ fix round 2 ============================
+
+
+def _admin_pair(conn, suffix=""):
+    """Two accounts, each holding a live `admin` grant."""
+    from app.auth import passwords as P
+
+    ids = []
+    for name in ("alpha", "beta"):
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO account (email, password_hash, state) VALUES (%s,%s,'active') RETURNING id",
+                        (f"{name}{suffix}@example.org", P.hash_password(PW)))
+            aid = cur.fetchone()[0]
+            cur.execute("INSERT INTO role_grant (account_id, role, granted_by) VALUES (%s,'admin',%s)", (aid, aid))
+        ids.append(aid)
+    return ids
+
+
+def _live_admins(conn):
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM role_grant WHERE role='admin' AND revoked_at IS NULL")
+        return cur.fetchone()[0]
+
+
+def _concurrent_removal(dsn, actor_account, target, barrier, results, *, via):
+    """One admin-grant mutation in its own READ COMMITTED transaction on its own connection,
+    replaying the statement sequence of the endpoint named by `via` around the SHARED guard:
+
+    * `grants` — lock the target account row, guard, revoke that one `admin` grant;
+    * `decide`  — lock the target account row, guard (with the self-check `revoke` carries),
+                  revoke EVERY grant and move the account to `revoked`.
+    """
+    import psycopg2
+
+    from app.api import admin_users as A
+    from app.auth import sessions as S
+
+    actor = S.Principal(actor_account, "active", frozenset({"admin"}), None, "session", "h")
+    connection = psycopg2.connect(dsn)   # NOT autocommit: `with connection:` is one real transaction
+    try:
+        with connection, connection.cursor() as cur:
+            cur.execute("SELECT 1 FROM account WHERE id=%s FOR UPDATE", (target,))
+            barrier.wait(timeout=30)     # both transactions are open before either reaches the guard
+            A._refuse_unsafe_target(cur, actor=actor, actor_account=actor_account, account_id=target,
+                                    self_forbidden=via == "decide", removing_admin=True)
+            if via == "decide":
+                cur.execute("UPDATE role_grant SET revoked_at=now() WHERE account_id=%s AND revoked_at IS NULL", (target,))
+                cur.execute("UPDATE account SET state='revoked' WHERE id=%s", (target,))
+            else:
+                cur.execute("UPDATE role_grant SET revoked_at=now() WHERE account_id=%s AND role='admin' AND revoked_at IS NULL",
+                            (target,))
+        results.append("removed")
+    except A.LastAdmin:
+        results.append("refused")
+    finally:
+        connection.close()
+
+
+def _race(conn, scratch_dsn, via):
+    """Three rounds with a fresh pair of admins each: under the bug the outcome is timing-dependent
+    and one round could pass by luck.
+
+    Every round starts from a deployment whose ONLY admins are the pair — the scenario NEW-1
+    describes. Without that reset, a survivor from the previous round makes both removals
+    legitimate (three admins, two go, one remains), and the test would fail for a reason that is
+    not the bug."""
+    import threading
+
+    for round_number in range(3):
+        with conn.cursor() as cur:
+            cur.execute("UPDATE role_grant SET revoked_at=now() WHERE role='admin' AND revoked_at IS NULL")
+        alpha, beta = _admin_pair(conn, suffix=f"-{via}-{round_number}")
+        assert _live_admins(conn) == 2, "the pair must be the whole admin population for this round"
+        barrier, results = threading.Barrier(2), []
+        threads = [threading.Thread(target=_concurrent_removal, args=(scratch_dsn, alpha, beta, barrier, results), kwargs={"via": via}),
+                   threading.Thread(target=_concurrent_removal, args=(scratch_dsn, beta, alpha, barrier, results), kwargs={"via": via})]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=60)
+            assert not thread.is_alive(), "a thread never finished — the serialisation must not deadlock"
+        assert sorted(results) == ["refused", "removed"], f"{via} round {round_number}: exactly one may win, got {results}"
+        assert _live_admins(conn) == 1, f"{via} round {round_number}: one admin of the pair must survive"
+
+
+def test_two_admins_ungranting_each_other_concurrently_cannot_reach_zero(conn, scratch_dsn):
+    """NEW-1. Rule 3 counted live admin grants with no lock over `role_grant`, and `grants()`'s only
+    lock is `FOR UPDATE` on the TARGET account row — so two admins ungranting *each other* lock
+    different rows, nothing serialises them, both see `count = 2`, and both commit. Demonstrated in
+    the re-review on a scratch database: **0 live admin grants afterwards** — precisely the state
+    rule 3 exists to prevent, with recovery meaning `bootstrap_admin.py` and production database
+    credentials again.
+
+    One event loop cannot produce this on its own (these handlers do blocking psycopg2 work, so two
+    in-process requests serialise), but Railway runs replicas: two containers, two admins, one
+    instant. So the race is driven here the way it happens in production — two connections, two
+    threads, each replaying the endpoint's own statement sequence through the real shared guard."""
+    _race(conn, scratch_dsn, via="grants")
+
+
+def test_two_admins_revoking_each_other_concurrently_cannot_reach_zero(conn, scratch_dsn):
+    """NEW-1's other half, named in the same paragraph of the re-review: "The same shape reaches
+    `decide`'s `revoke`, which strips grants and has no count at all." `revoke` passed
+    `removing_admin=False`, so two admins revoking each other raced to zero by exactly the route
+    above with nothing to serialise and no count to lose. Revoking an account that holds `admin`
+    now goes through rule 3 like any other removal of an admin grant."""
+    _race(conn, scratch_dsn, via="decide")
+
+
+def _decide_in_its_own_loop(dist, cookies, hdr, target, result):
+    """One `POST /api/admin/users/<target>/decide {"revoke"}` on its OWN event loop, in this
+    thread, against the real app. A separate loop because these handlers do blocking psycopg2 work:
+    a request that waits on a Postgres lock blocks the whole loop it runs on, so it cannot share
+    one with the test that is holding that lock."""
+    import asyncio
+
+    import httpx
+    from httpx import ASGITransport
+
+    from app.main import create_app
+
+    async def go():
+        async with httpx.AsyncClient(transport=ASGITransport(app=create_app(dist=dist)), base_url=ORIGIN) as c:
+            return await c.post(f"/api/admin/users/{target}/decide", headers=auth_headers(cookies, hdr),
+                                json={"action": "revoke", "note": "fix round 2"})
+
+    result["response"] = asyncio.run(go())
+
+
+def test_revoking_an_admin_waits_on_the_admin_grant_lock_and_an_ordinary_member_does_not(
+    conn, scratch_dsn, dist, member,
+):
+    """`decide`'s call site, pinned where it is observable. No single request can reach rule 3's
+    refusal through `revoke` (rule 2 stops self-revoke, rule 1 stops a staff actor reaching an
+    admin), so what the call site changes is whether the request SERIALISES — and that is visible
+    by holding the lock from another connection and watching the request wait for it.
+
+    Both requests run in their own thread, on their own event loop. Not for symmetry: these
+    handlers do blocking psycopg2 work, so a request that waits on a Postgres lock blocks the whole
+    loop it is on, and `asyncio.wait_for` cannot time it out — the timer never gets to run. A
+    regression that took the lock for EVERY revoke would deadlock the suite outright if the
+    ordinary-member request shared this thread; in its own thread it is a `join(timeout=...)` and a
+    plain assertion instead."""
+    import threading
+
+    import psycopg2
+
+    from app.api import admin_users as A
+
+    _admin, cookies, hdr = member(("admin",), email="locker@example.org")
+    victim, _cv, _hv = member(("admin",), email="victim-admin@example.org")
+    ordinary, _co, _ho = member(("buyer",), email="plain-member@example.org")
+    with conn.cursor() as cur:   # the acting admin has re-authenticated (`users.revoke` is in REAUTH)
+        cur.execute("UPDATE session SET reauth_at = now() WHERE account_id = %s", (_admin,))
+    from app.cache import sync_redis
+    sync_redis().flushall()      # ...so the cached principal is re-read with that stamp
+
+    plain_result: dict[str, Any] = {}
+    admin_result: dict[str, Any] = {}
+    plain_thread = threading.Thread(target=_decide_in_its_own_loop, args=(dist, cookies, hdr, ordinary, plain_result))
+    admin_thread = threading.Thread(target=_decide_in_its_own_loop, args=(dist, cookies, hdr, victim, admin_result))
+    blocker = psycopg2.connect(scratch_dsn)          # NOT autocommit: the lock is held until commit
+    try:
+        with blocker, blocker.cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (A.ADMIN_GRANT_LOCK,))
+            # An ordinary member is revoked straight through: that path never asks for the lock.
+            plain_thread.start()
+            plain_thread.join(timeout=30)
+            assert not plain_thread.is_alive(), "revoking an account with no admin grant must not queue behind the lock"
+            assert plain_result["response"].json() == {"state": "revoked", "roles": []}
+            # An ADMIN target must wait.
+            admin_thread.start()
+            admin_thread.join(timeout=2)
+            assert admin_thread.is_alive(), "revoking an admin must wait on the admin-grant lock"
+            assert "response" not in admin_result
+        # ...and completes as soon as the lock is released by the commit above.
+        admin_thread.join(timeout=60)
+        assert not admin_thread.is_alive(), "the revoke must proceed once the lock is free"
+    finally:
+        blocker.close()
+        for thread in (plain_thread, admin_thread):
+            if thread.is_alive():
+                thread.join(timeout=60)
+    assert admin_result["response"].json() == {"state": "revoked", "roles": []}
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM role_grant WHERE role='admin' AND revoked_at IS NULL")
+        assert cur.fetchone()[0] == 1, "the acting admin survives; the victim's grant is gone"
+
+
+async def test_the_admin_floor_does_not_fire_when_the_revoked_account_holds_no_admin(client, conn, member):
+    """The other side of that change, and what stops it being over-broad: rule 3 is about ADMIN
+    grants, not about `revoke`. An ordinary member is revoked exactly as before — including when
+    the acting staff member is the only administrative account in the deployment, where a naive
+    `removing_admin=True` for every revoke would have refused with `LAST_ADMIN`."""
+    _sid, scookies, shdr = member(("staff",), email="lone-staff@example.org")
+    ordinary, _c, _h = member(("buyer", "seller"), email="ordinary@example.org")
+    await _reauth(client, scookies, shdr)
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM role_grant WHERE role='admin' AND revoked_at IS NULL")
+        assert cur.fetchone()[0] == 0, "there is no admin at all: the floor must not read as 'the last one'"
+    r = await client.post(f"/api/admin/users/{ordinary}/decide", headers=auth_headers(scookies, shdr),
+                          json={"action": "revoke", "note": "fix round 2"})
+    assert r.json() == {"state": "revoked", "roles": []}
+
+
+def test_no_dead_dependency_aliases_remain(client):
+    """NEW-2. `Reviewer` outlived its only consumer when C2 moved `list_users` to a route-level
+    `dependencies=[...]`, and ruff does not flag an unused module-level assignment — so it read as
+    though a route still used it. Every alias this module exports must be reachable from a route."""
+    import inspect
+
+    from app.api import admin_users as A
+
+    aliases = [name for name, value in vars(A).items()
+               if name[0].isupper() and getattr(value, "__module__", "") == "typing" and "Depends" in repr(value)]
+    source = inspect.getsource(A)
+    for alias in aliases:
+        assert source.count(f": {alias}") >= 1, f"{alias} is defined but no route parameter uses it"
+    assert "Reviewer" not in aliases and "DetailViewer" in aliases
