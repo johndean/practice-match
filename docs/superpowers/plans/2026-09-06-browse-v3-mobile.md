@@ -3543,7 +3543,7 @@ Plain language, for stakeholders, plus screenshots of the live QA screens:
 
 ### Task V13: Option B — restore V2's display typography through a local design amendment (spec D15, D16)
 
-*Added 2026-09-07 on John's ruling: "keep the V2 header and do not restyle header or fonts". Executes after the final-review fix round, before the merge. Fresh implementer.*
+*Added 2026-09-07 on John's ruling: "keep the V2 header and do not restyle header or fonts". Executes after the final-review fix round, before the merge. Fresh implementer. Corrected twice the same day on the implementer's STOPs: the set is 23 in-place value edits (not 25/24) — `{{ m.v }}` is in (V2 uppercased the key-fact values), `{{ resultHeadline }}` is out (V3 never restyled it; its only V3 occurrence is the mobile list's, byte-identical to V2's).*
 
 **Files:**
 - Create: `docs/design-reference/design_handoff_practice_match_v3/Practice Match V3.rev2.dc.html` (byte-for-byte copy of the pristine Rev 2 file — `cp`, never edited)
@@ -3601,7 +3601,6 @@ function styledElements(html: string): Styled[] {
   }
   return out;
 }
-const RESULT_HEADLINE_V2 = 'font-family: var(--rf-display); font-size: 19px; font-weight: 800; letter-spacing: .02em; text-transform: uppercase; color: var(--color-navy); line-height: 1.2;';
 const decl = (style: string, prop: string) => { const m = new RegExp(`(?:^|;)\\s*${prop}:\\s*([^;]+)`).exec(style); return m ? m[1].trim() : null; };
 /** Set, replace or remove ONE declaration in place — never reorders the others (a reorder is a byte change with no rendered effect, and would be a spurious amendment). */
 function setDecl(style: string, prop: string, value: string | null): string {
@@ -3612,8 +3611,10 @@ function setDecl(style: string, prop: string, value: string | null): string {
 }
 
 /** A1 — V2 typography (spec D16, corrected 2026-09-07 after the V13 STOP). Rule-based and evidence-only: an element paired with V2 by its unique
- *  (tag, text) key takes V2's `text-transform` and `letter-spacing` VALUES wherever they differ from V3's, edited in place; `{{ resultHeadline }}`
- *  takes V2's whole style string. Elements whose two declarations already equal V2's produce NO amendment. Unpaired elements are never touched. */
+ *  (tag, text) key takes V2's `text-transform` and `letter-spacing` VALUES wherever they differ from V3's, edited in place. Elements whose two
+ *  declarations already equal V2's produce NO amendment. Unpaired elements — and elements whose key is not unique on one side — are never touched
+ *  (that rule is what keeps `{{ resultHeadline }}` alone: V3's only occurrence is the mobile list's, byte-identical to V2's; V2's 19 px desktop one
+ *  lived in the Browse column V3 replaced by design). */
 export function deriveTypographyB(v2Html: string, pristineHtml: string): Amendment[] {
   const key = (e: Styled) => `${e.tag}|${e.text}`;
   const uniq = (els: Styled[]) => { const c = new Map<string, number>(); els.forEach((e) => c.set(key(e), (c.get(key(e)) ?? 0) + 1)); return new Map(els.filter((e) => c.get(key(e)) === 1).map((e) => [key(e), e])); };
@@ -3622,8 +3623,7 @@ export function deriveTypographyB(v2Html: string, pristineHtml: string): Amendme
   for (const [k, e3] of v3u) {
     const e2 = v2.get(k); if (!e2) continue;
     let next = e3.style;
-    if (e3.text === '{{ resultHeadline }}') next = RESULT_HEADLINE_V2;
-    else for (const prop of ['text-transform', 'letter-spacing']) { const want = decl(e2.style, prop); if (want !== decl(e3.style, prop)) next = setDecl(next, prop, want); }
+    for (const prop of ['text-transform', 'letter-spacing']) { const want = decl(e2.style, prop); if (want !== decl(e3.style, prop)) next = setDecl(next, prop, want); }
     if (next === e3.style) continue;
     out.push({ id: `A1.${out.length + 1}`, date: '2026-09-07', ruling: 'keep the V2 header and do not restyle header or fonts',
       find: `style="${e3.style}"${e3.rest}>${e3.text}`, replace: `style="${next}"${e3.rest}>${e3.text}`, count: 1, text: e3.text });
@@ -3655,18 +3655,19 @@ import { AMENDED, LOCAL_AMENDMENTS_MD, PRISTINE, amendments, applyAmendments, de
 
 describe('local design amendments (spec D15)', () => {
   const pristine = readFileSync(PRISTINE, 'utf8');
-  // The 24 elements V2 typed differently from V3 (measured in the V13 STOP report, 2026-09-07): 22 display headings, the four
-  // key-fact values `{{ m.v }}` (V2 set them uppercase .005em — one element in the template), and `{{ resultHeadline }}`.
+  // The 23 elements V2 typed differently from V3 (measured in the V13 STOP reports, 2026-09-07): 22 display headings and the
+  // key-fact values `{{ m.v }}` (V2 set them uppercase .005em — one element in the template). `{{ resultHeadline }}` is NOT among them:
+  // V3's only occurrence is the mobile list's, byte-identical to V2's (the V7 review had paired it with V2's desktop Browse element).
   const A1_TEXTS = [
     'Veterinary Practice Transitions', "We're here to help connect veterinary practice owners", 'Member Sign In', 'Request Access',
     '{{ status.title }}', 'New to ownership? Start with the StartUp Club.', '{{ md.mdHeadline }}', '{{ d.title }}', '{{ sec.title }}',
     'Photos and Documents', 'Community Context', '{{ m.v }}', '{{ modal.title }}', 'My Requests', 'No requests yet', '{{ seller.heading }}',
     'My Listings', 'Buyer Interest', '{{ wiz.title }}', '{{ wiz.previewTitle }}', 'Your listing is with the VIN Foundation',
-    'VIN Foundation Admin', '{{ resultHeadline }}',
+    'VIN Foundation Admin',
   ];
-  it('A1 derives exactly the 24 V2-typography edits — value changes only, in place, none inside a script', () => {
+  it('A1 derives exactly the 23 V2-typography edits — value changes only, in place, none inside a script', () => {
     const a1 = deriveTypographyB(readFileSync(V2, 'utf8'), pristine);
-    expect(a1).toHaveLength(24);
+    expect(a1).toHaveLength(23);
     // `{{ d.title }}` occurs twice (34 px detail title, 19 px mobile title) — the key is (tag, text), both pair; the text list has one entry per distinct text.
     expect(new Set(a1.map((a) => a.text!.startsWith("We're here") ? "We're here to help connect veterinary practice owners" : a.text!))).toEqual(new Set(A1_TEXTS));
     for (const a of a1) {
@@ -3690,7 +3691,7 @@ describe('local design amendments (spec D15)', () => {
       expect(m[2], m[4]).toContain('text-transform: uppercase');
       expect(m[2], m[4]).toContain(`letter-spacing: ${px >= 24 ? '.005em' : '.02em'}`);
     }
-    expect(seen).toBeGreaterThanOrEqual(24);
+    expect(seen).toBeGreaterThanOrEqual(23);
   });
   it('LOCAL_AMENDMENTS.md names every amendment id', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
@@ -3720,7 +3721,7 @@ writeFileSync(AMENDED, applyAmendments(readFileSync(PRISTINE, 'utf8'), amendment
 
 | Id | Date | John's ruling | What changes |
 |---|---|---|---|
-| A1 | 2026-09-07 | "keep the V2 header and do not restyle header or fonts" | 24 template elements: every display-size heading paired with V2 takes V2's `text-transform`/`letter-spacing`; `{{ resultHeadline }}` takes V2's whole style (19 px, 800, `.02em`, navy); the key-fact values `{{ m.v }}` return to V2's uppercase `.005em`. No script, no `_ds/**`, no site header (byte-identical V2↔V3 already). |
+| A1 | 2026-09-07 | "keep the V2 header and do not restyle header or fonts" | 23 template elements: every display-size heading paired with V2 takes V2's `text-transform`/`letter-spacing` values in place; the key-fact values `{{ m.v }}` return to V2's uppercase `.005em`; `{{ resultHeadline }}` is untouched (V3's only occurrence, in the mobile list, already equals V2's). No script, no `_ds/**`, no site header (byte-identical V2↔V3 already). |
 ```
 
 - [ ] **Step 4: Regenerate and re-baseline** — `npm run gen:app` (App.vue/pseudo.css/logic.js; `git diff --stat -- src/logic.js` must be EMPTY — A1 touches no script), `npx vitest run` (all drift tests green), `npm run test:visual:baselines && npm run test:e2e` (28 visual at zero diffs, 28 DOM, 24 smoke). Expected first run: visual/DOM RED on every heading screen until the baselines regenerate; GREEN after.
