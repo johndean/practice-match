@@ -25,7 +25,7 @@ Every task's requirements implicitly include this section.
 **(d) Zero regression.** Every existing test keeps passing. The test count only grows, **except** where a task explicitly folds or deletes a case with the behaviour it covered. Those are, exhaustively:
 
 - **Task V5** — three `MarketMapView.test.ts` cases covering behaviour V3 deletes outright: `'draws a purple competition marker per community with vets > 0, skipping ones with none'` (C5 removes the competition bubble pass), `'draws no pins at all when the practices layer is off'` (the `layers` prop is gone) and `'the zoom-in, zoom-out and recenter buttons drive the engine'` (V3's control cluster has no recenter button — `MarketMapV3.jsx:340-405`; the surviving thirds are superseded by the V3 block's own zoom case).
-- **Task V8** — the two `stateToRoute` browse cases, folded into one, since V3 has one Browse route.
+- **Task V8** — the two `stateToRoute` browse cases, folded into one, since V3 has one Browse route; and `'treats an undefined browseMode as listings (the logic does the same)'`, which can assert nothing once `RoutedState.browseMode` is gone (controller ruling, 2026-09-07).
 - **Task V11** — seven test removals (six cases and one case-half), each in the commit that removes the code it covered: `markers.test.ts`'s `'pill muted/active'`, `'pill neither muted nor active falls back to the default (unselected) palette'`, `'clusterIcon and clusterize'`, `'clusterize uses the wider cell below zoom 8'`, `'pricePin active/inactive'` and `'dot'`; and `convert-dc.test.ts`'s `'maps x-import and image-slot to the Vue components with bound props and drops hint-* attributes'` AustinMap half (commit 5, spec D12).
 
 No other test is deleted anywhere in this plan.
