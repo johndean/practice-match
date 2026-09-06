@@ -43,6 +43,7 @@ The project is copied from the zip to `coming-soon/` at the repository root (no 
 1. `coming-soon/src/logic.js` `submit()`: after its existing validation, `POST /api/interest`; on `202` → the existing confirmed state; on `429` → error text "Too many attempts — please try again later."; on any other failure (network, 5xx) → "Something went wrong. Please try again." in the existing error slot. Double submission is blocked while a request is in flight.
 2. `coming-soon/index.html`: Merriweather is self-hosted (OFL) from `public/ds/fonts/` like Proxima Nova; the Google Fonts `<link>`s are removed. The README anticipates this ("self-host before launch"). No other file in the delivery changes; inline styles stay inline (the README's rule).
 3. `coming-soon/vite.config.js`: `build.assetsDir = '_app'` so the static server's immutable-cache rule applies (the marketplace uses the same layout).
+4. *(John's ruling 2026-09-06, after the Task 11d review)* `coming-soon/src/App.vue`: the email field binds `@input="v.setEmail"` instead of `@change`, so pressing Enter submits what the visitor can see (a `change` event only fires on blur). One attribute; nothing else in the file changes.
 
 Favicon and Open Graph image (the README's "worth adding before launch") are John's assets; they are added when he supplies them, not invented.
 

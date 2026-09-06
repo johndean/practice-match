@@ -3612,7 +3612,7 @@ cd frontend && PW_APP_URL=https://qa.foundation.vin npm run test:smoke && PW_APP
 ```
 Expected: verify OK; smoke green; visual `25 passed` against the live QA build (the QA image has the jump bar on, so every state is reachable).
 
-**Nightly load smoke (policy §3):** add `scripts/k6-smoke.js` from `docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md` §5 and `.github/workflows/perf.yml` (schedule `0 6 * * *`; installs k6; runs against `https://qa.foundation.vin` with `MEMBER_TOKEN` from a GitHub secret — the operator token until SP2). Test first: `tests/test_docs.py::test_perf_workflow_targets_qa_with_thresholds` asserts the workflow file exists, names `qa.foundation.vin`, and `k6-smoke.js` declares `p(95)<400` and `rate==0`. Run the workflow manually once (`gh workflow run perf.yml`) and record the p95 in `DEPLOY.md`.
+**Nightly load smoke (policy §3):** add `scripts/k6-smoke.js` from `docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md` §5 and `.github/workflows/perf.yml` (schedule `0 6 * * *`; installs k6; runs against `https://qa.foundation.vin` with `MEMBER_TOKEN` from a GitHub secret — the operator token until SP2). Test first: `tests/test_docs.py::test_perf_workflow_targets_qa_with_thresholds` asserts the workflow file exists, names `qa.foundation.vin`, and `k6-smoke.js` declares `p(95)<400` and `rate==0`. Run the workflow manually once (`gh workflow run perf.yml`) and record the p95 in `DEPLOY.md`. *Amended 2026-09-06 (John, option 2 — see Task 10c):* until Sub-project 2 the script hits only `/api/healthz` and no member token is used; the manual run happens after the merge, from `main`.
 
 - [ ] **Step 3b (added 2026-09-06): `DEPLOY.md` note** — `scripts/verify-deploy.sh` asserts the deployed `commit_sha` equals `EXPECT_SHA`; unset OR empty both fall back to the current checkout's `git rev-parse --short HEAD` (bash `${EXPECT_SHA:-…}` treats them identically — verified by the Task 8 round-2 re-review: `EXPECT_SHA=""` inside a checkout still asserts against local HEAD); a non-empty value is compared verbatim; the assertion is skipped ONLY when the script runs outside a git checkout. When the branch has moved past the deployed tree, pass `EXPECT_SHA=<deployed sha>` explicitly (as done for QA at `087acc1`). Two sentences next to the `SKIP_VERIFY` rule; the drift test asserts `EXPECT_SHA` appears in `DEPLOY.md`. The Task 8 report's "explicitly empty disables the check" wording is wrong and must not be copied.
 - [ ] **Step 4: Production** — *Gate added 2026-09-06 (John, after seeing the prototype jump bar on qa.foundation.vin): the bar stays on QA (`ENVIRONMENT=qa`) and must be OFF in production. Before `scripts/deploy.sh production`, the controller shows John the QA-verified state and gets his explicit go; after the deploy, the served production bundle must contain `prototypeBar:{type:Boolean,default:!1}` (the Task 8 check) and the gate screen must render without the bar — if either fails, roll back and STOP.*
@@ -3648,6 +3648,8 @@ Update the spec's status line to `Implemented 2026-09-__ — live on qa.foundati
 - [ ] **Step 7: Finish the branch**
 
 Use superpowers:finishing-a-development-branch: merge `feat/platform` → `main`, push `main` to both remotes, delete the branch, then invoke the Census data-layer plan.
+
+> **John's ruling 2026-09-06:** merge to `main` now — *only if production stays in Coming Soon mode and QA remains the working marketplace.* Railway deploys from CLI uploads, not from GitHub, so the merge must not deploy anything: before merging record `railway deployment list --json` (latest id) for api and worker in both environments and both hosts' `/api/healthz` (`site_mode`, `commit_sha`); after pushing `main` re-read all of them — identical, or STOP and report. Task 11e (pixel gate) continues afterwards on a fresh branch when the design export arrives. Secret rotation (the CLI printed values to the terminal once) happens once all phases are done, John's call.
 
 ---
 
@@ -5420,6 +5422,105 @@ Run: `poetry run pytest tests/test_migrate.py -q -W error` → FAIL (`main()` ra
 - [ ] **FR1 Step 4: Commit** — `git add scripts/migrate.py tests/test_migrate.py scripts/start.sh tests/scripts/test_start_sh.sh DEPLOY.md tests/test_docs.py` · `fix(deploy): api boot retries an unreachable database and then serves; a broken migration still stops the container; runbook stops overclaiming Railway's rollout` with the trailer.
 
 **Controller follow-up (Task 11f Step 4b, resumed):** redeploy QA; prove via the read-only proxy query that `schema_migrations` lists `001_init.sql, 002_interest_signup.sql` and `interest_signup` exists; `railway logs --service api --environment QA` shows `[migrate] applying` / `[migrate] done — 2 applied`; then the forwarded-hop probe.
+
+---
+
+### Task 11h: The email field commits on `input`, not `change` — John's ruling 2026-09-06 (spec §4 edit 4)
+
+**Why:** the delivered page binds the email field with `@change`, so a visitor who presses Enter before the field loses focus can be told "Enter your email address." with a filled field (Task 11d review, minor 4). John ruled: change it to `@input`. This is the one exception to the byte-identical rule beyond the spec's three edits and is recorded in the spec as edit 4.
+
+**Files:**
+- Modify: `coming-soon/src/App.vue` (one attribute), `coming-soon/package.json` + `package-lock.json` (`@vue/test-utils` dev dependency), `docs/superpowers/specs/2026-09-06-coming-soon-production-mode-design.md` (§4 edit 4 — done by the controller in the plan commit)
+- Create: `coming-soon/src/App.test.js`
+
+- [ ] **Step 1: Tooling** — `cd coming-soon && npm install --save-dev @vue/test-utils@2.4.6` (commit the lockfile).
+
+- [ ] **Step 2: Failing test** — `coming-soon/src/App.test.js`:
+```js
+import { mount } from '@vue/test-utils';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import App from './App.vue';
+import { vHover } from './directives/hover.js';
+
+const mountApp = () => mount(App, { global: { directives: { hover: vHover } } });
+afterEach(() => vi.unstubAllGlobals());
+
+describe('the email field', () => {
+  it('commits every keystroke, so Enter submits what the visitor can see (John, 2026-09-06)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ status: 202 })));
+    const w = mountApp();
+    const field = w.find('input[type="email"]');
+    await field.setValue('you@practice.com');          // fires `input`, never `change`
+    await field.trigger('keydown', { key: 'Enter' });
+    await new Promise((r) => setTimeout(r, 0));
+    await w.vm.$nextTick();
+    expect(fetch).toHaveBeenCalledWith('/api/interest', expect.objectContaining({ body: JSON.stringify({ email: 'you@practice.com' }) }));
+    expect(w.text()).toContain("You're on the list");
+  });
+  it('clears a previous error as soon as the visitor types', async () => {
+    const w = mountApp();
+    await w.find('button[aria-label]').exists();
+    await w.find('input[type="email"]').setValue('nope');
+    await w.find('input[type="email"]').trigger('keydown', { key: 'Enter' });
+    expect(w.text()).toContain("That address doesn't look right");
+    await w.find('input[type="email"]').setValue('you@practice.com');
+    expect(w.text()).not.toContain("That address doesn't look right");
+  });
+});
+```
+Run: `cd coming-soon && npx vitest run --coverage` → FAIL (with `@change`, `setValue` does not reach `setEmail`; Enter submits an empty address → "Enter your email address."). Coverage stays scoped to `src/logic.js` and remains 100 %.
+
+- [ ] **Step 3: Implement** — in `coming-soon/src/App.vue` line 39 change `@change="v.setEmail"` to `@input="v.setEmail"`. Nothing else in the file changes. Run the tests → PASS; `npm run build` still emits `dist/_app/`.
+
+- [ ] **Step 4: Commit**
+```bash
+git add coming-soon/src/App.vue coming-soon/src/App.test.js coming-soon/package.json coming-soon/package-lock.json
+git commit -m "fix(coming-soon): the email field commits on input, so Enter submits what the visitor sees (John's ruling; spec §4 edit 4)
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
+```
+The next deploy (QA, then production) carries it.
+
+---
+
+### Task 10c: Nightly load smoke narrowed to `/api/healthz` until Sub-project 2 — John's ruling 2026-09-06 (option 2)
+
+**Why:** three of the four endpoints the policy's k6 script hits (`/api/layers`, `/api/map-config`, `/api/markets`) are Sub-project 2/3 endpoints and 404 today, so the nightly would be red from day one. John chose to narrow the path list to the health endpoint for now; the member token is then unnecessary and is removed until Sub-project 2 restores the four-endpoint list.
+
+**Files:**
+- Modify: `scripts/k6-smoke.js`, `.github/workflows/perf.yml`, `docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md` (§3 table row and the §5 block), `tests/test_docs.py`
+
+- [ ] **Step 1: Failing test** — in `tests/test_docs.py::test_perf_workflow_targets_qa_with_thresholds`: replace `assert "${{ secrets.MEMBER_TOKEN }}" in text` with `assert "MEMBER_TOKEN" not in text, "no member token until Sub-project 2 restores the four-endpoint list (John, 2026-09-06)"`; after the existing k6 assertions add:
+```python
+    assert re.search(r"for \(const p of \['/api/healthz'\]\)", k6), "until SP2 the nightly hits only the health endpoint (John, 2026-09-06)"
+    assert "MEMBER_TOKEN" not in k6
+    policy = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-quality-and-performance-policy.md").read_text()
+    block = re.search(r"`scripts/k6-smoke.js`:\n\n```js\n(.*?)```", policy, re.S)
+    assert block and block.group(1) == k6, "the policy's §5 block and scripts/k6-smoke.js must stay byte-identical"
+```
+Run: `poetry run pytest tests/test_docs.py -q -W error` → FAIL.
+
+- [ ] **Step 2: Implement** — `scripts/k6-smoke.js` becomes exactly:
+```js
+import http from 'k6/http';
+import { check } from 'k6';
+export const options = { vus: 20, duration: '2m', thresholds: { http_req_duration: ['p(95)<400'], http_req_failed: ['rate==0'] } };
+const BASE = __ENV.BASE_URL;
+// Until Sub-project 2 ships its read endpoints (/api/layers, /api/map-config, /api/markets) only the
+// health endpoint exists; the four-endpoint list and the member token return with SP2 (John, 2026-09-06).
+export default function () {
+  for (const p of ['/api/healthz']) {
+    const r = http.get(`${BASE}${p}`);
+    check(r, { 'status < 500': (x) => x.status < 500 });
+  }
+}
+```
+The policy's §5 fenced block becomes the same text; its §3 row reads "p95 ≤ 400 ms on the read endpoints (health only until SP2), error rate 0 %, no 5xx" and drops "member token from a QA secret". `.github/workflows/perf.yml`: remove the `MEMBER_TOKEN` env line and rewrite the header comment's last two sentences: "Until Sub-project 2 the script hits only `/api/healthz`, so no member token is needed; the four-endpoint list and the token secret return with SP2."
+
+- [ ] **Step 3: GREEN** — `poetry run pytest tests/test_docs.py -q -W error`; `poetry run ruff check app tests scripts`; `node --check scripts/k6-smoke.js`.
+- [ ] **Step 4: Commit** — `git add scripts/k6-smoke.js .github/workflows/perf.yml docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md tests/test_docs.py` · `chore(perf): nightly load smoke hits only /api/healthz until Sub-project 2; member token removed until then (John's ruling)` with the trailer.
+
+**Controller follow-up after the merge:** `gh workflow run perf.yml --repo vin-swe/practice-match --ref main`, wait, read the p95 from the run log, add one line to `DEPLOY.md`'s Deploy section ("Nightly load smoke baseline (health endpoint, 20 VUs, 2 min, 2026-09-06): p95 = … ms") on a short branch, merge.
 
 ---
 
