@@ -25,6 +25,15 @@ F
 chmod +x "$tmp/railway"
 export PATH="$tmp:$PATH"
 
+# The fake healthz body must report the version this checkout actually carries: since P14,
+# verify-deploy.sh defaults EXPECT_VERSION from the pyproject beside it, so a literal here
+# coupled the whole suite to one release number and went red on the next version bump (it did,
+# at 0.1.1). Derived once, the same way the script derives it; the negative cases below stay
+# literal on purpose, because being the WRONG version is what they are testing.
+SOURCE_VERSION=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')
+export SOURCE_VERSION
+[[ -n "$SOURCE_VERSION" ]] || fail "could not read [project].version from pyproject.toml"
+
 SRV=""
 PORT=0
 stop_server() {
@@ -54,7 +63,7 @@ import json, os
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
 MODE = os.environ.get("MODE", "ok")
-BODY = {"status": "ok", "version": "0.1.0", "environment": os.environ.get("HEALTH_ENV", "qa"), "commit_sha": "abc1234",
+BODY = {"status": "ok", "version": os.environ["SOURCE_VERSION"], "environment": os.environ.get("HEALTH_ENV", "qa"), "commit_sha": "abc1234",
         "site_mode": "app",
         "db": {"ok": True, "postgis_version": "3.5.2"}, "redis": {"ok": True}}
 if MODE == "no_postgis":
@@ -322,18 +331,17 @@ start_server ok
 if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 EXPECT_VERSION=9.9.9 bash scripts/verify-deploy.sh QA 2>&1); then
   fail "a version mismatch must fail the script; it exited 0 with: $out"
 fi
-[[ "$out" == *"'0.1.0'"* && "$out" == *"'9.9.9'"* ]] || fail "the version mismatch must name both the served and the expected version; got: $out"
+[[ "$out" == *"'$SOURCE_VERSION'"* && "$out" == *"'9.9.9'"* ]] || fail "the version mismatch must name both the served and the expected version; got: $out"
 stop_server
 
 # --- 17. P14: EXPECT_VERSION defaults to the source pyproject's version ---------
 # An operator who runs the verifier by hand gets the check anyway; deploy.sh passes the
 # version of the tree it archived.
-source_version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')
 start_server wrong_version
 if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
   fail "an unset EXPECT_VERSION must still be checked against the source pyproject; it exited 0 with: $out"
 fi
-[[ "$out" == *"'$source_version'"* ]] || fail "the default EXPECT_VERSION must come from pyproject.toml ($source_version); got: $out"
+[[ "$out" == *"'$SOURCE_VERSION'"* ]] || fail "the default EXPECT_VERSION must come from pyproject.toml ($SOURCE_VERSION); got: $out"
 [[ "$out" == *"'0.0.1-not-the-source'"* ]] || fail "the version mismatch must name what was served; got: $out"
 stop_server
 
