@@ -13,6 +13,13 @@ import httpx
 import pytest
 from httpx import ASGITransport
 
+# Imported at module level, before any test runs: app.db calls psycopg2.extras.register_uuid()
+# at import (Task I2 ruling), and the `conn` fixture below connects with psycopg2 directly, so
+# without this the FIRST test of a fresh process reads uuid columns as str. The registration is
+# global and applies at fetch time, so this one import covers every direct psycopg2.connect() in
+# the suite. `_dispose_pools` uses the same module for dispose_all().
+import app.db
+
 
 @pytest.fixture
 def dist(tmp_path: Path) -> Path:
@@ -71,6 +78,123 @@ async def _dispose_pools():
     event loop before that loop closes at teardown (round 4: production code no
     longer monkeypatches loop.close to do this — see app/db.py)."""
     yield
-    from app.db import dispose_all  # imported lazily, as `client` does
+    await app.db.dispose_all()
 
-    await dispose_all()
+
+import uuid
+
+import fakeredis
+
+
+def _normalized_base(migrate, dsn: str) -> str:
+    """The DSN's scheme/dialect normalised through `migrate.normalize_dsn()` (as
+    `db.sync_conn()` also does), with any query string stripped, then split down to
+    everything before the database name — M9, fix round 1: a raw `rsplit` on an
+    asyncpg-style or query-stringed DSN breaks outright or bakes the query string
+    into a database name."""
+    return migrate.normalize_dsn(dsn).split("?", 1)[0].rsplit("/", 1)[0]
+
+
+def _maintenance(migrate, dsn: str) -> str:
+    return _normalized_base(migrate, dsn) + "/postgres"
+
+
+@pytest.fixture
+def scratch_dsn():
+    """Fresh database with every migration applied; dropped afterwards. Loads
+    scripts/migrate.py via a normal `import scripts.migrate` (scripts/ is a namespace
+    package, no __init__.py needed) rather than a fresh throwaway module object per
+    call, so a test can reach the exact `run` function this fixture calls through, by
+    patching `scripts.migrate.run` directly (I5 fix round 1's failure-injection test
+    does this)."""
+    from app.config import settings
+    from scripts import migrate
+
+    name = f"pm_test_{uuid.uuid4().hex[:8]}"
+    admin = psycopg2.connect(_maintenance(migrate, settings.database_url))
+    admin.autocommit = True
+    try:
+        with admin.cursor() as cur:
+            cur.execute(f'CREATE DATABASE "{name}"')
+        dsn = _normalized_base(migrate, settings.database_url) + f"/{name}"
+        try:
+            # I5, fix round 1: migrate.run must run INSIDE this try — previously it ran
+            # before the try/finally, so a failing migration left the just-created
+            # database (and this admin connection) leaked on the shared compose Postgres.
+            migrate.run(dsn)
+            yield dsn
+        finally:
+            with admin.cursor() as cur:
+                cur.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
+    finally:
+        admin.close()
+
+
+@pytest.fixture
+def conn(scratch_dsn, monkeypatch):
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "database_url", scratch_dsn)
+    c = psycopg2.connect(scratch_dsn)
+    c.autocommit = True
+    try:
+        yield c
+    finally:
+        c.close()
+
+
+@pytest.fixture
+def redis(monkeypatch):
+    server = fakeredis.FakeServer()
+    sync = fakeredis.FakeRedis(server=server)
+    aio = fakeredis.aioredis.FakeRedis(server=server)
+    from app import cache
+
+    # Patch the factories, not sync_redis/async_redis themselves (fix round 1, C1):
+    # a `from app.cache import sync_redis` consumer binds the function object once,
+    # but that function still resolves `_make_sync`/`_make_async` from `app.cache`'s
+    # own globals on every call, so patching those two intercepts every caller.
+    monkeypatch.setattr(cache, "_make_sync", lambda: sync)
+    monkeypatch.setattr(cache, "_make_async", lambda: aio)
+    # `sync_redis()` memoises one client per process (I3 fix round 1, C3): reset on both sides of
+    # the yield so an earlier test's client cannot shadow this fake, and this fake cannot outlive
+    # the test that asked for it.
+    cache.reset()
+    yield sync
+    cache.reset()
+
+
+def walk_routes(routes, prefix=""):
+    """(method, path, route) for everything mounted on an app, spelled the way
+    `permissions.PUBLIC_ROUTES` spells it — the raw path template (`/{path:path}`), not the compiled
+    `path_format` (`/{path}`).
+
+    FastAPI 0.141 keeps an included router as a WRAPPER object rather than flattening its routes
+    into `app.routes`, so a plain `{r.path for r in app.routes}` sees `/robots.txt`, `/`, the
+    `/_app` mount and the SPA catch-all — and no `/api/*` path at all. The walk recurses through
+    `original_router` and carries the include prefix, which is the only way to see them.
+
+    A `Mount` is recursed into when the mounted app exposes routes of its own (I3 fix round 2
+    observation): `Mount.routes` is `getattr(self.app, "routes", [])`, so a StaticFiles mount
+    yields nothing and falls through to the GET-only line — while a mounted sub-application's
+    write routes are SEEN by the route-guard test instead of being invisible to it.
+
+    Lives here rather than inside `tests/auth/test_permissions.py` (I9a review, Minor 4): it has two
+    consumers now — that file's route-guard and audit drift tests, and
+    `tests/test_docs.py::test_identity_runbook_endpoints_exist` — and a helper reached through
+    another test module's namespace makes a reorganisation of `tests/auth/` break an unrelated docs
+    test. Not a fixture: it is a plain generator, called at module level in places."""
+    from starlette.routing import Mount
+
+    for route in routes:
+        included = getattr(route, "original_router", None)
+        if included is not None:
+            yield from walk_routes(included.routes, prefix + route.include_context.prefix)
+        elif isinstance(route, Mount):
+            if route.routes:
+                yield from walk_routes(route.routes, prefix + route.path)
+            else:
+                yield "GET", prefix + route.path + "/{path:path}", None
+        else:
+            for method in sorted(route.methods):
+                yield method, prefix + route.path, route

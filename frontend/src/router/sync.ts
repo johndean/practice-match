@@ -1,3 +1,7 @@
+import { can } from '../auth/can';
+import type { Me } from '../auth/me';
+import type { Permission } from '../auth/permissions';
+
 export type Screen = 'gate' | 'browse' | 'detail' | 'requests' | 'seller' | 'admin';
 export interface RoutedState { screen: string; detailId?: string; adminTab?: string; gate?: string; auth?: boolean }
 export interface RouteTarget { path: string; query: Record<string, string> }
@@ -35,10 +39,32 @@ export function routeToPatch(to: RouteLike): Partial<RoutedState> {
   return { screen: 'gate' };
 }
 
+// The ONE route -> permission table (amendment A-I7). Not a `meta.perm` on each route in
+// routes.ts: every route renders the same `App` component, so a twin there would be a second
+// copy of this and one more thing to drift. The permission is the one the API guards the same
+// screen's data with, so the client hides exactly what the server would refuse.
+export const ROUTE_PERMS: Record<string, Permission> = { browse: 'page.browse', detail: 'listing.read', requests: 'request.read_own', seller: 'page.seller', admin: 'page.admin' };
+
 // The prototype's go(): a member screen requested while signed out shows the gate
-// (sign-in tab) and the request is remembered until auth flips true.
-export function guard(state: RoutedState & { auth?: boolean }, patch: Partial<RoutedState>): { apply: Partial<RoutedState>; pending: Partial<RoutedState> | null } {
-  if (patch.screen && patch.screen !== 'gate' && !state.auth) return { apply: { screen: 'gate', gate: 'signin' } as Partial<RoutedState>, pending: patch };
+// (sign-in tab) and the request is remembered until auth flips true. With a context, the
+// permission matrix has the second say: a signed-in visitor who does not hold the route's
+// permission gets the `unavailable` gate instead, and nothing is remembered — there is no
+// later moment at which the same account would be allowed in.
+//
+// FAIL-CLOSED (A-I7.2, review Important 1). The three branches are asked in this order for a
+// reason: any screen that is not the gate is a MEMBER route, whether or not ROUTE_PERMS names
+// it, so a route added to routes.ts and forgotten here stays behind the sign-in gate rather
+// than becoming reachable while signed out. Only the permission CHECK depends on the table.
+//
+// `ctx` carries the principal and nothing else (A-I7.2, review Minor 1). MARKET_DATA_PUBLIC has
+// no bearing on a route permission — no ROUTE_PERMS value is `market.read`, since Browse V3
+// (spec D3) is ONE screen guarded by `page.browse` and the market-data COLUMN inside it calls
+// `can('market.read', me, { marketDataPublic })` for itself in I8.
+export function guard(state: RoutedState & { auth?: boolean }, patch: Partial<RoutedState>, ctx?: { me: Me | null }): { apply: Partial<RoutedState>; pending: Partial<RoutedState> | null } {
+  if (!patch.screen || patch.screen === 'gate') return { apply: patch, pending: null };
+  if (!state.auth) return { apply: { screen: 'gate', gate: 'signin' } as Partial<RoutedState>, pending: patch };
+  const perm = ROUTE_PERMS[patch.screen];
+  if (ctx && perm && !can(perm, ctx.me)) return { apply: { screen: 'gate', gate: 'unavailable' } as Partial<RoutedState>, pending: null };   // A-I7: no context -> the prototype's rule
   return { apply: patch, pending: null };
 }
 

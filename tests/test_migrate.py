@@ -1,4 +1,5 @@
-import importlib.util
+import hashlib
+import re
 import uuid
 from pathlib import Path
 
@@ -7,11 +8,21 @@ import psycopg2.extensions
 import pytest
 
 from app.config import settings
+from scripts import migrate
 
 ROOT = Path(__file__).resolve().parent.parent
-spec = importlib.util.spec_from_file_location("migrate", ROOT / "scripts" / "migrate.py")
-migrate = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(migrate)  # type: ignore[union-attr]
+
+
+def test_migrate_module_is_the_one_shared_scripts_migrate_module():
+    """Regression guard (Task I1 re-review, hygiene item 1): this file used to load
+    scripts/migrate.py a second time under a detached module name via
+    importlib.util.spec_from_file_location, distinct from the `scripts.migrate` that
+    tests/conftest.py's `scratch_dsn` fixture (and app code) import normally — a patch
+    applied to one was invisible through the other. `migrate` above must now be the
+    exact same module object."""
+    import scripts.migrate as shared
+
+    assert migrate is shared
 
 
 def _maintenance_dsn(dsn: str) -> str:
@@ -35,21 +46,28 @@ def scratch_db():
         admin.close()
 
 
+def _all_migration_names() -> list[str]:
+    """The full, current set of migrations/NNN_*.sql files, in apply order — used
+    instead of a hardcoded list so this test does not need editing every time a new
+    migration is added to the shared migrations/ directory (Task I1 added 010-014)."""
+    return [Path(p).name for p in migrate.migration_files()]
+
+
 def test_applies_each_file_once_and_records_it(scratch_db):
     first = migrate.run(scratch_db)
     second = migrate.run(scratch_db)
-    assert first == ["001_init.sql", "002_interest_signup.sql"]
+    assert first == _all_migration_names()
     assert second == []
     with psycopg2.connect(scratch_db) as conn, conn.cursor() as cur:
         cur.execute("SELECT name FROM schema_migrations ORDER BY name")
-        assert [r[0] for r in cur.fetchall()] == ["001_init.sql", "002_interest_signup.sql"]
+        assert [r[0] for r in cur.fetchall()] == _all_migration_names()
         cur.execute("SELECT postgis_version()")
         assert cur.fetchone()[0].startswith("3.")
 
 
 def test_002_creates_interest_signup_with_a_unique_normalised_email(scratch_db):
     applied = migrate.run(scratch_db)
-    assert applied == ["001_init.sql", "002_interest_signup.sql"]
+    assert applied == _all_migration_names()
     with psycopg2.connect(scratch_db) as conn, conn.cursor() as cur:
         cur.execute("INSERT INTO interest_signup (email, email_normalised, consent_version) VALUES ('A@x.com', 'a@x.com', 'coming-soon-v1')")
         with pytest.raises(psycopg2.errors.UniqueViolation):
@@ -138,15 +156,123 @@ def test_main_returns_3_when_the_database_is_unreachable(monkeypatch, capsys):
 
 
 def test_cli_entrypoint_runs_main_when_executed_as___main__(scratch_db, monkeypatch):
-    """`if __name__ == "__main__": sys.exit(main())` never executes on import, and it is
-    exactly the line `railway.json`'s pre-deploy hook and `scripts/start.sh`'s migrate role
-    run — so it was the one uncovered statement in `scripts/` (P14 C4, 2026-09-07).
-    `runpy.run_path(..., run_name="__main__")` re-executes the file IN this process, so
-    pytest-cov sees it; `run_path` rather than `run_module`, because `run_module` on an
-    already-imported name raises a RuntimeWarning that `-W error` turns into a failure."""
+    """`if __name__ == "__main__": sys.exit(main())` never executes on import, and it is exactly
+    the line `railway.json`'s pre-deploy hook and `scripts/start.sh`'s migrate role run — so it was
+    the one uncovered arm in `scripts/` once `--cov=scripts` joined the gate. Reached independently
+    by I5 fix round 1, C1 (this branch) and P14 C4, 2026-09-07 (main), which is why the merge found
+    the same test on both sides. `runpy.run_path(..., run_name="__main__")` re-execs the file IN
+    this process (so pytest-cov sees it); `run_path`, not `run_module`, because `run_module` on an
+    already-imported dotted name raises a RuntimeWarning that `-W error` turns into a failure."""
     import runpy
 
     monkeypatch.setenv("DATABASE_URL", scratch_db)
     with pytest.raises(SystemExit) as exc:
         runpy.run_path(migrate.__file__, run_name="__main__")
     assert exc.value.code == 0
+
+
+def test_migration_files_never_manage_their_own_transaction():
+    """I7 fix round 1: scripts/migrate.py commits each file's own SQL and its ledger
+    row as ONE transaction; a migration that opened/closed its own transaction would
+    silently break that atomicity. Regex matches BEGIN/COMMIT/ROLLBACK at a statement
+    start (start of file or right after a `;`), case-insensitive, ignoring `--`
+    line comments — a migration's own transaction-control statement, not the `BEGIN`
+    a PL/pgSQL function body uses as a block delimiter (014_audit_log.sql has one)."""
+    forbidden = re.compile(r"(?:^|;)\s*(begin|commit|rollback)\b", re.IGNORECASE)
+    for path in sorted(ROOT.glob("migrations/*.sql")):
+        text = "\n".join(line.split("--", 1)[0] for line in path.read_text(encoding="utf-8").splitlines())
+        match = forbidden.search(text)
+        assert not match, f"{path.name} must not manage its own transaction: {match.group(0)!r}"
+
+
+def test_scratch_dsn_cleans_up_when_migrate_run_fails(request, monkeypatch):
+    """I5 fix round 1: tests/conftest.py's `scratch_dsn` fixture must run `migrate.run`
+    inside its `try` so a failing migration doesn't leak the just-created `pm_test_*`
+    database (or the admin connection) on the compose Postgres every worktree on port
+    5433 shares. `scratch_dsn` resolves `scripts.migrate` via a normal, cached import
+    (scripts/ is a namespace package), so patching `.run` here reaches the exact
+    function it calls through. `uuid.uuid4` is pinned so this test checks one specific,
+    deterministic database name rather than scanning for any `pm_test_%` — the compose
+    Postgres is shared with other concurrently-running test processes on this port, so
+    a global scan can see (and misattribute) an unrelated, legitimately in-flight
+    scratch database from one of those."""
+    fixed = uuid.UUID("00000000-0000-0000-0000-0000000000fe")
+    monkeypatch.setattr(uuid, "uuid4", lambda: fixed)
+    expected_name = f"pm_test_{fixed.hex[:8]}"
+
+    def _raise(dsn):
+        raise RuntimeError("forced failure (RED/behavioural test): migrate.run")
+
+    monkeypatch.setattr(migrate, "run", _raise)
+
+    with pytest.raises(RuntimeError):
+        request.getfixturevalue("scratch_dsn")
+
+    admin = psycopg2.connect(_maintenance_dsn(settings.database_url))
+    try:
+        with admin.cursor() as cur:
+            cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (expected_name,))
+            assert cur.fetchall() == []
+    finally:
+        admin.close()
+
+
+def test_scratch_dsn_normalises_an_asyncpg_style_dsn_with_a_query_string(request, monkeypatch):
+    """M9 fix round 1: `settings.database_url` may be in the asyncpg-dialect,
+    query-string form `app/db.py`/`app/checks.py` already accept — `scratch_dsn` must
+    normalise it (as `db.sync_conn()`/`migrate.normalize_dsn()` do) rather than handing
+    psycopg2 a scheme/query string it cannot parse."""
+    asyncpg_style = settings.database_url.replace("postgresql://", "postgresql+asyncpg://", 1) + "?sslmode=disable"
+    monkeypatch.setattr(settings, "database_url", asyncpg_style)
+
+    dsn = request.getfixturevalue("scratch_dsn")
+    with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT 1")
+        assert cur.fetchone() == (1,)
+
+
+# --- Step 0 (I6 re-review O3, ruled 2026-09-07): an applied migration that changes refuses to run ---
+#
+# Two adaptations of the brief's literal Step 0 code, both forced by the runner that exists rather
+# than by anything this task decides: `run()` takes `directory=`, not `migrations_dir=`, and
+# returns the LIST of files it applied rather than a process exit code — so the exit code (4) is
+# asserted through `main()`, which is where every other exit code in this file is asserted too, and
+# the ledger's column is `name`, not `filename`. The brief's own assertions — the recorded sha256,
+# `rc == 4`, and both halves of the stderr line — are reproduced exactly.
+
+
+def test_ledger_records_sha256_and_refuses_a_changed_applied_file(scratch_db, tmp_path, monkeypatch, capsys):
+    mig = tmp_path / "migrations"
+    mig.mkdir()
+    (mig / "001_a.sql").write_text("CREATE TABLE t_a (id int);\n")
+    monkeypatch.setattr(migrate, "MIGRATIONS_DIR", mig)
+    monkeypatch.setenv("DATABASE_URL", scratch_db)
+
+    assert migrate.main() == 0
+    with psycopg2.connect(scratch_db) as conn, conn.cursor() as cur:
+        cur.execute("SELECT checksum FROM schema_migrations WHERE name = '001_a.sql'")
+        assert cur.fetchone()[0] == hashlib.sha256(b"CREATE TABLE t_a (id int);\n").hexdigest()
+
+    (mig / "001_a.sql").write_text("CREATE TABLE t_a (id int, extra text);\n")  # edited after it was applied
+    capsys.readouterr()
+    assert migrate.main() == 4
+    err = capsys.readouterr().err
+    assert "001_a.sql changed after it was applied" in err and "drop and recreate the database or restore the file" in err
+
+
+def test_ledger_upgrades_itself_when_the_checksum_column_is_missing(scratch_db, tmp_path):
+    """A ledger created before this change has no `checksum` column: the runner adds it (NULL for
+    rows already applied) and never refuses on NULL — otherwise the first deploy carrying this
+    change would refuse to run against every database that already exists."""
+    mig = tmp_path / "migrations"
+    mig.mkdir()
+    (mig / "001_a.sql").write_text("CREATE TABLE t_a (id int);\n")
+    with psycopg2.connect(scratch_db) as conn, conn.cursor() as cur:
+        cur.execute("CREATE TABLE schema_migrations (name text PRIMARY KEY, applied_at timestamptz NOT NULL DEFAULT now())")
+        cur.execute("INSERT INTO schema_migrations (name) VALUES ('001_a.sql')")
+    (mig / "001_a.sql").write_text("CREATE TABLE t_a (id int, extra text);\n")  # changed — but the legacy row records no checksum
+
+    assert migrate.run(scratch_db, directory=mig) == []  # skipped, not refused
+    with psycopg2.connect(scratch_db) as conn, conn.cursor() as cur:
+        cur.execute("SELECT checksum FROM schema_migrations WHERE name = '001_a.sql'")
+        assert cur.fetchone()[0] is None

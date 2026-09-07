@@ -55,6 +55,106 @@ describe('local design amendments (spec D15)', () => {
       expect(regions.some(([s, e]) => at >= s && at + a.find.length <= e), `${a.text}: find is not inside a template region`).toBe(true);
     }
   });
+  // ---------------------------------------------------------------------------------------
+  // The SET, pinned both ways (A-I8). Until I8 there was no explicit count or id list
+  // anywhere: the only set-level guard was `LOCAL_AMENDMENTS.md`'s row equality below, which
+  // compares the code against the doc and is therefore satisfied by editing both. This is
+  // the third point of reference — a literal list in the test file — so adding, dropping or
+  // renaming an amendment is a deliberate three-file change, and the ORDER is pinned too
+  // (A2.5 matches A2.4's output, so the list may never be reordered).
+  // ---------------------------------------------------------------------------------------
+  const AMENDMENT_IDS = [
+    ...Array.from({ length: 24 }, (_, i) => `A1.${i + 1}`),
+    'A2', 'A2.2', 'A2.3', 'A2.4', 'A2.5', 'A3', 'A4',
+    // A-I8 (Task I8a): sign-in and sign-out through the `auth` adapter, the account-on-load
+    // bootstrap, and the two prototype props that let the reference reach a gate state and render
+    // the same account the app does.
+    'A5.1', 'A5.3a', 'A5.3b', 'A5.4', 'A5.6', 'A5.7',
+    // A6 — CLAUDE.md's launch-removal list, executed against the design; A7 — the sign-in copy.
+    'A6.1', 'A6.2', 'A6.3a', 'A6.3b', 'A6.3c', 'A6.4a', 'A6.4b', 'A6.4c', 'A6.4d', 'A6.5', 'A6.6a', 'A6.6b',
+    'A7.1', 'A7.2',
+  ];
+
+  it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
+    expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(51);
+    expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
+  });
+
+  it('every amendment carries a date and a ruling, so no edit to the approved design is anonymous', () => {
+    for (const a of amendments()) {
+      expect(a.date, a.id).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(a.ruling.length, `${a.id} has no ruling`).toBeGreaterThan(10);
+      expect(a.count, a.id).toBeGreaterThan(0);
+      expect(a.find, `${a.id}: an empty find would match everywhere`).not.toBe('');
+    }
+  });
+
+  // A-I8.1 (John's ruling on the implementer's NEEDS_CONTEXT): a removal amendment swallows
+  // exactly one adjacent newline, so the regenerated design keeps SINGLE blank lines. Without
+  // it, deleting a block that had a blank line on each side leaves two — a byte change in the
+  // approved design with no rendered effect, and the kind of drift the D15 mechanism exists to
+  // prevent. Asserted on the OUTPUT, which is the only place it can be true or false.
+  it('no amendment introduces a doubled blank line (A-I8.1)', () => {
+    // COUNTED, not located: the pristine bundle ships one doubled blank of its own (script
+    // line 1744, between `ECON_K`'s closing `};` and `const num`), which is the design's and
+    // not this mechanism's to tidy. Line NUMBERS move whenever an amendment adds or removes a
+    // line, so the invariant has to be the count — it may not grow.
+    const doubled = (text: string) => text.split('\n').filter((line, i, all) => line.trim() === '' && (all[i + 1] ?? 'x').trim() === '').length;
+    expect(doubled(readFileSync(AMENDED, 'utf8')), 'a removal amendment left two blank lines where the design had one').toBe(doubled(pristine));
+  });
+
+  // A5.6: the `startGate` prototype prop. Asserted through the DECODED attribute rather than
+  // as a substring, because that is what the bundle's runtime reads (support.js's
+  // `parseDataProps` → `propsMeta[k].default`) and what `app-generated.test.ts` requires
+  // `app.setup.js` to declare.
+  it('A5.6 adds the startGate prototype prop with the ruled shape, immediately after startViewport', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    const attr = /<script type="text\/x-dc" data-dc-script[^>]*data-props="([^"]*)"/.exec(amended)!;
+    const declared = JSON.parse(attr[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) as Record<string, unknown>;
+    expect(Object.keys(declared)).toEqual(['$preview', 'prototypeBar', 'startScreen', 'startViewport', 'startGate', 'me', 'layerPalette']);
+    expect(declared.startGate).toEqual({
+      editor: 'enum', options: ['signin', 'apply', 'pending', 'rejected'], default: '',
+      tsType: 'string', section: 'Prototype', label: 'Start on gate state'
+    });
+    // A5.7: the account the reference is handed, so its header matches the app's. `null` must
+    // survive the round trip — `support.js` copies a default only `if (v !== void 0)`, so a
+    // `null` default is passed to the Root and `logic.js`'s A5.4 bootstrap skips its branches.
+    expect(declared.me).toEqual({
+      editor: 'json', default: null, tsType: 'object', section: 'Prototype', label: 'Signed-in account'
+    });
+    // The pristine bundle declares neither — both exist only as local amendments.
+    expect(pristine).not.toContain('startGate');
+    expect(pristine).not.toContain('&quot;me&quot;');
+  });
+
+  // A6/A7 — the launch-removal list and the sign-in copy, asserted on the OUTPUT: every
+  // affordance CLAUDE.md's list names is gone from the design itself, so the oracle and the app
+  // lose them together. `prototypeBar`, `startScreen`, `startViewport` and `startGate` stay
+  // DECLARED (D-I8-2) — the parity test requires app.setup.js to declare what the design does,
+  // and the app simply never passes the first three.
+  it('A6/A7 take the prototype affordances out of the design and leave the props declared', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    for (const gone of [
+      'showPrototypeBar', 'Prototype — access states', 'gateStates', 'jumpTo', 'const jumps',
+      'r.mendes@example.com', '············', 'viewportLabel', 'toggleViewport',
+      'Mobile view', 'VIN username or email', 'Enter both your VIN username'
+    ]) {
+      expect(amended, `the launch removal left ${gone} in the design`).not.toContain(gone);
+    }
+    expect(amended, 'the sign-in label is the address the API actually authenticates').toContain('Email</span>');
+    expect(amended).toContain('"Enter both your email and password."');
+    // D-I8-2: declared, never passed.
+    for (const declared of ['prototypeBar', 'startScreen', 'startViewport', 'startGate']) {
+      expect(amended, `${declared} must stay declared in data-props`).toContain(`&quot;${declared}&quot;`);
+    }
+    // The fixture ARRAYS stay until the listings API replaces them (CLAUDE.md keeps the field
+    // names because the UI reads them) — this is the launch removal, not a data migration.
+    for (const kept of ['const P = [', 'sellerListings', 'const MARKETS', 'me: { name: "Dr. Rachel Mendes"']) {
+      expect(amended, `${kept} is not part of this list`).toContain(kept);
+    }
+  });
+
   it('the amended reference is the pristine Rev 2 file plus exactly the ruled edits', () => {
     expect(applyAmendments(pristine, amendments())).toBe(readFileSync(AMENDED, 'utf8'));
   });
@@ -133,9 +233,22 @@ describe('local design amendments (spec D15)', () => {
   // `| A2.2 |`–`| A2.5 |` rows. The file held eight rows and the test read four, so an `A2.6`
   // row with no code (or an `A2.6` amendment with no row) was invisible and the duplicate guard
   // covered only the top-level ids. The id set is now compared in full, both ways.
+  // M4 (review round 1): the rows had drifted out of order — A5.7 above A5.6, A4 below A5.x, the
+  // A6/A7 block appended after everything. The set case below could not see it, and the file is
+  // read by people. The order that matters is the order the edits are APPLIED, which is also the
+  // order the ids are pinned in above.
+  it('LOCAL_AMENDMENTS.md lists its rows in the order the amendments are applied', () => {
+    const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
+    const rows = [...md.matchAll(/^\|\s*(A[\w.]+)\s*\|/gm)].map((m) => m[1]);
+    expect(rows).toEqual([...new Set(amendments().map((a) => (a.id.startsWith('A1.') ? 'A1' : a.id)))]);
+  });
+
   it('LOCAL_AMENDMENTS.md carries exactly one table row per amendment id (A1 collapsed to one)', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
-    const rows = [...md.matchAll(/^\|\s*(A[\d.]+)\s*\|/gm)].map((m) => m[1]);
+    // `[\w.]`, not `[\d.]`: A-I8's ids include a letter suffix where one ruling needed two edits
+    // (`A5.3a`/`A5.3b`), and the digits-only class silently skipped those rows — the same class of
+    // hole as M5's missing pipe, which is what this case exists to catch.
+    const rows = [...md.matchAll(/^\|\s*(A[\w.]+)\s*\|/gm)].map((m) => m[1]);
     expect(new Set(rows).size, 'an amendment is documented twice').toBe(rows.length);
     // A1 derives 24 edits (`A1.1`…`A1.24`) from ONE ruling and is documented as one row; every
     // other id is literal and must appear in the file exactly as `amendments()` spells it.

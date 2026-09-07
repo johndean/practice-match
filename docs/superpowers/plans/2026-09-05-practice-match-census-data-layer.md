@@ -36,10 +36,11 @@
 - **Growth geography (red-team C2):** `population_growth_pct` is computed at **place** level (stable GEOIDs across the 2020 tract redefinition), county fallback; tract-level growth waits for the 2010→2020 tract crosswalk (Phase C).
 - **Google Maps Platform content (audit 2026-09-05, D15–D17):** no Google Places content is stored, analysed or rendered in V1. Google Maps Platform Terms §3.2.3(a)(iii) forbid saving "business names, addresses, or user reviews"; §3.2.3(c)(iv) forbids using "latitude/longitude values from the Places API as an input for point-in-polygon analysis"; Service Specific Terms §14.2 forbid Places content "in conjunction with a non-Google map" (the approved design is Leaflet). Only `place_id` may be kept indefinitely (SST §3) and latitude/longitude for 30 days (SST §14.3). Places Aggregate API POI counts may be cached 30 days solely to compute non-substitutable "Customer Values" (SST §13.1–13.2). The 2017 export `Report_Hospital_Competitor_All_US_ZipCode_FULL.csv` is a blocked source: never copied into the repository, the bucket or the database.
 - **Bands:** `market_metric.band ∈ {'place', 'drive_10', 'drive_20'}`. Community mosaic shading and the "community label" figures default to `place` (the approved design's numbers are city-level); the practice panel's drive-time context defaults to `drive_10`; every response names its band.
-- **Access (red-team C4):** every market endpoint requires an approved member session (Sub-project 2's `require_member`) unless `MARKET_DATA_PUBLIC=true` (VIN Foundation decision, spec §15). Coordinates returned are the **place centroid** unless the seller disclosed the location (`listing.location_disclosed`), never the geocoded point otherwise.
+- **Access (red-team C4):** every market endpoint carries `Depends(require("market.read"))` — Sub-project 2's permission dependency, `app/auth/deps.py`, shipped in Wave 2a. `MARKET_DATA_PUBLIC=true` is not a second code path: `app.auth.permissions.allowed` grants `market.read` to `anonymous` while the flag is set, so the dependency stays exactly as written and the flag opens it (VIN Foundation decision, spec §15). *Amended 2026-09-07 (Task I9a): was "Sub-project 2's `require_member`", which never existed under that name.* Coordinates returned are the **place centroid** unless the seller disclosed the location (`listing.location_disclosed`), never the geocoded point otherwise.
 - **Cache gate (red-team C5):** panel and community payloads are cached under a key that includes a global `market:gate:v` counter bumped on any licence decision, and metrics are re-filtered through the gate on read — a blocked layer disappears within 60 s even from cached payloads.
 - **Secrets in errors (red-team C6):** the API key never appears in exceptions, logs or archive keys (`CensusClient.redact(url)`).
 - **Migration numbering:** Sub-project 3 Phase A uses `017`–`059`; Sub-project 2 owns `010`–`015` and the Seed Listings plan owns `016`; Sub-project 3 Phase B (listing-dependent) uses `060`+.
+- **Every new `/api/*` route is guarded or declared public.** A route carries `Depends(require("<perm>"))` from `app/auth/deps.py`, or its `(method, path)` joins `app.auth.permissions.PUBLIC_ROUTES` with a comment saying why it needs no credential. `tests/auth/test_permissions.py::test_every_route_is_guarded_or_public` walks `create_app()` and fails closed on anything that is neither — so a route added without a decision does not ship, it goes red. (Added 2026-09-07, identity Task I9a review, Minor 3.)
 - Every commit: conventional message, `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`, pushed to `origin` and `production`. Work on `feat/census-data-layer` in a worktree.
 
 ## Decisions recorded in this plan (confirm on review)
@@ -57,7 +58,7 @@
 | D10 | **Three bands.** `place` (the listing's city/CDP), `drive_10` (8 km), `drive_20` (16 km). Community mosaic shading and community-label figures use `place` by default; the panel's drive-time tiles use `drive_10`; `?band=` selects. | The approved design's community numbers are city-level (Cedar Park 81,900 = the city); the spec's catchments answer the drive-time question. Both are real needs; the band is explicit (red-team C3). |
 | D11 | **ZIP Code Business Patterns (`zbp`, `2022/zbp`, NAICS2017) is the community-level competition source**, aggregated over ZCTAs by area overlap; county CBP is the benchmark. Register it as a new cleared public-domain dataset (VIN Foundation to approve the addition to the spec's §2 table). | County CBP cannot render per-community competition and produced incoherent ratios (red-team C1). ZIPs ≈ ZCTAs; the approximation is labelled. |
 | D12 | **Population growth at place level** (2014–2018 → 2019–2023 place rows), county fallback; tract growth deferred until the 2010→2020 tract relationship file is loaded. | 2010 and 2020 tract GEOIDs differ; joining prior-vintage tracts on 2020 GEOIDs is wrong (red-team C2). |
-| D13 | **Market endpoints are member-gated** via SP2's `require_member`, with `MARKET_DATA_PUBLIC` as the only way to open them (default false). | Spec §15 leaves public teaser vs gated to the VIN Foundation; default closed. |
+| D13 | **Market endpoints are member-gated** via `Depends(require("market.read"))` (Wave 2a's `app/auth/deps.py`), with `MARKET_DATA_PUBLIC` as the only way to open them (default false). *Amended 2026-09-07 (Task I9a): said "SP2's `require_member`", and the `app/api/access.py` wrapper this plan specified is **deleted** (its one function with it) — the flag's semantics live in `app.auth.permissions.allowed`, which grants `market.read` to `anonymous` while it is set, so there is nothing left for a wrapper to decide.* | Spec §15 leaves public teaser vs gated to the VIN Foundation; default closed. |
 | D14 | **Migration ranges:** SP3-A `017`–`059`, SP3-B `060`+. `001`–`002` are taken (`001_init`, `002_interest_signup`), SP2/identity holds `010`–`015` and the Seed Listings plan holds `016` (`016_listing.sql`). Inside SP3-A, `017`–`019` are Task A1's and `020` is taken by `020_license_audit.sql` (Task A8, renumbered from `007` on 2026-09-07 — it ALTERs and REFERENCES `dataset_registry`, which `017` creates). `003`–`009` are unassigned; anything that takes one must be a Platform-level migration with no dependency on later tables. | Phase B tables reference `listing(id)`, which SP2 creates; numbered ordering must guarantee it exists first. |
 | D15 | **The 2017 Google Places export is not a source.** `Report_Hospital_Competitor_All_US_ZipCode_FULL.csv` (audited 2026-09-05 — appendix below) stays out of the repository, bucket and database. The only content Google's terms let us keep is its 10,166 `place_id` values, and even those are not loaded until a Google-based mechanism (D17) is approved. The registry's `practice_locations` row names the file as blocked. | A 16-day snapshot (24 May–8 Jun 2017) covering 8,320 of ~41,700 ZIPs, Austin absent, 29.7 % individual-practitioner duplicates, ≈ 5 % non-veterinary rows; and Google Maps Platform Terms §3.2.3(a)/(c)(iv) + SST §14.2 forbid storing it, analysing it or drawing it on the Leaflet map. |
 | D16 | **Competitor points (Phase C) come from a permissively licensed, provenance-documented POI dataset, ranked:** (1) **Overture Maps Places** (CDLA-Permissive-2.0; Foursquare-sourced rows Apache-2.0; monthly GeoParquet on S3/Azure; per-feature `sources[]` and `confidence`; taxonomy entry `veterinarian`), (2) **Foursquare OS Places** (Apache-2.0; also an Overture source), (3) **VIN's member practice directory** (VIN-owned; consent review). OpenStreetMap `amenity=veterinary` (ODbL share-alike) is a coverage cross-check only, pending counsel. Google Places points are lawful only on a Google map (SST §14.1–14.2), which the approved Leaflet design excludes — not pursued. All candidate rows start `unresolved`. | Spec §12 excludes practice-location lists for undocumented provenance; these publish provenance and licence per record. They are storable, renderable on Leaflet and refreshable monthly — the three properties every Google route lacks. |
@@ -65,7 +66,17 @@
 
 ## API contract (consumed by Sub-project 2's frontend wiring)
 
-All routes below except `/api/admin/*` use `Depends(require_member)` from Sub-project 2 (approved buyer/seller/admin session). `MARKET_DATA_PUBLIC=true` removes the dependency (VIN Foundation decision, spec §15). Until SP2 lands, the dependency is the A9 operator token.
+All routes below except `/api/admin/*` use `Depends(require("market.read"))` from Sub-project 2's
+`app/auth/deps.py` (an `active` account holding buyer/seller/staff/admin, or an `api_token` carrying
+one of those roles). `MARKET_DATA_PUBLIC=true` does **not** remove the dependency — it widens the
+permission: `app.auth.permissions.allowed` grants `market.read` to `anonymous` while the flag is set
+(VIN Foundation decision, spec §15). The `/api/admin/*` routes use `Depends(require("data_sources.read"))`
+for reads and `Depends(require("licence.decide"))` for `/license`.
+
+*Amended 2026-09-07 (Task I9a): this section said `Depends(require_member)` and "until SP2 lands, the
+dependency is the A9 operator token". Wave 2a shipped the real dependency, so there is no stub to
+stand in for and no operator token to fall back on; `app/api/auth_stub.py` and `API_SECRET_KEY` are
+retired in Wave 2a Task I9b.*
 
 ```
 GET /api/layers
@@ -113,7 +124,7 @@ GET /api/listings/{listing_id}/market?band=drive_10|drive_20|place   (default dr
     # suppressed → value null + suppress_reason; 404 {"error":{"code":"NO_MARKET_DATA"}} only for an existing published listing (and enqueues one backfill per 10 min);
     # unknown listing → 404 {"error":{"code":"NOT_FOUND"}} with nothing enqueued.
 
-GET /api/admin/data-sources · POST /api/admin/data-sources/{key}/license   (operator/admin only — see A9)
+GET /api/admin/data-sources   (data_sources.read — staff/admin) · POST /api/admin/data-sources/{key}/license   (licence.decide — admin, re-authenticated; see A9)
 ```
 
 ## File map
@@ -161,53 +172,16 @@ GET /api/admin/data-sources · POST /api/admin/data-sources/{key}/license   (ope
 
 - [ ] **Step 1: Failing schema tests**
 
-`tests/census/conftest.py`:
-```python
-import os
-import uuid
-
-import psycopg2
-import pytest
-
-from app.config import settings
-
-
-def _maintenance(dsn: str) -> str:
-    return dsn.rsplit("/", 1)[0] + "/postgres"
-
-
-@pytest.fixture
-def scratch_dsn():
-    """Fresh database with all migrations applied; dropped afterwards."""
-    import importlib.util
-    from pathlib import Path
-    spec = importlib.util.spec_from_file_location("migrate", Path(__file__).resolve().parents[2] / "scripts" / "migrate.py")
-    migrate = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(migrate)  # type: ignore[union-attr]
-    name = f"pm_census_{uuid.uuid4().hex[:8]}"
-    admin = psycopg2.connect(_maintenance(settings.database_url))
-    admin.autocommit = True
-    with admin.cursor() as cur:
-        cur.execute(f'CREATE DATABASE "{name}"')
-    dsn = settings.database_url.rsplit("/", 1)[0] + f"/{name}"
-    migrate.run(dsn)
-    try:
-        yield dsn
-    finally:
-        with admin.cursor() as cur:
-            cur.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
-        admin.close()
-
-
-@pytest.fixture
-def conn(scratch_dsn):
-    c = psycopg2.connect(scratch_dsn)
-    c.autocommit = True
-    try:
-        yield c
-    finally:
-        c.close()
-```
+`tests/census/conftest.py` — **amended 2026-09-07 (Wave 2a Task I9a): `scratch_dsn` and `conn` are
+reused from the root `tests/conftest.py`, not written here.** Wave 2a needed the same
+create-migrate-drop database per test and built it there, with two fixes this plan's draft did not
+have: `migrate.run` runs INSIDE the `try`, so a failing migration cannot leak the database and the
+admin connection on the shared compose Postgres, and the DSN is normalised through
+`migrate.normalize_dsn()` before the database name is split off, so an asyncpg-style or
+query-stringed `DATABASE_URL` does not break or bake its query string into a database name. It also
+loads `scripts/migrate.py` as an ordinary `from scripts import migrate` rather than through
+`importlib.util`, which is what lets a test patch `scripts.migrate.run`. Ask for `conn` (or
+`scratch_dsn`) and the root conftest provides it; this file carries only what is census-specific.
 
 `tests/census/test_schema.py`:
 ```python
@@ -2273,12 +2247,22 @@ Run: `poetry run pytest -q` → all pass (including Platform's `test_celery.py`)
 ### Task A9: Admin Data Sources endpoint and the 60-second layer gate
 
 **Files:**
-- Create: `app/api/admin_data_sources.py`, `app/cache.py`, `app/census/gate.py`, `app/api/auth_stub.py`, `tests/census/test_admin_api.py`, `tests/census/test_gate.py`
+- Create: `app/api/admin_data_sources.py`, `app/census/gate.py`, `tests/census/test_admin_api.py`, `tests/census/test_gate.py`
 - Modify: `app/main.py` (include router before the `/api` catch-all)
+
+*Amended 2026-09-07 (Wave 2a Task I9a).* Three of the files this task used to create are **reused
+from Wave 2a**, not written here: `app/db.py` (the pooled sync/async connections), `app/cache.py`
+(`sync_redis`/`async_redis` and the JSON helpers) and the authentication that `app/api/auth_stub.py`
+was a stand-in for. Admin routes use `Depends(require("data_sources.read"))` for reads and
+`Depends(require("licence.decide"))` for `/license` — both from `app/auth/deps.py`, both against the
+matrix in `app/auth/permissions.py` (`data_sources.read` is staff/admin; `licence.decide` is admin
+and in `REAUTH`, so the caller must have confirmed their password in the last 10 minutes and **no
+`api_token` can ever satisfy it**, whatever role it carries). `app/api/auth_stub.py` and
+`API_SECRET_KEY` are retired in Wave 2a Task I9b, once `PM_API_TOKEN` carries CI.
 
 **Interfaces:**
 - `gate.layer_enabled(redis, conn_factory, dataset_key) -> bool` — reads `dataset_registry.license_status == 'cleared'` through a 60 s Redis cache (`gate:{dataset_key}`); `gate.invalidate(redis, dataset_key)`.
-- `auth_stub.require_operator(request)` — until Sub-project 2's real auth: `Authorization: Bearer <API_SECRET_KEY>` else 401. Replaced, not extended, in SP2.
+- `require("data_sources.read")` / `require("licence.decide")` from `app/auth/deps.py` (Wave 2a) — the caller is a session cookie or an `api_token`; a refusal is decision A5's `{"error": {"code", "message"}}` body, `401` when there is no credential at all and `403` when there is one that does not carry the permission.
 - `GET /api/admin/data-sources` → list per the API contract; `POST /api/admin/data-sources/{key}/license` `{status, name, url, notes}` → updates the registry (human decision, audited in `license_audit_log` with `url` and `changed=false`), invalidates the gate.
 
 - [ ] **Step 1: Failing tests**
@@ -2304,7 +2288,9 @@ def test_gate_reads_registry_and_caches_for_60s(conn):
     assert gate.version(r) == before + 1                                # cached payloads are keyed away
 ```
 
-`tests/census/test_admin_api.py`:
+`tests/census/test_admin_api.py` (the `member` factory and `auth_headers` come from Wave 2a's
+`tests/api/conftest.py` — a real account with the roles asked for, a live session and the matching
+CSRF header; Task I9a):
 ```python
 import httpx
 import pytest
@@ -2312,21 +2298,26 @@ from httpx import ASGITransport
 
 from app.config import settings
 from app.main import create_app
+from tests.api.conftest import ORIGIN, PW, auth_headers
 
 
 @pytest.fixture
 async def client(scratch_dsn, monkeypatch):
     monkeypatch.setattr(settings, "database_url", scratch_dsn)
-    async with httpx.AsyncClient(transport=ASGITransport(app=create_app()), base_url="http://test") as c:
+    # Base URL is the site's own origin (`https://qa.foundation.vin`), as `tests/api/conftest.py`
+    # does: `deps.check_origin_and_csrf` compares the `Origin` header against it on every
+    # cookie-authenticated state change (Task I9a).
+    async with httpx.AsyncClient(transport=ASGITransport(app=create_app()), base_url=ORIGIN) as c:
         yield c
 
 
-async def test_requires_operator_token(client):
+async def test_requires_a_credential(client):
     assert (await client.get("/api/admin/data-sources")).status_code == 401
 
 
-async def test_lists_registry_with_status_and_active_vintage(client):
-    r = await client.get("/api/admin/data-sources", headers={"Authorization": f"Bearer {settings.api_secret_key}"})
+async def test_lists_registry_with_status_and_active_vintage(client, member):
+    _aid, cookies, _hdrs = member(("admin",))
+    r = await client.get("/api/admin/data-sources", headers=auth_headers(cookies))
     assert r.status_code == 200
     rows = {x["dataset_key"]: x for x in r.json()}
     assert rows["pet_ownership"]["license_status"] == "blocked"
@@ -2334,8 +2325,13 @@ async def test_lists_registry_with_status_and_active_vintage(client):
     assert set(rows["acs5"]) >= {"dataset_key", "display_name", "license_status", "license_name", "vintage", "refresh_cadence", "last_verified_at", "active_vintage", "drift_flagged", "last_run", "notes"}
 
 
-async def test_license_decision_updates_registry_and_logs(client):
-    h = {"Authorization": f"Bearer {settings.api_secret_key}"}
+async def test_license_decision_updates_registry_and_logs(client, member):
+    # `licence.decide` is in `permissions.REAUTH`, so the session needs a password confirmation from
+    # the last 10 minutes or the answer is `403 REAUTH_REQUIRED` — the same `admin` shape the
+    # Map-engines plan's M4 block uses (Task I9a).
+    _aid, cookies, csrf = member(("admin",))
+    h = auth_headers(cookies, csrf)
+    assert (await client.post("/api/auth/reauth", headers=h, json={"password": PW})).status_code == 200
     r = await client.post("/api/admin/data-sources/imagery/license", headers=h,
                           json={"status": "cleared", "name": "Esri Imagery — commercial web display", "url": "https://example.test/terms", "notes": "signed 2026-09-05"})
     assert r.status_code == 200 and r.json()["license_status"] == "cleared"
@@ -2347,21 +2343,10 @@ Run: `poetry run pytest tests/census/test_admin_api.py tests/census/test_gate.py
 
 - [ ] **Step 2: Implement**
 
-`app/cache.py`:
-```python
-import redis.asyncio as aioredis
-import redis as redis_sync
-
-from app.config import settings
-
-
-def sync_redis() -> redis_sync.Redis:
-    return redis_sync.from_url(settings.redis_url, socket_connect_timeout=3, socket_timeout=3)
-
-
-def async_redis() -> aioredis.Redis:
-    return aioredis.from_url(settings.redis_url, socket_connect_timeout=3, socket_timeout=3)
-```
+*`app/cache.py` is **reused from Wave 2a**, not written here (amended 2026-09-07, Task I9a). It
+exposes the same `sync_redis()` / `async_redis()`, plus a `reset()` the test suite uses, and it
+MEMOISES one client per process rather than building a new one per call — which is why the `redis`
+fixture patches its two factories instead of the two functions. Nothing below changes.*
 
 `app/census/gate.py`:
 ```python
@@ -2396,20 +2381,11 @@ def version(r) -> int:
     return int(v) if v else 0
 ```
 
-`app/api/auth_stub.py`:
-```python
-"""Temporary operator gate for admin routes until Sub-project 2 ships real auth.
-Bearer token = API_SECRET_KEY of the environment. Delete this file in SP2."""
-from fastapi import HTTPException, Request
-
-from app.config import settings
-
-
-def require_operator(request: Request) -> None:
-    auth = request.headers.get("authorization", "")
-    if auth != f"Bearer {settings.api_secret_key}":
-        raise HTTPException(status_code=401, detail={"code": "UNAUTHORIZED", "message": "operator token required"})
-```
+*`app/api/auth_stub.py` is **not written**. Amended 2026-09-07 (Wave 2a Task I9a): the stub this
+plan specified — a bearer compared against `API_SECRET_KEY` — exists on `main` and is retired in
+Wave 2a Task I9b. Use `app/auth/deps.py`'s `require(...)` instead, which resolves a session cookie
+or an `api_token`, enforces Origin/CSRF on state changes, checks the matrix and enforces re-auth for
+`permissions.REAUTH`.*
 
 `app/api/admin_data_sources.py`:
 ```python
@@ -2419,12 +2395,14 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel, HttpUrl
 from sqlalchemy import text
 
-from app.api.auth_stub import require_operator
+from app.auth.deps import require
 from app.cache import sync_redis
 from app.census import gate
-from app.db import engine  # created in this task: app/db.py exposes `engine = create_async_engine(async_dsn(settings.database_url))`
+from app.db import engine  # reused from Wave 2a: app/db.py exposes `engine = create_async_engine(async_dsn(settings.database_url))`
 
-router = APIRouter(prefix="/api/admin", dependencies=[Depends(require_operator)])
+# `data_sources.read` (staff/admin) on the router; `/license` carries `licence.decide` (admin, and in
+# REAUTH) of its own — see the route below (Task I9a).
+router = APIRouter(prefix="/api/admin", dependencies=[Depends(require("data_sources.read"))])
 
 LIST_SQL = text("""
 SELECT r.dataset_key, r.display_name, r.api_dataset_id, r.vintage, r.refresh_cadence, r.license_status, r.license_name, r.license_url,
@@ -2448,8 +2426,11 @@ class LicenseDecision(BaseModel):
     notes: str | None = None
 
 
-@router.post("/data-sources/{dataset_key}/license")
+@router.post("/data-sources/{dataset_key}/license", dependencies=[Depends(require("licence.decide"))])
 async def decide_license(dataset_key: str, body: LicenseDecision) -> dict:
+    # `licence.decide` is admin-only and in `permissions.REAUTH` (Task I9a): the caller confirmed
+    # their password in the last 10 minutes, and no `api_token` can ever reach here — a licence
+    # decision is a named human's, which is what the audit row records.
     async with engine.begin() as conn:
         res = await conn.execute(text("""UPDATE dataset_registry SET license_status = :s, license_name = COALESCE(:n, license_name),
                                          license_url = COALESCE(:u, license_url), notes = COALESCE(:o, notes), drift_flagged = false,
@@ -3534,10 +3515,20 @@ Beat: `"materialize-nightly": {"task": "census.materialize_metrics", "schedule":
 ### Task B5: Market API — layers, markets, communities, listing panel; member gate; gate-versioned cache; backfill-on-miss
 
 **Files:**
-- Create: `app/api/market.py`, `app/api/access.py`, `app/db.py` (if not created in A9), `tests/census/test_market_api.py`
-- Modify: `app/main.py` (include router before the `/api` catch-all), `app/config.py` (`market_data_public: bool = False`)
+- Create: `app/api/market.py`, `tests/census/test_market_api.py`
+- Modify: `app/main.py` (include router before the `/api` catch-all)
 
-**Interfaces:** the endpoints in the API contract section. `access.market_access(request)` — no-op when `settings.market_data_public`, else `require_member(request)` (SP2; until SP2 lands, `require_member = auth_stub.require_operator`). `market.short_market_name(...)`. Cache keys `listing:{id}:market:v{version}:g{gate_version}` (TTL 86400 s); dedupe `backfill:{id}` (TTL 600 s).
+*Amended 2026-09-07 (Wave 2a Task I9a): `app/api/access.py` is **not written** and `app/db.py` and
+`app/config.py`'s `market_data_public` are **reused from Wave 2a** — the setting shipped in Task I3
+and the flag's whole meaning lives in `app.auth.permissions.allowed`, which grants `market.read` to
+`anonymous` while it is set. An `app/api/access.py` wrapper would now be a second place where the same
+rule is decided, and the browser's twin (`can('market.read', me, { marketDataPublic })`, fed by
+`GET /api/config`) reads the same one.*
+
+**Interfaces:** the endpoints in the API contract section, all behind
+`Depends(require("market.read"))` from `app/auth/deps.py`. `market.short_market_name(...)`. Cache
+keys `listing:{id}:market:v{version}:g{gate_version}` (TTL 86400 s); dedupe `backfill:{id}`
+(TTL 600 s).
 
 - [ ] **Step 1: Failing tests**
 
@@ -3551,9 +3542,12 @@ from app.cache import sync_redis
 from app.census import gate, materialize
 from app.config import settings
 from app.main import create_app
+from tests.api.conftest import ORIGIN, auth_headers
 from tests.census.test_materialize import world  # noqa: F401 — reuse the seeded listing fixture
 
-H = {"Authorization": f"Bearer {settings.api_secret_key}"}   # SP2 replaces this with a member session
+# `H` was `{"Authorization": f"Bearer {settings.api_secret_key}"}` — a module CONSTANT, because the
+# operator token was one. Amended 2026-09-07 (Task I9a): it is a member session now, which is
+# per-test state, so `H` is a fixture and every test that presents it takes it as a parameter.
 
 
 @pytest.fixture
@@ -3563,8 +3557,17 @@ async def client(scratch_dsn, monkeypatch):
     for pat in ("listing:*", "backfill:*", "gate:*", "market:*"):
         for k in r.scan_iter(pat): r.delete(k)
     r.delete("celery")
-    async with httpx.AsyncClient(transport=ASGITransport(app=create_app()), base_url="http://test") as c:
+    async with httpx.AsyncClient(transport=ASGITransport(app=create_app()), base_url=ORIGIN) as c:
         yield c
+
+
+@pytest.fixture
+def H(member):
+    """The member session every read below presents. `member(("buyer",))` writes a real `active`
+    account with the `buyer` grant and a live session into the scratch database; `auth_headers`
+    turns its cookies into the literal `Cookie` header httpx 0.28 wants (Task I9a)."""
+    _account_id, cookies, _csrf = member(("buyer",))
+    return auth_headers(cookies)
 
 
 @pytest.fixture
@@ -3582,14 +3585,20 @@ def test_short_market_name():
     assert short_market_name("Sacramento-Roseville-Folsom, CA Metro Area") == "Sacramento, CA"
 
 
-async def test_market_endpoints_require_a_member_unless_public(client, materialized, monkeypatch):
-    for path in ("/api/layers", "/api/markets", "/api/markets/12420/communities", f"/api/listings/{materialized}/market"):
+async def test_market_endpoints_require_a_member_unless_public(client, materialized, member, monkeypatch):
+    paths = ("/api/layers", "/api/markets", "/api/markets/12420/communities", f"/api/listings/{materialized}/market")
+    for path in paths:
         assert (await client.get(path)).status_code == 401, path
+    _aid, cookies, _csrf = member(("buyer",))
+    for path in paths:
+        assert (await client.get(path, headers=auth_headers(cookies))).status_code == 200, path
+    # MARKET_DATA_PUBLIC widens the permission rather than removing the dependency: the same
+    # `require("market.read")` now passes for an anonymous caller (Task I9a).
     monkeypatch.setattr(settings, "market_data_public", True)
     assert (await client.get("/api/markets")).status_code == 200
 
 
-async def test_layers_come_from_the_registry_with_gating_and_caveats(client, materialized, conn):
+async def test_layers_come_from_the_registry_with_gating_and_caveats(client, materialized, conn, H):
     layers = {l["key"]: l for l in (await client.get("/api/layers", headers=H)).json()}
     assert set(layers) == {"income", "pets", "growth", "households", "econ", "competition", "practices", "drive_10", "drive_20"}
     assert layers["income"]["source_label"].startswith("Source: U.S. Census Bureau, American Community Survey") and layers["income"]["enabled"] is True
@@ -3604,12 +3613,12 @@ async def test_layers_come_from_the_registry_with_gating_and_caveats(client, mat
     assert layers["competition"]["enabled"] is False
 
 
-async def test_markets_lists_cbsas_with_published_listings(client, materialized):
+async def test_markets_lists_cbsas_with_published_listings(client, materialized, H):
     r = await client.get("/api/markets", headers=H)
     assert r.json() == [{"cbsa_geoid": "12420", "name": "Austin, TX", "center": [30.31, -97.75], "zoom": 10}]
 
 
-async def test_communities_default_to_place_band_with_fixture_fields_and_competition(client, materialized):
+async def test_communities_default_to_place_band_with_fixture_fields_and_competition(client, materialized, H):
     body = (await client.get("/api/markets/12420/communities", headers=H)).json()
     assert body["band"] == "place" and body["vintage"] == "2019–2023"
     c = body["communities"][0]
@@ -3621,14 +3630,14 @@ async def test_communities_default_to_place_band_with_fixture_fields_and_competi
     assert drive["band"] == "drive_10" and drive["communities"][0]["pop"] < 81900
 
 
-async def test_disclosed_location_returns_the_point_for_members(client, materialized, conn):
+async def test_disclosed_location_returns_the_point_for_members(client, materialized, conn, H):
     with conn.cursor() as cur:
         cur.execute("UPDATE listing SET location_disclosed = true WHERE id=%s", (materialized,))
     c = (await client.get("/api/markets/12420/communities", headers=H)).json()["communities"][0]
     assert c["location"] == "disclosed_point" and (c["lat"], c["lng"]) == (30.55, -97.85)
 
 
-async def test_uncleared_layer_is_absent_within_60s(client, materialized, conn):
+async def test_uncleared_layer_is_absent_within_60s(client, materialized, conn, H):
     with conn.cursor() as cur:
         cur.execute("UPDATE dataset_registry SET license_status='unresolved' WHERE dataset_key IN ('zbp','cbp')")
     gate.invalidate(sync_redis(), "zbp"); gate.invalidate(sync_redis(), "cbp")
@@ -3636,7 +3645,7 @@ async def test_uncleared_layer_is_absent_within_60s(client, materialized, conn):
     assert "vets" not in c and "econ" not in c and "competition" not in c and "pop" in c
 
 
-async def test_listing_panel_is_cached_and_re_gated_on_read(client, materialized, conn):
+async def test_listing_panel_is_cached_and_re_gated_on_read(client, materialized, conn, H):
     r = await client.get(f"/api/listings/{materialized}/market", headers=H)
     assert r.status_code == 200 and r.headers["x-cache"] == "miss"
     m = r.json()["metrics"]
@@ -3651,12 +3660,12 @@ async def test_listing_panel_is_cached_and_re_gated_on_read(client, materialized
     assert "establishments" not in m2 and "population" in m2          # gate version changed the key; blocked layer gone
 
 
-async def test_place_band_panel_on_request(client, materialized):
+async def test_place_band_panel_on_request(client, materialized, H):
     body = (await client.get(f"/api/listings/{materialized}/market?band=place", headers=H)).json()
     assert body["band"] == "place" and body["metrics"]["population"]["value"] == 81900
 
 
-async def test_suppressed_metric_hides_value_but_keeps_reason(client, materialized, conn):
+async def test_suppressed_metric_hides_value_but_keeps_reason(client, materialized, conn, H):
     with conn.cursor() as cur:
         cur.execute("UPDATE market_metric SET suppressed=true, suppress_reason='high_moe' WHERE listing_id=%s AND metric_key='households'", (materialized,))
     sync_redis().incr(f"listing:{materialized}:market:version")
@@ -3664,7 +3673,7 @@ async def test_suppressed_metric_hides_value_but_keeps_reason(client, materializ
     assert hh["value"] is None and hh["suppressed"] is True and hh["suppress_reason"] == "high_moe"
 
 
-async def test_missing_metrics_404_and_enqueue_backfill_once_for_real_listings_only(client, conn):
+async def test_missing_metrics_404_and_enqueue_backfill_once_for_real_listings_only(client, conn, H):
     from tests.census.listing_fixtures import make_listing
     lid = make_listing(conn)
     r1 = await client.get(f"/api/listings/{lid}/market", headers=H)
@@ -3678,29 +3687,18 @@ async def test_missing_metrics_404_and_enqueue_backfill_once_for_real_listings_o
 
 Run: `poetry run pytest tests/census/test_market_api.py -q` → **FAIL** (`ModuleNotFoundError: No module named 'app.api.market'`) — watch it fail before writing any implementation.
 
-**Performance gates (policy §3):** extend `tests/perf/test_api_latency.py::BUDGET_MS` with `'/api/layers': 100, '/api/markets': 100, '/api/markets/12420/communities': 150` and (after `materialized`) `f'/api/listings/{lid}/market': 150`; add `tests/perf/test_query_plans.py` from `docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md` §5 with the `panel` plan (`market_metric` PK lookup → Index Scan). RED: endpoints 404 / table missing; GREEN after this task.
+**Performance gates (policy §3):** extend `tests/perf/test_api_latency.py::BUDGET_MS` with `'/api/layers': 100, '/api/markets': 100, '/api/markets/12420/communities': 150` and (after `materialized`) `f'/api/listings/{lid}/market': 150`; **extend** `tests/perf/test_query_plans.py::PLANS` with the `panel` plan (`market_metric` PK lookup) — *amended 2026-09-07 (Task I9a): the file already exists, created there with the `users_queue` and `session_lookup` entries; each entry names the index it expects rather than asking only for "some Index Scan"*. RED: endpoints 404 / table missing; GREEN after this task.
 
 - [ ] **Step 2: Implement**
 
-`app/api/access.py`:
-```python
-"""Market-data access rule (plan D13). Sub-project 2 provides require_member; until then the
-operator token stands in. MARKET_DATA_PUBLIC=true is the VIN Foundation's 'public teaser' switch."""
-from fastapi import Request
-
-from app.config import settings
-
-try:  # Sub-project 2
-    from app.api.auth import require_member  # type: ignore
-except ImportError:  # pragma: no cover — before SP2 lands
-    from app.api.auth_stub import require_operator as require_member
-
-
-def market_access(request: Request) -> None:
-    if settings.market_data_public:
-        return
-    require_member(request)
-```
+*`app/api/access.py` is **not written**. Amended 2026-09-07 (Wave 2a Task I9a): the wrapper this
+plan specified — "no-op when `settings.market_data_public`, else `require_member`" — would be a
+second place where one rule is decided. Wave 2a put that rule in `app.auth.permissions.allowed`,
+which grants `market.read` to `anonymous` while `MARKET_DATA_PUBLIC` is set, so the market router
+carries `Depends(require("market.read"))` and nothing else, and the browser's twin
+(`can('market.read', me, { marketDataPublic })`, fed by `GET /api/config`) reads the same rule from
+the same matrix. The `try/except ImportError` fallback to the operator token goes with it: the real
+dependency exists.*
 
 `app/api/market.py`:
 ```python
@@ -3714,14 +3712,14 @@ import json
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import text
 
-from app.api.access import market_access
+from app.auth.deps import require
 from app.cache import sync_redis
 from app.census import gate
 from app.census import metrics as M
 from app.db import engine, sync_conn
 from app.tasks.celery_app import celery_app
 
-router = APIRouter(prefix="/api", dependencies=[Depends(market_access)])
+router = APIRouter(prefix="/api", dependencies=[Depends(require("market.read"))])
 PANEL_TTL = 86400
 BACKFILL_DEDUPE_TTL = 600
 BANDS = ("place", "drive_10", "drive_20")
@@ -3881,23 +3879,13 @@ async def listing_market(listing_id: str, response: Response, band: str | None =
     return body
 ```
 
-`app/db.py`:
-```python
-import psycopg2
-from sqlalchemy.ext.asyncio import create_async_engine
-
-from app.checks import async_dsn
-from app.config import settings
-
-engine = create_async_engine(async_dsn(settings.database_url), pool_pre_ping=True)
-
-
-def sync_conn():
-    c = psycopg2.connect(settings.database_url.replace("postgresql+asyncpg://", "postgresql://", 1))
-    c.autocommit = True
-    return c
-```
-Add `market_data_public: bool = False` to `Settings`. Wire `market.router` in `main.py` before the catch-all. Run: `poetry run pytest -q` → all pass. Commit: `feat(census): member-gated market API — layers, markets, communities (place/catchment), panel with gate-versioned cache`.
+*`app/db.py` is **reused from Wave 2a**, not written here (amended 2026-09-07, Task I9a). Same
+`engine` and `sync_conn()`, with two differences that matter to this sub-project: `sync_conn()`
+draws from a psycopg2 REUSE pool sized by `DB_POOL_MAX` (past it a caller gets an un-pooled
+connection, never an error), and the async engine is cached per event loop with a `dispose_all()`
+the suite's autouse teardown calls. `market_data_public` is already a `Settings` field (Task I3), so
+there is nothing to add to the config either.* Wire `market.router` in `main.py` before the
+catch-all. Run: `poetry run pytest -q` → all pass. Commit: `feat(census): member-gated market API — layers, markets, communities (place/catchment), panel with gate-versioned cache`.
 
 ---
 
@@ -4441,7 +4429,7 @@ Satellite vendor · licensed pet rate vs ACS-derived · isochrones vs straight-l
 | C1 | **Competition layer incoherent.** CBP is county-level; the design renders per-community dots and Low/Moderate/High per community; `vets_per_10k` divided county establishments by catchment households (≈ 66/10k for Travis County vs the design's ≈ 2.5). No rendering/source plan existed for the layer. | High | D11: ZIP Code Business Patterns (`zbp`) aggregated over ZCTAs (A6, B3, B4); ratios computed over one geography; county apportionment fallback labelled derived; `GET /api/layers` + the layer rendering contract; caveat text per §5. |
 | C2 | **Growth joined 2014–2018 tracts (2010 GEOIDs) to 2020 tracts.** Tract definitions changed in 2020; many GEOIDs do not exist in both vintages. | High | D12: growth at place level with county fallback (B4); tract crosswalk deferred (Phase C). |
 | C3 | The design's community figures are city-level (Cedar Park 81,900), but the plan mapped them to `drive_10` catchments without saying so. | Medium | D10: three bands, `place` default for community surfaces, `drive_10` for the panel, `?band=` everywhere. |
-| C4 | **Market endpoints were unauthenticated**, returned a coordinate per listing (an anonymized listing becomes locatable), and enqueued a backfill for any id (queue flooding). | High | D13 + `market_access`; `location_disclosed` rule (D8); enqueue only for existing published listings (B5). |
+| C4 | **Market endpoints were unauthenticated**, returned a coordinate per listing (an anonymized listing becomes locatable), and enqueued a backfill for any id (queue flooding). | High | D13 + `Depends(require("market.read"))` (*amended 2026-09-07, Task I9a: was the `app/api/access.py` wrapper, now deleted*); `location_disclosed` rule (D8); enqueue only for existing published listings (B5). |
 | C5 | A cached panel kept a just-blocked layer for up to 24 h, violating "hides within one minute" (§11). | Medium | Gate version counter in every cache key (`gate.invalidate` bumps it) and re-filtering on read (A9, B5). |
 | C6 | The Census API key appeared in `CensusHTTPError` messages/logs; the ZCTA boundary file may be absent from GENZ2023; `4269::geography` cast should transform to 4326; archive-failure semantics unstated. | Medium | `redact()` in A3 with a test; GENZ2020 fallback in A4; `ST_Transform(…,4326)::geography` in B3/B4; archive failure fails the run (boto3 error propagates through `ingest.run`, recorded as `failed`). |
 | C7 | Migration numbers `005`/`006` collided with Sub-project 2's range and could sort before `listing` exists. | Medium | D14 ranges; Phase B → `060`/`061`. |
@@ -4449,7 +4437,7 @@ Satellite vendor · licensed pet rate vs ACS-derived · isochrones vs straight-l
 | C9 | Design copy conflicts with the spec: "Growth since 2015"; drive-time labels without the approximation qualifier; competition card lacks the proxy sentence. | Medium | Strings supplied by `/api/layers`; conflicts routed to the VIN Foundation/Claude Design (B6). |
 | C10 | Per-process concurrency semaphore (Celery concurrency 2 → up to 8 in flight per dataset). | Low | Accepted for V1 volumes; Redis token bucket if the Census API pushes back (429 halving already applies). |
 | C11 | `ingest.run` is all-or-nothing per run; §11's "resume from the last completed geography page" is not implemented. | Low | Accepted: atomic runs satisfy "no partial vintage ever goes active"; a rerun is cheap. |
-| C12 | Operator token = `API_SECRET_KEY` until SP2. | Low | Rotate `API_SECRET_KEY` when SP2 lands; `auth_stub.py` is deleted then. |
+| C12 | Operator token = `API_SECRET_KEY` until SP2. | Low | **Resolved by Wave 2a** (amended 2026-09-07, Task I9a): no market or admin route in this plan is reached by a shared secret any more — every one carries a permission from `app/auth/permissions.py`, resolved from a session cookie or a per-consumer `api_token` whose SHA-256 alone is stored, and licence decisions additionally need a re-authenticated human session. `app/api/auth_stub.py` and `API_SECRET_KEY` themselves are deleted in Wave 2a **Task I9b**, once `PM_API_TOKEN` carries CI (identity plan amendment A-I9); nothing in this sub-project reintroduces either. |
 | C13 | Business addresses are sent to the Census Geocoder (a public federal service). | Info | Acceptable for business premises; noted for the VIN Foundation's privacy notice. |
 | C14 | **A 2017 Google Places export (`Report_Hospital_Competitor_All_US_ZipCode_FULL.csv`) was proposed as the competition source.** Audit (appendix): 183,688 rows → 10,166 distinct places from 8,320 query ZIPs (≈ 20 % of the US; Texas 132 places, Austin absent, South Dakota none), swept 24 May–8 Jun 2017 with the legacy Nearby Search (the 60-result cap was hit in 645 ZIPs); 29.7 % of places are individual-practitioner listings, ≈ 5 % are pet retail, shelters or groomers, 38 % are unrated; addresses carry no state or ZIP; the geography column is corrupted; the file ends mid-record. Google Maps Platform Terms §3.2.3(a)(iii) and (c)(iv) and SST §14.2 forbid storing the content, using its coordinates in point-in-polygon analysis, or showing it on Leaflet. | High | D15: blocked source; audit appendix; registry note on `practice_locations`; `.gitignore` pattern so the file can never be committed. |
 | C15 | "Update via the Google Maps API" was requested without a lawful mechanism identified. Every Google route was checked (appendix): Nearby/Text Search, Place Details refresh at each SKU tier, Places Aggregate API, Places UI Kit, Maps JavaScript API, legacy Places API. Only the Aggregate API's Customer Values fit a stored, Leaflet-rendered layer. | Medium | D17 + Task C1 (gated on counsel and billing); D16 for points from permissively licensed POI data; the design's competition count stays Census ZBP (spec §5). |

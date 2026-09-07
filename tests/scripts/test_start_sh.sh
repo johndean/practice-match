@@ -29,5 +29,11 @@ printf '3\n3\n3\n3\n' > "$FAKE/codes"; out=$(run_api) || fail "persistently unre
 printf '1\n' > "$FAKE/codes"; set +e; out=$(run_api); code=$?; set -e
 [[ $code -ne 0 && "$out" != *"fake uvicorn"* && "$out" == *"migration failed"* ]] || fail "a failing migration file must stop the container before uvicorn (exit $code), got: $out"
 
+# Exit 4 = an already-applied migration whose file has changed (scripts/migrate.py's checksum
+# ledger, Task I5c Step 0). Like 1 and unlike 3 it is NOT retryable: the tree disagrees with the
+# database, and retrying cannot make it agree — stop, and do not serve.
+printf '4\n' > "$FAKE/codes"; set +e; out=$(run_api); code=$?; set -e
+[[ $code -eq 4 && "$out" != *"fake uvicorn"* && "$out" == *"migration failed (exit 4)"* ]] || fail "a changed applied migration (exit 4) must stop the container before uvicorn (exit $code), got: $out"
+
 if DRY_RUN=1 bash scripts/start.sh bogus 2>/dev/null; then fail "unknown role must exit non-zero"; fi
 echo "start.sh dispatcher OK"

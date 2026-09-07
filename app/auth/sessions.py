@@ -1,0 +1,298 @@
+"""Server-side sessions with a Redis principal cache that is deleted, never waited out, on any change (spec §3, S4)."""
+from __future__ import annotations
+
+import json
+from collections.abc import Collection
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from typing import Any, Literal, cast
+from uuid import UUID
+
+import psycopg2.extensions
+import redis as redis_sync
+
+from app.auth import tokens
+
+IDLE, ABSOLUTE, CACHE_TTL, TOUCH_EVERY = timedelta(days=14), timedelta(days=30), 60, timedelta(minutes=5)
+
+
+@dataclass(frozen=True)
+class Principal:
+    account_id: UUID
+    state: str
+    roles: frozenset[str]
+    reauth_at: datetime | None
+    kind: Literal["session", "token", "legacy"]
+    session_hash: str | None = None
+
+
+def hash_id(raw: str) -> str:
+    return tokens.hash(raw)
+
+
+def _principal(row: tuple[Any, ...], h: str) -> Principal:
+    """(account_id, state, reauth_at, roles) -> Principal. One mapper for both readers of
+    those four columns: `_load`'s SELECT and `create`'s INSERT ... RETURNING."""
+    return Principal(row[0], row[1], frozenset(row[3]), row[2], "session", h)
+
+
+def _load(conn: psycopg2.extensions.connection, h: str) -> Principal | None:
+    with conn.cursor() as cur:
+        cur.execute("""SELECT s.account_id, a.state, s.reauth_at,
+                              COALESCE((SELECT array_agg(role) FROM role_grant g WHERE g.account_id = s.account_id AND g.revoked_at IS NULL), '{}')
+                         FROM session s JOIN account a ON a.id = s.account_id
+                        WHERE s.id_hash = %s AND s.revoked_at IS NULL AND s.expires_at > now()
+                          AND s.last_seen_at > now() - %s""", (h, IDLE))
+        row = cur.fetchone()
+    return _principal(row, h) if row else None
+
+
+def _account_tombstone(account_id: UUID) -> str:
+    return f"account:{account_id}:invalidated"
+
+
+def _session_tombstone(h: str) -> str:
+    return f"session:{h}:revoked"
+
+
+def _now_us(r: redis_sync.Redis) -> int:
+    """The REDIS server clock, in microseconds. One clock owns both sides of the tombstone
+    comparison — the same principle M4 applied to Postgres expiries, for the same reason:
+    a reader and a revoker on two API containers must order against each other, not
+    against their own drifting local clocks."""
+    secs, micros = cast("tuple[int, int]", r.time())
+    return secs * 1_000_000 + micros
+
+
+def _tombstoned_since(r: redis_sync.Redis, account_id: UUID, h: str, loaded_at: int) -> bool:
+    """True when this session was signed out, or its account invalidated, at or after the
+    instant the principal was read from Postgres — i.e. the caller is holding a principal
+    that a change has already overtaken. Tombstones live exactly as long as a cache entry
+    could have (CACHE_TTL), so nothing older than the cache can be missed."""
+    stamps = cast("list[bytes | None]", r.mget(_account_tombstone(account_id), _session_tombstone(h)))
+    for stamp in stamps:
+        if stamp is not None and int(stamp) >= loaded_at:
+            return True
+    return False
+
+
+def _cache_set(r: redis_sync.Redis, p: Principal, loaded_at: int) -> None:
+    h = cast(str, p.session_hash)  # only ever called with a Principal freshly loaded/cached for a session, never None
+    # A principal read from Postgres BEFORE a sign-out or an invalidation can still arrive
+    # here after it — the read already happened, so no ordering can stop it (I4, NEW-1).
+    # Timestamped rather than a bare EXISTS so the reverse case stays fast: a session
+    # created AFTER a rotation is cached at once instead of reading Postgres for a minute
+    # (NEW-3). One EXTRA round trip on the cache-MISS path; a cache hit never reaches here.
+    if _tombstoned_since(r, p.account_id, h, loaded_at):
+        return
+    index = f"account:{p.account_id}:sessions"
+    # Index FIRST, principal second (I4): a concurrent invalidate_account reads the index
+    # to find what to delete, so a principal that is written before it is indexed can be
+    # missed entirely and then survive the full CACHE_TTL — the account is suspended but
+    # keeps its state and roles for another minute.
+    r.sadd(index, h)
+    # The index cannot outlive the sessions it points at: without this it never expired
+    # and grew one dead 64-char hash per sign-in, forever (I5).
+    r.expire(index, int(ABSOLUTE.total_seconds()))
+    r.set(f"session:{h}", json.dumps({"a": str(p.account_id), "s": p.state, "r": sorted(p.roles), "re": p.reauth_at.isoformat() if p.reauth_at else None}), ex=CACHE_TTL)
+
+
+def create(conn: psycopg2.extensions.connection, r: redis_sync.Redis, account_id: UUID, ip: str | None, ua: str | None) -> str:
+    raw, h = tokens.new_secret()
+    # Before the INSERT, so a rotation's own revoke_all cannot outrank the session it is
+    # rotating TO (NEW-3): that tombstone was stamped earlier than this instant.
+    loaded_at = _now_us(r)
+    with conn.cursor() as cur:
+        # The INSERT returns the principal's own four columns, so there is no second read
+        # of a row we just wrote and no impossible "not found" case to branch on or assert
+        # away (concern 4, round 2). `AS s` matters: unqualified `account_id` inside the
+        # roles subquery would bind to role_grant's OWN account_id and match every row.
+        # now() + interval, not the app clock: `expires_at` is read back as
+        # `expires_at > now()`, so one clock must own both ends (M4).
+        cur.execute("""INSERT INTO session AS s (id_hash, account_id, expires_at, ip, user_agent)
+                            VALUES (%s,%s, now() + %s::interval,%s,%s)
+                         RETURNING s.account_id,
+                                   (SELECT a.state FROM account a WHERE a.id = s.account_id),
+                                   s.reauth_at,
+                                   COALESCE((SELECT array_agg(g.role) FROM role_grant g WHERE g.account_id = s.account_id AND g.revoked_at IS NULL), '{}')""",
+                    (h, account_id, ABSOLUTE, ip, ua))
+        # INSERT ... RETURNING on a single-row VALUES always yields exactly one row.
+        row = cast("tuple[Any, ...]", cur.fetchone())
+    _cache_set(r, _principal(row, h), loaded_at)
+    return raw
+
+
+def resolve_cached(r: redis_sync.Redis, raw: str) -> Principal | None:
+    """The cache half of `resolve`, split out (not duplicated) in I3 fix round 1, Critical 3: it is
+    the ONLY half an authenticated request needs while the 60 s principal cache is warm, and
+    `app.auth.deps.current_principal` calls it first so the hot path opens no Postgres connection.
+    A miss here is not "no session" — only `resolve` can say that; it means "ask Postgres"."""
+    h = hash_id(raw)
+    # redis-py's sync/async command mixins share one ResponseT stub (Awaitable[Any] | Any); this client is sync.
+    cached = cast("bytes | str | None", r.get(f"session:{h}"))
+    if not cached:
+        return None
+    d = json.loads(cached)
+    return Principal(UUID(d["a"]), d["s"], frozenset(d["r"]), datetime.fromisoformat(d["re"]) if d["re"] else None, "session", h)
+
+
+def resolve(conn: psycopg2.extensions.connection, r: redis_sync.Redis, raw: str) -> Principal | None:
+    cached = resolve_cached(r, raw)
+    if cached:
+        return cached
+    h = hash_id(raw)
+    # The clock is read BEFORE Postgres: any sign-out or invalidation stamped at or after
+    # this instant must outrank the principal we are about to read (NEW-1).
+    loaded_at = _now_us(r)
+    p = _load(conn, h)
+    if p:
+        _cache_set(r, p, loaded_at)
+        return p
+    _prune_index(conn, r, h)
+    return None
+
+
+def _prune_index(conn: psycopg2.extensions.connection, r: redis_sync.Redis, h: str) -> None:
+    """A session id that no longer resolves — expired, idle, revoked — used to keep its
+    64-char hash in the account index for the index's full 30 days, and every later
+    sign-in reset that TTL, so a regular signer-in accumulated dead members without limit
+    (O1). Only `revoke()` ever pruned. The row still records whose session it was, so the
+    dead member can go now, on the one path that has just proved it is dead."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT account_id FROM session WHERE id_hash = %s", (h,))
+        row = cur.fetchone()
+    if row:
+        r.srem(f"account:{row[0]}:sessions", h)
+
+
+def touch(conn: psycopg2.extensions.connection, p: Principal) -> None:
+    with conn.cursor() as cur:
+        cur.execute("UPDATE session SET last_seen_at = now() WHERE id_hash = %s AND last_seen_at < now() - %s", (p.session_hash, TOUCH_EVERY))
+
+
+def set_reauth(conn: psycopg2.extensions.connection, r: redis_sync.Redis, p: Principal) -> None:
+    with conn.cursor() as cur:
+        cur.execute("UPDATE session SET reauth_at = now() WHERE id_hash = %s", (p.session_hash,))
+    r.delete(f"session:{p.session_hash}")
+
+
+def revoke(conn: psycopg2.extensions.connection, raw: str) -> tuple[str, UUID | None]:
+    """Ends ONE session and returns `(its id hash, the account that owned it or None)`.
+    **Postgres only** — `revoke_cache` is the other half, for after the commit.
+
+    Split for the reason `revoke_all` is (re-review O2, ruled 2026-09-07): deleting the cached
+    principal and stamping the tombstone inside the caller's transaction left a window in which a
+    concurrent `resolve` of the same cookie read `revoked_at IS NULL`, outranked the stamp and
+    re-cached a live principal — a signed-out cookie that went on working for up to `CACHE_TTL`.
+    """
+    h = hash_id(raw)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE session SET revoked_at = now() WHERE id_hash = %s RETURNING account_id", (h,))
+        row = cur.fetchone()
+    return h, (cast("UUID", row[0]) if row is not None else None)
+
+
+def revoke_cache(r: redis_sync.Redis, h: str, account_id: UUID | None) -> None:
+    """The Redis half of `revoke`, for AFTER the caller's transaction commits. `account_id` is
+    None when the raw id matched no row, and then there is no index to prune — the tombstone is
+    still stamped, which costs nothing and keeps the pair total.
+
+    One `MULTI`, like `revoke_all_cache` (re-review P1). Unbatched, the delete and the stamp were
+    separable: a racing `_cache_set` that had already passed its own tombstone check could land its
+    `SET` in the gap between them and leave a stale principal for the full `CACHE_TTL`. The general
+    form of that race is inherent and accepted (I4/NEW-1 — an in-flight reader whose Postgres read
+    precedes the change); this gap was not. The clock is read BEFORE the batch, because a value
+    queued in a `MULTI` cannot depend on a reply from inside it.
+    """
+    stamp = _now_us(r)
+    pipe = r.pipeline()
+    pipe.delete(f"session:{h}")
+    # Sign-out carries the same race invalidate_account does: a request that read this
+    # principal a moment ago may still be on its way to _cache_set (NEW-1).
+    pipe.set(_session_tombstone(h), stamp, ex=CACHE_TTL)
+    if account_id is not None:
+        pipe.srem(f"account:{account_id}:sessions", h)  # prune the index too, not just the cached principal (I5)
+    pipe.execute()
+
+
+def invalidate_account(r: redis_sync.Redis, account_id: UUID) -> None:
+    key = f"account:{account_id}:sessions"
+    members = cast("set[bytes | str]", r.smembers(key))
+    # Index FIRST, members second (I4): a `_cache_set` racing this then re-creates the
+    # index around its own session instead of having its SADD wiped a moment later, so
+    # the next invalidation can still find it.
+    r.delete(key)
+    if members:  # one DELETE for every cached principal, not one round trip each (M10)
+        r.delete(*(f"session:{h.decode() if isinstance(h, bytes) else h}" for h in members))
+    # Lives exactly as long as a cache entry could have, so an in-flight reader that
+    # already loaded a pre-change principal cannot install it behind us (I4). The stamp is
+    # what keeps that from also blocking principals read AFTER this point (NEW-3).
+    r.set(_account_tombstone(account_id), _now_us(r), ex=CACHE_TTL)
+
+
+def revoke_all(conn: psycopg2.extensions.connection, account_id: UUID) -> frozenset[str]:
+    """Ends every LIVE session of this account and returns their id hashes. **Postgres only.**
+
+    The Redis half is `revoke_all_cache`, which the caller runs once its transaction has COMMITTED
+    (I5c fix round 1, concern 2, ruled 2026-09-07). Splitting them is the whole point: this used to
+    mark `revoked_at` and delete the cached principals in one breath, inside the caller's
+    transaction, so a concurrent `resolve` landing between the deletion and the commit re-read the
+    still-live `session` row and re-cached the principal — a revoked account keeping its state and
+    roles for up to `CACHE_TTL`. The only thing standing in that window was the account tombstone,
+    which was itself stamped pre-commit; now the ordering is right AND the tombstone is still there.
+    """
+    with conn.cursor() as cur:
+        cur.execute("UPDATE session SET revoked_at = now() WHERE account_id = %s AND revoked_at IS NULL RETURNING id_hash",
+                    (account_id,))
+        return frozenset(cast("str", row[0]) for row in cur.fetchall())
+
+
+def revoke_all_cache(r: redis_sync.Redis, account_id: UUID, revoked: Collection[str],
+                     keep: Collection[str] = frozenset()) -> None:
+    """The Redis half of `revoke_all`, for AFTER the caller's transaction commits.
+
+    Clears the whole account index MINUS `keep`, plus the hashes `revoke_all` named. Both halves
+    of that matter (re-review O1, ruled 2026-09-07):
+
+    * **The index sweep** is what leaves no residue. `revoke_all` only matches rows with
+      `revoked_at IS NULL`, so a session already signed out — or whose row the nightly purge has
+      since deleted — is not in the set it returns; clearing only that set left such a principal
+      cached for the rest of its `CACHE_TTL`, and `deps.current_principal` returns a cache hit
+      BEFORE any expiry or state check, so that cookie went on working through a suspension.
+    * **`keep`** is the hashes the caller created inside the same transaction. `app.api.auth.change`
+      revokes every session and issues a NEW one, and a blind sweep would delete the cache entry
+      that rotation just wrote — the `/api/me` budget regression NEW-3 was fixed to stop. The kept
+      hash also stays IN the index, so the next invalidation can still find it.
+
+    The sweep can also take an entry it did not revoke — a session signed in between the commit and
+    this call — and that costs exactly ONE cache miss, not a minute of them (re-review P2): the
+    account tombstone is timestamped, and `_tombstoned_since` compares `stamp >= loaded_at`, so the
+    very next request reads Postgres once and re-caches the principal it read AFTER the stamp. That
+    is the strongest form of the argument for sweeping rather than clearing only what was named.
+
+    Every revoked session gets the same tombstone `revoke()` leaves for a single sign-out, and the
+    ACCOUNT tombstone is stamped as well: that is what stops a principal READ before the commit
+    from being installed after it, which no ordering can prevent.
+
+    All of it travels in ONE pipeline (re-review O5), so the cost is constant — the index read, the
+    clock, and a single batch — instead of one round trip per session as the tombstones used to be.
+    That `MULTI` spans two key prefixes, `session:*` and `account:*`, which would be a `CROSSSLOT`
+    error on a Redis CLUSTER (re-review P4). Railway runs a single-node Redis, and the code this
+    replaced already issued multi-key `DELETE`s, so nothing changes today — but if Redis is ever
+    clustered, give both prefixes a common hash tag (`session:{account}:…`) before this runs.
+    """
+    index = f"account:{account_id}:sessions"
+    indexed = {h.decode() if isinstance(h, bytes) else h for h in cast("set[bytes | str]", r.smembers(index))}
+    doomed = (indexed | set(revoked)) - set(keep)
+    stamp = _now_us(r)
+    pipe = r.pipeline()
+    if doomed:
+        pipe.delete(*(f"session:{h}" for h in doomed))
+        # SREM of every member empties the set, and Redis drops an empty set — so when nothing is
+        # kept the index goes with it, exactly as `invalidate_account`'s DELETE of it did.
+        pipe.srem(index, *doomed)
+        for h in doomed:
+            # One SET each, but pipelined: a tombstone carries its own TTL, which MSET cannot express.
+            pipe.set(_session_tombstone(h), stamp, ex=CACHE_TTL)
+    pipe.set(_account_tombstone(account_id), stamp, ex=CACHE_TTL)
+    pipe.execute()

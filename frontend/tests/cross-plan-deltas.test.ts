@@ -33,11 +33,20 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
     expect(md).toContain("there is one `browse` state, not `browse-listings`/`browse-market`");
   });
 
-  it('the identity plan executes the launch-removal list through the generator, not by hand-editing App.vue', () => {
+  it('the identity plan executes the launch-removal list through the D15 amendment engine, never by hand-editing App.vue or logic.js (A-I8, 2026-09-07)', () => {
     const md = read(IDENTITY);
-    expect(md).toContain('convert-dc.mjs --launch');
-    expect(md).toContain('gen:app:launch');
+    // A-I8 replaced the earlier `convert-dc.mjs --launch` idea: a second generator mode cannot
+    // coexist with one committed App.vue, and it would have left the oracle (the design file)
+    // showing the jump bar the app had lost. The prototype blocks now leave the DESIGN through
+    // ruled amendments (A6.x), and logic.js / App.vue are regenerated from it.
+    expect(md).toContain('D15 amendment mechanism');
+    expect(md).toContain('A6.1');
+    expect(md).toContain('gen:design');
+    expect(md).toContain('REGENERATED = pristine + amendments');
+    expect(md).not.toContain('gen:app:launch');
     expect(md).not.toContain('remove jump bar markup, `gateStates`, demo credentials');
+    // The one remaining mention of the old mode is the sentence that says why it was dropped.
+    expect(md.split('\n').filter((l) => l.includes('--launch')), 'the --launch mode may be named only where its rejection is explained').toHaveLength(1);
   });
 
   it('the map-engines plan names ListingsMap.vue only inside a "deleted in Browse V3" clause (spec D19) and rebases onto V3\'s engine shape', () => {
@@ -56,6 +65,21 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
     expect(md).toContain('panInside');
     expect(md).toContain('TooltipSpec');
     expect(md).toContain('one decision record');   // the basemap cross-reference, not a restatement
+  });
+
+  // I9a review, Important 1: the Census plan deleted `app/api/access.py` and its wrapper in the
+  // same commit that left Map engines M3 importing them — two documents of record contradicting
+  // each other, with the false one on the side an implementer builds from. The wrapper's whole
+  // reason for existing (decide `MARKET_DATA_PUBLIC`) now lives in `permissions.allowed`, so there
+  // is no shape of this plan in which the name is correct: neither plan may carry the token at all.
+  it('neither the census nor the map-engines plan names the deleted market-access wrapper (I9a Important 1)', () => {
+    for (const [plan, md] of [[CENSUS, read(CENSUS)], [MAP_ENGINES, read(MAP_ENGINES)]] as Array<[string, string]>) {
+      const offenders = md.split('\n').filter((l) => l.includes('market_access'));
+      expect(offenders, `${plan} still names the deleted market_access wrapper`).toEqual([]);
+    }
+    // …and both routers must name the permission that replaced it.
+    expect(read(CENSUS)).toContain('Depends(require("market.read"))');
+    expect(read(MAP_ENGINES)).toContain('Depends(require("market.read"))');
   });
 
   it('the census plan documents V3 rendering, the payroll label, the reserved word and the migration range', () => {
@@ -176,7 +200,13 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
     expect(md).toContain('spec D15');
     // Step 5 read 13 SAME / 0 MOVED once A1 paired by (tag, text, size) and the 28 px mobile
     // asking price came back, so the claim is all thirteen — not the twelve of the first pass.
-    expect(md).toContain('thirteen non-Browse screens are byte-identical to V2 again');
+    //
+    // Task I8a's launch removal (A6, ruled D-I8-6) then ENDED that byte-identity by taking the
+    // prototype jump bar off the top of every screen, so CLAUDE.md's sentence is dated rather
+    // than dropped (review round 1, I3). `tests/test_docs.py` pins the dating; this still pins
+    // the half that is A1's and does not expire — that A1's own effect is not understated.
+    expect(md).toContain('thirteen non-Browse screens');
+    expect(md).toContain('byte-identical to V2 again');
     expect(md).not.toContain('twelve of the thirteen');
     expect(md).not.toContain('option A makes it the proof');
     expect(md).not.toContain('V3 deliberately drops');

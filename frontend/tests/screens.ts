@@ -1,19 +1,31 @@
 import type { Page } from '@playwright/test';
-import { atTop, btn, click, jump, waitMap } from './harness';
+import { atTop, btn, click, reach, waitMap } from './harness';
 
 export interface Screen {
   name: string;
   viewport?: { width: number; height: number }; // default 1440×940 from the config
-  steps: (page: Page) => Promise<void>;         // identical clicks on reference and app, from the gate
+  steps: (page: Page) => Promise<void>;         // reach() the entry, then identical clicks on both targets
 }
 
+// Every state ENTERS through `reach()` (amendment A-I8) and is then driven by the same clicks
+// on both targets. The entry has to differ because the two targets are different things: the
+// reference is a static prototype and gets there through the design's own props (injected by
+// reference-server.mjs's `?props=`), the app signs in as a seeded account and deep-links the
+// route. What used to be shared — `jump()` on the prototype jump bar, the "Prototype — access
+// states" shortcuts, the jump bar's "Mobile view" toggle — leaves the design in A6.1/A6.2, so
+// there is nothing left to share. See harness.ts's `reach` for the two drivers.
+//
 // V3 (C1): Browse Practices is ONE screen — map with market data on the left, the results
 // rail on the right. There is no Listings / Market Data toggle and therefore no `market`
 // helper: every Browse state starts from `browse`.
-const browse = async (p: Page) => { await jump(p, 'Browse'); await waitMap(p); };
-const wizard = async (p: Page) => { await jump(p, 'Seller'); await click(p, 'Create a listing'); };
-const admin = async (p: Page) => { await jump(p, 'Admin'); };
-const mobile = async (p: Page) => { await click(p, 'Mobile view'); await jump(p, 'Browse'); };
+const browse = async (p: Page) => { await reach(p, { screen: 'browse' }); await waitMap(p); };
+const wizard = async (p: Page) => { await reach(p, { screen: 'seller' }); await click(p, 'Create a listing'); };
+const admin = async (p: Page) => { await reach(p, { screen: 'admin' }); };
+// D-I8-7: the phone frame is a PROTOTYPE presentation, not a browser resize — the harness
+// viewport stays the design's 1440×940. The "Mobile view" toggle that used to set it lived in
+// the jump bar, so it is asked for through `startViewport` now: `?props=` on the reference,
+// `?viewport=mobile` on the app.
+const mobile = async (p: Page) => { await reach(p, { screen: 'browse', viewport: 'mobile' }); };
 // App.vue's single position:fixed element — the interest modal's backdrop (see harness.ts's
 // `atTop`, which explains why this one state has to be pinned to the top of the page).
 const MODAL = 'div[style*="z-index: 900"]';
@@ -26,10 +38,16 @@ const PHONE = 'div[style*="width: 390px"][style*="height: 800px"]';
 const SHEET = 'div[style*="z-index: 700"]';
 
 export const SCREENS: Screen[] = [
-  { name: 'gate-signin', steps: async () => {} },
-  { name: 'gate-apply', steps: async (p) => { await click(p, 'Request access'); } },
-  { name: 'gate-pending', steps: async (p) => { await click(p, 'Pending approval'); } },
-  { name: 'gate-declined', steps: async (p) => { await click(p, 'Request declined'); } },
+  { name: 'gate-signin', steps: async (p) => { await reach(p); } },
+  // The design's own "Request access" link on the sign-in card (`goApply`) — a link, not a
+  // prototype shortcut, so it survives the launch removal and `reach` clicks it on the app.
+  { name: 'gate-apply', steps: async (p) => { await reach(p, { gate: 'apply' }); } },
+  // The two status gates were reached by the "Prototype — access states" buttons (A6.2 removes
+  // them). On the app they are now reached by BEING in that state: `reach` signs in as the
+  // seeded `pending@` / `declined@` account and A5.4's bootstrap maps the account's state to
+  // the gate. On the reference — no session, no API — the same gate comes from `startGate`.
+  { name: 'gate-pending', steps: async (p) => { await reach(p, { gate: 'pending', persona: 'pending' }); } },
+  { name: 'gate-declined', steps: async (p) => { await reach(p, { gate: 'rejected', persona: 'declined' }); } },
   { name: 'browse', steps: browse },
   // The Market data card's layer select (V3's `md.toggleLayerMenu` trigger). It is the first
   // aria-haspopup="listbox" on the screen; Compare's identical control is the second, and
@@ -59,9 +77,10 @@ export const SCREENS: Screen[] = [
   // the opposite of the screenshot (review L2; controller ruling 2026-09-07 amending D12).
   { name: 'browse-layers-open', steps: async (p) => { await browse(p); await click(p, 'Layers'); await p.getByRole('button', { name: 'Close layers' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
   { name: 'browse-market-panel', steps: async (p) => { await browse(p); await p.getByText('Cedar Park').first().click(); await p.getByText('View full listing').first().waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
-  { name: 'detail', steps: async (p) => { await jump(p, 'Listing'); } },
-  // The jump bar's default listing (Cedar Park / p1) always carries a pre-seeded pending
-  // request in the prototype's demo data (logic.js `state.requests`), so it never shows
+  { name: 'detail', steps: async (p) => { await reach(p, { screen: 'detail' }); } },
+  // The default listing (Cedar Park / p1 — `state.detailId`, and the route `reach` deep-links)
+  // always carries a pre-seeded pending request in the prototype's demo data (logic.js
+  // `state.requests`), so it never shows
   // "I'm interested" — only "Request sent". Open a listing with no seeded request instead
   // (Round Rock / p2) via a Browse results card.
   //
@@ -75,8 +94,8 @@ export const SCREENS: Screen[] = [
   // `results[].open` handler that broke `mobile-detail`, and the same ruling applies: use the
   // design's own route (controller, 2026-09-07).
   { name: 'interest-modal', steps: async (p) => { await browse(p); await p.getByText('Round Rock').first().click(); await click(p, 'View full listing'); await click(p, "I'm interested"); await atTop(p, MODAL); } },
-  { name: 'requests', steps: async (p) => { await jump(p, 'Requests'); } },
-  { name: 'seller-dash', steps: async (p) => { await jump(p, 'Seller'); } },
+  { name: 'requests', steps: async (p) => { await reach(p, { screen: 'requests' }); } },
+  { name: 'seller-dash', steps: async (p) => { await reach(p, { screen: 'seller' }); } },
   { name: 'wizard-step-1', steps: wizard },
   { name: 'wizard-step-7', steps: async (p) => { await wizard(p); await btn(p, /^7/).click(); } },
   { name: 'wizard-preview', steps: async (p) => { await wizard(p); await btn(p, /^8/).click(); } },
@@ -115,6 +134,9 @@ export const SCREENS: Screen[] = [
   // navigate on BOTH targets; controller ruling 2026-09-07 — the harness must not invent a
   // card navigation the design does not have). Waiting for the detail screen's own
   // "Exterior photo" band (V3:1522) keeps the step from ever silently no-opping again.
+  // (A2 has since given the mobile card its own navigation — see the `results[].open`
+  // characterisation in logic.test.ts — but this state stays on C13's pin route, which is
+  // what the CHANGE_LOG describes and what the baseline was taken through.)
   //
   // The ORDER is load-bearing: go straight to Map. A result-card tap first is not inert even
   // though nothing visible changes — it sets `activeId` (logic.js:1530), which makes the next

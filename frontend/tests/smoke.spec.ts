@@ -1,5 +1,5 @@
-import { test, expect, type Page } from '@playwright/test';
-import { booted, click, jump, prepare, waitMap } from './harness';
+import { test, expect, type BrowserContext, type Page } from '@playwright/test';
+import { appOrigin, booted, click, personaCredentials, personaSignIn, personaSignOut, prepare, reach, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
 import { SCREENS } from './screens';
 
 const ROUTES = ['/', '/browse', '/browse?tab=market', '/browse?tab=listings', '/practices/p1', '/requests', '/seller', '/admin?tab=data'];
@@ -22,22 +22,27 @@ test.describe('smoke', () => {
     });
   }
 
-  test('a deep link is honoured after the fixture sign-in, and a legacy ?tab= settles on Browse', async ({ page }) => {
+  // A-I8: the account is loaded before the app mounts (`main.ts` → `useMe().load()`), so a
+  // deep link into a member route is honoured by the SESSION — no gate click at all, where the
+  // prototype's fixture button used to be the only way this URL survived a cold load. The
+  // `?tab=market` is a legacy no-op kept deliberately: V3's Browse always shows market data.
+  test('a deep link is honoured for a signed-in account, and a legacy ?tab= settles on Browse', async ({ page }) => {
     await prepare(page);
-    await page.goto('/browse?tab=market');
-    await page.getByRole('button', { name: 'Approved — enter', exact: true }).click();
+    await signInAs(page, 'design', '/browse?tab=market');
     await expect(page).toHaveURL(/\/browse$/);
     await expect(page.getByRole('button', { name: /^Layers/ })).toBeVisible();
   });
 
+  // The design's OWN navigation — the header's four nav items, which only render once signed
+  // in — rather than the prototype jump bar's six. A6.1 removes the bar; this proves the
+  // routes are still written from the screens a member can actually reach.
   test('navigation writes the URL', async ({ page }) => {
     await prepare(page);
-    await page.goto('/');
-    await page.getByRole('button', { name: 'Browse', exact: true }).first().click();
+    await signInAs(page, 'design', '/browse');
     await expect(page).toHaveURL(/\/browse$/);
-    await page.getByRole('button', { name: 'Listing', exact: true }).first().click();
-    await expect(page).toHaveURL(/\/practices\/p1$/);
-    await page.getByRole('button', { name: 'Admin', exact: true }).first().click();
+    await page.getByRole('button', { name: 'My Requests', exact: true }).first().click();
+    await expect(page).toHaveURL(/\/requests$/);
+    await page.getByRole('button', { name: 'VIN Foundation Admin', exact: true }).first().click();
     await page.getByRole('button', { name: /^Data Sources\s*\d/ }).first().click();
     await expect(page).toHaveURL(/\/admin\?tab=data$/);
   });
@@ -64,8 +69,7 @@ test.describe('smoke', () => {
   test('no element inside any image-slot shadow root is focusable on the Listing screen', async ({ page }) => {
     await prepare(page);
     const errors = trapErrors(page);
-    await page.goto('/practices/p1');
-    await page.getByRole('button', { name: 'Approved — enter', exact: true }).click();
+    await signInAs(page, 'design', '/practices/p1');
     await expect(page).toHaveURL(/\/practices\/p1$/);
     await page.locator('image-slot').first().waitFor();
 
@@ -129,16 +133,18 @@ test.describe('smoke', () => {
   });
 
   // Performance gate (policy §3): the market map's first paint. The clock starts on the
-  // navigation, not after it — the deep link is signed in through the gate's fixture button,
-  // which is the only way this URL survives a cold load, so the budget covers boot + gate +
-  // the pending deep link + Leaflet's first paint. The `?tab=market` is a legacy no-op kept
-  // here deliberately: V3's Browse always shows market data. `[data-map]` is set by
-  // LeafletMapEngine.mount() once the map is on the page.
+  // NAVIGATION, so the budget covers everything a member pays for on a cold deep link —
+  // `main.ts`'s `/api/config` + `/api/me` (A-I8), the app's own boot, A5.4's bootstrap, the
+  // pending deep link and Leaflet's first paint. The session is established out of band
+  // beforehand, so the sign-in itself is not on the clock — the same as when a real member
+  // arrives with a cookie. The `?tab=market` is a legacy no-op kept here deliberately: V3's
+  // Browse always shows market data. `[data-map]` is set by LeafletMapEngine.mount() once the
+  // map is on the page.
   test('first map paint within budget', async ({ page }) => {
     await prepare(page);
+    await signInAs(page, 'design');                     // the cookie only; the clock starts below
     const started = Date.now();
     await page.goto('/browse?tab=market');
-    await page.getByRole('button', { name: 'Approved — enter', exact: true }).click();
     await page.locator('[data-map]').waitFor();
     const elapsed = Date.now() - started;
     expect(elapsed, `first map paint took ${elapsed}ms`).toBeLessThanOrEqual(1500);
@@ -153,8 +159,7 @@ test.describe('smoke', () => {
   // clicked again.
   test('opening Compare hides the floating "What this means" card; closing Compare brings it back (A4, spec D21)', async ({ page }) => {
     await prepare(page);
-    await booted(page);
-    await jump(page, 'Browse');
+    await signInAs(page, 'design', '/browse');
     await waitMap(page);
     const dismiss = page.locator('button[aria-label="Dismiss interpretation"]');
     await expect(dismiss).toBeVisible();
@@ -194,11 +199,12 @@ test.describe('mobile: the same map, market data in a sheet', () => {
     await expect(sheet(page)).toBeVisible();
   }
 
+  // D-I8-7: the phone frame is asked for through the URL now — the "Mobile view" toggle lived
+  // in the jump bar and left with it (A6.1). The harness viewport stays the design's 1440×940;
+  // 390×800 is the PROTOTYPE's frame drawn inside that page.
   async function mobileMap(page: Page) {
     await prepare(page);
-    await booted(page);
-    await click(page, 'Mobile view');
-    await jump(page, 'Browse');
+    await signInAs(page, 'design', '/browse?viewport=mobile');
     await click(page, 'Map');
     await waitMap(page);
   }
@@ -369,8 +375,7 @@ test.describe('mobile: the same map, market data in a sheet', () => {
 
   test('the desktop map keeps the basemap tabs the phone gives up', async ({ page }) => {
     await prepare(page);
-    await booted(page);
-    await jump(page, 'Browse');
+    await signInAs(page, 'design', '/browse');
     await waitMap(page);
     await expect(page.getByRole('button', { name: 'Satellite', exact: true }), 'the desktop map lost its basemap tabs').toHaveCount(1);
     await expect(page.getByRole('button', { name: 'Map', exact: true }), 'the desktop map lost its basemap tabs').toHaveCount(1);
@@ -427,9 +432,7 @@ test.describe('mobile: the same map, market data in a sheet', () => {
   // navigates directly, the same way V2's card and C13's second pin tap both do.
   test('tapping the first result card in the list reaches the detail screen (A2)', async ({ page }) => {
     await prepare(page);
-    await booted(page);
-    await click(page, 'Mobile view');
-    await jump(page, 'Browse');
+    await signInAs(page, 'design', '/browse?viewport=mobile');
     await phone(page).getByText('Revenue', { exact: false }).first().waitFor();
 
     const card = phone(page).locator('div[style*="cursor: pointer"]').filter({ hasText: 'Revenue' }).first();
@@ -489,5 +492,118 @@ test.describe('harness: atTop pins the interest modal against a scrolled capture
       'the interest-modal step left the page scrolled: its atTop() call is missing, so the modal\'s position:fixed overlay will be composited off-origin in the fullPage capture — the vin-swe Linux flake, back'
     ).toBe(0);
     expect(settled.stable, 'the overlay is still moving at the moment the capture would be taken').toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Amendment A-I7 — the proof that the harness sign-in reaches the REAL API. No stub and no
+// mock: `tests/targets.ts`'s `api` web server migrated the local Postgres, seeded the design
+// persona and is serving `app.main:app`, and Vite proxies `/api` to it with the Host header
+// intact. Three things are exercised here that nothing else in the suite touches — the
+// proxy, a `Secure` session cookie accepted over `http://localhost` (a trustworthy origin in
+// Chromium), and the Redis-cached principal behind `GET /api/me` — in a real browser.
+//
+// It asserts the SESSION, not the rendered screen — the screens are proved by visual.spec.ts
+// and dom.spec.ts, which now enter through it (`reach`). A-I8 executed the order this note
+// recorded: the sign-in existed and was proven here (I7), then `main.ts`'s `useMe().load()`
+// bootstrap made the app honour it and `screens.ts` switched off `jump()` (I8a commit 1), then
+// the jump bar went (I8a commit 3).
+// ---------------------------------------------------------------------------------------
+test.describe('harness: the design persona signs in against the real API (A-I7)', () => {
+  test('signInAsPersona leaves pm_session and pm_csrf on the context and /api/me answers the persona', async ({ page }) => {
+    await prepare(page);
+    await signInAsPersona(page);
+
+    const cookies = await page.context().cookies();
+    const session = cookies.find((c) => c.name === 'pm_session');
+    const csrf = cookies.find((c) => c.name === 'pm_csrf');
+    expect(session, 'no pm_session cookie — the sign-in never reached the API through Vite\'s /api proxy').toBeTruthy();
+    expect(session!.httpOnly, 'pm_session must stay HttpOnly: script must never be able to read it').toBe(true);
+    expect(csrf, 'no pm_csrf cookie — the app cannot echo the double-submit value in X-CSRF-Token').toBeTruthy();
+    expect(csrf!.httpOnly, 'pm_csrf is deliberately readable by script (app/api/auth.py:147)').toBe(false);
+
+    const me = await page.evaluate(() =>
+      fetch('/api/me', { credentials: 'same-origin' }).then((r) => r.json() as Promise<{ email: string; roles: string[] }>)
+    );
+    expect(me.email).toBe('design@practice-match.test');
+    expect(me.roles).toEqual(['admin', 'buyer', 'seller', 'staff']);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// The STATE-CHANGING half of the proxy proof (A-I7.2, review Important 2). Everything in the
+// test above is exempt from `deps.check_origin_and_csrf` — sign-in has no session yet and GET is
+// never checked — so none of it can catch the proxy rewriting the Host header. This can:
+// `POST /api/auth/reauth` is a cookie-session state change, so the API compares the browser's
+// `Origin` (http://localhost:5173) against `settings.origins` (empty on the api web server) plus
+// `str(request.url)`, which is built from the HOST header. It answers 200 only while Vite
+// preserves it; with `changeOrigin: true` the API sees http://localhost:8017 and refuses 403
+// ORIGIN. It also exercises the double-submit the app itself will use: `pm_csrf` read from
+// `document.cookie` by script, exactly as `src/auth/api.ts`'s `csrfToken()` does.
+//
+// In its OWN session, and signed out again in `finally` (re-review). `sessions.set_reauth`
+// stamps `session.reauth_at` for `deps.REAUTH_WINDOW` (10 minutes), and the memoised persona
+// session is shared by every other test in the worker — leaving THAT one re-authenticated would
+// let an I8 test asserting a REAUTH-gated action DEMANDS a step-up pass vacuously. It costs one
+// extra `SIGNIN_IP` attempt per run out of thirty, and `POST /api/auth/reauth` has no limiter.
+// ---------------------------------------------------------------------------------------
+test.describe('harness: the /api proxy preserves the Host header (A-I7.2)', () => {
+  test('POST /api/auth/reauth from the page is accepted, in a session of its own', async ({ browser }) => {
+    test.skip(!!process.env.PW_APP_URL, 'this proves Vite\'s /api proxy; a live deployment serves /api itself');
+
+    // Both the session and the context are created INSIDE the guarded region (re-review 2): with
+    // `personaSignIn()` outside it, a `browser.newContext()` that threw left a live session with
+    // nothing to sign it out, and its ten-minute step-up window outlived the run.
+    let cookies: PersonaCookies | undefined;
+    let context: BrowserContext | undefined;
+    let signOutStatus: number | undefined;
+    try {
+      cookies = await personaSignIn();
+      context = await browser.newContext({ baseURL: appOrigin() });
+      await context.addCookies(cookies);
+      const page = await context.newPage();
+      await prepare(page);
+      await page.goto('/');
+
+      const reauth = await page.evaluate(async (password) => {
+        const match = /(?:^|;\s*)pm_csrf=([^;]*)/.exec(document.cookie);
+        const response = await fetch('/api/auth/reauth', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': decodeURIComponent(match ? match[1] : '') },
+          body: JSON.stringify({ password })
+        });
+        return { csrfWasReadable: !!match, status: response.status, body: (await response.json()) as { status?: string; error?: { code?: string } } };
+      }, personaCredentials().password);
+
+      expect(reauth.csrfWasReadable, 'script could not read pm_csrf, so the app cannot echo the double-submit value').toBe(true);
+      expect(
+        reauth.status,
+        `POST /api/auth/reauth answered ${reauth.status} (${reauth.body.error?.code ?? 'no code'}) instead of 200. ` +
+        'An ORIGIN refusal here means Vite is rewriting the Host header — a `changeOrigin` on the ' +
+        '/api proxy — so deps.check_origin_and_csrf builds a different origin than the browser sent.'
+      ).toBe(200);
+      expect(reauth.body.status).toBe('reauthenticated');
+
+      // The cleanup is PROVEN, not hoped for: a `personaSignOut` that silently did nothing would
+      // leave this session's step-up window standing and this test would still have passed. The
+      // API answers 200 only after `sessions.revoke` has committed and dropped the cache entry.
+      //
+      // Checked from OUTSIDE the browser deliberately: asking the page for /api/me afterwards
+      // would log "Failed to load resource: … 401 (Unauthorized)" as a console error, which
+      // `prepare()`'s gate turns into a failure — a real 401 is the expected answer here.
+      //
+      // Asserted HERE rather than in the `finally`: an `expect` that threw from a `finally` would
+      // replace whatever failed above it, so a broken reauth would be reported as a broken
+      // sign-out.
+      signOutStatus = await personaSignOut(cookies);
+      expect(signOutStatus, 'personaSignOut did not end the session, so its 10-minute step-up window outlives this test').toBe(200);
+    } finally {
+      if (context) await context.close();
+      // The safety net: whatever failed above — including `browser.newContext()` itself — the
+      // session must not outlive this test. `signOutStatus` is set only by the happy path above,
+      // so this neither repeats it nor masks its failure.
+      if (cookies && signOutStatus === undefined) await personaSignOut(cookies);
+    }
   });
 });

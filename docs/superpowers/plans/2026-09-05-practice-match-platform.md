@@ -51,7 +51,7 @@
 | `frontend/tests/playwright.config.ts` | Two projects: `app`, `reference`; two web servers. |
 | `frontend/tests/reference-server.mjs` | Static server for the reference bundle. |
 | `frontend/tests/screens.ts` | The 25 screen states — one table, two targets. |
-| `frontend/tests/harness.ts` | Shared: tile blocking, settle, jump helpers. |
+| `frontend/tests/harness.ts` | Shared: tile blocking, settle, jump helpers. *(Amended 2026-09-07, identity Task I9a: the jump helpers were replaced by persona sign-in and `reach()` in Wave 2a Task I8a — see Task 3.)* |
 | `frontend/tests/reference-baselines.spec.ts` | Writes baselines from the reference. |
 | `frontend/tests/visual.spec.ts` | Asserts the app against baselines. |
 | `frontend/tests/smoke.spec.ts` | Routes render, no console errors, deep link → gate → state. |
@@ -61,7 +61,7 @@
 | `app/checks.py` | `check_db(url)`, `check_redis(url)` → dicts. |
 | `app/api/health.py` | `/api/healthz`, `/api/healthz/deep`, `/api/{path}` 404. |
 | `app/static.py` | SPA serving: `/_app` immutable, files, `index.html` fallback. |
-| `app/main.py` | App factory + wiring. |
+| `app/main.py` | App factory + wiring. *(Amended 2026-09-07, identity Task I9a review Minor 3: every `/api/*` route wired here must carry `Depends(require("<perm>"))` from `app/auth/deps.py` or have its `(method, path)` in `app.auth.permissions.PUBLIC_ROUTES` with a reason — `tests/auth/test_permissions.py::test_every_route_is_guarded_or_public` walks `create_app()` and fails closed on anything that is neither.)* |
 | `app/tasks/celery_app.py` | Celery instance + `ping`. |
 | `migrations/001_init.sql` | `CREATE EXTENSION IF NOT EXISTS postgis;` |
 | `scripts/migrate.py` | Ledger runner (`run(dsn) -> list[str]`, CLI `main()`). |
@@ -810,6 +810,16 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 **Interfaces:**
 - Produces: `stateToRoute(state: RoutedState): RouteTarget`; `routeToPatch(to: {path: string; params: Record<string, unknown>; query: Record<string, unknown>}): Partial<RoutedState>`; `guard(state: RoutedState & {auth?: boolean}, patch: Partial<RoutedState>): { apply: Partial<RoutedState>; pending: Partial<RoutedState> | null }` (signed-out + member screen → `apply = {screen:'gate', gate:'signin'}`, `pending = patch`); `needsPatch(state, patch): boolean`; `sameLocation(a: RouteTarget, b: {path: string; query: Record<string, unknown>}): boolean`; `useStateRouteSync(component, router)`.
+
+> **`guard()` was extended with permissions in Wave 2a (I7/I8a)** — amended 2026-09-07 (identity
+> Task I9a). It now takes a third argument, `ctx?: { me: Me | null }`, and answers in three ways
+> rather than two: signed out plus a member screen is still the gate with the request remembered;
+> signed IN but without the screen's permission (`ROUTE_PERMS[screen]`, checked through
+> `can(perm, me)` — the browser's twin of `app/auth/permissions.py`) is `{screen: 'gate', gate:
+> 'unavailable'}` with **no** pending route, because waiting for `auth` to flip would never help;
+> and with no `ctx` at all it falls back to exactly the prototype's rule above, which is what keeps
+> every pre-I7 caller and test honest. A permission-checked deep link is the point: a buyer who
+> pastes an `/admin` URL must not see the admin screen render and then empty.
 - Consumes: `Component` from `logic.js` — `state.screen`, `state.browseMode`, `state.detailId`, `state.adminTab`, `setState(patch)`.
 
 - [ ] **Step 1: Write the failing sync tests**
@@ -1065,6 +1075,33 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin fea
 **Interfaces:**
 - Produces: `SCREENS: Screen[]` with `{ name, viewport?, steps(page) }`; helpers `prepare(page)`, `settle(page)`, `jump(page, label)`, `click(page, text)`, `btn(page, nameRegex)`, `waitMap(page)`.
 - Consumes: the app at `http://localhost:5173/` (Task 2 routes) and the reference at `http://localhost:5174/`.
+
+> **The harness enters a state by PERSONA SIGN-IN now, not `jump()`** — amended 2026-09-07
+> (identity Task I9a; superseded by Wave 2a Tasks I7 and I8a). `jump(page, label)` drove the
+> design's own prototype jump bar, and amendments A6.1/A6.2 (ruled D-I8-6) took the bar, the
+> "Prototype — access states" shortcuts and the "Mobile view" toggle **out of the design** — so it
+> has nothing left to click on either target. The one entry point for all 28 states is
+> `reach(page, target)`, and it differs by target while everything after it stays identical, which
+> is what keeps one `steps()` function in `screens.ts` honest for both:
+>
+> * **app** — `signInAs(page, persona)` posts to the real `/api/auth/signin` out of band, the
+>   cookies go on the browser context, and the route is deep-linked (`ROUTE`: `/`, `/browse`,
+>   `/practices/p1`, `/requests`, `/seller`, `/admin`); `logic.js`'s A5.4 bootstrap turns the
+>   loaded account into the screen. Six accounts, seeded by `scripts/seed_persona.py`: three
+>   members (`buyer@`, `seller@`, `design@practice-match.test`, chosen so the account's COMPUTED
+>   `role` label reproduces the design's own fixture copy — A-I8.2/D-I8-8) and three applicants
+>   (`pending@`, `needs-review@`, `declined@`) for the gate states the shortcuts used to reach.
+> * **reference** — a static prototype with no session and no API. It enters through the design's
+>   own prototype props, which `tests/reference-server.mjs` injects per request from `?props=`
+>   (decision D-I8-3): `startScreen`, `startGate`, `startViewport` and `me` — the last being the
+>   same account the app signs in as, so both targets render the same header.
+>
+> The decisions are pure functions (`driverFor`, `personaFor`, `referenceMe`, `referenceUrl`,
+> `appPlan`) so `harness.test.ts` can pin them without a browser, and `PERSONA_PASSWORD` is one
+> test-only constant in two languages, pinned equal to `seed_persona.py`'s default by
+> `tests/test_docs.py::test_the_playwright_persona_password_default_matches_seed_persona`.
+> `jump()`/`click(p, 'Mobile view')` and the `jump(p, …)` calls in the `screens.ts` sketch below are
+> the pre-I8a shape; read `frontend/tests/harness.ts` and `screens.ts` for what shipped.
 
 - [ ] **Step 1: Install Playwright**
 
@@ -3614,6 +3651,19 @@ Expected: verify OK; smoke green; visual `25 passed` against the live QA build (
 
 **Nightly load smoke (policy §3):** add `scripts/k6-smoke.js` from `docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md` §5 and `.github/workflows/perf.yml` (schedule `0 6 * * *`; installs k6; runs against `https://qa.foundation.vin` with `MEMBER_TOKEN` from a GitHub secret — the operator token until SP2). Test first: `tests/test_docs.py::test_perf_workflow_targets_qa_with_thresholds` asserts the workflow file exists, names `qa.foundation.vin`, and `k6-smoke.js` declares `p(95)<400` and `rate==0`. Run the workflow manually once (`gh workflow run perf.yml`) and record the p95 in `DEPLOY.md`. *Amended 2026-09-06 (John, option 2 — see Task 10c):* until Sub-project 2 the script hits only `/api/healthz` and no member token is used; the manual run happens after the merge, from `main`.
 
+> **The token that returns with SP2 is `PM_API_TOKEN`, not `MEMBER_TOKEN`** — amended 2026-09-07
+> (identity Task I9a). It is an `api_token` an admin mints on QA through `POST /api/admin/tokens`
+> with `{"name": "k6-qa", "role": "buyer", "days": …}` (`DEPLOY.md` → Automation tokens): the value
+> is shown once, only its SHA-256 is stored, and it is presented as
+> `Authorization: Bearer pm_<id>.<secret>` with no cookie and no CSRF header. John sets it as a
+> GitHub Actions secret in **both** repositories — never a file, exactly as the line above says of
+> its predecessor. `buyer` is the right role because the nightly reads member-visible endpoints and
+> nothing more; a token can never re-authenticate or manage tokens, so even a leaked one cannot act
+> administratively. The rename is not cosmetic: `tests/test_docs.py::test_perf_workflow_targets_qa_with_thresholds`
+> asserts `"MEMBER_TOKEN" not in` both the workflow and the k6 script (Task 10c), so bringing the
+> old name back would fail the docs gate. Wiring it up is identity **Task I9b**, once the secret
+> exists; Task I9a left `perf.yml` and `scripts/k6-smoke.js` untouched.
+
 - [ ] **Step 3b (added 2026-09-06): `DEPLOY.md` note** — `scripts/verify-deploy.sh` asserts the deployed `commit_sha` equals `EXPECT_SHA`; unset OR empty both fall back to the current checkout's `git rev-parse --short HEAD` (bash `${EXPECT_SHA:-…}` treats them identically — verified by the Task 8 round-2 re-review: `EXPECT_SHA=""` inside a checkout still asserts against local HEAD); a non-empty value is compared verbatim; the assertion is skipped ONLY when the script runs outside a git checkout. When the branch has moved past the deployed tree, pass `EXPECT_SHA=<deployed sha>` explicitly (as done for QA at `087acc1`). Two sentences next to the `SKIP_VERIFY` rule; the drift test asserts `EXPECT_SHA` appears in `DEPLOY.md`. The Task 8 report's "explicitly empty disables the check" wording is wrong and must not be copied.
 - [ ] **Step 4: Production** — *Gate added 2026-09-06 (John, after seeing the prototype jump bar on qa.foundation.vin): the bar stays on QA (`ENVIRONMENT=qa`) and must be OFF in production. Before `scripts/deploy.sh production`, the controller shows John the QA-verified state and gets his explicit go; after the deploy, the served production bundle must contain `prototypeBar:{type:Boolean,default:!1}` (the Task 8 check) and the gate screen must render without the bar — if either fails, roll back and STOP.*
 
@@ -5666,7 +5716,7 @@ export default function () {
   }
 }
 ```
-The policy's §5 fenced block becomes the same text; its §3 row reads "p95 ≤ 400 ms on the read endpoints (health only until SP2), error rate 0 %, no 5xx" and drops "member token from a QA secret". `.github/workflows/perf.yml`: remove the `MEMBER_TOKEN` env line and rewrite the header comment's last two sentences: "Until Sub-project 2 the script hits only `/api/healthz`, so no member token is needed; the four-endpoint list and the token secret return with SP2."
+The policy's §5 fenced block becomes the same text; its §3 row reads "p95 ≤ 400 ms on the read endpoints (health only until SP2), error rate 0 %, no 5xx" and drops "member token from a QA secret". `.github/workflows/perf.yml`: remove the `MEMBER_TOKEN` env line and rewrite the header comment's last two sentences: "Until Sub-project 2 the script hits only `/api/healthz`, so no member token is needed; the four-endpoint list and the token secret return with SP2." *(Amended 2026-09-07, identity Task I9a: the secret that returns is `PM_API_TOKEN` — see the note under Task 10's nightly-load-smoke paragraph.)*
 
 - [ ] **Step 3: GREEN** — `poetry run pytest tests/test_docs.py -q -W error`; `poetry run ruff check app tests scripts`; `node --check scripts/k6-smoke.js`.
 - [ ] **Step 4: Commit** — `git add scripts/k6-smoke.js .github/workflows/perf.yml docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md tests/test_docs.py` · `chore(perf): nightly load smoke hits only /api/healthz until Sub-project 2; member token removed until then (John's ruling)` with the trailer.
@@ -5934,4 +5984,4 @@ Run: `poetry run pytest tests/test_static.py tests/test_health.py -q -W error` �
 - **Spec coverage:** §1 scope → Tasks 1–10; §2 layout/stack → Tasks 1, 5, 7, 9; §3 frontend edits (paths, Leaflet, router, env props, DS cascade) → Tasks 1–2; §4 harness (state table, two targets, determinism, tolerance, 25 states) → Tasks 3–4 (+ CI regeneration in Task 9); §5 backend (healthz bodies, deep, SPA, config fail-fast, migrations, Celery/roles) → Tasks 5–7; §6 Railway/DNS/deploy loop → Tasks 8, 10; §7 CI/docs → Task 9; §8 tests → every task; §9 hand-offs → Task 10; §10 DoD → Task 10 step 6.
 - **Deviation from spec, recorded:** baselines are regenerated from the reference in every CI run rather than committed as Linux PNGs (spec §4 said "committed"). Simpler, no binary churn, same oracle. The spec is amended in the same commit as this plan.
 - **Placeholder scan:** no TBD/TODO; the only intentionally blank cells are the two DNS values Railway prints at Task 8 step 7, filled in Task 10 step 2.
-- **Type consistency:** `stateToRoute/routeToPatch/needsPatch/sameLocation` names match across Task 2 files and tests; `SCREENS`/`Screen`, `prepare/booted/settle/jump/click/btn/waitMap` match across Tasks 3–4 and 10; `check_db/check_redis/create_app(dist)` match Tasks 5–7; `run(dsn, directory)`/`normalize_dsn` match Task 6 tests and conftest; `SKIP_VERIFY` matches Task 8 script and test.
+- **Type consistency:** `stateToRoute/routeToPatch/needsPatch/sameLocation` names match across Task 2 files and tests; `SCREENS`/`Screen`, `prepare/booted/settle/jump/click/btn/waitMap` match across Tasks 3–4 and 10 (*amended 2026-09-07, identity Task I9a: `jump` is gone since Wave 2a Task I8a and the set is `prepare/booted/settle/reach/click/btn/waitMap` — `reach()` plus `signInAs`/`PERSONAS`, per Task 3*); `check_db/check_redis/create_app(dist)` match Tasks 5–7; `run(dsn, directory)`/`normalize_dsn` match Task 6 tests and conftest; `SKIP_VERIFY` matches Task 8 script and test.

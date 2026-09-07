@@ -2,7 +2,9 @@ import json
 import re
 import tomllib
 from pathlib import Path
+from typing import cast
 
+import pytest
 import yaml
 
 from app.config import Settings
@@ -20,12 +22,17 @@ DOCS = [ROOT / "README.md", ROOT / "CLAUDE.md", ROOT / "DEPLOY.md", *sorted((ROO
 REQUIRED_CI_COMMANDS = (
     "poetry run ruff check app tests scripts",
     "poetry run mypy app --strict",
+    "scripts/bootstrap_admin.py scripts/seed_persona.py --strict",
     "poetry run pytest -q -W error",
-    # P14 C4 (2026-09-07): main's backend gate is now the 100 % app+scripts BRANCH gate that
-    # Wave 2a's branch already runs. It was `--cov=app --cov-fail-under=90` while two
-    # pre-existing gaps stood open (app/db.py's other-loop disposal arm and
-    # scripts/migrate.py's `__main__` guard); both are covered now, so nothing has to be
-    # relaxed to keep it green.
+    # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
+    # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
+    # `tests/test_migrate.py::test_cli_entrypoint_runs_main_when_executed_as___main__`.
+    # P14 C4 (2026-09-07) then raised main's own gate to the same 100 % app+scripts BRANCH gate
+    # (it had been `--cov=app --cov-fail-under=90` while two pre-existing gaps stood open:
+    # app/db.py's other-loop disposal arm and scripts/migrate.py's `__main__` guard). Both are
+    # covered now, so nothing has to be relaxed to keep it green. Asserted as one joined
+    # substring — the stricter of the two forms the merge inherited, since it also pins the
+    # flags' order and adjacency in quality.yml.
     "--cov=app --cov=scripts --cov-branch",
     "--cov-report=xml",
     "--cov-fail-under=100",
@@ -34,6 +41,7 @@ REQUIRED_CI_COMMANDS = (
     "bash tests/scripts/test_deploy_guard.sh",
     "bash tests/scripts/test_deploy_archive.sh",
     "bash tests/scripts/test_verify_deploy.sh",
+    "bash tests/scripts/test_bootstrap_admin.sh",
     "diff-cover coverage.xml --compare-branch=origin/main --fail-under=100",
     "npx vue-tsc --noEmit",
     "npm run build",
@@ -45,7 +53,7 @@ REQUIRED_CI_COMMANDS = (
 
 # Fix round 1, item 1: the tools quality.yml runs must be tracked dependencies, not installed
 # ad hoc inside the job.
-FORBIDDEN_CI_SUBSTRINGS = ("pip install", "npm install --no-save")
+FORBIDDEN_CI_SUBSTRINGS = ("pip install", "npm install --no-save", "--cov-fail-under=9")
 
 # Fix round 1's frontend-coverage ruling (John, 2026-09-06) plus the app.setup.js addition
 # ratified in fix round 2 — the exact set frontend/vite.config.ts's coverage.exclude must carry.
@@ -313,6 +321,39 @@ def test_reference_server_serves_the_coming_soon_design():
     assert "docs/design-reference/coming-soon" in (ROOT / "frontend" / "tests" / "reference-server.mjs").read_text()
 
 
+def test_deploy_md_documents_automation_tokens_and_their_two_exceptions():
+    """Task I5b (controller ruling, 2026-09-07 — concern 2). An `api_token` may now carry `staff`
+    or `admin`, so the operator page has to say who mints one and — the part that makes a standing
+    administrative bearer safe to hand out — the two things it can never do."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "## Automation tokens" in text
+    assert "POST /api/admin/tokens" in text and "Bearer pm_<id>.<secret>" in text
+    assert "90 days" in text
+    assert "re-authenticate" in text and "manage tokens" in text
+    assert "/api/admin/tokens/{id}/revoke" in text
+    # I5b review M1: removing a staff/admin grant revokes the tokens that account may no longer
+    # mint, so the page must not leave an operator thinking they have to hunt them down by hand.
+    assert "grant_removed" in text
+
+
+def test_deploy_md_says_an_applied_migration_is_immutable():
+    """Task I5c (controller ruling, 2026-09-07 — concern 6). `scripts/migrate.py` records each
+    file's SHA-256 from f3b7d41 and refuses to run when an applied file has changed, so the
+    operator page has to say what exit 4 means and what to do about it — the alternative is
+    learning it from a container that will not start."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "An applied migration is immutable" in text
+    assert "SHA-256" in text and "exit 4" in text
+    assert "drop and recreate the database or restore the file" in text
+    # ...and that no persistent environment is affected today: QA and production predate Wave 2a.
+    assert "b9d01ad" in text
+    # Fix round 1, L4: the guarantee is not retroactive — a row applied before f3b7d41 carries no
+    # checksum and is never checked, so `001`/`002` on QA and production stay silently mutable.
+    assert "Enforcement begins with the files applied from `f3b7d41` onward" in text
+    assert "carry no checksum and are not checked" in text
+    assert "001_init.sql" in text
+
+
 def test_dockerfile_copies_the_build_sha_stamp_with_the_optional_glob_form():
     """P14: /app/BUILD_SHA is what /api/healthz reports as commit_sha, and scripts/deploy.sh
     writes it into the archive it uploads. A build whose context has no stamp (a local
@@ -420,8 +461,14 @@ def test_claude_md_gate_includes_the_dom_oracle():
     assert "--project=app" in scripts["test:e2e"], scripts["test:e2e"]
     # …and no spec filter, or it would not be all three suites.
     assert "spec.ts" not in scripts["test:e2e"], scripts["test:e2e"]
-    ops = [line for line in text.splitlines() if line.startswith("cd frontend &&") and "test:" in line]
+    # `in`, not `startswith`: A-I7.2 prefixes the e2e line with `docker compose … up -d &&`,
+    # because the `app` project now starts the real API against the compose Postgres/Redis. The
+    # assertion is unchanged — the block must still run the DOM oracle, not the pixel gate alone.
+    ops = [line for line in text.splitlines() if "cd frontend &&" in line and "test:" in line]
     assert any("npm run test:e2e" in line for line in ops), "the Common operations block still runs the pixel gate alone"
+    assert any("docker compose -f docker-compose.dev.yml up -d" in line for line in ops), (
+        "the Common operations e2e line no longer starts the compose Postgres/Redis the app project's API needs"
+    )
 
 
 # The two plan sites that print the coverage-exclusion list as prose. Both are historical
@@ -446,3 +493,352 @@ def test_plans_that_print_the_coverage_exclusions_carry_the_f1_note():
         text = (ROOT / "docs" / "superpowers" / "plans" / name).read_text()
         assert "'src/dc-logic.js'" in text or "`src/dc-logic.js`" in text, f"{name}: expected the exclusion list here"
         assert F1_NOTE in text, f"{name} prints the old exclusion list without the F1 re-ratification note"
+
+
+def test_the_playwright_persona_password_default_matches_seed_persona():
+    """A-I7: `frontend/tests/harness.ts` signs the Playwright `app` project in as the design
+    persona with `PERSONA_PASSWORD` or the default below; `scripts/seed_persona.py` writes the
+    Argon2id hash of `PERSONA_PASSWORD` or ITS default. They are one documented test-only
+    constant in two languages, and if they drift every `app`-project run answers 401 at a point
+    far from the cause — so they are pinned equal here, where the failure names the two files."""
+    seeded = re.search(r'^DEFAULT_PASSWORD = "([^"]+)"', (ROOT / "scripts" / "seed_persona.py").read_text(), re.MULTILINE)
+    presented = re.search(r"^export const PERSONA_DEFAULT_PASSWORD = '([^']+)';",
+                          (ROOT / "frontend" / "tests" / "harness.ts").read_text(), re.MULTILINE)
+    assert seeded, "scripts/seed_persona.py no longer defines DEFAULT_PASSWORD"
+    assert presented, "frontend/tests/harness.ts no longer defines PERSONA_DEFAULT_PASSWORD"
+    assert presented.group(1) == seeded.group(1)
+
+
+def test_claude_md_does_not_claim_v2_byte_identity_after_the_launch_removal():
+    """Review round 1, I3. Two sentences in CLAUDE.md outlived their truth: the thirteen non-Browse
+    screens WERE byte-identical to V2 from Task V13 until Task I8a's launch removal (A6, ruled
+    D-I8-6) took the prototype jump bar off the top of every screen, and `baseline-manifest.json`
+    held the V1-era V2 hashes until the same commit re-froze it. Nothing pinned either, so both
+    went stale silently — which is the whole failure mode this file exists to prevent.
+
+    V2 itself is unaffected: it remains the pre-V3 oracle a suspected regression is diffed
+    against, which is a different job from being what the gates compare to."""
+    text = (ROOT / "CLAUDE.md").read_text()
+    assert "byte-identical to V2 again, hashes and all, **until the launch removal**" in text, (
+        "CLAUDE.md must date the V2 byte-identity claim to before the launch removal"
+    )
+    assert "V1-era V2 hashes" not in text, "CLAUDE.md still says the manifest holds the V1-era V2 hashes"
+    assert "post-launch-removal hashes" in text, "CLAUDE.md does not say what the manifest holds now"
+    assert "D-I8-6" in text, "the ruling that moved the baselines is not cited"
+    # …and the gate line, which made the same claim without a date.
+    gate = next(line for line in text.splitlines() if line.startswith("- **Verification gate"))
+    assert "until the launch removal" in gate, gate
+    # V2's actual job survives.
+    assert "remains the **pre-V3 oracle**" in text
+
+
+def test_claude_md_counts_the_five_prototype_props_and_says_which_are_read():
+    """Review round 1, M5. The launch-removal section said "the four prototype props" after A5.7
+    added a fifth, and described `prototypeBar` as one of the reference's ways into a state — but
+    A6.4b removed the only expression that ever read it, so it is declared for the parity check in
+    `app-generated.test.ts` and for nothing else."""
+    text = (ROOT / "CLAUDE.md").read_text()
+    assert "All five prototype props stay **declared**" in text
+    assert "the four prototype props" not in text
+    assert "`prototypeBar` is declared for that parity check alone" in text
+    # The five, by name, in the section that lists them.
+    section = text.split("## Launch-removal list")[1]
+    for prop in ("prototypeBar", "startScreen", "startViewport", "startGate", "me"):
+        assert f"`{prop}`" in section, prop
+
+
+def _harness_personas() -> dict[str, dict[str, object]]:
+    """`frontend/tests/harness.ts`'s `PERSONAS`, read without a TypeScript parser.
+
+    Each entry is written as ONE line precisely so this pin can read it; the file says so beside
+    them. The strings are what the reference is handed through the `me` prototype prop (A5.7) and
+    therefore what the design's own header renders on the oracle."""
+    source = (ROOT / "frontend" / "tests" / "harness.ts").read_text()
+    pattern = (r"^  (\w+): \{ email: '([^']+)', name: '([^']+)', role: '([^']+)', "
+               r"initials: '([^']+)', state: '([^']+)', roles: \[([^\]]*)\] \},?$")
+    found: dict[str, dict[str, object]] = {}
+    for m in re.finditer(pattern, source, re.MULTILINE):
+        key, email, name, role, initials, state, roles = m.groups()
+        found[key] = {"email": email, "name": name, "role": role, "initials": initials, "state": state,
+                      "roles": tuple(r.strip().strip("'") for r in roles.split(",") if r.strip())}
+    assert len(found) == 6, f"expected the six harness personas as one line each, read {sorted(found)}"
+    return found
+
+
+def test_the_harness_personas_are_the_accounts_seed_persona_seeds_with_the_labels_the_api_computes():
+    """A-I8.2 / D-I8-8: the visual oracle's personas are ONE fact in two languages.
+
+    Since amendment A5.4 the account menu renders `/api/me`'s computed `role` and `initials`
+    (spec §4, `app/api/auth.py::me_payload`), and `app.auth.labels` derives both from the account's
+    grants and display name. The harness holds each persona's payload as a constant, because the
+    REFERENCE is handed it through the `me` prototype prop (A5.7) — so if these strings and
+    `labels.py` ever disagree, the reference and the app render different headers and every
+    member-screen baseline is wrong. Pinned per persona, and the drift can come from either side."""
+    from app.auth.labels import initials, role_label
+    from scripts import seed_persona
+
+    seeded_roles: dict[str, tuple[str, ...]] = {
+        seed_persona.PERSONA_EMAIL: seed_persona.PERSONA_ROLES,
+        **{email: roles for email, roles in seed_persona.ORACLE_PERSONAS},
+        **{email: () for email, _state, _name in seed_persona.STATE_PERSONAS},
+    }
+    seeded_names: dict[str, str] = {
+        seed_persona.PERSONA_EMAIL: seed_persona.PERSONA_NAME,
+        **{email: seed_persona.PERSONA_NAME for email, _roles in seed_persona.ORACLE_PERSONAS},
+        **{email: name for email, _state, name in seed_persona.STATE_PERSONAS},
+    }
+    # Only the three members carry an affiliation; an applicant has none to confirm yet, which is
+    # rather the point for `declined@`.
+    members = {seed_persona.PERSONA_EMAIL, *(email for email, _roles in seed_persona.ORACLE_PERSONAS)}
+    seeded_states: dict[str, str] = {email: state for email, state, _name in seed_persona.STATE_PERSONAS}
+
+    for key, persona in _harness_personas().items():
+        email = str(persona["email"])
+        assert email in seeded_roles, f"{key} names {email}, which scripts/seed_persona.py does not seed"
+        assert persona["roles"] == tuple(sorted(seeded_roles[email])), (key, persona["roles"])
+        assert persona["name"] == seeded_names[email], (key, persona["name"])
+        assert persona["state"] == seeded_states.get(email, "active"), (key, persona["state"])
+        affiliation = seed_persona.PERSONA_AFFILIATION if email in members else None
+        assert persona["role"] == role_label(frozenset(seeded_roles[email]), affiliation), (key, persona["role"])
+        assert persona["initials"] == initials(seeded_names[email]), (key, persona["initials"])
+
+
+def test_the_buyer_persona_reproduces_the_design_fixture_label_letter_for_letter():
+    """A-I8.2, the invariant the nineteen buyer-family baselines rest on.
+
+    John's rule for this wave is that the approved design's copy does not change, so the oracle
+    persona was chosen to fit the design: `labels.role_label({"buyer"}, "StartUp Club")` must
+    reproduce `logic.js`'s fixture `state.me.role` exactly, or the reference and the app disagree on
+    the header of every buyer-family state and nineteen baselines move that should not."""
+    from app.auth.labels import initials, role_label
+    from scripts import seed_persona
+
+    design = (ROOT / "docs" / "design-reference" / "design_handoff_practice_match_v3" / "Practice Match V3.dc.html").read_text()
+    match = re.search(r'^    me: \{ name: "([^"]+)", role: "([^"]+)", initials: "([^"]+)" \}$', design, re.MULTILINE)
+    assert match, "the design's fixture persona is no longer the single line this pin reads"
+    name, role, inits = match.groups()
+
+    buyer_roles = dict(seed_persona.ORACLE_PERSONAS)["buyer@practice-match.test"]
+    assert role == role_label(frozenset(buyer_roles), seed_persona.PERSONA_AFFILIATION), role
+    assert name == seed_persona.PERSONA_NAME, name
+    assert inits == initials(seed_persona.PERSONA_NAME), inits
+    # And the harness must be handing that same account to the buyer-family states.
+    assert _harness_personas()["buyer"]["role"] == role
+
+
+def _users_ts_literal(name: str) -> object:
+    """One of the three exported JSON literals in `frontend/src/admin/users.ts`.
+
+    They are written as JSON on one line each precisely so this test can read them without a
+    TypeScript parser; the file says so beside them."""
+    source = (ROOT / "frontend" / "src" / "admin" / "users.ts").read_text()
+    match = re.search(rf"^export const {name}(?:: [^=]+)? = (.+);$", source, re.MULTILINE)
+    assert match, (
+        f"frontend/src/admin/users.ts: {name} is not a single-line exported literal, so this "
+        f"cross-language pin cannot read it. Each of NOTE_REQUIRED, ACTIONS and PILLS is written "
+        f"as double-quoted JSON on ONE line for exactly that reason; the file says so beside them."
+    )
+    try:
+        return json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        # Outside the `except`, so the failure is ONE named line rather than a chained
+        # JSONDecodeError naming a column in a string nobody can see from here (re-review).
+        reason = str(exc)
+    pytest.fail(
+        f"frontend/src/admin/users.ts: {name} is no longer DOUBLE-QUOTED JSON on a single line, "
+        f"so this cross-language pin cannot read it ({reason}). Each of NOTE_REQUIRED, ACTIONS "
+        f"and PILLS is written that way for exactly that reason; the file says so beside them. "
+        f"Got: {match.group(1)[:120]}"
+    )
+
+
+def test_the_admin_users_tables_match_the_api():
+    """Review Minor 3: the Admin Users table's three decision tables were hand-transcribed from
+    `app/api/admin_users.py` with nothing watching them.
+
+    A fifth note-required action added on the server would have left the UI POSTing a blank note
+    and taking a 422 at click time; an action offered from a state `TRANSITIONS` refuses would
+    have taken a 409 the same way; and an account state the API can report with no pill would
+    have rendered its raw key. The design deliberately offers a SUBSET of the transitions (the
+    API also allows `revoke` from five other states), so what is pinned is that the subset is
+    legal — not that it is complete."""
+    from app.api.admin_users import ACCOUNT_STATES, NOTE_REQUIRED, TRANSITIONS
+
+    assert _users_ts_literal("NOTE_REQUIRED") == list(NOTE_REQUIRED)
+    assert sorted(cast("dict[str, object]", _users_ts_literal("PILLS"))) == sorted(ACCOUNT_STATES)
+    for state, offered in cast("dict[str, list[str]]", _users_ts_literal("ACTIONS")).items():
+        for action in offered:
+            assert action in TRANSITIONS, f"the Admin Users table offers {action!r}, which app/api/admin_users.py has no transition for"
+            assert state in TRANSITIONS[action][0], f"the Admin Users table offers {action!r} from {state!r}, which the API refuses"
+
+
+# --- Task I9a: the identity wave's operator documentation -----------------------------------------
+# Four tests: two are PINS on what I4-I6 and I8a already made true (the variables, the launch
+# removal), two watch documentation this task wrote (the runbook's endpoints, the Resend DNS table).
+# `test_operator_token_is_retired` is deliberately NOT here: controller amendment A-I9 (2026-09-07)
+# splits I9, and the retirement of `API_SECRET_KEY` / `app/api/auth_stub.py` waits for the
+# `PM_API_TOKEN` GitHub secret to exist (Task I9b).
+
+
+IDENTITY_VARIABLES = ("RESEND_API_KEY", "RESEND_WEBHOOK_SECRET", "EMAIL_ALLOWLIST", "LINK_BASE_URL", "HIBP_ENABLED",
+                      "CONSOLIDATOR_KEYWORDS", "MAIL_REPLY_TO", "PERSONA_PASSWORD", "MARKET_DATA_PUBLIC", "DB_POOL_MAX")
+
+
+def _undocumented(name: str, deploy: str, example: str) -> list[str]:
+    """The documents in which `name` is not DOCUMENTED — which is a stronger claim than present.
+
+    `DEPLOY.md` must carry it as a backticked name (`` `VAR` ``, which is how every row of the
+    Variables table names its variable) or as a whole table cell (`| VAR |`). `.env.example` must
+    carry it as a line that assigns it, set or commented out — `VAR=` or `# VAR=`, the same form
+    `test_every_setting_is_documented_in_env_example_and_deploy_md` requires of every `Settings`
+    field.
+
+    Both patterns are bounded, and that is the point (I9a fix round 1, Minor 5). This test used to
+    ask `var in text`, and the mutation probe meant to prove it bites did not: renaming the
+    `.env.example` row to `# PROBE_REMOVED_PERSONA_PASSWORD=` left it GREEN, because the token was
+    still a substring of the longer name. A bare substring proves a name appears somewhere in a
+    document — in a sentence, inside another identifier, in a code block about something else — not
+    that an operator can find the row that tells them what to set."""
+    missing = []
+    if not re.search(rf"(?:`{re.escape(name)}`|\|\s*{re.escape(name)}\s*\|)", deploy):
+        missing.append("DEPLOY.md")
+    if not re.search(rf"(?m)^#?\s*{re.escape(name)}=", example):
+        missing.append(".env.example")
+    return missing
+
+
+def test_identity_variables_are_documented():
+    """Every variable Wave 2a introduced, in BOTH documents, as a row rather than a mention.
+
+    `test_every_setting_is_documented_in_env_example_and_deploy_md` above already covers each field
+    of `Settings`, which is most of this list. `PERSONA_PASSWORD` is the one that is NOT a setting —
+    nothing in the api or the worker reads it, only `scripts/seed_persona.py` does — so it is the one
+    that could have left both documents with nothing to notice."""
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    example = (ROOT / ".env.example").read_text()
+    undocumented = {var: where for var in IDENTITY_VARIABLES if (where := _undocumented(var, deploy, example))}
+    assert undocumented == {}, f"identity variables not documented as a row: {undocumented}"
+
+
+def test_launch_removal_list_is_executed():
+    """A PIN, not a change: Task I8a executed CLAUDE.md's launch-removal list through the D15
+    amendment engine (A6/A7, ruled D-I8-6), so the list left the DESIGN and the generated files
+    lost it with it. This is what stops any of it coming back — a regenerated `App.vue`/`logic.js`
+    carrying the jump bar, the access-state shortcuts or the demo credentials fails here."""
+    app_vue = (ROOT / "frontend" / "src" / "App.vue").read_text()
+    logic = (ROOT / "frontend" / "src" / "logic.js").read_text()
+    main = (ROOT / "frontend" / "src" / "main.ts").read_text()
+    assert "jumpTo" not in logic, "the prototype jump bar's navigation is back in logic.js"
+    assert "gateStates" not in app_vue, "the 'Prototype — access states' shortcuts are back in App.vue"
+    assert "r.mendes@example.com" not in logic, "the pre-filled demo credentials are back in logic.js"
+    assert "startViewport" not in main, "main.ts passes the startViewport prop again (the app reads ?viewport= only)"
+
+
+def test_identity_runbook_endpoints_exist():
+    """`docs/RUNBOOK-identity.md` is the operator page for Wave 2a, and every call it tells an
+    operator to make is written in backticks as `GET /api/…` / `POST /api/…`.
+
+    Walked against `app.main`'s own route table, so a renamed route, a mistyped path or a path
+    parameter spelled differently from the router's fails here rather than at 2 a.m. in front of a
+    404. Paths are written as TEMPLATES (`{account_id}`, `{token_id}`, `{application_id}` — the
+    routers' own parameter names), never with a literal id, and never with a query string inside
+    the backticks: the route table holds templates and nothing else.
+
+    The walk is `tests/conftest.py::walk_routes`, shared rather than restated: FastAPI 0.141 keeps
+    an included router as a WRAPPER object instead of flattening its routes into `app.routes`, so
+    the obvious `{r.path for r in app.routes}` sees `/robots.txt`, `/` and the SPA catch-all and
+    nothing else — every `/api/*` path reads as absent, which would have made this test fail
+    against a perfectly correct runbook. One walker, in the conftest both consumers can reach
+    (I9a review, Minor 4: it used to live in `tests/auth/test_permissions.py`, so reorganising
+    `tests/auth/` would have broken this docs test)."""
+    from app.main import app
+    from tests.conftest import walk_routes
+
+    templates = {path for _method, path, _route in walk_routes(app.routes)}
+    runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    paths = set(re.findall(r"`(?:GET|POST) (/api/[^`\s]+)`", runbook))
+    assert paths, "the runbook names no endpoints at all"
+    missing = sorted(p for p in paths if p not in templates)
+    assert missing == [], f"docs/RUNBOOK-identity.md names paths app.main does not serve: {missing}"
+
+
+def test_deploy_md_documents_the_resend_dns_records():
+    """Task I9a. Nothing sends from `foundation.vin` until the sender-domain records resolve, and
+    the values are John's to copy out of the Resend dashboard — so DEPLOY.md carries the record
+    NAMES and an explicit placeholder in every VALUE cell, and never a value. (The same rule the
+    `RESEND_API_KEY` row already states, applied to the records beside it.)"""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "## Resend DNS" in text, "the sender-domain records are undocumented"
+    for token in ("DKIM", "SPF", "DMARC", "_dmarc"):
+        assert token in text, token
+    placeholder = "value from the Resend dashboard"
+    assert text.count(placeholder) >= 5, f"every VALUE cell must read {placeholder!r} — DKIM x3, SPF, DMARC"
+    assert "scripts/bootstrap_admin.py" in text, "the first-admin bootstrap command is undocumented"
+
+
+def _runbook_decision_table() -> dict[str, dict[str, str]]:
+    """`docs/RUNBOOK-identity.md` §3's decision table, keyed by action.
+
+    One row per action, written as `| \\`action\\` | From | To | Note | Email | Effect |` — the same
+    "transcribed server table, pinned back against the server" arrangement
+    `test_the_admin_users_tables_match_the_api` uses for `frontend/src/admin/users.ts`."""
+    text = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    rows: dict[str, dict[str, str]] = {}
+    for line in text.splitlines():
+        m = re.match(r"^\| `(\w+)` \| ([^|]*)\| ([^|]*)\| ([^|]*)\| ([^|]*)\| ([^|]*)\|$", line)
+        if m:
+            action, frm, to, note, email, effect = (g.strip() for g in m.groups())
+            rows[action] = {"from": frm, "to": to, "note": note, "email": email, "effect": effect}
+    return rows
+
+
+def test_the_runbook_decision_table_matches_the_api():
+    """Review Minor 7. §3 of the runbook transcribes three server tables — `TRANSITIONS`,
+    `NOTE_REQUIRED` and `EMAIL` — and until this pin the only thing watching it was the endpoint
+    walk, which cannot see a wrong from-state or a missing "a note is required". An operator reading
+    a stale row would take a 409 or a 422 at click time and have no way to know the page was wrong.
+
+    Deliberately NOT a check that the table is complete in the other direction on `from`: `revoke`'s
+    row says "every state but `revoked`" in prose, so what is pinned for it is that the prose is
+    TRUE of the API (every account state except `revoked`), which is the same fact spelled two ways."""
+    from app.api.admin_users import ACCOUNT_STATES, EMAIL, NOTE_REQUIRED, TRANSITIONS
+
+    table = _runbook_decision_table()
+    assert sorted(table) == sorted(TRANSITIONS), "the runbook's decision table and TRANSITIONS name different actions"
+    for action, row in table.items():
+        allowed_from, to = TRANSITIONS[action]
+        assert row["to"] == f"`{to}`", (action, row["to"])
+        if action == "revoke":
+            assert row["from"] == "every state but `revoked`", row["from"]
+            assert frozenset(ACCOUNT_STATES) - {"revoked"} == allowed_from, "revoke's prose no longer describes TRANSITIONS"
+        else:
+            assert frozenset(re.findall(r"`(\w+)`", row["from"])) == allowed_from, (action, row["from"])
+        required = action in NOTE_REQUIRED
+        assert ("**required**" in row["note"]) is required, (action, row["note"], required)
+        templates = {template for (_kind, act), template in EMAIL.items() if act == action}
+        if templates:
+            missing = sorted(t for t in templates if f"`{t}`" not in row["email"])
+            assert missing == [], f"{action}: the runbook does not name the email(s) it sends: {missing}"
+        else:
+            assert "**none**" in row["email"], f"{action} sends no email; the table must say so"
+
+
+def test_the_identity_spec_states_the_unverified_re_issue_rule():
+    """I9a re-review, Important. Task I4's confirmed default — "a duplicate sign-up sends the
+    `account_exists` e-mail (equal work on both paths)" — stopped being true of an `unverified`
+    address when I9a fix round 1 made that path re-issue the verification link, and the spec is the
+    document John's rulings live in: a default recorded there and contradicted by the code is how a
+    later task re-implements the thing that was changed on purpose.
+
+    Pinned on the SPEC rather than on the runbook because the runbook describes an operator's day
+    and the spec records the decision. Both halves are asserted, so neither can drift back alone."""
+    spec = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-identity-access-email-design.md").read_text()
+    default = next((line for line in spec.splitlines() if "Task I4: a duplicate sign-up" in line), None)
+    assert default is not None, "the spec no longer records Task I4's duplicate-sign-up default"
+    assert "re-issues a fresh 24 h verification link" in default, (
+        "the spec's I4 default does not state the unverified re-issue rule (app/api/auth.py::signup)"
+    )
+    assert "`unverified`" in default and "`account_exists`" in default, (
+        "the amended default must still name both halves: `account_exists` from verified onward, re-issue while unverified"
+    )
+    assert "amended 2026-09-07" in default, "the amendment is undated"

@@ -1,5 +1,6 @@
 import { watch } from 'vue';
 import type { Router } from 'vue-router';
+import { useMe } from '../auth/me';
 import { guard, needsPatch, routeToPatch, sameLocation, stateToRoute, type RoutedState } from './sync';
 
 interface StatefulComponent { state: RoutedState; setState(patch: Partial<RoutedState>): void }
@@ -28,7 +29,10 @@ interface StatefulComponent { state: RoutedState; setState(patch: Partial<Routed
 export function useStateRouteSync(c: StatefulComponent, router: Router): void {
   let pending: Partial<RoutedState> | null = null;
   const apply = (to: { path: string; params: Record<string, unknown>; query: Record<string, unknown> }) => {
-    const g = guard(c.state, routeToPatch(to));
+    // A-I7's hand-over, executed by A-I8: the principal is read AT THE POINT OF THE CALL, not
+    // captured once — `useMe().me.value` changes when the visitor signs in or out, and a
+    // captured `null` would refuse every member route for the rest of the session.
+    const g = guard(c.state, routeToPatch(to), { me: useMe().me.value });
     pending = g.pending;
     if (needsPatch(c.state, g.apply)) c.setState(g.apply);
     // A stale in-session URL (e.g. a legacy ?tab= link visited via router.push while already
@@ -51,7 +55,23 @@ export function useStateRouteSync(c: StatefulComponent, router: Router): void {
       if (pending) {
         if (!c.state.auth) return;                  // keep the deep link visible while the gate is shown
         const p = pending; pending = null;
-        if (needsPatch(c.state, p)) { c.setState(p); return; }   // let the settled state retrigger this watcher
+        // The remembered link is permission-checked HERE, not only where it was typed (review
+        // round 1, G): the principal is unknowable at the moment a signed-out visitor asks for a
+        // route and knowable the moment auth arrives, so this is the only place the matrix can
+        // have its say over a deep link. `guard` with `auth` true returns either the patch itself
+        // or the `unavailable` gate, and `pending` in neither case — so nothing is remembered a
+        // second time and the URL settles instead of being held open forever.
+        const g = guard(c.state, p, { me: useMe().me.value });
+        if (needsPatch(c.state, g.apply)) {
+          const before = stateToRoute(c.state);
+          c.setState(g.apply);
+          // Return only when applying it MOVED the route: that move is what retriggers this
+          // watcher, which then navigates from the settled state rather than a transitional one.
+          // A refusal does not move it — the state was already showing a gate and stays on one,
+          // so `stateToRoute` is `/` before and after and no retrigger would ever come — and the
+          // URL still says the route that was just refused. Fall through and settle it here.
+          if (!sameLocation(before, stateToRoute(c.state))) return;
+        }
       }
       const loc = stateToRoute(c.state);
       const cur = router.currentRoute.value;

@@ -7,8 +7,10 @@ monkeypatched `loop.close` (round 4: production code must not do that)."""
 from __future__ import annotations
 
 import asyncio
+import threading
 import time
 
+import psycopg2.extensions
 import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import DBAPIError
@@ -77,13 +79,16 @@ async def test_get_engine_passes_a_connect_timeout(monkeypatch):
 
 async def test_get_redis_passes_socket_timeouts(monkeypatch):
     captured = {}
-    original_from_url = db.aioredis.from_url
+    # The seam is `Redis.from_url`, the annotated classmethod, since I3 fix round 1's follow-up:
+    # `get_redis` no longer goes through redis-py's unannotated module-level `from_url` shim (which
+    # only forwards to this very classmethod), so no `# type: ignore[no-untyped-call]` is needed.
+    original_from_url = db.aioredis.Redis.from_url
 
     def spy(url, **kwargs):
         captured.update(kwargs)
         return original_from_url(url, **kwargs)
 
-    monkeypatch.setattr(db.aioredis, "from_url", spy)
+    monkeypatch.setattr(db.aioredis.Redis, "from_url", spy)
     db.get_redis(REDIS_URL)
     assert captured.get("socket_connect_timeout") == db.TIMEOUT_S
     assert captured.get("socket_timeout") == db.TIMEOUT_S
@@ -179,3 +184,154 @@ async def test_dispose_all_drops_another_loops_entries_without_awaiting_them():
     assert other not in db._redis_clients, "another loop's redis clients must be dropped from the cache"
     assert engine.touched is False, "another loop's engine must never be disposed from this loop"
     assert client.touched is False, "another loop's redis client must never be closed from this loop"
+
+
+# --- I4 fix round 1, Important 5: `sync_conn()` is pooled -------------------------------------
+# An un-pooled `psycopg2.connect()` measured 32.8 ms on the dev stack and EVERY guarded endpoint
+# opened one, which is 59 % of `GET /api/me`. These pin the pool that removes it.
+
+
+def test_sync_conn_reuses_one_underlying_connection_across_sequential_uses(db_ready):
+    first = db.sync_conn()
+    backend = first.get_backend_pid()
+    first.close()                      # "close" now means "return to the pool"
+    second = db.sync_conn()
+    try:
+        assert second.get_backend_pid() == backend, "the second use opened a new Postgres backend"
+    finally:
+        second.close()
+
+
+def test_a_returned_connection_is_no_longer_checked_out(db_ready):
+    conn = db.sync_conn()
+    assert db.sync_pool_in_use() == 1
+    conn.close()
+    assert db.sync_pool_in_use() == 0
+
+
+def test_a_broken_connection_is_discarded_rather_than_returned(db_ready):
+    """psycopg2's pool refuses to re-pool a connection whose socket has gone; the next caller must
+    get a live one, not the corpse."""
+    conn = db.sync_conn()
+    psycopg2.extensions.connection.close(conn)   # close the REAL socket, bypassing the return-to-pool override
+    assert conn.closed != 0
+    conn.close()                              # release the (dead) connection
+    fresh = db.sync_conn()
+    try:
+        assert fresh is not conn and fresh.closed == 0
+        with fresh.cursor() as cur:
+            cur.execute("SELECT 1")
+            assert cur.fetchone() == (1,)
+    finally:
+        fresh.close()
+
+
+async def test_dispose_all_closes_the_sync_pools(db_ready):
+    conn = db.sync_conn()
+    conn.close()
+    assert db.sync_pool_in_use() == 0
+    await db.dispose_all()
+    assert db._sync_pools == {}
+    again = db.sync_conn()
+    try:
+        assert again.closed == 0
+    finally:
+        again.close()
+
+
+def test_pools_are_keyed_by_dsn_so_a_scratch_database_gets_its_own(conn, db_ready, monkeypatch):
+    """The `conn` fixture patches `settings.database_url` to a scratch database; the pool must
+    follow it, or a test would be handed a connection to the shared dev database."""
+    scratch = db.sync_conn()
+    try:
+        with scratch.cursor() as cur:
+            cur.execute("SELECT current_database()")
+            assert cur.fetchone()[0] == settings.database_url.rsplit("/", 1)[1]
+    finally:
+        scratch.close()
+    assert settings.database_url in db._sync_pools
+
+
+def test_the_pool_overflows_to_a_direct_connection_rather_than_refusing(db_ready, monkeypatch):
+    """`maxconn` exhaustion used to be impossible (there was no pool); it must not become a 500.
+    Beyond the cap a caller gets an ordinary un-pooled connection whose `close()` really closes —
+    the behaviour that shipped before the pool, as the overflow path rather than the normal one."""
+    monkeypatch.setattr(settings, "db_pool_max", 1)
+    db.dispose_sync_pools()
+    held = db.sync_conn()
+    try:
+        overflow = db.sync_conn()
+        try:
+            with overflow.cursor() as cur:
+                cur.execute("SELECT 1")
+                assert cur.fetchone() == (1,)
+        finally:
+            overflow.close()
+            assert overflow.closed != 0, "an overflow connection must really close, not linger"
+    finally:
+        held.close()
+
+
+# --- I4 fix round 2, NEW-1: disposal must not re-enter the pool --------------------------------
+# `_SyncPool.release()` calls `pool.putconn()`, which takes ThreadedConnectionPool's own
+# non-reentrant lock — and `closeall()` holds that lock while calling `conn.close()` on every
+# connection it knows about. A CHECKED-OUT connection still carried its `_holder`, so its `close()`
+# re-entered `putconn()` and blocked on the lock its own caller was holding. `_closeall` wraps that
+# call in `try/except Exception`, which cannot catch a deadlock.
+#
+# Both tests run the disposal on a DAEMON thread with a bounded join: a regression has to FAIL here,
+# not hang the run. That matters more than it sounds — `dispose_all()` is an autouse teardown after
+# every test, so before this fix any pool regression that left a connection checked out turned a
+# one-line assertion failure into a CI job that burned to its wall-clock limit with no diagnosis.
+
+
+def _dispose_on_a_watchdog_thread(timeout: float = 2.0) -> bool:
+    done = threading.Event()
+
+    def _run() -> None:
+        db.dispose_sync_pools()
+        done.set()
+
+    threading.Thread(target=_run, daemon=True).start()
+    return done.wait(timeout)
+
+
+def test_dispose_returns_while_a_connection_is_still_checked_out(db_ready):
+    conn = db.sync_conn()
+    assert db.sync_pool_in_use() == 1
+    assert _dispose_on_a_watchdog_thread(), "dispose_sync_pools() deadlocked with a connection checked out"
+    conn.close()
+
+
+def test_a_release_after_dispose_closes_the_connection_instead_of_raising(db_ready):
+    """The secondary path: `putconn()` on a closed pool raises `PoolError`, which on a request path
+    would be a 500 raised while merely cleaning up — and would leak the `in_use` count with it."""
+    conn = db.sync_conn()
+    holder = db._sync_pools[db.sync_dsn()]
+    assert _dispose_on_a_watchdog_thread()
+    conn.close()                      # must not raise
+    assert conn.closed != 0
+    assert holder.in_use == 0
+
+
+async def test_dispose_all_returns_while_a_connection_is_still_checked_out(db_ready):
+    """The production path: `app/main.py`'s lifespan calls `dispose_all()` on shutdown, and a
+    `force_exit` (a second SIGTERM) reaches it with requests still in flight. A hang there is a
+    container Railway has to SIGKILL, with the async engine and the Redis client never disposed."""
+    conn = db.sync_conn()
+    await asyncio.wait_for(db.dispose_all(), timeout=5)
+    conn.close()
+    assert db.sync_pool_in_use() == 0
+
+
+# `dispose_all()`'s other-loop arm (`if loop is current` false — app/db.py) is covered TWICE, on
+# purpose, and neither copy is redundant (merge fix round 1, 2026-09-07 — the reviewer's point):
+#   * `test_dispose_all_drops_another_loops_entries_without_awaiting_them`, above, is P14's
+#     HERMETIC unit test — an already-closed foreign loop and two stub objects, no Postgres and no
+#     Redis — so the arm stays covered when the suite runs with no services up.
+#   * `tests/auth/test_branch_edges.py::test_dispose_all_drops_foreign_loop_entries_without_disposing_them`
+#     is this branch's INTEGRATION twin — a live foreign loop on its own thread with real
+#     AsyncEngine/Redis objects (`db_ready`), which additionally proves the current loop's own
+#     entries ARE disposed.
+# Different in kind, not duplicates: delete either and the arm loses a property the other never
+# asserted. Keep both.

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const CONFIG = join(fileURLToPath(new URL('.', import.meta.url)), 'playwright.config.ts');
+const SIGNIN_FORM = join(fileURLToPath(new URL('.', import.meta.url)), 'signin-form.spec.ts');
 const FLAG = '--disable-partial-raster';
 
 // ---------------------------------------------------------------------------------------
@@ -110,11 +111,33 @@ function depthAt(sk: string, index: number): number {
   return depth;
 }
 
-describe('playwright.config.ts pins Chromium\'s raster', () => {
-  const src = readFileSync(CONFIG, 'utf8');
-  const code = withoutComments(src);
-  const sk = skeleton(src);
+// Read once, at module scope: three describes now assert against the same config, and `project()`
+// (below) is shared by them.
+const src = readFileSync(CONFIG, 'utf8');
+const code = withoutComments(src);
+const sk = skeleton(src);
 
+/**
+ * The source of ONE project object out of the `projects` array, found by brace-matching
+ * rather than by reading a single line (re-review M11a): the four projects happen to be
+ * one-liners today, and a reformat that split the `reference` object across lines would have
+ * failed the case above on a perfectly correct config. Brace matching runs over the
+ * skeleton, where strings are blanked, so the `name:` search itself reads `src`.
+ */
+function project(name: string): string {
+  const [projStart, projEnd] = block(sk, 'projects', 0, sk.length, 1);
+  const wanted = new RegExp(`name\\s*:\\s*['\"]${name}['\"]`);
+  for (let i = projStart; i <= projEnd; i++) {
+    if (sk[i] !== '{') continue;
+    const [start, end] = matchPair(sk, i);
+    const object = src.slice(start, end + 1);
+    if (wanted.test(object)) return object;
+    i = end;   // a project that is not the one asked for: skip its nested braces whole
+  }
+  throw new Error(`no project named '${name}' in playwright.config.ts`);
+}
+
+describe('playwright.config.ts pins Chromium\'s raster', () => {
   it(`passes ${FLAG} to Chromium`, () => {
     expect(
       code,
@@ -161,24 +184,100 @@ describe('playwright.config.ts pins Chromium\'s raster', () => {
       '`npm run test:visual:baselines` stops running the behavioural guard on its own output.'
     ).toContain('capture-determinism');
   });
+});
 
-  /**
-   * The source of ONE project object out of the `projects` array, found by brace-matching
-   * rather than by reading a single line (re-review M11a): the four projects happen to be
-   * one-liners today, and a reformat that split the `reference` object across lines would have
-   * failed the case above on a perfectly correct config. Brace matching runs over the
-   * skeleton, where strings are blanked, so the `name:` search itself reads `src`.
-   */
-  function project(name: string): string {
-    const [projStart, projEnd] = block(sk, 'projects', 0, sk.length, 1);
-    const wanted = new RegExp(`name\\s*:\\s*['\"]${name}['\"]`);
-    for (let i = projStart; i <= projEnd; i++) {
-      if (sk[i] !== '{') continue;
-      const [start, end] = matchPair(sk, i);
-      const object = src.slice(start, end + 1);
-      if (wanted.test(object)) return object;
-      i = end;   // a project that is not the one asked for: skip its nested braces whole
-    }
-    throw new Error(`no project named '${name}' in playwright.config.ts`);
-  }
+// ---------------------------------------------------------------------------------------
+// Review round 2, ruling 1. The form sign-in tests (I2) type a password into the design's own
+// card, so a FAILING run's trace carries it — and CI publishes `frontend/test-results`.
+//
+// In every local and CI run that password is the documented test-only default, so a trace
+// discloses nothing. The one run where it is a real secret is a LIVE one: `PW_APP_URL` set, which
+// is the QA hand-back, with `PERSONA_PASSWORD` from Railway. So the trace is off exactly there and
+// the project default (`retain-on-failure`) is untouched everywhere else — the tests themselves
+// keep running on a live run, because the form is precisely what Task I10 has to prove on QA.
+//
+// Pinned here, in this file's style, because the conditional is one line inside a describe and a
+// later edit — a tidy-up, a merge — could drop it with nothing failing. The config's own
+// `trace: 'retain-on-failure'` is asserted alongside, since the override is only meaningful
+// against that default.
+// ---------------------------------------------------------------------------------------
+describe('the form sign-in tests turn their trace off on a live run (round 3, ruling 1)', () => {
+  // The three tests that type a password into the design's own card live in their OWN spec file
+  // for exactly one reason: Playwright refuses `use({ trace })` inside a describe group ("because
+  // it forces a new worker") and allows it at the top level of a file. Round 2 put it at the top
+  // of `smoke.spec.ts`, which turned the WHOLE smoke suite's traces off on a live run; a file of
+  // their own scopes it to the three, and `smoke.spec.ts` is back on the project default.
+  //
+  // Why it matters at all: in every local and CI run the password is the documented test-only
+  // default, so a trace discloses nothing. The one run where it is a real secret is a live one —
+  // `PW_APP_URL` set, the QA hand-back, with `PERSONA_PASSWORD` from Railway — and CI publishes
+  // `frontend/test-results`. The tests still RUN there: the form is what Task I10 must prove on QA.
+  const USE_TRACE = /^test\.use\(\{ trace: process\.env\.PW_APP_URL \? 'off' : 'retain-on-failure' \}\);$/m;
+
+  it('carries the PW_APP_URL-conditional trace at the top level of signin-form.spec.ts', () => {
+    const spec = withoutComments(readFileSync(SIGNIN_FORM, 'utf8'));
+    expect(spec, 'the live-run trace override is gone').toMatch(USE_TRACE);
+    // Top level, i.e. before the first describe — where Playwright accepts it and where it governs
+    // the file.
+    const firstDescribe = spec.indexOf('test.describe(');
+    expect(spec.search(USE_TRACE)).toBeLessThan(firstDescribe === -1 ? spec.length : firstDescribe);
+  });
+
+  it('leaves the project default in place, which is what the override is measured against', () => {
+    expect(withoutComments(readFileSync(CONFIG, 'utf8'))).toContain("trace: 'retain-on-failure'");
+  });
+
+  it('leaves smoke.spec.ts on that default — the round-2 file-wide override is gone', () => {
+    const smoke = withoutComments(readFileSync(join(fileURLToPath(new URL('.', import.meta.url)), 'smoke.spec.ts'), 'utf8'));
+    expect(smoke, 'the whole smoke suite must not lose its traces on a live run').not.toMatch(/test\.use\(\{\s*trace/);
+  });
+
+  it('does not skip the tests on a live run — only their trace goes', () => {
+    const spec = withoutComments(readFileSync(SIGNIN_FORM, 'utf8'));
+    expect(spec).not.toMatch(/test\.skip\([^)]*PW_APP_URL/);
+  });
+
+  it('holds the three tests I2 asked for, and nothing else', () => {
+    // `(?<![.\w])`, not `\b`: a dot is a word boundary, so `\btest\(` also counts the
+    // `RegExp.prototype.test(e)` call inside the wrong-password case's console-error assertion.
+    const spec = withoutComments(readFileSync(SIGNIN_FORM, 'utf8'));
+    expect((spec.match(/(?<![.\w])test\(/g) ?? []).length).toBe(3);
+  });
+
+  it('is in the app project, or Playwright would never run it', () => {
+    expect(
+      project('app'),
+      'signin-form.spec.ts is not matched by the app project, so the only end-to-end coverage of ' +
+      'the design\'s own sign-in form (review round 1, I2) would silently stop running.'
+    ).toContain('signin-form');
+  });
+
+  it('keeps the app project\'s testMatch anchored at a path boundary', () => {
+    // An unanchored alternation would also match a substring of another file's name — which is
+    // why `reference-dom.spec.ts` is not swept into the app project by the `dom` alternative.
+    expect(project('app')).toContain('(^|\\/)');
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Round 3, ruling 2: the run id comes from the RUNNER, so a restarted worker can still read the
+// memo file the run wrote. `globalSetup` is the only place a value can be minted once per run and
+// inherited by every worker; `tests/global-setup.ts` mints it and clears a foreign run's file.
+// ---------------------------------------------------------------------------------------
+describe('playwright.config.ts mints one run id per run (round 3, ruling 2)', () => {
+  it('registers tests/global-setup.ts', () => {
+    expect(
+      withoutComments(readFileSync(CONFIG, 'utf8')),
+      'without globalSetup no value is shared by the run\'s workers, so the persona memo file ' +
+      'cannot bridge the worker restart Playwright performs after every test failure — and a ' +
+      'failing run pays its sign-ins again until SIGNIN_IP answers 429 (review round 1, M3).'
+    ).toMatch(/globalSetup\s*:\s*['"]\.\/global-setup(\.ts)?['"]/);
+  });
+
+  it('leaves the reference project and the raster flag untouched by that addition', () => {
+    // Round 3 is the first time this config is legitimately in the task's file list, so the two
+    // things it is otherwise pinned for are asserted here as well, side by side with the change.
+    expect(project('reference')).toContain('capture-determinism');
+    expect(withoutComments(readFileSync(CONFIG, 'utf8'))).toContain(FLAG);
+  });
 });

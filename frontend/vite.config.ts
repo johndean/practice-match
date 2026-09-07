@@ -7,7 +7,11 @@ export default defineConfig({
   // rather than try to resolve a component of that name.
   plugins: [vue({ template: { compilerOptions: { whitespace: 'preserve', isCustomElement: (tag) => tag === 'image-slot' } } })],
   build: { assetsDir: '_app' },
-  server: { port: 5173, strictPort: true },
+  // `/api` goes to the FastAPI app, which in the Playwright `app` project is the real backend
+  // tests/targets.ts starts on PW_API_PORT (default 8017). No `changeOrigin`, deliberately: the
+  // Host header stays the browser's, so `app.auth.deps.check_origin_and_csrf`'s `str(request.url)`
+  // origin equals the `Origin` the browser sent on the app's own state-changing calls.
+  server: { port: 5173, strictPort: true, proxy: { '/api': { target: `http://localhost:${process.env.PW_API_PORT || 8017}` } } },
   test: {
     include: ['src/**/*.test.ts', 'tests/**/*.test.ts'],
     coverage: {

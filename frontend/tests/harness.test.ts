@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BLANK_GIF } from './harness';
+import { BLANK_GIF, MEMO_FILE, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, appOrigin, appPlan, driverFor, forgetPersonaSession, memoFileRead, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, referenceMe, referenceOrigin, referenceUrl, runId } from './harness';
+import { resolveTargets } from './targets';
 
 // The stubbed basemap tile must be TRANSPARENT, not merely blank-looking (controller ruling
 // 2026-09-07). MarketMapV3.jsx:190 adds the Esri label tile layer with `pane: "shadowPane"`
@@ -113,5 +114,442 @@ describe('the stubbed basemap tile', () => {
     const twin = parseGif(Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7', 'base64'));
     expect(twin.gce!.flags & 0x01).toBe(1);
     expect(twin.painted).not.toBe(twin.gce!.transparentIndex);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Amendment A-I7. `signInAsPersona` itself needs a browser, so the two decisions inside it
+// are pulled out as pure functions and pinned here: WHICH credential is presented, and how
+// often the sign-in is actually spent.
+//
+// The second one is not a nicety. `app/auth/limits.py`'s `SIGNIN_IP = (30, 900)` is counted
+// on EVERY attempt per IP — `app/api/auth.py` calls `limits.hit` before it checks the
+// credential — so a suite that signed in once per screen state would answer 429 after the
+// thirtieth and the run would fail somewhere unrelated to whatever it was testing. One
+// sign-in per worker process, its cookies memoised and re-added to each new context, is the
+// whole budget the `app` project spends.
+// ---------------------------------------------------------------------------------------
+describe('the design persona credentials (A-I7)', () => {
+  it('are the seeded persona and the password scripts/seed_persona.py writes by default', () => {
+    expect(PERSONA_EMAIL).toBe('design@practice-match.test');
+    expect(PERSONA_DEFAULT_PASSWORD).toBe('design-persona-quiet-lantern-42');
+    expect(personaCredentials('design', {})).toEqual({ email: PERSONA_EMAIL, password: PERSONA_DEFAULT_PASSWORD });
+  });
+
+  it('take PERSONA_PASSWORD from the environment whenever it is set, exactly as seed_persona.py does', () => {
+    expect(personaCredentials('design', { PERSONA_PASSWORD: 'whatever-railway-holds' })).toEqual({
+      email: PERSONA_EMAIL,
+      password: 'whatever-railway-holds'
+    });
+  });
+});
+
+describe('personaSession spends one sign-in per worker process (A-I7)', () => {
+  const C = (name: string) => ({ name, value: 'opaque' });
+  const jar = (held: { name: string }[]) => {
+    const added: { name: string }[][] = [];
+    return { added, cookies: () => Promise.resolve(held), addCookies: (c: { name: string }[]) => { added.push(c); return Promise.resolve(); } };
+  };
+
+  it('signs in on the first call and memoises the cookies the context ended up holding', async () => {
+    const j = jar([C('pm_session'), C('pm_csrf')]);
+    let signIns = 0;
+    const memo = await personaSession(null, j, () => { signIns += 1; return Promise.resolve(); });
+    expect(memo.map((c) => c.name)).toEqual(['pm_session', 'pm_csrf']);
+    expect(signIns).toBe(1);
+    expect(j.added, 'nothing is re-added on the call that did the signing in').toEqual([]);
+  });
+
+  it('re-adds the memo on every later call instead of spending another attempt against SIGNIN_IP', async () => {
+    const j = jar([]);
+    let signIns = 0;
+    const memo = await personaSession([C('pm_session'), C('pm_csrf')], j, () => { signIns += 1; return Promise.resolve(); });
+    expect(memo.map((c) => c.name)).toEqual(['pm_session', 'pm_csrf']);
+    expect(signIns, 'a second sign-in spends one of SIGNIN_IP\'s 30 attempts per 900 s for nothing').toBe(0);
+    expect(j.added.map((batch) => batch.map((c) => c.name))).toEqual([['pm_session', 'pm_csrf']]);
+  });
+
+  // Review M4: memoising on `memo === null` alone meant an EMPTY jar counted as "signed in", so
+  // every later call would re-add nothing and the whole run would proceed anonymous with no
+  // failure anywhere near the cause. Only a jar that actually holds the session cookie is worth
+  // remembering; anything else throws here, where the cause is.
+  it('refuses to memoise a jar with no pm_session', async () => {
+    await expect(personaSession(null, jar([C('pm_csrf')]), () => Promise.resolve())).rejects.toThrow(/pm_session/);
+    await expect(personaSession(null, jar([]), () => Promise.resolve())).rejects.toThrow(/pm_session/);
+  });
+});
+
+describe('forgetPersonaSession (A-I7.2, extended by A-I8.2)', () => {
+  it('drops the persona it is named — the in-memory memo AND the run\'s file — and only that one', () => {
+    personaSessionMemos.buyer.cookies = [{ name: 'pm_session' }] as never;
+    personaSessionMemos.seller.cookies = [{ name: 'pm_session' }] as never;
+    const cleared: string[] = [];
+    forgetPersonaSession('buyer', (p) => cleared.push(p));
+    expect(personaSessionMemos.buyer.cookies).toBeNull();
+    expect(cleared, 'the file must be cleared too, or a restarted worker re-adds a revoked session').toEqual(['buyer']);
+    expect(personaSessionMemos.seller.cookies, 'one persona\'s sign-out is not another\'s').not.toBeNull();
+    personaSessionMemos.seller.cookies = null;
+  });
+
+  // Re-review: the DEFAULT argument — the real module memo, and the form I8 will actually call —
+  // was never exercised, and tests/harness.ts is not coverage-measured, so nothing noticed.
+  it('with no argument, clears the real module memo, so the next sign-in spends an attempt', async () => {
+    personaSessionMemo.cookies = [
+      { name: 'pm_session', value: 'stale-and-revoked', domain: 'localhost', path: '/', expires: -1, httpOnly: true, secure: true, sameSite: 'Lax' as const }
+    ];
+    const cleared: string[] = [];
+    forgetPersonaSession(undefined, (p) => cleared.push(p));
+    expect(personaSessionMemo.cookies).toBeNull();
+    expect(cleared, 'the no-argument form is the design persona\'s').toEqual(['design']);
+
+    let signIns = 0;
+    const jar = { cookies: () => Promise.resolve([{ name: 'pm_session' }]), addCookies: () => Promise.resolve() };
+    await personaSession(personaSessionMemo.cookies, jar, () => { signIns += 1; return Promise.resolve(); });
+    expect(signIns, 'with the memo cleared, personaSession must sign in again rather than re-add a revoked session').toBe(1);
+  });
+});
+
+// Where `personaSignIn` posts. It is the SAME expression playwright.config.ts hands
+// `resolveTargets` for the `app` project's baseURL, and pinning the two together both ways is
+// what keeps the standalone request context (which has no project `use.baseURL`) pointed at the
+// server the browser is looking at.
+describe('appOrigin (A-I7.2)', () => {
+  const ports = { app: 5173, ref: 4174, cs: 4175, api: 8017 };
+  it('is the app project\'s own baseURL, locally and against a live deployment', () => {
+    expect(appOrigin({})).toBe(resolveTargets({}, ports).baseURL);
+    expect(appOrigin({})).toBe('http://localhost:5173');
+    const live = { PW_APP_URL: 'https://qa.foundation.vin' };
+    expect(appOrigin(live)).toBe(resolveTargets(live, ports).baseURL);
+  });
+  it('honours PW_APP_PORT, exactly as playwright.config.ts does', () => {
+    expect(appOrigin({ PW_APP_PORT: '4999' })).toBe('http://localhost:4999');
+    expect(appOrigin({ PW_APP_PORT: 'not-a-port' })).toBe('http://localhost:5173');
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// `reach()` — the one entry point every approved state is driven through (amendment A-I8).
+//
+// Before I8 the harness entered each state through the design's own PROTOTYPE affordances:
+// the jump bar for the member screens, the "Prototype — access states" shortcuts for the two
+// status gates, and the jump bar's "Mobile view" toggle for the phone frame. A6.1/A6.2 take
+// all three out of the design, so the two targets no longer share an entry: the reference is
+// a static prototype with no session and gets there through the design's own props (injected
+// by reference-server.mjs's `?props=`), and the app signs in as a real seeded account and
+// deep-links the route. Everything AFTER the entry is the same clicks on both targets, which
+// is what keeps one `steps` function honest for two targets.
+//
+// The three decisions inside `reach` are pure functions so they can be pinned without a
+// browser: which target a page is on, what URL the reference needs, and what the app needs.
+// ---------------------------------------------------------------------------------------
+describe('PERSONAS — the /api/me payload of each seeded account (D-I8-4, A-I8.2)', () => {
+  it('are the six accounts scripts/seed_persona.py writes', () => {
+    expect(Object.keys(PERSONAS)).toEqual(['design', 'buyer', 'seller', 'pending', 'needsReview', 'declined']);
+  });
+
+  it('carry the /api/me fields logic.js reads, so the reference can be handed the same account', () => {
+    for (const p of Object.values(PERSONAS)) {
+      expect(Object.keys(p).sort()).toEqual(['email', 'initials', 'name', 'role', 'roles', 'state'].sort());
+      expect(p.email, 'RFC 6761 `.test` only: never a deliverable address').toMatch(/@practice-match\.test$/);
+    }
+  });
+
+  // The whole point of A-I8.2: the buyer's computed label IS the design's fixture text, so the
+  // nineteen buyer-family states keep their pixels without the design's copy changing. The
+  // Python side of this pin lives in tests/test_docs.py, against labels.role_label itself.
+  it('give the buyer the design\'s own fixture label, and the other two members their true ones', () => {
+    // The literal the design's own fixture carries. `tests/test_docs.py` is what pins it against
+    // `labels.role_label({'buyer'}, 'StartUp Club')` and against the design file itself, in both
+    // languages; this is the harness side of the same fact.
+    expect(PERSONAS.buyer.role).toBe('Approved buyer · StartUp Club');
+    expect(PERSONAS.seller.role).toBe('Approved buyer and seller · StartUp Club');
+    expect(PERSONAS.design.role).toBe('VIN Foundation admin · StartUp Club');
+    // One name and one set of initials across the whole suite: only `role` varies with what the
+    // account may actually open.
+    for (const key of ['design', 'buyer', 'seller'] as const) {
+      expect(PERSONAS[key].name).toBe('Dr. Rachel Mendes');
+      expect(PERSONAS[key].initials).toBe('RM');
+      expect(PERSONAS[key].state).toBe('active');
+    }
+  });
+
+  it('give the three applicants their states and no roles', () => {
+    expect(PERSONAS.pending.state).toBe('pending');
+    expect(PERSONAS.needsReview.state).toBe('needs_review');
+    expect(PERSONAS.declined.state).toBe('declined');
+    for (const key of ['pending', 'needsReview', 'declined'] as const) {
+      expect(PERSONAS[key].roles).toEqual([]);
+      expect(PERSONAS[key].role, 'labels.role_label with no grants and no affiliation').toBe('Applicant');
+    }
+  });
+
+  it('present the one documented password, whichever persona is asked for', () => {
+    for (const key of Object.keys(PERSONAS) as (keyof typeof PERSONAS)[]) {
+      expect(personaCredentials(key, {})).toEqual({ email: PERSONAS[key].email, password: PERSONA_DEFAULT_PASSWORD });
+      expect(personaCredentials(key, { PERSONA_PASSWORD: 'from-railway' }).password).toBe('from-railway');
+    }
+  });
+
+  it('memoise one session EACH, so six personas spend at most six of SIGNIN_IP\'s thirty attempts', () => {
+    expect(Object.keys(personaSessionMemos).sort()).toEqual(Object.keys(PERSONAS).sort());
+    expect(personaSessionMemo, 'signInAsPersona\'s memo IS the design persona\'s (A-I7\'s budget, unchanged)').toBe(personaSessionMemos.design);
+  });
+});
+
+// Which account each state is screenshotted as (A-I8.2). The header shows the truth since A5.4,
+// so the account decides what the design's own header must say — and the design's copy does not
+// change, so the account is chosen to fit the design: a BUYER for every state whose header the
+// fixture already describes, and the account that can actually open the others for the rest.
+describe('personaFor — the account a state is captured as (A-I8.2)', () => {
+  it('signs nobody in for a gate state', () => {
+    expect(personaFor()).toBeNull();
+    expect(personaFor({ screen: 'gate' })).toBeNull();
+    expect(personaFor({ gate: 'apply' })).toBeNull();
+  });
+
+  it('is the buyer for the whole buyer family — Browse, the listing and the requests', () => {
+    for (const screen of ['browse', 'detail', 'requests'] as const) expect(personaFor({ screen })).toBe('buyer');
+  });
+
+  it('is the seller for the seller dashboard (and therefore the wizard, which starts there)', () => {
+    expect(personaFor({ screen: 'seller' })).toBe('seller');
+  });
+
+  it('is the all-roles design persona for Admin, the only screens a buyer cannot open', () => {
+    expect(personaFor({ screen: 'admin' })).toBe('design');
+  });
+
+  it('honours an explicit persona — the two status gates name their own', () => {
+    expect(personaFor({ gate: 'pending', persona: 'pending' })).toBe('pending');
+    expect(personaFor({ gate: 'rejected', persona: 'declined' })).toBe('declined');
+    expect(personaFor({ screen: 'browse', persona: 'needsReview' })).toBe('needsReview');
+  });
+});
+
+describe('referenceMe — the account the reference is handed (A5.7 / A-I8.2)', () => {
+  it('is the same account the app signs in as, for every state that has one', () => {
+    for (const key of Object.keys(PERSONAS) as (keyof typeof PERSONAS)[]) expect(referenceMe(key)).toBe(PERSONAS[key]);
+  });
+
+  it('is null exactly where the app signs nobody in either', () => {
+    expect(referenceMe(null)).toBeNull();
+    expect(referenceMe(personaFor({ gate: 'signin' }))).toBeNull();
+    expect(referenceMe(personaFor({ gate: 'apply' }))).toBeNull();
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// The reference's entry. ONE navigation, no clicking: since review round 1's I1, A5.4 leaves a
+// set `startScreen` in charge of which screen even when an account is injected, so the reference
+// lands signed in AND on the named screen in a single goto — exactly where the app's deep link
+// puts the app. (Before I1 the account's `active` branch overrode `startScreen` and the harness
+// clicked the design's header nav to compensate: an undeclared deviation from the ruled A-I8.2,
+// fixed at the root rather than worked around.)
+// ---------------------------------------------------------------------------------------
+describe('referenceUrl — the design\'s own props, injected per request (A-I8 / D-I8-3)', () => {
+  const props = (url: string) => JSON.parse(decodeURIComponent(new URL(url, 'http://x').searchParams.get('props')!));
+
+  it('always serves the design at "/" and names all four prototype props on every request', () => {
+    const url = referenceUrl();
+    expect(url.startsWith('/?props=')).toBe(true);
+    expect(props(url)).toEqual({ startScreen: 'gate', startGate: '', startViewport: 'desktop', me: null });
+  });
+
+  it('names the screen and hands over that state\'s own account, for every member family', () => {
+    expect(props(referenceUrl({ screen: 'browse' }))).toEqual({ startScreen: 'browse', startGate: '', startViewport: 'desktop', me: PERSONAS.buyer });
+    expect(props(referenceUrl({ screen: 'detail' })).me).toEqual(PERSONAS.buyer);
+    expect(props(referenceUrl({ screen: 'requests' })).me).toEqual(PERSONAS.buyer);
+    expect(props(referenceUrl({ screen: 'seller' }))).toMatchObject({ startScreen: 'seller', me: PERSONAS.seller });
+    expect(props(referenceUrl({ screen: 'admin' }))).toMatchObject({ startScreen: 'admin', me: PERSONAS.design });
+  });
+
+  it('hands over an applicant for the two status gates, where the account IS the state', () => {
+    expect(props(referenceUrl({ gate: 'pending', persona: 'pending' }))).toMatchObject({ startScreen: 'gate', startGate: 'pending', me: PERSONAS.pending });
+    expect(props(referenceUrl({ gate: 'rejected', persona: 'declined' }))).toMatchObject({ startGate: 'rejected', me: PERSONAS.declined });
+  });
+
+  it('signs nobody in for the sign-in and application gates', () => {
+    expect(props(referenceUrl({ gate: 'signin' })).me).toBeNull();
+    expect(props(referenceUrl({ gate: 'apply' })).me).toBeNull();
+  });
+
+  it('asks for the phone frame through startViewport, the only way left (D-I8-7)', () => {
+    expect(props(referenceUrl({ screen: 'browse', viewport: 'mobile' })).startViewport).toBe('mobile');
+    expect(props(referenceUrl({ screen: 'browse' })).startViewport).toBe('desktop');
+  });
+
+  it('is stable for the same target, so the runtime\'s re-fetch of location.href hits the same URL', () => {
+    expect(referenceUrl({ screen: 'seller' })).toBe(referenceUrl({ screen: 'seller' }));
+  });
+});
+
+describe('appPlan — a real session and a real route (A-I8, A-I8.2)', () => {
+  it('signs the state\'s own persona in and deep-links its route', () => {
+    expect(appPlan({ screen: 'browse' })).toEqual({ persona: 'buyer', url: '/browse', click: null });
+    expect(appPlan({ screen: 'detail' })).toEqual({ persona: 'buyer', url: '/practices/p1', click: null });
+    expect(appPlan({ screen: 'requests' })).toEqual({ persona: 'buyer', url: '/requests', click: null });
+    expect(appPlan({ screen: 'seller' })).toEqual({ persona: 'seller', url: '/seller', click: null });
+    expect(appPlan({ screen: 'admin' })).toEqual({ persona: 'design', url: '/admin', click: null });
+  });
+
+  it('signs nobody in for the sign-in gate: that is what an anonymous visitor sees', () => {
+    expect(appPlan()).toEqual({ persona: null, url: '/', click: null });
+    expect(appPlan({ gate: 'signin' })).toEqual({ persona: null, url: '/', click: null });
+  });
+
+  it('reaches the application gate by the design\'s own link, which no launch removal touches', () => {
+    expect(appPlan({ gate: 'apply' })).toEqual({ persona: null, url: '/', click: 'Request access' });
+  });
+
+  it('reaches the two status gates by signing in as an account actually in that state', () => {
+    expect(appPlan({ gate: 'pending', persona: 'pending' })).toEqual({ persona: 'pending', url: '/', click: null });
+    expect(appPlan({ gate: 'rejected', persona: 'declined' })).toEqual({ persona: 'declined', url: '/', click: null });
+  });
+
+  it('asks for the phone frame through the URL query, the only way left (D-I8-7)', () => {
+    expect(appPlan({ screen: 'browse', viewport: 'mobile' }).url).toBe('/browse?viewport=mobile');
+    expect(appPlan({ screen: 'browse', viewport: 'desktop' }).url).toBe('/browse');
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// The memo survives a worker restart (A-I8.2).
+//
+// Playwright shuts the worker process down after a test failure and starts a new one, which used
+// to take the in-memory persona memo with it: every later failing test spent another of
+// `SIGNIN_IP`'s thirty attempts per IP per 15 minutes, and a run with a handful of real failures
+// turned into a wall of `429 RATE_LIMITED` that buried the first one (measured: 44 reported
+// failures, ~20 real). The jar is written to a file under `frontend/test-results/`, which
+// Playwright clears at the start of every run, so it is run-scoped by construction.
+// ---------------------------------------------------------------------------------------
+describe('the persona memo file (A-I8.2, run-scoped by M3)', () => {
+  const C = (name: string) => ({ name, value: 'opaque' });
+  const RUN = 'run-4711';
+
+  it('reads back what it wrote, per persona, within the same run', () => {
+    const one = memoFileUpdate(null, 'buyer', [C('pm_session')], RUN);
+    expect(memoFileRead(one, 'buyer', RUN)).toEqual([C('pm_session')]);
+    expect(memoFileRead(one, 'design', RUN), 'one persona\'s jar is not another\'s').toBeNull();
+
+    const two = memoFileUpdate(one, 'design', [C('pm_csrf')], RUN);
+    expect(memoFileRead(two, 'buyer', RUN)).toEqual([C('pm_session')]);
+    expect(memoFileRead(two, 'design', RUN)).toEqual([C('pm_csrf')]);
+  });
+
+  // M3. The file lives under `frontend/test-results/`, which Playwright clears at the start of a
+  // run — but only when it is run from `frontend/`, because that cleanup is anchored to the CWD
+  // while this file is anchored to the source tree. A stale file from a previous run would hold
+  // cookies for a session that may since have been revoked, and every test in the new run would
+  // then proceed as the wrong account with no failure anywhere near the cause. So the file is
+  // stamped with the run it belongs to and a foreign stamp reads as "no memo".
+  it('ignores every persona in a file stamped with a different run', () => {
+    const previous = memoFileUpdate(memoFileUpdate(null, 'buyer', [C('pm_session')], 'run-old'), 'design', [C('pm_session')], 'run-old');
+    for (const persona of ['buyer', 'design'] as const) {
+      expect(memoFileRead(previous, persona, 'run-old'), 'sanity: its own run can read it').not.toBeNull();
+      expect(memoFileRead(previous, persona, RUN), 'a fresh run must sign in again rather than re-add a stale session').toBeNull();
+    }
+  });
+
+  it('discards the previous run\'s sessions when the new run writes its first one', () => {
+    const previous = memoFileUpdate(null, 'design', [C('pm_session')], 'run-old');
+    const fresh = memoFileUpdate(previous, 'buyer', [C('pm_session')], RUN);
+    expect(memoFileRead(fresh, 'buyer', RUN)).toEqual([C('pm_session')]);
+    expect(memoFileRead(fresh, 'design', RUN), 'the stale run\'s jars do not survive alongside the new one\'s').toBeNull();
+    expect(JSON.parse(fresh).run).toBe(RUN);
+  });
+
+  it('drops a persona when handed null, leaving the others alone', () => {
+    const both = memoFileUpdate(memoFileUpdate(null, 'buyer', [C('a')], RUN), 'design', [C('b')], RUN);
+    const dropped = memoFileUpdate(both, 'buyer', null, RUN);
+    expect(memoFileRead(dropped, 'buyer', RUN)).toBeNull();
+    expect(memoFileRead(dropped, 'design', RUN)).toEqual([C('b')]);
+  });
+
+  it('treats an absent, corrupt or wrong-shaped file as no memo, rather than failing the run', () => {
+    for (const bad of [null, '{ not json', '[]', '{"sessions":{"buyer":[]}}', '{"run":"' + RUN + '","sessions":"nope"}']) {
+      expect(memoFileRead(bad, 'buyer', RUN), String(bad)).toBeNull();
+    }
+  });
+
+  it('is one anchor — the source tree, not the cwd Playwright cleans relative to (M3)', () => {
+    expect(MEMO_FILE.endsWith('/frontend/test-results/.persona-sessions.json'), MEMO_FILE).toBe(true);
+  });
+
+  // Round 3, ruling 2. The id is minted ONCE PER RUN by `tests/global-setup.ts` and read from the
+  // environment, because the environment is the only thing every worker of a run inherits from the
+  // runner. Round 2 derived it from the worker's own start time, which was stable inside a GREEN
+  // run (one worker process) and changed on every worker restart — and a restart is the only case
+  // this file exists for, since Playwright starts a new worker after each test failure.
+  it('reads the run id the runner minted, so every worker of one run agrees on it', () => {
+    expect(runId({ PW_RUN_ID: 'f4c1e0a2-9b7d-4e51-8a2c-6d0f1b3e5a7c' })).toBe('f4c1e0a2-9b7d-4e51-8a2c-6d0f1b3e5a7c');
+    expect(runId({ PW_RUN_ID: 'a' })).not.toBe(runId({ PW_RUN_ID: 'b' }));
+  });
+
+  it('has no run id outside a Playwright run, and then keeps no memo at all', () => {
+    // A vitest process, or `playwright test` with the globalSetup removed. "No memo" is the safe
+    // reading: the in-memory memo still spends one sign-in per persona per worker, and nothing is
+    // shared with a run it does not belong to.
+    expect(runId({})).toBe('');
+    expect(memoFileRead(memoFileUpdate(null, 'buyer', [C('pm_session')], ''), 'buyer', ''), 'an unstamped file is nobody\'s memo').toBeNull();
+  });
+
+  it('ignores and replaces a memo file another run stamped', () => {
+    const stale = memoFileUpdate(null, 'buyer', [C('pm_session')], 'run-A');
+    expect(memoFileRead(stale, 'buyer', 'run-A'), 'sanity: its own run reads it').not.toBeNull();
+    expect(memoFileRead(stale, 'buyer', 'run-B'), 'another run: no memo').toBeNull();
+    const fresh = memoFileUpdate(stale, 'buyer', [C('pm_session')], 'run-B');
+    expect(JSON.parse(fresh).run).toBe('run-B');
+    expect(memoFileRead(fresh, 'buyer', 'run-A'), 'and run A cannot read the replacement').toBeNull();
+  });
+
+  // The decision `tests/global-setup.ts` makes, as a pure function. It runs in the RUNNER, before
+  // any worker, and removes a file a DIFFERENT run left behind — so a run never starts by adopting
+  // a session that may since have been revoked, whatever cwd Playwright was launched from (its own
+  // clearing of `test-results/` is anchored there; MEMO_FILE is not).
+  it('isStaleMemoFile: only a file that cannot be shown to be this run\'s is stale', () => {
+    const mine = memoFileUpdate(null, 'buyer', [C('pm_session')], 'run-A');
+    expect(isStaleMemoFile(mine, 'run-A'), 'this run\'s own file survives — a restarted worker needs it').toBe(false);
+    expect(isStaleMemoFile(mine, 'run-B')).toBe(true);
+    expect(isStaleMemoFile(null, 'run-A'), 'nothing there to delete').toBe(false);
+    expect(isStaleMemoFile('{ not json', 'run-A'), 'unreadable cannot be shown to be ours').toBe(true);
+    expect(isStaleMemoFile(mine, ''), 'no run id at all: keep nothing').toBe(true);
+  });
+});
+
+describe('driverFor — which target the page is on (A-I8)', () => {
+  it('is the app for the app project\'s origin and the reference for anything else', () => {
+    expect(driverFor('http://localhost:5173/', 'http://localhost:5173')).toBe('app');
+    expect(driverFor('http://localhost:5173/practices/p1', 'http://localhost:5173')).toBe('app');
+    expect(driverFor('http://localhost:5174/', 'http://localhost:5173')).toBe('reference');
+    // The live-deployment mode: PW_APP_URL points the app project at QA and the reference server
+    // still runs locally, so the two are told apart by origin either way.
+    expect(driverFor('https://qa.foundation.vin/browse', 'https://qa.foundation.vin')).toBe('app');
+    expect(driverFor('http://localhost:5174/', 'https://qa.foundation.vin')).toBe('reference');
+  });
+
+  it('defaults to the app project\'s own origin, which is what reach() relies on', () => {
+    expect(driverFor(`${appOrigin({})}/browse`)).toBe('app');
+    expect(driverFor(`${referenceOrigin({})}/`)).toBe('reference');
+  });
+
+  it('refuses a page that has not navigated, rather than guessing the reference', () => {
+    // Guessing would drive an app-project run through the reference driver and screenshot the
+    // wrong target — and because the oracle is generated through the same driver, the pixel gate
+    // could not see it. `booted()` is what every spec calls first; this is what says so.
+    expect(() => driverFor('about:blank', 'http://localhost:5173')).toThrow(/booted/);
+    expect(() => driverFor('', 'http://localhost:5173')).toThrow(/booted/);
+  });
+});
+
+describe('referenceOrigin — where the design server answers (A-I8.2 / B2)', () => {
+  it('is the reference project\'s own baseURL, and honours PW_REF_PORT exactly as the config does', () => {
+    expect(referenceOrigin({})).toBe('http://localhost:5174');
+    expect(referenceOrigin({ PW_REF_PORT: '4174' })).toBe('http://localhost:4174');
+    expect(referenceOrigin({ PW_REF_PORT: 'not-a-port' })).toBe('http://localhost:5174');
+  });
+
+  it('is never the app\'s origin, so the template-refetch guard cannot reach the app', () => {
+    expect(referenceOrigin({})).not.toBe(appOrigin({}));
+    expect(referenceOrigin({})).not.toBe(resolveTargets({}, { app: 5173, ref: 5174, cs: 5175, api: 8017 }).baseURL);
   });
 });

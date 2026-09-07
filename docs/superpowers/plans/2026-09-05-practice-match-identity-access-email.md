@@ -13,7 +13,7 @@
 ## Global Constraints (exact values — from the spec and the quality policy)
 
 - **TDD, no exceptions.** Every step below that writes code starts from a failing test that is run and watched fail; `Run:` lines are mandatory.
-- **Quality and performance policy applies:** `pytest -W error --cov=app --cov=scripts --cov-branch --cov-fail-under=100` (raised by P14, 2026-09-07), `diff-cover --fail-under=100`, `ruff`, `mypy --strict`, `vue-tsc` strict, vitest coverage ≥ 85 % on `src/auth|map|router|admin`, Playwright fails on `pageerror`/`console.error`. Budgets: `/api/me` ≤ 20 ms p95 (cache hit), `/api/auth/signin` ≤ 300 ms p95, `/api/auth/signup` ≤ 100 ms, `/api/admin/users` ≤ 150 ms, one Argon2id hash ≤ 250 ms on CI, auth overhead ≤ 2 ms p95.
+- **Quality and performance policy applies — 100 % coverage (John's ruling 2026-09-06):** `pytest -W error --cov=app --cov=scripts --cov-branch --cov-fail-under=100` (raised by P14, 2026-09-07, to every line and branch of `app/` and `scripts/`; no exclusions without a ruling), `diff-cover --fail-under=100`, `ruff`, `mypy --strict`, `vue-tsc` strict, vitest **100 % lines, branches, functions and statements on every hand-written frontend file** (the existing `frontend/vite.config.ts` thresholds; the ratified exclude set may only grow by ruling), Playwright fails on `pageerror`/`console.error`. Budgets: `/api/me` ≤ 20 ms p95 (cache hit), `/api/auth/signin` ≤ 300 ms p95, `/api/auth/signup` ≤ 100 ms, `/api/admin/users` ≤ 150 ms, one Argon2id hash ≤ 250 ms on CI, auth overhead ≤ 2 ms p95.
 - **Any email address may register.** `account.email` is `citext`, unique, any domain. `foundation.vin` is only the sender domain.
 - **Passwords:** ≥ 12 chars (≥ 14 for staff/admin), ≤ 256; zxcvbn score ≥ 3; HIBP k-anonymity screen with the bundled NCSC top-100k list as fallback; Argon2id `time_cost=3, memory_cost=65536 (64 MiB), parallelism=1`; hashing runs in a worker thread; nothing about a password is logged beyond "changed".
 - **Sessions:** 256-bit random id, only its SHA-256 stored; cookies `pm_session` (`HttpOnly; Secure; SameSite=Lax; Path=/`) and `pm_csrf` (readable, 128-bit); idle 14 d, absolute 30 d; new id on sign-in and on every state/role change; Redis `session:{hash}` TTL 60 s **deleted** on sign-out, password change, state change, grant change — revocation effective on the next request; `last_seen_at` written at most every 5 min; nightly purge.
@@ -78,6 +78,8 @@
 ---
 
 ### Task I1: Schema (`010`–`014`), `app/db.py`, `app/cache.py`, root test fixtures
+
+*Ruling 2026-09-06 (Task I1 deviation 1): the connecting Postgres role is a superuser on compose (`pm`) and on Railway (`postgres`), so `REVOKE` cannot make `audit_log` append-only; `014_audit_log.sql` adds a `BEFORE UPDATE OR DELETE` trigger that raises, the REVOKEs stay as belt and braces, and the test asserts the refusal for the current role. A dedicated non-superuser application role is recorded as a later ops improvement. Also ruled: `tests/test_migrate.py`'s expected list is derived from `migrate.migration_files()`; `tests/auth/test_db_cache.py` covers the real `db`/`cache` bodies for the 100 % rule; `db.engine()` is an accessor over `get_engine(async_dsn(settings.database_url))`.*
 
 *Cross-plan delta (2026-09-05): Platform Task 5 fix round 3 created `app/db.py` — `get_engine(url)`, `get_redis(url)` (one instance per running event loop and URL) and `dispose_all()` — so the health probes reuse pooled connections. Task I1 EXTENDS that module (schema/session helpers) rather than creating it; keep those three names and semantics. Migration files (`010`–`014` and later) run under `scripts/migrate.py`, which commits each file and its ledger row as ONE transaction: a migration file must not contain its own `BEGIN`/`COMMIT`/`ROLLBACK`, and statements that cannot run inside a transaction (`CREATE INDEX CONCURRENTLY`, `VACUUM`, `CREATE DATABASE`) need their own runner path — add the rule to the `scripts/migrate.py` docstring in I1.*
 
@@ -197,8 +199,16 @@ def test_outbox_idempotency_and_audit_is_append_only(conn):
         cur.execute("INSERT INTO email_outbox (to_email, template, params, idempotency_key) VALUES ('a@b.co','verify_email','{}','k1')")
         with pytest.raises(psycopg2.errors.UniqueViolation):
             cur.execute("INSERT INTO email_outbox (to_email, template, params, idempotency_key) VALUES ('a@b.co','verify_email','{}','k1')")
-        cur.execute("SELECT has_table_privilege(current_user,'audit_log','UPDATE'), has_table_privilege(current_user,'audit_log','DELETE')")
-        assert cur.fetchone() == (False, False)
+        cur.execute("INSERT INTO audit_log (action, target_type) VALUES ('probe', 'probe') RETURNING id")
+        (aid,) = cur.fetchone()
+        # The connecting role is a superuser on compose and on Railway, so ACLs alone cannot enforce
+        # append-only; the trigger must refuse both statements for ANY role (Task I1 ruling).
+        with pytest.raises(psycopg2.errors.RaiseException):
+            cur.execute("UPDATE audit_log SET reason = 'tamper' WHERE id = %s", (aid,))
+        with pytest.raises(psycopg2.errors.RaiseException):
+            cur.execute("DELETE FROM audit_log WHERE id = %s", (aid,))
+        cur.execute("SELECT count(*) FROM audit_log WHERE id = %s", (aid,))
+        assert cur.fetchone() == (1,)
 
 
 def test_session_and_token_tables_store_hashes_only(conn):
@@ -339,6 +349,16 @@ CREATE TABLE audit_log (
 CREATE INDEX audit_log_target_idx ON audit_log (target_type, target_id, at DESC);
 REVOKE UPDATE, DELETE ON audit_log FROM PUBLIC;
 REVOKE UPDATE, DELETE ON audit_log FROM CURRENT_USER;
+-- Append-only must hold for the role that actually connects. Both the compose role (pm) and
+-- Railway's template role (postgres) are SUPERUSERS, which bypass ACLs, so the REVOKEs above are
+-- belt and braces only; the trigger is the control (Task I1 ruling, 2026-09-06).
+CREATE FUNCTION audit_log_is_append_only() RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+  RAISE EXCEPTION 'audit_log is append-only' USING ERRCODE = 'P0001';
+END $$;
+CREATE TRIGGER audit_log_append_only
+  BEFORE UPDATE OR DELETE ON audit_log
+  FOR EACH ROW EXECUTE FUNCTION audit_log_is_append_only();
 ```
 
 `app/db.py`:
@@ -379,16 +399,48 @@ def async_redis() -> aioredis.Redis:
 
 - [ ] **Step 5: Commit** — `feat(identity): schema 010–014, db/cache seams, scratch-database fixtures`.
 
+#### Task I1 — fix round 1 (2026-09-06, from the review: C1–C2 Critical, I4–I7 Important, M8–M11 Minor; I3 branch coverage → Task I1b after I2 lands)
+
+**Rulings.** C1 — `app/cache.py` resolves its client through module-level factories `_make_sync()` / `_make_async()` so a `from app.cache import sync_redis` binding still goes through the patch; the `redis` fixture patches those two factories; a test proves interception through BOTH import styles, sync and async, with `settings.redis_url` pointed at a closed port so a leak to the real Redis fails loudly. C2 — `014_audit_log.sql` also revokes TRUNCATE and adds a `BEFORE TRUNCATE … FOR EACH STATEMENT` trigger (same function); the test asserts `TRUNCATE audit_log` raises and the row survives. I5 — `scratch_dsn` runs `migrate.run` inside the `try`, and `admin.close()` always runs. I6 — `tests/auth/test_schema.py` pins the four indexes (by name via `pg_indexes`), the `ON DELETE CASCADE` FKs (insert account + child rows, delete the account, children gone), `citext` on `email_outbox.to_email` and `email_suppression.email` (case-insensitive lookups succeed), `timestamptz` on every `*_at` column (`information_schema.columns.data_type = 'timestamp with time zone'`), and the CHECKs on `email_token.purpose`, `api_token.role`, `email_outbox.status`, `application.status` (one bad value each → `CheckViolation`). I7 — `tests/test_migrate.py::test_migration_files_never_manage_their_own_transaction` asserts no `migrations/*.sql` contains a `BEGIN`, `COMMIT` or `ROLLBACK` statement (regex on statement starts, case-insensitive, ignoring `--` comments). M8 — `tests/auth/test_db_cache.py` tests request `db_ready`. M9 — `scratch_dsn`/`_maintenance()` normalise the DSN through `migrate.normalize_dsn()` and strip any query string before the `rsplit`. M10 — recorded (the ledger read-back is the independent assertion). M11 — restore `pyproject.toml`'s sqlalchemy constraint to the original `>=2.0` notation ONLY if the file is not being edited by the concurrent Task I2 implementer at that moment (`git status` must show `pyproject.toml` unmodified before you touch it; otherwise leave M11 for Task I1b). **I3 (branch coverage: `[tool.coverage.run] branch = true`, CI `--cov-branch`, the two `dispose_all` edges) is deliberately deferred to Task I1b, dispatched after Task I2 commits, because it edits `pyproject.toml` and `quality.yml` which I2 and the CI-gate task share.**
+
+**Files:** Modify `app/cache.py`, `tests/conftest.py`, `migrations/014_audit_log.sql`, `tests/auth/test_schema.py`, `tests/auth/test_db_cache.py`, `tests/test_migrate.py`. (`pyproject.toml` only under the M11 condition.)
+
+- [ ] **FR1 Step 1: failing tests, each watched fail for its own reason** — C1: `tests/auth/test_db_cache.py::test_redis_fixture_intercepts_both_import_styles(redis, monkeypatch)`: `monkeypatch.setattr(settings, "redis_url", "redis://127.0.0.1:1/0")`; `from app.cache import sync_redis, async_redis` at module top; assert `sync_redis() is redis` (or pings the fake — `redis.set("k","v")` then `sync_redis().get("k") == b"v"`), and `await async_redis().ping()` succeeds; RED today: the from-imported function builds a real client → `ConnectionError`. C2: extend `test_outbox_idempotency_and_audit_is_append_only` with `TRUNCATE audit_log` → `RaiseException`, count still 1 (RED: truncate succeeds). I5: a test that makes `migrate.run` raise (monkeypatch a migrations directory containing a broken `999_bad.sql` via `directory=`? — `scratch_dsn` calls `migrate.run(dsn)` without `directory`; instead monkeypatch `migrate.run` on the fixture's module object to raise, request `scratch_dsn`, expect the fixture to raise AND `pg_database` to contain no `pm_test_%` row afterwards — implement as a test that drives the fixture function directly through `request.getfixturevalue` inside `pytest.raises`, then queries the maintenance database). I6: the assertions listed above (each RED-provable by reading the migration; run them — they pass on the correct schema, so RED is demonstrated by temporarily editing a scratch copy of one migration? No: for schema-pinning tests the RED is a deliberately wrong assertion first (e.g. expect the index name misspelled), watched fail, then corrected — record that). I7: RED by adding a scratch `migrations/zz_probe.sql` containing `BEGIN;`, watching the test fail, deleting it. M8/M9: covered by the changed fixtures (M9: a test that `scratch_dsn` works when `settings.database_url` is monkeypatched to the `postgresql+asyncpg://…?sslmode=disable` form of the same DSN — RED today).
+- [ ] **FR1 Step 2: implement** as ruled. `app/cache.py`:
+```python
+def _make_sync() -> redis_sync.Redis:
+    return redis_sync.from_url(settings.redis_url, socket_connect_timeout=3, socket_timeout=3)
+
+
+def _make_async() -> aioredis.Redis:
+    return aioredis.from_url(settings.redis_url, socket_connect_timeout=3, socket_timeout=3)
+
+
+def sync_redis() -> redis_sync.Redis:
+    """Resolved through the module factory at call time so tests (and `from app.cache import sync_redis`
+    consumers) all see one patch point: the `redis` fixture replaces `_make_sync`/`_make_async`."""
+    return _make_sync()
+
+
+def async_redis() -> aioredis.Redis:
+    return _make_async()
+```
+The fixture: `monkeypatch.setattr(cache, "_make_sync", lambda: fake_sync); monkeypatch.setattr(cache, "_make_async", lambda: fake_async)` with `fakeredis.FakeRedis(server=server)` and `fakeredis.aioredis.FakeRedis(server=server)` sharing one `fakeredis.FakeServer()`.
+- [ ] **FR1 Step 3: GREEN** — `poetry run pytest -q -W error --cov=app --cov-report=term-missing --cov-fail-under=100`; mypy; ruff. (Statement coverage; branch coverage becomes the gate in I1b.)
+- [ ] **FR1 Step 4: Commit** — explicit pathspecs of the files above · `fix(identity): cache seams patchable under from-imports; audit log refuses TRUNCATE; scratch_dsn cleans up on a failed migration and normalises the DSN; schema contract and migration-transaction drift pinned` with the trailer.
+
 ---
 
 ### Task I2: Passwords, tokens, sessions
+
+*Ruling 2026-09-06 (Task I2 deviation): psycopg2 returns `uuid` columns as `str` unless `psycopg2.extras.register_uuid()` has run; the plan's `Principal.account_id: UUID` and the cache-hit path assume it. `app/db.py` calls `register_uuid()` once at import (process-wide, so the `conn` fixture and `sync_conn()` both return `uuid.UUID`); `app/db.py` joins this task's Modify list for that one line, and `tests/auth/test_sessions.py` gains `test_uuid_columns_come_back_as_uuid_objects(conn)` (insert an account, `SELECT id` → `isinstance(row[0], uuid.UUID)`). Also accepted: `types-zxcvbn` dev dependency, `datetime.now(UTC)`, strict-typing annotations.*
 
 **Files:**
 - Create: `app/auth/__init__.py`, `app/auth/passwords.py`, `app/auth/tokens.py`, `app/auth/sessions.py`, `app/auth/data/top100k.txt`, `tests/auth/test_passwords.py`, `tests/auth/test_tokens.py`, `tests/auth/test_sessions.py`
 - Modify: `app/config.py` (`hibp_enabled: bool = True`)
 
 **Interfaces:**
-- Produces: `passwords.PasswordPolicyError(reason: str)`; `passwords.validate(pw: str, *, privileged: bool) -> None`; `passwords.is_pwned(pw: str, http: httpx.Client | None = None) -> bool`; `passwords.hash_password(pw) -> str`; `passwords.verify(pw, hash) -> bool`; `passwords.needs_rehash(hash) -> bool`; `passwords.hash_async(pw) -> Awaitable[str]`, `passwords.verify_async(pw, hash) -> Awaitable[bool]`; `passwords.DUMMY_HASH` (a real Argon2id hash of a random string, used for equal work); `tokens.new_secret() -> tuple[str, str]` (raw, sha256 hex); `tokens.hash(raw) -> str`; `tokens.issue_email_token(conn, account_id, purpose, ttl: timedelta) -> str`; `tokens.consume_email_token(conn, raw, purpose) -> uuid | None`; `tokens.issue_api_token(conn, *, name, role, created_by, ttl: timedelta) -> str` (`pm_{id}.{secret}`); `tokens.verify_api_token(conn, raw) -> ApiPrincipal | None`; `sessions.Principal(account_id: UUID, state: str, roles: frozenset[str], reauth_at: datetime | None, kind: Literal['session','token','legacy'], session_hash: str | None)`; `sessions.create(conn, r, account_id, ip, ua) -> str`; `sessions.resolve(conn, r, raw_id) -> Principal | None`; `sessions.touch(conn, principal)`; `sessions.set_reauth(conn, r, principal)`; `sessions.revoke(conn, r, raw_id)`; `sessions.revoke_all(conn, r, account_id)`; `sessions.invalidate_account(r, account_id)`; `sessions.IDLE = timedelta(days=14)`, `ABSOLUTE = timedelta(days=30)`, `CACHE_TTL = 60`, `TOUCH_EVERY = timedelta(minutes=5)`.
+- Produces: `passwords.PasswordPolicyError(reason: str)`; `passwords.validate(pw: str, *, privileged: bool) -> None`; `passwords.is_pwned(pw: str, http: httpx.Client | None = None) -> bool`; `passwords.hash_password(pw) -> str`; `passwords.verify(pw, hash) -> bool`; `passwords.needs_rehash(hash) -> bool`; `passwords.hash_async(pw) -> Awaitable[str]`, `passwords.verify_async(pw, hash) -> Awaitable[bool]`; `passwords.DUMMY_HASH` (a real Argon2id hash of a random string, used for equal work); `tokens.new_secret() -> tuple[str, str]` (raw, sha256 hex); `tokens.hash(raw) -> str`; `tokens.issue_email_token(conn, account_id, purpose, ttl: timedelta) -> str`; `tokens.consume_email_token(conn, raw, purpose) -> uuid | None`; `tokens.issue_api_token(conn, *, name, role, created_by, ttl: timedelta) -> str` (`pm_{id}.{secret}`); `tokens.verify_api_token(conn, raw) -> ApiPrincipal | None`; `sessions.Principal(account_id: UUID, state: str, roles: frozenset[str], reauth_at: datetime | None, kind: Literal['session','token','legacy'], session_hash: str | None)`; `sessions.create(conn, r, account_id, ip, ua) -> str`; `sessions.resolve(conn, r, raw_id) -> Principal | None`; `sessions.touch(conn, principal)`; `sessions.set_reauth(conn, r, principal)`; `sessions.revoke(conn, raw_id) -> tuple[str, UUID | None]` and `sessions.revoke_cache(r, h, account_id)`; `sessions.revoke_all(conn, account_id) -> frozenset[str]` and `sessions.revoke_all_cache(r, account_id, revoked, keep=frozenset())` (both split in I5c fix rounds 1-2 so the cached principals are dropped only AFTER the caller's transaction commits; `revoke_all_cache` sweeps the account index minus `keep`, the hashes the caller created in the same transaction); `sessions.invalidate_account(r, account_id)`; `sessions.IDLE = timedelta(days=14)`, `ABSOLUTE = timedelta(days=30)`, `CACHE_TTL = 60`, `TOUCH_EVERY = timedelta(minutes=5)`.
 
 - [ ] **Step 1: Failing tests**
 
@@ -809,8 +861,10 @@ Add `hibp_enabled: bool = True` to `Settings`.
 - Modify: `app/config.py` (`market_data_public: bool = False`, `consolidator_keywords: str = ""`), `app/api/csrf.py` (from the Map-engines plan — if absent, create it here with the same body)
 
 **Interfaces:**
-- Produces: `permissions.ROLES = ("anonymous","applicant","buyer","seller","staff","admin")`; `permissions.MATRIX: dict[str, frozenset[str]]` (perm → roles) exactly as spec §4; `permissions.PUBLIC_ROUTES: frozenset[tuple[str, str]]` (method, path template); `permissions.REAUTH: frozenset[str]`; `permissions.AUDITED: frozenset[str]`; `permissions.effective_roles(principal: Principal | None) -> frozenset[str]`; `permissions.allowed(perm, principal) -> bool`; `permissions.to_typescript() -> str`; CLI `python -m app.auth.permissions --ts > frontend/src/auth/permissions.ts`; `deps.current_principal(request) -> Principal | None` (session cookie → `api_token` → legacy bearer as admin); `deps.require(perm: str)` FastAPI dependency returning the `Principal`; `deps.PermissionDenied` → `403 {"error":{"code":"FORBIDDEN"}}`, unauthenticated → `401 {"error":{"code":"UNAUTHORIZED"}}`, re-auth needed → `403 {"error":{"code":"REAUTH_REQUIRED"}}`; `deps.check_origin_and_csrf(request, principal)`; `audit.write(conn, *, actor: Principal | None, action, target_type, target_id=None, before=None, after=None, reason=None, request=None)`; `limits.hit(r, key, limit, window_s) -> None` raising `HTTPException(429)` with `Retry-After`; `limits.SIGNIN_EMAIL=(10,900)`, `SIGNIN_IP=(30,900)`, `SIGNUP_IP=(5,3600)`, `SIGNUP_EMAIL=(3,86400)`, `FORGOT_EMAIL=(3,3600)`; `labels.role_label(roles, affiliation) -> str`; `labels.initials(name) -> str`; `deps.client_ip(request) -> str | None`.
+- Produces: `permissions.ROLES = ("anonymous","applicant","buyer","seller","staff","admin")`; `permissions.MATRIX: dict[str, frozenset[str]]` (perm → roles) exactly as spec §4; `permissions.PUBLIC_ROUTES: frozenset[tuple[str, str]]` (method, path template); `permissions.REAUTH: frozenset[str]`; `permissions.AUDITED: frozenset[str]`; `permissions.effective_roles(principal: Principal | None) -> frozenset[str]`; `permissions.allowed(perm, principal) -> bool`; `permissions.to_typescript() -> str`; CLI `python -m app.auth.permissions --ts > frontend/src/auth/permissions.ts`; `deps.current_principal(request) -> Principal | None` (session cookie → `api_token` → legacy bearer as admin); `deps.require(perm: str)` FastAPI dependency returning the `Principal`; `deps.PermissionDenied` → `403 {"error":{"code":"FORBIDDEN"}}`, unauthenticated → `401 {"error":{"code":"UNAUTHORIZED"}}`, re-auth needed → `403 {"error":{"code":"REAUTH_REQUIRED"}}`; `deps.check_origin_and_csrf(request, principal)`; `audit.write(conn, *, actor: Principal | None, action, target_type, target_id=None, before=None, after=None, reason=None, request=None)`; `limits.hit(r, scope, subject, limit, window_s) -> None` raising a 429 `deps.AuthError` (`RATE_LIMITED`, `Retry-After`) — the key is built by `app.ratelimit.bucket_key(scope, subject, window_s)`, so raw IPs and e-mail addresses never enter Redis (I3 review ruling, 2026-09-06); `limits.SIGNIN_EMAIL=(10,900)`, `SIGNIN_IP=(30,900)`, `SIGNUP_IP=(5,3600)`, `SIGNUP_EMAIL=(3,86400)`, `FORGOT_EMAIL=(3,3600)`; `labels.role_label(roles, affiliation) -> str`; `labels.initials(name) -> str`; `deps.client_ip(request) -> str | None`.
 
+
+*Rulings after the I3 review and re-review (2026-09-06, zero-gaps): `deps` raises an `AuthError` hierarchy (`Unauthenticated` 401, `PermissionDenied` 403, CSRF/Origin/re-auth/429 codes as before) and exposes `deps.install(app)` — called in `create_app()` — which renders the A5 body `{"error":{"code","message"}}` for those exceptions only (no global patching of FastAPI). Resolution order is the prose order: session cookie → `api_token` → legacy bearer (a valid cookie wins over any `Authorization` header). REAUTH permissions are unreachable for non-session principals except the legacy operator (tokens fail closed). `users.revoke` is a real staff permission in `MATRIX`, `REAUTH` and `AUDITED`. `api_token` principals carry `account_id = created_by`, are refused when the creator is suspended/revoked, and audit as `actor_role = "token:<role>"`. `audit.write` redacts keys matching password/hash/secret/token. `limits.hit` takes `(scope, subject)` and pseudonymises through `app.ratelimit.bucket_key`. `current_principal` consults the Redis cache before opening any Postgres connection. `tests/auth/test_permissions.py::test_every_route_is_guarded_or_public` walks `create_app().routes`; later tasks hoist `REQUIRE_X = require("x")` to module constants and never wrap a `require` dependency. A live session whose account is suspended/revoked returns 403 `FORBIDDEN`; I5 invalidates all sessions on suspend/revoke so the next request is the generic 401.*
 - [ ] **Step 1: Failing tests**
 
 `tests/auth/test_permissions.py`:
@@ -1253,7 +1307,14 @@ async def test_signup_is_uniform_and_queues_one_verify_email(client, conn):
     r2 = await client.post("/api/auth/signup", json={"email": "new.person@gmail.com", "password": PW})    # existing → same answer
     assert r1.status_code == r2.status_code == 202 and r1.json() == r2.json() == {"status": "check_email"}
     rows = await _outbox(conn)
-    assert len(rows) == 1 and rows[0][0] == "New.Person@Gmail.com" and rows[0][1] == "verify_email" and rows[0][2]["link"].startswith("https://qa.foundation.vin/verify?token=")
+    # TWO rows, and both `verify_email` — updated 2026-09-08 to the shipped behaviour. Fix round 1's
+    # Critical 1 made the existing-address branch write a row too (equal commit work closes the
+    # registration-timing leak), and I9a fix round 1's Important 4 made that row a RE-ISSUED verify
+    # link while the address is still `unverified`. `account_exists` is the second row only from
+    # `verified` onward. See `tests/api/test_auth.py` for the three cases this one splits into.
+    assert [row[1] for row in rows] == ["verify_email", "verify_email"]
+    assert rows[0][0] == "New.Person@Gmail.com" and rows[0][2]["link"].startswith("https://qa.foundation.vin/verify?token=")
+    assert rows[1][2]["link"] != rows[0][2]["link"]                     # a new token, not the old link repeated
     with conn.cursor() as cur:
         cur.execute("SELECT state FROM account WHERE email='new.person@gmail.com'"); assert cur.fetchone() == ("unverified",)
 
@@ -1449,16 +1510,34 @@ def _link(path: str, token: str) -> str:
 @router.post("/auth/signup", status_code=202)
 async def signup(body: Creds, request: Request) -> dict:
     r = sync_redis(); ip = client_ip(request)
-    limits.hit(r, f"rl:signup:ip:{ip}", *limits.SIGNUP_IP); limits.hit(r, f"rl:signup:email:{body.email.lower()}", *limits.SIGNUP_EMAIL)
+    limits.hit(r, "signup:ip", ip, *limits.SIGNUP_IP); limits.hit(r, "signup:email", body.email.lower(), *limits.SIGNUP_EMAIL)
     _policy(body.password, privileged=False)
     hashed = await P.hash_async(body.password)
     with sync_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO account (email, password_hash, state) VALUES (%s,%s,'unverified') ON CONFLICT (email) DO NOTHING RETURNING id", (str(body.email), hashed))
-            row = cur.fetchone()
-        if row:
-            token = T.issue_email_token(conn, row[0], "verify", timedelta(hours=24))
-            enqueue(conn, to=str(body.email), template="verify_email", params={"link": _link("/verify", token)}, idempotency_key=f"{row[0]}:verify_email:{token[:8]}")
+            # `DO UPDATE SET email = account.email`, not `DO NOTHING` — updated 2026-09-08 to the
+            # shipped behaviour (fix round 1's Critical 1, then I9a fix round 1's Important 4). The
+            # branch below needs the EXISTING row's state, and this returns exactly one row whether
+            # it inserted or conflicted, so there is no second statement and no unreachable arm; the
+            # "update" writes the column to the value it already holds, so `state` and
+            # `password_hash` are untouched.
+            cur.execute("""INSERT INTO account (email, password_hash, state) VALUES (%s,%s,'unverified')
+                            ON CONFLICT (email) DO UPDATE SET email = account.email
+                            RETURNING id, state""", (str(body.email), hashed))
+            account_id, state = cur.fetchone()
+        if state == "unverified":
+            # A fresh address, and a pending one whose link expired or was suppressed: both get a
+            # verify link. There is no other way to obtain one (no re-send endpoint,
+            # `password/forgot` excludes `unverified`, no staff action verifies an address).
+            token = T.issue_email_token(conn, account_id, "verify", timedelta(hours=24))
+            enqueue(conn, to=str(body.email), template="verify_email", params={"link": _link("/verify", token)}, idempotency_key=f"{account_id}:verify_email:{token[:8]}")
+        else:
+            # `verified` onward: the owner has proved they hold the address, so they are told
+            # somebody tried to sign up as them. Equal commit work either way — one outbox row.
+            # `_outbox_key()` (a fresh uuid per attempt, `app/api/auth.py`) and NOT a deterministic
+            # key: a repeatable one would be deduped by the outbox's ON CONFLICT and the second
+            # attempt would write no row, which is the equal-work property Critical 1 restored.
+            enqueue(conn, to=str(body.email), template="account_exists", params={}, idempotency_key=_outbox_key())
     return {"status": "check_email"}
 
 
@@ -1476,7 +1555,7 @@ async def verify(body: TokenIn) -> dict:
 @router.post("/auth/signin")
 async def signin(body: Creds, request: Request, response: Response) -> dict:
     r = sync_redis(); ip = client_ip(request); email = str(body.email).lower()
-    limits.hit(r, f"rl:signin:email:{email}", *limits.SIGNIN_EMAIL); limits.hit(r, f"rl:signin:ip:{ip}", *limits.SIGNIN_IP)
+    limits.hit(r, "signin:email", email, *limits.SIGNIN_EMAIL); limits.hit(r, "signin:ip", ip, *limits.SIGNIN_IP)
     with sync_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id, password_hash, state FROM account WHERE email=%s", (email,)); row = cur.fetchone()
@@ -1500,7 +1579,7 @@ async def signin(body: Creds, request: Request, response: Response) -> dict:
 @router.post("/auth/signout")
 async def signout(request: Request, response: Response, principal=Depends(require("account.self"))) -> dict:
     with sync_conn() as conn:
-        S.revoke(conn, sync_redis(), request.cookies["pm_session"])
+        h, account_id = S.revoke(conn, request.cookies["pm_session"])   # cache cleared after the commit: S.revoke_cache(sync_redis(), h, account_id)
     clear_session_cookies(response)
     return {"status": "signed_out"}
 
@@ -1508,7 +1587,8 @@ async def signout(request: Request, response: Response, principal=Depends(requir
 @router.post("/auth/signout-all")
 async def signout_all(response: Response, principal=Depends(require("account.self"))) -> dict:
     with sync_conn() as conn:
-        S.revoke_all(conn, sync_redis(), principal.account_id)
+        revoked = S.revoke_all(conn, principal.account_id)
+    S.revoke_all_cache(sync_redis(), principal.account_id, revoked)   # after the commit
     clear_session_cookies(response)
     return {"status": "signed_out"}
 
@@ -1516,7 +1596,7 @@ async def signout_all(response: Response, principal=Depends(require("account.sel
 @router.post("/auth/password/forgot", status_code=202)
 async def forgot(body: EmailIn, request: Request) -> dict:
     r = sync_redis(); email = str(body.email).lower()
-    limits.hit(r, f"rl:forgot:email:{email}", *limits.FORGOT_EMAIL)
+    limits.hit(r, "forgot:email", email, *limits.FORGOT_EMAIL)
     with sync_conn() as conn:
         with conn.cursor() as cur:
             cur.execute("SELECT id FROM account WHERE email=%s AND state NOT IN ('unverified','revoked')", (email,)); row = cur.fetchone()
@@ -1537,7 +1617,7 @@ async def reset(body: ResetIn, request: Request) -> dict:
         _policy(body.password, privileged)
         with conn.cursor() as cur:
             cur.execute("UPDATE account SET password_hash=%s WHERE id=%s", (await P.hash_async(body.password), aid))
-        S.revoke_all(conn, sync_redis(), aid)
+        revoked = S.revoke_all(conn, aid)   # cache cleared after the commit: S.revoke_all_cache(sync_redis(), aid, revoked)
         audit.write(conn, actor=None, action="password.reset", target_type="account", target_id=aid, request=request)
         enqueue(conn, to=_email_of(conn, aid), template="password_changed", params={}, idempotency_key=f"{aid}:password_changed:{body.token[:8]}")
     return {"status": "reset"}
@@ -1554,7 +1634,7 @@ async def change(body: ChangeIn, request: Request, response: Response, principal
         _policy(body.new, privileged=bool(principal.roles & {"staff", "admin"}))
         with conn.cursor() as cur:
             cur.execute("UPDATE account SET password_hash=%s WHERE id=%s", (await P.hash_async(body.new), principal.account_id))
-        S.revoke_all(conn, r, principal.account_id)
+        revoked = S.revoke_all(conn, principal.account_id)   # cache cleared after the commit, keeping `raw`'s hash
         raw = S.create(conn, r, principal.account_id, client_ip(request), request.headers.get("user-agent"))
         set_session_cookies(response, raw)
         audit.write(conn, actor=principal, action="password.change", target_type="account", target_id=principal.account_id, request=request)
@@ -1601,12 +1681,16 @@ Settings: `link_base_url: str = "https://qa.foundation.vin"` (production sets `h
 
 ### Task I5: Applications, staff decisions, grants, api tokens, bootstrap admin, Admin read endpoints
 
+*John's condition (2026-09-06, on accepting the append-only-by-trigger ruling): **every account and every role must be surfaced in the admin controls, admins included.** `GET /api/admin/users` returns accounts of every state and every role — Staff and Admin rows too, including the bootstrap-created admins and the caller's own account — each with its `roles[]` and, per grant, `granted_by` and `granted_at`; it accepts a `role=` filter alongside `state=` and `kind=`. No role is hidden from the list, and the Admin › Users tab (Task I7) renders Staff and Admin rows exactly like the others. There is no separate "SuperAdmin" application role in the approved spec — Admin is the top role (it alone grants roles, and every grant is re-authenticated and audited); the Postgres superuser is a database credential, not an application user, and never appears in the app. Tests: an admin lists users and sees a staff account, another admin and itself with their grants; `role=admin` returns exactly the admins.*
+
+*Superseded in part (2026-09-07): I5 fix round 1's **F6** narrowed `TOKEN_ROLES` to `("buyer", "seller")` — "automation gets member roles; administration keeps its sessions". John reversed that the same day ("Admin and Staff must be handled in wave 2a … must include Staff/Admin tokens"), so an `api_token` carries any of the four roles and the containment moves into three safeguards: the minter must already hold a `staff`/`admin` role to mint one, a token principal never satisfies a re-auth gate, and a token principal never holds `tokens.manage`. Carried by **Task I5b** below; spec §Automation tokens is amended to match.*
+
 **Files:**
 - Create: `app/api/applications.py`, `app/api/admin_users.py`, `app/auth/flags.py`, `app/auth/data/disposable_domains.txt`, `scripts/bootstrap_admin.py`, `scripts/seed_persona.py`, `tests/api/test_applications.py`, `tests/api/test_admin_users.py`, `tests/scripts/test_bootstrap_admin.sh`
 - Modify: `app/main.py` (routers)
 
 **Interfaces:**
-- Produces: `POST /api/applications {kind, fields}` (`account.self`; buyer requires `state=verified`, seller requires role buyer and `seller.apply`) → `202 {id, status}`; `GET /api/applications/me` → latest per kind; `GET /api/admin/users?state=&kind=&cursor=&limit=` (`users.review`) → `{items: [...], next_cursor}`; `GET /api/admin/users/{id}` (`users.view_detail`, audited view) → account + applications + grants; `POST /api/admin/users/{id}/decide {action, note}` (`users.decide`; `revoke` → permission `users.revoke` requiring re-auth) → `{state, roles}`; `POST /api/admin/users/{id}/grants {role, grant: bool, reason}` (`roles.grant`); `POST /api/admin/tokens {name, role, days}` (`tokens.manage`) → `{token}` once; `POST /api/admin/tokens/{id}/revoke`; `GET /api/admin/audit?limit=` (`audit.read`); `GET /api/admin/permissions` (`permissions.read`) → `{roles, matrix, reauth, audited}`; `flags.compute(fields: dict, email: str) -> list[str]`; `decide(conn, r, *, actor, account_id, action, note, request) -> tuple[str, list[str]]` (the transition table below); CLI `bootstrap_admin.py --email …` prints an invite link (`/accept-invite?token=`), `seed_persona.py` refuses on production.
+- Produces: `POST /api/applications {kind, fields}` (`account.self`; buyer requires `state=verified`, seller requires role buyer and `seller.apply`) → `202 {id, status}`; `GET /api/applications/me` → latest per kind; `GET /api/admin/users?state=&kind=&cursor=&limit=` (`users.review`) → `{items: [...], next_cursor}`; `GET /api/admin/users/{id}` (`users.view_detail`, audited view) → account + applications + grants; `POST /api/admin/users/{id}/decide {action, note}` (`users.decide`; `revoke` → permission `users.revoke` requiring re-auth) → `{state, roles}`; `POST /api/admin/users/{id}/grants {role, grant: bool, reason}` (`roles.grant`); `POST /api/admin/tokens {name, role, days}` (`tokens.manage`) → `{token}` once; `POST /api/admin/tokens/{id}/revoke`; `GET /api/admin/audit?limit=` (`audit.read`); `GET /api/admin/permissions` (`permissions.read`) → `{roles, matrix, reauth, audited}`; `flags.compute(fields: dict, email: str) -> list[str]`; `decide(conn, *, actor, account_id, action, note) -> tuple[str, list[str], frozenset[str]]` (the transition table below; `request` moved to the endpoint with the audit row in I5, and the Redis client went with I5c fix round 1's post-commit split — the third element is the revoked session hashes `decide_route` hands to `sessions.revoke_all_cache`); CLI `bootstrap_admin.py --email …` prints an invite link (`/accept-invite?token=`), `seed_persona.py` refuses on production.
 
 Decision transitions (buyer application; seller analogous with `seller` grant only):
 
@@ -1819,7 +1903,7 @@ async def submit(body: ApplicationIn, request: Request, principal=Depends(requir
                 cur.execute("UPDATE account SET state='pending', display_name=COALESCE(display_name, %s) WHERE id=%s", (body.fields.get("name"), principal.account_id))
         template = "application_received" if body.kind == "buyer" else "seller_application_received"
         enqueue(conn, to=email, template=template, params={}, idempotency_key=f"{principal.account_id}:{template}:{app_id}")
-        audit.write(conn, actor=principal, action="application.submit", target_type="application", target_id=app_id, request=request)
+        audit.write(conn, actor=principal, action="applications.submit", target_type="application", target_id=app_id, request=request)
     return {"id": str(app_id), "status": "pending"}
 
 
@@ -1932,7 +2016,7 @@ def decide(conn, r, *, actor, account_id: UUID, action: str, note: str, request)
     if action in EMAIL:
         template = EMAIL[action] if kind == "buyer" or action in ("suspend", "revoke") else EMAIL[action].replace("application_", "seller_application_")
         enqueue(conn, to=email, template=template, params={"note": note}, idempotency_key=f"{account_id}:{template}:{app[0] if app else action}")
-    S.revoke_all(conn, r, account_id) if action in ("suspend", "revoke") else S.invalidate_account(r, account_id)
+    revoked = S.revoke_all(conn, account_id) if action in ("suspend", "revoke") else frozenset()   # the caller clears the cache after the commit
     audit.write(conn, actor=actor, action="users.decide", target_type="account", target_id=account_id, before={"state": state}, after={"state": to, "roles": roles}, reason=action if not note else f"{action}: {note}", request=request)
     return to, roles
 
@@ -2033,6 +2117,7 @@ print(f"{settings.link_base_url}/accept-invite?token={token}")
 **Interfaces:**
 - Consumes: `TokenIn(name, role, expires_at)`, `create_token`, `TokenManager` (= `require("tokens.manage")` + re-auth), `S.Principal` (kind `session` | `token`), `require(perm)` and its re-auth path in `app/auth/deps.py`, the audit helper (`tokens.create`).
 - Produces: `TOKEN_ROLES = ("buyer", "seller", "staff", "admin")`; `REAUTH_TOKEN_MESSAGE = "this action needs a re-authenticated session — api tokens cannot re-authenticate"`; a token principal's `permissions` = its role's set minus `{"tokens.manage"}`.
+- "The minter holds the role" is the PERMISSION-SUBSET rule, not a `role_grant` row (controller ruling, 2026-09-07): `permissions.may_mint(role, minter_roles)` is true when every `ADMINISTRATIVE` permission `role` carries is already the minter's — so an admin mints all four roles without granting itself `staff`, and the `403 ROLE_NOT_HELD` branch is unreachable over HTTP while `tokens.manage` is admin-only.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -2411,12 +2496,35 @@ Beat: `"mail-send-minutely": {"task": "mail.send", "schedule": 60.0}`, `"session
 ### Task I7: Frontend — `can()`, permission-aware `guard()`, `/api/me` store, Admin Users and Permissions mappings, harness persona sign-in
 
 **Files:**
-- Create: `frontend/src/auth/can.ts`, `frontend/src/auth/api.ts`, `frontend/src/auth/me.ts`, `frontend/src/auth/can.test.ts`, `frontend/src/auth/api.test.ts`, `frontend/src/admin/users.ts`, `frontend/src/admin/users.test.ts`, `frontend/src/admin/permissions.ts`, `frontend/src/admin/permissions.test.ts`
-- Modify: `frontend/src/router/sync.ts` (`guard`), `frontend/src/router/sync.test.ts`, `frontend/src/router/routes.ts` (route `meta.perm`), `frontend/tests/harness.ts`, `frontend/tests/screens.ts`, `frontend/package.json` (`"gen:permissions": "cd .. && poetry run python -m app.auth.permissions --ts > frontend/src/auth/permissions.ts"`)
+- Create: `frontend/src/auth/can.ts`, `frontend/src/auth/api.ts`, `frontend/src/auth/me.ts`, `frontend/src/auth/can.test.ts`, `frontend/src/auth/api.test.ts`, `frontend/src/auth/me.test.ts`, `frontend/tests/vite-config.test.ts`, `app/api/config.py`, `tests/api/test_config.py`, `frontend/src/admin/users.ts`, `frontend/src/admin/users.test.ts`, `frontend/src/admin/permissions.ts`, `frontend/src/admin/permissions.test.ts`
+- Modify: `frontend/src/router/sync.ts` (`guard`), `frontend/src/router/sync.test.ts`, `frontend/tests/harness.ts`, `frontend/tests/harness.test.ts`, `frontend/tests/smoke.spec.ts` (the persona proof), `frontend/tests/targets.ts`, `frontend/tests/targets.test.ts`, `frontend/tests/playwright.config.ts` (`PW_API_PORT`), `frontend/vite.config.ts` (`server.proxy['/api']`), `.github/workflows/quality.yml` (frontend job: services, Python, env), `tests/test_docs.py` (persona-default pin), `frontend/package.json` (`"gen:permissions": "cd .. && poetry run python -m app.auth.permissions --ts > frontend/src/auth/permissions.ts"`) — `frontend/src/router/routes.ts` and `frontend/tests/screens.ts` are NOT modified here (amendment A-I7 below)
 
 **Interfaces:**
 - Consumes: `frontend/src/auth/permissions.ts` (generated: `ROLES`, `Permission`, `MATRIX`, `REAUTH`), Platform Task 2's `RoutedState`, `guard(state, patch)`, `routes.ts`.
-- Produces: `can(perm: Permission, me: Me | null, opts?: { marketDataPublic?: boolean }) -> boolean`; `Me { id, email, name, role, initials, state, roles: string[], affiliation_label: string | null }`; `api.signIn(email, password) -> Promise<Me>` (throws `AuthError(code, message)` with the server's code), `api.signUp`, `api.verify(token)`, `api.apply(kind, fields)`, `api.me() -> Promise<Me | null>` (null on 401), `api.signOut()`, `api.reauth(password)`; `me.ts`: `useMe()` store (`me`, `load()`, `set()`, `clear()`); `guard(state, patch, ctx: { me: Me | null; marketDataPublic?: boolean })` — signed out + member route → gate/signin with `pending = patch`; signed in but lacking the route's permission → `apply = { screen: 'gate', gate: 'unavailable' }` (a new gate state rendered with the design's declined-screen layout and copy "This page is not available to your account"), `pending = null`; `ROUTE_PERMS: Record<string, Permission>` (`browse → page.browse`, `detail → listing.read`, `requests → request.read_own`, `seller → page.seller`, `admin-* → page.admin`); the market column inside Browse checks `can('market.read')` separately, honouring `MARKET_DATA_PUBLIC` (when false, anonymous and applicant visitors see the map and results without shading and a sign-in prompt in the market column); `toUserRows(items, ui)` and `toPermissionRows(matrix)` in the Data-tab `cell()` shape; harness `signInAsPersona(page)` (POST `/api/auth/signin` via `page.request`, then reload) replacing jump-bar sign-in in `screens.ts`.
+- Produces: `can(perm: Permission, me: Me | null, opts?: { marketDataPublic?: boolean }) -> boolean`; `Me { id, email, name, role, initials, state, roles: string[], affiliation_label: string | null }`; `api.signIn(email, password) -> Promise<Me>` (throws `AuthError(code, message)` with the server's code), `api.signUp`, `api.verify(token)`, `api.apply(kind, fields)`, `api.me() -> Promise<Me | null>` (null on 401), `api.signOut()`, `api.reauth(password)`; `me.ts`: `useMe()` store (`me`, `load()`, `set()`, `clear()`); `guard(state, patch, ctx: { me: Me | null; marketDataPublic?: boolean })` — signed out + member route → gate/signin with `pending = patch`; signed in but lacking the route's permission → `apply = { screen: 'gate', gate: 'unavailable' }` (a new gate state rendered with the design's declined-screen layout and copy "This page is not available to your account"), `pending = null`; `ROUTE_PERMS: Record<string, Permission>` (`browse → page.browse`, `detail → listing.read`, `requests → request.read_own`, `seller → page.seller`, `admin-* → page.admin`); the market column inside Browse checks `can('market.read')` separately, honouring `MARKET_DATA_PUBLIC` (when false, anonymous and applicant visitors see the map and results without shading and a sign-in prompt in the market column); `toUserRows(items, ui)` and `toPermissionRows(matrix)` in the Data-tab `cell()` shape; harness `signInAsPersona(page, url = '/')` (POST `/api/auth/signin` via `page.request` ONCE per worker process — the context's cookies are memoised and re-added on later calls — then `page.goto(url)`); `screens.ts` switches to it in Task I8, not here (amendment A-I7 below).
+
+**Controller amendment A-I7 (2026-09-07; default applied, listed in John's queue for vetting):**
+
+- *Why.* As first written, I7 had `screens.ts` sign in through the API while the app still derives `auth` from the prototype fixture (only I8 wires `/api/me` into `logic.js`), so every member state would have rendered the gate. The Playwright `app` project also had no API to reach — Vite serves the app alone (no `/api` proxy) and the `frontend` CI job has no database, Redis or Python. And `POST /api/auth/signin` counts every attempt per IP (`app/auth/limits.py`: `SIGNIN_IP = (30, 900)`; `auth.py` calls `limits.hit` before the credential check), so one sign-in per screen state would answer 429 after thirty.
+- *A real API behind the parity suite — no stubs, no mocks.* `frontend/vite.config.ts` gains `server: { port: 5173, strictPort: true, proxy: { '/api': { target: `http://localhost:${process.env.PW_API_PORT || 8017}` } } }` — the Host header is preserved (no `changeOrigin`), so `deps.check_origin_and_csrf`'s `str(request.url)` origin equals the browser's `Origin` on the app's own state-changing calls. `frontend/tests/targets.ts` adds an `api` `webServer` entry whenever `PW_APP_URL` is unset: `command: `poetry run python scripts/migrate.py && poetry run python scripts/seed_persona.py && poetry run uvicorn app.main:app --port ${ports.api}``, `cwd: '../..'`, `url: `http://localhost:${ports.api}/api/healthz``, `timeout: 90_000`, the same `reuseExistingServer`, and an `env` of defaults the process environment overrides (`{ ...defaults, ...process.env }` semantics — CI's job env wins): `DATABASE_URL=postgresql://pm:pm_dev_pw@localhost:5433/practice_match`, `REDIS_URL=redis://localhost:6380/0`, `ENVIRONMENT=test`, `API_SECRET_KEY=pw_only_secret_change_me` (the compose defaults `.env.example` and `tests/conftest.py` already use). `WebServerSpec` gains `env?: Record<string, string>`; `resolveTargets` takes `ports.api`; `playwright.config.ts` reads `PW_API_PORT` (default **8017** — not 8000, which another project on this machine may already hold and `reuseExistingServer` would silently adopt). `tests/targets.test.ts` covers: the `api` entry present locally and absent under `PW_APP_URL`; its command, cwd, url and env defaults; an env override. Local precondition for `npm run test:e2e` becomes the backend's own: `docker compose -f docker-compose.dev.yml up -d`.
+- *CI.* The `frontend` job gains the backend job's `services` (postgis on 5433, redis on 6380, same health checks) and `env` (`DATABASE_URL`, `REDIS_URL`, `ENVIRONMENT: test`, `API_SECRET_KEY: ci_only_secret_change_me`), plus `actions/setup-python@v5` (3.12), `pipx install poetry==2.4.1` and `poetry install --no-interaction` (each with `working-directory: .`) before the Playwright steps. `tests/test_docs.py`'s workflow pins (`REQUIRED_CI_COMMANDS`, `FORBIDDEN_CI_SUBSTRINGS`, per-job `timeout-minutes`) must stay green unchanged.
+- *Harness.* `signInAsPersona(page, url = '/')` posts `{ email: 'design@practice-match.test', password: process.env.PERSONA_PASSWORD ?? 'design-persona-quiet-lantern-42' }` to `/api/auth/signin` through `page.request` once per worker process, memoises `page.context().cookies()` and re-adds them with `context.addCookies` on every later call (one attempt per run against `SIGNIN_IP`), then `page.goto(url)`. The default mirrors `scripts/seed_persona.py`'s `DEFAULT_PASSWORD`; a new `tests/test_docs.py` test pins the two literals equal. The credential and memo helpers are pure, exported, and unit-tested in `tests/harness.test.ts`.
+- *Proof — the RED for the harness — one test in `frontend/tests/smoke.spec.ts`:* after `signInAsPersona(page)`, `page.context().cookies()` holds `pm_session` and `pm_csrf`; `await page.evaluate(() => fetch('/api/me', { credentials: 'same-origin' }).then((r) => r.json()))` answers `email` `design@practice-match.test` and `roles` `["admin", "buyer", "seller", "staff"]` — the proxy, the Secure cookie on `http://localhost`, and the Redis-cached principal exercised in the real browser.
+- *`screens.ts` is switched in I8, not here.* The app honours the session only after I8's `useMe().load()` bootstrap; I8 switches every `jump()` step to `signInAsPersona` in the same commit that removes the jump bar. The zero-regression order is intact: the harness sign-in exists and is proven here, the wiring follows, then the removal.
+- *`guard()`'s context is optional.* `guard(state, patch, ctx?)` — the permission check runs only when a context is supplied; without one the prototype's rule is unchanged (signed in → the patch applies), which keeps the fixture-auth app working until I8. Add to `sync.test.ts`: `expect(guard({ ...base, auth: true }, { screen: 'admin', adminTab: 'users' })).toEqual({ apply: { screen: 'admin', adminTab: 'users' }, pending: null })`. `useStateRouteSync` passes no context in I7; I8 passes `{ me: useMe().me.value }` on every call.
+- *`routes.ts` is not modified.* `ROUTE_PERMS` in `sync.ts` is the single route→permission map — every route renders the one `App` component, so a `meta.perm` twin would be a second copy of the same table.
+
+**Controller amendment A-I7.2 (2026-09-07; the I7 review-round rulings — `task-I7-fr1-rulings.md`; defaults applied, listed in John's queue):**
+
+- *`guard()` is fail-closed.* A non-`gate` screen with no `ROUTE_PERMS` entry keeps the prototype's rule: signed out → `{ apply: { screen: 'gate', gate: 'signin' }, pending: patch }`; signed in → the patch applies. The context is `ctx?: { me: Me | null }` — `marketDataPublic` leaves the guard (the route guard never checks `market.read`; the market column calls `can('market.read', me, { marketDataPublic })` itself in I8).
+- *`GET /api/config` is the runtime source of `MARKET_DATA_PUBLIC`.* Public route (`PUBLIC_ROUTES`), included unconditionally in `create_app`, answering `{"market_data_public": <bool>}` from `settings.market_data_public`; `api.config(): Promise<{ market_data_public: boolean }>`; `useMe()` gains `marketDataPublic: Ref<boolean>` (default `false`), and `load()` fetches `/api/config` then `/api/me` (a failed config fetch leaves `false`). Tests: `tests/api/test_config.py` (both values; anonymous 200; the route-guard drift test sees it in `PUBLIC_ROUTES`); `api.test.ts`/`me.test.ts` for the client.
+- *Admin mappings return the design's row shape.* `toUserRows(items, ui): Cell[][]` and `toPermissionRows(matrix, meanings?): Cell[][]` — exactly `sets.<tab>.rows` in `adminVals()` (arrays of cells; the existing `set.rows.map((cells, i) => ({ cells, style }))` supplies `style`). There is no "Seller" kicker: the V3 Admin Users tab has no such element ("absent beats faked"); distinguishing a seller application on that tab is a Rev 3 design item. The Permissions columns are derived, `['Permission', 'Meaning', ...ROLES]` (the six generated roles in `ROLES` order, capitalised for display), and a permission without a meaning gets an empty Meaning cell, never a duplicate of its name.
+- *The "no `changeOrigin`" decision is pinned twice.* `frontend/tests/vite-config.test.ts` reads `vite.config.ts` as text (the `/api` target is `` `http://localhost:${process.env.PW_API_PORT || 8017}` ``; `changeOrigin` absent), and the smoke proof makes one state-changing call through the proxy from the page — `POST /api/auth/reauth` with `X-CSRF-Token` from the `pm_csrf` cookie and the persona password → 200 — which only passes while the Host header is preserved.
+- *Harness memo.* Cookies are memoised only when the jar holds `pm_session`; `forgetPersonaSession()` is exported for I8's sign-out tests; both unit-tested.
+- *Cross-language pins.* `NOTE_REQUIRED`, `ACTIONS` and `PILLS` in `frontend/src/admin/users.ts` are exported JSON-parsable literals pinned by pytest against `app.api.admin_users.NOTE_REQUIRED`, `TRANSITIONS` (every design action legal from its state) and `ACCOUNT_STATES`; the 401 fixtures use the server's code `UNAUTHORIZED`.
+- *Values.* The api webServer's `API_SECRET_KEY` default is `test_only_secret_change_me` (the value `tests/conftest.py` uses). Playwright merges `{ ...process.env, ...webServer.env }` — the spec's `env` WINS — so `targets.ts` resolves each default as `process.env[name] ?? value` at config time; that, not a spread, is how the process environment overrides the defaults. `gen:permissions` is `cd .. && DATABASE_URL=${DATABASE_URL:-postgresql://pm:pm_dev_pw@localhost:5433/practice_match} REDIS_URL=${REDIS_URL:-redis://localhost:6380/0} ENVIRONMENT=${ENVIRONMENT:-test} API_SECRET_KEY=${API_SECRET_KEY:-test_only_secret_change_me} poetry run python -m app.auth.permissions --ts > frontend/src/auth/permissions.ts.new && mv frontend/src/auth/permissions.ts.new frontend/src/auth/permissions.ts` — the generator imports `app.config` at module import (root cause; not refactored here), and the atomic write means a failure can never empty the committed twin.
+- *Docs.* CLAUDE.md's "Common operations" e2e line starts with `docker compose -f docker-compose.dev.yml up -d &&` (the `app` project starts the API against the compose Postgres/Redis). `src/auth/me.test.ts` joins the Create list.
+
 
 - [ ] **Step 1: Failing tests**
 
@@ -2471,7 +2579,7 @@ describe('guard with permissions', () => {
 
 `frontend/src/admin/permissions.test.ts` — `toPermissionRows(matrix)` yields one row per permission: `[cell(permission, meaning), cell(roles joined), …]` with columns `['Permission', 'Meaning', 'Buyer', 'Seller', 'Staff', 'Admin']` and ✓/— cells.
 
-- [ ] **Step 2: Run to verify failure** — `cd frontend && npm run gen:permissions && npx vitest run src/auth src/admin src/router` → **FAIL** (missing modules; `guard` has no third argument).
+- [ ] **Step 2: Run to verify failure** — `cd frontend && npm run gen:permissions && npx vitest run src/auth src/admin src/router tests/targets.test.ts tests/harness.test.ts` → **FAIL** (missing modules; `guard` has no third argument).
 
 - [ ] **Step 3: Implement**
 
@@ -2510,17 +2618,17 @@ function permFor(patch: Partial<RoutedState>): Permission | null {
   return ROUTE_PERMS[patch.screen] ?? null;
 }
 
-export function guard(state: RoutedState & { auth?: boolean }, patch: Partial<RoutedState>, ctx: { me: Me | null; marketDataPublic?: boolean } = { me: null }) {
+export function guard(state: RoutedState & { auth?: boolean }, patch: Partial<RoutedState>, ctx?: { me: Me | null; marketDataPublic?: boolean }) {
   const perm = permFor(patch);
   if (!perm) return { apply: patch, pending: null };
   if (!state.auth) return { apply: { screen: 'gate', gate: 'signin' } as Partial<RoutedState>, pending: patch };
-  if (!can(perm, ctx.me, { marketDataPublic: ctx.marketDataPublic })) return { apply: { screen: 'gate', gate: 'unavailable' } as Partial<RoutedState>, pending: null };
+  if (ctx && !can(perm, ctx.me, { marketDataPublic: ctx.marketDataPublic })) return { apply: { screen: 'gate', gate: 'unavailable' } as Partial<RoutedState>, pending: null };   // A-I7: no context → the prototype's rule
   return { apply: patch, pending: null };
 }
 ```
-`useStateRouteSync` passes `{ me: useMe().me }`. `api.ts` wraps `fetch` (same-origin credentials, JSON, `X-CSRF-Token` from `document.cookie`), `me.ts` is a small module-level store (`ref<Me | null>`). `admin/users.ts` and `admin/permissions.ts` follow the Map-engines M6 pattern (the `cell()`/`A()` shapes and pill tones copied verbatim from `logic.js`). Harness: `signInAsPersona(page)` posts `{email: 'design@practice-match.test', password: process.env.PERSONA_PASSWORD}` through `page.request` (cookies flow into the browser context), then `page.goto(url)`; `screens.ts` replaces every jump-bar step with it; the reference project is unchanged (the design still uses its own shortcuts). `screens.ts` edits apply **on top of** Browse V3's screen list (docs/superpowers/plans/2026-09-06-browse-v3-mobile.md, Task V9): there is one `browse` state, not `browse-listings`/`browse-market`, and three new states — `browse-layer-menu`, `browse-compare-open`, `browse-legend-collapsed` — plus `mobile-sheet` (the mobile market-data sheet).
+`useStateRouteSync` passes no context in I7 (A-I7); I8 passes `{ me: useMe().me.value }` on every call once `main.ts` loads `/api/me` before mount. `api.ts` wraps `fetch` (same-origin credentials, JSON, `X-CSRF-Token` from `document.cookie`), `me.ts` is a small module-level store (`ref<Me | null>`). `admin/users.ts` and `admin/permissions.ts` follow the Map-engines M6 pattern (the `cell()`/`A()` shapes and pill tones copied verbatim from `logic.js`). Harness: `signInAsPersona(page)` posts `{email: 'design@practice-match.test', password: process.env.PERSONA_PASSWORD}` through `page.request` (cookies flow into the browser context), then `page.goto(url)`; `screens.ts` is NOT switched here (A-I7) — it keeps `jump()` until I8, whose bootstrap makes the app honour the session; the reference project is unchanged (the design still uses its own shortcuts). When I8 switches `screens.ts`, its edits apply **on top of** Browse V3's screen list (docs/superpowers/plans/2026-09-06-browse-v3-mobile.md, Task V9): there is one `browse` state, not `browse-listings`/`browse-market`, and three new states — `browse-layer-menu`, `browse-compare-open`, `browse-legend-collapsed` — plus `mobile-sheet` (the mobile market-data sheet).
 
-- [ ] **Step 4: Run to verify passing** — `npx vitest run && npx vue-tsc --noEmit && npx playwright test --project=app` → green (the jump bar still exists at this point; both sign-in paths work).
+- [ ] **Step 4: Run to verify passing** — `npx vitest run && npx vue-tsc --noEmit && npx playwright test --project=app` → green (the jump bar still exists at this point; every screen state still uses `jump()`, and the persona proof in `smoke.spec.ts` signs in through the proxy to the real API — both paths work).
 
 - [ ] **Step 5: Commit** — `feat(auth-ui): permission twin, can(), permission-aware guard, auth API client, Admin Users/Permissions mappings, persona sign-in in the harness`.
 
@@ -2528,73 +2636,98 @@ export function guard(state: RoutedState & { auth?: boolean }, patch: Partial<Ro
 
 ### Task I8: Wire the prototype to the API and execute the launch-removal list (zero-regression order)
 
+**Controller amendment A-I8 (2026-09-07; pre-flight `task-I8-preflight.md`; defaults applied, decisions D-I8-1…7 in John's queue).** The task as first written edited `logic.js` by hand, added a `--launch` generator mode, dropped design props from `app.setup.js` and masked a copy string. Every one of those is refused by the gates that bind this branch since Browse V3 merged: `frontend/tests/app-generated.test.ts` pins `logic.js` to the design's script block byte for byte and `app.setup.js` to declaring every design prop; there is one committed `App.vue`; `maxDiffPixels: 0` admits no masks. The vehicle for every change below is therefore the **D15 amendment mechanism** (`frontend/tests/design-amendments.ts` → the amended design file → `logic.js` re-ported and `App.vue` regenerated), so the oracle and the app change together. The pre-flight also found that the plan never designed the screens the lifecycle needs (sign-up, "check your email", `/verify`, forgot/reset, `/accept-invite`, the applicant's answer / re-apply screens, the `unavailable` gate, an Admin → Permissions tab); the V3 design has none of them and "absent beats faked" forbids inventing them. The task is split: **I8a** (below, starts after I7) does everything that needs no new design; **I8b** and **I8c** are written when John's Rev 3 design package exists.
+
+#### Task I8a: real sign-in and sign-out, the app reads the account on load, the prototype shortcuts leave the design, the oracle reaches every state without them
+
 **Files:**
-- Modify: `frontend/src/logic.js` (`signIn`, `submitApply`, `signOut`, `me`/`auth` bootstrap, gate state), `frontend/src/logic.test.ts` (characterisation updates, RED then GREEN), `frontend/scripts/convert-dc.mjs` (a `--launch` mode that strips the prototype blocks during conversion), `frontend/package.json` (a `gen:app:launch` twin of `gen:app`), `frontend/tests/app-generated.test.ts` (asserts BOTH modes are byte-identical to a fresh conversion), `frontend/tests/convert-dc.test.ts` (unit tests for the stripping rules), `frontend/src/main.ts` (`useMe().load()` before mount; `startViewport` removed), `frontend/tests/screens.ts` (`gate-unavailable` state), `frontend/tests/harness.ts` (mask the sign-in copy string until the design reference changes — `DESIGN_HAS_EMAIL_COPY=false`)
+- Modify: `frontend/tests/design-amendments.ts` (A5.1, A5.3a/b, A5.4, A5.6, A6.1–A6.6, A7.1–A7.2 — literal `find`/`replace`/`count` entries; each with `date` and `ruling`), `frontend/tests/design-amendments.test.ts` (the set pinned both ways — count and ids), `docs/design-reference/design_handoff_practice_match_v3/LOCAL_AMENDMENTS.md` (one row per amendment), `docs/design-reference/design_handoff_practice_match_v3/Practice Match V3.dc.html` (REGENERATED = pristine + amendments — never hand-edited; `Practice Match V3.rev2.dc.html` untouched, SHA pinned), `frontend/src/logic.js` (RE-PORTED from the amended script block — the byte-identity test dictates the bytes), `frontend/src/App.vue` + `frontend/src/generated/pseudo.css` (`npm run gen:app`), `frontend/src/app.setup.js` (props `auth`, `me`, `startGate`; `startViewport` fed from the URL), `frontend/src/main.ts` (`await useMe().load()` before `bootstrap()`), `frontend/src/auth/me.ts` + `me.test.ts` (no `/api/me` request without a `pm_csrf` cookie — A-I8.2), `frontend/src/router/useStateRouteSync.ts` + `.test.ts` (passes `{ me: useMe().me.value }` on every `guard` call — A-I7), `frontend/src/logic.test.ts` (characterisation: RED first for every behaviour that changes), `frontend/tests/harness.ts` + `harness.test.ts` (`reach()`, `signInAs()`, `PERSONAS`), `frontend/tests/screens.ts` (every `jump()` / shortcut / "Mobile view" step → `reach`), `frontend/tests/reference-server.mjs` + `reference-server.test.ts` (`?props=` injection), `frontend/tests/smoke.spec.ts` (fixture-sign-in tests → persona), `frontend/tests/baseline-manifest.json` (re-frozen by ruling D-I8-6), `frontend/tests/visual.spec.ts-snapshots/*` and `dom-snapshots/*` (regenerated by the reference project), `frontend/package.json` (`gen:design`), `scripts/seed_persona.py` + its tests (three state personas), `CLAUDE.md` (launch-removal list wording per D-I8-2/D-I8-7).
+- Create: `frontend/scripts/apply-amendments.ts` (run by `npm run gen:design` via `vite-node`: reads `PRISTINE`, applies `amendments()`, writes `AMENDED`).
 
 **Interfaces:**
-- Consumes: `api.signIn/signUp/verify/apply/me/signOut` (Task I7), `useMe()`.
-- Produces: `logic.js` behaviours: `signIn()` calls `api.signIn` and on success `setState({ auth: true, screen: pendingOr('browse'), me })`, on `AuthError` sets `formError` to the server message; `submitApply()` validates as before then `api.apply('buyer', fields)` → `gate: 'pending'`; bootstrap: when `useMe().me` is an active member, `auth = true`; when `state ∈ {pending, needs_review}` → `gate: 'pending'`; `declined` → `gate: 'rejected'`; `signOut()` calls `api.signOut()` then the existing reset.
+- Consumes (Task I7): `api.signIn/signOut/me/config`, `useMe()` (`me`, `marketDataPublic`, `load`, `clear`), `signInAsPersona`/`forgetPersonaSession`, `guard(state, patch, ctx?)`.
+- Produces: design amendments A5–A7 (below); `this.props.auth` = `{ signIn(email, pw): Promise<Me>, signOut(): Promise<void> }` and `this.props.me: Me | null` as the prototype's two hooks; prototype prop `startGate` (`'' | 'signin' | 'apply' | 'pending' | 'rejected'`); harness `PERSONAS = { design, pending, declined, needsReview }` (emails `design@`, `pending@`, `declined@`, `needs-review@practice-match.test`, one documented password), `signInAs(page, persona)`, `reach(page, { screen?, gate?, viewport?, persona? })` — on the reference `page.goto('/?props=' + encodeURIComponent(JSON.stringify({ startScreen, startGate, startViewport })))`, on the app `signInAs` (when the target needs a session) then `page.goto(route + (viewport === 'mobile' ? '?viewport=mobile' : ''))`; `reference-server.mjs` `injectProps(html, query)` rewrites `data-props` defaults for the keys given in `?props=` (same bytes for the runtime's re-fetch of `location.href`; unknown keys refused with 400).
 
-- [ ] **Step 1: Update the characterisation suite first (RED)**
+**The amendments (exact; anchors are lines of the design's script block, identical to `frontend/src/logic.js` bar the `"assets/` → `"/assets/` rewrite — none of these anchors contains an asset path):**
 
-In `frontend/src/logic.test.ts` replace the fixture-sign-in expectations:
-```ts
-import { vi } from 'vitest';
-import * as api from './auth/api';
+- **A5.1 — sign-in through the adapter.** find `        this.setState({ screen: "browse", formError: "", auth: true });\n      },\n      signedIn: !!s.auth,` → replace
+  ```
+          if (!this.props.auth) return this.setState({ screen: "browse", formError: "", auth: true });
+          return this.props.auth.signIn(s.email, s.pw).then(
+            (me) => this.setState({ screen: "browse", formError: "", auth: true, email: me.email, me: { name: me.name, role: me.role, initials: me.initials } }),
+            (e) => this.setState({ formError: (e && e.message) || "Sign-in failed.", auth: false, screen: "gate" })
+          );
+        },
+        signedIn: !!s.auth,
+  ```
+  (count 1; the empty-fields validation line above it is A7.2's). Ruling: spec §"Prototype wiring" step 2; the reference keeps the fixture path because it has no `auth` prop.
+- **A5.3a/b — sign-out through the adapter.** a: find `      signOut: () => this.setState({` → `      signOut: () => (this.props.auth ? this.props.auth.signOut().catch(() => {}) : Promise.resolve()).then(() => this.setState({` (count 1). b: find `      }),\n      goHome: this.go("gate"),` → `      })),\n      goHome: this.go("gate"),` (count 1).
+- **A5.4 — bootstrap from the loaded account and the `startGate` prop.** find `    if (this.props.startViewport === "mobile") this.setState({ viewport: "mobile" });\n  }` → replace
+  ```
+      if (this.props.startViewport === "mobile") this.setState({ viewport: "mobile" });
+      if (this.props.startGate) this.setState({ screen: "gate", gate: this.props.startGate });
+      const me = this.props.me;
+      if (me && me.state === "active") this.setState({ auth: true, screen: "browse", email: me.email, me: { name: me.name, role: me.role, initials: me.initials } });
+      else if (me && (me.state === "pending" || me.state === "needs_review")) this.setState({ screen: "gate", gate: "pending" });
+      else if (me && me.state === "declined") this.setState({ screen: "gate", gate: "rejected" });
+      else if (me && me.state === "verified") this.setState({ screen: "gate", gate: "apply" });
+    }
+  ```
+  (count 1). A deep link pending in `useStateRouteSync` is applied by its watcher the moment `auth` flips, exactly as the fixture sign-in did; `verified → apply` is the default for an account that has not applied yet (D-I8-5 rider).
+- **A5.6 — the `startGate` prototype prop in `data-props`.** Add, immediately after the `startViewport` entry inside the escaped JSON of `<script type="text/x-dc" data-dc-script data-props="…">`, an entry keyed `startGate` mirroring `startScreen`'s shape: `editor: "enum"`, `options: ["signin", "apply", "pending", "rejected"]`, `default: ""`, `tsType: "string"`, `section: "Prototype"`, `label: "Start on gate state"` — same `&quot;`/`&amp;` escaping as its neighbours (derive the literal from the `startViewport` entry; count 1). `app.setup.js` declares `startGate: { type: String, default: '' }` (the parity test only requires setup ⊇ design).
+- **A6.1 — the jump bar leaves the template.** find = the whole `<sc-if value="{{ showPrototypeBar }}" hint-placeholder-val="{{ true }}">` … matching `</sc-if>` block (the design's line 71 onward; copy it verbatim from the PRISTINE file, including its trailing newline) → replace `""` (count 1).
+- **A6.2 — the "Prototype — access states" shortcuts leave the sign-in card.** find = the block that wraps the label `Prototype — access states` and its `<sc-for list="{{ gateStates }}" as="s" hint-placeholder-count="3">` loop (the smallest enclosing element, copied verbatim) → replace `""` (count 1).
+- **A6.3a/b/c — demo data.** a: find `    email: "r.mendes@example.com", pw: "············", formError: "",` → `    email: "", pw: "", formError: "",`. b: find `        userMenu: false, auth: false, screen: "gate", gate: "signin", pw: "············",` → the same line with `pw: "",`. c: find `    apply: { name: "Rachel Mendes, DVM", vin: "", grad: "", state: "TX", employer: "", intent: "", affirm: true, error: "" },` → `    apply: { name: "", vin: "", grad: "", state: "", employer: "", intent: "", affirm: false, error: "" },` (each count 1).
+- **A6.4 — the jump bar's script.** find the `const jumps = [...].map((k) => ({ … }));` block (the six lines starting `    const jumps = ["gate", "browse", "detail", "requests", "seller", "admin"].map((k) => ({` and ending `    }));`) → `""`; find `      showPrototypeBar: this.props.prototypeBar !== false,\n` → `""`; find `      nav, jumps,` → `      nav,`; find the `  jumpTo = (screen) => () => this.setState({ screen, auth: screen !== "gate", interest: "closed", userMenu: false, gate: "signin" });\n\n` line → `""` (each count 1).
+- **A6.5 — `gateStates` in the script.** find the five lines from `      gateStates: [` to its closing `      ],` → `""` (count 1).
+- **A7.1 — the label.** find `VIN username or email</span>` → `Email</span>` (count 1). **A7.2 — the message.** find `"Enter both your VIN username and password."` → `"Enter both your email and password."` (count 1). Ruling: spec §Sign-in ("The design's 'VIN username' copy changes to 'Email' (design delta)").
 
-it('signIn() calls the API and navigates on success', async () => {
-  vi.spyOn(api, 'signIn').mockResolvedValue({ id: '1', email: 'r@x.io', name: 'Dr. Rachel Mendes', role: 'Approved buyer', initials: 'RM', state: 'active', roles: ['buyer'], affiliation_label: null });
-  c.setState({ email: 'r@x.io', pw: 'orbit-lantern-quiet-42' });
-  await c.renderVals().signIn();
-  expect(c.state).toMatchObject({ auth: true, screen: 'browse', me: { name: 'Dr. Rachel Mendes', role: 'Approved buyer', initials: 'RM' } });
-});
-it('signIn() shows the server message on failure and stays on the gate', async () => {
-  vi.spyOn(api, 'signIn').mockRejectedValue(new api.AuthError('INVALID_CREDENTIALS', 'Email or password is incorrect.'));
-  c.setState({ email: 'r@x.io', pw: 'wrong-wrong-wrong-1' });
-  await c.renderVals().signIn();
-  expect(c.state).toMatchObject({ auth: false, screen: 'gate', formError: 'Email or password is incorrect.' });
-});
-it('submitApply() posts the application and shows the pending screen', async () => {
-  const spy = vi.spyOn(api, 'apply').mockResolvedValue({ id: 'a1', status: 'pending' });
-  c.setState({ apply: { ...c.state.apply, name: 'Jane Doe, DVM', grad: 'Texas A&M, 2014', intent: 'Buy soon', affirm: true } });
-  await c.renderVals().submitApply();
-  expect(spy).toHaveBeenCalledWith('buyer', expect.objectContaining({ name: 'Jane Doe, DVM', school_year: 'Texas A&M, 2014', intent: 'Buy soon', affirm: true }));
-  expect(c.state.gate).toBe('pending');
-});
-it('the jump bar no longer exists', () => { expect(c.renderVals().jumps).toBeUndefined(); expect(c.jumpTo).toBeUndefined(); });
-```
-Delete the old `jumpTo` characterisation tests. Run: `npx vitest run src/logic.test.ts` → **FAIL** (fixture `signIn` sets `auth` without the API; `jumps` still present).
+- **A6.6 — the viewport toggle's script.** After A6.1 nothing references `viewportLabel` or `toggleViewport`; the bundle's own dead-code rule (spec D8/D12, applied by A2.3–A2.5) removes both lines from `renderVals()` (find each line verbatim → `""`, count 1 each). **Removal amendments and blank lines (A-I8.1):** every `find` that deletes a block or line swallows exactly one adjacent newline so the regenerated file keeps single blank lines — the byte-for-byte proof pins the result either way; doubled blank lines are not acceptable. **`booted()` (A-I8.1):** it waits today for the jump bar's `Access` button, which A6.1 removes; from commit 3 it waits instead for an element present on every screen of both targets (the header's brand text — pick the most stable selector and say which), implemented inside `harness.ts` only — its eleven call sites in the spec files do not change; if a spec file would have to change, STOP.
 
-- [ ] **Step 2: Wire `logic.js` (GREEN), keeping every other line untouched**
+**Controller amendment A-I8.2 (2026-09-07; the implementer's second NEEDS_CONTEXT — `task-I8a-report.md`):**
 
-`signIn` becomes `async`: validates as before, then `try { const me = await api.signIn(s.email, s.pw); this.setState({ auth: true, screen: this.pendingScreen || 'browse', me: { name: me.name, role: me.role, initials: me.initials }, email: me.email, formError: '' }); } catch (e) { this.setState({ formError: e.message || 'Sign-in failed.', auth: false, screen: 'gate' }); }`. `submitApply` maps `apply` fields → `{ name, vin_member_id: vin, school_year: grad, license_state: state, employer, intent, affirm }` and calls `api.apply('buyer', …)`, then `gate: 'pending'`. `signOut` awaits `api.signOut()` first. `componentDidMount` bootstrap: read `useMe().me` (loaded in `main.ts`) → `auth`/`gate` per the interface above. Remove `jumpTo` and the `jumps` array from `renderVals`. Run: `npx vitest run src/logic.test.ts` → pass.
+- **B1 — the header must show the truth, and the design's copy does not change.** With A5.4 the header renders `/api/me`'s computed `role`, and the all-roles design persona carries "VIN Foundation admin · StartUp Club" where the design's fixture says "Approved buyer · StartUp Club" — 20 states would diverge on that line. The drafted fix (A5.5: rewrite the design's fixture label) is **rejected**: it changes the approved design's copy, and John's rule is that the existing design does not change. Ruling: the oracle persona is a **buyer**. `app/auth/labels.py` reproduces the fixture exactly for a buyer-only account named "Dr. Rachel Mendes" with affiliation "StartUp Club" (`initials` → "RM", `role_label` → "Approved buyer · StartUp Club" — verified 2026-09-07), so the 19 buyer-family states (the four gate states, `browse` and its five siblings, `detail`, `interest-modal`, `requests`, the four mobile states, the two header states) keep their pixels. `scripts/seed_persona.py` seeds two more accounts with that name and affiliation and the documented password: `buyer@practice-match.test` (role buyer) and `seller@practice-match.test` (roles buyer + seller, label "Approved buyer and seller · StartUp Club"); `design@practice-match.test` keeps all four roles (label "VIN Foundation admin · StartUp Club") and serves the four Admin states. `reach()` picks the persona by state: none for gate states, `buyer` for the buyer family, `seller` for `seller-dash` and the four wizard states, `design` for the four admin states. The REFERENCE renders the same header because it receives the same account: the design's `data-props` gains a prototype prop **`me`** (A5.7 — default `null`, `section: "Prototype"`, mirroring `startGate`'s entry; the runtime must pass an object default through unchanged — check `support.js`'s `data-props` parsing first and STOP if it does not), `injectProps` accepts a JSON object for a declared key, and `reach()` sends `?props={"me": …}` with the persona's `/api/me` shape (`{ email, name, role, initials, state, roles }`) held as constants in the harness and pinned by `tests/test_docs.py` against `labels.role_label` / `labels.initials` for each persona's roles. Consequence, recorded as default **D-I8-8**: nine states — `seller-dash`, the four `wizard-*`, the four `admin-*` — show the label of the account that can actually open them, so their baselines and DOM snapshots regenerate in **commit 1** and `baseline-manifest.json` is re-frozen for those nine there (D-I8-6 now names two re-freezes: commit 1 for the nine labels, commit 3 for the bar). The other 19 must be byte-identical to today's PNGs after commit 1 — that is the proof `reach` reproduces the states. The A5.5 draft in the working tree is reverted; `logic.js`'s fixture `me` keeps the design's text.
+- **B2 — the reference's image-slot race.** Root cause (the report): the bundle's `<image-slot>` upgrades on the raw pre-hydration DOM, sets `data-filled`, that pollutes the template the runtime reads from the DOM, and the runtime's re-fetch of `location.href` (guarded by `window.__resources` at `support.js:158`) then hands React a clean template in which the attribute is gone, so the dashed placeholder ring is drawn over the practice photo — a race that the jump-bar entry avoided by accident (the gate has no image-slot) and that `detail`/`interest-modal` pass by luck. Ruling: `prepare()` sets `window.__resources = {}` through `page.addInitScript` for the reference origin only, with the root cause in its comment; the regenerated Browse-family baselines must be **byte-identical** to today's (the fix restores the correct oracle, it does not create a new one) — state that comparison in the report; add the cheapest deterministic proof that no placeholder ring is visible on `browse` in the reference project (a unit test on the pure decision plus one reference-project assertion).
+- **The anonymous `/api/me` 401** logs a console error Chromium cannot be told to suppress, and the forgiveness hack in `prepare()` is withdrawn. Ruling: `frontend/src/auth/me.ts` joins the file list — `load()` asks `/api/me` only when the readable `pm_csrf` cookie is present (it is set alongside the session; absent → `me` stays `null` without a request), RED first in `me.test.ts`; no 401 is ever provoked for a signed-out visitor.
+- **Worker restarts.** Playwright restarts the worker after a failure and the in-memory persona memo dies with it, so failures cascade into `429 RATE_LIMITED`. Ruling: the memo is persisted to a run-scoped file under `frontend/test-results/` (created by the first sign-in, read by a restarted worker, removed by the run's global teardown or overwritten by the next run's first sign-in); `forgetPersonaSession()` removes it too; unit-tested.
 
-- [ ] **Step 3: Execute the launch-removal list through the generator (`convert-dc.mjs --launch`), never by hand**
+**Controller amendment A-I8.3 (2026-09-07; the I8a review-round rulings — `task-I8a-fr1-rulings.md`):**
 
-Browse V3 spec D2: `frontend/src/App.vue` is generated, so a hand edit is undone by the next
-`npm run gen:app` and breaks `frontend/tests/app-generated.test.ts`. Add a `--launch` flag to
-`convert-dc.mjs` that, during conversion, drops the jump-bar markup block, the
-"Prototype — access states" shortcuts block and the pre-filled demo credentials, and add a
-`gen:app:launch` script that writes the same three outputs. `app-generated.test.ts` asserts
-both modes reproduce their committed output byte-for-byte, so the launch build stays honest
-and `npm run gen:app` still reproduces the prototype build. `startScreen`/`startViewport` are
-dropped from `app.setup.js`'s `defineProps` in the same change. The `unavailable` gate state
-is added to the design reference (a Claude Design update) and reaches the app by
-regeneration — not by editing `App.vue`; the declined-screen kicker, body and CTA copy come from
-the design reference's `unavailable` gate state, not from this plan.
+- **The adapter is a measured module.** `frontend/src/auth/adapter.ts` exports `makeAuthAdapter(api, store)`; its `signIn` writes the `Me` into `useMe()` (`store.set(me)`) before resolving, and `signOut` clears it. `app.setup.js` only calls it. Proven RED end to end: without `store.set`, the form sign-in never leaves the gate (the route guard sees a null principal and answers `unavailable`).
+- **A5.4 respects `startScreen`.** The `active` branch sets `screen: (this.props.startScreen && this.props.startScreen !== "gate") ? this.props.startScreen : "browse"` — the app never passes `startScreen`, so its behaviour is unchanged; the reference lands where `?props=` says, so `reach()` injects the persona's account for every state (the buyer family included) and needs no navigation clicks.
+- **The design's own sign-in form is proven end to end** in `frontend/tests/signin-form.spec.ts` (the `app` project's `testMatch` grows to `(visual|smoke|dom|signin-form)`): buyer credentials → Browse with the header identity, then `/requests` without a bounce; a wrong password → the card's error box shows the server's "Email or password is incorrect."; sign-out from the account menu → the gate. Those tests type the persona password, so that file — and only that file — sets `trace: 'off'` at its top level when `PW_APP_URL` is set (the one mode with a real password; Playwright refuses a per-describe trace override, and locally and in CI the password is the documented default); pinned by a text test.
+- **The pending deep link is guarded twice.** `useStateRouteSync` re-runs `guard(c.state, p, { me })` before applying the pending patch when `auth` flips; a refusal lands on the `unavailable` gate and settles the URL.
+- **Run-scoped memo.** `playwright.config.ts` gains a `globalSetup` (`frontend/tests/global-setup.ts`) that sets `PW_RUN_ID` (a UUID unless already set) for the whole run — workers inherit it, including the worker Playwright starts after a failure — and clears any memo file stamped with another run's id; the persona memo under `frontend/test-results/` is stamped with `PW_RUN_ID`; `forgetPersonaSession()` removes it. (A worker-local start time cannot bridge a worker restart — round 2's finding.)
+- **CLAUDE.md** no longer claims the thirteen non-Browse screens are byte-identical to V2: they were until the launch removal (A6, D-I8-6); the manifest holds the post-launch-removal hashes; V2 stays the pre-V3 oracle for regression diffs; five prototype props are declared (`prototypeBar` read by nothing). Pinned by `tests/test_docs.py`.
 
-**After this task lands, `npm run gen:app` must not be re-run for a production build**: the
-launch build comes from `npm run gen:app:launch`.
+The "Mobile view" / "Desktop view" toggle lives in the jump bar and leaves with it (A6.1). Until a responsive mobile design exists (Rev 3 item), the phone-frame presentation stays reachable through `startViewport`: the reference via `?props=`, the app via the URL query `?viewport=mobile` read in `app.setup.js` (`startViewport: new URLSearchParams(location.search).get('viewport') === 'mobile' ? 'mobile' : 'desktop'` as the prop default) — D-I8-7.
 
-- [ ] **Step 4: Run — GREEN across the board**
+**Order of commits (each green on its own):**
 
-Run: `npx vitest run && npx vue-tsc --noEmit && npx playwright test` → visual gate green on every state (persona sign-in reaches all of them), `gate-unavailable` added to both the app and the reference (the reference renders the declined layout with the new copy via a one-line addition to `reference-server.mjs`'s injected state — flagged for the Claude Design update). Then `poetry run pytest tests/test_docs.py -q` → the launch-removal drift test (I9) passes.
+1. **Oracle, harness and the account-on-load first (nothing visible changes).** `reference-server.mjs` `injectProps` + tests; A5.6 (`startGate`) **and A5.4 (bootstrap from `props.me` / `startGate`)** + `gen:design` + regenerate the design file, `logic.js`, `App.vue`; `app.setup.js` declares `startGate`, reads `?viewport=`, **and passes `me: useMe().me.value`; `main.ts` awaits `useMe().load()` before `bootstrap()`; `useStateRouteSync` passes `{ me }`** (A-I8.1 / R1: the app must honour a real session BEFORE `screens.ts` stops using the jump bar — I7's own note at `smoke.spec.ts` records this order); `logic.test.ts` RED first for `componentDidMount` with `props.me` in each state; `scripts/seed_persona.py` seeds the three state personas (RED: a test that queries the four accounts and their states; production refusal unchanged); harness `PERSONAS`, `signInAs`, `reach` + unit tests; `screens.ts` switched from `jump()`/shortcuts/"Mobile view" to `reach` (identical UI clicks after the entry); `smoke.spec.ts`'s fixture-sign-in tests → persona. Baselines: the 19 buyer-family states are byte-identical to today's PNGs after `npm run test:visual:baselines` (that is the proof `reach` reproduces them); the nine seller/admin states regenerate with their persona's header label (A-I8.2 / D-I8-8) and the manifest is re-frozen for those nine; `npm run test:e2e` green. `scripts/seed_persona.py` seeds `buyer@` and `seller@` beside `design@` and the three state personas (A-I8.2).
+2. **The adapter (script only; no pixel moves).** A5.1, A5.3a/b → regenerate; `app.setup.js` passes `auth: { signIn: api.signIn, signOut: () => api.signOut().then(() => useMe().clear()) }`; `logic.test.ts` RED first: with an `auth` prop, `signIn()` calls it and sets `auth/me/email` on success and `formError` from the error on failure; `signOut()` calls it then resets; without props the fixture behaviour is byte-for-byte the old one (existing tests stay green). Gate: unit 100 %, e2e green with existing snapshots (the fixture path is what the reference exercises; the app's persona path renders the same screens).
+3. **Launch removal and copy.** A6.1–A6.6, A7.1–A7.2 → regenerate; `booted()` re-anchored (above). Every one of the 28 states changes (the bar is gone from the top of each): `npm run test:visual:baselines` regenerates the oracle and the DOM snapshots; `npm run test:e2e` must be green at 0 px; `baseline-manifest.json` is re-frozen on darwin (`node tests/baseline-manifest.mjs` — whatever the module exposes for freezing; read it) under ruling D-I8-6, its test's comment updated to say the launch removal moved the thirteen screens by design; `logic.test.ts`: the `jumps`/`jumpTo`/`gateStates` characterisation tests become "the jump bar no longer exists" (`renderVals().jumps` undefined, `jumpTo` undefined, `gateStates` undefined) and the demo credentials are empty. CLAUDE.md's launch-removal paragraph is updated per D-I8-2/D-I8-7 (`test_docs.py` pins CLAUDE.md — keep them green).
 
-- [ ] **Step 5: Commit** — `feat(auth-ui): prototype sign-in/apply on the API; jump bar, demo credentials and access shortcuts removed; unavailable gate state`.
+**Gates (every commit):** `cd frontend && npx vitest run --coverage` (100/100/100/100 on every measured file), `npx vue-tsc --noEmit -p tsconfig.json`, `npm run build`, `npm run test:visual:baselines && npm run test:e2e`; `poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov-fail-under=100`, `ruff`, `mypy` (the seed script is mypy-strict-checked). `design-amendments.test.ts` proves pristine + amendments == the amended file byte for byte and pins the set both ways; `app-generated.test.ts` proves `logic.js`/`App.vue` are regenerated, not edited.
+
+**Decisions for John recorded with this amendment (defaults applied unless he objects):** D-I8-1 the D15 mechanism carries the wiring and the launch removal; D-I8-2 `prototypeBar`/`startScreen`/`startViewport`/`startGate` stay DECLARED (the app never passes the first three; `startViewport` only from `?viewport=`); D-I8-3 the reference server's `?props=` injection; D-I8-4 the three seeded state personas (test/QA only; refused on production); D-I8-5 the `unavailable` copy (I8b) and `verified → apply`; D-I8-6 the baseline manifest is re-frozen after the launch removal (a design change by ruled amendment, not a code leak); D-I8-7 the phone-frame presentation stays reachable via `?viewport=mobile` until a responsive design exists. **D-I8-8 (A-I8.2):** the oracle persona is a buyer, so the header stays the design's on 19 states; the nine seller/admin states show the label of the account that can open them and re-baseline in commit 1; the reference receives the same account through a `me` prototype prop. **A-I8.1 (2026-09-07, after the implementer's NEEDS_CONTEXT):** R1 ordering (the bootstrap moves to commit 1), A6.6, the blank-line rule and `booted()`'s new anchor; `gate: 'unavailable'` renders an empty gate column until I8b supplies the ruled copy — known, on John's queue, not patched around.
+
+#### Task I8b (blocked on the Rev 3 design): the `unavailable` gate, the applicant's answer / re-submit and re-apply screens, and the application wired to the API
+
+Waits for John's copy for `unavailable` (title ruled: "This page is not available to your account"; kicker/body/CTA proposed in `task-I8-preflight.md`) and for the Rev 3 screens for `needs_review` (answer + Re-submit) and `declined` (Re-apply). The application (`submitApply` → `POST /api/applications`) is wired here too, because it presupposes a verified account and therefore the sign-up flow of I8c. Written as amendments (A8) when the design exists; the harness `PERSONAS` already carry `needsReview` and `declined` for its screens.
+
+#### Task I8c (blocked on the Rev 3 design): the account pages the API already serves
+
+Sign-up (email + password) and "check your email"; the `/verify` landing (POSTs the token from its URL, replaces history — spec §API); forgot-password and set-a-new-password (`/reset?token=`); accept-invite (`/accept-invite?token=`, the four admins' link from `scripts/bootstrap_admin.py`). Each is a routed page the design does not have; `routes.ts` and `ROUTE_PERMS` grow with them; the reference must render them too (a new design export or amendments). Written when the design exists. Until then Task I10's "open the invite link, set the admin password" and "sign up as a stranger" steps cannot run — see the artifact's top action.
 
 ---
 
 ### Task I9: Cross-plan deltas, docs, drift tests, performance gates, operator-token retirement
+
+**Controller amendment A-I9 (2026-09-07; pre-flight `task-I9-preflight.md`).** The retirement of the operator token has an out-of-band dependency the task text states but does not sequence: `perf.yml` must switch to a `PM_API_TOKEN` that an admin mints on QA (`POST /api/admin/tokens {name: "k6-qa", role: "buyer", days}`) and John sets as a GitHub secret in both repositories, and `API_SECRET_KEY` must be unset on Railway (🚦 — never by an implementer) — all BEFORE `auth_stub.py`, `Settings.api_secret_key` and the legacy bearer branch go. The task is therefore split:
+
+- **I9a (now):** everything below EXCEPT the retirement — the cross-plan deltas (Census, Map-engines, Platform plans), `docs/RUNBOOK-identity.md`, `DEPLOY.md`'s identity variables and Resend DNS table, `.env.example`, the drift tests `test_identity_variables_are_documented`, `test_launch_removal_list_is_executed` (a pin — I8a already made it true) and `test_identity_runbook_endpoints_exist`, and the latency and query-plan gates. `perf.yml` is NOT touched in I9a: today it runs the health-endpoint smoke only (John's 2026-09-06 ruling) and carries no member token at all — the plan's "`MEMBER_TOKEN` → `PM_API_TOKEN`" delta was written against an earlier draft; the sign-in-flow scenario joins the nightly run in I9b, once `PM_API_TOKEN` exists (`tests/test_docs.py::test_perf_workflow_targets_qa_with_thresholds` pins the workflow's shape — keep it green). `test_operator_token_is_retired` is NOT written in I9a. The Platform-plan delta "Task 3/10 harness → persona sign-in" describes I8a's `reach()` and the six seeded personas, not I7's `signInAsPersona` alone. `frontend/tests/cross-plan-deltas.test.ts` pins Map-engines text — keep it green or update it in the same commit, with the reason.
+- **I9b (after John mints `k6-qa`, sets `PM_API_TOKEN` in both repositories, and `API_SECRET_KEY` is unset on Railway):** `test_operator_token_is_retired` RED first; delete `app/api/auth_stub.py`; drop `api_secret_key` from `Settings`; remove the legacy branch from `deps.current_principal`; add the sign-in-flow scenario to `perf.yml`/`scripts/k6-smoke.js` under `PM_API_TOKEN` (5 VUs, the spec's budgets); sweep every remaining `API_SECRET_KEY` site — `tests/conftest.py`, `.github/workflows/quality.yml` (both jobs' `env`), `frontend/tests/targets.ts` (the api webServer defaults), `frontend/package.json` (`gen:permissions`), `CLAUDE.md`, `DEPLOY.md`, `.env.example`, this plan's A-I7 text, `tests/test_docs.py` pins, the Platform plan — each either loses the variable or is rewritten; `tests/test_docs.py` pins that no `API_SECRET_KEY` remains outside history.
 
 **Files:**
 - Create: `docs/RUNBOOK-identity.md`

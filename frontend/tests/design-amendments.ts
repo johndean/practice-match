@@ -157,6 +157,271 @@ const A4: Amendment = {
   replace: '        return !!valueLayer && !s.mdInsightOff && s.mdLegendOff !== true && !s.mdCompareOpen && mapW >= 810;', count: 1
 };
 
+/** A5.1 — sign-in through the `auth` adapter (amendment A-I8; spec §"Prototype wiring" step 2).
+ *
+ *  A literal script edit, like A2 and A4. `this.props.auth` is the prototype's other hook: the app
+ *  passes the real `/api/auth/*` client, and the reference — which has no `auth` prop and no API —
+ *  keeps the design's fixture path exactly as it shipped, which is what keeps the two targets on
+ *  the same pixels.
+ *
+ *  The refusal message rendered is the SERVER's own: `INVALID_CREDENTIALS` and `RATE_LIMITED` are
+ *  both 4xx on the same form and want different copy, and `src/auth/api.ts` deliberately carries
+ *  the API's prose rather than an identifier. `|| "Sign-in failed."` covers a rejection that
+ *  carries none.
+ *
+ *  The handler RETURNS the adapter's promise, so a caller can await the settled state; the
+ *  design's own button ignores the return value, exactly as it ignored the fixture path's
+ *  `undefined`. The empty-form validation above it is untouched — it must refuse before it spends
+ *  a request against a rate-limited endpoint (its wording is A7.2's).
+ */
+const A5_1: Amendment = {
+  id: 'A5.1', date: '2026-09-07',
+  ruling: 'spec §"Prototype wiring" step 2: the prototype signs in through the API; the reference keeps the fixture path because it has no auth prop',
+  find: '        this.setState({ screen: "browse", formError: "", auth: true });\n      },\n      signedIn: !!s.auth,',
+  replace: '        if (!this.props.auth) return this.setState({ screen: "browse", formError: "", auth: true });\n'
+    + '        return this.props.auth.signIn(s.email, s.pw).then(\n'
+    + '          (me) => this.setState({ screen: "browse", formError: "", auth: true, email: me.email, me: { name: me.name, role: me.role, initials: me.initials } }),\n'
+    + '          (e) => this.setState({ formError: (e && e.message) || "Sign-in failed.", auth: false, screen: "gate" })\n'
+    + '        );\n'
+    + '      },\n'
+    + '      signedIn: !!s.auth,',
+  count: 1
+};
+
+/** A5.3a/b — sign-out through the adapter (amendment A-I8). Two literal edits, because the
+ *  handler's `setState` object spans several lines: (a) wraps the call in the adapter's promise,
+ *  (b) closes the extra parenthesis that wrap opened.
+ *
+ *  `.catch(() => {})` on the API call, deliberately: the reset must happen whatever the network
+ *  did. A failed sign-out that left the member looking signed in — with a session the server may
+ *  well have already revoked — is the worse of the two failures, and the server-side session is
+ *  what actually authorises anything.
+ */
+const A5_3a: Amendment = {
+  id: 'A5.3a', date: '2026-09-07',
+  ruling: 'spec §"Prototype wiring" step 2: sign-out ends the real session, and resets whatever the network did',
+  find: '      signOut: () => this.setState({',
+  replace: '      signOut: () => (this.props.auth ? this.props.auth.signOut().catch(() => {}) : Promise.resolve()).then(() => this.setState({',
+  count: 1
+};
+const A5_3b: Amendment = {
+  id: 'A5.3b', date: '2026-09-07',
+  ruling: 'closes the parenthesis A5.3a opened (same ruling)',
+  find: '      }),\n      goHome: this.go("gate"),',
+  replace: '      })),\n      goHome: this.go("gate"),',
+  count: 1
+};
+
+/** A5.4 — the bootstrap reads the account the app loaded from `/api/me`, and the `startGate`
+ *  prototype prop (amendment A-I8, ordering A-I8.1). A literal script edit, like A2 and A4.
+ *
+ *  `this.props.me` is the ONE hook a real session reaches the approved prototype through:
+ *  `src/main.ts` awaits `useMe().load()` before `bootstrap()` and `src/app.setup.js` passes the
+ *  payload down, so `componentDidMount` can put the visitor where the spec's account lifecycle
+ *  says they belong. The reference and the Claude Design preview pass no `me` at all and take
+ *  the design's own fixture path unchanged — which is what keeps the oracle and the app on the
+ *  same pixels.
+ *
+ *  `unverified` is deliberately unmapped: it has nowhere to go until I8c's "check your email"
+ *  screen exists, and "absent beats faked" forbids inventing one, so it falls through to the
+ *  sign-in gate. `verified → apply` is the D-I8-5 rider: an address that has never applied.
+ *
+ *  `startGate` is the reference's way into a gate state now that A6.2 takes the "Prototype —
+ *  access states" shortcuts out; `tests/reference-server.mjs` injects it through `?props=`.
+ *
+ *  A SET `startScreen` WINS over the account's landing screen (review round 1, I1). The branch
+ *  first set `screen: "browse"` unconditionally, which silently overrode the prop — so the
+ *  reference, whose ONLY screen driver is `startScreen`, could not be signed in and placed on a
+ *  named screen at once, and the harness worked around it by clicking the design's header nav.
+ *  That workaround was an undeclared deviation from the ruled A-I8.2 and is gone. The app never
+ *  passes `startScreen`, so its behaviour is untouched: it lands on Browse and `useStateRouteSync`
+ *  moves it to the pending deep link the instant `auth` flips.
+ */
+const A5_4: Amendment = {
+  id: 'A5.4', date: '2026-09-07',
+  ruling: 'the app reads the signed-in account on load; the reference reaches a gate state through the startGate prop (A-I8 / A-I8.1, spec §"Prototype wiring" step 1)',
+  find: '    if (this.props.startViewport === "mobile") this.setState({ viewport: "mobile" });\n  }',
+  replace: '    if (this.props.startViewport === "mobile") this.setState({ viewport: "mobile" });\n'
+    + '    if (this.props.startGate) this.setState({ screen: "gate", gate: this.props.startGate });\n'
+    + '    const me = this.props.me;\n'
+    + '    if (me && me.state === "active") this.setState({ auth: true, screen: (this.props.startScreen && this.props.startScreen !== "gate") ? this.props.startScreen : "browse", email: me.email, me: { name: me.name, role: me.role, initials: me.initials } });\n'
+    + '    else if (me && (me.state === "pending" || me.state === "needs_review")) this.setState({ screen: "gate", gate: "pending" });\n'
+    + '    else if (me && me.state === "declined") this.setState({ screen: "gate", gate: "rejected" });\n'
+    + '    else if (me && me.state === "verified") this.setState({ screen: "gate", gate: "apply" });\n'
+    + '  }',
+  count: 1
+};
+
+/** A5.6 — the `startGate` prototype prop in `data-props` (amendment A-I8, decision D-I8-3).
+ *
+ *  Declared beside its neighbours so the bundle's runtime hands it to the Root as a default
+ *  (support.js's `parseDataProps` → `propsMeta[k].default`), which is what makes the reference
+ *  server's `?props=` injection work at all, and so `app-generated.test.ts` requires
+ *  `app.setup.js` to declare it too. The literal MIRRORS `startScreen`'s shape and carries the
+ *  same `&quot;` escaping as the entry it is spliced in after — the equality proof in
+ *  design-amendments.test.ts decodes the attribute and pins the decoded object, so a mis-escape
+ *  cannot pass.
+ */
+const STARTVIEWPORT_ENTRY = '&quot;startViewport&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;desktop&quot;,&quot;mobile&quot;],&quot;default&quot;:&quot;desktop&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Viewport on load&quot;}';
+const STARTGATE_ENTRY = '&quot;startGate&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;signin&quot;,&quot;apply&quot;,&quot;pending&quot;,&quot;rejected&quot;],&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Start on gate state&quot;}';
+const A5_6: Amendment = {
+  id: 'A5.6', date: '2026-09-07',
+  ruling: 'the reference needs a prop-driven way into a gate state once the access-state shortcuts leave (A-I8, D-I8-3)',
+  find: STARTVIEWPORT_ENTRY, replace: `${STARTVIEWPORT_ENTRY},${STARTGATE_ENTRY}`, count: 1
+};
+
+/** A5.7 — the `me` prototype prop in `data-props` (amendment A-I8.2).
+ *
+ *  A5.4 makes the header render `/api/me`'s computed `role` and `initials`. The APP gets those
+ *  from a real session; the REFERENCE has none, so without this it would render the design's
+ *  fixture persona while the app rendered the signed-in one — and John's rule for this wave is
+ *  that the design's copy does not change, so the fixture cannot be edited to match (the drafted
+ *  A5.5 was rejected on exactly that ground). The two targets are reconciled the other way
+ *  instead: the reference is handed the SAME account, through the design's own prop mechanism.
+ *
+ *  `tests/reference-server.mjs` injects it per request from `?props=`, and the bundle's runtime
+ *  copies a `default` into the Root's props verbatim — `support.js`'s `parseDataProps` only
+ *  JSON-parses the attribute and strips `$`-prefixed keys, and the defaults loop is
+ *  `if (v !== void 0) d[k] = v` with no coercion — so an object default and a `null` default both
+ *  arrive unchanged (checked before this amendment was written, as A-I8.2 required).
+ *
+ *  `editor: "json"` because the value is an object rather than one of the tool's scalar editors;
+ *  the runtime reads only `default`, so the editor name has no bearing on what either target
+ *  renders. Everything else mirrors `startGate`'s entry, in the same key order.
+ */
+const ME_ENTRY = '&quot;me&quot;:{&quot;editor&quot;:&quot;json&quot;,&quot;default&quot;:null,&quot;tsType&quot;:&quot;object&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Signed-in account&quot;}';
+const A5_7: Amendment = {
+  id: 'A5.7', date: '2026-09-07',
+  ruling: 'the reference must render the same account the app does, and the design\'s copy does not change (A-I8.2, D-I8-8)',
+  find: STARTGATE_ENTRY, replace: `${STARTGATE_ENTRY},${ME_ENTRY}`, count: 1
+};
+
+// ---------------------------------------------------------------------------------------
+// A6 — the launch-removal list, executed against the DESIGN (amendment A-I8, D-I8-1).
+//
+// CLAUDE.md's list has waited for real authentication since the platform plan: the prototype
+// jump bar, the "Prototype — access states" shortcuts, the pre-filled demo credentials. They
+// leave the design rather than the port, so the oracle and the app lose them together and every
+// gate keeps holding — which is the whole reason the D15 mechanism carries this.
+//
+// BLANK LINES (A-I8.1). Every removal below swallows exactly ONE adjacent newline where the
+// design had a blank line on both sides of the removed block, so the regenerated file keeps
+// single blank lines. `design-amendments.test.ts` counts them against the pristine file, which
+// ships one doubled blank of its own that is not this mechanism's to tidy.
+//
+// The `find` strings for the two markup blocks and the two multi-line script blocks are the
+// pristine file's own bytes, quoted with \n escapes exactly as A2.3 quotes its block: readable
+// enough to review against the source, and impossible to get wrong by re-indenting.
+// ---------------------------------------------------------------------------------------
+const FIND_A6_1 = "  <sc-if value=\"{{ showPrototypeBar }}\" hint-placeholder-val=\"{{ true }}\">\n  <div style=\"display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 7px 18px; background: #003a70; color: #fff; font-size: 11px;\">\n    <div style=\"display: flex; align-items: center; gap: 10px;\">\n      <span style=\"font-family: var(--rf-display); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #deecf7;\">Prototype</span>\n      <span style=\"color: #deecf7;\">Practice Match — internal working title. Public name to be set by the VIN Foundation.</span>\n    </div>\n    <div style=\"display: flex; align-items: center; gap: 6px;\">\n      <span style=\"color: #deecf7;\">Jump to</span>\n      <sc-for list=\"{{ jumps }}\" as=\"j\" hint-placeholder-count=\"6\">\n        <button onClick=\"{{ j.go }}\" style=\"{{ j.style }}\" style-hover=\"background: rgba(255,255,255,.26);\">{{ j.label }}</button>\n      </sc-for>\n      <span style=\"width: 1px; height: 15px; background: rgba(255,255,255,.22); margin: 0 4px;\"></span>\n      <button onClick=\"{{ toggleViewport }}\" style=\"font-size: 11px; font-weight: 500; color: #003a70; background: #deecf7; border: 0; border-radius: 3px; padding: 4px 9px; cursor: pointer;\">{{ viewportLabel }}</button>\n    </div>\n  </div>\n  </sc-if>\n\n";
+const FIND_A6_2 = "              <div style=\"margin-top: 16px; padding: 15px 17px; border: 1px dashed var(--border-subtle); border-radius: 8px;\">\n                <div style=\"font-family: var(--rf-display); font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--color-steel);\">Prototype — access states</div>\n                <div style=\"display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px;\">\n                  <sc-for list=\"{{ gateStates }}\" as=\"s\" hint-placeholder-count=\"3\">\n                    <button onClick=\"{{ s.go }}\" style=\"font-size: 12px; font-weight: 500; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 999px; padding: 6px 12px; cursor: pointer;\" style-hover=\"border-color: var(--color-steel); background: var(--color-off-white);\">{{ s.label }}</button>\n                  </sc-for>\n                </div>\n              </div>\n";
+const FIND_A6_4a = "    const jumps = [\"gate\", \"browse\", \"detail\", \"requests\", \"seller\", \"admin\"].map((k) => ({\n      label: k === \"gate\" ? \"Access\" : k === \"detail\" ? \"Listing\" : k.charAt(0).toUpperCase() + k.slice(1),\n      go: this.jumpTo(k),\n      style: \"font-size: 11px; font-weight: 500; color: #fff; background: rgba(255,255,255,\" +\n        (s.screen === k ? \".3\" : \".1\") + \"); border: 1px solid rgba(255,255,255,.16); border-radius: 3px; padding: 3px 8px; cursor: pointer;\"\n    }));\n\n";
+const FIND_A6_5 = "      gateStates: [\n        { label: \"Pending approval\", go: () => this.setState({ gate: \"pending\" }) },\n        { label: \"Request declined\", go: () => this.setState({ gate: \"rejected\" }) },\n        { label: \"Approved — enter\", go: () => this.setState({ screen: \"browse\", auth: true }) }\n      ],\n";
+
+/** A6.1 — the jump bar leaves the template. Its markup, plus the blank line it left behind. */
+const A6_1: Amendment = {
+  id: 'A6.1', date: '2026-09-07',
+  ruling: "CLAUDE.md's launch-removal list, executed with real auth: the prototype jump bar's markup",
+  find: FIND_A6_1, replace: '', count: 1
+};
+
+/** A6.2 — the "Prototype — access states" shortcuts leave the sign-in card: the smallest
+ *  enclosing element (the dashed-border block), which is also its label and its `sc-for` loop.
+ *  No adjacent blank line here — the block sits between the card's `</div>` and the `</sc-if>`. */
+const A6_2: Amendment = {
+  id: 'A6.2', date: '2026-09-07',
+  ruling: "CLAUDE.md's launch-removal list: the \"Prototype — access states\" shortcuts",
+  find: FIND_A6_2, replace: '', count: 1
+};
+
+/** A6.3a/b/c — the pre-filled demo credentials and the pre-filled application.
+ *  The design ships a real-looking address and a masked password in `state` so the prototype's
+ *  Sign in button works on the first click; with A5.1 that click reaches the API, so the fields
+ *  must start empty. `apply` is the same class: a half-filled application with `affirm: true`
+ *  would submit an affirmation nobody made. Field names are kept — the UI reads them. */
+const A6_3a: Amendment = {
+  id: 'A6.3a', date: '2026-09-07',
+  ruling: "CLAUDE.md's launch-removal list: the pre-filled demo credentials",
+  find: '    email: "r.mendes@example.com", pw: "············", formError: "",',
+  replace: '    email: "", pw: "", formError: "",', count: 1
+};
+const A6_3b: Amendment = {
+  id: 'A6.3b', date: '2026-09-07',
+  ruling: "the same, where signOut restores them (CLAUDE.md's launch-removal list)",
+  find: '        userMenu: false, auth: false, screen: "gate", gate: "signin", pw: "············",',
+  replace: '        userMenu: false, auth: false, screen: "gate", gate: "signin", pw: "",', count: 1
+};
+const A6_3c: Amendment = {
+  id: 'A6.3c', date: '2026-09-07',
+  ruling: "the pre-filled application, including an affirmation nobody made (CLAUDE.md's launch-removal list)",
+  find: '    apply: { name: "Rachel Mendes, DVM", vin: "", grad: "", state: "TX", employer: "", intent: "", affirm: true, error: "" },',
+  replace: '    apply: { name: "", vin: "", grad: "", state: "", employer: "", intent: "", affirm: false, error: "" },', count: 1
+};
+
+/** A6.4a/b/c/d — the jump bar's script: the `jumps` array it rendered from (plus the blank line
+ *  it left behind), the `showPrototypeBar` flag its `sc-if` read, the `jumps` key in
+ *  `renderVals()`'s return, and the `jumpTo` handler its buttons called. */
+const A6_4a: Amendment = {
+  id: 'A6.4a', date: '2026-09-07',
+  ruling: "CLAUDE.md's launch-removal list: the jump bar's own array",
+  find: FIND_A6_4a, replace: '', count: 1
+};
+const A6_4b: Amendment = {
+  id: 'A6.4b', date: '2026-09-07',
+  ruling: 'the flag the removed sc-if read (same ruling)',
+  find: '      showPrototypeBar: this.props.prototypeBar !== false,\n', replace: '', count: 1
+};
+const A6_4c: Amendment = {
+  id: 'A6.4c', date: '2026-09-07',
+  ruling: 'the jumps key in renderVals()\'s return (same ruling)',
+  find: '      nav, jumps,', replace: '      nav,', count: 1
+};
+const A6_4d: Amendment = {
+  id: 'A6.4d', date: '2026-09-07',
+  ruling: 'the handler the removed buttons called (same ruling)',
+  find: '  jumpTo = (screen) => () => this.setState({ screen, auth: screen !== "gate", interest: "closed", userMenu: false, gate: "signin" });\n\n',
+  replace: '', count: 1
+};
+
+/** A6.5 — `gateStates` in the script: the three shortcut buttons A6.2's markup rendered. */
+const A6_5: Amendment = {
+  id: 'A6.5', date: '2026-09-07',
+  ruling: "CLAUDE.md's launch-removal list: the access-state shortcuts' own array",
+  find: FIND_A6_5, replace: '', count: 1
+};
+
+/** A6.6a/b — the viewport toggle's script (A-I8.1). After A6.1 nothing references
+ *  `viewportLabel` or `toggleViewport`: the "Mobile view" / "Desktop view" button that read them
+ *  lived in the jump bar. The bundle's own dead-code rule applies, exactly as it did to A2.3–A2.5.
+ *  `isDesktop` — which reads the same `s.viewport` — is untouched: the phone-frame presentation
+ *  stays reachable through `startViewport` until a responsive design exists (D-I8-7). */
+const A6_6a: Amendment = {
+  id: 'A6.6a', date: '2026-09-07',
+  ruling: 'a dead mapping is dead code (spec D8/D12, A-I8.1): nothing reads viewportLabel after A6.1',
+  find: '      viewportLabel: s.viewport === "desktop" ? "Mobile view" : "Desktop view",\n', replace: '', count: 1
+};
+const A6_6b: Amendment = {
+  id: 'A6.6b', date: '2026-09-07',
+  ruling: 'the same for toggleViewport, the handler the removed button called (A-I8.1)',
+  find: '      toggleViewport: () => this.setState({ viewport: s.viewport === "desktop" ? "mobile" : "desktop" }),\n', replace: '', count: 1
+};
+
+/** A7.1/A7.2 — the sign-in copy (spec §Sign-in: "The design's 'VIN username' copy changes to
+ *  'Email' (design delta)"). The API authenticates an email address and knows nothing about VIN
+ *  usernames, so the label and the empty-form message would both be asking for the wrong thing.
+ *  A ruled amendment, not a harness mask: `maxDiffPixels: 0` admits no masks. */
+const A7_1: Amendment = {
+  id: 'A7.1', date: '2026-09-07',
+  ruling: "spec §Sign-in: the design's 'VIN username' copy changes to 'Email' (design delta)",
+  find: 'VIN username or email</span>', replace: 'Email</span>', count: 1
+};
+const A7_2: Amendment = {
+  id: 'A7.2', date: '2026-09-07',
+  ruling: 'the same copy in the empty-form message (spec §Sign-in)',
+  find: '"Enter both your VIN username and password."', replace: '"Enter both your email and password."', count: 1
+};
+
 export function amendments(): Amendment[] {
-  return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4];
+  return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
+    A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2];
 }

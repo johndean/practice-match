@@ -21,9 +21,12 @@
 # negative cases exist to keep it that way.
 set -euo pipefail
 ENV="${1:?usage: verify-deploy.sh QA|production [BASE_URL]}"
+# FORBID_MARKET_PUBLIC: MARKET_DATA_PUBLIC is a QA evaluation flag and never production's
+# (app/config.py), so /api/config answering true there fails the deploy. On QA either value
+# passes -- evaluating it is what QA is for.
 case "$ENV" in
-  QA)         DEFAULT_BASE="https://qa.foundation.vin"; WANT=qa;         WANT_MODE=app ;;                                  # the coming-soon page never goes to QA
-  production) DEFAULT_BASE="https://foundation.vin";    WANT=production; WANT_MODE="${EXPECT_SITE_MODE:-coming_soon}" ;;  # launch flip: EXPECT_SITE_MODE=app
+  QA)         DEFAULT_BASE="https://qa.foundation.vin"; WANT=qa;         WANT_MODE=app;                                  FORBID_MARKET_PUBLIC="" ;;   # the coming-soon page never goes to QA
+  production) DEFAULT_BASE="https://foundation.vin";    WANT=production; WANT_MODE="${EXPECT_SITE_MODE:-coming_soon}"; FORBID_MARKET_PUBLIC=1 ;;    # launch flip: EXPECT_SITE_MODE=app
   *) echo "usage: verify-deploy.sh QA|production [BASE_URL]" >&2; exit 64 ;;
 esac
 # An explicit target (positional arg or VERIFY_BASE_URL) means an ad hoc probe --
@@ -122,6 +125,36 @@ except Exception as exc:
 code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/healthz/deep")
 [[ "$code" == "200" ]] || { echo "FAIL: deep healthz returned $code at $BASE/api/healthz/deep" >&2; exit 1; }
 echo "deep healthz OK"
+# GET /api/config (Identity Task I7) is public, mounted in every SITE_MODE, and the browser reads
+# it BEFORE /api/me on every page load: useMe().load() takes market_data_public from it, and the
+# Browse market column decides from that whether an anonymous visitor sees market data. So a
+# deployment where it is absent or malformed is a broken deployment, and it is probed here rather
+# than only in app mode. The client fails the flag closed on a read failure, which is a safety
+# net, not a licence to ship without the endpoint.
+echo "→ GET $BASE/api/config"
+config=$(curl -fsS --max-time 20 "$BASE/api/config") \
+  || { echo "FAIL: /api/config did not answer 200 at $BASE/api/config" >&2; exit 1; }
+printf '%s' "$config" | FORBID_MARKET_PUBLIC="$FORBID_MARKET_PUBLIC" python3 -c '
+import os, sys, json
+
+def fail(msg):  # one clean line on stderr, exit 1 - never a traceback (same rule as healthz)
+    sys.exit(f"FAIL: {msg}")
+
+try:
+    b = json.load(sys.stdin)
+except Exception:
+    fail("config body is not JSON")
+if not isinstance(b, dict):
+    fail(f"config body is not a JSON object: {b}")
+# A JSON boolean specifically: the client holds this in a Ref<boolean>, where the string "yes"
+# would be truthy and an anonymous visitor would be shown market data on a type error.
+flag = b.get("market_data_public")
+if not isinstance(flag, bool):
+    fail(f"config market_data_public is not a JSON boolean: {b}")
+if os.environ["FORBID_MARKET_PUBLIC"] and flag:
+    fail("market_data_public is true on production - MARKET_DATA_PUBLIC is a QA evaluation flag, never production")
+print("config OK  market_data_public", flag)
+'
 # Which shell to probe depends on SITE_MODE: production runs the coming-soon page
 # (probed by its title, the ABSENCE of the marketplace shell, and the /api/interest
 # contract), QA and app mode run the marketplace SPA (probed by its #app shell on the
@@ -145,6 +178,20 @@ if [[ "$mode" == "coming_soon" ]]; then
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H 'Content-Type: application/json' -d '{"email":"not-an-email"}' "$BASE/api/interest")
   [[ "$code" == "422" ]] || { echo "FAIL: interest endpoint answered $code to an invalid address (expected 422)" >&2; exit 1; }
   echo "interest endpoint OK"
+  # The auth surface must NOT be mounted behind the Coming Soon page: create_app() includes the
+  # router only when SITE_MODE=app, so anyone who guesses the path gets the JSON 404 rather than a
+  # real account row nothing can email yet (Identity plan Task I4, fix round 1).
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H 'Content-Type: application/json' -d '{"email":"probe@example.org","password":"x"}' "$BASE/api/auth/signup")
+  [[ "$code" == "404" ]] || { echo "FAIL: /api/auth/signup answered $code in coming-soon mode (expected 404 - the auth surface must not be mounted before launch)" >&2; exit 1; }
+  echo "auth endpoints absent OK"
+  # ...and so must the member surface Task I5 added behind the same gate. One probe per router:
+  # /api/auth/signup alone could not detect the applications or admin routers being un-gated on
+  # their own (Identity plan Task I5, fix round 1, N2).
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/admin/users")
+  [[ "$code" == "404" ]] || { echo "FAIL: /api/admin/users answered $code in coming-soon mode (expected 404 - the admin surface must not be mounted before launch)" >&2; exit 1; }
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H 'Content-Type: application/json' -d '{"kind":"buyer","fields":{}}' "$BASE/api/applications")
+  [[ "$code" == "404" ]] || { echo "FAIL: /api/applications answered $code in coming-soon mode (expected 404 - the applications surface must not be mounted before launch)" >&2; exit 1; }
+  echo "member endpoints absent OK"
 else
   body=$(curl -fsS --max-time 20 "$BASE/browse")
   [[ "$body" == *'id="app"'* ]] || { echo "FAIL: SPA fallback missing at $BASE/browse" >&2; exit 1; }
