@@ -86,7 +86,12 @@ describe('reference-server.mjs', () => {
   it('keeps serving the Practice Match V3 marketplace design at "/"', async () => {
     const res = await fetch(`${base}/`);
     expect(res.status).toBe(200);
-    expect(await res.text()).toContain('Practice Match — internal working title');
+    const served = await res.text();
+    // The gate's own hero heading. It used to be the jump bar's "Practice Match — internal
+    // working title" strip, which amendment A6.1 removed from the design — a marker inside the
+    // prototype scaffolding could only ever have been temporary.
+    expect(served).toContain('Veterinary Practice Transitions');
+    expect(served).toContain('<script type="text/x-dc" data-dc-script');
   });
 
   it('rejects a traversal attempt through the coming-soon prefix rather than silently serving the marketplace file', async () => {

@@ -194,8 +194,8 @@ const num = (s) => (s == null ? 0 : Number(String(s).replace(/[^0-9.]/g, "")) ||
 class Component extends DCLogic {
   state = {
     screen: "gate", gate: "signin", auth: false, viewport: "desktop", mobileTab: "list",
-    email: "r.mendes@example.com", pw: "············", formError: "",
-    apply: { name: "Rachel Mendes, DVM", vin: "", grad: "", state: "TX", employer: "", intent: "", affirm: true, error: "" },
+    email: "", pw: "", formError: "",
+    apply: { name: "", vin: "", grad: "", state: "", employer: "", intent: "", affirm: false, error: "" },
     f: { type: "Any", price: "Any", revenue: "Any", doctors: "Any", building: "Any" },
     loading: false, activeId: null, hoverId: null, detailId: "p1", detailDocs: false,
     interest: "closed", interestMsg: "", sent: [],
@@ -250,8 +250,6 @@ class Component extends DCLogic {
     if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false });
     this.setState({ screen, interest: "closed", userMenu: false });
   };
-
-  jumpTo = (screen) => () => this.setState({ screen, auth: screen !== "gate", interest: "closed", userMenu: false, gate: "signin" });
 
   setF = (key) => (e) => {
     const v = e && e.target ? e.target.value : e;
@@ -1346,13 +1344,6 @@ class Component extends DCLogic {
         (s.screen === n.key ? "var(--color-blue)" : "transparent") + ";"
     }));
 
-    const jumps = ["gate", "browse", "detail", "requests", "seller", "admin"].map((k) => ({
-      label: k === "gate" ? "Access" : k === "detail" ? "Listing" : k.charAt(0).toUpperCase() + k.slice(1),
-      go: this.jumpTo(k),
-      style: "font-size: 11px; font-weight: 500; color: #fff; background: rgba(255,255,255," +
-        (s.screen === k ? ".3" : ".1") + "); border: 1px solid rgba(255,255,255,.16); border-radius: 3px; padding: 3px 8px; cursor: pointer;"
-    }));
-
     const statusMap = {
       pending: {
         kicker: "Application received", title: "Your request is under review",
@@ -1371,11 +1362,8 @@ class Component extends DCLogic {
     };
 
     return {
-      showPrototypeBar: this.props.prototypeBar !== false,
       isDesktop: s.viewport === "desktop",
-      viewportLabel: s.viewport === "desktop" ? "Mobile view" : "Desktop view",
-      toggleViewport: () => this.setState({ viewport: s.viewport === "desktop" ? "mobile" : "desktop" }),
-      nav, jumps,
+      nav,
       navExpanded: !!s.auth && vw >= 1050,
       navCollapsed: !!s.auth && vw < 1050,
       navMenuOpen: !!s.navMenu,
@@ -1388,7 +1376,7 @@ class Component extends DCLogic {
       userMenuOpen: !!s.userMenu,
       toggleUserMenu: () => this.setState({ userMenu: !s.userMenu }),
       signOut: () => (this.props.auth ? this.props.auth.signOut().catch(() => {}) : Promise.resolve()).then(() => this.setState({
-        userMenu: false, auth: false, screen: "gate", gate: "signin", pw: "············",
+        userMenu: false, auth: false, screen: "gate", gate: "signin", pw: "",
         interest: "closed", activeId: null, hoverId: null, sellerView: "dash", wizSubmitted: false, formError: ""
       })),
       goHome: this.go("gate"),
@@ -1406,7 +1394,7 @@ class Component extends DCLogic {
       setEmail: (e) => this.setState({ email: e.target.value, formError: "" }),
       setPw: (e) => this.setState({ pw: e.target.value, formError: "" }),
       signIn: () => {
-        if (!s.email || !s.pw) return this.setState({ formError: "Enter both your VIN username and password." });
+        if (!s.email || !s.pw) return this.setState({ formError: "Enter both your email and password." });
         if (!this.props.auth) return this.setState({ screen: "browse", formError: "", auth: true });
         return this.props.auth.signIn(s.email, s.pw).then(
           (me) => this.setState({ screen: "browse", formError: "", auth: true, email: me.email, me: { name: me.name, role: me.role, initials: me.initials } }),
@@ -1418,11 +1406,6 @@ class Component extends DCLogic {
       goSignInScreen: () => this.setState({ screen: "gate", gate: "signin" }),
       goApply: (e) => { if (e) e.preventDefault(); this.setState({ gate: "apply" }); },
       goSignin: (e) => { if (e) e.preventDefault(); this.setState({ gate: "signin", screen: "gate" }); },
-      gateStates: [
-        { label: "Pending approval", go: () => this.setState({ gate: "pending" }) },
-        { label: "Request declined", go: () => this.setState({ gate: "rejected" }) },
-        { label: "Approved — enter", go: () => this.setState({ screen: "browse", auth: true }) }
-      ],
       apply: s.apply,
       applyFields: [
         { key: "name", label: "Full name and credentials", hint: "Jane Doe, DVM" },

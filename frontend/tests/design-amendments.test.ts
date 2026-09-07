@@ -70,11 +70,14 @@ describe('local design amendments (spec D15)', () => {
     // bootstrap, and the two prototype props that let the reference reach a gate state and render
     // the same account the app does.
     'A5.1', 'A5.3a', 'A5.3b', 'A5.4', 'A5.6', 'A5.7',
+    // A6 — CLAUDE.md's launch-removal list, executed against the design; A7 — the sign-in copy.
+    'A6.1', 'A6.2', 'A6.3a', 'A6.3b', 'A6.3c', 'A6.4a', 'A6.4b', 'A6.4c', 'A6.4d', 'A6.5', 'A6.6a', 'A6.6b',
+    'A7.1', 'A7.2',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(37);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(51);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -123,6 +126,33 @@ describe('local design amendments (spec D15)', () => {
     // The pristine bundle declares neither — both exist only as local amendments.
     expect(pristine).not.toContain('startGate');
     expect(pristine).not.toContain('&quot;me&quot;');
+  });
+
+  // A6/A7 — the launch-removal list and the sign-in copy, asserted on the OUTPUT: every
+  // affordance CLAUDE.md's list names is gone from the design itself, so the oracle and the app
+  // lose them together. `prototypeBar`, `startScreen`, `startViewport` and `startGate` stay
+  // DECLARED (D-I8-2) — the parity test requires app.setup.js to declare what the design does,
+  // and the app simply never passes the first three.
+  it('A6/A7 take the prototype affordances out of the design and leave the props declared', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    for (const gone of [
+      'showPrototypeBar', 'Prototype — access states', 'gateStates', 'jumpTo', 'const jumps',
+      'r.mendes@example.com', '············', 'viewportLabel', 'toggleViewport',
+      'Mobile view', 'VIN username or email', 'Enter both your VIN username'
+    ]) {
+      expect(amended, `the launch removal left ${gone} in the design`).not.toContain(gone);
+    }
+    expect(amended, 'the sign-in label is the address the API actually authenticates').toContain('Email</span>');
+    expect(amended).toContain('"Enter both your email and password."');
+    // D-I8-2: declared, never passed.
+    for (const declared of ['prototypeBar', 'startScreen', 'startViewport', 'startGate']) {
+      expect(amended, `${declared} must stay declared in data-props`).toContain(`&quot;${declared}&quot;`);
+    }
+    // The fixture ARRAYS stay until the listings API replaces them (CLAUDE.md keeps the field
+    // names because the UI reads them) — this is the launch removal, not a data migration.
+    for (const kept of ['const P = [', 'sellerListings', 'const MARKETS', 'me: { name: "Dr. Rachel Mendes"']) {
+      expect(amended, `${kept} is not part of this list`).toContain(kept);
+    }
   });
 
   it('the amended reference is the pristine Rev 2 file plus exactly the ruled edits', () => {

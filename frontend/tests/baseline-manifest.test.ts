@@ -10,8 +10,12 @@ import { MANIFEST_PATH, SNAPSHOT_DIR, UNCHANGED_SCREENS, hashBaselines } from '.
 // account menu renders the signed-in account's own label, and `seller-dash`, the four `wizard-*`
 // and the four `admin-*` are captured as the accounts that can actually open them (a seller and an
 // admin), so their header line differs from the design's single fixture persona by design
-// (A-I8.2 / D-I8-8). The buyer-family states did not move: the oracle persona for those is a buyer
-// whose computed label reproduces the fixture letter for letter, which is why it was chosen. Zero regression is proved
+// (A-I8.2 / D-I8-8). The buyer-family states did not move there: the oracle persona for those is a
+// buyer whose computed label reproduces the fixture letter for letter, which is why it was chosen.
+// Task I8a's third commit then re-based all thirteen again — the launch removal took the prototype
+// jump bar off the top of every screen, so all 28 approved states moved BY DESIGN, by ruled
+// amendment rather than by a code leak (D-I8-6). The manifest keeps doing the job it was built
+// for: from here on, a moved hash means a CODE change moved a screen the design did not. Zero regression is proved
 // as well by the DOM oracle (node-for-node identical to the amended V3 reference) plus the
 // zero-tolerance pixel gate. A moved hash means a CODE change moved a screen the design did
 // not: stop and diff, never re-write the manifest.

@@ -8,6 +8,7 @@ beforeEach(() => { c = new Component({}); });
 describe('logic.js — characterisation of the approved prototype (file untouched)', () => {
   it('starts signed out on the sign-in gate with the design defaults', () => {
     expect(c.state).toMatchObject({ screen: 'gate', gate: 'signin', auth: false, viewport: 'desktop', mobileTab: 'list', adminTab: 'users', detailId: 'p1', sellerView: 'dash' });
+    expect(c.state, 'A6.3: no demo credentials survive the launch removal').toMatchObject({ email: '', pw: '' });
   });
 
   it('go() refuses navigation while signed out and returns to the sign-in gate', () => {
@@ -16,23 +17,43 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     expect(c.state).toMatchObject({ screen: 'gate', gate: 'signin', userMenu: false, auth: false });
   });
 
-  it('jumpTo() (the prototype jump bar) signs in and navigates; jumpTo("gate") signs out', () => {
-    c.jumpTo('admin')();
-    expect(c.state).toMatchObject({ screen: 'admin', auth: true, interest: 'closed', userMenu: false, gate: 'signin' });
-    c.jumpTo('gate')();
-    expect(c.state).toMatchObject({ screen: 'gate', auth: false });
+  // The launch-removal list, executed (amendments A6.1–A6.6). Every affordance below used to be
+  // the harness's way into a state and the prototype's way of faking a member; `reach()` and the
+  // seeded accounts replaced all of them in commit 1, and the design lost them in commit 3.
+  it('the prototype jump bar no longer exists — no jumpTo, no jumps, no viewport toggle (A6.1/A6.4/A6.6)', () => {
+    expect(c.jumpTo, 'the jump bar\'s handler').toBeUndefined();
+    const v = c.renderVals();
+    expect(v.jumps, 'the array the bar rendered from').toBeUndefined();
+    expect(v.showPrototypeBar, 'the flag its sc-if read').toBeUndefined();
+    expect(v.viewportLabel, 'the "Mobile view" / "Desktop view" label (A6.6)').toBeUndefined();
+    expect(v.toggleViewport, 'the handler that button called (A6.6)').toBeUndefined();
+    // `isDesktop` reads the same `s.viewport` and STAYS: the phone frame is still reachable
+    // through the `startViewport` prop until a responsive design exists (D-I8-7).
+    expect(v.isDesktop).toBe(true);
+  });
+
+  it('the "Prototype — access states" shortcuts no longer exist (A6.2/A6.5)', () => {
+    expect(c.renderVals().gateStates).toBeUndefined();
+  });
+
+  it('the demo credentials and the pre-filled application are empty (A6.3)', () => {
+    expect(c.state).toMatchObject({ email: '', pw: '' });
+    expect(c.state.apply).toEqual({ name: '', vin: '', grad: '', state: '', employer: '', intent: '', affirm: false, error: '' });
+    // …and sign-out does not put a masked password back.
+    c.setState({ auth: true, screen: 'browse' });
+    c.renderVals().signOut();
+    expect(c.state.pw).toBe('');
   });
 
   it('go() navigates once signed in', () => {
-    c.jumpTo('browse')();
+    c.setState({ auth: true, screen: 'browse' });
     c.go('seller')();
     expect(c.state.screen).toBe('seller');
   });
 
-  it('renderVals exposes the four nav items and six jumps with the design labels, plus the signed-in flags', () => {
+  it('renderVals exposes the four nav items with the design labels, plus the signed-in flags', () => {
     const v = c.renderVals();
     expect(v.nav.map((n: any) => n.label)).toEqual(['Browse Practices', 'My Requests', 'List a Practice', 'VIN Foundation Admin']);
-    expect(v.jumps.map((j: any) => j.label)).toEqual(['Access', 'Browse', 'Listing', 'Requests', 'Seller', 'Admin']);
     expect(v.signedIn).toBe(false);
     expect(v.signedOut).toBe(true);
   });
@@ -276,7 +297,7 @@ describe('logic.js — characterisation of the approved prototype (file untouche
 
     expect(auth.calls, 'an empty form must not reach the API — it is a rate-limited endpoint').toEqual([]);
     expect(c2.state.auth).toBe(false);
-    expect(c2.state.formError).toContain('Enter both your');
+    expect(c2.state.formError, 'A7.2: the API authenticates an email address').toBe('Enter both your email and password.');
   });
 
   it('signOut() ends the session through the adapter and then resets the prototype (A5.3)', async () => {

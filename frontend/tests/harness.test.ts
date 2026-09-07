@@ -181,11 +181,13 @@ describe('personaSession spends one sign-in per worker process (A-I7)', () => {
 });
 
 describe('forgetPersonaSession (A-I7.2, extended by A-I8.2)', () => {
-  it('drops the persona it is named, and only that one', () => {
+  it('drops the persona it is named — the in-memory memo AND the run\'s file — and only that one', () => {
     personaSessionMemos.buyer.cookies = [{ name: 'pm_session' }] as never;
     personaSessionMemos.seller.cookies = [{ name: 'pm_session' }] as never;
-    forgetPersonaSession('buyer');
+    const cleared: string[] = [];
+    forgetPersonaSession('buyer', (p) => cleared.push(p));
     expect(personaSessionMemos.buyer.cookies).toBeNull();
+    expect(cleared, 'the file must be cleared too, or a restarted worker re-adds a revoked session').toEqual(['buyer']);
     expect(personaSessionMemos.seller.cookies, 'one persona\'s sign-out is not another\'s').not.toBeNull();
     personaSessionMemos.seller.cookies = null;
   });
@@ -196,8 +198,10 @@ describe('forgetPersonaSession (A-I7.2, extended by A-I8.2)', () => {
     personaSessionMemo.cookies = [
       { name: 'pm_session', value: 'stale-and-revoked', domain: 'localhost', path: '/', expires: -1, httpOnly: true, secure: true, sameSite: 'Lax' as const }
     ];
-    forgetPersonaSession();
+    const cleared: string[] = [];
+    forgetPersonaSession(undefined, (p) => cleared.push(p));
     expect(personaSessionMemo.cookies).toBeNull();
+    expect(cleared, 'the no-argument form is the design persona\'s').toEqual(['design']);
 
     let signIns = 0;
     const jar = { cookies: () => Promise.resolve([{ name: 'pm_session' }]), addCookies: () => Promise.resolve() };

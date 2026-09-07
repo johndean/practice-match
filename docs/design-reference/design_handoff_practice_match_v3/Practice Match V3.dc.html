@@ -68,23 +68,6 @@
 
 <div style="min-height: 100vh; background: var(--color-white); color: #333;">
 
-  <sc-if value="{{ showPrototypeBar }}" hint-placeholder-val="{{ true }}">
-  <div style="display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 7px 18px; background: #003a70; color: #fff; font-size: 11px;">
-    <div style="display: flex; align-items: center; gap: 10px;">
-      <span style="font-family: var(--rf-display); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #deecf7;">Prototype</span>
-      <span style="color: #deecf7;">Practice Match — internal working title. Public name to be set by the VIN Foundation.</span>
-    </div>
-    <div style="display: flex; align-items: center; gap: 6px;">
-      <span style="color: #deecf7;">Jump to</span>
-      <sc-for list="{{ jumps }}" as="j" hint-placeholder-count="6">
-        <button onClick="{{ j.go }}" style="{{ j.style }}" style-hover="background: rgba(255,255,255,.26);">{{ j.label }}</button>
-      </sc-for>
-      <span style="width: 1px; height: 15px; background: rgba(255,255,255,.22); margin: 0 4px;"></span>
-      <button onClick="{{ toggleViewport }}" style="font-size: 11px; font-weight: 500; color: #003a70; background: #deecf7; border: 0; border-radius: 3px; padding: 4px 9px; cursor: pointer;">{{ viewportLabel }}</button>
-    </div>
-  </div>
-  </sc-if>
-
   <sc-if value="{{ isDesktop }}" hint-placeholder-val="{{ true }}">
   <div>
     <header style="position: sticky; top: 0; z-index: 40; display: flex; align-items: center; justify-content: space-between; gap: 28px; height: 74px; padding: 0 34px; background: var(--color-white); border-bottom: 1px solid var(--rf-line);">
@@ -177,7 +160,7 @@
                 </div>
                 <div style="padding: 24px 26px 26px; display: flex; flex-direction: column; gap: 16px;">
                   <label style="display: flex; flex-direction: column; gap: 6px;">
-                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">VIN username or email</span>
+                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">Email</span>
                     <input value="{{ form.email }}" onChange="{{ setEmail }}" style="height: 44px; padding: 0 13px; font-size: 15px; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none;">
                   </label>
                   <label style="display: flex; flex-direction: column; gap: 6px;">
@@ -189,14 +172,6 @@
                   </sc-if>
                   <button onClick="{{ signIn }}" style="font-family: var(--rf-display); height: 48px; font-size: 15px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;" style-hover="background: var(--color-navy);">Sign in</button>
                   <div style="text-align: center; font-size: 14px; color: #494949;">Not approved yet? <a href="#apply" onClick="{{ goApply }}">Request access</a></div>
-                </div>
-              </div>
-              <div style="margin-top: 16px; padding: 15px 17px; border: 1px dashed var(--border-subtle); border-radius: 8px;">
-                <div style="font-family: var(--rf-display); font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--color-steel);">Prototype — access states</div>
-                <div style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px;">
-                  <sc-for list="{{ gateStates }}" as="s" hint-placeholder-count="3">
-                    <button onClick="{{ s.go }}" style="font-size: 12px; font-weight: 500; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 999px; padding: 6px 12px; cursor: pointer;" style-hover="border-color: var(--color-steel); background: var(--color-off-white);">{{ s.label }}</button>
-                  </sc-for>
                 </div>
               </div>
             </sc-if>
@@ -1751,8 +1726,8 @@ const num = (s) => (s == null ? 0 : Number(String(s).replace(/[^0-9.]/g, "")) ||
 class Component extends DCLogic {
   state = {
     screen: "gate", gate: "signin", auth: false, viewport: "desktop", mobileTab: "list",
-    email: "r.mendes@example.com", pw: "············", formError: "",
-    apply: { name: "Rachel Mendes, DVM", vin: "", grad: "", state: "TX", employer: "", intent: "", affirm: true, error: "" },
+    email: "", pw: "", formError: "",
+    apply: { name: "", vin: "", grad: "", state: "", employer: "", intent: "", affirm: false, error: "" },
     f: { type: "Any", price: "Any", revenue: "Any", doctors: "Any", building: "Any" },
     loading: false, activeId: null, hoverId: null, detailId: "p1", detailDocs: false,
     interest: "closed", interestMsg: "", sent: [],
@@ -1807,8 +1782,6 @@ class Component extends DCLogic {
     if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false });
     this.setState({ screen, interest: "closed", userMenu: false });
   };
-
-  jumpTo = (screen) => () => this.setState({ screen, auth: screen !== "gate", interest: "closed", userMenu: false, gate: "signin" });
 
   setF = (key) => (e) => {
     const v = e && e.target ? e.target.value : e;
@@ -2903,13 +2876,6 @@ class Component extends DCLogic {
         (s.screen === n.key ? "var(--color-blue)" : "transparent") + ";"
     }));
 
-    const jumps = ["gate", "browse", "detail", "requests", "seller", "admin"].map((k) => ({
-      label: k === "gate" ? "Access" : k === "detail" ? "Listing" : k.charAt(0).toUpperCase() + k.slice(1),
-      go: this.jumpTo(k),
-      style: "font-size: 11px; font-weight: 500; color: #fff; background: rgba(255,255,255," +
-        (s.screen === k ? ".3" : ".1") + "); border: 1px solid rgba(255,255,255,.16); border-radius: 3px; padding: 3px 8px; cursor: pointer;"
-    }));
-
     const statusMap = {
       pending: {
         kicker: "Application received", title: "Your request is under review",
@@ -2928,11 +2894,8 @@ class Component extends DCLogic {
     };
 
     return {
-      showPrototypeBar: this.props.prototypeBar !== false,
       isDesktop: s.viewport === "desktop",
-      viewportLabel: s.viewport === "desktop" ? "Mobile view" : "Desktop view",
-      toggleViewport: () => this.setState({ viewport: s.viewport === "desktop" ? "mobile" : "desktop" }),
-      nav, jumps,
+      nav,
       navExpanded: !!s.auth && vw >= 1050,
       navCollapsed: !!s.auth && vw < 1050,
       navMenuOpen: !!s.navMenu,
@@ -2945,7 +2908,7 @@ class Component extends DCLogic {
       userMenuOpen: !!s.userMenu,
       toggleUserMenu: () => this.setState({ userMenu: !s.userMenu }),
       signOut: () => (this.props.auth ? this.props.auth.signOut().catch(() => {}) : Promise.resolve()).then(() => this.setState({
-        userMenu: false, auth: false, screen: "gate", gate: "signin", pw: "············",
+        userMenu: false, auth: false, screen: "gate", gate: "signin", pw: "",
         interest: "closed", activeId: null, hoverId: null, sellerView: "dash", wizSubmitted: false, formError: ""
       })),
       goHome: this.go("gate"),
@@ -2963,7 +2926,7 @@ class Component extends DCLogic {
       setEmail: (e) => this.setState({ email: e.target.value, formError: "" }),
       setPw: (e) => this.setState({ pw: e.target.value, formError: "" }),
       signIn: () => {
-        if (!s.email || !s.pw) return this.setState({ formError: "Enter both your VIN username and password." });
+        if (!s.email || !s.pw) return this.setState({ formError: "Enter both your email and password." });
         if (!this.props.auth) return this.setState({ screen: "browse", formError: "", auth: true });
         return this.props.auth.signIn(s.email, s.pw).then(
           (me) => this.setState({ screen: "browse", formError: "", auth: true, email: me.email, me: { name: me.name, role: me.role, initials: me.initials } }),
@@ -2975,11 +2938,6 @@ class Component extends DCLogic {
       goSignInScreen: () => this.setState({ screen: "gate", gate: "signin" }),
       goApply: (e) => { if (e) e.preventDefault(); this.setState({ gate: "apply" }); },
       goSignin: (e) => { if (e) e.preventDefault(); this.setState({ gate: "signin", screen: "gate" }); },
-      gateStates: [
-        { label: "Pending approval", go: () => this.setState({ gate: "pending" }) },
-        { label: "Request declined", go: () => this.setState({ gate: "rejected" }) },
-        { label: "Approved — enter", go: () => this.setState({ screen: "browse", auth: true }) }
-      ],
       apply: s.apply,
       applyFields: [
         { key: "name", label: "Full name and credentials", hint: "Jane Doe, DVM" },

@@ -92,9 +92,22 @@ export async function prepare(page: Page): Promise<void> {
   });
 }
 
+/**
+ * Loads the target's root and waits for the design to have rendered.
+ *
+ * It waited for the jump bar's `Access` button until amendment A6.1 removed the bar, and the
+ * replacement is the `<header>` element (A-I8.1): the design declares exactly ONE, it is the
+ * first thing inside `<sc-if value="{{ isDesktop }}">` so it is present on every screen of both
+ * targets signed in or out, and at `position: sticky` with a fixed 74 px height it is visible at
+ * every width the suite uses.
+ *
+ * NOT the header's brand text, which was the obvious candidate: `subBrandTextStyle` is
+ * `display: none` below 1050 px, so `header-1000` and `header-1100` would wait forever. Nor the
+ * logo `img`, whose box collapses to zero — and `visible` with it — if the asset ever 404s.
+ */
 export async function booted(page: Page): Promise<void> {
   await page.goto('/');
-  await page.getByRole('button', { name: 'Access', exact: true }).first().waitFor({ state: 'visible' });
+  await page.locator('header').first().waitFor({ state: 'visible' });
 }
 
 export async function settle(page: Page): Promise<void> {
@@ -407,9 +420,12 @@ export const personaSessionMemo = personaSessionMemos.design;
  * out, the memoised `pm_session` names a revoked session and re-adding it to the next context would
  * silently run every later test anonymous.
  */
-export function forgetPersonaSession(persona: PersonaKey = 'design'): void {
+export function forgetPersonaSession(persona: PersonaKey = 'design', clearFile: (p: PersonaKey) => void = (p) => writeMemoFile(p, null)): void {
   personaSessionMemos[persona].cookies = null;
-  writeMemoFile(persona, null);
+  // Injected so harness.test.ts can ASSERT the file is cleared instead of writing into the real
+  // `test-results/` while a unit suite runs — which it did, quietly deleting two personas' jars
+  // from a Playwright run's memo and buying two needless sign-ins on the next one.
+  clearFile(persona);
 }
 
 export async function signInAs(page: Page, persona: PersonaKey, url = '/'): Promise<void> {

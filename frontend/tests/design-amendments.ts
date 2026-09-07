@@ -288,6 +288,132 @@ const A5_7: Amendment = {
   find: STARTGATE_ENTRY, replace: `${STARTGATE_ENTRY},${ME_ENTRY}`, count: 1
 };
 
+// ---------------------------------------------------------------------------------------
+// A6 — the launch-removal list, executed against the DESIGN (amendment A-I8, D-I8-1).
+//
+// CLAUDE.md's list has waited for real authentication since the platform plan: the prototype
+// jump bar, the "Prototype — access states" shortcuts, the pre-filled demo credentials. They
+// leave the design rather than the port, so the oracle and the app lose them together and every
+// gate keeps holding — which is the whole reason the D15 mechanism carries this.
+//
+// BLANK LINES (A-I8.1). Every removal below swallows exactly ONE adjacent newline where the
+// design had a blank line on both sides of the removed block, so the regenerated file keeps
+// single blank lines. `design-amendments.test.ts` counts them against the pristine file, which
+// ships one doubled blank of its own that is not this mechanism's to tidy.
+//
+// The `find` strings for the two markup blocks and the two multi-line script blocks are the
+// pristine file's own bytes, quoted with \n escapes exactly as A2.3 quotes its block: readable
+// enough to review against the source, and impossible to get wrong by re-indenting.
+// ---------------------------------------------------------------------------------------
+const FIND_A6_1 = "  <sc-if value=\"{{ showPrototypeBar }}\" hint-placeholder-val=\"{{ true }}\">\n  <div style=\"display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 7px 18px; background: #003a70; color: #fff; font-size: 11px;\">\n    <div style=\"display: flex; align-items: center; gap: 10px;\">\n      <span style=\"font-family: var(--rf-display); font-weight: 700; letter-spacing: .12em; text-transform: uppercase; color: #deecf7;\">Prototype</span>\n      <span style=\"color: #deecf7;\">Practice Match — internal working title. Public name to be set by the VIN Foundation.</span>\n    </div>\n    <div style=\"display: flex; align-items: center; gap: 6px;\">\n      <span style=\"color: #deecf7;\">Jump to</span>\n      <sc-for list=\"{{ jumps }}\" as=\"j\" hint-placeholder-count=\"6\">\n        <button onClick=\"{{ j.go }}\" style=\"{{ j.style }}\" style-hover=\"background: rgba(255,255,255,.26);\">{{ j.label }}</button>\n      </sc-for>\n      <span style=\"width: 1px; height: 15px; background: rgba(255,255,255,.22); margin: 0 4px;\"></span>\n      <button onClick=\"{{ toggleViewport }}\" style=\"font-size: 11px; font-weight: 500; color: #003a70; background: #deecf7; border: 0; border-radius: 3px; padding: 4px 9px; cursor: pointer;\">{{ viewportLabel }}</button>\n    </div>\n  </div>\n  </sc-if>\n\n";
+const FIND_A6_2 = "              <div style=\"margin-top: 16px; padding: 15px 17px; border: 1px dashed var(--border-subtle); border-radius: 8px;\">\n                <div style=\"font-family: var(--rf-display); font-size: 11px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; color: var(--color-steel);\">Prototype — access states</div>\n                <div style=\"display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px;\">\n                  <sc-for list=\"{{ gateStates }}\" as=\"s\" hint-placeholder-count=\"3\">\n                    <button onClick=\"{{ s.go }}\" style=\"font-size: 12px; font-weight: 500; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 999px; padding: 6px 12px; cursor: pointer;\" style-hover=\"border-color: var(--color-steel); background: var(--color-off-white);\">{{ s.label }}</button>\n                  </sc-for>\n                </div>\n              </div>\n";
+const FIND_A6_4a = "    const jumps = [\"gate\", \"browse\", \"detail\", \"requests\", \"seller\", \"admin\"].map((k) => ({\n      label: k === \"gate\" ? \"Access\" : k === \"detail\" ? \"Listing\" : k.charAt(0).toUpperCase() + k.slice(1),\n      go: this.jumpTo(k),\n      style: \"font-size: 11px; font-weight: 500; color: #fff; background: rgba(255,255,255,\" +\n        (s.screen === k ? \".3\" : \".1\") + \"); border: 1px solid rgba(255,255,255,.16); border-radius: 3px; padding: 3px 8px; cursor: pointer;\"\n    }));\n\n";
+const FIND_A6_5 = "      gateStates: [\n        { label: \"Pending approval\", go: () => this.setState({ gate: \"pending\" }) },\n        { label: \"Request declined\", go: () => this.setState({ gate: \"rejected\" }) },\n        { label: \"Approved — enter\", go: () => this.setState({ screen: \"browse\", auth: true }) }\n      ],\n";
+
+/** A6.1 — the jump bar leaves the template. Its markup, plus the blank line it left behind. */
+const A6_1: Amendment = {
+  id: 'A6.1', date: '2026-09-07',
+  ruling: "CLAUDE.md's launch-removal list, executed with real auth: the prototype jump bar's markup",
+  find: FIND_A6_1, replace: '', count: 1
+};
+
+/** A6.2 — the "Prototype — access states" shortcuts leave the sign-in card: the smallest
+ *  enclosing element (the dashed-border block), which is also its label and its `sc-for` loop.
+ *  No adjacent blank line here — the block sits between the card's `</div>` and the `</sc-if>`. */
+const A6_2: Amendment = {
+  id: 'A6.2', date: '2026-09-07',
+  ruling: "CLAUDE.md's launch-removal list: the \"Prototype — access states\" shortcuts",
+  find: FIND_A6_2, replace: '', count: 1
+};
+
+/** A6.3a/b/c — the pre-filled demo credentials and the pre-filled application.
+ *  The design ships a real-looking address and a masked password in `state` so the prototype's
+ *  Sign in button works on the first click; with A5.1 that click reaches the API, so the fields
+ *  must start empty. `apply` is the same class: a half-filled application with `affirm: true`
+ *  would submit an affirmation nobody made. Field names are kept — the UI reads them. */
+const A6_3a: Amendment = {
+  id: 'A6.3a', date: '2026-09-07',
+  ruling: "CLAUDE.md's launch-removal list: the pre-filled demo credentials",
+  find: '    email: "r.mendes@example.com", pw: "············", formError: "",',
+  replace: '    email: "", pw: "", formError: "",', count: 1
+};
+const A6_3b: Amendment = {
+  id: 'A6.3b', date: '2026-09-07',
+  ruling: "the same, where signOut restores them (CLAUDE.md's launch-removal list)",
+  find: '        userMenu: false, auth: false, screen: "gate", gate: "signin", pw: "············",',
+  replace: '        userMenu: false, auth: false, screen: "gate", gate: "signin", pw: "",', count: 1
+};
+const A6_3c: Amendment = {
+  id: 'A6.3c', date: '2026-09-07',
+  ruling: "the pre-filled application, including an affirmation nobody made (CLAUDE.md's launch-removal list)",
+  find: '    apply: { name: "Rachel Mendes, DVM", vin: "", grad: "", state: "TX", employer: "", intent: "", affirm: true, error: "" },',
+  replace: '    apply: { name: "", vin: "", grad: "", state: "", employer: "", intent: "", affirm: false, error: "" },', count: 1
+};
+
+/** A6.4a/b/c/d — the jump bar's script: the `jumps` array it rendered from (plus the blank line
+ *  it left behind), the `showPrototypeBar` flag its `sc-if` read, the `jumps` key in
+ *  `renderVals()`'s return, and the `jumpTo` handler its buttons called. */
+const A6_4a: Amendment = {
+  id: 'A6.4a', date: '2026-09-07',
+  ruling: "CLAUDE.md's launch-removal list: the jump bar's own array",
+  find: FIND_A6_4a, replace: '', count: 1
+};
+const A6_4b: Amendment = {
+  id: 'A6.4b', date: '2026-09-07',
+  ruling: 'the flag the removed sc-if read (same ruling)',
+  find: '      showPrototypeBar: this.props.prototypeBar !== false,\n', replace: '', count: 1
+};
+const A6_4c: Amendment = {
+  id: 'A6.4c', date: '2026-09-07',
+  ruling: 'the jumps key in renderVals()\'s return (same ruling)',
+  find: '      nav, jumps,', replace: '      nav,', count: 1
+};
+const A6_4d: Amendment = {
+  id: 'A6.4d', date: '2026-09-07',
+  ruling: 'the handler the removed buttons called (same ruling)',
+  find: '  jumpTo = (screen) => () => this.setState({ screen, auth: screen !== "gate", interest: "closed", userMenu: false, gate: "signin" });\n\n',
+  replace: '', count: 1
+};
+
+/** A6.5 — `gateStates` in the script: the three shortcut buttons A6.2's markup rendered. */
+const A6_5: Amendment = {
+  id: 'A6.5', date: '2026-09-07',
+  ruling: "CLAUDE.md's launch-removal list: the access-state shortcuts' own array",
+  find: FIND_A6_5, replace: '', count: 1
+};
+
+/** A6.6a/b — the viewport toggle's script (A-I8.1). After A6.1 nothing references
+ *  `viewportLabel` or `toggleViewport`: the "Mobile view" / "Desktop view" button that read them
+ *  lived in the jump bar. The bundle's own dead-code rule applies, exactly as it did to A2.3–A2.5.
+ *  `isDesktop` — which reads the same `s.viewport` — is untouched: the phone-frame presentation
+ *  stays reachable through `startViewport` until a responsive design exists (D-I8-7). */
+const A6_6a: Amendment = {
+  id: 'A6.6a', date: '2026-09-07',
+  ruling: 'a dead mapping is dead code (spec D8/D12, A-I8.1): nothing reads viewportLabel after A6.1',
+  find: '      viewportLabel: s.viewport === "desktop" ? "Mobile view" : "Desktop view",\n', replace: '', count: 1
+};
+const A6_6b: Amendment = {
+  id: 'A6.6b', date: '2026-09-07',
+  ruling: 'the same for toggleViewport, the handler the removed button called (A-I8.1)',
+  find: '      toggleViewport: () => this.setState({ viewport: s.viewport === "desktop" ? "mobile" : "desktop" }),\n', replace: '', count: 1
+};
+
+/** A7.1/A7.2 — the sign-in copy (spec §Sign-in: "The design's 'VIN username' copy changes to
+ *  'Email' (design delta)"). The API authenticates an email address and knows nothing about VIN
+ *  usernames, so the label and the empty-form message would both be asking for the wrong thing.
+ *  A ruled amendment, not a harness mask: `maxDiffPixels: 0` admits no masks. */
+const A7_1: Amendment = {
+  id: 'A7.1', date: '2026-09-07',
+  ruling: "spec §Sign-in: the design's 'VIN username' copy changes to 'Email' (design delta)",
+  find: 'VIN username or email</span>', replace: 'Email</span>', count: 1
+};
+const A7_2: Amendment = {
+  id: 'A7.2', date: '2026-09-07',
+  ruling: 'the same copy in the empty-form message (spec §Sign-in)',
+  find: '"Enter both your VIN username and password."', replace: '"Enter both your email and password."', count: 1
+};
+
 export function amendments(): Amendment[] {
-  return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7];
+  return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
+    A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2];
 }
