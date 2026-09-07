@@ -78,6 +78,28 @@ jobs:
     timeout-minutes: 45
     defaults:
       run: { working-directory: frontend }
+    # The `app` project's parity suite signs into the REAL API through Vite's /api proxy
+    # (amendment A-I7), so this job now needs the same backend the `backend` job does: the same
+    # images, the same ports, the same health checks. tests/targets.ts starts uvicorn itself,
+    # after running the migrations and seeding the design persona; the env below overrides its
+    # local defaults, which is why nothing about the compose ports is repeated in the command.
+    services:
+      postgres:
+        image: postgis/postgis:16-3.5
+        env: { POSTGRES_USER: pm, POSTGRES_PASSWORD: pm_dev_pw, POSTGRES_DB: practice_match }
+        ports: ['5433:5432']
+        options: >-
+          --health-cmd "pg_isready -U pm -d practice_match" --health-interval 5s --health-timeout 5s --health-retries 10
+      redis:
+        image: redis:7-alpine
+        ports: ['6380:6379']
+        options: >-
+          --health-cmd "redis-cli ping" --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://pm:pm_dev_pw@localhost:5433/practice_match
+      REDIS_URL: redis://localhost:6380/0
+      ENVIRONMENT: test
+      API_SECRET_KEY: ci_only_secret_change_me
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -96,6 +118,14 @@ jobs:
       # test file to run, so this one command replaces the separate plain `vitest run` and the
       # standalone bundle-budget.test.ts run the earlier draft had (both redundant with this).
       - run: npx vitest run --coverage
+      # Python, for the api web server the Playwright steps below start. `working-directory: .`
+      # on each `run`, because this job's `defaults` put every command in `frontend/`.
+      - uses: actions/setup-python@v5
+        with: { python-version: '3.12' }
+      - run: pipx install poetry==2.4.1
+        working-directory: .
+      - run: poetry install --no-interaction
+        working-directory: .
       - run: npx playwright install --with-deps chromium
       - name: Reference project — generates the oracle (visual baselines + DOM snapshots) from the approved design, this run's Linux Chromium
         run: npx playwright test --config=tests/playwright.config.ts --project=reference

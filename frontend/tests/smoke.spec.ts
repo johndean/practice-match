@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { booted, click, jump, prepare, waitMap } from './harness';
+import { booted, click, jump, prepare, signInAsPersona, waitMap } from './harness';
 import { SCREENS } from './screens';
 
 const ROUTES = ['/', '/browse', '/browse?tab=market', '/browse?tab=listings', '/practices/p1', '/requests', '/seller', '/admin?tab=data'];
@@ -489,5 +489,40 @@ test.describe('harness: atTop pins the interest modal against a scrolled capture
       'the interest-modal step left the page scrolled: its atTop() call is missing, so the modal\'s position:fixed overlay will be composited off-origin in the fullPage capture — the vin-swe Linux flake, back'
     ).toBe(0);
     expect(settled.stable, 'the overlay is still moving at the moment the capture would be taken').toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Amendment A-I7 — the proof that the harness sign-in reaches the REAL API. No stub and no
+// mock: `tests/targets.ts`'s `api` web server migrated the local Postgres, seeded the design
+// persona and is serving `app.main:app`, and Vite proxies `/api` to it with the Host header
+// intact. Three things are exercised here that nothing else in the suite touches — the
+// proxy, a `Secure` session cookie accepted over `http://localhost` (a trustworthy origin in
+// Chromium), and the Redis-cached principal behind `GET /api/me` — in a real browser.
+//
+// It asserts the SESSION, not the rendered screen. The app still derives `auth` from the
+// prototype fixture; Task I8's `useMe().load()` bootstrap is what makes it honour the
+// session, and only then does `screens.ts` switch from `jump()` to this. The zero-regression
+// order is deliberate: the sign-in exists and is proven here, the wiring follows, then the
+// jump bar goes.
+// ---------------------------------------------------------------------------------------
+test.describe('harness: the design persona signs in against the real API (A-I7)', () => {
+  test('signInAsPersona leaves pm_session and pm_csrf on the context and /api/me answers the persona', async ({ page }) => {
+    await prepare(page);
+    await signInAsPersona(page);
+
+    const cookies = await page.context().cookies();
+    const session = cookies.find((c) => c.name === 'pm_session');
+    const csrf = cookies.find((c) => c.name === 'pm_csrf');
+    expect(session, 'no pm_session cookie — the sign-in never reached the API through Vite\'s /api proxy').toBeTruthy();
+    expect(session!.httpOnly, 'pm_session must stay HttpOnly: script must never be able to read it').toBe(true);
+    expect(csrf, 'no pm_csrf cookie — the app cannot echo the double-submit value in X-CSRF-Token').toBeTruthy();
+    expect(csrf!.httpOnly, 'pm_csrf is deliberately readable by script (app/api/auth.py:147)').toBe(false);
+
+    const me = await page.evaluate(() =>
+      fetch('/api/me', { credentials: 'same-origin' }).then((r) => r.json() as Promise<{ email: string; roles: string[] }>)
+    );
+    expect(me.email).toBe('design@practice-match.test');
+    expect(me.roles).toEqual(['admin', 'buyer', 'seller', 'staff']);
   });
 });

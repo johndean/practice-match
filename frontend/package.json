@@ -15,6 +15,7 @@
     "test:visual:baselines": "playwright test --config=tests/playwright.config.ts --project=reference",
     "test:cs:baselines": "playwright test --config=tests/playwright.config.ts --project=coming-soon-reference",
     "test:cs": "playwright test --config=tests/playwright.config.ts --project=coming-soon",
+    "gen:permissions": "cd .. && DATABASE_URL=${DATABASE_URL:-postgresql://pm:pm_dev_pw@localhost:5433/practice_match} REDIS_URL=${REDIS_URL:-redis://localhost:6380/0} ENVIRONMENT=${ENVIRONMENT:-test} API_SECRET_KEY=${API_SECRET_KEY:-pw_only_secret_change_me} poetry run python -m app.auth.permissions --ts > frontend/src/auth/permissions.ts",
     "gen:app": "node scripts/convert-dc.mjs ../docs/design-reference/design_handoff_practice_match_v3/'Practice Match V3.dc.html' src/app.setup.js src/App.vue src/generated/pseudo.css"
   },
   "dependencies": {

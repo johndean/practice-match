@@ -10,6 +10,11 @@
  * the oracle the visual baselines and DOM snapshots are generated from, so it must never
  * follow the app to a remote host. The coming-soon Vite dev server likewise always runs
  * locally — there is no live-deployment mode for it.
+ *
+ * The `api` entry (amendment A-I7) is the REAL backend the `app` project's parity suite signs
+ * into through Vite's `/api` proxy — no stub and no mock. It migrates the database and seeds the
+ * design persona before it serves, and it follows the Vite server: under `PW_APP_URL` the live
+ * deployment brings its own API and this entry is not started.
  */
 
 /** The subset of Playwright's `webServer` entry shape this config uses. */
@@ -21,6 +26,9 @@ export interface WebServerSpec {
   reuseExistingServer: boolean;
   stdout: 'ignore';
   stderr: 'pipe';
+  /** Only the `api` entry sets this. Playwright already inherits `process.env` for every web
+   *  server, so these are DEFAULTS the process environment overrides — see `API_ENV_DEFAULTS`. */
+  env?: Record<string, string>;
 }
 
 export interface Targets {
@@ -31,7 +39,24 @@ export interface Targets {
   webServer: WebServerSpec[];
 }
 
-export function resolveTargets(env: NodeJS.ProcessEnv, ports: { app: number; ref: number; cs: number }): Targets {
+/**
+ * What `app.config.Settings` requires of the api web server, defaulted to the values
+ * `docker-compose.dev.yml`, `.env.example` and `tests/conftest.py` already agree on, so
+ * `docker compose -f docker-compose.dev.yml up -d` is the only local precondition. Each entry is
+ * a DEFAULT: whatever the process environment holds for that name wins, which is how CI's own
+ * `frontend` job env (its service ports and `API_SECRET_KEY`) takes over unchanged. Forwarding
+ * only these four rather than spreading all of `process.env` costs nothing — Playwright passes
+ * the whole process environment through to a web server anyway — and keeps the config object
+ * from carrying every unrelated variable on the machine.
+ */
+const API_ENV_DEFAULTS: Record<string, string> = {
+  DATABASE_URL: 'postgresql://pm:pm_dev_pw@localhost:5433/practice_match',
+  REDIS_URL: 'redis://localhost:6380/0',
+  ENVIRONMENT: 'test',
+  API_SECRET_KEY: 'pw_only_secret_change_me'
+};
+
+export function resolveTargets(env: NodeJS.ProcessEnv, ports: { app: number; ref: number; cs: number; api: number }): Targets {
   const live = env.PW_APP_URL;
   const reuseExistingServer = !env.CI;
   const vite: WebServerSpec = {
@@ -52,6 +77,21 @@ export function resolveTargets(env: NodeJS.ProcessEnv, ports: { app: number; ref
     stdout: 'ignore',
     stderr: 'pipe'
   };
+  const apiEnv: Record<string, string> = {};
+  for (const [name, value] of Object.entries(API_ENV_DEFAULTS)) apiEnv[name] = env[name] ?? value;
+  // `cwd` is the repository root (Playwright resolves it against this config's directory), which
+  // is where `poetry` and `app.main` resolve. Migrate, then seed the persona, then serve: the
+  // health check below is what Playwright waits on, so the suite never races the seed.
+  const api: WebServerSpec = {
+    command: `poetry run python scripts/migrate.py && poetry run python scripts/seed_persona.py && poetry run uvicorn app.main:app --port ${ports.api}`,
+    url: `http://localhost:${ports.api}/api/healthz`,
+    cwd: '../..',
+    timeout: 90_000,
+    reuseExistingServer,
+    stdout: 'ignore',
+    stderr: 'pipe',
+    env: apiEnv
+  };
   const comingSoon: WebServerSpec = {
     command: `npm run dev -- --port ${ports.cs} --strictPort`,
     url: `http://localhost:${ports.cs}`,
@@ -64,6 +104,6 @@ export function resolveTargets(env: NodeJS.ProcessEnv, ports: { app: number; ref
   return {
     baseURL: live ?? `http://localhost:${ports.app}`,
     csBaseURL: `http://localhost:${ports.cs}`,
-    webServer: live ? [reference, comingSoon] : [vite, reference, comingSoon]
+    webServer: live ? [reference, comingSoon] : [vite, api, reference, comingSoon]
   };
 }

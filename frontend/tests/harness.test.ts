@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BLANK_GIF } from './harness';
+import { BLANK_GIF, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, personaCredentials, personaSession } from './harness';
 
 // The stubbed basemap tile must be TRANSPARENT, not merely blank-looking (controller ruling
 // 2026-09-07). MarketMapV3.jsx:190 adds the Esri label tile layer with `pane: "shadowPane"`
@@ -113,5 +113,57 @@ describe('the stubbed basemap tile', () => {
     const twin = parseGif(Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBTAA7', 'base64'));
     expect(twin.gce!.flags & 0x01).toBe(1);
     expect(twin.painted).not.toBe(twin.gce!.transparentIndex);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Amendment A-I7. `signInAsPersona` itself needs a browser, so the two decisions inside it
+// are pulled out as pure functions and pinned here: WHICH credential is presented, and how
+// often the sign-in is actually spent.
+//
+// The second one is not a nicety. `app/auth/limits.py`'s `SIGNIN_IP = (30, 900)` is counted
+// on EVERY attempt per IP — `app/api/auth.py` calls `limits.hit` before it checks the
+// credential — so a suite that signed in once per screen state would answer 429 after the
+// thirtieth and the run would fail somewhere unrelated to whatever it was testing. One
+// sign-in per worker process, its cookies memoised and re-added to each new context, is the
+// whole budget the `app` project spends.
+// ---------------------------------------------------------------------------------------
+describe('the design persona credentials (A-I7)', () => {
+  it('are the seeded persona and the password scripts/seed_persona.py writes by default', () => {
+    expect(PERSONA_EMAIL).toBe('design@practice-match.test');
+    expect(PERSONA_DEFAULT_PASSWORD).toBe('design-persona-quiet-lantern-42');
+    expect(personaCredentials({})).toEqual({ email: PERSONA_EMAIL, password: PERSONA_DEFAULT_PASSWORD });
+  });
+
+  it('take PERSONA_PASSWORD from the environment whenever it is set, exactly as seed_persona.py does', () => {
+    expect(personaCredentials({ PERSONA_PASSWORD: 'whatever-railway-holds' })).toEqual({
+      email: PERSONA_EMAIL,
+      password: 'whatever-railway-holds'
+    });
+  });
+});
+
+describe('personaSession spends one sign-in per worker process (A-I7)', () => {
+  const jar = (held: string[]) => {
+    const added: string[][] = [];
+    return { added, cookies: () => Promise.resolve(held), addCookies: (c: string[]) => { added.push(c); return Promise.resolve(); } };
+  };
+
+  it('signs in on the first call and memoises the cookies the context ended up holding', async () => {
+    const j = jar(['pm_session', 'pm_csrf']);
+    let signIns = 0;
+    const memo = await personaSession<string>(null, j, () => { signIns += 1; return Promise.resolve(); });
+    expect(memo).toEqual(['pm_session', 'pm_csrf']);
+    expect(signIns).toBe(1);
+    expect(j.added, 'nothing is re-added on the call that did the signing in').toEqual([]);
+  });
+
+  it('re-adds the memo on every later call instead of spending another attempt against SIGNIN_IP', async () => {
+    const j = jar([]);
+    let signIns = 0;
+    const memo = await personaSession<string>(['pm_session', 'pm_csrf'], j, () => { signIns += 1; return Promise.resolve(); });
+    expect(memo).toEqual(['pm_session', 'pm_csrf']);
+    expect(signIns, 'a second sign-in spends one of SIGNIN_IP\'s 30 attempts per 900 s for nothing').toBe(0);
+    expect(j.added).toEqual([['pm_session', 'pm_csrf']]);
   });
 });

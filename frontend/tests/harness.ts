@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import type { BrowserContext, Page } from '@playwright/test';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -140,4 +140,78 @@ export async function atTop(page: Page, selector: string): Promise<void> {
 export async function waitMap(page: Page): Promise<void> {
   await page.locator('.leaflet-container').first().waitFor({ state: 'visible' });
   await page.waitForTimeout(700); // Leaflet setView + marker layer
+}
+
+// ---------------------------------------------------------------------------------------
+// The design persona's sign-in (amendment A-I7) — the real API, reached through Vite's `/api`
+// proxy. `scripts/seed_persona.py` upserts this account (roles buyer + seller + staff + admin,
+// state `active`) and the `api` web server in tests/targets.ts runs it before serving, so the
+// credential below is all this needs.
+//
+// The password default MIRRORS that script's `DEFAULT_PASSWORD`, and
+// `tests/test_docs.py::test_the_playwright_persona_password_default_matches_seed_persona` pins
+// the two equal — a drift would otherwise surface as a 401 in whichever test happened to run
+// first. It is a documented test-only constant, not a secret: the account is
+// `design@practice-match.test` (RFC 6761 `.test`, never deliverable) and seed_persona.py
+// refuses to run against production at all.
+// ---------------------------------------------------------------------------------------
+export const PERSONA_EMAIL = 'design@practice-match.test';
+export const PERSONA_DEFAULT_PASSWORD = 'design-persona-quiet-lantern-42';
+
+/** The credential `POST /api/auth/signin` is given. Pure, so harness.test.ts can pin it. */
+export function personaCredentials(env: NodeJS.ProcessEnv = process.env): { email: string; password: string } {
+  return { email: PERSONA_EMAIL, password: env.PERSONA_PASSWORD ?? PERSONA_DEFAULT_PASSWORD };
+}
+
+/**
+ * One sign-in per worker process, memoised.
+ *
+ * `app/auth/limits.py`'s `SIGNIN_IP = (30, 900)` is counted on EVERY attempt per IP —
+ * `app/api/auth.py` calls `limits.hit` BEFORE it checks the credential — so signing in once per
+ * screen state would answer 429 after the thirtieth, in whichever test happened to be running.
+ * The first call spends the one attempt and keeps the cookies it produced; every later call
+ * re-adds them to the new context instead.
+ *
+ * Pure: the memo is passed in and handed back, and both context operations are arguments, which
+ * is what lets harness.test.ts pin the budget without a browser.
+ */
+export async function personaSession<C>(
+  memo: C[] | null,
+  jar: { cookies: () => Promise<C[]>; addCookies: (cookies: C[]) => Promise<void> },
+  signIn: () => Promise<void>
+): Promise<C[]> {
+  if (memo === null) {
+    await signIn();
+    return jar.cookies();
+  }
+  await jar.addCookies(memo);
+  return memo;
+}
+
+type PersonaCookies = Awaited<ReturnType<BrowserContext['cookies']>>;
+
+// Module state, so the memo is per worker process — Playwright gives each test a fresh
+// BrowserContext, and a fresh context holds no cookies.
+let personaCookies: PersonaCookies | null = null;
+
+/**
+ * Signs the page's context in as the design persona, then navigates to `url`.
+ *
+ * `page.request` shares the browser context's cookie jar, so `pm_session` and `pm_csrf` are set
+ * on the context by the POST itself and every later navigation and `fetch` carries them.
+ * Sign-in is the one state-changing call that needs neither `X-CSRF-Token` nor a matching
+ * `Origin` — `deps.check_origin_and_csrf` only enforces those on a request that ALREADY has a
+ * cookie session.
+ */
+export async function signInAsPersona(page: Page, url = '/'): Promise<void> {
+  const context = page.context();
+  personaCookies = await personaSession<PersonaCookies[number]>(
+    personaCookies,
+    { cookies: () => context.cookies(), addCookies: (cookies) => context.addCookies(cookies) },
+    async () => {
+      const response = await page.request.post('/api/auth/signin', { data: personaCredentials() });
+      if (!response.ok()) throw new Error(`persona sign-in failed: ${response.status()} ${await response.text()}`);
+    }
+  );
+  await page.goto(url);
 }

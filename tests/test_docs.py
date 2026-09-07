@@ -485,3 +485,17 @@ def test_plans_that_print_the_coverage_exclusions_carry_the_f1_note():
         text = (ROOT / "docs" / "superpowers" / "plans" / name).read_text()
         assert "'src/dc-logic.js'" in text or "`src/dc-logic.js`" in text, f"{name}: expected the exclusion list here"
         assert F1_NOTE in text, f"{name} prints the old exclusion list without the F1 re-ratification note"
+
+
+def test_the_playwright_persona_password_default_matches_seed_persona():
+    """A-I7: `frontend/tests/harness.ts` signs the Playwright `app` project in as the design
+    persona with `PERSONA_PASSWORD` or the default below; `scripts/seed_persona.py` writes the
+    Argon2id hash of `PERSONA_PASSWORD` or ITS default. They are one documented test-only
+    constant in two languages, and if they drift every `app`-project run answers 401 at a point
+    far from the cause — so they are pinned equal here, where the failure names the two files."""
+    seeded = re.search(r'^DEFAULT_PASSWORD = "([^"]+)"', (ROOT / "scripts" / "seed_persona.py").read_text(), re.M)
+    presented = re.search(r"^export const PERSONA_DEFAULT_PASSWORD = '([^']+)';",
+                          (ROOT / "frontend" / "tests" / "harness.ts").read_text(), re.M)
+    assert seeded, "scripts/seed_persona.py no longer defines DEFAULT_PASSWORD"
+    assert presented, "frontend/tests/harness.ts no longer defines PERSONA_DEFAULT_PASSWORD"
+    assert presented.group(1) == seeded.group(1)
