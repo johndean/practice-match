@@ -1,5 +1,5 @@
-import { test, expect, type Page } from '@playwright/test';
-import { appOrigin, booted, click, jump, personaCredentials, personaSignIn, personaSignOut, prepare, signInAsPersona, waitMap } from './harness';
+import { test, expect, type BrowserContext, type Page } from '@playwright/test';
+import { appOrigin, booted, click, jump, personaCredentials, personaSignIn, personaSignOut, prepare, signInAsPersona, waitMap, type PersonaCookies } from './harness';
 import { SCREENS } from './screens';
 
 const ROUTES = ['/', '/browse', '/browse?tab=market', '/browse?tab=listings', '/practices/p1', '/requests', '/seller', '/admin?tab=data'];
@@ -548,10 +548,15 @@ test.describe('harness: the /api proxy preserves the Host header (A-I7.2)', () =
   test('POST /api/auth/reauth from the page is accepted, in a session of its own', async ({ browser }) => {
     test.skip(!!process.env.PW_APP_URL, 'this proves Vite\'s /api proxy; a live deployment serves /api itself');
 
-    const cookies = await personaSignIn();
-    const context = await browser.newContext({ baseURL: appOrigin() });
-    let signedOut = false;
+    // Both the session and the context are created INSIDE the guarded region (re-review 2): with
+    // `personaSignIn()` outside it, a `browser.newContext()` that threw left a live session with
+    // nothing to sign it out, and its ten-minute step-up window outlived the run.
+    let cookies: PersonaCookies | undefined;
+    let context: BrowserContext | undefined;
+    let signOutStatus: number | undefined;
     try {
+      cookies = await personaSignIn();
+      context = await browser.newContext({ baseURL: appOrigin() });
       await context.addCookies(cookies);
       const page = await context.newPage();
       await prepare(page);
@@ -584,13 +589,18 @@ test.describe('harness: the /api proxy preserves the Host header (A-I7.2)', () =
       // Checked from OUTSIDE the browser deliberately: asking the page for /api/me afterwards
       // would log "Failed to load resource: … 401 (Unauthorized)" as a console error, which
       // `prepare()`'s gate turns into a failure — a real 401 is the expected answer here.
-      const signOut = await personaSignOut(cookies);
-      signedOut = true;
-      expect(signOut, 'personaSignOut did not end the session, so its 10-minute step-up window outlives this test').toBe(200);
+      //
+      // Asserted HERE rather than in the `finally`: an `expect` that threw from a `finally` would
+      // replace whatever failed above it, so a broken reauth would be reported as a broken
+      // sign-out.
+      signOutStatus = await personaSignOut(cookies);
+      expect(signOutStatus, 'personaSignOut did not end the session, so its 10-minute step-up window outlives this test').toBe(200);
     } finally {
-      // The safety net for a failure before the explicit sign-out above.
-      if (!signedOut) await personaSignOut(cookies);
-      await context.close();
+      if (context) await context.close();
+      // The safety net: whatever failed above — including `browser.newContext()` itself — the
+      // session must not outlive this test. `signOutStatus` is set only by the happy path above,
+      // so this neither repeats it nor masks its failure.
+      if (cookies && signOutStatus === undefined) await personaSignOut(cookies);
     }
   });
 });
