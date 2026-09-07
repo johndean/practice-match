@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { PERSONAS, personaCredentials, prepare } from './harness';
+import { PERSONAS, isExpectedSignInFailure401, personaCredentials, prepare } from './harness';
 
 // ---------------------------------------------------------------------------------------
 // The trace goes off on a LIVE run and nowhere else (round 3, ruling 1).
@@ -113,7 +113,7 @@ test.describe('the design\'s own sign-in form, against the real API (A5.1/A5.3, 
     expect(await page.evaluate(() => fetch('/api/me', { credentials: 'same-origin' }).then((r) => r.status)), 'no session was created').toBe(401);
 
     expect(
-      errors.filter((e) => !/401 \(Unauthorized\)/.test(e)),
+      errors.filter((e) => !isExpectedSignInFailure401(e)),
       'the only console error this test expects is the 401 it deliberately provoked'
     ).toEqual([]);
   });

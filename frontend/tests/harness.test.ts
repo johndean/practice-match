@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BLANK_GIF, MEMO_FILE, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, appOrigin, appPlan, driverFor, forgetPersonaSession, memoFileRead, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, referenceMe, referenceOrigin, referenceUrl, runId } from './harness';
+import { BLANK_GIF, MEMO_FILE, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, appOrigin, appPlan, driverFor, forgetPersonaSession, memoFileRead, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, referenceMe, referenceOrigin, referenceUrl, runId } from './harness';
 import { resolveTargets } from './targets';
 
 // The stubbed basemap tile must be TRANSPARENT, not merely blank-looking (controller ruling
@@ -551,5 +551,40 @@ describe('referenceOrigin — where the design server answers (A-I8.2 / B2)', ()
   it('is never the app\'s origin, so the template-refetch guard cannot reach the app', () => {
     expect(referenceOrigin({})).not.toBe(appOrigin({}));
     expect(referenceOrigin({})).not.toBe(resolveTargets({}, { app: 5173, ref: 5174, cs: 5175, api: 8017 }).baseURL);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// signin-form.spec.ts's wrong-password case deliberately provokes a 401 and filters the one
+// console line Chromium logs for it out of the errors the test otherwise fails on. Chromium's
+// wording differs by transport: HTTP/1.1 (Vite's dev proxy — every local and CI run) carries a
+// reason phrase, "Failed to load resource: the server responded with a status of 401
+// (Unauthorized)"; HTTP/2 (a live deployment, e.g. PW_APP_URL=https://qa.foundation.vin) has no
+// reason phrase at the protocol level, so Chromium logs "… a status of 401 ()" instead.
+// Matching `/401 \(Unauthorized\)/` — the original filter — missed the second form, so the
+// deliberate 401 leaked through and failed the test only on a live run. Matching the status
+// code alone, word-bounded, recognises the line under both transports without swallowing an
+// unrelated status that happens to share the digits.
+// ---------------------------------------------------------------------------------------
+describe('isExpectedSignInFailure401 — the sign-in form\'s deliberate 401, across transports', () => {
+  it('matches the HTTP/1.1 console line (a reason phrase present, via Vite\'s dev proxy)', () => {
+    expect(isExpectedSignInFailure401('Failed to load resource: the server responded with a status of 401 (Unauthorized)')).toBe(true);
+  });
+
+  it('matches the HTTP/2 console line (no reason phrase — a live QA/production run)', () => {
+    expect(isExpectedSignInFailure401('Failed to load resource: the server responded with a status of 401 ()')).toBe(true);
+  });
+
+  it('does not match an unrelated console error', () => {
+    expect(isExpectedSignInFailure401('Failed to load resource: the server responded with a status of 429 (Too Many Requests)')).toBe(false);
+  });
+
+  it('is word-bounded: a status code that merely contains "401" is not mistaken for it', () => {
+    expect(isExpectedSignInFailure401('Failed to load resource: the server responded with a status of 4010 (Bogus)')).toBe(false);
+    expect(isExpectedSignInFailure401('some other line mentioning 14010 in passing')).toBe(false);
+  });
+
+  it('does not match an ordinary page error unrelated to any HTTP status', () => {
+    expect(isExpectedSignInFailure401('pageerror: TypeError: something failed')).toBe(false);
   });
 });

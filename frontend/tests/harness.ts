@@ -640,3 +640,20 @@ export async function placeholderRings(page: Page): Promise<string[]> {
       .map((el) => el.id || '(no id)')
   );
 }
+
+/**
+ * True for the one console line Chromium logs for `signin-form.spec.ts`'s wrong-password
+ * case, which deliberately provokes a 401 and needs to recognise its own line rather than
+ * fail on it. Chromium's wording differs by transport: HTTP/1.1 (Vite's dev proxy — every
+ * local and CI run) carries a reason phrase, "Failed to load resource: the server responded
+ * with a status of 401 (Unauthorized)"; HTTP/2 (a live deployment, e.g.
+ * `PW_APP_URL=https://qa.foundation.vin`) has no reason phrase at the protocol level, so
+ * Chromium logs "… a status of 401 ()" instead. Matching `/401 \(Unauthorized\)/` — the
+ * original filter — missed the second form, so the deliberate 401 leaked through the filter
+ * and failed the test only on a live run (found running the parity suite against QA). Matched
+ * on the status code alone, word-bounded so a status that merely CONTAINS "401" (e.g. a 4010)
+ * is not mistaken for it, and any other console error still fails the test as before.
+ */
+export function isExpectedSignInFailure401(message: string): boolean {
+  return /status of 401\b/.test(message);
+}
