@@ -34,7 +34,11 @@ const flush = () => new Promise((resolve) => setTimeout(resolve, 0));
 let apps: ReturnType<typeof createApp>[] = [];
 afterEach(() => { apps.forEach((a) => a.unmount()); apps = []; useMe().clear(); });
 
-async function setup(initialPath = '/', me: Me | null = MEMBER) {
+// `trackNav`: install the navigation-count spies BEFORE `app.mount()`, i.e. before the
+// composable's own initial `apply()` call — so a caller can assert counts for the COLD-LOAD
+// settle itself (review Minor 3), not only for one issued after `setup()` has already
+// returned. `null` when untracked, matching the untracked call sites' existing destructuring.
+async function setup(initialPath = '/', me: Me | null = MEMBER, trackNav = false) {
   // The store is module-level state (me.ts says why it is not a Pinia store), so it is set
   // before the composable reads it and cleared in afterEach.
   if (me) useMe().set(me); else useMe().clear();
@@ -46,13 +50,15 @@ async function setup(initialPath = '/', me: Me | null = MEMBER) {
   await router.isReady();
   const c = new Component({});
   c.state = reactive(c.state);
+  const pushSpy = trackNav ? vi.spyOn(router, 'push') : null;
+  const replaceSpy = trackNav ? vi.spyOn(router, 'replace') : null;
   const el = document.createElement('div');
   const app = createApp({ setup() { useStateRouteSync(c, router); return () => null; } });
   app.use(router);
   app.mount(el);
   apps.push(app);
   await flush(); await nextTick();
-  return { c, router: router as Router, app };
+  return { c, router: router as Router, app, pushSpy, replaceSpy };
 }
 
 describe('useStateRouteSync — state → route', () => {
@@ -265,6 +271,13 @@ describe('useStateRouteSync — a stale in-session ?tab= on Browse settles', () 
 // later real navigation is not swallowed by a leaked flag (3), and the pre-existing legacy
 // `?tab=` settle (a different self-caused `afterEach`, exercised in its own describe block
 // below) still passes (4).
+//
+// Review fix round 1, Important 1: the first cut guarded only apply()'s settle branch, not
+// the state → route watcher's own replace/push a few lines down — which is equally
+// self-caused (it exists ONLY to mirror state into the URL) and, mid-session, equally able to
+// re-parse a token-bearing URL back down to nothing. `useStateRouteSync — a mid-session
+// navigation to a token URL (Important 1)` below is that RED, and `settleWith`'s shared
+// guard (in the composable, not duplicated per call site) is the fix.
 // ---------------------------------------------------------------------------------------
 describe('useStateRouteSync — account gate routes with a token (S2)', () => {
   // `logic.js`'s initial state literal (generated, untouchable) does not declare `gateToken`,
@@ -274,13 +287,19 @@ describe('useStateRouteSync — account gate routes with a token (S2)', () => {
   const gateToken = (c: { state: unknown }): string | undefined => (c.state as { gateToken?: string }).gateToken;
 
   // (1) The token is captured AND survives the address bar settling — not merely present
-  // transiently before the self-caused afterEach would otherwise have wiped it.
+  // transiently before the self-caused afterEach would otherwise have wiped it. Tracked
+  // (review Minor 3): the "no second navigation" half of the fixed-point property was
+  // previously pinned only in the pure functions (sync.test.ts) — one replace (the settle),
+  // no push, is now asserted for the composable itself, the same way the legacy `?tab=` test
+  // below asserts its own counts.
   it('a signed-out visit to /verify?token=T lands on the verify gate with the token captured, and the URL settles to /verify', async () => {
-    const { c, router } = await setup('/verify?token=T', null);
+    const { c, router, pushSpy, replaceSpy } = await setup('/verify?token=T', null, true);
     expect(c.state.screen).toBe('gate');
     expect(c.state.gate).toBe('verify');
     expect(gateToken(c)).toBe('T');
     expect(router.currentRoute.value.fullPath).toBe('/verify');
+    expect(replaceSpy).toHaveBeenCalledTimes(1);     // the composable settling the token out of the URL
+    expect(pushSpy).not.toHaveBeenCalled();
   });
 
   it('a signed-out visit to /reset?token=T settles the same way', async () => {
@@ -322,6 +341,127 @@ describe('useStateRouteSync — account gate routes with a token (S2)', () => {
     expect(c.state.screen).toBe('gate');
     expect(c.state.gate).toBe('signin');
     expect(router.currentRoute.value.fullPath).toBe('/browse');
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Review fix round 1, Important 1. The four A-S2 proofs above all exercise the COLD-LOAD
+// path: `apply(router.currentRoute.value)` runs before the state → route watcher is even
+// registered (`useStateRouteSync`'s own source order), so that first setState is invisible to
+// it and only apply()'s own settle-replace ever fires. A navigation to a token URL PARTWAY
+// THROUGH A SESSION is different: the watcher is already live, wakes on the very same
+// setState (gate/gateToken changing), and — before this fix — issued its OWN unguarded
+// replace to the identical bare location apply() was already settling to. vue-router treats
+// the second as superseding the first, cancels the first, and still fires `afterEach` for the
+// cancelled one — consuming a flag meant for the real, still-in-flight second navigation and
+// leaving THAT one's own `afterEach` unguarded, which re-parsed the (by-then) bare URL and
+// zeroed `gateToken` right back out. Traced with instrumented setState/replace/push/afterEach
+// calls against the pre-fix composable (script not part of the diff):
+//
+//   router.push -> "/reset?token=X"
+//   afterEach /reset?token=X settling=false  -> apply(): setState gate=reset gateToken=X
+//   router.replace -> {"path":"/reset"}      -> apply()'s settle, settling=true
+//   router.replace -> {"path":"/reset"}      -> the WATCHER'S OWN, unguarded, second replace
+//   afterEach /reset failure=8 (CANCELLED) settling=true  -> apply()'s settle; flag consumed here
+//   afterEach /reset failure=undefined settling=false     -> the watcher's replace; UNGUARDED
+//                                              -> apply() again: gateToken := ''  <- lost
+//
+// `settleWith`'s shared guard (refusing to issue an overlapping second self-caused navigation
+// rather than trying to make one flag survive two of them racing) is what fixes it — see its
+// own comment in useStateRouteSync.ts for why a naive per-site copy of "set/clear the flag"
+// does not.
+// ---------------------------------------------------------------------------------------
+describe('useStateRouteSync — a mid-session navigation to a token URL (Important 1)', () => {
+  const gateToken = (c: { state: unknown }): string | undefined => (c.state as { gateToken?: string }).gateToken;
+
+  it('router.push(\'/reset?token=X\') mid-session settles to /reset with gateToken retained', async () => {
+    const { c, router } = await setup('/', null);
+    const pushSpy = vi.spyOn(router, 'push');
+    const replaceSpy = vi.spyOn(router, 'replace');
+
+    await router.push('/reset?token=X');
+    await flush(); await nextTick(); await flush(); await nextTick();
+
+    expect(c.state.gate).toBe('reset');
+    expect(gateToken(c)).toBe('X');
+    expect(router.currentRoute.value.fullPath).toBe('/reset');
+    // Exactly the two navigations this scenario legitimately needs: the test's own initiating
+    // push, and the composable's one settle-replace — never a second, racing self-navigation
+    // from the watcher.
+    expect(pushSpy).toHaveBeenCalledTimes(1);
+    expect(replaceSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('the same holds for /accept-invite?token=Y, mid-session', async () => {
+    const { c, router } = await setup('/', null);
+    await router.push('/accept-invite?token=Y');
+    await flush(); await nextTick(); await flush(); await nextTick();
+
+    expect(c.state.gate).toBe('invite');
+    expect(gateToken(c)).toBe('Y');
+    expect(router.currentRoute.value.fullPath).toBe('/accept-invite');
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Review fix round 1, Minor 2. `settling`'s `.finally` is the safety net for whatever
+// navigation outcome does not reach `afterEach` at all (a redirecting navigation guard — this
+// app has none, so the REAL router cannot be driven into that outcome; deleting the `.finally`
+// left all 68 router tests green under mutation, per the review). Falsifying it needs an
+// outcome the real router cannot currently produce, so this ONE test substitutes a minimal
+// stub implementing just the Router surface useStateRouteSync touches (`currentRoute`,
+// `afterEach`, `replace`, `push`) — the file's own "no mocks, no stub router" rule (top of
+// file) is about the composable's CORRELATES (the Component, the route table), not about this
+// one otherwise-unexercisable branch, so this is a deliberate, narrow exception, kept to its
+// own describe block.
+// ---------------------------------------------------------------------------------------
+describe('useStateRouteSync — the .finally safety net (Minor 2)', () => {
+  interface FakeLoc { path: string; query: Record<string, string>; params: Record<string, unknown>; fullPath: string }
+
+  /** Stands in for the ONE outcome the real router cannot produce without a redirecting
+   *  navigation guard: `replace` resolves (moves `currentRoute`) without ever invoking the
+   *  registered `afterEach`. `push` behaves like a genuine navigation — it DOES invoke
+   *  `afterEach` — which is what lets this test tell a swallowed navigation apart from a
+   *  processed one. */
+  function fakeRouter(initial: { path: string; query?: Record<string, string> }) {
+    let current: FakeLoc = { path: initial.path, query: initial.query ?? {}, params: {}, fullPath: initial.path };
+    let afterEachCb: ((to: FakeLoc) => void) | null = null;
+    return {
+      get currentRoute() { return { value: current }; },
+      afterEach(cb: (to: FakeLoc) => void) { afterEachCb = cb; },
+      replace(loc: { path: string; query: Record<string, string> }) {
+        current = { path: loc.path, query: loc.query, params: {}, fullPath: loc.path };
+        return Promise.resolve();   // deliberately never calls afterEachCb
+      },
+      push(loc: { path: string; query: Record<string, string> }) {
+        current = { path: loc.path, query: loc.query, params: {}, fullPath: loc.path };
+        afterEachCb?.(current);
+        return Promise.resolve();
+      }
+    };
+  }
+
+  it('clears `settling` after a settle whose afterEach never fires, so the next real navigation still applies', async () => {
+    const fake = fakeRouter({ path: '/verify', query: { token: 'T' } });
+    const router = fake as unknown as Router;
+    const c = new Component({});
+    c.state = reactive(c.state);
+    useMe().clear();
+    useStateRouteSync(c, router);
+    await flush(); await nextTick();
+
+    // The settle ran (the fake's `replace` moved `currentRoute` to the bare /verify) but never
+    // invoked `afterEach` for it — the one outcome only `.finally` can recover `settling` from.
+    expect(router.currentRoute.value.fullPath).toBe('/verify');
+    expect((c.state as { gateToken?: string }).gateToken).toBe('T');
+
+    // A later GENUINE navigation (the fake's `push` DOES fire afterEach) must still be
+    // processed. Deleting `.finally` leaves `settling` stuck `true` from the settle above, and
+    // this assertion is what catches it: the afterEach handler would consume the stale flag
+    // and return without ever calling apply(), leaving `c.state.gate` at 'verify'.
+    fake.push({ path: '/reset', query: {} });
+    await flush(); await nextTick();
+    expect(c.state.gate).toBe('reset');
   });
 });
 

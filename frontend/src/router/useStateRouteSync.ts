@@ -28,23 +28,51 @@ interface StatefulComponent { state: RoutedState; setState(patch: Partial<Routed
 // come.
 export function useStateRouteSync(c: StatefulComponent, router: Router): void {
   let pending: Partial<RoutedState> | null = null;
-  // The settle branch's own `router.replace(loc)` below is itself a navigation: vue-router's
-  // `afterEach` fires for it exactly as for any visitor-driven one (confirmed against
-  // vue-router 4's source, `pushWithRedirect` → `triggerAfterEach(to, from, failure)` — it
-  // runs even when the navigation resolves as a NAVIGATION_DUPLICATED failure, e.g. replacing
-  // a location that is already current; the one path that defers it is a redirecting
-  // navigation guard, which this app has none of). Left unguarded, that second `afterEach`
-  // call re-runs `apply()` against the URL this composable just wrote, re-derives a patch from
-  // it (`routeToPatch`'s `gateToken: ''` for a bare path is correct for a GENUINE bare visit —
-  // that contract does not change here), and clobbers whatever the first pass just captured
-  // (S2 fix round: a `/verify?token=T` visit lost its `gateToken` the instant the address bar
-  // settled to the bare `/verify`, because this second, self-caused pass saw no token in the
-  // now-bare URL and overwrote it). `settling` marks exactly the one `afterEach` firing caused
-  // by that self-replace so it is skipped instead of re-applied. The `.finally` is the second
-  // guard, for whatever navigation outcome does not reach `afterEach` at all (the
-  // redirect-guard case above, or any future one) — without it a firing that never happened
-  // would leave `settling` stuck `true` and silently swallow the next GENUINE navigation.
+  // Every navigation this composable itself issues to correct the URL — apply()'s settle
+  // branch below, AND the state → route watcher's own replace/push further down (review
+  // Important 1) — is self-caused: vue-router's `afterEach` fires for it exactly as for any
+  // visitor-driven one (confirmed against vue-router 4's source, `pushWithRedirect` →
+  // `triggerAfterEach(to, from, failure)` — it runs even when the navigation resolves as a
+  // NAVIGATION_DUPLICATED or NAVIGATION_CANCELLED failure; the one path that defers it is a
+  // redirecting navigation guard, which this app has none of). Left unguarded, that second
+  // `afterEach` call re-runs `apply()` against the URL this composable just wrote, re-derives
+  // a patch from it (`routeToPatch`'s `gateToken: ''` for a bare path is correct for a
+  // GENUINE bare visit — that contract does not change here), and clobbers whatever the first
+  // pass just captured (S2 fix round: a `/verify?token=T` visit lost its `gateToken` the
+  // instant the address bar settled to the bare `/verify`).
+  //
+  // `settleWith` is the ONE place either site issues such a navigation, so both are marked by
+  // the SAME flag — and it refuses to issue an OVERLAPPING second one while the first is still
+  // in flight. That refusal is load-bearing, not merely tidy: a plain "set the flag, clear it
+  // in the afterEach it causes" pattern applied independently at BOTH sites still loses the
+  // token, because the two sites' navigations can genuinely overlap. Trace (review Important
+  // 1, `router.push('/reset?token=X')` mid-session): apply()'s settle starts a `replace` to
+  // the bare `/reset`; because that ALSO changes `state.gate`/`gateToken`, the watcher wakes
+  // (it was never asleep here — this is mid-session, not the cold-load path the four A-S2
+  // proofs cover) and, reading a not-yet-updated `currentRoute` still holding the old query,
+  // computes the SAME bare `/reset` and — if it independently set its own flag and fired its
+  // own `replace` — would issue a SECOND navigation to that identical target. vue-router
+  // treats the second as superseding the first, cancels it, and STILL fires `afterEach` for
+  // the cancelled one (confirmed above) — consuming a boolean meant for the real, still-
+  // in-flight second navigation and leaving ITS OWN eventual `afterEach` unguarded, right back
+  // to the original bug. Refusing the second call instead of racing it sidesteps this
+  // entirely: while a self-caused navigation is in flight, nothing but vue-router's and Vue's
+  // own internal microtasks run, so `c.state` cannot have changed — whatever the second caller
+  // would navigate to is necessarily the SAME location the first is already headed to, and
+  // skipping it changes nothing (identity-keying the flag by target, the other approach
+  // considered, does NOT fix this: the review noted the two calls target the same location, so
+  // a key would not tell them apart either). The `.finally` remains the second guard, for
+  // whatever navigation outcome does not reach `afterEach` at all (the redirect-guard case
+  // above, or any future one) — without it a firing that never happened would leave `settling`
+  // stuck `true` and silently swallow the next GENUINE navigation (falsified in
+  // useStateRouteSync.test.ts with a minimal stub router — the real router cannot produce that
+  // outcome to test against).
   let settling = false;
+  const settleWith = (navigate: () => Promise<unknown>) => {
+    if (settling) return;
+    settling = true;
+    navigate().finally(() => { settling = false; });
+  };
   const apply = (to: { path: string; params: Record<string, unknown>; query: Record<string, unknown> }) => {
     // A-I7's hand-over, executed by A-I8: the principal is read AT THE POINT OF THE CALL, not
     // captured once — `useMe().me.value` changes when the visitor signs in or out, and a
@@ -61,15 +89,12 @@ export function useStateRouteSync(c: StatefulComponent, router: Router): void {
     // stay exactly as the visitor typed it until auth arrives (the watcher's own bail).
     if (!pending) {
       const loc = stateToRoute(c.state);
-      if (!sameLocation(loc, to)) {
-        settling = true;
-        router.replace(loc).finally(() => { settling = false; });
-      }
+      if (!sameLocation(loc, to)) settleWith(() => router.replace(loc));
     }
   };
   apply(router.currentRoute.value);
   router.afterEach((to) => {
-    if (settling) { settling = false; return; }   // the settle-replace's own afterEach: not a real navigation to re-apply
+    if (settling) { settling = false; return; }   // a self-caused settle's own afterEach: not a real navigation to re-apply
     apply(to);
   });
   watch(
@@ -99,7 +124,7 @@ export function useStateRouteSync(c: StatefulComponent, router: Router): void {
       const loc = stateToRoute(c.state);
       const cur = router.currentRoute.value;
       if (sameLocation(loc, cur)) return;
-      if (loc.path === cur.path) router.replace(loc); else router.push(loc);
+      settleWith(() => (loc.path === cur.path ? router.replace(loc) : router.push(loc)));
     },
     { deep: true }
   );

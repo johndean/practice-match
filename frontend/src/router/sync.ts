@@ -27,7 +27,11 @@ export function stateToRoute(s: RoutedState): RouteTarget {
     }
     // A token, if any, is captured once into state (gateToken) and never written back to
     // the address bar — every gate value, new or old, maps to its bare path only.
-    default: return { path: (s.screen === 'gate' && s.gate && GATE_PATHS[s.gate]) || '/', query: {} };
+    // `Object.hasOwn` (review Minor 5): `s.gate` is visitor/URL-derived, so an unguarded
+    // `GATE_PATHS[s.gate]` would read through `Object.prototype` for a value like
+    // `"constructor"` — unreachable today (no code produces such a gate value) but a hazard
+    // worth retiring rather than arguing away.
+    default: return { path: (s.screen === 'gate' && s.gate && Object.hasOwn(GATE_PATHS, s.gate) ? GATE_PATHS[s.gate] : '') || '/', query: {} };
   }
 }
 
@@ -44,7 +48,11 @@ export function routeToPatch(to: RouteLike): Partial<RoutedState> {
   if (to.path === '/requests') return { screen: 'requests' };
   if (to.path === '/seller') return { screen: 'seller' };
   if (to.path === '/admin') return { screen: 'admin', adminTab: pick(to.query.tab, ADMIN_TABS, 'users') };
-  if (to.path in GATE_ROUTES) return { screen: 'gate', gate: GATE_ROUTES[to.path], gateToken: typeof to.query.token === 'string' ? to.query.token : '' };
+  // `Object.hasOwn`, not `to.path in GATE_ROUTES` (review Minor 5): `to.path` comes straight
+  // off the URL, so an unguarded `in` reads through `Object.prototype` for a path like
+  // `/constructor`. Every real route starts with `/` and vue-router's own catch-all would
+  // 404 anything else first, so this is unreachable today — retired anyway.
+  if (Object.hasOwn(GATE_ROUTES, to.path)) return { screen: 'gate', gate: GATE_ROUTES[to.path], gateToken: typeof to.query.token === 'string' ? to.query.token : '' };
   return { screen: 'gate' };
 }
 
