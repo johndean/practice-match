@@ -21,6 +21,10 @@ export default defineConfig({
   retries: 0,
   forbidOnly: !!process.env.CI,
   reporter: [['list']],
+  // Mints one PW_RUN_ID per run, which every worker inherits, and clears a memo file another run
+  // left behind — see tests/global-setup.ts for why the environment is the only channel that can
+  // carry it (round 3, ruling 2).
+  globalSetup: './global-setup.ts',
   // Baselines are produced from the reference by the `reference` project and
   // named <state>-<platform>.png. The app must never overwrite them.
   snapshotPathTemplate: '{testDir}/visual.spec.ts-snapshots/{arg}-{platform}{ext}',
@@ -64,7 +68,12 @@ export default defineConfig({
     // Anchored at a path boundary (start-or-slash) and the extension: an unanchored
     // (visual|smoke|dom) would also match "reference-dom.spec.ts" as a substring, which
     // belongs to the reference project only.
-    { name: 'app', testMatch: /(^|\/)(visual|smoke|dom)\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: VIEWPORT, baseURL } },
+    //
+    // `signin-form` is its own file rather than a describe inside smoke.spec.ts because Playwright
+    // refuses `use({ trace })` in a describe group ("because it forces a new worker") and allows it
+    // at the top level of a file: those three tests type a password into the design's own card, and
+    // their trace is turned off on a live run alone (round 3, ruling 1).
+    { name: 'app', testMatch: /(^|\/)(visual|smoke|dom|signin-form)\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: VIEWPORT, baseURL } },
     { name: 'reference', testMatch: /(^|\/)(reference-(baselines|dom)|capture-determinism)\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: VIEWPORT, baseURL: `http://localhost:${REF}` } },
     { name: 'coming-soon-reference', testMatch: /(^|\/)coming-soon-reference\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: CS_VIEWPORT, baseURL: `http://localhost:${REF}` } },
     { name: 'coming-soon', testMatch: /(^|\/)coming-soon-visual\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: CS_VIEWPORT, baseURL: csBaseURL } }

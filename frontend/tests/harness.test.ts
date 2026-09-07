@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BLANK_GIF, MEMO_FILE, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, appOrigin, appPlan, driverFor, forgetPersonaSession, memoFileRead, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, referenceMe, referenceOrigin, referenceUrl, runId } from './harness';
+import { BLANK_GIF, MEMO_FILE, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, appOrigin, appPlan, driverFor, forgetPersonaSession, memoFileRead, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, referenceMe, referenceOrigin, referenceUrl, runId } from './harness';
 import { resolveTargets as resolveTargetsForRef } from './targets';
 import { resolveTargets } from './targets';
 
@@ -476,30 +476,44 @@ describe('the persona memo file (A-I8.2, run-scoped by M3)', () => {
     expect(MEMO_FILE.endsWith('/frontend/test-results/.persona-sessions.json'), MEMO_FILE).toBe(true);
   });
 
-  // Round 2, ruling 2. The id was the runner pid alone, and pids are reused — so a stale file
-  // from a much earlier run could in principle be adopted by a later run that happened to draw the
-  // same pid. It now carries the process start time as well, so a reused pid never matches.
-  it('identifies the run by the runner pid AND a process start time, so a reused pid cannot match', () => {
-    expect(runId(4711, 1_700_000_000_000)).toBe('4711-1700000000000');
-    expect(runId(4711, 1_700_000_000_001), 'the same pid, a different run').not.toBe(runId(4711, 1_700_000_000_000));
-    expect(runId(4712, 1_700_000_000_000), 'a different runner, the same instant').not.toBe(runId(4711, 1_700_000_000_000));
+  // Round 3, ruling 2. The id is minted ONCE PER RUN by `tests/global-setup.ts` and read from the
+  // environment, because the environment is the only thing every worker of a run inherits from the
+  // runner. Round 2 derived it from the worker's own start time, which was stable inside a GREEN
+  // run (one worker process) and changed on every worker restart — and a restart is the only case
+  // this file exists for, since Playwright starts a new worker after each test failure.
+  it('reads the run id the runner minted, so every worker of one run agrees on it', () => {
+    expect(runId({ PW_RUN_ID: 'f4c1e0a2-9b7d-4e51-8a2c-6d0f1b3e5a7c' })).toBe('f4c1e0a2-9b7d-4e51-8a2c-6d0f1b3e5a7c');
+    expect(runId({ PW_RUN_ID: 'a' })).not.toBe(runId({ PW_RUN_ID: 'b' }));
   });
 
-  it('yields one stable id within a process, because the start time is computed once and cached', () => {
-    // `process.uptime()` advances, so recomputing it per call would give a different id every
-    // time and the file would never be readable at all.
-    expect(runId()).toBe(runId());
-    expect(runId(), 'the defaults are this process\'s own runner and start time').toBe(`${process.ppid}-${runId().split('-')[1]}`);
-    expect(Number(runId().split('-')[1]), 'a plausible epoch-ms start time').toBeGreaterThan(1_600_000_000_000);
+  it('has no run id outside a Playwright run, and then keeps no memo at all', () => {
+    // A vitest process, or `playwright test` with the globalSetup removed. "No memo" is the safe
+    // reading: the in-memory memo still spends one sign-in per persona per worker, and nothing is
+    // shared with a run it does not belong to.
+    expect(runId({})).toBe('');
+    expect(memoFileRead(memoFileUpdate(null, 'buyer', [C('pm_session')], ''), 'buyer', ''), 'an unstamped file is nobody\'s memo').toBeNull();
   });
 
-  it('ignores and replaces a memo file stamped by a reused pid from an earlier run', () => {
-    const stale = memoFileUpdate(null, 'buyer', [C('pm_session')], runId(4711, 1_000));
-    expect(memoFileRead(stale, 'buyer', runId(4711, 1_000)), 'sanity: its own run reads it').not.toBeNull();
-    expect(memoFileRead(stale, 'buyer', runId(4711, 2_000)), 'the same pid, a later run: no memo').toBeNull();
-    const fresh = memoFileUpdate(stale, 'buyer', [C('pm_session')], runId(4711, 2_000));
-    expect(JSON.parse(fresh).run).toBe('4711-2000');
-    expect(memoFileRead(fresh, 'buyer', runId(4711, 1_000)), 'and the earlier run cannot read the replacement').toBeNull();
+  it('ignores and replaces a memo file another run stamped', () => {
+    const stale = memoFileUpdate(null, 'buyer', [C('pm_session')], 'run-A');
+    expect(memoFileRead(stale, 'buyer', 'run-A'), 'sanity: its own run reads it').not.toBeNull();
+    expect(memoFileRead(stale, 'buyer', 'run-B'), 'another run: no memo').toBeNull();
+    const fresh = memoFileUpdate(stale, 'buyer', [C('pm_session')], 'run-B');
+    expect(JSON.parse(fresh).run).toBe('run-B');
+    expect(memoFileRead(fresh, 'buyer', 'run-A'), 'and run A cannot read the replacement').toBeNull();
+  });
+
+  // The decision `tests/global-setup.ts` makes, as a pure function. It runs in the RUNNER, before
+  // any worker, and removes a file a DIFFERENT run left behind — so a run never starts by adopting
+  // a session that may since have been revoked, whatever cwd Playwright was launched from (its own
+  // clearing of `test-results/` is anchored there; MEMO_FILE is not).
+  it('isStaleMemoFile: only a file that cannot be shown to be this run\'s is stale', () => {
+    const mine = memoFileUpdate(null, 'buyer', [C('pm_session')], 'run-A');
+    expect(isStaleMemoFile(mine, 'run-A'), 'this run\'s own file survives — a restarted worker needs it').toBe(false);
+    expect(isStaleMemoFile(mine, 'run-B')).toBe(true);
+    expect(isStaleMemoFile(null, 'run-A'), 'nothing there to delete').toBe(false);
+    expect(isStaleMemoFile('{ not json', 'run-A'), 'unreadable cannot be shown to be ours').toBe(true);
+    expect(isStaleMemoFile(mine, ''), 'no run id at all: keep nothing').toBe(true);
   });
 });
 

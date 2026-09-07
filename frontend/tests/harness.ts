@@ -265,25 +265,33 @@ export function referenceOrigin(env: NodeJS.ProcessEnv = process.env): string {
 export const MEMO_FILE = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'test-results', '.persona-sessions.json');
 
 /**
- * THIS process's start time, in epoch milliseconds. Computed once, at module load: `process.uptime()`
- * advances, so recomputing it per call would give a different id every call and the memo file would
- * never be readable at all.
+ * Which RUN a memo file belongs to (round 3, ruling 2) — the id `tests/global-setup.ts` mints once
+ * in the runner process and every worker inherits through the environment.
+ *
+ * The environment is the only channel that works: a worker-local value (round 2 used the process
+ * start time) is stable inside a GREEN run, where there is one worker, and different in every
+ * worker Playwright starts after a test failure — which is the only case the memo file exists for.
+ *
+ * Empty outside a Playwright run — a vitest process, or `playwright test` with the globalSetup
+ * removed. `writeMemoFile` then keeps no file and `memoFileRead` finds none, so the in-memory memo
+ * does its usual one-sign-in-per-persona-per-worker job and nothing is ever shared with a run it
+ * does not belong to.
  */
-const PROCESS_STARTED_AT = Date.now() - Math.round(process.uptime() * 1000);
+export function runId(env: NodeJS.ProcessEnv = process.env): string {
+  return env.PW_RUN_ID ?? '';
+}
 
 /**
- * Which RUN a memo file belongs to (round 2, ruling 2).
+ * Whether a memo file must be deleted before the run starts — the decision `global-setup.ts` makes,
+ * as a pure function so it can be pinned without a filesystem.
  *
- * Playwright forks its workers from the runner process, so `process.ppid` is the same for every
- * worker of one run — but pids are REUSED, so a stale file from a much earlier run could in
- * principle be adopted by a later run that happened to draw the same pid. The start time is
- * carried alongside it, and a reused pid then never matches. No `globalSetup` and no config change.
- *
- * The directory clearing is still the first guard: Playwright empties `test-results/` at run start
- * (see MEMO_FILE for the one case where that path and its clearing disagree).
+ * Stale means "cannot be shown to belong to this run": another run's stamp, an unreadable file, or
+ * no run id at all. Only THIS run's own file survives, because a restarted worker needs it.
  */
-export function runId(ppid: number = process.ppid, startedAt: number = PROCESS_STARTED_AT): string {
-  return `${ppid}-${startedAt}`;
+export function isStaleMemoFile(existing: string | null, run: string): boolean {
+  if (existing === null) return false;                 // nothing to delete
+  const held = parseMemoFile(existing);
+  return !run || !held || held.run !== run;
 }
 
 /** The file's contents with one persona's jar set, or removed when `cookies` is null. A write from
@@ -302,6 +310,7 @@ export function memoFileUpdate(existing: string | null, persona: string, cookies
  *  is simply "no memo": this is a cache, and failing the run over it would be worse than signing
  *  in again. */
 export function memoFileRead(existing: string | null, persona: string, run: string): unknown[] | null {
+  if (!run) return null;                               // no run id: nothing can be shown to be ours
   const held = parseMemoFile(existing);
   if (!held || held.run !== run) return null;
   const jar = held.sessions[persona];
@@ -324,8 +333,10 @@ function parseMemoFile(existing: string | null): { run: string; sessions: Record
 const readMemoFileText = (): string | null => (existsSync(MEMO_FILE) ? readFileSync(MEMO_FILE, 'utf8') : null);
 
 function writeMemoFile(persona: PersonaKey, cookies: PersonaCookies | null): void {
+  const run = runId();
+  if (!run) return;                                    // outside a Playwright run there is no run to scope a file to
   mkdirSync(dirname(MEMO_FILE), { recursive: true });
-  writeFileSync(MEMO_FILE, memoFileUpdate(readMemoFileText(), persona, cookies, runId()));
+  writeFileSync(MEMO_FILE, memoFileUpdate(readMemoFileText(), persona, cookies, run));
 }
 
 /**
