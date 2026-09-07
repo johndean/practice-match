@@ -3822,6 +3822,17 @@ Expected: `SAME` for all thirteen (the V7 review classified twelve movers as typ
 Re-apply (`applyAmendments` from the pristine file with the full list), `npm run gen:app`: `logic.js` changes by exactly that line (`git diff -- src/logic.js` shows one hunk); `App.vue`/`pseudo.css` unchanged. `LOCAL_AMENDMENTS.md` gains the A2 row (John's words; root cause in one sentence).
 - [ ] **Step 6: GREEN and gate** — the two new tests pass; full frontend gate (28 visual at zero diffs — A2 changes no pixel; `baseline-manifest.json` unchanged). Commit `design(amend): A2 — mobile practice card opens the detail (root cause: browseSel unbound since C13)`.
 
+> **Four further amendments landed after Step 6 (recorded 2026-09-07 — spec D17 amended in the final-review fix round).** A2 fixed the tap; the bundle's own dead-code rule (spec D8/D12) then required the `browseSel` orphans C13 left behind to go, each controller-ruled with a root cause and a grep gate:
+>
+> | Id | Edit to the design's script | Ruled in |
+> |---|---|---|
+> | **A2.2** | the comment above the amended handler, rewritten to describe what the handler now does | V14's concerns round (`fc256cc`) |
+> | **A2.3** | `hasBrowseSel`, `closeBrowseSel` and `bsel` deleted outright — a 25-line block whose only template reader was the peek card C13 removed | V14's concerns round (`fc256cc`) |
+> | **A2.4** | the dead `browseSel` key dropped from the **top-level** `selectMarker`, keeping its live `activeId` key | V14's concerns round (`fc256cc`) |
+> | **A2.5** | that top-level `selectMarker` deleted outright — no template prop binds it; the design's only `on-select` bindings are `mob.selectMarker` and `md.selectFromMap` | the zero-gaps round (`34d01ec`) |
+>
+> The wired `mobileVals.selectMarker` (C13's own fix, which the second pin tap uses) is untouched throughout. A2.5's `find` is A2.4's output, so the two are order-dependent and `applyAmendments`' per-step count check is what enforces it (spec D15). Proved by `design-amendments.test.ts`, `frontend/src/logic.test.ts:82`/`:121` and the grep gates: zero `browseSel`, `hasBrowseSel`, `closeBrowseSel` or `bsel` in the ported `logic.js`, exactly one `selectMarker`.
+
 ### Task V15: "View full listing" (spec D18) and the plans name `ListingsMap.vue` (spec D19)
 
 *Added 2026-09-07 on John's rulings. After V14. Fresh implementer (cheap tier — the plan text carries the code).*
@@ -4074,6 +4085,7 @@ Every acceptance criterion, change-log entry, dead-code rule, file-index entry, 
 | D15 local design amendments | V13 | `design-amendments.test.ts` (pristine + edits = amended, byte for byte) |
 | D16 A1 V2 typography (option B) | V13 | `design-amendments.test.ts` (24 edits; every display heading uppercase with V2 tracking) + the thirteen vs the V1-era manifest |
 | D17 A2 mobile card opens the detail | V14 | `logic.test.ts` (`p.open` → detail) + `smoke.spec.ts` (390×800 card tap → detail) |
+| D17 (amended) A2.2–A2.5: the handler's stale comment rewritten; `hasBrowseSel`/`closeBrowseSel`/`bsel` deleted; the dead `browseSel` key dropped from the unwired top-level `selectMarker`, then that handler deleted — the wired `mobileVals.selectMarker` untouched | V14's concerns round (A2.2–A2.4) and the zero-gaps round (A2.5); recorded in the spec by the final-review fix round | `design-amendments.test.ts` (pristine + list == amended byte for byte; each `find` counted at the point it is applied) + `logic.test.ts:82`/`:121` + the grep gates (zero `browseSel`/`hasBrowseSel`/`closeBrowseSel`/`bsel` in `logic.js`, exactly one `selectMarker`) |
 | D18 A3 "View full listing" | V15 | `design-amendments.test.ts` (label present/absent) + `screens.ts:70` reaches `interest-modal` |
 | D19 plans name `ListingsMap.vue` | V15 | `cross-plan-deltas.test.ts` (token allowed only in a "deleted in Browse V3" clause) |
 | D20 mosaic redraw semantics: one merged watcher (pane order: overlay before pins) with the overlay redrawn only when one of the reference's five area-effect inputs changes; a selection moves `driveCenter`, so the design itself rebuilds the mosaic | the final-review fix round (`MarketMapView.vue`'s `areaChanged()`); V5's block carries the superseded banner | `MarketMapView.test.ts`'s area-effect cases ("rebuilds no mosaic rectangle when only activeId changes", "redraws every overlay layer before every pin when only `practices` changes", "rebuilds the overlay and THEN the pins when driveCenter[0] moves") + `smoke.spec.ts`'s 1500 ms `a second pin tap repaints the map within budget` gate |
