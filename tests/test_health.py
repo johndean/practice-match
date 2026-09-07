@@ -1,9 +1,11 @@
 import logging
+from pathlib import Path
 
 import httpx
 import pytest
 from httpx import ASGITransport
 
+from app.api import health
 from app.checks import async_dsn, check_db, check_redis
 from app.config import settings
 from app.main import app
@@ -110,3 +112,45 @@ async def test_healthz_reports_postgis_and_redis_up(client, db_ready):
     assert body["redis"]["ok"] is True, body["redis"]
     r = await client.get("/api/healthz/deep")
     assert r.status_code == 200
+
+
+# --- P14: commit_sha proves the ARTEFACT, not a service variable ----------------
+# healthz reported the COMMIT_SHA variable scripts/deploy.sh sets immediately before each
+# upload, so on 2026-09-07 it agreed with a deploy whose uploaded tree was a different
+# one. BUILD_SHA is written into the `git archive` deploy.sh uploads and copied into the
+# image, so it cannot drift from the code that is serving.
+
+
+async def test_commit_sha_comes_from_the_build_sha_file_when_the_image_carries_one(client, monkeypatch, tmp_path):
+    stamp = tmp_path / "BUILD_SHA"
+    stamp.write_text("17f40c3\n")  # trailing newline: deploy.sh writes one
+    monkeypatch.setattr(health, "BUILD_SHA_FILE", stamp)
+    monkeypatch.setattr(settings, "commit_sha", "variable-only")
+    body = (await client.get("/api/healthz")).json()
+    assert body["commit_sha"] == "17f40c3"
+
+
+async def test_commit_sha_falls_back_to_the_setting_when_the_file_is_absent(client, monkeypatch, tmp_path):
+    """A git-connected Railway build, or a local `docker build`, carries no BUILD_SHA."""
+    monkeypatch.setattr(health, "BUILD_SHA_FILE", tmp_path / "no-such-dir" / "BUILD_SHA")
+    monkeypatch.setattr(settings, "commit_sha", "fallback9")
+    body = (await client.get("/api/healthz")).json()
+    assert body["commit_sha"] == "fallback9"
+
+
+async def test_commit_sha_falls_back_when_the_build_sha_file_is_blank(client, monkeypatch, tmp_path):
+    """An empty stamp is no evidence; it must not shadow COMMIT_SHA with an empty string."""
+    stamp = tmp_path / "BUILD_SHA"
+    stamp.write_text("  \n")
+    monkeypatch.setattr(health, "BUILD_SHA_FILE", stamp)
+    monkeypatch.setattr(settings, "commit_sha", "fallback9")
+    body = (await client.get("/api/healthz")).json()
+    assert body["commit_sha"] == "fallback9"
+
+
+def test_build_sha_file_sits_at_the_app_root_beside_pyproject():
+    """WORKDIR /app in the image, code at /app/app/api/health.py: the stamp is /app/BUILD_SHA,
+    the same root app/version.py reads pyproject.toml from."""
+    root = Path(__file__).resolve().parent.parent
+    assert health.BUILD_SHA_FILE == root / "BUILD_SHA"
+    assert (root / "pyproject.toml").exists()

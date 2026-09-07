@@ -51,6 +51,16 @@ COPY migrations/ ./migrations/
 COPY scripts/ ./scripts/
 COPY --from=frontend-build /work/frontend/dist/ ./frontend/dist/
 COPY --from=coming-soon-build /work/coming-soon/dist/ ./coming-soon/dist/
+# /app/BUILD_SHA is what /api/healthz reports as commit_sha: scripts/deploy.sh writes the
+# source's short sha into the `git archive` it uploads, so the stamp travels with the tree
+# and cannot be set independently of it the way the COMMIT_SHA variable can (P14).
+# `BUILD_SH[A]` makes it optional — the glob matches nothing on a build whose context has
+# no stamp (a local scripts/verify-image.sh, or a git-connected Railway build). It must
+# stay PAIRED with a source that is always present: a COPY whose only source matches
+# nothing fails outright ("COPY failed: no source files were specified", measured
+# 2026-09-07). pyproject.toml is the pairing — already copied above, same content, so this
+# adds nothing to the image, and being the last layer it never invalidates poetry install.
+COPY pyproject.toml BUILD_SH[A] ./
 # Nothing writes under /app at runtime (uvicorn and the Celery worker keep no
 # files there; `migrate` only reads), so a non-root user is a plain drop of
 # privilege — no volume or writable-path accommodation needed.

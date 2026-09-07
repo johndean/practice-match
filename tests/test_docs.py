@@ -299,3 +299,19 @@ def test_deploy_md_records_the_nightly_load_smoke_baseline():
 def test_reference_server_serves_the_coming_soon_design():
     assert (ROOT / "docs" / "design-reference" / "coming-soon" / "Coming Soon.dc.html").exists()
     assert "docs/design-reference/coming-soon" in (ROOT / "frontend" / "tests" / "reference-server.mjs").read_text()
+
+
+def test_dockerfile_copies_the_build_sha_stamp_with_the_optional_glob_form():
+    """P14: /app/BUILD_SHA is what /api/healthz reports as commit_sha, and scripts/deploy.sh
+    writes it into the archive it uploads. A build whose context has no stamp (a local
+    `scripts/verify-image.sh`, or a git-connected Railway build) must still succeed, so the
+    source is the `BUILD_SH[A]` glob — but a COPY whose ONLY source matches nothing fails
+    outright ("COPY failed: no source files were specified", measured against the local
+    daemon 2026-09-07), so the glob must stay paired with a source that is always present."""
+    text = (ROOT / "Dockerfile").read_text()
+    copies = [ln for ln in text.splitlines() if ln.startswith("COPY") and "BUILD_SH" in ln]
+    assert copies, "the Dockerfile must copy BUILD_SHA using the optional-glob form BUILD_SH[A]"
+    for line in copies:
+        assert re.fullmatch(r"COPY \S+ BUILD_SH\[A\] \./", line), (
+            f"the optional glob must be paired with an always-present source: {line!r}"
+        )
