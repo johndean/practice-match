@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import json
 
-from tests.api.conftest import auth_headers
+from tests.api.conftest import PW, auth_headers
 
 FIELDS = {"name": "Rachel Mendes, DVM", "vin_member_id": "", "school_year": "Texas A&M, 2014", "license_state": "TX",
           "employer": "Relief veterinarian", "intent": "Buy within 18 months.", "affirm": True}
@@ -502,24 +502,32 @@ async def test_the_applicant_history_and_the_staff_detail_agree_on_names_and_ord
 
 
 async def test_the_principal_cache_is_dropped_only_after_the_transaction_commits(client, conn, member, monkeypatch):
-    """L5. `invalidate_account` only deletes Redis keys, so calling it while the row change is
-    still uncommitted leaves a window in which a concurrent resolve reads the OLD state and
+    """L5. `invalidate_account` only deletes Redis keys, so calling it while the change is still
+    uncommitted leaves a window in which a concurrent resolve reads the OLD principal and
     re-caches it for the full `sessions.CACHE_TTL`.
 
-    The spy reads `account.state` through the `conn` fixture — a SECOND, autocommitted connection,
-    which can therefore see only committed data. The state it reports at call time is the state the
-    rest of the world can see, which is the whole question. All three sites are exercised in one
-    account's journey: submit, `decide`, and answer.
+    The spy reads the account's state AND its live roles through the `conn` fixture — a SECOND,
+    autocommitted connection, which can therefore see only committed data. What it reports at call
+    time is what the rest of the world can see, which is the whole question. Roles as well as
+    state because a role grant changes no state at all: the fourth site (`grants`) is invisible to
+    a state-only probe (controller ruling on fix round 1's concern 1).
+
+    One account's journey exercises all four sites: `submit`, `decide` (twice), `answer`, and
+    `grants`.
     """
     from app.auth import sessions as S
 
-    seen: list[str] = []
+    seen: list[tuple[str, list[str]]] = []
     real = S.invalidate_account
 
     def spy(r, account_id):
         with conn.cursor() as cur:
             cur.execute("SELECT state FROM account WHERE id=%s", (account_id,))
-            seen.append(cur.fetchone()[0])
+            state = cur.fetchone()[0]
+            cur.execute("SELECT array_agg(role ORDER BY role) FROM role_grant WHERE account_id=%s AND revoked_at IS NULL",
+                        (account_id,))
+            roles = cur.fetchone()[0]
+        seen.append((state, list(roles or [])))
         return real(r, account_id)
 
     monkeypatch.setattr(S, "invalidate_account", spy)
@@ -534,4 +542,18 @@ async def test_the_principal_cache_is_dropped_only_after_the_transaction_commits
     assert answered.status_code == 200
     await _decide(client, staff, aid, "approve", "")
 
-    assert seen == ["pending", "needs_review", "pending", "active"]
+    # ...and the fourth site: a role grant, which moves no state — `roles` is the only thing that
+    # changes, so it is the only thing that can catch a pre-commit invalidation here.
+    _admin, acookies, ahdr = member(("admin",), email="grant-admin@example.org")
+    assert (await client.post("/api/auth/reauth", headers=auth_headers(acookies, ahdr), json={"password": PW})).status_code == 200
+    granted = await client.post(f"/api/admin/users/{aid}/grants", headers=auth_headers(acookies, ahdr),
+                                json={"role": "staff", "grant": True, "reason": "New reviewer"})
+    assert granted.status_code == 200 and granted.json()["roles"] == ["buyer", "staff"]
+
+    assert seen == [
+        ("pending", []),
+        ("needs_review", []),
+        ("pending", []),
+        ("active", ["buyer"]),
+        ("active", ["buyer", "staff"]),
+    ]

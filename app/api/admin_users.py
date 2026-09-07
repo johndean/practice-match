@@ -652,7 +652,6 @@ async def grants(account_id: UUID, body: GrantIn, request: Request, principal: G
             roles = _roles(cur, account_id)
             # Only a removal can cost the account a role it minted with; granting one can only add.
             revoked = _revoke_unmintable_tokens(cur, account_id, frozenset(roles)) if not body.grant else []
-        S.invalidate_account(sync_redis(), account_id)
         audit.write(conn, actor=principal, action="roles.grant", target_type="account", target_id=account_id,
                     before={"roles": before}, after={"roles": roles}, reason=body.reason, request=request)
         for token_id, token_role in revoked:
@@ -660,6 +659,11 @@ async def grants(account_id: UUID, body: GrantIn, request: Request, principal: G
             # source for `audit.write(`, and a row written out of sight of it does not count.
             audit.write(conn, actor=principal, action="tokens.revoke", target_type="api_token", target_id=token_id,
                         after={"role": token_role, "grant_removed": body.role}, reason="grant_removed", request=request)
+    # AFTER the commit above, for the reason `decide_route` records (review L5, extended to this
+    # site by the controller's ruling on fix round 1's concern 1). A grant moves no `account.state`,
+    # so the window here is invisible to a state-only probe — and worse than the others while it
+    # lasted: a stale principal re-cached here carries ROLES, not a role-less gate state.
+    S.invalidate_account(sync_redis(), account_id)
     return {"roles": roles, "revoked_tokens": [str(token_id) for token_id, _ in revoked]}
 
 
