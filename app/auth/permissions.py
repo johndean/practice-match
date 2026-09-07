@@ -66,6 +66,9 @@ TOKEN_DENIED = frozenset({"tokens.manage"})
 # spelled out rather than waved through by the test.
 PUBLIC_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("GET", "/api/healthz"), ("GET", "/api/healthz/deep"), ("GET", "/robots.txt"), ("GET", "/"), ("GET", "/{path:path}"),
+    # The flag ABOUT anonymous visitors (A-I7.2): requiring a credential to read whether an
+    # anonymous visitor holds `market.read` would be circular. Reads one setting, writes nothing.
+    ("GET", "/api/config"),
     ("POST", "/api/auth/signup"), ("POST", "/api/auth/verify"), ("POST", "/api/auth/signin"),
     ("POST", "/api/auth/password/forgot"), ("POST", "/api/auth/password/reset"), ("POST", "/api/webhooks/resend"),
     # The other half of `scripts/bootstrap_admin.py` (Task I5): the single-use `invite` token IS

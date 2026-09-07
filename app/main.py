@@ -9,6 +9,7 @@ from fastapi.responses import PlainTextResponse
 from app.api.admin_users import router as admin_users_router
 from app.api.applications import router as applications_router
 from app.api.auth import router as auth_router
+from app.api.config import router as config_router
 from app.api.health import not_found_router
 from app.api.health import router as health_router
 from app.api.interest import router as interest_router
@@ -58,6 +59,11 @@ def create_app(dist: Path | None = None) -> FastAPI:
     # 1, ruling (a)). I4 adds the auth routers.
     deps.install(app)
     app.include_router(health_router)
+    # UNCONDITIONALLY, unlike the auth surface below (A-I7.2): `GET /api/config` publishes
+    # MARKET_DATA_PUBLIC, which is what the browser's `can('market.read', …)` needs in order to
+    # honour the same rule `permissions.allowed` applies. It reads one boolean setting, reveals
+    # nothing an anonymous market request would not, and writes nothing.
+    app.include_router(config_router)
     # Future /api routers are included here, BEFORE the catch-all below.
     #
     # The auth surface exists only in `app` mode (I4 fix round 1, Important 6). Production runs
