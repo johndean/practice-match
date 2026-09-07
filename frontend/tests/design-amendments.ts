@@ -526,7 +526,9 @@ const A8_3a: Amendment = {
  *  a slow API never shows a blank screen; `declined` pre-fills the application form from the
  *  applicant's own last answers (spec §3, "Re-apply needs no new screen"); `startNotice` is how
  *  the reference reaches the five sign-in-with-a-notice states; and a `/verify` landing posts
- *  its token on arrival. Every one of the four API calls is guarded by `this.props.auth`, so the
+ *  its token on arrival — or, with NO token, shows the expired card outright (controller ruling,
+ *  2026-09-08): there is nothing to verify without one, so posting an empty token spent a
+ *  rate-limited request to be told what the client already knew. Every one of the four API calls is guarded by `this.props.auth`, so the
  *  reference — which has none — takes the design's fixture path unchanged. */
 const A8_3b: Amendment = {
   id: 'A8.3b', ...S4,
@@ -536,7 +538,8 @@ const A8_3b: Amendment = {
     + '    if (me && me.state === "needs_review" && this.props.auth) this.props.auth.applicationsMe().then((r) => { if (r && r.current) this.setState({ screen: "gate", gate: "answer", answer: Object.assign({}, this.state.answer, { applicationId: r.current.id, note: r.current.info_request || "" }) }); }, () => {});\n'
     + '    if (me && me.state === "declined" && this.props.auth) this.props.auth.applicationsMe().then((r) => { if (r && r.current && r.current.fields) { const f = r.current.fields; this.setState({ apply: Object.assign({}, this.state.apply, { name: f.name || "", vin: f.vin_member_id || "", grad: f.school_year || "", state: f.license_state || "", employer: f.employer || "", intent: f.intent || "", affirm: !!f.affirm }) }); } }, () => {});\n'
     + '    if (this.props.startNotice) this.setState({ screen: "gate", gate: "signin", formNotice: this.props.startNotice });\n'
-    + '    if (this.state.gate === "verify" && this.props.auth) this.props.auth.verify(this.state.gateToken).then(() => this.setState({ gate: "signin", gateToken: "", formNotice: "Your address is verified. Sign in to complete your access request." }), () => this.setState({ gate: "verify-expired", gateToken: "" }));\n'
+    + '    if (this.state.gate === "verify" && !this.state.gateToken) this.setState({ gate: "verify-expired" });\n'
+    + '    else if (this.state.gate === "verify" && this.props.auth) this.props.auth.verify(this.state.gateToken).then(() => this.setState({ gate: "signin", gateToken: "", formNotice: "Your address is verified. Sign in to complete your access request." }), () => this.setState({ gate: "verify-expired", gateToken: "" }));\n'
     + '  }',
   count: 1
 };

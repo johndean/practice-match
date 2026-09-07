@@ -606,7 +606,7 @@ def _harness_personas() -> dict[str, dict[str, object]]:
         key, email, name, role, initials, state, roles = m.groups()
         found[key] = {"email": email, "name": name, "role": role, "initials": initials, "state": state,
                       "roles": tuple(r.strip().strip("'") for r in roles.split(",") if r.strip())}
-    assert len(found) == 6, f"expected the six harness personas as one line each, read {sorted(found)}"
+    assert len(found) == 7, f"expected the seven harness personas as one line each, read {sorted(found)}"
     return found
 
 
@@ -622,20 +622,25 @@ def test_the_harness_personas_are_the_accounts_seed_persona_seeds_with_the_label
     from app.auth.labels import initials, role_label
     from scripts import seed_persona
 
+    # A-S4: `IDENTITY_STATE_PERSONAS` (Task S3's `unverified@` and `verified@`) is read alongside
+    # `STATE_PERSONAS` — the harness names `verified@` since Task S4, because it is the account the
+    # app reaches `gate-apply` as. Both tuples have the same (email, state, display name) shape and
+    # neither carries a role grant, so they merge into one map here.
+    state_personas = (*seed_persona.STATE_PERSONAS, *seed_persona.IDENTITY_STATE_PERSONAS)
     seeded_roles: dict[str, tuple[str, ...]] = {
         seed_persona.PERSONA_EMAIL: seed_persona.PERSONA_ROLES,
         **{email: roles for email, roles in seed_persona.ORACLE_PERSONAS},
-        **{email: () for email, _state, _name in seed_persona.STATE_PERSONAS},
+        **{email: () for email, _state, _name in state_personas},
     }
     seeded_names: dict[str, str] = {
         seed_persona.PERSONA_EMAIL: seed_persona.PERSONA_NAME,
         **{email: seed_persona.PERSONA_NAME for email, _roles in seed_persona.ORACLE_PERSONAS},
-        **{email: name for email, _state, name in seed_persona.STATE_PERSONAS},
+        **{email: name for email, _state, name in state_personas},
     }
     # Only the three members carry an affiliation; an applicant has none to confirm yet, which is
     # rather the point for `declined@`.
     members = {seed_persona.PERSONA_EMAIL, *(email for email, _roles in seed_persona.ORACLE_PERSONAS)}
-    seeded_states: dict[str, str] = {email: state for email, state, _name in seed_persona.STATE_PERSONAS}
+    seeded_states: dict[str, str] = {email: state for email, state, _name in state_personas}
 
     for key, persona in _harness_personas().items():
         email = str(persona["email"])

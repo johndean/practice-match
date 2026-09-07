@@ -39,9 +39,12 @@ const SHEET = 'div[style*="z-index: 700"]';
 
 export const SCREENS: Screen[] = [
   { name: 'gate-signin', steps: async (p) => { await reach(p); } },
-  // The design's own "Request access" link on the sign-in card (`goApply`) — a link, not a
-  // prototype shortcut, so it survives the launch removal and `reach` clicks it on the app.
-  { name: 'gate-apply', steps: async (p) => { await reach(p, { gate: 'apply' }); } },
+  // A-S4: reached by BEING an address that is confirmed and has not applied — A5.4's bootstrap
+  // lands `verified@` on the Request Access card, on both targets. The design's own "Request
+  // access" link used to be the way in; A8.1c sends an anonymous visitor's click to the sign-up
+  // card instead, which is correct (there is no application without an account) and is why this
+  // state now names an account like the two status gates below do.
+  { name: 'gate-apply', steps: async (p) => { await reach(p, { gate: 'apply', persona: 'verified' }); } },
   // The two status gates were reached by the "Prototype — access states" buttons (A6.2 removes
   // them). On the app they are now reached by BEING in that state: `reach` signs in as the
   // seeded `pending@` / `declined@` account and A5.4's bootstrap maps the account's state to

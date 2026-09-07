@@ -244,7 +244,7 @@ describe('appOrigin (A-I7.2)', () => {
 // ---------------------------------------------------------------------------------------
 describe('PERSONAS — the /api/me payload of each seeded account (D-I8-4, A-I8.2)', () => {
   it('are the six accounts scripts/seed_persona.py writes', () => {
-    expect(Object.keys(PERSONAS)).toEqual(['design', 'buyer', 'seller', 'pending', 'needsReview', 'declined']);
+    expect(Object.keys(PERSONAS)).toEqual(['design', 'buyer', 'seller', 'pending', 'needsReview', 'declined', 'verified']);
   });
 
   it('carry the /api/me fields logic.js reads, so the reference can be handed the same account', () => {
@@ -273,11 +273,19 @@ describe('PERSONAS — the /api/me payload of each seeded account (D-I8-4, A-I8.
     }
   });
 
-  it('give the three applicants their states and no roles', () => {
+  it('give the four applicants their states and no roles', () => {
     expect(PERSONAS.pending.state).toBe('pending');
     expect(PERSONAS.needsReview.state).toBe('needs_review');
     expect(PERSONAS.declined.state).toBe('declined');
-    for (const key of ['pending', 'needsReview', 'declined'] as const) {
+    // A-S4 (Task S4): `verified@` is an address that has been confirmed and has never applied.
+    // A5.4's bootstrap lands it on the Request Access card, which is how the APP now reaches
+    // `gate-apply` — the design's own "Request access" link sends an anonymous visitor to the
+    // sign-up card since A8.1c, so the link is no longer that state's way in. S3 seeded it.
+    expect(PERSONAS.verified.state).toBe('verified');
+    expect(PERSONAS.verified.email).toBe('verified@practice-match.test');
+    // `labels.initials("Verified Applicant")` — the seed's display name for the account.
+    expect(PERSONAS.verified.initials).toBe('VA');
+    for (const key of ['pending', 'needsReview', 'declined', 'verified'] as const) {
       expect(PERSONAS[key].roles).toEqual([]);
       expect(PERSONAS[key].role, 'labels.role_label with no grants and no affiliation').toBe('Applicant');
     }
@@ -290,7 +298,7 @@ describe('PERSONAS — the /api/me payload of each seeded account (D-I8-4, A-I8.
     }
   });
 
-  it('memoise one session EACH, so six personas spend at most six of SIGNIN_IP\'s thirty attempts', () => {
+  it('memoise one session EACH, so seven personas spend at most seven of SIGNIN_IP\'s thirty attempts', () => {
     expect(Object.keys(personaSessionMemos).sort()).toEqual(Object.keys(PERSONAS).sort());
     expect(personaSessionMemo, 'signInAsPersona\'s memo IS the design persona\'s (A-I7\'s budget, unchanged)').toBe(personaSessionMemos.design);
   });
@@ -385,25 +393,36 @@ describe('referenceUrl — the design\'s own props, injected per request (A-I8 /
 
 describe('appPlan — a real session and a real route (A-I8, A-I8.2)', () => {
   it('signs the state\'s own persona in and deep-links its route', () => {
-    expect(appPlan({ screen: 'browse' })).toEqual({ persona: 'buyer', url: '/browse', click: null });
-    expect(appPlan({ screen: 'detail' })).toEqual({ persona: 'buyer', url: '/practices/p1', click: null });
-    expect(appPlan({ screen: 'requests' })).toEqual({ persona: 'buyer', url: '/requests', click: null });
-    expect(appPlan({ screen: 'seller' })).toEqual({ persona: 'seller', url: '/seller', click: null });
-    expect(appPlan({ screen: 'admin' })).toEqual({ persona: 'design', url: '/admin', click: null });
+    expect(appPlan({ screen: 'browse' })).toEqual({ persona: 'buyer', url: '/browse' });
+    expect(appPlan({ screen: 'detail' })).toEqual({ persona: 'buyer', url: '/practices/p1' });
+    expect(appPlan({ screen: 'requests' })).toEqual({ persona: 'buyer', url: '/requests' });
+    expect(appPlan({ screen: 'seller' })).toEqual({ persona: 'seller', url: '/seller' });
+    expect(appPlan({ screen: 'admin' })).toEqual({ persona: 'design', url: '/admin' });
   });
 
   it('signs nobody in for the sign-in gate: that is what an anonymous visitor sees', () => {
-    expect(appPlan()).toEqual({ persona: null, url: '/', click: null });
-    expect(appPlan({ gate: 'signin' })).toEqual({ persona: null, url: '/', click: null });
+    expect(appPlan()).toEqual({ persona: null, url: '/' });
+    expect(appPlan({ gate: 'signin' })).toEqual({ persona: null, url: '/' });
   });
 
-  it('reaches the application gate by the design\'s own link, which no launch removal touches', () => {
-    expect(appPlan({ gate: 'apply' })).toEqual({ persona: null, url: '/', click: 'Request access' });
+  // A-S4: the design's own "Request access" link used to be this state's way in on the app.
+  // A8.1c makes that link open the SIGN-UP card for an anonymous visitor — correct product
+  // behaviour, since an applicant needs an account first — so the application gate is reached
+  // the way the spec says a verified address reaches it: by being one. Nothing is clicked on
+  // any state any more, so `appPlan` no longer carries a click at all.
+  it('reaches the application gate by signing in as an address that is verified and has not applied', () => {
+    expect(appPlan({ gate: 'apply', persona: 'verified' })).toEqual({ persona: 'verified', url: '/' });
+  });
+
+  it('carries no click for any state: every entry is an account and a route', () => {
+    for (const target of [{}, { gate: 'signin' as const }, { gate: 'apply' as const, persona: 'verified' as const }, { screen: 'browse' as const }]) {
+      expect(appPlan(target), JSON.stringify(target)).not.toHaveProperty('click');
+    }
   });
 
   it('reaches the two status gates by signing in as an account actually in that state', () => {
-    expect(appPlan({ gate: 'pending', persona: 'pending' })).toEqual({ persona: 'pending', url: '/', click: null });
-    expect(appPlan({ gate: 'rejected', persona: 'declined' })).toEqual({ persona: 'declined', url: '/', click: null });
+    expect(appPlan({ gate: 'pending', persona: 'pending' })).toEqual({ persona: 'pending', url: '/' });
+    expect(appPlan({ gate: 'rejected', persona: 'declined' })).toEqual({ persona: 'declined', url: '/' });
   });
 
   it('asks for the phone frame through the URL query, the only way left (D-I8-7)', () => {

@@ -224,7 +224,11 @@ export const PERSONAS = {
   seller: { email: 'seller@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved buyer and seller · StartUp Club', initials: 'RM', state: 'active', roles: ['buyer', 'seller'] },
   pending: { email: 'pending@practice-match.test', name: 'Pending Applicant', role: 'Applicant', initials: 'PA', state: 'pending', roles: [] },
   needsReview: { email: 'needs-review@practice-match.test', name: 'Applicant Under Review', role: 'Applicant', initials: 'AR', state: 'needs_review', roles: [] },
-  declined: { email: 'declined@practice-match.test', name: 'Declined Applicant', role: 'Applicant', initials: 'DA', state: 'declined', roles: [] }
+  declined: { email: 'declined@practice-match.test', name: 'Declined Applicant', role: 'Applicant', initials: 'DA', state: 'declined', roles: [] },
+  // A-S4 (Task S4): an address that is confirmed and has never applied. A5.4's bootstrap lands it
+  // on the Request Access card, which is how the APP reaches `gate-apply` now that A8.1c sends an
+  // anonymous visitor's "Request access" click to the sign-up card instead. Seeded by Task S3.
+  verified: { email: 'verified@practice-match.test', name: 'Verified Applicant', role: 'Applicant', initials: 'VA', state: 'verified', roles: [] }
 } as const;
 
 export type PersonaKey = keyof typeof PERSONAS;
@@ -447,18 +451,19 @@ export async function personaSignOut(cookies: PersonaCookies, baseURL = appOrigi
  * THE BUDGET. `app/auth/limits.py`'s `SIGNIN_IP = (30, 900)` counts EVERY attempt per IP, wrong
  * credentials included (`app/api/auth.py` calls `limits.hit` before it checks the password). A
  * full `app`-project run spends: one per persona that any state signs in as — `buyer`, `seller`,
- * `design`, `pending`, `declined` (`needsReview` is seeded and exported for Task I8b, and no
- * approved state uses it yet) — plus the reauth test's own standalone session, plus the three
- * form sign-ins in `signin-form.spec.ts` (the successful one, the deliberately wrong password, and
- * one the sign-out test consumes). Nine of thirty, with the memo and this file keeping it there
- * however many workers the run gets through.
+ * `design`, `pending`, `declined` and, since A-S4, `verified` (`needsReview` is seeded and exported
+ * for Task I8b, and no approved state uses it yet) — plus the reauth test's own standalone session,
+ * plus the three form sign-ins in `signin-form.spec.ts` (the successful one, the deliberately wrong
+ * password, and one the sign-out test consumes). TEN of thirty, with the memo and this file keeping
+ * it there however many workers the run gets through.
  *
  * The wrong password also counts toward `SIGNIN_EMAIL`'s ten failures per address per 15 minutes —
  * for `buyer@` only, and one of ten.
  */
 export const personaSessionMemos: Record<PersonaKey, { cookies: PersonaCookies | null }> = {
   design: { cookies: null }, buyer: { cookies: null }, seller: { cookies: null },
-  pending: { cookies: null }, needsReview: { cookies: null }, declined: { cookies: null }
+  pending: { cookies: null }, needsReview: { cookies: null }, declined: { cookies: null },
+  verified: { cookies: null }
 };
 
 /**
@@ -531,6 +536,7 @@ export interface ReachTarget {
   screen?: 'gate' | 'browse' | 'detail' | 'requests' | 'seller' | 'admin';
   /** Which gate state, when `screen` is the gate. */
   gate?: 'signin' | 'apply' | 'pending' | 'rejected';
+  // Task S5 widens this to the nine account-screen values; S4 needs none of them here.
   /** `mobile` asks for the prototype's own 390×800 phone frame, not a browser resize. */
   viewport?: 'desktop' | 'mobile';
   /** Overrides the persona the app signs in as. The reference ignores it — it has no session. */
@@ -570,8 +576,9 @@ export function personaFor(target: ReachTarget = {}): PersonaKey | null {
 }
 
 /** The account handed to the REFERENCE: the same one the app signs in as, so both targets render
- *  the same header. `null` only where the app signs nobody in either (the sign-in and application
- *  gates). A5.4 reads it and, since review round 1's I1, leaves a set `startScreen` in charge of
+ *  the same header. `null` only where the app signs nobody in either — the sign-in gate (the
+ *  application gate joined the signed-in states in A-S4). A5.4 reads it and, since review round 1's
+ *  I1, leaves a set `startScreen` in charge of
  *  WHICH screen — so one navigation puts the reference exactly where the app's deep link puts the
  *  app, with no clicking in between. */
 export function referenceMe(persona: PersonaKey | null): (typeof PERSONAS)[PersonaKey] | null {
@@ -592,16 +599,19 @@ export function referenceUrl(target: ReachTarget = {}): string {
   }))}`;
 }
 
-/** The app's plan for a target: which account to be, which URL to open, and — for the one gate
- *  state the design reaches by a link rather than by an account — what to click after. */
-export function appPlan(target: ReachTarget = {}): { persona: PersonaKey | null; url: string; click: string | null } {
+/** The app's plan for a target: which account to be, and which URL to open.
+ *
+ *  It used to carry a third field, `click`: the application gate was reached by loading `/` signed
+ *  out and pressing the design's own "Request access" link. A8.1c makes that link open the SIGN-UP
+ *  card for an anonymous visitor — an applicant needs an account before there is anything to apply
+ *  with — so the gate is reached the way the spec says a confirmed address reaches it, by being one
+ *  (`persona: 'verified'`, passed by screens.ts). No state clicks anything on entry any more, so
+ *  the field is gone rather than left at `null` for nothing to read. */
+export function appPlan(target: ReachTarget = {}): { persona: PersonaKey | null; url: string } {
   const screen = target.screen ?? 'gate';
   return {
     persona: personaFor(target),
-    url: ROUTE[screen] + (target.viewport === 'mobile' ? '?viewport=mobile' : ''),
-    // "Request access" is the design's own link on the sign-in card (`goApply`), not a prototype
-    // shortcut, so it survives the launch removal and is the honest way onto that gate.
-    click: screen === 'gate' && target.gate === 'apply' ? 'Request access' : null
+    url: ROUTE[screen] + (target.viewport === 'mobile' ? '?viewport=mobile' : '')
   };
 }
 
@@ -621,8 +631,7 @@ export async function reach(page: Page, target: ReachTarget = {}): Promise<void>
   const plan = appPlan(target);
   if (plan.persona) await signInAs(page, plan.persona, plan.url);
   else await page.goto(plan.url);
-  await mounted(page);
-  if (plan.click) await click(page, plan.click);
+  return mounted(page);
 }
 
 /**

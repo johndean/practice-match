@@ -918,12 +918,38 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
     expect(spent.state).toMatchObject({ gate: 'verify-expired', gateToken: '' });
     expect(spent.renderVals().status.title).toBe('This link is no longer valid');
 
-    // The reference has no adapter: `startGate: 'verify'` is not one of its states, and nothing
-    // is posted — which is why the oracle photographs `verify-expired` and the notice, not `verify`.
+    // The reference has no adapter: nothing is posted, so a token-bearing `verify` gate simply
+    // stays put — which is why the oracle photographs `verify-expired` and the notice, not `verify`.
     const reference: any = new Component({});
     reference.setState({ gate: 'verify', gateToken: 't' });
     reference.componentDidMount();
     expect(reference.state.gate).toBe('verify');
+  });
+
+  // A-S4 (controller ruling, 2026-09-08). A bare `/verify` — no `?token=` — used to POST an
+  // EMPTY token and take the server's own 400 on a rate-limited endpoint, which is both a wasted
+  // request and a console error on a route a signed-out visitor can simply type. There is nothing
+  // to verify without a token, and the card that says so already exists.
+  it('a /verify landing with no token shows the expired card without spending a request (A8.3)', () => {
+    const auth = fakeAuth();
+    const c2: any = new Component({ auth });
+    c2.setState({ screen: 'gate', gate: 'verify', gateToken: '' });
+    c2.componentDidMount();
+    expect(auth.verify, 'a token-less link must not reach a rate-limited endpoint').not.toHaveBeenCalled();
+    expect(c2.state).toMatchObject({ screen: 'gate', gate: 'verify-expired' });
+    expect(c2.renderVals().status.title).toBe('This link is no longer valid');
+
+    // …and a token-bearing one still posts, on the very same mount.
+    const withToken: any = new Component({ auth: fakeAuth() });
+    withToken.setState({ screen: 'gate', gate: 'verify', gateToken: 'raw-verify-token' });
+    withToken.componentDidMount();
+    expect(withToken.props.auth.verify).toHaveBeenCalledWith('raw-verify-token');
+
+    // The reference has no adapter and still needs the expired card for a token-less landing.
+    const reference2: any = new Component({});
+    reference2.setState({ screen: 'gate', gate: 'verify', gateToken: '' });
+    reference2.componentDidMount();
+    expect(reference2.state.gate).toBe('verify-expired');
   });
 
   it('a token-bearing gate wins over the active-account redirect, so a member following a reset or invitation link still sees that page (A8.3, S2 review rider)', async () => {
