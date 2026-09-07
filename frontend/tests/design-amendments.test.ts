@@ -32,7 +32,13 @@ describe('local design amendments (spec D15)', () => {
     for (const a of a1) {
       expect(a.replace, a.text).toContain('text-transform: uppercase');
       expect(a.replace, a.text).toMatch(/letter-spacing: \.0(2|05)em/);
-      expect(a.find.length - a.replace.length, `${a.text}: only the two declarations change`).toBeLessThanOrEqual(0);
+      // M6 (re-review): this was `find.length - replace.length <= 0`, which only forbade the
+      // replacement SHRINKING — it would have passed a `replace` that rewrote a colour or a font
+      // size on the same tag, provided the string grew. Assert the real property instead: strip
+      // the two declarations A1 is allowed to touch from both styles and everything left, plus
+      // every byte outside the style attribute, must be identical.
+      expect(withoutTypography(a.replace), `${a.text}: A1 changed something other than text-transform/letter-spacing`)
+        .toBe(withoutTypography(a.find));
     }
     // The two elements the ruling leaves alone: `{{ c.value }}` is V3-only (no V2 counterpart, spec
     // D6) and `{{ resultHeadline }}` already equals V2's (V3's only occurrence is the mobile list's).
@@ -72,10 +78,66 @@ describe('local design amendments (spec D15)', () => {
     }
     expect(seen).toBe(24);
   });
-  it('LOCAL_AMENDMENTS.md carries one table row per amendment group, and no row without amendments', () => {
+  // M4/M6 (re-review): the `find`-count contract had no explicit expectation anywhere — the
+  // general guard is `applyAmendments`' own `throw`, reachable only through the byte-identity
+  // case above, so a future refactor to a plain `replace` chain would drop it silently and the
+  // failure would point at the wrong test. It is also the case that states spec D15's contract
+  // as implemented: the count is measured at the point the amendment is APPLIED, in list order,
+  // because A2.5's `find` is the text A2.4 produces and does not exist in the pristine file.
+  it('every `find` occurs exactly `count` times at the point it is applied, in list order (spec D15)', () => {
+    let out = pristine;
+    for (const a of amendments()) {
+      expect(out.split(a.find).length - 1, `${a.id}: find count at the point of application`).toBe(a.count);
+      out = out.split(a.find).join(a.replace);
+    }
+    expect(out).toBe(readFileSync(AMENDED, 'utf8'));
+    // The ordering dependency itself, named: A2.5 matches A2.4's output, so it cannot be counted
+    // against the pristine file and the two may never be reordered.
+    const list = amendments();
+    const a24 = list.find((a) => a.id === 'A2.4')!; const a25 = list.find((a) => a.id === 'A2.5')!;
+    expect(list.indexOf(a24)).toBeLessThan(list.indexOf(a25));
+    expect(pristine.split(a25.find).length - 1, 'A2.5 is expected to be absent from the pristine file').toBe(0);
+    expect(a24.replace.trim() + '\n', 'A2.5 must match what A2.4 leaves behind').toContain(a25.find.trim());
+  });
+  it('applyAmendments refuses a list whose `find` count does not match, naming the amendment', () => {
+    const bogus = { id: 'A0', date: '2026-09-07', ruling: 'a fabricated entry', find: 'View full market report', replace: 'x', count: 2 };
+    expect(() => applyAmendments(pristine, [bogus])).toThrow(/A0: expected 2 match\(es\).*found 1/);
+  });
+  // M7 (re-review): `setDecl`'s removal path (`value === null`) is never taken by A1 against the
+  // two design files — V2 declares `text-transform`/`letter-spacing` wherever V3 does — so the
+  // rule "take V2's VALUES, including its absence" was asserted by nothing. This is that case,
+  // on two synthetic files: V2 lacks a declaration V3 has, so the amendment must delete it.
+  it('A1 removes a declaration V3 has and V2 does not (setDecl\'s removal path)', () => {
+    const v2 = '<div style="font-size: 24px; color: red">Heading</div>';
+    const v3 = '<div style="font-size: 24px; text-transform: uppercase; color: red">Heading</div>';
+    const a1 = deriveTypographyB(v2, v3);
+    expect(a1, 'the removal path produced no amendment: V3 keeps a declaration V2 does not have').toHaveLength(1);
+    expect(a1[0].find).toBe('style="font-size: 24px; text-transform: uppercase; color: red">Heading');
+    expect(a1[0].replace, 'the declaration V2 does not carry must be gone').toBe('style="font-size: 24px; color: red">Heading');
+    expect(applyAmendments(v3, a1)).toBe(v2);
+  });
+  // M5 (re-review): the row regex was `^\|\s*(A\d+)\s*\|`, which required the pipe immediately
+  // after the digits — it matched `| A1 |`, `| A2 |`, `| A3 |`, `| A4 |` and skipped all four
+  // `| A2.2 |`–`| A2.5 |` rows. The file held eight rows and the test read four, so an `A2.6`
+  // row with no code (or an `A2.6` amendment with no row) was invisible and the duplicate guard
+  // covered only the top-level ids. The id set is now compared in full, both ways.
+  it('LOCAL_AMENDMENTS.md carries exactly one table row per amendment id (A1 collapsed to one)', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
-    const rows = [...md.matchAll(/^\|\s*(A\d+)\s*\|/gm)].map((m) => m[1]);
-    expect(new Set(rows).size, 'a group is documented twice').toBe(rows.length);
-    expect(new Set(rows)).toEqual(new Set(amendments().map((a) => a.id.split('.')[0])));
+    const rows = [...md.matchAll(/^\|\s*(A[\d.]+)\s*\|/gm)].map((m) => m[1]);
+    expect(new Set(rows).size, 'an amendment is documented twice').toBe(rows.length);
+    // A1 derives 24 edits (`A1.1`…`A1.24`) from ONE ruling and is documented as one row; every
+    // other id is literal and must appear in the file exactly as `amendments()` spells it.
+    expect(new Set(rows)).toEqual(new Set(amendments().map((a) => (a.id.startsWith('A1.') ? 'A1' : a.id))));
   });
 });
+
+/**
+ * `a.find`/`a.replace` with the two declarations A1 is allowed to change removed, and the
+ * whitespace those removals leave behind normalised — `setDecl` appends a declaration after a
+ * space and deletes it with its leading space, so a legitimate edit differs from its source by
+ * whitespace at the seam and by nothing else.
+ */
+function withoutTypography(s: string): string {
+  return s.replace(/(text-transform|letter-spacing):\s*[^;"]*;?/g, '')
+    .replace(/\s+/g, ' ').replace(/ ;/g, ';').replace(/ "/g, '"').trim();
+}

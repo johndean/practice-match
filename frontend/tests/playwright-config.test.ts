@@ -155,12 +155,30 @@ describe('playwright.config.ts pins Chromium\'s raster', () => {
   });
 
   it('runs the determinism guard: capture-determinism.spec.ts is in the reference project', () => {
-    const [projStart, projEnd] = block(sk, 'projects', 0, sk.length, 1);
-    const reference = src.slice(projStart, projEnd + 1).split('\n').find((l) => l.includes("name: 'reference'")) ?? '';
     expect(
-      reference,
+      project('reference'),
       'the reference project no longer matches capture-determinism.spec.ts, so ' +
       '`npm run test:visual:baselines` stops running the behavioural guard on its own output.'
     ).toContain('capture-determinism');
   });
+
+  /**
+   * The source of ONE project object out of the `projects` array, found by brace-matching
+   * rather than by reading a single line (re-review M11a): the four projects happen to be
+   * one-liners today, and a reformat that split the `reference` object across lines would have
+   * failed the case above on a perfectly correct config. Brace matching runs over the
+   * skeleton, where strings are blanked, so the `name:` search itself reads `src`.
+   */
+  function project(name: string): string {
+    const [projStart, projEnd] = block(sk, 'projects', 0, sk.length, 1);
+    const wanted = new RegExp(`name\\s*:\\s*['\"]${name}['\"]`);
+    for (let i = projStart; i <= projEnd; i++) {
+      if (sk[i] !== '{') continue;
+      const [start, end] = matchPair(sk, i);
+      const object = src.slice(start, end + 1);
+      if (wanted.test(object)) return object;
+      i = end;   // a project that is not the one asked for: skip its nested braces whole
+    }
+    throw new Error(`no project named '${name}' in playwright.config.ts`);
+  }
 });

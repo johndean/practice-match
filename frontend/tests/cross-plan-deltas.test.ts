@@ -13,6 +13,7 @@ const IDENTITY = '2026-09-05-practice-match-identity-access-email.md';
 const MAP_ENGINES = '2026-09-05-practice-match-map-engines.md';
 const CENSUS = '2026-09-05-practice-match-census-data-layer.md';
 const SEED = '2026-09-06-practice-match-seed-listings.md';
+const GOOGLE = '2026-09-05-practice-match-google-maps-greenfield.md';
 const BROWSE_V3 = '2026-09-06-browse-v3-mobile.md';
 const IDENTITY_SPEC = '2026-09-05-identity-access-email-design.md';
 const MAP_ENGINES_SPEC = '2026-09-05-map-engines-design.md';
@@ -121,6 +122,28 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
     expect(read(MAP_ENGINES)).toContain('Census SP3-A `017`–`059`');
   });
 
+  // Re-review M8/M13a (2026-09-07): one sequence means the FILE NAMES have to agree with it too.
+  // `007_license_audit.sql` ALTERs and REFERENCES `dataset_registry`, which the same plan creates
+  // ten numbers later in `017_census_registry.sql`, so `scripts/migrate.py` could never have run
+  // it — and the census plan's own D14 reserves `003`–`009` for Platform-level migrations with no
+  // dependency on later tables. The Google plan's `009_google_registry.sql` is the same class of
+  // defect from the other side: the map-engines plan records that `080` supersedes it while the
+  // Google plan still said "Create".
+  it('every plan names its migration files consistently with that sequence (M8, M13a)', () => {
+    const census = read(CENSUS);
+    expect(census, '`007` sorts before the `017` that creates dataset_registry, so it cannot run').not.toContain('007_license_audit');
+    expect(census).toContain('migrations/020_license_audit.sql');
+    expect(census, 'D14 must record `020` as taken so the next renumber sees it').toContain('`020` is taken');
+
+    const google = read(GOOGLE);
+    const orphans = google.split('\n').filter((l) => l.includes('009_google_registry') && !l.includes('superseded by `080_map_engines.sql`'));
+    expect(orphans, '`009_google_registry.sql` may be named only beside its supersession note').toEqual([]);
+
+    const identity = read(IDENTITY);
+    expect(identity, '`012` is `012_api_tokens.sql`; `application` is created by `011_applications_roles.sql`').not.toContain('012_applications.sql');
+    expect(identity).toContain('`migrations/011_applications_roles.sql` **in place**');
+  });
+
   // Same sequence, in the SPECS. A reader meets whichever document they open first, and three
   // of them still carried the superseded ranges after V12 corrected the four plans (I2).
   it('the three specs state the same one migration sequence as the plans', () => {
@@ -211,6 +234,80 @@ describe('the Browse V3 plan describes what shipped', () => {
     expect(md).not.toContain('the Map-engines plan §12');
     expect(md).not.toContain('the Browse V3 spec §"Legally load-bearing"');
     expect(md).toContain('`LEAFLET` tile-constant note');
+  });
+
+  // I2 / rulings 4a–4d (2026-09-07). Task V13's fix round swept option A out of the two
+  // cross-plan documents and pinned the correction (above), but not out of the plan that OWNS
+  // the decision. Its four audit tables are the surface a reviewer reads INSTEAD of the prose,
+  // so an unmarked "option A" row there teaches a rule John withdrew — including two rows that
+  // called the bundle's C14 byte-identical claim factually incorrect, which option B vindicated.
+  it('no audit-table row cites option A as standing (I2)', () => {
+    const rows = [...read(BROWSE_V3).matchAll(/^\|.*option A\).*$/gm)].map((m) => m[0]);
+    expect(rows, 'an audit-table row still states option A').toEqual([]);
+  });
+
+  // Ruling 4d: V12 Step 11's commit template carried the superseded migration number in PLAIN
+  // TEXT, which the backticked assertion in the case above could not see.
+  it('states the one migration sequence in prose as well as in code spans (4d)', () => {
+    expect(read(BROWSE_V3)).not.toMatch(/migrations start at `?015`?/);
+  });
+
+  // M1/M2: D20 — the mosaic redraw semantics John confirmed ("I AGREE with your decision") — was
+  // indexed nowhere in the document that maps decisions to tasks and tests; A.6 was still titled
+  // D1–D14 and its D16 row counted 25 edits where every other consumer of that number says 24.
+  // M9: V17's Step 4 still prescribed the condition-based wait its own Outcome note refuted.
+  it('indexes every spec decision through D21, counts A1 at 24, and supersedes what was refuted (M1, M2, M9)', () => {
+    const md = read(BROWSE_V3);
+    expect(md).toContain('### A.6 Spec decisions D1–D21');
+    expect(md).toContain('D20');
+    expect(md, 'A1 is 24 edits in the spec, LOCAL_AMENDMENTS.md, CLAUDE.md and two test assertions').not.toContain('25 edits');
+    expect(md, 'V5\'s watcher block still describes the pre-D20 superset redraw').toContain('Superseded by D20 (John confirmed 2026-09-07)');
+    expect(md, 'V17 Step 4 still prescribes the refuted condition-based wait').toContain('Superseded by the Outcome note above (recorded 2026-09-07)');
+  });
+
+  // M3: V15 replaced the blanket `not.toContain('ListingsMap')` ban with the per-line "deleted in
+  // Browse V3" filter (spec D19). Three plan sites still described the retired rule as current —
+  // re-executing V12 Step 5 from that text would write a line that FAILS the shipped test.
+  it('describes its own ListingsMap drift rule as V15 left it (M3)', () => {
+    const md = read(BROWSE_V3);
+    expect(md).toContain('the token only inside a "deleted in Browse V3" clause');
+    expect(md.split('superseded by Task V15 (spec D19)').length - 1, 'both V12 sites need the marker').toBeGreaterThanOrEqual(2);
+  });
+});
+
+// I1 (2026-09-07): A2.2–A2.5 edit John's approved design — three of them deletions — and existed
+// only in `LOCAL_AMENDMENTS.md`, `design-amendments.ts` and the SDD working directory, while the
+// spec decision that owns them still said `selectMarker` was untouched. D15 makes the amendment
+// list the retirement register for a re-issued bundle, so the spec is the text a future
+// implementer reads while deciding what to undo.
+describe('the durable record names every design amendment that shipped', () => {
+  it('spec D17 records A2.2–A2.5 and no longer says every other handler is untouched (I1)', () => {
+    const spec = readSpec(BROWSE_V3_SPEC);
+    expect(spec).toContain('A2.5');
+    expect(spec).not.toContain('leaving `selectMarker` and every other handler untouched');
+    expect(spec, 'the wired handler C13 fixed must be named as the one that stayed').toContain('`mobileVals.selectMarker`');
+  });
+
+  it('spec D15 states the find-count contract the implementation actually honours (M4)', () => {
+    const spec = readSpec(BROWSE_V3_SPEC);
+    expect(spec).toContain('at the point it is applied');
+    expect(spec, 'A2.5 matches A2.4\'s output, so no count can be measured against the pristine file').not.toContain('occurs exactly `count` times in the pristine file');
+  });
+
+  it('the spec keeps its decision records in one sequence (ruling 8)', () => {
+    const spec = readSpec(BROWSE_V3_SPEC);
+    expect(spec.indexOf('- **D8 —')).toBeLessThan(spec.indexOf('- **D9 —'));
+    expect(spec.indexOf('- **D9 —')).toBeLessThan(spec.indexOf('- **D10 —'));
+  });
+
+  it('CLAUDE.md names all four amendment families, not A1 alone (I1)', () => {
+    const claude = readFileSync(join(ROOT, 'CLAUDE.md'), 'utf8');
+    for (const id of ['A1', 'A2', 'A3', 'A4']) expect(claude, `amendment family ${id} is not named in CLAUDE.md`).toContain(id);
+  });
+
+  it('the plan\'s V14 block lists the amendments that landed after A2 (I1)', () => {
+    const md = read(BROWSE_V3);
+    for (const id of ['A2.2', 'A2.3', 'A2.4', 'A2.5']) expect(md, `${id} appears in no plan task`).toContain(id);
   });
 });
 
