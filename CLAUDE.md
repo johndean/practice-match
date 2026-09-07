@@ -55,7 +55,7 @@ Prototype jump bar markup (`prototypeBar`, already off in production) · "Protot
 ```bash
 docker compose -f docker-compose.dev.yml up -d && poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov-fail-under=100   # backend gate, exactly as CI runs it
 cd frontend && npm run typecheck && npm test && npm run build                  # frontend gates
-cd frontend && npm run test:visual:baselines && npm run test:e2e            # oracles from V3, then visual + DOM + smoke
+docker compose -f docker-compose.dev.yml up -d && cd frontend && npm run test:visual:baselines && npm run test:e2e   # oracles from V3, then visual + DOM + smoke (the app project starts the API against the compose Postgres/Redis)
 scripts/deploy.sh QA && scripts/deploy.sh production                           # after the gate
 railway logs --service api --environment QA --lines 50
 railway variable list --service api --environment QA --json | python3 -c 'import sys,json; print("\n".join(sorted(json.load(sys.stdin))))'   # names only — never pipe values to a terminal

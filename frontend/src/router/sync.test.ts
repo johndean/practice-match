@@ -94,16 +94,26 @@ describe('guard with permissions', () => {
     expect(guard({ ...base, auth: true }, { screen: 'admin', adminTab: 'users' })).toEqual({ apply: { screen: 'admin', adminTab: 'users' }, pending: null });
   });
 
-  it('honours MARKET_DATA_PUBLIC through the context', () => {
-    expect(guard({ ...base, auth: true }, { screen: 'browse' }, { me: null, marketDataPublic: true })).toEqual({ apply: { screen: 'gate', gate: 'unavailable' }, pending: null });
+  it('a signed-in visitor with no principal at all is refused, not let through', () => {
+    expect(guard({ ...base, auth: true }, { screen: 'browse' }, { me: null })).toEqual({ apply: { screen: 'gate', gate: 'unavailable' }, pending: null });
   });
 
-  // Nothing routes to a screen outside ROUTE_PERMS today — `routeToPatch` produces exactly the
-  // six the table and the gate cover — but an unguarded patch must not be a silent denial
-  // either: a screen with no permission behind it is not a member route.
-  it('a patch with no screen, and a screen the table does not name, are not guarded', () => {
+  // FAIL-CLOSED (A-I7.2, review Important 1). A non-`gate` screen absent from ROUTE_PERMS is
+  // still a MEMBER route, so a screen added to routes.ts and forgotten here stays behind the
+  // sign-in gate instead of becoming reachable while signed out. Nothing routes to one today —
+  // `routeToPatch` produces exactly the six the table and the gate cover — and this is the pin
+  // that keeps that harmless as I8 and V9 add routes.
+  it('a screen the table does not name is still a member route', () => {
+    expect(guard({ ...base, auth: false }, { screen: 'mystery' })).toEqual({ apply: { screen: 'gate', gate: 'signin' }, pending: { screen: 'mystery' } });
+    expect(guard({ ...base, auth: false }, { screen: 'mystery' }, { me: null })).toEqual({ apply: { screen: 'gate', gate: 'signin' }, pending: { screen: 'mystery' } });
+  });
+
+  it('applies an unnamed screen once signed in — the matrix has nothing to say about it', () => {
+    expect(guard({ ...base, auth: true }, { screen: 'mystery' }, { me: buyer })).toEqual({ apply: { screen: 'mystery' }, pending: null });
+  });
+
+  it('never guards an empty patch — there is no screen being asked for', () => {
     expect(guard({ ...base, auth: false }, {}, { me: null })).toEqual({ apply: {}, pending: null });
-    expect(guard({ ...base, auth: false }, { screen: 'verify' }, { me: null })).toEqual({ apply: { screen: 'verify' }, pending: null });
   });
 
   it('maps every member route to the permission the API guards it with', () => {

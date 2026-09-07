@@ -48,12 +48,12 @@ describe('resolveTargets', () => {
       expect(api({ PW_APP_URL: 'https://qa.foundation.vin' })).toBeUndefined();
     });
 
-    it('carries the docker-compose.dev.yml defaults .env.example and tests/conftest.py already use', () => {
+    it('carries the docker-compose.dev.yml defaults tests/conftest.py already uses', () => {
       expect(api()!.env).toEqual({
         DATABASE_URL: 'postgresql://pm:pm_dev_pw@localhost:5433/practice_match',
         REDIS_URL: 'redis://localhost:6380/0',
         ENVIRONMENT: 'test',
-        API_SECRET_KEY: 'pw_only_secret_change_me'
+        API_SECRET_KEY: 'test_only_secret_change_me'
       });
     });
 

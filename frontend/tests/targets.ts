@@ -44,16 +44,19 @@ export interface Targets {
  * `docker-compose.dev.yml`, `.env.example` and `tests/conftest.py` already agree on, so
  * `docker compose -f docker-compose.dev.yml up -d` is the only local precondition. Each entry is
  * a DEFAULT: whatever the process environment holds for that name wins, which is how CI's own
- * `frontend` job env (its service ports and `API_SECRET_KEY`) takes over unchanged. Forwarding
- * only these four rather than spreading all of `process.env` costs nothing — Playwright passes
- * the whole process environment through to a web server anyway — and keeps the config object
- * from carrying every unrelated variable on the machine.
+ * `frontend` job env (its service ports and `API_SECRET_KEY`) takes over unchanged. Resolving
+ * each name HERE, rather than handing Playwright `env: API_ENV_DEFAULTS`, is what makes that
+ * true: Playwright merges `{ ...DEFAULT_ENVIRONMENT_VARIABLES, ...process.env, ...webServer.env }`
+ * — the spec's `env` WINS over the process environment — so a literal spread would have let
+ * these local defaults beat CI's job env (A-I7.2). Forwarding only these four also keeps the
+ * config object from carrying every unrelated variable on the machine, at no cost: Playwright
+ * passes the whole process environment through regardless.
  */
 const API_ENV_DEFAULTS: Record<string, string> = {
   DATABASE_URL: 'postgresql://pm:pm_dev_pw@localhost:5433/practice_match',
   REDIS_URL: 'redis://localhost:6380/0',
   ENVIRONMENT: 'test',
-  API_SECRET_KEY: 'pw_only_secret_change_me'
+  API_SECRET_KEY: 'test_only_secret_change_me'
 };
 
 export function resolveTargets(env: NodeJS.ProcessEnv, ports: { app: number; ref: number; cs: number; api: number }): Targets {

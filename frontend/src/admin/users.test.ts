@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from 'vitest';
 import { Component } from '../logic.js';
-import { NOTE_REQUIRED, toUserRows, type Cell, type UserItem, type UsersUi } from './users';
+import { ACTIONS, NOTE_REQUIRED, PILLS, toUserRows, type Cell, type UserItem, type UsersUi } from './users';
 
 // ---------------------------------------------------------------------------------------
 // The design's OWN `adminVals()` output is the oracle for every style string below, so
@@ -50,19 +50,19 @@ function recordingUi(note: string | null = 'a reviewer note') {
   };
   return { ui, calls };
 }
-const rowsFor = (items: UserItem[]) => toUserRows(items, recordingUi().ui);
+const rowsFor = (items: UserItem[]): Cell[][] => toUserRows(items, recordingUi().ui);
 
 describe('toUserRows renders the design\'s Users table from the live payload', () => {
   it('reproduces the applicant and affiliation cells the approved design shows', () => {
     const [row] = rowsFor([PRIYA]);
-    expect(row.cells[0]).toEqual(DESIGN[0][0]);      // "Dr. Priya Raghavan" / "Texas A&M, 2016 · TX license"
-    expect(row.cells[1]).toEqual(DESIGN[0][1]);      // employer / “intent”
-    expect(row.cells[2]).toEqual(DESIGN[0][2]);      // "Pending", warn
+    expect(row[0]).toEqual(DESIGN[0][0]);      // "Dr. Priya Raghavan" / "Texas A&M, 2016 · TX license"
+    expect(row[1]).toEqual(DESIGN[0][1]);      // employer / “intent”
+    expect(row[2]).toEqual(DESIGN[0][2]);      // "Pending", warn
   });
 
   it('pluralises a multi-state licence exactly as the design does', () => {
     const [row] = rowsFor([item({ name: 'Dr. Marcus Bell', fields: { school_year: 'Colorado State, 2009', license_state: 'TX, NM' } })]);
-    expect(row.cells[0]).toEqual(DESIGN[1][0]);      // "Colorado State, 2009 · TX, NM licenses"
+    expect(row[0]).toEqual(DESIGN[1][0]);      // "Colorado State, 2009 · TX, NM licenses"
   });
 
   it('replaces the intent quote with the reviewer hint when the application carries a flag', () => {
@@ -70,9 +70,9 @@ describe('toUserRows renders the design\'s Users table from the live payload', (
       name: 'Dr. Alan Cho', state: 'needs_review', flags: ['employer_keyword'],
       fields: { school_year: 'Ohio State, 2004', license_state: 'TX', employer: 'Regional medical director, 14-hospital group', intent: 'never rendered while a flag stands' }
     })]);
-    expect(row.cells[0]).toEqual(DESIGN[2][0]);
-    expect(row.cells[1]).toEqual(DESIGN[2][1]);      // "Affiliation flagged: employer appears to be a consolidator."
-    expect(row.cells[2]).toEqual(DESIGN[2][2]);      // "Needs review", bad
+    expect(row[0]).toEqual(DESIGN[2][0]);
+    expect(row[1]).toEqual(DESIGN[2][1]);      // "Affiliation flagged: employer appears to be a consolidator."
+    expect(row[2]).toEqual(DESIGN[2][2]);      // "Needs review", bad
   });
 
   it('appends the free-text affiliation to the employer, and shows the Approved pill', () => {
@@ -80,31 +80,47 @@ describe('toUserRows renders the design\'s Users table from the live payload', (
       name: 'Dr. Rachel Mendes', state: 'active', affiliation_label: 'StartUp Club',
       fields: { school_year: 'Texas A&M, 2014', license_state: 'TX', employer: 'Relief veterinarian', intent: 'Buy within 18 months.' }
     })]);
-    expect(row.cells[0]).toEqual(DESIGN[3][0]);      // "Dr. Rachel Mendes" / "Texas A&M, 2014 · TX license"
-    expect(row.cells[1].main).toBe('Relief veterinarian · StartUp Club');
-    expect(row.cells[2]).toEqual(DESIGN[3][2]);      // "Approved", ok
+    expect(row[0]).toEqual(DESIGN[3][0]);      // "Dr. Rachel Mendes" / "Texas A&M, 2014 · TX license"
+    expect(row[1].main).toBe('Relief veterinarian · StartUp Club');
+    expect(row[2]).toEqual(DESIGN[3][2]);      // "Approved", ok
   });
 
   it('names a flag the design has no copy for by the flag itself, rather than inventing prose', () => {
     const [row] = rowsFor([item({ flags: ['disposable_domain'] })]);
-    expect(row.cells[1].sub).toBe('Affiliation flagged: disposable_domain');
+    expect(row[1].sub).toBe('Affiliation flagged: disposable_domain');
   });
 
   it('renders an application with no fields at all without inventing any', () => {
     const [row] = rowsFor([item({ fields: null, affiliation_label: null })]);
-    expect(row.cells[0]).toMatchObject({ hasMain: true, main: 'Dr. Priya Raghavan', hasSub: false, sub: '' });
-    expect(row.cells[1]).toMatchObject({ hasMain: false, main: '', hasSub: false, sub: '' });
+    expect(row[0]).toMatchObject({ hasMain: true, main: 'Dr. Priya Raghavan', hasSub: false, sub: '' });
+    expect(row[1]).toMatchObject({ hasMain: false, main: '', hasSub: false, sub: '' });
   });
 
-  it('gives a seller application the "Seller" kicker, and a buyer none', () => {
-    expect(rowsFor([item({ kind: 'seller' })])[0]).toMatchObject({ hasKicker: true, kicker: 'Seller' });
-    expect(rowsFor([PRIYA])[0]).toMatchObject({ hasKicker: false, kicker: '' });
+  // A-I7.2 (review Important 3): the rows ARE the design's rows — an array of cell arrays,
+  // exactly `sets.<tab>.rows`, which `adminVals()`'s own
+  // `set.rows.map((cells, i) => ({ cells, style }))` then wraps with the grid and the last-row
+  // border. Anything else loses `style` and re-flows the table at maxDiffPixels: 0. There is no
+  // "Seller" kicker: the V3 Admin Users tab has no such element, and how a seller application is
+  // distinguished there is a Rev 3 design item.
+  it('returns the design\'s own row shape — four cells per row, no wrapper', () => {
+    const rows = rowsFor([PRIYA, item({ kind: 'seller' })]);
+    expect(rows).toHaveLength(2);
+    for (const row of rows) {
+      expect(Array.isArray(row)).toBe(true);
+      expect(row).toHaveLength(DESIGN[0].length);
+      expect(Object.keys(row[0])).toEqual(Object.keys(DESIGN[0][0]));
+    }
+    // `kind` alone changes nothing that is rendered (the cells' action closures are per-call, so
+    // the buttons are compared by label rather than by identity).
+    const [buyer, seller] = [rowsFor([PRIYA])[0], rowsFor([item({ kind: 'seller' })])[0]];
+    expect(seller.slice(0, 3)).toEqual(buyer.slice(0, 3));
+    expect(seller[3].actions.map((a) => [a.label, a.style])).toEqual(buyer[3].actions.map((a) => [a.label, a.style]));
   });
 });
 
 describe('the pill and the decision buttons, per account state', () => {
-  const pillOf = (state: string) => rowsFor([item({ state })])[0].cells[2];
-  const buttonsOf = (state: string) => rowsFor([item({ state })])[0].cells[3];
+  const pillOf = (state: string) => rowsFor([item({ state })])[0][2];
+  const buttonsOf = (state: string) => rowsFor([item({ state })])[0][3];
 
   it('carries the design\'s tones', () => {
     expect(pillOf('pending')).toMatchObject({ pill: 'Pending', pillStyle: PILL.warn });
@@ -114,14 +130,23 @@ describe('the pill and the decision buttons, per account state', () => {
     expect(pillOf('revoked')).toMatchObject({ pill: 'Revoked', pillStyle: PILL.bad });
   });
 
-  it('falls back to the state itself, muted, for an ACCOUNT_STATE the ruled set does not name', () => {
-    // `unverified`, `verified` and `declined` are real states with no ruled pill (the five above
-    // are what the brief ratified). The state key is shown rather than prose nobody approved.
-    expect(pillOf('declined')).toMatchObject({ pill: 'declined', pillStyle: PILL.mute });
+  it('shows the state itself, muted, for the three ACCOUNT_STATES the design has no pill for', () => {
+    // `unverified`, `verified` and `declined` are real states with no ruled label, so the state
+    // key is shown rather than prose nobody approved. Listed in PILLS rather than left to the
+    // fallback, because `tests/test_docs.py` pins PILLS's keys against `ACCOUNT_STATES` (M3).
     expect(pillOf('unverified')).toMatchObject({ pill: 'unverified', pillStyle: PILL.mute });
+    expect(pillOf('verified')).toMatchObject({ pill: 'verified', pillStyle: PILL.mute });
+    expect(pillOf('declined')).toMatchObject({ pill: 'declined', pillStyle: PILL.mute });
   });
 
-  it('offers exactly the transitions app/api/admin_users.py allows from each state', () => {
+  it('covers every account state the API can report, and fails soft on one it cannot yet', () => {
+    expect(Object.keys(PILLS)).toHaveLength(8);                       // pinned against ACCOUNT_STATES from pytest
+    expect(pillOf('hibernating')).toMatchObject({ pill: 'hibernating', pillStyle: PILL.mute });
+    expect(buttonsOf('hibernating')).toMatchObject({ hasActions: false, actions: [] });
+    expect(Object.keys(ACTIONS)).toEqual(['pending', 'needs_review', 'active', 'suspended']);
+  });
+
+  it('offers the buttons the approved design shows for each state (a legal subset of the API\'s transitions)', () => {
     expect(buttonsOf('pending').actions.map((a) => [a.label, a.style])).toEqual([['Approve', BTN.primary], ['Decline', BTN.danger], ['Request info', BTN.plain]]);
     expect(buttonsOf('needs_review').actions.map((a) => [a.label, a.style])).toEqual([['Approve', BTN.primary], ['Decline', BTN.danger]]);
     expect(buttonsOf('active').actions.map((a) => [a.label, a.style])).toEqual([['Suspend', BTN.plain], ['Revoke', BTN.danger]]);
@@ -137,7 +162,7 @@ describe('a decision is a note, sometimes a re-authentication, then the post', (
   const press = async (state: string, label: string, note: string | null = 'a reviewer note') => {
     const { ui, calls } = recordingUi(note);
     const row = toUserRows([item({ state })], ui)[0];
-    await row.cells[3].actions.find((a) => a.label === label)!.go();
+    await row[3].actions.find((a) => a.label === label)!.go();
     return calls;
   };
 

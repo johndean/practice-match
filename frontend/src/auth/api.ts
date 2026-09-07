@@ -60,6 +60,17 @@ async function payload<T>(res: Response): Promise<T> {
   return (await res.json()) as T;
 }
 
+/**
+ * The flags the client has to honour — today just `MARKET_DATA_PUBLIC` (A-I7.2).
+ *
+ * Public, and public by nature: the flag is a statement ABOUT anonymous visitors, so requiring a
+ * credential to read it would be circular. It throws like every other read; `useMe().load()` is
+ * where the fail-closed default lives, because that is the caller that has to keep rendering.
+ */
+export async function config(): Promise<{ market_data_public: boolean }> {
+  return payload<{ market_data_public: boolean }>(await call('GET', '/config'));
+}
+
 /** 200 + the `/api/me` payload, and the `pm_session` / `pm_csrf` cookies with it. */
 export async function signIn(email: string, password: string): Promise<Me> {
   return payload<Me>(await call('POST', '/auth/signin', { email, password }));

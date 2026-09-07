@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AuthError, apply, csrfToken, me, reauth, signIn, signOut, signUp, verify } from './api';
+import { AuthError, apply, config, csrfToken, me, reauth, signIn, signOut, signUp, verify } from './api';
 
 interface Call { url: string; init: { method: string; credentials: string; headers: Record<string, string>; body?: string } }
 
@@ -114,12 +114,29 @@ describe('me()', () => {
   });
 
   it('is null when signed out — a 401 here is the answer, not a failure', async () => {
-    stubFetch({ status: 401, body: { error: { code: 'UNAUTHENTICATED', message: 'Sign in to continue.' } } });
+    stubFetch({ status: 401, body: { error: { code: 'UNAUTHORIZED', message: 'Sign in to continue.' } } });   // app/auth/deps.py's Unauthenticated.code
     expect(await me()).toBeNull();
   });
 
   it('still throws on anything else, so a broken API is never read as "signed out"', async () => {
     stubFetch({ status: 500, body: { error: { code: 'INTERNAL', message: 'boom' } } });
     await expect(me()).rejects.toMatchObject({ code: 'INTERNAL' });
+  });
+});
+
+// A-I7.2 / review Important 4: `MARKET_DATA_PUBLIC` had no runtime source, so the client's twin
+// of the matrix could not honour the one rule that is not the matrix.
+describe('config()', () => {
+  it('GETs /api/config, with no CSRF header on a read', async () => {
+    const calls = stubFetch({ status: 200, body: { market_data_public: true } });
+    expect(await config()).toEqual({ market_data_public: true });
+    expect(calls[0].url).toBe('/api/config');
+    expect(calls[0].init.method).toBe('GET');
+    expect(calls[0].init.headers['X-CSRF-Token']).toBeUndefined();
+  });
+
+  it('throws like every other read when the endpoint is broken — the caller decides the default', async () => {
+    stubFetch({ status: 500, body: { error: { code: 'INTERNAL', message: 'boom' } } });
+    await expect(config()).rejects.toMatchObject({ code: 'INTERNAL' });
   });
 });

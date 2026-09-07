@@ -52,8 +52,17 @@ export function cell(main: string | null, sub?: string | null, pill?: string | n
 /** `app/api/admin_users.py`'s `TRANSITIONS` keys — the staff decisions, by their API names. */
 export type Action = 'approve' | 'decline' | 'request_info' | 'suspend' | 'reinstate' | 'revoke';
 
+// ---------------------------------------------------------------------------------------
+// The next three constants are JSON, on ONE LINE each and double-quoted, because
+// `tests/test_docs.py::test_the_admin_users_tables_match_the_api` parses them out of this file
+// and compares them with `app/api/admin_users.py` (review Minor 3): `NOTE_REQUIRED` against its
+// namesake, every action in `ACTIONS[state]` against `TRANSITIONS` (the design shows a legal
+// SUBSET), and `PILLS`'s keys against `ACCOUNT_STATES`. A fifth note-required action added on
+// the server would otherwise have this table POST a blank note and take a 422 at click time.
+// ---------------------------------------------------------------------------------------
+
 /** The four `admin_users.decide` refuses with `NoteRequired` when the note is blank. */
-export const NOTE_REQUIRED: readonly Action[] = ['decline', 'request_info', 'suspend', 'revoke'];
+export const NOTE_REQUIRED: readonly Action[] = ["decline", "request_info", "suspend", "revoke"];
 
 // Which permission each decision is made under. Revoke has its own (`users.revoke`) precisely
 // because it — and only it — is in `permissions.REAUTH`, so which button needs a step-up is
@@ -63,16 +72,11 @@ const PERM_OF: Record<Action, Permission> = {
   suspend: 'users.decide', reinstate: 'users.decide', revoke: 'users.revoke'
 };
 
-// `app/api/admin_users.py`'s TRANSITIONS, read from the target state's side. A state with no
-// entry (`unverified`, `verified`, `declined`, `revoked`) offers no button — `revoke` is
-// reachable from all but `revoked` on the API, but the design's table is a REVIEW queue and the
-// brief ratifies these four rows.
-const ACTIONS: Record<string, Action[]> = {
-  pending: ['approve', 'decline', 'request_info'],
-  needs_review: ['approve', 'decline'],
-  active: ['suspend', 'revoke'],
-  suspended: ['reinstate', 'revoke']
-};
+// The buttons the approved design shows, per state — a legal SUBSET of `TRANSITIONS`, not all of
+// it: the API also allows `revoke` from `unverified`, `verified`, `pending`, `needs_review` and
+// `declined`, which the design's review queue does not offer. A state with no entry here offers
+// no button at all.
+export const ACTIONS: Record<string, Action[]> = {"pending": ["approve", "decline", "request_info"], "needs_review": ["approve", "decline"], "active": ["suspend", "revoke"], "suspended": ["reinstate", "revoke"]};
 
 const LABEL: Record<Action, string> = {
   approve: 'Approve', decline: 'Decline', request_info: 'Request info',
@@ -81,14 +85,10 @@ const LABEL: Record<Action, string> = {
 
 const TONE: Partial<Record<Action, string>> = { approve: 'primary', decline: 'danger', revoke: 'danger' };
 
-/** `[label, tone]` per account state, from the design's own Users rows. */
-const PILLS: Record<string, [string, string]> = {
-  pending: ['Pending', 'warn'],
-  needs_review: ['Needs review', 'bad'],
-  active: ['Approved', 'ok'],
-  suspended: ['Suspended', 'info'],
-  revoked: ['Revoked', 'bad']
-};
+// `[label, tone]` for every `ACCOUNT_STATES` entry, in that order. Five carry the design's own
+// labels and tones (its Users rows show Pending, Needs review, Approved and Revoked); the other
+// three have no ruled label, so they show the state key, muted — absent beats faked.
+export const PILLS: Record<string, [string, string]> = {"unverified": ["unverified", "mute"], "verified": ["verified", "mute"], "pending": ["Pending", "warn"], "needs_review": ["Needs review", "bad"], "declined": ["declined", "mute"], "active": ["Approved", "ok"], "suspended": ["Suspended", "info"], "revoked": ["Revoked", "bad"]};
 
 // The design's admin Users table shows one flagged applicant, and this is its sentence. A flag
 // with no approved copy is named by the flag itself rather than by prose nobody has ruled —
@@ -120,13 +120,6 @@ export interface UsersUi {
   decide(item: UserItem, action: Action, note: string): Promise<void>;
 }
 
-export interface UserRow {
-  /** A seller application says so above the applicant's name; a buyer's needs no label. */
-  hasKicker: boolean;
-  kicker: string;
-  cells: Cell[];
-}
-
 const text = (value: unknown): string => (typeof value === 'string' ? value : '');
 const join = (parts: string[]): string => parts.filter(Boolean).join(' · ');
 
@@ -154,27 +147,35 @@ function decision(item: UserItem, action: Action, ui: UsersUi): () => Promise<vo
   };
 }
 
-export function toUserRows(items: UserItem[], ui: UsersUi): UserRow[] {
+/**
+ * Exactly the shape of `sets.<tab>.rows` in `adminVals()` — an array of cell arrays. The design's
+ * own `set.rows.map((cells, i) => ({ cells, style }))` is what wraps them with the grid
+ * (`grid-template-columns`) and the last row's `border-bottom: 0`, so returning anything else
+ * would lose `style` and re-flow the table at `maxDiffPixels: 0` (review Important 3).
+ *
+ * There is no "Seller" kicker: the V3 Admin Users tab has no such element and neither does its
+ * `cell()`, so rendering one would mean editing a screen that must stay byte-identical to V2.
+ * How a seller application is distinguished on that tab is a Rev 3 design item.
+ */
+export function toUserRows(items: UserItem[], ui: UsersUi): Cell[][] {
   return items.map((item) => {
     const fields = item.fields ?? {};
+    // The fallback is for a state the API learns to report before this table learns to show it:
+    // pytest pins PILLS's keys against today's `ACCOUNT_STATES`, so it cannot be reached by any
+    // state that exists now.
     const [pill, tone] = PILLS[item.state] ?? [item.state, 'mute'];
     const actions = ACTIONS[item.state];
     const flagged = item.flags.length > 0;
-    return {
-      hasKicker: item.kind === 'seller',
-      kicker: item.kind === 'seller' ? 'Seller' : '',
-      cells: [
-        cell(item.name, join([text(fields.school_year), licence(text(fields.license_state))])),
-        cell(
-          join([text(fields.employer), item.affiliation_label ?? '']),
-          flagged
-            ? `Affiliation flagged: ${item.flags.map((flag) => FLAG_TEXT[flag] ?? flag).join(' ')}`
-            : quote(text(fields.intent))
-        ),
-        cell(null, null, pill, tone),
-        cell(null, null, null, null, actions ? actions.map((action) => A(LABEL[action], TONE[action], decision(item, action, ui))) : null)
-      ]
-    };
+    return [
+      cell(item.name, join([text(fields.school_year), licence(text(fields.license_state))])),
+      cell(
+        join([text(fields.employer), item.affiliation_label ?? '']),
+        flagged
+          ? `Affiliation flagged: ${item.flags.map((flag) => FLAG_TEXT[flag] ?? flag).join(' ')}`
+          : quote(text(fields.intent))
+      ),
+      cell(null, null, pill, tone),
+      cell(null, null, null, null, actions ? actions.map((action) => A(LABEL[action], TONE[action], decision(item, action, ui))) : null)
+    ];
   });
 }
-

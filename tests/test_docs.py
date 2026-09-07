@@ -2,6 +2,7 @@ import json
 import re
 import tomllib
 from pathlib import Path
+from typing import cast
 
 import yaml
 
@@ -459,8 +460,14 @@ def test_claude_md_gate_includes_the_dom_oracle():
     assert "--project=app" in scripts["test:e2e"], scripts["test:e2e"]
     # …and no spec filter, or it would not be all three suites.
     assert "spec.ts" not in scripts["test:e2e"], scripts["test:e2e"]
-    ops = [line for line in text.splitlines() if line.startswith("cd frontend &&") and "test:" in line]
+    # `in`, not `startswith`: A-I7.2 prefixes the e2e line with `docker compose … up -d &&`,
+    # because the `app` project now starts the real API against the compose Postgres/Redis. The
+    # assertion is unchanged — the block must still run the DOM oracle, not the pixel gate alone.
+    ops = [line for line in text.splitlines() if "cd frontend &&" in line and "test:" in line]
     assert any("npm run test:e2e" in line for line in ops), "the Common operations block still runs the pixel gate alone"
+    assert any("docker compose -f docker-compose.dev.yml up -d" in line for line in ops), (
+        "the Common operations e2e line no longer starts the compose Postgres/Redis the app project's API needs"
+    )
 
 
 # The two plan sites that print the coverage-exclusion list as prose. Both are historical
@@ -499,3 +506,34 @@ def test_the_playwright_persona_password_default_matches_seed_persona():
     assert seeded, "scripts/seed_persona.py no longer defines DEFAULT_PASSWORD"
     assert presented, "frontend/tests/harness.ts no longer defines PERSONA_DEFAULT_PASSWORD"
     assert presented.group(1) == seeded.group(1)
+
+
+def _users_ts_literal(name: str) -> object:
+    """One of the three exported JSON literals in `frontend/src/admin/users.ts`.
+
+    They are written as JSON on one line each precisely so this test can read them without a
+    TypeScript parser; the file says so beside them."""
+    source = (ROOT / "frontend" / "src" / "admin" / "users.ts").read_text()
+    match = re.search(rf"^export const {name}(?:: [^=]+)? = (.+);$", source, re.MULTILINE)
+    assert match, f"frontend/src/admin/users.ts: {name} is not a one-line exported JSON literal"
+    return json.loads(match.group(1))
+
+
+def test_the_admin_users_tables_match_the_api():
+    """Review Minor 3: the Admin Users table's three decision tables were hand-transcribed from
+    `app/api/admin_users.py` with nothing watching them.
+
+    A fifth note-required action added on the server would have left the UI POSTing a blank note
+    and taking a 422 at click time; an action offered from a state `TRANSITIONS` refuses would
+    have taken a 409 the same way; and an account state the API can report with no pill would
+    have rendered its raw key. The design deliberately offers a SUBSET of the transitions (the
+    API also allows `revoke` from five other states), so what is pinned is that the subset is
+    legal — not that it is complete."""
+    from app.api.admin_users import ACCOUNT_STATES, NOTE_REQUIRED, TRANSITIONS
+
+    assert _users_ts_literal("NOTE_REQUIRED") == list(NOTE_REQUIRED)
+    assert sorted(cast("dict[str, object]", _users_ts_literal("PILLS"))) == sorted(ACCOUNT_STATES)
+    for state, offered in cast("dict[str, list[str]]", _users_ts_literal("ACTIONS")).items():
+        for action in offered:
+            assert action in TRANSITIONS, f"the Admin Users table offers {action!r}, which app/api/admin_users.py has no transition for"
+            assert state in TRANSITIONS[action][0], f"the Admin Users table offers {action!r} from {state!r}, which the API refuses"

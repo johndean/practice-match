@@ -172,17 +172,26 @@ export function personaCredentials(env: NodeJS.ProcessEnv = process.env): { emai
  * The first call spends the one attempt and keeps the cookies it produced; every later call
  * re-adds them to the new context instead.
  *
+ * It memoises only a jar that actually holds `pm_session` (review M4). Memoising on
+ * `memo === null` alone meant an EMPTY jar counted as "signed in", so every later call would
+ * re-add nothing and the whole run would proceed anonymous — with no failure anywhere near the
+ * cause. Throwing here puts it at the cause.
+ *
  * Pure: the memo is passed in and handed back, and both context operations are arguments, which
  * is what lets harness.test.ts pin the budget without a browser.
  */
-export async function personaSession<C>(
+export async function personaSession<C extends { name: string }>(
   memo: C[] | null,
   jar: { cookies: () => Promise<C[]>; addCookies: (cookies: C[]) => Promise<void> },
   signIn: () => Promise<void>
 ): Promise<C[]> {
   if (memo === null) {
     await signIn();
-    return jar.cookies();
+    const cookies = await jar.cookies();
+    if (!cookies.some((cookie) => cookie.name === 'pm_session')) {
+      throw new Error(`persona sign-in left no pm_session cookie on the context (got: ${cookies.map((c) => c.name).join(', ') || 'nothing'})`);
+    }
+    return cookies;
   }
   await jar.addCookies(memo);
   return memo;
@@ -191,8 +200,20 @@ export async function personaSession<C>(
 type PersonaCookies = Awaited<ReturnType<BrowserContext['cookies']>>;
 
 // Module state, so the memo is per worker process — Playwright gives each test a fresh
-// BrowserContext, and a fresh context holds no cookies.
-let personaCookies: PersonaCookies | null = null;
+// BrowserContext, and a fresh context holds no cookies. A holder rather than a bare `let`, so
+// `forgetPersonaSession` has something to clear that a unit test can hand it.
+const held: { cookies: PersonaCookies | null } = { cookies: null };
+
+/**
+ * Drops the memo, so the next `signInAsPersona` signs in again (A-I7.2).
+ *
+ * For I8's sign-out tests: the memo is the WHOLE context jar and never expires, so once a test
+ * signs out, the memoised `pm_session` names a revoked session and re-adding it to the next
+ * context would silently run every later test anonymous.
+ */
+export function forgetPersonaSession(memo: { cookies: unknown[] | null } = held): void {
+  memo.cookies = null;
+}
 
 /**
  * Signs the page's context in as the design persona, then navigates to `url`.
@@ -205,8 +226,8 @@ let personaCookies: PersonaCookies | null = null;
  */
 export async function signInAsPersona(page: Page, url = '/'): Promise<void> {
   const context = page.context();
-  personaCookies = await personaSession<PersonaCookies[number]>(
-    personaCookies,
+  held.cookies = await personaSession<PersonaCookies[number]>(
+    held.cookies,
     { cookies: () => context.cookies(), addCookies: (cookies) => context.addCookies(cookies) },
     async () => {
       const response = await page.request.post('/api/auth/signin', { data: personaCredentials() });

@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { booted, click, jump, prepare, signInAsPersona, waitMap } from './harness';
+import { booted, click, jump, personaCredentials, prepare, signInAsPersona, waitMap } from './harness';
 import { SCREENS } from './screens';
 
 const ROUTES = ['/', '/browse', '/browse?tab=market', '/browse?tab=listings', '/practices/p1', '/requests', '/seller', '/admin?tab=data'];
@@ -524,5 +524,35 @@ test.describe('harness: the design persona signs in against the real API (A-I7)'
     );
     expect(me.email).toBe('design@practice-match.test');
     expect(me.roles).toEqual(['admin', 'buyer', 'seller', 'staff']);
+
+    // The STATE-CHANGING half (A-I7.2, review Important 2). Everything above is exempt from
+    // `deps.check_origin_and_csrf` — sign-in has no session yet and GET is never checked — so
+    // none of it can catch the proxy rewriting the Host header. This can: `POST /api/auth/reauth`
+    // is a cookie-session state change, so the API compares the browser's `Origin`
+    // (http://localhost:5173) against `settings.origins` (empty here) plus `str(request.url)`,
+    // which is built from the Host header. It answers 200 only while Vite preserves it. With
+    // `changeOrigin: true` the API sees http://localhost:8017 and refuses with ORIGIN.
+    //
+    // It also exercises the double-submit the app itself will use: `pm_csrf` read from
+    // `document.cookie` by script, exactly as `src/auth/api.ts`'s `csrfToken()` does.
+    const reauth = await page.evaluate(async (password) => {
+      const match = /(?:^|;\s*)pm_csrf=([^;]*)/.exec(document.cookie);
+      const response = await fetch('/api/auth/reauth', {
+        method: 'POST',
+        credentials: 'same-origin',
+        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': decodeURIComponent(match ? match[1] : '') },
+        body: JSON.stringify({ password })
+      });
+      return { csrfWasReadable: !!match, status: response.status, body: (await response.json()) as { status?: string; error?: { code?: string } } };
+    }, personaCredentials().password);
+
+    expect(reauth.csrfWasReadable, 'script could not read pm_csrf, so the app cannot echo the double-submit value').toBe(true);
+    expect(
+      reauth.status,
+      `POST /api/auth/reauth answered ${reauth.status} (${reauth.body.error?.code ?? 'no code'}) instead of 200. ` +
+      'An ORIGIN refusal here means Vite is rewriting the Host header — a `changeOrigin` on the ' +
+      '/api proxy — so deps.check_origin_and_csrf builds a different origin than the browser sent.'
+    ).toBe(200);
+    expect(reauth.body.status).toBe('reauthenticated');
   });
 });

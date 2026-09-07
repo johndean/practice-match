@@ -21,5 +21,9 @@ export function can(perm: Permission, me: Me | null, opts: { marketDataPublic?: 
   // The one arm that is not the matrix (`allowed()`'s MARKET_DATA_PUBLIC branch): it widens
   // `market.read` for ANONYMOUS visitors only. `applicant` is deliberately not in it.
   if (perm === 'market.read' && opts.marketDataPublic && roles.includes('anonymous')) return true;
+  // `MATRIX[perm]` THROWS for a permission that is not in the table, and that is deliberate:
+  // I8 calls `can()` from `logic.js`, which is untyped, so a typo there is a TypeError the
+  // Playwright `pageerror` gate fails on immediately. Do not turn this into a silent `false` —
+  // that would hide a UI element with no failure anywhere (review note on can.ts).
   return (MATRIX[perm] as readonly string[]).some((r) => roles.includes(r));
 }

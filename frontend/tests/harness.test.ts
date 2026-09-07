@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BLANK_GIF, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, personaCredentials, personaSession } from './harness';
+import { BLANK_GIF, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, forgetPersonaSession, personaCredentials, personaSession } from './harness';
 
 // The stubbed basemap tile must be TRANSPARENT, not merely blank-looking (controller ruling
 // 2026-09-07). MarketMapV3.jsx:190 adds the Esri label tile layer with `pane: "shadowPane"`
@@ -144,16 +144,17 @@ describe('the design persona credentials (A-I7)', () => {
 });
 
 describe('personaSession spends one sign-in per worker process (A-I7)', () => {
-  const jar = (held: string[]) => {
-    const added: string[][] = [];
-    return { added, cookies: () => Promise.resolve(held), addCookies: (c: string[]) => { added.push(c); return Promise.resolve(); } };
+  const C = (name: string) => ({ name, value: 'opaque' });
+  const jar = (held: { name: string }[]) => {
+    const added: { name: string }[][] = [];
+    return { added, cookies: () => Promise.resolve(held), addCookies: (c: { name: string }[]) => { added.push(c); return Promise.resolve(); } };
   };
 
   it('signs in on the first call and memoises the cookies the context ended up holding', async () => {
-    const j = jar(['pm_session', 'pm_csrf']);
+    const j = jar([C('pm_session'), C('pm_csrf')]);
     let signIns = 0;
-    const memo = await personaSession<string>(null, j, () => { signIns += 1; return Promise.resolve(); });
-    expect(memo).toEqual(['pm_session', 'pm_csrf']);
+    const memo = await personaSession(null, j, () => { signIns += 1; return Promise.resolve(); });
+    expect(memo.map((c) => c.name)).toEqual(['pm_session', 'pm_csrf']);
     expect(signIns).toBe(1);
     expect(j.added, 'nothing is re-added on the call that did the signing in').toEqual([]);
   });
@@ -161,9 +162,26 @@ describe('personaSession spends one sign-in per worker process (A-I7)', () => {
   it('re-adds the memo on every later call instead of spending another attempt against SIGNIN_IP', async () => {
     const j = jar([]);
     let signIns = 0;
-    const memo = await personaSession<string>(['pm_session', 'pm_csrf'], j, () => { signIns += 1; return Promise.resolve(); });
-    expect(memo).toEqual(['pm_session', 'pm_csrf']);
+    const memo = await personaSession([C('pm_session'), C('pm_csrf')], j, () => { signIns += 1; return Promise.resolve(); });
+    expect(memo.map((c) => c.name)).toEqual(['pm_session', 'pm_csrf']);
     expect(signIns, 'a second sign-in spends one of SIGNIN_IP\'s 30 attempts per 900 s for nothing').toBe(0);
-    expect(j.added).toEqual([['pm_session', 'pm_csrf']]);
+    expect(j.added.map((batch) => batch.map((c) => c.name))).toEqual([['pm_session', 'pm_csrf']]);
+  });
+
+  // Review M4: memoising on `memo === null` alone meant an EMPTY jar counted as "signed in", so
+  // every later call would re-add nothing and the whole run would proceed anonymous with no
+  // failure anywhere near the cause. Only a jar that actually holds the session cookie is worth
+  // remembering; anything else throws here, where the cause is.
+  it('refuses to memoise a jar with no pm_session', async () => {
+    await expect(personaSession(null, jar([C('pm_csrf')]), () => Promise.resolve())).rejects.toThrow(/pm_session/);
+    await expect(personaSession(null, jar([]), () => Promise.resolve())).rejects.toThrow(/pm_session/);
+  });
+});
+
+describe('forgetPersonaSession (A-I7.2)', () => {
+  it('drops the memo, so I8\'s sign-out tests cannot re-add a revoked session to the next context', () => {
+    const held: { cookies: unknown[] | null } = { cookies: [{ name: 'pm_session' }] };
+    forgetPersonaSession(held);
+    expect(held.cookies).toBeNull();
   });
 });
