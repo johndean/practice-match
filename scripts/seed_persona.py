@@ -285,7 +285,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     print(f"[seed_persona] oracle personas: {oracles}")
     print(f"[seed_persona] gate-state personas: {', '.join(f'{e} ({s})' for e, s, _ in STATE_PERSONAS)}")
     identity = ", ".join(f"{e} ({s})" for e, s, _ in IDENTITY_STATE_PERSONAS)
-    print(f"[seed_persona] identity-screen personas: {identity}, {INVITED_EMAIL} ({INVITED_STATE}, no usable password)")
+    print(f"[seed_persona] identity-screen personas: {identity}, {INVITED_EMAIL} ({INVITED_STATE}, invite-only sign-in)")
     print(f"[seed_persona] fixture tokens: {FIXTURE_TOKEN_COUNT} per purpose ({', '.join(sorted(FIXTURE_TOKENS))}), recreated this run")
     return 0
 
