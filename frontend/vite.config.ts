@@ -14,10 +14,11 @@ export default defineConfig({
       provider: 'v8',
       // MEASURED: every hand-written file under `src/` except the exclusions below, plus
       // `tests/design-amendments.ts` — the engine that edits the approved design derives 24 of
-      // the 31 amendments and is held to the same 100 % as `src/` (re-review M7). That is 14
-      // files as of 2026-09-07 (F1), the two most recent additions being `src/dc-logic.js` and
-      // `src/lib/leaflet.js`, which moved out of the exclusions below once Browse V3's
-      // final-review fix round gave them behaviour tests.
+      // the 31 amendments and is held to the same 100 % as `src/` (re-review M7). The set is
+      // whatever `src/**` holds, so it grows with the code and no count here stays true for
+      // long: it was 14 files when F1 landed on main (2026-09-07), the two most recent
+      // additions being `src/dc-logic.js` and `src/lib/leaflet.js`, which moved out of the
+      // exclusions below once Browse V3's final-review fix round gave them behaviour tests.
       include: ['src/**/*.{ts,js,vue}', 'tests/design-amendments.ts'],
       // NOT measured, and why — every entry is generated, verbatim-ported, types-only or a test
       // double, with nothing left that is merely inconvenient to test: App.vue and pseudo.css
