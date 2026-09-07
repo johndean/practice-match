@@ -154,6 +154,38 @@ async def test_engine_errors_never_carry_bound_parameters(db_ready):
     assert "victim-address@example.org" not in str(info.value)
 
 
+async def test_dispose_all_drops_another_loops_entries_without_awaiting_them():
+    """The false arm of `if loop is current:` (app/db.py:77 and :82) — the only branch in
+    this module the suite never reached, because every other test disposes the loop it is
+    running on (P14 C4, 2026-09-07). An entry cached by a DIFFERENT and very possibly
+    already-closed loop must be dropped from the cache untouched: asyncpg and redis-py
+    connections are bound to the loop that opened them, so awaiting that loop's
+    `dispose()`/`aclose()` from this one is exactly what round 4's ruling forbids."""
+
+    class NeverAwaited:
+        def __init__(self) -> None:
+            self.touched = False
+
+        async def dispose(self) -> None:  # AsyncEngine's disposal API
+            self.touched = True
+
+        async def aclose(self) -> None:  # Redis's disposal API
+            self.touched = True
+
+    other = asyncio.new_event_loop()
+    other.close()  # the realistic shape: the loop that cached these has already gone
+    engine, client = NeverAwaited(), NeverAwaited()
+    db._engines[other] = {"postgresql+asyncpg://other/db": engine}
+    db._redis_clients[other] = {"redis://other/0": client}
+
+    await db.dispose_all()
+
+    assert other not in db._engines, "another loop's engines must be dropped from the cache"
+    assert other not in db._redis_clients, "another loop's redis clients must be dropped from the cache"
+    assert engine.touched is False, "another loop's engine must never be disposed from this loop"
+    assert client.touched is False, "another loop's redis client must never be closed from this loop"
+
+
 # --- I4 fix round 1, Important 5: `sync_conn()` is pooled -------------------------------------
 # An un-pooled `psycopg2.connect()` measured 32.8 ms on the dev stack and EVERY guarded endpoint
 # opened one, which is 59 % of `GET /api/me`. These pin the pool that removes it.
@@ -292,8 +324,14 @@ async def test_dispose_all_returns_while_a_connection_is_still_checked_out(db_re
     assert db.sync_pool_in_use() == 0
 
 
-# `dispose_all()`'s other-loop arm (`if loop is current` false — app/db.py) is covered by
-# tests/auth/test_branch_edges.py::test_dispose_all_drops_foreign_loop_entries_without_disposing_them.
-# P14 added a stub-based twin of it here; the merge (2026-09-07) kept the broader one — it uses a
-# live foreign loop and real AsyncEngine/Redis objects and also proves the current loop's own
-# entries ARE disposed. Do not re-add a second copy: it would double-cover the same two edges.
+# `dispose_all()`'s other-loop arm (`if loop is current` false — app/db.py) is covered TWICE, on
+# purpose, and neither copy is redundant (merge fix round 1, 2026-09-07 — the reviewer's point):
+#   * `test_dispose_all_drops_another_loops_entries_without_awaiting_them`, above, is P14's
+#     HERMETIC unit test — an already-closed foreign loop and two stub objects, no Postgres and no
+#     Redis — so the arm stays covered when the suite runs with no services up.
+#   * `tests/auth/test_branch_edges.py::test_dispose_all_drops_foreign_loop_entries_without_disposing_them`
+#     is this branch's INTEGRATION twin — a live foreign loop on its own thread with real
+#     AsyncEngine/Redis objects (`db_ready`), which additionally proves the current loop's own
+#     entries ARE disposed.
+# Different in kind, not duplicates: delete either and the arm loses a property the other never
+# asserted. Keep both.

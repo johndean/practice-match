@@ -472,7 +472,8 @@ PLANS_QUOTING_THE_COVERAGE_EXCLUSIONS = (
 )
 F1_NOTE = (
     "(Re-ratified 2026-09-07, F1: `src/dc-logic.js` and `src/lib/**` left the exclusion list "
-    "once their tests landed; the measured set is 14 files at 100 %.)"
+    "once their tests landed; every hand-written file under `src/**` is measured at 100 %, so "
+    "the set grows with the code — 14 files when F1 landed on main.)"
 )
 
 
