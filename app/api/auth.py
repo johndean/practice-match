@@ -416,7 +416,9 @@ async def signout(request: Request, response: Response, principal: Self) -> dict
     # KeyError — a 500 — for the bearer callers the guard now refuses outright.)
     raw = request.cookies.get("pm_session") or ""
     with closing(sync_conn()) as conn, conn:
-        S.revoke(conn, sync_redis(), raw)
+        h, account_id = S.revoke(conn, raw)
+    # AFTER the commit (re-review O2): see `sessions.revoke`.
+    S.revoke_cache(sync_redis(), h, account_id)
     clear_session_cookies(response)
     return {"status": "signed_out"}
 
@@ -548,10 +550,12 @@ async def change(body: ChangeIn, request: Request, response: Response, principal
         set_session_cookies(response, raw)
         audit.write(conn, actor=principal, action="password.change", target_type="account", target_id=principal.account_id, request=request)
         enqueue(conn, to=_email_of(conn, principal.account_id), template="password_changed", params={}, idempotency_key=_outbox_key())
-    # AFTER the commit (concern 2, ruled 2026-09-07). `revoke_all_cache` touches only the sessions
-    # `revoke_all` actually revoked, which is what leaves the one just created above cached —
-    # NEW-3's `/api/me` budget for the member who has only this second changed their password.
-    S.revoke_all_cache(r, principal.account_id, revoked)
+    # AFTER the commit (concern 2, ruled 2026-09-07). `keep` is the session created above: the
+    # sweep clears every other principal of this account — including any left over from a session
+    # that was already dead (re-review O1) — while the rotation's replacement stays cached and
+    # indexed, which is NEW-3's `/api/me` budget for the member who has only this second changed
+    # their password.
+    S.revoke_all_cache(r, principal.account_id, revoked, keep={S.hash_id(raw)})
     return {"status": "changed"}
 
 

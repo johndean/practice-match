@@ -176,17 +176,32 @@ def set_reauth(conn: psycopg2.extensions.connection, r: redis_sync.Redis, p: Pri
     r.delete(f"session:{p.session_hash}")
 
 
-def revoke(conn: psycopg2.extensions.connection, r: redis_sync.Redis, raw: str) -> None:
+def revoke(conn: psycopg2.extensions.connection, raw: str) -> tuple[str, UUID | None]:
+    """Ends ONE session and returns `(its id hash, the account that owned it or None)`.
+    **Postgres only** — `revoke_cache` is the other half, for after the commit.
+
+    Split for the reason `revoke_all` is (re-review O2, ruled 2026-09-07): deleting the cached
+    principal and stamping the tombstone inside the caller's transaction left a window in which a
+    concurrent `resolve` of the same cookie read `revoked_at IS NULL`, outranked the stamp and
+    re-cached a live principal — a signed-out cookie that went on working for up to `CACHE_TTL`.
+    """
     h = hash_id(raw)
     with conn.cursor() as cur:
         cur.execute("UPDATE session SET revoked_at = now() WHERE id_hash = %s RETURNING account_id", (h,))
         row = cur.fetchone()
+    return h, (cast("UUID", row[0]) if row is not None else None)
+
+
+def revoke_cache(r: redis_sync.Redis, h: str, account_id: UUID | None) -> None:
+    """The Redis half of `revoke`, for AFTER the caller's transaction commits. `account_id` is
+    None when the raw id matched no row, and then there is no index to prune — the tombstone is
+    still stamped, which costs nothing and keeps the pair total."""
     r.delete(f"session:{h}")
     # Sign-out carries the same race invalidate_account does: a request that read this
     # principal a moment ago may still be on its way to _cache_set (NEW-1).
     r.set(_session_tombstone(h), _now_us(r), ex=CACHE_TTL)
-    if row:
-        r.srem(f"account:{row[0]}:sessions", h)  # prune the index too, not just the cached principal (I5)
+    if account_id is not None:
+        r.srem(f"account:{account_id}:sessions", h)  # prune the index too, not just the cached principal (I5)
 
 
 def invalidate_account(r: redis_sync.Redis, account_id: UUID) -> None:
@@ -221,26 +236,42 @@ def revoke_all(conn: psycopg2.extensions.connection, account_id: UUID) -> frozen
         return frozenset(cast("str", row[0]) for row in cur.fetchall())
 
 
-def revoke_all_cache(r: redis_sync.Redis, account_id: UUID, revoked: Collection[str]) -> None:
+def revoke_all_cache(r: redis_sync.Redis, account_id: UUID, revoked: Collection[str],
+                     keep: Collection[str] = frozenset()) -> None:
     """The Redis half of `revoke_all`, for AFTER the caller's transaction commits.
 
-    Per revoked session, rather than `invalidate_account`'s sweep of the whole account index, and
-    deliberately so: `app.api.auth.change` revokes every session and issues a NEW one in the SAME
-    transaction, so a post-commit sweep would delete the cache entry that rotation just wrote and,
-    with a fresh account tombstone stamped after it, decline to write it again for the full
-    `CACHE_TTL` — the `/api/me` budget regression NEW-3 was fixed to stop. `revoked` is exactly the
-    set of sessions whose state changed, so there is nothing else to touch.
+    Clears the whole account index MINUS `keep`, plus the hashes `revoke_all` named. Both halves
+    of that matter (re-review O1, ruled 2026-09-07):
 
-    Each revoked session gets the same tombstone `revoke()` leaves for a single sign-out, and the
+    * **The index sweep** is what leaves no residue. `revoke_all` only matches rows with
+      `revoked_at IS NULL`, so a session already signed out — or whose row the nightly purge has
+      since deleted — is not in the set it returns; clearing only that set left such a principal
+      cached for the rest of its `CACHE_TTL`, and `deps.current_principal` returns a cache hit
+      BEFORE any expiry or state check, so that cookie went on working through a suspension.
+    * **`keep`** is the hashes the caller created inside the same transaction. `app.api.auth.change`
+      revokes every session and issues a NEW one, and a blind sweep would delete the cache entry
+      that rotation just wrote — the `/api/me` budget regression NEW-3 was fixed to stop. The kept
+      hash also stays IN the index, so the next invalidation can still find it.
+
+    Every revoked session gets the same tombstone `revoke()` leaves for a single sign-out, and the
     ACCOUNT tombstone is stamped as well: that is what stops a principal READ before the commit
     from being installed after it, which no ordering can prevent.
+
+    All of it travels in ONE pipeline (re-review O5), so the cost is constant — the index read, the
+    clock, and a single batch — instead of one round trip per session as the tombstones used to be.
     """
+    index = f"account:{account_id}:sessions"
+    indexed = {h.decode() if isinstance(h, bytes) else h for h in cast("set[bytes | str]", r.smembers(index))}
+    doomed = (indexed | set(revoked)) - set(keep)
     stamp = _now_us(r)
-    if revoked:
-        # One DELETE and one SREM for the whole set, not a round trip each (M10).
-        r.delete(*(f"session:{h}" for h in revoked))
-        r.srem(f"account:{account_id}:sessions", *revoked)
-        for h in revoked:
-            # One SET each: a tombstone carries its own TTL, which MSET cannot express.
-            r.set(_session_tombstone(h), stamp, ex=CACHE_TTL)
-    r.set(_account_tombstone(account_id), stamp, ex=CACHE_TTL)
+    pipe = r.pipeline()
+    if doomed:
+        pipe.delete(*(f"session:{h}" for h in doomed))
+        # SREM of every member empties the set, and Redis drops an empty set — so when nothing is
+        # kept the index goes with it, exactly as `invalidate_account`'s DELETE of it did.
+        pipe.srem(index, *doomed)
+        for h in doomed:
+            # One SET each, but pipelined: a tombstone carries its own TTL, which MSET cannot express.
+            pipe.set(_session_tombstone(h), stamp, ex=CACHE_TTL)
+    pipe.set(_account_tombstone(account_id), stamp, ex=CACHE_TTL)
+    pipe.execute()

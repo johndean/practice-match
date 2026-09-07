@@ -652,7 +652,9 @@ async def test_malformed_addresses_do_not_share_one_rate_limit_bucket(client, co
 
 # --- fix round 1, concern 2 (ruled 2026-09-07): every `revoke_all` clears Redis AFTER its commit ---
 
-REVOKE_ALL_SITES = ("signout_all", "reset", "accept_invite", "change", "decide_revoke")
+# `signout` joins the five in fix round 2 (re-review O2): it was the one remaining pre-commit
+# Redis mutation of session state in the app.
+REVOKE_ALL_SITES = ("signout", "signout_all", "reset", "accept_invite", "change", "decide_revoke")
 
 
 @pytest.mark.parametrize("site", REVOKE_ALL_SITES)
@@ -675,12 +677,13 @@ async def test_every_revoke_all_site_clears_the_cache_only_after_the_commit(clie
 
     uncommitted: list[str] = []
     dropped: list[str] = []
-    real_delete = redis.delete
 
-    def delete(*keys):
+    def inspect(*keys):
+        """Every `session:{h}` key belonging to THIS account that is about to be dropped, checked
+        against what a second connection can see."""
         for key in keys:
             name = key.decode() if isinstance(key, bytes) else str(key)
-            if not name.startswith("session:"):
+            if not name.startswith("session:") or name.endswith(":revoked"):
                 continue
             with conn.cursor() as cur:
                 cur.execute("SELECT revoked_at FROM session WHERE id_hash = %s AND account_id = %s", (name.split(":", 1)[1], aid))
@@ -690,11 +693,37 @@ async def test_every_revoke_all_site_clears_the_cache_only_after_the_commit(clie
             dropped.append(name)
             if row[0] is None:
                 uncommitted.append(name)
+
+    # The probe sits at the DELETE itself rather than on any one function, so it survives a
+    # refactor of the two halves — which it has already had to: `revoke_all_cache` now batches
+    # every mutation into a pipeline (re-review O5), so the keys arrive in `command_stack` at
+    # `execute()` rather than through the client's own `delete`. `revoke_cache` (single sign-out)
+    # still calls `delete` directly, so both shapes are watched.
+    real_delete, real_pipeline = redis.delete, redis.pipeline
+
+    def delete(*keys):
+        inspect(*keys)
         return real_delete(*keys)
 
-    monkeypatch.setattr(redis, "delete", delete)
+    def pipeline(*a, **kw):
+        pipe = real_pipeline(*a, **kw)
+        real_execute = pipe.execute
 
-    if site == "signout_all":
+        def execute(*ea, **ekw):
+            for args, _options in list(pipe.command_stack):
+                if args and str(args[0]).upper() in ("DEL", "UNLINK"):
+                    inspect(*args[1:])
+            return real_execute(*ea, **ekw)
+
+        pipe.execute = execute
+        return pipe
+
+    monkeypatch.setattr(redis, "delete", delete)
+    monkeypatch.setattr(redis, "pipeline", pipeline)
+
+    if site == "signout":
+        assert (await client.post("/api/auth/signout", headers=auth_headers(cookies, hdr))).status_code == 200
+    elif site == "signout_all":
         assert (await client.post("/api/auth/signout-all", headers=auth_headers(cookies, hdr))).status_code == 200
     elif site == "reset":
         token = T.issue_email_token(conn, aid, "reset", timedelta(hours=1))
@@ -718,5 +747,33 @@ async def test_every_revoke_all_site_clears_the_cache_only_after_the_commit(clie
         cur.execute("SELECT count(*) FROM session WHERE account_id=%s AND revoked_at IS NULL", (aid,))
         # `password/change` rotates: it revokes every session and issues ONE new one in the same
         # transaction, which must survive — that is what NEW-3 fixed and what a post-commit sweep
-        # of the whole account index would undo.
-        assert cur.fetchone()[0] == (1 if site == "change" else 0)
+        # of the whole account index would undo. `signout` ends only the cookie it was called with,
+        # so the second session this test created is still live.
+        assert cur.fetchone()[0] == (1 if site in ("change", "signout") else 0)
+
+
+async def test_password_change_leaves_exactly_its_new_session_cached(client, conn, redis, member):
+    """O1 at the route, as a REGRESSION PIN rather than a RED: it already held before the sweep
+    was added (the rotation revokes both live sessions, so clearing the named set cleared them
+    both), and the whole point of `keep=` is that it goes on holding. The sweep must take every
+    principal of the account EXCEPT the one the rotation just issued — which stays cached and
+    indexed, not merely re-readable (NEW-3's `/api/me` budget for the member who has this second
+    changed their password)."""
+    def cached_principals():
+        """`session:{h}` only — `session:{h}:revoked` is a tombstone, not a cached principal."""
+        keys = (k.decode() if isinstance(k, bytes) else k for k in redis.keys("session:*"))
+        return {k for k in keys if not k.endswith(":revoked")}
+
+    aid, cookies, hdr = member(("buyer",), email="rotation-sweep@example.org")
+    S.create(conn, redis, aid, None, None)  # a second device, cached
+    assert len(cached_principals()) == 2
+
+    r = await client.post("/api/auth/password/change", headers=auth_headers(cookies, hdr),
+                          json={"current": PW, "new": NEW_PW})
+    assert r.status_code == 200
+    new_raw = r.cookies["pm_session"]
+    new_hash = S.hash_id(new_raw)
+
+    assert cached_principals() == {f"session:{new_hash}"}    # the two old principals are gone
+    assert redis.sismember(f"account:{aid}:sessions", new_hash)
+    assert (await client.get("/api/me", headers=auth_headers({"pm_session": new_raw}))).status_code == 200

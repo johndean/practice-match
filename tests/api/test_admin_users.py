@@ -21,6 +21,7 @@ from __future__ import annotations
 
 import contextlib
 import io
+import json
 import runpy
 import subprocess
 import sys
@@ -1223,3 +1224,30 @@ async def test_the_detail_of_an_account_with_no_application_carries_none_and_an_
     _sid, scookies, _shdr = member(("staff",), email="staff@example.org")
     d = (await client.get(f"/api/admin/users/{aid}", headers=auth_headers(scookies))).json()
     assert d["applications"] == [] and d["application"] is None and d["application_history"] == []
+
+
+async def test_the_users_list_and_the_detail_agree_on_which_application_is_latest(client, conn, member):
+    """Fix round 2, re-review O4. Two more "latest application" lookups had no tiebreak: the Users
+    list's `LEFT JOIN LATERAL … ORDER BY submitted_at DESC LIMIT 1` and `decide`'s latest-open
+    lookup. L2 gave the applicant history and the staff detail a shared `submitted_at DESC, id
+    DESC`; without it here, a tie lets the LIST name a different "latest" than the DETAIL shows.
+
+    The ids are explicit and chosen so insertion order and `id DESC` DISAGREE — otherwise a tie is
+    broken by whichever row the plan happens to reach first and the test proves nothing."""
+    aid, _cookies, _hdr = member((), state="pending", email="tiebreak@example.org")
+    low, high = "00000000-0000-4000-8000-000000000001", "ffffffff-ffff-4fff-bfff-ffffffffffff"
+    with conn.cursor() as cur:
+        # ONE statement, so both rows share `submitted_at`; the low id is inserted FIRST, so the
+        # untiebroken plan reaches it first while `id DESC` names the other.
+        cur.execute("""INSERT INTO application (id, account_id, kind, fields, status)
+                       VALUES (%s,%s,'buyer',%s,'pending'), (%s,%s,'seller',%s,'pending')""",
+                    (low, aid, json.dumps(FIELDS), high, aid, json.dumps(SELLER_FIELDS)))
+        cur.execute("SELECT count(DISTINCT submitted_at) FROM application WHERE account_id=%s", (aid,))
+        assert cur.fetchone() == (1,)
+    _sid, scookies, _shdr = member(("staff",), email="tiebreak-staff@example.org")
+
+    listed = (await client.get("/api/admin/users?state=pending", headers=auth_headers(scookies))).json()["items"]
+    row = next(item for item in listed if item["account_id"] == str(aid))
+    detail = (await client.get(f"/api/admin/users/{aid}", headers=auth_headers(scookies))).json()
+    assert detail["application"]["id"] == high            # `submitted_at DESC, id DESC`
+    assert row["kind"] == detail["application"]["kind"]   # ...and the list says the same

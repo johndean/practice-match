@@ -189,7 +189,7 @@ def test_a_principal_read_before_a_sign_out_is_never_cached_after_it(conn, redis
         p = real_load(c, hh)                                        # … principal read from Postgres
         if p is not None and not fired:
             fired.append(True)
-            S.revoke(conn, redis, raw)                              # … member signs out
+            S.revoke_cache(redis, *S.revoke(conn, raw))             # … member signs out
         return p
 
     monkeypatch.setattr(S, "_load", _load_then_sign_out)
@@ -346,20 +346,40 @@ def test_session_expiry_follows_the_database_clock_not_the_app_clock(conn, redis
 
 # Coverage-only, per John's 100 %-coverage ruling (2026-09-06) — not in the brief's Step 1.
 def test_revoke_a_single_session(conn, redis):
+    """Split in two in I5c fix round 2 (re-review O2): `revoke` deleted the cached principal and
+    stamped the tombstone INSIDE the caller's transaction, which left the last pre-commit Redis
+    mutation of session state in the app — between the stamp and the commit a concurrent `resolve`
+    of the same cookie read `revoked_at IS NULL`, outranked the stamp and re-cached a live
+    principal, so a signed-out cookie kept working for up to `CACHE_TTL`. `revoke` is Postgres
+    only now and names the session (and its account) for `revoke_cache` to clear afterwards."""
     aid = _member(conn)
     raw = S.create(conn, redis, aid, None, None)
     assert S.resolve(conn, redis, raw) is not None
-    S.revoke(conn, redis, raw)
+    h = S.hash_id(raw)
+
+    assert S.revoke(conn, raw) == (h, aid)                  # the DB half: the hash and the owner
+    with conn.cursor() as cur:
+        cur.execute("SELECT revoked_at IS NOT NULL FROM session WHERE id_hash = %s", (h,))
+        assert cur.fetchone() == (True,)
+    assert redis.exists(f"session:{h}") and redis.exists(f"session:{h}:revoked") == 0  # cache untouched
+
+    S.revoke_cache(redis, h, aid)
     assert S.resolve(conn, redis, raw) is None
+    assert 0 < redis.ttl(f"session:{h}:revoked") <= S.CACHE_TTL
     # I5, fix round 1: revoke() deleted session:{h} but left {h} in the account index, so
     # every later invalidate_account paid a round trip for a session that no longer exists.
     assert not redis.sismember(f"account:{aid}:sessions", S.hash_id(raw))
 
 
 def test_revoking_an_unknown_session_id_is_a_no_op(conn, redis):
-    """revoke() now reads the owning account back from the UPDATE so it can prune the
-    index (I5); a raw id that matches no row must simply do nothing."""
-    S.revoke(conn, redis, "not-a-session-id-anyone-ever-issued")
+    """revoke() reads the owning account back from the UPDATE so it can prune the index (I5); a raw
+    id that matches no row names no account, and `revoke_cache` must not try to prune one. The
+    tombstone is still stamped: it costs nothing and keeps the pair total (O2)."""
+    unknown = "not-a-session-id-anyone-ever-issued"
+    h, account_id = S.revoke(conn, unknown)
+    assert (h, account_id) == (S.hash_id(unknown), None)
+    S.revoke_cache(redis, h, account_id)
+    assert redis.exists(f"session:{h}:revoked")
 
 
 # --- I5c fix round 1, concern 2: the two halves of `revoke_all`, and what each one owns ---
@@ -386,27 +406,29 @@ def test_revoke_all_writes_postgres_only_and_names_the_sessions_it_ended(conn, r
     assert S.revoke_all(conn, aid) == frozenset()
 
 
-def test_revoke_all_cache_clears_exactly_the_sessions_it_is_given(conn, redis):
-    """The Redis half. Per session, not a sweep of the account index: `app.api.auth.change` revokes
-    every session and issues a NEW one in the same transaction, and that one must stay cached
-    (NEW-3's `/api/me` budget). The account tombstone is stamped either way — it is what stops a
-    principal read before the commit from being installed after it."""
+def test_revoke_all_cache_without_keep_sweeps_even_a_session_created_afterwards(conn, redis):
+    """The Redis half, and the reason `keep` is not optional in practice. The sweep is by ACCOUNT
+    (re-review O1), so with no `keep` it takes the replacement a rotation issued a microsecond
+    earlier along with everything else — which is exactly why `app.api.auth.change` passes its new
+    session's hash. The account tombstone is stamped either way: it is what stops a principal read
+    before the commit from being installed after it."""
     aid = _member(conn)
     doomed = S.create(conn, redis, aid, None, None)
     h = S.hash_id(doomed)
     revoked = S.revoke_all(conn, aid)
-    survivor = S.create(conn, redis, aid, None, None)          # the rotation's replacement
-    sh = S.hash_id(survivor)
+    replacement = S.create(conn, redis, aid, None, None)
+    sh = S.hash_id(replacement)
 
-    S.revoke_all_cache(redis, aid, revoked)
+    S.revoke_all_cache(redis, aid, revoked)                    # no `keep`
 
     assert redis.exists(f"session:{h}") == 0                   # the revoked principal is gone …
     assert redis.exists(f"session:{h}:revoked")                # … and tombstoned, like a sign-out
     assert 0 < redis.ttl(f"session:{h}:revoked") <= S.CACHE_TTL
     assert redis.sismember(f"account:{aid}:sessions", h) == 0
-    assert redis.exists(f"session:{sh}")                       # the replacement survives, cached at once
-    assert redis.sismember(f"account:{aid}:sessions", sh)
-    assert S.resolve(conn, redis, doomed) is None and S.resolve(conn, redis, survivor) is not None
+    assert redis.exists(f"session:{sh}") == 0                  # and so is the replacement, uncached
+    assert S.resolve(conn, redis, doomed) is None
+    # It still WORKS — the row is live, so the next request re-reads Postgres and re-caches it.
+    assert S.resolve(conn, redis, replacement) is not None
     assert 0 < redis.ttl(f"account:{aid}:invalidated") <= S.CACHE_TTL
 
 
@@ -418,3 +440,91 @@ def test_revoke_all_cache_with_nothing_revoked_still_stamps_the_account_tombston
     assert S.revoke_all(conn, aid) == frozenset()
     S.revoke_all_cache(redis, aid, frozenset())
     assert 0 < redis.ttl(f"account:{aid}:invalidated") <= S.CACHE_TTL
+
+
+# --- I5c fix round 2 (re-review observations O1, O2, O5) ---
+
+
+def test_revoke_all_cache_leaves_no_cached_principal_behind_at_all(conn, redis):
+    """O1, zero residue. `revoke_all` only matches rows with `revoked_at IS NULL`, so a session
+    that was ALREADY signed out — or whose row the nightly purge has since deleted — is not in the
+    set it returns, and clearing only that set left its cached principal alive for the rest of its
+    60 s TTL. `deps.current_principal` returns a cache hit BEFORE any expiry or state check, so
+    that cookie went on working, with its cached state and roles, through a suspension.
+
+    `revoke_all_cache` sweeps the account index (minus `keep`) as well as the hashes it is given,
+    so nothing of the account's survives the call."""
+    aid = _member(conn)
+    signed_out, purged, live = (S.create(conn, redis, aid, None, None) for _ in range(3))
+    for raw in (signed_out, purged, live):
+        assert redis.exists(f"session:{S.hash_id(raw)}")
+
+    with conn.cursor() as cur:
+        cur.execute("UPDATE session SET revoked_at = now() WHERE id_hash = %s", (S.hash_id(signed_out),))
+        cur.execute("DELETE FROM session WHERE id_hash = %s", (S.hash_id(purged),))
+
+    revoked = S.revoke_all(conn, aid)
+    assert revoked == frozenset({S.hash_id(live)})  # the other two are not `revoked_at IS NULL` rows
+    S.revoke_all_cache(redis, aid, revoked)
+
+    for raw in (signed_out, purged, live):
+        assert redis.exists(f"session:{S.hash_id(raw)}") == 0, raw
+        assert redis.exists(f"session:{S.hash_id(raw)}:revoked"), raw
+        assert redis.sismember(f"account:{aid}:sessions", S.hash_id(raw)) == 0, raw
+    assert redis.exists(f"account:{aid}:sessions") == 0
+
+
+def test_revoke_all_cache_keeps_the_session_the_caller_just_created(conn, redis):
+    """O1's other half. The sweep must not take the rotation's replacement with it: `keep` is the
+    hashes the caller created inside the same transaction. NEW-3's guarantee — cached AND indexed
+    at once, not in 60 s — has to survive a whole-index sweep."""
+    aid = _member(conn)
+    doomed = S.create(conn, redis, aid, None, None)
+    revoked = S.revoke_all(conn, aid)
+    survivor = S.create(conn, redis, aid, None, None)
+    kept = S.hash_id(survivor)
+
+    S.revoke_all_cache(redis, aid, revoked, keep={kept})
+
+    assert redis.exists(f"session:{S.hash_id(doomed)}") == 0
+    assert redis.exists(f"session:{kept}")
+    assert redis.sismember(f"account:{aid}:sessions", kept)
+    assert redis.exists(f"session:{kept}:revoked") == 0     # never tombstoned
+    assert S.resolve(conn, redis, survivor) is not None and S.resolve(conn, redis, doomed) is None
+
+
+def test_revoke_all_cache_costs_the_same_whatever_the_session_count(conn, redis):
+    """O5, the counterpart to `test_invalidate_account_is_one_round_trip_per_call`: the tombstone
+    `SET`s were issued one per session, so an account with N devices paid N round trips. Every
+    mutation travels in ONE pipeline now, so the cost is constant — the index read, the clock, and
+    a single batch — rather than growing with the number of sessions."""
+    aid = _member(conn)
+    raws = [S.create(conn, redis, aid, None, None) for _ in range(4)]
+    revoked = S.revoke_all(conn, aid)
+
+    direct: list[str] = []
+    pipelines: list[object] = []
+    real = {name: getattr(redis, name) for name in ("set", "delete", "srem", "pipeline")}
+
+    def _spy(name):
+        def _call(*a: object, **kw: object) -> object:
+            (pipelines if name == "pipeline" else direct).append(name)
+            return real[name](*a, **kw)
+        return _call
+
+    for name in real:
+        setattr(redis, name, _spy(name))
+    try:
+        S.revoke_all_cache(redis, aid, revoked)
+        assert direct == [], f"every mutation belongs in the pipeline, not direct: {direct}"
+        assert len(pipelines) == 1
+    finally:
+        for name in real:
+            delattr(redis, name)
+
+    for raw in raws:
+        assert redis.exists(f"session:{S.hash_id(raw)}") == 0
+        assert 0 < redis.ttl(f"session:{S.hash_id(raw)}:revoked") <= S.CACHE_TTL
+    assert 0 < redis.ttl(f"account:{aid}:invalidated") <= S.CACHE_TTL
+
+

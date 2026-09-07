@@ -32,8 +32,10 @@ a concurrent resolve could read the pre-decision principal and re-cache it for t
 
 That replaces fix round 1 N3's note, which recorded the old ordering (Redis before the audit
 insert) as the fail-safe direction — sessions ending even if the decision rolled back. It is moot
-now: nothing is deleted until the decision is committed, so there is no longer any way for the two
-stores to disagree, which is strictly better than choosing which way they should.
+now: nothing is deleted until the decision is committed, so ORDERING can no longer make the two
+stores disagree, which is strictly better than choosing which way they should. Not that they never
+can — a Redis outage after the commit still leaves a stale entry for up to `sessions.CACHE_TTL`,
+which the account tombstone bounds and nothing here can prevent.
 """
 from __future__ import annotations
 
@@ -415,7 +417,7 @@ SELECT a.id, a.email, a.state, a.display_name, a.affiliation_label, a.created_at
                                   ORDER BY g.role)
                    FROM role_grant g WHERE g.account_id = a.id AND g.revoked_at IS NULL), '[]'::jsonb)
   FROM account a
-  LEFT JOIN LATERAL (SELECT * FROM application WHERE account_id = a.id ORDER BY submitted_at DESC LIMIT 1) ap ON true
+  LEFT JOIN LATERAL (SELECT * FROM application WHERE account_id = a.id ORDER BY submitted_at DESC, id DESC LIMIT 1) ap ON true
  WHERE (%(state)s::text IS NULL OR a.state = %(state)s)
    AND (%(kind)s::text IS NULL OR ap.kind = %(kind)s)
    AND (%(role)s::text IS NULL OR EXISTS (SELECT 1 FROM role_grant g
@@ -547,8 +549,11 @@ def decide(
         # route the re-review demonstrated for `grants`.
         _refuse_unsafe_target(cur, actor=actor, actor_account=actor_account, account_id=account_id,
                               self_forbidden=action in SELF_FORBIDDEN_ACTIONS, removing_admin=action == "revoke")
+        # `, id DESC` is the tiebreak every "latest application" lookup shares (review L2, extended
+        # here by re-review O4): the one-open-row rule leaves this a single candidate today, but a
+        # tie must not let two endpoints name different rows as the latest.
         cur.execute("""SELECT id, kind FROM application WHERE account_id=%s AND status = ANY(%s)
-                        ORDER BY submitted_at DESC LIMIT 1""", (account_id, list(OPEN_STATUSES)))
+                        ORDER BY submitted_at DESC, id DESC LIMIT 1""", (account_id, list(OPEN_STATUSES)))
         application = cur.fetchone()
         kind = application[1] if application is not None else "buyer"
         if kind == "seller" and action in APPLICATION_ACTIONS:
