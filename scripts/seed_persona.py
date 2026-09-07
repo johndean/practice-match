@@ -153,6 +153,15 @@ FIXTURE_TOKENS: dict[str, tuple[str, str]] = {
 }
 FIXTURE_TTL = {"verify": timedelta(hours=24), "reset": timedelta(hours=1), "invite": timedelta(days=7)}
 
+# Review round 1, Minor 2: the delete-then-insert of application rows and fixture tokens below is
+# idempotent SEQUENTIALLY, but not race-proof against two concurrent `seed_persona.py` runs — one
+# run's DELETE interleaved with another's INSERT could raise a `token_hash` unique collision or
+# leave a transient duplicate application row. `pg_advisory_xact_lock` takes this key for the
+# lifetime of the surrounding transaction and releases it automatically at COMMIT/ROLLBACK, so a
+# second run simply waits its turn rather than racing the first. The value is arbitrary — nothing
+# else in this codebase takes an advisory lock, so no other key can collide with it.
+SEED_LOCK_KEY = 0x5EEDF00D
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     from app.auth import audit
@@ -171,6 +180,9 @@ def main(argv: Sequence[str] | None = None) -> int:
     # backend idle-in-transaction across it (I4 fix round 1, Important 5).
     hashed = P.hash_password(os.environ.get("PERSONA_PASSWORD", DEFAULT_PASSWORD))
     with closing(sync_conn()) as conn, conn, conn.cursor() as cur:
+        # Review round 1, Minor 2: taken first, before any read or write below, so the whole run
+        # is serialised against any other concurrent `seed_persona.py` run — see SEED_LOCK_KEY.
+        cur.execute("SELECT pg_advisory_xact_lock(%s)", (SEED_LOCK_KEY,))
         cur.execute("""INSERT INTO account (email, password_hash, state, display_name, affiliation_label)
                             VALUES (%s,%s,'active',%s,%s)
                        ON CONFLICT (email) DO UPDATE
@@ -244,14 +256,16 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         # `needs-review@`'s and `declined@`'s first real application row — delete-then-insert, so
         # a re-run never accumulates a second row on either account (application has no natural
-        # key `ON CONFLICT` could use).
+        # key `ON CONFLICT` could use). Scoped to `kind='buyer'` (review round 1, Minor 1): this
+        # is the only kind seeded here, and a bare `account_id=%s` delete would erase any `seller`
+        # application row a later task seeds on the same account, which this script does not own.
         needs_review_id = state_persona_ids[NEEDS_REVIEW_EMAIL]
-        cur.execute("DELETE FROM application WHERE account_id=%s", (needs_review_id,))
+        cur.execute("DELETE FROM application WHERE account_id=%s AND kind='buyer'", (needs_review_id,))
         cur.execute("""INSERT INTO application (account_id, kind, fields, status, decided_by, decided_at, info_request)
                        VALUES (%s, 'buyer', %s, 'needs_review', %s, now(), %s)""",
                     (needs_review_id, json.dumps(NEEDS_REVIEW_FIELDS), account_id, NEEDS_REVIEW_INFO_REQUEST))
         declined_id = state_persona_ids[DECLINED_EMAIL]
-        cur.execute("DELETE FROM application WHERE account_id=%s", (declined_id,))
+        cur.execute("DELETE FROM application WHERE account_id=%s AND kind='buyer'", (declined_id,))
         cur.execute("""INSERT INTO application (account_id, kind, fields, status, decided_by, decided_at, decision_note)
                        VALUES (%s, 'buyer', %s, 'declined', %s, now(), %s)""",
                     (declined_id, json.dumps(DECLINED_FIELDS), account_id, DECLINED_DECISION_NOTE))

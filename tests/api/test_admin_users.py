@@ -682,6 +682,78 @@ async def test_seed_persona_recreates_twelve_single_use_fixture_tokens_per_purpo
     assert invite_r.status_code == 200
 
 
+def test_seed_persona_deletes_only_the_buyer_application_row_it_owns(conn, monkeypatch):
+    """Review round 1, Minor 1: `DELETE FROM application WHERE account_id=%s` (no `kind` filter)
+    silently erased ANY application row on `needs-review@`/`declined@`, not only the `buyer` one
+    this script seeds — so a `seller` application on the same account (something this script does
+    not own and never sees) would have been wiped by the next re-seed. Scoped to `kind='buyer'`
+    now: a pre-existing `seller` row on `declined@` must survive a re-seed untouched, while the
+    account still ends up with exactly one `buyer` row (not accumulated, not deleted twice)."""
+    from scripts import seed_persona
+
+    monkeypatch.setenv("PERSONA_PASSWORD", INVITE_PW)
+    _run_cli(seed_persona, [])   # first pass creates `declined@` with its one `buyer` row
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM account WHERE email=%s", (seed_persona.DECLINED_EMAIL,))
+        declined_id = cur.fetchone()[0]
+        cur.execute("""INSERT INTO application (account_id, kind, fields, status)
+                       VALUES (%s, 'seller', %s, 'approved') RETURNING id""",
+                    (declined_id, json.dumps(SELLER_FIELDS)))
+        seller_row_id = cur.fetchone()[0]
+
+    _run_cli(seed_persona, [])   # re-seed must not touch the seller row
+    _run_cli(seed_persona, [])   # ...nor the second time
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT id, status FROM application WHERE account_id=%s AND kind='seller'", (declined_id,))
+        assert cur.fetchall() == [(seller_row_id, "approved")], "the seller row must survive untouched"
+        cur.execute("SELECT count(*) FROM application WHERE account_id=%s AND kind='buyer'", (declined_id,))
+        assert cur.fetchone()[0] == 1, "exactly one buyer row — not accumulated, not deleted alongside the seller row"
+
+
+def test_seed_persona_serialises_concurrent_runs_with_an_advisory_lock(conn, scratch_dsn, monkeypatch):
+    """Review round 1, Minor 2: the delete-then-insert of application rows and fixture tokens is
+    idempotent SEQUENTIALLY but not race-proof against two concurrent `seed_persona.py` runs — a
+    `token_hash` unique collision, or a transient duplicate row, if two runs interleaved. `main()`
+    now takes `pg_advisory_xact_lock(SEED_LOCK_KEY)` as its very first statement, so a second run
+    simply waits.
+
+    Proved the way `test_minting_a_token_serialises_against_a_demotion_of_the_minter` proves its
+    own lock: a second, non-autocommit connection takes the SAME advisory lock and holds it open;
+    a background thread running the seed is shown to be blocked (`join(timeout=...)` + `is_alive()`
+    still True); only once the blocking connection's transaction ends (releasing the lock) does the
+    seed complete."""
+    import threading
+
+    import psycopg2
+
+    from scripts import seed_persona
+
+    monkeypatch.setenv("PERSONA_PASSWORD", INVITE_PW)
+
+    results: list[int] = []
+    thread = threading.Thread(target=lambda: results.append(seed_persona.main([])))
+    blocker = psycopg2.connect(scratch_dsn)          # NOT autocommit: the lock is held until commit
+    try:
+        with blocker, blocker.cursor() as cur:
+            cur.execute("SELECT pg_advisory_xact_lock(%s)", (seed_persona.SEED_LOCK_KEY,))
+            thread.start()
+            thread.join(timeout=2)
+            assert thread.is_alive(), "the seed must wait behind the advisory lock while it is held"
+            assert results == [], "the seed must not have completed while the lock is held"
+        thread.join(timeout=60)                      # the `with` block above just committed, releasing the lock
+        assert not thread.is_alive(), "the seed must proceed once the lock is released"
+    finally:
+        blocker.close()
+        if thread.is_alive():
+            thread.join(timeout=60)
+    assert results == [0]
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM account WHERE email=%s", (seed_persona.PERSONA_EMAIL,))
+        assert cur.fetchone()[0] == 1
+
+
 @pytest.mark.parametrize(("script", "argv"), [("bootstrap_admin", ["--email", "cli@example.org"]), ("seed_persona", [])])
 def test_the_cli_entry_points_run_as___main__(conn, monkeypatch, script, argv):
     """`if __name__ == "__main__": raise SystemExit(main())` never executes on import, and a
