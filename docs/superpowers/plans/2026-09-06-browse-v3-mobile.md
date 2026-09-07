@@ -3844,6 +3844,20 @@ Re-apply from the pristine file with the full list; `npm run gen:app`: `logic.js
 - [ ] **Step 3: GREEN, re-baseline, gate.** The two new tests pass. `npm run test:visual:baselines` (the `browse-compare-open` oracle changes: no interpretation card; all other 27 unchanged — compare the regenerated PNG set against the previous run's hashes and list any other mover as a STOP) then the full frontend gate (`npm run typecheck && npx vitest run --coverage && npm run build && npm run test:smoke && npm run test:visual:baselines && npm run test:e2e`); `baseline-manifest.json` unmoved (Browse states are not in it); backend diff empty. Commit `design(amend): A4 — Compare hides the "What this means" card (John's ruling)`.
 
 
+### Task V17: `header-1000` capture determinism (systematic debugging) — before the merge
+
+*Added 2026-09-07 from V16's report: `header-1000-darwin.png` (the Browse screenshot at 1000 px, not in the thirteen-screen manifest) flips between two hashes across repeated `npm run test:visual:baselines` runs with no code change. The zero-tolerance gate passes only because reference and app are captured in the same run — a capture that is not deterministic can desynchronise between the two projects and fail CI at random, exactly as the `interest-modal` flake did before its `atTop()` fix. Follow superpowers:systematic-debugging; record each phase. Fresh implementer.*
+
+**Files:**
+- Modify: `frontend/tests/harness.ts` and/or `frontend/tests/screens.ts` (the `header-1000` step, and `header-1100` if it shares the cause) — the fix is a condition-based wait on the thing that moves, never a widened tolerance (Global Constraint (e)) and never a `waitForTimeout` alone
+- Test: `frontend/tests/harness.test.ts` or a new `frontend/tests/capture-determinism.spec.ts` (reference project): capture `header-1000` twice in one run and assert byte-identical PNGs
+
+- [ ] **Step 1 (Phase 1 — reproduce and diff):** run `npx playwright test --config=tests/playwright.config.ts --project=reference reference-baselines.spec.ts -g header-1000` five times; hash the PNG after each; keep one copy of each distinct variant; `diff` them pixel-wise (a small Node script over the PNGs with `pngjs` or the harness's existing PNG reader) — report WHERE the differing pixels are (bounding box) and WHAT is drawn there (map tile edge, a fading element, a scrollbar, a caret, antialiased text).
+- [ ] **Step 2 (Phase 2 — compare):** which other states capture the same region deterministically (`header-1100`, `browse`) and what their steps do differently (waits, `atTop()`, the shading guard, the blank tile); read the harness's settle logic for the Browse states.
+- [ ] **Step 3 (Phase 3 — one hypothesis):** name the single moving thing and why it is unsettled at 1000 px only (a resize-driven relayout? the results rail collapsing per README §2? a Leaflet pan animation? the mosaic's canvas repaint order?).
+- [ ] **Step 4 (Phase 4 — failing test, fix, verify):** the determinism test RED (two captures differ), then the minimal condition-based wait (e.g. wait for the map's `moveend`/canvas idle, or for the element in question to reach its final box), then GREEN five runs in a row; `npm run test:visual:baselines && npm run test:visual` at zero diffs; no other state's PNG moves; `baseline-manifest.json` unmoved. Commit `test(visual): header-1000 captures deterministically — <root cause> waited on, not timed`.
+
+
 ## Self-Review
 
 Run against the spec with fresh eyes, per the writing-plans skill.
@@ -4030,7 +4044,7 @@ Every acceptance criterion, change-log entry, dead-code rule, file-index entry, 
 
 ## Execution Handoff
 
-*2026-09-07: Tasks V13–V16 were added after the final whole-branch review on John's rulings (typography option B; mobile card tap; "View full listing"; naming `ListingsMap.vue`). They run after the final-review fix round and before the merge, each with its own task review, then one scoped re-review of V13–V16.*
+*2026-09-07: Tasks V13–V17 were added after the final whole-branch review (V13–V16 on John's rulings; V17 a capture flake V16 surfaced) (typography option B; mobile card tap; "View full listing"; naming `ListingsMap.vue`). They run after the final-review fix round and before the merge, each with its own task review, then one scoped re-review of V13–V17.*
 
 Plan complete and saved to `docs/superpowers/plans/2026-09-06-browse-v3-mobile.md`. Two execution options:
 
