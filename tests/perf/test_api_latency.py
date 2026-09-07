@@ -1,4 +1,3 @@
-import statistics
 import time
 import uuid
 
@@ -7,6 +6,9 @@ import pytest
 
 from app import db
 from app.config import settings
+from tests.perf.gate import gate_p95, p95_of
+
+__all__ = ["p95_of"]   # re-exported: the Census/Map import path the M7 ruling named (p95_of moved to gate.py in Task 15)
 
 # --- Task I4 budgets ---------------------------------------------------------------------------
 # The brief's numbers, RESTORED in fix round 1 (Important 5). They were relaxed to 150/500 ms on the
@@ -138,17 +140,8 @@ async def staff(dist, db_ready):
         conn.close()
 
 
-def p95_of(samples: list[float]) -> float:
-    """The 95th percentile, `method="inclusive"` — never above the largest observed sample.
-
-    The default (exclusive) method EXTRAPOLATES past the data, which on the ten samples the sign-in
-    gate takes made the assertion `1.2 x max(10) <= budget` rather than `p95 <= budget`: a measured
-    max of 213.1 ms came out as a "p95" of 255.3 ms (fix round 2, NEW-2). Every gate in this file
-    goes through here, so none of them can report a latency nothing actually took."""
-    return statistics.quantiles(samples, n=20, method="inclusive")[18]
-
-
-async def p95(client, path: str, n: int = 50) -> float:
+async def _samples(client, path: str, n: int = 50) -> list[float]:
+    """Timed GET loop with its own warm-up, so a `gate_p95` re-measurement is warm too."""
     await client.get(path)  # warm-up
     samples = []
     for _ in range(n):
@@ -156,7 +149,7 @@ async def p95(client, path: str, n: int = 50) -> float:
         r = await client.get(path)
         samples.append((time.perf_counter() - t0) * 1000)
         assert r.status_code < 500, path
-    return p95_of(samples)
+    return samples
 
 
 @pytest.mark.parametrize("path, budget", sorted(BUDGET_MS.items()))
@@ -166,13 +159,17 @@ async def test_p95_within_budget(client, signed_in, staff, path, budget):
     # event loop ("Runner.run() cannot be called from a running event loop"). `staff` (Task I9a) is
     # taken the same way, for the same reason.
     measured = staff if path in STAFF_PATHS else signed_in if path in SIGNED_IN_PATHS else client
-    # `p95` only refuses a 5xx, which is right for the public paths but would let an administrative
-    # budget be measured against a 401 or a 403 — a refusal that never reaches Postgres and so
-    # always fits inside any budget (Task I9a). Assert the credential actually opens the path first.
+    # `_samples` only refuses a 5xx, which is right for the public paths but would let an
+    # administrative budget be measured against a 401 or a 403 — a refusal that never reaches
+    # Postgres and so always fits inside any budget (Task I9a). Assert the credential actually
+    # opens the path first.
     if path in STAFF_PATHS:
         assert (await measured.get(path)).status_code == 200, f"{path} is not being measured through a staff client"
-    got = await p95(measured, path)
-    assert got <= budget, f"{path} p95 {got:.1f} ms over {budget} ms"
+
+    async def measure() -> list[float]:
+        return await _samples(measured, path)
+
+    await gate_p95(measure, budget, label=path)
 
 
 async def test_anonymous_well_formed_bearer_p95_within_budget(client, db_ready):
@@ -181,15 +178,18 @@ async def test_anonymous_well_formed_bearer_p95_within_budget(client, db_ready):
     request on every guarded route — `app.db.sync_conn()` opens a fresh connection, there is no
     sync pool — and this is what pins that cost. The answer is the generic 401."""
     bearer = {"Authorization": f"Bearer pm_{uuid.uuid4()}.{'x' * 43}"}
-    await client.get("/api/me", headers=bearer)   # warm-up, as `p95` does: the FIRST connect is the slow one
-    samples = []
-    for _ in range(50):
-        t0 = time.perf_counter()
-        r = await client.get("/api/me", headers=bearer)
-        samples.append((time.perf_counter() - t0) * 1000)
-        assert r.status_code == 401, r.text
-    got = p95_of(samples)
-    assert got <= BEARER_BUDGET_MS, f"anonymous well-formed bearer p95 {got:.1f} ms over {BEARER_BUDGET_MS} ms"
+
+    async def measure() -> list[float]:
+        await client.get("/api/me", headers=bearer)   # warm-up, as `_samples` does: the FIRST connect is the slow one
+        samples = []
+        for _ in range(50):
+            t0 = time.perf_counter()
+            r = await client.get("/api/me", headers=bearer)
+            samples.append((time.perf_counter() - t0) * 1000)
+            assert r.status_code == 401, r.text
+        return samples
+
+    await gate_p95(measure, BEARER_BUDGET_MS, label="anonymous well-formed bearer")
 
 
 async def test_signin_p95_under_300ms(client, db_ready):
@@ -212,21 +212,20 @@ async def test_signin_p95_under_300ms(client, db_ready):
     allowed on one address. That stopped being true in fix round 1, when the lockout began counting
     FAILURES only: successful sign-ins no longer touch that bucket at all."""
     email = f"perf-{uuid.uuid4().hex[:10]}@example.org"
-    ip, samples = _fresh_ip(), []
     from app.auth import passwords as P
 
     _sql("INSERT INTO account (email, password_hash, state) VALUES (%s,%s,'active')", (email, P.hash_password(PERF_PW)))
     try:
-        for _ in range(11):
-            t0 = time.perf_counter()
-            r = await client.post("/api/auth/signin", json={"email": email, "password": PERF_PW}, headers={"x-forwarded-for": ip})
-            samples.append((time.perf_counter() - t0) * 1000)
-            assert r.status_code == 200, r.text
-        got = p95_of(samples[1:])
-        # Captured by pytest unless -s: invisible in a normal run, and the numbers are right there
-        # when the gate trips or when somebody needs to see what it is actually measuring.
-        print(f"\nsignin p95 {got:.1f} ms  samples {[round(x) for x in samples]} (first discarded)")
-        assert got <= SIGNIN_BUDGET_MS, f"/api/auth/signin p95 {got:.1f} ms over {SIGNIN_BUDGET_MS} ms; samples {[round(x) for x in samples]}"
+        async def measure() -> list[float]:
+            ip, samples = _fresh_ip(), []
+            for _ in range(11):
+                t0 = time.perf_counter()
+                r = await client.post("/api/auth/signin", json={"email": email, "password": PERF_PW}, headers={"x-forwarded-for": ip})
+                samples.append((time.perf_counter() - t0) * 1000)
+                assert r.status_code == 200, r.text
+            return samples[1:]   # first discarded: it pays the pool's own connect and a cold anyio threadpool
+
+        await gate_p95(measure, SIGNIN_BUDGET_MS, label="/api/auth/signin")
     finally:
         _sql("DELETE FROM account WHERE email=%s", (email,))
 
@@ -238,17 +237,20 @@ async def test_signup_p95_within_budget(client, db_ready, monkeypatch):
     a 2 s-timeout call to a third party is not a budget this suite can hold, and what is being
     measured is the app's own work."""
     monkeypatch.setattr(settings, "hibp_enabled", False)
-    tag, samples = uuid.uuid4().hex[:8], []
+    tag = uuid.uuid4().hex[:8]
     try:
-        await client.post("/api/auth/signup", json={"email": f"perf-{tag}-warm@example.org", "password": PERF_PW}, headers={"x-forwarded-for": _fresh_ip()})
-        for i in range(20):
-            t0 = time.perf_counter()
-            r = await client.post("/api/auth/signup", json={"email": f"perf-{tag}-{i}@example.org", "password": PERF_PW},
-                                  headers={"x-forwarded-for": _fresh_ip()})
-            samples.append((time.perf_counter() - t0) * 1000)
-            assert r.status_code == 202, r.text
-        got = p95_of(samples)
-        assert got <= SIGNUP_BUDGET_MS, f"/api/auth/signup p95 {got:.1f} ms over {SIGNUP_BUDGET_MS} ms"
+        async def measure() -> list[float]:
+            samples = []
+            await client.post("/api/auth/signup", json={"email": f"perf-{tag}-warm@example.org", "password": PERF_PW}, headers={"x-forwarded-for": _fresh_ip()})
+            for i in range(20):
+                t0 = time.perf_counter()
+                r = await client.post("/api/auth/signup", json={"email": f"perf-{tag}-{i}@example.org", "password": PERF_PW},
+                                      headers={"x-forwarded-for": _fresh_ip()})
+                samples.append((time.perf_counter() - t0) * 1000)
+                assert r.status_code == 202, r.text
+            return samples
+
+        await gate_p95(measure, SIGNUP_BUDGET_MS, label="/api/auth/signup")
     finally:
         _sql("DELETE FROM email_outbox WHERE to_email LIKE %s", (f"perf-{tag}-%",))
         _sql("DELETE FROM account WHERE email LIKE %s", (f"perf-{tag}-%",))
@@ -266,28 +268,30 @@ async def test_interest_stored_path_p95_within_budget(client, db_ready):
     through as well — three distinct one-off costs, and the first sample is reproducibly the slowest
     of the fifty (6.0-7.3 ms against a 4.2-4.8 ms median, ten runs on the dev stack).
 
-    The measured numbers are printed — captured by pytest unless `-s`, and repeated in the assertion
-    message — because this gate failed once on a shared GitHub runner at p95 110.3 ms while the same
-    commit passed everywhere else. That is twenty times this machine's steady state (p95 4.7-6.8 ms
-    over ten runs; 6.3-7.3 ms with three suites racing each other), so it was the box and not the
-    endpoint — but "over 100 ms" on its own could not say so. The next failure will arrive with its
-    samples attached: a warm-up artefact shows as one outlier, a stalled runner as a whole block.
+    This gate failed once on a shared GitHub runner at p95 110.3 ms while the same commit passed
+    everywhere else — 45 of 50 samples at 7 ms, five spikes of 53-150 ms — twenty times this
+    machine's steady state (p95 4.7-6.8 ms over ten runs; 6.3-7.3 ms with three suites racing each
+    other), so it was the box and not the endpoint, but "over 100 ms" on its own could not say so
+    (2026-09-07). `gate_p95` (Task 15, 2026-09-08) is the fix below: a first p95 over budget is
+    measured once more, warm, before either sample set is trusted, and both print either way — a
+    regression fails twice; a stalled runner does not.
     """
     tag = uuid.uuid4().hex[:8]
-    samples: list[float] = []
     try:
-        for w in range(3):   # warm-ups (M6, N8: a fresh address each, so no rate limit sees them twice)
-            await client.post("/api/interest", json={"email": f"perf-{tag}-warm{w}@example.org"}, headers={"x-forwarded-for": _fresh_ip()})
-        for i in range(50):
-            n = uuid.uuid4().int
-            ip = "10." + ".".join(str((n >> s) & 255) for s in (16, 8, 0))
-            t0 = time.perf_counter()
-            r = await client.post("/api/interest", json={"email": f"perf-{tag}-{i}@example.org"}, headers={"x-forwarded-for": ip})
-            samples.append((time.perf_counter() - t0) * 1000)
-            assert r.status_code == 202, r.text
-        got = p95_of(samples)
-        print(f"\ninterest p95 {got:.1f} ms  samples {[round(x) for x in samples]} (3 warm-ups discarded)")
-        assert got <= 100, f"/api/interest p95 {got:.1f} ms over 100 ms; samples {[round(x) for x in samples]}"
+        async def measure() -> list[float]:
+            samples: list[float] = []
+            for w in range(3):   # warm-ups (M6, N8: a fresh address each, so no rate limit sees them twice)
+                await client.post("/api/interest", json={"email": f"perf-{tag}-warm{w}@example.org"}, headers={"x-forwarded-for": _fresh_ip()})
+            for i in range(50):
+                n = uuid.uuid4().int
+                ip = "10." + ".".join(str((n >> s) & 255) for s in (16, 8, 0))
+                t0 = time.perf_counter()
+                r = await client.post("/api/interest", json={"email": f"perf-{tag}-{i}@example.org"}, headers={"x-forwarded-for": ip})
+                samples.append((time.perf_counter() - t0) * 1000)
+                assert r.status_code == 202, r.text
+            return samples
+
+        await gate_p95(measure, 100, label="/api/interest")
     finally:
         with psycopg2.connect(settings.database_url) as conn, conn.cursor() as cur:
             cur.execute("DELETE FROM interest_signup WHERE email_normalised LIKE %s", (f"perf-{tag}-%",))
@@ -303,16 +307,19 @@ async def test_cold_principal_cache_me_p95_within_budget(signed_in, db_ready):
 
     raw = signed_in.headers["Cookie"].split("pm_session=", 1)[1].split(";")[0]
     key = f"session:{S.hash_id(raw)}"
-    samples = []
-    await signed_in.get("/api/me")
-    for _ in range(30):
-        sync_redis().delete(key)           # force the miss half on every sample
-        t0 = time.perf_counter()
-        r = await signed_in.get("/api/me")
-        samples.append((time.perf_counter() - t0) * 1000)
-        assert r.status_code == 200, r.text
-    got = p95_of(samples)
-    assert got <= COLD_ME_BUDGET_MS, f"/api/me with a cold principal cache p95 {got:.1f} ms over {COLD_ME_BUDGET_MS} ms"
+
+    async def measure() -> list[float]:
+        samples = []
+        await signed_in.get("/api/me")   # warm-up
+        for _ in range(30):
+            sync_redis().delete(key)           # force the miss half on every sample
+            t0 = time.perf_counter()
+            r = await signed_in.get("/api/me")
+            samples.append((time.perf_counter() - t0) * 1000)
+            assert r.status_code == 200, r.text
+        return samples
+
+    await gate_p95(measure, COLD_ME_BUDGET_MS, label="/api/me with a cold principal cache")
 
 
 async def test_no_connection_is_held_across_the_argon2id_hop(client, db_ready, monkeypatch):
