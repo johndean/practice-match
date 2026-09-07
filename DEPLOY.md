@@ -40,6 +40,32 @@ Both custom domains need **all four** records below, not just a CNAME each — R
 
 `foundation.vin`'s record is an **apex CNAME**, not the A record the plan originally expected — the DNS provider must support ALIAS / ANAME / CNAME-flattening at the root; a plain CNAME at the apex is invalid on providers without it. Check propagation with `dig +short qa.foundation.vin CNAME`, `dig +short foundation.vin CNAME`, `dig +short _railway-verify.qa.foundation.vin TXT`, `dig +short _railway-verify.foundation.vin TXT`, then `railway domain status a066b6b3-bca4-4cd8-bbfb-ae21d2a24531` (QA) / `railway domain status d9e291e7-498c-40a7-9fe3-f8b54c695986` (production). Until DNS is live, verify against the Railway-issued hosts directly: QA `https://api-qa-f3b3.up.railway.app`, production `https://api-production-ebcf.up.railway.app` (pass as `scripts/verify-deploy.sh ENV <url>` or set `VERIFY_BASE_URL`).
 
+## Resend DNS (sender domain `foundation.vin` — Identity plan Task I6)
+
+No transactional mail is delivered until the sender-domain records resolve and Resend shows the
+domain verified: a verify link, a password reset and every application decision all go out through
+it. Add `foundation.vin` in the Resend dashboard, then create the records it prints. **Every value
+is copied out of the dashboard and lives nowhere else** — not here, not in git, not in chat, the
+same rule as `RESEND_API_KEY` and `CENSUS_API_KEY`. John holds the account and fills these in.
+
+| Purpose | Type | Name | Value |
+|---|---|---|---|
+| DKIM 1 of 3 | CNAME | `<selector1>._domainkey.foundation.vin` | value from the Resend dashboard |
+| DKIM 2 of 3 | CNAME | `<selector2>._domainkey.foundation.vin` | value from the Resend dashboard |
+| DKIM 3 of 3 | CNAME | `<selector3>._domainkey.foundation.vin` | value from the Resend dashboard |
+| SPF | TXT | `send.foundation.vin` | value from the Resend dashboard |
+| DMARC | TXT | `_dmarc.foundation.vin` | value from the Resend dashboard |
+
+The DKIM selectors are generated per domain, so the `<selectorN>` labels above are placeholders too
+— read them off the dashboard with the values. **Copy the set the dashboard actually shows**: if it
+asks for a different shape (a single `resend._domainkey` TXT beside a `send` MX and SPF pair, which
+is the other form Resend uses), create that and correct this table in the same commit rather than
+forcing the rows above. Check propagation the same way as the Railway records —
+`dig +short <selector1>._domainkey.foundation.vin CNAME`, `dig +short send.foundation.vin TXT`,
+`dig +short _dmarc.foundation.vin TXT` — and confirm "Verified" in the dashboard before expecting a
+single email to arrive. One sender domain serves both environments; QA is kept from emailing real
+people by `EMAIL_ALLOWLIST`, not by a separate domain.
+
 ## Deploy
 
 ```bash
@@ -76,6 +102,25 @@ Expected `verify-deploy.sh` output on QA (app mode): `healthz OK  version X.Y.Z 
 ## Migrations
 
 **An applied migration is immutable.** From `f3b7d41` the ledger records each file's SHA-256 alongside its name, and a file whose bytes have changed since it was applied stops the container before uvicorn with exit 4 (`[migrate] <file> changed after it was applied — drop and recreate the database or restore the file`) — so amend a numbered file in place only while no persistent database has yet run it, which today means only files added after `b9d01ad`: QA and production predate Wave 2a and neither is affected. Enforcement begins with the files applied from `f3b7d41` onward and is not retroactive: ledger rows written before it carry no checksum and are not checked, so `001_init.sql` and `002_interest_signup.sql` — already applied on QA and production — stay unchecked and must simply be left alone.
+
+## Identity operations (Wave 2a)
+
+The operator page is **[docs/RUNBOOK-identity.md](docs/RUNBOOK-identity.md)** — the review queue and
+its decisions, role grants, the audit trail, an applicant who never got the email, a locked-out
+member, rotating `RESEND_API_KEY`, and the QA persona accounts. Two of those are run from a checkout
+rather than through the app, so they belong on this page:
+
+* **The first admin** — `ENVIRONMENT=qa poetry run python scripts/bootstrap_admin.py --email person@example.org`
+  creates (or reactivates) an `active` account holding `admin` with **no usable password** and prints
+  a single-use 24 h invite link, which is the only way in. It refuses on production without
+  `--production` (exit 2) and refuses an address already in `pending`/`needs_review`/`declined`/
+  `suspended`/`revoked` without `--reactivate` (exit 3) — each of those is a recorded staff decision.
+  Every run writes an audit row. **The link is a credential**: send it the way you would a password
+  reset, never into a shared log.
+* **QA persona accounts** — `PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py`
+  seeds the six `.test` accounts the visual suite and a QA click-through use. Idempotent, and it
+  **refuses on production with no override flag** (exit 2). `PERSONA_PASSWORD` is read from the
+  shell only — never a Railway variable.
 
 ## Automation tokens
 

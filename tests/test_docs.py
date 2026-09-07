@@ -670,3 +670,80 @@ def test_the_admin_users_tables_match_the_api():
         for action in offered:
             assert action in TRANSITIONS, f"the Admin Users table offers {action!r}, which app/api/admin_users.py has no transition for"
             assert state in TRANSITIONS[action][0], f"the Admin Users table offers {action!r} from {state!r}, which the API refuses"
+
+
+# --- Task I9a: the identity wave's operator documentation -----------------------------------------
+# Four tests: two are PINS on what I4-I6 and I8a already made true (the variables, the launch
+# removal), two watch documentation this task wrote (the runbook's endpoints, the Resend DNS table).
+# `test_operator_token_is_retired` is deliberately NOT here: controller amendment A-I9 (2026-09-07)
+# splits I9, and the retirement of `API_SECRET_KEY` / `app/api/auth_stub.py` waits for the
+# `PM_API_TOKEN` GitHub secret to exist (Task I9b).
+
+
+def test_identity_variables_are_documented():
+    """Every variable Wave 2a introduced, in BOTH documents.
+
+    `test_every_setting_is_documented_in_env_example_and_deploy_md` above already covers each field
+    of `Settings`, which is most of this list. `PERSONA_PASSWORD` is the one that is NOT a setting —
+    nothing in the api or the worker reads it, only `scripts/seed_persona.py` does — so it is the one
+    that could have left both documents with nothing to notice."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    example = (ROOT / ".env.example").read_text()
+    for var in ("RESEND_API_KEY", "RESEND_WEBHOOK_SECRET", "EMAIL_ALLOWLIST", "LINK_BASE_URL", "HIBP_ENABLED",
+                "CONSOLIDATOR_KEYWORDS", "MAIL_REPLY_TO", "PERSONA_PASSWORD", "MARKET_DATA_PUBLIC", "DB_POOL_MAX"):
+        assert var in text and var in example, var
+
+
+def test_launch_removal_list_is_executed():
+    """A PIN, not a change: Task I8a executed CLAUDE.md's launch-removal list through the D15
+    amendment engine (A6/A7, ruled D-I8-6), so the list left the DESIGN and the generated files
+    lost it with it. This is what stops any of it coming back — a regenerated `App.vue`/`logic.js`
+    carrying the jump bar, the access-state shortcuts or the demo credentials fails here."""
+    app_vue = (ROOT / "frontend" / "src" / "App.vue").read_text()
+    logic = (ROOT / "frontend" / "src" / "logic.js").read_text()
+    main = (ROOT / "frontend" / "src" / "main.ts").read_text()
+    assert "jumpTo" not in logic, "the prototype jump bar's navigation is back in logic.js"
+    assert "gateStates" not in app_vue, "the 'Prototype — access states' shortcuts are back in App.vue"
+    assert "r.mendes@example.com" not in logic, "the pre-filled demo credentials are back in logic.js"
+    assert "startViewport" not in main, "main.ts passes the startViewport prop again (the app reads ?viewport= only)"
+
+
+def test_identity_runbook_endpoints_exist():
+    """`docs/RUNBOOK-identity.md` is the operator page for Wave 2a, and every call it tells an
+    operator to make is written in backticks as `GET /api/…` / `POST /api/…`.
+
+    Walked against `app.main`'s own route table, so a renamed route, a mistyped path or a path
+    parameter spelled differently from the router's fails here rather than at 2 a.m. in front of a
+    404. Paths are written as TEMPLATES (`{account_id}`, `{token_id}`, `{application_id}` — the
+    routers' own parameter names), never with a literal id, and never with a query string inside
+    the backticks: the route table holds templates and nothing else.
+
+    The walk is `tests/auth/test_permissions.py::_walk`, imported rather than restated: FastAPI
+    0.141 keeps an included router as a WRAPPER object instead of flattening its routes into
+    `app.routes`, so the obvious `{r.path for r in app.routes}` sees `/robots.txt`, `/` and the SPA
+    catch-all and nothing else — every `/api/*` path reads as absent, which would have made this
+    test fail against a perfectly correct runbook. One walker, in the module whose docstring
+    records that behaviour."""
+    from app.main import app
+    from tests.auth.test_permissions import _walk
+
+    templates = {path for _method, path, _route in _walk(app.routes)}
+    runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    paths = set(re.findall(r"`(?:GET|POST) (/api/[^`\s]+)`", runbook))
+    assert paths, "the runbook names no endpoints at all"
+    missing = sorted(p for p in paths if p not in templates)
+    assert missing == [], f"docs/RUNBOOK-identity.md names paths app.main does not serve: {missing}"
+
+
+def test_deploy_md_documents_the_resend_dns_records():
+    """Task I9a. Nothing sends from `foundation.vin` until the sender-domain records resolve, and
+    the values are John's to copy out of the Resend dashboard — so DEPLOY.md carries the record
+    NAMES and an explicit placeholder in every VALUE cell, and never a value. (The same rule the
+    `RESEND_API_KEY` row already states, applied to the records beside it.)"""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "## Resend DNS" in text, "the sender-domain records are undocumented"
+    for token in ("DKIM", "SPF", "DMARC", "_dmarc"):
+        assert token in text, token
+    placeholder = "value from the Resend dashboard"
+    assert text.count(placeholder) >= 5, f"every VALUE cell must read {placeholder!r} — DKIM x3, SPF, DMARC"
+    assert "scripts/bootstrap_admin.py" in text, "the first-admin bootstrap command is undocumented"
