@@ -300,14 +300,32 @@ describe('the durable record names every design amendment that shipped', () => {
     expect(spec.indexOf('- **D9 —')).toBeLessThan(spec.indexOf('- **D10 —'));
   });
 
-  it('CLAUDE.md names all four amendment families, not A1 alone (I1)', () => {
+  // Bare `A1`–`A4` would pass on any document that happens to contain those two characters —
+  // `A1` appears inside the manifest prose already. The pin is the phrase each family is named
+  // BY, so deleting or rewording one of them fails (re-review of this fix round, observation 2).
+  it('CLAUDE.md names all four amendment families and says what each one does (I1)', () => {
     const claude = readFileSync(join(ROOT, 'CLAUDE.md'), 'utf8');
-    for (const id of ['A1', 'A2', 'A3', 'A4']) expect(claude, `amendment family ${id} is not named in CLAUDE.md`).toContain(id);
+    const families: Array<[string, string]> = [
+      ['A1 (typography)', 'Amendment **A1** (John, 2026-09-07: "keep the V2 header and do not restyle header or fonts") restores V2\'s display typography on 24 template elements'],
+      ['A2 (mobile card)', '**A2** (spec D17 — the mobile practice card opens the detail;'],
+      ['A2.2–A2.5 (C13 dead code)', '**A2.2–A2.5** then delete the `browseSel` orphans C13 left behind, including the unwired top-level `selectMarker`'],
+      ['A3 (label)', '**A3** (spec D18 — "View full market report" → "View full listing")'],
+      ['A4 (Compare)', '**A4** (spec D21 — Compare hides the "What this means" card)'],
+    ];
+    for (const [family, phrase] of families) expect(claude, `CLAUDE.md no longer names ${family}`).toContain(phrase);
   });
 
-  it('the plan\'s V14 block lists the amendments that landed after A2 (I1)', () => {
+  // …and in the TASK, not merely somewhere in a 4,100-line file: the id set also appears in
+  // Appendix A.6 and the Self-Review table, either of which would have satisfied a
+  // whole-document `toContain`. The record has to sit with the task that shipped the edits, so
+  // the pin reads only Task V14's own slice (re-review of this fix round, observation 2).
+  it('the plan\'s V14 block itself lists the amendments that landed after A2 (I1)', () => {
     const md = read(BROWSE_V3);
-    for (const id of ['A2.2', 'A2.3', 'A2.4', 'A2.5']) expect(md, `${id} appears in no plan task`).toContain(id);
+    const start = md.indexOf('### Task V14:');
+    expect(start, 'the plan has no `### Task V14:` heading any more').toBeGreaterThan(-1);
+    const next = md.indexOf('\n### Task', start + 1);
+    const v14 = md.slice(start, next === -1 ? md.length : next);
+    for (const id of ['A2.2', 'A2.3', 'A2.4', 'A2.5']) expect(v14, `${id} appears outside Task V14, or nowhere`).toContain(id);
   });
 });
 
