@@ -31,6 +31,32 @@ import { booted, prepare, settle } from './harness';
 //
 // This test is the guard. Ten loads at ~13 % per-capture flip rate fail ~75 % of the time
 // without the flag; with it the same ten are byte-identical.
+//
+// WHICH STATES THE FIX MOVED — nine of the 28, so a future flip in any of them is this same
+// mechanism and not a design change (review Minor 3). Measured flipping, each with the same
+// twelve-pixel signature translated to its own rail position: `header-1000` (x 547–548),
+// `header-1100` (x 647–648), `browse` (x 987–988). Same family by inference — their baselines
+// moved by 1–28 pixels of one-grey-level antialiasing when the flag went in, but they were
+// not sampled repeatedly: `browse-compare-open`, `browse-layer-menu`, `browse-layers-open`,
+// `browse-legend-collapsed`, `browse-market-panel` and `mobile-sheet`. None of the nine is in
+// `baseline-manifest.json`'s thirteen, which did not move.
+//
+// WHAT THIS LOOP IS AND IS NOT (review Minor 4). The ten navigations run inside ONE test —
+// one context, one renderer process — whereas `reference-baselines.spec.ts` captures once per
+// fresh context. That makes this a stronger stressor than the oracle's own path, not a
+// replica of it: sharing a process is what surfaces a third image (`2ad38c1d…`) and is why
+// RED landed on the first attempt. Do not "simplify" it into a per-capture fresh context in
+// the belief that it reproduces the oracle — it would only get weaker. The fresh-context
+// proof is five consecutive `npm run test:visual:baselines` runs producing one identical set
+// of all 28 PNGs, recorded in the V17 report rather than automated.
+//
+// RESIDUAL RISK (review Minor 6). `--disable-partial-raster` is a `cc/base/switches` switch,
+// not part of Playwright's own arg set, and Chromium ignores switches it no longer knows
+// SILENTLY — a future Chromium that drops it reinstates the flake with no error of any kind.
+// The two detectors are this test (probabilistic: ~75 % per state, ~94 % across the two) and
+// `playwright-config.test.ts` (deterministic, but it can only prove the flag is still being
+// passed, not that Chromium still honours it). A `header-1000` hash that starts moving again
+// after a Playwright or Chromium bump is that risk arriving, not a new bug.
 // ---------------------------------------------------------------------------------------
 
 const CAPTURES = 10;
@@ -38,9 +64,9 @@ const CAPTURES = 10;
 test.setTimeout(180_000);
 
 test.describe('capture determinism', () => {
-  // The two states README §2 names for V3's short-column collapse. They share one cause with
-  // the rest of the Browse family (`browse` flips identically, 12 pixels at x 987–988), and
-  // one fix; these two are the ones the flake was found on and are cheap enough to gate.
+  // The two states README §2 names for V3's short-column collapse — the ones the flake was
+  // found on, and cheap enough to gate at ~20 s each. They share one cause and one fix with
+  // the other seven listed above; gating all nine would cost ~3 minutes on the arbiter run.
   for (const name of ['header-1000', 'header-1100']) {
     test(`${name} is byte-identical across ${CAPTURES} captures`, async ({ page }) => {
       const s = SCREENS.find((x) => x.name === name)!;
