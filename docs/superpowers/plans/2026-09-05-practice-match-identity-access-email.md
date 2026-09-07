@@ -2155,6 +2155,8 @@ async def test_staff_detail_shows_answer_and_history(client, staff_session, answ
 
 *Notes for I7/I8 (2026-09-07): the applicant-facing answer field and Re-apply action are wired only when John supplies the Rev 3 gate-state design; until then I8 leaves the gate screens as designed and the report lists the two API paths as "reachable by API, not by UI".*
 
+*Note for I8 (I5c review L3, 2026-09-07): the admin account detail currently carries the application rows three ways (`applications`, `application`, `application_history`) so the existing Admin mapping stayed untouched; I8 picks ONE shape when it wires the Admin Users detail and deletes the other two in the launch-removal pass — a test pins the single shape.*
+
 ### Task I6: Resend pipeline — templates, outbox sending, worker tasks, webhook, allowlist, suppression
 
 **Files:**
