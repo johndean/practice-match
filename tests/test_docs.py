@@ -680,18 +680,44 @@ def test_the_admin_users_tables_match_the_api():
 # `PM_API_TOKEN` GitHub secret to exist (Task I9b).
 
 
+IDENTITY_VARIABLES = ("RESEND_API_KEY", "RESEND_WEBHOOK_SECRET", "EMAIL_ALLOWLIST", "LINK_BASE_URL", "HIBP_ENABLED",
+                      "CONSOLIDATOR_KEYWORDS", "MAIL_REPLY_TO", "PERSONA_PASSWORD", "MARKET_DATA_PUBLIC", "DB_POOL_MAX")
+
+
+def _undocumented(name: str, deploy: str, example: str) -> list[str]:
+    """The documents in which `name` is not DOCUMENTED — which is a stronger claim than present.
+
+    `DEPLOY.md` must carry it as a backticked name (`` `VAR` ``, which is how every row of the
+    Variables table names its variable) or as a whole table cell (`| VAR |`). `.env.example` must
+    carry it as a line that assigns it, set or commented out — `VAR=` or `# VAR=`, the same form
+    `test_every_setting_is_documented_in_env_example_and_deploy_md` requires of every `Settings`
+    field.
+
+    Both patterns are bounded, and that is the point (I9a fix round 1, Minor 5). This test used to
+    ask `var in text`, and the mutation probe meant to prove it bites did not: renaming the
+    `.env.example` row to `# PROBE_REMOVED_PERSONA_PASSWORD=` left it GREEN, because the token was
+    still a substring of the longer name. A bare substring proves a name appears somewhere in a
+    document — in a sentence, inside another identifier, in a code block about something else — not
+    that an operator can find the row that tells them what to set."""
+    missing = []
+    if not re.search(rf"(?:`{re.escape(name)}`|\|\s*{re.escape(name)}\s*\|)", deploy):
+        missing.append("DEPLOY.md")
+    if not re.search(rf"(?m)^#?\s*{re.escape(name)}=", example):
+        missing.append(".env.example")
+    return missing
+
+
 def test_identity_variables_are_documented():
-    """Every variable Wave 2a introduced, in BOTH documents.
+    """Every variable Wave 2a introduced, in BOTH documents, as a row rather than a mention.
 
     `test_every_setting_is_documented_in_env_example_and_deploy_md` above already covers each field
     of `Settings`, which is most of this list. `PERSONA_PASSWORD` is the one that is NOT a setting —
     nothing in the api or the worker reads it, only `scripts/seed_persona.py` does — so it is the one
     that could have left both documents with nothing to notice."""
-    text = (ROOT / "DEPLOY.md").read_text()
+    deploy = (ROOT / "DEPLOY.md").read_text()
     example = (ROOT / ".env.example").read_text()
-    for var in ("RESEND_API_KEY", "RESEND_WEBHOOK_SECRET", "EMAIL_ALLOWLIST", "LINK_BASE_URL", "HIBP_ENABLED",
-                "CONSOLIDATOR_KEYWORDS", "MAIL_REPLY_TO", "PERSONA_PASSWORD", "MARKET_DATA_PUBLIC", "DB_POOL_MAX"):
-        assert var in text and var in example, var
+    undocumented = {var: where for var in IDENTITY_VARIABLES if (where := _undocumented(var, deploy, example))}
+    assert undocumented == {}, f"identity variables not documented as a row: {undocumented}"
 
 
 def test_launch_removal_list_is_executed():
