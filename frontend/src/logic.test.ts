@@ -496,6 +496,25 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
     expect(c2.state).toMatchObject({ auth: false, gate: 'signin', screen: 'gate' });
   });
 
+  // Fix round 1 re-review, ruled deliberate: the widened guard also means the forgot / reset /
+  // invite cards' "Back to sign in" ends an ACTIVE member's session, where the narrow `s.auth &&`
+  // guard would only have done so from a status card. That is coherent and is kept — arriving at
+  // the sign-in card means signing in as SOMEBODY, so whoever is there now is on their way out —
+  // and it is the same rule on every card rather than a rule that depends on which one you came
+  // from. Pinned here so it can never become an accident.
+  it('"Back to sign in" ends an active member\'s session too, from a reset link as much as from a status card (A8.1)', async () => {
+    const auth = fakeAuth();
+    const c2: any = new Component({ auth, me: { ...ACCOUNT, state: 'active' } });
+    c2.setState({ screen: 'gate', gate: 'reset', gateToken: 'raw-reset-token' });
+    c2.componentDidMount();
+    expect(c2.state, 'A8.3a keeps the member on the reset page').toMatchObject({ screen: 'gate', gate: 'reset' });
+
+    await c2.renderVals().goSignin();
+
+    expect(auth.signOut).toHaveBeenCalledTimes(1);
+    expect(c2.state).toMatchObject({ gate: 'signin', screen: 'gate', formNotice: '' });
+  });
+
   it('goSignin still shows the card when the sign-out call fails, and spends no request when nobody is signed in (A8.1)', async () => {
     const failing = fakeAuth({ signOut: vi.fn(() => Promise.reject(new Error('network'))) });
     const c2: any = new Component({ auth: failing });

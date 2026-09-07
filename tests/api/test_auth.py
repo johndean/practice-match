@@ -961,6 +961,19 @@ async def test_resend_verification_refuses_every_state_but_unverified(client, co
     assert await _outbox(conn) == []
 
 
+async def test_resend_verification_refuses_the_legacy_operator_bearer(client, conn):
+    """The `row is None` arm. `deps.LEGACY_ADMIN` is the `API_SECRET_KEY` bearer's synthetic id: it
+    passes `account.self` and names no `account` row at all (the same hole `_password_hash_of`
+    guards), so reading `row[1]` off the missing row would be a `TypeError` — a 500 on a credential
+    path — instead of the refusal every non-unverified caller gets. It is not an unverified
+    applicant, so it is refused with the rest."""
+    from app.config import settings
+
+    r = await client.post("/api/auth/verify/resend", headers={"Authorization": f"Bearer {settings.api_secret_key}"})
+    assert (r.status_code, r.json()["error"]["code"]) == (403, "FORBIDDEN")
+    assert await _outbox(conn) == []
+
+
 async def test_resend_verification_needs_a_session(client):
     """`account.self`, like `/api/me`: no cookie, no resend. An unverified principal HOLDS
     `account.self` — `permissions.effective_roles` makes any non-active account an `applicant`,

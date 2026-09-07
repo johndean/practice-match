@@ -363,9 +363,15 @@ async def resend_verification(principal: Self, request: Request) -> dict[str, st
 
     `unverified` ONLY. From `verified` onward the address has been proved, so a fresh link would be
     a way IN rather than a courtesy — the same line `signup`'s third branch and `password/forgot`'s
-    `RESETTABLE_STATES` already draw. A 403 rather than a uniform 202 because the caller IS the
-    account holder: there is no enumeration to protect here, and "your address is already
-    confirmed" is the useful answer.
+    `RESETTABLE_STATES` already draw. A 403 rather than the uniform 202 the ANONYMOUS endpoints
+    answer with, because there is no enumeration to protect from a caller who is the account
+    holder; but the refusal is `AddressState`, whose message is `AuthError`'s generic "Your account
+    cannot do this." and NOT a per-state explanation. Two reasons: the branch also catches
+    `suspended` and `revoked`, which are not "already confirmed", and inventing user-facing copy is
+    not this task's to do. The client swallows it (`logic.js`'s `.catch(() => {})` on the card's
+    "Send it again"), which is right — the only way to press that button on a non-`unverified`
+    account is a screen left open across a state change, and the answer to a stale screen is not an
+    error message.
 
     The ceiling is `signup`'s own `SIGNUP_EMAIL` counter under `signup`'s own Redis key, so the two
     ways of asking for a verify link share three per address per day rather than adding up to six.

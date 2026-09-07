@@ -1440,6 +1440,8 @@ class Component extends DCLogic {
       signedOut: !s.auth,
       goSignInScreen: () => this.setState({ screen: "gate", gate: "signin" }),
       goApply: (e) => { if (e) e.preventDefault(); this.setState({ gate: (s.auth || !this.props.auth) ? "apply" : "signup" }); },
+      // Reaching the sign-in card means signing in as SOMEBODY, so whoever is signed in now is on their way out — the
+      // same rule on every card that leads here: a status card's "Sign in", and the account cards' "Back to sign in".
       goSignin: (e) => { if (e) e.preventDefault(); const show = () => this.setState({ gate: "signin", screen: "gate", formNotice: "" }); if ((s.auth || this.props.me) && this.props.auth) return this.props.auth.signOut().then(show, show); show(); },
       goForgot: (e) => { if (e) e.preventDefault(); this.setState({ gate: "forgot", formError: "", formNotice: "" }); },
       goSignup: (e) => { if (e) e.preventDefault(); this.setState({ gate: "signup", formError: "", formNotice: "" }); },
