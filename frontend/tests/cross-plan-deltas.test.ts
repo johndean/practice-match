@@ -33,11 +33,20 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
     expect(md).toContain("there is one `browse` state, not `browse-listings`/`browse-market`");
   });
 
-  it('the identity plan executes the launch-removal list through the generator, not by hand-editing App.vue', () => {
+  it('the identity plan executes the launch-removal list through the D15 amendment engine, never by hand-editing App.vue or logic.js (A-I8, 2026-09-07)', () => {
     const md = read(IDENTITY);
-    expect(md).toContain('convert-dc.mjs --launch');
-    expect(md).toContain('gen:app:launch');
+    // A-I8 replaced the earlier `convert-dc.mjs --launch` idea: a second generator mode cannot
+    // coexist with one committed App.vue, and it would have left the oracle (the design file)
+    // showing the jump bar the app had lost. The prototype blocks now leave the DESIGN through
+    // ruled amendments (A6.x), and logic.js / App.vue are regenerated from it.
+    expect(md).toContain('D15 amendment mechanism');
+    expect(md).toContain('A6.1');
+    expect(md).toContain('gen:design');
+    expect(md).toContain('REGENERATED = pristine + amendments');
+    expect(md).not.toContain('gen:app:launch');
     expect(md).not.toContain('remove jump bar markup, `gateStates`, demo credentials');
+    // The one remaining mention of the old mode is the sentence that says why it was dropped.
+    expect(md.split('\n').filter((l) => l.includes('--launch')), 'the --launch mode may be named only where its rejection is explained').toHaveLength(1);
   });
 
   it('the map-engines plan names ListingsMap.vue only inside a "deleted in Browse V3" clause (spec D19) and rebases onto V3\'s engine shape', () => {
