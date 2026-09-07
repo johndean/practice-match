@@ -13,21 +13,29 @@
 #
 # Same hermetic fake-`railway` harness as test_deploy_guard.sh and test_verify_deploy.sh:
 # a fake CLI shadows the real one on PATH and records every invocation. This one also
-# records a manifest of the directory `railway up` was handed, so the assertions can
-# inspect exactly what would have been uploaded. Scratch git repositories — including a
-# real `git worktree add`, so the `.git` pointer file is the genuine article — stand in
-# for the checkouts. Nothing here touches the network or a Railway account.
+# records a manifest of the directory `railway up` was handed, and models Railway's
+# deployment list well enough to exercise the log-stream-timeout fallback: a deployment
+# comes into existence only when `up` creates one, and its status is popped per poll.
+# Scratch git repositories — including a real `git worktree add`, so the `.git` pointer
+# file is the genuine article — stand in for the checkouts. Nothing here touches the
+# network or a Railway account.
 set -euo pipefail; cd "$(dirname "$0")/../.."
 fail() { echo "FAIL: $*"; exit 1; }
 [[ -x scripts/deploy.sh ]] || fail "scripts/deploy.sh missing or not executable"
 
 tmp=$(mktemp -d); trap 'rm -rf "$tmp"' EXIT
 export FAKE_LOG="$tmp/log"; : > "$FAKE_LOG"
-export FAKE_STATUS_FILE="$tmp/deployment-status"; printf 'SUCCESS\n' > "$FAKE_STATUS_FILE"
+export FAKE_STATE="$tmp/state"
+reset_state() { rm -rf "$FAKE_STATE"; mkdir -p "$FAKE_STATE"; }
+reset_state
 
 cat > "$tmp/railway" <<'F'
 #!/usr/bin/env bash
 echo "railway $*" >> "$FAKE_LOG"
+# --service <name>, wherever it sits in the argument list.
+svc=""; prev=""
+for a in "$@"; do [[ "$prev" == "--service" ]] && svc="$a"; prev="$a"; done
+OLD_ROW='{"id":"dep-old","status":"SUCCESS","createdAt":"2026-09-07T09:00:00Z"}'
 case "$1" in
   status) printf '{"name":"%s"}\n' "${FAKE_PROJECT:-Practice Match}" ;;
   variable) : ;;
@@ -40,22 +48,33 @@ case "$1" in
       [[ -f "$path/pyproject.toml" ]] && sed 's|^|UPLOAD_PYPROJECT |' "$path/pyproject.toml" >> "$FAKE_LOG"
       [[ -f "$path/BUILD_SHA" ]] && sed 's|^|UPLOAD_BUILD_SHA |' "$path/BUILD_SHA" >> "$FAKE_LOG"
     fi
-    # The measured failure mode: the upload succeeds, then the CLI's own log stream
-    # times out and `up` exits non-zero ("reqwest error … operation timed out") while
-    # the deployment carries on to SUCCESS.
+    # A real upload creates a deployment. FAKE_UP_NO_DEPLOYMENT is the C2 hole: `up` failed
+    # at UPLOAD time, so nothing was created and the previous (SUCCESS) deployment is still
+    # the newest one Railway will report.
+    if [[ -z "${FAKE_UP_NO_DEPLOYMENT:-}" ]]; then
+      # Unquoted on purpose: "BUILDING SUCCESS" becomes one status per line, popped per poll.
+      printf '%s\n' ${FAKE_DEPLOY_STATUSES:-SUCCESS} > "$FAKE_STATE/dep-$svc"
+    fi
+    # The measured failure mode: the upload succeeds, then the CLI's own log stream times
+    # out and `up` exits non-zero while the deployment carries on to SUCCESS.
     [[ -n "${FAKE_UP_FAILS:-}" ]] && { echo "reqwest error: error sending request: operation timed out" >&2; exit 1; }
     exit 0
     ;;
   deployment)
-    # `deployment list --json`. The OLDEST row comes first and is already SUCCESS, so a
-    # parser that reads element 0 rather than the newest by createdAt would sail past
-    # the FAILED case below — this ordering is the assertion. One status per line in
-    # FAKE_STATUS_FILE, popped per call; the last line repeats for ever.
-    st=$(head -n 1 "$FAKE_STATUS_FILE")
-    if [[ $(wc -l < "$FAKE_STATUS_FILE") -gt 1 ]]; then
-      tail -n +2 "$FAKE_STATUS_FILE" > "$FAKE_STATUS_FILE.next" && mv "$FAKE_STATUS_FILE.next" "$FAKE_STATUS_FILE"
+    # `deployment list --json`. The OLDEST row — already SUCCESS — comes FIRST, so a parser
+    # that reads element 0 instead of the newest by createdAt cannot pass the cases below.
+    rows="$OLD_ROW"
+    state="$FAKE_STATE/dep-$svc"
+    if [[ -f "$state" ]]; then
+      st=$(head -n 1 "$state")
+      if [[ $(wc -l < "$state") -gt 1 ]]; then
+        tail -n +2 "$state" > "$state.next" && mv "$state.next" "$state"
+      fi
+      rows="$rows,$(printf '{"id":"dep-%s","status":"%s","createdAt":"2026-09-07T10:00:00Z"}' "$svc" "$st")"
     fi
-    printf '[{"id":"dep-old","status":"SUCCESS","createdAt":"2026-09-07T09:00:00Z"},{"id":"dep-new","status":"%s","createdAt":"2026-09-07T10:00:00Z"}]\n' "$st"
+    # A CLI whose JSON carries no createdAt at all: the script must fail closed, not hang.
+    [[ -n "${FAKE_NO_CREATED_AT:-}" ]] && rows=$(printf '%s' "$rows" | sed 's/,"createdAt":"[^"]*"//g')
+    printf '[%s]\n' "$rows"
     ;;
 esac
 F
@@ -63,7 +82,10 @@ chmod +x "$tmp/railway"
 export PATH="$tmp:$PATH"
 export FAKE_PROJECT="Practice Match"
 export SKIP_VERIFY=1
+# Seconds, not minutes: the production bounds are 10 s / 120 s / 900 s.
 export DEPLOY_POLL_INTERVAL=1
+export DEPLOY_APPEAR_TIMEOUT=2
+export DEPLOY_POLL_TIMEOUT=3
 
 # Scratch repositories, made without touching the developer's git identity or signing config.
 git_q() { git -c init.defaultBranch=main -c commit.gpgsign=false -c user.name=pm-test -c user.email=pm-test@example.invalid "$@"; }
@@ -79,7 +101,7 @@ new_repo() {  # new_repo <dir> <version>
 # --- 1. the upload is the committed tree: no .git, no untracked files -----------
 repo="$tmp/main-checkout"; new_repo "$repo" 9.9.9
 echo "notes to self" > "$repo/scratch-note.txt"   # untracked: must not ship, must not refuse the deploy
-: > "$FAKE_LOG"
+reset_state; : > "$FAKE_LOG"
 out=$(scripts/deploy.sh QA "$repo") || fail "a clean SOURCE_DIR must deploy; got: $out"
 grep -q '^UPLOAD_PYPROJECT version = "9.9.9"' "$FAKE_LOG" \
   || fail "the upload must carry SOURCE_DIR's committed pyproject.toml; got: $(grep '^UPLOAD_PYPROJECT' "$FAKE_LOG" || echo none)"
@@ -107,7 +129,7 @@ grep -q "^UPLOAD_BUILD_SHA $repo_sha$" "$FAKE_LOG" \
   || fail "BUILD_SHA must carry SOURCE_DIR's short HEAD ($repo_sha); got: $(grep '^UPLOAD_BUILD_SHA' "$FAKE_LOG" || echo none)"
 
 # --- 3. an uncommitted tracked edit is refused (66), before the CLI is touched ---
-: > "$FAKE_LOG"
+reset_state; : > "$FAKE_LOG"
 printf '[project]\nname = "practice-match"\nversion = "9.9.9-uncommitted"\n' > "$repo/pyproject.toml"
 set +e
 out=$(scripts/deploy.sh QA "$repo" 2>&1); code=$?
@@ -128,7 +150,7 @@ git_q -C "$wt" add pyproject.toml
 git_q -C "$wt" commit -q -m "branch-only version"
 wt_sha=$(git_q -C "$wt" rev-parse --short HEAD)
 [[ "$wt_sha" != "$repo_sha" ]] || fail "the worktree and the main checkout must differ for this case to mean anything"
-: > "$FAKE_LOG"
+reset_state; : > "$FAKE_LOG"
 out=$(scripts/deploy.sh QA "$wt") || fail "a linked worktree must be deployable as SOURCE_DIR; got: $out"
 grep -q '^UPLOAD_PYPROJECT version = "8.8.8"' "$FAKE_LOG" \
   || fail "SOURCE_DIR=<linked worktree> must upload the worktree's HEAD; got: $(grep '^UPLOAD_PYPROJECT' "$FAKE_LOG" || echo none)"
@@ -136,48 +158,92 @@ if grep -q '9\.9\.9' "$FAKE_LOG"; then fail "the main checkout's tree leaked int
 grep -q "^UPLOAD_BUILD_SHA $wt_sha$" "$FAKE_LOG" \
   || fail "BUILD_SHA must be the worktree's sha ($wt_sha); got: $(grep '^UPLOAD_BUILD_SHA' "$FAKE_LOG" || echo none)"
 
-# --- 5. a log-stream timeout after a good upload polls through to SUCCESS -------
-: > "$FAKE_LOG"; printf 'BUILDING\nSUCCESS\n' > "$FAKE_STATUS_FILE"
-out=$(FAKE_UP_FAILS=1 scripts/deploy.sh QA "$repo" 2>&1) \
+# --- 5. a log-stream timeout after a good upload polls the NEW deployment to SUCCESS -
+# The upload created a deployment newer than the one that was newest before `railway up`,
+# so a non-zero `up` is only the log stream dying and the deploy must carry on.
+reset_state; : > "$FAKE_LOG"
+out=$(FAKE_UP_FAILS=1 FAKE_DEPLOY_STATUSES="BUILDING SUCCESS" scripts/deploy.sh QA "$repo" 2>&1) \
   || fail "a log-stream timeout after a successful upload must not abort the deploy; got: $out"
 [[ "$out" == *"SUCCESS"* ]] || fail "the fallback must report the status it polled; got: $out"
 grep -q '^railway deployment list --service api' "$FAKE_LOG" || fail "the fallback must poll deployment list for api"
 grep -q '^railway deployment list --service worker' "$FAKE_LOG" || fail "the worker upload must still happen after the api log stream timed out"
 [[ $(grep -c '^UP ' "$FAKE_LOG") -eq 2 ]] || fail "both services must still be uploaded; got: $(grep '^UP ' "$FAKE_LOG")"
+# The baseline must be read BEFORE the upload, or "newer than what was there" means nothing.
+first_api_call=$(grep -m1 -E '^railway (up|deployment list) .*--service api' "$FAKE_LOG")
+[[ "$first_api_call" == railway\ deployment\ list* ]] \
+  || fail "the newest deployment must be recorded BEFORE railway up, not after; first api call was: $first_api_call"
 
-# --- 6. a FAILED deployment stops the deploy with 67 ----------------------------
-: > "$FAKE_LOG"; printf 'FAILED\n' > "$FAKE_STATUS_FILE"
+# --- 6. C2: an upload that created NO deployment fails closed (67) ---------------
+# `railway up` can exit non-zero because the upload itself failed, in which case no new
+# deployment exists and Railway's newest is still the previous deploy's SUCCESS. Polling
+# for a status alone would read that SUCCESS and sail on with nothing deployed.
+reset_state; : > "$FAKE_LOG"
 set +e
-out=$(FAKE_UP_FAILS=1 scripts/deploy.sh QA "$repo" 2>&1); code=$?
+out=$(FAKE_UP_FAILS=1 FAKE_UP_NO_DEPLOYMENT=1 scripts/deploy.sh QA "$repo" 2>&1); code=$?
+set -e
+[[ $code -eq 67 ]] || fail "an upload that created no deployment must exit 67, got $code: $out"
+[[ "$out" == *"upload did not create a deployment for api"* ]] \
+  || fail "the failure must say the upload created no deployment; got: $out"
+[[ "$out" != *"SUCCESS"* ]] || fail "the previous deployment's SUCCESS must never be read as this deploy's; got: $out"
+[[ $(grep -c '^UP ' "$FAKE_LOG") -eq 1 ]] || fail "the worker upload must not follow a failed api upload"
+# It polled rather than giving up on the first look, and it stopped inside the bound.
+[[ "$out" == *"waiting for the api deployment to appear"* ]] || fail "the appearance wait must poll and say so; got: $out"
+
+# --- 7. C2: a deployment list with no createdAt fails closed too, never hangs ----
+reset_state; : > "$FAKE_LOG"
+set +e
+out=$(FAKE_UP_FAILS=1 FAKE_NO_CREATED_AT=1 scripts/deploy.sh QA "$repo" 2>&1); code=$?
+set -e
+[[ $code -eq 67 ]] || fail "a deployment list without createdAt must exit 67, got $code: $out"
+[[ "$out" == *"upload did not create a deployment for api"* ]] \
+  || fail "a list with no createdAt must read as no new deployment; got: $out"
+
+# --- 8. a FAILED deployment stops the deploy with 67 ----------------------------
+reset_state; : > "$FAKE_LOG"
+set +e
+out=$(FAKE_UP_FAILS=1 FAKE_DEPLOY_STATUSES=FAILED scripts/deploy.sh QA "$repo" 2>&1); code=$?
 set -e
 [[ $code -eq 67 ]] || fail "a FAILED deployment must exit 67, got $code: $out"
 [[ "$out" == *"FAILED"* ]] || fail "the failure must name the deployment status; got: $out"
 [[ $(grep -c '^UP ' "$FAKE_LOG") -eq 1 ]] || fail "a failed api deployment must stop before the worker upload"
 
-# --- 7. the wait is bounded: a deployment that never settles exits 67, never hangs -
-: > "$FAKE_LOG"; printf 'BUILDING\n' > "$FAKE_STATUS_FILE"
+# --- 9. the settle wait is bounded: a deployment that never finishes exits 67 ----
+reset_state; : > "$FAKE_LOG"
 set +e
-out=$(FAKE_UP_FAILS=1 DEPLOY_POLL_TIMEOUT=0 scripts/deploy.sh QA "$repo" 2>&1); code=$?
+out=$(FAKE_UP_FAILS=1 FAKE_DEPLOY_STATUSES=BUILDING DEPLOY_POLL_TIMEOUT=0 scripts/deploy.sh QA "$repo" 2>&1); code=$?
 set -e
 [[ $code -eq 67 ]] || fail "an unsettled deployment must exit 67 within the bound, got $code: $out"
 [[ "$out" == *"BUILDING"* ]] || fail "the bounded-wait failure must report the last status seen; got: $out"
 
-# --- 8. the default SOURCE_DIR is the script's own repo root --------------------
-# Proved with a scratch checkout that carries its own copy of deploy.sh, so the case is
-# independent of this repository's working state.
+# --- 10. the default SOURCE_DIR is the script's own repo root, and the verifier is
+# handed the archived tree's sha and version ------------------------------------
+# Proved with a scratch checkout that carries its own copy of deploy.sh (so the case is
+# independent of this repository's working state) plus a recording stub where deploy.sh
+# looks for the verifier — `scripts/verify-deploy.sh`, relative to its own repo root — so
+# "continues to the worker and the verifier" is asserted without any network in play.
 selfrepo="$tmp/self-checkout"; new_repo "$selfrepo" 7.7.7
 mkdir -p "$selfrepo/scripts"
 cp scripts/deploy.sh "$selfrepo/scripts/deploy.sh"
-git_q -C "$selfrepo" add scripts/deploy.sh
-git_q -C "$selfrepo" commit -q -m "vendor deploy.sh"
-: > "$FAKE_LOG"; printf 'SUCCESS\n' > "$FAKE_STATUS_FILE"
-out=$("$selfrepo/scripts/deploy.sh" QA) || fail "the default SOURCE_DIR must be the script's own repo root; got: $out"
+cat > "$selfrepo/scripts/verify-deploy.sh" <<'V'
+#!/usr/bin/env bash
+echo "VERIFY env=$1 EXPECT_SHA=${EXPECT_SHA:-} EXPECT_VERSION=${EXPECT_VERSION:-}" >> "$FAKE_LOG"
+V
+chmod +x "$selfrepo/scripts/verify-deploy.sh"
+git_q -C "$selfrepo" add scripts/deploy.sh scripts/verify-deploy.sh
+git_q -C "$selfrepo" commit -q -m "vendor deploy.sh and a recording verifier stub"
+self_sha=$(git_q -C "$selfrepo" rev-parse --short HEAD)
+reset_state; : > "$FAKE_LOG"
+out=$(SKIP_VERIFY= FAKE_UP_FAILS=1 FAKE_DEPLOY_STATUSES="BUILDING SUCCESS" "$selfrepo/scripts/deploy.sh" QA 2>&1) \
+  || fail "the default SOURCE_DIR must deploy and reach the verifier; got: $out"
 grep -q '^UPLOAD_PYPROJECT version = "7.7.7"' "$FAKE_LOG" \
   || fail "the default SOURCE_DIR must archive the script's own repo; got: $(grep '^UPLOAD_PYPROJECT' "$FAKE_LOG" || echo none)"
+[[ $(grep -c '^UP ' "$FAKE_LOG") -eq 2 ]] || fail "the worker upload must follow the api's recovered log-stream timeout"
+grep -q "^VERIFY env=QA EXPECT_SHA=$self_sha EXPECT_VERSION=7.7.7$" "$FAKE_LOG" \
+  || fail "the verifier must be handed the archived tree's sha and version; got: $(grep '^VERIFY' "$FAKE_LOG" || echo none)"
 
-# --- 9. a SOURCE_DIR that is not a git working tree is a usage error (64) -------
+# --- 11. a SOURCE_DIR that is not a git working tree is a usage error (64) ------
 mkdir -p "$tmp/not-a-repo"
-: > "$FAKE_LOG"
+reset_state; : > "$FAKE_LOG"
 set +e
 out=$(scripts/deploy.sh QA "$tmp/not-a-repo" 2>&1); code=$?
 set -e

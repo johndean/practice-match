@@ -326,6 +326,10 @@ def test_deploy_md_documents_the_archive_upload_and_the_new_exit_codes():
     assert "scripts/deploy.sh QA .worktrees/<branch>" in text, "the SOURCE_DIR usage is undocumented"
     assert "pointer file" in text, "the worktree hazard that caused P14 is unrecorded"
     assert "exit 66" in text and "exit 67" in text, "the new exit codes are undocumented"
+    # C2: a `railway up` that fails at upload time creates no deployment, so the previous
+    # deploy stays the newest and a status-only poll would read its SUCCESS as this one's.
+    assert "upload did not create a deployment" in text, "the fail-closed upload guard is undocumented"
+    assert "strictly newer" in text, "the createdAt baseline rule is undocumented"
     assert "EXPECT_VERSION" in text, "the verifier's artefact check is undocumented"
 
 
