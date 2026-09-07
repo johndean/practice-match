@@ -7,6 +7,13 @@
 # the code now serving traffic is the code we just deployed, so a stale container
 # that answers 200 with an older commit_sha must fail the deploy.
 #
+# EXPECT_VERSION defaults to the version in the pyproject.toml beside this script and
+# proves the deployed ARTEFACT rather than an environment variable. It exists because
+# commit_sha alone could not: it was the COMMIT_SHA variable scripts/deploy.sh had just
+# set, so it agreed with the deploy even on 2026-09-07, when the tree actually uploaded
+# was a different one (P14). `version` is read from the image's own pyproject.toml, so a
+# mismatch between the tree we built and the tree that is serving shows up here.
+#
 # This script is the ONLY gate between a green `railway up` and a broken
 # deployment — /api/healthz is deliberately always-200, so Railway's own
 # healthcheck passes even with a dead database. Every probe below must therefore
@@ -32,13 +39,22 @@ else
 fi
 BASE="${BASE%/}"
 EXPECT_SHA="${EXPECT_SHA:-$(git rev-parse --short HEAD 2>/dev/null || true)}"
+# Empty when the pyproject is unreadable or carries no version (the assertion is then
+# skipped, exactly as EXPECT_SHA is outside a git checkout) — never a traceback.
+EXPECT_VERSION="${EXPECT_VERSION:-$(python3 -c '
+import sys, tomllib
+try:
+    print(tomllib.load(open(sys.argv[1], "rb"))["project"]["version"])
+except Exception:
+    pass
+' "$(dirname "$0")/../pyproject.toml")}"
 
 echo "→ GET $BASE/api/healthz"
 # Captured once and reused for the mode decision below (fix round 1). -f fails the
 # assignment (and, under set -e, the script) on a 4xx/5xx instead of handing python
 # an empty body. -sS: no progress meter, but real errors still reach stderr.
 health=$(curl -fsS --max-time 20 "$BASE/api/healthz")
-printf '%s' "$health" | WANT="$WANT" EXPECT_SHA="$EXPECT_SHA" python3 -c '
+printf '%s' "$health" | WANT="$WANT" EXPECT_SHA="$EXPECT_SHA" EXPECT_VERSION="$EXPECT_VERSION" python3 -c '
 import os, sys, json
 
 def fail(msg):  # one clean line on stderr, exit 1 - no traceback (fix round 1)
@@ -56,6 +72,7 @@ try:
 except Exception:
     fail("healthz body is not JSON")
 want, expect = os.environ["WANT"], os.environ["EXPECT_SHA"]
+expect_version = os.environ["EXPECT_VERSION"]
 
 # Belt and braces (fix round 3): every check below assumes a well-shaped body, but a
 # malformed one can still take a shape none of the specific checks anticipated (e.g.
@@ -90,6 +107,12 @@ try:
     sha = b.get("commit_sha")
     if expect and sha != expect:
         fail(f"commit_sha is {sha!r}, expected {expect!r} - a stale container is still serving")
+    # The artefact check: version is read from the pyproject.toml inside the deployed
+    # image, so unlike commit_sha it cannot be made to agree by setting a variable (P14).
+    # Note the single-quoted heredoc-free inline script - no apostrophes in here.
+    served_version = b.get("version")
+    if expect_version and served_version != expect_version:
+        fail(f"version is {served_version!r}, expected {expect_version!r} - the deployed artefact is not the tree we built")
     print("healthz OK  version", b.get("version"), " commit", sha, " postgis", pg, " site_mode", mode)
 except SystemExit:
     raise

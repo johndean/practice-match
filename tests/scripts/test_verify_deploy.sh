@@ -37,7 +37,7 @@ railway_calls() { wc -l < "$FAKE_RAILWAY_LOG" | tr -d ' '; }
 
 # start_server <mode> [environment]. Modes: ok | spa_missing | deep_503 | no_postgis | no_site_mode |
 #   coming_ok | coming_wrong_shell | coming_interest_500 | coming_leak | missing_keys | db_null |
-#   not_json | deep_json
+#   not_json | deep_json | wrong_version
 # [environment] overrides the fake body's `environment` field (default qa) — M1's production-mode
 # cases reuse the same MODE bodies (coming_ok, ok) with environment: production instead of duplicating
 # them under new mode names.
@@ -67,6 +67,10 @@ if MODE == "missing_keys":
     BODY = {"status": "ok"}  # malformed: every other required key absent (fix round 2)
 if MODE == "db_null":
     BODY["db"] = None  # malformed: key present but not an object (fix round 3)
+if MODE == "wrong_version":
+    # A deployed artefact whose own pyproject.toml is not the source's (P14): the version
+    # is the image's property, unlike commit_sha, which was the variable deploy.sh set.
+    BODY["version"] = "0.0.1-not-the-source"
 
 SHELL_OK = b'<!doctype html><div id="app"></div>'
 SHELL_BAD = b'<!doctype html><p>404 - no app shell here</p>'
@@ -308,6 +312,29 @@ if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash script
 fi
 [[ "$out" == *"FAIL: healthz body is not"* ]] || fail "the deeply-nested-body failure must name itself; got: $out"
 [[ "$out" != *"Traceback"* ]] || fail "the failure must be one clean FAIL line, not a Python traceback; got: $out"
+stop_server
+
+# --- 16. P14: a version mismatch fails, and the message names both versions -----
+# commit_sha was the COMMIT_SHA variable deploy.sh had just set, so it agreed with the
+# deploy even when a different tree had been uploaded. `version` comes from the deployed
+# artefact's own pyproject.toml, so it can disagree — and must fail the script when it does.
+start_server ok
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 EXPECT_VERSION=9.9.9 bash scripts/verify-deploy.sh QA 2>&1); then
+  fail "a version mismatch must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"'0.1.0'"* && "$out" == *"'9.9.9'"* ]] || fail "the version mismatch must name both the served and the expected version; got: $out"
+stop_server
+
+# --- 17. P14: EXPECT_VERSION defaults to the source pyproject's version ---------
+# An operator who runs the verifier by hand gets the check anyway; deploy.sh passes the
+# version of the tree it archived.
+source_version=$(python3 -c 'import tomllib; print(tomllib.load(open("pyproject.toml","rb"))["project"]["version"])')
+start_server wrong_version
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
+  fail "an unset EXPECT_VERSION must still be checked against the source pyproject; it exited 0 with: $out"
+fi
+[[ "$out" == *"'$source_version'"* ]] || fail "the default EXPECT_VERSION must come from pyproject.toml ($source_version); got: $out"
+[[ "$out" == *"'0.0.1-not-the-source'"* ]] || fail "the version mismatch must name what was served; got: $out"
 stop_server
 
 # --- no case anywhere in this suite may reach the Railway CLI ------------------
