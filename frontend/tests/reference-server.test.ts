@@ -75,7 +75,7 @@ describe('reference-server.mjs', () => {
     expect(await res.text()).toContain('<title>VIN Foundation — Coming Soon</title>');
   });
 
-  it('keeps serving the Practice Match V2 marketplace design at "/"', async () => {
+  it('keeps serving the Practice Match V3 marketplace design at "/"', async () => {
     const res = await fetch(`${base}/`);
     expect(res.status).toBe(200);
     expect(await res.text()).toContain('Practice Match — internal working title');
@@ -83,13 +83,13 @@ describe('reference-server.mjs', () => {
 
   it('rejects a traversal attempt through the coming-soon prefix rather than silently serving the marketplace file', async () => {
     // A raw literal ".." on the wire — a normal browser/fetch request would resolve this
-    // client-side to "/Practice Match V2.dc.html" and never send the ".." at all.
-    const res = await rawGet(port, '/coming-soon/../Practice%20Match%20V2.dc.html');
+    // client-side to "/Practice Match V3.dc.html" and never send the ".." at all.
+    const res = await rawGet(port, '/coming-soon/../Practice%20Match%20V3.dc.html');
     expect([403, 404]).toContain(res.status);
   });
 
   it('still rejects the percent-encoded-slash bypass of the URL parser\'s own dot-segment normalization', async () => {
-    const res = await rawGet(port, '/coming-soon/..%2fdesign_handoff_practice_match_v2%2fPractice%20Match%20V2.dc.html');
+    const res = await rawGet(port, '/coming-soon/..%2fdesign_handoff_practice_match_v3%2fPractice%20Match%20V3.dc.html');
     expect([403, 404]).toContain(res.status);
   });
 });

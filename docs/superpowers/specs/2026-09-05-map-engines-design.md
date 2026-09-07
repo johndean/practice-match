@@ -22,7 +22,7 @@
 
 ### 2.1 The interface
 
-Every map surface — `MarketMapView.vue` and `ListingsMap.vue`, the handoff's two Leaflet components — calls only `MapEngine`:
+Every map surface — `MarketMapView.vue`, which is the only Leaflet component left (amended 2026-09-07: Browse V3 merged Listings into one Browse screen and deleted the second component; the plan was swept at V12, this spec was not) — calls only `MapEngine`:
 
 ```ts
 interface MapEngine {
@@ -84,7 +84,7 @@ The Google column is slower because Google's runtime is larger — a property of
 
 ## 3. Data model
 
-Migration `080_map_engines.sql` (this sub-project owns `080`–`089`; Census SP3-A `002`–`009`, SP2 `010`–`059`, SP3-B `060`+). It alters `dataset_registry` (Census plan A1) and adds one table.
+Migration `080_map_engines.sql` (this sub-project owns `080`–`089`; amended 2026-09-07 to the one sequence the plans now state: `001`–`002` taken, `003`–`009` unassigned, SP2/identity `010`–`015`, Seed Listings `016`, Census SP3-A `017`–`059`, SP3-B `060`+). It alters `dataset_registry` (Census plan A1) and adds one table.
 
 ```sql
 ALTER TABLE dataset_registry
@@ -261,7 +261,7 @@ Every other row's "Source and license" sub-line gains "Renders on: Leaflet · Go
 
 ## 11. Sequencing and plan impacts
 
-1. **SP1 Platform — Task 1 amendment:** add `frontend/src/map/engine.ts` and `frontend/src/map/engines/leaflet.ts`; point `MarketMapView.vue` and `ListingsMap.vue` at the interface; add the ESLint import rule. Pixels unchanged; Leaflet stays vendored. No other SP1 change.
+1. **SP1 Platform — Task 1 amendment:** add `frontend/src/map/engine.ts` and `frontend/src/map/engines/leaflet.ts`; point `MarketMapView.vue` at the interface (amended 2026-09-07: the second component is gone with V3's merged Browse screen); add the ESLint import rule. Pixels unchanged; Leaflet stays vendored. No other SP1 change.
 2. **Census A1 + A9 first** (registry + seed; gate + `/api/admin/data-sources`): prerequisites of this sub-project; A1's seed is not edited — `080` adds the columns and rows.
 3. **This sub-project (plan to follow):** `080_map_engines.sql`; shell rendering + CSP + ETag; `/api/map-config`; `/api/layers` rule; `activate` + change log + `/changes`; Admin rows and action (operator token until SP2); `engines/google.ts` and the Google plan's G3 (pins), G4 (count proxy), G6 (stub, mask), G7 (runbook). The Google plan's G5 "block tiles" trigger and G8 "remove Leaflet" deltas are **superseded** by the matrix and dropped.
 4. **SP2 Admin** attaches the real admin role and CSRF to endpoints that already exist; enables `activate` on production.

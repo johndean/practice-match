@@ -73,7 +73,7 @@ grep -n "def sync_conn" app/db.py                                     # psycopg2
 grep -n "def sync_redis" app/cache.py                                 # one client per process
 grep -n "^def member" -n tests/api/conftest.py || grep -n "def member" tests/api/conftest.py
 grep -n "def conn\|def redis\|def scratch_dsn" tests/conftest.py
-ls migrations/01[0-4]_*.sql                                           # 010–014 exist; this plan starts at 015
+ls migrations/01[0-5]_*.sql                                           # 010–015 exist; this plan starts at 016
 ```
 
 Expected: every grep hits. `app.auth.deps.require` returns `Callable[[Request], S.Principal | None]` and raises `KeyError` at wiring time for an unknown permission; `install(app)` is already called from `app.main.create_app()`; `tests/api/conftest.py` provides `client` (base URL `https://qa.foundation.vin`) and `member(roles=("buyer",), state="active", email=None, affiliation=None) -> (account_id, cookies, headers)`; `tests/conftest.py` provides `conn` (a scratch database with every migration applied, `settings.database_url` monkeypatched to it), `redis` (fakeredis, patched into `app.cache`) and `scratch_dsn`.
@@ -302,7 +302,7 @@ def test_defaults_are_what_the_seeder_relies_on(conn: Any) -> None:
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `poetry run pytest tests/test_listing_schema.py -v`
-Expected: every test FAILS — `psycopg2.errors.UndefinedTable: relation "listing" does not exist` (the `conn` fixture builds a scratch database from `migrations/`, which has no `015` yet).
+Expected: every test FAILS — `psycopg2.errors.UndefinedTable: relation "listing" does not exist` (the `conn` fixture builds a scratch database from `migrations/`, which has no `016` yet).
 
 - [ ] **Step 3: Write the migration**
 
@@ -393,7 +393,7 @@ cd "/Users/johndean/Development/Practice Match"
 git add migrations/016_listing.sql tests/test_listing_schema.py
 git commit -m "feat(db): listing table — geography point, status/source/type checks, photos jsonb
 
-Spec 2026-09-06 D1. Migrations start at 015 (identity holds 010-014). geom is
+Spec 2026-09-06 D1. Migrations start at 016 (identity holds 010-015). geom is
 geography(Point,4326) with a GiST index so Wave 2b's radius search and the geocode
 bounds test both measure metres on the spheroid; listing_page_idx is the exact key
 GET /api/listings pages on. The community figures stay with the Census plan.
@@ -4173,7 +4173,7 @@ Run against the spec with fresh eyes, per the writing-plans skill.
 | §2 John's table, verbatim | L2 | `test_johns_table_is_reproduced_verbatim_and_in_order`, and — because that is a hand-typed second copy — `test_the_seed_file_reconstructs_the_spec_table_exactly` parsed straight out of the spec's own markdown |
 | §2 photograph source folders | L3 | `test_source_images_are_sorted_and_exclude_non_images`, `test_every_seeded_hospital_has_photographs` |
 | D1 the `listing` table and every named column | L1 | `test_listing_has_exactly_the_contracted_columns` |
-| D1 migrations start at `015` | L1 | the filename; `ls migrations/01[0-4]_*.sql` in Preconditions |
+| D1 migrations start at `016` | L1 | the filename; `ls migrations/01[0-5]_*.sql` in Preconditions |
 | D2 Census Geocoder, coordinates + tier committed | L2 | `test_the_geocode_provenance_is_recorded`, `test_no_geocode_placeholder_survived_the_run`, `test_the_dallas_anchor_is_the_probed_coordinate` (with a documented recourse for a rolling-benchmark change) |
 | D2 state bbox + ≤ 25 km from centroid, no network in tests | L2 | `test_every_point_is_inside_its_states_bounding_box`, `test_every_point_is_within_25_km_of_its_city_centroid` |
 | D2 no Google content stored | L2, Constraint (h) | the geocode block calls only `geocoding.geo.census.gov`; nothing in `seeds/` names Google |

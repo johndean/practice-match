@@ -18,18 +18,20 @@ Every environment variable is set only in Railway (per service, per environment)
 
 ## Source of truth for the UI
 
-`docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html` is the approved design. Rules, each violated by an assistant somewhere before:
+`docs/design-reference/design_handoff_practice_match_v3/Practice Match V3.dc.html` is the approved design. Rules, each violated by an assistant somewhere before:
 
 - **Reference open first, port verbatim, absent beats faked.** No invented UI, no placeholder banners, no "TODO Phase X", no simplifications.
-- **Ported files are byte-identical** except the edits listed in `docs/superpowers/specs/2026-09-05-practice-match-platform-design.md` §3. `logic.js` is never restructured. Inline styles stay inline. No CSS framework, no Pinia, no per-screen split without a visual diff per screen.
-- **`npm run test:visual` is the arbiter.** Baselines are generated from the reference in the same run (`npm run test:visual:baselines`). Tolerance is zero (`playwright.config.ts`); relaxing it requires a recorded reason.
+- **Ported files are byte-identical** except the edits listed in `docs/superpowers/specs/2026-09-06-browse-v3-mobile-design.md` §3, which `frontend/tests/app-generated.test.ts` enforces byte for byte. `logic.js` is never restructured. Inline styles stay inline. No CSS framework, no Pinia, no per-screen split without a visual diff per screen.
+- **`npm run test:visual` is the arbiter.** Baselines are generated from the reference in the same run (`npm run test:visual:baselines`). Tolerance is zero: `maxDiffPixels: 0` beside `threshold: 0.1` (`playwright.config.ts`) — no pixel may differ, where a pixel counts as differing when its per-pixel YIQ distance is above 0.1. Relaxing either requires a recorded reason.
 - The design-system cascade matters: `frontend/index.html` links `colors_and_type.css`, `preview/_preview.css`, `ui_kits/vin/kit.css` in that order, before the app styles.
+
+The V3 file is the approved design **plus the local amendments listed in `docs/design-reference/design_handoff_practice_match_v3/LOCAL_AMENDMENTS.md` (spec D15)**: the pristine bundle file is kept beside it as `Practice Match V3.rev2.dc.html` and is never edited, `frontend/tests/design-amendments.ts` is the machine-readable list of ruled edits, and `frontend/tests/design-amendments.test.ts` proves pristine + amendments == the amended file byte for byte. Amendment **A1** (John, 2026-09-07: "keep the V2 header and do not restyle header or fonts") restores V2's display typography on 24 template elements — every display-size heading paired with V2 by tag, text and size takes V2's `text-transform`/`letter-spacing` values in place, and the key-fact values `{{ m.v }}` and the 28 px mobile asking price return to V2's uppercase `.005em` — so all thirteen non-Browse screens are byte-identical to V2 again (`mobile-list`, `mobile-detail`, `detail`, `requests`, `seller-dash`, the four `wizard-*`, the four `admin-*`), hashes and all, in `frontend/tests/baseline-manifest.json`, which holds the V1-era V2 hashes once more. The other three families are literal script or template edits: **A2** (spec D17 — the mobile practice card opens the detail; **A2.2–A2.5** then delete the `browseSel` orphans C13 left behind, including the unwired top-level `selectMarker`, under the bundle's own dead-code rule — the wired `mobileVals.selectMarker` is untouched), **A3** (spec D18 — "View full market report" → "View full listing") and **A4** (spec D21 — Compare hides the "What this means" card). Four families, 31 entries: A1's 24 derived edits plus seven literals; `LOCAL_AMENDMENTS.md` carries one row per amendment and the test pins the set both ways. `docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html` remains the **pre-V3 oracle** — what a suspected regression is diffed against, not what the gates compare to. Every visual and DOM oracle is regenerated from the amended V3 design. `header-1100` and `header-1000` are not among the thirteen: they are Browse screenshots, and `mobile-map`, the Browse states and the two header states change by design.
 
 ## Non-negotiables (from po.vin / rounds.vin, still true here)
 
 - **Surgical diffs.** The change contains the ask and nothing else. Never remove a function or feature while doing unrelated work. No drive-by refactors or reformatting.
 - **No destructive actions** without explicit instruction in the current conversation.
-- **Verification gate before every production deploy — all four:** (1) `poetry run pytest` + `npm run typecheck && npm test && npm run build`; (2) `npm run test:smoke` and `npm run test:visual` green; (3) click-through on https://qa.foundation.vin of the changed flow; (4) post-deploy smoke on https://foundation.vin (`scripts/verify-deploy.sh production`). Verified = ship; no need to ask.
+- **Verification gate before every production deploy — all four:** (1) `poetry run pytest` + `npm run typecheck && npm test && npm run build`; (2) `npm run test:visual:baselines` then `npm run test:e2e` (the `app` project: visual + DOM oracle + smoke) green — the DOM oracle runs under neither `test:smoke` nor `test:visual`, and it is the secondary proof of zero regression on the thirteen non-Browse screens — after V13 they are byte-identical to V2 again; (3) click-through on https://qa.foundation.vin of the changed flow; (4) post-deploy smoke on https://foundation.vin (`scripts/verify-deploy.sh production`). Verified = ship; no need to ask.
 - **Push every commit to both remotes:** `origin` (vin-swe/practice-match) and `production` (johndean/practice-match). Conventional commits; trailer `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
 - **Versions in lockstep:** `frontend/package.json` and `pyproject.toml`, one patch per release (`tests/test_versions.py`).
 - **Close the loop:** forwardable plain-language summary + screenshots of the live screens + a one-line engineer's note with any risk.
@@ -38,7 +40,7 @@ Every environment variable is set only in Railway (per service, per environment)
 
 - **Attribution stays visible** on every map ("Tiles © Esri" today; whatever the VIN Foundation's final basemap licence requires) and under Community Context ("Source: U.S. Census Bureau, …"). Attribution strings will come from `dataset_registry.attribution_text`, not hard-coded, once Sub-project 3 lands.
 - **Blocked datasets never ship.** Pet-ownership incidence (licence unresolved) and third-party practice-location data must not be ingested or displayed until the VIN Foundation clears them. The admin Data Sources tab shows this gate; keep it.
-- **Open licence question:** the design uses Esri basemap tiles; the Census spec registered CARTO. Do not swap either way without the VIN Foundation's decision (spec §9).
+- **Open licence question — one decision record.** Esri (the approved design) vs CARTO (the Census spec) is **one** open question, recorded in the Census plan (`docs/superpowers/plans/2026-09-05-practice-match-census-data-layer.md`, "Basemap licence — one decision record") and referenced, not restated, here. Do not swap either way without the VIN Foundation's decision.
 
 ## Launch-removal list (execute in Sub-project 2, with real auth)
 
@@ -46,14 +48,14 @@ Prototype jump bar markup (`prototypeBar`, already off in production) · "Protot
 
 ## Layout
 
-`frontend/` Vue app · `frontend/tests/` Playwright (`screens.ts` = the 25 approved states) · `app/` FastAPI (`api/health.py`, `static.py`, `checks.py`, `tasks/celery_app.py`) · `migrations/` numbered SQL (ledger runner `scripts/migrate.py`) · `scripts/` `start.sh` (roles api|worker|migrate), `deploy.sh`, `verify-deploy.sh`, `verify-image.sh` · `tests/` pytest · `docs/design-reference/` the handoff bundle (never shipped) · `docs/superpowers/{specs,plans}/`.
+`frontend/` Vue app · `frontend/tests/` Playwright (`screens.ts` = the 28 approved states) · `app/` FastAPI (`api/health.py`, `static.py`, `checks.py`, `tasks/celery_app.py`) · `migrations/` numbered SQL (ledger runner `scripts/migrate.py`) · `scripts/` `start.sh` (roles api|worker|migrate), `deploy.sh`, `verify-deploy.sh`, `verify-image.sh` · `tests/` pytest · `docs/design-reference/` the handoff bundle (never shipped) · `docs/superpowers/{specs,plans}/`.
 
 ## Common operations
 
 ```bash
 docker compose -f docker-compose.dev.yml up -d && poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov-fail-under=100   # backend gate, exactly as CI runs it
 cd frontend && npm run typecheck && npm test && npm run build                  # frontend gates
-cd frontend && npm run test:smoke && npm run test:visual:baselines && npm run test:visual
+cd frontend && npm run test:visual:baselines && npm run test:e2e            # oracles from V3, then visual + DOM + smoke
 scripts/deploy.sh QA && scripts/deploy.sh production                           # after the gate
 railway logs --service api --environment QA --lines 50
 railway variable list --service api --environment QA --json | python3 -c 'import sys,json; print("\n".join(sorted(json.load(sys.stdin))))'   # names only — never pipe values to a terminal

@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 //
 // ImageSlot is a parity port of the design's <image-slot> custom element
-// (docs/design-reference/design_handoff_practice_match_v2/image-slot.js). The pixels are
+// (docs/design-reference/design_handoff_practice_match_v3/image-slot.js). The pixels are
 // judged by the visual gate against the element's own rendering, so what these tests pin
 // is the thing the gate depends on: the shadow tree the element builds in its constructor
 // (l.494-528), the stylesheet it injects (l.290-425), and the read-only branch of
@@ -23,7 +23,7 @@ const css = readFileSync(CSS_PATH, 'utf8');
 // as one `const stylesheet = '…' + '…'` concatenation (l.290-425) whose comment lines are
 // dropped before the literals are joined. Evaluating it here makes the port's CSS file a
 // byte-for-byte assertion against the element's real text rather than a transcription.
-const SLOT_JS = join(import.meta.dirname, '..', '..', '..', 'docs', 'design-reference', 'design_handoff_practice_match_v2', 'image-slot.js');
+const SLOT_JS = join(import.meta.dirname, '..', '..', '..', 'docs', 'design-reference', 'design_handoff_practice_match_v3', 'image-slot.js');
 function designStylesheet(): string {
   const src = readFileSync(SLOT_JS, 'utf8');
   const start = src.indexOf('const stylesheet =');

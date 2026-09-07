@@ -31,6 +31,13 @@ select, input, textarea, button { font-family: 'ProximaNova', Arial, Helvetica, 
 
 .leaflet-container { font-family: 'ProximaNova', Arial, Helvetica, sans-serif; }
 
+/* Leaflet tooltip skins from the V3 reference helmet. They target Leaflet's own tooltip
+   elements, which are created outside any component's scope, so they cannot be scoped. */
+.leaflet-tooltip.rf-callout { background: #fff; border: 1px solid rgba(0,58,112,.12); border-radius: 8px; box-shadow: 0 4px 16px rgba(0,58,112,.22); padding: 8px 10px; color: #003a70; white-space: nowrap; }
+.leaflet-tooltip.rf-callout::before { border-top-color: #fff; }
+.leaflet-tooltip.rf-tip { background: #fff; border: 1px solid rgba(0,58,112,.12); border-radius: 6px; box-shadow: 0 3px 10px rgba(0,58,112,.18); color: #003a70; }
+.leaflet-tooltip.rf-tip::before { border-top-color: #fff; }
+
 @keyframes rf-fade-up {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: none; }

@@ -4,8 +4,9 @@
 .sch3:hover{background: var(--color-navy) !important}
 .sch4:hover{border-color: var(--color-steel) !important;background: var(--color-off-white) !important}
 .sch5:hover{background: #003a70 !important}
-.sch6:hover{box-shadow: var(--shadow-lg) !important;transform: translateY(-2px) !important}
-.sch7:hover{background: var(--vf-navy) !important}
-.sch8:hover{background: var(--vf-neutral) !important}
-.sch9:hover{opacity: 1 !important}
-.scha:hover{color: var(--color-navy) !important}
+.sch6:hover{background: var(--vf-navy) !important}
+.sch7:hover{background: var(--vf-neutral) !important}
+.sch8:hover{opacity: 1 !important}
+.sch9:hover{border-color: var(--vf-accent) !important}
+.scha:hover{color: var(--vf-navy) !important}
+.schb:hover{color: var(--color-navy) !important}

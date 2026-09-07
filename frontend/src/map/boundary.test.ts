@@ -12,7 +12,7 @@ describe('map engine import boundary (Map-engines spec §2.2)', () => {
       const rel = relative(SRC, f);
       if (ALLOWED.some((re) => re.test(rel))) return false;
       const s = readFileSync(f, 'utf8');
-      return /from\s+['"]leaflet|require\(['"]leaflet|window\.L\b|\bL\.(map|tileLayer|marker|divIcon|circle|layerGroup|control)\(/.test(s);
+      return /from\s+['"]leaflet|require\(['"]leaflet|window\.L\b|\bL\.(map|tileLayer|marker|divIcon|circle|rectangle|canvas|layerGroup|control)\(/.test(s);
     }).map((f) => relative(SRC, f));
     expect(offenders).toEqual([]);
   });

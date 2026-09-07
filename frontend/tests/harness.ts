@@ -6,9 +6,9 @@ export type JumpLabel = 'Access' | 'Browse' | 'Listing' | 'Requests' | 'Seller' 
 
 // Deterministic rendering on both targets: no basemap tiles (markers still draw
 // over the blank canvas), fonts loaded, pointer parked, animations settled.
-const VENDOR = join(fileURLToPath(new URL('.', import.meta.url)), '../../docs/design-reference/design_handoff_practice_match_v2/vendor');
-// support.js loads React/ReactDOM/Babel from unpkg with SRI; AustinMap.jsx and MarketMap.jsx
-// (loaded by the reference's Browse/Listing/Market screens) separately load Leaflet from
+const VENDOR = join(fileURLToPath(new URL('.', import.meta.url)), '../../docs/design-reference/design_handoff_practice_match_v3/vendor');
+// support.js loads React/ReactDOM/Babel from unpkg with SRI; MarketMapV3.jsx (loaded by the
+// reference's Browse/Listing/Market screens) separately loads Leaflet from
 // unpkg the same SRI-pinned way — all five must be vendored or the map screens never boot.
 const VENDORED: Record<string, { file: string; type: string }> = {
   'https://unpkg.com/react@18.3.1/umd/react.production.min.js': { file: 'react.production.min.js', type: 'text/javascript' },
@@ -18,8 +18,17 @@ const VENDORED: Record<string, { file: string; type: string }> = {
   'https://unpkg.com/leaflet@1.9.4/dist/leaflet.js': { file: 'leaflet.js', type: 'text/javascript' }
 };
 
-// 1×1 transparent GIF, used to answer the reference's pre-hydration image-slot noise below.
-const BLANK_GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==', 'base64');
+// 1×1 fully transparent GIF, used for the stubbed basemap tiles and to answer the
+// reference's pre-hydration image-slot noise below. It MUST be transparent, not merely
+// blank-looking: MarketMapV3.jsx:190 puts the Esri label tiles in `shadowPane` (z-index
+// 500), deliberately ABOVE the community mosaic in the overlay pane (z-index 400), so an
+// opaque stub paints 24 solid squares over the C5/C7 shading and the zero-tolerance gate
+// compares two unshaded maps. The previous constant
+// (R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==) carried no Graphic Control Extension
+// and was therefore opaque white — harmless under V2, which drew nothing beneath the
+// labels. Guarded by harness.test.ts (controller ruling 2026-09-07). With a transparent
+// tile the basemap area is Leaflet's own #ddd rather than white, on both targets.
+export const BLANK_GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
 
 export async function prepare(page: Page): Promise<void> {
   page.on('pageerror', (e) => { throw new Error(`page error: ${e.message}`); });
@@ -78,6 +87,54 @@ export async function click(page: Page, text: string): Promise<void> {
 
 export function btn(page: Page, name: RegExp) {
   return page.getByRole('button', { name }).first();
+}
+
+// ---------------------------------------------------------------------------------------
+// The one state whose capture a page scroll can move.
+//
+// App.vue has exactly ONE `position: fixed` element — the interest modal's overlay
+// (`position: fixed; inset: 0; z-index: 900; … place-items: center`). Everything else on all
+// 28 approved states is in normal flow, and a fullPage screenshot captures flow content
+// whole regardless of where the page happens to be scrolled. A fixed element is different:
+// it is composited at the offset it PAINTS at, so a page scrolled by N pixels puts the whole
+// overlay — backdrop and the dialog centred inside it — N pixels down the screenshot while
+// the dimmed content behind it does not move.
+//
+// That is what failed CI on the vin-swe runner at fa17a91 (`interest-modal`, 23,441 pixels,
+// 1 %), and only there: comparing that run's own expected/actual pair pixel by pixel, the
+// actual aligns with the expected EXACTLY at dy = +5 and dx = 0 (zero mismatching samples
+// across the dialog) — a pure translation, nothing reflowed, no animation mid-flight (the
+// runner's log even says "captured a stable screenshot"). The backdrop's top edge sits at
+// y = 0 in one and y = 5 in the other, its bottom edge at 939 and 943.
+//
+// The scroll comes from the click itself: Playwright scrolls a target into view before
+// clicking it, and the listing page is ~20 px taller on the Linux runner than on darwin
+// (2375 vs 2355 for the same commit, font metrics), which is enough to push "I'm interested"
+// past the fold and scroll the page a few pixels first. Reproduced on darwin by scrolling
+// 5 px by hand before the capture: 23,608 pixels, the same failure.
+//
+// So the capture is pinned instead of hoped for: scroll back to the top, then hold until the
+// overlay's own box has been identical across two consecutive animation frames with the page
+// still at the top. Nothing is relaxed and no tolerance moves — the screenshot is simply
+// taken from the one viewport position the design's centred dialog is drawn for.
+export async function atTop(page: Page, selector: string): Promise<void> {
+  await page.locator(selector).first().waitFor({ state: 'visible' });
+  await page.evaluate(() => window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }));
+  await page.waitForFunction(
+    (sel) =>
+      new Promise<boolean>((resolve) => {
+        const el = document.querySelector(sel);
+        if (!el) return resolve(false);
+        const a = el.getBoundingClientRect();
+        requestAnimationFrame(() =>
+          requestAnimationFrame(() => {
+            const b = el.getBoundingClientRect();
+            resolve(window.scrollY === 0 && a.top === b.top && a.left === b.left && a.width === b.width && a.height === b.height);
+          })
+        );
+      }),
+    selector
+  );
 }
 
 export async function waitMap(page: Page): Promise<void> {
