@@ -52,7 +52,9 @@ fi
 echo "🚦 railway status → Project: $PROJECT | target environment: $ENV"
 SHA=$(git -C "$SOURCE_DIR" rev-parse --short HEAD)
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/practice-match-deploy.XXXXXX")
-trap 'rm -rf "$TMP"' EXIT
+# Deliberately NOT inside $TMP: that directory is the upload.
+CLI_ERR=$(mktemp "${TMPDIR:-/tmp}/practice-match-deploy-err.XXXXXX")
+trap 'rm -rf "$TMP" "$CLI_ERR"' EXIT
 git -C "$SOURCE_DIR" archive --format=tar HEAD | tar -x -C "$TMP"
 # The artefact's own commit, read back by /api/healthz in preference to COMMIT_SHA: a
 # variable can be set without the uploaded tree ever changing (that is exactly how P14
@@ -80,7 +82,16 @@ echo "→ uploading the committed tree of $SOURCE_DIR (HEAD $SHA, version $VERSI
 # with dep-id/dep-createdAt it is that exact deployment, otherwise the newest one whose
 # createdAt is strictly after the baseline. Rows without a createdAt are dropped.
 select_deployment() {
-  railway deployment list --service "$1" --environment "$2" --json 2>/dev/null |
+  local listing
+  # Returns non-zero, printing the CLI's own stderr, when `railway deployment list` fails, so
+  # each caller decides what a missing list means. The blanket `2>/dev/null` this replaced hid
+  # an expired token or a rate limit behind a bare `exit 1` with no output at all (M1).
+  if ! listing=$(railway deployment list --service "$1" --environment "$2" --json 2>"$CLI_ERR"); then
+    echo "railway deployment list --service $1 --environment $2 failed:" >&2
+    cat "$CLI_ERR" >&2
+    return 1
+  fi
+  printf '%s' "$listing" |
     BASELINE="$3" DEP_ID="${4:-}" DEP_CREATED="${5:-}" python3 -c '
 import json, os, sys
 
@@ -127,7 +138,10 @@ await_deployment() {
   local waited=0 row status dep_id dep_created
   # Phase 1 — the upload must have created a deployment newer than the baseline.
   while :; do
-    row=$(select_deployment "$svc" "$env" "$baseline")
+    if ! row=$(select_deployment "$svc" "$env" "$baseline"); then
+      echo "STOP: cannot tell whether the $svc upload created a deployment — the deployment list is unreadable (reason above). Failing closed." >&2
+      exit 67
+    fi
     if [[ -n "$row" ]]; then
       dep_created=$(printf '%s' "$row" | cut -f1)
       dep_id=$(printf '%s' "$row" | cut -f2)
@@ -145,7 +159,10 @@ await_deployment() {
   # Phase 2 — that deployment, and only that one, must reach SUCCESS within the bound.
   waited=0
   while :; do
-    row=$(select_deployment "$svc" "$env" "$baseline" "$dep_id" "$dep_created")
+    if ! row=$(select_deployment "$svc" "$env" "$baseline" "$dep_id" "$dep_created"); then
+      echo "STOP: lost track of the $svc deployment ${dep_id:-$dep_created} — the deployment list is unreadable (reason above). Failing closed." >&2
+      exit 67
+    fi
     status=$(printf '%s' "$row" | cut -f3)
     case "$status" in
       SUCCESS)
@@ -168,8 +185,14 @@ await_deployment() {
 for svc in api worker; do
   railway variable set "COMMIT_SHA=$SHA" --service "$svc" --environment "$ENV" --skip-deploys >/dev/null
   # Recorded BEFORE the upload: this is the only evidence that can tell a dead log stream
-  # from an upload that never happened.
-  BASELINE=$(select_deployment "$svc" "$ENV" "" | cut -f1)
+  # from an upload that never happened. A CLI failure here must not block a deploy that is
+  # otherwise fine (M1): an empty baseline is safe, because an unreadable list then fails
+  # phase 1 closed anyway, and a readable one only ever mis-reads a PREVIOUS deployment as
+  # this one if a previous deployment exists.
+  if ! BASELINE=$(select_deployment "$svc" "$ENV" "" | cut -f1); then
+    echo "WARN: could not read $svc's deployment list; the log-stream fallback will treat any dated deployment as new" >&2
+    BASELINE=""
+  fi
   echo "→ railway up $TMP --path-as-root --environment $ENV --service $svc --ci  (commit $SHA)"
   # --path-as-root: without it the PATH argument is filtered against "the project
   # directory" the CLI resolves for itself, which is the mis-resolution P14 was.

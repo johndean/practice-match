@@ -61,8 +61,20 @@ case "$1" in
     exit 0
     ;;
   deployment)
-    # `deployment list --json`. The OLDEST row — already SUCCESS — comes FIRST, so a parser
-    # that reads element 0 instead of the newest by createdAt cannot pass the cases below.
+    # `deployment list --json`. FAKE_DEPLOYMENT_FAILS makes the subcommand fail the way a
+    # transient API error, an expired token or a rate limit does; FAKE_DEPLOYMENT_FAILS_AFTER
+    # lets the first N calls through first, so the baseline read and the two mid-run fallback
+    # reads can be failed independently (M1).
+    if [[ -n "${FAKE_DEPLOYMENT_FAILS:-}" ]]; then
+      n=$(cat "$FAKE_STATE/dep-list-calls" 2>/dev/null || echo 0)
+      n=$((n + 1)); echo "$n" > "$FAKE_STATE/dep-list-calls"
+      if (( n > ${FAKE_DEPLOYMENT_FAILS_AFTER:-0} )); then
+        echo "error: failed to fetch deployments: unauthorized" >&2
+        exit 1
+      fi
+    fi
+    # The OLDEST row — already SUCCESS — comes FIRST, so a parser that reads element 0
+    # instead of the newest by createdAt cannot pass the cases below.
     rows="$OLD_ROW"
     state="$FAKE_STATE/dep-$svc"
     if [[ -f "$state" ]]; then
@@ -100,6 +112,7 @@ new_repo() {  # new_repo <dir> <version>
 
 # --- 1. the upload is the committed tree: no .git, no untracked files -----------
 repo="$tmp/main-checkout"; new_repo "$repo" 9.9.9
+repo_sha=$(git_q -C "$repo" rev-parse --short HEAD)
 echo "notes to self" > "$repo/scratch-note.txt"   # untracked: must not ship, must not refuse the deploy
 reset_state; : > "$FAKE_LOG"
 out=$(scripts/deploy.sh QA "$repo") || fail "a clean SOURCE_DIR must deploy; got: $out"
@@ -124,7 +137,6 @@ grep -q -- "--environment QA --service api" "$FAKE_LOG" || fail "api not deploye
 grep -q -- "--environment QA --service worker" "$FAKE_LOG" || fail "worker not deployed to QA"
 
 # --- 2. BUILD_SHA travels inside the archive ------------------------------------
-repo_sha=$(git_q -C "$repo" rev-parse --short HEAD)
 grep -q "^UPLOAD_BUILD_SHA $repo_sha$" "$FAKE_LOG" \
   || fail "BUILD_SHA must carry SOURCE_DIR's short HEAD ($repo_sha); got: $(grep '^UPLOAD_BUILD_SHA' "$FAKE_LOG" || echo none)"
 
@@ -249,5 +261,32 @@ out=$(scripts/deploy.sh QA "$tmp/not-a-repo" 2>&1); code=$?
 set -e
 [[ $code -eq 64 ]] || fail "a SOURCE_DIR that is not a git working tree must exit 64, got $code: $out"
 [[ ! -s "$FAKE_LOG" ]] || fail "an unusable SOURCE_DIR must be refused before the railway CLI is touched: $(cat "$FAKE_LOG")"
+
+# --- 12. M1: a baseline `deployment list` failure warns loudly and does NOT block a deploy -
+# The baseline read is on the happy path, so a CLI blip must not become a silent abort: it
+# degrades to an empty baseline (safe — an unreadable list then fails phase 1 closed anyway)
+# and says so, with the CLI's own reason visible rather than swallowed by 2>/dev/null.
+reset_state; : > "$FAKE_LOG"
+out=$(FAKE_DEPLOYMENT_FAILS=1 scripts/deploy.sh QA "$repo" 2>&1) \
+  || fail "a deployment-list failure must not block a deploy whose upload succeeded; got: $out"
+[[ "$out" == *"WARN: could not read api's deployment list"* ]] || fail "the degraded baseline must warn; got: $out"
+[[ "$out" == *"unauthorized"* ]] || fail "the CLI's own reason must reach the operator, not /dev/null; got: $out"
+[[ $(grep -c '^UP ' "$FAKE_LOG") -eq 2 ]] || fail "both services must still be uploaded; got: $(grep '^UP ' "$FAKE_LOG")"
+
+# --- 13. M1: mid-run (phase 1) a deployment-list failure fails closed, reason visible ------
+reset_state; : > "$FAKE_LOG"
+set +e
+out=$(FAKE_UP_FAILS=1 FAKE_DEPLOYMENT_FAILS=1 FAKE_DEPLOYMENT_FAILS_AFTER=1 scripts/deploy.sh QA "$repo" 2>&1); code=$?
+set -e
+[[ $code -eq 67 ]] || fail "a deployment-list failure during the fallback must fail closed with 67, got $code: $out"
+[[ "$out" == *"unauthorized"* ]] || fail "the CLI's failure must be printed before failing closed; got: $out"
+
+# --- 14. M1: and in phase 2, after the deployment has been identified ---------------------
+reset_state; : > "$FAKE_LOG"
+set +e
+out=$(FAKE_UP_FAILS=1 FAKE_DEPLOY_STATUSES="BUILDING SUCCESS" FAKE_DEPLOYMENT_FAILS=1 FAKE_DEPLOYMENT_FAILS_AFTER=2 scripts/deploy.sh QA "$repo" 2>&1); code=$?
+set -e
+[[ $code -eq 67 ]] || fail "losing the deployment list mid-settle must fail closed with 67, got $code: $out"
+[[ "$out" == *"unauthorized"* ]] || fail "the CLI's failure must be printed before failing closed; got: $out"
 
 echo "deploy archive OK"
