@@ -1644,6 +1644,27 @@ Expected: FAIL — the new block fails on the first case with `expected { …, s
 
 Replace `frontend/src/components/MarketMapView.vue` entirely. The control cluster, the status overlay and every literal below are `MarketMapV3.jsx:154-436`, ported:
 
+> **Superseded by D20 (John confirmed 2026-09-07): the shipped watcher redraws the overlay only when `areaChanged()` on the five reference deps — see `MarketMapView.vue`.** The block below, and the comment inside it that calls the merged dep list "deliberately a superset of the reference's area effect", describe the pre-D20 watcher: it rebuilt all 12,560 mosaic rectangles on a `practices`- or `activeId`-only change, which `MarketMapV3.jsx`'s area effect would not do. The final-review fix round added the guard; the shipped shape is:
+>
+> ```js
+> let lastArea = null;
+> function areaChanged() {
+>   const next = [props.communities, props.activeLayer, props.showDrive, props.driveCenter && props.driveCenter[0], status.value];
+>   const changed = lastArea === null || next.some((d, i) => !Object.is(d, lastArea[i]));
+>   lastArea = next;
+>   return changed;
+> }
+>
+> watch(
+>   [() => props.communities, () => props.activeLayer, () => props.showDrive, () => props.driveCenter && props.driveCenter[0],
+>     () => props.practices, () => props.activeId, status],
+>   () => { if (areaChanged()) drawOverlay(); drawPins(); },
+>   { deep: true }
+> );
+> ```
+>
+> One merged watcher still guarantees the pane order (overlay re-added before pins); only the overlay's redraw is now gated on the reference's own five inputs. A selection moves `driveCenter` and `showDrive`, so the design itself rebuilds the mosaic on a pin or card tap — that cost is the design's (spec D20).
+
 ```vue
 <template>
   <div style="position: absolute; inset: 0; background: #f5f5f5;">
@@ -3215,6 +3236,9 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
 
   it('the map-engines plan no longer mentions ListingsMap anywhere and rebases onto V3\'s engine shape', () => {
     const md = read(MAP_ENGINES);
+    // superseded by Task V15 (spec D19): the blanket ban became a per-line filter — the token
+    // is allowed on a line that also says "deleted in Browse V3". Re-executing this step must
+    // write V15's rule (`cross-plan-deltas.test.ts`'s `offenders` filter), not the line below.
     expect(md).not.toContain('ListingsMap');   // catches the M5 file list, the components paragraph AND the setControls parenthetical
     expect(md).toContain('rectangle');
     expect(md).toContain('ring(');
@@ -3357,6 +3381,8 @@ Add a sequencing note at the top of M5:
 > must implement `rectangle`, `ring` and `panInside` too, and `engines/contract.test.ts` must
 > cover them for both engines. `ListingsMap.vue` no longer exists.
 ```
+
+*(This wording is superseded by Task V15 (spec D19): the sentence that shipped names the file inside the clause the drift test requires — "`ListingsMap.vue` (deleted in Browse V3) is the V2-era listings map component this task's file list used to name; it no longer exists." Re-executing this step must write that, not the line above.)*
 
 In M7, correct the three `?tab=market` comments (the URLs still work — they are legacy no-ops):
 
@@ -3858,6 +3884,8 @@ Re-apply from the pristine file with the full list; `npm run gen:app`: `logic.js
 - [ ] **Step 1 (Phase 1 — reproduce and diff):** run `npx playwright test --config=tests/playwright.config.ts --project=reference reference-baselines.spec.ts -g header-1000` five times; hash the PNG after each; keep one copy of each distinct variant; `diff` them pixel-wise (a small Node script over the PNGs with `pngjs` or the harness's existing PNG reader) — report WHERE the differing pixels are (bounding box) and WHAT is drawn there (map tile edge, a fading element, a scrollbar, a caret, antialiased text).
 - [ ] **Step 2 (Phase 2 — compare):** which other states capture the same region deterministically (`header-1100`, `browse`) and what their steps do differently (waits, `atTop()`, the shading guard, the blank tile); read the harness's settle logic for the Browse states.
 - [ ] **Step 3 (Phase 3 — one hypothesis):** name the single moving thing and why it is unsettled at 1000 px only (a resize-driven relayout? the results rail collapsing per README §2? a Leaflet pan animation? the mosaic's canvas repaint order?).
+> **Superseded by the Outcome note above (recorded 2026-09-07)** — Steps 1–4 below are exactly what was executed and are left as the record. Step 4's prescription — "the minimal condition-based wait" — was refuted by the debugging it prescribes: nothing in the page moves (24/24 identical geometry), three condition-based waits were tried and counted out, and the root cause is Chromium's partial raster, not an unsettled element. The shipped fix is `launchOptions: { args: ['--disable-partial-raster'] }` in `frontend/tests/playwright.config.ts` with the tolerance untouched, and the shipped commit subject is `test(visual): header-1000 captures deterministically — Chromium partial raster pinned, not timed`, not the "waited on, not timed" template below. Checkboxes stay unticked as the plan convention has them.
+
 - [ ] **Step 4 (Phase 4 — failing test, fix, verify):** the determinism test RED (two captures differ), then the minimal condition-based wait (e.g. wait for the map's `moveend`/canvas idle, or for the element in question to reach its final box), then GREEN five runs in a row; `npm run test:visual:baselines && npm run test:visual` at zero diffs; no other state's PNG moves; `baseline-manifest.json` unmoved. Commit `test(visual): header-1000 captures deterministically — <root cause> waited on, not timed`.
 
 
@@ -3897,6 +3925,13 @@ Run against the spec with fresh eyes, per the writing-plans skill.
 | §4 D12 `browse-layers-open`; the `AustinMap` grammar entry deleted | V9 note + SCREENS entry; V11 commit 5 |
 | §4 D13 snapshot oracles stay git-ignored | Global Constraint (l2); V1 Step 0; V9 Steps 4, 8 |
 | §4 D14 `ring()`; the `isBrowse` pin; disabled-vs-blocked | V4 (interface, impl, 2 tests) + V5 `drawOverlay`; V7 Step 4; V12 Step 6 |
+| §4 D15 local design amendments (pristine + list == amended, byte for byte) | V13; V14, V15 and V16 append to the same list |
+| §4 D16 A1 — V2 display typography, 24 in-place edits | V13 |
+| §4 D17 A2 — the mobile card opens the detail; A2.2–A2.5 remove the `browseSel` orphans C13 left | V14; A2.2–A2.4 in V14's fix round, A2.5 in the zero-gaps round, recorded in the spec by the final-review fix round |
+| §4 D18 A3 — "View full listing" | V15 |
+| §4 D19 plans name `ListingsMap.vue` inside a "deleted in Browse V3" clause | V15 |
+| §4 D20 mosaic redraw semantics (`areaChanged()` on the reference's five area-effect deps, inside the one merged watcher) | the final-review fix round; V5's block banner + A.6 |
+| §4 D21 A4 — Compare hides "What this means" | V16 |
 | §5 quality gates (unit, typecheck, build, smoke, visual, DOM, bundle budget, drift tests) | end of V3, V4, V5, V6, V7, V9, V10, V11, V12 |
 | §5 mobile acceptance at 390×800 | V10 |
 | §5 backend suite unaffected | V11 closing Step 3; V12 Step 10 |
@@ -4018,14 +4053,14 @@ Every acceptance criterion, change-log entry, dead-code rule, file-index entry, 
 | §7 risk: **vestigial `isBrowse: false`** at the reference — "a render value nothing reads" | V7 Step 4 | `app-generated.test.ts` pins **exactly one** occurrence in `logic.js` (spec D14). It is not a defect and must not be "cleaned": `logic.js` is a verbatim port, so it goes when the design reference drops it |
 | §8 prototype scaffolding stays; Sub-project 2 removes it | V7 note, V10 note, V12 Step 4 | `cross-plan-deltas.test.ts` I8 case |
 
-### A.6 Spec decisions D1–D14
+### A.6 Spec decisions D1–D21
 
 | Decision | Owning task | Test / gate |
 |---|---|---|
 | D1 sequencing / worktree | plan header ("Branch") | — (a controller ruling, not a code fact) |
 | D2 I8 via `convert-dc.mjs --launch` | V12 Step 4 | `cross-plan-deltas.test.ts` I8 case |
 | D3 permissions on the merged Browse | V12 Step 3 | `cross-plan-deltas.test.ts` I7 case |
-| D4 map-engines follows V3 | V12 Step 5 | `cross-plan-deltas.test.ts` map-engines case (`not.toContain('ListingsMap')`, `ring(`) |
+| D4 map-engines follows V3 | V12 Step 5, V15 (wording, D19) | `cross-plan-deltas.test.ts` map-engines case (the token only inside a "deleted in Browse V3" clause — V15 replaced V12's blanket `not.toContain` ban with a per-line filter — plus `ring(`) |
 | D5 census follows V3's rendering and copy; migrations at `017` (amended 2026-09-07: `015` until the I5 fix round gave identity `015` and the Seed Listings plan took `016`) | V12 Step 6 | `cross-plan-deltas.test.ts` census case |
 | D6 baselines (re-amended, option B): V13 restored V2's typography via A1, so the thirteen are byte-identical to V2 again and the manifest carries the V1-era hashes; **every** state is regenerated from the amended reference, with DOM parity + the pixel gate as the secondary proof; the 28th state, the `mobile-sheet` state, added in V10 fix round 1 as the oracle for the OPENED sheet | V1 Step 0–5, V9 Steps 3, 5, 8, V10 Step 4, V11, V13 | 28-state `dom.spec.ts` + 28-state `visual.spec.ts` at `maxDiffPixels: 0`; `baseline-manifest.test.ts` (13) after V10, each V11 deletion and V13 |
 | D7 tolerance never relaxed | Global Constraint (e) | `playwright.config.ts` untouched; V9 Step 7 |
@@ -4037,10 +4072,11 @@ Every acceptance criterion, change-log entry, dead-code rule, file-index entry, 
 | D13 snapshot oracles stay git-ignored | Global Constraint (l2); V1 Step 0; V9 Steps 4, 8 | Step 0 regenerates and verifies them; V9 uses `rm -f`, and `git add` names `screens.ts` only |
 | D14 `ring()`; the `isBrowse` pin; the disabled-vs-blocked contract | V4 + V5; V7 Step 4; V12 Step 6 | `leaflet.test.ts` ring cases; `app-generated.test.ts` one-occurrence pin; `cross-plan-deltas.test.ts` disabled/blocked case |
 | D15 local design amendments | V13 | `design-amendments.test.ts` (pristine + edits = amended, byte for byte) |
-| D16 A1 V2 typography (option B) | V13 | `design-amendments.test.ts` (25 edits; every display heading uppercase with V2 tracking) + the thirteen vs the V1-era manifest |
+| D16 A1 V2 typography (option B) | V13 | `design-amendments.test.ts` (24 edits; every display heading uppercase with V2 tracking) + the thirteen vs the V1-era manifest |
 | D17 A2 mobile card opens the detail | V14 | `logic.test.ts` (`p.open` → detail) + `smoke.spec.ts` (390×800 card tap → detail) |
 | D18 A3 "View full listing" | V15 | `design-amendments.test.ts` (label present/absent) + `screens.ts:70` reaches `interest-modal` |
 | D19 plans name `ListingsMap.vue` | V15 | `cross-plan-deltas.test.ts` (token allowed only in a "deleted in Browse V3" clause) |
+| D20 mosaic redraw semantics: one merged watcher (pane order: overlay before pins) with the overlay redrawn only when one of the reference's five area-effect inputs changes; a selection moves `driveCenter`, so the design itself rebuilds the mosaic | the final-review fix round (`MarketMapView.vue`'s `areaChanged()`); V5's block carries the superseded banner | `MarketMapView.test.ts`'s area-effect cases ("rebuilds no mosaic rectangle when only activeId changes", "redraws every overlay layer before every pin when only `practices` changes", "rebuilds the overlay and THEN the pins when driveCenter[0] moves") + `smoke.spec.ts`'s 1500 ms `a second pin tap repaints the map within budget` gate |
 | D21 A4 Compare hides "What this means" | V16 | `logic.test.ts` (`insightOpen` false while Compare is open, true again after) + `smoke.spec.ts` (1440×940 dismiss button gone/back) + re-baselined `browse-compare-open` |
 
 ---
