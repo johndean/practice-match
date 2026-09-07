@@ -27,11 +27,18 @@ BEARER_BUDGET_MS = 60
 SIGNUP_BUDGET_MS = 300   # brief: 100 — John's default in fix round 1; one Argon2id hash is ~97 ms
 SIGNIN_BUDGET_MS = 300   # the brief's number
 COLD_ME_BUDGET_MS = 60   # the review's ⚠️: /api/me with the principal cache MISSED (Redis -> Postgres)
-BUDGET_MS = {"/api/healthz": 20, "/": 15, "/api/me": 20}   # Census B5 and Map engines M3/M4 extend this dict
+# Spec §6's budget for the admin review queue joins the dict in Task I9a: it is the one
+# administrative READ a reviewer waits on, and `migrations/015_admin_list_indexes.sql` exists
+# because it had nothing behind either half of its query.
+BUDGET_MS = {"/api/healthz": 20, "/": 15, "/api/me": 20, "/api/admin/users?state=pending": 150}   # Census B5 and Map engines M3/M4 extend this dict
 # Paths BUDGET_MS measures through the SIGNED-IN client rather than the anonymous one (Task I4):
 # `/api/me` answered anonymously is a 401 that never opens a connection, which is not the path the
 # app serves. Everything else here is public and is measured as a visitor sees it.
 SIGNED_IN_PATHS = frozenset({"/api/me"})
+# Task I9a: the same argument one role further up. `GET /api/admin/users` is guarded by
+# `users.review` (staff/admin), so measured as a visitor — or even as the `signed_in` member, who
+# holds no grant — it is a 401/403 decided before any connection is opened.
+STAFF_PATHS = frozenset({"/api/admin/users?state=pending"})
 PERF_PW = "orbit-lantern-quiet-42"
 
 
@@ -82,6 +89,48 @@ async def signed_in(dist, db_ready):
         conn.close()
 
 
+@pytest.fixture
+async def staff(dist, db_ready):
+    """`signed_in` one role up: an `active` account holding the `staff` grant, so `users.review`
+    passes and `GET /api/admin/users` answers 200 (Task I9a).
+
+    Written out rather than folded into `signed_in` with a `roles` argument: `signed_in` is what
+    three shipped gates measure `/api/me` through, and reshaping a fixture underneath them to save
+    twelve lines is not a trade this file should make. The two bodies differ only by the
+    `role_grant` INSERT, which is the whole point of having both.
+
+    The queue is measured on the shared dev database as it stands, whatever is in it — the budget
+    is about the INDEXES behind the query (`migrations/015_admin_list_indexes.sql`), not about a
+    row count this fixture would have to invent."""
+    from httpx import ASGITransport, AsyncClient
+
+    from app.auth import passwords as P
+    from app.auth import sessions as S
+    from app.cache import sync_redis
+    from app.db import sync_conn
+    from app.main import create_app
+
+    email = f"perf-staff-{uuid.uuid4().hex[:10]}@example.org"
+    conn = sync_conn()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO account (email, password_hash, state, display_name) VALUES (%s,%s,'active','Perf Reviewer') RETURNING id",
+                        (email, P.hash_password(PERF_PW)))
+            account_id = cur.fetchone()[0]
+            cur.execute("INSERT INTO role_grant (account_id, role, granted_by) VALUES (%s,'staff',%s)", (account_id, account_id))
+        raw = S.create(conn, sync_redis(), account_id, "203.0.113.10", "pytest-perf")
+        try:
+            async with AsyncClient(transport=ASGITransport(app=create_app(dist=dist)), base_url="https://qa.foundation.vin",
+                                   headers={"Cookie": f"pm_session={raw}"}) as c:
+                yield c
+        finally:
+            S.revoke_all_cache(sync_redis(), account_id, S.revoke_all(conn, account_id))
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM account WHERE id=%s", (account_id,))   # role_grant cascades on account_id
+    finally:
+        conn.close()
+
+
 def p95_of(samples: list[float]) -> float:
     """The 95th percentile, `method="inclusive"` — never above the largest observed sample.
 
@@ -104,11 +153,17 @@ async def p95(client, path: str, n: int = 50) -> float:
 
 
 @pytest.mark.parametrize("path, budget", sorted(BUDGET_MS.items()))
-async def test_p95_within_budget(client, signed_in, path, budget):
+async def test_p95_within_budget(client, signed_in, staff, path, budget):
     # `signed_in` is taken as an ordinary parameter, not resolved lazily through
     # `request.getfixturevalue`: pytest-asyncio cannot set an ASYNC fixture up from inside a running
-    # event loop ("Runner.run() cannot be called from a running event loop").
-    measured = signed_in if path in SIGNED_IN_PATHS else client
+    # event loop ("Runner.run() cannot be called from a running event loop"). `staff` (Task I9a) is
+    # taken the same way, for the same reason.
+    measured = staff if path in STAFF_PATHS else signed_in if path in SIGNED_IN_PATHS else client
+    # `p95` only refuses a 5xx, which is right for the public paths but would let an administrative
+    # budget be measured against a 401 or a 403 — a refusal that never reaches Postgres and so
+    # always fits inside any budget (Task I9a). Assert the credential actually opens the path first.
+    if path in STAFF_PATHS:
+        assert (await measured.get(path)).status_code == 200, f"{path} is not being measured through a staff client"
     got = await p95(measured, path)
     assert got <= budget, f"{path} p95 {got:.1f} ms over {budget} ms"
 
