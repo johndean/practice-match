@@ -49,13 +49,19 @@ FORBIDDEN_CI_SUBSTRINGS = ("pip install", "npm install --no-save")
 
 # Fix round 1's frontend-coverage ruling (John, 2026-09-06) plus the app.setup.js addition
 # ratified in fix round 2 — the exact set frontend/vite.config.ts's coverage.exclude must carry.
+# Re-ratified 2026-09-07 (F1): the two hand-written files are measured. `src/dc-logic.js` (the
+# 13-line React-shaped base class every setState runs through) and `src/lib/**` (a hand-written
+# Leaflet loader) were the only entries in this set that were neither generated from the design
+# nor verbatim-ported, and they were listed solely because the set was ratified. Browse V3's
+# final-review fix round gave both behaviour tests (src/dc-logic.test.ts, src/lib/leaflet.test.ts)
+# and re-derived that both measure 100/100/100/100 unexcluded, but could not drop them here
+# because this pin is John's and no file under tests/ changed on that branch. Every remaining
+# entry is unchanged: what stays out is generated, verbatim-ported, types-only or a test double.
 RATIFIED_COVERAGE_EXCLUDE = {
     "src/App.vue",
     "src/app.setup.js",
     "src/logic.js",
-    "src/dc-logic.js",
     "src/generated/**",
-    "src/lib/**",
     "src/map/engine.ts",
     "src/map/testing/**",
     "src/**/*.test.ts",
