@@ -1,3 +1,7 @@
+import { can } from '../auth/can';
+import type { Me } from '../auth/me';
+import type { Permission } from '../auth/permissions';
+
 export type Screen = 'gate' | 'browse' | 'detail' | 'requests' | 'seller' | 'admin';
 export interface RoutedState { screen: string; detailId?: string; adminTab?: string; gate?: string; auth?: boolean }
 export interface RouteTarget { path: string; query: Record<string, string> }
@@ -35,10 +39,30 @@ export function routeToPatch(to: RouteLike): Partial<RoutedState> {
   return { screen: 'gate' };
 }
 
+// The ONE route -> permission table (amendment A-I7). Not a `meta.perm` on each route in
+// routes.ts: every route renders the same `App` component, so a twin there would be a second
+// copy of this and one more thing to drift. The permission is the one the API guards the same
+// screen's data with, so the client hides exactly what the server would refuse.
+export const ROUTE_PERMS: Record<string, Permission> = { browse: 'page.browse', detail: 'listing.read', requests: 'request.read_own', seller: 'page.seller', admin: 'page.admin' };
+
+function permFor(patch: Partial<RoutedState>): Permission | null {
+  if (!patch.screen || patch.screen === 'gate') return null;
+  // Browse V3 (spec D3): Browse Practices is ONE screen, so the route permission keys on
+  // `patch.screen` alone — there is no browseMode to branch on. The market-data column
+  // inside the screen checks can('market.read') itself, honouring MARKET_DATA_PUBLIC.
+  return ROUTE_PERMS[patch.screen] ?? null;
+}
+
 // The prototype's go(): a member screen requested while signed out shows the gate
-// (sign-in tab) and the request is remembered until auth flips true.
-export function guard(state: RoutedState & { auth?: boolean }, patch: Partial<RoutedState>): { apply: Partial<RoutedState>; pending: Partial<RoutedState> | null } {
-  if (patch.screen && patch.screen !== 'gate' && !state.auth) return { apply: { screen: 'gate', gate: 'signin' } as Partial<RoutedState>, pending: patch };
+// (sign-in tab) and the request is remembered until auth flips true. With a context, the
+// permission matrix has the second say: a signed-in visitor who does not hold the route's
+// permission gets the `unavailable` gate instead, and nothing is remembered — there is no
+// later moment at which the same account would be allowed in.
+export function guard(state: RoutedState & { auth?: boolean }, patch: Partial<RoutedState>, ctx?: { me: Me | null; marketDataPublic?: boolean }): { apply: Partial<RoutedState>; pending: Partial<RoutedState> | null } {
+  const perm = permFor(patch);
+  if (!perm) return { apply: patch, pending: null };
+  if (!state.auth) return { apply: { screen: 'gate', gate: 'signin' } as Partial<RoutedState>, pending: patch };
+  if (ctx && !can(perm, ctx.me, { marketDataPublic: ctx.marketDataPublic })) return { apply: { screen: 'gate', gate: 'unavailable' } as Partial<RoutedState>, pending: null };   // A-I7: no context -> the prototype's rule
   return { apply: patch, pending: null };
 }
 

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { stateToRoute, routeToPatch, guard, needsPatch, sameLocation } from './sync';
+import { stateToRoute, routeToPatch, guard, needsPatch, sameLocation, ROUTE_PERMS } from './sync';
 
 const base = { screen: 'gate', detailId: 'p1', adminTab: 'users' };
 
@@ -64,6 +64,51 @@ describe('guard (the prototype\'s go() semantics)', () => {
     expect(guard({ ...base, auth: true }, { screen: 'admin', adminTab: 'data' })).toEqual({ apply: { screen: 'admin', adminTab: 'data' }, pending: null }));
   it('never guards the gate itself', () =>
     expect(guard({ ...base, auth: false }, { screen: 'gate' })).toEqual({ apply: { screen: 'gate' }, pending: null }));
+});
+
+// ---------------------------------------------------------------------------------------
+// Task I7. `guard` is where a route meets the permission matrix, and `ROUTE_PERMS` is the ONE
+// route → permission table (amendment A-I7: no `meta.perm` twin in routes.ts — every route
+// renders the same `App` component, so a second copy would only be a second thing to drift).
+//
+// The context is OPTIONAL, and that is load-bearing until I8: the app still derives `auth`
+// from the prototype fixture, so `useStateRouteSync` passes no context and the prototype's
+// rule — signed in, patch applies — is unchanged. I8 passes `{ me: useMe().me.value }` on
+// every call once main.ts loads /api/me before mount.
+// ---------------------------------------------------------------------------------------
+describe('guard with permissions', () => {
+  const buyer = { id: '1', email: 'b@x.io', name: 'B', role: 'Approved buyer', initials: 'B', state: 'active', roles: ['buyer'], affiliation_label: null };
+  it('signed out + member route → sign-in gate with the route pending', () => {
+    expect(guard({ ...base, auth: false }, { screen: 'admin', adminTab: 'users' }, { me: null })).toEqual({ apply: { screen: 'gate', gate: 'signin' }, pending: { screen: 'admin', adminTab: 'users' } });
+  });
+  it('signed in without the permission → unavailable gate, nothing pending', () => {
+    expect(guard({ ...base, auth: true }, { screen: 'admin', adminTab: 'users' }, { me: buyer })).toEqual({ apply: { screen: 'gate', gate: 'unavailable' }, pending: null });
+  });
+  it('signed in with the permission → the patch applies', () => {
+    expect(guard({ ...base, auth: true }, { screen: 'browse' }, { me: buyer })).toEqual({ apply: { screen: 'browse' }, pending: null });
+  });
+
+  // A-I7: WITHOUT a context the permission check does not run at all, so the fixture-auth app
+  // keeps working until I8 wires /api/me into logic.js. A buyer would fail `page.admin`.
+  it('no context → the prototype\'s rule, unchanged', () => {
+    expect(guard({ ...base, auth: true }, { screen: 'admin', adminTab: 'users' })).toEqual({ apply: { screen: 'admin', adminTab: 'users' }, pending: null });
+  });
+
+  it('honours MARKET_DATA_PUBLIC through the context', () => {
+    expect(guard({ ...base, auth: true }, { screen: 'browse' }, { me: null, marketDataPublic: true })).toEqual({ apply: { screen: 'gate', gate: 'unavailable' }, pending: null });
+  });
+
+  // Nothing routes to a screen outside ROUTE_PERMS today — `routeToPatch` produces exactly the
+  // six the table and the gate cover — but an unguarded patch must not be a silent denial
+  // either: a screen with no permission behind it is not a member route.
+  it('a patch with no screen, and a screen the table does not name, are not guarded', () => {
+    expect(guard({ ...base, auth: false }, {}, { me: null })).toEqual({ apply: {}, pending: null });
+    expect(guard({ ...base, auth: false }, { screen: 'verify' }, { me: null })).toEqual({ apply: { screen: 'verify' }, pending: null });
+  });
+
+  it('maps every member route to the permission the API guards it with', () => {
+    expect(ROUTE_PERMS).toEqual({ browse: 'page.browse', detail: 'listing.read', requests: 'request.read_own', seller: 'page.seller', admin: 'page.admin' });
+  });
 });
 
 describe('needsPatch / sameLocation', () => {
