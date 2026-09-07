@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AuthError, apply, config, csrfToken, me, reauth, signIn, signOut, signUp, verify } from './api';
+import { AuthError, acceptInvite, answer, applicationsMe, apply, config, csrfToken, forgot, me, reauth, reset, signIn, signOut, signUp, verify } from './api';
 
 interface Call { url: string; init: { method: string; credentials: string; headers: Record<string, string>; body?: string } }
 
@@ -121,6 +121,68 @@ describe('me()', () => {
   it('still throws on anything else, so a broken API is never read as "signed out"', async () => {
     stubFetch({ status: 500, body: { error: { code: 'INTERNAL', message: 'boom' } } });
     await expect(me()).rejects.toMatchObject({ code: 'INTERNAL' });
+  });
+});
+
+describe('forgot, reset, acceptInvite, answer — POST with credentials and the CSRF header', () => {
+  it('post the exact path and body, and return the parsed body', async () => {
+    document.cookie = 'pm_csrf=double-submit';
+    const calls = stubFetch(
+      { status: 202, body: { status: 'check_email' } },
+      { status: 200, body: { status: 'reset' } },
+      { status: 200, body: { status: 'active' } },
+      { status: 200, body: { status: 'pending' } }
+    );
+    expect(await forgot('a@b.co')).toEqual({ status: 'check_email' });
+    expect(await reset('tok', 'newpw')).toEqual({ status: 'reset' });
+    expect(await acceptInvite('tok', 'newpw')).toEqual({ status: 'active' });
+    expect(await answer('ap1', 'Yes, I confirm.')).toEqual({ status: 'pending' });
+    expect(calls.map((c) => c.url)).toEqual([
+      '/api/auth/password/forgot',
+      '/api/auth/password/reset',
+      '/api/auth/accept-invite',
+      '/api/applications/ap1/answer'
+    ]);
+    expect(calls.map((c) => c.init.method)).toEqual(Array(4).fill('POST'));
+    expect(calls.map((c) => c.init.credentials)).toEqual(Array(4).fill('same-origin'));
+    expect(calls.map((c) => c.init.headers['X-CSRF-Token'])).toEqual(Array(4).fill('double-submit'));
+    expect(calls.map((c) => c.init.body)).toEqual([
+      JSON.stringify({ email: 'a@b.co' }),
+      JSON.stringify({ token: 'tok', password: 'newpw' }),
+      JSON.stringify({ token: 'tok', password: 'newpw' }),
+      JSON.stringify({ answer: 'Yes, I confirm.' })
+    ]);
+  });
+
+  it('answer() encodes the application id into the path', async () => {
+    const calls = stubFetch({ status: 200, body: { status: 'pending' } });
+    await answer('needs/slash', 'ok');
+    expect(calls[0].url).toBe('/api/applications/needs%2Fslash/answer');
+  });
+
+  it('throws the server\'s AuthError on a 4xx, like every other call', async () => {
+    stubFetch({ status: 400, body: { error: { code: 'TOKEN_EXPIRED', message: 'This link has expired.' } } });
+    await expect(reset('stale', 'newpw')).rejects.toMatchObject({ code: 'TOKEN_EXPIRED' });
+  });
+});
+
+describe('applicationsMe()', () => {
+  it('GETs /api/applications/me and returns {current, history}, with no CSRF header on a read', async () => {
+    const rows = {
+      current: { id: 'ap1', kind: 'buyer', status: 'pending', info_request: null, answer: null, fields: { name: 'A' }, decision_note: null },
+      history: []
+    };
+    const calls = stubFetch({ status: 200, body: rows });
+    expect(await applicationsMe()).toEqual(rows);
+    expect(calls[0].url).toBe('/api/applications/me');
+    expect(calls[0].init.method).toBe('GET');
+    expect(calls[0].init.headers['X-CSRF-Token']).toBeUndefined();
+    expect(calls[0].init.body).toBeUndefined();
+  });
+
+  it('throws like every other read when the endpoint is broken', async () => {
+    stubFetch({ status: 500, body: { error: { code: 'INTERNAL', message: 'boom' } } });
+    await expect(applicationsMe()).rejects.toMatchObject({ code: 'INTERNAL' });
   });
 });
 

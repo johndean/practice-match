@@ -85,9 +85,44 @@ export async function verify(token: string): Promise<Status> {
   return payload<Status>(await call('POST', '/auth/verify', { token }));
 }
 
+/** 202 either way, same as `signUp` — a registered and an unregistered address must read alike. */
+export async function forgot(email: string): Promise<Status> {
+  return payload<Status>(await call('POST', '/auth/password/forgot', { email }));
+}
+
+export async function reset(token: string, password: string): Promise<Status> {
+  return payload<Status>(await call('POST', '/auth/password/reset', { token, password }));
+}
+
+export async function acceptInvite(token: string, password: string): Promise<Status> {
+  return payload<Status>(await call('POST', '/auth/accept-invite', { token, password }));
+}
+
 /** The buyer or seller application. 202 + the row it created. */
 export async function apply(kind: string, fields: Record<string, unknown>): Promise<{ id: string; status: string }> {
   return payload<{ id: string; status: string }>(await call('POST', '/applications', { kind, fields }));
+}
+
+/** One row of `/api/applications/me` — the applicant's current or a past application. */
+export interface ApplicationRow {
+  id: string;
+  kind: string;
+  status: string;
+  info_request: string | null;
+  answer: string | null;
+  fields: Record<string, unknown>;
+  decision_note: string | null;
+}
+
+export interface ApplicationsMe { current: ApplicationRow | null; history: ApplicationRow[] }
+
+/** The applicant's reply to an admin's `info_request` on their current application. */
+export async function answer(applicationId: string, answer: string): Promise<Status> {
+  return payload<Status>(await call('POST', `/applications/${encodeURIComponent(applicationId)}/answer`, { answer }));
+}
+
+export async function applicationsMe(): Promise<ApplicationsMe> {
+  return payload<ApplicationsMe>(await call('GET', '/applications/me'));
 }
 
 /**
