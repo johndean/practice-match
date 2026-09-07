@@ -373,3 +373,27 @@ def test_claude_md_local_backend_gate_is_the_one_ci_runs():
     for doc, text in (("CLAUDE.md", claude), ("quality.yml", workflow), ("the quality policy", policy)):
         assert "--cov-fail-under=100" in text, doc
         assert "--cov-fail-under=90" not in text, f"{doc} still carries the old 90 % threshold"
+
+
+# The four sub-project plans whose policy-summary line quoted the backend CI gate. P14 raised
+# it, so each has to quote the raised one — a plan that still says 90 % is an instruction to
+# lower the gate the next time someone executes it (the shape of review finding L9).
+PLANS_QUOTING_THE_BACKEND_GATE = (
+    "2026-09-05-practice-match-map-engines.md",
+    "2026-09-05-practice-match-google-maps-greenfield.md",
+    "2026-09-05-practice-match-identity-access-email.md",
+    "2026-09-05-practice-match-census-data-layer.md",
+)
+
+
+def test_sub_project_plans_quote_the_raised_backend_gate():
+    """P14 fix round 1, L9 extended: `main` is the canonical copy of every plan, and each of
+    these opens by summarising the quality policy's CI gates. Left at the old 90 % floor they
+    would walk a future implementer straight into lowering it — and `tests/test_docs.py`
+    already makes that a RED test, so the conflict would surface as a mystery failure rather
+    than as the instruction it is."""
+    for name in PLANS_QUOTING_THE_BACKEND_GATE:
+        text = (ROOT / "docs" / "superpowers" / "plans" / name).read_text()
+        assert "pytest -W error --cov=app --cov=scripts --cov-branch --cov-fail-under=100" in text, name
+        assert "raised by P14, 2026-09-07" in text, f"{name} must date the raise"
+        assert "--cov-fail-under=90" not in text, f"{name} still quotes the old 90 % floor"
