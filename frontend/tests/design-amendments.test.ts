@@ -66,14 +66,15 @@ describe('local design amendments (spec D15)', () => {
   const AMENDMENT_IDS = [
     ...Array.from({ length: 24 }, (_, i) => `A1.${i + 1}`),
     'A2', 'A2.2', 'A2.3', 'A2.4', 'A2.5', 'A3', 'A4',
-    // A-I8 (Task I8a): the account-on-load bootstrap and the two prototype props that let the
-    // reference reach a gate state and render the same account the app does.
-    'A5.4', 'A5.6', 'A5.7',
+    // A-I8 (Task I8a): sign-in and sign-out through the `auth` adapter, the account-on-load
+    // bootstrap, and the two prototype props that let the reference reach a gate state and render
+    // the same account the app does.
+    'A5.1', 'A5.3a', 'A5.3b', 'A5.4', 'A5.6', 'A5.7',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(34);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(37);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -204,7 +205,10 @@ describe('local design amendments (spec D15)', () => {
   // covered only the top-level ids. The id set is now compared in full, both ways.
   it('LOCAL_AMENDMENTS.md carries exactly one table row per amendment id (A1 collapsed to one)', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
-    const rows = [...md.matchAll(/^\|\s*(A[\d.]+)\s*\|/gm)].map((m) => m[1]);
+    // `[\w.]`, not `[\d.]`: A-I8's ids include a letter suffix where one ruling needed two edits
+    // (`A5.3a`/`A5.3b`), and the digits-only class silently skipped those rows — the same class of
+    // hole as M5's missing pipe, which is what this case exists to catch.
+    const rows = [...md.matchAll(/^\|\s*(A[\w.]+)\s*\|/gm)].map((m) => m[1]);
     expect(new Set(rows).size, 'an amendment is documented twice').toBe(rows.length);
     // A1 derives 24 edits (`A1.1`…`A1.24`) from ONE ruling and is documented as one row; every
     // other id is literal and must appear in the file exactly as `amendments()` spells it.

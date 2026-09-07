@@ -1387,10 +1387,10 @@ class Component extends DCLogic {
       me: Object.assign({ email: s.email }, s.me),
       userMenuOpen: !!s.userMenu,
       toggleUserMenu: () => this.setState({ userMenu: !s.userMenu }),
-      signOut: () => this.setState({
+      signOut: () => (this.props.auth ? this.props.auth.signOut().catch(() => {}) : Promise.resolve()).then(() => this.setState({
         userMenu: false, auth: false, screen: "gate", gate: "signin", pw: "············",
         interest: "closed", activeId: null, hoverId: null, sellerView: "dash", wizSubmitted: false, formError: ""
-      }),
+      })),
       goHome: this.go("gate"),
       showGate: s.screen === "gate",
       gateSignin: s.screen === "gate" && s.gate === "signin",
@@ -1407,7 +1407,11 @@ class Component extends DCLogic {
       setPw: (e) => this.setState({ pw: e.target.value, formError: "" }),
       signIn: () => {
         if (!s.email || !s.pw) return this.setState({ formError: "Enter both your VIN username and password." });
-        this.setState({ screen: "browse", formError: "", auth: true });
+        if (!this.props.auth) return this.setState({ screen: "browse", formError: "", auth: true });
+        return this.props.auth.signIn(s.email, s.pw).then(
+          (me) => this.setState({ screen: "browse", formError: "", auth: true, email: me.email, me: { name: me.name, role: me.role, initials: me.initials } }),
+          (e) => this.setState({ formError: (e && e.message) || "Sign-in failed.", auth: false, screen: "gate" })
+        );
       },
       signedIn: !!s.auth,
       signedOut: !s.auth,

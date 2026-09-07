@@ -157,6 +157,61 @@ const A4: Amendment = {
   replace: '        return !!valueLayer && !s.mdInsightOff && s.mdLegendOff !== true && !s.mdCompareOpen && mapW >= 810;', count: 1
 };
 
+/** A5.1 — sign-in through the `auth` adapter (amendment A-I8; spec §"Prototype wiring" step 2).
+ *
+ *  A literal script edit, like A2 and A4. `this.props.auth` is the prototype's other hook: the app
+ *  passes the real `/api/auth/*` client, and the reference — which has no `auth` prop and no API —
+ *  keeps the design's fixture path exactly as it shipped, which is what keeps the two targets on
+ *  the same pixels.
+ *
+ *  The refusal message rendered is the SERVER's own: `INVALID_CREDENTIALS` and `RATE_LIMITED` are
+ *  both 4xx on the same form and want different copy, and `src/auth/api.ts` deliberately carries
+ *  the API's prose rather than an identifier. `|| "Sign-in failed."` covers a rejection that
+ *  carries none.
+ *
+ *  The handler RETURNS the adapter's promise, so a caller can await the settled state; the
+ *  design's own button ignores the return value, exactly as it ignored the fixture path's
+ *  `undefined`. The empty-form validation above it is untouched — it must refuse before it spends
+ *  a request against a rate-limited endpoint (its wording is A7.2's).
+ */
+const A5_1: Amendment = {
+  id: 'A5.1', date: '2026-09-07',
+  ruling: 'spec §"Prototype wiring" step 2: the prototype signs in through the API; the reference keeps the fixture path because it has no auth prop',
+  find: '        this.setState({ screen: "browse", formError: "", auth: true });\n      },\n      signedIn: !!s.auth,',
+  replace: '        if (!this.props.auth) return this.setState({ screen: "browse", formError: "", auth: true });\n'
+    + '        return this.props.auth.signIn(s.email, s.pw).then(\n'
+    + '          (me) => this.setState({ screen: "browse", formError: "", auth: true, email: me.email, me: { name: me.name, role: me.role, initials: me.initials } }),\n'
+    + '          (e) => this.setState({ formError: (e && e.message) || "Sign-in failed.", auth: false, screen: "gate" })\n'
+    + '        );\n'
+    + '      },\n'
+    + '      signedIn: !!s.auth,',
+  count: 1
+};
+
+/** A5.3a/b — sign-out through the adapter (amendment A-I8). Two literal edits, because the
+ *  handler's `setState` object spans several lines: (a) wraps the call in the adapter's promise,
+ *  (b) closes the extra parenthesis that wrap opened.
+ *
+ *  `.catch(() => {})` on the API call, deliberately: the reset must happen whatever the network
+ *  did. A failed sign-out that left the member looking signed in — with a session the server may
+ *  well have already revoked — is the worse of the two failures, and the server-side session is
+ *  what actually authorises anything.
+ */
+const A5_3a: Amendment = {
+  id: 'A5.3a', date: '2026-09-07',
+  ruling: 'spec §"Prototype wiring" step 2: sign-out ends the real session, and resets whatever the network did',
+  find: '      signOut: () => this.setState({',
+  replace: '      signOut: () => (this.props.auth ? this.props.auth.signOut().catch(() => {}) : Promise.resolve()).then(() => this.setState({',
+  count: 1
+};
+const A5_3b: Amendment = {
+  id: 'A5.3b', date: '2026-09-07',
+  ruling: 'closes the parenthesis A5.3a opened (same ruling)',
+  find: '      }),\n      goHome: this.go("gate"),',
+  replace: '      })),\n      goHome: this.go("gate"),',
+  count: 1
+};
+
 /** A5.4 — the bootstrap reads the account the app loaded from `/api/me`, and the `startGate`
  *  prototype prop (amendment A-I8, ordering A-I8.1). A literal script edit, like A2 and A4.
  *
@@ -234,5 +289,5 @@ const A5_7: Amendment = {
 };
 
 export function amendments(): Amendment[] {
-  return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_4, A5_6, A5_7];
+  return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7];
 }

@@ -209,6 +209,108 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     expect(c2.state).toMatchObject({ screen: 'admin', auth: true });
   });
 
+  // ---------------------------------------------------------------------------------------
+  // A5.1 / A5.3 (amendment A-I8) — sign-in and sign-out through the `auth` adapter.
+  //
+  // `this.props.auth` is the prototype's second hook (the first is `props.me`): the app passes
+  // the real `/api/auth/*` client, the reference and the Claude Design preview pass nothing and
+  // keep the design's fixture path byte for byte. The adapter here is a plain fake OBJECT, never
+  // a module mock — `logic.js` is a verbatim port and the point is to exercise IT, through the
+  // same seam the app uses.
+  //
+  // `signIn` returns the adapter's promise so a caller (and this suite) can await the settled
+  // state; the design's own button ignores the return value, exactly as it ignored the fixture
+  // path's `undefined`.
+  // ---------------------------------------------------------------------------------------
+  const ME = { email: 'buyer@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved buyer · StartUp Club', initials: 'RM', state: 'active', roles: ['buyer'] };
+
+  /** Records what the prototype asked for, and answers however the case wants. */
+  function fakeAuth(answers: { signIn?: () => Promise<unknown>; signOut?: () => Promise<unknown> } = {}) {
+    const calls: string[] = [];
+    return {
+      calls,
+      signIn: (email: string, password: string) => { calls.push(`signIn(${email},${password})`); return (answers.signIn ?? (() => Promise.resolve(ME)))(); },
+      signOut: () => { calls.push('signOut()'); return (answers.signOut ?? (() => Promise.resolve({ status: 'signed_out' })))(); }
+    };
+  }
+
+  it('signIn() calls the adapter with the typed credential and takes the header strings from its answer (A5.1)', async () => {
+    const auth = fakeAuth();
+    const c2: any = new Component({ auth });
+    c2.setState({ email: 'buyer@practice-match.test', pw: 'a-password' });
+
+    await c2.renderVals().signIn();
+
+    expect(auth.calls).toEqual(['signIn(buyer@practice-match.test,a-password)']);
+    expect(c2.state).toMatchObject({ auth: true, screen: 'browse', formError: '', email: 'buyer@practice-match.test' });
+    expect(c2.state.me).toEqual({ name: 'Dr. Rachel Mendes', role: 'Approved buyer · StartUp Club', initials: 'RM' });
+  });
+
+  it('signIn() shows the server\'s own refusal message and stays on the gate, signed out (A5.1)', async () => {
+    const auth = fakeAuth({ signIn: () => Promise.reject(new Error('Too many attempts. Try again later.')) });
+    const c2: any = new Component({ auth });
+    c2.setState({ email: 'buyer@practice-match.test', pw: 'wrong' });
+
+    await c2.renderVals().signIn();
+
+    // The API's wording, not ours: `INVALID_CREDENTIALS` and `RATE_LIMITED` want different copy
+    // and the message is the server's prose to render (src/auth/api.ts).
+    expect(c2.state).toMatchObject({ formError: 'Too many attempts. Try again later.', auth: false, screen: 'gate' });
+  });
+
+  it('signIn() falls back to its own wording when the refusal carries none (A5.1)', async () => {
+    for (const rejection of [new Error(''), undefined]) {
+      const c2: any = new Component({ auth: fakeAuth({ signIn: () => Promise.reject(rejection) }) });
+      c2.setState({ email: 'e', pw: 'p' });
+      await c2.renderVals().signIn();
+      expect(c2.state.formError).toBe('Sign-in failed.');
+    }
+  });
+
+  it('signIn() validates the empty form before it spends a request (A5.1 / A7.2)', async () => {
+    const auth = fakeAuth();
+    const c2: any = new Component({ auth });
+    c2.setState({ email: '', pw: '' });
+
+    await c2.renderVals().signIn();
+
+    expect(auth.calls, 'an empty form must not reach the API — it is a rate-limited endpoint').toEqual([]);
+    expect(c2.state.auth).toBe(false);
+    expect(c2.state.formError).toContain('Enter both your');
+  });
+
+  it('signOut() ends the session through the adapter and then resets the prototype (A5.3)', async () => {
+    const auth = fakeAuth();
+    const c2: any = new Component({ auth, me: { ...ME } });
+    c2.componentDidMount();
+    expect(c2.state.auth).toBe(true);
+
+    await c2.renderVals().signOut();
+
+    expect(auth.calls).toEqual(['signOut()']);
+    expect(c2.state).toMatchObject({ auth: false, screen: 'gate', gate: 'signin', userMenu: false, interest: 'closed' });
+  });
+
+  it('signOut() resets even when the API refuses, so a failure cannot strand a member signed in (A5.3)', async () => {
+    const auth = fakeAuth({ signOut: () => Promise.reject(new Error('network')) });
+    const c2: any = new Component({ auth, me: { ...ME } });
+    c2.componentDidMount();
+
+    await c2.renderVals().signOut();
+
+    expect(c2.state).toMatchObject({ auth: false, screen: 'gate' });
+  });
+
+  it('without an auth prop the design\'s own fixture path runs, unchanged (A5.1 / A5.3)', async () => {
+    const c2: any = new Component({});
+    c2.setState({ email: 'anything', pw: 'anything' });
+    c2.renderVals().signIn();
+    expect(c2.state).toMatchObject({ screen: 'browse', formError: '', auth: true });
+
+    await c2.renderVals().signOut();
+    expect(c2.state).toMatchObject({ auth: false, screen: 'gate', gate: 'signin' });
+  });
+
   // A4 (spec D21, John: "if user clicks + Compare that action closes the 'What this means'
   // card, and when X Compare is clicked it closes the compare and the card appears again").
   // insightOpen already requires a value layer, an undismissed member and a wide-enough map
