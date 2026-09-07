@@ -156,11 +156,13 @@ def test_main_returns_3_when_the_database_is_unreachable(monkeypatch, capsys):
 
 
 def test_cli_entrypoint_runs_main_when_executed_as___main__(scratch_db, monkeypatch):
-    """I5 fix round 1, C1. `if __name__ == "__main__": sys.exit(main())` never executes on import,
-    and `railway.json`'s pre-deploy hook runs exactly that line — so it was the one uncovered arm
-    in the whole tree once `--cov=scripts` joined the gate. `runpy.run_path(..., run_name="__main__")`
-    re-execs the file IN this process (so pytest-cov sees it); `run_path`, not `run_module`, because
-    `run_module` on an already-imported dotted name raises a RuntimeWarning that `-W error` fails."""
+    """`if __name__ == "__main__": sys.exit(main())` never executes on import, and it is exactly
+    the line `railway.json`'s pre-deploy hook and `scripts/start.sh`'s migrate role run — so it was
+    the one uncovered arm in `scripts/` once `--cov=scripts` joined the gate. Reached independently
+    by I5 fix round 1, C1 (this branch) and P14 C4, 2026-09-07 (main), which is why the merge found
+    the same test on both sides. `runpy.run_path(..., run_name="__main__")` re-execs the file IN
+    this process (so pytest-cov sees it); `run_path`, not `run_module`, because `run_module` on an
+    already-imported dotted name raises a RuntimeWarning that `-W error` turns into a failure."""
     import runpy
 
     monkeypatch.setenv("DATABASE_URL", scratch_db)

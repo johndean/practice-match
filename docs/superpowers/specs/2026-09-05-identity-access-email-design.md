@@ -28,7 +28,7 @@
 
 **Two orthogonal facts.** `account.state ∈ {unverified, verified, pending, needs_review, declined, active, suspended, revoked}` and `role_grant(role ∈ {buyer, seller, staff, admin})`. Effective permissions = union of active grants **only while `state = active`**; every other state sees the gate screens.
 
-**Tables (migrations `010`–`019`):**
+**Tables (migrations `010`–`015` — amended 2026-09-07: the reserved range used to end at `019`, which overlaps Census SP3-A's `017`–`059`):**
 
 | Table | Columns (essentials) |
 |---|---|
@@ -65,6 +65,8 @@ Retention: declined applications and their PII purged 12 months after decision (
 **CSRF and origin.** POST/PATCH/DELETE from a cookie session require `X-CSRF-Token == pm_csrf` **and** an `Origin`/`Referer` on the site's host; bearer `api_token` callers are exempt. No endpoint changes state on GET (router-walk test).
 
 **Automation tokens (amended 2026-09-07 — John: "Admin and Staff must be handled in Wave 2a"; tokens "must include Staff/Admin tokens").** `api_token` created by an admin (`tokens.manage`) for a named purpose (`k6-qa`, `e2e-qa`, `deploy-verify`), carrying **any one of the four roles — `buyer`, `seller`, `staff` or `admin`**; the minter must hold the role being granted (no escalation — clarified 2026-09-07: "holds" is the permission-subset rule, not a `role_grant` row: a minter may mint a token for role R only when every administrative permission R carries is already theirs, so an admin mints any of the four roles and nobody mints a token that administers more than they do), the creation is a re-authenticated, audited action (`tokens.create` records the role), hashed at rest, ≤ 90 days, revocable; `Authorization: Bearer pm_<id>.<secret>`. A token principal holds its role's permissions with two exceptions, because a token has no session to re-authenticate: it never satisfies a re-auth gate (Revoke, licence decisions, engine activation, role grants, token creation) and it never holds `tokens.manage` — a leaked admin token cannot mint tokens or revoke people. They replace `API_SECRET_KEY`/`auth_stub.py`, which are deleted once CI secrets are switched (one-release overlap in which `require(perm)` accepts either).
+
+**Defaults confirmed by John (2026-09-07: "I AGREE with your decision").** (1) Task I4: a duplicate sign-up sends the `account_exists` e-mail (equal work on both paths); the sign-in routes are switched off while production runs in Coming Soon mode; staff and admin receive `signin_new_device` on a sign-in from a new device; the sign-up budget is 300 ms p95, the same as sign-in. (2) Task I6: when an outbox row ends `failed` or `suppressed` its stored `params` are emptied (PII), so Admin shows address, template, status and error but not the body; retries follow this spec's ladder (1 min, 10 min, 1 h, 6 h, then `failed`); the application-status e-mails carry the design's gate-screen sentences verbatim. (3) Task I5b: removing a `staff` or `admin` grant revokes, in the same transaction and audited (`tokens.revoke`, reason `grant_removed`), every live `api_token` that account minted whose role it may no longer mint; a mint locks the minter's own account row so it cannot race a demotion.
 
 **Rate limits.** Redis fixed windows keyed by (route, email) and (route, first `X-Forwarded-For` hop as set by Railway's proxy); constants in `app/auth/limits.py`; responses carry `Retry-After`.
 
@@ -142,7 +144,7 @@ Unit: password policy, token hashing/expiry, matrix rules, row filters, template
 
 ## 10. Plan impacts
 
-Census plan: `require_member`/`auth_stub.py` → `require(perm)`; `MARKET_DATA_PUBLIC` → anonymous `market.read`; A9 `actor` → account id; C12 rotation replaced by deletion of `API_SECRET_KEY` after CI switches to `api_token`. Map-engines plan: `require_operator` → `require("licence.decide")`/`require("engine.activate")` with re-auth; `require_csrf` stays; `registry_change_log.actor` = account id; the Permissions tab joins the Admin tab set. Platform plan: `guard()` gains permissions; the visual harness gains API sign-in; the launch-removal list executes here. Migrations `010`–`019`.
+Census plan: `require_member`/`auth_stub.py` → `require(perm)`; `MARKET_DATA_PUBLIC` → anonymous `market.read`; A9 `actor` → account id; C12 rotation replaced by deletion of `API_SECRET_KEY` after CI switches to `api_token`. Map-engines plan: `require_operator` → `require("licence.decide")`/`require("engine.activate")` with re-auth; `require_csrf` stays; `registry_change_log.actor` = account id; the Permissions tab joins the Admin tab set. Platform plan: `guard()` gains permissions; the visual harness gains API sign-in; the launch-removal list executes here. Migrations `010`–`015` (amended 2026-09-07: `016` is the Seed Listings plan's and `017`–`059` are Census SP3-A's).
 
 ## 11. Open items
 

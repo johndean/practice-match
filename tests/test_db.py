@@ -290,3 +290,10 @@ async def test_dispose_all_returns_while_a_connection_is_still_checked_out(db_re
     await asyncio.wait_for(db.dispose_all(), timeout=5)
     conn.close()
     assert db.sync_pool_in_use() == 0
+
+
+# `dispose_all()`'s other-loop arm (`if loop is current` false — app/db.py) is covered by
+# tests/auth/test_branch_edges.py::test_dispose_all_drops_foreign_loop_entries_without_disposing_them.
+# P14 added a stub-based twin of it here; the merge (2026-09-07) kept the broader one — it uses a
+# live foreign loop and real AsyncEngine/Redis objects and also proves the current loop's own
+# entries ARE disposed. Do not re-add a second copy: it would double-cover the same two edges.

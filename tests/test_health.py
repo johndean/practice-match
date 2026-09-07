@@ -1,9 +1,11 @@
 import logging
+from pathlib import Path
 
 import httpx
 import pytest
 from httpx import ASGITransport
 
+from app.api import health
 from app.checks import async_dsn, check_db, check_redis
 from app.config import settings
 from app.main import app
@@ -110,3 +112,89 @@ async def test_healthz_reports_postgis_and_redis_up(client, db_ready):
     assert body["redis"]["ok"] is True, body["redis"]
     r = await client.get("/api/healthz/deep")
     assert r.status_code == 200
+
+
+# --- P14: commit_sha proves the ARTEFACT, not a service variable ----------------
+# healthz reported the COMMIT_SHA variable scripts/deploy.sh sets immediately before each
+# upload, so on 2026-09-07 it agreed with a deploy whose uploaded tree was a different
+# one. BUILD_SHA is written into the `git archive` deploy.sh uploads and copied into the
+# image, so it cannot drift from the code that is serving.
+
+
+@pytest.fixture
+def stamp_cache_cleared():
+    """L8: build_sha() is cached — the stamp cannot change inside a running image, and
+    /api/healthz is Railway's healthcheck and the nightly k6 target, so it must not do a
+    file read per request. A test that moves BUILD_SHA_FILE has to clear the cache either
+    side of itself."""
+    health.build_sha.cache_clear()
+    yield
+    health.build_sha.cache_clear()
+
+
+async def test_commit_sha_is_read_once_not_on_every_request(client, monkeypatch, tmp_path, stamp_cache_cleared):
+    """The stamp is baked into the image; re-reading it per request buys nothing and puts a
+    blocking file read on the healthcheck path."""
+    stamp = tmp_path / "BUILD_SHA"
+    stamp.write_text("17f40c3\n")
+    reads = 0
+    real_read_text = type(stamp).read_text
+
+    def counting_read_text(self, *args, **kwargs):
+        nonlocal reads
+        reads += 1
+        return real_read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(health, "BUILD_SHA_FILE", stamp)
+    monkeypatch.setattr(type(stamp), "read_text", counting_read_text)
+    for _ in range(3):
+        assert (await client.get("/api/healthz")).json()["commit_sha"] == "17f40c3"
+    assert reads == 1, f"the stamp must be read once, not once per request (read {reads} times)"
+
+
+async def test_commit_sha_falls_back_when_the_stamp_is_not_valid_utf8(client, monkeypatch, tmp_path, stamp_cache_cleared):
+    """UnicodeDecodeError is not an OSError, so a non-UTF-8 stamp turned the deliberately
+    always-200 healthz into a 500 — and Railway's healthcheck with it. This module must
+    never be the thing that breaks."""
+    stamp = tmp_path / "BUILD_SHA"
+    stamp.write_bytes(b"\xff\xfe not utf-8 \x00")
+    monkeypatch.setattr(health, "BUILD_SHA_FILE", stamp)
+    monkeypatch.setattr(settings, "commit_sha", "fallback9")
+    r = await client.get("/api/healthz")
+    assert r.status_code == 200
+    assert r.json()["commit_sha"] == "fallback9"
+
+
+async def test_commit_sha_comes_from_the_build_sha_file_when_the_image_carries_one(client, monkeypatch, tmp_path, stamp_cache_cleared):
+    stamp = tmp_path / "BUILD_SHA"
+    stamp.write_text("17f40c3\n")  # trailing newline: deploy.sh writes one
+    monkeypatch.setattr(health, "BUILD_SHA_FILE", stamp)
+    monkeypatch.setattr(settings, "commit_sha", "variable-only")
+    body = (await client.get("/api/healthz")).json()
+    assert body["commit_sha"] == "17f40c3"
+
+
+async def test_commit_sha_falls_back_to_the_setting_when_the_file_is_absent(client, monkeypatch, tmp_path, stamp_cache_cleared):
+    """A git-connected Railway build, or a local `docker build`, carries no BUILD_SHA."""
+    monkeypatch.setattr(health, "BUILD_SHA_FILE", tmp_path / "no-such-dir" / "BUILD_SHA")
+    monkeypatch.setattr(settings, "commit_sha", "fallback9")
+    body = (await client.get("/api/healthz")).json()
+    assert body["commit_sha"] == "fallback9"
+
+
+async def test_commit_sha_falls_back_when_the_build_sha_file_is_blank(client, monkeypatch, tmp_path, stamp_cache_cleared):
+    """An empty stamp is no evidence; it must not shadow COMMIT_SHA with an empty string."""
+    stamp = tmp_path / "BUILD_SHA"
+    stamp.write_text("  \n")
+    monkeypatch.setattr(health, "BUILD_SHA_FILE", stamp)
+    monkeypatch.setattr(settings, "commit_sha", "fallback9")
+    body = (await client.get("/api/healthz")).json()
+    assert body["commit_sha"] == "fallback9"
+
+
+def test_build_sha_file_sits_at_the_app_root_beside_pyproject():
+    """WORKDIR /app in the image, code at /app/app/api/health.py: the stamp is /app/BUILD_SHA,
+    the same root app/version.py reads pyproject.toml from."""
+    root = Path(__file__).resolve().parent.parent
+    assert health.BUILD_SHA_FILE == root / "BUILD_SHA"
+    assert (root / "pyproject.toml").exists()

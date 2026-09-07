@@ -12,7 +12,7 @@
 
 ## Global Constraints (exact values — verified against Google's terms and pricing on 2026-09-05)
 
-- **Quality and performance policy (`docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md`).** Test shape ~70/20/10 unit/integration/e2e enforced by rules; CI gates: `pytest -W error --cov-fail-under=90`, `diff-cover --fail-under=100`, `ruff`, `mypy --strict`, `vue-tsc --noEmit` (strict), vitest coverage ≥ 85 % on `src/map|router|admin`, Playwright fails on any `pageerror`/`console.error`, `gitleaks`; performance budgets are tests: API p95 (`/api/healthz` ≤ 20 ms, shell ≤ 15 ms, list endpoints ≤ 100 ms, panel ≤ 150 ms), bundle sizes (main ≤ 220 KB gz, `engine-leaflet` ≤ 60, `engine-google` ≤ 12, first load ≤ 300), first map paint ≤ 1,500 ms, hot queries use indexes, nightly k6 on QA (p95 ≤ 400 ms, 0 errors). Raising a budget is a reviewed change with a reason in the commit message.
+- **Quality and performance policy (`docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md`).** Test shape ~70/20/10 unit/integration/e2e enforced by rules; CI gates: `pytest -W error --cov=app --cov=scripts --cov-branch --cov-fail-under=100` (raised by P14, 2026-09-07), `diff-cover --fail-under=100`, `ruff`, `mypy --strict`, `vue-tsc --noEmit` (strict), vitest coverage ≥ 85 % on `src/map|router|admin`, Playwright fails on any `pageerror`/`console.error`, `gitleaks`; performance budgets are tests: API p95 (`/api/healthz` ≤ 20 ms, shell ≤ 15 ms, list endpoints ≤ 100 ms, panel ≤ 150 ms), bundle sizes (main ≤ 220 KB gz, `engine-leaflet` ≤ 60, `engine-google` ≤ 12, first load ≤ 300), first map paint ≤ 1,500 ms, hot queries use indexes, nightly k6 on QA (p95 ≤ 400 ms, 0 errors). Raising a budget is a reviewed change with a reason in the commit message.
 - **TDD, no exceptions (John, 2026-09-05: "everything must have tests").** Every production change begins with a failing test that is run and watched fail (RED), then the minimal code, then the same test watched pass (GREEN) — the `Run:` lines in each task are mandatory steps, not illustrations. Documentation and configuration are covered by drift tests (`tests/test_docs.py`: every setting in `.env.example` and `DEPLOY.md`, relative links resolve, CI workflow shape, runbook endpoints exist); operational scripts have shell tests under `tests/scripts/` that run them against stubbed servers or a stubbed `curl`; ops steps end with an executable verification whose script is itself tested. The handoff's generated UI is covered by the visual gate (every screen state), the route smoke tests, the router-sync and engine unit tests and the `logic.js` characterisation suite (Platform Task 1c); new code in those files follows TDD.
 - **One map engine, app-wide (Terms §3.2.3(e)).** "Customer will not use the Google Maps Core Services with or near a non-Google Map in a Customer Application." Leaflet, Esri and CARTO leave the application entirely; an ESLint `no-restricted-imports` rule for `leaflet` enforces it. The design-reference render used by the visual harness may still contain Leaflet — it is a development fixture, not part of the Customer Application.
 - **Attribution untouched.** The Google logo, "Map data ©… Google" and the Terms link are rendered by the API; they are never removed, hidden, obscured or moved (Maps JavaScript API policies). `disableDefaultUI: true` removes controls only; it does not and must not touch attribution. Places content shown outside the map (a list, a tooltip) shows each place's `attributions` when present.
@@ -75,7 +75,7 @@
 | `app/api/competition_live.py` | Live count proxy: member gate, rate limit, visible point, Aggregate call, timeout, no persistence |
 | `app/api/access.py` | `visible_point(conn, listing_id, geo_vintage) -> tuple[float, float] | None` (D8 rule) |
 | `app/census/google_aggregate.py` | Aggregate client (sync from the Census plan, plus `count_operational_async`) |
-| `migrations/009_google_registry.sql` | Registry rows `google_maps_js`, `google_places_live`; notes update on `google_places_aggregate` |
+| `migrations/009_google_registry.sql` | Registry rows `google_maps_js`, `google_places_live`; notes update on `google_places_aggregate` — **not created (recorded 2026-09-07): superseded by `080_map_engines.sql` (map-engines plan); the registry rows land there** |
 | `frontend/e2e/visual.spec.ts`, `frontend/e2e/harness.ts` | Map-viewport mask while `DESIGN_HAS_GOOGLE_MAP=false`; Google loader stub route |
 | `DEPLOY.md`, `docs/RUNBOOK-google-quota.md` | Console setup, keys, quotas, what to do when a quota trips |
 
@@ -776,7 +776,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ### Task G5: Registry rows, `/api/layers` entries, the no-mixing switch in the gate
 
 **Files:**
-- Create: `migrations/009_google_registry.sql`
+- Create: `migrations/009_google_registry.sql` — **not created (recorded 2026-09-07): superseded by `080_map_engines.sql` (map-engines plan); the registry rows land there**
 - Modify: `app/api/market.py:layers` (two entries), `tests/census/test_registry.py` (`SPEC_KEYS` + statuses), `tests/api/test_market_api.py` (layers assertions)
 
 **Interfaces:**
@@ -810,7 +810,7 @@ async def test_clearing_google_maps_blocks_the_non_google_basemaps(conn):
 
 - [ ] **Step 3: Implement**
 
-`migrations/009_google_registry.sql`:
+`migrations/009_google_registry.sql` — **not created (recorded 2026-09-07): superseded by `080_map_engines.sql` (map-engines plan); the registry rows land there**:
 ```sql
 -- Greenfield Google plan (G0/G9). Rows start unresolved; Task G1's verification clears them through the admin endpoint.
 INSERT INTO dataset_registry

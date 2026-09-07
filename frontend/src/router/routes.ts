@@ -2,7 +2,7 @@ import { createRouter, createWebHistory, type RouteRecordRaw } from 'vue-router'
 import App from '../App.vue';
 
 // Every route renders the single approved component; the URL is a mirror of
-// state.screen (+ browseMode / detailId / adminTab). See router/sync.ts.
+// state.screen (+ detailId / adminTab). See router/sync.ts.
 export const routes: RouteRecordRaw[] = [
   { path: '/', component: App },
   { path: '/browse', component: App },

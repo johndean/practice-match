@@ -65,6 +65,7 @@ jobs:
       - run: bash tests/scripts/test_start_sh.sh
       - run: bash tests/scripts/test_verify_image_sh.sh
       - run: bash tests/scripts/test_deploy_guard.sh
+      - run: bash tests/scripts/test_deploy_archive.sh
       - run: bash tests/scripts/test_verify_deploy.sh
       - run: bash tests/scripts/test_bootstrap_admin.sh
       - name: Coverage on the diff (pull requests only)

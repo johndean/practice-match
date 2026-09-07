@@ -7,20 +7,259 @@
 # CLI resolves a project by walking up the tree, so an unlinked directory anywhere
 # under /Users/johndean inherits that project. Without this check `railway up` from
 # a fresh clone would deploy this repo over an unrelated production service.
+#
+# usage: deploy.sh QA|production [SOURCE_DIR]      SOURCE_DIR defaults to this repo root
+#
+# What is uploaded is `git archive HEAD` of SOURCE_DIR, extracted into a temp directory —
+# never a working directory, and never a tree the CLI resolved for itself. P14, measured
+# 2026-09-07: run from the linked worktree `.worktrees/feat-browse-v3` (HEAD 17f40c3),
+# `railway up` (CLI 5.26.0) followed that worktree's `.git` *pointer file* back to the main
+# repository directory and uploaded MAIN's tree, while /api/healthz reported the branch's
+# sha — the COMMIT_SHA variable this script had just set. So: name the source explicitly,
+# archive its HEAD, and hand the CLI a plain directory with no `.git` to mis-resolve.
+# To deploy a branch: `scripts/deploy.sh QA .worktrees/<branch>`.
+#
+# Exit codes: 64 usage — a bad environment, or a SOURCE_DIR that is not a directory, is not
+#                a git working tree (a bare repository and a bare `.git` directory are not),
+#                has no commits, or whose committed tree carries no readable
+#                [project].version. Each of these says which. (Same list as DEPLOY.md.)
+#             65 the linked Railway project is not Practice Match (the 🚦 guard)
+#             66 SOURCE_DIR has uncommitted changes to tracked files
+#             67 the upload created no deployment, or the deployment did not reach SUCCESS
 set -euo pipefail
 ENV="${1:-}"
-[[ "$ENV" == "QA" || "$ENV" == "production" ]] || { echo "usage: $0 QA|production" >&2; exit 64; }
+[[ "$ENV" == "QA" || "$ENV" == "production" ]] || { echo "usage: $0 QA|production [SOURCE_DIR]" >&2; exit 64; }
+# Resolved before the cd below, so a relative SOURCE_DIR means what the caller typed.
+if [[ -n "${2:-}" ]]; then
+  SOURCE_DIR=$(cd "$2" 2>/dev/null && pwd) || { echo "STOP: SOURCE_DIR '$2' is not a directory" >&2; exit 64; }
+fi
 cd "$(dirname "$0")/.."
+SOURCE_DIR="${SOURCE_DIR:-$PWD}"
+# The ANSWER, not the exit code: `rev-parse --is-inside-work-tree` exits 0 for a bare
+# repository and for a bare `.git` directory too, printing "false" — and both then died past
+# the 🚦 check with git's own `fatal: this operation must be run in a work tree` and exit 128
+# (L1). `rev-parse --git-dir`, which this replaced, could not tell them apart at all.
+if [[ "$(git -C "$SOURCE_DIR" rev-parse --is-inside-work-tree 2>/dev/null || true)" != "true" ]]; then
+  echo "STOP: SOURCE_DIR '$SOURCE_DIR' is not a git working tree (a bare repository or a bare .git directory is not one); deploy.sh uploads a git archive of its HEAD" >&2
+  exit 64
+fi
+# A repository with no commits reached `git archive HEAD` and exited 128 with `fatal: Needed
+# a single revision` (L2).
+if ! git -C "$SOURCE_DIR" rev-parse --verify HEAD >/dev/null 2>&1; then
+  echo "STOP: SOURCE_DIR '$SOURCE_DIR' has no commits; deploy.sh uploads a git archive of HEAD, so there is nothing to upload" >&2
+  exit 64
+fi
+# Untracked files are fine (they are not in HEAD and will not ship). Uncommitted edits to
+# TRACKED files are not: "deploy what is committed" would silently drop them, which is a
+# worse surprise than refusing.
+DIRTY=$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=no)
+if [[ -n "$DIRTY" ]]; then
+  echo "STOP: '$SOURCE_DIR' has uncommitted changes to tracked files. deploy.sh uploads the committed tree (HEAD), so these would NOT ship:" >&2
+  echo "$DIRTY" >&2
+  echo "Commit them (or pass a SOURCE_DIR that is committed) and run again." >&2
+  exit 66
+fi
 PROJECT=$(railway status --json | python3 -c 'import sys,json; print(json.load(sys.stdin).get("name",""))')
 if [[ "$PROJECT" != "Practice Match" ]]; then
   echo "🚦 STOP: railway is linked to '${PROJECT:-nothing}', not 'Practice Match'. Fix with: railway link" >&2
   exit 65
 fi
 echo "🚦 railway status → Project: $PROJECT | target environment: $ENV"
-SHA=$(git rev-parse --short HEAD)
+SHA=$(git -C "$SOURCE_DIR" rev-parse --short HEAD)
+# Warnings, never refusals (L7): a detached or local-only HEAD deploys perfectly well, but
+# the BUILD_SHA stamped into the artefact is then one nobody else can fetch — which defeats
+# the point of stamping it, and is exactly the kind of thing that made P14 hard to unpick.
+if ! git -C "$SOURCE_DIR" symbolic-ref -q HEAD >/dev/null 2>&1; then
+  echo "WARN: '$SOURCE_DIR' is on a detached HEAD ($SHA) — no branch names this commit." >&2
+fi
+if [[ -z "$(git -C "$SOURCE_DIR" branch -r --contains HEAD 2>/dev/null || true)" ]]; then
+  echo "WARN: HEAD $SHA of '$SOURCE_DIR' is not on any remote; push before deploying if this artefact needs to be reproducible." >&2
+fi
+TMP=$(mktemp -d "${TMPDIR:-/tmp}/practice-match-deploy.XXXXXX")
+# Deliberately NOT inside $TMP: that directory is the upload.
+CLI_ERR=$(mktemp "${TMPDIR:-/tmp}/practice-match-deploy-err.XXXXXX")
+trap 'rm -rf "$TMP" "$CLI_ERR"' EXIT
+git -C "$SOURCE_DIR" archive --format=tar HEAD | tar -x -C "$TMP"
+# The artefact's own commit, read back by /api/healthz in preference to COMMIT_SHA: a
+# variable can be set without the uploaded tree ever changing (that is exactly how P14
+# hid itself), a file inside the archive cannot.
+printf '%s\n' "$SHA" > "$TMP/BUILD_SHA"
+# Read from the archive, not the checkout: this is definitionally the version being shipped.
+# One clean line on any failure — a missing or malformed pyproject used to surface a raw
+# Python traceback and exit 1 (L3); nothing has been uploaded at this point.
+VERSION=$(python3 -c '
+import sys, tomllib
+try:
+    print(tomllib.load(open(sys.argv[1], "rb"))["project"]["version"])
+except Exception as exc:
+    sys.exit(f"STOP: cannot read [project].version from the committed pyproject.toml of {sys.argv[2]} ({type(exc).__name__}); deploy.sh needs it as the version to verify against")
+' "$TMP/pyproject.toml" "$SOURCE_DIR") || exit 64
+echo "→ uploading the committed tree of $SOURCE_DIR (HEAD $SHA, version $VERSION)"
+
+# `railway up --ci` streams build logs, and that stream can time out with a
+# `reqwest error … operation timed out` *after* the upload succeeded — the deployment
+# carries on to SUCCESS regardless (measured 2026-09-07). Aborting there would leave the
+# api deployed and the worker not, so a non-zero `up` is resolved by asking Railway what
+# actually happened rather than by guessing.
+#
+# It must fail CLOSED, though: `up` also exits non-zero when the upload itself failed, and
+# then no new deployment exists and Railway's newest is still the PREVIOUS deploy — very
+# possibly a SUCCESS, which a status-only poll would read as this deploy succeeding
+# (C2 ruling, 2026-09-07). So the newest deployment is recorded before the upload and only
+# a strictly newer one counts. A deployment with no `createdAt` cannot be dated, so it
+# reads as "no new deployment" rather than being trusted or waited on for ever.
+#
+# select_deployment <svc> <env> <baseline-createdAt> [dep-id] [dep-createdAt]
+# Prints "<createdAt>\t<id>\t<STATUS>" for the deployment being tracked, or nothing:
+# with dep-id/dep-createdAt it is that exact deployment, otherwise the newest one whose
+# createdAt is strictly after the baseline. Rows without a createdAt are dropped.
+select_deployment() {
+  local listing
+  # Returns non-zero, printing the CLI's own stderr, when `railway deployment list` fails, so
+  # each caller decides what a missing list means. The blanket `2>/dev/null` this replaced hid
+  # an expired token or a rate limit behind a bare `exit 1` with no output at all (M1).
+  if ! listing=$(railway deployment list --service "$1" --environment "$2" --json 2>"$CLI_ERR"); then
+    echo "railway deployment list --service $1 --environment $2 failed:" >&2
+    cat "$CLI_ERR" >&2
+    return 1
+  fi
+  printf '%s' "$listing" |
+    BASELINE="$3" DEP_ID="${4:-}" DEP_CREATED="${5:-}" python3 -c '
+import json, os, sys
+from datetime import datetime, timezone
+
+
+def parse(raw):
+    """createdAt as a MOMENT. Compared and sorted as text until L6: a single
+    offset-format row (or dropped milliseconds mid-list) would silently mis-order the list
+    rather than fail closed, and the whole upload-created-a-deployment guard rests on this
+    comparison. Unparseable reads as missing, which every caller treats as no deployment."""
+    text = str(raw or "")
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
+
+
+def rows(payload):
+    if isinstance(payload, list):
+        return [r for r in payload if isinstance(r, dict)]
+    if isinstance(payload, dict):
+        for value in payload.values():
+            if isinstance(value, list):
+                return [r for r in value if isinstance(r, dict)]
+    return []
+
+
+try:
+    dated = [(parse(r.get("createdAt") or r.get("created_at")), r) for r in rows(json.load(sys.stdin))]
+except Exception:
+    dated = []
+dated = [pair for pair in dated if pair[0] is not None]
+want_id = os.environ["DEP_ID"]
+want_created, baseline = parse(os.environ["DEP_CREATED"]), parse(os.environ["BASELINE"])
+if want_id:
+    dated = [pair for pair in dated if str(pair[1].get("id") or "") == want_id]
+elif want_created is not None:
+    dated = [pair for pair in dated if pair[0] == want_created]
+elif baseline is not None:
+    dated = [pair for pair in dated if pair[0] > baseline]
+if dated:
+    dated.sort(key=lambda pair: pair[0], reverse=True)
+    when, top = dated[0]
+    print(when.isoformat(), str(top.get("id") or ""), str(top.get("status") or "UNKNOWN").upper(), sep="\t")
+'
+}
+
+# await_deployment <svc> <env> <baseline-createdAt>
+await_deployment() {
+  local svc="$1" env="$2" baseline="$3"
+  local interval="${DEPLOY_POLL_INTERVAL:-10}"
+  local appear="${DEPLOY_APPEAR_TIMEOUT:-120}"
+  local settle="${DEPLOY_POLL_TIMEOUT:-900}"
+  if (( interval < 1 )); then interval=1; fi
+  local waited=0 row status dep_id dep_created
+  # Phase 1 — the upload must have created a deployment newer than the baseline.
+  while :; do
+    if ! row=$(select_deployment "$svc" "$env" "$baseline"); then
+      echo "STOP: cannot tell whether the $svc upload created a deployment — the deployment list is unreadable (reason above). Failing closed." >&2
+      exit 67
+    fi
+    if [[ -n "$row" ]]; then
+      dep_created=$(printf '%s' "$row" | cut -f1)
+      dep_id=$(printf '%s' "$row" | cut -f2)
+      break
+    fi
+    if (( waited >= appear )); then
+      # An inference, and said as one (L4): being told "nothing was deployed" when Railway
+      # was merely slow to register a live deployment is the worst thing to hear before
+      # redeploying over it.
+      echo "STOP: upload did not create a deployment for $svc in $env — no deployment newer than '${baseline:-<no previous deployment>}' appeared within ${waited}s (bound ${appear}s). The upload almost certainly failed and nothing was deployed; if Railway was merely slow to register it, check \`railway deployment list --service $svc --environment $env\` first, then re-run with a larger DEPLOY_APPEAR_TIMEOUT." >&2
+      exit 67
+    fi
+    echo "   waiting for the $svc deployment to appear (${waited}s of ${appear}s)"
+    sleep "$interval"
+    waited=$(( waited + interval ))
+  done
+  echo "   $svc deployment ${dep_id:-$dep_created} was created by the upload; waiting for it to settle"
+  # Phase 2 — that deployment, and only that one, must reach SUCCESS within the bound.
+  waited=0
+  while :; do
+    if ! row=$(select_deployment "$svc" "$env" "$baseline" "$dep_id" "$dep_created"); then
+      echo "STOP: lost track of the $svc deployment ${dep_id:-$dep_created} — the deployment list is unreadable (reason above). Failing closed." >&2
+      exit 67
+    fi
+    status=$(printf '%s' "$row" | cut -f3)
+    case "$status" in
+      SUCCESS)
+        echo "   $svc deployment status → SUCCESS (the upload completed; only the log stream failed)"
+        return 0 ;;
+      # Every status Railway settles on that is not SUCCESS ends the wait AT ONCE: with only
+      # FAILED and CRASHED here, a REMOVED/SKIPPED/CANCELLED deployment burned the whole
+      # 900 s bound before failing anyway (L5).
+      FAILED|CRASHED|REMOVED|SKIPPED|CANCELLED)
+        echo "STOP: the $svc deployment for $env ended $status. Logs: railway logs --service $svc --environment $env --lines 100" >&2
+        exit 67 ;;
+    esac
+    # Deliberately NOT terminal: any other status — BUILDING, DEPLOYING, INITIALIZING, a
+    # SLEEPING serverless service, or whatever Railway adds next — keeps polling to the
+    # 15-minute bound and then exits 67. Guessing that an unfamiliar status means "done" is
+    # the one thing this fallback must never do; waiting out the bound is the fail-closed
+    # cost of not guessing, and DEPLOY_POLL_TIMEOUT is there to shorten it.
+    if (( waited >= settle )); then
+      echo "STOP: the $svc deployment for $env was still ${status:-UNKNOWN} after ${waited}s (bound ${settle}s); not calling that a good deploy" >&2
+      exit 67
+    fi
+    echo "   $svc deployment status → ${status:-UNKNOWN} (waited ${waited}s of ${settle}s)"
+    sleep "$interval"
+    waited=$(( waited + interval ))
+  done
+}
+
 for svc in api worker; do
   railway variable set "COMMIT_SHA=$SHA" --service "$svc" --environment "$ENV" --skip-deploys >/dev/null
-  echo "→ railway up --environment $ENV --service $svc --ci  (commit $SHA)"
-  railway up --environment "$ENV" --service "$svc" --ci
+  # Recorded BEFORE the upload: this is the only evidence that can tell a dead log stream
+  # from an upload that never happened. A CLI failure here must not block a deploy that is
+  # otherwise fine (M1): an empty baseline is safe, because an unreadable list then fails
+  # phase 1 closed anyway, and a readable one only ever mis-reads a PREVIOUS deployment as
+  # this one if a previous deployment exists.
+  if ! BASELINE=$(select_deployment "$svc" "$ENV" "" | cut -f1); then
+    echo "WARN: could not read $svc's deployment list; the log-stream fallback will treat any dated deployment as new" >&2
+    BASELINE=""
+  fi
+  echo "→ railway up $TMP --path-as-root --environment $ENV --service $svc --ci  (commit $SHA)"
+  # --path-as-root: without it the PATH argument is filtered against "the project
+  # directory" the CLI resolves for itself, which is the mis-resolution P14 was.
+  if ! railway up "$TMP" --path-as-root --environment "$ENV" --service "$svc" --ci; then
+    echo "   railway up exited non-zero (the log stream times out after a good upload); asking Railway for the deployment status" >&2
+    await_deployment "$svc" "$ENV" "$BASELINE"
+  fi
 done
-[[ -n "${SKIP_VERIFY:-}" ]] || scripts/verify-deploy.sh "$ENV"
+[[ -n "${SKIP_VERIFY:-}" ]] || EXPECT_SHA="$SHA" EXPECT_VERSION="$VERSION" scripts/verify-deploy.sh "$ENV"
+# verify-deploy.sh defaults EXPECT_SHA/EXPECT_VERSION to ITS OWN checkout, so a later hand-run
+# after a SOURCE_DIR deploy would demand this checkout's tree and fail a perfectly good deploy
+# (M2). Hand over the line that does not.
+echo "→ to re-verify this deploy later: EXPECT_SHA=$SHA EXPECT_VERSION=$VERSION scripts/verify-deploy.sh $ENV"

@@ -1,3 +1,4 @@
+import json
 import re
 import tomllib
 from pathlib import Path
@@ -21,17 +22,22 @@ REQUIRED_CI_COMMANDS = (
     "poetry run mypy app --strict",
     "scripts/bootstrap_admin.py scripts/seed_persona.py --strict",
     "poetry run pytest -q -W error",
-    "--cov=app",
     # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
     # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
     # `tests/test_migrate.py::test_cli_entrypoint_runs_main_when_executed_as___main__`.
-    "--cov=scripts",
-    "--cov-branch",
+    # P14 C4 (2026-09-07) then raised main's own gate to the same 100 % app+scripts BRANCH gate
+    # (it had been `--cov=app --cov-fail-under=90` while two pre-existing gaps stood open:
+    # app/db.py's other-loop disposal arm and scripts/migrate.py's `__main__` guard). Both are
+    # covered now, so nothing has to be relaxed to keep it green. Asserted as one joined
+    # substring — the stricter of the two forms the merge inherited, since it also pins the
+    # flags' order and adjacency in quality.yml.
+    "--cov=app --cov=scripts --cov-branch",
     "--cov-report=xml",
     "--cov-fail-under=100",
     "bash tests/scripts/test_start_sh.sh",
     "bash tests/scripts/test_verify_image_sh.sh",
     "bash tests/scripts/test_deploy_guard.sh",
+    "bash tests/scripts/test_deploy_archive.sh",
     "bash tests/scripts/test_verify_deploy.sh",
     "bash tests/scripts/test_bootstrap_admin.sh",
     "diff-cover coverage.xml --compare-branch=origin/main --fail-under=100",
@@ -338,3 +344,114 @@ def test_deploy_md_says_an_applied_migration_is_immutable():
     assert "Enforcement begins with the files applied from `f3b7d41` onward" in text
     assert "carry no checksum and are not checked" in text
     assert "001_init.sql" in text
+
+
+def test_dockerfile_copies_the_build_sha_stamp_with_the_optional_glob_form():
+    """P14: /app/BUILD_SHA is what /api/healthz reports as commit_sha, and scripts/deploy.sh
+    writes it into the archive it uploads. A build whose context has no stamp (a local
+    `scripts/verify-image.sh`, or a git-connected Railway build) must still succeed, so the
+    source is the `BUILD_SH[A]` glob — but a COPY whose ONLY source matches nothing fails
+    outright ("COPY failed: no source files were specified", measured against the local
+    daemon 2026-09-07), so the glob must stay paired with a source that is always present."""
+    text = (ROOT / "Dockerfile").read_text()
+    copies = [ln for ln in text.splitlines() if ln.startswith("COPY") and "BUILD_SH" in ln]
+    assert copies, "the Dockerfile must copy BUILD_SHA using the optional-glob form BUILD_SH[A]"
+    for line in copies:
+        assert re.fullmatch(r"COPY \S+ BUILD_SH\[A\] \./", line), (
+            f"the optional glob must be paired with an always-present source: {line!r}"
+        )
+
+
+def test_deploy_md_documents_the_archive_upload_and_the_new_exit_codes():
+    """P14: the deploy path can no longer ship a tree other than the one it names. The
+    runbook has to say what is uploaded, how a branch is deployed, and what the two new
+    refusals mean — an operator who hits 66 or 67 must not have to read the script."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "git archive" in text, "the archive-based upload is undocumented"
+    assert "scripts/deploy.sh QA .worktrees/<branch>" in text, "the SOURCE_DIR usage is undocumented"
+    assert "pointer file" in text, "the worktree hazard that caused P14 is unrecorded"
+    assert "exit 66" in text and "exit 67" in text, "the new exit codes are undocumented"
+    # C2: a `railway up` that fails at upload time creates no deployment, so the previous
+    # deploy stays the newest and a status-only poll would read its SUCCESS as this one's.
+    assert "upload did not create a deployment" in text, "the fail-closed upload guard is undocumented"
+    assert "strictly newer" in text, "the createdAt baseline rule is undocumented"
+    assert "EXPECT_VERSION" in text, "the verifier's artefact check is undocumented"
+    # M2: the verifier's defaults are its own checkout's, so a hand-run after a SOURCE_DIR
+    # deploy needs both knobs passed explicitly or it fails a perfectly good deploy.
+    assert "EXPECT_SHA=<sha> EXPECT_VERSION=<version> scripts/verify-deploy.sh QA" in text, (
+        "the ready-to-paste re-verify line for a SOURCE_DIR deploy is undocumented"
+    )
+
+
+def test_claude_md_traffic_light_block_records_the_archive_upload():
+    """The 🚦 block is the one place every assistant reads before touching Railway."""
+    text = (ROOT / "CLAUDE.md").read_text()
+    assert (
+        "deploy.sh uploads a `git archive` of the source's HEAD, never the working directory; "
+        "a linked worktree must be passed as SOURCE_DIR" in text
+    )
+
+
+def test_platform_plan_records_the_p14_hotfix():
+    text = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-05-practice-match-platform.md").read_text()
+    assert "### Task 14: Deploy what is committed, verify what is deployed (hotfix, 2026-09-07)" in text
+    assert "--path-as-root" in text, "the flag that makes the upload path the archive root is unrecorded"
+    assert "BUILD_SHA" in text, "the artefact stamp is unrecorded"
+
+
+def test_claude_md_local_backend_gate_is_the_one_ci_runs():
+    """P14 C4: the backend gate is the 100 % app+scripts branch gate. The command in
+    CLAUDE.md's Common operations must be the one CI runs verbatim — otherwise the loop
+    John actually types is weaker than the gate, and the first he hears of it is a red CI."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    workflow = (ROOT / ".github" / "workflows" / "quality.yml").read_text()
+    policy = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-quality-and-performance-policy.md").read_text()
+    gate = "poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch"
+    assert gate in claude, "CLAUDE.md's Common operations must carry the backend gate verbatim"
+    assert gate in workflow, "quality.yml must run the same gate"
+    assert gate in policy, "the quality policy must state the same gate"
+    for doc, text in (("CLAUDE.md", claude), ("quality.yml", workflow), ("the quality policy", policy)):
+        assert "--cov-fail-under=100" in text, doc
+        assert "--cov-fail-under=90" not in text, f"{doc} still carries the old 90 % threshold"
+
+
+# The four sub-project plans whose policy-summary line quoted the backend CI gate. P14 raised
+# it, so each has to quote the raised one — a plan that still says 90 % is an instruction to
+# lower the gate the next time someone executes it (the shape of review finding L9).
+PLANS_QUOTING_THE_BACKEND_GATE = (
+    "2026-09-05-practice-match-map-engines.md",
+    "2026-09-05-practice-match-google-maps-greenfield.md",
+    "2026-09-05-practice-match-identity-access-email.md",
+    "2026-09-05-practice-match-census-data-layer.md",
+)
+
+
+def test_sub_project_plans_quote_the_raised_backend_gate():
+    """P14 fix round 1, L9 extended: `main` is the canonical copy of every plan, and each of
+    these opens by summarising the quality policy's CI gates. Left at the old 90 % floor they
+    would walk a future implementer straight into lowering it — and `tests/test_docs.py`
+    already makes that a RED test, so the conflict would surface as a mystery failure rather
+    than as the instruction it is."""
+    for name in PLANS_QUOTING_THE_BACKEND_GATE:
+        text = (ROOT / "docs" / "superpowers" / "plans" / name).read_text()
+        assert "pytest -W error --cov=app --cov=scripts --cov-branch --cov-fail-under=100" in text, name
+        assert "raised by P14, 2026-09-07" in text, f"{name} must date the raise"
+        assert "--cov-fail-under=90" not in text, f"{name} still quotes the old 90 % floor"
+
+
+def test_claude_md_gate_includes_the_dom_oracle():
+    """Final review M2 (2026-09-07). Option A made the DOM oracle THE proof of zero regression
+    for the thirteen non-Browse screens (CLAUDE.md's own "Source of truth" paragraph says so),
+    and it runs under neither `npm run test:smoke` nor `npm run test:visual` — only under
+    `npm run test:e2e`, whose `--project=app` matches visual|smoke|dom. CI runs it; an operator
+    following CLAUDE.md's four-item gate by hand did not."""
+    text = (ROOT / "CLAUDE.md").read_text()
+    gate = next(line for line in text.splitlines() if line.startswith("- **Verification gate"))
+    assert "npm run test:visual:baselines" in gate, "the hand-run gate does not regenerate the oracles first"
+    assert "npm run test:e2e" in gate, "the hand-run gate still skips the DOM oracle"
+    scripts = json.loads((ROOT / "frontend" / "package.json").read_text())["scripts"]
+    assert "--project=app" in scripts["test:e2e"], scripts["test:e2e"]
+    # …and no spec filter, or it would not be all three suites.
+    assert "spec.ts" not in scripts["test:e2e"], scripts["test:e2e"]
+    ops = [line for line in text.splitlines() if line.startswith("cd frontend &&") and "test:" in line]
+    assert any("npm run test:e2e" in line for line in ops), "the Common operations block still runs the pixel gate alone"

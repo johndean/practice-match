@@ -6,14 +6,14 @@
 
 **Goal:** Real accounts for Practice Match — any-domain email + password, verified-then-applied, approved by VIN Foundation staff into Buyer/Seller roles, governed by one code-defined permission matrix, with server-side sessions revocable on the next request and every email sent through Resend from an audited outbox.
 
-**Architecture:** Postgres tables for accounts, applications, grants, sessions, tokens, outbox and audit (migrations `010`–`014`); `app/auth/*` holds passwords (Argon2id + HIBP), tokens, sessions (Redis-cached principal, explicit invalidation), the permission matrix and the `require(perm)` dependency; FastAPI routers for auth, applications, admin users and the Resend webhook; the existing Celery worker sends mail from the outbox; the frontend gets a generated `permissions.ts`, a permission-aware `guard()`, `can()`, live Admin Users/Permissions mappings, and the prototype's sign-in/apply wired to the API with the launch-removal list executed last.
+**Architecture:** Postgres tables for accounts, applications, grants, sessions, tokens, outbox and audit (migrations `010`–`015` — `015_admin_list_indexes` was added in the I5 fix round); `app/auth/*` holds passwords (Argon2id + HIBP), tokens, sessions (Redis-cached principal, explicit invalidation), the permission matrix and the `require(perm)` dependency; FastAPI routers for auth, applications, admin users and the Resend webhook; the existing Celery worker sends mail from the outbox; the frontend gets a generated `permissions.ts`, a permission-aware `guard()`, `can()`, live Admin Users/Permissions mappings, and the prototype's sign-in/apply wired to the API with the launch-removal list executed last.
 
 **Tech Stack:** FastAPI, SQLAlchemy 2 async (`asyncpg`) for request paths, psycopg2 for migrations/tests, Redis, Celery 5, `argon2-cffi`, `zxcvbn`, `httpx`, `fakeredis` (tests), Vue 3 + vue-router 4 + Vitest, Playwright, Resend HTTP API.
 
 ## Global Constraints (exact values — from the spec and the quality policy)
 
 - **TDD, no exceptions.** Every step below that writes code starts from a failing test that is run and watched fail; `Run:` lines are mandatory.
-- **Quality and performance policy applies — 100 % coverage (John's ruling 2026-09-06):** `pytest -W error --cov-fail-under=100` (every line and branch of `app/` covered; no exclusions without a ruling), `diff-cover --fail-under=100`, `ruff`, `mypy --strict`, `vue-tsc` strict, vitest **100 % lines, branches, functions and statements on every hand-written frontend file** (the existing `frontend/vite.config.ts` thresholds; the ratified exclude set may only grow by ruling), Playwright fails on `pageerror`/`console.error`. Budgets: `/api/me` ≤ 20 ms p95 (cache hit), `/api/auth/signin` ≤ 300 ms p95, `/api/auth/signup` ≤ 100 ms, `/api/admin/users` ≤ 150 ms, one Argon2id hash ≤ 250 ms on CI, auth overhead ≤ 2 ms p95.
+- **Quality and performance policy applies — 100 % coverage (John's ruling 2026-09-06):** `pytest -W error --cov=app --cov=scripts --cov-branch --cov-fail-under=100` (raised by P14, 2026-09-07, to every line and branch of `app/` and `scripts/`; no exclusions without a ruling), `diff-cover --fail-under=100`, `ruff`, `mypy --strict`, `vue-tsc` strict, vitest **100 % lines, branches, functions and statements on every hand-written frontend file** (the existing `frontend/vite.config.ts` thresholds; the ratified exclude set may only grow by ruling), Playwright fails on `pageerror`/`console.error`. Budgets: `/api/me` ≤ 20 ms p95 (cache hit), `/api/auth/signin` ≤ 300 ms p95, `/api/auth/signup` ≤ 100 ms, `/api/admin/users` ≤ 150 ms, one Argon2id hash ≤ 250 ms on CI, auth overhead ≤ 2 ms p95.
 - **Any email address may register.** `account.email` is `citext`, unique, any domain. `foundation.vin` is only the sender domain.
 - **Passwords:** ≥ 12 chars (≥ 14 for staff/admin), ≤ 256; zxcvbn score ≥ 3; HIBP k-anonymity screen with the bundled NCSC top-100k list as fallback; Argon2id `time_cost=3, memory_cost=65536 (64 MiB), parallelism=1`; hashing runs in a worker thread; nothing about a password is logged beyond "changed".
 - **Sessions:** 256-bit random id, only its SHA-256 stored; cookies `pm_session` (`HttpOnly; Secure; SameSite=Lax; Path=/`) and `pm_csrf` (readable, 128-bit); idle 14 d, absolute 30 d; new id on sign-in and on every state/role change; Redis `session:{hash}` TTL 60 s **deleted** on sign-out, password change, state change, grant change — revocation effective on the next request; `last_seen_at` written at most every 5 min; nightly purge.
@@ -28,7 +28,7 @@
 - **Operator token overlap:** `require(perm)` accepts a session, an `api_token`, **or** the legacy `Authorization: Bearer {API_SECRET_KEY}` (as admin) until Task I9 deletes `auth_stub.py` and `API_SECRET_KEY` after CI secrets switch to an `api_token`.
 - **Automation tokens carry any of the four roles (John, 2026-09-07).** Staff and admin tokens are minted only by an admin who holds that role, under re-auth, audited with the role; token principals never satisfy a re-auth gate and never hold `tokens.manage` (spec §Automation tokens, amended). Task I5b.
 - **The applicant's path back (John, 2026-09-07: YES).** `needs_review` → answer in the app + re-submit → `pending`; `declined` → re-apply → new application row, `pending`; one open application per account; audited; `application_received` re-sent. API in Task I5c; the screens wait for a Rev 3 design (John's queue) and are wired in I8 only when it exists.
-- **Migrations `010`–`019`** belong to SP2; this wave uses `010`–`014`.
+- **Migrations `010`–`015`** belong to this wave; `016` is the Seed Listings plan's, `017`–`059` are Census SP3-A's.
 - **Design persona** (`design@practice-match.test`, roles buyer+seller+staff+admin) exists only in test and QA databases (seeded by `scripts/seed_persona.py`, refused when `ENVIRONMENT=production`).
 - **Zero-regression order** for the prototype: harness API sign-in first, then `logic.js` wiring (RED-then-GREEN against the characterisation suite), then jump bar / demo credentials / `gateStates` / `startViewport` removal, then the sign-in copy change.
 - Every commit: conventional message, `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`, pushed to `origin` and `production`. Work on `feat/identity` in a worktree.
@@ -2135,7 +2135,7 @@ async def test_token_principal_never_satisfies_reauth(client, token_for, decline
 *Added 2026-09-07. API only; the screens wait for a Rev 3 design (spec §Lifecycle amendment). After I5b, before I7. Standard-tier implementer.*
 
 **Files:**
-- Modify: `migrations/012_applications.sql` **in place** (or whichever `01x` file creates `application` — never applied to a persistent database: QA and production serve `main` at `b9d01ad`; say so in the commit) — add `answer text`, `answered_at timestamptz`, `resubmitted_at timestamptz`
+- Modify: `migrations/011_applications_roles.sql` **in place** (or whichever `01x` file creates `application` — never applied to a persistent database: QA and production serve `main` at `b9d01ad`; say so in the commit) — add `answer text`, `answered_at timestamptz`, `resubmitted_at timestamptz`
 - Modify: `app/api/applications.py` (`POST /api/applications/{id}/answer`; re-apply branch in `POST /api/applications`; `GET /api/applications/me` returns `history`), `app/api/admin_users.py` (detail shows `answer`, `answered_at`, `history`), `app/auth/audit.py` action names (`applications.answer`, `applications.reapply`) + the AST drift test list
 - Test: `tests/api/test_applications.py`, `tests/api/test_admin_users.py` (detail history), `tests/mail/test_send.py` (a second `application_received` with a new cause)
 
@@ -2214,6 +2214,8 @@ async def test_staff_detail_shows_answer_and_history(client, staff_session, answ
 - [ ] **Step 5: Docs + commit** — spec/plan already amended; `DEPLOY.md` unchanged; `feat(identity): applicants answer a request for information and re-submit; declined applicants re-apply (John's ruling); one open application per account`.
 
 *Notes for I7/I8 (2026-09-07): the applicant-facing answer field and Re-apply action are wired only when John supplies the Rev 3 gate-state design; until then I8 leaves the gate screens as designed and the report lists the two API paths as "reachable by API, not by UI".*
+
+*Note for I8 (I5c review L3, 2026-09-07): the admin account detail currently carries the application rows three ways (`applications`, `application`, `application_history`) so the existing Admin mapping stayed untouched; I8 picks ONE shape when it wires the Admin Users detail and deletes the other two in the launch-removal pass — a test pins the single shape.*
 
 ### Task I6: Resend pipeline — templates, outbox sending, worker tasks, webhook, allowlist, suppression
 
@@ -2474,7 +2476,7 @@ Beat: `"mail-send-minutely": {"task": "mail.send", "schedule": 60.0}`, `"session
 
 **Interfaces:**
 - Consumes: `frontend/src/auth/permissions.ts` (generated: `ROLES`, `Permission`, `MATRIX`, `REAUTH`), Platform Task 2's `RoutedState`, `guard(state, patch)`, `routes.ts`.
-- Produces: `can(perm: Permission, me: Me | null, opts?: { marketDataPublic?: boolean }) -> boolean`; `Me { id, email, name, role, initials, state, roles: string[], affiliation_label: string | null }`; `api.signIn(email, password) -> Promise<Me>` (throws `AuthError(code, message)` with the server's code), `api.signUp`, `api.verify(token)`, `api.apply(kind, fields)`, `api.me() -> Promise<Me | null>` (null on 401), `api.signOut()`, `api.reauth(password)`; `me.ts`: `useMe()` store (`me`, `load()`, `set()`, `clear()`); `guard(state, patch, ctx: { me: Me | null; marketDataPublic?: boolean })` — signed out + member route → gate/signin with `pending = patch`; signed in but lacking the route's permission → `apply = { screen: 'gate', gate: 'unavailable' }` (a new gate state rendered with the design's declined-screen layout and copy "This page is not available to your account"), `pending = null`; `ROUTE_PERMS: Record<string, Permission>` (`browse-listings → page.browse`, `browse-market → market.read`, `detail → listing.read`, `requests → request.read_own`, `seller → page.seller`, `admin-* → page.admin`); `toUserRows(items, ui)` and `toPermissionRows(matrix)` in the Data-tab `cell()` shape; harness `signInAsPersona(page)` (POST `/api/auth/signin` via `page.request`, then reload) replacing jump-bar sign-in in `screens.ts`.
+- Produces: `can(perm: Permission, me: Me | null, opts?: { marketDataPublic?: boolean }) -> boolean`; `Me { id, email, name, role, initials, state, roles: string[], affiliation_label: string | null }`; `api.signIn(email, password) -> Promise<Me>` (throws `AuthError(code, message)` with the server's code), `api.signUp`, `api.verify(token)`, `api.apply(kind, fields)`, `api.me() -> Promise<Me | null>` (null on 401), `api.signOut()`, `api.reauth(password)`; `me.ts`: `useMe()` store (`me`, `load()`, `set()`, `clear()`); `guard(state, patch, ctx: { me: Me | null; marketDataPublic?: boolean })` — signed out + member route → gate/signin with `pending = patch`; signed in but lacking the route's permission → `apply = { screen: 'gate', gate: 'unavailable' }` (a new gate state rendered with the design's declined-screen layout and copy "This page is not available to your account"), `pending = null`; `ROUTE_PERMS: Record<string, Permission>` (`browse → page.browse`, `detail → listing.read`, `requests → request.read_own`, `seller → page.seller`, `admin-* → page.admin`); the market column inside Browse checks `can('market.read')` separately, honouring `MARKET_DATA_PUBLIC` (when false, anonymous and applicant visitors see the map and results without shading and a sign-in prompt in the market column); `toUserRows(items, ui)` and `toPermissionRows(matrix)` in the Data-tab `cell()` shape; harness `signInAsPersona(page)` (POST `/api/auth/signin` via `page.request`, then reload) replacing jump-bar sign-in in `screens.ts`.
 
 - [ ] **Step 1: Failing tests**
 
@@ -2518,7 +2520,7 @@ describe('guard with permissions', () => {
     expect(guard({ ...base, auth: true }, { screen: 'admin', adminTab: 'users' }, { me: buyer })).toEqual({ apply: { screen: 'gate', gate: 'unavailable' }, pending: null });
   });
   it('signed in with the permission → the patch applies', () => {
-    expect(guard({ ...base, auth: true }, { screen: 'browse', browseMode: 'listings' }, { me: buyer })).toEqual({ apply: { screen: 'browse', browseMode: 'listings' }, pending: null });
+    expect(guard({ ...base, auth: true }, { screen: 'browse' }, { me: buyer })).toEqual({ apply: { screen: 'browse' }, pending: null });
   });
 });
 ```
@@ -2558,11 +2560,13 @@ import { can } from '../auth/can';
 import type { Me } from '../auth/me';
 import type { Permission } from '../auth/permissions';
 
-export const ROUTE_PERMS: Record<string, Permission> = { browse: 'page.browse', 'browse-market': 'market.read', detail: 'listing.read', requests: 'request.read_own', seller: 'page.seller', admin: 'page.admin' };
+export const ROUTE_PERMS: Record<string, Permission> = { browse: 'page.browse', detail: 'listing.read', requests: 'request.read_own', seller: 'page.seller', admin: 'page.admin' };
 
 function permFor(patch: Partial<RoutedState>): Permission | null {
   if (!patch.screen || patch.screen === 'gate') return null;
-  if (patch.screen === 'browse') return patch.browseMode === 'market' ? ROUTE_PERMS['browse-market'] : ROUTE_PERMS.browse;
+  // Browse V3 (spec D3): Browse Practices is ONE screen, so the route permission keys on
+  // `patch.screen` alone — there is no browseMode to branch on. The market-data column
+  // inside the screen checks can('market.read') itself, honouring MARKET_DATA_PUBLIC.
   return ROUTE_PERMS[patch.screen] ?? null;
 }
 
@@ -2574,7 +2578,7 @@ export function guard(state: RoutedState & { auth?: boolean }, patch: Partial<Ro
   return { apply: patch, pending: null };
 }
 ```
-`useStateRouteSync` passes `{ me: useMe().me }`. `api.ts` wraps `fetch` (same-origin credentials, JSON, `X-CSRF-Token` from `document.cookie`), `me.ts` is a small module-level store (`ref<Me | null>`). `admin/users.ts` and `admin/permissions.ts` follow the Map-engines M6 pattern (the `cell()`/`A()` shapes and pill tones copied verbatim from `logic.js`). Harness: `signInAsPersona(page)` posts `{email: 'design@practice-match.test', password: process.env.PERSONA_PASSWORD}` through `page.request` (cookies flow into the browser context), then `page.goto(url)`; `screens.ts` replaces every jump-bar step with it; the reference project is unchanged (the design still uses its own shortcuts).
+`useStateRouteSync` passes `{ me: useMe().me }`. `api.ts` wraps `fetch` (same-origin credentials, JSON, `X-CSRF-Token` from `document.cookie`), `me.ts` is a small module-level store (`ref<Me | null>`). `admin/users.ts` and `admin/permissions.ts` follow the Map-engines M6 pattern (the `cell()`/`A()` shapes and pill tones copied verbatim from `logic.js`). Harness: `signInAsPersona(page)` posts `{email: 'design@practice-match.test', password: process.env.PERSONA_PASSWORD}` through `page.request` (cookies flow into the browser context), then `page.goto(url)`; `screens.ts` replaces every jump-bar step with it; the reference project is unchanged (the design still uses its own shortcuts). `screens.ts` edits apply **on top of** Browse V3's screen list (docs/superpowers/plans/2026-09-06-browse-v3-mobile.md, Task V9): there is one `browse` state, not `browse-listings`/`browse-market`, and three new states — `browse-layer-menu`, `browse-compare-open`, `browse-legend-collapsed` — plus `mobile-sheet` (the mobile market-data sheet).
 
 - [ ] **Step 4: Run to verify passing** — `npx vitest run && npx vue-tsc --noEmit && npx playwright test --project=app` → green (the jump bar still exists at this point; both sign-in paths work).
 
@@ -2585,7 +2589,7 @@ export function guard(state: RoutedState & { auth?: boolean }, patch: Partial<Ro
 ### Task I8: Wire the prototype to the API and execute the launch-removal list (zero-regression order)
 
 **Files:**
-- Modify: `frontend/src/logic.js` (`signIn`, `submitApply`, `signOut`, `me`/`auth` bootstrap, gate state), `frontend/src/logic.test.ts` (characterisation updates, RED then GREEN), `frontend/src/App.vue` (remove jump bar markup, `gateStates`, demo credentials; add the `unavailable` gate state using the declined-screen layout), `frontend/src/main.ts` (`useMe().load()` before mount; `startViewport` removed), `frontend/tests/screens.ts` (`gate-unavailable` state), `frontend/tests/harness.ts` (mask the sign-in copy string until the design reference changes — `DESIGN_HAS_EMAIL_COPY=false`)
+- Modify: `frontend/src/logic.js` (`signIn`, `submitApply`, `signOut`, `me`/`auth` bootstrap, gate state), `frontend/src/logic.test.ts` (characterisation updates, RED then GREEN), `frontend/scripts/convert-dc.mjs` (a `--launch` mode that strips the prototype blocks during conversion), `frontend/package.json` (a `gen:app:launch` twin of `gen:app`), `frontend/tests/app-generated.test.ts` (asserts BOTH modes are byte-identical to a fresh conversion), `frontend/tests/convert-dc.test.ts` (unit tests for the stripping rules), `frontend/src/main.ts` (`useMe().load()` before mount; `startViewport` removed), `frontend/tests/screens.ts` (`gate-unavailable` state), `frontend/tests/harness.ts` (mask the sign-in copy string until the design reference changes — `DESIGN_HAS_EMAIL_COPY=false`)
 
 **Interfaces:**
 - Consumes: `api.signIn/signUp/verify/apply/me/signOut` (Task I7), `useMe()`.
@@ -2625,9 +2629,22 @@ Delete the old `jumpTo` characterisation tests. Run: `npx vitest run src/logic.t
 
 `signIn` becomes `async`: validates as before, then `try { const me = await api.signIn(s.email, s.pw); this.setState({ auth: true, screen: this.pendingScreen || 'browse', me: { name: me.name, role: me.role, initials: me.initials }, email: me.email, formError: '' }); } catch (e) { this.setState({ formError: e.message || 'Sign-in failed.', auth: false, screen: 'gate' }); }`. `submitApply` maps `apply` fields → `{ name, vin_member_id: vin, school_year: grad, license_state: state, employer, intent, affirm }` and calls `api.apply('buyer', …)`, then `gate: 'pending'`. `signOut` awaits `api.signOut()` first. `componentDidMount` bootstrap: read `useMe().me` (loaded in `main.ts`) → `auth`/`gate` per the interface above. Remove `jumpTo` and the `jumps` array from `renderVals`. Run: `npx vitest run src/logic.test.ts` → pass.
 
-- [ ] **Step 3: Remove the prototype affordances (App.vue, main.ts) and add the `unavailable` gate**
+- [ ] **Step 3: Execute the launch-removal list through the generator (`convert-dc.mjs --launch`), never by hand**
 
-Delete the jump-bar markup block, the `gateStates` shortcuts block and the pre-filled demo credentials (`email`/`pw` defaults become `''`) — the launch-removal list from the handoff README. Add `gateUnavailable` (`s.screen === 'gate' && s.gate === 'unavailable'`) rendered with the declined-screen layout: kicker "Not available", title "This page is not available to your account", body "Your access level does not include this page. If you think it should, reply to your approval email.", primary "Back to Browse" → `go('browse')`. `screens.ts` adds `gate-unavailable` (sign in as a buyer-only test account seeded by `seed_persona.py --buyer-only`, visit `/admin`). Harness: while `DESIGN_HAS_EMAIL_COPY !== 'true'`, mask the sign-in label element in `gate-signin` (the design says "VIN username", the app says "Email").
+Browse V3 spec D2: `frontend/src/App.vue` is generated, so a hand edit is undone by the next
+`npm run gen:app` and breaks `frontend/tests/app-generated.test.ts`. Add a `--launch` flag to
+`convert-dc.mjs` that, during conversion, drops the jump-bar markup block, the
+"Prototype — access states" shortcuts block and the pre-filled demo credentials, and add a
+`gen:app:launch` script that writes the same three outputs. `app-generated.test.ts` asserts
+both modes reproduce their committed output byte-for-byte, so the launch build stays honest
+and `npm run gen:app` still reproduces the prototype build. `startScreen`/`startViewport` are
+dropped from `app.setup.js`'s `defineProps` in the same change. The `unavailable` gate state
+is added to the design reference (a Claude Design update) and reaches the app by
+regeneration — not by editing `App.vue`; the declined-screen kicker, body and CTA copy come from
+the design reference's `unavailable` gate state, not from this plan.
+
+**After this task lands, `npm run gen:app` must not be re-run for a production build**: the
+launch build comes from `npm run gen:app:launch`.
 
 - [ ] **Step 4: Run — GREEN across the board**
 
@@ -2695,7 +2712,7 @@ Run: `poetry run pytest tests/test_docs.py tests/perf -q` → **FAIL**.
 **Executable gates for this task (its RED/GREEN):** `scripts/verify-deploy.sh QA` (itself tested by `tests/scripts/test_verify_deploy.sh`), the persona-driven Playwright suite against `PW_APP_URL`, `perf.yml`, and `tests/test_docs.py::test_identity_variables_are_documented`. Any defect found in Step 4 is first reproduced as a failing test in the responsible task (I4–I8), fixed, and redeployed — never patched on QA by hand.
 
 - [ ] **Step 1: Variables (John, out-of-band).** `railway status` → `Project: Practice Match`. QA: `railway variables --set RESEND_API_KEY=<key> --service worker --environment QA`; `--set RESEND_WEBHOOK_SECRET=<whsec> --service api --environment QA`; `--set EMAIL_ALLOWLIST=<john's addresses> --service api --environment QA` and the same on `worker`; `--set LINK_BASE_URL=https://qa.foundation.vin --service api --environment QA`; `--set PERSONA_PASSWORD=<random> --service api --environment QA`. Production: the same minus `EMAIL_ALLOWLIST` and `PERSONA_PASSWORD`, with `LINK_BASE_URL=https://foundation.vin`. Resend: add the domain `foundation.vin`, apply the DKIM/SPF/DMARC records at name.com, wait for "Verified", register the webhook `https://qa.foundation.vin/api/webhooks/resend` (events `email.delivered`, `email.bounced`, `email.complained`).
-- [ ] **Step 2: Deploy QA** — `scripts/deploy.sh QA` (migrations `010`–`014` run in the pre-deploy step), `scripts/verify-deploy.sh QA`.
+- [ ] **Step 2: Deploy QA** — `scripts/deploy.sh QA` (migrations `010`–`015` run in the pre-deploy step), `scripts/verify-deploy.sh QA`.
 - [ ] **Step 3: Bootstrap** — `railway run --service api --environment QA -- python scripts/bootstrap_admin.py --email <john>` → open the printed invite link, set the admin password; `railway run --service api --environment QA -- python scripts/seed_persona.py`.
 - [ ] **Step 4: The real flow, as a stranger** — from a fresh browser: sign up with an allowlisted personal address → the verify email arrives from `no-reply@foundation.vin` (check DKIM pass in the headers) → verify → apply → "Application received" arrives → as admin, Admin → Users shows the row with flags → Request info (email arrives) → Approve (email arrives) → the applicant signs in and browses; Suspend → the applicant's next request is refused; Reinstate; a wrong password ten times → `429`; forgot/reset → sessions dropped. Record each step in `DEPLOY.md` §Identity acceptance with the outbox ids.
 - [ ] **Step 5: Gates on QA** — `PW_APP_URL=https://qa.foundation.vin PERSONA_PASSWORD=… npx playwright test --project=app` (persona sign-in; every state green); `gh workflow run perf.yml` (sign-in flow at 5 VUs inside the budgets); `/api/healthz` shows `redis.ok`, `db.ok`.

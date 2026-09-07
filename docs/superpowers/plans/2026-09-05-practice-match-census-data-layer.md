@@ -14,7 +14,7 @@
 
 ## Global Constraints (from the spec — exact values)
 
-- **Quality and performance policy (`docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md`).** Test shape ~70/20/10 unit/integration/e2e enforced by rules; CI gates: `pytest -W error --cov-fail-under=90`, `diff-cover --fail-under=100`, `ruff`, `mypy --strict`, `vue-tsc --noEmit` (strict), vitest coverage ≥ 85 % on `src/map|router|admin`, Playwright fails on any `pageerror`/`console.error`, `gitleaks`; performance budgets are tests: API p95 (`/api/healthz` ≤ 20 ms, shell ≤ 15 ms, list endpoints ≤ 100 ms, panel ≤ 150 ms), bundle sizes (main ≤ 220 KB gz, `engine-leaflet` ≤ 60, `engine-google` ≤ 12, first load ≤ 300), first map paint ≤ 1,500 ms, hot queries use indexes, nightly k6 on QA (p95 ≤ 400 ms, 0 errors). Raising a budget is a reviewed change with a reason in the commit message.
+- **Quality and performance policy (`docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md`).** Test shape ~70/20/10 unit/integration/e2e enforced by rules; CI gates: `pytest -W error --cov=app --cov=scripts --cov-branch --cov-fail-under=100` (raised by P14, 2026-09-07), `diff-cover --fail-under=100`, `ruff`, `mypy --strict`, `vue-tsc --noEmit` (strict), vitest coverage ≥ 85 % on `src/map|router|admin`, Playwright fails on any `pageerror`/`console.error`, `gitleaks`; performance budgets are tests: API p95 (`/api/healthz` ≤ 20 ms, shell ≤ 15 ms, list endpoints ≤ 100 ms, panel ≤ 150 ms), bundle sizes (main ≤ 220 KB gz, `engine-leaflet` ≤ 60, `engine-google` ≤ 12, first load ≤ 300), first map paint ≤ 1,500 ms, hot queries use indexes, nightly k6 on QA (p95 ≤ 400 ms, 0 errors). Raising a budget is a reviewed change with a reason in the commit message.
 - **TDD, no exceptions (John, 2026-09-05: "everything must have tests").** Every production change begins with a failing test that is run and watched fail (RED), then the minimal code, then the same test watched pass (GREEN) — the `Run:` lines in each task are mandatory steps, not illustrations. Documentation and configuration are covered by drift tests (`tests/test_docs.py`: every setting in `.env.example` and `DEPLOY.md`, relative links resolve, CI workflow shape, runbook endpoints exist); operational scripts have shell tests under `tests/scripts/` that run them against stubbed servers or a stubbed `curl`; ops steps end with an executable verification whose script is itself tested. The handoff's generated UI is covered by the visual gate (every screen state), the route smoke tests, the router-sync and engine unit tests and the `logic.js` characterisation suite (Platform Task 1c); new code in those files follows TDD.
 - **Pinned vintages, in `dataset_registry`:** `acs5` = `2023/acs/acs5` (2019–2023) · `acs5_subject` = `2023/acs/acs5/subject` · `acs5_prior` = `2018/acs/acs5` (2014–2018, static) · `cbp` = `2022/cbp` (NAICS parameter `NAICS2017`) · `qwi` = `timeseries/qwi/sa` · `bds` = `timeseries/bds` · `geocoder` = `geocoding.geo.census.gov`, benchmark `Public_AR_Current`, vintage `Current_Current` · `tiger_cb` = `TIGER2023/cb_2023_*`. No request is made without a vintage; vintages advance only by migration + `active_vintage` flip.
 - **Pre-aggregate, never call at request time.** The request path reads our tables only. A page that finds no materialised metric renders the layer's empty state and enqueues a backfill.
@@ -26,7 +26,7 @@
 - **Variable map (§4)** is the only variable list requested; every `_E` requested with its `_M` for population, households, median income at minimum. A response missing an expected variable aborts the load (no partial vintage ever goes active).
 - **NAICS (§5):** `541940` competition count (CBP, 6-digit); `5419` for QWI; `54` sector denominator (BDS); `812910`, `459910` optional adjacent-demand layers. The CBP NAICS parameter name comes from `dataset_registry.naics_param`, never hard-coded.
 - **Geography (§6):** summary levels `140` tract (11-digit), `150` block group (off by default), `160` place (7), `860` ZCTA (5), `050` county (5), `310` CBSA (5), `040` state (2), plus `010` nation (`us:1`) for benchmarks. Resolution order: address → geocoder (tract, county, place) → tract ACS; else ZCTA centroid → containing tract; else place; else county; `geo_precision` recorded and never silently promoted.
-- **Derived formulas (§8), `formula_version = 'v1'`:** `pet_households_est = households × 0.57` (documented national placeholder) · `population_growth_pct = (pop_2023 − pop_2018) / pop_2018 × 100` · `vets_per_10k_households = establishments / (households / 10000)` · `income_index_vs_us = (local_median − us_median) / us_median × 100` · `revenue_per_establishment = payroll_k × 1000 / establishments` (labelled payroll-per-establishment) · `drive_catchment` V1 = straight-line buffers 8 km (`drive_10`) and 16 km (`drive_20`), method `euclidean_buffer_v1` · `opportunity_score = 40·min(income/140000, 1) + 35·min(growth/40, 1) + 25·max(0, 1 − vets_per_10k/3)`, clamped 0–100, rounded, always rendered with its three components, never in a price context.
+- **Derived formulas (§8), `formula_version = 'v1'`:** `pet_households_est = households × 0.57` (documented national placeholder) · `population_growth_pct = (pop_2023 − pop_2018) / pop_2018 × 100` · `vets_per_10k_households = establishments / (households / 10000)` · `income_index_vs_us = (local_median − us_median) / us_median × 100` · `revenue_per_establishment = payroll_k × 1000 / establishments` (surfaced as "Avg. payroll per practice" under the layer "Average Practice Payroll"; the metric key is unchanged) · `drive_catchment` V1 = straight-line buffers 8 km (`drive_10`) and 16 km (`drive_20`), method `euclidean_buffer_v1` · `opportunity_score = 40·min(income/140000, 1) + 35·min(growth/40, 1) + 25·max(0, 1 − vets_per_10k/3)`, clamped 0–100, rounded, always rendered with its three components, never in a price context.
 - **Data quality (§14):** suppress any ACS value with CV `(moe / 1.645) / estimate > 0.30` → `suppressed = true, suppress_reason = 'high_moe'` (row kept). Summed counts: combined MOE `sqrt(Σ moe²)`, same CV test. Medians never sum: household-weighted average, flagged approximate. CBP noise flags stored verbatim; noise-flagged counts are estimates; suppress employment/payroll where Census suppressed. Every rendered figure shows dataset + vintage; two vintages never appear in one ratio.
 - **Caching (§10):** raw API response → bucket key `raw/{dataset_key}/{vintage}/{sha256(url)}.json`, immutable · geocode result → `geocode_cache` keyed `sha256(normalized_address)`, 365 d · `market_metric` until vintage flip · panel payload → Redis `listing:{id}:market:v{n}` 24 h · basemap tiles never proxied.
 - **Refresh (§9):** `acs_annual_load` yearly Dec, manual approval · `cbp_annual_load` yearly Apr, manual · `qwi_quarterly_load` scheduled quarterly, keeps 20 quarters · `geocode_on_write` per listing create/address edit · `metric_materialize` nightly + on new listing · `license_audit` quarterly.
@@ -35,11 +35,11 @@
 - **Competition geography (red-team C1):** community-level competition comes from **ZIP Code Business Patterns** (`zbp`, same Census program, public domain) aggregated over the ZCTAs a catchment/place intersects; county CBP remains the county benchmark. `vets_per_10k_households` always divides establishments and households measured over the **same** geography. The UI must say the count is a proxy for competitive density (spec §5).
 - **Growth geography (red-team C2):** `population_growth_pct` is computed at **place** level (stable GEOIDs across the 2020 tract redefinition), county fallback; tract-level growth waits for the 2010→2020 tract crosswalk (Phase C).
 - **Google Maps Platform content (audit 2026-09-05, D15–D17):** no Google Places content is stored, analysed or rendered in V1. Google Maps Platform Terms §3.2.3(a)(iii) forbid saving "business names, addresses, or user reviews"; §3.2.3(c)(iv) forbids using "latitude/longitude values from the Places API as an input for point-in-polygon analysis"; Service Specific Terms §14.2 forbid Places content "in conjunction with a non-Google map" (the approved design is Leaflet). Only `place_id` may be kept indefinitely (SST §3) and latitude/longitude for 30 days (SST §14.3). Places Aggregate API POI counts may be cached 30 days solely to compute non-substitutable "Customer Values" (SST §13.1–13.2). The 2017 export `Report_Hospital_Competitor_All_US_ZipCode_FULL.csv` is a blocked source: never copied into the repository, the bucket or the database.
-- **Bands:** `market_metric.band ∈ {'place', 'drive_10', 'drive_20'}`. Community bubbles and the "community label" figures default to `place` (the approved design's numbers are city-level); the practice panel's drive-time context defaults to `drive_10`; every response names its band.
+- **Bands:** `market_metric.band ∈ {'place', 'drive_10', 'drive_20'}`. Community mosaic shading and the "community label" figures default to `place` (the approved design's numbers are city-level); the practice panel's drive-time context defaults to `drive_10`; every response names its band.
 - **Access (red-team C4):** every market endpoint requires an approved member session (Sub-project 2's `require_member`) unless `MARKET_DATA_PUBLIC=true` (VIN Foundation decision, spec §15). Coordinates returned are the **place centroid** unless the seller disclosed the location (`listing.location_disclosed`), never the geocoded point otherwise.
 - **Cache gate (red-team C5):** panel and community payloads are cached under a key that includes a global `market:gate:v` counter bumped on any licence decision, and metrics are re-filtered through the gate on read — a blocked layer disappears within 60 s even from cached payloads.
 - **Secrets in errors (red-team C6):** the API key never appears in exceptions, logs or archive keys (`CensusClient.redact(url)`).
-- **Migration numbering:** Sub-project 3 Phase A uses `002`–`009`; Sub-project 2 owns `010`–`059`; Sub-project 3 Phase B (listing-dependent) uses `060`+.
+- **Migration numbering:** Sub-project 3 Phase A uses `017`–`059`; Sub-project 2 owns `010`–`015` and the Seed Listings plan owns `016`; Sub-project 3 Phase B (listing-dependent) uses `060`+.
 - Every commit: conventional message, `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`, pushed to `origin` and `production`. Work on `feat/census-data-layer` in a worktree.
 
 ## Decisions recorded in this plan (confirm on review)
@@ -48,17 +48,17 @@
 |---|---|---|
 | D1 | **Object store = Railway Buckets** (S3-compatible; `railway bucket create practice-match-data`), one bucket per environment; boto3 with `S3_ENDPOINT_URL`, `S3_BUCKET`, `S3_ACCESS_KEY_ID`, `S3_SECRET_ACCESS_KEY` on `worker` (and `api` for future tile reads). | Same vendor as everything else; credentials via `railway bucket credentials`; no GCS service-account plumbing. |
 | D2 | **Boundary files parsed with pyshp + shapely**, geometry inserted as WKB via `ST_GeomFromWKB(…, 4269)`; no GDAL/`shp2pgsql` in the image. | Keeps the image small and pure-Python; cartographic boundary files are simple polygons. |
-| D3 | **Choropleth vector tiles deferred to Phase C.** The approved design draws per-community bubbles (`dot()` at each listing's community with a bucketed value), not tract polygons; the tile pipeline in spec §7/§10 has no consumer yet. | YAGNI; flagged for the VIN Foundation with the basemap licence question. |
+| D3 | **Tract-level choropleth vector tiles deferred to Phase C.** Browse V3 ships *community mosaic shading* — client-side `L.rectangle` cells over community areas from the market-data payload — which is community granularity, not tract. The word "choropleth" is reserved in this programme for the Phase C server-generated MVT tile pipeline (spec §7/§10), which still has no consumer. | YAGNI; flagged for the VIN Foundation with the basemap licence question. |
 | D4 | **Markets loaded in V1:** the four design markets — Austin–Round Rock–San Marcos `12420` (TX `48`), Sacramento–Roseville–Folsom `40900` (CA `06`), Orlando–Kissimmee–Sanford `36740` (FL `12`), Atlanta–Sandy Springs–Roswell `12060` (GA `13`) — tract/place/county/CBSA data for those four **states** in full, plus the national row. New listings outside them auto-extend `market_state` and trigger a state load. | Matches the fixture markets; whole-state loads are ~24 k tracts total, well under limits. |
 | D5 | **Ingest writes use psycopg2 (sync) inside Celery tasks; API reads use SQLAlchemy async.** | Celery tasks are synchronous; one connection per task, executemany batches. |
 | D6 | **API contract mirrors the fixture field names** the approved UI already reads (`pop`, `hh`, `income`, `growth`, `pets`, `econ`, `vets`) so Sub-project 2's "replace fixtures with API calls" is a field-for-field swap. | The handoff README: "Keep the field names — the UI reads them directly." |
 | D7 | **National benchmark** `us_median` comes from the same `acs5` vintage at geography `us:1` (stored `geo_id='1'`, `summary_level='010'`), never a hard-coded constant (the prototype's `75149` is replaced). | §14: two vintages never in one ratio. |
 | D8 | **Community location shown on the map** = the listing's place centroid; the geocoded point is returned only when `listing.location_disclosed` is true **and** the caller is an approved member. `geo_precision` is always returned. | Sellers control disclosure (design principle 2); an anonymized listing must not be locatable from the API (red-team C4). |
-| D10 | **Three bands.** `place` (the listing's city/CDP), `drive_10` (8 km), `drive_20` (16 km). Community bubbles and community-label figures use `place` by default; the panel's drive-time tiles use `drive_10`; `?band=` selects. | The approved design's community numbers are city-level (Cedar Park 81,900 = the city); the spec's catchments answer the drive-time question. Both are real needs; the band is explicit (red-team C3). |
+| D10 | **Three bands.** `place` (the listing's city/CDP), `drive_10` (8 km), `drive_20` (16 km). Community mosaic shading and community-label figures use `place` by default; the panel's drive-time tiles use `drive_10`; `?band=` selects. | The approved design's community numbers are city-level (Cedar Park 81,900 = the city); the spec's catchments answer the drive-time question. Both are real needs; the band is explicit (red-team C3). |
 | D11 | **ZIP Code Business Patterns (`zbp`, `2022/zbp`, NAICS2017) is the community-level competition source**, aggregated over ZCTAs by area overlap; county CBP is the benchmark. Register it as a new cleared public-domain dataset (VIN Foundation to approve the addition to the spec's §2 table). | County CBP cannot render per-community competition and produced incoherent ratios (red-team C1). ZIPs ≈ ZCTAs; the approximation is labelled. |
 | D12 | **Population growth at place level** (2014–2018 → 2019–2023 place rows), county fallback; tract growth deferred until the 2010→2020 tract relationship file is loaded. | 2010 and 2020 tract GEOIDs differ; joining prior-vintage tracts on 2020 GEOIDs is wrong (red-team C2). |
 | D13 | **Market endpoints are member-gated** via SP2's `require_member`, with `MARKET_DATA_PUBLIC` as the only way to open them (default false). | Spec §15 leaves public teaser vs gated to the VIN Foundation; default closed. |
-| D14 | **Migration ranges:** SP3-A `002`–`009`, SP2 `010`–`059`, SP3-B `060`+. | Phase B tables reference `listing(id)`, which SP2 creates; numbered ordering must guarantee it exists first. |
+| D14 | **Migration ranges:** SP3-A `017`–`059`, SP3-B `060`+. `001`–`002` are taken (`001_init`, `002_interest_signup`), SP2/identity holds `010`–`015` and the Seed Listings plan holds `016` (`016_listing.sql`). Inside SP3-A, `017`–`019` are Task A1's and `020` is taken by `020_license_audit.sql` (Task A8, renumbered from `007` on 2026-09-07 — it ALTERs and REFERENCES `dataset_registry`, which `017` creates). `003`–`009` are unassigned; anything that takes one must be a Platform-level migration with no dependency on later tables. | Phase B tables reference `listing(id)`, which SP2 creates; numbered ordering must guarantee it exists first. |
 | D15 | **The 2017 Google Places export is not a source.** `Report_Hospital_Competitor_All_US_ZipCode_FULL.csv` (audited 2026-09-05 — appendix below) stays out of the repository, bucket and database. The only content Google's terms let us keep is its 10,166 `place_id` values, and even those are not loaded until a Google-based mechanism (D17) is approved. The registry's `practice_locations` row names the file as blocked. | A 16-day snapshot (24 May–8 Jun 2017) covering 8,320 of ~41,700 ZIPs, Austin absent, 29.7 % individual-practitioner duplicates, ≈ 5 % non-veterinary rows; and Google Maps Platform Terms §3.2.3(a)/(c)(iv) + SST §14.2 forbid storing it, analysing it or drawing it on the Leaflet map. |
 | D16 | **Competitor points (Phase C) come from a permissively licensed, provenance-documented POI dataset, ranked:** (1) **Overture Maps Places** (CDLA-Permissive-2.0; Foursquare-sourced rows Apache-2.0; monthly GeoParquet on S3/Azure; per-feature `sources[]` and `confidence`; taxonomy entry `veterinarian`), (2) **Foursquare OS Places** (Apache-2.0; also an Overture source), (3) **VIN's member practice directory** (VIN-owned; consent review). OpenStreetMap `amenity=veterinary` (ODbL share-alike) is a coverage cross-check only, pending counsel. Google Places points are lawful only on a Google map (SST §14.1–14.2), which the approved Leaflet design excludes — not pursued. All candidate rows start `unresolved`. | Spec §12 excludes practice-location lists for undocumented provenance; these publish provenance and licence per record. They are storable, renderable on Leaflet and refreshable monthly — the three properties every Google route lacks. |
 | D17 | **Google's only role is a freshness signal through the Places Aggregate API** (Task C1, gated): `INSIGHT_COUNT` of `veterinary_care` places (Places type Table A) that are `OPERATIONAL`, per listing band; the count lives only in memory, is bucketed with the design thresholds into `level_live` (Low/Moderate/High) and compared with the ZBP level (`diverges`); those two values are the persisted "Customer Values" (SST §13.1). No count, ratio or place list is stored, returned or drawn. Registry row `google_places_aggregate` stays `unresolved` until VIN Foundation counsel accepts SST §13 and a Google Cloud billing account exists. | It is the one Google mechanism built for market counts whose terms permit derived metrics; Nearby/Text Search (20 results, no pagination, $32/1k) and Place Details refreshes return content we may not keep. V1 volume (4 markets × ~60 communities × 3 bands ≈ 720 requests/month) sits inside the 5,000 free requests; $10 per further 1,000. |
@@ -75,7 +75,7 @@ GET /api/layers
    { "key": "competition", "label": "Veterinary Competition",    "dataset_key": "zbp",  "vintage": "2022", "geo_level": "zcta",
      "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices." , … },
    { "key": "growth",      "label": "Population Growth",         "dataset_key": "acs5_prior", "vintage": "2014–2018 → 2019–2023", "geo_level": "place", … },
-   { "key": "households",  … }, { "key": "econ", "label": "Economic Profile", "dataset_key": "cbp", "vintage": "2022", "geo_level": "county",
+   { "key": "households",  … }, { "key": "econ", "label": "Average Practice Payroll", "dataset_key": "cbp", "vintage": "2022", "geo_level": "county",
      "caveat": "Payroll per establishment, not revenue." , … },
    { "key": "drive_10", "label": "5–10 min drive time", "dataset_key": null, "caveat": "Straight-line 8 km approximation of drive time." },
    { "key": "drive_20", "label": "10–20 min drive time", "dataset_key": null, "caveat": "Straight-line 16 km approximation of drive time." },
@@ -106,7 +106,7 @@ GET /api/listings/{listing_id}/market?band=drive_10|drive_20|place   (default dr
       "pet_households_est":       { … "is_derived": true, "assumed_rate": 0.57 },
       "establishments":           { "value": 7, "unit": "count", "source_dataset": "zbp", "vintage": "2022", "geo_level": "zcta" },
       "vets_per_10k_households":  { … "unit": "ratio", "is_derived": true, "inputs": {"acs5": "2019–2023", "zbp": "2022"} },
-      "revenue_per_establishment":{ … "unit": "usd", "is_derived": true, "label": "Payroll per establishment", "source_dataset": "cbp", "geo_level": "county" },
+      "revenue_per_establishment":{ … "unit": "usd", "is_derived": true, "label": "Avg. payroll per practice", "source_dataset": "cbp", "geo_level": "county" },
       "income_index_vs_us":       { … "unit": "pct", "is_derived": true },
       "opportunity_score":        { "value": 50, "unit": "score", "is_derived": true, "formula_version": "v1", "components": { "income": 118400, "growth": 14.2, "vets_per_10k": 2.54 } } },
     "attribution": [ … ] }
@@ -120,11 +120,12 @@ GET /api/admin/data-sources · POST /api/admin/data-sources/{key}/license   (ope
 
 | Path | Responsibility |
 |---|---|
-| `migrations/002_census_registry.sql` | `ingest_run`, `dataset_registry`, FK back-fill, `active_vintage`, `market_state`; registry seed (§2 + attribution) |
-| `migrations/003_census_geo.sql` | `geo_area` + indexes |
-| `migrations/004_census_measures.sql` | `acs_measure`, `cbp_industry`, `qwi_measure`, `bds_measure` |
-| `migrations/008_zbp.sql` | `zbp_industry` (ZIP-level establishments, D11) |
-| `migrations/060_geocode_cache.sql` | `geocode_cache`, `geocode_review` (365-day cache, §10; staff flags §11) — Phase B, after SP2's `010`–`059` |
+| `migrations/017_census_registry.sql` | `ingest_run`, `dataset_registry`, FK back-fill, `active_vintage`, `market_state`; registry seed (§2 + attribution) |
+| `migrations/018_census_geo.sql` | `geo_area` + indexes |
+| `migrations/019_census_measures.sql` | `acs_measure`, `cbp_industry`, `qwi_measure`, `bds_measure` |
+| `migrations/020_license_audit.sql` | `license_audit_log`; `dataset_registry.drift_flagged` (§9 quarterly licence audit, Task A8) — renumbered from `007` 2026-09-07: it depends on `dataset_registry`, which `017` creates, so `007` could never run and D14 reserves `003`–`009` for migrations with no such dependency |
+| `migrations/023_zbp.sql` | `zbp_industry` (ZIP-level establishments, D11) |
+| `migrations/060_geocode_cache.sql` | `geocode_cache`, `geocode_review` (365-day cache, §10; staff flags §11) — Phase B, after SP2's `010`–`015` |
 | `migrations/061_census_listing_tables.sql` | `practice_location`, `practice_catchment`, `market_metric` (+`inputs`), licence-gate trigger (Phase B) |
 | `app/census/__init__.py` | package |
 | `app/census/registry.py` | `Dataset` records read from `dataset_registry`; `is_cleared(key)`; `attribution(keys)` |
@@ -150,10 +151,10 @@ GET /api/admin/data-sources · POST /api/admin/data-sources/{key}/license   (ope
 
 ## Phase A — Reference data (no listing dependency)
 
-### Task A1: Registry, ingest-run ledger, geography and measure tables (migrations 002–004)
+### Task A1: Registry, ingest-run ledger, geography and measure tables (migrations 017–019)
 
 **Files:**
-- Create: `migrations/002_census_registry.sql`, `migrations/003_census_geo.sql`, `migrations/004_census_measures.sql`, `app/census/__init__.py`, `app/census/registry.py`, `tests/census/__init__.py`, `tests/census/conftest.py`, `tests/census/test_schema.py`, `tests/census/test_registry.py`
+- Create: `migrations/017_census_registry.sql`, `migrations/018_census_geo.sql`, `migrations/019_census_measures.sql`, `app/census/__init__.py`, `app/census/registry.py`, `tests/census/__init__.py`, `tests/census/conftest.py`, `tests/census/test_schema.py`, `tests/census/test_registry.py`
 
 **Interfaces:**
 - Produces: tables above; `registry.load(conn) -> dict[str, Dataset]`; `registry.is_cleared(conn, key) -> bool`; `registry.attribution(conn, keys) -> list[str]`; `Dataset(dataset_key, display_name, api_dataset_id, base_url, vintage, naics_param, refresh_cadence, license_status, license_name, license_url, attribution_text, last_verified_at, notes)`.
@@ -307,7 +308,7 @@ Run: `poetry run pytest tests/census -q` → FAIL (tables and module missing).
 
 - [ ] **Step 2: Migrations (spec §13 DDL verbatim, plus seed)**
 
-`migrations/002_census_registry.sql`:
+`migrations/017_census_registry.sql`:
 ```sql
 -- Census & Market Data Source Specification v1.0 §13 — provenance and registry.
 -- Created first: other tables reference ingest_run.
@@ -379,7 +380,7 @@ INSERT INTO dataset_registry
   ('geocoder','Census Geocoder (geographies)',NULL,'https://geocoding.geo.census.gov/geocoder','Current_Current',NULL,'On write','cleared','Public domain','https://geocoding.geo.census.gov/geocoder/Geocoding_Services_API.html','Geocoding: U.S. Census Bureau Geocoder',NULL),
   ('tiger_cb','TIGER Cartographic Boundary files','TIGER2023/cb_2023_*','https://www2.census.gov/geo/tiger/GENZ2023/shp','2023',NULL,'Annual','cleared','Public domain','https://www.census.gov/programs-surveys/geography/technical-documentation/naming-convention/cartographic-boundary-file.html','Boundaries: U.S. Census Bureau, TIGER/Line Cartographic Boundary Files 2023',NULL),
   ('aies','Annual Integrated Economic Survey',NULL,'https://api.census.gov/data','TBD',NULL,'Annual','unresolved','Verify ID',NULL,'Source: U.S. Census Bureau, Annual Integrated Economic Survey','Confirm dataset identifier and geography availability before any revenue-benchmark layer is promised (§15)'),
-  ('osm_tiles','Street basemap tiles (CARTO, OSM data)',NULL,'https://basemaps.cartocdn.com/light_all','live',NULL,'live','cleared','ODbL 1.0','https://www.openstreetmap.org/copyright','© OpenStreetMap contributors © CARTO','Registered by the spec; the approved design ships Esri tiles — VIN Foundation decision pending (Platform spec §9)'),
+  ('osm_tiles','Street basemap tiles (CARTO, OSM data)',NULL,'https://basemaps.cartocdn.com/light_all','live',NULL,'live','cleared','ODbL 1.0','https://www.openstreetmap.org/copyright','© OpenStreetMap contributors © CARTO','Registered by the spec; the approved design ships Esri tiles — VIN Foundation decision pending; see this plan''s "Basemap licence — one decision record"'),
   ('imagery','Satellite basemap',NULL,'vendor TBD','live',NULL,'live','unresolved',NULL,NULL,'Imagery attribution pending licence','Satellite toggle stays behind a feature flag until a written licence names commercial web display'),
   ('pet_ownership','Pet ownership incidence (commercial)',NULL,'licensed feed','n/a',NULL,'n/a','blocked',NULL,NULL,'Pet-ownership incidence (licensed) — not in use','Ship only the ACS-derived estimate (rate 0.57) until a licence is signed'),
   ('practice_locations','Third-party practice location data',NULL,'n/a','n/a',NULL,'n/a','blocked',NULL,NULL,'Practice locations (third party) — not in use','Spec §12: purchased or scraped veterinary location lists are out of scope for V1 (undocumented provenance). Includes the 2017 Google Places export Report_Hospital_Competitor_All_US_ZipCode_FULL.csv (D15): Google Maps Platform Terms §3.2.3 and SST §14 forbid storing or rendering its content. Competition counts come from Census establishment totals only.'),
@@ -388,7 +389,7 @@ INSERT INTO dataset_registry
   ('fsq_os_places','Foursquare OS Places (competitor points, alternate)',NULL,'https://huggingface.co/datasets/foursquare/fsq-os-places','monthly release',NULL,'Monthly','unresolved','Apache-2.0','https://opensource.foursquare.com/os-places/','Practice locations: Foursquare OS Places (Apache-2.0)','D16 rank 2; category label Veterinarian. Redundant with overture_places unless Overture stops carrying Foursquare rows.');
 ```
 
-`migrations/003_census_geo.sql`:
+`migrations/018_census_geo.sql`:
 ```sql
 -- §13 geo_area: Census geographies with geometry, one row per GEOID per vintage.
 CREATE TABLE geo_area (
@@ -408,7 +409,7 @@ CREATE INDEX geo_area_geom_gix ON geo_area USING gist (geom);
 CREATE INDEX geo_area_level_idx ON geo_area (summary_level, vintage);
 ```
 
-`migrations/004_census_measures.sql`:
+`migrations/019_census_measures.sql`:
 ```sql
 -- §13 measure tables, long format.
 CREATE TABLE acs_measure (
@@ -1578,7 +1579,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin fea
 ### Task A6: Industry loads — CBP (541940 + adjacent), ZBP (ZIP-level competition, D11), QWI (5419, 20 quarters), BDS (54)
 
 **Files:**
-- Create: `migrations/008_zbp.sql`, `app/census/cbp.py`, `app/census/zbp.py`, `app/census/qwi.py`, `app/census/bds.py`, `tests/census/test_industry.py`
+- Create: `migrations/023_zbp.sql`, `app/census/cbp.py`, `app/census/zbp.py`, `app/census/qwi.py`, `app/census/bds.py`, `tests/census/test_industry.py`
 - Modify: `scripts/census_load.py` (`cbp`, `qwi`, `bds` subcommands)
 
 **Interfaces:**
@@ -1718,7 +1719,7 @@ def load(conn, client_factory, states: list[str]) -> int:
         return run.rows
 ```
 
-`migrations/008_zbp.sql` (D11):
+`migrations/023_zbp.sql` (D11):
 ```sql
 -- ZIP Code Business Patterns — the community-level competition source. ZIP codes are stored as
 -- summary_level '860' (ZCTA) geo_ids; the ZIP≈ZCTA approximation is labelled in the UI.
@@ -2036,7 +2037,7 @@ Run: `poetry run pytest tests/census/test_vintage.py -q` → all pass (GREEN); t
 ### Task A8: Celery tasks, beat schedule, licence audit
 
 **Files:**
-- Create: `app/tasks/census.py`, `migrations/007_license_audit.sql`, `app/census/license.py`, `tests/census/test_tasks.py`, `tests/census/test_license.py`
+- Create: `app/tasks/census.py`, `migrations/020_license_audit.sql`, `app/census/license.py`, `tests/census/test_tasks.py`, `tests/census/test_license.py`
 - Modify: `app/tasks/celery_app.py` (import the task module; beat schedule)
 
 **Interfaces:**
@@ -2102,7 +2103,7 @@ Run: `poetry run pytest tests/census/test_license.py tests/census/test_tasks.py 
 
 - [ ] **Step 2: Migration and licence module**
 
-`migrations/007_license_audit.sql`:
+`migrations/020_license_audit.sql`:
 ```sql
 -- §9 license_audit: re-read each source's terms URL quarterly; flag drift for staff review.
 ALTER TABLE dataset_registry ADD COLUMN drift_flagged boolean NOT NULL DEFAULT false;
@@ -2482,7 +2483,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin fea
 
 ## Phase B — Listing-dependent (requires Sub-project 2's `listing` table)
 
-> **Precondition check before B1:** `psql "$DATABASE_URL" -c '\d listing'` must show `id uuid PRIMARY KEY`, address columns (`street`, `city`, `state`, `zip`), `status`, and `location_disclosed boolean` (SP2's seller disclosure toggle — the design's step-7 "generalized location" control). If it does not, STOP — Sub-project 2 has not landed; report BLOCKED rather than inventing a `listing` table here. Phase B migrations are numbered `060`+ so they always sort after SP2's `010`–`059` (D14).
+> **Precondition check before B1:** `psql "$DATABASE_URL" -c '\d listing'` must show `id uuid PRIMARY KEY`, address columns (`street`, `city`, `state`, `zip`), `status`, and `location_disclosed boolean` (SP2's seller disclosure toggle — the design's step-7 "generalized location" control). If it does not, STOP — Sub-project 2 has not landed; report BLOCKED rather than inventing a `listing` table here. Phase B migrations are numbered `060`+ so they always sort after SP2's `010`–`015` (D14).
 
 ### Task B1: Listing-dependent tables, geocode cache, licence-gate trigger (migrations 060–061)
 
@@ -3641,7 +3642,7 @@ async def test_listing_panel_is_cached_and_re_gated_on_read(client, materialized
     m = r.json()["metrics"]
     assert m["population"]["unit"] == "count" and m["establishments"]["source_dataset"] == "zbp"
     assert m["opportunity_score"]["components"].keys() == {"income", "growth", "vets_per_10k"}
-    assert m["revenue_per_establishment"]["label"] == "Payroll per establishment"
+    assert m["revenue_per_establishment"]["label"] == "Avg. payroll per practice"
     assert (await client.get(f"/api/listings/{materialized}/market", headers=H)).headers["x-cache"] == "hit"
     with conn.cursor() as cur:
         cur.execute("UPDATE dataset_registry SET license_status='blocked' WHERE dataset_key='zbp'")
@@ -3733,7 +3734,7 @@ LAYERS = [
     {"key": "growth", "label": "Population Growth", "dataset_key": "acs5_prior", "metric": "population_growth_pct", "is_derived": True, "geo_level": "place",
      "caveat": "Change between two ACS 5-year periods, measured for the listing's city/CDP."},
     {"key": "households", "label": "Households", "dataset_key": "acs5", "metric": "households", "is_derived": False, "caveat": None},
-    {"key": "econ", "label": "Economic Profile", "dataset_key": "cbp", "metric": "revenue_per_establishment", "is_derived": True, "geo_level": "county",
+    {"key": "econ", "label": "Average Practice Payroll", "dataset_key": "cbp", "metric": "revenue_per_establishment", "is_derived": True, "geo_level": "county",
      "caveat": "Payroll per establishment (NAICS 541940), not revenue; county level."},
     {"key": "competition", "label": "Veterinary Competition", "dataset_key": "zbp", "metric": "establishments", "is_derived": False, "geo_level": "zcta",
      "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. ZIP-code counts aggregated to the community."},
@@ -3743,7 +3744,7 @@ LAYERS = [
 ]
 FIELD_FOR = {"pop": "population", "hh": "households", "income": "median_hh_income", "growth": "population_growth_pct",
              "pets": "pet_households_est", "econ": "revenue_per_establishment", "vets": "establishments"}
-LABELS = {"revenue_per_establishment": "Payroll per establishment"}
+LABELS = {"revenue_per_establishment": "Avg. payroll per practice"}
 
 
 def short_market_name(cbsa_name: str) -> str:
@@ -3949,13 +3950,21 @@ Run: `poetry run pytest tests/api/test_contract_doc.py -q` → **FAIL** (`FileNo
 | `marketPanel()` `incomeNat = 75149`, `per10k`, `score` | `metrics.income_index_vs_us`, `metrics.vets_per_10k_households`, `metrics.opportunity_score` (+ `components`) |
 | Admin **Data Sources** tab rows | `GET /api/admin/data-sources` (columns: Dataset · Source and license · Status · Action → `POST …/license`) |
 | Data Layers rows / footer cards `on` state, card `src` text ("Census ACS 5-year", "Census CBP, NAICS 541940", …), legend titles | `GET /api/layers` → `label`, `source_label`, `vintage`, `caveat`, `enabled`. A disabled layer's row and card disappear (spec §11); no hard-coded source copy remains (spec §12) |
-| `layers.competition` dots (`dot(size, 'rgba(120,86,190,.75)')`, size `8 + min(n, 14)`, tooltip "N veterinary establishments") | `communities[].competition.count`; tooltip gains the proxy caveat from `/api/layers` |
+| `competition` as the active mosaic-shading layer (purple ramp; the `rf-tip` shows the community name, "Veterinary competition" and the bucketed establishment count) | `communities[].competition.count`; the tip's source note gains the proxy caveat from `/api/layers` |
 | Panel `compBars` Low/Moderate/High (`per10k < 1.4 / < 2.2`) and `per10k` | `communities[].competition.level` / `metrics.vets_per_10k_households` — thresholds now live in `metrics.competition_level` and are returned, not recomputed |
 | `MARKETS[market].center/zoom`, `mdSubline: "… metro · within 20 miles"` | `GET /api/markets`; the "within 20 miles" copy stays a results-radius statement (unchanged) |
 
-**Design-vs-spec copy conflicts (route to the VIN Foundation / Claude Design before SP2 wires them):** (1) the card/legend copy "Growth since 2015" must become a vintage statement ("ACS 2014–2018 → 2019–2023"); (2) "5–10 min drive time" / "10–20 min drive time" need the spec §8 approximation label ("≈ 8 km straight-line"); (3) the competition card needs the §5 proxy sentence. The API supplies all three strings via `/api/layers`; the approved design must be updated to show them.
+**Design-vs-spec copy conflicts (route to the VIN Foundation / Claude Design before SP2 wires them):** (1) the card/legend copy "Growth since 2015" must become a vintage statement ("ACS 2014–2018 → 2019–2023"); (2) "5–10 min drive time" / "10–20 min drive time" need the spec §8 approximation label ("≈ 8 km straight-line"); (3) the competition card needs the §5 proxy sentence; (4) the econ layer is **"Average Practice Payroll"** and its metric label **"Avg. payroll per practice"** in Browse V3 — this plan's `LAYERS[].label`, `LABELS`, the `/api/layers` fixture and the metric-label test were renamed to match (the metric key `revenue_per_establishment` is unchanged, and the caveat prose "Payroll per establishment (NAICS 541940), not revenue; county level." stays as written — it explains what the metric is, and rewriting it to "Avg. payroll per practice, not revenue" would make it circular). The API supplies all three strings via `/api/layers`; the approved design must be updated to show them.
 
 Copy rules the frontend must honour when wiring (spec §8/§12/§14): every figure shows dataset + vintage (`attribution[]` and `metrics[].vintage`); `is_derived` → "derived estimate"; `median_hh_income.approximate` → "approximate"; `suppressed` → "Estimate too imprecise to show at this geography"; `geo_precision != 'rooftop'` → "approximate community data"; `opportunity_score` always with its three components and never near the price.
+
+**"Disabled" and "blocked" are different states and stay distinguishable** (V3 README §5). V3's
+Layers drawer lets a member turn a dataset off, and the admin Data Sources tab separately gates
+pet-ownership estimates on an unresolved licence; V3's fixtures conflate the two into one
+boolean. `/api/layers` therefore carries `state: "enabled" | "disabled" | "blocked"` per layer
+(plus `blocked_reason` when `blocked`), never a bare `enabled: boolean`: a member may re-enable
+what they disabled, and may never enable what the licence blocks. The frontend renders a
+licence-blocked layer as unavailable with its reason, not as an unchecked checkbox.
 
 Run: `poetry run pytest tests/api/test_contract_doc.py -q` → 2 passed (GREEN): the document and the routers cannot drift apart silently.
 
@@ -3977,23 +3986,24 @@ Rendering stays exactly as the approved components do it (`MarketMapView.vue`, `
 
 | Layer (design key) | Drawn as (existing component behaviour) | Number(s) | Data path | Geography | Source label & caveat (from `/api/layers`) | Gate |
 |---|---|---|---|---|---|---|
-| Practice Listings (`practices`) | price pins `pricePin(label, active)` at practice/generalized point | asking price | SP2 listings API | point or place centroid (D8) | — | published listings only |
-| 5–10 min drive time (`drive5` in code, `drive_10` band) | `L.circle(hub, 8000 m, #003a70, .2)` | — | client-side; hub = selected practice or market center | 8 km buffer | "Straight-line 8 km approximation of drive time." | always |
-| 10–20 min drive time (`drive10` in code, `drive_20` band) | `L.circle(hub, 16000 m, #339dde, .16)` | — | client-side | 16 km buffer | "Straight-line 16 km approximation …" | always |
-| Median Household Income (`income`) | community bubble `dot(16 + 30·t, ramp)`; legend buckets `<$60K … >$150K` | `communities[].income` | `market_metric.median_hh_income` (band `place` by default) | place (drive bands on request) | ACS attribution + vintage; `approximate` for catchment bands | `acs5` cleared |
-| Pet Ownership (est.) (`pets`) | bubble, orange ramp | `communities[].pets` | `pet_households_est` (derived, rate 0.57) | place | ACS attribution; "Derived estimate: households × 0.57 …" | `acs5` cleared |
-| Population Growth (`growth`) | bubble, green ramp | `communities[].growth` | `population_growth_pct` (derived) | **place** (D12) | "ACS 2014–2018 → 2019–2023 …" | `acs5_prior` cleared |
-| Households (`households`) | bubble, blue ramp | `communities[].hh` | `households` | place | ACS attribution | `acs5` cleared |
-| Economic Profile (`econ`) | bubble, violet ramp; buckets `<$450K … >$900K` | `communities[].econ` | `revenue_per_establishment` (CBP payroll ÷ establishments) | **county** | CBP attribution; "Payroll per establishment, not revenue; county level." | `cbp` cleared |
-| Veterinary Competition (`competition`) | offset dot `[lat+.012, lng+.012]`, size `8 + min(n,14)`, `rgba(120,86,190,.75)`; tooltip "N veterinary establishments"; panel bars Low/Moderate/High | `communities[].vets`, `communities[].competition.{count, per_10k_households, level}` | `establishments` from **ZBP** ZIP counts aggregated over the community's ZCTAs (fallback: county CBP apportioned by household share, labelled derived). Phase C (Task C1, D17): `competition.freshness.{level_live, diverges, as_of}` from the Places Aggregate API — a bucket and a flag, never a count | ZCTA→place / catchment | ZBP attribution; "… proxy for competitive density, not a count of independent practices. ZIP-code counts aggregated to the community." Freshness: the `google_places_aggregate` attribution text | `zbp` cleared (fallback needs `cbp`); `freshness` only while `google_places_aggregate` is cleared |
+| Practice Listings (`practices`) | `practicePin(label, selected)` markers at the practice/generalized point; the selected pin opens a persistent `practiceCallout(p)` (photo, name, price, meta) and the map `panInside`s (padding `[48, 110]`) to bring pin and callout fully into view (C6 — V2's price-pin builder is gone) | asking price | SP2 listings API | point or place centroid (D8) | — | published listings only |
+| Drive-time catchment (`drive`) | one dashed, unfilled ring: `radius: 16000, color: '#003a70', weight: 1.5, dashArray: '4 4', fill: false, interactive: false` (C7 — V2's two filled circles are gone) | — | client-side; hub = selected practice or market center | 16 km buffer | "Straight-line 16 km approximation of drive time." | always |
+| Median Household Income (`income`) | community mosaic shading, green ramp (`L.rectangle` cells, `fillOpacity: 0.5`, step 0.0055); legend buckets `< $50K / $50–75K / $75–100K / $100–150K / > $150K` (five classes — V3 widened income's ramp from V2's four; every other layer keeps four) | `communities[].income` | `market_metric.median_hh_income` (band `place` by default) | place (drive bands on request) | ACS attribution + vintage; `approximate` for catchment bands | `acs5` cleared |
+| Pet Ownership (est.) (`pets`) | community mosaic shading, orange ramp | `communities[].pets` | `pet_households_est` (derived, rate 0.57) | place | ACS attribution; "Derived estimate: households × 0.57 …" | `acs5` cleared |
+| Population Growth (`growth`) | community mosaic shading, **brown** ramp (C10: teal read as a second green beside income) | `communities[].growth` | `population_growth_pct` (derived) | **place** (D12) | "ACS 2014–2018 → 2019–2023 …" | `acs5_prior` cleared |
+| Households (`households`) | community mosaic shading, blue ramp | `communities[].hh` | `households` | place | ACS attribution | `acs5` cleared |
+| Average Practice Payroll (`econ`) | community mosaic shading, rose ramp; buckets `<$450K … >$900K` | `communities[].econ` | `revenue_per_establishment` (CBP payroll ÷ establishments) | **county** | CBP attribution; "Payroll per establishment, not revenue; county level." | `cbp` cleared |
+| Veterinary Competition (`competition`) | community mosaic shading, purple ramp (`#e9e2f6 · #c3b0e6 · #9a7ed4 · #7856be`); buckets `1–2 / 3–5 / 6–9 / 10+`; select label "Veterinary competition", legend title "Veterinary Establishments (CBP)"; `rf-tip` on hover; panel bars Low/Moderate/High (C5 — V2's offset `dot()` bubble pass is gone) | `communities[].vets`, `communities[].competition.{count, per_10k_households, level}` | `establishments` from **ZBP** ZIP counts aggregated over the community's ZCTAs (fallback: county CBP apportioned by household share, labelled derived). Phase C (Task C1, D17): `competition.freshness.{level_live, diverges, as_of}` from the Places Aggregate API — a bucket and a flag, never a count | ZCTA→place / catchment | ZBP attribution; "… proxy for competitive density, not a count of independent practices. ZIP-code counts aggregated to the community." Freshness: the `google_places_aggregate` attribution text | `zbp` cleared (fallback needs `cbp`); `freshness` only while `google_places_aggregate` is cleared |
 
-Sources in one sentence for stakeholders: demographics, households, income and growth are the Census Bureau's American Community Survey; competition is the Census Bureau's count of veterinary establishments (NAICS 541940) by ZIP code, with the county total as a benchmark; the economic profile is Census payroll per establishment; pet ownership is our estimate from households; drive-time rings are straight-line approximations until a routing licence exists. No third-party practice list is used (spec §12); no Google Maps data is used in V1 (D15), and the 2017 Google Places export is blocked.
+Rendering follows the approved V3 design (`docs/design-reference/design_handoff_practice_match_v3/Practice Match V3.dc.html`, `MarketMapV3.jsx`) and the shipped `frontend/src/components/MarketMapView.vue` / `frontend/src/map/mosaic.js`, not V2's bubbles. Copy and type come from the V3 design, which drops `text-transform: uppercase` and its letter-spacing on every display-size heading and keeps it on micro labels; any layer name, bucket label or eyebrow this plan specifies is rendered in that system, not V2's. Amended 2026-09-07: Task V13 restored V2's typography through local amendment A1 (Browse V3 spec D15/D16); the thirteen non-Browse screens are byte-identical to V2 again, so a pre-V3 pixel oracle exists for them. Browse-only elements keep V3's type.
+
+Sources in one sentence for stakeholders: demographics, households, income and growth are the Census Bureau's American Community Survey; competition is the Census Bureau's count of veterinary establishments (NAICS 541940) by ZIP code, with the county total as a benchmark; average practice payroll is Census payroll per establishment; pet ownership is our estimate from households; drive-time rings are straight-line approximations until a routing licence exists. No third-party practice list is used (spec §12); no Google Maps data is used in V1 (D15), and the 2017 Google Places export is blocked.
 
 ## Phase C — Deferred by design (each has a stated trigger)
 
 | Item | Spec ref | Trigger to build | Sketch |
 |---|---|---|---|
-| Tract choropleth vector tiles | §7 "Choropleth tiles", §10 CDN row | The approved design gains tract-level shading (today it draws community bubbles) | Nightly task: for each cleared value layer and z6–z12 over CBSAs with listings, `ST_AsMVT(ST_AsMVTGeom(...))` per tile → bucket `tiles/{metric}/{vintage}/{z}/{x}/{y}.pbf`, immutable, 30-day cache; Leaflet.VectorGrid client; new path per vintage flip |
+| Tract choropleth vector tiles | §7 "Choropleth tiles", §10 CDN row | The approved design gains tract-level shading (today it shades community mosaic cells) | Nightly task: for each cleared value layer and z6–z12 over CBSAs with listings, `ST_AsMVT(ST_AsMVTGeom(...))` per tile → bucket `tiles/{metric}/{vintage}/{z}/{x}/{y}.pbf`, immutable, 30-day cache; Leaflet.VectorGrid client; new path per vintage flip |
 | True isochrones (`isochrone_v2`) | §8 drive_catchment V2 | VIN Foundation licenses a routing engine (§15) | Replace `catchment.build` SQL with polygons from the engine; keep `method` column; rerun materialise |
 | Satellite basemap | §2 imagery, §12 | Written licence naming commercial web display + attribution string | Flip `imagery` to `cleared` via admin; frontend shows the Satellite tab only when `GET /api/admin/data-sources` (or a public `/api/layers`) reports it cleared |
 | Licensed pet-ownership rate | §8 pet_households_est, §15 | Licence signed | New dataset row `pet_ownership` cleared; `PET_RATE` becomes a per-CBSA table; `formula_version` → `v2` |
@@ -4420,7 +4430,9 @@ git push origin HEAD && git push production HEAD
 
 ## Open items for the VIN Foundation (carried from the spec §15 and the Platform spec §9)
 
-Basemap licence (Esri in the design vs CARTO in the spec) · satellite vendor · licensed pet rate vs ACS-derived · isochrones vs straight-line · opportunity-score weights sign-off and publication · public teaser vs gated market data · AIES identifier · Census API key contact address to use in the User-Agent (`CENSUS_CONTACT_EMAIL`) · **Google Places Aggregate API (D17)** — counsel sign-off on SST §13 "Customer Values" (a Low/Moderate/High bucket and a divergence flag as the only persisted outputs) and a Google Cloud billing account · **competitor-points source (D16)** — approve Overture Maps Places (or Foursquare OS Places / VIN's directory) for a Phase C points layer · **disposition of the 2017 Google Places export (D15)** — done 2026-09-05: John kept the `place_id` column only (`practice_match_google_place_ids_2017.csv`) and deleted the file · **map engine (G0)** — Leaflet (approved design) or Google Maps: see `docs/decisions/2026-09-05-competition-presentation-options.md` and the greenfield plan `docs/superpowers/plans/2026-09-05-practice-match-google-maps-greenfield.md`; if Google is chosen, D16/D17 and Task C1 are superseded by that plan.
+Satellite vendor · licensed pet rate vs ACS-derived · isochrones vs straight-line · opportunity-score weights sign-off and publication · public teaser vs gated market data · AIES identifier · Census API key contact address to use in the User-Agent (`CENSUS_CONTACT_EMAIL`) · **Google Places Aggregate API (D17)** — counsel sign-off on SST §13 "Customer Values" (a Low/Moderate/High bucket and a divergence flag as the only persisted outputs) and a Google Cloud billing account · **competitor-points source (D16)** — approve Overture Maps Places (or Foursquare OS Places / VIN's directory) for a Phase C points layer · **disposition of the 2017 Google Places export (D15)** — done 2026-09-05: John kept the `place_id` column only (`practice_match_google_place_ids_2017.csv`) and deleted the file · **map engine (G0)** — Leaflet (approved design) or Google Maps: see `docs/decisions/2026-09-05-competition-presentation-options.md` and the greenfield plan `docs/superpowers/plans/2026-09-05-practice-match-google-maps-greenfield.md`; if Google is chosen, D16/D17 and Task C1 are superseded by that plan.
+
+**Basemap licence — one decision record, owned by John and the VIN Foundation.** The approved design uses Esri tiles ("Tiles © Esri", "Imagery © Esri, Maxar, Earthstar Geographics"); this spec registered CARTO. It is **one** open question, recorded here and referenced — not restated — by the Map-engines plan's `LEAFLET` tile-constant note (Task M3) and by CLAUDE.md's "Legally load-bearing" section. Do not swap either way without that decision. Attribution stays visible on every map regardless (`attributionControl: true`).
 
 ## Red-team review (2026-09-05) — findings and dispositions
 

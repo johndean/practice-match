@@ -1,4 +1,6 @@
 import asyncio
+import functools
+from pathlib import Path
 from typing import TypedDict
 
 from fastapi import APIRouter
@@ -10,6 +12,35 @@ from app.version import VERSION
 
 router = APIRouter(prefix="/api")
 not_found_router = APIRouter(prefix="/api")  # include LAST among /api routers
+
+# The commit the deployed ARTEFACT was built from. scripts/deploy.sh writes it into the
+# `git archive` it uploads and the Dockerfile copies it, so in the image this is
+# /app/BUILD_SHA — the same root app/version.py reads pyproject.toml from. The COMMIT_SHA
+# setting proves nothing on its own: deploy.sh sets that service variable immediately
+# before each upload, which is why healthz still reported the branch's sha on 2026-09-07
+# while the tree actually uploaded was main's (P14). Module-level so tests can move it.
+BUILD_SHA_FILE = Path(__file__).resolve().parent.parent.parent / "BUILD_SHA"
+
+
+@functools.cache
+def build_sha() -> str:
+    """The image's own BUILD_SHA stamp; the COMMIT_SHA setting when there is no stamp
+    (a git-connected Railway build, or a local `docker build`) or it is blank.
+
+    Cached (L8): the stamp cannot change inside a running image, and /api/healthz is
+    Railway's healthcheck and the nightly load smoke's only target — it must not pay a
+    blocking file read per request. Tests that move BUILD_SHA_FILE call
+    `build_sha.cache_clear()`.
+
+    UnicodeDecodeError is caught alongside OSError because it is NOT one (L8): a stamp that
+    is not valid UTF-8 would otherwise turn the deliberately always-200 healthz into a 500,
+    and fail Railway's healthcheck with it. This function must never be the thing that
+    breaks."""
+    try:
+        stamped = BUILD_SHA_FILE.read_text().strip()
+    except (OSError, UnicodeDecodeError):
+        return settings.commit_sha
+    return stamped or settings.commit_sha
 
 
 class HealthBody(TypedDict):
@@ -28,7 +59,7 @@ async def _body() -> HealthBody:
         "status": "ok",
         "version": VERSION,
         "environment": settings.environment,
-        "commit_sha": settings.commit_sha,
+        "commit_sha": build_sha(),
         "site_mode": settings.site_mode,
         "db": db,
         "redis": redis_,

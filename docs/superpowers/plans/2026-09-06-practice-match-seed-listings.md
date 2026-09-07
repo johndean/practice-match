@@ -30,7 +30,7 @@ Every task's requirements implicitly include this section.
 
 ### The programme's standing rules
 
-- **(a) 100 % lines AND branches, backend.** Every task's local gate is `poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov-fail-under=100`. `scripts/` is in the coverage scope for this plan because two of its four deliverables live there. **→ John (pre-flight I6):** `--cov=scripts` is a *new* scope — `main`'s CI runs `--cov=app … --cov-fail-under=90` and Wave 2a's runs `--cov=app --cov-branch --cov-fail-under=100`; neither includes `scripts/`, so `coverage.xml` carries no `scripts/*.py` rows and `diff-cover … --fail-under=100` cannot enforce the two new modules. The default applied here is to **add `--cov=scripts` to `.github/workflows/quality.yml` in Task L5**, so the gate that holds locally also holds on every PR. The Preconditions establish the baseline first: if `scripts/migrate.py` is not already at 100 % lines and branches, Task L1's own gate would fail before this plan has written a line — that is a STOP, not something to work around.
+- **(a) 100 % lines AND branches, backend.** Every task's local gate is `poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov-fail-under=100`. `scripts/` is in the coverage scope for this plan because two of its four deliverables live there. **→ John (pre-flight I6), resolved 2026-09-07:** `--cov=scripts` was a *new* scope when this plan was written — `main`'s CI then ran `--cov=app` at a 90 % floor and Wave 2a's `--cov=app --cov-branch` at 100 %, neither including `scripts/`, so `coverage.xml` carried no `scripts/*.py` rows and `diff-cover … --fail-under=100` could not enforce the two new modules. P14 (Task 14 Step 8) has since made `main`'s CI gate exactly this command, so Task L5 has nothing left to add and must not lower the floor. The Preconditions establish the baseline first: if `scripts/migrate.py` is not already at 100 % lines and branches, Task L1's own gate would fail before this plan has written a line — that is a STOP, not something to work around.
 - **(b) 100 % lines, branches, functions and statements, frontend.** `cd frontend && npx vitest run --coverage`. The documented `coverage.exclude` list in `frontend/vite.config.ts` is **not widened** by this plan; the new module `frontend/src/listings/load.ts` is covered at 100 %.
 - **(c) No suppressions.** No `# pragma: no cover`, no `# noqa`, no `# type: ignore`, no `@ts-expect-error`, no `@ts-nocheck`, no `assert` used as control flow in production code. A cast at a typed boundary (`x as unknown as T`) is not a suppression and is allowed where it is documented; a suppression comment is not.
 - **(d) `poetry run mypy app --strict`** — 0 errors. **`poetry run ruff check app tests scripts`** — 0 findings, on ruff's default rule set plus `extend-select = ["I", "RUF"]`, with **no ignores added**.
@@ -73,7 +73,7 @@ grep -n "def sync_conn" app/db.py                                     # psycopg2
 grep -n "def sync_redis" app/cache.py                                 # one client per process
 grep -n "^def member" -n tests/api/conftest.py || grep -n "def member" tests/api/conftest.py
 grep -n "def conn\|def redis\|def scratch_dsn" tests/conftest.py
-ls migrations/01[0-4]_*.sql                                           # 010–014 exist; this plan starts at 015
+ls migrations/01[0-5]_*.sql                                           # 010–015 exist; this plan starts at 016
 ```
 
 Expected: every grep hits. `app.auth.deps.require` returns `Callable[[Request], S.Principal | None]` and raises `KeyError` at wiring time for an unknown permission; `install(app)` is already called from `app.main.create_app()`; `tests/api/conftest.py` provides `client` (base URL `https://qa.foundation.vin`) and `member(roles=("buyer",), state="active", email=None, affiliation=None) -> (account_id, cookies, headers)`; `tests/conftest.py` provides `conn` (a scratch database with every migration applied, `settings.database_url` monkeypatched to it), `redis` (fakeredis, patched into `app.cache`) and `scratch_dsn`.
@@ -302,7 +302,7 @@ def test_defaults_are_what_the_seeder_relies_on(conn: Any) -> None:
 - [ ] **Step 2: Run the test to verify it fails**
 
 Run: `poetry run pytest tests/test_listing_schema.py -v`
-Expected: every test FAILS — `psycopg2.errors.UndefinedTable: relation "listing" does not exist` (the `conn` fixture builds a scratch database from `migrations/`, which has no `015` yet).
+Expected: every test FAILS — `psycopg2.errors.UndefinedTable: relation "listing" does not exist` (the `conn` fixture builds a scratch database from `migrations/`, which has no `016` yet).
 
 - [ ] **Step 3: Write the migration**
 
@@ -393,7 +393,7 @@ cd "/Users/johndean/Development/Practice Match"
 git add migrations/016_listing.sql tests/test_listing_schema.py
 git commit -m "feat(db): listing table — geography point, status/source/type checks, photos jsonb
 
-Spec 2026-09-06 D1. Migrations start at 015 (identity holds 010-014). geom is
+Spec 2026-09-06 D1. Migrations start at 016 (identity holds 010-015). geom is
 geography(Point,4326) with a GiST index so Wave 2b's radius search and the geocode
 bounds test both measure metres on the spheroid; listing_page_idx is the exact key
 GET /api/listings pages on. The community figures stay with the Census plan.
@@ -3181,16 +3181,16 @@ In `tests/test_docs.py`, add one entry to `REQUIRED_CI_COMMANDS`, immediately af
     "--cov=scripts",   # seed listings: scripts/prepare_photos.py and scripts/seed_listings.py
 ```
 
-Run: `poetry run pytest tests/test_docs.py -v`
-Expected: FAIL — the workflow does not contain `--cov=scripts`.
+> **Superseded 2026-09-07 (P14 Task 14 Step 8): `main` is already at the 100 % `app`+`scripts` branch gate — `poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov-report=xml --cov-fail-under=100` — so this step has nothing to add and must NOT lower it.** P14 closed the two gaps that had kept the floor at 90 % (`app/db.py`'s other-loop disposal arm and `scripts/migrate.py`'s `__main__` guard) and pinned the command in `quality.yml`, `CLAUDE.md` and the quality policy together; `tests/test_docs.py` now asserts `--cov-fail-under=90` appears in none of the three, so the edit this step originally prescribed is a RED test rather than a silent regression. Check `quality.yml` before doing anything here; if it already carries the line below, skip to the next step.
 
-In `.github/workflows/quality.yml`, extend the backend coverage run (line 64):
+Run: `poetry run pytest tests/test_docs.py -v`
+Expected: PASS already — the workflow contains `--cov=scripts`. If it somehow does not, restore exactly:
 
 ```yaml
-      - run: poetry run pytest -q -W error --cov=app --cov=scripts --cov-report=xml --cov-fail-under=90
+      - run: poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov-report=xml --cov-fail-under=100
 ```
 
-> The `--cov-fail-under` number is **not** changed here. Raising the repository-wide floor is a separate decision with its own blast radius; what this plan needs is for `scripts/` to appear in `coverage.xml` so `diff-cover … --fail-under=100` enforces every changed line of the two new modules on every PR. The 100 % lines-and-branches gate stays as the plan's own per-task command.
+> The floor is deliberately at 100 % now, not 90 %: what this plan needed was for `scripts/` to appear in `coverage.xml` so `diff-cover … --fail-under=100` enforces every changed line of the two new modules on every PR, and that is already true. The plan's own per-task 100 % lines-and-branches command is unchanged.
 
 Run: `poetry run pytest tests/test_docs.py -v`
 Expected: PASS.
@@ -4173,7 +4173,7 @@ Run against the spec with fresh eyes, per the writing-plans skill.
 | §2 John's table, verbatim | L2 | `test_johns_table_is_reproduced_verbatim_and_in_order`, and — because that is a hand-typed second copy — `test_the_seed_file_reconstructs_the_spec_table_exactly` parsed straight out of the spec's own markdown |
 | §2 photograph source folders | L3 | `test_source_images_are_sorted_and_exclude_non_images`, `test_every_seeded_hospital_has_photographs` |
 | D1 the `listing` table and every named column | L1 | `test_listing_has_exactly_the_contracted_columns` |
-| D1 migrations start at `015` | L1 | the filename; `ls migrations/01[0-4]_*.sql` in Preconditions |
+| D1 migrations start at `016` | L1 | the filename; `ls migrations/01[0-5]_*.sql` in Preconditions |
 | D2 Census Geocoder, coordinates + tier committed | L2 | `test_the_geocode_provenance_is_recorded`, `test_no_geocode_placeholder_survived_the_run`, `test_the_dallas_anchor_is_the_probed_coordinate` (with a documented recourse for a rolling-benchmark change) |
 | D2 state bbox + ≤ 25 km from centroid, no network in tests | L2 | `test_every_point_is_inside_its_states_bounding_box`, `test_every_point_is_within_25_km_of_its_city_centroid` |
 | D2 no Google content stored | L2, Constraint (h) | the geocode block calls only `geocoding.geo.census.gov`; nothing in `seeds/` names Google |
