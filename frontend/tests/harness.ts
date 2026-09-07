@@ -265,15 +265,25 @@ export function referenceOrigin(env: NodeJS.ProcessEnv = process.env): string {
 export const MEMO_FILE = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'test-results', '.persona-sessions.json');
 
 /**
- * Which RUN a memo file belongs to.
- *
- * Playwright forks its workers from the runner process, so every worker of one run shares the same
- * parent pid and a different run has a different one. That needs no `globalSetup` and no config
- * change, and it is the second guard rather than the only one — the directory is cleared at run
- * start too (when the suite is launched from `frontend/`, see MEMO_FILE).
+ * THIS process's start time, in epoch milliseconds. Computed once, at module load: `process.uptime()`
+ * advances, so recomputing it per call would give a different id every call and the memo file would
+ * never be readable at all.
  */
-export function runId(ppid: number = process.ppid): string {
-  return String(ppid);
+const PROCESS_STARTED_AT = Date.now() - Math.round(process.uptime() * 1000);
+
+/**
+ * Which RUN a memo file belongs to (round 2, ruling 2).
+ *
+ * Playwright forks its workers from the runner process, so `process.ppid` is the same for every
+ * worker of one run — but pids are REUSED, so a stale file from a much earlier run could in
+ * principle be adopted by a later run that happened to draw the same pid. The start time is
+ * carried alongside it, and a reused pid then never matches. No `globalSetup` and no config change.
+ *
+ * The directory clearing is still the first guard: Playwright empties `test-results/` at run start
+ * (see MEMO_FILE for the one case where that path and its clearing disagree).
+ */
+export function runId(ppid: number = process.ppid, startedAt: number = PROCESS_STARTED_AT): string {
+  return `${ppid}-${startedAt}`;
 }
 
 /** The file's contents with one persona's jar set, or removed when `cookies` is null. A write from

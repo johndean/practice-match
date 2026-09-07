@@ -4,6 +4,27 @@ import { SCREENS } from './screens';
 
 const ROUTES = ['/', '/browse', '/browse?tab=market', '/browse?tab=listings', '/practices/p1', '/requests', '/seller', '/admin?tab=data'];
 
+// ---------------------------------------------------------------------------------------
+// Round 2, ruling 1: the trace goes off on a LIVE run and nowhere else.
+//
+// The sign-in-form tests below (I2) type a password into the design's own card, so a FAILING run's
+// trace carries it — and CI publishes `frontend/test-results`. In every local and CI run that
+// password is the documented test-only default, so a trace there discloses nothing. The one run
+// where it is a real secret is a live one: `PW_APP_URL` set, which is the QA hand-back, with
+// `PERSONA_PASSWORD` from Railway. So the trace is off exactly there, and when `PW_APP_URL` is
+// unset this resolves to the project's own `retain-on-failure` — the default is untouched.
+//
+// TOP-LEVEL, not on the form describe, and not by choice: Playwright refuses `use({ trace })`
+// inside a describe group — "because it forces a new worker" — and names this as the remedy. So it
+// applies to the whole smoke file on a live run rather than to the three tests alone; a live run is
+// the QA hand-back, where the smoke suite is what is being demonstrated and its traces are the cost
+// the ruling already accepted for those tests.
+//
+// The TESTS are not skipped: the form is precisely what Task I10 must prove on QA. Pinned in
+// tests/playwright-config.test.ts, so a later edit cannot silently drop the line.
+// ---------------------------------------------------------------------------------------
+test.use({ trace: process.env.PW_APP_URL ? 'off' : 'retain-on-failure' });
+
 function trapErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on('pageerror', (e) => errors.push(`pageerror: ${e.message}`));

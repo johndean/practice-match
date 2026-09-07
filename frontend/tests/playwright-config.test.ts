@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const CONFIG = join(fileURLToPath(new URL('.', import.meta.url)), 'playwright.config.ts');
+const SMOKE = join(fileURLToPath(new URL('.', import.meta.url)), 'smoke.spec.ts');
 const FLAG = '--disable-partial-raster';
 
 // ---------------------------------------------------------------------------------------
@@ -181,4 +182,62 @@ describe('playwright.config.ts pins Chromium\'s raster', () => {
     }
     throw new Error(`no project named '${name}' in playwright.config.ts`);
   }
+});
+
+// ---------------------------------------------------------------------------------------
+// Review round 2, ruling 1. The form sign-in tests (I2) type a password into the design's own
+// card, so a FAILING run's trace carries it — and CI publishes `frontend/test-results`.
+//
+// In every local and CI run that password is the documented test-only default, so a trace
+// discloses nothing. The one run where it is a real secret is a LIVE one: `PW_APP_URL` set, which
+// is the QA hand-back, with `PERSONA_PASSWORD` from Railway. So the trace is off exactly there and
+// the project default (`retain-on-failure`) is untouched everywhere else — the tests themselves
+// keep running on a live run, because the form is precisely what Task I10 has to prove on QA.
+//
+// Pinned here, in this file's style, because the conditional is one line inside a describe and a
+// later edit — a tidy-up, a merge — could drop it with nothing failing. The config's own
+// `trace: 'retain-on-failure'` is asserted alongside, since the override is only meaningful
+// against that default.
+// ---------------------------------------------------------------------------------------
+describe('the form sign-in tests turn their trace off on a live run (round 2, ruling 1)', () => {
+  /** The sign-in-form describe's own body, comments blanked — from its opening to the next
+   *  top-level `test.describe(` in the file. */
+  function formDescribeBody(): string {
+    const smoke = withoutComments(readFileSync(SMOKE, 'utf8'));
+    const at = smoke.indexOf("test.describe('the design\\'s own sign-in form");
+    expect(at, 'the sign-in-form describe is gone or renamed — re-point this pin').toBeGreaterThan(-1);
+    const rest = smoke.slice(at + 1);
+    const next = rest.indexOf('\ntest.describe(');
+    return rest.slice(0, next === -1 ? undefined : next);
+  }
+
+  const USE_TRACE = /^test\.use\(\{ trace: process\.env\.PW_APP_URL \? 'off' : 'retain-on-failure' \}\);$/m;
+
+  it('carries a PW_APP_URL-conditional trace in smoke.spec.ts, at the top level', () => {
+    const smoke = withoutComments(readFileSync(SMOKE, 'utf8'));
+    expect(smoke, 'the live-run trace override is gone').toMatch(USE_TRACE);
+    // TOP-LEVEL is not a preference: Playwright refuses `use({ trace })` inside a describe group
+    // ("because it forces a new worker") and names this as the remedy. So the assertion is that it
+    // sits before the first describe, where it governs the file — including the form tests.
+    expect(smoke.search(USE_TRACE)).toBeLessThan(smoke.indexOf('test.describe('));
+    expect(formDescribeBody(), 'and NOT inside the describe, which Playwright rejects outright').not.toMatch(/test\.use\(\{\s*trace/);
+  });
+
+  it('leaves the project default in place, which is what the override is measured against', () => {
+    expect(withoutComments(readFileSync(CONFIG, 'utf8'))).toContain("trace: 'retain-on-failure'");
+  });
+
+  it('does not skip the tests on a live run — only their trace goes', () => {
+    // The form is what Task I10 has to prove on QA, so `PW_APP_URL` must not gate the tests
+    // themselves. (The reauth test's own `test.skip(!!process.env.PW_APP_URL, …)` is a different
+    // describe and stays: it proves Vite's proxy, which a live deployment does not have.)
+    expect(formDescribeBody()).not.toMatch(/test\.skip\([^)]*PW_APP_URL/);
+  });
+
+  it('still spends the three sign-in attempts it documents, live or not', () => {
+    const body = formDescribeBody();
+    // `(?<![.\w])`, not `\b`: a dot is a word boundary, so `\btest\(` also counted the
+    // `RegExp.prototype.test(e)` call inside the wrong-password case's console-error assertion.
+    expect((body.match(/(?<![.\w])test\(/g) ?? []).length, 'three form tests, as ruled by I2').toBe(3);
+  });
 });

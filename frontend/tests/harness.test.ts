@@ -476,12 +476,30 @@ describe('the persona memo file (A-I8.2, run-scoped by M3)', () => {
     expect(MEMO_FILE.endsWith('/frontend/test-results/.persona-sessions.json'), MEMO_FILE).toBe(true);
   });
 
-  it('identifies the run by the Playwright runner process every worker is a child of', () => {
-    // Workers are forked by the runner, so `process.ppid` is the same for every worker of one run
-    // and differs between runs. It needs no config change and no globalSetup — and it is the
-    // second guard, not the only one: the directory itself is cleared at run start.
-    expect(runId()).toBe(String(process.ppid));
-    expect(runId(4711)).toBe('4711');
+  // Round 2, ruling 2. The id was the runner pid alone, and pids are reused — so a stale file
+  // from a much earlier run could in principle be adopted by a later run that happened to draw the
+  // same pid. It now carries the process start time as well, so a reused pid never matches.
+  it('identifies the run by the runner pid AND a process start time, so a reused pid cannot match', () => {
+    expect(runId(4711, 1_700_000_000_000)).toBe('4711-1700000000000');
+    expect(runId(4711, 1_700_000_000_001), 'the same pid, a different run').not.toBe(runId(4711, 1_700_000_000_000));
+    expect(runId(4712, 1_700_000_000_000), 'a different runner, the same instant').not.toBe(runId(4711, 1_700_000_000_000));
+  });
+
+  it('yields one stable id within a process, because the start time is computed once and cached', () => {
+    // `process.uptime()` advances, so recomputing it per call would give a different id every
+    // time and the file would never be readable at all.
+    expect(runId()).toBe(runId());
+    expect(runId(), 'the defaults are this process\'s own runner and start time').toBe(`${process.ppid}-${runId().split('-')[1]}`);
+    expect(Number(runId().split('-')[1]), 'a plausible epoch-ms start time').toBeGreaterThan(1_600_000_000_000);
+  });
+
+  it('ignores and replaces a memo file stamped by a reused pid from an earlier run', () => {
+    const stale = memoFileUpdate(null, 'buyer', [C('pm_session')], runId(4711, 1_000));
+    expect(memoFileRead(stale, 'buyer', runId(4711, 1_000)), 'sanity: its own run reads it').not.toBeNull();
+    expect(memoFileRead(stale, 'buyer', runId(4711, 2_000)), 'the same pid, a later run: no memo').toBeNull();
+    const fresh = memoFileUpdate(stale, 'buyer', [C('pm_session')], runId(4711, 2_000));
+    expect(JSON.parse(fresh).run).toBe('4711-2000');
+    expect(memoFileRead(fresh, 'buyer', runId(4711, 1_000)), 'and the earlier run cannot read the replacement').toBeNull();
   });
 });
 
