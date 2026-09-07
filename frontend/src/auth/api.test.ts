@@ -164,6 +164,30 @@ describe('forgot, reset, acceptInvite, answer — POST with credentials and the 
     stubFetch({ status: 400, body: { error: { code: 'TOKEN_EXPIRED', message: 'This link has expired.' } } });
     await expect(reset('stale', 'newpw')).rejects.toMatchObject({ code: 'TOKEN_EXPIRED' });
   });
+
+  it('forgot throws the server\'s AuthError, with its code and message, on a 4xx', async () => {
+    stubFetch({ status: 429, body: { error: { code: 'RATE_LIMITED', message: 'Too many attempts. Try again later.' } } });
+    const thrown = await forgot('a@b.co').catch((e: unknown) => e);
+    expect(thrown).toBeInstanceOf(AuthError);
+    expect((thrown as AuthError).code).toBe('RATE_LIMITED');
+    expect((thrown as AuthError).message).toBe('Too many attempts. Try again later.');
+  });
+
+  it('acceptInvite throws the server\'s AuthError, with its code and message, on a 4xx', async () => {
+    stubFetch({ status: 400, body: { error: { code: 'TOKEN_EXPIRED', message: 'This invite has expired.' } } });
+    const thrown = await acceptInvite('tok', 'newpw').catch((e: unknown) => e);
+    expect(thrown).toBeInstanceOf(AuthError);
+    expect((thrown as AuthError).code).toBe('TOKEN_EXPIRED');
+    expect((thrown as AuthError).message).toBe('This invite has expired.');
+  });
+
+  it('answer throws the server\'s AuthError, with its code and message, on a 4xx', async () => {
+    stubFetch({ status: 409, body: { error: { code: 'ALREADY_ANSWERED', message: 'This application already has an answer on file.' } } });
+    const thrown = await answer('ap1', 'Yes, I confirm.').catch((e: unknown) => e);
+    expect(thrown).toBeInstanceOf(AuthError);
+    expect((thrown as AuthError).code).toBe('ALREADY_ANSWERED');
+    expect((thrown as AuthError).message).toBe('This application already has an answer on file.');
+  });
 });
 
 describe('applicationsMe()', () => {
