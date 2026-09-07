@@ -23,7 +23,7 @@
 - **Shell rendering:** no I/O per request — engine chunk filenames globbed from `frontend/dist/_app/engine-*.js` at process start; snapshot TTL **15 s**; `Cache-Control: no-cache`; weak `ETag` = hash(chunk names, engine, gate, authenticated flag); inlined JSON escapes `<`, `>`, `&`, U+2028, U+2029 as `\uXXXX`.
 - **Google runtime config (`mapId`, `browserKey`) is inlined only in authenticated shells** — a valid member session (SP2) or, before SP2, `MARKET_DATA_PUBLIC=true` (QA only, never production). Values come from the `api` service environment (`GOOGLE_MAPS_BROWSER_KEY`, `GOOGLE_MAPS_MAP_ID`), never from the build.
 - **CSP per page = union of the enabled rows' allowlists** (constants in `app/shell.py:CSP_HOSTS`); `style-src 'self' 'unsafe-inline'` (the design uses inline styles); `img-src 'self' data: blob:` plus the enabled tile/imagery hosts.
-- **Activation:** one transaction — `UPDATE … SET active=false WHERE kind='engine'` then `UPDATE … SET active=true WHERE dataset_key=:k AND kind='engine' AND license_status='cleared'` (0 rows → 409); idempotent no-op on the already-active engine (no log row, no gate bump); `5` activations per minute per environment; `ADMIN_ACTIVATE_ENABLED` default **false on production** until SP2 ships; CSRF: bearer-token callers exempt, cookie sessions must send `X-CSRF-Token` equal to the `pm_csrf` cookie.
+- **Activation:** one transaction — `UPDATE … SET active=false WHERE kind='engine'` then `UPDATE … SET active=true WHERE dataset_key=:k AND kind='engine' AND license_status='cleared'` (0 rows → 409); idempotent no-op on the already-active engine (no log row, no gate bump); `5` activations per minute per environment; `ADMIN_ACTIVATE_ENABLED` default **false on production** until SP2 ships; CSRF and Origin are `deps.check_origin_and_csrf`, which `require(...)` already runs on every state change — bearer (`api_token`) callers are exempt, cookie sessions must send `X-CSRF-Token` equal to the `pm_csrf` cookie **and** an `Origin` of the site. *Amended 2026-09-07 (identity Task I9a): this bullet described a `require_csrf` of its own; there is one implementation now and it is inside the permission dependency.*
 - **Change log:** `registry_change_log` append-only for the application role; rows carry actor, IP, user agent, field, old/new value, reason.
 - **Reconciliation:** every `/api/*` response carries `X-PM-Gate: <version>`; clients refetch `/api/layers` and `/api/map-config` on the next route change when it changes — **no polling**; a map component enables only layers whose `engines` include the engine it **mounted**.
 - **Runtime rules:** one long-lived map instance per session (re-parented between screens; `show()` after re-parenting); Places calls debounced 300 ms and memoised per (hub, band); **no client-side engine swap** — a failed engine shows the design's "Map unavailable" panel.
@@ -46,7 +46,7 @@
 | `app/api/map_config.py` | `GET /api/map-config` |
 | `app/api/market.py` | `/api/layers` uses `gate.enabled`; new shape |
 | `app/api/admin_data_sources.py` | `/activate`, `/changes`; `/license` writes the change log; row fields |
-| `app/api/csrf.py` | `require_csrf` (bearer exempt; cookie double-submit) |
+| ~~`app/api/csrf.py`~~ | **Not created** (identity Task I9a): `deps.check_origin_and_csrf`, inside `require(...)`, is the one implementation |
 | `frontend/vite.config.ts` | `manualChunks` → `engine-leaflet`, `engine-google` |
 | `frontend/src/map/config.ts` | `readShellConfig`, `fetchMapConfig`, `ShellConfig` |
 | `frontend/src/map/gate.ts` | `apiFetch` (records `X-PM-Gate`), `gateChanged`, `installGateWatcher(router)` |
@@ -759,22 +759,43 @@ Register `map_config.router` in `app/main.py` before the catch-all. Update `test
 ### Task M4: Activation endpoint, change log, `/changes`, CSRF, rate limit
 
 **Files:**
-- Create: `app/api/csrf.py`, `tests/census/test_activate.py`
+- Create: `tests/census/test_activate.py`
 - Modify: `app/api/admin_data_sources.py` (`LIST_SQL` fields; `/license` logging; new routes), `tests/census/test_admin_api.py` (row fields)
 
+*Amended 2026-09-07 (identity Task I9a).* `app/api/csrf.py` is **not created**: Wave 2a's
+`app/auth/deps.py` runs `check_origin_and_csrf` inside `require(...)`, so the CSRF and Origin rules
+arrive with the permission and there is no second implementation to keep in step. The permissions
+this task's three surfaces carry:
+
+| Route | Permission | Who |
+|---|---|---|
+| `GET /api/admin/data-sources`, `GET /api/admin/data-sources/changes` | `require("data_sources.read")` | staff, admin |
+| `POST /api/admin/data-sources/{key}/license` | `require("licence.decide")` | admin, **re-authenticated** |
+| `POST /api/admin/data-sources/{key}/activate` | `require("engine.activate")` | admin, **re-authenticated** |
+
+Both write permissions are in `permissions.REAUTH`, so the caller must have confirmed their password
+in the last 10 minutes (`POST /api/auth/reauth`; past `deps.REAUTH_WINDOW` the answer is
+`403 REAUTH_REQUIRED`) and **no `api_token` can ever satisfy them** — `403 REAUTH_TOKEN`, whatever
+role the token carries. A licence decision and an engine swap are a named human's, which is what the
+change log records. The read half is what an automation token is for.
+
 **Interfaces:**
-- Consumes: `require_operator` (A9 → SP2 admin role), `sync_redis`, `engine` (async SQLAlchemy), `gate.invalidate`, `shell.reset` is **not** called (the 15 s TTL is the contract), `settings.activate_enabled`.
-- Produces: `POST /api/admin/data-sources/{key}/activate` → `{"active": key, "changed": bool}`; `GET /api/admin/data-sources/changes?limit=50` → `list[dict]`; `csrf.require_csrf(request)`; `admin_data_sources.RATE_LIMIT = (5, 60)`; `admin_data_sources.actor(request) -> tuple[str, str | None, str | None]` (actor, ip, ua — `"operator"` until SP2 sets `request.state.member_id`).
+- Consumes: `require` from `app/auth/deps.py` (Wave 2a), `sync_redis`, `engine` (async SQLAlchemy), `gate.invalidate`, `shell.reset` is **not** called (the 15 s TTL is the contract), `settings.activate_enabled`.
+- Produces: `POST /api/admin/data-sources/{key}/activate` → `{"active": key, "changed": bool}`; `GET /api/admin/data-sources/changes?limit=50` → `list[dict]`; `admin_data_sources.RATE_LIMIT = (5, 60)`; `admin_data_sources.actor(request) -> tuple[str, str | None, str | None]` (actor, ip, ua — the actor is `str(request.state.principal.account_id)`, which `require` sets; *amended 2026-09-07, Task I9a: it was the literal `"operator"` until SP2 set `request.state.member_id`*).
 
 - [ ] **Step 1: Failing tests**
 
-`tests/census/test_activate.py` (Census `client`, `conn`; `H = {"Authorization": f"Bearer {settings.api_secret_key}"}`):
+`tests/census/test_activate.py` — *amended 2026-09-07 (identity Task I9a): `H` was
+`{"Authorization": f"Bearer {settings.api_secret_key}"}`. It is a **re-authenticated admin session**
+now (Wave 2a's `member` factory plus `POST /api/auth/reauth`), because `engine.activate` and
+`licence.decide` are in `permissions.REAUTH` and no bearer can satisfy them. The change log's
+`actor` is the admin's `account_id`, not the literal `"operator"`, and the CSRF case's shape changes
+with it:*
 ```python
 import pytest
 
 from app.config import settings
-
-H = {"Authorization": f"Bearer {settings.api_secret_key}"}
+from tests.api.conftest import PW, auth_headers
 
 
 @pytest.fixture(autouse=True)
@@ -782,30 +803,44 @@ def enabled(monkeypatch):
     monkeypatch.setattr(settings, "admin_activate_enabled", True)
 
 
-async def test_rows_expose_kind_engines_active(client):
-    rows = {x["dataset_key"]: x for x in (await client.get("/api/admin/data-sources", headers=H)).json()}
+@pytest.fixture
+async def admin(client, member):
+    """A re-authenticated admin: `(account_id, headers)`. The headers carry the session cookie AND
+    the `X-CSRF-Token`/`Origin` pair `deps.check_origin_and_csrf` requires on a state change."""
+    account_id, cookies, csrf = member(("admin",))
+    h = auth_headers(cookies, csrf)
+    assert (await client.post("/api/auth/reauth", headers=h, json={"password": PW})).status_code == 200
+    return account_id, h
+
+
+async def test_rows_expose_kind_engines_active(client, member):
+    _aid, cookies, _csrf = member(("staff",))            # the READ needs only `data_sources.read`
+    rows = {x["dataset_key"]: x for x in (await client.get("/api/admin/data-sources", headers=auth_headers(cookies))).json()}
     assert rows["map_engine_leaflet"]["kind"] == "engine" and rows["map_engine_leaflet"]["active"] is True and rows["esri_tiles"]["engines"] == ["leaflet"]
 
 
-async def test_activate_refuses_uncleared_then_swaps_logs_and_bumps_the_gate(client, conn):
+async def test_activate_refuses_uncleared_then_swaps_logs_and_bumps_the_gate(client, conn, admin):
+    account_id, H = admin
     r = await client.post("/api/admin/data-sources/map_engine_google/activate", headers=H, json={"reason": "evaluate on QA"})
     assert r.status_code == 409
     g0 = (await client.get("/api/layers")).headers["x-pm-gate"]
     await client.post("/api/admin/data-sources/map_engine_google/license", headers=H, json={"status": "cleared", "name": "Google Maps Platform Terms"})
     r = await client.post("/api/admin/data-sources/map_engine_google/activate", headers=H, json={"reason": "evaluate on QA"})
     assert r.status_code == 200 and r.json() == {"active": "map_engine_google", "changed": True}
+    who = str(account_id)
     with conn.cursor() as cur:
         cur.execute("SELECT dataset_key FROM dataset_registry WHERE kind='engine' AND active"); assert cur.fetchall() == [("map_engine_google",)]
         cur.execute("SELECT dataset_key, field, old_value, new_value, actor, reason FROM registry_change_log ORDER BY id")
         rows = cur.fetchall()
-    assert ("map_engine_google", "license_status", "unresolved", "cleared", "operator", None) in rows
-    assert ("map_engine_google", "active", "map_engine_leaflet", "map_engine_google", "operator", "evaluate on QA") in rows
+    assert ("map_engine_google", "license_status", "unresolved", "cleared", who, None) in rows
+    assert ("map_engine_google", "active", "map_engine_leaflet", "map_engine_google", who, "evaluate on QA") in rows
     from app.cache import sync_redis
     from app.census import gate
     assert gate.version(sync_redis()) > int(g0)
 
 
-async def test_activate_is_idempotent(client, conn):
+async def test_activate_is_idempotent(client, conn, admin):
+    _aid, H = admin
     v = (await client.get("/api/layers")).headers["x-pm-gate"]
     r = await client.post("/api/admin/data-sources/map_engine_leaflet/activate", headers=H, json={})
     assert r.json() == {"active": "map_engine_leaflet", "changed": False}
@@ -814,7 +849,8 @@ async def test_activate_is_idempotent(client, conn):
     assert (await client.get("/api/layers")).headers["x-pm-gate"] == v
 
 
-async def test_activate_rejects_non_engine_rows_disabled_environments_and_rate(client, monkeypatch):
+async def test_activate_rejects_non_engine_rows_disabled_environments_and_rate(client, admin, monkeypatch):
+    _aid, H = admin
     assert (await client.post("/api/admin/data-sources/acs5/activate", headers=H, json={})).status_code == 409
     monkeypatch.setattr(settings, "admin_activate_enabled", False)
     assert (await client.post("/api/admin/data-sources/map_engine_leaflet/activate", headers=H, json={})).status_code == 403
@@ -823,45 +859,52 @@ async def test_activate_rejects_non_engine_rows_disabled_environments_and_rate(c
     assert codes[:5] == [200] * 5 and codes[5] == 429
 
 
-async def test_changes_lists_newest_first(client):
+async def test_changes_lists_newest_first(client, admin):
+    _aid, H = admin
     await client.post("/api/admin/data-sources/imagery/license", headers=H, json={"status": "blocked"})
     rows = (await client.get("/api/admin/data-sources/changes?limit=5", headers=H)).json()
     assert rows[0]["dataset_key"] == "imagery" and rows[0]["field"] == "license_status" and rows[0]["new_value"] == "blocked"
 
 
-async def test_csrf_double_submit_for_cookie_sessions_bearer_exempt(client):
-    # bearer: exempt
-    assert (await client.post("/api/admin/data-sources/map_engine_leaflet/activate", headers=H, json={})).status_code == 200
-    # cookie session without token: refused before auth runs (SP2 wires the real session; the stub treats any pm_session cookie as a session)
-    r = await client.post("/api/admin/data-sources/map_engine_leaflet/activate", cookies={"pm_session": "s", "pm_csrf": "t"}, json={})
-    assert r.status_code == 403 and r.json()["detail"]["code"] == "CSRF"
+async def test_a_cookie_session_needs_the_double_submit_and_a_token_can_never_activate(client, conn, member, admin):
+    _aid, H = admin
+    # The same session WITHOUT the X-CSRF-Token/Origin pair: refused as CSRF, and the refusal never
+    # says whether the session was valid.
+    account_id, cookies, _csrf = member(("admin",))
+    r = await client.post("/api/admin/data-sources/map_engine_leaflet/activate", headers=auth_headers(cookies), json={})
+    assert r.status_code == 403 and r.json()["error"]["code"] == "CSRF"
+    # An `api_token` sends no cookie and so is exempt from CSRF — and is refused anyway, because
+    # `engine.activate` is in REAUTH and a token has no password to confirm. The READ still works.
+    from datetime import timedelta
+
+    from app.auth import tokens as T
+    raw = T.issue_api_token(conn, name="e2e", role="admin", created_by=account_id, ttl=timedelta(days=1)).raw
+    bearer = {"Authorization": f"Bearer {raw}"}
+    assert (await client.get("/api/admin/data-sources", headers=bearer)).status_code == 200
+    r = await client.post("/api/admin/data-sources/map_engine_leaflet/activate", headers=bearer, json={})
+    assert r.status_code == 403 and r.json()["error"]["code"] == "REAUTH_TOKEN"
 ```
 
 - [ ] **Step 2: Run to verify failure** — `poetry run pytest tests/census/test_activate.py -q` → FAIL (404 on `/activate`).
 
 - [ ] **Step 3: Implement**
 
-`app/api/csrf.py`:
-```python
-"""Double-submit CSRF for cookie sessions (SP2). Bearer-token callers (the pre-SP2 operator) have no ambient credential and are exempt."""
-from fastapi import HTTPException, Request
+*`app/api/csrf.py` is **not written** (amended 2026-09-07, identity Task I9a). `deps.require(...)`
+calls `deps.check_origin_and_csrf(request, principal)` on every non-GET request from a **session**
+principal — a constant-time double-submit compare of `X-CSRF-Token` against the `pm_csrf` cookie,
+then an RFC 6454 origin check of `Origin`/`Referer` against `settings.origins` — and skips both for
+a `token` principal, which carries no ambient credential. A separate `require_csrf` would be a
+second rule to keep in step, and it also could not order itself correctly: the refusals arrive in
+one dependency, so "CSRF before permission" is a property of that function rather than of a
+dependency list. Both refusals render decision A5's `{"error": {"code", "message"}}` body with
+`code` of `CSRF` or `ORIGIN`.*
 
-
-def require_csrf(request: Request) -> None:
-    if request.headers.get("authorization", "").startswith("Bearer "):
-        return
-    if "pm_session" in request.cookies:
-        token = request.headers.get("x-csrf-token")
-        if not token or token != request.cookies.get("pm_csrf"):
-            raise HTTPException(403, detail={"code": "CSRF", "message": "missing or mismatched X-CSRF-Token"})
-```
-
-`app/api/admin_data_sources.py` — additions (router dependencies become `[Depends(require_csrf), Depends(require_operator)]` in that order so the CSRF test sees 403 before 401):
+`app/api/admin_data_sources.py` — additions:
 ```python
 from fastapi import HTTPException, Request
 from pydantic import BaseModel
 
-from app.api.csrf import require_csrf
+from app.auth.deps import client_ip, require
 from app.config import settings
 
 RATE_LIMIT = (5, 60)
@@ -873,8 +916,13 @@ FROM dataset_registry r LEFT JOIN active_vintage a USING (dataset_key) ORDER BY 
 
 
 def actor(request: Request) -> tuple[str, str | None, str | None]:
-    who = getattr(request.state, "member_id", None) or "operator"
-    return str(who), request.client.host if request.client else None, request.headers.get("user-agent")
+    """(actor, ip, user agent) for the change log. Task I9a: the actor is the principal's
+    `account_id` — `deps.require` sets `request.state.principal` after it has checked the
+    permission, so a guarded route always has one, and `deps.client_ip` is the project's one
+    X-Forwarded-For rule (first hop, port stripped, refused unless it parses as an address; a
+    raw `request.client.host` puts the edge's address in an `inet` column instead of the caller's)."""
+    principal = request.state.principal
+    return str(principal.account_id), client_ip(request), request.headers.get("user-agent")
 
 
 LOG_SQL = text("""INSERT INTO registry_change_log (dataset_key, actor, actor_ip, actor_ua, field, old_value, new_value, reason)
@@ -885,8 +933,12 @@ class Activation(BaseModel):
     reason: str | None = None
 
 
-@router.post("/data-sources/{dataset_key}/activate")
+@router.post("/data-sources/{dataset_key}/activate", dependencies=[Depends(require("engine.activate"))])
 async def activate(dataset_key: str, body: Activation, request: Request) -> dict:
+    # `engine.activate` is admin-only and in REAUTH (Task I9a), so the caller confirmed their
+    # password in the last 10 minutes and is never an api token. `ADMIN_ACTIVATE_ENABLED` STAYS
+    # beside it: the permission says who may swap the engine, the flag says in which environment
+    # anyone may — production keeps it off until the Google licence is cleared.
     if not settings.activate_enabled:
         raise HTTPException(403, detail={"code": "ACTIVATE_DISABLED", "message": "engine activation is disabled in this environment until SP2 ships"})
     r = sync_redis()
@@ -1322,6 +1374,17 @@ Components: `MarketMapView.vue` — the only map component, since `ListingsMap.v
 - Consumes: `GET /api/admin/data-sources` rows (Task M4 shape), `POST …/activate`, `apiFetch`.
 - Produces: `toDataRows(rows: ApiRow[], ui: ActivateUi): Row[]` in the exact `cell()` shape `logic.js` renders (`hasMain, main, hasSub, sub, hasPill, pill, pillStyle, hasActions, actions[{label, go, style}]`); `useActivate(post: (key: string) => Promise<void>): ActivateUi` with `state(key) → 'idle' | 'confirm' | 'busy'`, `click(key)`, 6 s confirm window; `PILL` styles copied verbatim from `logic.js` tones (`ok`, `warn`, `bad`, `info`, `mute`).
 
+*Amended 2026-09-07 (identity Task I9a): the pattern already exists.* Wave 2a's Task I7 built the
+same thing one tab over — `frontend/src/admin/users.ts` maps `GET /api/admin/users` rows into the
+identical `cell()` shape for the Admin → Users tab, with its own pill table and per-row actions, and
+`tests/test_docs.py::test_the_admin_users_tables_match_the_api` pins its decision tables against the
+server's. **Read `admin/users.ts` before writing `admin/dataSources.ts`**: it is the reference for
+the cell shape, the pill tones and how a row's actions are derived from state, and the two files
+must not disagree about any of it. Its lesson is also worth taking: the three tables it transcribes
+from the API are written as double-quoted JSON on ONE line each precisely so a Python test can read
+them without a TypeScript parser, and the same trick is what would let this task's pill/engine
+tables be pinned against `dataset_registry`'s own enums.
+
 - [ ] **Step 1: Failing tests**
 
 ```ts
@@ -1379,19 +1442,42 @@ describe('useActivate', () => {
 - Modify: `frontend/tests/playwright.config.ts` (project `app-google`, a `backend` webServer, `fullyParallel: false`, `dependencies`), `frontend/tests/harness.ts` (`prepare()` routes the Google loader to the stub), `frontend/package.json` (`build:stubs`)
 
 **Interfaces:**
-- Consumes: FastAPI on `http://localhost:8010` started by Playwright (`poetry run uvicorn app.main:app --port 8010` with `DATABASE_URL`/`REDIS_URL` from the CI services or `docker-compose.dev.yml`, all migrations applied by `scripts/migrate.py`, `MARKET_DATA_PUBLIC=true`, `API_SECRET_KEY` from env, `GOOGLE_MAPS_BROWSER_KEY=stub`, `GOOGLE_MAPS_MAP_ID=practice-match-web`), the built `frontend/dist`.
+- Consumes: FastAPI on `http://localhost:8010` started by Playwright (`poetry run uvicorn app.main:app --port 8010` with `DATABASE_URL`/`REDIS_URL` from the CI services or `docker-compose.dev.yml`, all migrations applied by `scripts/migrate.py`, `MARKET_DATA_PUBLIC=true`, `GOOGLE_MAPS_BROWSER_KEY=stub`, `GOOGLE_MAPS_MAP_ID=practice-match-web`), the accounts `scripts/seed_persona.py` seeds (`PERSONA_PASSWORD` in the same environment), the built `frontend/dist`. *Amended 2026-09-07 (identity Task I9a): `API_SECRET_KEY` is gone from this list — see the header block below.*
 - Produces: the e2e proofs listed in the spec §10.
 
 - [ ] **Step 1: Write the spec and the `app-google` project — no Google stub yet**
 
+*Amended 2026-09-07 (identity Task I9a).* `const H = { Authorization: \`Bearer ${process.env.API_SECRET_KEY}\` }`
+cannot drive this helper any more, and **no bearer can**: `licence.decide` and `engine.activate` are
+in `permissions.REAUTH`, and an `api_token` is refused there by construction (`403 REAUTH_TOKEN`) —
+that refusal is the containment that lets a standing admin token exist at all. So the two WRITES go
+through a re-authenticated admin **session**, which this suite already has a way to get: the
+`design@practice-match.test` persona holds all four roles and `frontend/tests/harness.ts`'s
+`signInAs` posts to the real `/api/auth/signin` out of band, putting the cookies on the browser
+context. One extra call — `POST /api/auth/reauth` with `PERSONA_PASSWORD` — stamps `session.reauth_at`
+and the helper below works. `PM_API_TOKEN` (a GitHub secret; minted by an admin through
+`POST /api/admin/tokens`, see `DEPLOY.md` → Automation tokens — there is no `scripts/mint_ci_token.py`)
+is for the READ-only calls a run makes without a browser, `GET /api/admin/data-sources` and
+`GET /api/admin/data-sources/changes`.
+
 ```ts
 import { expect, test, type Page } from '@playwright/test';
-import { prepare } from '../tests/harness';
+import { PERSONA_DEFAULT_PASSWORD, prepare, signInAs } from '../tests/harness';
 
 const API = 'http://localhost:8010';
-const H = { Authorization: `Bearer ${process.env.API_SECRET_KEY}` };
+const PW = process.env.PERSONA_PASSWORD ?? PERSONA_DEFAULT_PASSWORD;
 
-async function activate(request: Page['request'], key: string) {
+/** The admin session every write below is made with: cookies from the real sign-in, the
+ *  double-submit header `deps.check_origin_and_csrf` wants, and a fresh password confirmation. */
+async function adminHeaders(page: Page): Promise<Record<string, string>> {
+  await signInAs(page, 'design');
+  const csrf = (await page.context().cookies()).find((c) => c.name === 'pm_csrf')!.value;
+  const H = { 'X-CSRF-Token': csrf, Origin: API };
+  expect((await page.request.post(`${API}/api/auth/reauth`, { headers: H, data: { password: PW } })).ok()).toBeTruthy();
+  return H;
+}
+
+async function activate(request: Page['request'], key: string, H: Record<string, string>) {
   await request.post(`${API}/api/admin/data-sources/${key}/license`, { headers: H, data: { status: 'cleared' } });
   const r = await request.post(`${API}/api/admin/data-sources/${key}/activate`, { headers: H, data: { reason: 'e2e' } });
   expect(r.ok()).toBeTruthy();
@@ -1425,7 +1511,8 @@ test.describe.serial('map engines', () => {
   });
 
   test('activating Google swaps the shell, blocks Esri tiles, enables Google layers; both maps never coexist', async ({ page, request }) => {
-    await activate(request, 'map_engine_google');
+    const H = await adminHeaders(page);
+    await activate(request, 'map_engine_google', H);
     await prepare(page);   // routes https://maps.googleapis.com/maps/api/js** to the stub
     const rec = recorder(page);
     // `?tab=market` is a legacy no-op after Browse V3 (spec D4): Browse Practices is one
@@ -1441,12 +1528,13 @@ test.describe.serial('map engines', () => {
     const layers = await (await request.get(`${API}/api/layers`)).json();
     const byKey = Object.fromEntries(layers.layers.map((l: { key: string }) => [l.key, l]));
     expect(layers.engine).toBe('google'); expect(byKey.competition_live_points.engines).toEqual(['google']);
-    const sources = Object.fromEntries((await (await request.get(`${API}/api/admin/data-sources`, { headers: H })).json()).map((r: { dataset_key: string }) => [r.dataset_key, r]));
+    const sources = Object.fromEntries((await (await request.get(`${API}/api/admin/data-sources`, { headers: { Authorization: `Bearer ${process.env.PM_API_TOKEN}` } })).json()).map((r: { dataset_key: string }) => [r.dataset_key, r]));
     expect(sources.esri_tiles.engines).toEqual(['leaflet']);   // not eligible under Google
   });
 
   test('activating Leaflet again restores the design engine', async ({ page, request }) => {
-    await activate(request, 'map_engine_leaflet');
+    const H = await adminHeaders(page);
+    await activate(request, 'map_engine_leaflet', H);
     await prepare(page);
     // `?tab=market` is a legacy no-op after Browse V3 (spec D4): Browse Practices is one
     // screen and always shows market data. The URL is kept here because it is the shape old
@@ -1550,7 +1638,7 @@ Run: `poetry run pytest tests/test_health.py tests/test_docs.py -q` → **FAIL**
 
 - Healthz: add `"map": {"engine": shell.snapshot().engine}` to the body.
 - `DEPLOY.md`: the three Google variables (`GOOGLE_MAPS_BROWSER_KEY`, `GOOGLE_MAPS_MAP_ID` on `api`; `GOOGLE_MAPS_SERVER_KEY` on `api` for the count proxy), `ADMIN_ACTIVATE_ENABLED` (production: unset/false until SP2), `MARKET_DATA_PUBLIC=true` on QA only for evaluation.
-- `docs/RUNBOOK-map-engines.md`: how to activate an engine (`POST /api/admin/data-sources/map_engine_google/activate` with the operator token; what changes within 15 s; `curl -sI / | grep -i content-security-policy` to verify), how to revert, how to read `GET /api/admin/data-sources/changes`, what a tripped Google quota looks like and what to do, key rotation.
+- `docs/RUNBOOK-map-engines.md`: how to activate an engine (`POST /api/admin/data-sources/map_engine_google/activate` as a re-authenticated admin — *amended 2026-09-07, identity Task I9a: "with the operator token" is wrong twice over; `engine.activate` is admin-only and in `permissions.REAUTH`, so no bearer can reach it. `docs/RUNBOOK-identity.md` is the shape to follow, and its §0 has the curl preamble for a session plus `POST /api/auth/reauth`*; what changes within 15 s; `curl -sI / | grep -i content-security-policy` to verify), how to revert, how to read `GET /api/admin/data-sources/changes`, what a tripped Google quota looks like and what to do, key rotation.
 - Census plan: API contract `/api/layers` → `{ "engine": …, "gate": …, "layers": [ … ] }`; B5 test snippets read `r.json()["layers"]`; Task B6 note: `map_config.LEAFLET` follows the cleared basemap row (`esri_tiles` or `osm_tiles`) when SP2 wires the Data tab.
 - Google plan: status banner under the title — "Superseded in part by the Map-engines plan (2026-09-05): G2's engine is implemented as `frontend/src/map/engines/google.ts` behind `MapEngine`; G5 (`009_google_registry.sql`, `google_maps_js`, the tile-blocking trigger) and G8 (Leaflet removal) are replaced by registry row `map_engine_google` and the eligibility matrix; G1, G3, G4, G6-stub, G7 stand and are executed from Map-engines Tasks M7/M8."
 
@@ -1570,7 +1658,7 @@ Run: `poetry run pytest tests/test_health.py tests/test_docs.py -q` → all pass
 | E2 | `shell.snapshot()` reads Postgres; if it ran per request the shell would regress. | Medium | 15 s TTL, never raises, keeps the last snapshot (M2 tests count `_load_snapshot` calls). |
 | E3 | An `X-PM-Gate` value computed from the snapshot can lag a decision by up to 15 s. | Low | Accepted — inside the spec's 60 s gate; e2e waits 15.5 s. |
 | E4 | The e2e activation tests mutate shared state and run in parallel with the visual project. | Medium | `fullyParallel: false`, `dependencies: ['app']`, serial describe, final test restores Leaflet (M7). |
-| E5 | `require_csrf` before `require_operator` means an unauthenticated cookie request sees 403 CSRF, not 401. | Info | Intended: CSRF failures never reveal whether a session is valid. |
+| E5 | `require_csrf` before `require_operator` means an unauthenticated cookie request sees 403 CSRF, not 401. | Info | Intended: CSRF failures never reveal whether a session is valid. *Amended 2026-09-07 (identity Task I9a): the ordering is no longer a dependency list to get right — `deps.require` resolves the principal, runs `check_origin_and_csrf`, then checks the matrix, so the CSRF refusal comes first by construction and for a cookie session only. A request with **no** credential at all is not a CSRF failure: `check_origin_and_csrf` returns immediately for a `None` principal, and the answer is the generic 401.* |
 | E6 | AdvancedMarker anchors content bottom-centre; Leaflet anchors by `iconAnchor`. | Medium | The Google engine's wrapper `transform` reproduces the anchor (M5 test asserts `translate(0px, 10px)` for a centred 20 px dot). |
 | E7 | Fixture rows in the Admin tab stay until SP2 wires the API; the pixel gate would break if the engine rows were injected into fixtures. | Low | M6 delivers the mapping only; SP2 flips the tab to live rows. |
 | E8 | The Google plan's G5 trigger would have blocked `osm_tiles` permanently. | Medium | Dropped; eligibility (`engines`) handles it without mutating licence status (M1). |
