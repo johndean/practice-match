@@ -995,6 +995,40 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
     expect(c2.renderVals().form).toMatchObject({ error: true, errorText: 'Your address is verified. Sign in to complete your access request.' });
   });
 
+  // A9.1 (controller amendment A-S5, 2026-09-08). The applicant's question is a rendered element
+  // fed only by `applicationsMe()`, which the reference never calls — it has no adapter — so the
+  // oracle's two targets differed by one line of 13 px text and the card's height, and no
+  // `?props=` value could close the gap. `startAnswerNote` is that value, by the same mechanism
+  // A8.8b gave the sign-in notices: declared in the design's own `data-props`, read once by
+  // `componentDidMount`, and never passed by the app (which reaches the note by fetching it).
+  it('the startAnswerNote prototype prop puts the applicant\'s question on the answer card, which is how gate-answer is photographed (A9.1)', () => {
+    const c2: any = new Component({ startGate: 'answer', startAnswerNote: 'Which practice do you work at now, and in what role?' });
+    c2.componentDidMount();
+    expect(c2.state).toMatchObject({ screen: 'gate', gate: 'answer' });
+    expect(c2.renderVals().gateAnswer).toBe(true);
+    expect(c2.renderVals().answerForm.note).toBe('Which practice do you work at now, and in what role?');
+    // It writes ONLY the note: the answer text, the error and the application id are the
+    // applicant's own and are not props (the reference never submits).
+    expect(c2.state.answer).toEqual({ text: '', error: '', applicationId: '', note: 'Which practice do you work at now, and in what role?' });
+  });
+
+  it('without startAnswerNote the answer card renders no note at all, so the 28 approved states cannot move (A9.1)', () => {
+    for (const props of [{ startGate: 'answer' }, { startGate: 'answer', startAnswerNote: '' }, {}]) {
+      const c2: any = new Component(props);
+      c2.componentDidMount();
+      expect(c2.state.answer.note, JSON.stringify(props)).toBe('');
+      expect(c2.renderVals().answerForm.note, JSON.stringify(props)).toBe('');
+    }
+  });
+
+  it('startAnswerNote never overrides the note the APP fetched — the app passes none (A9.1)', async () => {
+    const c2: any = new Component({ auth: fakeAuth({ applicationsMe: vi.fn(() => Promise.resolve({ current: { id: 'app-9', info_request: 'What is your current role?', fields: {} }, history: [] })) }), me: { ...ACCOUNT, state: 'needs_review' } });
+    c2.componentDidMount();
+    await Promise.resolve(); await Promise.resolve();
+    expect(c2.state).toMatchObject({ gate: 'answer' });
+    expect(c2.state.answer).toMatchObject({ applicationId: 'app-9', note: 'What is your current role?' });
+  });
+
   it('a /verify landing posts its token on arrival and shows the notice, or the expired card (A8.3, spec §3 rows 3a/3b)', async () => {
     const auth = fakeAuth();
     const ok: any = new Component({ auth });

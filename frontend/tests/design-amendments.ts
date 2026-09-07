@@ -861,8 +861,55 @@ const A8_8b: Amendment = {
 // reference never reaches (it has no adapter). Recorded here so the gap in the numbering is a
 // decision rather than an omission.
 
+// ---------------------------------------------------------------------------------------
+// A9.1 — controller amendment A-S5 (2026-09-08), on the S5 implementer's NEEDS_CONTEXT.
+//
+// The applicant-answer card renders the reviewer's question as its own element
+// (`{{ answerForm.note }}`, 13 px / line-height 1.5 / margin-top 4 px), and A8.3b feeds it from
+// `GET /api/applications/me` — a call guarded by `this.props.auth`, which the REFERENCE does not
+// have. Measured against the real `Component`: the app renders the seeded `info_request` and the
+// reference renders `""`, so the two targets differ by one line of text and ~23.5 px of card
+// height, and `maxDiffPixels: 0` can never pass. Nothing in the design's six prototype props
+// carries an application, and the note is not an input, so no step could type it either.
+//
+// The ruling is the mechanism A8.8b already established for the sign-in notices rather than a
+// fixture (which would put invented copy in the shipped app) or a demotion (which would drop an
+// approved state John counted): one more DECLARED prop. It defaults to `""`, so every one of the
+// 28 approved states renders exactly what it rendered before.
+// ---------------------------------------------------------------------------------------
+const S5 = {
+  date: '2026-09-08',
+  ruling: 'A-S5 (2026-09-08): the reference reaches the applicant-answer card\'s note through a declared prototype prop, `startAnswerNote`, exactly as `startNotice` reaches the sign-in notices; the app never passes it.'
+};
+
+/** A9.1a — the declaration, spliced immediately after A8.8b's `startNotice` with the same
+ *  `&quot;` escaping as its neighbours. `app.setup.js` declares it too, because
+ *  `app-generated.test.ts` requires this file to declare everything the design does; the app
+ *  never passes it (D-I8-2). */
+const STARTANSWERNOTE_ENTRY = '&quot;startAnswerNote&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Applicant answer note on load&quot;}';
+const A9_1a: Amendment = {
+  id: 'A9.1a', ...S5,
+  find: STARTNOTICE_ENTRY, replace: `${STARTNOTICE_ENTRY},${STARTANSWERNOTE_ENTRY}`, count: 1
+};
+
+/** A9.1b — `componentDidMount` writes it into the answer card's note, one line after the
+ *  `startNotice` line it mirrors. It sets the NOTE only: the answer text, the error and the
+ *  application id belong to a real applicant, and the reference never submits. It is also the
+ *  last thing the bootstrap does with a prop, so the APP — which passes no `startAnswerNote` —
+ *  keeps whatever `applicationsMe()` fetched. */
+const A9_1b: Amendment = {
+  id: 'A9.1b', ...S5,
+  find: '    if (this.props.startNotice) this.setState({ screen: "gate", gate: "signin", formNotice: this.props.startNotice });\n'
+    + '    if (this.state.gate === "verify"',
+  replace: '    if (this.props.startNotice) this.setState({ screen: "gate", gate: "signin", formNotice: this.props.startNotice });\n'
+    + '    if (this.props.startAnswerNote) this.setState({ answer: Object.assign({}, this.state.answer, { note: this.props.startAnswerNote }) });\n'
+    + '    if (this.state.gate === "verify"',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
-    A7_3, A7_4, A8_1a, A8_1b, A8_1c, A8_2, A8_3a, A8_3b, A8_4a, A8_4b, A8_5, A8_6, A8_7, A8_8a, A8_8b];
+    A7_3, A7_4, A8_1a, A8_1b, A8_1c, A8_2, A8_3a, A8_3b, A8_4a, A8_4b, A8_5, A8_6, A8_7, A8_8a, A8_8b,
+    A9_1a, A9_1b];
 }

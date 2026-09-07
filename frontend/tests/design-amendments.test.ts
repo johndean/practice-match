@@ -78,11 +78,15 @@ describe('local design amendments (spec D15)', () => {
     // edit carries a letter suffix, exactly as A5.3a/A6.3a/A6.4a do.
     'A7.3', 'A7.4',
     'A8.1a', 'A8.1b', 'A8.1c', 'A8.2', 'A8.3a', 'A8.3b', 'A8.4a', 'A8.4b', 'A8.5', 'A8.6', 'A8.7', 'A8.8a', 'A8.8b',
+    // A-S5 (Task S5): the one seam the oracle could not close from outside the design — the
+    // applicant-answer card's note, which only `applicationsMe()` fed and the reference never
+    // calls. One more declared prototype prop, exactly as A8.8b did for the sign-in notices.
+    'A9.1a', 'A9.1b',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(66);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(68);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -117,7 +121,7 @@ describe('local design amendments (spec D15)', () => {
     const amended = readFileSync(AMENDED, 'utf8');
     const attr = /<script type="text\/x-dc" data-dc-script[^>]*data-props="([^"]*)"/.exec(amended)!;
     const declared = JSON.parse(attr[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) as Record<string, unknown>;
-    expect(Object.keys(declared)).toEqual(['$preview', 'prototypeBar', 'startScreen', 'startViewport', 'startGate', 'me', 'startNotice', 'layerPalette']);
+    expect(Object.keys(declared)).toEqual(['$preview', 'prototypeBar', 'startScreen', 'startViewport', 'startGate', 'me', 'startNotice', 'startAnswerNote', 'layerPalette']);
     // A8.8a widened the enum to every gate value the account screens add; the shape is A5.6's.
     expect(declared.startGate).toEqual({
       editor: 'enum',
@@ -130,9 +134,16 @@ describe('local design amendments (spec D15)', () => {
     expect(declared.me).toEqual({
       editor: 'json', default: null, tsType: 'object', section: 'Prototype', label: 'Signed-in account'
     });
-    // The pristine bundle declares neither — both exist only as local amendments.
+    // A9.1a (A-S5): the applicant-answer card's note, the reference's only way to it. Same shape
+    // as A8.8b's `startNotice`, spliced immediately after it, and defaulting to `""` — which is
+    // what keeps the 28 approved states on their pixels (an empty note renders nothing).
+    expect(declared.startAnswerNote).toEqual({
+      editor: 'text', default: '', tsType: 'string', section: 'Prototype', label: 'Applicant answer note on load'
+    });
+    // The pristine bundle declares none of the three — all exist only as local amendments.
     expect(pristine).not.toContain('startGate');
     expect(pristine).not.toContain('&quot;me&quot;');
+    expect(pristine).not.toContain('startAnswerNote');
   });
 
   // A6/A7 — the launch-removal list and the sign-in copy, asserted on the OUTPUT: every
