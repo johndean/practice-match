@@ -30,7 +30,7 @@ Every task's requirements implicitly include this section.
 
 ### The programme's standing rules
 
-- **(a) 100 % lines AND branches, backend.** Every task's local gate is `poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov-fail-under=100`. `scripts/` is in the coverage scope for this plan because two of its four deliverables live there. **→ John (pre-flight I6):** `--cov=scripts` is a *new* scope — `main`'s CI runs `--cov=app … --cov-fail-under=90` and Wave 2a's runs `--cov=app --cov-branch --cov-fail-under=100`; neither includes `scripts/`, so `coverage.xml` carries no `scripts/*.py` rows and `diff-cover … --fail-under=100` cannot enforce the two new modules. The default applied here is to **add `--cov=scripts` to `.github/workflows/quality.yml` in Task L5**, so the gate that holds locally also holds on every PR. The Preconditions establish the baseline first: if `scripts/migrate.py` is not already at 100 % lines and branches, Task L1's own gate would fail before this plan has written a line — that is a STOP, not something to work around.
+- **(a) 100 % lines AND branches, backend.** Every task's local gate is `poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov-fail-under=100`. `scripts/` is in the coverage scope for this plan because two of its four deliverables live there. **→ John (pre-flight I6), resolved 2026-09-07:** `--cov=scripts` was a *new* scope when this plan was written — `main`'s CI then ran `--cov=app` at a 90 % floor and Wave 2a's `--cov=app --cov-branch` at 100 %, neither including `scripts/`, so `coverage.xml` carried no `scripts/*.py` rows and `diff-cover … --fail-under=100` could not enforce the two new modules. P14 (Task 14 Step 8) has since made `main`'s CI gate exactly this command, so Task L5 has nothing left to add and must not lower the floor. The Preconditions establish the baseline first: if `scripts/migrate.py` is not already at 100 % lines and branches, Task L1's own gate would fail before this plan has written a line — that is a STOP, not something to work around.
 - **(b) 100 % lines, branches, functions and statements, frontend.** `cd frontend && npx vitest run --coverage`. The documented `coverage.exclude` list in `frontend/vite.config.ts` is **not widened** by this plan; the new module `frontend/src/listings/load.ts` is covered at 100 %.
 - **(c) No suppressions.** No `# pragma: no cover`, no `# noqa`, no `# type: ignore`, no `@ts-expect-error`, no `@ts-nocheck`, no `assert` used as control flow in production code. A cast at a typed boundary (`x as unknown as T`) is not a suppression and is allowed where it is documented; a suppression comment is not.
 - **(d) `poetry run mypy app --strict`** — 0 errors. **`poetry run ruff check app tests scripts`** — 0 findings, on ruff's default rule set plus `extend-select = ["I", "RUF"]`, with **no ignores added**.
@@ -3181,16 +3181,16 @@ In `tests/test_docs.py`, add one entry to `REQUIRED_CI_COMMANDS`, immediately af
     "--cov=scripts",   # seed listings: scripts/prepare_photos.py and scripts/seed_listings.py
 ```
 
-Run: `poetry run pytest tests/test_docs.py -v`
-Expected: FAIL — the workflow does not contain `--cov=scripts`.
+> **Superseded 2026-09-07 (P14 Task 14 Step 8): `main` is already at the 100 % `app`+`scripts` branch gate — `poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov-report=xml --cov-fail-under=100` — so this step has nothing to add and must NOT lower it.** P14 closed the two gaps that had kept the floor at 90 % (`app/db.py`'s other-loop disposal arm and `scripts/migrate.py`'s `__main__` guard) and pinned the command in `quality.yml`, `CLAUDE.md` and the quality policy together; `tests/test_docs.py` now asserts `--cov-fail-under=90` appears in none of the three, so the edit this step originally prescribed is a RED test rather than a silent regression. Check `quality.yml` before doing anything here; if it already carries the line below, skip to the next step.
 
-In `.github/workflows/quality.yml`, extend the backend coverage run (line 64):
+Run: `poetry run pytest tests/test_docs.py -v`
+Expected: PASS already — the workflow contains `--cov=scripts`. If it somehow does not, restore exactly:
 
 ```yaml
-      - run: poetry run pytest -q -W error --cov=app --cov=scripts --cov-report=xml --cov-fail-under=90
+      - run: poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov-report=xml --cov-fail-under=100
 ```
 
-> The `--cov-fail-under` number is **not** changed here. Raising the repository-wide floor is a separate decision with its own blast radius; what this plan needs is for `scripts/` to appear in `coverage.xml` so `diff-cover … --fail-under=100` enforces every changed line of the two new modules on every PR. The 100 % lines-and-branches gate stays as the plan's own per-task command.
+> The floor is deliberately at 100 % now, not 90 %: what this plan needed was for `scripts/` to appear in `coverage.xml` so `diff-cover … --fail-under=100` enforces every changed line of the two new modules on every PR, and that is already true. The plan's own per-task 100 % lines-and-branches command is unchanged.
 
 Run: `poetry run pytest tests/test_docs.py -v`
 Expected: PASS.

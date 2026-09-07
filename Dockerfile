@@ -58,7 +58,10 @@ COPY --from=coming-soon-build /work/coming-soon/dist/ ./coming-soon/dist/
 # no stamp (a local scripts/verify-image.sh, or a git-connected Railway build). It must
 # stay PAIRED with a source that is always present: a COPY whose only source matches
 # nothing fails outright ("COPY failed: no source files were specified", measured
-# 2026-09-07). pyproject.toml is the pairing — already copied above, same content, so this
+# 2026-09-07 on the CLASSIC builder, which is what a local scripts/verify-image.sh uses;
+# Railway builds with BuildKit, where an empty wildcard is tolerated rather than fatal — so
+# the paired form is never worse there, and on Railway the stamp is always present anyway).
+# pyproject.toml is the pairing — already copied above, same content, so this
 # adds nothing to the image, and being the last layer it never invalidates poetry install.
 COPY pyproject.toml BUILD_SH[A] ./
 # Nothing writes under /app at runtime (uvicorn and the Celery worker keep no
