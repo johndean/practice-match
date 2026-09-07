@@ -33,10 +33,17 @@ describe('resolveTargets', () => {
     const api = (env: NodeJS.ProcessEnv = {}) =>
       resolveTargets(env, ports).webServer.find((w) => w.url.endsWith('/api/healthz'));
 
-    it('migrates and seeds the persona before it serves, from the repository root', () => {
+    // A-S5.1 (John's ruling, 2026-09-08): `reset_rate_limits.py` joins the chain, between the
+    // migration and the seed. The limits themselves do not move — they are security controls and
+    // `tests/api/test_auth.py` still proves each refusal — but the LOCAL environment's counters
+    // are cleared before the API serves, so consecutive suite runs are independent instead of the
+    // third one meeting `FORGOT_IP` in the middle of a screenshot. The script refuses anywhere but
+    // `ENVIRONMENT=test` against a loopback Redis, so this line can never reach QA or production;
+    // in CI it runs and deletes nothing (a fresh Redis service per job).
+    it('resets the local rate limits and seeds the persona before it serves, from the repository root', () => {
       const w = api()!;
       expect(w.command).toBe(
-        'poetry run python scripts/migrate.py && poetry run python scripts/seed_persona.py && poetry run uvicorn app.main:app --port 8017'
+        'poetry run python scripts/migrate.py && poetry run python scripts/reset_rate_limits.py && poetry run python scripts/seed_persona.py && poetry run uvicorn app.main:app --port 8017'
       );
       expect(w.cwd).toBe('../..');
       expect(w.url).toBe('http://localhost:8017/api/healthz');

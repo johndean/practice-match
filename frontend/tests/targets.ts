@@ -83,10 +83,19 @@ export function resolveTargets(env: NodeJS.ProcessEnv, ports: { app: number; ref
   const apiEnv: Record<string, string> = {};
   for (const [name, value] of Object.entries(API_ENV_DEFAULTS)) apiEnv[name] = env[name] ?? value;
   // `cwd` is the repository root (Playwright resolves it against this config's directory), which
-  // is where `poetry` and `app.main` resolve. Migrate, then seed the persona, then serve: the
-  // health check below is what Playwright waits on, so the suite never races the seed.
+  // is where `poetry` and `app.main` resolve. Migrate, clear the local rate-limit counters, seed
+  // the persona, then serve: the health check below is what Playwright waits on, so the suite
+  // never races any of the three.
+  //
+  // A-S5.1 (John's ruling, 2026-09-08): `reset_rate_limits.py` is what makes consecutive LOCAL
+  // runs independent. The limits themselves are untouched — `SIGNIN_IP` is still 30 per fixed
+  // 15-minute window and `FORGOT_IP` still 10 per hour, and `tests/api/test_auth.py` still proves
+  // each refusal — but a suite that spends sixteen sign-ins, three forgot calls and one sign-up
+  // per run would otherwise have met `FORGOT_IP` on its third run of the hour, in the middle of a
+  // screenshot. The script refuses unless `ENVIRONMENT` is exactly `test` AND Redis is on
+  // loopback, so this line cannot reach QA or production; in CI it runs and deletes nothing.
   const api: WebServerSpec = {
-    command: `poetry run python scripts/migrate.py && poetry run python scripts/seed_persona.py && poetry run uvicorn app.main:app --port ${ports.api}`,
+    command: `poetry run python scripts/migrate.py && poetry run python scripts/reset_rate_limits.py && poetry run python scripts/seed_persona.py && poetry run uvicorn app.main:app --port ${ports.api}`,
     url: `http://localhost:${ports.api}/api/healthz`,
     cwd: '../..',
     timeout: 90_000,
