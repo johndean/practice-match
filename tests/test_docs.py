@@ -239,6 +239,20 @@ def test_perf_workflow_targets_qa_with_thresholds():
     assert block and block.group(1) == k6, "the policy's §5 block and scripts/k6-smoke.js must stay byte-identical"
 
 
+def test_policy_p95_gate_reflects_the_re_measure_rule():
+    """Task 15 (2026-09-08): `test_interest_stored_path_p95_within_budget` failed on a stalled
+    shared runner while the identical commit passed everywhere else. The fix is `gate_p95`: every
+    p95 gate measures once and, only if that first p95 is over budget, measures once more and
+    asserts the second — both sample sets printed either way — so a regression still fails twice
+    but a stalled runner does not. The policy row and the test module must both say so."""
+    policy = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-quality-and-performance-policy.md").read_text()
+    assert ("when the first p95 is over budget the endpoint is measured once more and the second "
+            "decides (a regression fails twice; a stalled shared runner does not), both sample sets "
+            "printed") in policy
+    latency = (ROOT / "tests" / "perf" / "test_api_latency.py").read_text()
+    assert "from tests.perf.gate import gate_p95, p95_of" in latency, "test_api_latency.py must import gate_p95 from tests.perf.gate"
+
+
 def test_deploy_md_documents_the_site_mode_matrix():
     text = (ROOT / "DEPLOY.md").read_text()
     assert "SITE_MODE" in text and "coming_soon" in text
