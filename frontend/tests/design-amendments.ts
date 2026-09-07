@@ -143,6 +143,20 @@ const A3: Amendment = {
   find: 'View full market report', replace: 'View full listing', count: 1
 };
 
+/** A4 — Compare hides the "What this means" card (spec D21, John: "if user clicks + Compare
+ *  that action 'closes' the 'What this means card' and when X Compare is clicked it closes
+ *  the compare and 'What this means card' appears again"). A literal, not rule-derived, entry:
+ *  it edits the design's SCRIPT (the `insightOpen` IIFE inside `marketVals`), not the template,
+ *  so — like A2 — it is exempt from A1's "inside a template region" check. One condition is
+ *  added to the existing expression; nothing else about `insightOpen`'s gating (a value layer,
+ *  an undismissed member, the mapW >= 810 width gate) changes. */
+const A4: Amendment = {
+  id: 'A4', date: '2026-09-07',
+  ruling: "if user clicks + Compare that action closes the 'What this means' card; when X Compare is clicked it closes the compare and the card appears again (spec D21)",
+  find: '        return !!valueLayer && !s.mdInsightOff && s.mdLegendOff !== true && mapW >= 810;',
+  replace: '        return !!valueLayer && !s.mdInsightOff && s.mdLegendOff !== true && !s.mdCompareOpen && mapW >= 810;', count: 1
+};
+
 export function amendments(): Amendment[] {
-  return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3];
+  return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4];
 }

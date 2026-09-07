@@ -2129,7 +2129,7 @@ class Component extends DCLogic {
         const vw = s.vw || (typeof window !== "undefined" ? window.innerWidth : 1440);
         // map column ≈ viewport − results rail − open detail panel
         const mapW = vw - 470 - (s.mdSel ? 366 : 0);
-        return !!valueLayer && !s.mdInsightOff && s.mdLegendOff !== true && mapW >= 810;
+        return !!valueLayer && !s.mdInsightOff && s.mdLegendOff !== true && !s.mdCompareOpen && mapW >= 810;
       })(),
       dismissInsight: () => this.setState({ mdInsightOff: true }),
       showDrive: !!sel,

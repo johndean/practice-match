@@ -143,6 +143,26 @@ test.describe('smoke', () => {
     const elapsed = Date.now() - started;
     expect(elapsed, `first map paint took ${elapsed}ms`).toBeLessThanOrEqual(1500);
   });
+
+  // A4 (spec D21, John: "if user clicks + Compare that action closes the 'What this means'
+  // card, and when X Compare is clicked it closes the compare and the card appears again").
+  // At 1440×940 (this project's default viewport) the floating interpretation card's own
+  // dismiss button — `button[aria-label="Dismiss interpretation"]`, unique to that card, since
+  // the docked panel's own "What this means" heading carries no such button — disappears while
+  // Compare is open and returns when the same toggle (whose note reads "close" while open) is
+  // clicked again.
+  test('opening Compare hides the floating "What this means" card; closing Compare brings it back (A4, spec D21)', async ({ page }) => {
+    await prepare(page);
+    await booted(page);
+    await jump(page, 'Browse');
+    await waitMap(page);
+    const dismiss = page.locator('button[aria-label="Dismiss interpretation"]');
+    await expect(dismiss).toBeVisible();
+    await click(page, 'Compare');
+    await expect(dismiss).toHaveCount(0);
+    await click(page, 'Compare');
+    await expect(dismiss).toBeVisible();
+  });
 });
 
 // ---------------------------------------------------------------------------------------

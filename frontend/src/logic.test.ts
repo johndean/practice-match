@@ -126,4 +126,27 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     c.renderVals().mob.selectMarker('p2');
     expect(c.state).toMatchObject({ screen: 'detail', detailId: 'p2' });
   });
+
+  // A4 (spec D21, John: "if user clicks + Compare that action closes the 'What this means'
+  // card, and when X Compare is clicked it closes the compare and the card appears again").
+  // insightOpen already requires a value layer, an undismissed member and a wide-enough map
+  // column (mapW >= 810, hence vw: 1440 here); A4 adds "and Compare is not open". Before A4,
+  // toggleCompare had no effect on insightOpen at all.
+  it('insightOpen hides while Compare is open and returns when Compare closes; dismissInsight wins regardless (A4, spec D21)', () => {
+    c.setState({ vw: 1440 });
+    expect(c.renderVals().md.insightOpen).toBe(true);
+
+    c.renderVals().md.toggleCompare();
+    expect(c.state.mdCompareOpen).toBe(true);
+    expect(c.renderVals().md.insightOpen).toBe(false);
+
+    c.renderVals().md.toggleCompare();
+    expect(c.state.mdCompareOpen).toBe(false);
+    expect(c.renderVals().md.insightOpen).toBe(true);
+
+    c.renderVals().md.dismissInsight();
+    expect(c.renderVals().md.insightOpen).toBe(false);
+    c.renderVals().md.toggleCompare();
+    expect(c.renderVals().md.insightOpen).toBe(false);
+  });
 });
