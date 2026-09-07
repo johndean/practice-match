@@ -26,6 +26,7 @@ REQUIRED_CI_COMMANDS = (
     "bash tests/scripts/test_start_sh.sh",
     "bash tests/scripts/test_verify_image_sh.sh",
     "bash tests/scripts/test_deploy_guard.sh",
+    "bash tests/scripts/test_deploy_archive.sh",
     "bash tests/scripts/test_verify_deploy.sh",
     "diff-cover coverage.xml --compare-branch=origin/main --fail-under=100",
     "npx vue-tsc --noEmit",
