@@ -233,6 +233,16 @@ describe('local design amendments (spec D15)', () => {
   // `| A2.2 |`–`| A2.5 |` rows. The file held eight rows and the test read four, so an `A2.6`
   // row with no code (or an `A2.6` amendment with no row) was invisible and the duplicate guard
   // covered only the top-level ids. The id set is now compared in full, both ways.
+  // M4 (review round 1): the rows had drifted out of order — A5.7 above A5.6, A4 below A5.x, the
+  // A6/A7 block appended after everything. The set case below could not see it, and the file is
+  // read by people. The order that matters is the order the edits are APPLIED, which is also the
+  // order the ids are pinned in above.
+  it('LOCAL_AMENDMENTS.md lists its rows in the order the amendments are applied', () => {
+    const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
+    const rows = [...md.matchAll(/^\|\s*(A[\w.]+)\s*\|/gm)].map((m) => m[1]);
+    expect(rows).toEqual([...new Set(amendments().map((a) => (a.id.startsWith('A1.') ? 'A1' : a.id)))]);
+  });
+
   it('LOCAL_AMENDMENTS.md carries exactly one table row per amendment id (A1 collapsed to one)', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
     // `[\w.]`, not `[\d.]`: A-I8's ids include a letter suffix where one ruling needed two edits

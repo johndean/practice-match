@@ -55,7 +55,23 @@ export function useStateRouteSync(c: StatefulComponent, router: Router): void {
       if (pending) {
         if (!c.state.auth) return;                  // keep the deep link visible while the gate is shown
         const p = pending; pending = null;
-        if (needsPatch(c.state, p)) { c.setState(p); return; }   // let the settled state retrigger this watcher
+        // The remembered link is permission-checked HERE, not only where it was typed (review
+        // round 1, G): the principal is unknowable at the moment a signed-out visitor asks for a
+        // route and knowable the moment auth arrives, so this is the only place the matrix can
+        // have its say over a deep link. `guard` with `auth` true returns either the patch itself
+        // or the `unavailable` gate, and `pending` in neither case — so nothing is remembered a
+        // second time and the URL settles instead of being held open forever.
+        const g = guard(c.state, p, { me: useMe().me.value });
+        if (needsPatch(c.state, g.apply)) {
+          const before = stateToRoute(c.state);
+          c.setState(g.apply);
+          // Return only when applying it MOVED the route: that move is what retriggers this
+          // watcher, which then navigates from the settled state rather than a transitional one.
+          // A refusal does not move it — the state was already showing a gate and stays on one,
+          // so `stateToRoute` is `/` before and after and no retrigger would ever come — and the
+          // URL still says the route that was just refused. Fall through and settle it here.
+          if (!sameLocation(before, stateToRoute(c.state))) return;
+        }
       }
       const loc = stateToRoute(c.state);
       const cur = router.currentRoute.value;

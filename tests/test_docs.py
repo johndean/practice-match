@@ -509,6 +509,44 @@ def test_the_playwright_persona_password_default_matches_seed_persona():
     assert presented.group(1) == seeded.group(1)
 
 
+def test_claude_md_does_not_claim_v2_byte_identity_after_the_launch_removal():
+    """Review round 1, I3. Two sentences in CLAUDE.md outlived their truth: the thirteen non-Browse
+    screens WERE byte-identical to V2 from Task V13 until Task I8a's launch removal (A6, ruled
+    D-I8-6) took the prototype jump bar off the top of every screen, and `baseline-manifest.json`
+    held the V1-era V2 hashes until the same commit re-froze it. Nothing pinned either, so both
+    went stale silently — which is the whole failure mode this file exists to prevent.
+
+    V2 itself is unaffected: it remains the pre-V3 oracle a suspected regression is diffed
+    against, which is a different job from being what the gates compare to."""
+    text = (ROOT / "CLAUDE.md").read_text()
+    assert "byte-identical to V2 again, hashes and all, **until the launch removal**" in text, (
+        "CLAUDE.md must date the V2 byte-identity claim to before the launch removal"
+    )
+    assert "V1-era V2 hashes" not in text, "CLAUDE.md still says the manifest holds the V1-era V2 hashes"
+    assert "post-launch-removal hashes" in text, "CLAUDE.md does not say what the manifest holds now"
+    assert "D-I8-6" in text, "the ruling that moved the baselines is not cited"
+    # …and the gate line, which made the same claim without a date.
+    gate = next(line for line in text.splitlines() if line.startswith("- **Verification gate"))
+    assert "until the launch removal" in gate, gate
+    # V2's actual job survives.
+    assert "remains the **pre-V3 oracle**" in text
+
+
+def test_claude_md_counts_the_five_prototype_props_and_says_which_are_read():
+    """Review round 1, M5. The launch-removal section said "the four prototype props" after A5.7
+    added a fifth, and described `prototypeBar` as one of the reference's ways into a state — but
+    A6.4b removed the only expression that ever read it, so it is declared for the parity check in
+    `app-generated.test.ts` and for nothing else."""
+    text = (ROOT / "CLAUDE.md").read_text()
+    assert "All five prototype props stay **declared**" in text
+    assert "the four prototype props" not in text
+    assert "`prototypeBar` is declared for that parity check alone" in text
+    # The five, by name, in the section that lists them.
+    section = text.split("## Launch-removal list")[1]
+    for prop in ("prototypeBar", "startScreen", "startViewport", "startGate", "me"):
+        assert f"`{prop}`" in section, prop
+
+
 def _harness_personas() -> dict[str, dict[str, object]]:
     """`frontend/tests/harness.ts`'s `PERSONAS`, read without a TypeScript parser.
 

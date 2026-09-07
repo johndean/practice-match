@@ -185,7 +185,13 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
     expect(md).toContain('spec D15');
     // Step 5 read 13 SAME / 0 MOVED once A1 paired by (tag, text, size) and the 28 px mobile
     // asking price came back, so the claim is all thirteen — not the twelve of the first pass.
-    expect(md).toContain('thirteen non-Browse screens are byte-identical to V2 again');
+    //
+    // Task I8a's launch removal (A6, ruled D-I8-6) then ENDED that byte-identity by taking the
+    // prototype jump bar off the top of every screen, so CLAUDE.md's sentence is dated rather
+    // than dropped (review round 1, I3). `tests/test_docs.py` pins the dating; this still pins
+    // the half that is A1's and does not expire — that A1's own effect is not understated.
+    expect(md).toContain('thirteen non-Browse screens');
+    expect(md).toContain('byte-identical to V2 again');
     expect(md).not.toContain('twelve of the thirteen');
     expect(md).not.toContain('option A makes it the proof');
     expect(md).not.toContain('V3 deliberately drops');

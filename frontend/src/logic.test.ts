@@ -224,6 +224,30 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     expect(c2.state).toMatchObject({ auth: true, screen: 'browse', viewport: 'mobile' });
   });
 
+  // Review round 1, I1. A5.4's `active` branch used to set `screen: "browse"` unconditionally,
+  // which silently overrode `startScreen` — so the REFERENCE, whose only screen driver is that
+  // prop, could not be signed in and put on a named screen at the same time. (The harness worked
+  // around it by clicking the design's header nav, which was an undeclared deviation from the
+  // ruled A-I8.2 and is now deleted.) A set `startScreen` wins; the app never passes it, so
+  // nothing about the app changes — it still lands on Browse and lets the router's pending deep
+  // link move it.
+  it('a set startScreen wins over the account\'s landing screen, so the reference can be signed in AND placed (A5.4, I1)', () => {
+    for (const screen of ['browse', 'detail', 'requests', 'seller', 'admin']) {
+      const c2: any = new Component({ startScreen: screen, me: ACTIVE });
+      c2.componentDidMount();
+      expect(c2.state, screen).toMatchObject({ auth: true, screen, email: ACTIVE.email });
+      expect(c2.state.me, screen).toEqual({ name: ACTIVE.name, role: ACTIVE.role, initials: ACTIVE.initials });
+    }
+  });
+
+  it('with no startScreen — the app\'s case — an active account still lands on Browse (A5.4, I1)', () => {
+    for (const props of [{ me: ACTIVE }, { me: ACTIVE, startScreen: '' }, { me: ACTIVE, startScreen: 'gate' }]) {
+      const c2: any = new Component(props);
+      c2.componentDidMount();
+      expect(c2.state, JSON.stringify(props)).toMatchObject({ auth: true, screen: 'browse' });
+    }
+  });
+
   it('startScreen still signs the prototype in without any account, exactly as the design shipped it', () => {
     const c2: any = new Component({ startScreen: 'admin' });
     c2.componentDidMount();

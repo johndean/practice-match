@@ -120,6 +120,17 @@ describe('reference-server.mjs', () => {
     expect(await (await fetch(`${base}/`)).text(), 'a request without ?props= still serves the file verbatim').toBe(DESIGN);
   });
 
+  // M2: the runtime re-fetches `location.href` after boot, so the URL that carries an OBJECT
+  // value has to answer identically the second time too — otherwise `updateHtml` would hand React
+  // a different template than the one it mounted.
+  it('answers the same bytes on a second request for a ?props= URL carrying an object', async () => {
+    const query = `props=${encodeURIComponent(JSON.stringify({ me: { email: 'seller@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved buyer and seller · StartUp Club', initials: 'RM', state: 'active', roles: ['buyer', 'seller'] } }))}`;
+    const first = await (await fetch(`${base}/?${query}`)).text();
+    const second = await (await fetch(`${base}/?${query}`)).text();
+    expect(second).toBe(first);
+    expect(declaredProps(first).me.default).toMatchObject({ email: 'seller@practice-match.test' });
+  });
+
   it('answers 400 for an unknown prop name instead of serving a page that looks right', async () => {
     const res = await fetch(`${base}/?props=${encodeURIComponent(JSON.stringify({ startScren: 'admin' }))}`);
     expect(res.status).toBe(400);
@@ -200,6 +211,21 @@ describe('injectProps (A-I8 / D-I8-3)', () => {
     const attr = / data-props="([^"]*)"/.exec(html!)![1];
     expect(attr).not.toMatch(/(?<!&(?:quot|amp);)"/);
     expect(declaredProps(html!).startGate.default).toBe('rejected');
+  });
+
+  // M2 (review round 1). A5.7's `me` is an OBJECT, and it is the value the reference's whole
+  // header identity comes from — but every case here injected a string, so JSON round-tripping an
+  // object through an HTML attribute (nested quotes, the `·` in the role label) was untested.
+  it('injects an object value and round-trips it, nested quotes and non-ASCII included', () => {
+    const me = { email: 'buyer@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved buyer · StartUp Club', initials: 'RM', state: 'active', roles: ['buyer'] };
+    const { html } = inject(DESIGN, `props=${encodeURIComponent(JSON.stringify({ me }))}`);
+    expect(declaredProps(html!).me.default).toEqual(me);
+    // The attribute must still be a well-formed, single-quoted-out HTML attribute value.
+    const attr = / data-props="([^"]*)"/.exec(html!)![1];
+    expect(attr).not.toMatch(/(?<!&(?:quot|amp);)"/);
+    expect(attr).toContain('StartUp Club');
+    // …and `null` back again, which is how a gate state says "nobody is signed in".
+    expect(declaredProps(inject(DESIGN, `props=${encodeURIComponent(JSON.stringify({ me: null }))}`).html!).me.default).toBeNull();
   });
 
   it('refuses an unknown prop name rather than silently screenshotting the wrong state', () => {

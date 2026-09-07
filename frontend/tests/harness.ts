@@ -95,15 +95,21 @@ export async function prepare(page: Page): Promise<void> {
 /**
  * Loads the target's root and waits for the design to have rendered.
  *
- * It waited for the jump bar's `Access` button until amendment A6.1 removed the bar, and the
- * replacement is the `<header>` element (A-I8.1): the design declares exactly ONE, it is the
- * first thing inside `<sc-if value="{{ isDesktop }}">` so it is present on every screen of both
- * targets signed in or out, and at `position: sticky` with a fixed 74 px height it is visible at
- * every width the suite uses.
+ * It waits for the design's `<header>` — one element, declared exactly once, the first thing
+ * inside `<sc-if value="{{ isDesktop }}">`, `position: sticky` at a fixed 74 px height. It waited
+ * for the jump bar's `Access` button until amendment A6.1 removed the bar (A-I8.1).
+ *
+ * PRECISELY: it is present on every screen of both targets, signed in or out, IN THE DESKTOP
+ * PRESENTATION — the phone frame the design draws for `viewport: mobile` has no `<header>` at all
+ * (review round 1, M6). That is not a gap, because this function always loads `/` and the viewport
+ * prop is never set on it: every state boots at the desktop presentation and only then does
+ * `reach()` ask for the phone frame, through `?props=` on the reference or `?viewport=mobile` on
+ * the app. The two narrow viewports (`header-1000`, `header-1100`) are still the desktop
+ * presentation, just narrower, so the header is there.
  *
  * NOT the header's brand text, which was the obvious candidate: `subBrandTextStyle` is
- * `display: none` below 1050 px, so `header-1000` and `header-1100` would wait forever. Nor the
- * logo `img`, whose box collapses to zero — and `visible` with it — if the asset ever 404s.
+ * `display: none` below 1050 px, so `header-1000` would wait forever. Nor the logo `img`, whose
+ * box collapses to zero — and `visible` with it — if the asset ever 404s.
  */
 export async function booted(page: Page): Promise<void> {
   await page.goto('/');
@@ -221,10 +227,6 @@ export const PERSONAS = {
   declined: { email: 'declined@practice-match.test', name: 'Declined Applicant', role: 'Applicant', initials: 'DA', state: 'declined', roles: [] }
 } as const;
 
-/** The design's own fixture label (`logic.js`'s `state.me.role`). The buyer persona IS this
- *  string — A-I8.2 chose a buyer for exactly that reason. */
-export const FIXTURE_LABEL = 'Approved buyer · StartUp Club';
-
 export type PersonaKey = keyof typeof PERSONAS;
 
 /** The credential `POST /api/auth/signin` is given. Pure, so harness.test.ts can pin it. */
@@ -254,30 +256,56 @@ export function referenceOrigin(env: NodeJS.ProcessEnv = process.env): string {
 // every run — so it is RUN-SCOPED by construction, and a session from a previous run can never be
 // re-used. The read/merge halves are pure so harness.test.ts can pin them without a filesystem.
 // ---------------------------------------------------------------------------------------
-const MEMO_FILE = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'test-results', '.persona-sessions.json');
+/**
+ * ONE anchor: the source tree (review round 1, M3). Playwright's own clearing of `test-results/`
+ * is anchored to the CWD it was launched from, so it only lines up with this path when the suite
+ * is run from `frontend/` — which is why the file also carries a run stamp below rather than
+ * trusting the directory to have been emptied.
+ */
+export const MEMO_FILE = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'test-results', '.persona-sessions.json');
 
-/** The file's contents with one persona's jar set, or removed when `cookies` is null. */
-export function memoFileUpdate(existing: string | null, persona: string, cookies: unknown[] | null): string {
-  let held: Record<string, unknown[]> = {};
-  if (existing) {
-    try {
-      const parsed: unknown = JSON.parse(existing);
-      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) held = parsed as Record<string, unknown[]>;
-    } catch { /* a corrupt file is no memo — see memoFileRead */ }
-  }
-  if (cookies) held[persona] = cookies; else delete held[persona];
-  return JSON.stringify(held);
+/**
+ * Which RUN a memo file belongs to.
+ *
+ * Playwright forks its workers from the runner process, so every worker of one run shares the same
+ * parent pid and a different run has a different one. That needs no `globalSetup` and no config
+ * change, and it is the second guard rather than the only one — the directory is cleared at run
+ * start too (when the suite is launched from `frontend/`, see MEMO_FILE).
+ */
+export function runId(ppid: number = process.ppid): string {
+  return String(ppid);
 }
 
-/** One persona's jar, or null. An absent, corrupt or wrong-shaped file is simply "no memo": this
- *  is a cache, and failing the run over it would be worse than signing in again. */
-export function memoFileRead(existing: string | null, persona: string): unknown[] | null {
+/** The file's contents with one persona's jar set, or removed when `cookies` is null. A write from
+ *  a different run than the file was stamped with starts a fresh object: the previous run's jars
+ *  name sessions that may since have been revoked, and re-adding one would run every later test as
+ *  the wrong account with no failure anywhere near the cause. */
+export function memoFileUpdate(existing: string | null, persona: string, cookies: unknown[] | null, run: string): string {
+  let sessions: Record<string, unknown[]> = {};
+  const held = parseMemoFile(existing);
+  if (held && held.run === run) sessions = held.sessions;
+  if (cookies) sessions[persona] = cookies; else delete sessions[persona];
+  return JSON.stringify({ run, sessions });
+}
+
+/** One persona's jar for THIS run, or null. An absent, corrupt, wrong-shaped or foreign-run file
+ *  is simply "no memo": this is a cache, and failing the run over it would be worse than signing
+ *  in again. */
+export function memoFileRead(existing: string | null, persona: string, run: string): unknown[] | null {
+  const held = parseMemoFile(existing);
+  if (!held || held.run !== run) return null;
+  const jar = held.sessions[persona];
+  return Array.isArray(jar) ? jar : null;
+}
+
+function parseMemoFile(existing: string | null): { run: string; sessions: Record<string, unknown[]> } | null {
   if (!existing) return null;
   try {
     const parsed: unknown = JSON.parse(existing);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    const held = (parsed as Record<string, unknown>)[persona];
-    return Array.isArray(held) ? (held as unknown[]) : null;
+    const { run, sessions } = parsed as { run?: unknown; sessions?: unknown };
+    if (typeof run !== 'string' || !sessions || typeof sessions !== 'object' || Array.isArray(sessions)) return null;
+    return { run, sessions: sessions as Record<string, unknown[]> };
   } catch {
     return null;
   }
@@ -287,7 +315,7 @@ const readMemoFileText = (): string | null => (existsSync(MEMO_FILE) ? readFileS
 
 function writeMemoFile(persona: PersonaKey, cookies: PersonaCookies | null): void {
   mkdirSync(dirname(MEMO_FILE), { recursive: true });
-  writeFileSync(MEMO_FILE, memoFileUpdate(readMemoFileText(), persona, cookies));
+  writeFileSync(MEMO_FILE, memoFileUpdate(readMemoFileText(), persona, cookies, runId()));
 }
 
 /**
@@ -395,9 +423,17 @@ export async function personaSignOut(cookies: PersonaCookies, baseURL = appOrigi
  * favour of the first one's cookies and every later test would run as the wrong account — with
  * no failure anywhere near the cause.
  *
- * The budget is still what A-I7 costed: `app/auth/limits.py`'s `SIGNIN_IP = (30, 900)` is counted
- * on EVERY attempt per IP, and this spends one per persona per worker (four), plus the reauth
- * test's own one — five of thirty.
+ * THE BUDGET. `app/auth/limits.py`'s `SIGNIN_IP = (30, 900)` counts EVERY attempt per IP, wrong
+ * credentials included (`app/api/auth.py` calls `limits.hit` before it checks the password). A
+ * full `app`-project run spends: one per persona that any state signs in as — `buyer`, `seller`,
+ * `design`, `pending`, `declined` (`needsReview` is seeded and exported for Task I8b, and no
+ * approved state uses it yet) — plus the reauth test's own standalone session, plus the three
+ * form sign-ins in `smoke.spec.ts` (the successful one, the deliberately wrong password, and the
+ * one the sign-out test consumes). Nine of thirty, with the memo and this file keeping it there
+ * however many workers the run gets through.
+ *
+ * The wrong password also counts toward `SIGNIN_EMAIL`'s ten failures per address per 15 minutes —
+ * for `buyer@` only, and one of ten.
  */
 export const personaSessionMemos: Record<PersonaKey, { cookies: PersonaCookies | null }> = {
   design: { cookies: null }, buyer: { cookies: null }, seller: { cookies: null },
@@ -432,7 +468,7 @@ export async function signInAs(page: Page, persona: PersonaKey, url = '/'): Prom
   const context = page.context();
   const memo = personaSessionMemos[persona];
   // A restarted worker has an empty in-memory memo but the run's file is still there.
-  if (memo.cookies === null) memo.cookies = memoFileRead(readMemoFileText(), persona) as PersonaCookies | null;
+  if (memo.cookies === null) memo.cookies = memoFileRead(readMemoFileText(), persona, runId()) as PersonaCookies | null;
   memo.cookies = await personaSession<PersonaCookies[number]>(
     memo.cookies,
     { cookies: () => context.cookies(), addCookies: (cookies) => context.addCookies(cookies) },
@@ -464,7 +500,7 @@ export async function signInAsPersona(page: Page, url = '/'): Promise<void> {
 //              the cookies go on the browser context, and the route is deep-linked.
 //              `logic.js`'s A5.4 bootstrap turns the loaded account into the screen.
 //
-// The decisions are pure functions (`driverFor`, `personaFor`, `referenceMe`, `referencePlan`,
+// The decisions are pure functions (`driverFor`, `personaFor`, `referenceMe`, `referenceUrl`,
 // `appPlan`) so
 // harness.test.ts can pin them without a browser.
 // ---------------------------------------------------------------------------------------
@@ -512,56 +548,27 @@ export function personaFor(target: ReachTarget = {}): PersonaKey | null {
   return target.persona ?? SCREEN_PERSONA[target.screen ?? 'gate'];
 }
 
-/** The design's own header nav, per screen — a member's route, not a prototype affordance, so it
- *  survives the launch removal. There is deliberately no entry for `detail`: the design has no nav
- *  item for a listing, and needs none (see `referencePlan`). */
-const NAV_LABEL: Partial<Record<NonNullable<ReachTarget['screen']>, string>> = {
-  browse: 'Browse Practices', requests: 'My Requests', seller: 'List a Practice', admin: 'VIN Foundation Admin'
-};
-
-/**
- * The account handed to the REFERENCE, or null when there is nothing to hand over: the buyer
- * persona's label IS the design's fixture (that is why A-I8.2 chose a buyer), so injecting it would
- * change nothing — and NOT injecting it keeps `startScreen` working, which matters below.
- */
+/** The account handed to the REFERENCE: the same one the app signs in as, so both targets render
+ *  the same header. `null` only where the app signs nobody in either (the sign-in and application
+ *  gates). A5.4 reads it and, since review round 1's I1, leaves a set `startScreen` in charge of
+ *  WHICH screen — so one navigation puts the reference exactly where the app's deep link puts the
+ *  app, with no clicking in between. */
 export function referenceMe(persona: PersonaKey | null): (typeof PERSONAS)[PersonaKey] | null {
-  if (!persona) return null;
-  return PERSONAS[persona].role === FIXTURE_LABEL ? null : PERSONAS[persona];
+  return persona ? PERSONAS[persona] : null;
 }
 
 /**
  * The reference's entry: the design at `/` — the runtime resolves its own relative assets against
  * it — with all four prototype props named on every request, so no state inherits a value another
- * set, plus the nav click A5.4's ordering makes necessary.
- *
- * THE ORDERING FACT. A5.4 applies `startScreen` first and the loaded account second, and the
- * account's `active` branch sets `screen: "browse"` — so an injected active account OVERRIDES
- * `startScreen`. (Measured against the real bundle: `startScreen: "admin"` alone renders the Admin
- * screen; the same with an active `me` renders Browse.) The app is unaffected, because there the
- * screen comes from the ROUTE and `useStateRouteSync` re-applies the pending deep link the instant
- * `auth` flips. So where an account IS injected, the reference reaches the screen the way a member
- * does — by clicking the design's own header nav.
+ * state set.
  */
-export function referencePlan(target: ReachTarget = {}): { url: string; nav: string | null } {
-  const screen = target.screen ?? 'gate';
-  const me = referenceMe(personaFor(target));
-  const overridden = !!me && me.state === 'active' && screen !== 'gate';
-  const nav = overridden ? NAV_LABEL[screen] ?? null : null;
-  // The silent-wrong-capture hole, closed loudly: an active account is injected, `startScreen` is
-  // therefore ignored, and the design has no nav item for this screen — the capture would be of
-  // Browse under the target's name, and the oracle would be generated from it.
-  if (overridden && !nav) {
-    throw new Error(`reach(): an injected active account overrides startScreen, and the design has no nav item for "${screen}" — capture it as a buyer, or reach it by clicking`);
-  }
-  return {
-    url: `/?props=${encodeURIComponent(JSON.stringify({
-      startScreen: screen,
-      startGate: target.gate ?? '',
-      startViewport: target.viewport ?? 'desktop',
-      me
-    }))}`,
-    nav
-  };
+export function referenceUrl(target: ReachTarget = {}): string {
+  return `/?props=${encodeURIComponent(JSON.stringify({
+    startScreen: target.screen ?? 'gate',
+    startGate: target.gate ?? '',
+    startViewport: target.viewport ?? 'desktop',
+    me: referenceMe(personaFor(target))
+  }))}`;
 }
 
 /** The app's plan for a target: which account to be, which URL to open, and — for the one gate
@@ -587,11 +594,8 @@ async function mounted(page: Page): Promise<void> {
  *  both targets — see tests/screens.ts. */
 export async function reach(page: Page, target: ReachTarget = {}): Promise<void> {
   if (driverFor(page.url()) === 'reference') {
-    const plan = referencePlan(target);
-    await page.goto(plan.url);
-    await mounted(page);
-    if (plan.nav) await page.getByRole('button', { name: plan.nav, exact: true }).first().click();
-    return;
+    await page.goto(referenceUrl(target));
+    return mounted(page);
   }
   const plan = appPlan(target);
   if (plan.persona) await signInAs(page, plan.persona, plan.url);

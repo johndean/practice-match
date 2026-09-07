@@ -3,6 +3,7 @@ import { useRouter } from 'vue-router';
 import { Component } from './logic.js';
 import MarketMapView from './components/MarketMapView.vue';
 import ImageSlot from './components/ImageSlot.vue';
+import { makeAuthAdapter } from './auth/adapter';
 import * as api from './auth/api';
 import { useMe } from './auth/me';
 import { useStateRouteSync } from './router/useStateRouteSync';
@@ -32,12 +33,12 @@ const props = defineProps({
   // A5.1 / A5.3: the real `/api/auth/*` client, as the prototype's `auth` adapter — the seam the
   // design's own Sign in and Sign out handlers call through. The reference and the Claude Design
   // preview pass nothing and keep the design's fixture path, which is what keeps the two targets
-  // on the same pixels. `signOut` also clears the loaded account, so the header cannot outlive
-  // the session it names. Nothing in the template reads `auth`; only `logic.js` does.
-  auth: {
-    type: Object,
-    default: () => ({ signIn: api.signIn, signOut: () => api.signOut().then(() => useMe().clear()) })
-  },
+  // on the same pixels. Nothing in the template reads `auth`; only `logic.js` does.
+  //
+  // `src/auth/adapter.ts`, not an object literal here (review round 1, C1): this file is copied
+  // verbatim into App.vue and is outside the coverage gate, so the store write that keeps
+  // `useMe()` and `logic.js` in agreement belongs somewhere it has unit tests.
+  auth: { type: Object, default: () => makeAuthAdapter(api, useMe()) },
   // A5.4: the signed-in account, or null. `main.ts` awaits `useMe().load()` before
   // `bootstrap()`, so this is populated on the FIRST render and the prototype's
   // `componentDidMount` can put the visitor where the account lifecycle says they belong.

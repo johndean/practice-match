@@ -228,6 +228,14 @@ const A5_3b: Amendment = {
  *
  *  `startGate` is the reference's way into a gate state now that A6.2 takes the "Prototype —
  *  access states" shortcuts out; `tests/reference-server.mjs` injects it through `?props=`.
+ *
+ *  A SET `startScreen` WINS over the account's landing screen (review round 1, I1). The branch
+ *  first set `screen: "browse"` unconditionally, which silently overrode the prop — so the
+ *  reference, whose ONLY screen driver is `startScreen`, could not be signed in and placed on a
+ *  named screen at once, and the harness worked around it by clicking the design's header nav.
+ *  That workaround was an undeclared deviation from the ruled A-I8.2 and is gone. The app never
+ *  passes `startScreen`, so its behaviour is untouched: it lands on Browse and `useStateRouteSync`
+ *  moves it to the pending deep link the instant `auth` flips.
  */
 const A5_4: Amendment = {
   id: 'A5.4', date: '2026-09-07',
@@ -236,7 +244,7 @@ const A5_4: Amendment = {
   replace: '    if (this.props.startViewport === "mobile") this.setState({ viewport: "mobile" });\n'
     + '    if (this.props.startGate) this.setState({ screen: "gate", gate: this.props.startGate });\n'
     + '    const me = this.props.me;\n'
-    + '    if (me && me.state === "active") this.setState({ auth: true, screen: "browse", email: me.email, me: { name: me.name, role: me.role, initials: me.initials } });\n'
+    + '    if (me && me.state === "active") this.setState({ auth: true, screen: (this.props.startScreen && this.props.startScreen !== "gate") ? this.props.startScreen : "browse", email: me.email, me: { name: me.name, role: me.role, initials: me.initials } });\n'
     + '    else if (me && (me.state === "pending" || me.state === "needs_review")) this.setState({ screen: "gate", gate: "pending" });\n'
     + '    else if (me && me.state === "declined") this.setState({ screen: "gate", gate: "rejected" });\n'
     + '    else if (me && me.state === "verified") this.setState({ screen: "gate", gate: "apply" });\n'

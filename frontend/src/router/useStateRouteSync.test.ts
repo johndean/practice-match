@@ -323,33 +323,45 @@ describe('useStateRouteSync — the route permission (A-I7 hand-over, executed b
   });
 
   // ---------------------------------------------------------------------------------------
-  // RECORDED GAP, not a patch (A-I8; reported to the controller with Task I8a).
+  // The remembered deep link is permission-checked TOO (review round 1, G).
   //
-  // `guard()` is consulted on the ROUTE → STATE side (`apply`, above). The pending patch a
-  // signed-out deep link leaves behind is applied by the watcher directly, without a second
-  // `guard()` call — so a visitor who deep-links a route their account does not hold, and
-  // then signs in, lands on it. This is pinned rather than fixed for two reasons: the brief
-  // asks `useStateRouteSync` to pass a principal on every `guard` call and this path makes
-  // none, and `can()`'s own contract is that it "only hides what the API would refuse" — the
-  // server is the authority, and it still refuses the data. Closing it means routing the
-  // pending patch through `guard` inside a watcher whose re-entrancy is carefully reasoned
-  // (see useStateRouteSync.ts's own comment), which is a change to ask for, not to make.
-  //
-  // If this behaviour is ever changed deliberately, this is the case that says so.
+  // `guard()` is consulted on the route → state side, but the patch a SIGNED-OUT deep link leaves
+  // behind used to be applied by the watcher without a second call — so a visitor who deep-linked
+  // a route their account does not hold, and then signed in, landed on it. The principal is not
+  // knowable at the moment the link is remembered and is knowable at the moment it is applied,
+  // which is where the check now happens.
   // ---------------------------------------------------------------------------------------
-  it('a signed-out deep link into a route the account does not hold is still applied when auth arrives (recorded gap)', async () => {
-    const { c } = await setup('/seller', BUYER);
-    expect(c.state.gate, 'signed out, so the sign-in gate — the deep link is remembered').toBe('signin');
+  it('permission-checks the remembered deep link when auth arrives, not only when it was typed', async () => {
+    const { c, router } = await setup('/admin', BUYER);
+    expect(c.state.gate, 'signed out, so the sign-in gate — and the link is remembered').toBe('signin');
+    expect(router.currentRoute.value.fullPath, 'the URL stays as typed until auth arrives').toBe('/admin');
+
     c.setState({ auth: true });
     await flush(); await nextTick();
-    expect(c.state.screen, 'the remembered patch is applied unchecked: the recorded gap').toBe('seller');
+
+    expect(c.state.screen, 'page.admin is ["admin","staff"]; a buyer holds neither').toBe('gate');
+    expect(c.state.gate).toBe('unavailable');
+    expect(router.currentRoute.value.fullPath, 'nothing is pending any more, so the URL settles').toBe('/');
   });
 
-  it('an anonymous visitor still gets the sign-in gate, not the unavailable one — the fail-closed order', async () => {
-    const { c, router } = await setup('/admin', null);
-    expect(c.state.screen).toBe('gate');
-    expect(c.state.gate, 'signed out is answered before the matrix is consulted').toBe('signin');
-    expect(router.currentRoute.value.fullPath, 'the deep link is held open until auth arrives').toBe('/admin');
+  it('still honours a remembered deep link the account DOES hold', async () => {
+    const { c, router } = await setup('/browse', BUYER);
+    expect(c.state.gate).toBe('signin');
+
+    c.setState({ auth: true });
+    await flush(); await nextTick();
+
+    expect(c.state.screen).toBe('browse');
+    expect(router.currentRoute.value.fullPath).toBe('/browse');
+  });
+
+  it('honours a remembered deep link into a non-Browse route for an account that holds it', async () => {
+    // The seller dashboard, for the account that can open it — the case that proves the new
+    // `guard` call passes the PATCH through rather than flattening every pending link to Browse.
+    const { c, router } = await setup('/seller', MEMBER);
+    c.setState({ auth: true });
+    await flush(); await nextTick();
+    expect(c.state.screen).toBe('seller');
+    expect(router.currentRoute.value.fullPath).toBe('/seller');
   });
 });
-

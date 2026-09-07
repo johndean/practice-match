@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { BLANK_GIF, FIXTURE_LABEL, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, appOrigin, appPlan, driverFor, forgetPersonaSession, memoFileRead, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, referenceMe, referenceOrigin, referencePlan } from './harness';
+import { BLANK_GIF, MEMO_FILE, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, appOrigin, appPlan, driverFor, forgetPersonaSession, memoFileRead, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, referenceMe, referenceOrigin, referenceUrl, runId } from './harness';
 import { resolveTargets as resolveTargetsForRef } from './targets';
 import { resolveTargets } from './targets';
 
@@ -259,8 +259,10 @@ describe('PERSONAS — the /api/me payload of each seeded account (D-I8-4, A-I8.
   // nineteen buyer-family states keep their pixels without the design's copy changing. The
   // Python side of this pin lives in tests/test_docs.py, against labels.role_label itself.
   it('give the buyer the design\'s own fixture label, and the other two members their true ones', () => {
-    expect(PERSONAS.buyer.role).toBe(FIXTURE_LABEL);
-    expect(FIXTURE_LABEL).toBe('Approved buyer · StartUp Club');
+    // The literal the design's own fixture carries. `tests/test_docs.py` is what pins it against
+    // `labels.role_label({'buyer'}, 'StartUp Club')` and against the design file itself, in both
+    // languages; this is the harness side of the same fact.
+    expect(PERSONAS.buyer.role).toBe('Approved buyer · StartUp Club');
     expect(PERSONAS.seller.role).toBe('Approved buyer and seller · StartUp Club');
     expect(PERSONAS.design.role).toBe('VIN Foundation admin · StartUp Club');
     // One name and one set of initials across the whole suite: only `role` varies with what the
@@ -326,82 +328,59 @@ describe('personaFor — the account a state is captured as (A-I8.2)', () => {
 });
 
 describe('referenceMe — the account the reference is handed (A5.7 / A-I8.2)', () => {
-  it('hands over nothing for the buyer: its label IS the design\'s fixture, so there is nothing to change', () => {
-    expect(referenceMe('buyer')).toBeNull();
-    expect(referenceMe(null)).toBeNull();
+  it('is the same account the app signs in as, for every state that has one', () => {
+    for (const key of Object.keys(PERSONAS) as (keyof typeof PERSONAS)[]) expect(referenceMe(key)).toBe(PERSONAS[key]);
   });
 
-  it('hands over the account whenever its label differs from the fixture', () => {
-    expect(referenceMe('seller')).toBe(PERSONAS.seller);
-    expect(referenceMe('design')).toBe(PERSONAS.design);
-    expect(referenceMe('pending')).toBe(PERSONAS.pending);
+  it('is null exactly where the app signs nobody in either', () => {
+    expect(referenceMe(null)).toBeNull();
+    expect(referenceMe(personaFor({ gate: 'signin' }))).toBeNull();
+    expect(referenceMe(personaFor({ gate: 'apply' }))).toBeNull();
   });
 });
 
 // ---------------------------------------------------------------------------------------
-// The reference's entry, and the one ordering fact that shapes it.
-//
-// `logic.js`'s A5.4 bootstrap applies `startScreen` FIRST and the loaded account SECOND, and the
-// account's `active` branch sets `screen: "browse"` — so on the reference an injected active
-// account OVERRIDES `startScreen` (measured against the real bundle: `startScreen: "admin"` alone
-// renders the Admin screen, `startScreen: "admin"` plus an active `me` renders Browse). The app
-// does not care: there the screen comes from the ROUTE, and `useStateRouteSync` re-applies the
-// pending deep link the instant `auth` flips.
-//
-// So the reference reaches those screens the way a member does — by clicking the design's own
-// header nav, which is not a prototype affordance and survives the launch removal. `detail` has
-// no nav item, and needs none: it is a buyer state, so no account is injected and `startScreen`
-// still drives.
+// The reference's entry. ONE navigation, no clicking: since review round 1's I1, A5.4 leaves a
+// set `startScreen` in charge of which screen even when an account is injected, so the reference
+// lands signed in AND on the named screen in a single goto — exactly where the app's deep link
+// puts the app. (Before I1 the account's `active` branch overrode `startScreen` and the harness
+// clicked the design's header nav to compensate: an undeclared deviation from the ruled A-I8.2,
+// fixed at the root rather than worked around.)
 // ---------------------------------------------------------------------------------------
-describe('referencePlan — props, and the nav click A5.4\'s ordering makes necessary', () => {
+describe('referenceUrl — the design\'s own props, injected per request (A-I8 / D-I8-3)', () => {
   const props = (url: string) => JSON.parse(decodeURIComponent(new URL(url, 'http://x').searchParams.get('props')!));
 
-  it('always serves the design at "/" and names all four prototype props', () => {
-    const plan = referencePlan();
-    expect(plan.url.startsWith('/?props=')).toBe(true);
-    expect(props(plan.url)).toEqual({ startScreen: 'gate', startGate: '', startViewport: 'desktop', me: null });
-    expect(plan.nav).toBeNull();
+  it('always serves the design at "/" and names all four prototype props on every request', () => {
+    const url = referenceUrl();
+    expect(url.startsWith('/?props=')).toBe(true);
+    expect(props(url)).toEqual({ startScreen: 'gate', startGate: '', startViewport: 'desktop', me: null });
   });
 
-  it('drives the buyer family by startScreen alone, with no account injected and no nav click', () => {
-    for (const screen of ['browse', 'detail', 'requests'] as const) {
-      const plan = referencePlan({ screen });
-      expect(props(plan.url), screen).toEqual({ startScreen: screen, startGate: '', startViewport: 'desktop', me: null });
-      expect(plan.nav, screen).toBeNull();
-    }
+  it('names the screen and hands over that state\'s own account, for every member family', () => {
+    expect(props(referenceUrl({ screen: 'browse' }))).toEqual({ startScreen: 'browse', startGate: '', startViewport: 'desktop', me: PERSONAS.buyer });
+    expect(props(referenceUrl({ screen: 'detail' })).me).toEqual(PERSONAS.buyer);
+    expect(props(referenceUrl({ screen: 'requests' })).me).toEqual(PERSONAS.buyer);
+    expect(props(referenceUrl({ screen: 'seller' }))).toMatchObject({ startScreen: 'seller', me: PERSONAS.seller });
+    expect(props(referenceUrl({ screen: 'admin' }))).toMatchObject({ startScreen: 'admin', me: PERSONAS.design });
   });
 
-  it('injects the account and clicks the design\'s own nav for the seller and admin screens', () => {
-    const seller = referencePlan({ screen: 'seller' });
-    expect(props(seller.url).me).toEqual(PERSONAS.seller);
-    expect(seller.nav).toBe('List a Practice');
-
-    const admin = referencePlan({ screen: 'admin' });
-    expect(props(admin.url).me).toEqual(PERSONAS.design);
-    expect(admin.nav).toBe('VIN Foundation Admin');
+  it('hands over an applicant for the two status gates, where the account IS the state', () => {
+    expect(props(referenceUrl({ gate: 'pending', persona: 'pending' }))).toMatchObject({ startScreen: 'gate', startGate: 'pending', me: PERSONAS.pending });
+    expect(props(referenceUrl({ gate: 'rejected', persona: 'declined' }))).toMatchObject({ startGate: 'rejected', me: PERSONAS.declined });
   });
 
-  it('injects an applicant for the two status gates, where the account IS the state', () => {
-    const plan = referencePlan({ gate: 'pending', persona: 'pending' });
-    expect(props(plan.url)).toMatchObject({ startScreen: 'gate', startGate: 'pending', me: PERSONAS.pending });
-    // Not active, so nothing overrides anything and there is no screen to navigate to.
-    expect(plan.nav).toBeNull();
+  it('signs nobody in for the sign-in and application gates', () => {
+    expect(props(referenceUrl({ gate: 'signin' })).me).toBeNull();
+    expect(props(referenceUrl({ gate: 'apply' })).me).toBeNull();
   });
 
   it('asks for the phone frame through startViewport, the only way left (D-I8-7)', () => {
-    expect(props(referencePlan({ screen: 'browse', viewport: 'mobile' }).url).startViewport).toBe('mobile');
-    expect(props(referencePlan({ screen: 'browse' }).url).startViewport).toBe('desktop');
+    expect(props(referenceUrl({ screen: 'browse', viewport: 'mobile' })).startViewport).toBe('mobile');
+    expect(props(referenceUrl({ screen: 'browse' })).startViewport).toBe('desktop');
   });
 
   it('is stable for the same target, so the runtime\'s re-fetch of location.href hits the same URL', () => {
-    expect(referencePlan({ screen: 'seller' }).url).toBe(referencePlan({ screen: 'seller' }).url);
-  });
-
-  // The hole this closes: an active account is injected, `startScreen` is therefore ignored, and
-  // the screen has no nav item — the capture would silently be of Browse. Loud instead.
-  it('refuses a target whose screen an injected active account would silently replace with Browse', () => {
-    expect(() => referencePlan({ screen: 'detail', persona: 'design' })).toThrow(/detail/);
-    expect(() => referencePlan({ screen: 'browse', persona: 'design' }), 'Browse is where it lands anyway').not.toThrow();
+    expect(referenceUrl({ screen: 'seller' })).toBe(referenceUrl({ screen: 'seller' }));
   });
 });
 
@@ -444,30 +423,90 @@ describe('appPlan — a real session and a real route (A-I8, A-I8.2)', () => {
 // failures, ~20 real). The jar is written to a file under `frontend/test-results/`, which
 // Playwright clears at the start of every run, so it is run-scoped by construction.
 // ---------------------------------------------------------------------------------------
-describe('the persona memo file (A-I8.2)', () => {
+describe('the persona memo file (A-I8.2, run-scoped by M3)', () => {
   const C = (name: string) => ({ name, value: 'opaque' });
+  const RUN = 'run-4711';
 
-  it('reads back what it wrote, per persona', () => {
-    const one = memoFileUpdate(null, 'buyer', [C('pm_session')]);
-    expect(memoFileRead(one, 'buyer')).toEqual([C('pm_session')]);
-    expect(memoFileRead(one, 'design'), 'one persona\'s jar is not another\'s').toBeNull();
+  it('reads back what it wrote, per persona, within the same run', () => {
+    const one = memoFileUpdate(null, 'buyer', [C('pm_session')], RUN);
+    expect(memoFileRead(one, 'buyer', RUN)).toEqual([C('pm_session')]);
+    expect(memoFileRead(one, 'design', RUN), 'one persona\'s jar is not another\'s').toBeNull();
 
-    const two = memoFileUpdate(one, 'design', [C('pm_csrf')]);
-    expect(memoFileRead(two, 'buyer')).toEqual([C('pm_session')]);
-    expect(memoFileRead(two, 'design')).toEqual([C('pm_csrf')]);
+    const two = memoFileUpdate(one, 'design', [C('pm_csrf')], RUN);
+    expect(memoFileRead(two, 'buyer', RUN)).toEqual([C('pm_session')]);
+    expect(memoFileRead(two, 'design', RUN)).toEqual([C('pm_csrf')]);
+  });
+
+  // M3. The file lives under `frontend/test-results/`, which Playwright clears at the start of a
+  // run — but only when it is run from `frontend/`, because that cleanup is anchored to the CWD
+  // while this file is anchored to the source tree. A stale file from a previous run would hold
+  // cookies for a session that may since have been revoked, and every test in the new run would
+  // then proceed as the wrong account with no failure anywhere near the cause. So the file is
+  // stamped with the run it belongs to and a foreign stamp reads as "no memo".
+  it('ignores every persona in a file stamped with a different run', () => {
+    const previous = memoFileUpdate(memoFileUpdate(null, 'buyer', [C('pm_session')], 'run-old'), 'design', [C('pm_session')], 'run-old');
+    for (const persona of ['buyer', 'design'] as const) {
+      expect(memoFileRead(previous, persona, 'run-old'), 'sanity: its own run can read it').not.toBeNull();
+      expect(memoFileRead(previous, persona, RUN), 'a fresh run must sign in again rather than re-add a stale session').toBeNull();
+    }
+  });
+
+  it('discards the previous run\'s sessions when the new run writes its first one', () => {
+    const previous = memoFileUpdate(null, 'design', [C('pm_session')], 'run-old');
+    const fresh = memoFileUpdate(previous, 'buyer', [C('pm_session')], RUN);
+    expect(memoFileRead(fresh, 'buyer', RUN)).toEqual([C('pm_session')]);
+    expect(memoFileRead(fresh, 'design', RUN), 'the stale run\'s jars do not survive alongside the new one\'s').toBeNull();
+    expect(JSON.parse(fresh).run).toBe(RUN);
   });
 
   it('drops a persona when handed null, leaving the others alone', () => {
-    const both = memoFileUpdate(memoFileUpdate(null, 'buyer', [C('a')]), 'design', [C('b')]);
-    const dropped = memoFileUpdate(both, 'buyer', null);
-    expect(memoFileRead(dropped, 'buyer')).toBeNull();
-    expect(memoFileRead(dropped, 'design')).toEqual([C('b')]);
+    const both = memoFileUpdate(memoFileUpdate(null, 'buyer', [C('a')], RUN), 'design', [C('b')], RUN);
+    const dropped = memoFileUpdate(both, 'buyer', null, RUN);
+    expect(memoFileRead(dropped, 'buyer', RUN)).toBeNull();
+    expect(memoFileRead(dropped, 'design', RUN)).toEqual([C('b')]);
   });
 
-  it('treats an absent or corrupt file as no memo, rather than failing the run', () => {
-    expect(memoFileRead(null, 'buyer')).toBeNull();
-    expect(memoFileRead('{ not json', 'buyer')).toBeNull();
-    expect(memoFileRead('[]', 'buyer')).toBeNull();
+  it('treats an absent, corrupt or wrong-shaped file as no memo, rather than failing the run', () => {
+    for (const bad of [null, '{ not json', '[]', '{"sessions":{"buyer":[]}}', '{"run":"' + RUN + '","sessions":"nope"}']) {
+      expect(memoFileRead(bad, 'buyer', RUN), String(bad)).toBeNull();
+    }
+  });
+
+  it('is one anchor — the source tree, not the cwd Playwright cleans relative to (M3)', () => {
+    expect(MEMO_FILE.endsWith('/frontend/test-results/.persona-sessions.json'), MEMO_FILE).toBe(true);
+  });
+
+  it('identifies the run by the Playwright runner process every worker is a child of', () => {
+    // Workers are forked by the runner, so `process.ppid` is the same for every worker of one run
+    // and differs between runs. It needs no config change and no globalSetup — and it is the
+    // second guard, not the only one: the directory itself is cleared at run start.
+    expect(runId()).toBe(String(process.ppid));
+    expect(runId(4711)).toBe('4711');
+  });
+});
+
+describe('driverFor — which target the page is on (A-I8)', () => {
+  it('is the app for the app project\'s origin and the reference for anything else', () => {
+    expect(driverFor('http://localhost:5173/', 'http://localhost:5173')).toBe('app');
+    expect(driverFor('http://localhost:5173/practices/p1', 'http://localhost:5173')).toBe('app');
+    expect(driverFor('http://localhost:5174/', 'http://localhost:5173')).toBe('reference');
+    // The live-deployment mode: PW_APP_URL points the app project at QA and the reference server
+    // still runs locally, so the two are told apart by origin either way.
+    expect(driverFor('https://qa.foundation.vin/browse', 'https://qa.foundation.vin')).toBe('app');
+    expect(driverFor('http://localhost:5174/', 'https://qa.foundation.vin')).toBe('reference');
+  });
+
+  it('defaults to the app project\'s own origin, which is what reach() relies on', () => {
+    expect(driverFor(`${appOrigin({})}/browse`)).toBe('app');
+    expect(driverFor(`${referenceOrigin({})}/`)).toBe('reference');
+  });
+
+  it('refuses a page that has not navigated, rather than guessing the reference', () => {
+    // Guessing would drive an app-project run through the reference driver and screenshot the
+    // wrong target — and because the oracle is generated through the same driver, the pixel gate
+    // could not see it. `booted()` is what every spec calls first; this is what says so.
+    expect(() => driverFor('about:blank', 'http://localhost:5173')).toThrow(/booted/);
+    expect(() => driverFor('', 'http://localhost:5173')).toThrow(/booted/);
   });
 });
 
