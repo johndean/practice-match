@@ -1554,7 +1554,7 @@ async def signin(body: Creds, request: Request, response: Response) -> dict:
 @router.post("/auth/signout")
 async def signout(request: Request, response: Response, principal=Depends(require("account.self"))) -> dict:
     with sync_conn() as conn:
-        S.revoke(conn, sync_redis(), request.cookies["pm_session"])
+        h, account_id = S.revoke(conn, request.cookies["pm_session"])   # cache cleared after the commit: S.revoke_cache(sync_redis(), h, account_id)
     clear_session_cookies(response)
     return {"status": "signed_out"}
 

@@ -528,3 +528,66 @@ def test_revoke_all_cache_costs_the_same_whatever_the_session_count(conn, redis)
     assert 0 < redis.ttl(f"account:{aid}:invalidated") <= S.CACHE_TTL
 
 
+
+
+def test_revoke_cache_is_one_batch_so_the_delete_and_the_stamp_cannot_separate(conn, redis):
+    """P1 (re-review 2). `revoke_cache` was the one cache half that was neither batched nor
+    atomic: `DELETE`, then `TIME`, then the tombstone `SET`, then `SREM` — three mutating round
+    trips, and the delete and the stamp were separable. A racing `_cache_set` that had already
+    passed its own tombstone check could land its `SET` in the gap between them and leave a stale
+    principal for up to `CACHE_TTL`. The general form of that race is inherent (an in-flight reader
+    whose Postgres read precedes the change, accepted in I4/NEW-1); the GAP is not.
+
+    Same shape as `revoke_all_cache`'s counterpart: nothing mutating reaches the client directly,
+    and there is exactly one batch."""
+    aid = _member(conn)
+    raw = S.create(conn, redis, aid, None, None)
+    h, account_id = S.revoke(conn, raw)
+
+    direct: list[str] = []
+    pipelines: list[object] = []
+    real = {name: getattr(redis, name) for name in ("set", "delete", "srem", "pipeline")}
+
+    def _spy(name):
+        def _call(*a: object, **kw: object) -> object:
+            (pipelines if name == "pipeline" else direct).append(name)
+            return real[name](*a, **kw)
+        return _call
+
+    for name in real:
+        setattr(redis, name, _spy(name))
+    try:
+        S.revoke_cache(redis, h, account_id)
+        assert direct == [], f"every mutation belongs in the one MULTI, not direct: {direct}"
+        assert len(pipelines) == 1
+    finally:
+        for name in real:
+            delattr(redis, name)
+
+    assert redis.exists(f"session:{h}") == 0
+    assert 0 < redis.ttl(f"session:{h}:revoked") <= S.CACHE_TTL
+    assert redis.sismember(f"account:{aid}:sessions", h) == 0
+    assert S.resolve(conn, redis, raw) is None
+
+
+def test_revoke_cache_of_an_unknown_session_is_still_one_batch(conn, redis):
+    """The no-account arm of the same batch: nothing to prune from an index, so the `MULTI` carries
+    the delete and the stamp only — still one round trip, still atomic."""
+    unknown = "not-a-session-id-anyone-ever-issued"
+    h, account_id = S.revoke(conn, unknown)
+    assert account_id is None
+
+    pipelines: list[object] = []
+    real_pipeline = redis.pipeline
+
+    def _spy(*a: object, **kw: object) -> object:
+        pipelines.append("pipeline")
+        return real_pipeline(*a, **kw)
+
+    redis.pipeline = _spy
+    try:
+        S.revoke_cache(redis, h, account_id)
+        assert len(pipelines) == 1
+    finally:
+        del redis.pipeline
+    assert 0 < redis.ttl(f"session:{h}:revoked") <= S.CACHE_TTL

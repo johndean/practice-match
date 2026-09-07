@@ -195,13 +195,24 @@ def revoke(conn: psycopg2.extensions.connection, raw: str) -> tuple[str, UUID | 
 def revoke_cache(r: redis_sync.Redis, h: str, account_id: UUID | None) -> None:
     """The Redis half of `revoke`, for AFTER the caller's transaction commits. `account_id` is
     None when the raw id matched no row, and then there is no index to prune — the tombstone is
-    still stamped, which costs nothing and keeps the pair total."""
-    r.delete(f"session:{h}")
+    still stamped, which costs nothing and keeps the pair total.
+
+    One `MULTI`, like `revoke_all_cache` (re-review P1). Unbatched, the delete and the stamp were
+    separable: a racing `_cache_set` that had already passed its own tombstone check could land its
+    `SET` in the gap between them and leave a stale principal for the full `CACHE_TTL`. The general
+    form of that race is inherent and accepted (I4/NEW-1 — an in-flight reader whose Postgres read
+    precedes the change); this gap was not. The clock is read BEFORE the batch, because a value
+    queued in a `MULTI` cannot depend on a reply from inside it.
+    """
+    stamp = _now_us(r)
+    pipe = r.pipeline()
+    pipe.delete(f"session:{h}")
     # Sign-out carries the same race invalidate_account does: a request that read this
     # principal a moment ago may still be on its way to _cache_set (NEW-1).
-    r.set(_session_tombstone(h), _now_us(r), ex=CACHE_TTL)
+    pipe.set(_session_tombstone(h), stamp, ex=CACHE_TTL)
     if account_id is not None:
-        r.srem(f"account:{account_id}:sessions", h)  # prune the index too, not just the cached principal (I5)
+        pipe.srem(f"account:{account_id}:sessions", h)  # prune the index too, not just the cached principal (I5)
+    pipe.execute()
 
 
 def invalidate_account(r: redis_sync.Redis, account_id: UUID) -> None:
@@ -253,12 +264,22 @@ def revoke_all_cache(r: redis_sync.Redis, account_id: UUID, revoked: Collection[
       that rotation just wrote — the `/api/me` budget regression NEW-3 was fixed to stop. The kept
       hash also stays IN the index, so the next invalidation can still find it.
 
+    The sweep can also take an entry it did not revoke — a session signed in between the commit and
+    this call — and that costs exactly ONE cache miss, not a minute of them (re-review P2): the
+    account tombstone is timestamped, and `_tombstoned_since` compares `stamp >= loaded_at`, so the
+    very next request reads Postgres once and re-caches the principal it read AFTER the stamp. That
+    is the strongest form of the argument for sweeping rather than clearing only what was named.
+
     Every revoked session gets the same tombstone `revoke()` leaves for a single sign-out, and the
     ACCOUNT tombstone is stamped as well: that is what stops a principal READ before the commit
     from being installed after it, which no ordering can prevent.
 
     All of it travels in ONE pipeline (re-review O5), so the cost is constant — the index read, the
     clock, and a single batch — instead of one round trip per session as the tombstones used to be.
+    That `MULTI` spans two key prefixes, `session:*` and `account:*`, which would be a `CROSSSLOT`
+    error on a Redis CLUSTER (re-review P4). Railway runs a single-node Redis, and the code this
+    replaced already issued multi-key `DELETE`s, so nothing changes today — but if Redis is ever
+    clustered, give both prefixes a common hash tag (`session:{account}:…`) before this runs.
     """
     index = f"account:{account_id}:sessions"
     indexed = {h.decode() if isinstance(h, bytes) else h for h in cast("set[bytes | str]", r.smembers(index))}
