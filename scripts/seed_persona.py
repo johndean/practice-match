@@ -24,7 +24,14 @@ A-I8): the Playwright `app` project used to reach the "under review" and "not gr
 clicking the design's own "Prototype — access states" shortcuts, and amendment A6.2 takes those out
 of the design, so the only honest way in is a real account in that state — `logic.js`'s A5.4
 bootstrap maps `pending`/`needs_review` to the "under review" gate and `declined` to the "not
-granted" one. Same password, same `.test` domain, same production refusal.
+granted" one. Same password, same `.test` domain, same production refusal. `needs-review@` and
+`declined@` each carry one real `application` row (Task S3), so the applicant answer/re-apply
+screens have something to show.
+
+Task S3 also seeds `unverified@`, `verified@` and `invited@practice-match.test` — one account per
+state the sign-up/verify/reset/accept-invite screens start from — and twelve single-use
+`email_token` fixture rows per purpose (`FIXTURE_TOKENS`), recreated every run for the visual
+harness to consume through the real endpoints.
 
     ENVIRONMENT=qa poetry run python scripts/seed_persona.py
 
@@ -43,9 +50,11 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import sys
 from collections.abc import Sequence
 from contextlib import closing
+from datetime import timedelta
 from pathlib import Path
 from typing import cast
 from uuid import UUID
@@ -88,10 +97,67 @@ PERSONA_APPLICATION = {
     "affirm": True,
 }
 
+# Task S3 (Wave 2a, I8b/I8c): the sign-up/verify/reset/accept-invite screens' oracle needs an
+# account in each state those flows start FROM. `unverified@` and `verified@` share the documented
+# persona password like every other fixture above; `invited@` does not — see INVITED_* below.
+IDENTITY_STATE_PERSONAS: tuple[tuple[str, str, str], ...] = (
+    ("unverified@practice-match.test", "unverified", "Unverified Applicant"),
+    ("verified@practice-match.test", "verified", "Verified Applicant"),
+)
+# A real Argon2id hash of a secret generated fresh and never stored anywhere but this hash — not
+# `bootstrap_admin.py`'s `NO_PASSWORD` sentinel, because the point here is proving the *shared*
+# persona password specifically does not open this account, and a sentinel can't verify against
+# anything to prove that. The only way in is the `invite` fixture token seeded below.
+INVITED_EMAIL = "invited@practice-match.test"
+INVITED_STATE = "verified"
+INVITED_NAME = "Invited Staff"
+
+# D-I8-4 continued: `needs-review@` and `declined@` (STATE_PERSONAS above) get their first REAL
+# `application` row, so the applicant's answer/re-apply screens (Task I8b) have something to
+# render besides the design's own fixture copy. `pending@` still gets none — nothing in this wave
+# reads a pending row's fields.
+NEEDS_REVIEW_EMAIL = "needs-review@practice-match.test"
+NEEDS_REVIEW_FIELDS = {
+    "name": "Applicant Under Review, DVM",
+    "vin_member_id": "",
+    "school_year": "Colorado State, 2018",
+    "license_state": "CO",
+    "employer": "Associate veterinarian",
+    "intent": "Buy within a year.",
+    "affirm": True,
+}
+NEEDS_REVIEW_INFO_REQUEST = "Which practice do you work at now, and in what role?"
+DECLINED_EMAIL = "declined@practice-match.test"
+# Verbatim from the task brief.
+DECLINED_FIELDS = {
+    "name": "Declined Applicant, DVM",
+    "school_year": "Texas A&M, 2012",
+    "license_state": "TX",
+    "employer": "Hill Country Veterinary Clinic",
+    "intent": "Exploring ownership within two years.",
+    "affirm": True,
+}
+DECLINED_DECISION_NOTE = "Employer is outside the marketplace's current pilot region."
+
+# Twelve single-use tokens per purpose, recreated every run: Task S5's visual oracle consumes
+# `fixture-<purpose>-01` … `-12` through the real endpoints instead of a live signup/forgot/invite
+# flow, so a screenshot run never competes with itself for SIGNUP_EMAIL/FORGOT_EMAIL's daily
+# budgets. The raw values are documented test constants the harness mirrors — never printed here
+# beyond this pattern, and never a password.
+FIXTURE_TOKEN_PREFIX = "fixture-"
+FIXTURE_TOKEN_COUNT = 12
+FIXTURE_TOKENS: dict[str, tuple[str, str]] = {
+    "verify": ("unverified@practice-match.test", "fixture-verify-{n:02d}"),
+    "reset": ("verified@practice-match.test", "fixture-reset-{n:02d}"),
+    "invite": (INVITED_EMAIL, "fixture-invite-{n:02d}"),
+}
+FIXTURE_TTL = {"verify": timedelta(hours=24), "reset": timedelta(hours=1), "invite": timedelta(days=7)}
+
 
 def main(argv: Sequence[str] | None = None) -> int:
     from app.auth import audit
     from app.auth import passwords as P
+    from app.auth import tokens as T
     from app.config import settings
     from app.db import sync_conn
 
@@ -137,6 +203,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                             (oracle_id, role, account_id))
             audit.write(conn, actor=None, action="persona.seed", target_type="account",
                         target_id=oracle_id, reason="seed_persona.py")
+        state_persona_ids: dict[str, UUID] = {}
         for email, state, display_name in STATE_PERSONAS:
             cur.execute("""INSERT INTO account (email, password_hash, state, display_name)
                                 VALUES (%s,%s,%s,%s)
@@ -144,12 +211,68 @@ def main(argv: Sequence[str] | None = None) -> int:
                                    SET password_hash=EXCLUDED.password_hash, state=EXCLUDED.state,
                                        display_name=EXCLUDED.display_name
                              RETURNING id""", (email, hashed, state, display_name))
+            aid = cast("tuple[UUID]", cur.fetchone())[0]
+            state_persona_ids[email] = aid
             audit.write(conn, actor=None, action="persona.seed", target_type="account",
-                        target_id=cast("tuple[UUID]", cur.fetchone())[0], reason="seed_persona.py")
+                        target_id=aid, reason="seed_persona.py")
+
+        # Task S3: the three identity-screen accounts. `unverified@`/`verified@` share `hashed`
+        # like every fixture above; `invited@` gets a hash of a secret generated fresh THIS RUN and
+        # kept nowhere — the invite token is the only way in.
+        identity_ids: dict[str, UUID] = {}
+        for email, state, display_name in IDENTITY_STATE_PERSONAS:
+            cur.execute("""INSERT INTO account (email, password_hash, state, display_name)
+                                VALUES (%s,%s,%s,%s)
+                           ON CONFLICT (email) DO UPDATE
+                                   SET password_hash=EXCLUDED.password_hash, state=EXCLUDED.state,
+                                       display_name=EXCLUDED.display_name
+                             RETURNING id""", (email, hashed, state, display_name))
+            identity_ids[email] = cast("tuple[UUID]", cur.fetchone())[0]
+            audit.write(conn, actor=None, action="persona.seed", target_type="account",
+                        target_id=identity_ids[email], reason="seed_persona.py")
+
+        invited_hashed = P.hash_password(secrets.token_urlsafe(24))
+        cur.execute("""INSERT INTO account (email, password_hash, state, display_name)
+                            VALUES (%s,%s,%s,%s)
+                       ON CONFLICT (email) DO UPDATE
+                               SET password_hash=EXCLUDED.password_hash, state=EXCLUDED.state,
+                                   display_name=EXCLUDED.display_name
+                         RETURNING id""", (INVITED_EMAIL, invited_hashed, INVITED_STATE, INVITED_NAME))
+        identity_ids[INVITED_EMAIL] = cast("tuple[UUID]", cur.fetchone())[0]
+        audit.write(conn, actor=None, action="persona.seed", target_type="account",
+                    target_id=identity_ids[INVITED_EMAIL], reason="seed_persona.py")
+
+        # `needs-review@`'s and `declined@`'s first real application row — delete-then-insert, so
+        # a re-run never accumulates a second row on either account (application has no natural
+        # key `ON CONFLICT` could use).
+        needs_review_id = state_persona_ids[NEEDS_REVIEW_EMAIL]
+        cur.execute("DELETE FROM application WHERE account_id=%s", (needs_review_id,))
+        cur.execute("""INSERT INTO application (account_id, kind, fields, status, decided_by, decided_at, info_request)
+                       VALUES (%s, 'buyer', %s, 'needs_review', %s, now(), %s)""",
+                    (needs_review_id, json.dumps(NEEDS_REVIEW_FIELDS), account_id, NEEDS_REVIEW_INFO_REQUEST))
+        declined_id = state_persona_ids[DECLINED_EMAIL]
+        cur.execute("DELETE FROM application WHERE account_id=%s", (declined_id,))
+        cur.execute("""INSERT INTO application (account_id, kind, fields, status, decided_by, decided_at, decision_note)
+                       VALUES (%s, 'buyer', %s, 'declined', %s, now(), %s)""",
+                    (declined_id, json.dumps(DECLINED_FIELDS), account_id, DECLINED_DECISION_NOTE))
+
+        # Twelve fresh single-use tokens per purpose. Deleted first so neither a used row from the
+        # last run nor a stale one survives a re-seed.
+        for purpose, (email, pattern) in FIXTURE_TOKENS.items():
+            target_id = identity_ids[email]
+            cur.execute("DELETE FROM email_token WHERE account_id=%s AND purpose=%s", (target_id, purpose))
+            for n in range(1, FIXTURE_TOKEN_COUNT + 1):
+                raw = pattern.format(n=n)
+                cur.execute("""INSERT INTO email_token (account_id, purpose, token_hash, expires_at)
+                               VALUES (%s,%s,%s, now() + %s::interval)""",
+                            (target_id, purpose, T.hash(raw), FIXTURE_TTL[purpose]))
     print(f"[seed_persona] {PERSONA_EMAIL} is ready on {settings.environment} — roles: {', '.join(PERSONA_ROLES)}")
     oracles = ", ".join(f"{email} ({'+'.join(roles)})" for email, roles in ORACLE_PERSONAS)
     print(f"[seed_persona] oracle personas: {oracles}")
     print(f"[seed_persona] gate-state personas: {', '.join(f'{e} ({s})' for e, s, _ in STATE_PERSONAS)}")
+    identity = ", ".join(f"{e} ({s})" for e, s, _ in IDENTITY_STATE_PERSONAS)
+    print(f"[seed_persona] identity-screen personas: {identity}, {INVITED_EMAIL} ({INVITED_STATE}, no usable password)")
+    print(f"[seed_persona] fixture tokens: {FIXTURE_TOKEN_COUNT} per purpose ({', '.join(sorted(FIXTURE_TOKENS))}), recreated this run")
     return 0
 
 

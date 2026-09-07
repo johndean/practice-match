@@ -562,6 +562,126 @@ def test_seed_persona_upserts_the_design_account_and_never_prints_its_password(c
     assert "production" in capsys.readouterr().err
 
 
+async def test_seed_persona_seeds_the_three_identity_screen_accounts(client, conn, monkeypatch):
+    """Task S3: the sign-up/verify/reset/accept-invite screens' oracle needs an account in each of
+    the three states those flows start from. `unverified@` and `verified@` take the same documented
+    password as every other fixture; `invited@` is deliberately given a password nobody is ever
+    told (a fresh random secret, hashed and discarded) — the only way into that account is the
+    invite token, so signing in with the shared persona password must fail exactly like a stranger
+    who does not hold the link."""
+    from app.auth import passwords as P
+    from scripts import seed_persona
+
+    monkeypatch.setenv("PERSONA_PASSWORD", INVITE_PW)
+    _run_cli(seed_persona, [])
+    _run_cli(seed_persona, [])                                                  # idempotent
+
+    expected_state = {
+        "unverified@practice-match.test": "unverified",
+        "verified@practice-match.test": "verified",
+        "invited@practice-match.test": "verified",
+    }
+    with conn.cursor() as cur:
+        cur.execute("SELECT email, state, display_name, password_hash FROM account WHERE email = ANY(%s) ORDER BY email",
+                    (sorted(expected_state),))
+        rows = cur.fetchall()
+    assert [r[0] for r in rows] == sorted(expected_state)
+    by_email = {r[0]: r for r in rows}
+    assert by_email["unverified@practice-match.test"][1:3] == ("unverified", "Unverified Applicant")
+    assert by_email["verified@practice-match.test"][1:3] == ("verified", "Verified Applicant")
+    assert by_email["invited@practice-match.test"][1:3] == ("verified", "Invited Staff")
+    assert P.verify(INVITE_PW, by_email["unverified@practice-match.test"][3])
+    assert P.verify(INVITE_PW, by_email["verified@practice-match.test"][3])
+    assert not P.verify(INVITE_PW, by_email["invited@practice-match.test"][3]), \
+        "invited@ must NOT accept the shared persona password"
+
+    r = await client.post("/api/auth/signin", json={"email": "invited@practice-match.test", "password": INVITE_PW})
+    assert r.status_code == 401
+
+
+def test_seed_persona_gives_needs_review_and_declined_their_first_real_application_row(conn, monkeypatch):
+    """D-I8-4 continued: `needs-review@` and `declined@` (STATE_PERSONAS) get one real `application`
+    row apiece so the applicant's answer/re-apply screens (Task I8b) have something to render —
+    `needs-review@`'s carries the reviewer's `info_request`, `declined@`'s carries the fields spec'd
+    verbatim in the brief. Each account gets exactly one row, however often the script runs
+    (`OPEN_STATUSES`'s one-open-application-per-account invariant, applications.py)."""
+    from scripts import seed_persona
+
+    monkeypatch.setenv("PERSONA_PASSWORD", INVITE_PW)
+    _run_cli(seed_persona, [])
+    _run_cli(seed_persona, [])                                                  # idempotent — no accumulation
+
+    with conn.cursor() as cur:
+        cur.execute("""SELECT count(*), max(status), max(info_request)
+                         FROM application a JOIN account acc ON acc.id = a.account_id
+                        WHERE acc.email = 'needs-review@practice-match.test'""")
+        count, status, info_request = cur.fetchone()
+        assert (count, status) == (1, "needs_review")
+        assert info_request == "Which practice do you work at now, and in what role?"
+
+        cur.execute("""SELECT count(*), max(status), max(fields::text)
+                         FROM application a JOIN account acc ON acc.id = a.account_id
+                        WHERE acc.email = 'declined@practice-match.test'""")
+        count, status, fields_text = cur.fetchone()
+        assert (count, status) == (1, "declined")
+        assert json.loads(fields_text) == {
+            "name": "Declined Applicant, DVM",
+            "school_year": "Texas A&M, 2012",
+            "license_state": "TX",
+            "employer": "Hill Country Veterinary Clinic",
+            "intent": "Exploring ownership within two years.",
+            "affirm": True,
+        }
+
+
+async def test_seed_persona_recreates_twelve_single_use_fixture_tokens_per_purpose(client, conn, monkeypatch):
+    """S3's other half: twelve `email_token` rows per purpose, always fresh (Task S5's visual
+    oracle consumes them through the real endpoints, never a live signup/forgot/invite flow, so a
+    screenshot run never competes with itself for `SIGNUP_EMAIL`/`FORGOT_EMAIL`'s daily budgets).
+    Consuming one and re-seeding proves the re-seed is a DELETE-then-INSERT, not an accumulation:
+    the used row is gone and a fresh, unused one takes its place."""
+    from scripts import seed_persona
+
+    monkeypatch.setenv("PERSONA_PASSWORD", INVITE_PW)
+    _run_cli(seed_persona, [])
+    _run_cli(seed_persona, [])                                                  # idempotent
+
+    assert seed_persona.FIXTURE_TOKENS == {
+        "verify": ("unverified@practice-match.test", "fixture-verify-{n:02d}"),
+        "reset": ("verified@practice-match.test", "fixture-reset-{n:02d}"),
+        "invite": ("invited@practice-match.test", "fixture-invite-{n:02d}"),
+    }
+
+    def _count(purpose, email):
+        with conn.cursor() as cur:
+            cur.execute("""SELECT count(*), count(*) FILTER (WHERE used_at IS NULL)
+                             FROM email_token t JOIN account a ON a.id = t.account_id
+                            WHERE a.email = %s AND t.purpose = %s""", (email, purpose))
+            return cur.fetchone()
+
+    for purpose, (email, _pattern) in seed_persona.FIXTURE_TOKENS.items():
+        assert _count(purpose, email) == (12, 12), purpose
+
+    verify_token = seed_persona.FIXTURE_TOKENS["verify"][1].format(n=1)
+    first = await client.post("/api/auth/verify", json={"token": verify_token})
+    assert first.status_code == 200
+    again = await client.post("/api/auth/verify", json={"token": verify_token})
+    assert again.status_code in (400, 401, 422)
+    assert _count("verify", "unverified@practice-match.test") == (12, 11), "one token is now used"
+
+    _run_cli(seed_persona, [])                                                  # re-seed after consumption
+    for purpose, (email, _pattern) in seed_persona.FIXTURE_TOKENS.items():
+        assert _count(purpose, email) == (12, 12), f"{purpose}: old rows must be gone, not accumulated"
+
+    reset_token = seed_persona.FIXTURE_TOKENS["reset"][1].format(n=2)
+    reset_r = await client.post("/api/auth/password/reset", json={"token": reset_token, "password": "quiet-orbit-lantern-71"})
+    assert reset_r.status_code == 200
+
+    invite_token = seed_persona.FIXTURE_TOKENS["invite"][1].format(n=3)
+    invite_r = await client.post("/api/auth/accept-invite", json={"token": invite_token, "password": "quiet-orbit-lantern-72"})
+    assert invite_r.status_code == 200
+
+
 @pytest.mark.parametrize(("script", "argv"), [("bootstrap_admin", ["--email", "cli@example.org"]), ("seed_persona", [])])
 def test_the_cli_entry_points_run_as___main__(conn, monkeypatch, script, argv):
     """`if __name__ == "__main__": raise SystemExit(main())` never executes on import, and a

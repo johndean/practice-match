@@ -523,6 +523,32 @@ def test_the_playwright_persona_password_default_matches_seed_persona():
     assert presented.group(1) == seeded.group(1)
 
 
+def test_the_harness_fixture_tokens_match_the_seed_scripts_pattern_and_the_three_new_state_emails():
+    """Task S3/S5, same shape as the password pin above: `scripts/seed_persona.py`'s
+    `FIXTURE_TOKENS` names the account and the `fixture-<purpose>-{n:02d}` pattern the visual
+    harness (Task S5) mirrors as test-only constants, so the two never drift out of the one
+    documented `fixture-<purpose>-NN` shape a raw token is ever allowed to look like.
+
+    S3 ships only the seed side; the harness half (`FIXTURE_TOKEN_PREFIX` and the three new
+    `*@practice-match.test` emails in `frontend/tests/harness.ts`) is Task S5's to add — so THIS
+    half of the pin is the one RED test S3 leaves behind on purpose, named in the task report."""
+    from scripts import seed_persona
+
+    assert seed_persona.FIXTURE_TOKENS == {
+        "verify": ("unverified@practice-match.test", "fixture-verify-{n:02d}"),
+        "reset": ("verified@practice-match.test", "fixture-reset-{n:02d}"),
+        "invite": ("invited@practice-match.test", "fixture-invite-{n:02d}"),
+    }
+    assert seed_persona.FIXTURE_TOKEN_PREFIX == "fixture-"
+
+    harness = (ROOT / "frontend" / "tests" / "harness.ts").read_text()
+    presented = re.search(r"^export const FIXTURE_TOKEN_PREFIX = '([^']+)';$", harness, re.MULTILINE)
+    assert presented, "frontend/tests/harness.ts does not yet define FIXTURE_TOKEN_PREFIX (Task S5)"
+    assert presented.group(1) == seed_persona.FIXTURE_TOKEN_PREFIX
+    for email, _pattern in seed_persona.FIXTURE_TOKENS.values():
+        assert email in harness, f"frontend/tests/harness.ts does not yet name {email} (Task S5)"
+
+
 def test_claude_md_does_not_claim_v2_byte_identity_after_the_launch_removal():
     """Review round 1, I3. Two sentences in CLAUDE.md outlived their truth: the thirteen non-Browse
     screens WERE byte-identical to V2 from Task V13 until Task I8a's launch removal (A6, ruled
