@@ -422,3 +422,26 @@ def test_claude_md_gate_includes_the_dom_oracle():
     assert "spec.ts" not in scripts["test:e2e"], scripts["test:e2e"]
     ops = [line for line in text.splitlines() if line.startswith("cd frontend &&") and "test:" in line]
     assert any("npm run test:e2e" in line for line in ops), "the Common operations block still runs the pixel gate alone"
+
+
+# The two plan sites that print the coverage-exclusion list as prose. Both are historical
+# records rather than live instructions, but an implementer reading either would be told the
+# old set — the same drift class as the backend-gate lines (L9).
+PLANS_QUOTING_THE_COVERAGE_EXCLUSIONS = (
+    "2026-09-06-browse-v3-mobile.md",
+    "2026-09-05-practice-match-platform.md",
+)
+F1_NOTE = (
+    "(Re-ratified 2026-09-07, F1: `src/dc-logic.js` and `src/lib/**` left the exclusion list "
+    "once their tests landed; the measured set is 14 files at 100 %.)"
+)
+
+
+def test_plans_that_print_the_coverage_exclusions_carry_the_f1_note():
+    """F1: `src/dc-logic.js` and `src/lib/**` are measured now, so every place that prints the
+    old list has to say so beside it — Browse V3's Global Constraint (g), which is the reason
+    that branch could not widen the set, and Task 12's configuration step, which set it."""
+    for name in PLANS_QUOTING_THE_COVERAGE_EXCLUSIONS:
+        text = (ROOT / "docs" / "superpowers" / "plans" / name).read_text()
+        assert "'src/dc-logic.js'" in text or "`src/dc-logic.js`" in text, f"{name}: expected the exclusion list here"
+        assert F1_NOTE in text, f"{name} prints the old exclusion list without the F1 re-ratification note"
