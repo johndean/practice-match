@@ -32,8 +32,20 @@ if [[ -n "${2:-}" ]]; then
 fi
 cd "$(dirname "$0")/.."
 SOURCE_DIR="${SOURCE_DIR:-$PWD}"
-git -C "$SOURCE_DIR" rev-parse --git-dir >/dev/null 2>&1 \
-  || { echo "STOP: SOURCE_DIR '$SOURCE_DIR' is not a git working tree; deploy.sh uploads a git archive of its HEAD" >&2; exit 64; }
+# The ANSWER, not the exit code: `rev-parse --is-inside-work-tree` exits 0 for a bare
+# repository and for a bare `.git` directory too, printing "false" — and both then died past
+# the 🚦 check with git's own `fatal: this operation must be run in a work tree` and exit 128
+# (L1). `rev-parse --git-dir`, which this replaced, could not tell them apart at all.
+if [[ "$(git -C "$SOURCE_DIR" rev-parse --is-inside-work-tree 2>/dev/null || true)" != "true" ]]; then
+  echo "STOP: SOURCE_DIR '$SOURCE_DIR' is not a git working tree (a bare repository or a bare .git directory is not one); deploy.sh uploads a git archive of its HEAD" >&2
+  exit 64
+fi
+# A repository with no commits reached `git archive HEAD` and exited 128 with `fatal: Needed
+# a single revision` (L2).
+if ! git -C "$SOURCE_DIR" rev-parse --verify HEAD >/dev/null 2>&1; then
+  echo "STOP: SOURCE_DIR '$SOURCE_DIR' has no commits; deploy.sh uploads a git archive of HEAD, so there is nothing to upload" >&2
+  exit 64
+fi
 # Untracked files are fine (they are not in HEAD and will not ship). Uncommitted edits to
 # TRACKED files are not: "deploy what is committed" would silently drop them, which is a
 # worse surprise than refusing.
@@ -51,6 +63,15 @@ if [[ "$PROJECT" != "Practice Match" ]]; then
 fi
 echo "🚦 railway status → Project: $PROJECT | target environment: $ENV"
 SHA=$(git -C "$SOURCE_DIR" rev-parse --short HEAD)
+# Warnings, never refusals (L7): a detached or local-only HEAD deploys perfectly well, but
+# the BUILD_SHA stamped into the artefact is then one nobody else can fetch — which defeats
+# the point of stamping it, and is exactly the kind of thing that made P14 hard to unpick.
+if ! git -C "$SOURCE_DIR" symbolic-ref -q HEAD >/dev/null 2>&1; then
+  echo "WARN: '$SOURCE_DIR' is on a detached HEAD ($SHA) — no branch names this commit." >&2
+fi
+if [[ -z "$(git -C "$SOURCE_DIR" branch -r --contains HEAD 2>/dev/null || true)" ]]; then
+  echo "WARN: HEAD $SHA of '$SOURCE_DIR' is not on any remote; push before deploying if this artefact needs to be reproducible." >&2
+fi
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/practice-match-deploy.XXXXXX")
 # Deliberately NOT inside $TMP: that directory is the upload.
 CLI_ERR=$(mktemp "${TMPDIR:-/tmp}/practice-match-deploy-err.XXXXXX")
@@ -61,7 +82,15 @@ git -C "$SOURCE_DIR" archive --format=tar HEAD | tar -x -C "$TMP"
 # hid itself), a file inside the archive cannot.
 printf '%s\n' "$SHA" > "$TMP/BUILD_SHA"
 # Read from the archive, not the checkout: this is definitionally the version being shipped.
-VERSION=$(python3 -c 'import sys,tomllib; print(tomllib.load(open(sys.argv[1],"rb"))["project"]["version"])' "$TMP/pyproject.toml")
+# One clean line on any failure — a missing or malformed pyproject used to surface a raw
+# Python traceback and exit 1 (L3); nothing has been uploaded at this point.
+VERSION=$(python3 -c '
+import sys, tomllib
+try:
+    print(tomllib.load(open(sys.argv[1], "rb"))["project"]["version"])
+except Exception as exc:
+    sys.exit(f"STOP: cannot read [project].version from the committed pyproject.toml of {sys.argv[2]} ({type(exc).__name__}); deploy.sh needs it as the version to verify against")
+' "$TMP/pyproject.toml" "$SOURCE_DIR") || exit 64
 echo "→ uploading the committed tree of $SOURCE_DIR (HEAD $SHA, version $VERSION)"
 
 # `railway up --ci` streams build logs, and that stream can time out with a

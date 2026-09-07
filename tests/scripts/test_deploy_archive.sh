@@ -101,6 +101,9 @@ export DEPLOY_POLL_TIMEOUT=3
 
 # Scratch repositories, made without touching the developer's git identity or signing config.
 git_q() { git -c init.defaultBranch=main -c commit.gpgsign=false -c user.name=pm-test -c user.email=pm-test@example.invalid "$@"; }
+# deploy.sh warns when HEAD is on no remote (L7); a remote-tracking ref makes a scratch
+# checkout look pushed, so that warning appears only in the cases that are about it.
+mark_pushed() { git_q -C "$1" update-ref refs/remotes/origin/deployed HEAD; }
 new_repo() {  # new_repo <dir> <version>
   mkdir -p "$1"
   git_q -C "$1" init -q
@@ -108,6 +111,7 @@ new_repo() {  # new_repo <dir> <version>
   printf 'FROM scratch\n' > "$1/Dockerfile"
   git_q -C "$1" add pyproject.toml Dockerfile
   git_q -C "$1" commit -q -m "scratch $2"
+  mark_pushed "$1"
 }
 
 # --- 1. the upload is the committed tree: no .git, no untracked files -----------
@@ -115,7 +119,8 @@ repo="$tmp/main-checkout"; new_repo "$repo" 9.9.9
 repo_sha=$(git_q -C "$repo" rev-parse --short HEAD)
 echo "notes to self" > "$repo/scratch-note.txt"   # untracked: must not ship, must not refuse the deploy
 reset_state; : > "$FAKE_LOG"
-out=$(scripts/deploy.sh QA "$repo") || fail "a clean SOURCE_DIR must deploy; got: $out"
+out=$(scripts/deploy.sh QA "$repo" 2>&1) || fail "a clean SOURCE_DIR must deploy; got: $out"
+[[ "$out" != *"WARN"* ]] || fail "a pushed, attached, committed SOURCE_DIR must warn about nothing; got: $out"
 grep -q '^UPLOAD_PYPROJECT version = "9.9.9"' "$FAKE_LOG" \
   || fail "the upload must carry SOURCE_DIR's committed pyproject.toml; got: $(grep '^UPLOAD_PYPROJECT' "$FAKE_LOG" || echo none)"
 if grep -q '^UPLOAD_ENTRY \./\.git' "$FAKE_LOG"; then fail "the upload must not contain .git: $(grep '^UPLOAD_ENTRY \./\.git' "$FAKE_LOG")"; fi
@@ -166,6 +171,7 @@ git_q -C "$repo" worktree add -q -b feat/browse-v3 "$wt"
 printf '[project]\nname = "practice-match"\nversion = "8.8.8"\n' > "$wt/pyproject.toml"
 git_q -C "$wt" add pyproject.toml
 git_q -C "$wt" commit -q -m "branch-only version"
+mark_pushed "$wt"
 wt_sha=$(git_q -C "$wt" rev-parse --short HEAD)
 [[ "$wt_sha" != "$repo_sha" ]] || fail "the worktree and the main checkout must differ for this case to mean anything"
 reset_state; : > "$FAKE_LOG"
@@ -249,6 +255,7 @@ V
 chmod +x "$selfrepo/scripts/verify-deploy.sh"
 git_q -C "$selfrepo" add scripts/deploy.sh scripts/verify-deploy.sh
 git_q -C "$selfrepo" commit -q -m "vendor deploy.sh and a recording verifier stub"
+mark_pushed "$selfrepo"
 self_sha=$(git_q -C "$selfrepo" rev-parse --short HEAD)
 reset_state; : > "$FAKE_LOG"
 out=$(SKIP_VERIFY= FAKE_UP_FAILS=1 FAKE_DEPLOY_STATUSES="BUILDING SUCCESS" "$selfrepo/scripts/deploy.sh" QA 2>&1) \
@@ -294,5 +301,71 @@ out=$(FAKE_UP_FAILS=1 FAKE_DEPLOY_STATUSES="BUILDING SUCCESS" FAKE_DEPLOYMENT_FA
 set -e
 [[ $code -eq 67 ]] || fail "losing the deployment list mid-settle must fail closed with 67, got $code: $out"
 [[ "$out" == *"unauthorized"* ]] || fail "the CLI's failure must be printed before failing closed; got: $out"
+
+# --- 15. L1: a bare repository is not a working tree — 64, not git's exit 128 ------------
+# `rev-parse --git-dir` SUCCEEDS for a bare repo and for a `.git` directory (both print
+# is-inside-work-tree=false, rc 0), so the guard has to read the answer, not the exit code.
+git_q -C "$tmp" init -q --bare bare-repo.git
+reset_state; : > "$FAKE_LOG"
+set +e
+out=$(scripts/deploy.sh QA "$tmp/bare-repo.git" 2>&1); code=$?
+set -e
+[[ $code -eq 64 ]] || fail "a bare repository must exit 64, got $code: $out"
+[[ "$out" == *"not a git working tree"* ]] || fail "the bare-repo refusal must use the working-tree message; got: $out"
+[[ ! -s "$FAKE_LOG" ]] || fail "a bare repository must be refused before the railway CLI is touched"
+
+# --- 16. L1: a `.git` directory is not a working tree either -----------------------------
+reset_state; : > "$FAKE_LOG"
+set +e
+out=$(scripts/deploy.sh QA "$repo/.git" 2>&1); code=$?
+set -e
+[[ $code -eq 64 ]] || fail "a .git directory must exit 64, got $code: $out"
+[[ "$out" == *"not a git working tree"* ]] || fail "the .git-directory refusal must use the working-tree message; got: $out"
+
+# --- 17. L2: a repository with no commits — 64, not git's 'Needed a single revision' 128 --
+mkdir -p "$tmp/no-commits"; git_q -C "$tmp/no-commits" init -q
+reset_state; : > "$FAKE_LOG"
+set +e
+out=$(scripts/deploy.sh QA "$tmp/no-commits" 2>&1); code=$?
+set -e
+[[ $code -eq 64 ]] || fail "a repository with no commits must exit 64, got $code: $out"
+[[ "$out" == *"no commits"* ]] || fail "the empty-repo refusal must name the reason; got: $out"
+[[ "$out" != *"Needed a single revision"* ]] || fail "git's own fatal must not be what the operator sees; got: $out"
+[[ ! -s "$FAKE_LOG" ]] || fail "an empty repository must be refused before the railway CLI is touched"
+
+# --- 18. L3: an archived tree with no pyproject.toml fails on one clean line ---------------
+nopy="$tmp/no-pyproject"; mkdir -p "$nopy"
+git_q -C "$nopy" init -q
+printf 'FROM scratch\n' > "$nopy/Dockerfile"
+git_q -C "$nopy" add Dockerfile
+git_q -C "$nopy" commit -q -m "no pyproject"
+mark_pushed "$nopy"
+reset_state; : > "$FAKE_LOG"
+set +e
+out=$(scripts/deploy.sh QA "$nopy" 2>&1); code=$?
+set -e
+[[ $code -eq 64 ]] || fail "a tree without pyproject.toml must exit 64, got $code: $out"
+[[ "$out" == *"pyproject.toml"* ]] || fail "the failure must name pyproject.toml; got: $out"
+[[ "$out" != *"Traceback"* ]] || fail "a missing pyproject must be one clean line, not a Python traceback; got: $out"
+[[ $(grep -c '^UP ' "$FAKE_LOG") -eq 0 ]] || fail "nothing may be uploaded when the version cannot be read"
+
+# --- 19. L7: HEAD on no remote warns, and still deploys ----------------------------------
+# The stamp is the point: a BUILD_SHA nobody else can fetch defeats it. A warning, never a
+# refusal — John deploys from a worktree before pushing all the time.
+local_only="$tmp/local-only"; new_repo "$local_only" 5.5.5
+git_q -C "$local_only" update-ref -d refs/remotes/origin/deployed
+reset_state; : > "$FAKE_LOG"
+out=$(scripts/deploy.sh QA "$local_only" 2>&1) || fail "an unpushed HEAD must still deploy; got: $out"
+[[ "$out" == *"is not on any remote"* ]] || fail "an unpushed HEAD must warn; got: $out"
+[[ "$out" == *"push before deploying"* ]] || fail "the warning must say what to do; got: $out"
+[[ $(grep -c '^UP ' "$FAKE_LOG") -eq 2 ]] || fail "the warning must not stop the deploy"
+
+# --- 20. L7: a detached HEAD warns, and still deploys ------------------------------------
+detached="$tmp/detached"; new_repo "$detached" 4.4.4
+git_q -C "$detached" checkout -q --detach
+reset_state; : > "$FAKE_LOG"
+out=$(scripts/deploy.sh QA "$detached" 2>&1) || fail "a detached HEAD must still deploy; got: $out"
+[[ "$out" == *"detached HEAD"* ]] || fail "a detached HEAD must be called out; got: $out"
+[[ $(grep -c '^UP ' "$FAKE_LOG") -eq 2 ]] || fail "the detached-HEAD warning must not stop the deploy"
 
 echo "deploy archive OK"

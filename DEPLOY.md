@@ -45,7 +45,7 @@ scripts/deploy.sh production               # api + worker → verify-deploy.sh p
 
 | Code | Meaning | What to do |
 |---|---|---|
-| `exit 64` | usage: the environment is not `QA`/`production`, or SOURCE_DIR is not a directory or not a git working tree | fix the arguments |
+| `exit 64` | usage: the environment is not `QA`/`production`, or SOURCE_DIR is not a directory, not a git working tree (a bare repository and a bare `.git` directory are not), has no commits, or its committed tree carries no readable `[project].version` | fix the arguments; every one of these says which |
 | `exit 65` | 🚦 the linked Railway project is not **Practice Match** | `railway link`, then `railway status` |
 | `exit 66` | SOURCE_DIR has uncommitted changes to tracked files — the upload is HEAD, so those edits would silently not ship | commit them, or pass a SOURCE_DIR that is committed. Untracked files are fine and are simply left out |
 | `exit 67` | the upload created no deployment, or the deployment did not reach `SUCCESS` | read the message: either the upload itself failed and **nothing was deployed**, or `railway logs --service <svc> --environment <env> --lines 100` |
