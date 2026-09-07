@@ -51,7 +51,7 @@ Prototype jump bar markup (`prototypeBar`, already off in production) · "Protot
 ## Common operations
 
 ```bash
-docker compose -f docker-compose.dev.yml up -d && poetry run pytest            # backend tests
+docker compose -f docker-compose.dev.yml up -d && poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov-fail-under=100   # backend gate, exactly as CI runs it
 cd frontend && npm run typecheck && npm test && npm run build                  # frontend gates
 cd frontend && npm run test:smoke && npm run test:visual:baselines && npm run test:visual
 scripts/deploy.sh QA && scripts/deploy.sh production                           # after the gate

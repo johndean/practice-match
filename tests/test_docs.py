@@ -20,9 +20,14 @@ REQUIRED_CI_COMMANDS = (
     "poetry run ruff check app tests scripts",
     "poetry run mypy app --strict",
     "poetry run pytest -q -W error",
-    "--cov=app",
+    # P14 C4 (2026-09-07): main's backend gate is now the 100 % app+scripts BRANCH gate that
+    # Wave 2a's branch already runs. It was `--cov=app --cov-fail-under=90` while two
+    # pre-existing gaps stood open (app/db.py's other-loop disposal arm and
+    # scripts/migrate.py's `__main__` guard); both are covered now, so nothing has to be
+    # relaxed to keep it green.
+    "--cov=app --cov=scripts --cov-branch",
     "--cov-report=xml",
-    "--cov-fail-under=90",
+    "--cov-fail-under=100",
     "bash tests/scripts/test_start_sh.sh",
     "bash tests/scripts/test_verify_image_sh.sh",
     "bash tests/scripts/test_deploy_guard.sh",
@@ -347,3 +352,19 @@ def test_platform_plan_records_the_p14_hotfix():
     assert "### Task 14: Deploy what is committed, verify what is deployed (hotfix, 2026-09-07)" in text
     assert "--path-as-root" in text, "the flag that makes the upload path the archive root is unrecorded"
     assert "BUILD_SHA" in text, "the artefact stamp is unrecorded"
+
+
+def test_claude_md_local_backend_gate_is_the_one_ci_runs():
+    """P14 C4: the backend gate is the 100 % app+scripts branch gate. The command in
+    CLAUDE.md's Common operations must be the one CI runs verbatim — otherwise the loop
+    John actually types is weaker than the gate, and the first he hears of it is a red CI."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    workflow = (ROOT / ".github" / "workflows" / "quality.yml").read_text()
+    policy = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-quality-and-performance-policy.md").read_text()
+    gate = "poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch"
+    assert gate in claude, "CLAUDE.md's Common operations must carry the backend gate verbatim"
+    assert gate in workflow, "quality.yml must run the same gate"
+    assert gate in policy, "the quality policy must state the same gate"
+    for doc, text in (("CLAUDE.md", claude), ("quality.yml", workflow), ("the quality policy", policy)):
+        assert "--cov-fail-under=100" in text, doc
+        assert "--cov-fail-under=90" not in text, f"{doc} still carries the old 90 % threshold"

@@ -147,3 +147,35 @@ async def test_engine_errors_never_carry_bound_parameters(db_ready):
             await conn.execute(text("SELECT 1 FROM no_such_table WHERE x = :p"), {"p": "victim-address@example.org"})
     assert "no_such_table" in str(info.value)
     assert "victim-address@example.org" not in str(info.value)
+
+
+async def test_dispose_all_drops_another_loops_entries_without_awaiting_them():
+    """The false arm of `if loop is current:` (app/db.py:77 and :82) — the only branch in
+    this module the suite never reached, because every other test disposes the loop it is
+    running on (P14 C4, 2026-09-07). An entry cached by a DIFFERENT and very possibly
+    already-closed loop must be dropped from the cache untouched: asyncpg and redis-py
+    connections are bound to the loop that opened them, so awaiting that loop's
+    `dispose()`/`aclose()` from this one is exactly what round 4's ruling forbids."""
+
+    class NeverAwaited:
+        def __init__(self) -> None:
+            self.touched = False
+
+        async def dispose(self) -> None:  # AsyncEngine's disposal API
+            self.touched = True
+
+        async def aclose(self) -> None:  # Redis's disposal API
+            self.touched = True
+
+    other = asyncio.new_event_loop()
+    other.close()  # the realistic shape: the loop that cached these has already gone
+    engine, client = NeverAwaited(), NeverAwaited()
+    db._engines[other] = {"postgresql+asyncpg://other/db": engine}
+    db._redis_clients[other] = {"redis://other/0": client}
+
+    await db.dispose_all()
+
+    assert other not in db._engines, "another loop's engines must be dropped from the cache"
+    assert other not in db._redis_clients, "another loop's redis clients must be dropped from the cache"
+    assert engine.touched is False, "another loop's engine must never be disposed from this loop"
+    assert client.touched is False, "another loop's redis client must never be closed from this loop"

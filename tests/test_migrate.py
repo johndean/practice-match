@@ -135,3 +135,18 @@ def test_main_returns_3_when_the_database_is_unreachable(monkeypatch, capsys):
     assert code == 3
     err = capsys.readouterr().err
     assert "unreachable" in err and "OperationalError" in err
+
+
+def test_cli_entrypoint_runs_main_when_executed_as___main__(scratch_db, monkeypatch):
+    """`if __name__ == "__main__": sys.exit(main())` never executes on import, and it is
+    exactly the line `railway.json`'s pre-deploy hook and `scripts/start.sh`'s migrate role
+    run — so it was the one uncovered statement in `scripts/` (P14 C4, 2026-09-07).
+    `runpy.run_path(..., run_name="__main__")` re-executes the file IN this process, so
+    pytest-cov sees it; `run_path` rather than `run_module`, because `run_module` on an
+    already-imported name raises a RuntimeWarning that `-W error` turns into a failure."""
+    import runpy
+
+    monkeypatch.setenv("DATABASE_URL", scratch_db)
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(migrate.__file__, run_name="__main__")
+    assert exc.value.code == 0

@@ -18,7 +18,7 @@ Target shape — roughly **70 % unit · 20 % integration · 10 % end-to-end** by
 
 | Gate | Command (CI job) | Threshold |
 |---|---|---|
-| Backend tests | `poetry run pytest -q -W error --cov=app --cov-report=xml --cov-fail-under=90` | 0 failures, 0 warnings, line coverage ≥ 90 % |
+| Backend tests | `poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov-report=xml --cov-fail-under=100` | 0 failures, 0 warnings, 100 % line AND branch coverage of `app/` and `scripts/` (raised in P14, 2026-09-07, from the earlier 90 % line-coverage gate over `app/` alone, once the two standing gaps — `app/db.py`'s other-loop disposal arm and `scripts/migrate.py`'s `__main__` guard — were covered) |
 | Changed-line coverage | `diff-cover coverage.xml --compare-branch=origin/main --fail-under=100` | 100 % of changed lines covered (PRs) |
 | Types and lint (backend) | `poetry run ruff check app tests scripts && poetry run mypy app --strict` | 0 findings |
 | Frontend tests | `npx vitest run --coverage` (scope and thresholds live in the vitest config) | 0 failures; **100 % lines, branches, functions and statements on every hand-written frontend file** (`src/**` minus the generated `App.vue`/`generated/**`, the untouched prototype `logic.js`/`dc-logic.js`/`lib/**`, type-only files and test helpers — those stay under the visual, DOM and characterisation gates). *Raised from 85 % by John on 2026-09-06.* |
