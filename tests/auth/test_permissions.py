@@ -411,7 +411,7 @@ def test_the_audited_action_rule_rejects_a_near_miss_name(dist):
 
 
 def test_the_applicant_facing_audit_actions_name_no_permission_and_are_not_watched(dist):
-    """`application.submit`, `applications.answer` and `applications.reapply` are written by routes
+    """`applications.submit`, `applications.answer` and `applications.reapply` are written by routes
     guarded by `account.self`, which is not in `AUDITED` — spec §4 audits staff decisions, grants,
     token events, resets, sign-in failure bursts and application-detail VIEWS, not an applicant
     acting on their own row. The drift test above therefore never sees these three, and there is no
@@ -425,8 +425,8 @@ def test_the_applicant_facing_audit_actions_name_no_permission_and_are_not_watch
     from app.api import applications as A
     from app.main import create_app
 
-    assert (A.ANSWER_ACTION, A.REAPPLY_ACTION) == ("applications.answer", "applications.reapply")
-    assert not {A.ANSWER_ACTION, A.REAPPLY_ACTION, "application.submit"} & set(PM.MATRIX)
+    assert (A.SUBMIT_ACTION, A.ANSWER_ACTION, A.REAPPLY_ACTION) == ("applications.submit", "applications.answer", "applications.reapply")
+    assert not {A.SUBMIT_ACTION, A.ANSWER_ACTION, A.REAPPLY_ACTION} & set(PM.MATRIX)
     assert "account.self" not in PM.AUDITED
     watched = {(method, path) for method, path, route in _walk(create_app(dist=dist).routes)
                if any(perm in PM.AUDITED for perm in _permissions_of(route))}

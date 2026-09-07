@@ -69,8 +69,8 @@ async def test_a_seller_application_leaves_the_account_active_and_queues_its_own
     with conn.cursor() as cur:
         cur.execute("SELECT state FROM account WHERE id=%s", (aid,)); assert cur.fetchone() == ("active",)
         cur.execute("SELECT template FROM email_outbox"); assert [row[0] for row in cur.fetchall()] == ["seller_application_received"]
-        cur.execute("SELECT action, target_type FROM audit_log WHERE action='application.submit'")
-        assert cur.fetchone() == ("application.submit", "application")
+        cur.execute("SELECT action, target_type FROM audit_log WHERE action='applications.submit'")
+        assert cur.fetchone() == ("applications.submit", "application")
 
 
 async def test_a_seller_application_states_its_own_required_fields(client, conn, member):
@@ -380,3 +380,20 @@ async def test_a_seller_answer_leaves_the_account_active_and_queues_the_seller_t
     assert me["state"] == "active" and me["roles"] == ["buyer"]
     template, key = _one(conn, "SELECT template, idempotency_key FROM email_outbox ORDER BY id DESC LIMIT 1")
     assert template == "seller_application_received" and key.endswith(f":{app_id}:2")
+
+
+async def test_every_applicant_audit_action_is_in_the_applications_namespace(client, conn, member):
+    """Controller ruling, 2026-09-07 (concern 3): `application.submit` was the odd singular beside
+    I5c's `applications.answer` and `applications.reapply`, so an auditor grepping `audit_log` for
+    this area needed two spellings. Renamed while it is free — Wave 2a has never been deployed and
+    every scratch database is rebuilt from migrations, so no audit row anywhere carries the old
+    name, and none ever will."""
+    aid, cookies, hdr, _app_id = await _open_application(client, member, "namespace@example.org")
+    await _decide(client, _staff(member), aid, "decline", "Not enough detail.")
+    assert (await client.post("/api/applications", headers=auth_headers(cookies, hdr),
+                              json={"kind": "buyer", "fields": FIELDS})).status_code == 202
+    with conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT action FROM audit_log WHERE target_type='application' ORDER BY action")
+        assert [x[0] for x in cur.fetchall()] == ["applications.reapply", "applications.submit"]
+        cur.execute("SELECT count(*) FROM audit_log WHERE action LIKE 'application.%'")
+        assert cur.fetchone()[0] == 0, "the singular namespace is gone, not merely joined"

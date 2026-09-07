@@ -320,3 +320,16 @@ def test_deploy_md_documents_automation_tokens_and_their_two_exceptions():
     # I5b review M1: removing a staff/admin grant revokes the tokens that account may no longer
     # mint, so the page must not leave an operator thinking they have to hunt them down by hand.
     assert "grant_removed" in text
+
+
+def test_deploy_md_says_an_applied_migration_is_immutable():
+    """Task I5c (controller ruling, 2026-09-07 — concern 6). `scripts/migrate.py` records each
+    file's SHA-256 from f3b7d41 and refuses to run when an applied file has changed, so the
+    operator page has to say what exit 4 means and what to do about it — the alternative is
+    learning it from a container that will not start."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "An applied migration is immutable" in text
+    assert "SHA-256" in text and "exit 4" in text
+    assert "drop and recreate the database or restore the file" in text
+    # ...and that no persistent environment is affected today: QA and production predate Wave 2a.
+    assert "b9d01ad" in text

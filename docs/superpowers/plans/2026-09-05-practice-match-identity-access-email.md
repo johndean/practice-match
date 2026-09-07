@@ -1877,7 +1877,7 @@ async def submit(body: ApplicationIn, request: Request, principal=Depends(requir
                 cur.execute("UPDATE account SET state='pending', display_name=COALESCE(display_name, %s) WHERE id=%s", (body.fields.get("name"), principal.account_id))
         template = "application_received" if body.kind == "buyer" else "seller_application_received"
         enqueue(conn, to=email, template=template, params={}, idempotency_key=f"{principal.account_id}:{template}:{app_id}")
-        audit.write(conn, actor=principal, action="application.submit", target_type="application", target_id=app_id, request=request)
+        audit.write(conn, actor=principal, action="applications.submit", target_type="application", target_id=app_id, request=request)
     return {"id": str(app_id), "status": "pending"}
 
 

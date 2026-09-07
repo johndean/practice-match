@@ -49,9 +49,12 @@ OPEN_STATUSES = ("pending", "needs_review")
 # `seller.apply` instead — a declined seller may re-apply with no state change at all.
 BUYER_APPLY_STATES = ("verified", "declined")
 MAX_ANSWER = 4_000
-# The two audit actions the path back writes. Named as constants because the answer route also
-# COUNTS its own rows (see `answer`), and a literal in two places would be a silent miscount.
-ANSWER_ACTION, REAPPLY_ACTION = "applications.answer", "applications.reapply"
+# The three audit actions an applicant's own routes write, in ONE namespace (controller ruling,
+# 2026-09-07 — `application.submit`, singular, was renamed while it was still free: Wave 2a has
+# never been deployed, so no audit row anywhere carries the old name). Named as constants because
+# the answer route also COUNTS its own rows (see `answer`), and a literal in two places would be a
+# silent miscount.
+SUBMIT_ACTION, ANSWER_ACTION, REAPPLY_ACTION = "applications.submit", "applications.answer", "applications.reapply"
 # A closed row's `status` read back as the staff decision that produced it — what the applicant's
 # history and the reviewer's detail both show. `admin_users.APPLICATION_STATUS` is the forward map.
 DECISION = {"approved": "approve", "declined": "decline", "needs_review": "request_info"}
@@ -210,7 +213,7 @@ async def submit(body: ApplicationIn, request: Request, principal: Self) -> dict
                 S.invalidate_account(sync_redis(), principal.account_id)
         enqueue(conn, to=email, template=TEMPLATE[body.kind], params={},
                 idempotency_key=f"{principal.account_id}:{TEMPLATE[body.kind]}:{app_id}")
-        audit.write(conn, actor=principal, action=REAPPLY_ACTION if reapplying else "application.submit",
+        audit.write(conn, actor=principal, action=REAPPLY_ACTION if reapplying else SUBMIT_ACTION,
                     target_type="application", target_id=app_id, after={"kind": body.kind}, request=request)
     return {"id": str(app_id), "status": "pending"}
 
