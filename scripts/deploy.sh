@@ -123,6 +123,22 @@ select_deployment() {
   printf '%s' "$listing" |
     BASELINE="$3" DEP_ID="${4:-}" DEP_CREATED="${5:-}" python3 -c '
 import json, os, sys
+from datetime import datetime, timezone
+
+
+def parse(raw):
+    """createdAt as a MOMENT. Compared and sorted as text until L6: a single
+    offset-format row (or dropped milliseconds mid-list) would silently mis-order the list
+    rather than fail closed, and the whole upload-created-a-deployment guard rests on this
+    comparison. Unparseable reads as missing, which every caller treats as no deployment."""
+    text = str(raw or "")
+    if text.endswith("Z"):
+        text = text[:-1] + "+00:00"
+    try:
+        moment = datetime.fromisoformat(text)
+    except ValueError:
+        return None
+    return moment if moment.tzinfo else moment.replace(tzinfo=timezone.utc)
 
 
 def rows(payload):
@@ -135,25 +151,23 @@ def rows(payload):
     return []
 
 
-def created(row):
-    return str(row.get("createdAt") or row.get("created_at") or "")
-
-
 try:
-    found = [r for r in rows(json.load(sys.stdin)) if created(r)]
+    dated = [(parse(r.get("createdAt") or r.get("created_at")), r) for r in rows(json.load(sys.stdin))]
 except Exception:
-    found = []
-want_id, want_created, baseline = os.environ["DEP_ID"], os.environ["DEP_CREATED"], os.environ["BASELINE"]
+    dated = []
+dated = [pair for pair in dated if pair[0] is not None]
+want_id = os.environ["DEP_ID"]
+want_created, baseline = parse(os.environ["DEP_CREATED"]), parse(os.environ["BASELINE"])
 if want_id:
-    found = [r for r in found if str(r.get("id") or "") == want_id]
-elif want_created:
-    found = [r for r in found if created(r) == want_created]
-else:
-    found = [r for r in found if created(r) > baseline]
-if found:
-    found.sort(key=created, reverse=True)
-    top = found[0]
-    print(created(top), str(top.get("id") or ""), str(top.get("status") or "UNKNOWN").upper(), sep="\t")
+    dated = [pair for pair in dated if str(pair[1].get("id") or "") == want_id]
+elif want_created is not None:
+    dated = [pair for pair in dated if pair[0] == want_created]
+elif baseline is not None:
+    dated = [pair for pair in dated if pair[0] > baseline]
+if dated:
+    dated.sort(key=lambda pair: pair[0], reverse=True)
+    when, top = dated[0]
+    print(when.isoformat(), str(top.get("id") or ""), str(top.get("status") or "UNKNOWN").upper(), sep="\t")
 '
 }
 
@@ -177,7 +191,10 @@ await_deployment() {
       break
     fi
     if (( waited >= appear )); then
-      echo "STOP: upload did not create a deployment for $svc in $env — nothing newer than '${baseline:-<no previous deployment>}' after ${waited}s (bound ${appear}s). The upload itself failed; nothing was deployed." >&2
+      # An inference, and said as one (L4): being told "nothing was deployed" when Railway
+      # was merely slow to register a live deployment is the worst thing to hear before
+      # redeploying over it.
+      echo "STOP: upload did not create a deployment for $svc in $env — no deployment newer than '${baseline:-<no previous deployment>}' appeared within ${waited}s (bound ${appear}s). The upload almost certainly failed and nothing was deployed; if Railway was merely slow to register it, check \`railway deployment list --service $svc --environment $env\` first, then re-run with a larger DEPLOY_APPEAR_TIMEOUT." >&2
       exit 67
     fi
     echo "   waiting for the $svc deployment to appear (${waited}s of ${appear}s)"
@@ -197,7 +214,10 @@ await_deployment() {
       SUCCESS)
         echo "   $svc deployment status → SUCCESS (the upload completed; only the log stream failed)"
         return 0 ;;
-      FAILED|CRASHED)
+      # Every status Railway settles on that is not SUCCESS ends the wait AT ONCE: with only
+      # FAILED and CRASHED here, a REMOVED/SKIPPED/CANCELLED deployment burned the whole
+      # 900 s bound before failing anyway (L5).
+      FAILED|CRASHED|REMOVED|SKIPPED|CANCELLED)
         echo "STOP: the $svc deployment for $env ended $status. Logs: railway logs --service $svc --environment $env --lines 100" >&2
         exit 67 ;;
     esac

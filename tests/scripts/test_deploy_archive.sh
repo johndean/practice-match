@@ -36,6 +36,16 @@ echo "railway $*" >> "$FAKE_LOG"
 svc=""; prev=""
 for a in "$@"; do [[ "$prev" == "--service" ]] && svc="$a"; prev="$a"; done
 OLD_ROW='{"id":"dep-old","status":"SUCCESS","createdAt":"2026-09-07T09:00:00Z"}'
+NEW_CREATED="2026-09-07T10:00:00Z"
+case "${FAKE_CREATED_FORMAT:-}" in
+  offset)
+    # The same two instants written so that a TEXT comparison gets the order WRONG: the new
+    # deployment is 10:30 UTC (later than the 10:00Z baseline) but sorts BEFORE it as text.
+    OLD_ROW='{"id":"dep-old","status":"SUCCESS","createdAt":"2026-09-07T10:00:00Z"}'
+    NEW_CREATED="2026-09-07T09:30:00-01:00"
+    ;;
+  garbage) NEW_CREATED="not-a-date" ;;
+esac
 case "$1" in
   status) printf '{"name":"%s"}\n' "${FAKE_PROJECT:-Practice Match}" ;;
   variable) : ;;
@@ -82,7 +92,7 @@ case "$1" in
       if [[ $(wc -l < "$state") -gt 1 ]]; then
         tail -n +2 "$state" > "$state.next" && mv "$state.next" "$state"
       fi
-      rows="$rows,$(printf '{"id":"dep-%s","status":"%s","createdAt":"2026-09-07T10:00:00Z"}' "$svc" "$st")"
+      rows="$rows,$(printf '{"id":"dep-%s","status":"%s","createdAt":"%s"}' "$svc" "$st" "$NEW_CREATED")"
     fi
     # A CLI whose JSON carries no createdAt at all: the script must fail closed, not hang.
     [[ -n "${FAKE_NO_CREATED_AT:-}" ]] && rows=$(printf '%s' "$rows" | sed 's/,"createdAt":"[^"]*"//g')
@@ -209,6 +219,11 @@ set -e
 [[ "$out" == *"upload did not create a deployment for api"* ]] \
   || fail "the failure must say the upload created no deployment; got: $out"
 [[ "$out" != *"SUCCESS"* ]] || fail "the previous deployment's SUCCESS must never be read as this deploy's; got: $out"
+# L4: "nothing was deployed" is an INFERENCE from "nothing newer appeared in time". Told as
+# fact, an operator who hits a slow Railway would redeploy over a live deployment.
+[[ "$out" == *"almost certainly"* ]] || fail "the 67 message must state the inference as an inference; got: $out"
+[[ "$out" == *"DEPLOY_APPEAR_TIMEOUT"* ]] || fail "the 67 message must name the knob to raise; got: $out"
+[[ "$out" == *"railway deployment list"* ]] || fail "the 67 message must say to check the deployment list first; got: $out"
 [[ $(grep -c '^UP ' "$FAKE_LOG") -eq 1 ]] || fail "the worker upload must not follow a failed api upload"
 # It polled rather than giving up on the first look, and it stopped inside the bound.
 [[ "$out" == *"waiting for the api deployment to appear"* ]] || fail "the appearance wait must poll and say so; got: $out"
@@ -367,5 +382,40 @@ reset_state; : > "$FAKE_LOG"
 out=$(scripts/deploy.sh QA "$detached" 2>&1) || fail "a detached HEAD must still deploy; got: $out"
 [[ "$out" == *"detached HEAD"* ]] || fail "a detached HEAD must be called out; got: $out"
 [[ $(grep -c '^UP ' "$FAKE_LOG") -eq 2 ]] || fail "the detached-HEAD warning must not stop the deploy"
+
+# --- 21. L5: every terminal status ends the wait at once, not after the full bound --------
+# Only FAILED and CRASHED were terminal, so a REMOVED/SKIPPED/CANCELLED deployment burned
+# the whole 900 s before exiting 67. The generous settle bound here is the assertion: an
+# unrecognised terminal status would make this case take a minute.
+for terminal in REMOVED SKIPPED CANCELLED; do
+  reset_state; : > "$FAKE_LOG"
+  started=$SECONDS
+  set +e
+  out=$(FAKE_UP_FAILS=1 FAKE_DEPLOY_STATUSES="$terminal" DEPLOY_POLL_TIMEOUT=60 scripts/deploy.sh QA "$repo" 2>&1); code=$?
+  set -e
+  [[ $code -eq 67 ]] || fail "a $terminal deployment must exit 67, got $code: $out"
+  [[ "$out" == *"ended $terminal"* ]] || fail "$terminal must be reported as a terminal status; got: $out"
+  [[ $((SECONDS - started)) -lt 10 ]] || fail "$terminal must end the wait at once, not after the settle bound"
+  [[ $(grep -c '^UP ' "$FAKE_LOG") -eq 1 ]] || fail "a $terminal api deployment must stop before the worker upload"
+done
+
+# --- 22. L6: createdAt is compared as a MOMENT, not as text ------------------------------
+# A single offset-format row is enough to mis-order a text comparison: the deployment the
+# upload created is 10:30 UTC, later than the 10:00Z baseline, but sorts before it as a
+# string — so a text comparison never finds it and fails a good deploy closed with 67.
+reset_state; : > "$FAKE_LOG"
+out=$(FAKE_UP_FAILS=1 FAKE_CREATED_FORMAT=offset scripts/deploy.sh QA "$repo" 2>&1) \
+  || fail "an offset-format createdAt must still be recognised as newer; got: $out"
+[[ "$out" == *"SUCCESS"* ]] || fail "the offset-format deployment must be polled to SUCCESS; got: $out"
+[[ $(grep -c '^UP ' "$FAKE_LOG") -eq 2 ]] || fail "both services must be uploaded; got: $(grep '^UP ' "$FAKE_LOG")"
+
+# --- 23. L6: an unparseable createdAt reads as missing, so the run fails closed -----------
+reset_state; : > "$FAKE_LOG"
+set +e
+out=$(FAKE_UP_FAILS=1 FAKE_CREATED_FORMAT=garbage scripts/deploy.sh QA "$repo" 2>&1); code=$?
+set -e
+[[ $code -eq 67 ]] || fail "an undatable deployment must fail closed with 67, got $code: $out"
+[[ "$out" == *"upload did not create a deployment for api"* ]] \
+  || fail "an undatable deployment must read as no new deployment; got: $out"
 
 echo "deploy archive OK"
