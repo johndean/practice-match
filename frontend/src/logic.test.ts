@@ -378,4 +378,15 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     c.renderVals().md.toggleCompare();
     expect(c.renderVals().md.insightOpen).toBe(false);
   });
+
+  // A10 (John, 2026-09-08): the sign-in card's second gate point gets new copy. A literal
+  // script edit, like A3 — `gatePoints[1]` in renderVals()'s return. Points 1 and 3 are
+  // untouched.
+  it('gatePoints[1] carries the ruled "Sellers control location & disclosure" copy (A10)', () => {
+    const points = c.renderVals().gatePoints;
+    expect(points[0].title).toBe('Approved members only');
+    expect(points[1].title).toBe('Sellers control location & disclosure');
+    expect(points[1].body).toBe('Properties are mapped using precise coordinates, while the exact location details, financial packets, and floor plans are only revealed when the seller authorizes access.');
+    expect(points[2].title).toBe('One clear next step');
+  });
 });

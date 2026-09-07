@@ -421,7 +421,19 @@ const A7_2: Amendment = {
   find: '"Enter both your VIN username and password."', replace: '"Enter both your email and password."', count: 1
 };
 
+/** A10 — the sign-in card's second gate point (John, 2026-09-08). A literal script edit, like A3:
+ *  the `gatePoints[1]` object in the sign-in view. Ids A8 and A9 are RESERVED by the account-screens
+ *  branch (feat/identity: A8 = the account screens, A9 = the answer-note prototype prop), so this
+ *  family is A10 — the gap is a reservation, not an omission. */
+const A10: Amendment = {
+  id: 'A10', date: '2026-09-08',
+  ruling: 'update the text on login page for #2 Sellers control disclosure to "Sellers control location & disclosure Properties are mapped using precise coordinates, while the exact location details, financial packets, and floor plans are only revealed when the seller authorizes access."',
+  find: '{ n: "2", title: "Sellers control disclosure", body: "General location by default. Financial packets and floor plans open only when the seller says yes." }',
+  replace: '{ n: "2", title: "Sellers control location & disclosure", body: "Properties are mapped using precise coordinates, while the exact location details, financial packets, and floor plans are only revealed when the seller authorizes access." }',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
-    A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2];
+    A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2, A10];
 }

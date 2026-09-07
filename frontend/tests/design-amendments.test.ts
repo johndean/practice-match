@@ -73,11 +73,14 @@ describe('local design amendments (spec D15)', () => {
     // A6 — CLAUDE.md's launch-removal list, executed against the design; A7 — the sign-in copy.
     'A6.1', 'A6.2', 'A6.3a', 'A6.3b', 'A6.3c', 'A6.4a', 'A6.4b', 'A6.4c', 'A6.4d', 'A6.5', 'A6.6a', 'A6.6b',
     'A7.1', 'A7.2',
+    // A10 — the sign-in card's second gate point (John, 2026-09-08). A8/A9 are reserved by the
+    // account-screens branch (feat/identity), not part of this list.
+    'A10',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(51);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(52);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
