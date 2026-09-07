@@ -48,6 +48,7 @@ function fakeApi(overrides: Partial<AuthApi> = {}): AuthApi {
     apply: () => Promise.resolve({ id: 'ap1', status: 'pending' }),
     answer: () => Promise.resolve(STATUS),
     applicationsMe: () => Promise.resolve({ current: null, history: [] }),
+    resendVerification: () => Promise.resolve(STATUS),
     ...overrides
   };
 }
@@ -119,7 +120,20 @@ describe('makeAuthAdapter (C1)', () => {
 // unlike signIn/signOut, none of them has an opinion about the store — so each test asserts the
 // same three things: the same-named `api` function is called with the same arguments, its result
 // is handed straight back, and the store is left exactly as it was found.
-describe('makeAuthAdapter — the eight lifecycle pass-throughs', () => {
+describe('makeAuthAdapter — the nine lifecycle pass-throughs', () => {
+  // A-S4.1: the ninth. Like the other eight it has no opinion about the store — a re-sent
+  // verification mail does not change who `useMe()` says the visitor is.
+  it('resendVerification calls api.resendVerification with no arguments and returns its result, untouched by the store', async () => {
+    const calls: unknown[] = [];
+    const store = fakeStore();
+    const adapter = makeAuthAdapter(fakeApi({ resendVerification: (...args: unknown[]) => { calls.push(args); return Promise.resolve(STATUS); } }), store);
+
+    expect(await adapter.resendVerification()).toBe(STATUS);
+
+    expect(calls).toEqual([[]]);
+    expect(store.writes).toEqual([]);
+  });
+
   it('signUp calls api.signUp with the same arguments and returns its result, untouched by the store', async () => {
     const calls: unknown[] = [];
     const store = fakeStore();

@@ -476,11 +476,18 @@ const A8_1a: Amendment = {
  *  moves — but a signed-in member who presses it must not be left looking at a sign-in card
  *  behind their own signed-in header. `show` runs on both settlements for A5.3's reason: the
  *  server-side session is what authorises anything, and a member left looking signed in is the
- *  worse of the two failures. */
+ *  worse of the two failures.
+ *
+ *  The guard is `(s.auth || this.props.me)`, not `s.auth` alone (fix round 1, Important 1): A5.4
+ *  never sets `auth` for an APPLICANT — `pending`, `needs_review`, `declined` and `unverified` all
+ *  land on a gate card signed out as far as the prototype's own flag is concerned — so `s.auth`
+ *  alone meant spec §4.3 held on the `unavailable` card and nowhere else, and those four states
+ *  could not end their session at all. A loaded account is the evidence that a session exists. */
 const A8_1b: Amendment = {
   id: 'A8.1b', ...S4,
+  ruling: 'spec §4.3 (agreed): the status cards\' secondary button ends the session before it shows the sign-in card — and an applicant has a session too',
   find: '      goSignin: (e) => { if (e) e.preventDefault(); this.setState({ gate: "signin", screen: "gate" }); },',
-  replace: '      goSignin: (e) => { if (e) e.preventDefault(); const show = () => this.setState({ gate: "signin", screen: "gate", formNotice: "" }); if (s.auth && this.props.auth) return this.props.auth.signOut().then(show, show); show(); },\n'
+  replace: '      goSignin: (e) => { if (e) e.preventDefault(); const show = () => this.setState({ gate: "signin", screen: "gate", formNotice: "" }); if ((s.auth || this.props.me) && this.props.auth) return this.props.auth.signOut().then(show, show); show(); },\n'
     + '      goForgot: (e) => { if (e) e.preventDefault(); this.setState({ gate: "forgot", formError: "", formNotice: "" }); },\n'
     + '      goSignup: (e) => { if (e) e.preventDefault(); this.setState({ gate: "signup", formError: "", formNotice: "" }); },',
   count: 1
@@ -556,12 +563,12 @@ const A8_4a: Amendment = {
 /** A8.4b — the four status cards' content (spec §3 rows 2, 3b, 5c, 8). Their `headStyle` is the
  *  grey one `pending` and `rejected` already use, byte for byte.
  *
- *  RECORDED LIMIT on "Send it again": it re-posts the sign-up, and when the visitor arrived by
- *  SIGNING IN as an unverified account rather than by signing up, `s.signup.pw` is empty. The
- *  API's uniform 202 still answers — it must, or the endpoint would tell a stranger which
- *  addresses exist — but no new link is issued without the password. The card's own body already
- *  says to use the same email and password, and the sign-up card is one click away through
- *  "Sign in" → "Request access". `logic.test.ts` names this in the case that pins it. */
+ *  "Send it again" has TWO branches (fix round 1, ruled A-S4.1). It re-posts the SIGN-UP when the
+ *  visitor got here by signing up, because the client still holds the password; and it calls
+ *  `POST /api/auth/verify/resend` — which needs none, only the session — when it does not and an
+ *  account is loaded, which is how somebody who reached this card by SIGNING IN as an unverified
+ *  account arrives. Before that endpoint existed the second case posted an empty password, the
+ *  API's uniform 202 answered, and the card claimed to have sent a link that was never issued. */
 const A8_4b: Amendment = {
   id: 'A8.4b', ...S4,
   find: '        primary: { label: "Reply with more information", go: () => this.setState({ gate: "apply" }) }\n      }\n    };',
@@ -572,7 +579,7 @@ const A8_4b: Amendment = {
     + '        headStyle: "padding: 22px 26px; background: #f5f5f5; color: #494949;",\n'
     + '        body: "We sent a verification link to " + (s.signup.email || s.email) + ". It is valid for 24 hours. Open it to confirm your address, then sign in to complete your access request.",\n'
     + '        meta: [{ k: "Sent to", v: s.signup.email || s.email }, { k: "Link valid for", v: "24 hours" }],\n'
-    + '        primary: { label: "Send it again", go: () => { if (!this.props.auth) return; this.props.auth.signUp(s.signup.email || s.email, s.signup.pw).catch(() => {}); } }\n'
+    + '        primary: { label: "Send it again", go: () => { if (!this.props.auth) return; return (!s.signup.pw && this.props.me ? this.props.auth.resendVerification() : this.props.auth.signUp(s.signup.email || s.email, s.signup.pw)).catch(() => {}); } }\n'
     + '      },\n'
     + '      "verify-expired": {\n'
     + '        kicker: "Link expired", title: "This link is no longer valid",\n'
@@ -618,7 +625,6 @@ const A8_5: Amendment = {
   id: 'A8.5', ...S4,
   find: '      submitApply: () => {',
   replace: '      gateSignup: s.screen === "gate" && s.gate === "signup",\n'
-    + '      gateCheckEmail: s.screen === "gate" && s.gate === "check-email",\n'
     + '      gateForgot: s.screen === "gate" && s.gate === "forgot",\n'
     + '      gateReset: s.screen === "gate" && s.gate === "reset",\n'
     + '      gateInvite: s.screen === "gate" && s.gate === "invite",\n'
@@ -648,7 +654,7 @@ const A8_5: Amendment = {
     + '        const f = s.reset;\n'
     + '        if (!f.pw || !f.pw2) return this.setState({ reset: Object.assign({}, f, { error: "Enter your new password twice." }) });\n'
     + '        if (f.pw !== f.pw2) return this.setState({ reset: Object.assign({}, f, { error: "The two passwords do not match." }) });\n'
-    + '        const done = () => this.setState({ gate: "signin", gateToken: "", formNotice: "Password updated. Sign in with your new password." });\n'
+    + '        const done = () => this.setState({ gate: "signin", gateToken: "", reset: { pw: "", pw2: "", error: "" }, formNotice: "Password updated. Sign in with your new password." });\n'
     + '        if (!this.props.auth) return done();\n'
     + '        return this.props.auth.reset(s.gateToken, f.pw).then(done, (e) => (e && e.code === "TOKEN_INVALID") ? this.setState({ gate: "reset-expired", gateToken: "" }) : this.setState({ reset: Object.assign({}, f, { error: (e && e.message) || "Reset failed." }) }));\n'
     + '      },\n'
@@ -659,7 +665,7 @@ const A8_5: Amendment = {
     + '        const f = s.invite;\n'
     + '        if (!f.pw || !f.pw2) return this.setState({ invite: Object.assign({}, f, { error: "Enter your new password twice." }) });\n'
     + '        if (f.pw !== f.pw2) return this.setState({ invite: Object.assign({}, f, { error: "The two passwords do not match." }) });\n'
-    + '        const done = () => this.setState({ gate: "signin", gateToken: "", formNotice: "Your password is set. Sign in with your email and the password you just chose." });\n'
+    + '        const done = () => this.setState({ gate: "signin", gateToken: "", invite: { pw: "", pw2: "", error: "" }, formNotice: "Your password is set. Sign in with your email and the password you just chose." });\n'
     + '        if (!this.props.auth) return done();\n'
     + '        return this.props.auth.acceptInvite(s.gateToken, f.pw).then(done, (e) => (e && e.code === "TOKEN_INVALID") ? this.setState({ gate: "signin", gateToken: "", formNotice: "This invitation link is no longer valid. Ask the VIN Foundation for a new one." }) : this.setState({ invite: Object.assign({}, f, { error: (e && e.message) || "Could not set the password." }) }));\n'
     + '      },\n'

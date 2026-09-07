@@ -323,6 +323,24 @@ describe('local design amendments (spec D15)', () => {
     expect(rows).toEqual([...new Set(amendments().map((a) => (a.id.startsWith('A1.') ? 'A1' : a.id)))]);
   });
 
+  // Fix round 1 (Minor): A8.1b's row paraphrased its amendment's `ruling` instead of quoting it,
+  // and nothing could see the difference — the two set cases below compare IDS, not text. A row
+  // that says something other than the ruling it documents is the drift D15 exists to prevent, so
+  // the ruling column is now the `ruling` field, byte for byte, for every amendment. (The "What
+  // changes" column is free prose and is not compared: it is the row's own explanation.)
+  it('every LOCAL_AMENDMENTS.md row quotes its amendment\'s ruling verbatim', () => {
+    const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
+    const cells = new Map([...md.matchAll(/^\|\s*(A[\w.]+)\s*\|[^|]*\|\s*(.*?)\s*\|/gm)].map((m) => [m[1], m[2]]));
+    for (const a of amendments()) {
+      const id = a.id.startsWith('A1.') ? 'A1' : a.id;
+      expect(cells.get(id), `${a.id}: LOCAL_AMENDMENTS.md has no row`).toBeDefined();
+      expect(cells.get(id), `${id}: the row's ruling is not the amendment's`).toBe(a.ruling);
+    }
+    // A1's 24 derived edits collapse to one row, which is only meaningful because they share one
+    // ruling — asserted rather than assumed.
+    expect(new Set(amendments().filter((a) => a.id.startsWith('A1.')).map((a) => a.ruling)).size).toBe(1);
+  });
+
   it('LOCAL_AMENDMENTS.md carries exactly one table row per amendment id (A1 collapsed to one)', () => {
     const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
     // `[\w.]`, not `[\d.]`: A-I8's ids include a letter suffix where one ruling needed two edits

@@ -557,10 +557,10 @@ describe('useStateRouteSync — unknown URL', () => {
 // is no later moment at which the same account becomes allowed in, so holding the URL open
 // would be holding it open forever.
 //
-// `gate: 'unavailable'` renders an EMPTY gate column today: the design has no such state and
-// "absent beats faked" forbids inventing one, so Task I8b adds it with John's copy (the
-// title is ruled — "This page is not available to your account"). Known and recorded in
-// A-I8.1, deliberately not patched around here.
+// `gate: 'unavailable'` used to render an EMPTY gate column: the design had no such state, and
+// "absent beats faked" forbade inventing one. Task S4 (amendment A8.4) added it with John's
+// ruled copy — the status card titled "This page is not available to your account", whose
+// primary button returns to Browse — so the refusal now lands somewhere that explains itself.
 // ---------------------------------------------------------------------------------------
 describe('useStateRouteSync — the route permission (A-I7 hand-over, executed by A-I8)', () => {
   const BUYER: Me = { ...MEMBER, role: 'Approved buyer', roles: ['buyer'] };

@@ -3015,7 +3015,7 @@ class Component extends DCLogic {
         headStyle: "padding: 22px 26px; background: #f5f5f5; color: #494949;",
         body: "We sent a verification link to " + (s.signup.email || s.email) + ". It is valid for 24 hours. Open it to confirm your address, then sign in to complete your access request.",
         meta: [{ k: "Sent to", v: s.signup.email || s.email }, { k: "Link valid for", v: "24 hours" }],
-        primary: { label: "Send it again", go: () => { if (!this.props.auth) return; this.props.auth.signUp(s.signup.email || s.email, s.signup.pw).catch(() => {}); } }
+        primary: { label: "Send it again", go: () => { if (!this.props.auth) return; return (!s.signup.pw && this.props.me ? this.props.auth.resendVerification() : this.props.auth.signUp(s.signup.email || s.email, s.signup.pw)).catch(() => {}); } }
       },
       "verify-expired": {
         kicker: "Link expired", title: "This link is no longer valid",
@@ -3084,7 +3084,7 @@ class Component extends DCLogic {
       signedOut: !s.auth,
       goSignInScreen: () => this.setState({ screen: "gate", gate: "signin" }),
       goApply: (e) => { if (e) e.preventDefault(); this.setState({ gate: (s.auth || !this.props.auth) ? "apply" : "signup" }); },
-      goSignin: (e) => { if (e) e.preventDefault(); const show = () => this.setState({ gate: "signin", screen: "gate", formNotice: "" }); if (s.auth && this.props.auth) return this.props.auth.signOut().then(show, show); show(); },
+      goSignin: (e) => { if (e) e.preventDefault(); const show = () => this.setState({ gate: "signin", screen: "gate", formNotice: "" }); if ((s.auth || this.props.me) && this.props.auth) return this.props.auth.signOut().then(show, show); show(); },
       goForgot: (e) => { if (e) e.preventDefault(); this.setState({ gate: "forgot", formError: "", formNotice: "" }); },
       goSignup: (e) => { if (e) e.preventDefault(); this.setState({ gate: "signup", formError: "", formNotice: "" }); },
       apply: s.apply,
@@ -3101,7 +3101,6 @@ class Component extends DCLogic {
       setIntent: (e) => this.setState((st) => ({ apply: Object.assign({}, st.apply, { intent: e.target.value, error: "" }) })),
       toggleAffirm: () => this.setState((st) => ({ apply: Object.assign({}, st.apply, { affirm: !st.apply.affirm }) })),
       gateSignup: s.screen === "gate" && s.gate === "signup",
-      gateCheckEmail: s.screen === "gate" && s.gate === "check-email",
       gateForgot: s.screen === "gate" && s.gate === "forgot",
       gateReset: s.screen === "gate" && s.gate === "reset",
       gateInvite: s.screen === "gate" && s.gate === "invite",
@@ -3131,7 +3130,7 @@ class Component extends DCLogic {
         const f = s.reset;
         if (!f.pw || !f.pw2) return this.setState({ reset: Object.assign({}, f, { error: "Enter your new password twice." }) });
         if (f.pw !== f.pw2) return this.setState({ reset: Object.assign({}, f, { error: "The two passwords do not match." }) });
-        const done = () => this.setState({ gate: "signin", gateToken: "", formNotice: "Password updated. Sign in with your new password." });
+        const done = () => this.setState({ gate: "signin", gateToken: "", reset: { pw: "", pw2: "", error: "" }, formNotice: "Password updated. Sign in with your new password." });
         if (!this.props.auth) return done();
         return this.props.auth.reset(s.gateToken, f.pw).then(done, (e) => (e && e.code === "TOKEN_INVALID") ? this.setState({ gate: "reset-expired", gateToken: "" }) : this.setState({ reset: Object.assign({}, f, { error: (e && e.message) || "Reset failed." }) }));
       },
@@ -3142,7 +3141,7 @@ class Component extends DCLogic {
         const f = s.invite;
         if (!f.pw || !f.pw2) return this.setState({ invite: Object.assign({}, f, { error: "Enter your new password twice." }) });
         if (f.pw !== f.pw2) return this.setState({ invite: Object.assign({}, f, { error: "The two passwords do not match." }) });
-        const done = () => this.setState({ gate: "signin", gateToken: "", formNotice: "Your password is set. Sign in with your email and the password you just chose." });
+        const done = () => this.setState({ gate: "signin", gateToken: "", invite: { pw: "", pw2: "", error: "" }, formNotice: "Your password is set. Sign in with your email and the password you just chose." });
         if (!this.props.auth) return done();
         return this.props.auth.acceptInvite(s.gateToken, f.pw).then(done, (e) => (e && e.code === "TOKEN_INVALID") ? this.setState({ gate: "signin", gateToken: "", formNotice: "This invitation link is no longer valid. Ask the VIN Foundation for a new one." }) : this.setState({ invite: Object.assign({}, f, { error: (e && e.message) || "Could not set the password." }) }));
       },

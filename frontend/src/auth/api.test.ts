@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AuthError, acceptInvite, answer, applicationsMe, apply, config, csrfToken, forgot, me, reauth, reset, signIn, signOut, signUp, verify } from './api';
+import { AuthError, acceptInvite, answer, applicationsMe, apply, config, csrfToken, forgot, me, reauth, resendVerification, reset, signIn, signOut, signUp, verify } from './api';
 
 interface Call { url: string; init: { method: string; credentials: string; headers: Record<string, string>; body?: string } }
 
@@ -100,6 +100,27 @@ describe('the state-changing calls send X-CSRF-Token, read from the cookie', () 
       undefined,                                   // signout carries no body
       JSON.stringify({ password: 'pw' })
     ]);
+  });
+});
+
+// A-S4.1: the session-authenticated re-send behind the "Check your email" card's "Send it again".
+// No body at all — the account IS the argument — and the CSRF double-submit like every other state
+// change.
+describe('resendVerification()', () => {
+  it('POSTs /api/auth/verify/resend with the CSRF header and no body', async () => {
+    document.cookie = 'pm_csrf=double-submit';
+    const calls = stubFetch({ status: 202, body: { status: 'check_email' } });
+    expect(await resendVerification()).toEqual({ status: 'check_email' });
+    expect(calls[0].url).toBe('/api/auth/verify/resend');
+    expect(calls[0].init.method).toBe('POST');
+    expect(calls[0].init.headers['X-CSRF-Token']).toBe('double-submit');
+    expect(calls[0].init.body, 'the account is the argument; there is nothing to send').toBeUndefined();
+  });
+
+  it('throws the server\'s own AuthError when the account is not unverified', async () => {
+    stubFetch({ status: 403, body: { error: { code: 'FORBIDDEN', message: 'Your account cannot do this.' } } });
+    const thrown = (await resendVerification().catch((e: unknown) => e)) as AuthError;
+    expect([thrown.code, thrown.message]).toEqual(['FORBIDDEN', 'Your account cannot do this.']);
   });
 });
 

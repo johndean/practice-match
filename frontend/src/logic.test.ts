@@ -411,7 +411,8 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
       acceptInvite: vi.fn(() => Promise.resolve({ status: 'invited' })),
       apply: vi.fn(() => Promise.resolve({ id: 'app-1', status: 'pending' })),
       answer: vi.fn(() => Promise.resolve({ status: 'pending' })),
-      applicationsMe: vi.fn(() => Promise.resolve({ current: null, history: [] }))
+      applicationsMe: vi.fn(() => Promise.resolve({ current: null, history: [] })),
+      resendVerification: vi.fn(() => Promise.resolve({ status: 'check_email' }))
     }, over) as any;
   }
   /** What `src/auth/api.ts` throws: the server's own `code` and its own prose. */
@@ -462,6 +463,37 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
     await c2.renderVals().goSignin();
     expect(auth.signOut).toHaveBeenCalledTimes(1);
     expect(c2.state).toMatchObject({ gate: 'signin', screen: 'gate', formNotice: '' });
+  });
+
+  // Fix round 1, Important 1. A5.4 never sets `auth` for an applicant — `pending`, `needs_review`,
+  // `declined` and `unverified` all land on a gate card with `auth: false` — so a `s.auth &&` guard
+  // meant the status cards' "Sign in" signed nobody out except on the `unavailable` card, and those
+  // four states could not end their session at all. A LOADED ACCOUNT is the evidence a session
+  // exists, whatever the prototype's own flag says.
+  it('the status cards\' "Sign in" signs an APPLICANT out too, who never had the auth flag set (A8.1)', async () => {
+    for (const state of ['pending', 'needs_review', 'declined', 'unverified']) {
+      const auth = fakeAuth();
+      const c2: any = new Component({ auth, me: { ...ACCOUNT, state } });
+      c2.componentDidMount();
+      expect(c2.state.auth, state).toBe(false);
+
+      await c2.renderVals().goSignin();
+
+      expect(auth.signOut, `${state}: an applicant must be able to end their session`).toHaveBeenCalledTimes(1);
+      expect(c2.state, state).toMatchObject({ gate: 'signin', screen: 'gate' });
+    }
+  });
+
+  it('the answer card\'s "Sign out" link signs a needs_review applicant out for the same reason (A8.5)', async () => {
+    const auth = fakeAuth();
+    const c2: any = new Component({ auth, me: { ...ACCOUNT, state: 'needs_review' } });
+    c2.componentDidMount();
+    expect(c2.state.auth).toBe(false);
+
+    await c2.renderVals().goSignOut();
+
+    expect(auth.signOut).toHaveBeenCalledTimes(1);
+    expect(c2.state).toMatchObject({ auth: false, gate: 'signin', screen: 'gate' });
   });
 
   it('goSignin still shows the card when the sign-out call fails, and spends no request when nobody is signed in (A8.1)', async () => {
@@ -527,8 +559,10 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
       const c2: any = new Component({ auth: fakeAuth({ signUp: vi.fn(() => Promise.reject(rejection)) }) });
       c2.renderVals().setSignupEmail(typed('new@practice-match.test'));
       c2.renderVals().setSignupPw(typed('short'));
+      c2.renderVals().goSignup();
       await c2.renderVals().submitSignup();
-      expect(c2.state.gate, 'a refusal keeps the visitor on the form').toBe('signin');
+      expect(c2.state.gate, 'a refusal keeps the visitor on the form').toBe('signup');
+      expect(c2.renderVals().gateSignup).toBe(true);
       expect(c2.renderVals().signupForm).toMatchObject({ error: true, errorText: shown });
     }
   });
@@ -567,17 +601,43 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
     expect(auth.signUp).toHaveBeenCalledWith('new@practice-match.test', 'a-long-enough-password');
   });
 
-  it('"Send it again" for an account that ARRIVED BY SIGNING IN re-posts with an empty password, so the uniform 202 answers but no new link is issued — recorded limit (A8.4)', () => {
+  // Fix round 1: this used to re-post the SIGN-UP with an empty password for a visitor who reached
+  // the card by signing in, which the API's uniform 202 answered without issuing anything — the
+  // card claimed to have sent a link that never existed. `POST /api/auth/verify/resend` (A-S4.1)
+  // is the endpoint that needs no password, and this is the branch that calls it.
+  it('"Send it again" for an account that ARRIVED BY SIGNING IN re-sends through the session, with no password (A8.4/A-S4.1)', async () => {
     const auth = fakeAuth();
     const c2: any = new Component({ auth, me: { ...ACCOUNT, state: 'unverified', email: 'unverified@practice-match.test' } });
     c2.componentDidMount();
     expect(c2.state).toMatchObject({ gate: 'check-email', email: 'unverified@practice-match.test' });
     const v = c2.renderVals();
     expect(v.status.body).toContain('unverified@practice-match.test');
-    v.status.primary.go();
-    // The card's own body already tells them to use the same email and password, and the signup
-    // card is one click away through "Sign in" → "Request access".
-    expect(auth.signUp).toHaveBeenCalledWith('unverified@practice-match.test', '');
+
+    await v.status.primary.go();
+
+    expect(auth.resendVerification).toHaveBeenCalledTimes(1);
+    expect(auth.signUp, 'there is no password in hand to sign up with').not.toHaveBeenCalled();
+  });
+
+  it('"Send it again" re-posts the SIGN-UP when the visitor got here by signing up, since it holds the password (A8.4)', async () => {
+    const auth = fakeAuth();
+    const c2: any = new Component({ auth });
+    c2.setState({ gate: 'check-email', signup: { email: 'new@practice-match.test', pw: 'a-long-enough-password', error: '' } });
+
+    await c2.renderVals().status.primary.go();
+
+    expect(auth.signUp).toHaveBeenCalledWith('new@practice-match.test', 'a-long-enough-password');
+    expect(auth.resendVerification, 'no session exists yet — the account has never signed in').not.toHaveBeenCalled();
+  });
+
+  it('a refused "Send it again" is swallowed on both branches: the card has nowhere to put a message (A8.4)', async () => {
+    for (const over of [{ signUp: vi.fn(() => Promise.reject(new Error('nope'))) }, { resendVerification: vi.fn(() => Promise.reject(new Error('nope'))) }]) {
+      const auth = fakeAuth(over);
+      const c2: any = new Component({ auth, me: 'resendVerification' in over ? { ...ACCOUNT, state: 'unverified' } : null });
+      c2.setState({ gate: 'check-email', signup: { email: 'x@y.test', pw: 'resendVerification' in over ? '' : 'a-long-enough-password', error: '' } });
+      await c2.renderVals().status.primary.go();
+      expect(c2.state.gate).toBe('check-email');
+    }
   });
 
   it('"Send it again" is a no-op on the reference, which has no adapter to post through (A8.4)', () => {
@@ -666,6 +726,9 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
 
     expect(auth.reset).toHaveBeenCalledWith('raw-reset-token', 'a-long-enough-password');
     expect(c2.state).toMatchObject({ gate: 'signin', gateToken: '', formNotice: 'Password updated. Sign in with your new password.' });
+    // Fix round 1: the token was cleared and the plaintext passwords were not, so they sat in
+    // `state` — and in every Vue devtools snapshot of it — for the rest of the session.
+    expect(c2.state.reset, 'the new password must not outlive the request that set it').toEqual({ pw: '', pw2: '', error: '' });
   });
 
   it('a used or expired reset token shows the expired card; any other refusal stays on the form (A8.5, spec §3 row 5c)', async () => {
@@ -694,6 +757,7 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
     c2.renderVals().setResetPw2(typed('x'));
     c2.renderVals().submitReset();
     expect(c2.state).toMatchObject({ gate: 'signin', formNotice: 'Password updated. Sign in with your new password.' });
+    expect(c2.state.reset).toEqual({ pw: '', pw2: '', error: '' });
   });
 
   // -----------------------------------------------------------------------------------------
@@ -711,6 +775,7 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
 
     expect(auth.acceptInvite).toHaveBeenCalledWith('raw-invite-token', 'a-long-enough-staff-password');
     expect(c2.state).toMatchObject({ gate: 'signin', gateToken: '', formNotice: 'Your password is set. Sign in with your email and the password you just chose.' });
+    expect(c2.state.invite, 'the new password must not outlive the request that set it').toEqual({ pw: '', pw2: '', error: '' });
   });
 
   it('a spent invitation lands on the sign-in card with its own notice; any other refusal stays on the form (A8.5, spec §3 row 6a)', async () => {
@@ -749,6 +814,7 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
     reference.renderVals().setInvitePw2(typed('x'));
     reference.renderVals().submitInvite();
     expect(reference.state).toMatchObject({ gate: 'signin', formNotice: 'Your password is set. Sign in with your email and the password you just chose.' });
+    expect(reference.state.invite).toEqual({ pw: '', pw2: '', error: '' });
   });
 
   // -----------------------------------------------------------------------------------------
@@ -850,18 +916,26 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
     expect(c2.renderVals().gateAnswer).toBe(true);
   });
 
-  it('a needs_review account with no open application, or a failed lookup, stays on the "under review" card (A8.3)', async () => {
-    for (const applicationsMe of [vi.fn(() => Promise.resolve({ current: null, history: [] })), vi.fn(() => Promise.resolve({ current: { id: 'app-9', info_request: null, fields: {} }, history: [] })), vi.fn(() => Promise.reject(new Error('offline')))]) {
+  // Two cases, not one loop over `expect(['pending','answer']).toContain(…)` — which was true of
+  // BOTH outcomes and could therefore never fail (fix round 1, Important 2). Each asserts the one
+  // gate its own outcome must produce, so the other outcome fails it.
+  it('a needs_review account whose application cannot be read stays on the "under review" card (A8.3)', async () => {
+    for (const applicationsMe of [vi.fn(() => Promise.reject(new Error('offline'))), vi.fn(() => Promise.resolve({ current: null, history: [] }))]) {
       const c2: any = new Component({ auth: fakeAuth({ applicationsMe }), me: { ...ACCOUNT, state: 'needs_review' } });
       c2.componentDidMount();
       await Promise.resolve(); await Promise.resolve();
-      expect(['pending', 'answer']).toContain(c2.state.gate);
+      expect(c2.state.gate, 'a failed or empty lookup must leave A5.4\'s synchronous card in place').toBe('pending');
+      expect(c2.renderVals().gateAnswer).toBe(false);
     }
-    // The note is the empty string, never `null`, when the reviewer left no question.
-    const c3: any = new Component({ auth: fakeAuth({ applicationsMe: vi.fn(() => Promise.resolve({ current: { id: 'app-9', info_request: null, fields: {} }, history: [] })) }), me: { ...ACCOUNT, state: 'needs_review' } });
-    c3.componentDidMount();
+  });
+
+  it('a needs_review account whose application IS read moves to the answer card, note or no note (A8.3)', async () => {
+    const c2: any = new Component({ auth: fakeAuth({ applicationsMe: vi.fn(() => Promise.resolve({ current: { id: 'app-9', info_request: null, fields: {} }, history: [] })) }), me: { ...ACCOUNT, state: 'needs_review' } });
+    c2.componentDidMount();
     await Promise.resolve(); await Promise.resolve();
-    expect(c3.state.answer).toMatchObject({ applicationId: 'app-9', note: '' });
+    expect(c2.state.gate).toBe('answer');
+    // The note is the empty string, never `null`, when the reviewer left no question.
+    expect(c2.state.answer).toMatchObject({ applicationId: 'app-9', note: '' });
   });
 
   it('componentDidMount pre-fills the application form from a declined account\'s own answers (A8.3, spec §3 "re-apply")', async () => {
@@ -975,13 +1049,17 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
   // A8.4/A8.5 — the flags the new blocks render from
   // -----------------------------------------------------------------------------------------
   it('each new gate value lights exactly one card, and only on the gate screen (A8.4/A8.5)', () => {
-    const flags = ['gateSignin', 'gateApply', 'gateStatus', 'gateSignup', 'gateCheckEmail', 'gateForgot', 'gateReset', 'gateInvite', 'gateAnswer'];
+    const flags = ['gateSignin', 'gateApply', 'gateStatus', 'gateSignup', 'gateForgot', 'gateReset', 'gateInvite', 'gateAnswer'];
     const expected: Record<string, string[]> = {
       signin: ['gateSignin'], apply: ['gateApply'], pending: ['gateStatus'], rejected: ['gateStatus'],
-      signup: ['gateSignup'], 'check-email': ['gateStatus', 'gateCheckEmail'], 'verify-expired': ['gateStatus'],
+      signup: ['gateSignup'], 'check-email': ['gateStatus'], 'verify-expired': ['gateStatus'],
       forgot: ['gateForgot'], reset: ['gateReset'], 'reset-expired': ['gateStatus'], invite: ['gateInvite'],
       answer: ['gateAnswer'], unavailable: ['gateStatus']
     };
+    // Fix round 1: `gateCheckEmail` was computed and read by no template — check-email renders
+    // through the card A8.4 fills, like the other three status states. The bundle's own dead-code
+    // rule (A2.3, A6.6) applies to a mapping nothing reads.
+    expect(new Component({}).renderVals()).not.toHaveProperty('gateCheckEmail');
     for (const [gate, on] of Object.entries(expected)) {
       const c2: any = new Component({});
       c2.setState({ screen: 'gate', gate });

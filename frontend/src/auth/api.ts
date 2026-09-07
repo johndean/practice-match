@@ -85,6 +85,19 @@ export async function verify(token: string): Promise<Status> {
   return payload<Status>(await call('POST', '/auth/verify', { token }));
 }
 
+/**
+ * A fresh 24 h verification link for the SIGNED-IN account that has not confirmed its address
+ * (A-S4.1). No body: the session names the account, which is the whole reason this exists —
+ * `signUp` needs the password, and somebody who reached the "Check your email" card by signing in
+ * as an unverified account has none in hand.
+ *
+ * 403 `FORBIDDEN` from `verified` onward (and for `suspended`/`revoked`), which the caller renders
+ * as the server's own message like every other refusal.
+ */
+export async function resendVerification(): Promise<Status> {
+  return payload<Status>(await call('POST', '/auth/verify/resend'));
+}
+
 /** 202 either way, same as `signUp` — a registered and an unregistered address must read alike. */
 export async function forgot(email: string): Promise<Status> {
   return payload<Status>(await call('POST', '/auth/password/forgot', { email }));

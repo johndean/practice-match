@@ -587,7 +587,7 @@ export function referenceMe(persona: PersonaKey | null): (typeof PERSONAS)[Perso
 
 /**
  * The reference's entry: the design at `/` — the runtime resolves its own relative assets against
- * it — with all four prototype props named on every request, so no state inherits a value another
+ * it — with all five prototype props named on every request, so no state inherits a value another
  * state set.
  */
 export function referenceUrl(target: ReachTarget = {}): string {
@@ -595,7 +595,10 @@ export function referenceUrl(target: ReachTarget = {}): string {
     startScreen: target.screen ?? 'gate',
     startGate: target.gate ?? '',
     startViewport: target.viewport ?? 'desktop',
-    me: referenceMe(personaFor(target))
+    me: referenceMe(personaFor(target)),
+    // A8.8b: always named, always empty until Task S5 gives `reach()` a `notice` option — which is
+    // what keeps a notice state, once one exists, from leaking into the next capture.
+    startNotice: ''
   }))}`;
 }
 

@@ -357,14 +357,19 @@ describe('referenceMe — the account the reference is handed (A5.7 / A-I8.2)', 
 describe('referenceUrl — the design\'s own props, injected per request (A-I8 / D-I8-3)', () => {
   const props = (url: string) => JSON.parse(decodeURIComponent(new URL(url, 'http://x').searchParams.get('props')!));
 
-  it('always serves the design at "/" and names all four prototype props on every request', () => {
+  // FIVE since A8.8b declared `startNotice`: the sentence this pins — "named on every request, so
+  // no state inherits a value another state set" — is only true of a prop the payload actually
+  // carries, and `startNotice` is the one that decides whether the sign-in card shows a message.
+  // It is always `''` until Task S5 gives `reach()` a `notice` option; naming it is what stops a
+  // notice state, once S5 adds one, leaking into the next capture.
+  it('always serves the design at "/" and names all five prototype props on every request', () => {
     const url = referenceUrl();
     expect(url.startsWith('/?props=')).toBe(true);
-    expect(props(url)).toEqual({ startScreen: 'gate', startGate: '', startViewport: 'desktop', me: null });
+    expect(props(url)).toEqual({ startScreen: 'gate', startGate: '', startViewport: 'desktop', me: null, startNotice: '' });
   });
 
   it('names the screen and hands over that state\'s own account, for every member family', () => {
-    expect(props(referenceUrl({ screen: 'browse' }))).toEqual({ startScreen: 'browse', startGate: '', startViewport: 'desktop', me: PERSONAS.buyer });
+    expect(props(referenceUrl({ screen: 'browse' }))).toEqual({ startScreen: 'browse', startGate: '', startViewport: 'desktop', me: PERSONAS.buyer, startNotice: '' });
     expect(props(referenceUrl({ screen: 'detail' })).me).toEqual(PERSONAS.buyer);
     expect(props(referenceUrl({ screen: 'requests' })).me).toEqual(PERSONAS.buyer);
     expect(props(referenceUrl({ screen: 'seller' }))).toMatchObject({ startScreen: 'seller', me: PERSONAS.seller });

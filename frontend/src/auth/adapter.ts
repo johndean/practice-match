@@ -8,7 +8,8 @@
  * adapter called `api.signIn` and handed the answer straight back WITHOUT writing it into the
  * store, so after an interactive sign-in through the design's own form `useMe().me.value` stayed
  * null while `logic.js` believed it was signed in — and the next `guard()` asked
- * `can('page.browse', null)`, got false, and sent the member to the empty `unavailable` gate.
+ * `can('page.browse', null)`, got false, and sent the member to the `unavailable` gate — which at
+ * the time rendered an empty column, since the card A8.4 fills did not exist yet.
  * `main.ts`'s load-before-mount hid it from every reload path.
  */
 import type { ApplicationsMe, Status } from './api';
@@ -27,6 +28,7 @@ export interface AuthApi {
   apply(kind: string, fields: Record<string, unknown>): Promise<{ id: string; status: string }>;
   answer(applicationId: string, answer: string): Promise<Status>;
   applicationsMe(): Promise<ApplicationsMe>;
+  resendVerification(): Promise<Status>;
 }
 
 /** What `logic.js` sees as `this.props.auth`. */
@@ -41,6 +43,7 @@ export interface AuthAdapter {
   apply(kind: string, fields: Record<string, unknown>): Promise<{ id: string; status: string }>;
   answer(applicationId: string, answer: string): Promise<Status>;
   applicationsMe(): Promise<ApplicationsMe>;
+  resendVerification(): Promise<Status>;
 }
 
 /** The store, narrowed to the two writes the adapter performs. */
@@ -81,6 +84,9 @@ export function makeAuthAdapter(api: AuthApi, store: AuthStore): AuthAdapter {
     acceptInvite: (token, password) => api.acceptInvite(token, password),
     apply: (kind, fields) => api.apply(kind, fields),
     answer: (applicationId, text) => api.answer(applicationId, text),
-    applicationsMe: () => api.applicationsMe()
+    applicationsMe: () => api.applicationsMe(),
+    // A-S4.1: the "Send it again" button's other branch — used when the visitor reached the
+    // check-email card by SIGNING IN rather than by signing up, so no password is in hand.
+    resendVerification: () => api.resendVerification()
   };
 }
