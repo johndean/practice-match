@@ -28,6 +28,23 @@ interface StatefulComponent { state: RoutedState; setState(patch: Partial<Routed
 // come.
 export function useStateRouteSync(c: StatefulComponent, router: Router): void {
   let pending: Partial<RoutedState> | null = null;
+  // The settle branch's own `router.replace(loc)` below is itself a navigation: vue-router's
+  // `afterEach` fires for it exactly as for any visitor-driven one (confirmed against
+  // vue-router 4's source, `pushWithRedirect` → `triggerAfterEach(to, from, failure)` — it
+  // runs even when the navigation resolves as a NAVIGATION_DUPLICATED failure, e.g. replacing
+  // a location that is already current; the one path that defers it is a redirecting
+  // navigation guard, which this app has none of). Left unguarded, that second `afterEach`
+  // call re-runs `apply()` against the URL this composable just wrote, re-derives a patch from
+  // it (`routeToPatch`'s `gateToken: ''` for a bare path is correct for a GENUINE bare visit —
+  // that contract does not change here), and clobbers whatever the first pass just captured
+  // (S2 fix round: a `/verify?token=T` visit lost its `gateToken` the instant the address bar
+  // settled to the bare `/verify`, because this second, self-caused pass saw no token in the
+  // now-bare URL and overwrote it). `settling` marks exactly the one `afterEach` firing caused
+  // by that self-replace so it is skipped instead of re-applied. The `.finally` is the second
+  // guard, for whatever navigation outcome does not reach `afterEach` at all (the
+  // redirect-guard case above, or any future one) — without it a firing that never happened
+  // would leave `settling` stuck `true` and silently swallow the next GENUINE navigation.
+  let settling = false;
   const apply = (to: { path: string; params: Record<string, unknown>; query: Record<string, unknown> }) => {
     // A-I7's hand-over, executed by A-I8: the principal is read AT THE POINT OF THE CALL, not
     // captured once — `useMe().me.value` changes when the visitor signs in or out, and a
@@ -44,11 +61,17 @@ export function useStateRouteSync(c: StatefulComponent, router: Router): void {
     // stay exactly as the visitor typed it until auth arrives (the watcher's own bail).
     if (!pending) {
       const loc = stateToRoute(c.state);
-      if (!sameLocation(loc, to)) router.replace(loc);
+      if (!sameLocation(loc, to)) {
+        settling = true;
+        router.replace(loc).finally(() => { settling = false; });
+      }
     }
   };
   apply(router.currentRoute.value);
-  router.afterEach((to) => apply(to));
+  router.afterEach((to) => {
+    if (settling) { settling = false; return; }   // the settle-replace's own afterEach: not a real navigation to re-apply
+    apply(to);
+  });
   watch(
     () => ({ auth: c.state.auth, loc: stateToRoute(c.state) }),
     () => {

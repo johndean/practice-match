@@ -245,6 +245,86 @@ describe('useStateRouteSync — a stale in-session ?tab= on Browse settles', () 
   });
 });
 
+// ---------------------------------------------------------------------------------------
+// Task S2: the five account pages route to gate states, and an incoming ?token= is captured
+// once into state and never written back to the address bar. `sync.test.ts` proves the pure
+// mapping; this proves it through the real composable + real router, on a signed-out visit
+// (the only way these five are ever reached — they are public gate sub-states, so `guard`
+// never withholds them the way a member route is withheld).
+//
+// Fix round (amendment A-S2): the first cut of this left `apply()`'s own corrective
+// `router.replace(loc)` — the call that strips the token from the address bar — visible to
+// its OWN `afterEach`. That second, self-caused pass re-parsed the now-bare URL, and
+// `routeToPatch`'s `gateToken: ''` contract for a bare path (correct for a genuine bare
+// visit — unchanged here) overwrote the token this pass itself had just captured. Fixed in
+// `useStateRouteSync.ts` with a `settling` flag that marks exactly that one self-caused
+// `afterEach` firing so it is skipped rather than re-applied, with a `.finally` on the
+// replace as the second guard against the flag ever leaking into a later, genuine
+// navigation. The four cases below are the ones that pin it: token captured AND retained
+// (1), a genuinely bare visit still zeros it (2 — the contract itself must not change), a
+// later real navigation is not swallowed by a leaked flag (3), and the pre-existing legacy
+// `?tab=` settle (a different self-caused `afterEach`, exercised in its own describe block
+// below) still passes (4).
+// ---------------------------------------------------------------------------------------
+describe('useStateRouteSync — account gate routes with a token (S2)', () => {
+  // `logic.js`'s initial state literal (generated, untouchable) does not declare `gateToken`,
+  // so `c.state`'s type inferred from that literal does not have it — even though the real
+  // object gets the key at runtime, via `setState`'s `Object.assign`. Read back with the same
+  // narrow, optional shape `RoutedState` gives the field.
+  const gateToken = (c: { state: unknown }): string | undefined => (c.state as { gateToken?: string }).gateToken;
+
+  // (1) The token is captured AND survives the address bar settling — not merely present
+  // transiently before the self-caused afterEach would otherwise have wiped it.
+  it('a signed-out visit to /verify?token=T lands on the verify gate with the token captured, and the URL settles to /verify', async () => {
+    const { c, router } = await setup('/verify?token=T', null);
+    expect(c.state.screen).toBe('gate');
+    expect(c.state.gate).toBe('verify');
+    expect(gateToken(c)).toBe('T');
+    expect(router.currentRoute.value.fullPath).toBe('/verify');
+  });
+
+  it('a signed-out visit to /reset?token=T settles the same way', async () => {
+    const { c, router } = await setup('/reset?token=T', null);
+    expect(c.state.gate).toBe('reset');
+    expect(gateToken(c)).toBe('T');
+    expect(router.currentRoute.value.fullPath).toBe('/reset');
+  });
+
+  // (2) routeToPatch's contract does not change: a GENUINE bare visit (no token ever in the
+  // query — nothing here is self-caused) still captures an empty gateToken.
+  it('a genuine bare /verify visit (no token) captures an empty gateToken', async () => {
+    const { c, router } = await setup('/verify', null);
+    expect(c.state.gate).toBe('verify');
+    expect(gateToken(c)).toBe('');
+    expect(router.currentRoute.value.fullPath).toBe('/verify');
+  });
+
+  it('a signed-out visit with no token captures an empty gateToken (a second bare route)', async () => {
+    const { c, router } = await setup('/signup', null);
+    expect(c.state.gate).toBe('signup');
+    expect(gateToken(c)).toBe('');
+    expect(router.currentRoute.value.fullPath).toBe('/signup');
+  });
+
+  // (3) The flag does not leak: a later, genuinely external navigation — not caused by this
+  // composable's own settle — is still processed. If `settling` were stuck `true` from the
+  // /verify settle above, this afterEach firing would be swallowed and `c.state` would never
+  // move off the verify gate.
+  it('an external router.push after a settle still applies — the flag does not leak into the next navigation', async () => {
+    const { c, router } = await setup('/verify?token=T', null);
+    expect(router.currentRoute.value.fullPath).toBe('/verify');
+    expect(gateToken(c)).toBe('T');
+
+    await router.push('/browse');
+    await flush(); await nextTick();
+    // Signed out, so the deep link into a member route shows the sign-in gate and holds the
+    // URL — proof the navigation was actually processed, not silently dropped.
+    expect(c.state.screen).toBe('gate');
+    expect(c.state.gate).toBe('signin');
+    expect(router.currentRoute.value.fullPath).toBe('/browse');
+  });
+});
+
 describe('useStateRouteSync — unknown URL', () => {
   it('normalizes an unmatched URL to / and shows the gate', async () => {
     const { c, router } = await setup('/nope');

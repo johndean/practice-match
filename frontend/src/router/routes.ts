@@ -10,6 +10,11 @@ export const routes: RouteRecordRaw[] = [
   { path: '/requests', component: App },
   { path: '/seller', component: App },
   { path: '/admin', component: App },
+  { path: '/signup', component: App },
+  { path: '/forgot', component: App },
+  { path: '/verify', component: App },
+  { path: '/reset', component: App },
+  { path: '/accept-invite', component: App },
   { path: '/:pathMatch(.*)*', redirect: '/' }
 ];
 

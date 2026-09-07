@@ -121,6 +121,61 @@ describe('guard with permissions', () => {
   });
 });
 
+// ---------------------------------------------------------------------------------------
+// Task S2: the five account pages route to gate states. An incoming ?token= is read once
+// into `gateToken` and never written back to the address bar — the bare path is always
+// what stateToRoute produces, whether or not a token was captured.
+// ---------------------------------------------------------------------------------------
+describe('account gate routes (S2)', () => {
+  const r = (path: string, query: Record<string, unknown> = {}, params: Record<string, unknown> = {}) => ({ path, query, params });
+
+  it('/signup ↔ gate signup, no token', () => {
+    expect(routeToPatch(r('/signup'))).toEqual({ screen: 'gate', gate: 'signup', gateToken: '' });
+    expect(stateToRoute({ ...base, screen: 'gate', gate: 'signup' })).toEqual({ path: '/signup', query: {} });
+  });
+  it('/forgot ↔ gate forgot, no token', () => {
+    expect(routeToPatch(r('/forgot'))).toEqual({ screen: 'gate', gate: 'forgot', gateToken: '' });
+    expect(stateToRoute({ ...base, screen: 'gate', gate: 'forgot' })).toEqual({ path: '/forgot', query: {} });
+  });
+  it('/verify?token=T ↔ gate verify with the token captured, mapped back to the bare path (never the token)', () => {
+    expect(routeToPatch(r('/verify', { token: 'T' }))).toEqual({ screen: 'gate', gate: 'verify', gateToken: 'T' });
+    expect(stateToRoute({ ...base, screen: 'gate', gate: 'verify', gateToken: 'T' })).toEqual({ path: '/verify', query: {} });
+  });
+  it('/reset?token=T ↔ gate reset with the token captured, mapped back to the bare path', () => {
+    expect(routeToPatch(r('/reset', { token: 'T' }))).toEqual({ screen: 'gate', gate: 'reset', gateToken: 'T' });
+    expect(stateToRoute({ screen: 'gate', gate: 'reset', gateToken: 'T' })).toEqual({ path: '/reset', query: {} });
+  });
+  it('/accept-invite?token=T ↔ gate invite with the token captured, mapped back to the bare path', () => {
+    expect(routeToPatch(r('/accept-invite', { token: 'T' }))).toEqual({ screen: 'gate', gate: 'invite', gateToken: 'T' });
+    expect(stateToRoute({ ...base, screen: 'gate', gate: 'invite', gateToken: 'T' })).toEqual({ path: '/accept-invite', query: {} });
+  });
+
+  it('no ?token= on any of the five still captures an empty string, not undefined', () => {
+    expect(routeToPatch(r('/verify')).gateToken).toBe('');
+  });
+
+  it('a non-string token (e.g. a repeated ?token=) is not captured — gateToken is empty', () => {
+    expect(routeToPatch(r('/verify', { token: ['a', 'b'] }))).toEqual({ screen: 'gate', gate: 'verify', gateToken: '' });
+  });
+
+  it('a gate value outside the five new ones still maps to /', () => {
+    expect(stateToRoute({ ...base, screen: 'gate', gate: 'signin' })).toEqual({ path: '/', query: {} });
+    expect(stateToRoute({ ...base, screen: 'gate', gate: 'unavailable' })).toEqual({ path: '/', query: {} });
+  });
+
+  it('a token deep link settles to the bare path with no second navigation (fixed point)', () => {
+    const cases: Array<[string, string]> = [
+      ['/signup', 'signup'], ['/forgot', 'forgot'], ['/verify', 'verify'], ['/reset', 'reset'], ['/accept-invite', 'invite']
+    ];
+    for (const [path, gate] of cases) {
+      const patch = routeToPatch(r(path, { token: 'T' }));
+      const target = stateToRoute({ ...base, ...patch });
+      expect(target).toEqual({ path, query: {} });
+      expect(routeToPatch(r(target.path, target.query))).toEqual({ screen: 'gate', gate, gateToken: '' });
+    }
+  });
+});
+
 describe('needsPatch / sameLocation', () => {
   it('needsPatch is false when state already matches', () =>
     expect(needsPatch({ ...base, screen: 'browse' }, { screen: 'browse' })).toBe(false));
