@@ -465,6 +465,77 @@ describe('useStateRouteSync — the .finally safety net (Minor 2)', () => {
   });
 });
 
+// ---------------------------------------------------------------------------------------
+// Re-review follow-up on the fix round above: a REFUSED self-caused settle (settling already
+// true) used to be a DROP, not a deferral. Reproduced: `c.setState({screen:'browse',auth:true})`
+// starts a settle-push to `/browse`; before that push resolves, a SECOND, microtask-separated
+// `setState({screen:'requests'})` changes state again. The watcher wakes for the second change
+// too, but `settleWith` (as first written) just refused — `if (settling) return;` — and
+// nothing remembered that a settle was still owed once the first push resolved. Traced against
+// the pre-fix composable (script not part of the diff):
+//
+//   setState({screen:'browse',auth:true})
+//   await Promise.resolve()                    <- ONE microtask, not a flush() macrotask
+//   router.push -> {"path":"/browse"}           <- the watcher's settle, in flight
+//   setState({screen:'requests'})               <- state moves again WHILE that push is in flight
+//   afterEach /browse                            <- the settle's own afterEach: consumed, settling=false
+//   final state: requests                       <- state is right
+//   final url: /browse                          <- URL never caught up — the drop
+//
+// Fixed by having `settleWith`'s `.finally` re-invoke its `attempt` thunk (which recomputes
+// `stateToRoute(c.state)` vs `router.currentRoute.value` FRESH, not from a stale closure) the
+// instant the in-flight navigation resolves — so a refusal now means "try again once the
+// current one clears", not "never mind".
+// ---------------------------------------------------------------------------------------
+describe('useStateRouteSync — a refused self-caused settle is retried, not dropped', () => {
+  it('two setState calls separated by a microtask inside one macrotask: the URL ends at the SECOND state, not stuck at the first', async () => {
+    const { c, router } = await setup('/');
+    const pushSpy = vi.spyOn(router, 'push');
+    const replaceSpy = vi.spyOn(router, 'replace');
+
+    c.setState({ screen: 'browse', auth: true });
+    await Promise.resolve();          // one microtask — the first settle-push is still in flight
+    c.setState({ screen: 'requests' });
+
+    await flush(); await nextTick(); await flush(); await nextTick();
+
+    expect(c.state.screen).toBe('requests');
+    expect(router.currentRoute.value.fullPath, 'the URL is stuck at the FIRST state — a refused settle was dropped, not retried').toBe('/requests');
+
+    // No livelock: reaching the final state took a small, bounded number of navigations, not a
+    // runaway retry loop — this scenario needs at most two (the initial settle to /browse, the
+    // retry to /requests once it resolves).
+    const total = pushSpy.mock.calls.length + replaceSpy.mock.calls.length;
+    expect(total).toBeGreaterThan(0);
+    expect(total).toBeLessThanOrEqual(3);
+
+    // Quiescent afterwards — the retry mechanism does not keep firing once state agrees with
+    // the URL.
+    await flush(); await nextTick();
+    expect(pushSpy.mock.calls.length + replaceSpy.mock.calls.length).toBe(total);
+  });
+
+  it('three setState calls, each separated by a microtask, settle to the LAST one, still bounded', async () => {
+    const { c, router } = await setup('/');
+    const pushSpy = vi.spyOn(router, 'push');
+    const replaceSpy = vi.spyOn(router, 'replace');
+
+    c.setState({ screen: 'browse', auth: true });
+    await Promise.resolve();
+    c.setState({ screen: 'requests' });
+    await Promise.resolve();
+    c.setState({ screen: 'seller' });
+
+    await flush(); await nextTick(); await flush(); await nextTick(); await flush(); await nextTick();
+
+    expect(c.state.screen).toBe('seller');
+    expect(router.currentRoute.value.fullPath).toBe('/seller');
+    const total = pushSpy.mock.calls.length + replaceSpy.mock.calls.length;
+    expect(total).toBeGreaterThan(0);
+    expect(total).toBeLessThanOrEqual(4);
+  });
+});
+
 describe('useStateRouteSync — unknown URL', () => {
   it('normalizes an unmatched URL to / and shows the gate', async () => {
     const { c, router } = await setup('/nope');

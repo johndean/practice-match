@@ -55,23 +55,44 @@ export function useStateRouteSync(c: StatefulComponent, router: Router): void {
   // treats the second as superseding the first, cancels it, and STILL fires `afterEach` for
   // the cancelled one (confirmed above) — consuming a boolean meant for the real, still-
   // in-flight second navigation and leaving ITS OWN eventual `afterEach` unguarded, right back
-  // to the original bug. Refusing the second call instead of racing it sidesteps this
-  // entirely: while a self-caused navigation is in flight, nothing but vue-router's and Vue's
-  // own internal microtasks run, so `c.state` cannot have changed — whatever the second caller
-  // would navigate to is necessarily the SAME location the first is already headed to, and
+  // to the original bug. Refusing the second call instead of racing it sidesteps this: a
+  // second `settleWith` call arriving from the SAME synchronous `setState` that the first is
+  // already reacting to targets the IDENTICAL location the first is already headed to (nothing
+  // but vue-router's and Vue's own internal microtasks run between "the state changed" and
+  // "the first call read it", so there is no room for a differing state in between) — so
   // skipping it changes nothing (identity-keying the flag by target, the other approach
-  // considered, does NOT fix this: the review noted the two calls target the same location, so
-  // a key would not tell them apart either). The `.finally` remains the second guard, for
-  // whatever navigation outcome does not reach `afterEach` at all (the redirect-guard case
-  // above, or any future one) — without it a firing that never happened would leave `settling`
-  // stuck `true` and silently swallow the next GENUINE navigation (falsified in
-  // useStateRouteSync.test.ts with a minimal stub router — the real router cannot produce that
-  // outcome to test against).
+  // considered, does NOT fix this same-overlap case either: the two calls target the same
+  // location, so a key would not tell them apart).
+  //
+  // A DIFFERENT `setState`, separated from the first by even one microtask (still inside the
+  // same in-flight navigation's window — e.g. `await Promise.resolve()` between two calls, no
+  // `setTimeout`/flush in between) is NOT covered by that reasoning: `c.state` genuinely CAN
+  // and does change again before the first navigation resolves, and a bare refusal would DROP
+  // that second settle forever (review fix round 1 follow-up, reproduced: `screen: 'requests'`
+  // in state, URL stuck at `/browse`). So a refusal here is a DEFERRAL, not a drop: `attempt`
+  // is a thunk that reads `c.state` and `router.currentRoute.value` FRESH and either performs
+  // one navigation or reports there is nothing (any more) to do; `settleWith` re-invokes it,
+  // fresh, the instant the in-flight navigation resolves, so whatever `c.state` says BY THEN —
+  // not a stale snapshot from when the (possibly-refused) call was first made — gets its own
+  // settle. This terminates rather than livelocking because each retry only ever fires when
+  // the PREVIOUS attempt actually changed something (a call while nothing is pending is a
+  // no-op: `attempt` returns `null` and `settleWith` does not recurse), and `c.state` stops
+  // producing new targets once nothing further sets it — bounded by however many distinct
+  // states were set while a navigation was in flight, never unbounded (useStateRouteSync.test.ts
+  // asserts a small bound, not just "eventually true").
+  //
+  // The `.finally` is also the second guard for whatever navigation outcome does not reach
+  // `afterEach` at all (a redirecting navigation guard, which this app has none of) — without
+  // it a firing that never happened would leave `settling` stuck `true` and silently swallow
+  // the next GENUINE navigation (falsified in useStateRouteSync.test.ts with a minimal stub
+  // router — the real router cannot produce that outcome to test against).
   let settling = false;
-  const settleWith = (navigate: () => Promise<unknown>) => {
+  const settleWith = (attempt: () => Promise<unknown> | null) => {
     if (settling) return;
+    const nav = attempt();
+    if (!nav) return;
     settling = true;
-    navigate().finally(() => { settling = false; });
+    nav.finally(() => { settling = false; settleWith(attempt); });
   };
   const apply = (to: { path: string; params: Record<string, unknown>; query: Record<string, unknown> }) => {
     // A-I7's hand-over, executed by A-I8: the principal is read AT THE POINT OF THE CALL, not
@@ -85,12 +106,27 @@ export function useStateRouteSync(c: StatefulComponent, router: Router): void {
     // that never differs from state — needsPatch is false above, no setState fires, and the
     // state → route watcher (which only reacts to state CHANGES) never gets a chance to
     // settle it. Settle it here instead, by comparing what the current state resolves to
-    // against the URL actually navigated to. Skipped while a gate is pending: the URL must
-    // stay exactly as the visitor typed it until auth arrives (the watcher's own bail).
-    if (!pending) {
+    // against the current route. Skipped while a gate is pending: the URL must stay exactly
+    // as the visitor typed it until auth arrives (the watcher's own bail) — this is a GATE
+    // settle whenever it runs (the outer `!pending` gate only lets it start as one), and it
+    // stays one across every retry too: `pending` cannot go null → non-null while this chain
+    // is active, because the only thing that ever sets it is a DIFFERENT apply() call, and
+    // every such call is itself blocked by `settling` for as long as this chain holds it
+    // `true` (the composable's `afterEach` handler above skips `apply()` entirely whenever
+    // `settling` is true) — so there is no window in which an unrelated navigation could sneak
+    // in and change `pending` between one retry and the next.
+    if (!pending) settleWith(() => {
       const loc = stateToRoute(c.state);
-      if (!sameLocation(loc, to)) settleWith(() => router.replace(loc));
-    }
+      const cur = router.currentRoute.value;
+      // Always `replace`, never `push`, even when the path itself changes (e.g. a permission
+      // refusal redirecting `/admin` → `/`): this settle is a CORRECTION of a route the
+      // visitor never really reached, not a new place they navigated to, so it must not leave
+      // a dead-end entry in history. `to` (the argument first passed in) is equivalent to
+      // `cur` at the moment of the FIRST call — apply() only ever runs synchronously against
+      // whatever is already current — but a RETRY runs later, when `to` is stale and `cur` is
+      // not, so `cur` is what both the first attempt and every retry compare against.
+      return sameLocation(loc, cur) ? null : router.replace(loc);
+    });
   };
   apply(router.currentRoute.value);
   router.afterEach((to) => {
@@ -121,10 +157,16 @@ export function useStateRouteSync(c: StatefulComponent, router: Router): void {
           if (!sameLocation(before, stateToRoute(c.state))) return;
         }
       }
-      const loc = stateToRoute(c.state);
-      const cur = router.currentRoute.value;
-      if (sameLocation(loc, cur)) return;
-      settleWith(() => (loc.path === cur.path ? router.replace(loc) : router.push(loc)));
+      // Recomputed FRESH inside the thunk, not captured from this invocation's outer scope
+      // (review fix round 1 follow-up): a retry runs later, after `c.state` may have moved
+      // again while the previous navigation was in flight, and must settle to THAT state, not
+      // a snapshot of this one.
+      settleWith(() => {
+        const loc = stateToRoute(c.state);
+        const cur = router.currentRoute.value;
+        if (sameLocation(loc, cur)) return null;
+        return loc.path === cur.path ? router.replace(loc) : router.push(loc);
+      });
     },
     { deep: true }
   );
