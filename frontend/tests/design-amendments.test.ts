@@ -116,6 +116,18 @@ describe('local design amendments (spec D15)', () => {
     expect(a1[0].replace, 'the declaration V2 does not carry must be gone').toBe('style="font-size: 24px; color: red">Heading');
     expect(applyAmendments(v3, a1)).toBe(v2);
   });
+  // The other half of the same rule, and the other half of `setDecl`'s append path: V2 carries a
+  // declaration V3 dropped, on a style that does NOT end in a semicolon, so the appended
+  // declaration has to bring one with it. Every real A1 style ends in `;`, so this variant is
+  // reachable only from a synthetic pair (M7: the engine is now inside the coverage gate).
+  it('A1 adds a declaration V2 has and V3 dropped, semicolon and all', () => {
+    const v2 = '<div style="font-size: 24px; color: red; text-transform: uppercase">Heading</div>';
+    const v3 = '<div style="font-size: 24px; color: red">Heading</div>';
+    const a1 = deriveTypographyB(v2, v3);
+    expect(a1, 'V3 dropped a declaration V2 carries and no amendment was derived').toHaveLength(1);
+    expect(a1[0].replace).toBe('style="font-size: 24px; color: red; text-transform: uppercase;">Heading');
+    expect(applyAmendments(v3, a1)).toBe('<div style="font-size: 24px; color: red; text-transform: uppercase;">Heading</div>');
+  });
   // M5 (re-review): the row regex was `^\|\s*(A\d+)\s*\|`, which required the pipe immediately
   // after the digits — it matched `| A1 |`, `| A2 |`, `| A3 |`, `| A4 |` and skipped all four
   // `| A2.2 |`–`| A2.5 |` rows. The file held eight rows and the test read four, so an `A2.6`
