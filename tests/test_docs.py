@@ -55,13 +55,19 @@ FORBIDDEN_CI_SUBSTRINGS = ("pip install", "npm install --no-save", "--cov-fail-u
 
 # Fix round 1's frontend-coverage ruling (John, 2026-09-06) plus the app.setup.js addition
 # ratified in fix round 2 — the exact set frontend/vite.config.ts's coverage.exclude must carry.
+# Re-ratified 2026-09-07 (F1): the two hand-written files are measured. `src/dc-logic.js` (the
+# 13-line React-shaped base class every setState runs through) and `src/lib/**` (a hand-written
+# Leaflet loader) were the only entries in this set that were neither generated from the design
+# nor verbatim-ported, and they were listed solely because the set was ratified. Browse V3's
+# final-review fix round gave both behaviour tests (src/dc-logic.test.ts, src/lib/leaflet.test.ts)
+# and re-derived that both measure 100/100/100/100 unexcluded, but could not drop them here
+# because this pin is John's and no file under tests/ changed on that branch. Every remaining
+# entry is unchanged: what stays out is generated, verbatim-ported, types-only or a test double.
 RATIFIED_COVERAGE_EXCLUDE = {
     "src/App.vue",
     "src/app.setup.js",
     "src/logic.js",
-    "src/dc-logic.js",
     "src/generated/**",
-    "src/lib/**",
     "src/map/engine.ts",
     "src/map/testing/**",
     "src/**/*.test.ts",
@@ -455,3 +461,26 @@ def test_claude_md_gate_includes_the_dom_oracle():
     assert "spec.ts" not in scripts["test:e2e"], scripts["test:e2e"]
     ops = [line for line in text.splitlines() if line.startswith("cd frontend &&") and "test:" in line]
     assert any("npm run test:e2e" in line for line in ops), "the Common operations block still runs the pixel gate alone"
+
+
+# The two plan sites that print the coverage-exclusion list as prose. Both are historical
+# records rather than live instructions, but an implementer reading either would be told the
+# old set — the same drift class as the backend-gate lines (L9).
+PLANS_QUOTING_THE_COVERAGE_EXCLUSIONS = (
+    "2026-09-06-browse-v3-mobile.md",
+    "2026-09-05-practice-match-platform.md",
+)
+F1_NOTE = (
+    "(Re-ratified 2026-09-07, F1: `src/dc-logic.js` and `src/lib/**` left the exclusion list "
+    "once their tests landed; the measured set is 14 files at 100 %.)"
+)
+
+
+def test_plans_that_print_the_coverage_exclusions_carry_the_f1_note():
+    """F1: `src/dc-logic.js` and `src/lib/**` are measured now, so every place that prints the
+    old list has to say so beside it — Browse V3's Global Constraint (g), which is the reason
+    that branch could not widen the set, and Task 12's configuration step, which set it."""
+    for name in PLANS_QUOTING_THE_COVERAGE_EXCLUSIONS:
+        text = (ROOT / "docs" / "superpowers" / "plans" / name).read_text()
+        assert "'src/dc-logic.js'" in text or "`src/dc-logic.js`" in text, f"{name}: expected the exclusion list here"
+        assert F1_NOTE in text, f"{name} prints the old exclusion list without the F1 re-ratification note"
