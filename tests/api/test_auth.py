@@ -695,10 +695,12 @@ async def test_every_revoke_all_site_clears_the_cache_only_after_the_commit(clie
                 uncommitted.append(name)
 
     # The probe sits at the DELETE itself rather than on any one function, so it survives a
-    # refactor of the two halves — which it has already had to: `revoke_all_cache` now batches
-    # every mutation into a pipeline (re-review O5), so the keys arrive in `command_stack` at
-    # `execute()` rather than through the client's own `delete`. `revoke_cache` (single sign-out)
-    # still calls `delete` directly, so both shapes are watched.
+    # refactor of the two halves — which it has already had to twice: both cache halves batch every
+    # mutation into a pipeline now (`revoke_all_cache` in re-review O5, `revoke_cache` in P1), so
+    # the keys arrive in `command_stack` at `execute()` rather than through the client's own
+    # `delete`. BOTH are wrapped anyway: `pipeline()` is what every current caller goes through,
+    # and `delete()` catches an unbatched one — a new call site, or a revert of either batch —
+    # rather than letting it pass unwatched.
     real_delete, real_pipeline = redis.delete, redis.pipeline
 
     def delete(*keys):

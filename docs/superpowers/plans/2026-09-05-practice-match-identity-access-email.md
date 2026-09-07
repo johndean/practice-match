@@ -1562,7 +1562,8 @@ async def signout(request: Request, response: Response, principal=Depends(requir
 @router.post("/auth/signout-all")
 async def signout_all(response: Response, principal=Depends(require("account.self"))) -> dict:
     with sync_conn() as conn:
-        S.revoke_all(conn, sync_redis(), principal.account_id)
+        revoked = S.revoke_all(conn, principal.account_id)
+    S.revoke_all_cache(sync_redis(), principal.account_id, revoked)   # after the commit
     clear_session_cookies(response)
     return {"status": "signed_out"}
 
@@ -1591,7 +1592,7 @@ async def reset(body: ResetIn, request: Request) -> dict:
         _policy(body.password, privileged)
         with conn.cursor() as cur:
             cur.execute("UPDATE account SET password_hash=%s WHERE id=%s", (await P.hash_async(body.password), aid))
-        S.revoke_all(conn, sync_redis(), aid)
+        revoked = S.revoke_all(conn, aid)   # cache cleared after the commit: S.revoke_all_cache(sync_redis(), aid, revoked)
         audit.write(conn, actor=None, action="password.reset", target_type="account", target_id=aid, request=request)
         enqueue(conn, to=_email_of(conn, aid), template="password_changed", params={}, idempotency_key=f"{aid}:password_changed:{body.token[:8]}")
     return {"status": "reset"}
@@ -1608,7 +1609,7 @@ async def change(body: ChangeIn, request: Request, response: Response, principal
         _policy(body.new, privileged=bool(principal.roles & {"staff", "admin"}))
         with conn.cursor() as cur:
             cur.execute("UPDATE account SET password_hash=%s WHERE id=%s", (await P.hash_async(body.new), principal.account_id))
-        S.revoke_all(conn, r, principal.account_id)
+        revoked = S.revoke_all(conn, principal.account_id)   # cache cleared after the commit, keeping `raw`'s hash
         raw = S.create(conn, r, principal.account_id, client_ip(request), request.headers.get("user-agent"))
         set_session_cookies(response, raw)
         audit.write(conn, actor=principal, action="password.change", target_type="account", target_id=principal.account_id, request=request)
@@ -1990,7 +1991,7 @@ def decide(conn, r, *, actor, account_id: UUID, action: str, note: str, request)
     if action in EMAIL:
         template = EMAIL[action] if kind == "buyer" or action in ("suspend", "revoke") else EMAIL[action].replace("application_", "seller_application_")
         enqueue(conn, to=email, template=template, params={"note": note}, idempotency_key=f"{account_id}:{template}:{app[0] if app else action}")
-    S.revoke_all(conn, r, account_id) if action in ("suspend", "revoke") else S.invalidate_account(r, account_id)
+    revoked = S.revoke_all(conn, account_id) if action in ("suspend", "revoke") else frozenset()   # the caller clears the cache after the commit
     audit.write(conn, actor=actor, action="users.decide", target_type="account", target_id=account_id, before={"state": state}, after={"state": to, "roles": roles}, reason=action if not note else f"{action}: {note}", request=request)
     return to, roles
 
