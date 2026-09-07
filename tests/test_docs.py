@@ -493,9 +493,9 @@ def test_the_playwright_persona_password_default_matches_seed_persona():
     Argon2id hash of `PERSONA_PASSWORD` or ITS default. They are one documented test-only
     constant in two languages, and if they drift every `app`-project run answers 401 at a point
     far from the cause — so they are pinned equal here, where the failure names the two files."""
-    seeded = re.search(r'^DEFAULT_PASSWORD = "([^"]+)"', (ROOT / "scripts" / "seed_persona.py").read_text(), re.M)
+    seeded = re.search(r'^DEFAULT_PASSWORD = "([^"]+)"', (ROOT / "scripts" / "seed_persona.py").read_text(), re.MULTILINE)
     presented = re.search(r"^export const PERSONA_DEFAULT_PASSWORD = '([^']+)';",
-                          (ROOT / "frontend" / "tests" / "harness.ts").read_text(), re.M)
+                          (ROOT / "frontend" / "tests" / "harness.ts").read_text(), re.MULTILINE)
     assert seeded, "scripts/seed_persona.py no longer defines DEFAULT_PASSWORD"
     assert presented, "frontend/tests/harness.ts no longer defines PERSONA_DEFAULT_PASSWORD"
     assert presented.group(1) == seeded.group(1)
