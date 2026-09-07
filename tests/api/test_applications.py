@@ -268,7 +268,7 @@ async def test_declined_applicant_reapplies(client, conn, member):
 
     body = (await client.get("/api/applications/me", headers=auth_headers(cookies))).json()
     assert [h["status"] for h in body["history"]] == ["declined"] and body["current"]["status"] == "pending"
-    assert body["history"][0]["decision"] == "decline" and body["history"][0]["reason"] == "Not enough detail."
+    assert body["history"][0]["decision"] == "decline" and body["history"][0]["decision_note"] == "Not enough detail."
     assert body["history"][0]["decided_at"]
     assert _one(conn, "SELECT target_id FROM audit_log WHERE action='applications.reapply'") == (r.json()["id"],)
     assert _one(conn, "SELECT count(*) FROM application WHERE account_id=%s", (aid,)) == (2,)
@@ -397,3 +397,141 @@ async def test_every_applicant_audit_action_is_in_the_applications_namespace(cli
         assert [x[0] for x in cur.fetchall()] == ["applications.reapply", "applications.submit"]
         cur.execute("SELECT count(*) FROM audit_log WHERE action LIKE 'application.%'")
         assert cur.fetchone()[0] == 0, "the singular namespace is gone, not merely joined"
+
+
+# --- fix round 1 (review 2026-09-07): M1, L1, L2, L5 ---
+
+
+async def test_a_suspended_or_revoked_account_cannot_answer(client, conn, member):
+    """M1. `answer` was the one transition in this wave with no allowed-from set on the ACCOUNT.
+    `revoke` is not an application action, so a revoked account genuinely keeps its open
+    `needs_review` row on disk — and every non-`active` state resolves to the `applicant` role,
+    which holds `account.self`. Only the session layer stood between that row and
+    `UPDATE account SET state='pending'`, walking an account out of a state the spec calls
+    terminal.
+
+    The account is put into its end state with a direct UPDATE rather than through `decide`,
+    because `decide`'s suspend and revoke branches end every session (`ENDS_EVERY_SESSION`) — that
+    is the door this test must come through instead of. The session is minted while the account is
+    still `needs_review`, so the cached principal disagrees with the row: the guard has to read the
+    row, not the principal.
+    """
+    for state in ("suspended", "revoked"):
+        aid, cookies, hdr = member((), state="needs_review", email=f"{state}-answers@example.org")
+        with conn.cursor() as cur:
+            cur.execute("""INSERT INTO application (account_id, kind, fields, status, info_request)
+                             VALUES (%s,'buyer',%s,'needs_review','Which practice?') RETURNING id""", (aid, json.dumps(FIELDS)))
+            app_id = str(cur.fetchone()[0])
+            cur.execute("UPDATE account SET state=%s WHERE id=%s", (state, aid))
+
+        r = await client.post(f"/api/applications/{app_id}/answer", headers=auth_headers(cookies, hdr),
+                              json={"answer": "Let me back in"})
+        assert (r.status_code, r.json()["error"]["code"]) == (409, "STATE"), state
+
+        with conn.cursor() as cur:
+            cur.execute("SELECT status, answer, answered_at, resubmitted_at FROM application WHERE id=%s", (app_id,))
+            assert cur.fetchone() == ("needs_review", None, None, None), state
+            cur.execute("SELECT state FROM account WHERE id=%s", (aid,))
+            assert cur.fetchone() == (state,), state
+            cur.execute("SELECT count(*) FROM audit_log WHERE target_id=%s", (app_id,))
+            assert cur.fetchone()[0] == 0, state
+            cur.execute("SELECT count(*) FROM email_outbox")
+            assert cur.fetchone()[0] == 0, state
+
+
+async def test_a_suspended_or_revoked_account_cannot_re_apply(client, conn, member):
+    """M1, the other half — a regression pin rather than a new guard: `submit` has always had an
+    explicit allowed-from set (`BUYER_APPLY_STATES`), and a re-application must stay inside it."""
+    for state in ("suspended", "revoked"):
+        aid, cookies, hdr = member((), state="declined", email=f"{state}-reapplies@example.org")
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO application (account_id, kind, fields, status) VALUES (%s,'buyer',%s,'declined')",
+                        (aid, json.dumps(FIELDS)))
+            cur.execute("UPDATE account SET state=%s WHERE id=%s", (state, aid))
+
+        r = await client.post("/api/applications", headers=auth_headers(cookies, hdr), json={"kind": "buyer", "fields": FIELDS})
+        assert (r.status_code, r.json()["error"]["code"]) == (409, "STATE"), state
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM application WHERE account_id=%s", (aid,))
+            assert cur.fetchone()[0] == 1, state
+            cur.execute("SELECT state FROM account WHERE id=%s", (aid,))
+            assert cur.fetchone() == (state,), state
+
+
+async def test_a_declined_seller_re_application_is_audited_as_a_re_application(client, conn, member):
+    """L1. The flag used to key on the ACCOUNT state, which a declined seller decision never
+    changes — a seller applies from `active` and stays there — so an auditor counting
+    re-applications undercounted every seller one. It keys on "this kind's latest row is
+    `declined`" instead, which is true of both kinds."""
+    aid, cookies, hdr = member(("buyer",), email="seller-reapply@example.org")
+    first = await client.post("/api/applications", headers=auth_headers(cookies, hdr), json={"kind": "seller", "fields": SELLER_FIELDS})
+    assert first.status_code == 202
+    await _decide(client, _staff(member), aid, "decline", "Not this year.")
+    assert _one(conn, "SELECT state FROM account WHERE id=%s", (aid,)) == ("active",)  # a seller decision never moves it
+
+    again = await client.post("/api/applications", headers=auth_headers(cookies, hdr), json={"kind": "seller", "fields": SELLER_FIELDS})
+    assert again.status_code == 202 and again.json()["id"] != first.json()["id"]
+    assert _one(conn, "SELECT target_id FROM audit_log WHERE action='applications.reapply'") == (again.json()["id"],)
+    assert _one(conn, "SELECT count(*) FROM audit_log WHERE action='applications.submit'") == (1,)  # the first one only
+
+
+async def test_the_applicant_history_and_the_staff_detail_agree_on_names_and_order(client, conn, member):
+    """L2. The two endpoints read the same rows: one name for the reviewer's note
+    (`decision_note`, the column's own name) and one ordering (`submitted_at DESC, id DESC`), so
+    two rows sharing a `submitted_at` cannot make them disagree about which row is `current`."""
+    aid, cookies, _hdr = member((), state="declined", email="two-histories@example.org")
+    with conn.cursor() as cur:
+        # Written in one statement, so both rows carry the SAME `submitted_at` — the tie the two
+        # orderings had no shared way of breaking.
+        cur.execute("""INSERT INTO application (account_id, kind, fields, status, decision_note, decided_at)
+                       SELECT %s, 'buyer', %s, 'declined', note, now() FROM unnest(ARRAY['First look','Second look']) AS note""",
+                    (aid, json.dumps(FIELDS)))
+        cur.execute("SELECT count(DISTINCT submitted_at) FROM application WHERE account_id=%s", (aid,))
+        assert cur.fetchone() == (1,)
+    _sid, scookies, _shdr = member(("staff",), email="staff-order@example.org")
+
+    mine = (await client.get("/api/applications/me", headers=auth_headers(cookies))).json()
+    detail = (await client.get(f"/api/admin/users/{aid}", headers=auth_headers(scookies))).json()
+    assert [mine["current"]["id"], *(h["id"] for h in mine["history"])] == [a["id"] for a in detail["applications"]]
+    assert mine["current"]["id"] == detail["application"]["id"]
+    assert [h["id"] for h in mine["history"]] == [a["id"] for a in detail["application_history"]]
+    # One name, and it is the column's own.
+    assert mine["current"]["decision_note"] in {"First look", "Second look"}
+    assert "reason" not in mine["current"] and "reason" not in mine["history"][0]
+    assert mine["history"][0]["decision_note"] == detail["application_history"][0]["decision_note"]
+
+
+async def test_the_principal_cache_is_dropped_only_after_the_transaction_commits(client, conn, member, monkeypatch):
+    """L5. `invalidate_account` only deletes Redis keys, so calling it while the row change is
+    still uncommitted leaves a window in which a concurrent resolve reads the OLD state and
+    re-caches it for the full `sessions.CACHE_TTL`.
+
+    The spy reads `account.state` through the `conn` fixture — a SECOND, autocommitted connection,
+    which can therefore see only committed data. The state it reports at call time is the state the
+    rest of the world can see, which is the whole question. All three sites are exercised in one
+    account's journey: submit, `decide`, and answer.
+    """
+    from app.auth import sessions as S
+
+    seen: list[str] = []
+    real = S.invalidate_account
+
+    def spy(r, account_id):
+        with conn.cursor() as cur:
+            cur.execute("SELECT state FROM account WHERE id=%s", (account_id,))
+            seen.append(cur.fetchone()[0])
+        return real(r, account_id)
+
+    monkeypatch.setattr(S, "invalidate_account", spy)
+
+    aid, cookies, hdr = member((), state="verified", email="ordering@example.org")
+    submitted = await client.post("/api/applications", headers=auth_headers(cookies, hdr), json={"kind": "buyer", "fields": FIELDS})
+    assert submitted.status_code == 202
+    staff = _staff(member)
+    await _decide(client, staff, aid, "request_info", "Which practice?")
+    answered = await client.post(f"/api/applications/{submitted.json()['id']}/answer",
+                                 headers=auth_headers(cookies, hdr), json={"answer": "Cedar Park"})
+    assert answered.status_code == 200
+    await _decide(client, staff, aid, "approve", "")
+
+    assert seen == ["pending", "needs_review", "pending", "active"]

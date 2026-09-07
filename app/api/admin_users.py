@@ -23,11 +23,17 @@ Two shapes here are load-bearing and easy to undo by accident:
   row per poll of the I7 Users tab into a table whose triggers refuse DELETE.
 
 One ordering is deliberate and worth stating rather than discovering (fix round 1, N3): inside
-`decide` the Redis work (`S.revoke_all` / `S.invalidate_account`) and the outbox `enqueue` both run
-BEFORE `decide_route`'s `audit.write`. A failure in the audit insert therefore rolls back the
-Postgres side — the decision, the grants, the outbox row — while the Redis session keys stay
-deleted. That is the fail-safe direction (the sessions end, the decision does not) and it is the
-one place in the app where the two stores can diverge, so the order stays as it is.
+`decide` the session revocation (`S.revoke_all`) and the outbox `enqueue` both run BEFORE
+`decide_route`'s `audit.write`. A failure in the audit insert therefore rolls back the Postgres
+side — the decision, the grants, the outbox row — while the Redis session keys stay deleted. That
+is the fail-safe direction (the sessions end, the decision does not) and it is the one place in the
+app where the two stores can diverge, so the order stays as it is.
+
+The OTHER half of that Redis work moved in I5c fix round 1 (review L5): `S.invalidate_account`,
+which only deletes cache keys, now runs in `decide_route` AFTER the transaction commits. Dropping
+the cache while the decision was still uncommitted left a window in which a concurrent resolve
+could read the pre-decision state and re-cache it for the full `sessions.CACHE_TTL`. It has no
+fail-safe direction to preserve — a rolled-back decision leaves nothing to invalidate.
 """
 from __future__ import annotations
 
@@ -472,7 +478,7 @@ async def detail(account_id: UUID, request: Request, principal: DetailViewer) ->
                 raise NotFound
             cur.execute("""SELECT id, kind, fields, flags, status, submitted_at, decided_at, decision_note, info_request,
                                   answer, answered_at, resubmitted_at
-                             FROM application WHERE account_id=%s ORDER BY submitted_at DESC""", (account_id,))
+                             FROM application WHERE account_id=%s ORDER BY submitted_at DESC, id DESC""", (account_id,))
             applications = [
                 {"id": str(r[0]), "kind": r[1], "fields": r[2], "flags": r[3], "status": r[4],
                  "submitted_at": _iso(r[5]), "decided_at": _iso(r[6]), "decision_note": r[7], "info_request": r[8],
@@ -571,9 +577,10 @@ def decide(
         # `revoke_all`, not `invalidate_account`: dropping the principal cache alone leaves the
         # cookie resolving to a live session, so the suspended member gets a 403 on the routes
         # their (now empty) roles no longer reach instead of the generic 401 spec §3 asks for.
+        # It stays INSIDE the transaction because it writes `session.revoked_at` as well as
+        # clearing Redis; only the pure-Redis `invalidate_account` moved out (review L5, and the
+        # module docstring's note on the one ordering that is deliberate).
         S.revoke_all(conn, r, account_id)
-    else:
-        S.invalidate_account(r, account_id)
     return to, roles
 
 
@@ -600,6 +607,13 @@ async def decide_route(account_id: UUID, body: Decision, request: Request, princ
                     # before/after; `reason` is not redacted, so nothing but the decision and the
                     # reviewer's note goes in it.
                     reason=body.action if not body.note.strip() else f"{body.action}: {body.note}", request=request)
+    # AFTER the commit above (review L5): `invalidate_account` only deletes Redis keys, so dropping
+    # the cache while the decision was still uncommitted left a window in which a concurrent
+    # resolve read the OLD state and re-cached it for the full `sessions.CACHE_TTL`. The
+    # suspend/revoke branch is not here — `revoke_all` writes to Postgres too and stays inside the
+    # transaction, which is what keeps the divergence direction the docstring describes.
+    if body.action not in ENDS_EVERY_SESSION:
+        S.invalidate_account(sync_redis(), account_id)
     return {"state": state, "roles": roles}
 
 

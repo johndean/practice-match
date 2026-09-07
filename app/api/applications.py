@@ -49,6 +49,14 @@ OPEN_STATUSES = ("pending", "needs_review")
 # `seller.apply` instead — a declined seller may re-apply with no state change at all.
 BUYER_APPLY_STATES = ("verified", "declined")
 MAX_ANSWER = 4_000
+# The ACCOUNT state each kind's answer is allowed FROM — the explicit allowed-from set every other
+# transition in this wave has and this one lacked (review M1). A buyer application in
+# `needs_review` belongs to an account in `needs_review`; a seller application in `needs_review`
+# belongs to an account that stayed `active` (the decision table's seller override). Those are the
+# only two states a `needs_review` row can coexist with, so this is an exact allow-list rather than
+# a denylist — and `suspended`/`revoked`, which `decide` reaches WITHOUT closing the application
+# row, can no longer be walked back out of by answering it.
+ANSWER_FROM = {"buyer": "needs_review", "seller": "active"}
 # The three audit actions an applicant's own routes write, in ONE namespace (controller ruling,
 # 2026-09-07 — `application.submit`, singular, was renamed while it was still free: Wave 2a has
 # never been deployed, so no audit row anywhere carries the old name). Named as constants because
@@ -190,9 +198,6 @@ async def submit(body: ApplicationIn, request: Request, principal: Self) -> dict
                 raise ApplicationState
             if body.kind == "seller" and not PM.allowed("seller.apply", principal):
                 raise NotABuyer
-            # A `declined` buyer applying again is a RE-APPLICATION: a new row, with the declined
-            # one kept as history, and the account back to `pending` (John's ruling, 2026-09-07).
-            reapplying = body.kind == "buyer" and state == "declined"
             _validate(body.kind, body.fields)
             # One open row per ACCOUNT, not per kind (spec §Lifecycle, amended): `admin_users.decide`
             # acts on "the account's latest open application" whatever its kind, so a second open
@@ -201,6 +206,14 @@ async def submit(body: ApplicationIn, request: Request, principal: Self) -> dict
                         (principal.account_id, list(OPEN_STATUSES)))
             if cur.fetchone() is not None:
                 raise ApplicationState
+            # A RE-APPLICATION is "this kind's latest row was declined" — a new row, with the
+            # declined one kept as history (John's ruling, 2026-09-07). Keyed on the ROW rather
+            # than on `account.state` (review L1): a declined seller decision leaves the account
+            # `active`, so an account-state test undercounted every seller re-application.
+            cur.execute("""SELECT status FROM application WHERE account_id=%s AND kind=%s
+                            ORDER BY submitted_at DESC, id DESC LIMIT 1""", (principal.account_id, body.kind))
+            latest = cur.fetchone()
+            reapplying = latest is not None and latest[0] == "declined"
             cur.execute("INSERT INTO application (account_id, kind, fields, flags) VALUES (%s,%s,%s,%s) RETURNING id",
                         (principal.account_id, body.kind, json.dumps(body.fields), flags.compute(body.fields, email)))
             # RETURNING id on a just-inserted row always yields exactly one row.
@@ -208,13 +221,17 @@ async def submit(body: ApplicationIn, request: Request, principal: Self) -> dict
             if body.kind == "buyer":
                 cur.execute("UPDATE account SET state='pending', display_name=COALESCE(display_name, %s) WHERE id=%s",
                             (str(body.fields["name"]).strip(), principal.account_id))
-                # The cached principal still says `verified`; the account no longer does. Spec §3's
-                # S4: a principal cache is DELETED on any change, never waited out.
-                S.invalidate_account(sync_redis(), principal.account_id)
         enqueue(conn, to=email, template=TEMPLATE[body.kind], params={},
                 idempotency_key=f"{principal.account_id}:{TEMPLATE[body.kind]}:{app_id}")
         audit.write(conn, actor=principal, action=REAPPLY_ACTION if reapplying else SUBMIT_ACTION,
                     target_type="application", target_id=app_id, after={"kind": body.kind}, request=request)
+    # AFTER the commit above (`with conn:` is the transaction manager). The cached principal still
+    # says `verified`; the account no longer does — spec §3's S4: a principal cache is DELETED on
+    # any change, never waited out. Deleting it while the row change was still uncommitted left a
+    # window in which a concurrent resolve read the OLD state and re-cached it for the full
+    # `sessions.CACHE_TTL` (review L5).
+    if body.kind == "buyer":
+        S.invalidate_account(sync_redis(), principal.account_id)
     return {"id": str(app_id), "status": "pending"}
 
 
@@ -229,13 +246,16 @@ async def answer(application_id: UUID, body: AnswerIn, request: Request, princip
     """
     with closing(sync_conn()) as conn, conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT email FROM account WHERE id=%s FOR UPDATE", (principal.account_id,))
+            cur.execute("SELECT email, state FROM account WHERE id=%s FOR UPDATE", (principal.account_id,))
             row = cur.fetchone()
             if row is None:
                 # `deps.LEGACY_ADMIN` — the `API_SECRET_KEY` bearer — passes `account.self` and
                 # names no `account` row. Same generic 401 as `submit` gives it.
                 raise Unauthenticated
-            email = cast("str", row[0])
+            # `state` comes from the ROW, not from `principal.state`: the principal is a 60 s cache
+            # (`sessions.CACHE_TTL`), and a suspension a moment old must not be answerable through
+            # a principal that predates it. Same reasoning as `submit`'s.
+            email, state = cast("str", row[0]), cast("str", row[1])
             # Scoped to the caller's own account in the WHERE clause, so "no such application" and
             # "not yours" are one indistinguishable 404. `FOR UPDATE` serialises two answers to the
             # same row, which is what makes the `needs_review` check below a real gate.
@@ -245,7 +265,9 @@ async def answer(application_id: UUID, body: AnswerIn, request: Request, princip
             if application is None:
                 raise NotFound
             kind, status = cast("str", application[0]), cast("str", application[1])
-            if status != "needs_review":
+            # BOTH halves, and the same uniform 409 either way: the row must be waiting for an
+            # answer, and the account must be in the state that row implies (review M1).
+            if status != "needs_review" or state != ANSWER_FROM[kind]:
                 raise AnswerState
             cur.execute("""UPDATE application SET answer=%s, answered_at=now(), resubmitted_at=now(), status='pending'
                             WHERE id=%s""", (body.answer, application_id))
@@ -254,7 +276,6 @@ async def answer(application_id: UUID, body: AnswerIn, request: Request, princip
                 # applies from an `active` account, and demoting it to `pending` would strip every
                 # role on the next request (`permissions.effective_roles`).
                 cur.execute("UPDATE account SET state='pending' WHERE id=%s", (principal.account_id,))
-                S.invalidate_account(sync_redis(), principal.account_id)
             # `n` = which submission of this row this is, for the outbox idempotency cause. The row
             # carries one `resubmitted_at` rather than a counter, so the count comes from the
             # append-only audit trail: one `applications.answer` row per PREVIOUS re-submission,
@@ -268,6 +289,9 @@ async def answer(application_id: UUID, body: AnswerIn, request: Request, princip
         audit.write(conn, actor=principal, action=ANSWER_ACTION, target_type="application",
                     target_id=application_id, before={"status": status}, after={"status": "pending", "kind": kind},
                     request=request)
+    # AFTER the commit, for the reason `submit` above records (review L5).
+    if kind == "buyer":
+        S.invalidate_account(sync_redis(), principal.account_id)
     return {"status": "pending"}
 
 
@@ -279,7 +303,9 @@ MINE = """SELECT id, kind, status, info_request, answer, answered_at, resubmitte
 def _mine_row(r: tuple[Any, ...]) -> dict[str, Any]:
     return {"id": str(r[0]), "kind": r[1], "status": r[2], "info_request": r[3], "answer": r[4],
             "answered_at": _iso(r[5]), "resubmitted_at": _iso(r[6]), "submitted_at": r[7].isoformat(),
-            "decision": DECISION.get(r[2]), "reason": r[8], "decided_at": _iso(r[9])}
+            # `decision_note` — the column's own name, and the one the staff detail already used
+            # (review L2). It was `reason` here, so the two endpoints named one column two ways.
+            "decision": DECISION.get(r[2]), "decision_note": r[8], "decided_at": _iso(r[9])}
 
 
 @router.get("/applications/me")
