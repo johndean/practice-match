@@ -14,7 +14,7 @@ VIN Foundation veterinary practice marketplace (internal working title). Read th
 Every environment variable is set only in Railway (per service, per environment) — see `.env.example` for the full list and `DEPLOY.md` for how each is set. `CENSUS_API_KEY` (worker only, Sub-project 3; John holds it) is the one that must never appear in git, chat, or a CI log — same rule as `API_SECRET_KEY`, just worth naming. `SITE_MODE` (`app` | `coming_soon`) selects which built site the api serves; production runs `coming_soon` until launch; QA never does.
 
 > ### 🚦 ALWAYS confirm the Railway target before uploading or changing anything
-> This machine runs 5+ Railway projects; `railway up` ships to whatever is linked. Before ANY `railway up`, variable change, or service mutation run `railway status` and read it back — it must say **Project: Practice Match**. `scripts/deploy.sh` enforces this; do not bypass it with a bare `railway up`. Never pass `--project` from memory. Never set a global `RAILWAY_TOKEN`.
+> This machine runs 5+ Railway projects; `railway up` ships to whatever is linked. Before ANY `railway up`, variable change, or service mutation run `railway status` and read it back — it must say **Project: Practice Match**. `scripts/deploy.sh` enforces this; do not bypass it with a bare `railway up`. deploy.sh uploads a `git archive` of the source's HEAD, never the working directory; a linked worktree must be passed as SOURCE_DIR (`scripts/deploy.sh QA .worktrees/<branch>`), because the CLI resolves a worktree's `.git` pointer file back to the main checkout and would otherwise ship main's tree (P14, `DEPLOY.md`). Never pass `--project` from memory. Never set a global `RAILWAY_TOKEN`.
 
 ## Source of truth for the UI
 

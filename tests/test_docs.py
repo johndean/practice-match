@@ -315,3 +315,31 @@ def test_dockerfile_copies_the_build_sha_stamp_with_the_optional_glob_form():
         assert re.fullmatch(r"COPY \S+ BUILD_SH\[A\] \./", line), (
             f"the optional glob must be paired with an always-present source: {line!r}"
         )
+
+
+def test_deploy_md_documents_the_archive_upload_and_the_new_exit_codes():
+    """P14: the deploy path can no longer ship a tree other than the one it names. The
+    runbook has to say what is uploaded, how a branch is deployed, and what the two new
+    refusals mean — an operator who hits 66 or 67 must not have to read the script."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "git archive" in text, "the archive-based upload is undocumented"
+    assert "scripts/deploy.sh QA .worktrees/<branch>" in text, "the SOURCE_DIR usage is undocumented"
+    assert "pointer file" in text, "the worktree hazard that caused P14 is unrecorded"
+    assert "exit 66" in text and "exit 67" in text, "the new exit codes are undocumented"
+    assert "EXPECT_VERSION" in text, "the verifier's artefact check is undocumented"
+
+
+def test_claude_md_traffic_light_block_records_the_archive_upload():
+    """The 🚦 block is the one place every assistant reads before touching Railway."""
+    text = (ROOT / "CLAUDE.md").read_text()
+    assert (
+        "deploy.sh uploads a `git archive` of the source's HEAD, never the working directory; "
+        "a linked worktree must be passed as SOURCE_DIR" in text
+    )
+
+
+def test_platform_plan_records_the_p14_hotfix():
+    text = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-05-practice-match-platform.md").read_text()
+    assert "### Task 14: Deploy what is committed, verify what is deployed (hotfix, 2026-09-07)" in text
+    assert "--path-as-root" in text, "the flag that makes the upload path the archive root is unrecorded"
+    assert "BUILD_SHA" in text, "the artefact stamp is unrecorded"
