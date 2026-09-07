@@ -1,5 +1,5 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
-import { appOrigin, booted, click, jump, personaCredentials, personaSignIn, personaSignOut, prepare, signInAsPersona, waitMap, type PersonaCookies } from './harness';
+import { appOrigin, booted, click, personaCredentials, personaSignIn, personaSignOut, prepare, reach, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
 import { SCREENS } from './screens';
 
 const ROUTES = ['/', '/browse', '/browse?tab=market', '/browse?tab=listings', '/practices/p1', '/requests', '/seller', '/admin?tab=data'];
@@ -22,22 +22,27 @@ test.describe('smoke', () => {
     });
   }
 
-  test('a deep link is honoured after the fixture sign-in, and a legacy ?tab= settles on Browse', async ({ page }) => {
+  // A-I8: the account is loaded before the app mounts (`main.ts` → `useMe().load()`), so a
+  // deep link into a member route is honoured by the SESSION — no gate click at all, where the
+  // prototype's fixture button used to be the only way this URL survived a cold load. The
+  // `?tab=market` is a legacy no-op kept deliberately: V3's Browse always shows market data.
+  test('a deep link is honoured for a signed-in account, and a legacy ?tab= settles on Browse', async ({ page }) => {
     await prepare(page);
-    await page.goto('/browse?tab=market');
-    await page.getByRole('button', { name: 'Approved — enter', exact: true }).click();
+    await signInAs(page, 'design', '/browse?tab=market');
     await expect(page).toHaveURL(/\/browse$/);
     await expect(page.getByRole('button', { name: /^Layers/ })).toBeVisible();
   });
 
+  // The design's OWN navigation — the header's four nav items, which only render once signed
+  // in — rather than the prototype jump bar's six. A6.1 removes the bar; this proves the
+  // routes are still written from the screens a member can actually reach.
   test('navigation writes the URL', async ({ page }) => {
     await prepare(page);
-    await page.goto('/');
-    await page.getByRole('button', { name: 'Browse', exact: true }).first().click();
+    await signInAs(page, 'design', '/browse');
     await expect(page).toHaveURL(/\/browse$/);
-    await page.getByRole('button', { name: 'Listing', exact: true }).first().click();
-    await expect(page).toHaveURL(/\/practices\/p1$/);
-    await page.getByRole('button', { name: 'Admin', exact: true }).first().click();
+    await page.getByRole('button', { name: 'My Requests', exact: true }).first().click();
+    await expect(page).toHaveURL(/\/requests$/);
+    await page.getByRole('button', { name: 'VIN Foundation Admin', exact: true }).first().click();
     await page.getByRole('button', { name: /^Data Sources\s*\d/ }).first().click();
     await expect(page).toHaveURL(/\/admin\?tab=data$/);
   });
@@ -64,8 +69,7 @@ test.describe('smoke', () => {
   test('no element inside any image-slot shadow root is focusable on the Listing screen', async ({ page }) => {
     await prepare(page);
     const errors = trapErrors(page);
-    await page.goto('/practices/p1');
-    await page.getByRole('button', { name: 'Approved — enter', exact: true }).click();
+    await signInAs(page, 'design', '/practices/p1');
     await expect(page).toHaveURL(/\/practices\/p1$/);
     await page.locator('image-slot').first().waitFor();
 
@@ -129,16 +133,18 @@ test.describe('smoke', () => {
   });
 
   // Performance gate (policy §3): the market map's first paint. The clock starts on the
-  // navigation, not after it — the deep link is signed in through the gate's fixture button,
-  // which is the only way this URL survives a cold load, so the budget covers boot + gate +
-  // the pending deep link + Leaflet's first paint. The `?tab=market` is a legacy no-op kept
-  // here deliberately: V3's Browse always shows market data. `[data-map]` is set by
-  // LeafletMapEngine.mount() once the map is on the page.
+  // NAVIGATION, so the budget covers everything a member pays for on a cold deep link —
+  // `main.ts`'s `/api/config` + `/api/me` (A-I8), the app's own boot, A5.4's bootstrap, the
+  // pending deep link and Leaflet's first paint. The session is established out of band
+  // beforehand, so the sign-in itself is not on the clock — the same as when a real member
+  // arrives with a cookie. The `?tab=market` is a legacy no-op kept here deliberately: V3's
+  // Browse always shows market data. `[data-map]` is set by LeafletMapEngine.mount() once the
+  // map is on the page.
   test('first map paint within budget', async ({ page }) => {
     await prepare(page);
+    await signInAs(page, 'design');                     // the cookie only; the clock starts below
     const started = Date.now();
     await page.goto('/browse?tab=market');
-    await page.getByRole('button', { name: 'Approved — enter', exact: true }).click();
     await page.locator('[data-map]').waitFor();
     const elapsed = Date.now() - started;
     expect(elapsed, `first map paint took ${elapsed}ms`).toBeLessThanOrEqual(1500);
@@ -153,8 +159,7 @@ test.describe('smoke', () => {
   // clicked again.
   test('opening Compare hides the floating "What this means" card; closing Compare brings it back (A4, spec D21)', async ({ page }) => {
     await prepare(page);
-    await booted(page);
-    await jump(page, 'Browse');
+    await signInAs(page, 'design', '/browse');
     await waitMap(page);
     const dismiss = page.locator('button[aria-label="Dismiss interpretation"]');
     await expect(dismiss).toBeVisible();
@@ -194,11 +199,12 @@ test.describe('mobile: the same map, market data in a sheet', () => {
     await expect(sheet(page)).toBeVisible();
   }
 
+  // D-I8-7: the phone frame is asked for through the URL now — the "Mobile view" toggle lived
+  // in the jump bar and left with it (A6.1). The harness viewport stays the design's 1440×940;
+  // 390×800 is the PROTOTYPE's frame drawn inside that page.
   async function mobileMap(page: Page) {
     await prepare(page);
-    await booted(page);
-    await click(page, 'Mobile view');
-    await jump(page, 'Browse');
+    await signInAs(page, 'design', '/browse?viewport=mobile');
     await click(page, 'Map');
     await waitMap(page);
   }
@@ -369,8 +375,7 @@ test.describe('mobile: the same map, market data in a sheet', () => {
 
   test('the desktop map keeps the basemap tabs the phone gives up', async ({ page }) => {
     await prepare(page);
-    await booted(page);
-    await jump(page, 'Browse');
+    await signInAs(page, 'design', '/browse');
     await waitMap(page);
     await expect(page.getByRole('button', { name: 'Satellite', exact: true }), 'the desktop map lost its basemap tabs').toHaveCount(1);
     await expect(page.getByRole('button', { name: 'Map', exact: true }), 'the desktop map lost its basemap tabs').toHaveCount(1);
@@ -427,9 +432,7 @@ test.describe('mobile: the same map, market data in a sheet', () => {
   // navigates directly, the same way V2's card and C13's second pin tap both do.
   test('tapping the first result card in the list reaches the detail screen (A2)', async ({ page }) => {
     await prepare(page);
-    await booted(page);
-    await click(page, 'Mobile view');
-    await jump(page, 'Browse');
+    await signInAs(page, 'design', '/browse?viewport=mobile');
     await phone(page).getByText('Revenue', { exact: false }).first().waitFor();
 
     const card = phone(page).locator('div[style*="cursor: pointer"]').filter({ hasText: 'Revenue' }).first();
@@ -500,11 +503,11 @@ test.describe('harness: atTop pins the interest modal against a scrolled capture
 // proxy, a `Secure` session cookie accepted over `http://localhost` (a trustworthy origin in
 // Chromium), and the Redis-cached principal behind `GET /api/me` — in a real browser.
 //
-// It asserts the SESSION, not the rendered screen. The app still derives `auth` from the
-// prototype fixture; Task I8's `useMe().load()` bootstrap is what makes it honour the
-// session, and only then does `screens.ts` switch from `jump()` to this. The zero-regression
-// order is deliberate: the sign-in exists and is proven here, the wiring follows, then the
-// jump bar goes.
+// It asserts the SESSION, not the rendered screen — the screens are proved by visual.spec.ts
+// and dom.spec.ts, which now enter through it (`reach`). A-I8 executed the order this note
+// recorded: the sign-in existed and was proven here (I7), then `main.ts`'s `useMe().load()`
+// bootstrap made the app honour it and `screens.ts` switched off `jump()` (I8a commit 1), then
+// the jump bar went (I8a commit 3).
 // ---------------------------------------------------------------------------------------
 test.describe('harness: the design persona signs in against the real API (A-I7)', () => {
   test('signInAsPersona leaves pm_session and pm_csrf on the context and /api/me answers the persona', async ({ page }) => {

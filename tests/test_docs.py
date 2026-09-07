@@ -509,6 +509,85 @@ def test_the_playwright_persona_password_default_matches_seed_persona():
     assert presented.group(1) == seeded.group(1)
 
 
+def _harness_personas() -> dict[str, dict[str, object]]:
+    """`frontend/tests/harness.ts`'s `PERSONAS`, read without a TypeScript parser.
+
+    Each entry is written as ONE line precisely so this pin can read it; the file says so beside
+    them. The strings are what the reference is handed through the `me` prototype prop (A5.7) and
+    therefore what the design's own header renders on the oracle."""
+    source = (ROOT / "frontend" / "tests" / "harness.ts").read_text()
+    pattern = (r"^  (\w+): \{ email: '([^']+)', name: '([^']+)', role: '([^']+)', "
+               r"initials: '([^']+)', state: '([^']+)', roles: \[([^\]]*)\] \},?$")
+    found: dict[str, dict[str, object]] = {}
+    for m in re.finditer(pattern, source, re.MULTILINE):
+        key, email, name, role, initials, state, roles = m.groups()
+        found[key] = {"email": email, "name": name, "role": role, "initials": initials, "state": state,
+                      "roles": tuple(r.strip().strip("'") for r in roles.split(",") if r.strip())}
+    assert len(found) == 6, f"expected the six harness personas as one line each, read {sorted(found)}"
+    return found
+
+
+def test_the_harness_personas_are_the_accounts_seed_persona_seeds_with_the_labels_the_api_computes():
+    """A-I8.2 / D-I8-8: the visual oracle's personas are ONE fact in two languages.
+
+    Since amendment A5.4 the account menu renders `/api/me`'s computed `role` and `initials`
+    (spec §4, `app/api/auth.py::me_payload`), and `app.auth.labels` derives both from the account's
+    grants and display name. The harness holds each persona's payload as a constant, because the
+    REFERENCE is handed it through the `me` prototype prop (A5.7) — so if these strings and
+    `labels.py` ever disagree, the reference and the app render different headers and every
+    member-screen baseline is wrong. Pinned per persona, and the drift can come from either side."""
+    from app.auth.labels import initials, role_label
+    from scripts import seed_persona
+
+    seeded_roles: dict[str, tuple[str, ...]] = {
+        seed_persona.PERSONA_EMAIL: seed_persona.PERSONA_ROLES,
+        **{email: roles for email, roles in seed_persona.ORACLE_PERSONAS},
+        **{email: () for email, _state, _name in seed_persona.STATE_PERSONAS},
+    }
+    seeded_names: dict[str, str] = {
+        seed_persona.PERSONA_EMAIL: seed_persona.PERSONA_NAME,
+        **{email: seed_persona.PERSONA_NAME for email, _roles in seed_persona.ORACLE_PERSONAS},
+        **{email: name for email, _state, name in seed_persona.STATE_PERSONAS},
+    }
+    # Only the three members carry an affiliation; an applicant has none to confirm yet, which is
+    # rather the point for `declined@`.
+    members = {seed_persona.PERSONA_EMAIL, *(email for email, _roles in seed_persona.ORACLE_PERSONAS)}
+    seeded_states: dict[str, str] = {email: state for email, state, _name in seed_persona.STATE_PERSONAS}
+
+    for key, persona in _harness_personas().items():
+        email = str(persona["email"])
+        assert email in seeded_roles, f"{key} names {email}, which scripts/seed_persona.py does not seed"
+        assert persona["roles"] == tuple(sorted(seeded_roles[email])), (key, persona["roles"])
+        assert persona["name"] == seeded_names[email], (key, persona["name"])
+        assert persona["state"] == seeded_states.get(email, "active"), (key, persona["state"])
+        affiliation = seed_persona.PERSONA_AFFILIATION if email in members else None
+        assert persona["role"] == role_label(frozenset(seeded_roles[email]), affiliation), (key, persona["role"])
+        assert persona["initials"] == initials(seeded_names[email]), (key, persona["initials"])
+
+
+def test_the_buyer_persona_reproduces_the_design_fixture_label_letter_for_letter():
+    """A-I8.2, the invariant the nineteen buyer-family baselines rest on.
+
+    John's rule for this wave is that the approved design's copy does not change, so the oracle
+    persona was chosen to fit the design: `labels.role_label({"buyer"}, "StartUp Club")` must
+    reproduce `logic.js`'s fixture `state.me.role` exactly, or the reference and the app disagree on
+    the header of every buyer-family state and nineteen baselines move that should not."""
+    from app.auth.labels import initials, role_label
+    from scripts import seed_persona
+
+    design = (ROOT / "docs" / "design-reference" / "design_handoff_practice_match_v3" / "Practice Match V3.dc.html").read_text()
+    match = re.search(r'^    me: \{ name: "([^"]+)", role: "([^"]+)", initials: "([^"]+)" \}$', design, re.MULTILINE)
+    assert match, "the design's fixture persona is no longer the single line this pin reads"
+    name, role, inits = match.groups()
+
+    buyer_roles = dict(seed_persona.ORACLE_PERSONAS)["buyer@practice-match.test"]
+    assert role == role_label(frozenset(buyer_roles), seed_persona.PERSONA_AFFILIATION), role
+    assert name == seed_persona.PERSONA_NAME, name
+    assert inits == initials(seed_persona.PERSONA_NAME), inits
+    # And the harness must be handing that same account to the buyer-family states.
+    assert _harness_personas()["buyer"]["role"] == role
+
+
 def _users_ts_literal(name: str) -> object:
     """One of the three exported JSON literals in `frontend/src/admin/users.ts`.
 

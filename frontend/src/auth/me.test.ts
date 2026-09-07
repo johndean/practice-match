@@ -22,8 +22,14 @@ const SIGNED_OUT = { status: 401, body: { error: { code: 'UNAUTHORIZED', message
 const FLAG_ON = { '/api/config': { status: 200, body: { market_data_public: true } } };
 const FLAG_OFF = { '/api/config': { status: 200, body: { market_data_public: false } } };
 
-beforeEach(() => useMe().clear());
-afterEach(() => vi.unstubAllGlobals());
+// `load()` asks `/api/me` only when the readable `pm_csrf` cookie is there (A-I8.2), so the
+// cases that exercise the principal set it and the cases about a signed-out visitor do not.
+const SESSION_COOKIE = 'pm_csrf=double-submit-value';
+const holdSession = () => { document.cookie = SESSION_COOKIE; };
+const dropSession = () => { document.cookie = 'pm_csrf=; expires=Thu, 01 Jan 1970 00:00:00 GMT'; };
+
+beforeEach(() => { useMe().clear(); holdSession(); });
+afterEach(() => { vi.unstubAllGlobals(); dropSession(); });
 
 describe('useMe', () => {
   it('starts empty and closed — nothing is known before /api/config and /api/me answer', async () => {
@@ -117,3 +123,60 @@ describe('useMe', () => {
     expect(store.marketDataPublic.value, 'MARKET_DATA_PUBLIC is a property of the deployment, not of the visitor').toBe(true);
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A-I8.2: no `/api/me` request for a visitor who plainly has no session.
+//
+// `main.ts` calls `load()` on EVERY page load, and for a signed-out visitor `/api/me` answers
+// 401 — the ANSWER, not a failure (api.ts says so). But Chromium logs every 4xx subresource as
+// `Failed to load resource: … 401 (Unauthorized)`, with no URL in the text and no way to
+// suppress it, and the Playwright harness fails a test on any console error. Forgiving the line
+// in the harness was tried and withdrawn: it is a gate hole, and the request was pointless
+// anyway.
+//
+// `pm_csrf` is the tell. `app/api/auth.py` sets it in the same handler as `pm_session`, with the
+// same lifetime, and deliberately leaves it readable (`httponly=False`) so the double-submit
+// value can be echoed in `X-CSRF-Token`. No `pm_csrf` therefore means no usable session: even if
+// a `pm_session` somehow outlived it, every state-changing call would already be refused for want
+// of the token, so "signed out" is both the safe and the accurate reading.
+// ---------------------------------------------------------------------------------------
+describe('useMe().load() and the session cookie (A-I8.2)', () => {
+  it('does not ask /api/me at all when there is no pm_csrf cookie', async () => {
+    dropSession();
+    const urls = stubFetch({ ...FLAG_ON, '/api/me': { status: 200, body: PERSONA } });
+    const store = useMe();
+
+    await expect(store.load()).resolves.toBeNull();
+
+    expect(urls, 'the flag is still read — it is a property of the deployment, not the visitor').toEqual(['/api/config']);
+    expect(store.me.value).toBeNull();
+    expect(store.marketDataPublic.value, 'MARKET_DATA_PUBLIC still governs the anonymous market column').toBe(true);
+  });
+
+  it('asks /api/me when the cookie is there, exactly as before', async () => {
+    const urls = stubFetch({ ...FLAG_ON, '/api/me': { status: 200, body: PERSONA } });
+    expect(await useMe().load()).toEqual(PERSONA);
+    expect(urls).toEqual(['/api/config', '/api/me']);
+  });
+
+  it('clears a previously-loaded principal when the cookie has gone (a signed-out reload)', async () => {
+    const store = useMe();
+    store.set(PERSONA);
+    dropSession();
+    stubFetch(FLAG_OFF);
+
+    await expect(store.load()).resolves.toBeNull();
+    expect(store.me.value, 'a stale principal must not survive a load that found no session').toBeNull();
+  });
+
+  it('reads the cookie at call time, not at import time', async () => {
+    dropSession();
+    stubFetch({ ...FLAG_ON, '/api/me': { status: 200, body: PERSONA } });
+    const store = useMe();
+    expect(await store.load()).toBeNull();
+
+    holdSession();
+    expect(await store.load(), 'signing in mid-session must be visible to the next load()').toEqual(PERSONA);
+  });
+});
+

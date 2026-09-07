@@ -232,6 +232,12 @@ class Component extends DCLogic {
     const start = this.props.startScreen;
     if (start && start !== "gate") this.setState({ screen: start, auth: true });
     if (this.props.startViewport === "mobile") this.setState({ viewport: "mobile" });
+    if (this.props.startGate) this.setState({ screen: "gate", gate: this.props.startGate });
+    const me = this.props.me;
+    if (me && me.state === "active") this.setState({ auth: true, screen: "browse", email: me.email, me: { name: me.name, role: me.role, initials: me.initials } });
+    else if (me && (me.state === "pending" || me.state === "needs_review")) this.setState({ screen: "gate", gate: "pending" });
+    else if (me && me.state === "declined") this.setState({ screen: "gate", gate: "rejected" });
+    else if (me && me.state === "verified") this.setState({ screen: "gate", gate: "apply" });
   }
 
   money(n) {

@@ -6,7 +6,11 @@
 // heading, so the V2 hashes could not survive — spec D6 option A); Task V13 Step 5 re-based it
 // again after John's ruling "keep the V2 header and do not restyle header or fonts" put V2's
 // typography back through local design amendment A1 (spec D15/D16, option B), which returned
-// all thirteen screens to their V1-era V2 hashes. Read by baseline-manifest.test.ts: a moved
+// all thirteen screens to their V1-era V2 hashes; Task I8a re-based NINE of them (`seller-dash`,
+// the four `wizard-*`, the four `admin-*`) when the account menu began rendering the signed-in
+// account's true label instead of the design's single fixture persona (A5.4 / A-I8.2, default
+// D-I8-8) — the other four keep their hashes, because the account those screens are captured as
+// is a buyer whose computed label IS the fixture's. Read by baseline-manifest.test.ts: a moved
 // hash there means a CODE change moved a screen the design did not. The PNGs it hashes are
 // git-ignored (.gitignore:6-7), so this is a within-worktree leak detector, not a CI oracle.
 // Never regenerate it to make a test pass — only to record a ruled design change.

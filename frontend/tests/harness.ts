@@ -1,8 +1,7 @@
 import { request as apiRequest, type BrowserContext, type Page } from '@playwright/test';
-import { join } from 'node:path';
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-
-export type JumpLabel = 'Access' | 'Browse' | 'Listing' | 'Requests' | 'Seller' | 'Admin';
 
 // Deterministic rendering on both targets: no basemap tiles (markers still draw
 // over the blank canvas), fonts loaded, pointer parked, animations settled.
@@ -33,6 +32,34 @@ export const BLANK_GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAA
 export async function prepare(page: Page): Promise<void> {
   page.on('pageerror', (e) => { throw new Error(`page error: ${e.message}`); });
   page.on('console', (m) => { if (m.type() === 'error') throw new Error(`console.error: ${m.text()}`); });
+  // ---------------------------------------------------------------------------------------
+  // B2 (A-I8.2): suppress the design runtime's re-fetch of its own document, on the REFERENCE
+  // ORIGIN ONLY. `support.js`'s `boot()` guards that re-fetch on `window.__resources`
+  // (support.js:158), and the re-fetch is what breaks the oracle:
+  //
+  //   1. the bundle's `<image-slot>` elements upgrade on the RAW, pre-hydration DOM, where `src`
+  //      is still the literal unresolved `{{ … }}` text, and `_render` marks them `data-filled`;
+  //   2. `boot()` then reads `dc.innerHTML` as the template — now carrying that attribute — so
+  //      React holds it as a prop;
+  //   3. the re-fetch hands `updateHtml` the RAW text template, which has no `data-filled`, and
+  //      React removes the attribute it no longer has in props. `image-slot.css`'s
+  //      `:host([data-filled]) .ring{display:none}` then stops applying and the dashed
+  //      PLACEHOLDER RING is drawn over the practice photo.
+  //
+  // The jump-bar entry avoided this by accident — the gate screen has no `<image-slot>` at all, so
+  // there was nothing mounted for `updateHtml` to strip, and the Browse slot was created by the
+  // click afterwards from the clean template. `startScreen` mounts the screen on the first commit
+  // instead, inside the window the re-fetch closes, and whether a given slot survives is a race
+  // (`browse` lost it every time; `detail` and `interest-modal` happened to win).
+  //
+  // Skipping the re-fetch leaves the template as the DOM-parsed one and every slot rendered by the
+  // element itself: `data-filled` present wherever there is a real `src`, absent where there is
+  // not — which is exactly what the app's own port does. Guarded by `placeholderRings` below and
+  // asserted in the reference project (reference-baselines.spec.ts).
+  // ---------------------------------------------------------------------------------------
+  await page.addInitScript((refOrigin) => {
+    if (location.origin === refOrigin) (window as unknown as { __resources?: unknown }).__resources = {};
+  }, referenceOrigin());
   // Fulfilling (not aborting) the basemap tiles: an aborted <img> request logs its own
   // "Failed to load resource: net::ERR_FAILED" console error in Chromium, which the error
   // gate above would then fail the test on. A blank tile gives the same deterministic,
@@ -74,11 +101,6 @@ export async function settle(page: Page): Promise<void> {
   await page.evaluate(() => (document as Document & { fonts: FontFaceSet }).fonts.ready);
   await page.mouse.move(0, 0);
   await page.waitForTimeout(600);
-}
-
-// The design's own prototype jump bar: signs in and switches screen on both targets.
-export async function jump(page: Page, label: JumpLabel): Promise<void> {
-  await page.getByRole('button', { name: label, exact: true }).first().click();
 }
 
 export async function click(page: Page, text: string): Promise<void> {
@@ -158,9 +180,101 @@ export async function waitMap(page: Page): Promise<void> {
 export const PERSONA_EMAIL = 'design@practice-match.test';
 export const PERSONA_DEFAULT_PASSWORD = 'design-persona-quiet-lantern-42';
 
+/**
+ * The six seeded accounts, each as the `/api/me` payload `logic.js`'s A5.4 bootstrap reads
+ * (`scripts/seed_persona.py` writes them; `tests/test_docs.py` pins these strings against
+ * `app.auth.labels.role_label` / `initials` for each persona's grants, in both languages).
+ *
+ * Three MEMBERS, all Dr. Rachel Mendes of the StartUp Club, differing only in what they may
+ * open — because since A5.4 the account menu renders the account's TRUE label, so the account
+ * decides what the design's own header must say. John's rule for this wave is that the design's
+ * copy does not change, so the account is chosen to fit the design rather than the reverse
+ * (A-I8.2): `buyer` reproduces the fixture's "Approved buyer · StartUp Club" letter for letter,
+ * which is what keeps the nineteen buyer-family states on their existing pixels.
+ *
+ * Three APPLICANTS, one per gate state the "Prototype — access states" shortcuts used to reach
+ * before A6.2 removed them. They hold no grants, so `role_label` gives them "Applicant".
+ *
+ * Each entry is ONE line on purpose: `tests/test_docs.py` reads them without a TypeScript parser
+ * and pins every field against `labels.role_label` / `labels.initials` and `seed_persona.py`'s own
+ * constants. Keep the shape, or that pin stops seeing them.
+ */
+export const PERSONAS = {
+  design: { email: 'design@practice-match.test', name: 'Dr. Rachel Mendes', role: 'VIN Foundation admin · StartUp Club', initials: 'RM', state: 'active', roles: ['admin', 'buyer', 'seller', 'staff'] },
+  buyer: { email: 'buyer@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved buyer · StartUp Club', initials: 'RM', state: 'active', roles: ['buyer'] },
+  seller: { email: 'seller@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved buyer and seller · StartUp Club', initials: 'RM', state: 'active', roles: ['buyer', 'seller'] },
+  pending: { email: 'pending@practice-match.test', name: 'Pending Applicant', role: 'Applicant', initials: 'PA', state: 'pending', roles: [] },
+  needsReview: { email: 'needs-review@practice-match.test', name: 'Applicant Under Review', role: 'Applicant', initials: 'AR', state: 'needs_review', roles: [] },
+  declined: { email: 'declined@practice-match.test', name: 'Declined Applicant', role: 'Applicant', initials: 'DA', state: 'declined', roles: [] }
+} as const;
+
+/** The design's own fixture label (`logic.js`'s `state.me.role`). The buyer persona IS this
+ *  string — A-I8.2 chose a buyer for exactly that reason. */
+export const FIXTURE_LABEL = 'Approved buyer · StartUp Club';
+
+export type PersonaKey = keyof typeof PERSONAS;
+
 /** The credential `POST /api/auth/signin` is given. Pure, so harness.test.ts can pin it. */
-export function personaCredentials(env: NodeJS.ProcessEnv = process.env): { email: string; password: string } {
-  return { email: PERSONA_EMAIL, password: env.PERSONA_PASSWORD ?? PERSONA_DEFAULT_PASSWORD };
+export function personaCredentials(persona: PersonaKey = 'design', env: NodeJS.ProcessEnv = process.env): { email: string; password: string } {
+  return { email: PERSONAS[persona].email, password: env.PERSONA_PASSWORD ?? PERSONA_DEFAULT_PASSWORD };
+}
+
+/**
+ * Where the design server answers — the SAME expression `playwright.config.ts` hands the
+ * `reference` project for its baseURL, pinned against it in harness.test.ts. `prepare()` needs it
+ * to scope the template-refetch guard (B2) to the reference and keep it away from the app.
+ */
+export function referenceOrigin(env: NodeJS.ProcessEnv = process.env): string {
+  return `http://localhost:${Number(env.PW_REF_PORT) || 5174}`;
+}
+
+// ---------------------------------------------------------------------------------------
+// The persona memo, on disk (A-I8.2).
+//
+// Playwright shuts the worker process down after a test failure and starts a new one, and the
+// in-memory memo went with it: every later failing test spent another of `SIGNIN_IP`'s thirty
+// attempts per IP per 15 minutes, so a run with a handful of real failures collapsed into a wall
+// of `429 RATE_LIMITED` that buried the first one (measured on this branch: 44 reported failures,
+// about twenty of them real).
+//
+// The file lives directly under `frontend/test-results/`, which Playwright clears at the start of
+// every run — so it is RUN-SCOPED by construction, and a session from a previous run can never be
+// re-used. The read/merge halves are pure so harness.test.ts can pin them without a filesystem.
+// ---------------------------------------------------------------------------------------
+const MEMO_FILE = join(fileURLToPath(new URL('.', import.meta.url)), '..', 'test-results', '.persona-sessions.json');
+
+/** The file's contents with one persona's jar set, or removed when `cookies` is null. */
+export function memoFileUpdate(existing: string | null, persona: string, cookies: unknown[] | null): string {
+  let held: Record<string, unknown[]> = {};
+  if (existing) {
+    try {
+      const parsed: unknown = JSON.parse(existing);
+      if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) held = parsed as Record<string, unknown[]>;
+    } catch { /* a corrupt file is no memo — see memoFileRead */ }
+  }
+  if (cookies) held[persona] = cookies; else delete held[persona];
+  return JSON.stringify(held);
+}
+
+/** One persona's jar, or null. An absent, corrupt or wrong-shaped file is simply "no memo": this
+ *  is a cache, and failing the run over it would be worse than signing in again. */
+export function memoFileRead(existing: string | null, persona: string): unknown[] | null {
+  if (!existing) return null;
+  try {
+    const parsed: unknown = JSON.parse(existing);
+    if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
+    const held = (parsed as Record<string, unknown>)[persona];
+    return Array.isArray(held) ? (held as unknown[]) : null;
+  } catch {
+    return null;
+  }
+}
+
+const readMemoFileText = (): string | null => (existsSync(MEMO_FILE) ? readFileSync(MEMO_FILE, 'utf8') : null);
+
+function writeMemoFile(persona: PersonaKey, cookies: PersonaCookies | null): void {
+  mkdirSync(dirname(MEMO_FILE), { recursive: true });
+  writeFileSync(MEMO_FILE, memoFileUpdate(readMemoFileText(), persona, cookies));
 }
 
 /**
@@ -224,11 +338,11 @@ export function appOrigin(env: NodeJS.ProcessEnv = process.env): string {
  * `Origin`: `deps.check_origin_and_csrf` only enforces those on a request that ALREADY carries a
  * cookie session.
  */
-export async function personaSignIn(baseURL = appOrigin()): Promise<PersonaCookies> {
+export async function personaSignIn(persona: PersonaKey = 'design', baseURL = appOrigin()): Promise<PersonaCookies> {
   const api = await apiRequest.newContext({ baseURL });
   try {
-    const response = await api.post('/api/auth/signin', { data: personaCredentials() });
-    if (!response.ok()) throw new Error(`persona sign-in failed: ${response.status()} ${await response.text()}`);
+    const response = await api.post('/api/auth/signin', { data: personaCredentials(persona) });
+    if (!response.ok()) throw new Error(`${persona} persona sign-in failed: ${response.status()} ${await response.text()}`);
     return (await api.storageState()).cookies;
   } finally {
     await api.dispose();
@@ -263,35 +377,225 @@ export async function personaSignOut(cookies: PersonaCookies, baseURL = appOrigi
 }
 
 /**
- * The one-per-worker-process memo. Exported so `forgetPersonaSession()`'s default — the form I8
- * calls — can be exercised without test-only code in the production path (re-review).
+ * One memo PER PERSONA, per worker process (A-I8). A-I7 had a single memo because there was a
+ * single account; four personas need four, or the second persona's sign-in would be skipped in
+ * favour of the first one's cookies and every later test would run as the wrong account — with
+ * no failure anywhere near the cause.
+ *
+ * The budget is still what A-I7 costed: `app/auth/limits.py`'s `SIGNIN_IP = (30, 900)` is counted
+ * on EVERY attempt per IP, and this spends one per persona per worker (four), plus the reauth
+ * test's own one — five of thirty.
  */
-export const personaSessionMemo: { cookies: PersonaCookies | null } = { cookies: null };
+export const personaSessionMemos: Record<PersonaKey, { cookies: PersonaCookies | null }> = {
+  design: { cookies: null }, buyer: { cookies: null }, seller: { cookies: null },
+  pending: { cookies: null }, needsReview: { cookies: null }, declined: { cookies: null }
+};
 
 /**
- * Drops the memo, so the next `signInAsPersona` signs in again (A-I7.2).
- *
- * For I8's sign-out tests: the memo is the WHOLE context jar and never expires, so once a test
- * signs out, the memoised `pm_session` names a revoked session and re-adding it to the next
- * context would silently run every later test anonymous.
+ * The design persona's memo — the same object as `personaSessionMemos.design`, kept under its
+ * A-I7 name because that is what `forgetPersonaSession()`'s no-argument form clears and what
+ * `signInAsPersona` spends. Exported so that default can be exercised without test-only code in
+ * the production path (re-review).
  */
-export function forgetPersonaSession(memo: { cookies: unknown[] | null } = personaSessionMemo): void {
-  memo.cookies = null;
+export const personaSessionMemo = personaSessionMemos.design;
+
+/**
+ * Drops one persona's session — the in-memory memo AND its entry in the run's memo file — so the
+ * next `signInAs` for it signs in again (A-I7.2, extended by A-I8.2).
+ *
+ * For I8's sign-out tests: a memo is the WHOLE context jar and never expires, so once a test signs
+ * out, the memoised `pm_session` names a revoked session and re-adding it to the next context would
+ * silently run every later test anonymous.
+ */
+export function forgetPersonaSession(persona: PersonaKey = 'design'): void {
+  personaSessionMemos[persona].cookies = null;
+  writeMemoFile(persona, null);
+}
+
+export async function signInAs(page: Page, persona: PersonaKey, url = '/'): Promise<void> {
+  const context = page.context();
+  const memo = personaSessionMemos[persona];
+  // A restarted worker has an empty in-memory memo but the run's file is still there.
+  if (memo.cookies === null) memo.cookies = memoFileRead(readMemoFileText(), persona) as PersonaCookies | null;
+  memo.cookies = await personaSession<PersonaCookies[number]>(
+    memo.cookies,
+    { cookies: () => context.cookies(), addCookies: (cookies) => context.addCookies(cookies) },
+    async () => { await context.addCookies(await personaSignIn(persona)); }
+  );
+  writeMemoFile(persona, memo.cookies);
+  await page.goto(url);
+}
+
+/** `signInAs(page, 'design', url)` under its A-I7 name — the design persona is the member every
+ *  screenshot of a member screen is taken as. */
+export async function signInAsPersona(page: Page, url = '/'): Promise<void> {
+  return signInAs(page, 'design', url);
+}
+
+// ---------------------------------------------------------------------------------------
+// `reach()` — the one entry point for all 28 approved states (amendment A-I8).
+//
+// Until I8 both targets entered every state the same way, through the design's own PROTOTYPE
+// affordances: the jump bar (`jump()`), the "Prototype — access states" shortcuts, and the
+// jump bar's "Mobile view" toggle. A6.1/A6.2 take all three out of the design, so the entry
+// has to differ by target while everything after it stays identical — which is what keeps one
+// `steps` function in screens.ts honest for two targets:
+//
+//   REFERENCE  a static prototype: no session, no API. It enters through the design's OWN
+//              prototype props, which tests/reference-server.mjs injects per request from
+//              `?props=` (decision D-I8-3). `startGate` (A5.6) is the gate states' way in.
+//   APP        a real session: `signInAs` posts to the real `/api/auth/signin` out of band,
+//              the cookies go on the browser context, and the route is deep-linked.
+//              `logic.js`'s A5.4 bootstrap turns the loaded account into the screen.
+//
+// The decisions are pure functions (`driverFor`, `personaFor`, `referenceMe`, `referencePlan`,
+// `appPlan`) so
+// harness.test.ts can pin them without a browser.
+// ---------------------------------------------------------------------------------------
+
+export interface ReachTarget {
+  /** The prototype screen. Anything but `gate` needs a session on the app. */
+  screen?: 'gate' | 'browse' | 'detail' | 'requests' | 'seller' | 'admin';
+  /** Which gate state, when `screen` is the gate. */
+  gate?: 'signin' | 'apply' | 'pending' | 'rejected';
+  /** `mobile` asks for the prototype's own 390×800 phone frame, not a browser resize. */
+  viewport?: 'desktop' | 'mobile';
+  /** Overrides the persona the app signs in as. The reference ignores it — it has no session. */
+  persona?: PersonaKey;
 }
 
 /**
- * Signs the page's context in as the design persona, then navigates to `url`.
+ * Which target `page` is on, from the origin it has already navigated to.
  *
- * The cookies are obtained out of band (see `personaSignIn`) and added to the browser context, so
- * every later navigation and `fetch` from the page carries them — and the credential never enters
- * a trace.
+ * Deliberately NOT a default: a page still on `about:blank` would be guessed as the reference,
+ * which would drive an app-project run through the reference's driver and screenshot the wrong
+ * target — and because the oracle is generated through the same driver, the pixel gate could not
+ * see it. Every spec calls `booted()` before `steps()`; this is the assertion that says so.
  */
-export async function signInAsPersona(page: Page, url = '/'): Promise<void> {
-  const context = page.context();
-  personaSessionMemo.cookies = await personaSession<PersonaCookies[number]>(
-    personaSessionMemo.cookies,
-    { cookies: () => context.cookies(), addCookies: (cookies) => context.addCookies(cookies) },
-    async () => { await context.addCookies(await personaSignIn()); }
+export function driverFor(url: string, appUrl = appOrigin()): 'app' | 'reference' {
+  if (!/^https?:\/\//.test(url)) throw new Error(`reach() needs a page that has already navigated (call booted() first); got ${url || 'about:blank'}`);
+  return new URL(url).origin === new URL(appUrl).origin ? 'app' : 'reference';
+}
+
+/** The app's route per prototype screen — the same mapping `src/router/sync.ts` writes URLs with. */
+const ROUTE: Record<NonNullable<ReachTarget['screen']>, string> = {
+  gate: '/', browse: '/browse', detail: '/practices/p1', requests: '/requests', seller: '/seller', admin: '/admin'
+};
+
+/**
+ * Which account a state is captured as (A-I8.2). The header shows the account's TRUE label since
+ * A5.4, so the account decides what the design's own header must say — and the design's copy does
+ * not change, so a BUYER serves every state whose header the fixture already describes, and the
+ * account that can actually open the rest serves those.
+ */
+const SCREEN_PERSONA: Record<NonNullable<ReachTarget['screen']>, PersonaKey | null> = {
+  gate: null, browse: 'buyer', detail: 'buyer', requests: 'buyer', seller: 'seller', admin: 'design'
+};
+
+export function personaFor(target: ReachTarget = {}): PersonaKey | null {
+  return target.persona ?? SCREEN_PERSONA[target.screen ?? 'gate'];
+}
+
+/** The design's own header nav, per screen — a member's route, not a prototype affordance, so it
+ *  survives the launch removal. There is deliberately no entry for `detail`: the design has no nav
+ *  item for a listing, and needs none (see `referencePlan`). */
+const NAV_LABEL: Partial<Record<NonNullable<ReachTarget['screen']>, string>> = {
+  browse: 'Browse Practices', requests: 'My Requests', seller: 'List a Practice', admin: 'VIN Foundation Admin'
+};
+
+/**
+ * The account handed to the REFERENCE, or null when there is nothing to hand over: the buyer
+ * persona's label IS the design's fixture (that is why A-I8.2 chose a buyer), so injecting it would
+ * change nothing — and NOT injecting it keeps `startScreen` working, which matters below.
+ */
+export function referenceMe(persona: PersonaKey | null): (typeof PERSONAS)[PersonaKey] | null {
+  if (!persona) return null;
+  return PERSONAS[persona].role === FIXTURE_LABEL ? null : PERSONAS[persona];
+}
+
+/**
+ * The reference's entry: the design at `/` — the runtime resolves its own relative assets against
+ * it — with all four prototype props named on every request, so no state inherits a value another
+ * set, plus the nav click A5.4's ordering makes necessary.
+ *
+ * THE ORDERING FACT. A5.4 applies `startScreen` first and the loaded account second, and the
+ * account's `active` branch sets `screen: "browse"` — so an injected active account OVERRIDES
+ * `startScreen`. (Measured against the real bundle: `startScreen: "admin"` alone renders the Admin
+ * screen; the same with an active `me` renders Browse.) The app is unaffected, because there the
+ * screen comes from the ROUTE and `useStateRouteSync` re-applies the pending deep link the instant
+ * `auth` flips. So where an account IS injected, the reference reaches the screen the way a member
+ * does — by clicking the design's own header nav.
+ */
+export function referencePlan(target: ReachTarget = {}): { url: string; nav: string | null } {
+  const screen = target.screen ?? 'gate';
+  const me = referenceMe(personaFor(target));
+  const overridden = !!me && me.state === 'active' && screen !== 'gate';
+  const nav = overridden ? NAV_LABEL[screen] ?? null : null;
+  // The silent-wrong-capture hole, closed loudly: an active account is injected, `startScreen` is
+  // therefore ignored, and the design has no nav item for this screen — the capture would be of
+  // Browse under the target's name, and the oracle would be generated from it.
+  if (overridden && !nav) {
+    throw new Error(`reach(): an injected active account overrides startScreen, and the design has no nav item for "${screen}" — capture it as a buyer, or reach it by clicking`);
+  }
+  return {
+    url: `/?props=${encodeURIComponent(JSON.stringify({
+      startScreen: screen,
+      startGate: target.gate ?? '',
+      startViewport: target.viewport ?? 'desktop',
+      me
+    }))}`,
+    nav
+  };
+}
+
+/** The app's plan for a target: which account to be, which URL to open, and — for the one gate
+ *  state the design reaches by a link rather than by an account — what to click after. */
+export function appPlan(target: ReachTarget = {}): { persona: PersonaKey | null; url: string; click: string | null } {
+  const screen = target.screen ?? 'gate';
+  return {
+    persona: personaFor(target),
+    url: ROUTE[screen] + (target.viewport === 'mobile' ? '?viewport=mobile' : ''),
+    // "Request access" is the design's own link on the sign-in card (`goApply`), not a prototype
+    // shortcut, so it survives the launch removal and is the honest way onto that gate.
+    click: screen === 'gate' && target.gate === 'apply' ? 'Request access' : null
+  };
+}
+
+/** Waits for the target's own root to have rendered. The app mounts only after `useMe().load()`
+ *  has answered, which can be after `load`, so `page.goto` returning is not enough on its own. */
+async function mounted(page: Page): Promise<void> {
+  await page.locator('#app > *, #dc-root > *').first().waitFor({ state: 'attached' });
+}
+
+/** Puts `page` on an approved state's entry point. Everything after this is identical clicks on
+ *  both targets — see tests/screens.ts. */
+export async function reach(page: Page, target: ReachTarget = {}): Promise<void> {
+  if (driverFor(page.url()) === 'reference') {
+    const plan = referencePlan(target);
+    await page.goto(plan.url);
+    await mounted(page);
+    if (plan.nav) await page.getByRole('button', { name: plan.nav, exact: true }).first().click();
+    return;
+  }
+  const plan = appPlan(target);
+  if (plan.persona) await signInAs(page, plan.persona, plan.url);
+  else await page.goto(plan.url);
+  await mounted(page);
+  if (plan.click) await click(page, plan.click);
+}
+
+/**
+ * The ids of any `<image-slot>` that has a real `src` but is still drawing its dashed placeholder
+ * ring — the B2 symptom, read from the live shadow DOM rather than inferred from a pixel diff.
+ * Empty is the only acceptable answer on either target.
+ */
+export async function placeholderRings(page: Page): Promise<string[]> {
+  return page.evaluate(() =>
+    [...document.querySelectorAll('image-slot[src]')]
+      .filter((el) => {
+        const ring = el.shadowRoot?.querySelector('.ring');
+        return !ring || getComputedStyle(ring).display !== 'none';
+      })
+      .map((el) => el.id || '(no id)')
   );
-  await page.goto(url);
 }

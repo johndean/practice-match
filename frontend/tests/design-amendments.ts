@@ -157,6 +157,82 @@ const A4: Amendment = {
   replace: '        return !!valueLayer && !s.mdInsightOff && s.mdLegendOff !== true && !s.mdCompareOpen && mapW >= 810;', count: 1
 };
 
+/** A5.4 — the bootstrap reads the account the app loaded from `/api/me`, and the `startGate`
+ *  prototype prop (amendment A-I8, ordering A-I8.1). A literal script edit, like A2 and A4.
+ *
+ *  `this.props.me` is the ONE hook a real session reaches the approved prototype through:
+ *  `src/main.ts` awaits `useMe().load()` before `bootstrap()` and `src/app.setup.js` passes the
+ *  payload down, so `componentDidMount` can put the visitor where the spec's account lifecycle
+ *  says they belong. The reference and the Claude Design preview pass no `me` at all and take
+ *  the design's own fixture path unchanged — which is what keeps the oracle and the app on the
+ *  same pixels.
+ *
+ *  `unverified` is deliberately unmapped: it has nowhere to go until I8c's "check your email"
+ *  screen exists, and "absent beats faked" forbids inventing one, so it falls through to the
+ *  sign-in gate. `verified → apply` is the D-I8-5 rider: an address that has never applied.
+ *
+ *  `startGate` is the reference's way into a gate state now that A6.2 takes the "Prototype —
+ *  access states" shortcuts out; `tests/reference-server.mjs` injects it through `?props=`.
+ */
+const A5_4: Amendment = {
+  id: 'A5.4', date: '2026-09-07',
+  ruling: 'the app reads the signed-in account on load; the reference reaches a gate state through the startGate prop (A-I8 / A-I8.1, spec §"Prototype wiring" step 1)',
+  find: '    if (this.props.startViewport === "mobile") this.setState({ viewport: "mobile" });\n  }',
+  replace: '    if (this.props.startViewport === "mobile") this.setState({ viewport: "mobile" });\n'
+    + '    if (this.props.startGate) this.setState({ screen: "gate", gate: this.props.startGate });\n'
+    + '    const me = this.props.me;\n'
+    + '    if (me && me.state === "active") this.setState({ auth: true, screen: "browse", email: me.email, me: { name: me.name, role: me.role, initials: me.initials } });\n'
+    + '    else if (me && (me.state === "pending" || me.state === "needs_review")) this.setState({ screen: "gate", gate: "pending" });\n'
+    + '    else if (me && me.state === "declined") this.setState({ screen: "gate", gate: "rejected" });\n'
+    + '    else if (me && me.state === "verified") this.setState({ screen: "gate", gate: "apply" });\n'
+    + '  }',
+  count: 1
+};
+
+/** A5.6 — the `startGate` prototype prop in `data-props` (amendment A-I8, decision D-I8-3).
+ *
+ *  Declared beside its neighbours so the bundle's runtime hands it to the Root as a default
+ *  (support.js's `parseDataProps` → `propsMeta[k].default`), which is what makes the reference
+ *  server's `?props=` injection work at all, and so `app-generated.test.ts` requires
+ *  `app.setup.js` to declare it too. The literal MIRRORS `startScreen`'s shape and carries the
+ *  same `&quot;` escaping as the entry it is spliced in after — the equality proof in
+ *  design-amendments.test.ts decodes the attribute and pins the decoded object, so a mis-escape
+ *  cannot pass.
+ */
+const STARTVIEWPORT_ENTRY = '&quot;startViewport&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;desktop&quot;,&quot;mobile&quot;],&quot;default&quot;:&quot;desktop&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Viewport on load&quot;}';
+const STARTGATE_ENTRY = '&quot;startGate&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;signin&quot;,&quot;apply&quot;,&quot;pending&quot;,&quot;rejected&quot;],&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Start on gate state&quot;}';
+const A5_6: Amendment = {
+  id: 'A5.6', date: '2026-09-07',
+  ruling: 'the reference needs a prop-driven way into a gate state once the access-state shortcuts leave (A-I8, D-I8-3)',
+  find: STARTVIEWPORT_ENTRY, replace: `${STARTVIEWPORT_ENTRY},${STARTGATE_ENTRY}`, count: 1
+};
+
+/** A5.7 — the `me` prototype prop in `data-props` (amendment A-I8.2).
+ *
+ *  A5.4 makes the header render `/api/me`'s computed `role` and `initials`. The APP gets those
+ *  from a real session; the REFERENCE has none, so without this it would render the design's
+ *  fixture persona while the app rendered the signed-in one — and John's rule for this wave is
+ *  that the design's copy does not change, so the fixture cannot be edited to match (the drafted
+ *  A5.5 was rejected on exactly that ground). The two targets are reconciled the other way
+ *  instead: the reference is handed the SAME account, through the design's own prop mechanism.
+ *
+ *  `tests/reference-server.mjs` injects it per request from `?props=`, and the bundle's runtime
+ *  copies a `default` into the Root's props verbatim — `support.js`'s `parseDataProps` only
+ *  JSON-parses the attribute and strips `$`-prefixed keys, and the defaults loop is
+ *  `if (v !== void 0) d[k] = v` with no coercion — so an object default and a `null` default both
+ *  arrive unchanged (checked before this amendment was written, as A-I8.2 required).
+ *
+ *  `editor: "json"` because the value is an object rather than one of the tool's scalar editors;
+ *  the runtime reads only `default`, so the editor name has no bearing on what either target
+ *  renders. Everything else mirrors `startGate`'s entry, in the same key order.
+ */
+const ME_ENTRY = '&quot;me&quot;:{&quot;editor&quot;:&quot;json&quot;,&quot;default&quot;:null,&quot;tsType&quot;:&quot;object&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Signed-in account&quot;}';
+const A5_7: Amendment = {
+  id: 'A5.7', date: '2026-09-07',
+  ruling: 'the reference must render the same account the app does, and the design\'s copy does not change (A-I8.2, D-I8-8)',
+  find: STARTGATE_ENTRY, replace: `${STARTGATE_ENTRY},${ME_ENTRY}`, count: 1
+};
+
 export function amendments(): Amendment[] {
-  return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4];
+  return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_4, A5_6, A5_7];
 }

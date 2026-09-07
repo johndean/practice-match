@@ -26,7 +26,10 @@ export interface MeStore {
    * passes to `can('market.read', me, { marketDataPublic })` for an anonymous visitor.
    */
   marketDataPublic: Ref<boolean>;
-  /** Reads `/api/config` then `/api/me`; I8's `main.ts` awaits this once before mount. */
+  /**
+   * Reads `/api/config`, then `/api/me` IF the visitor has a session cookie; `main.ts` awaits
+   * this once before mount. Answers `null` — and asks nothing — for a visitor who has none.
+   */
   load(): Promise<Me | null>;
   /** What `signIn` feeds it — the sign-in response IS the `/api/me` payload. */
   set(me: Me): void;
@@ -68,6 +71,22 @@ export function useMe(): MeStore {
     // every load: a config outage must never hand an anonymous visitor market data.
     load: async () => {
       marketDataPublic.value = await readMarketDataPublic();
+      // A-I8.2: no `/api/me` for a visitor who plainly has no session.
+      //
+      // `main.ts` calls this on every page load, and for a signed-out visitor `/api/me` answers
+      // 401 — the ANSWER, not a failure (see `api.me`). But Chromium logs every 4xx subresource
+      // as a console error that cannot be suppressed, and the Playwright harness fails a test on
+      // any console error; forgiving that one line in the harness was tried and withdrawn as a
+      // gate hole. The request bought nothing either way.
+      //
+      // `pm_csrf` is the tell, and it is a sound one: `app/api/auth.py` sets it in the same
+      // handler as `pm_session`, with the same lifetime, and deliberately leaves it readable
+      // (`httponly=False`) so the double-submit value can be echoed in `X-CSRF-Token`. If it is
+      // absent there is no usable session — a `pm_session` that somehow outlived it could not
+      // authorise a single state change for want of the token — so "signed out" is both the safe
+      // reading and the accurate one. Read at CALL time, so signing in is visible to the next
+      // `load()`.
+      if (!api.csrfToken()) return (current.value = null);
       return (current.value = await api.me());
     },
     set: (me) => { current.value = me; },

@@ -55,6 +55,75 @@ describe('local design amendments (spec D15)', () => {
       expect(regions.some(([s, e]) => at >= s && at + a.find.length <= e), `${a.text}: find is not inside a template region`).toBe(true);
     }
   });
+  // ---------------------------------------------------------------------------------------
+  // The SET, pinned both ways (A-I8). Until I8 there was no explicit count or id list
+  // anywhere: the only set-level guard was `LOCAL_AMENDMENTS.md`'s row equality below, which
+  // compares the code against the doc and is therefore satisfied by editing both. This is
+  // the third point of reference — a literal list in the test file — so adding, dropping or
+  // renaming an amendment is a deliberate three-file change, and the ORDER is pinned too
+  // (A2.5 matches A2.4's output, so the list may never be reordered).
+  // ---------------------------------------------------------------------------------------
+  const AMENDMENT_IDS = [
+    ...Array.from({ length: 24 }, (_, i) => `A1.${i + 1}`),
+    'A2', 'A2.2', 'A2.3', 'A2.4', 'A2.5', 'A3', 'A4',
+    // A-I8 (Task I8a): the account-on-load bootstrap and the two prototype props that let the
+    // reference reach a gate state and render the same account the app does.
+    'A5.4', 'A5.6', 'A5.7',
+  ];
+
+  it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
+    expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(34);
+    expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
+  });
+
+  it('every amendment carries a date and a ruling, so no edit to the approved design is anonymous', () => {
+    for (const a of amendments()) {
+      expect(a.date, a.id).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+      expect(a.ruling.length, `${a.id} has no ruling`).toBeGreaterThan(10);
+      expect(a.count, a.id).toBeGreaterThan(0);
+      expect(a.find, `${a.id}: an empty find would match everywhere`).not.toBe('');
+    }
+  });
+
+  // A-I8.1 (John's ruling on the implementer's NEEDS_CONTEXT): a removal amendment swallows
+  // exactly one adjacent newline, so the regenerated design keeps SINGLE blank lines. Without
+  // it, deleting a block that had a blank line on each side leaves two — a byte change in the
+  // approved design with no rendered effect, and the kind of drift the D15 mechanism exists to
+  // prevent. Asserted on the OUTPUT, which is the only place it can be true or false.
+  it('no amendment introduces a doubled blank line (A-I8.1)', () => {
+    // COUNTED, not located: the pristine bundle ships one doubled blank of its own (script
+    // line 1744, between `ECON_K`'s closing `};` and `const num`), which is the design's and
+    // not this mechanism's to tidy. Line NUMBERS move whenever an amendment adds or removes a
+    // line, so the invariant has to be the count — it may not grow.
+    const doubled = (text: string) => text.split('\n').filter((line, i, all) => line.trim() === '' && (all[i + 1] ?? 'x').trim() === '').length;
+    expect(doubled(readFileSync(AMENDED, 'utf8')), 'a removal amendment left two blank lines where the design had one').toBe(doubled(pristine));
+  });
+
+  // A5.6: the `startGate` prototype prop. Asserted through the DECODED attribute rather than
+  // as a substring, because that is what the bundle's runtime reads (support.js's
+  // `parseDataProps` → `propsMeta[k].default`) and what `app-generated.test.ts` requires
+  // `app.setup.js` to declare.
+  it('A5.6 adds the startGate prototype prop with the ruled shape, immediately after startViewport', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    const attr = /<script type="text\/x-dc" data-dc-script[^>]*data-props="([^"]*)"/.exec(amended)!;
+    const declared = JSON.parse(attr[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) as Record<string, unknown>;
+    expect(Object.keys(declared)).toEqual(['$preview', 'prototypeBar', 'startScreen', 'startViewport', 'startGate', 'me', 'layerPalette']);
+    expect(declared.startGate).toEqual({
+      editor: 'enum', options: ['signin', 'apply', 'pending', 'rejected'], default: '',
+      tsType: 'string', section: 'Prototype', label: 'Start on gate state'
+    });
+    // A5.7: the account the reference is handed, so its header matches the app's. `null` must
+    // survive the round trip — `support.js` copies a default only `if (v !== void 0)`, so a
+    // `null` default is passed to the Root and `logic.js`'s A5.4 bootstrap skips its branches.
+    expect(declared.me).toEqual({
+      editor: 'json', default: null, tsType: 'object', section: 'Prototype', label: 'Signed-in account'
+    });
+    // The pristine bundle declares neither — both exist only as local amendments.
+    expect(pristine).not.toContain('startGate');
+    expect(pristine).not.toContain('&quot;me&quot;');
+  });
+
   it('the amended reference is the pristine Rev 2 file plus exactly the ruled edits', () => {
     expect(applyAmendments(pristine, amendments())).toBe(readFileSync(AMENDED, 'utf8'));
   });

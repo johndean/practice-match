@@ -4,8 +4,14 @@ import { join } from 'node:path';
 import { MANIFEST_PATH, SNAPSHOT_DIR, UNCHANGED_SCREENS, hashBaselines } from './baseline-manifest.mjs';
 
 // Global Constraint (f) / spec D6 (option B, Task V13): the thirteen non-Browse screens. Local
-// design amendment A1 put V2's display typography back, so all thirteen hash to their V1-era V2
-// baselines again and byte-identity is the primary proof once more. Zero regression is proved
+// design amendment A1 put V2's display typography back, so they hash to their V1-era V2 baselines
+// and byte-identity is the primary proof once more — for FOUR of them still (`detail`, `requests`,
+// `mobile-list`, `mobile-detail`). The other nine were re-based by Task I8a: since A5.4 the
+// account menu renders the signed-in account's own label, and `seller-dash`, the four `wizard-*`
+// and the four `admin-*` are captured as the accounts that can actually open them (a seller and an
+// admin), so their header line differs from the design's single fixture persona by design
+// (A-I8.2 / D-I8-8). The buyer-family states did not move: the oracle persona for those is a buyer
+// whose computed label reproduces the fixture letter for letter, which is why it was chosen. Zero regression is proved
 // as well by the DOM oracle (node-for-node identical to the amended V3 reference) plus the
 // zero-tolerance pixel gate. A moved hash means a CODE change moved a screen the design did
 // not: stop and diff, never re-write the manifest.

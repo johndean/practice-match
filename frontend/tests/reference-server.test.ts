@@ -1,9 +1,17 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type ChildProcess, spawn } from 'node:child_process';
+import { readFileSync } from 'node:fs';
 import { get } from 'node:http';
 import { createServer } from 'node:net';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { injectProps } from './reference-server.mjs';
+
+/** `injectProps` returns a discriminated union (a rewritten document, or a refusal). Narrowed
+ *  to one optional-field shape here so each case can assert the field it is about without a
+ *  type guard per line; the cases that read `.html` are the ones that assert no `status`. */
+type Injected = { html?: string; status?: number; reason?: string };
+const inject = (html: string, query?: string): Injected => injectProps(html, query) as Injected;
 
 /** A GET issued with an explicit raw `path`, bypassing the client-side URL normalization
  *  `fetch()` (and every browser) applies before a request ever reaches the wire — necessary
@@ -92,4 +100,126 @@ describe('reference-server.mjs', () => {
     const res = await rawGet(port, '/coming-soon/..%2fdesign_handoff_practice_match_v3%2fPractice%20Match%20V3.dc.html');
     expect([403, 404]).toContain(res.status);
   });
+
+  // The wire half of the injection: the pure function is pinned above, this proves the
+  // server actually applies it to the root document and refuses a bad query with a status
+  // rather than a rewritten page (A-I8 / D-I8-3).
+  it('applies ?props= to the design served at "/" and leaves the file itself alone', async () => {
+    const query = `props=${encodeURIComponent(JSON.stringify({ startScreen: 'admin' }))}`;
+    const res = await fetch(`${base}/?${query}`);
+    expect(res.status).toBe(200);
+    const served = await res.text();
+    expect(served).toContain('&quot;startScreen&quot;:{&quot;editor&quot;:&quot;enum&quot;');
+    expect(declaredProps(served).startScreen.default).toBe('admin');
+    expect(served, 'the design file on disk must not have been rewritten').not.toBe(DESIGN);
+    expect(await (await fetch(`${base}/`)).text(), 'a request without ?props= still serves the file verbatim').toBe(DESIGN);
+  });
+
+  it('answers 400 for an unknown prop name instead of serving a page that looks right', async () => {
+    const res = await fetch(`${base}/?props=${encodeURIComponent(JSON.stringify({ startScren: 'admin' }))}`);
+    expect(res.status).toBe(400);
+  });
+
+  it('ignores ?props= on a non-index asset, which has no data-props to rewrite', async () => {
+    const res = await fetch(`${base}/support.js?props=${encodeURIComponent(JSON.stringify({ startScreen: 'admin' }))}`);
+    expect(res.status).toBe(200);
+    expect(await res.text()).toContain('dc-runtime');
+  });
 });
+
+// ---------------------------------------------------------------------------------------
+// `?props=` injection (amendment A-I8, decision D-I8-3).
+//
+// The prototype affordances that used to reach `gate-pending`, `gate-declined` and the
+// member screens on the REFERENCE — the jump bar and the "Prototype — access states"
+// shortcuts — leave the design in A6.1/A6.2. A static prototype has no other way in, so the
+// server rewrites the served design's `data-props` DEFAULTS for the keys named in
+// `?props=<json>`, and the runtime reads them exactly as it reads the file's own
+// (support.js's `parseDataProps` → `propsMeta[k].default` → the Root's props).
+//
+// Two invariants make that safe rather than clever:
+//
+//  * SAME URL, SAME BYTES. support.js re-fetches `location.href` after boot to re-read the
+//    template (`boot()`, support.js:159), so the injection has to be a pure function of the
+//    request path AND query — which it is: it is applied on the way out, per request, and a
+//    request with no `?props=` is byte-identical to the file.
+//  * UNKNOWN KEYS ARE REFUSED. A typo'd prop name that was silently ignored would leave the
+//    harness screenshotting the wrong state and the oracle would be generated FROM that,
+//    which is the one failure mode a zero-tolerance pixel gate cannot see. 400, loudly.
+// ---------------------------------------------------------------------------------------
+const DESIGN = readFileSync(
+  join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', 'docs', 'design-reference', 'design_handoff_practice_match_v3', 'Practice Match V3.dc.html'),
+  'utf8'
+);
+
+/** The decoded `data-props` JSON of a served document — what the runtime will read. */
+function declaredProps(html: string): Record<string, { default?: unknown }> {
+  const attr = /<script type="text\/x-dc" data-dc-script[^>]*data-props="([^"]*)"/.exec(html)!;
+  return JSON.parse(attr[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) as Record<string, { default?: unknown }>;
+}
+
+describe('injectProps (A-I8 / D-I8-3)', () => {
+  it('returns the document untouched, byte for byte, when there is no ?props= at all', () => {
+    expect(inject(DESIGN, '').html).toBe(DESIGN);
+    expect(inject(DESIGN, undefined).html).toBe(DESIGN);
+    expect(inject(DESIGN, 'theme=dark').html).toBe(DESIGN);
+  });
+
+  it('rewrites only the named keys\' defaults and leaves every other entry as the design has it', () => {
+    const before = declaredProps(DESIGN);
+    const { html } = inject(DESIGN, `props=${encodeURIComponent(JSON.stringify({ startScreen: 'admin', startGate: 'pending' }))}`);
+    const after = declaredProps(html!);
+    expect(after.startScreen.default).toBe('admin');
+    expect(after.startGate.default).toBe('pending');
+    expect(after.startViewport.default).toBe(before.startViewport.default);
+    expect(after.layerPalette.default).toBe(before.layerPalette.default);
+    expect(after.prototypeBar.default).toBe(before.prototypeBar.default);
+    expect(Object.keys(after), 'no entry may be added or dropped').toEqual(Object.keys(before));
+  });
+
+  it('changes nothing outside the data-props attribute', () => {
+    const { html } = inject(DESIGN, `props=${encodeURIComponent(JSON.stringify({ startViewport: 'mobile' }))}`);
+    const strip = (s: string) => s.replace(/ data-props="[^"]*"/, ' data-props="…"');
+    expect(strip(html!)).toBe(strip(DESIGN));
+  });
+
+  it('is idempotent for the same query, so the runtime\'s re-fetch of location.href gets the same bytes', () => {
+    const query = `props=${encodeURIComponent(JSON.stringify({ startScreen: 'browse', startGate: '', startViewport: 'mobile' }))}`;
+    expect(inject(DESIGN, query).html).toBe(inject(DESIGN, query).html);
+  });
+
+  it('re-escapes the attribute so the document still parses and the runtime still reads it', () => {
+    const { html } = inject(DESIGN, `props=${encodeURIComponent(JSON.stringify({ startGate: 'rejected' }))}`);
+    // `"` may not survive raw inside a double-quoted attribute, and `&` may not survive raw
+    // at all — a bare `&quot;` in the JSON would be re-decoded as a quote on the next read.
+    const attr = / data-props="([^"]*)"/.exec(html!)![1];
+    expect(attr).not.toMatch(/(?<!&(?:quot|amp);)"/);
+    expect(declaredProps(html!).startGate.default).toBe('rejected');
+  });
+
+  it('refuses an unknown prop name rather than silently screenshotting the wrong state', () => {
+    expect(inject(DESIGN, `props=${encodeURIComponent(JSON.stringify({ startScren: 'admin' }))}`)).toMatchObject({ status: 400 });
+    expect(inject(DESIGN, `props=${encodeURIComponent(JSON.stringify({ startScreen: 'admin', nope: 1 }))}`)).toMatchObject({ status: 400 });
+  });
+
+  it('refuses the $-prefixed editor metadata, which is not a prop', () => {
+    expect(inject(DESIGN, `props=${encodeURIComponent(JSON.stringify({ $preview: { width: 1 } }))}`)).toMatchObject({ status: 400 });
+  });
+
+  it('refuses a ?props= that is not a JSON object', () => {
+    expect(inject(DESIGN, 'props=not-json')).toMatchObject({ status: 400 });
+    expect(inject(DESIGN, `props=${encodeURIComponent('[1,2]')}`)).toMatchObject({ status: 400 });
+    expect(inject(DESIGN, `props=${encodeURIComponent('"a string"')}`)).toMatchObject({ status: 400 });
+    expect(inject(DESIGN, `props=${encodeURIComponent('null')}`)).toMatchObject({ status: 400 });
+  });
+
+  it('refuses ?props= on a document that declares none, instead of quietly ignoring it', () => {
+    expect(inject('<html><body>no dc script here</body></html>', 'props=%7B%7D')).toMatchObject({ status: 400 });
+  });
+
+  it('names the offending key in the refusal, so a harness typo is readable', () => {
+    const refusal = inject(DESIGN, `props=${encodeURIComponent(JSON.stringify({ startScren: 'admin' }))}`);
+    expect(refusal.reason).toContain('startScren');
+  });
+});
+

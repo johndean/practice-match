@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BLANK_GIF, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, appOrigin, forgetPersonaSession, personaCredentials, personaSession, personaSessionMemo } from './harness';
+import { BLANK_GIF, FIXTURE_LABEL, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, appOrigin, appPlan, driverFor, forgetPersonaSession, memoFileRead, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, referenceMe, referenceOrigin, referencePlan } from './harness';
+import { resolveTargets as resolveTargetsForRef } from './targets';
 import { resolveTargets } from './targets';
 
 // The stubbed basemap tile must be TRANSPARENT, not merely blank-looking (controller ruling
@@ -133,11 +134,11 @@ describe('the design persona credentials (A-I7)', () => {
   it('are the seeded persona and the password scripts/seed_persona.py writes by default', () => {
     expect(PERSONA_EMAIL).toBe('design@practice-match.test');
     expect(PERSONA_DEFAULT_PASSWORD).toBe('design-persona-quiet-lantern-42');
-    expect(personaCredentials({})).toEqual({ email: PERSONA_EMAIL, password: PERSONA_DEFAULT_PASSWORD });
+    expect(personaCredentials('design', {})).toEqual({ email: PERSONA_EMAIL, password: PERSONA_DEFAULT_PASSWORD });
   });
 
   it('take PERSONA_PASSWORD from the environment whenever it is set, exactly as seed_persona.py does', () => {
-    expect(personaCredentials({ PERSONA_PASSWORD: 'whatever-railway-holds' })).toEqual({
+    expect(personaCredentials('design', { PERSONA_PASSWORD: 'whatever-railway-holds' })).toEqual({
       email: PERSONA_EMAIL,
       password: 'whatever-railway-holds'
     });
@@ -179,11 +180,14 @@ describe('personaSession spends one sign-in per worker process (A-I7)', () => {
   });
 });
 
-describe('forgetPersonaSession (A-I7.2)', () => {
-  it('drops the memo it is handed', () => {
-    const held: { cookies: unknown[] | null } = { cookies: [{ name: 'pm_session' }] };
-    forgetPersonaSession(held);
-    expect(held.cookies).toBeNull();
+describe('forgetPersonaSession (A-I7.2, extended by A-I8.2)', () => {
+  it('drops the persona it is named, and only that one', () => {
+    personaSessionMemos.buyer.cookies = [{ name: 'pm_session' }] as never;
+    personaSessionMemos.seller.cookies = [{ name: 'pm_session' }] as never;
+    forgetPersonaSession('buyer');
+    expect(personaSessionMemos.buyer.cookies).toBeNull();
+    expect(personaSessionMemos.seller.cookies, 'one persona\'s sign-out is not another\'s').not.toBeNull();
+    personaSessionMemos.seller.cookies = null;
   });
 
   // Re-review: the DEFAULT argument — the real module memo, and the form I8 will actually call —
@@ -217,5 +221,261 @@ describe('appOrigin (A-I7.2)', () => {
   it('honours PW_APP_PORT, exactly as playwright.config.ts does', () => {
     expect(appOrigin({ PW_APP_PORT: '4999' })).toBe('http://localhost:4999');
     expect(appOrigin({ PW_APP_PORT: 'not-a-port' })).toBe('http://localhost:5173');
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// `reach()` — the one entry point every approved state is driven through (amendment A-I8).
+//
+// Before I8 the harness entered each state through the design's own PROTOTYPE affordances:
+// the jump bar for the member screens, the "Prototype — access states" shortcuts for the two
+// status gates, and the jump bar's "Mobile view" toggle for the phone frame. A6.1/A6.2 take
+// all three out of the design, so the two targets no longer share an entry: the reference is
+// a static prototype with no session and gets there through the design's own props (injected
+// by reference-server.mjs's `?props=`), and the app signs in as a real seeded account and
+// deep-links the route. Everything AFTER the entry is the same clicks on both targets, which
+// is what keeps one `steps` function honest for two targets.
+//
+// The three decisions inside `reach` are pure functions so they can be pinned without a
+// browser: which target a page is on, what URL the reference needs, and what the app needs.
+// ---------------------------------------------------------------------------------------
+describe('PERSONAS — the /api/me payload of each seeded account (D-I8-4, A-I8.2)', () => {
+  it('are the six accounts scripts/seed_persona.py writes', () => {
+    expect(Object.keys(PERSONAS)).toEqual(['design', 'buyer', 'seller', 'pending', 'needsReview', 'declined']);
+  });
+
+  it('carry the /api/me fields logic.js reads, so the reference can be handed the same account', () => {
+    for (const p of Object.values(PERSONAS)) {
+      expect(Object.keys(p).sort()).toEqual(['email', 'initials', 'name', 'role', 'roles', 'state'].sort());
+      expect(p.email, 'RFC 6761 `.test` only: never a deliverable address').toMatch(/@practice-match\.test$/);
+    }
+  });
+
+  // The whole point of A-I8.2: the buyer's computed label IS the design's fixture text, so the
+  // nineteen buyer-family states keep their pixels without the design's copy changing. The
+  // Python side of this pin lives in tests/test_docs.py, against labels.role_label itself.
+  it('give the buyer the design\'s own fixture label, and the other two members their true ones', () => {
+    expect(PERSONAS.buyer.role).toBe(FIXTURE_LABEL);
+    expect(FIXTURE_LABEL).toBe('Approved buyer · StartUp Club');
+    expect(PERSONAS.seller.role).toBe('Approved buyer and seller · StartUp Club');
+    expect(PERSONAS.design.role).toBe('VIN Foundation admin · StartUp Club');
+    // One name and one set of initials across the whole suite: only `role` varies with what the
+    // account may actually open.
+    for (const key of ['design', 'buyer', 'seller'] as const) {
+      expect(PERSONAS[key].name).toBe('Dr. Rachel Mendes');
+      expect(PERSONAS[key].initials).toBe('RM');
+      expect(PERSONAS[key].state).toBe('active');
+    }
+  });
+
+  it('give the three applicants their states and no roles', () => {
+    expect(PERSONAS.pending.state).toBe('pending');
+    expect(PERSONAS.needsReview.state).toBe('needs_review');
+    expect(PERSONAS.declined.state).toBe('declined');
+    for (const key of ['pending', 'needsReview', 'declined'] as const) {
+      expect(PERSONAS[key].roles).toEqual([]);
+      expect(PERSONAS[key].role, 'labels.role_label with no grants and no affiliation').toBe('Applicant');
+    }
+  });
+
+  it('present the one documented password, whichever persona is asked for', () => {
+    for (const key of Object.keys(PERSONAS) as (keyof typeof PERSONAS)[]) {
+      expect(personaCredentials(key, {})).toEqual({ email: PERSONAS[key].email, password: PERSONA_DEFAULT_PASSWORD });
+      expect(personaCredentials(key, { PERSONA_PASSWORD: 'from-railway' }).password).toBe('from-railway');
+    }
+  });
+
+  it('memoise one session EACH, so six personas spend at most six of SIGNIN_IP\'s thirty attempts', () => {
+    expect(Object.keys(personaSessionMemos).sort()).toEqual(Object.keys(PERSONAS).sort());
+    expect(personaSessionMemo, 'signInAsPersona\'s memo IS the design persona\'s (A-I7\'s budget, unchanged)').toBe(personaSessionMemos.design);
+  });
+});
+
+// Which account each state is screenshotted as (A-I8.2). The header shows the truth since A5.4,
+// so the account decides what the design's own header must say — and the design's copy does not
+// change, so the account is chosen to fit the design: a BUYER for every state whose header the
+// fixture already describes, and the account that can actually open the others for the rest.
+describe('personaFor — the account a state is captured as (A-I8.2)', () => {
+  it('signs nobody in for a gate state', () => {
+    expect(personaFor()).toBeNull();
+    expect(personaFor({ screen: 'gate' })).toBeNull();
+    expect(personaFor({ gate: 'apply' })).toBeNull();
+  });
+
+  it('is the buyer for the whole buyer family — Browse, the listing and the requests', () => {
+    for (const screen of ['browse', 'detail', 'requests'] as const) expect(personaFor({ screen })).toBe('buyer');
+  });
+
+  it('is the seller for the seller dashboard (and therefore the wizard, which starts there)', () => {
+    expect(personaFor({ screen: 'seller' })).toBe('seller');
+  });
+
+  it('is the all-roles design persona for Admin, the only screens a buyer cannot open', () => {
+    expect(personaFor({ screen: 'admin' })).toBe('design');
+  });
+
+  it('honours an explicit persona — the two status gates name their own', () => {
+    expect(personaFor({ gate: 'pending', persona: 'pending' })).toBe('pending');
+    expect(personaFor({ gate: 'rejected', persona: 'declined' })).toBe('declined');
+    expect(personaFor({ screen: 'browse', persona: 'needsReview' })).toBe('needsReview');
+  });
+});
+
+describe('referenceMe — the account the reference is handed (A5.7 / A-I8.2)', () => {
+  it('hands over nothing for the buyer: its label IS the design\'s fixture, so there is nothing to change', () => {
+    expect(referenceMe('buyer')).toBeNull();
+    expect(referenceMe(null)).toBeNull();
+  });
+
+  it('hands over the account whenever its label differs from the fixture', () => {
+    expect(referenceMe('seller')).toBe(PERSONAS.seller);
+    expect(referenceMe('design')).toBe(PERSONAS.design);
+    expect(referenceMe('pending')).toBe(PERSONAS.pending);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// The reference's entry, and the one ordering fact that shapes it.
+//
+// `logic.js`'s A5.4 bootstrap applies `startScreen` FIRST and the loaded account SECOND, and the
+// account's `active` branch sets `screen: "browse"` — so on the reference an injected active
+// account OVERRIDES `startScreen` (measured against the real bundle: `startScreen: "admin"` alone
+// renders the Admin screen, `startScreen: "admin"` plus an active `me` renders Browse). The app
+// does not care: there the screen comes from the ROUTE, and `useStateRouteSync` re-applies the
+// pending deep link the instant `auth` flips.
+//
+// So the reference reaches those screens the way a member does — by clicking the design's own
+// header nav, which is not a prototype affordance and survives the launch removal. `detail` has
+// no nav item, and needs none: it is a buyer state, so no account is injected and `startScreen`
+// still drives.
+// ---------------------------------------------------------------------------------------
+describe('referencePlan — props, and the nav click A5.4\'s ordering makes necessary', () => {
+  const props = (url: string) => JSON.parse(decodeURIComponent(new URL(url, 'http://x').searchParams.get('props')!));
+
+  it('always serves the design at "/" and names all four prototype props', () => {
+    const plan = referencePlan();
+    expect(plan.url.startsWith('/?props=')).toBe(true);
+    expect(props(plan.url)).toEqual({ startScreen: 'gate', startGate: '', startViewport: 'desktop', me: null });
+    expect(plan.nav).toBeNull();
+  });
+
+  it('drives the buyer family by startScreen alone, with no account injected and no nav click', () => {
+    for (const screen of ['browse', 'detail', 'requests'] as const) {
+      const plan = referencePlan({ screen });
+      expect(props(plan.url), screen).toEqual({ startScreen: screen, startGate: '', startViewport: 'desktop', me: null });
+      expect(plan.nav, screen).toBeNull();
+    }
+  });
+
+  it('injects the account and clicks the design\'s own nav for the seller and admin screens', () => {
+    const seller = referencePlan({ screen: 'seller' });
+    expect(props(seller.url).me).toEqual(PERSONAS.seller);
+    expect(seller.nav).toBe('List a Practice');
+
+    const admin = referencePlan({ screen: 'admin' });
+    expect(props(admin.url).me).toEqual(PERSONAS.design);
+    expect(admin.nav).toBe('VIN Foundation Admin');
+  });
+
+  it('injects an applicant for the two status gates, where the account IS the state', () => {
+    const plan = referencePlan({ gate: 'pending', persona: 'pending' });
+    expect(props(plan.url)).toMatchObject({ startScreen: 'gate', startGate: 'pending', me: PERSONAS.pending });
+    // Not active, so nothing overrides anything and there is no screen to navigate to.
+    expect(plan.nav).toBeNull();
+  });
+
+  it('asks for the phone frame through startViewport, the only way left (D-I8-7)', () => {
+    expect(props(referencePlan({ screen: 'browse', viewport: 'mobile' }).url).startViewport).toBe('mobile');
+    expect(props(referencePlan({ screen: 'browse' }).url).startViewport).toBe('desktop');
+  });
+
+  it('is stable for the same target, so the runtime\'s re-fetch of location.href hits the same URL', () => {
+    expect(referencePlan({ screen: 'seller' }).url).toBe(referencePlan({ screen: 'seller' }).url);
+  });
+
+  // The hole this closes: an active account is injected, `startScreen` is therefore ignored, and
+  // the screen has no nav item — the capture would silently be of Browse. Loud instead.
+  it('refuses a target whose screen an injected active account would silently replace with Browse', () => {
+    expect(() => referencePlan({ screen: 'detail', persona: 'design' })).toThrow(/detail/);
+    expect(() => referencePlan({ screen: 'browse', persona: 'design' }), 'Browse is where it lands anyway').not.toThrow();
+  });
+});
+
+describe('appPlan — a real session and a real route (A-I8, A-I8.2)', () => {
+  it('signs the state\'s own persona in and deep-links its route', () => {
+    expect(appPlan({ screen: 'browse' })).toEqual({ persona: 'buyer', url: '/browse', click: null });
+    expect(appPlan({ screen: 'detail' })).toEqual({ persona: 'buyer', url: '/practices/p1', click: null });
+    expect(appPlan({ screen: 'requests' })).toEqual({ persona: 'buyer', url: '/requests', click: null });
+    expect(appPlan({ screen: 'seller' })).toEqual({ persona: 'seller', url: '/seller', click: null });
+    expect(appPlan({ screen: 'admin' })).toEqual({ persona: 'design', url: '/admin', click: null });
+  });
+
+  it('signs nobody in for the sign-in gate: that is what an anonymous visitor sees', () => {
+    expect(appPlan()).toEqual({ persona: null, url: '/', click: null });
+    expect(appPlan({ gate: 'signin' })).toEqual({ persona: null, url: '/', click: null });
+  });
+
+  it('reaches the application gate by the design\'s own link, which no launch removal touches', () => {
+    expect(appPlan({ gate: 'apply' })).toEqual({ persona: null, url: '/', click: 'Request access' });
+  });
+
+  it('reaches the two status gates by signing in as an account actually in that state', () => {
+    expect(appPlan({ gate: 'pending', persona: 'pending' })).toEqual({ persona: 'pending', url: '/', click: null });
+    expect(appPlan({ gate: 'rejected', persona: 'declined' })).toEqual({ persona: 'declined', url: '/', click: null });
+  });
+
+  it('asks for the phone frame through the URL query, the only way left (D-I8-7)', () => {
+    expect(appPlan({ screen: 'browse', viewport: 'mobile' }).url).toBe('/browse?viewport=mobile');
+    expect(appPlan({ screen: 'browse', viewport: 'desktop' }).url).toBe('/browse');
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// The memo survives a worker restart (A-I8.2).
+//
+// Playwright shuts the worker process down after a test failure and starts a new one, which used
+// to take the in-memory persona memo with it: every later failing test spent another of
+// `SIGNIN_IP`'s thirty attempts per IP per 15 minutes, and a run with a handful of real failures
+// turned into a wall of `429 RATE_LIMITED` that buried the first one (measured: 44 reported
+// failures, ~20 real). The jar is written to a file under `frontend/test-results/`, which
+// Playwright clears at the start of every run, so it is run-scoped by construction.
+// ---------------------------------------------------------------------------------------
+describe('the persona memo file (A-I8.2)', () => {
+  const C = (name: string) => ({ name, value: 'opaque' });
+
+  it('reads back what it wrote, per persona', () => {
+    const one = memoFileUpdate(null, 'buyer', [C('pm_session')]);
+    expect(memoFileRead(one, 'buyer')).toEqual([C('pm_session')]);
+    expect(memoFileRead(one, 'design'), 'one persona\'s jar is not another\'s').toBeNull();
+
+    const two = memoFileUpdate(one, 'design', [C('pm_csrf')]);
+    expect(memoFileRead(two, 'buyer')).toEqual([C('pm_session')]);
+    expect(memoFileRead(two, 'design')).toEqual([C('pm_csrf')]);
+  });
+
+  it('drops a persona when handed null, leaving the others alone', () => {
+    const both = memoFileUpdate(memoFileUpdate(null, 'buyer', [C('a')]), 'design', [C('b')]);
+    const dropped = memoFileUpdate(both, 'buyer', null);
+    expect(memoFileRead(dropped, 'buyer')).toBeNull();
+    expect(memoFileRead(dropped, 'design')).toEqual([C('b')]);
+  });
+
+  it('treats an absent or corrupt file as no memo, rather than failing the run', () => {
+    expect(memoFileRead(null, 'buyer')).toBeNull();
+    expect(memoFileRead('{ not json', 'buyer')).toBeNull();
+    expect(memoFileRead('[]', 'buyer')).toBeNull();
+  });
+});
+
+describe('referenceOrigin — where the design server answers (A-I8.2 / B2)', () => {
+  it('is the reference project\'s own baseURL, and honours PW_REF_PORT exactly as the config does', () => {
+    expect(referenceOrigin({})).toBe('http://localhost:5174');
+    expect(referenceOrigin({ PW_REF_PORT: '4174' })).toBe('http://localhost:4174');
+    expect(referenceOrigin({ PW_REF_PORT: 'not-a-port' })).toBe('http://localhost:5174');
+  });
+
+  it('is never the app\'s origin, so the template-refetch guard cannot reach the app', () => {
+    expect(referenceOrigin({})).not.toBe(appOrigin({}));
+    expect(referenceOrigin({})).not.toBe(resolveTargetsForRef({}, { app: 5173, ref: 5174, cs: 5175, api: 8017 }).baseURL);
   });
 });

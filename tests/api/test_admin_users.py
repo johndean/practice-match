@@ -440,6 +440,100 @@ def test_bootstrap_admin_is_idempotent_refuses_production_without_the_flag_and_i
     assert _run_cli(bootstrap_admin, ["--email", "founder@example.org", "--production"]).startswith(settings.link_base_url)
 
 
+def test_seed_persona_seeds_the_two_oracle_personas_whose_labels_the_design_shows(conn, monkeypatch):
+    """A-I8.2 / D-I8-8: the visual oracle's personas.
+
+    Once `logic.js` renders `/api/me`'s computed `role` (A5.4), the account menu shows the truth —
+    so the account the screenshots are taken as decides what the design's own header must say. The
+    design's fixture reads "Approved buyer · StartUp Club", and John's rule for this wave is that
+    the design's copy does not change, so the oracle persona for the 19 buyer-family states is a
+    BUYER: `labels.role_label({"buyer"}, "StartUp Club")` reproduces that string letter for letter.
+
+    `seller@` (buyer + seller) serves the seller dashboard and the four wizard states, and
+    `design@` (all four roles) the four Admin states — those nine show their own account's label,
+    which is why their baselines move once and are re-frozen (D-I8-8).
+
+    All three carry the SAME display name and affiliation, so `name` and `initials` are constant
+    across the whole suite and only `role` varies with what the account may actually open."""
+    from app.auth import passwords as P
+    from app.auth.labels import initials, role_label
+    from scripts import seed_persona
+
+    monkeypatch.setenv("PERSONA_PASSWORD", INVITE_PW)
+    _run_cli(seed_persona, [])
+    _run_cli(seed_persona, [])                                                  # idempotent
+
+    expected = {
+        "buyer@practice-match.test": ("buyer",),
+        "seller@practice-match.test": ("buyer", "seller"),
+        seed_persona.PERSONA_EMAIL: seed_persona.PERSONA_ROLES,
+    }
+    with conn.cursor() as cur:
+        for email, roles in expected.items():
+            cur.execute("""SELECT a.id, a.state, a.display_name, a.affiliation_label, a.password_hash
+                             FROM account a WHERE a.email=%s""", (email,))
+            row = cur.fetchone()
+            assert row, f"{email} was not seeded"
+            aid, state, name, affiliation, hashed = row
+            cur.execute("SELECT role FROM role_grant WHERE account_id=%s AND revoked_at IS NULL ORDER BY role", (aid,))
+            granted = tuple(r[0] for r in cur.fetchall())
+            assert state == "active", email
+            assert granted == tuple(sorted(roles)), (email, granted)
+            assert (name, affiliation) == (seed_persona.PERSONA_NAME, seed_persona.PERSONA_AFFILIATION), email
+            assert P.verify(INVITE_PW, hashed), email
+            # The one fact the pixels depend on: what the account menu will render.
+            assert initials(name) == "RM", email
+            expected_label = role_label(frozenset(granted), affiliation)
+            assert expected_label == {
+                "buyer@practice-match.test": "Approved buyer · StartUp Club",
+                "seller@practice-match.test": "Approved buyer and seller · StartUp Club",
+                seed_persona.PERSONA_EMAIL: "VIN Foundation admin · StartUp Club",
+            }[email], (email, expected_label)
+
+
+def test_seed_persona_seeds_the_three_state_personas_the_harness_reaches_the_gates_with(conn, monkeypatch):
+    """D-I8-4 (amendment A-I8): three more fixture accounts, one per gate state.
+
+    The Playwright `app` project used to reach `gate-pending` and `gate-declined` by clicking the
+    design's own "Prototype — access states" shortcuts; A6.2 takes those out of the design, so the
+    only honest way in is a real account in that state and `logic.js`'s A5.4 bootstrap mapping it
+    (`pending`/`needs_review` → the "under review" gate, `declined` → the "not granted" gate).
+    `frontend/tests/harness.ts`'s `PERSONAS` presents exactly these addresses.
+
+    They hold NO role grants and no `application` row on purpose: `can.effectiveRoles` makes any
+    non-`active` account an `applicant` whatever it was granted, so a grant would buy them nothing,
+    and the design's status screens render their own fixture copy — Task I8b is what wires the real
+    answer / re-apply screens to the API. Same documented password, same `.test` domain, same
+    production refusal as the design persona.
+    """
+    from app.auth import passwords as P
+    from scripts import seed_persona
+
+    monkeypatch.setenv("PERSONA_PASSWORD", INVITE_PW)
+    _run_cli(seed_persona, [])
+    _run_cli(seed_persona, [])                                                  # idempotent, like the design persona
+
+    expected = {
+        seed_persona.PERSONA_EMAIL: "active",
+        "pending@practice-match.test": "pending",
+        "needs-review@practice-match.test": "needs_review",
+        "declined@practice-match.test": "declined",
+    }
+    with conn.cursor() as cur:
+        cur.execute("""SELECT a.email, a.state, a.display_name, a.password_hash,
+                              (SELECT count(*) FROM role_grant g WHERE g.account_id = a.id AND g.revoked_at IS NULL)
+                         FROM account a WHERE a.email = ANY(%s) ORDER BY a.email""", (sorted(expected),))
+        rows = cur.fetchall()
+    assert [r[0] for r in rows] == sorted(expected), "the four personas the harness signs in as must all exist"
+    for email, state, name, hashed, grants in rows:
+        assert state == expected[email], email
+        assert name, f"{email} has no display name, so the header would render blank initials"
+        assert P.verify(INVITE_PW, hashed), f"{email} does not accept the one documented password"
+        # Only the design persona is a member; the other three are applicants.
+        assert (grants > 0) is (email == seed_persona.PERSONA_EMAIL), email
+        assert email.endswith("@practice-match.test"), "RFC 6761 `.test` only: never a deliverable address"
+
+
 def test_seed_persona_upserts_the_design_account_and_never_prints_its_password(conn, capsys, monkeypatch):
     from app.auth import passwords as P
     from app.config import settings

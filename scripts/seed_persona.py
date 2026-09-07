@@ -1,9 +1,30 @@
 #!/usr/bin/env python3
-"""The design persona — Dr. Rachel Mendes, the account the approved design's screenshots are of.
+"""The personas the approved design's screenshots are taken as, and the ones the visual harness
+reaches the gate screens with.
 
-Upserts `design@practice-match.test` as an `active` account holding every role, with a pre-approved
-buyer application behind it, so a reviewer can click through the whole marketplace on QA without
-first inventing a member. Idempotent: run it as often as you like.
+Three MEMBER accounts, all named Dr. Rachel Mendes of the StartUp Club, differing only in what they
+are allowed to open — because since amendment A5.4 the account menu renders `/api/me`'s computed
+`role`, so the account decides what the header says (A-I8.2 / D-I8-8):
+
+    buyer@   role buyer            → "Approved buyer · StartUp Club"            the design's own fixture text
+    seller@  roles buyer + seller  → "Approved buyer and seller · StartUp Club"  the seller dashboard and wizard
+    design@  all four roles        → "VIN Foundation admin · StartUp Club"       the VIN Foundation Admin screens
+
+`buyer@` is the oracle persona for the nineteen buyer-family states precisely because
+`labels.role_label({"buyer"}, "StartUp Club")` reproduces the design's fixture string letter for
+letter — John's rule for this wave is that the design's copy does not change, so the account is
+chosen to fit the design rather than the other way round.
+
+`design@practice-match.test` holds every role and carries a pre-approved buyer application, so a
+reviewer can click through the whole marketplace on QA without first inventing a member. Idempotent:
+run it as often as you like.
+
+It also upserts `pending@`, `needs-review@` and `declined@practice-match.test` (D-I8-4, amendment
+A-I8): the Playwright `app` project used to reach the "under review" and "not granted" gates by
+clicking the design's own "Prototype — access states" shortcuts, and amendment A6.2 takes those out
+of the design, so the only honest way in is a real account in that state — `logic.js`'s A5.4
+bootstrap maps `pending`/`needs_review` to the "under review" gate and `declined` to the "not
+granted" one. Same password, same `.test` domain, same production refusal.
 
     ENVIRONMENT=qa poetry run python scripts/seed_persona.py
 
@@ -40,6 +61,23 @@ PERSONA_NAME = "Dr. Rachel Mendes"
 PERSONA_AFFILIATION = "StartUp Club"
 PERSONA_ROLES = ("buyer", "seller", "staff", "admin")
 DEFAULT_PASSWORD = "design-persona-quiet-lantern-42"
+# A-I8.2 / D-I8-8: the two member personas whose labels the design's own header shows. Same name and
+# affiliation as `design@` — only the grants differ, so `name` and `initials` are constant across the
+# whole visual suite and only `role` varies with what the account may open.
+ORACLE_PERSONAS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    ("buyer@practice-match.test", ("buyer",)),
+    ("seller@practice-match.test", ("buyer", "seller")),
+)
+# D-I8-4: one row per gate state the harness has to reach. No role grants and no `application`
+# row, deliberately: `can.effectiveRoles` makes any non-`active` account an `applicant` whatever it
+# was granted, so a grant would buy these three nothing, and the design's status screens render
+# their own fixture copy — Task I8b is what wires the real answer / re-apply screens to the API.
+# The names are plainly fixture names; `labels.initials` renders them in the account menu.
+STATE_PERSONAS: tuple[tuple[str, str, str], ...] = (
+    ("pending@practice-match.test", "pending", "Pending Applicant"),
+    ("needs-review@practice-match.test", "needs_review", "Applicant Under Review"),
+    ("declined@practice-match.test", "declined", "Declined Applicant"),
+)
 PERSONA_APPLICATION = {
     "name": "Rachel Mendes, DVM",
     "vin_member_id": "",
@@ -86,7 +124,32 @@ def main(argv: Sequence[str] | None = None) -> int:
                     (account_id, json.dumps(PERSONA_APPLICATION), account_id, account_id))
         audit.write(conn, actor=None, action="persona.seed", target_type="account", target_id=account_id,
                     reason="seed_persona.py")
+        for email, roles in ORACLE_PERSONAS:
+            cur.execute("""INSERT INTO account (email, password_hash, state, display_name, affiliation_label)
+                                VALUES (%s,%s,'active',%s,%s)
+                           ON CONFLICT (email) DO UPDATE
+                                   SET password_hash=EXCLUDED.password_hash, state='active',
+                                       display_name=EXCLUDED.display_name, affiliation_label=EXCLUDED.affiliation_label
+                             RETURNING id""", (email, hashed, PERSONA_NAME, PERSONA_AFFILIATION))
+            oracle_id = cast("tuple[UUID]", cur.fetchone())[0]
+            for role in roles:
+                cur.execute("INSERT INTO role_grant (account_id, role, granted_by) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
+                            (oracle_id, role, account_id))
+            audit.write(conn, actor=None, action="persona.seed", target_type="account",
+                        target_id=oracle_id, reason="seed_persona.py")
+        for email, state, display_name in STATE_PERSONAS:
+            cur.execute("""INSERT INTO account (email, password_hash, state, display_name)
+                                VALUES (%s,%s,%s,%s)
+                           ON CONFLICT (email) DO UPDATE
+                                   SET password_hash=EXCLUDED.password_hash, state=EXCLUDED.state,
+                                       display_name=EXCLUDED.display_name
+                             RETURNING id""", (email, hashed, state, display_name))
+            audit.write(conn, actor=None, action="persona.seed", target_type="account",
+                        target_id=cast("tuple[UUID]", cur.fetchone())[0], reason="seed_persona.py")
     print(f"[seed_persona] {PERSONA_EMAIL} is ready on {settings.environment} — roles: {', '.join(PERSONA_ROLES)}")
+    oracles = ", ".join(f"{email} ({'+'.join(roles)})" for email, roles in ORACLE_PERSONAS)
+    print(f"[seed_persona] oracle personas: {oracles}")
+    print(f"[seed_persona] gate-state personas: {', '.join(f'{e} ({s})' for e, s, _ in STATE_PERSONAS)}")
     return 0
 
 

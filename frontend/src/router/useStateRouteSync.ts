@@ -1,5 +1,6 @@
 import { watch } from 'vue';
 import type { Router } from 'vue-router';
+import { useMe } from '../auth/me';
 import { guard, needsPatch, routeToPatch, sameLocation, stateToRoute, type RoutedState } from './sync';
 
 interface StatefulComponent { state: RoutedState; setState(patch: Partial<RoutedState>): void }
@@ -28,7 +29,10 @@ interface StatefulComponent { state: RoutedState; setState(patch: Partial<Routed
 export function useStateRouteSync(c: StatefulComponent, router: Router): void {
   let pending: Partial<RoutedState> | null = null;
   const apply = (to: { path: string; params: Record<string, unknown>; query: Record<string, unknown> }) => {
-    const g = guard(c.state, routeToPatch(to));
+    // A-I7's hand-over, executed by A-I8: the principal is read AT THE POINT OF THE CALL, not
+    // captured once — `useMe().me.value` changes when the visitor signs in or out, and a
+    // captured `null` would refuse every member route for the rest of the session.
+    const g = guard(c.state, routeToPatch(to), { me: useMe().me.value });
     pending = g.pending;
     if (needsPatch(c.state, g.apply)) c.setState(g.apply);
     // A stale in-session URL (e.g. a legacy ?tab= link visited via router.push while already
