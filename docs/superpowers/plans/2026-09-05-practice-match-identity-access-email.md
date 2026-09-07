@@ -2075,7 +2075,7 @@ async def test_token_principal_never_satisfies_reauth(client, token_for, decline
 *Added 2026-09-07. API only; the screens wait for a Rev 3 design (spec §Lifecycle amendment). After I5b, before I7. Standard-tier implementer.*
 
 **Files:**
-- Modify: `migrations/012_applications.sql` **in place** (or whichever `01x` file creates `application` — never applied to a persistent database: QA and production serve `main` at `b9d01ad`; say so in the commit) — add `answer text`, `answered_at timestamptz`, `resubmitted_at timestamptz`
+- Modify: `migrations/011_applications_roles.sql` **in place** (or whichever `01x` file creates `application` — never applied to a persistent database: QA and production serve `main` at `b9d01ad`; say so in the commit) — add `answer text`, `answered_at timestamptz`, `resubmitted_at timestamptz`
 - Modify: `app/api/applications.py` (`POST /api/applications/{id}/answer`; re-apply branch in `POST /api/applications`; `GET /api/applications/me` returns `history`), `app/api/admin_users.py` (detail shows `answer`, `answered_at`, `history`), `app/auth/audit.py` action names (`applications.answer`, `applications.reapply`) + the AST drift test list
 - Test: `tests/api/test_applications.py`, `tests/api/test_admin_users.py` (detail history), `tests/mail/test_send.py` (a second `application_received` with a new cause)
 

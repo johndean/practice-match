@@ -75,7 +75,7 @@
 | `app/api/competition_live.py` | Live count proxy: member gate, rate limit, visible point, Aggregate call, timeout, no persistence |
 | `app/api/access.py` | `visible_point(conn, listing_id, geo_vintage) -> tuple[float, float] | None` (D8 rule) |
 | `app/census/google_aggregate.py` | Aggregate client (sync from the Census plan, plus `count_operational_async`) |
-| `migrations/009_google_registry.sql` | Registry rows `google_maps_js`, `google_places_live`; notes update on `google_places_aggregate` |
+| `migrations/009_google_registry.sql` | Registry rows `google_maps_js`, `google_places_live`; notes update on `google_places_aggregate` — **not created (recorded 2026-09-07): superseded by `080_map_engines.sql` (map-engines plan); the registry rows land there** |
 | `frontend/e2e/visual.spec.ts`, `frontend/e2e/harness.ts` | Map-viewport mask while `DESIGN_HAS_GOOGLE_MAP=false`; Google loader stub route |
 | `DEPLOY.md`, `docs/RUNBOOK-google-quota.md` | Console setup, keys, quotas, what to do when a quota trips |
 
@@ -776,7 +776,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ### Task G5: Registry rows, `/api/layers` entries, the no-mixing switch in the gate
 
 **Files:**
-- Create: `migrations/009_google_registry.sql`
+- Create: `migrations/009_google_registry.sql` — **not created (recorded 2026-09-07): superseded by `080_map_engines.sql` (map-engines plan); the registry rows land there**
 - Modify: `app/api/market.py:layers` (two entries), `tests/census/test_registry.py` (`SPEC_KEYS` + statuses), `tests/api/test_market_api.py` (layers assertions)
 
 **Interfaces:**
@@ -810,7 +810,7 @@ async def test_clearing_google_maps_blocks_the_non_google_basemaps(conn):
 
 - [ ] **Step 3: Implement**
 
-`migrations/009_google_registry.sql`:
+`migrations/009_google_registry.sql` — **not created (recorded 2026-09-07): superseded by `080_map_engines.sql` (map-engines plan); the registry rows land there**:
 ```sql
 -- Greenfield Google plan (G0/G9). Rows start unresolved; Task G1's verification clears them through the admin endpoint.
 INSERT INTO dataset_registry

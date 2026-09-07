@@ -58,7 +58,7 @@
 | D11 | **ZIP Code Business Patterns (`zbp`, `2022/zbp`, NAICS2017) is the community-level competition source**, aggregated over ZCTAs by area overlap; county CBP is the benchmark. Register it as a new cleared public-domain dataset (VIN Foundation to approve the addition to the spec's §2 table). | County CBP cannot render per-community competition and produced incoherent ratios (red-team C1). ZIPs ≈ ZCTAs; the approximation is labelled. |
 | D12 | **Population growth at place level** (2014–2018 → 2019–2023 place rows), county fallback; tract growth deferred until the 2010→2020 tract relationship file is loaded. | 2010 and 2020 tract GEOIDs differ; joining prior-vintage tracts on 2020 GEOIDs is wrong (red-team C2). |
 | D13 | **Market endpoints are member-gated** via SP2's `require_member`, with `MARKET_DATA_PUBLIC` as the only way to open them (default false). | Spec §15 leaves public teaser vs gated to the VIN Foundation; default closed. |
-| D14 | **Migration ranges:** SP3-A `017`–`059`, SP3-B `060`+. `001`–`002` are taken (`001_init`, `002_interest_signup`), SP2/identity holds `010`–`015` and the Seed Listings plan holds `016` (`016_listing.sql`). `003`–`009` are unassigned; anything that takes one must be a Platform-level migration with no dependency on later tables. | Phase B tables reference `listing(id)`, which SP2 creates; numbered ordering must guarantee it exists first. |
+| D14 | **Migration ranges:** SP3-A `017`–`059`, SP3-B `060`+. `001`–`002` are taken (`001_init`, `002_interest_signup`), SP2/identity holds `010`–`015` and the Seed Listings plan holds `016` (`016_listing.sql`). Inside SP3-A, `017`–`019` are Task A1's and `020` is taken by `020_license_audit.sql` (Task A8, renumbered from `007` on 2026-09-07 — it ALTERs and REFERENCES `dataset_registry`, which `017` creates). `003`–`009` are unassigned; anything that takes one must be a Platform-level migration with no dependency on later tables. | Phase B tables reference `listing(id)`, which SP2 creates; numbered ordering must guarantee it exists first. |
 | D15 | **The 2017 Google Places export is not a source.** `Report_Hospital_Competitor_All_US_ZipCode_FULL.csv` (audited 2026-09-05 — appendix below) stays out of the repository, bucket and database. The only content Google's terms let us keep is its 10,166 `place_id` values, and even those are not loaded until a Google-based mechanism (D17) is approved. The registry's `practice_locations` row names the file as blocked. | A 16-day snapshot (24 May–8 Jun 2017) covering 8,320 of ~41,700 ZIPs, Austin absent, 29.7 % individual-practitioner duplicates, ≈ 5 % non-veterinary rows; and Google Maps Platform Terms §3.2.3(a)/(c)(iv) + SST §14.2 forbid storing it, analysing it or drawing it on the Leaflet map. |
 | D16 | **Competitor points (Phase C) come from a permissively licensed, provenance-documented POI dataset, ranked:** (1) **Overture Maps Places** (CDLA-Permissive-2.0; Foursquare-sourced rows Apache-2.0; monthly GeoParquet on S3/Azure; per-feature `sources[]` and `confidence`; taxonomy entry `veterinarian`), (2) **Foursquare OS Places** (Apache-2.0; also an Overture source), (3) **VIN's member practice directory** (VIN-owned; consent review). OpenStreetMap `amenity=veterinary` (ODbL share-alike) is a coverage cross-check only, pending counsel. Google Places points are lawful only on a Google map (SST §14.1–14.2), which the approved Leaflet design excludes — not pursued. All candidate rows start `unresolved`. | Spec §12 excludes practice-location lists for undocumented provenance; these publish provenance and licence per record. They are storable, renderable on Leaflet and refreshable monthly — the three properties every Google route lacks. |
 | D17 | **Google's only role is a freshness signal through the Places Aggregate API** (Task C1, gated): `INSIGHT_COUNT` of `veterinary_care` places (Places type Table A) that are `OPERATIONAL`, per listing band; the count lives only in memory, is bucketed with the design thresholds into `level_live` (Low/Moderate/High) and compared with the ZBP level (`diverges`); those two values are the persisted "Customer Values" (SST §13.1). No count, ratio or place list is stored, returned or drawn. Registry row `google_places_aggregate` stays `unresolved` until VIN Foundation counsel accepts SST §13 and a Google Cloud billing account exists. | It is the one Google mechanism built for market counts whose terms permit derived metrics; Nearby/Text Search (20 results, no pagination, $32/1k) and Place Details refreshes return content we may not keep. V1 volume (4 markets × ~60 communities × 3 bands ≈ 720 requests/month) sits inside the 5,000 free requests; $10 per further 1,000. |
@@ -123,6 +123,7 @@ GET /api/admin/data-sources · POST /api/admin/data-sources/{key}/license   (ope
 | `migrations/017_census_registry.sql` | `ingest_run`, `dataset_registry`, FK back-fill, `active_vintage`, `market_state`; registry seed (§2 + attribution) |
 | `migrations/018_census_geo.sql` | `geo_area` + indexes |
 | `migrations/019_census_measures.sql` | `acs_measure`, `cbp_industry`, `qwi_measure`, `bds_measure` |
+| `migrations/020_license_audit.sql` | `license_audit_log`; `dataset_registry.drift_flagged` (§9 quarterly licence audit, Task A8) — renumbered from `007` 2026-09-07: it depends on `dataset_registry`, which `017` creates, so `007` could never run and D14 reserves `003`–`009` for migrations with no such dependency |
 | `migrations/023_zbp.sql` | `zbp_industry` (ZIP-level establishments, D11) |
 | `migrations/060_geocode_cache.sql` | `geocode_cache`, `geocode_review` (365-day cache, §10; staff flags §11) — Phase B, after SP2's `010`–`015` |
 | `migrations/061_census_listing_tables.sql` | `practice_location`, `practice_catchment`, `market_metric` (+`inputs`), licence-gate trigger (Phase B) |
@@ -2036,7 +2037,7 @@ Run: `poetry run pytest tests/census/test_vintage.py -q` → all pass (GREEN); t
 ### Task A8: Celery tasks, beat schedule, licence audit
 
 **Files:**
-- Create: `app/tasks/census.py`, `migrations/007_license_audit.sql`, `app/census/license.py`, `tests/census/test_tasks.py`, `tests/census/test_license.py`
+- Create: `app/tasks/census.py`, `migrations/020_license_audit.sql`, `app/census/license.py`, `tests/census/test_tasks.py`, `tests/census/test_license.py`
 - Modify: `app/tasks/celery_app.py` (import the task module; beat schedule)
 
 **Interfaces:**
@@ -2102,7 +2103,7 @@ Run: `poetry run pytest tests/census/test_license.py tests/census/test_tasks.py 
 
 - [ ] **Step 2: Migration and licence module**
 
-`migrations/007_license_audit.sql`:
+`migrations/020_license_audit.sql`:
 ```sql
 -- §9 license_audit: re-read each source's terms URL quarterly; flag drift for staff review.
 ALTER TABLE dataset_registry ADD COLUMN drift_flagged boolean NOT NULL DEFAULT false;
