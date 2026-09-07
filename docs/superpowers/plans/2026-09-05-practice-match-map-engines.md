@@ -1478,8 +1478,10 @@ const PW = process.env.PERSONA_PASSWORD ?? PERSONA_DEFAULT_PASSWORD;
  *  `check_origin_and_csrf` compares the presented origin against `settings.origins` **plus**
  *  `str(request.url)`, so a same-origin request is accepted whether or not the environment names
  *  its own host. Point `API` at a different host than the requests go to and this breaks; if this
- *  suite ever needs a cross-origin case, add `ORIGINS` to `frontend/tests/targets.ts`'s
- *  `API_ENV_DEFAULTS` rather than guessing. (Noted 2026-09-07, identity Task I9a review.) */
+ *  suite ever needs a cross-origin case, add `ALLOWED_ORIGINS` (the variable `Settings.allowed_origins`
+ *  reads; `settings.origins` is the parsed list) to `frontend/tests/targets.ts`'s `API_ENV_DEFAULTS`
+ *  rather than guessing. (Noted 2026-09-07, identity Task I9a review; the variable name corrected
+ *  2026-09-08 — this said `ORIGINS`, which nothing reads.) */
 async function adminHeaders(page: Page): Promise<Record<string, string>> {
   await signInAs(page, 'design');
   const csrf = (await page.context().cookies()).find((c) => c.name === 'pm_csrf')!.value;

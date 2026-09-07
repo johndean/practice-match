@@ -821,3 +821,24 @@ def test_the_runbook_decision_table_matches_the_api():
             assert missing == [], f"{action}: the runbook does not name the email(s) it sends: {missing}"
         else:
             assert "**none**" in row["email"], f"{action} sends no email; the table must say so"
+
+
+def test_the_identity_spec_states_the_unverified_re_issue_rule():
+    """I9a re-review, Important. Task I4's confirmed default — "a duplicate sign-up sends the
+    `account_exists` e-mail (equal work on both paths)" — stopped being true of an `unverified`
+    address when I9a fix round 1 made that path re-issue the verification link, and the spec is the
+    document John's rulings live in: a default recorded there and contradicted by the code is how a
+    later task re-implements the thing that was changed on purpose.
+
+    Pinned on the SPEC rather than on the runbook because the runbook describes an operator's day
+    and the spec records the decision. Both halves are asserted, so neither can drift back alone."""
+    spec = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-identity-access-email-design.md").read_text()
+    default = next((line for line in spec.splitlines() if "Task I4: a duplicate sign-up" in line), None)
+    assert default is not None, "the spec no longer records Task I4's duplicate-sign-up default"
+    assert "re-issues a fresh 24 h verification link" in default, (
+        "the spec's I4 default does not state the unverified re-issue rule (app/api/auth.py::signup)"
+    )
+    assert "`unverified`" in default and "`account_exists`" in default, (
+        "the amended default must still name both halves: `account_exists` from verified onward, re-issue while unverified"
+    )
+    assert "amended 2026-09-07" in default, "the amendment is undated"

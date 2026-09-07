@@ -1307,7 +1307,14 @@ async def test_signup_is_uniform_and_queues_one_verify_email(client, conn):
     r2 = await client.post("/api/auth/signup", json={"email": "new.person@gmail.com", "password": PW})    # existing → same answer
     assert r1.status_code == r2.status_code == 202 and r1.json() == r2.json() == {"status": "check_email"}
     rows = await _outbox(conn)
-    assert len(rows) == 1 and rows[0][0] == "New.Person@Gmail.com" and rows[0][1] == "verify_email" and rows[0][2]["link"].startswith("https://qa.foundation.vin/verify?token=")
+    # TWO rows, and both `verify_email` — updated 2026-09-08 to the shipped behaviour. Fix round 1's
+    # Critical 1 made the existing-address branch write a row too (equal commit work closes the
+    # registration-timing leak), and I9a fix round 1's Important 4 made that row a RE-ISSUED verify
+    # link while the address is still `unverified`. `account_exists` is the second row only from
+    # `verified` onward. See `tests/api/test_auth.py` for the three cases this one splits into.
+    assert [row[1] for row in rows] == ["verify_email", "verify_email"]
+    assert rows[0][0] == "New.Person@Gmail.com" and rows[0][2]["link"].startswith("https://qa.foundation.vin/verify?token=")
+    assert rows[1][2]["link"] != rows[0][2]["link"]                     # a new token, not the old link repeated
     with conn.cursor() as cur:
         cur.execute("SELECT state FROM account WHERE email='new.person@gmail.com'"); assert cur.fetchone() == ("unverified",)
 
@@ -1508,11 +1515,29 @@ async def signup(body: Creds, request: Request) -> dict:
     hashed = await P.hash_async(body.password)
     with sync_conn() as conn:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO account (email, password_hash, state) VALUES (%s,%s,'unverified') ON CONFLICT (email) DO NOTHING RETURNING id", (str(body.email), hashed))
-            row = cur.fetchone()
-        if row:
-            token = T.issue_email_token(conn, row[0], "verify", timedelta(hours=24))
-            enqueue(conn, to=str(body.email), template="verify_email", params={"link": _link("/verify", token)}, idempotency_key=f"{row[0]}:verify_email:{token[:8]}")
+            # `DO UPDATE SET email = account.email`, not `DO NOTHING` — updated 2026-09-08 to the
+            # shipped behaviour (fix round 1's Critical 1, then I9a fix round 1's Important 4). The
+            # branch below needs the EXISTING row's state, and this returns exactly one row whether
+            # it inserted or conflicted, so there is no second statement and no unreachable arm; the
+            # "update" writes the column to the value it already holds, so `state` and
+            # `password_hash` are untouched.
+            cur.execute("""INSERT INTO account (email, password_hash, state) VALUES (%s,%s,'unverified')
+                            ON CONFLICT (email) DO UPDATE SET email = account.email
+                            RETURNING id, state""", (str(body.email), hashed))
+            account_id, state = cur.fetchone()
+        if state == "unverified":
+            # A fresh address, and a pending one whose link expired or was suppressed: both get a
+            # verify link. There is no other way to obtain one (no re-send endpoint,
+            # `password/forgot` excludes `unverified`, no staff action verifies an address).
+            token = T.issue_email_token(conn, account_id, "verify", timedelta(hours=24))
+            enqueue(conn, to=str(body.email), template="verify_email", params={"link": _link("/verify", token)}, idempotency_key=f"{account_id}:verify_email:{token[:8]}")
+        else:
+            # `verified` onward: the owner has proved they hold the address, so they are told
+            # somebody tried to sign up as them. Equal commit work either way — one outbox row.
+            # `_outbox_key()` (a fresh uuid per attempt, `app/api/auth.py`) and NOT a deterministic
+            # key: a repeatable one would be deduped by the outbox's ON CONFLICT and the second
+            # attempt would write no row, which is the equal-work property Critical 1 restored.
+            enqueue(conn, to=str(body.email), template="account_exists", params={}, idempotency_key=_outbox_key())
     return {"status": "check_email"}
 
 

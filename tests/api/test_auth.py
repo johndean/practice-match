@@ -403,6 +403,36 @@ async def test_the_re_issue_branch_answers_in_the_same_time_as_the_account_exist
     assert delta < 0.020, (statistics.median(reissue_s), statistics.median(exists_s))
 
 
+async def test_a_new_address_and_an_existing_unverified_one_answer_in_the_same_time(client, conn):
+    """I9a re-review, Minor. The registration-timing leak Critical 1 closed is about NEW vs
+    EXISTING, and after Important 4 "existing" has two shapes. `new` vs `verified` is pinned by
+    `test_signup_does_the_same_work_for_a_new_and_an_existing_address` and `unverified` vs
+    `verified` by the case above, so `new` vs `unverified` was bounded only transitively — through
+    two medians and two tolerances, which is not a bound anyone should rely on for an
+    enumeration oracle. This is the direct pair.
+
+    It is also the pair with the most work on BOTH sides: `new` inserts an account, issues a token
+    and queues a row; `unverified` re-issues a token and queues a row. The difference is one
+    `account` INSERT against one no-op `ON CONFLICT DO UPDATE` — which is why it fits the same
+    20 ms window the other two use."""
+    existing = [f"u5-unver-{i}@example.org" for i in range(10)]
+    with conn.cursor() as cur:
+        for email in existing:
+            cur.execute("INSERT INTO account (email, password_hash, state) VALUES (%s,%s,'unverified')", (email, P.hash_password(PW)))
+    new_s, unver_s = [], []
+    for i in range(10):
+        for samples, email in ((new_s, f"u5-new-{i}@example.org"), (unver_s, existing[i])):
+            t0 = time.perf_counter()
+            r = await client.post("/api/auth/signup", json={"email": email, "password": PW}, headers={"x-forwarded-for": _ip()})
+            samples.append(time.perf_counter() - t0)
+            assert r.status_code == 202 and r.json() == {"status": "check_email"}, email
+    # Both branches send the SAME template, which is the point: from outside, a fresh sign-up and a
+    # re-issue on a pending address are indistinguishable in answer, body and mail.
+    assert sorted(row[1] for row in await _outbox(conn)) == ["verify_email"] * 20
+    delta = abs(statistics.median(new_s) - statistics.median(unver_s))
+    assert delta < 0.020, (statistics.median(new_s), statistics.median(unver_s))
+
+
 @pytest.mark.parametrize("bad", ["a\x00b@example.org", "a\x01b@example.org", "a\u202eb@example.org", "a\ud800b@example.org"])
 async def test_an_unencodable_address_gets_the_uniform_answer_not_a_500(client, conn, bad):
     """C2. `str.strip()` does not remove NUL and a lone surrogate survives every character class
