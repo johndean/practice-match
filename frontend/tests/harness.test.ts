@@ -1,6 +1,5 @@
 import { describe, expect, it } from 'vitest';
 import { BLANK_GIF, MEMO_FILE, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, appOrigin, appPlan, driverFor, forgetPersonaSession, memoFileRead, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, referenceMe, referenceOrigin, referenceUrl, runId } from './harness';
-import { resolveTargets as resolveTargetsForRef } from './targets';
 import { resolveTargets } from './targets';
 
 // The stubbed basemap tile must be TRANSPARENT, not merely blank-looking (controller ruling
@@ -551,6 +550,6 @@ describe('referenceOrigin — where the design server answers (A-I8.2 / B2)', ()
 
   it('is never the app\'s origin, so the template-refetch guard cannot reach the app', () => {
     expect(referenceOrigin({})).not.toBe(appOrigin({}));
-    expect(referenceOrigin({})).not.toBe(resolveTargetsForRef({}, { app: 5173, ref: 5174, cs: 5175, api: 8017 }).baseURL);
+    expect(referenceOrigin({})).not.toBe(resolveTargets({}, { app: 5173, ref: 5174, cs: 5175, api: 8017 }).baseURL);
   });
 });

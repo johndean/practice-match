@@ -449,7 +449,7 @@ export async function personaSignOut(cookies: PersonaCookies, baseURL = appOrigi
  * full `app`-project run spends: one per persona that any state signs in as — `buyer`, `seller`,
  * `design`, `pending`, `declined` (`needsReview` is seeded and exported for Task I8b, and no
  * approved state uses it yet) — plus the reauth test's own standalone session, plus the three
- * form sign-ins in `smoke.spec.ts` (the successful one, the deliberately wrong password, and the
+ * form sign-ins in `signin-form.spec.ts` (the successful one, the deliberately wrong password, and
  * one the sign-out test consumes). Nine of thirty, with the memo and this file keeping it there
  * however many workers the run gets through.
  *

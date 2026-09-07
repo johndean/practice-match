@@ -322,6 +322,20 @@ describe('useStateRouteSync — the route permission (A-I7 hand-over, executed b
     expect(c.state.gate, 'page.browse is ["admin","buyer","seller","staff"]; an applicant is none of them').toBe('unavailable');
   });
 
+  it('an anonymous visitor still gets the sign-in gate, not the unavailable one — the fail-closed order', async () => {
+    // `guard`'s three questions in order: a member route at all, signed in, permitted. Signed out
+    // is answered SECOND, before the matrix is consulted, so a visitor with no account gets the
+    // sign-in gate and keeps their deep link — not the `unavailable` gate, which would tell
+    // somebody who has simply not signed in that their account may not have this page.
+    //
+    // It is also the only case that exercises `setup()`'s null branch (`useMe().clear()`), i.e.
+    // the composable reading a genuinely empty store rather than a principal.
+    const { c, router } = await setup('/admin', null);
+    expect(c.state.screen).toBe('gate');
+    expect(c.state.gate, 'signed out is answered before the matrix is consulted').toBe('signin');
+    expect(router.currentRoute.value.fullPath, 'the deep link is held open until auth arrives').toBe('/admin');
+  });
+
   // ---------------------------------------------------------------------------------------
   // The remembered deep link is permission-checked TOO (review round 1, G).
   //

@@ -1,9 +1,8 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
-import { PERSONAS, appOrigin, booted, click, personaCredentials, personaSignIn, personaSignOut, prepare, reach, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
+import { appOrigin, booted, click, personaCredentials, personaSignIn, personaSignOut, prepare, reach, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
 import { SCREENS } from './screens';
 
 const ROUTES = ['/', '/browse', '/browse?tab=market', '/browse?tab=listings', '/practices/p1', '/requests', '/seller', '/admin?tab=data'];
-
 
 function trapErrors(page: Page): string[] {
   const errors: string[] = [];
