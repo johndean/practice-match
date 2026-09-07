@@ -21,9 +21,12 @@
 # negative cases exist to keep it that way.
 set -euo pipefail
 ENV="${1:?usage: verify-deploy.sh QA|production [BASE_URL]}"
+# FORBID_MARKET_PUBLIC: MARKET_DATA_PUBLIC is a QA evaluation flag and never production's
+# (app/config.py), so /api/config answering true there fails the deploy. On QA either value
+# passes -- evaluating it is what QA is for.
 case "$ENV" in
-  QA)         DEFAULT_BASE="https://qa.foundation.vin"; WANT=qa;         WANT_MODE=app ;;                                  # the coming-soon page never goes to QA
-  production) DEFAULT_BASE="https://foundation.vin";    WANT=production; WANT_MODE="${EXPECT_SITE_MODE:-coming_soon}" ;;  # launch flip: EXPECT_SITE_MODE=app
+  QA)         DEFAULT_BASE="https://qa.foundation.vin"; WANT=qa;         WANT_MODE=app;                                  FORBID_MARKET_PUBLIC="" ;;   # the coming-soon page never goes to QA
+  production) DEFAULT_BASE="https://foundation.vin";    WANT=production; WANT_MODE="${EXPECT_SITE_MODE:-coming_soon}"; FORBID_MARKET_PUBLIC=1 ;;    # launch flip: EXPECT_SITE_MODE=app
   *) echo "usage: verify-deploy.sh QA|production [BASE_URL]" >&2; exit 64 ;;
 esac
 # An explicit target (positional arg or VERIFY_BASE_URL) means an ad hoc probe --
@@ -122,6 +125,36 @@ except Exception as exc:
 code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/healthz/deep")
 [[ "$code" == "200" ]] || { echo "FAIL: deep healthz returned $code at $BASE/api/healthz/deep" >&2; exit 1; }
 echo "deep healthz OK"
+# GET /api/config (Identity Task I7) is public, mounted in every SITE_MODE, and the browser reads
+# it BEFORE /api/me on every page load: useMe().load() takes market_data_public from it, and the
+# Browse market column decides from that whether an anonymous visitor sees market data. So a
+# deployment where it is absent or malformed is a broken deployment, and it is probed here rather
+# than only in app mode. The client fails the flag closed on a read failure, which is a safety
+# net, not a licence to ship without the endpoint.
+echo "→ GET $BASE/api/config"
+config=$(curl -fsS --max-time 20 "$BASE/api/config") \
+  || { echo "FAIL: /api/config did not answer 200 at $BASE/api/config" >&2; exit 1; }
+printf '%s' "$config" | FORBID_MARKET_PUBLIC="$FORBID_MARKET_PUBLIC" python3 -c '
+import os, sys, json
+
+def fail(msg):  # one clean line on stderr, exit 1 - never a traceback (same rule as healthz)
+    sys.exit(f"FAIL: {msg}")
+
+try:
+    b = json.load(sys.stdin)
+except Exception:
+    fail("config body is not JSON")
+if not isinstance(b, dict):
+    fail(f"config body is not a JSON object: {b}")
+# A JSON boolean specifically: the client holds this in a Ref<boolean>, where the string "yes"
+# would be truthy and an anonymous visitor would be shown market data on a type error.
+flag = b.get("market_data_public")
+if not isinstance(flag, bool):
+    fail(f"config market_data_public is not a JSON boolean: {b}")
+if os.environ["FORBID_MARKET_PUBLIC"] and flag:
+    fail("market_data_public is true on production - MARKET_DATA_PUBLIC is a QA evaluation flag, never production")
+print("config OK  market_data_public", flag)
+'
 # Which shell to probe depends on SITE_MODE: production runs the coming-soon page
 # (probed by its title, the ABSENCE of the marketplace shell, and the /api/interest
 # contract), QA and app mode run the marketplace SPA (probed by its #app shell on the

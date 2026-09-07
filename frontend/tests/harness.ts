@@ -1,4 +1,4 @@
-import type { BrowserContext, Page } from '@playwright/test';
+import { request as apiRequest, type BrowserContext, type Page } from '@playwright/test';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -197,12 +197,76 @@ export async function personaSession<C extends { name: string }>(
   return memo;
 }
 
-type PersonaCookies = Awaited<ReturnType<BrowserContext['cookies']>>;
+export type PersonaCookies = Awaited<ReturnType<BrowserContext['cookies']>>;
 
-// Module state, so the memo is per worker process — Playwright gives each test a fresh
-// BrowserContext, and a fresh context holds no cookies. A holder rather than a bare `let`, so
-// `forgetPersonaSession` has something to clear that a unit test can hand it.
-const held: { cookies: PersonaCookies | null } = { cookies: null };
+/**
+ * Where the persona signs in — the SAME expression `playwright.config.ts` hands `resolveTargets`
+ * for the `app` project's baseURL, pinned against it both ways in harness.test.ts.
+ *
+ * It has to be computed rather than read off the page: the sign-in below runs in a STANDALONE
+ * request context, which has no project `use.baseURL` of its own, and Playwright exposes no
+ * public getter for a browser context's.
+ */
+export function appOrigin(env: NodeJS.ProcessEnv = process.env): string {
+  return env.PW_APP_URL ?? `http://localhost:${Number(env.PW_APP_PORT) || 5173}`;
+}
+
+/**
+ * One sign-in, in a standalone request context, and the cookies it produced.
+ *
+ * Standalone — `request.newContext()`, not `page.request` — because it is deliberately OUTSIDE
+ * any browser context, and therefore outside the Playwright trace (re-review). `trace:
+ * 'retain-on-failure'` plus the CI job's `frontend/test-results` artifact upload means a failing
+ * run's trace is published; a sign-in made through `page.request` would have put the persona
+ * password in it, and the plan's QA step runs with a real `PERSONA_PASSWORD`.
+ *
+ * Sign-in is the one state-changing call that needs neither `X-CSRF-Token` nor a matching
+ * `Origin`: `deps.check_origin_and_csrf` only enforces those on a request that ALREADY carries a
+ * cookie session.
+ */
+export async function personaSignIn(baseURL = appOrigin()): Promise<PersonaCookies> {
+  const api = await apiRequest.newContext({ baseURL });
+  try {
+    const response = await api.post('/api/auth/signin', { data: personaCredentials() });
+    if (!response.ok()) throw new Error(`persona sign-in failed: ${response.status()} ${await response.text()}`);
+    return (await api.storageState()).cookies;
+  } finally {
+    await api.dispose();
+  }
+}
+
+/**
+ * Ends a session `personaSignIn` opened — also standalone, so it works from a `finally` even when
+ * the page it was used from is broken.
+ *
+ * `POST /api/auth/signout` IS origin/CSRF-checked, so it presents the double-submit token from
+ * the jar and an `Origin` equal to the host it posts to (which `deps.check_origin_and_csrf`
+ * compares against `str(request.url)`).
+ *
+ * Returns the status, so a caller can PROVE the session ended rather than hope: the API answers
+ * 200 only after `sessions.revoke` has committed and the cache entry is gone. 0 means there was
+ * no double-submit token in the jar and nothing was attempted.
+ */
+export async function personaSignOut(cookies: PersonaCookies, baseURL = appOrigin()): Promise<number> {
+  const csrf = cookies.find((cookie) => cookie.name === 'pm_csrf');
+  if (!csrf) return 0;                                 // no double-submit token: nothing to sign out with
+  const api = await apiRequest.newContext({
+    baseURL,
+    storageState: { cookies, origins: [] },
+    extraHTTPHeaders: { 'X-CSRF-Token': csrf.value, Origin: baseURL }
+  });
+  try {
+    return (await api.post('/api/auth/signout')).status();
+  } finally {
+    await api.dispose();
+  }
+}
+
+/**
+ * The one-per-worker-process memo. Exported so `forgetPersonaSession()`'s default — the form I8
+ * calls — can be exercised without test-only code in the production path (re-review).
+ */
+export const personaSessionMemo: { cookies: PersonaCookies | null } = { cookies: null };
 
 /**
  * Drops the memo, so the next `signInAsPersona` signs in again (A-I7.2).
@@ -211,28 +275,23 @@ const held: { cookies: PersonaCookies | null } = { cookies: null };
  * signs out, the memoised `pm_session` names a revoked session and re-adding it to the next
  * context would silently run every later test anonymous.
  */
-export function forgetPersonaSession(memo: { cookies: unknown[] | null } = held): void {
+export function forgetPersonaSession(memo: { cookies: unknown[] | null } = personaSessionMemo): void {
   memo.cookies = null;
 }
 
 /**
  * Signs the page's context in as the design persona, then navigates to `url`.
  *
- * `page.request` shares the browser context's cookie jar, so `pm_session` and `pm_csrf` are set
- * on the context by the POST itself and every later navigation and `fetch` carries them.
- * Sign-in is the one state-changing call that needs neither `X-CSRF-Token` nor a matching
- * `Origin` — `deps.check_origin_and_csrf` only enforces those on a request that ALREADY has a
- * cookie session.
+ * The cookies are obtained out of band (see `personaSignIn`) and added to the browser context, so
+ * every later navigation and `fetch` from the page carries them — and the credential never enters
+ * a trace.
  */
 export async function signInAsPersona(page: Page, url = '/'): Promise<void> {
   const context = page.context();
-  held.cookies = await personaSession<PersonaCookies[number]>(
-    held.cookies,
+  personaSessionMemo.cookies = await personaSession<PersonaCookies[number]>(
+    personaSessionMemo.cookies,
     { cookies: () => context.cookies(), addCookies: (cookies) => context.addCookies(cookies) },
-    async () => {
-      const response = await page.request.post('/api/auth/signin', { data: personaCredentials() });
-      if (!response.ok()) throw new Error(`persona sign-in failed: ${response.status()} ${await response.text()}`);
-    }
+    async () => { await context.addCookies(await personaSignIn()); }
   );
   await page.goto(url);
 }

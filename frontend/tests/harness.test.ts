@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { BLANK_GIF, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, forgetPersonaSession, personaCredentials, personaSession } from './harness';
+import { BLANK_GIF, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, appOrigin, forgetPersonaSession, personaCredentials, personaSession, personaSessionMemo } from './harness';
+import { resolveTargets } from './targets';
 
 // The stubbed basemap tile must be TRANSPARENT, not merely blank-looking (controller ruling
 // 2026-09-07). MarketMapV3.jsx:190 adds the Esri label tile layer with `pane: "shadowPane"`
@@ -179,9 +180,42 @@ describe('personaSession spends one sign-in per worker process (A-I7)', () => {
 });
 
 describe('forgetPersonaSession (A-I7.2)', () => {
-  it('drops the memo, so I8\'s sign-out tests cannot re-add a revoked session to the next context', () => {
+  it('drops the memo it is handed', () => {
     const held: { cookies: unknown[] | null } = { cookies: [{ name: 'pm_session' }] };
     forgetPersonaSession(held);
     expect(held.cookies).toBeNull();
+  });
+
+  // Re-review: the DEFAULT argument — the real module memo, and the form I8 will actually call —
+  // was never exercised, and tests/harness.ts is not coverage-measured, so nothing noticed.
+  it('with no argument, clears the real module memo, so the next sign-in spends an attempt', async () => {
+    personaSessionMemo.cookies = [
+      { name: 'pm_session', value: 'stale-and-revoked', domain: 'localhost', path: '/', expires: -1, httpOnly: true, secure: true, sameSite: 'Lax' as const }
+    ];
+    forgetPersonaSession();
+    expect(personaSessionMemo.cookies).toBeNull();
+
+    let signIns = 0;
+    const jar = { cookies: () => Promise.resolve([{ name: 'pm_session' }]), addCookies: () => Promise.resolve() };
+    await personaSession(personaSessionMemo.cookies, jar, () => { signIns += 1; return Promise.resolve(); });
+    expect(signIns, 'with the memo cleared, personaSession must sign in again rather than re-add a revoked session').toBe(1);
+  });
+});
+
+// Where `personaSignIn` posts. It is the SAME expression playwright.config.ts hands
+// `resolveTargets` for the `app` project's baseURL, and pinning the two together both ways is
+// what keeps the standalone request context (which has no project `use.baseURL`) pointed at the
+// server the browser is looking at.
+describe('appOrigin (A-I7.2)', () => {
+  const ports = { app: 5173, ref: 4174, cs: 4175, api: 8017 };
+  it('is the app project\'s own baseURL, locally and against a live deployment', () => {
+    expect(appOrigin({})).toBe(resolveTargets({}, ports).baseURL);
+    expect(appOrigin({})).toBe('http://localhost:5173');
+    const live = { PW_APP_URL: 'https://qa.foundation.vin' };
+    expect(appOrigin(live)).toBe(resolveTargets(live, ports).baseURL);
+  });
+  it('honours PW_APP_PORT, exactly as playwright.config.ts does', () => {
+    expect(appOrigin({ PW_APP_PORT: '4999' })).toBe('http://localhost:4999');
+    expect(appOrigin({ PW_APP_PORT: 'not-a-port' })).toBe('http://localhost:5173');
   });
 });

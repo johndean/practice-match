@@ -1,5 +1,5 @@
 import { test, expect, type Page } from '@playwright/test';
-import { booted, click, jump, personaCredentials, prepare, signInAsPersona, waitMap } from './harness';
+import { appOrigin, booted, click, jump, personaCredentials, personaSignIn, personaSignOut, prepare, signInAsPersona, waitMap } from './harness';
 import { SCREENS } from './screens';
 
 const ROUTES = ['/', '/browse', '/browse?tab=market', '/browse?tab=listings', '/practices/p1', '/requests', '/seller', '/admin?tab=data'];
@@ -524,35 +524,73 @@ test.describe('harness: the design persona signs in against the real API (A-I7)'
     );
     expect(me.email).toBe('design@practice-match.test');
     expect(me.roles).toEqual(['admin', 'buyer', 'seller', 'staff']);
+  });
+});
 
-    // The STATE-CHANGING half (A-I7.2, review Important 2). Everything above is exempt from
-    // `deps.check_origin_and_csrf` — sign-in has no session yet and GET is never checked — so
-    // none of it can catch the proxy rewriting the Host header. This can: `POST /api/auth/reauth`
-    // is a cookie-session state change, so the API compares the browser's `Origin`
-    // (http://localhost:5173) against `settings.origins` (empty here) plus `str(request.url)`,
-    // which is built from the Host header. It answers 200 only while Vite preserves it. With
-    // `changeOrigin: true` the API sees http://localhost:8017 and refuses with ORIGIN.
-    //
-    // It also exercises the double-submit the app itself will use: `pm_csrf` read from
-    // `document.cookie` by script, exactly as `src/auth/api.ts`'s `csrfToken()` does.
-    const reauth = await page.evaluate(async (password) => {
-      const match = /(?:^|;\s*)pm_csrf=([^;]*)/.exec(document.cookie);
-      const response = await fetch('/api/auth/reauth', {
-        method: 'POST',
-        credentials: 'same-origin',
-        headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': decodeURIComponent(match ? match[1] : '') },
-        body: JSON.stringify({ password })
-      });
-      return { csrfWasReadable: !!match, status: response.status, body: (await response.json()) as { status?: string; error?: { code?: string } } };
-    }, personaCredentials().password);
+// ---------------------------------------------------------------------------------------
+// The STATE-CHANGING half of the proxy proof (A-I7.2, review Important 2). Everything in the
+// test above is exempt from `deps.check_origin_and_csrf` — sign-in has no session yet and GET is
+// never checked — so none of it can catch the proxy rewriting the Host header. This can:
+// `POST /api/auth/reauth` is a cookie-session state change, so the API compares the browser's
+// `Origin` (http://localhost:5173) against `settings.origins` (empty on the api web server) plus
+// `str(request.url)`, which is built from the HOST header. It answers 200 only while Vite
+// preserves it; with `changeOrigin: true` the API sees http://localhost:8017 and refuses 403
+// ORIGIN. It also exercises the double-submit the app itself will use: `pm_csrf` read from
+// `document.cookie` by script, exactly as `src/auth/api.ts`'s `csrfToken()` does.
+//
+// In its OWN session, and signed out again in `finally` (re-review). `sessions.set_reauth`
+// stamps `session.reauth_at` for `deps.REAUTH_WINDOW` (10 minutes), and the memoised persona
+// session is shared by every other test in the worker — leaving THAT one re-authenticated would
+// let an I8 test asserting a REAUTH-gated action DEMANDS a step-up pass vacuously. It costs one
+// extra `SIGNIN_IP` attempt per run out of thirty, and `POST /api/auth/reauth` has no limiter.
+// ---------------------------------------------------------------------------------------
+test.describe('harness: the /api proxy preserves the Host header (A-I7.2)', () => {
+  test('POST /api/auth/reauth from the page is accepted, in a session of its own', async ({ browser }) => {
+    test.skip(!!process.env.PW_APP_URL, 'this proves Vite\'s /api proxy; a live deployment serves /api itself');
 
-    expect(reauth.csrfWasReadable, 'script could not read pm_csrf, so the app cannot echo the double-submit value').toBe(true);
-    expect(
-      reauth.status,
-      `POST /api/auth/reauth answered ${reauth.status} (${reauth.body.error?.code ?? 'no code'}) instead of 200. ` +
-      'An ORIGIN refusal here means Vite is rewriting the Host header — a `changeOrigin` on the ' +
-      '/api proxy — so deps.check_origin_and_csrf builds a different origin than the browser sent.'
-    ).toBe(200);
-    expect(reauth.body.status).toBe('reauthenticated');
+    const cookies = await personaSignIn();
+    const context = await browser.newContext({ baseURL: appOrigin() });
+    let signedOut = false;
+    try {
+      await context.addCookies(cookies);
+      const page = await context.newPage();
+      await prepare(page);
+      await page.goto('/');
+
+      const reauth = await page.evaluate(async (password) => {
+        const match = /(?:^|;\s*)pm_csrf=([^;]*)/.exec(document.cookie);
+        const response = await fetch('/api/auth/reauth', {
+          method: 'POST',
+          credentials: 'same-origin',
+          headers: { 'Content-Type': 'application/json', 'X-CSRF-Token': decodeURIComponent(match ? match[1] : '') },
+          body: JSON.stringify({ password })
+        });
+        return { csrfWasReadable: !!match, status: response.status, body: (await response.json()) as { status?: string; error?: { code?: string } } };
+      }, personaCredentials().password);
+
+      expect(reauth.csrfWasReadable, 'script could not read pm_csrf, so the app cannot echo the double-submit value').toBe(true);
+      expect(
+        reauth.status,
+        `POST /api/auth/reauth answered ${reauth.status} (${reauth.body.error?.code ?? 'no code'}) instead of 200. ` +
+        'An ORIGIN refusal here means Vite is rewriting the Host header — a `changeOrigin` on the ' +
+        '/api proxy — so deps.check_origin_and_csrf builds a different origin than the browser sent.'
+      ).toBe(200);
+      expect(reauth.body.status).toBe('reauthenticated');
+
+      // The cleanup is PROVEN, not hoped for: a `personaSignOut` that silently did nothing would
+      // leave this session's step-up window standing and this test would still have passed. The
+      // API answers 200 only after `sessions.revoke` has committed and dropped the cache entry.
+      //
+      // Checked from OUTSIDE the browser deliberately: asking the page for /api/me afterwards
+      // would log "Failed to load resource: … 401 (Unauthorized)" as a console error, which
+      // `prepare()`'s gate turns into a failure — a real 401 is the expected answer here.
+      const signOut = await personaSignOut(cookies);
+      signedOut = true;
+      expect(signOut, 'personaSignOut did not end the session, so its 10-minute step-up window outlives this test').toBe(200);
+    } finally {
+      // The safety net for a failure before the explicit sign-out above.
+      if (!signedOut) await personaSignOut(cookies);
+      await context.close();
+    }
   });
 });

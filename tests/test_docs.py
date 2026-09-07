@@ -4,6 +4,7 @@ import tomllib
 from pathlib import Path
 from typing import cast
 
+import pytest
 import yaml
 
 from app.config import Settings
@@ -515,8 +516,23 @@ def _users_ts_literal(name: str) -> object:
     TypeScript parser; the file says so beside them."""
     source = (ROOT / "frontend" / "src" / "admin" / "users.ts").read_text()
     match = re.search(rf"^export const {name}(?:: [^=]+)? = (.+);$", source, re.MULTILINE)
-    assert match, f"frontend/src/admin/users.ts: {name} is not a one-line exported JSON literal"
-    return json.loads(match.group(1))
+    assert match, (
+        f"frontend/src/admin/users.ts: {name} is not a single-line exported literal, so this "
+        f"cross-language pin cannot read it. Each of NOTE_REQUIRED, ACTIONS and PILLS is written "
+        f"as double-quoted JSON on ONE line for exactly that reason; the file says so beside them."
+    )
+    try:
+        return json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        # Outside the `except`, so the failure is ONE named line rather than a chained
+        # JSONDecodeError naming a column in a string nobody can see from here (re-review).
+        reason = str(exc)
+    pytest.fail(
+        f"frontend/src/admin/users.ts: {name} is no longer DOUBLE-QUOTED JSON on a single line, "
+        f"so this cross-language pin cannot read it ({reason}). Each of NOTE_REQUIRED, ACTIONS "
+        f"and PILLS is written that way for exactly that reason; the file says so beside them. "
+        f"Got: {match.group(1)[:120]}"
+    )
 
 
 def test_the_admin_users_tables_match_the_api():

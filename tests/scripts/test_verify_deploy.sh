@@ -47,7 +47,7 @@ railway_calls() { wc -l < "$FAKE_RAILWAY_LOG" | tr -d ' '; }
 # start_server <mode> [environment]. Modes: ok | spa_missing | deep_503 | no_postgis | no_site_mode |
 #   coming_ok | coming_wrong_shell | coming_interest_500 | coming_leak | coming_auth_live | coming_admin_live |
 #   coming_applications_live | missing_keys | db_null |
-#   not_json | deep_json | wrong_version
+#   not_json | deep_json | wrong_version | no_config | config_not_bool | config_public
 # [environment] overrides the fake body's `environment` field (default qa) — M1's production-mode
 # cases reuse the same MODE bodies (coming_ok, ok) with environment: production instead of duplicating
 # them under new mode names.
@@ -83,6 +83,15 @@ if MODE == "wrong_version":
     # is the image's property, unlike commit_sha, which was the variable deploy.sh set.
     BODY["version"] = "0.0.1-not-the-source"
 
+# GET /api/config (Identity Task I7): the browser reads MARKET_DATA_PUBLIC from it at boot, so a
+# deploy where it is missing, malformed, or true on production must fail. Every other mode serves
+# the shape a healthy deployment does.
+CONFIG = {"market_data_public": False}
+if MODE == "config_not_bool":
+    CONFIG = {"market_data_public": "yes"}
+if MODE == "config_public":
+    CONFIG = {"market_data_public": True}
+
 SHELL_OK = b'<!doctype html><div id="app"></div>'
 SHELL_BAD = b'<!doctype html><p>404 - no app shell here</p>'
 COMING_SHELL = "<!doctype html><title>VIN Foundation — Coming Soon</title>".encode("utf-8")
@@ -102,6 +111,11 @@ class H(BaseHTTPRequestHandler):
         if self.path.startswith("/api/admin/users") and MODE == "coming_admin_live":
             # The Admin surface mounted behind the Coming Soon page (Task I5, fix round 1, N2).
             self._send(200, "application/json", b'{"items":[],"next_cursor":null}')
+        elif self.path.startswith("/api/config"):
+            if MODE == "no_config":
+                self._send(404, "application/json", b'{"error":{"code":"NOT_FOUND"}}')
+            else:
+                self._send(200, "application/json", json.dumps(CONFIG).encode())
         elif self.path.startswith("/api/healthz/deep"):
             self._send(503 if MODE == "deep_503" else 200, "application/json", json.dumps(BODY).encode())
         elif self.path.startswith("/api/healthz"):
@@ -165,7 +179,7 @@ PY
 start_server ok
 : > "$FAKE_RAILWAY_LOG"
 out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA) || fail "a healthy target must verify; output: $out"
-for line in "healthz OK" "deep healthz OK" "SPA fallback OK"; do [[ "$out" == *"$line"* ]] || fail "missing '$line' in: $out"; done
+for line in "healthz OK" "deep healthz OK" "config OK" "SPA fallback OK"; do [[ "$out" == *"$line"* ]] || fail "missing '$line' in: $out"; done
 [[ "$out" == *"3.5.2"* ]] || fail "the postgis version must be printed; got: $out"
 
 # An explicit target is an ad hoc probe: the Railway CLI must not be invoked at all,
@@ -211,7 +225,8 @@ stop_server
 # is production's normal shape now — the coming-soon page never goes to QA) -----
 start_server coming_ok production
 out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh production 2>&1) || fail "coming-soon mode must verify; output: $out"
-for line in "site_mode coming_soon" "coming-soon shell OK" "interest endpoint OK" "auth endpoints absent OK" "member endpoints absent OK"; do [[ "$out" == *"$line"* ]] || fail "missing '$line' in: $out"; done
+for line in "site_mode coming_soon" "config OK  market_data_public False" "coming-soon shell OK" "interest endpoint OK" "auth endpoints absent OK" "member endpoints absent OK"; do [[ "$out" == *"$line"* ]] || fail "missing '$line' in: $out"; done
+# I7: market_data_public false on production is the required shape, and it verifies.
 stop_server
 
 # --- 7a. M1: QA must never accept site_mode coming_soon, whatever the environment
@@ -379,6 +394,46 @@ if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash script
 fi
 [[ "$out" == *"'$SOURCE_VERSION'"* ]] || fail "the default EXPECT_VERSION must come from pyproject.toml ($SOURCE_VERSION); got: $out"
 [[ "$out" == *"'0.0.1-not-the-source'"* ]] || fail "the version mismatch must name what was served; got: $out"
+stop_server
+
+# --- 18. I7: /api/config missing fails — the client reads it at boot -----------
+# GET /api/config publishes MARKET_DATA_PUBLIC, and `useMe().load()` reads it before /api/me on
+# every page load. A deployment where it 404s is a deployment whose Browse market column decides
+# what to show from a fetch that failed.
+start_server no_config
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
+  fail "a missing /api/config must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"/api/config"* ]] || fail "the missing-config failure must name the endpoint; got: $out"
+[[ "$out" != *"config OK"* ]] || fail "must not claim config OK when the endpoint is absent; got: $out"
+stop_server
+
+# --- 19. I7: a non-boolean market_data_public fails ---------------------------
+# `Ref<boolean>` on the client: the string "yes" would be truthy there, so an anonymous visitor
+# would be shown market data on the strength of a type error.
+start_server config_not_bool
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
+  fail "a non-boolean market_data_public must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"market_data_public is not a JSON boolean"* ]] || fail "the non-boolean failure must name itself; got: $out"
+[[ "$out" != *"Traceback"* ]] || fail "the failure must be one clean FAIL line, not a Python traceback; got: $out"
+stop_server
+
+# --- 20. I7: market_data_public true on PRODUCTION fails ----------------------
+# MARKET_DATA_PUBLIC is a QA evaluation flag (app/config.py: "never production"), so the verifier
+# refuses it there outright — and it refuses BEFORE the site_mode branch, which is why this body
+# reports site_mode app and still fails on the config probe.
+start_server config_public production
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh production 2>&1); then
+  fail "market_data_public true on production must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"market_data_public is true on production"* ]] || fail "the production market-data failure must name itself; got: $out"
+stop_server
+
+# --- 21. I7: either value passes on QA — the flag is what QA exists to evaluate
+start_server config_public
+out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1) || fail "market_data_public true must verify on QA; output: $out"
+[[ "$out" == *"config OK  market_data_public True"* ]] || fail "the config line must report the value it saw; got: $out"
 stop_server
 
 # --- no case anywhere in this suite may reach the Railway CLI ------------------

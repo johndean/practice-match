@@ -69,6 +69,36 @@ describe('useMe', () => {
     expect(useMe().marketDataPublic.value).toBe(false);
   });
 
+  // Re-review: the ref is typed `Ref<boolean>`, so it must only ever hold a boolean. A 200 that
+  // omits the field would otherwise store `undefined` — fail-closed in effect, but the type would
+  // be lying and an `=== false` check in I8 would misread it.
+  it('coerces a 200 that omits the flag, rather than storing undefined in a boolean ref', async () => {
+    stubFetch({ '/api/config': { status: 200, body: {} }, '/api/me': { status: 200, body: PERSONA } });
+    const store = useMe();
+    await store.load();
+    expect(store.marketDataPublic.value).toBe(false);
+    expect(typeof store.marketDataPublic.value).toBe('boolean');
+  });
+
+  it('fails the flag closed when /api/config REFUSES, not only when it never lands', async () => {
+    stubFetch({ '/api/config': { status: 500, body: { error: { code: 'INTERNAL', message: 'boom' } } }, '/api/me': { status: 200, body: PERSONA } });
+    const store = useMe();
+    await store.load();
+    expect(store.marketDataPublic.value).toBe(false);
+  });
+
+  // Re-review: the blanket `.catch(() => false)` also swallowed a genuine client bug, leaving no
+  // trace in dev. Only the two failures the API contract can produce become `false`.
+  it('lets a bug in this code through instead of reading it as a closed flag', async () => {
+    // Only /api/config misbehaves, and with something the contract cannot produce: a blanket
+    // catch would swallow it, resolve `load()`, and leave the flag quietly false.
+    vi.stubGlobal('fetch', (url: string) => {
+      if (url === '/api/config') throw new RangeError('a bug in the client, not a network failure');
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(PERSONA) });
+    });
+    await expect(useMe().load()).rejects.toThrow(RangeError);
+  });
+
   it('set() and clear() are what sign-in and sign-out call, and every importer sees the same refs', () => {
     const a = useMe();
     const b = useMe();
