@@ -28,6 +28,12 @@ const props = defineProps({
   // `?props=`). The app never passes it — it signs in as a real account instead, and A5.4 maps
   // that account's state to the gate.
   startGate: { type: String, default: '' },
+  // A8.8b: the message the sign-in card shows on load. Four account outcomes (a verified
+  // address, a reset link requested, a password updated, an invitation accepted) end on the
+  // sign-in card with a notice, and the REFERENCE has no API to produce the outcome — so the
+  // oracle hands it the notice directly, through the design's own prop mechanism. The app never
+  // passes it: it reaches those states by actually performing them.
+  startNotice: { type: String, default: '' },
   // V3 C10: three named palettes — `distinct` (default), `cool`, `colorblind`.
   layerPalette: { type: String, default: 'distinct' },
   // A5.1 / A5.3: the real `/api/auth/*` client, as the prototype's `auth` adapter — the seam the

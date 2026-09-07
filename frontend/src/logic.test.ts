@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { Component } from './logic.js';
 
 let c: any;
@@ -197,8 +197,12 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     expect(verified.renderVals().gateApply).toBe(true);
   });
 
-  it('componentDidMount leaves an unverified account, and no account at all, on the sign-in gate (A5.4)', () => {
-    for (const props of [{ me: { ...ACTIVE, state: 'unverified' } }, { me: null }, {}]) {
+  // `unverified` used to be here too: A5.4 left it unmapped because I8c's "check your email"
+  // card did not exist, and "absent beats faked" forbade inventing one. Task S4 built the card,
+  // A8.3b maps the state, and the landing is pinned by its own case in the A-S4 block below —
+  // so this case keeps the half that is still true.
+  it('componentDidMount leaves a visitor with no account at all on the sign-in gate (A5.4)', () => {
+    for (const props of [{ me: null }, {}]) {
       const c2: any = new Component(props);
       c2.componentDidMount();
       expect(c2.state, JSON.stringify(props)).toMatchObject({ screen: 'gate', gate: 'signin', auth: false });
@@ -377,5 +381,590 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     expect(c.renderVals().md.insightOpen).toBe(false);
     c.renderVals().md.toggleCompare();
     expect(c.renderVals().md.insightOpen).toBe(false);
+  });
+});
+
+// ===========================================================================================
+// A-S4 (Task S4) — the account screens, composed from the V3 gate card.
+//
+// Everything below drives the REAL `Component` through the same two hooks the app uses:
+// `props.auth` (the adapter Task I8a introduced, here a plain fake OBJECT with `vi.fn()`
+// methods — never a module mock) and `props.me`. Without an adapter every one of these paths
+// falls back to the prototype's own fixture transition, which is what keeps the REFERENCE — a
+// bare design file with no API — rendering each new state for the pixel oracle.
+//
+// The copy asserted here is the spec's §3 table, letter for letter
+// (`docs/superpowers/specs/2026-09-07-account-screens-design.md`).
+// ===========================================================================================
+describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
+  const ACCOUNT = { id: 'a1', email: 'buyer@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved buyer · StartUp Club', initials: 'RM', state: 'active', roles: ['buyer'] };
+
+  /** The adapter, as `logic.js` sees it: every account call, each answering how the case needs. */
+  function fakeAuth(over: Record<string, unknown> = {}) {
+    return Object.assign({
+      signIn: vi.fn(() => Promise.resolve(ACCOUNT)),
+      signOut: vi.fn(() => Promise.resolve({ status: 'signed_out' })),
+      signUp: vi.fn(() => Promise.resolve({ status: 'check_email' })),
+      verify: vi.fn(() => Promise.resolve({ status: 'verified' })),
+      forgot: vi.fn(() => Promise.resolve({ status: 'check_email' })),
+      reset: vi.fn(() => Promise.resolve({ status: 'reset' })),
+      acceptInvite: vi.fn(() => Promise.resolve({ status: 'invited' })),
+      apply: vi.fn(() => Promise.resolve({ id: 'app-1', status: 'pending' })),
+      answer: vi.fn(() => Promise.resolve({ status: 'pending' })),
+      applicationsMe: vi.fn(() => Promise.resolve({ current: null, history: [] }))
+    }, over) as any;
+  }
+  /** What `src/auth/api.ts` throws: the server's own `code` and its own prose. */
+  const authError = (code: string, message: string) => Object.assign(new Error(message), { code });
+  const typed = (v: any) => ({ target: { value: v } });
+
+  // -----------------------------------------------------------------------------------------
+  // A8.1 — the notice slot, the sign-out-first rule, and where "Request access" leads
+  // -----------------------------------------------------------------------------------------
+  it('the sign-in card\'s message box shows a notice as well as a refusal, through the same slot (A8.1)', () => {
+    const c2: any = new Component({});
+    expect(c2.renderVals().form).toMatchObject({ error: false, errorText: '' });
+    c2.setState({ formNotice: 'Password updated. Sign in with your new password.' });
+    expect(c2.renderVals().form).toMatchObject({ error: true, errorText: 'Password updated. Sign in with your new password.' });
+    c2.setState({ formError: 'Email or password is incorrect.' });
+    expect(c2.renderVals().form.errorText, 'a refusal wins over a standing notice').toBe('Email or password is incorrect.');
+  });
+
+  it('goApply opens sign-up for an anonymous visitor on the app, and the application form for an account (A8.1)', () => {
+    const anon: any = new Component({ auth: fakeAuth() });
+    anon.renderVals().goApply();
+    expect(anon.state.gate).toBe('signup');
+
+    const member: any = new Component({ auth: fakeAuth() });
+    member.setState({ auth: true });
+    member.renderVals().goApply();
+    expect(member.state.gate).toBe('apply');
+
+    const reference: any = new Component({});
+    reference.renderVals().goApply();
+    expect(reference.state.gate, 'the reference has no adapter and keeps the design\'s own path').toBe('apply');
+  });
+
+  it('goForgot and goSignup open their cards and clear any standing message (A8.1)', () => {
+    const c2: any = new Component({});
+    c2.setState({ formError: 'nope', formNotice: 'sent' });
+    c2.renderVals().goForgot();
+    expect(c2.state).toMatchObject({ gate: 'forgot', formError: '', formNotice: '' });
+    c2.setState({ formError: 'nope', formNotice: 'sent' });
+    c2.renderVals().goSignup();
+    expect(c2.state).toMatchObject({ gate: 'signup', formError: '', formNotice: '' });
+  });
+
+  it('the status cards\' "Sign in" ends the session first, so it never shows a signed-in header behind the card (A8.1, spec §4.3)', async () => {
+    const auth = fakeAuth();
+    const c2: any = new Component({ auth });
+    c2.setState({ auth: true, gate: 'unavailable', screen: 'gate', formNotice: 'stale' });
+    await c2.renderVals().goSignin();
+    expect(auth.signOut).toHaveBeenCalledTimes(1);
+    expect(c2.state).toMatchObject({ gate: 'signin', screen: 'gate', formNotice: '' });
+  });
+
+  it('goSignin still shows the card when the sign-out call fails, and spends no request when nobody is signed in (A8.1)', async () => {
+    const failing = fakeAuth({ signOut: vi.fn(() => Promise.reject(new Error('network'))) });
+    const c2: any = new Component({ auth: failing });
+    c2.setState({ auth: true, gate: 'rejected' });
+    await c2.renderVals().goSignin();
+    expect(c2.state).toMatchObject({ gate: 'signin', screen: 'gate' });
+
+    const anon = fakeAuth();
+    const c3: any = new Component({ auth: anon });
+    c3.setState({ gate: 'forgot' });
+    c3.renderVals().goSignin({ preventDefault: () => undefined });
+    expect(anon.signOut, 'a signed-out visitor must not spend a sign-out call').not.toHaveBeenCalled();
+    expect(c3.state.gate).toBe('signin');
+  });
+
+  it('goSignOut on the answer card ends the session and returns to the sign-in card (A8.5, spec §4.3)', async () => {
+    const auth = fakeAuth();
+    const c2: any = new Component({ auth });
+    c2.setState({ auth: true, gate: 'answer' });
+    await c2.renderVals().goSignOut({ preventDefault: () => undefined });
+    expect(auth.signOut).toHaveBeenCalledTimes(1);
+    expect(c2.state).toMatchObject({ auth: false, gate: 'signin', screen: 'gate' });
+
+    const reference: any = new Component({});
+    reference.setState({ auth: true, gate: 'answer' });
+    reference.renderVals().goSignOut();
+    expect(reference.state).toMatchObject({ auth: false, gate: 'signin' });
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // A8.2 — the new state fields
+  // -----------------------------------------------------------------------------------------
+  it('the new gate state starts empty, alongside the design\'s own fields (A8.2)', () => {
+    const c2: any = new Component({});
+    expect(c2.state).toMatchObject({ formNotice: '', gateToken: '' });
+    expect(c2.state.signup).toEqual({ email: '', pw: '', error: '' });
+    expect(c2.state.forgot).toEqual({ email: '', error: '' });
+    expect(c2.state.reset).toEqual({ pw: '', pw2: '', error: '' });
+    expect(c2.state.invite).toEqual({ pw: '', pw2: '', error: '' });
+    expect(c2.state.answer).toEqual({ text: '', error: '', applicationId: '', note: '' });
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // A8.5 — sign-up
+  // -----------------------------------------------------------------------------------------
+  it('submitSignup posts the credentials and lands on "check your email" (A8.5, spec §3 row 1)', async () => {
+    const auth = fakeAuth();
+    const c2: any = new Component({ auth });
+    c2.renderVals().setSignupEmail(typed('new@practice-match.test'));
+    c2.renderVals().setSignupPw(typed('a-long-enough-password'));
+    expect(c2.renderVals().signupForm).toMatchObject({ email: 'new@practice-match.test', pw: 'a-long-enough-password', error: false });
+
+    await c2.renderVals().submitSignup();
+
+    expect(auth.signUp).toHaveBeenCalledWith('new@practice-match.test', 'a-long-enough-password');
+    expect(c2.state).toMatchObject({ gate: 'check-email', email: 'new@practice-match.test' });
+  });
+
+  it('submitSignup shows the server\'s own refusal on the card, and its own wording when the refusal carries none (A8.5)', async () => {
+    for (const [rejection, shown] of [[authError('PASSWORD_POLICY', 'That password has appeared in a breach.'), 'That password has appeared in a breach.'], [new Error(''), 'Sign-up failed.'], [undefined, 'Sign-up failed.']] as const) {
+      const c2: any = new Component({ auth: fakeAuth({ signUp: vi.fn(() => Promise.reject(rejection)) }) });
+      c2.renderVals().setSignupEmail(typed('new@practice-match.test'));
+      c2.renderVals().setSignupPw(typed('short'));
+      await c2.renderVals().submitSignup();
+      expect(c2.state.gate, 'a refusal keeps the visitor on the form').toBe('signin');
+      expect(c2.renderVals().signupForm).toMatchObject({ error: true, errorText: shown });
+    }
+  });
+
+  it('submitSignup refuses an empty form before it spends a rate-limited request (A8.5)', () => {
+    const auth = fakeAuth();
+    const c2: any = new Component({ auth });
+    c2.renderVals().submitSignup();
+    expect(auth.signUp).not.toHaveBeenCalled();
+    expect(c2.renderVals().signupForm.errorText).toBe('Enter both your email and password.');
+  });
+
+  it('without an adapter submitSignup takes the prototype\'s fixture transition (A8.5)', () => {
+    const c2: any = new Component({});
+    c2.renderVals().setSignupEmail(typed('new@practice-match.test'));
+    c2.renderVals().setSignupPw(typed('a-long-enough-password'));
+    c2.renderVals().submitSignup();
+    expect(c2.state.gate).toBe('check-email');
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // A8.4 — the four status cards
+  // -----------------------------------------------------------------------------------------
+  it('the check-email card names the address, states the 24-hour life and re-posts the sign-up (A8.4, spec §3 row 2)', () => {
+    const auth = fakeAuth();
+    const c2: any = new Component({ auth });
+    c2.setState({ gate: 'check-email', signup: { email: 'new@practice-match.test', pw: 'a-long-enough-password', error: '' } });
+    const v = c2.renderVals();
+    expect(v.gateStatus).toBe(true);
+    expect(v.status.kicker).toBe('Almost there');
+    expect(v.status.title).toBe('Check your email');
+    expect(v.status.body).toBe('We sent a verification link to new@practice-match.test. It is valid for 24 hours. Open it to confirm your address, then sign in to complete your access request.');
+    expect(v.status.meta).toEqual([{ k: 'Sent to', v: 'new@practice-match.test' }, { k: 'Link valid for', v: '24 hours' }]);
+    expect(v.status.primary.label).toBe('Send it again');
+    v.status.primary.go();
+    expect(auth.signUp).toHaveBeenCalledWith('new@practice-match.test', 'a-long-enough-password');
+  });
+
+  it('"Send it again" for an account that ARRIVED BY SIGNING IN re-posts with an empty password, so the uniform 202 answers but no new link is issued — recorded limit (A8.4)', () => {
+    const auth = fakeAuth();
+    const c2: any = new Component({ auth, me: { ...ACCOUNT, state: 'unverified', email: 'unverified@practice-match.test' } });
+    c2.componentDidMount();
+    expect(c2.state).toMatchObject({ gate: 'check-email', email: 'unverified@practice-match.test' });
+    const v = c2.renderVals();
+    expect(v.status.body).toContain('unverified@practice-match.test');
+    v.status.primary.go();
+    // The card's own body already tells them to use the same email and password, and the signup
+    // card is one click away through "Sign in" → "Request access".
+    expect(auth.signUp).toHaveBeenCalledWith('unverified@practice-match.test', '');
+  });
+
+  it('"Send it again" is a no-op on the reference, which has no adapter to post through (A8.4)', () => {
+    const c2: any = new Component({});
+    c2.setState({ gate: 'check-email' });
+    expect(() => c2.renderVals().status.primary.go()).not.toThrow();
+    expect(c2.state.gate).toBe('check-email');
+  });
+
+  it('the expired-link and not-available cards carry the spec\'s copy and their own next step (A8.4, spec §3 rows 3b/5c/8)', () => {
+    const expect_ = (gate: string, kicker: string, title: string, body: string, label: string) => {
+      const c2: any = new Component({});
+      c2.setState({ gate });
+      const v = c2.renderVals();
+      expect(v.gateStatus, gate).toBe(true);
+      expect(v.status, gate).toMatchObject({ kicker, title, body, meta: [] });
+      expect(v.status.primary.label, gate).toBe(label);
+      v.status.primary.go();
+      return c2.state;
+    };
+    expect(expect_('verify-expired', 'Link expired', 'This link is no longer valid', 'Verification links work once and expire after 24 hours. Request a new one with the same email and password.', 'Request a new link').gate).toBe('signup');
+    expect(expect_('reset-expired', 'Link expired', 'This link is no longer valid', 'Reset links work once and expire after 1 hour.', 'Request a new link').gate).toBe('forgot');
+    expect(expect_('unavailable', 'Access', 'This page is not available to your account', 'Your approved access does not include this page. If you think it should, write to the VIN Foundation from the address on your account.', 'Back to Browse Practices').screen).toBe('browse');
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // A8.5 — forgot
+  // -----------------------------------------------------------------------------------------
+  it('submitForgot asks for the link and returns to the sign-in card with the notice (A8.5, spec §3 rows 4a/4b)', async () => {
+    const auth = fakeAuth();
+    const c2: any = new Component({ auth });
+    c2.renderVals().setForgotEmail(typed('verified@practice-match.test'));
+    expect(c2.renderVals().forgotForm).toMatchObject({ email: 'verified@practice-match.test', error: false });
+
+    await c2.renderVals().submitForgot();
+
+    expect(auth.forgot).toHaveBeenCalledWith('verified@practice-match.test');
+    expect(c2.state).toMatchObject({ gate: 'signin', formNotice: 'If that address has an account, a reset link is on its way. It is valid for 1 hour.' });
+    expect(c2.renderVals().form.errorText).toBe('If that address has an account, a reset link is on its way. It is valid for 1 hour.');
+  });
+
+  it('submitForgot refuses an empty address, shows the server\'s refusal, and works with no adapter (A8.5)', async () => {
+    const auth = fakeAuth();
+    const empty: any = new Component({ auth });
+    empty.renderVals().submitForgot();
+    expect(auth.forgot).not.toHaveBeenCalled();
+    expect(empty.renderVals().forgotForm.errorText).toBe('Enter your email.');
+
+    for (const [rejection, shown] of [[authError('RATE_LIMITED', 'Too many requests. Try again later.'), 'Too many requests. Try again later.'], [new Error(''), 'Request failed.']] as const) {
+      const c2: any = new Component({ auth: fakeAuth({ forgot: vi.fn(() => Promise.reject(rejection)) }) });
+      c2.renderVals().setForgotEmail(typed('verified@practice-match.test'));
+      await c2.renderVals().submitForgot();
+      expect(c2.renderVals().forgotForm).toMatchObject({ error: true, errorText: shown });
+    }
+
+    const reference: any = new Component({});
+    reference.renderVals().setForgotEmail(typed('verified@practice-match.test'));
+    reference.renderVals().submitForgot();
+    expect(reference.state).toMatchObject({ gate: 'signin', formNotice: 'If that address has an account, a reset link is on its way. It is valid for 1 hour.' });
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // A8.5 — reset
+  // -----------------------------------------------------------------------------------------
+  it('submitReset checks the two passwords match before it spends the single-use token (A8.5, spec §3 row 5a)', () => {
+    const auth = fakeAuth();
+    const c2: any = new Component({ auth });
+    c2.renderVals().submitReset();
+    expect(c2.renderVals().resetForm.errorText).toBe('Enter your new password twice.');
+
+    c2.renderVals().setResetPw(typed('a-long-enough-password'));
+    c2.renderVals().setResetPw2(typed('a-different-password'));
+    c2.renderVals().submitReset();
+    expect(auth.reset, 'a mismatch must not burn the token').not.toHaveBeenCalled();
+    expect(c2.renderVals().resetForm).toMatchObject({ error: true, errorText: 'The two passwords do not match.' });
+  });
+
+  it('submitReset posts the held token and returns to the sign-in card with the notice (A8.5, spec §3 row 5b)', async () => {
+    const auth = fakeAuth();
+    const c2: any = new Component({ auth });
+    c2.setState({ gate: 'reset', gateToken: 'raw-reset-token' });
+    c2.renderVals().setResetPw(typed('a-long-enough-password'));
+    c2.renderVals().setResetPw2(typed('a-long-enough-password'));
+
+    await c2.renderVals().submitReset();
+
+    expect(auth.reset).toHaveBeenCalledWith('raw-reset-token', 'a-long-enough-password');
+    expect(c2.state).toMatchObject({ gate: 'signin', gateToken: '', formNotice: 'Password updated. Sign in with your new password.' });
+  });
+
+  it('a used or expired reset token shows the expired card; any other refusal stays on the form (A8.5, spec §3 row 5c)', async () => {
+    const expired: any = new Component({ auth: fakeAuth({ reset: vi.fn(() => Promise.reject(authError('TOKEN_INVALID', 'This link is invalid or has expired.'))) }) });
+    expired.setState({ gate: 'reset', gateToken: 'spent-token' });
+    expired.renderVals().setResetPw(typed('a-long-enough-password'));
+    expired.renderVals().setResetPw2(typed('a-long-enough-password'));
+    await expired.renderVals().submitReset();
+    expect(expired.state).toMatchObject({ gate: 'reset-expired', gateToken: '' });
+
+    for (const [rejection, shown] of [[authError('PASSWORD_POLICY', 'Pick a longer password.'), 'Pick a longer password.'], [new Error(''), 'Reset failed.']] as const) {
+      const c2: any = new Component({ auth: fakeAuth({ reset: vi.fn(() => Promise.reject(rejection)) }) });
+      c2.setState({ gate: 'reset', gateToken: 't' });
+      c2.renderVals().setResetPw(typed('a-long-enough-password'));
+      c2.renderVals().setResetPw2(typed('a-long-enough-password'));
+      await c2.renderVals().submitReset();
+      expect(c2.state.gate).toBe('reset');
+      expect(c2.renderVals().resetForm).toMatchObject({ error: true, errorText: shown });
+    }
+  });
+
+  it('without an adapter submitReset shows the notice, which is how the reference reaches that state (A8.5)', () => {
+    const c2: any = new Component({});
+    c2.setState({ gate: 'reset' });
+    c2.renderVals().setResetPw(typed('x'));
+    c2.renderVals().setResetPw2(typed('x'));
+    c2.renderVals().submitReset();
+    expect(c2.state).toMatchObject({ gate: 'signin', formNotice: 'Password updated. Sign in with your new password.' });
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // A8.5 — accept invite
+  // -----------------------------------------------------------------------------------------
+  it('submitInvite sets the staff password and returns to the sign-in card with the notice (A8.5, spec §3 rows 6a/6b)', async () => {
+    const auth = fakeAuth();
+    const c2: any = new Component({ auth });
+    c2.setState({ gate: 'invite', gateToken: 'raw-invite-token' });
+    c2.renderVals().setInvitePw(typed('a-long-enough-staff-password'));
+    c2.renderVals().setInvitePw2(typed('a-long-enough-staff-password'));
+    expect(c2.renderVals().inviteForm).toMatchObject({ pw: 'a-long-enough-staff-password', pw2: 'a-long-enough-staff-password', error: false });
+
+    await c2.renderVals().submitInvite();
+
+    expect(auth.acceptInvite).toHaveBeenCalledWith('raw-invite-token', 'a-long-enough-staff-password');
+    expect(c2.state).toMatchObject({ gate: 'signin', gateToken: '', formNotice: 'Your password is set. Sign in with your email and the password you just chose.' });
+  });
+
+  it('a spent invitation lands on the sign-in card with its own notice; any other refusal stays on the form (A8.5, spec §3 row 6a)', async () => {
+    const spent: any = new Component({ auth: fakeAuth({ acceptInvite: vi.fn(() => Promise.reject(authError('TOKEN_INVALID', 'This link is invalid or has expired.'))) }) });
+    spent.setState({ gate: 'invite', gateToken: 'spent-token' });
+    spent.renderVals().setInvitePw(typed('a-long-enough-staff-password'));
+    spent.renderVals().setInvitePw2(typed('a-long-enough-staff-password'));
+    await spent.renderVals().submitInvite();
+    expect(spent.state).toMatchObject({ gate: 'signin', gateToken: '', formNotice: 'This invitation link is no longer valid. Ask the VIN Foundation for a new one.' });
+
+    for (const [rejection, shown] of [[authError('PASSWORD_POLICY', 'Staff passwords are at least 14 characters.'), 'Staff passwords are at least 14 characters.'], [new Error(''), 'Could not set the password.']] as const) {
+      const c2: any = new Component({ auth: fakeAuth({ acceptInvite: vi.fn(() => Promise.reject(rejection)) }) });
+      c2.setState({ gate: 'invite', gateToken: 't' });
+      c2.renderVals().setInvitePw(typed('a-long-enough-staff-password'));
+      c2.renderVals().setInvitePw2(typed('a-long-enough-staff-password'));
+      await c2.renderVals().submitInvite();
+      expect(c2.state.gate).toBe('invite');
+      expect(c2.renderVals().inviteForm).toMatchObject({ error: true, errorText: shown });
+    }
+  });
+
+  it('submitInvite checks both fields and the match first, and works with no adapter (A8.5)', () => {
+    const auth = fakeAuth();
+    const c2: any = new Component({ auth });
+    c2.renderVals().submitInvite();
+    expect(c2.renderVals().inviteForm.errorText).toBe('Enter your new password twice.');
+    c2.renderVals().setInvitePw(typed('one-password'));
+    c2.renderVals().setInvitePw2(typed('another-password'));
+    c2.renderVals().submitInvite();
+    expect(auth.acceptInvite, 'a mismatch must not burn the invitation').not.toHaveBeenCalled();
+    expect(c2.renderVals().inviteForm.errorText).toBe('The two passwords do not match.');
+
+    const reference: any = new Component({});
+    reference.setState({ gate: 'invite' });
+    reference.renderVals().setInvitePw(typed('x'));
+    reference.renderVals().setInvitePw2(typed('x'));
+    reference.renderVals().submitInvite();
+    expect(reference.state).toMatchObject({ gate: 'signin', formNotice: 'Your password is set. Sign in with your email and the password you just chose.' });
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // A8.5 — the applicant's answer
+  // -----------------------------------------------------------------------------------------
+  it('submitAnswer sends the reply against the application id and lands on the pending card (A8.5, spec §3 row 7)', async () => {
+    const auth = fakeAuth();
+    const c2: any = new Component({ auth });
+    c2.setState({ gate: 'answer', answer: { text: '', error: '', applicationId: 'app-9', note: 'Which practice do you work at now, and in what role?' } });
+    expect(c2.renderVals().answerForm.note).toBe('Which practice do you work at now, and in what role?');
+    c2.renderVals().setAnswer(typed('I am an associate at Cedar Park Animal Hospital.'));
+
+    await c2.renderVals().submitAnswer();
+
+    expect(auth.answer).toHaveBeenCalledWith('app-9', 'I am an associate at Cedar Park Animal Hospital.');
+    expect(c2.state.gate).toBe('pending');
+  });
+
+  it('submitAnswer refuses an empty reply, shows the server\'s refusal, and falls back with no adapter (A8.5)', async () => {
+    const auth = fakeAuth();
+    const empty: any = new Component({ auth });
+    empty.setState({ gate: 'answer' });
+    empty.renderVals().submitAnswer();
+    expect(auth.answer).not.toHaveBeenCalled();
+    expect(empty.renderVals().answerForm.errorText).toBe('Write your answer first.');
+
+    for (const [rejection, shown] of [[authError('CONFLICT', 'This application has already been answered.'), 'This application has already been answered.'], [new Error(''), 'Could not send your answer.']] as const) {
+      const c2: any = new Component({ auth: fakeAuth({ answer: vi.fn(() => Promise.reject(rejection)) }) });
+      c2.setState({ gate: 'answer' });
+      c2.renderVals().setAnswer(typed('My answer.'));
+      await c2.renderVals().submitAnswer();
+      expect(c2.state.gate).toBe('answer');
+      expect(c2.renderVals().answerForm).toMatchObject({ error: true, errorText: shown });
+    }
+
+    const reference: any = new Component({});
+    reference.setState({ gate: 'answer' });
+    reference.renderVals().setAnswer(typed('My answer.'));
+    reference.renderVals().submitAnswer();
+    expect(reference.state.gate).toBe('pending');
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // A8.6 — the application itself now reaches the API
+  // -----------------------------------------------------------------------------------------
+  it('submitApply posts the application with the API\'s own field names and lands on the pending card (A8.6)', async () => {
+    const auth = fakeAuth();
+    const c2: any = new Component({ auth });
+    c2.setState({ gate: 'apply', apply: { name: 'Jane Doe, DVM', vin: '12345', grad: 'Texas A&M, 2014', state: 'TX', employer: 'Cedar Park Animal Hospital', intent: 'Buying', affirm: true, error: '' } });
+
+    await c2.renderVals().submitApply();
+
+    expect(auth.apply).toHaveBeenCalledWith('buyer', { name: 'Jane Doe, DVM', vin_member_id: '12345', school_year: 'Texas A&M, 2014', license_state: 'TX', employer: 'Cedar Park Animal Hospital', intent: 'Buying', affirm: true });
+    expect(c2.state.gate).toBe('pending');
+  });
+
+  it('a refused application stays on the form with the server\'s message; the reference keeps the fixture transition (A8.6)', async () => {
+    const filled = { name: 'Jane Doe, DVM', vin: '', grad: 'Texas A&M, 2014', state: '', employer: '', intent: 'Buying', affirm: false, error: '' };
+    for (const [rejection, shown] of [[authError('CONFLICT', 'An application is already open.'), 'An application is already open.'], [new Error(''), 'Your request could not be sent.']] as const) {
+      const c2: any = new Component({ auth: fakeAuth({ apply: vi.fn(() => Promise.reject(rejection)) }) });
+      c2.setState({ gate: 'apply', apply: { ...filled } });
+      await c2.renderVals().submitApply();
+      expect(c2.state.gate).toBe('apply');
+      expect(c2.renderVals().apply.error).toBe(shown);
+    }
+
+    const auth = fakeAuth();
+    const incomplete: any = new Component({ auth });
+    incomplete.setState({ gate: 'apply' });
+    incomplete.renderVals().submitApply();
+    expect(auth.apply, 'the design\'s own required-field check runs first').not.toHaveBeenCalled();
+
+    const reference: any = new Component({});
+    reference.setState({ gate: 'apply', apply: { ...filled } });
+    reference.renderVals().submitApply();
+    expect(reference.state.gate).toBe('pending');
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // A8.3 — the bootstrap
+  // -----------------------------------------------------------------------------------------
+  it('componentDidMount lands an unverified account on the check-email card, carrying its address (A8.3)', () => {
+    const c2: any = new Component({ me: { ...ACCOUNT, state: 'unverified', email: 'unverified@practice-match.test' } });
+    c2.componentDidMount();
+    expect(c2.state).toMatchObject({ screen: 'gate', gate: 'check-email', email: 'unverified@practice-match.test', auth: false });
+    expect(c2.renderVals().status.title).toBe('Check your email');
+  });
+
+  it('componentDidMount takes a needs_review account to the answer card with the reviewer\'s question (A8.3)', async () => {
+    const auth = fakeAuth({ applicationsMe: vi.fn(() => Promise.resolve({ current: { id: 'app-9', info_request: 'Which practice do you work at now, and in what role?', fields: {} }, history: [] })) });
+    const c2: any = new Component({ auth, me: { ...ACCOUNT, state: 'needs_review' } });
+    c2.componentDidMount();
+    // Synchronously it is the "under review" card A5.4 already mapped; the answer card arrives
+    // with the application, so a slow API never leaves the visitor on a blank screen.
+    expect(c2.state).toMatchObject({ screen: 'gate', gate: 'pending' });
+    await Promise.resolve(); await Promise.resolve();
+    expect(c2.state).toMatchObject({ screen: 'gate', gate: 'answer' });
+    expect(c2.state.answer).toMatchObject({ applicationId: 'app-9', note: 'Which practice do you work at now, and in what role?' });
+    expect(c2.renderVals().gateAnswer).toBe(true);
+  });
+
+  it('a needs_review account with no open application, or a failed lookup, stays on the "under review" card (A8.3)', async () => {
+    for (const applicationsMe of [vi.fn(() => Promise.resolve({ current: null, history: [] })), vi.fn(() => Promise.resolve({ current: { id: 'app-9', info_request: null, fields: {} }, history: [] })), vi.fn(() => Promise.reject(new Error('offline')))]) {
+      const c2: any = new Component({ auth: fakeAuth({ applicationsMe }), me: { ...ACCOUNT, state: 'needs_review' } });
+      c2.componentDidMount();
+      await Promise.resolve(); await Promise.resolve();
+      expect(['pending', 'answer']).toContain(c2.state.gate);
+    }
+    // The note is the empty string, never `null`, when the reviewer left no question.
+    const c3: any = new Component({ auth: fakeAuth({ applicationsMe: vi.fn(() => Promise.resolve({ current: { id: 'app-9', info_request: null, fields: {} }, history: [] })) }), me: { ...ACCOUNT, state: 'needs_review' } });
+    c3.componentDidMount();
+    await Promise.resolve(); await Promise.resolve();
+    expect(c3.state.answer).toMatchObject({ applicationId: 'app-9', note: '' });
+  });
+
+  it('componentDidMount pre-fills the application form from a declined account\'s own answers (A8.3, spec §3 "re-apply")', async () => {
+    const fields = { name: 'Jane Doe, DVM', vin_member_id: '12345', school_year: 'Texas A&M, 2014', license_state: 'TX', employer: 'Cedar Park Animal Hospital', intent: 'Buying', affirm: true };
+    const c2: any = new Component({ auth: fakeAuth({ applicationsMe: vi.fn(() => Promise.resolve({ current: { id: 'app-8', info_request: null, fields }, history: [] })) }), me: { ...ACCOUNT, state: 'declined' } });
+    c2.componentDidMount();
+    expect(c2.state).toMatchObject({ screen: 'gate', gate: 'rejected' });
+    await Promise.resolve(); await Promise.resolve();
+    expect(c2.state.apply).toEqual({ name: 'Jane Doe, DVM', vin: '12345', grad: 'Texas A&M, 2014', state: 'TX', employer: 'Cedar Park Animal Hospital', intent: 'Buying', affirm: true, error: '' });
+    // …and the declined card's own "Reply with more information" opens that pre-filled form.
+    c2.renderVals().status.primary.go();
+    expect(c2.state.gate).toBe('apply');
+  });
+
+  it('a declined account with no application row, empty fields or a failed lookup leaves the form empty (A8.3)', async () => {
+    const empty = { name: '', vin: '', grad: '', state: '', employer: '', intent: '', affirm: false, error: '' };
+    for (const applicationsMe of [vi.fn(() => Promise.resolve({ current: null, history: [] })), vi.fn(() => Promise.resolve({ current: { id: 'a', info_request: null, fields: null }, history: [] })), vi.fn(() => Promise.resolve({ current: { id: 'a', info_request: null, fields: {} }, history: [] })), vi.fn(() => Promise.reject(new Error('offline')))]) {
+      const c2: any = new Component({ auth: fakeAuth({ applicationsMe }), me: { ...ACCOUNT, state: 'declined' } });
+      c2.componentDidMount();
+      await Promise.resolve(); await Promise.resolve();
+      expect(c2.state.apply).toEqual(empty);
+    }
+  });
+
+  it('the reference, which has no adapter, never asks for an application at all (A8.3)', async () => {
+    for (const state of ['needs_review', 'declined']) {
+      const c2: any = new Component({ me: { ...ACCOUNT, state } });
+      c2.componentDidMount();
+      await Promise.resolve(); await Promise.resolve();
+      expect(c2.state.gate, state).toBe(state === 'declined' ? 'rejected' : 'pending');
+    }
+  });
+
+  it('the startNotice prototype prop puts the reference on the sign-in card with the message, which is how the five notice states are photographed (A8.3/A8.8)', () => {
+    const c2: any = new Component({ startNotice: 'Your address is verified. Sign in to complete your access request.' });
+    c2.componentDidMount();
+    expect(c2.state).toMatchObject({ screen: 'gate', gate: 'signin' });
+    expect(c2.renderVals().form).toMatchObject({ error: true, errorText: 'Your address is verified. Sign in to complete your access request.' });
+  });
+
+  it('a /verify landing posts its token on arrival and shows the notice, or the expired card (A8.3, spec §3 rows 3a/3b)', async () => {
+    const auth = fakeAuth();
+    const ok: any = new Component({ auth });
+    ok.setState({ screen: 'gate', gate: 'verify', gateToken: 'raw-verify-token' });
+    ok.componentDidMount();
+    expect(auth.verify).toHaveBeenCalledWith('raw-verify-token');
+    await Promise.resolve(); await Promise.resolve();
+    expect(ok.state).toMatchObject({ gate: 'signin', gateToken: '', formNotice: 'Your address is verified. Sign in to complete your access request.' });
+
+    const spent: any = new Component({ auth: fakeAuth({ verify: vi.fn(() => Promise.reject(authError('TOKEN_INVALID', 'This link is invalid or has expired.'))) }) });
+    spent.setState({ screen: 'gate', gate: 'verify', gateToken: 'spent-token' });
+    spent.componentDidMount();
+    await Promise.resolve(); await Promise.resolve();
+    expect(spent.state).toMatchObject({ gate: 'verify-expired', gateToken: '' });
+    expect(spent.renderVals().status.title).toBe('This link is no longer valid');
+
+    // The reference has no adapter: `startGate: 'verify'` is not one of its states, and nothing
+    // is posted — which is why the oracle photographs `verify-expired` and the notice, not `verify`.
+    const reference: any = new Component({});
+    reference.setState({ gate: 'verify', gateToken: 't' });
+    reference.componentDidMount();
+    expect(reference.state.gate).toBe('verify');
+  });
+
+  it('a token-bearing gate wins over the active-account redirect, so a member following a reset or invitation link still sees that page (A8.3, S2 review rider)', async () => {
+    for (const gate of ['verify', 'reset', 'invite']) {
+      const c2: any = new Component({ auth: fakeAuth(), me: { ...ACCOUNT, state: 'active' } });
+      c2.setState({ screen: 'gate', gate, gateToken: 'raw-token' });
+      c2.componentDidMount();
+      expect(c2.state, gate).toMatchObject({ screen: 'gate', gate, auth: false });
+    }
+    // …and `verify` then resolves to the sign-in card with its notice, still on the gate screen.
+    const verifying: any = new Component({ auth: fakeAuth(), me: { ...ACCOUNT, state: 'active' } });
+    verifying.setState({ screen: 'gate', gate: 'verify', gateToken: 'raw-token' });
+    verifying.componentDidMount();
+    await Promise.resolve(); await Promise.resolve();
+    expect(verifying.state).toMatchObject({ screen: 'gate', gate: 'signin', formNotice: 'Your address is verified. Sign in to complete your access request.' });
+    // Every other gate value leaves A5.4's redirect exactly as it was.
+    const member: any = new Component({ auth: fakeAuth(), me: { ...ACCOUNT, state: 'active' } });
+    member.componentDidMount();
+    expect(member.state).toMatchObject({ auth: true, screen: 'browse' });
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // A8.4/A8.5 — the flags the new blocks render from
+  // -----------------------------------------------------------------------------------------
+  it('each new gate value lights exactly one card, and only on the gate screen (A8.4/A8.5)', () => {
+    const flags = ['gateSignin', 'gateApply', 'gateStatus', 'gateSignup', 'gateCheckEmail', 'gateForgot', 'gateReset', 'gateInvite', 'gateAnswer'];
+    const expected: Record<string, string[]> = {
+      signin: ['gateSignin'], apply: ['gateApply'], pending: ['gateStatus'], rejected: ['gateStatus'],
+      signup: ['gateSignup'], 'check-email': ['gateStatus', 'gateCheckEmail'], 'verify-expired': ['gateStatus'],
+      forgot: ['gateForgot'], reset: ['gateReset'], 'reset-expired': ['gateStatus'], invite: ['gateInvite'],
+      answer: ['gateAnswer'], unavailable: ['gateStatus']
+    };
+    for (const [gate, on] of Object.entries(expected)) {
+      const c2: any = new Component({});
+      c2.setState({ screen: 'gate', gate });
+      const v = c2.renderVals();
+      expect(flags.filter((f) => v[f]).sort(), gate).toEqual([...on].sort());
+      // …and nothing renders once the visitor is off the gate screen.
+      c2.setState({ screen: 'browse' });
+      const off = c2.renderVals();
+      expect(flags.filter((f) => off[f]), `${gate} off the gate screen`).toEqual([]);
+    }
   });
 });

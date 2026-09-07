@@ -224,7 +224,8 @@ const A5_3b: Amendment = {
  *
  *  `unverified` is deliberately unmapped: it has nowhere to go until I8c's "check your email"
  *  screen exists, and "absent beats faked" forbids inventing one, so it falls through to the
- *  sign-in gate. `verified → apply` is the D-I8-5 rider: an address that has never applied.
+ *  sign-in gate. (That card exists as of Task S4, and A8.3b maps it.) `verified → apply` is the
+ *  D-I8-5 rider: an address that has never applied.
  *
  *  `startGate` is the reference's way into a gate state now that A6.2 takes the "Prototype —
  *  access states" shortcuts out; `tests/reference-server.mjs` injects it through `?props=`.
@@ -421,7 +422,436 @@ const A7_2: Amendment = {
   find: '"Enter both your VIN username and password."', replace: '"Enter both your email and password."', count: 1
 };
 
+// ---------------------------------------------------------------------------------------
+// A7.3/A7.4 and A8 — the account screens (Task S4, spec `2026-09-07-account-screens-design.md`).
+//
+// The Wave 2a API serves the whole account lifecycle; the approved design has screens for four
+// of its states. John's ruling (2026-09-08, "approved") clears that blocker the way D15 exists
+// to: the missing screens are composed STRICTLY from the gate card the design already ships —
+// the same shell, band, label, input, error box, button and footer line — and land in the
+// design as ruled amendments, so `logic.js` and `App.vue` are regenerated rather than edited
+// and the other 27 approved states keep their pixels and their DOM.
+//
+// A ruling that needs more than one literal edit carries a letter suffix (A8.1a/b/c), exactly
+// as A5.3a and A6.3a/b/c do. The order below is the order the edits are applied.
+// ---------------------------------------------------------------------------------------
+const S4 = { date: '2026-09-08', ruling: "account screens composed from the V3 gate card — John, 2026-09-08 ('approved')" };
+
+/** A7.3 — the sign-in card's footer line gains the forgot-password entry (spec §4.1). The only
+ *  two edits to an existing screen in this task are this and A7.4, both ruled, both on
+ *  `gate-signin`, which is not one of the thirteen V2-oracle screens. */
+const A7_3: Amendment = {
+  id: 'A7.3', ...S4,
+  ruling: 'spec §4.1: the sign-in card offers "Forgot your password?" beside "Request access"',
+  find: 'Not approved yet? <a href="#apply" onClick="{{ goApply }}">Request access</a></div>',
+  replace: 'Not approved yet? <a href="#apply" onClick="{{ goApply }}">Request access</a> · <a href="#forgot" onClick="{{ goForgot }}">Forgot your password?</a></div>',
+  count: 1
+};
+
+/** A7.4 — the sign-in sub-line (spec §4.2, John: "remove the VIN language"). The API
+ *  authenticates an email address and a password of its own; "VIN credentials" describes a
+ *  login this marketplace does not have. A7.1 already did the same for the field label. */
+const A7_4: Amendment = {
+  id: 'A7.4', ...S4,
+  ruling: 'spec §4.2: "remove the VIN language" from the sign-in card\'s sub-line',
+  find: '>Use your VIN credentials.</div>', replace: '>Use the email and password you registered with.</div>', count: 1
+};
+
+/** A8.1a — the notice slot (spec §3, "The notice slot"). Four outcomes — a verified address, a
+ *  reset link requested, a password updated, an invitation accepted — have signing in as their
+ *  only next step, and the status card's fixed secondary button is already "Sign in", so a
+ *  status card for them would have shown two identical buttons. They speak through the SIGN-IN
+ *  card's existing message box instead: a second state field (`formNotice`) feeds the same
+ *  template slot, so the card's markup is untouched and the box still appears only when there
+ *  is something to say. A refusal wins over a notice — `formError` is checked first. */
+const A8_1a: Amendment = {
+  id: 'A8.1a', ...S4,
+  find: '      form: { email: s.email, pw: s.pw, error: !!s.formError, errorText: s.formError },',
+  replace: '      form: { email: s.email, pw: s.pw, error: !!(s.formError || s.formNotice), errorText: s.formError || s.formNotice },',
+  count: 1
+};
+
+/** A8.1b — `goSignin` signs the visitor out first (spec §4.3, John: agreed), and the two new
+ *  ways into the account cards. The status cards' secondary button keeps its label — no pixel
+ *  moves — but a signed-in member who presses it must not be left looking at a sign-in card
+ *  behind their own signed-in header. `show` runs on both settlements for A5.3's reason: the
+ *  server-side session is what authorises anything, and a member left looking signed in is the
+ *  worse of the two failures. */
+const A8_1b: Amendment = {
+  id: 'A8.1b', ...S4,
+  find: '      goSignin: (e) => { if (e) e.preventDefault(); this.setState({ gate: "signin", screen: "gate" }); },',
+  replace: '      goSignin: (e) => { if (e) e.preventDefault(); const show = () => this.setState({ gate: "signin", screen: "gate", formNotice: "" }); if (s.auth && this.props.auth) return this.props.auth.signOut().then(show, show); show(); },\n'
+    + '      goForgot: (e) => { if (e) e.preventDefault(); this.setState({ gate: "forgot", formError: "", formNotice: "" }); },\n'
+    + '      goSignup: (e) => { if (e) e.preventDefault(); this.setState({ gate: "signup", formError: "", formNotice: "" }); },',
+  count: 1
+};
+
+/** A8.1c — where "Request access" leads. An anonymous visitor on the APP has no account yet, so
+ *  the first step is sign-up; a signed-in `verified` account already has one and wants the
+ *  application form. The reference — no adapter — keeps the design's own path to `apply`, which
+ *  is what leaves `gate-apply` on its pixels. */
+const A8_1c: Amendment = {
+  id: 'A8.1c', ...S4,
+  find: '      goApply: (e) => { if (e) e.preventDefault(); this.setState({ gate: "apply" }); },',
+  replace: '      goApply: (e) => { if (e) e.preventDefault(); this.setState({ gate: (s.auth || !this.props.auth) ? "apply" : "signup" }); },',
+  count: 1
+};
+
+/** A8.2 — the state the new cards read. All empty, like A6.3's: nothing is pre-filled, and
+ *  `gateToken` is where the router parks an incoming `?token=` so the app never writes one into
+ *  a URL of its own (spec S3). Edits the line A6.3a left. */
+const A8_2: Amendment = {
+  id: 'A8.2', ...S4,
+  find: '    email: "", pw: "", formError: "",',
+  replace: '    email: "", pw: "", formError: "", formNotice: "", gateToken: "",\n'
+    + '    signup: { email: "", pw: "", error: "" }, forgot: { email: "", error: "" }, reset: { pw: "", pw2: "", error: "" }, invite: { pw: "", pw2: "", error: "" }, answer: { text: "", error: "", applicationId: "", note: "" },',
+  count: 1
+};
+
+/** A8.3a — a token-bearing gate wins over the active-account redirect (S2 review rider,
+ *  2026-09-08). A5.4 sent every `active` account straight to Browse; an approved member who
+ *  follows a reset or invitation link is an `active` account, and would never have seen the page
+ *  the link was for. The three gate values the router sets from a `?token=` URL are exempt. */
+const A8_3a: Amendment = {
+  id: 'A8.3a', ...S4,
+  ruling: 'S2 review rider (2026-09-08): a token-bearing gate value wins over the active-account redirect',
+  find: '    if (me && me.state === "active") this.setState({ auth: true, screen: (this.props.startScreen && this.props.startScreen !== "gate") ? this.props.startScreen : "browse", email: me.email, me: { name: me.name, role: me.role, initials: me.initials } });',
+  replace: '    if (me && me.state === "active" && !["verify", "reset", "invite"].includes(this.state.gate)) this.setState({ auth: true, screen: (this.props.startScreen && this.props.startScreen !== "gate") ? this.props.startScreen : "browse", email: me.email, me: { name: me.name, role: me.role, initials: me.initials } });',
+  count: 1
+};
+
+/** A8.3b — the rest of the bootstrap. `unverified` finally has somewhere to go (A5.4 left it
+ *  deliberately unmapped because I8c's card did not exist yet); `needs_review` keeps A5.4's
+ *  synchronous `pending` card and switches to the answer card when the application arrives, so
+ *  a slow API never shows a blank screen; `declined` pre-fills the application form from the
+ *  applicant's own last answers (spec §3, "Re-apply needs no new screen"); `startNotice` is how
+ *  the reference reaches the five sign-in-with-a-notice states; and a `/verify` landing posts
+ *  its token on arrival. Every one of the four API calls is guarded by `this.props.auth`, so the
+ *  reference — which has none — takes the design's fixture path unchanged. */
+const A8_3b: Amendment = {
+  id: 'A8.3b', ...S4,
+  find: '    else if (me && me.state === "verified") this.setState({ screen: "gate", gate: "apply" });\n  }',
+  replace: '    else if (me && me.state === "verified") this.setState({ screen: "gate", gate: "apply" });\n'
+    + '    else if (me && me.state === "unverified") this.setState({ screen: "gate", gate: "check-email", email: me.email });\n'
+    + '    if (me && me.state === "needs_review" && this.props.auth) this.props.auth.applicationsMe().then((r) => { if (r && r.current) this.setState({ screen: "gate", gate: "answer", answer: Object.assign({}, this.state.answer, { applicationId: r.current.id, note: r.current.info_request || "" }) }); }, () => {});\n'
+    + '    if (me && me.state === "declined" && this.props.auth) this.props.auth.applicationsMe().then((r) => { if (r && r.current && r.current.fields) { const f = r.current.fields; this.setState({ apply: Object.assign({}, this.state.apply, { name: f.name || "", vin: f.vin_member_id || "", grad: f.school_year || "", state: f.license_state || "", employer: f.employer || "", intent: f.intent || "", affirm: !!f.affirm }) }); } }, () => {});\n'
+    + '    if (this.props.startNotice) this.setState({ screen: "gate", gate: "signin", formNotice: this.props.startNotice });\n'
+    + '    if (this.state.gate === "verify" && this.props.auth) this.props.auth.verify(this.state.gateToken).then(() => this.setState({ gate: "signin", gateToken: "", formNotice: "Your address is verified. Sign in to complete your access request." }), () => this.setState({ gate: "verify-expired", gateToken: "" }));\n'
+    + '  }',
+  count: 1
+};
+
+/** A8.4a — `gateStatus` covers every status value. The four new ones render through the card
+ *  the design already has, which is why they add no markup at all. */
+const A8_4a: Amendment = {
+  id: 'A8.4a', ...S4,
+  find: '      gateStatus: s.screen === "gate" && (s.gate === "pending" || s.gate === "rejected"),',
+  replace: '      gateStatus: s.screen === "gate" && (s.gate === "pending" || s.gate === "rejected" || s.gate === "check-email" || s.gate === "verify-expired" || s.gate === "reset-expired" || s.gate === "unavailable"),',
+  count: 1
+};
+
+/** A8.4b — the four status cards' content (spec §3 rows 2, 3b, 5c, 8). Their `headStyle` is the
+ *  grey one `pending` and `rejected` already use, byte for byte.
+ *
+ *  RECORDED LIMIT on "Send it again": it re-posts the sign-up, and when the visitor arrived by
+ *  SIGNING IN as an unverified account rather than by signing up, `s.signup.pw` is empty. The
+ *  API's uniform 202 still answers — it must, or the endpoint would tell a stranger which
+ *  addresses exist — but no new link is issued without the password. The card's own body already
+ *  says to use the same email and password, and the sign-up card is one click away through
+ *  "Sign in" → "Request access". `logic.test.ts` names this in the case that pins it. */
+const A8_4b: Amendment = {
+  id: 'A8.4b', ...S4,
+  find: '        primary: { label: "Reply with more information", go: () => this.setState({ gate: "apply" }) }\n      }\n    };',
+  replace: '        primary: { label: "Reply with more information", go: () => this.setState({ gate: "apply" }) }\n'
+    + '      },\n'
+    + '      "check-email": {\n'
+    + '        kicker: "Almost there", title: "Check your email",\n'
+    + '        headStyle: "padding: 22px 26px; background: #f5f5f5; color: #494949;",\n'
+    + '        body: "We sent a verification link to " + (s.signup.email || s.email) + ". It is valid for 24 hours. Open it to confirm your address, then sign in to complete your access request.",\n'
+    + '        meta: [{ k: "Sent to", v: s.signup.email || s.email }, { k: "Link valid for", v: "24 hours" }],\n'
+    + '        primary: { label: "Send it again", go: () => { if (!this.props.auth) return; this.props.auth.signUp(s.signup.email || s.email, s.signup.pw).catch(() => {}); } }\n'
+    + '      },\n'
+    + '      "verify-expired": {\n'
+    + '        kicker: "Link expired", title: "This link is no longer valid",\n'
+    + '        headStyle: "padding: 22px 26px; background: #f5f5f5; color: #494949;",\n'
+    + '        body: "Verification links work once and expire after 24 hours. Request a new one with the same email and password.",\n'
+    + '        meta: [],\n'
+    + '        primary: { label: "Request a new link", go: () => this.setState({ gate: "signup" }) }\n'
+    + '      },\n'
+    + '      "reset-expired": {\n'
+    + '        kicker: "Link expired", title: "This link is no longer valid",\n'
+    + '        headStyle: "padding: 22px 26px; background: #f5f5f5; color: #494949;",\n'
+    + '        body: "Reset links work once and expire after 1 hour.",\n'
+    + '        meta: [],\n'
+    + '        primary: { label: "Request a new link", go: () => this.setState({ gate: "forgot" }) }\n'
+    + '      },\n'
+    + '      unavailable: {\n'
+    + '        kicker: "Access", title: "This page is not available to your account",\n'
+    + '        headStyle: "padding: 22px 26px; background: #f5f5f5; color: #494949;",\n'
+    + '        body: "Your approved access does not include this page. If you think it should, write to the VIN Foundation from the address on your account.",\n'
+    + '        meta: [],\n'
+    + '        primary: { label: "Back to Browse Practices", go: () => this.setState({ screen: "browse" }) }\n'
+    + '      }\n'
+    + '    };',
+  count: 1
+};
+
+/** A8.5 — the form values, setters and submits for the five new form cards, plus `goSignOut`
+ *  for the answer card's footer link. Each mirrors the design's own `form`/`setEmail`/`setPw`/
+ *  `signIn` trio in shape, returns the adapter's promise so a caller can await the settled
+ *  state, and renders the SERVER's own message (`src/auth/api.ts` carries the API's prose, not
+ *  an identifier) with a fallback for a rejection that carries none.
+ *
+ *  The client checks only what the server cannot answer more cheaply: both fields present, and
+ *  the two passwords equal. Password STRENGTH is the server's (zxcvbn ≥ 3, HIBP) and its message
+ *  is what the card shows — a client-side scorer would cost the bundle budget for a second
+ *  opinion. The match check runs BEFORE the request precisely so a mistyped confirmation cannot
+ *  burn a single-use token.
+ *
+ *  `TOKEN_INVALID` is `app/api/auth.py`'s own code, and all three consume paths (`verify`,
+ *  `password/reset`, `accept-invite`) raise the same `TokenInvalid` — checked before this was
+ *  written, because the brief made a differing code a STOP. */
+const A8_5: Amendment = {
+  id: 'A8.5', ...S4,
+  find: '      submitApply: () => {',
+  replace: '      gateSignup: s.screen === "gate" && s.gate === "signup",\n'
+    + '      gateCheckEmail: s.screen === "gate" && s.gate === "check-email",\n'
+    + '      gateForgot: s.screen === "gate" && s.gate === "forgot",\n'
+    + '      gateReset: s.screen === "gate" && s.gate === "reset",\n'
+    + '      gateInvite: s.screen === "gate" && s.gate === "invite",\n'
+    + '      gateAnswer: s.screen === "gate" && s.gate === "answer",\n'
+    + '      signupForm: { email: s.signup.email, pw: s.signup.pw, error: !!s.signup.error, errorText: s.signup.error },\n'
+    + '      setSignupEmail: (e) => this.setState((st) => ({ signup: Object.assign({}, st.signup, { email: e.target.value, error: "" }) })),\n'
+    + '      setSignupPw: (e) => this.setState((st) => ({ signup: Object.assign({}, st.signup, { pw: e.target.value, error: "" }) })),\n'
+    + '      submitSignup: () => {\n'
+    + '        const f = s.signup;\n'
+    + '        if (!f.email || !f.pw) return this.setState({ signup: Object.assign({}, f, { error: "Enter both your email and password." }) });\n'
+    + '        if (!this.props.auth) return this.setState({ gate: "check-email" });\n'
+    + '        return this.props.auth.signUp(f.email, f.pw).then(() => this.setState({ gate: "check-email", email: f.email }), (e) => this.setState({ signup: Object.assign({}, f, { error: (e && e.message) || "Sign-up failed." }) }));\n'
+    + '      },\n'
+    + '      forgotForm: { email: s.forgot.email, error: !!s.forgot.error, errorText: s.forgot.error },\n'
+    + '      setForgotEmail: (e) => this.setState((st) => ({ forgot: Object.assign({}, st.forgot, { email: e.target.value, error: "" }) })),\n'
+    + '      submitForgot: () => {\n'
+    + '        const f = s.forgot;\n'
+    + '        if (!f.email) return this.setState({ forgot: Object.assign({}, f, { error: "Enter your email." }) });\n'
+    + '        const done = () => this.setState({ gate: "signin", formNotice: "If that address has an account, a reset link is on its way. It is valid for 1 hour." });\n'
+    + '        if (!this.props.auth) return done();\n'
+    + '        return this.props.auth.forgot(f.email).then(done, (e) => this.setState({ forgot: Object.assign({}, f, { error: (e && e.message) || "Request failed." }) }));\n'
+    + '      },\n'
+    + '      resetForm: { pw: s.reset.pw, pw2: s.reset.pw2, error: !!s.reset.error, errorText: s.reset.error },\n'
+    + '      setResetPw: (e) => this.setState((st) => ({ reset: Object.assign({}, st.reset, { pw: e.target.value, error: "" }) })),\n'
+    + '      setResetPw2: (e) => this.setState((st) => ({ reset: Object.assign({}, st.reset, { pw2: e.target.value, error: "" }) })),\n'
+    + '      submitReset: () => {\n'
+    + '        const f = s.reset;\n'
+    + '        if (!f.pw || !f.pw2) return this.setState({ reset: Object.assign({}, f, { error: "Enter your new password twice." }) });\n'
+    + '        if (f.pw !== f.pw2) return this.setState({ reset: Object.assign({}, f, { error: "The two passwords do not match." }) });\n'
+    + '        const done = () => this.setState({ gate: "signin", gateToken: "", formNotice: "Password updated. Sign in with your new password." });\n'
+    + '        if (!this.props.auth) return done();\n'
+    + '        return this.props.auth.reset(s.gateToken, f.pw).then(done, (e) => (e && e.code === "TOKEN_INVALID") ? this.setState({ gate: "reset-expired", gateToken: "" }) : this.setState({ reset: Object.assign({}, f, { error: (e && e.message) || "Reset failed." }) }));\n'
+    + '      },\n'
+    + '      inviteForm: { pw: s.invite.pw, pw2: s.invite.pw2, error: !!s.invite.error, errorText: s.invite.error },\n'
+    + '      setInvitePw: (e) => this.setState((st) => ({ invite: Object.assign({}, st.invite, { pw: e.target.value, error: "" }) })),\n'
+    + '      setInvitePw2: (e) => this.setState((st) => ({ invite: Object.assign({}, st.invite, { pw2: e.target.value, error: "" }) })),\n'
+    + '      submitInvite: () => {\n'
+    + '        const f = s.invite;\n'
+    + '        if (!f.pw || !f.pw2) return this.setState({ invite: Object.assign({}, f, { error: "Enter your new password twice." }) });\n'
+    + '        if (f.pw !== f.pw2) return this.setState({ invite: Object.assign({}, f, { error: "The two passwords do not match." }) });\n'
+    + '        const done = () => this.setState({ gate: "signin", gateToken: "", formNotice: "Your password is set. Sign in with your email and the password you just chose." });\n'
+    + '        if (!this.props.auth) return done();\n'
+    + '        return this.props.auth.acceptInvite(s.gateToken, f.pw).then(done, (e) => (e && e.code === "TOKEN_INVALID") ? this.setState({ gate: "signin", gateToken: "", formNotice: "This invitation link is no longer valid. Ask the VIN Foundation for a new one." }) : this.setState({ invite: Object.assign({}, f, { error: (e && e.message) || "Could not set the password." }) }));\n'
+    + '      },\n'
+    + '      answerForm: { text: s.answer.text, note: s.answer.note, error: !!s.answer.error, errorText: s.answer.error },\n'
+    + '      setAnswer: (e) => this.setState((st) => ({ answer: Object.assign({}, st.answer, { text: e.target.value, error: "" }) })),\n'
+    + '      submitAnswer: () => {\n'
+    + '        const f = s.answer;\n'
+    + '        if (!f.text) return this.setState({ answer: Object.assign({}, f, { error: "Write your answer first." }) });\n'
+    + '        if (!this.props.auth) return this.setState({ gate: "pending" });\n'
+    + '        return this.props.auth.answer(f.applicationId, f.text).then(() => this.setState({ gate: "pending" }), (e) => this.setState({ answer: Object.assign({}, f, { error: (e && e.message) || "Could not send your answer." }) }));\n'
+    + '      },\n'
+    + '      goSignOut: (e) => { if (e) e.preventDefault(); const show = () => this.setState({ gate: "signin", screen: "gate", auth: false, formNotice: "" }); if (this.props.auth) return this.props.auth.signOut().then(show, show); show(); },\n'
+    + '      submitApply: () => {',
+  count: 1
+};
+
+/** A8.6 — the application reaches the API. The design's own required-field check above is
+ *  untouched and still runs first; the field names are the API's (`vin_member_id`,
+ *  `school_year`, `license_state`), mapped from the prototype's short ones, which CLAUDE.md
+ *  keeps because the UI reads them. With no adapter the fixture transition to the pending card
+ *  is exactly what it was. */
+const A8_6: Amendment = {
+  id: 'A8.6', ...S4,
+  find: '        this.setState({ apply: Object.assign({}, a, { error: "" }), gate: "pending" });\n      },',
+  replace: '        if (!this.props.auth) return this.setState({ apply: Object.assign({}, a, { error: "" }), gate: "pending" });\n'
+    + '        return this.props.auth.apply("buyer", { name: a.name, vin_member_id: a.vin, school_year: a.grad, license_state: a.state, employer: a.employer, intent: a.intent, affirm: !!a.affirm }).then(() => this.setState({ apply: Object.assign({}, a, { error: "" }), gate: "pending" }), (e) => this.setState({ apply: Object.assign({}, a, { error: (e && e.message) || "Your request could not be sent." }) }));\n'
+    + '      },',
+  count: 1
+};
+
+/** A8.7 — the five form cards' markup, appended in the gate's right column after the existing
+ *  `gateStatus` block and before the column's own close.
+ *
+ *  Every element is the sign-in or apply card's, element for element — the card shell, the band
+ *  header, `<label>`/`<span>`/`<input>`, the grey left-bordered error box, the 48 px primary
+ *  button and the 14 px centred footer line — with only bindings and text changed.
+ *  `design-amendments.test.ts` proves it: every `style`/`style-hover` value below already
+ *  appears on the design's own gate card, and (A1's two ruled declarations aside) on the
+ *  PRISTINE card. Nothing here is newly styled, which is why the 27 other approved states do not
+ *  move a pixel.
+ *
+ *  The four status states (`check-email`, `verify-expired`, `reset-expired`, `unavailable`) get
+ *  NO block: they render through the card A8.4 fills. Absent beats faked, in both directions.
+ */
+const A8_7_FIND = '            </sc-if>\n'
+    + '          </div>\n'
+    + '        </div>\n'
+    + '\n'
+    + '        <div style="background: var(--color-navy); color: var(--color-white); padding: 30px 34px;">';
+const A8_7_REPLACE = [
+  '            </sc-if>',
+  '',
+  '            <sc-if value="{{ gateSignup }}" hint-placeholder-val="{{ false }}">',
+  '              <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">',
+  '                <div style="padding: 22px 26px; background: var(--rf-band);">',
+  '                  <div style="font-family: var(--rf-display); font-size: 20px; font-weight: 800; color: var(--color-navy); text-transform: uppercase; letter-spacing: .02em;">Request Access</div>',
+  '                  <div style="font-size: 13px; line-height: 1.5; color: #494949; margin-top: 4px;">Start with the email and password you will sign in with.</div>',
+  '                </div>',
+  '                <div style="padding: 24px 26px 26px; display: flex; flex-direction: column; gap: 16px;">',
+  '                  <label style="display: flex; flex-direction: column; gap: 6px;">',
+  '                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">Email</span>',
+  '                    <input value="{{ signupForm.email }}" onChange="{{ setSignupEmail }}" style="height: 44px; padding: 0 13px; font-size: 15px; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none;">',
+  '                  </label>',
+  '                  <label style="display: flex; flex-direction: column; gap: 6px;">',
+  '                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">Password</span>',
+  '                    <input type="password" value="{{ signupForm.pw }}" onChange="{{ setSignupPw }}" placeholder="At least 12 characters" style="height: 44px; padding: 0 13px; font-size: 15px; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none;">',
+  '                  </label>',
+  '                  <sc-if value="{{ signupForm.error }}" hint-placeholder-val="{{ false }}">',
+  '                    <div style="display: flex; gap: 9px; padding: 11px 13px; background: #f5f5f5; border-left: 3px solid var(--vf-text); border-radius: 4px; font-size: 13px; line-height: 1.5; color: #494949;">{{ signupForm.errorText }}</div>',
+  '                  </sc-if>',
+  '                  <button onClick="{{ submitSignup }}" style="font-family: var(--rf-display); height: 48px; font-size: 15px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;" style-hover="background: var(--color-navy);">Create account</button>',
+  '                  <div style="text-align: center; font-size: 14px; color: #494949;">Already have an account? <a href="#signin" onClick="{{ goSignin }}">Sign in</a></div>',
+  '                </div>',
+  '              </div>',
+  '            </sc-if>',
+  '',
+  '            <sc-if value="{{ gateForgot }}" hint-placeholder-val="{{ false }}">',
+  '              <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">',
+  '                <div style="padding: 22px 26px; background: var(--rf-band);">',
+  '                  <div style="font-family: var(--rf-display); font-size: 20px; font-weight: 800; color: var(--color-navy); text-transform: uppercase; letter-spacing: .02em;">Reset your password</div>',
+  '                  <div style="font-size: 13px; line-height: 1.5; color: #494949; margin-top: 4px;">We will email you a link.</div>',
+  '                </div>',
+  '                <div style="padding: 24px 26px 26px; display: flex; flex-direction: column; gap: 16px;">',
+  '                  <label style="display: flex; flex-direction: column; gap: 6px;">',
+  '                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">Email</span>',
+  '                    <input value="{{ forgotForm.email }}" onChange="{{ setForgotEmail }}" style="height: 44px; padding: 0 13px; font-size: 15px; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none;">',
+  '                  </label>',
+  '                  <sc-if value="{{ forgotForm.error }}" hint-placeholder-val="{{ false }}">',
+  '                    <div style="display: flex; gap: 9px; padding: 11px 13px; background: #f5f5f5; border-left: 3px solid var(--vf-text); border-radius: 4px; font-size: 13px; line-height: 1.5; color: #494949;">{{ forgotForm.errorText }}</div>',
+  '                  </sc-if>',
+  '                  <button onClick="{{ submitForgot }}" style="font-family: var(--rf-display); height: 48px; font-size: 15px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;" style-hover="background: var(--color-navy);">Send reset link</button>',
+  '                  <div style="text-align: center; font-size: 14px; color: #494949;"><a href="#signin" onClick="{{ goSignin }}">Back to sign in</a></div>',
+  '                </div>',
+  '              </div>',
+  '            </sc-if>',
+  '',
+  '            <sc-if value="{{ gateReset }}" hint-placeholder-val="{{ false }}">',
+  '              <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">',
+  '                <div style="padding: 22px 26px; background: var(--rf-band);">',
+  '                  <div style="font-family: var(--rf-display); font-size: 20px; font-weight: 800; color: var(--color-navy); text-transform: uppercase; letter-spacing: .02em;">Choose a new password</div>',
+  '                  <div style="font-size: 13px; line-height: 1.5; color: #494949; margin-top: 4px;">At least 12 characters. Your other sessions will be signed out.</div>',
+  '                </div>',
+  '                <div style="padding: 24px 26px 26px; display: flex; flex-direction: column; gap: 16px;">',
+  '                  <label style="display: flex; flex-direction: column; gap: 6px;">',
+  '                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">New password</span>',
+  '                    <input type="password" value="{{ resetForm.pw }}" onChange="{{ setResetPw }}" style="height: 44px; padding: 0 13px; font-size: 15px; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none;">',
+  '                  </label>',
+  '                  <label style="display: flex; flex-direction: column; gap: 6px;">',
+  '                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">Confirm password</span>',
+  '                    <input type="password" value="{{ resetForm.pw2 }}" onChange="{{ setResetPw2 }}" style="height: 44px; padding: 0 13px; font-size: 15px; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none;">',
+  '                  </label>',
+  '                  <sc-if value="{{ resetForm.error }}" hint-placeholder-val="{{ false }}">',
+  '                    <div style="display: flex; gap: 9px; padding: 11px 13px; background: #f5f5f5; border-left: 3px solid var(--vf-text); border-radius: 4px; font-size: 13px; line-height: 1.5; color: #494949;">{{ resetForm.errorText }}</div>',
+  '                  </sc-if>',
+  '                  <button onClick="{{ submitReset }}" style="font-family: var(--rf-display); height: 48px; font-size: 15px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;" style-hover="background: var(--color-navy);">Save password</button>',
+  '                  <div style="text-align: center; font-size: 14px; color: #494949;"><a href="#signin" onClick="{{ goSignin }}">Back to sign in</a></div>',
+  '                </div>',
+  '              </div>',
+  '            </sc-if>',
+  '',
+  '            <sc-if value="{{ gateInvite }}" hint-placeholder-val="{{ false }}">',
+  '              <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">',
+  '                <div style="padding: 22px 26px; background: var(--rf-band);">',
+  '                  <div style="font-family: var(--rf-display); font-size: 20px; font-weight: 800; color: var(--color-navy); text-transform: uppercase; letter-spacing: .02em;">Set your password</div>',
+  '                  <div style="font-size: 13px; line-height: 1.5; color: #494949; margin-top: 4px;">You have been invited to the Practice Match team. Staff passwords are at least 14 characters.</div>',
+  '                </div>',
+  '                <div style="padding: 24px 26px 26px; display: flex; flex-direction: column; gap: 16px;">',
+  '                  <label style="display: flex; flex-direction: column; gap: 6px;">',
+  '                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">New password</span>',
+  '                    <input type="password" value="{{ inviteForm.pw }}" onChange="{{ setInvitePw }}" style="height: 44px; padding: 0 13px; font-size: 15px; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none;">',
+  '                  </label>',
+  '                  <label style="display: flex; flex-direction: column; gap: 6px;">',
+  '                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">Confirm password</span>',
+  '                    <input type="password" value="{{ inviteForm.pw2 }}" onChange="{{ setInvitePw2 }}" style="height: 44px; padding: 0 13px; font-size: 15px; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none;">',
+  '                  </label>',
+  '                  <sc-if value="{{ inviteForm.error }}" hint-placeholder-val="{{ false }}">',
+  '                    <div style="display: flex; gap: 9px; padding: 11px 13px; background: #f5f5f5; border-left: 3px solid var(--vf-text); border-radius: 4px; font-size: 13px; line-height: 1.5; color: #494949;">{{ inviteForm.errorText }}</div>',
+  '                  </sc-if>',
+  '                  <button onClick="{{ submitInvite }}" style="font-family: var(--rf-display); height: 48px; font-size: 15px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;" style-hover="background: var(--color-navy);">Save password</button>',
+  '                  <div style="text-align: center; font-size: 14px; color: #494949;"><a href="#signin" onClick="{{ goSignin }}">Back to sign in</a></div>',
+  '                </div>',
+  '              </div>',
+  '            </sc-if>',
+  '',
+  '            <sc-if value="{{ gateAnswer }}" hint-placeholder-val="{{ false }}">',
+  '              <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">',
+  '                <div style="padding: 22px 26px; background: var(--rf-band);">',
+  '                  <div style="font-family: var(--rf-display); font-size: 20px; font-weight: 800; color: var(--color-navy); text-transform: uppercase; letter-spacing: .02em;">More information requested</div>',
+  '                  <div style="font-size: 13px; line-height: 1.5; color: #494949; margin-top: 4px;">{{ answerForm.note }}</div>',
+  '                </div>',
+  '                <div style="padding: 24px 26px 26px; display: flex; flex-direction: column; gap: 16px;">',
+  '                  <label style="display: flex; flex-direction: column; gap: 6px;">',
+  '                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">Your answer</span>',
+  '                    <textarea value="{{ answerForm.text }}" onChange="{{ setAnswer }}" rows="4" style="padding: 10px 13px; font-size: 14px; line-height: 1.5; color: var(--color-navy); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none; resize: vertical;"></textarea>',
+  '                  </label>',
+  '                  <sc-if value="{{ answerForm.error }}" hint-placeholder-val="{{ false }}">',
+  '                    <div style="display: flex; gap: 9px; padding: 11px 13px; background: #f5f5f5; border-left: 3px solid var(--vf-text); border-radius: 4px; font-size: 13px; line-height: 1.5; color: #494949;">{{ answerForm.errorText }}</div>',
+  '                  </sc-if>',
+  '                  <button onClick="{{ submitAnswer }}" style="font-family: var(--rf-display); height: 48px; font-size: 15px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;" style-hover="background: var(--color-navy);">Re-submit request</button>',
+  '                  <div style="text-align: center; font-size: 14px; color: #494949;"><a href="#signout" onClick="{{ goSignOut }}">Sign out</a></div>',
+  '                </div>',
+  '              </div>',
+  '            </sc-if>',
+  '          </div>',
+  '        </div>',
+  '',
+  '        <div style="background: var(--color-navy); color: var(--color-white); padding: 30px 34px;">'
+].join('\n');
+const A8_7: Amendment = { id: 'A8.7', ...S4, find: A8_7_FIND, replace: A8_7_REPLACE, count: 1 };
+
+/** A8.8a/b — the prototype props the REFERENCE reaches the new states through. `startGate`'s
+ *  enum grows to every gate value (A5.6 declared four); `startNotice` is new, and is the only
+ *  way to photograph the five sign-in-card-with-a-notice states on a target that has no API to
+ *  produce the outcome. Both are spliced into the escaped `data-props` JSON with the same
+ *  `&quot;` escaping as their neighbours, and `app.setup.js` declares `startNotice` because
+ *  `app-generated.test.ts` requires it to declare everything the design does. */
+const A8_8a: Amendment = {
+  id: 'A8.8a', ...S4,
+  find: '&quot;options&quot;:[&quot;signin&quot;,&quot;apply&quot;,&quot;pending&quot;,&quot;rejected&quot;]',
+  replace: '&quot;options&quot;:[&quot;signin&quot;,&quot;apply&quot;,&quot;pending&quot;,&quot;rejected&quot;,&quot;signup&quot;,&quot;check-email&quot;,&quot;verify-expired&quot;,&quot;forgot&quot;,&quot;reset&quot;,&quot;reset-expired&quot;,&quot;invite&quot;,&quot;answer&quot;,&quot;unavailable&quot;]',
+  count: 1
+};
+const STARTNOTICE_ENTRY = '&quot;startNotice&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Sign-in notice on load&quot;}';
+const A8_8b: Amendment = {
+  id: 'A8.8b', ...S4,
+  find: ME_ENTRY, replace: `${ME_ENTRY},${STARTNOTICE_ENTRY}`, count: 1
+};
+
+// A8.9 — no amendment. `startGate: "reset"` and `startGate: "invite"` render their forms on the
+// reference with no token at all: the token is read only when the form SUBMITS, which the
+// reference never reaches (it has no adapter). Recorded here so the gap in the numbering is a
+// decision rather than an omission.
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
-    A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2];
+    A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
+    A7_3, A7_4, A8_1a, A8_1b, A8_1c, A8_2, A8_3a, A8_3b, A8_4a, A8_4b, A8_5, A8_6, A8_7, A8_8a, A8_8b];
 }

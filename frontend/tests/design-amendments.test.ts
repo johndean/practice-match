@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { AMENDED, LOCAL_AMENDMENTS_MD, PRISTINE, amendments, applyAmendments, deriveTypographyB, templateRegions, V2 } from './design-amendments';
+import { AMENDED, type Amendment, LOCAL_AMENDMENTS_MD, PRISTINE, amendments, applyAmendments, deriveTypographyB, templateRegions, V2 } from './design-amendments';
 
 describe('local design amendments (spec D15)', () => {
   const pristine = readFileSync(PRISTINE, 'utf8');
@@ -73,11 +73,16 @@ describe('local design amendments (spec D15)', () => {
     // A6 — CLAUDE.md's launch-removal list, executed against the design; A7 — the sign-in copy.
     'A6.1', 'A6.2', 'A6.3a', 'A6.3b', 'A6.3c', 'A6.4a', 'A6.4b', 'A6.4c', 'A6.4d', 'A6.5', 'A6.6a', 'A6.6b',
     'A7.1', 'A7.2',
+    // A-S4 (Task S4): the two ruled touches to the sign-in card, then the account screens —
+    // composed from the gate card's own elements. A ruling that needed more than one literal
+    // edit carries a letter suffix, exactly as A5.3a/A6.3a/A6.4a do.
+    'A7.3', 'A7.4',
+    'A8.1a', 'A8.1b', 'A8.1c', 'A8.2', 'A8.3a', 'A8.3b', 'A8.4a', 'A8.4b', 'A8.5', 'A8.6', 'A8.7', 'A8.8a', 'A8.8b',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(51);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(66);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -112,10 +117,12 @@ describe('local design amendments (spec D15)', () => {
     const amended = readFileSync(AMENDED, 'utf8');
     const attr = /<script type="text\/x-dc" data-dc-script[^>]*data-props="([^"]*)"/.exec(amended)!;
     const declared = JSON.parse(attr[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) as Record<string, unknown>;
-    expect(Object.keys(declared)).toEqual(['$preview', 'prototypeBar', 'startScreen', 'startViewport', 'startGate', 'me', 'layerPalette']);
+    expect(Object.keys(declared)).toEqual(['$preview', 'prototypeBar', 'startScreen', 'startViewport', 'startGate', 'me', 'startNotice', 'layerPalette']);
+    // A8.8a widened the enum to every gate value the account screens add; the shape is A5.6's.
     expect(declared.startGate).toEqual({
-      editor: 'enum', options: ['signin', 'apply', 'pending', 'rejected'], default: '',
-      tsType: 'string', section: 'Prototype', label: 'Start on gate state'
+      editor: 'enum',
+      options: ['signin', 'apply', 'pending', 'rejected', 'signup', 'check-email', 'verify-expired', 'forgot', 'reset', 'reset-expired', 'invite', 'answer', 'unavailable'],
+      default: '', tsType: 'string', section: 'Prototype', label: 'Start on gate state'
     });
     // A5.7: the account the reference is handed, so its header matches the app's. `null` must
     // survive the round trip — `support.js` copies a default only `if (v !== void 0)`, so a
@@ -155,6 +162,77 @@ describe('local design amendments (spec D15)', () => {
     }
   });
 
+  // ---------------------------------------------------------------------------------------
+  // A-S4 (Task S4) — the account screens. The design gains seven gate states and the two
+  // touches to the sign-in card John ruled, and every one of them is composed from the gate
+  // card the design already ships. That is what keeps the other 27 approved states on their
+  // pixels, and the cases below are what stop a new block from styling anything of its own.
+  // ---------------------------------------------------------------------------------------
+  const GATE_OPEN = '    <sc-if value="{{ showGate }}" hint-placeholder-val="{{ true }}">';
+  const GATE_CLOSE = '        <div style="background: var(--color-navy); color: var(--color-white); padding: 30px 34px;">';
+  /** The gate screen's own markup: the band, the two columns and the cards, up to the footer band. */
+  const gateRegion = (html: string) => {
+    const a = html.indexOf(GATE_OPEN); const b = html.indexOf(GATE_CLOSE, a);
+    expect(Math.min(a, b), 'the gate region moved — this helper no longer finds it').toBeGreaterThan(0);
+    return html.slice(a, b);
+  };
+  /** What an amendment ADDS: `replace` minus the prefix and suffix it shares with `find`. */
+  const insertedText = (a: Amendment) => {
+    let head = 0; while (head < a.find.length && a.find[head] === a.replace[head]) head++;
+    let tail = 0; while (tail < a.find.length - head && a.find[a.find.length - 1 - tail] === a.replace[a.replace.length - 1 - tail]) tail++;
+    return a.replace.slice(head, a.replace.length - tail);
+  };
+
+  it('A7.3/A7.4 are the two ruled touches to the sign-in card, and the VIN wording is gone', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    expect(amended, 'A7.3: the forgot-password entry point').toContain('Not approved yet? <a href="#apply" onClick="{{ goApply }}">Request access</a> · <a href="#forgot" onClick="{{ goForgot }}">Forgot your password?</a></div>');
+    expect(amended, 'A7.4: the sub-line').toContain('>Use the email and password you registered with.</div>');
+    expect(amended, 'the VIN-credentials sub-line is the copy John ruled out').not.toContain('Use your VIN credentials.');
+  });
+
+  // The composition rule, machine-checked. Without it "built only from the existing gate card"
+  // is a promise in a document; with it, a block that invents a padding, a colour or a radius
+  // fails here rather than in a screenshot review.
+  it('A8.7 invents no style: every style attribute in the blocks it inserts is one the gate card already carries', () => {
+    const list = amendments();
+    const i = list.findIndex((a) => a.id === 'A8.7');
+    expect(i, 'A8.7 is not in the amendment list').toBeGreaterThan(-1);
+    const inserted = insertedText(list[i]);
+    // The design the blocks are copied FROM: the pristine file with every earlier amendment
+    // applied — A1's ruled typography included, since the gate card's own 20 px title carries it.
+    const from = gateRegion(applyAmendments(pristine, list.slice(0, i)));
+    const pristineGate = gateRegion(pristine);
+    const attrs = [...inserted.matchAll(/\bstyle(?:-[a-z]+)?="[^"]*"/g)].map((m) => m[0]);
+    expect(attrs.length, 'A8.7 inserted no styled element at all').toBeGreaterThan(30);
+    for (const attr of attrs) {
+      expect(from, `A8.7 introduces a style the gate card does not carry: ${attr}`).toContain(attr);
+      // …and, apart from A1's two ruled declarations, it is the PRISTINE card's own string, so no
+      // block can smuggle in a style that some earlier amendment happened to invent.
+      expect(withoutTypography(pristineGate), `not the pristine gate card's own style either: ${attr}`).toContain(withoutTypography(attr));
+    }
+  });
+
+  it('A8.7 adds exactly the five account form cards, and the four status states add no markup at all', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    for (const flag of ['gateSignup', 'gateForgot', 'gateReset', 'gateInvite', 'gateAnswer']) {
+      expect(amended.split(`<sc-if value="{{ ${flag} }}"`).length - 1, `${flag} is not rendered exactly once`).toBe(1);
+    }
+    // check-email, verify-expired, reset-expired and unavailable render through the status card
+    // the design already had (A8.4 widens `gateStatus` and fills `statusMap`) — "absent beats
+    // faked" cuts both ways, and a second card would have moved the four approved status states.
+    for (const flag of ['gateCheckEmail', 'gateVerifyExpired', 'gateResetExpired', 'gateUnavailable']) {
+      expect(amended, `${flag} must render through the existing gateStatus card`).not.toContain(`<sc-if value="{{ ${flag} }}"`);
+    }
+  });
+
+  it('A8.8 declares startNotice beside the other prototype props, with the ruled shape', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    const attr = /<script type="text\/x-dc" data-dc-script[^>]*data-props="([^"]*)"/.exec(amended)!;
+    const declared = JSON.parse(attr[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) as Record<string, unknown>;
+    expect(declared.startNotice).toEqual({ editor: 'text', default: '', tsType: 'string', section: 'Prototype', label: 'Sign-in notice on load' });
+    expect(pristine, 'startNotice exists only as a local amendment').not.toContain('startNotice');
+  });
+
   it('the amended reference is the pristine Rev 2 file plus exactly the ruled edits', () => {
     expect(applyAmendments(pristine, amendments())).toBe(readFileSync(AMENDED, 'utf8'));
   });
@@ -176,7 +254,9 @@ describe('local design amendments (spec D15)', () => {
       expect(m[2], m[4]).toContain('text-transform: uppercase');
       expect(m[2], m[4]).toContain(`letter-spacing: ${px >= 24 ? '.005em' : '.02em'}`);
     }
-    expect(seen).toBe(24);
+    // 24 before Task S4; the five account form cards (A8.7) each carry the gate card's own
+    // 20 px title, and a heading is a heading — the census counts them too.
+    expect(seen).toBe(29);
   });
   // M4/M6 (re-review): the `find`-count contract had no explicit expectation anywhere — the
   // general guard is `applyAmendments`' own `throw`, reachable only through the byte-identity
