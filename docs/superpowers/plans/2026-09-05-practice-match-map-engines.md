@@ -30,6 +30,7 @@
 - **`/api/layers` response shape becomes `{ "engine": "leaflet", "gate": 42, "layers": [ … each entry with "engines": [...] ] }`** (Census plan API contract and B5 tests updated in Task M9).
 - **Migration numbering:** this sub-project owns `080`–`089`. SP2/identity `010`–`015`, Seed Listings `016`, Census SP3-A `017`–`059`, SP3-B `060`+. The Google plan's `009_google_registry.sql` (Task G5) is **not** created — superseded by `080`.
 - **Testing:** `app-leaflet` (the existing `app` project) keeps the full visual gate at `maxDiffPixels: 0`; `app-google` runs smoke, the map screens and the no-mixing assertions with the map viewport masked; no live Google key in CI or GitHub — the stub only.
+- **Every new `/api/*` route is guarded or declared public.** A route carries `Depends(require("<perm>"))` from `app/auth/deps.py`, or its `(method, path)` joins `app.auth.permissions.PUBLIC_ROUTES` with a comment saying why it needs no credential. `tests/auth/test_permissions.py::test_every_route_is_guarded_or_public` walks `create_app()` and fails closed on anything that is neither — so a route added without a decision does not ship, it goes red. (Added 2026-09-07, identity Task I9a review, Minor 3.)
 - Every commit: conventional message, `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`, pushed to `origin` and `production`. Work on `feat/map-engines` in a worktree. Before any `railway up` or variable change: `railway status` must print `Project: Practice Match`.
 
 ## File map
@@ -634,7 +635,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 - Modify: `app/api/market.py` (`layers`), `tests/api/test_market_api.py` (response shape), `app/main.py` (router)
 
 **Interfaces:**
-- Consumes: `shell.snapshot`, `gate.enabled`, `market._registry` (extend it to select `kind, engines, active`), `access.market_access`, `LAYERS` (Census B5).
+- Consumes: `shell.snapshot`, `gate.enabled`, `market._registry` (extend it to select `kind, engines, active`), `require("market.read")` from `app/auth/deps.py`, `LAYERS` (Census B5). *Amended 2026-09-07 (identity Task I9a): this named the `app/api/access.py` wrapper, which is not written — the Census plan's B5 deleted the wrapper in the same commit, so an implementer following this line would have imported a module the other plan says does not exist. `MARKET_DATA_PUBLIC` is handled inside `permissions.allowed`, which grants `market.read` to `anonymous` while the flag is set, so this router needs exactly the permission Census B5's market router has and nothing more.*
 - Produces: `GET /api/map-config` → `{"engine": str, "gate": int, "leaflet": {"tiles": str, "labels": str, "attribution": str}}` or `{"engine": "google", "gate": int, "google": {"mapId": str, "browserKey": str}}`; `GET /api/layers` → `{"engine": str, "gate": int, "layers": [ {…, "engines": list[str], "enabled": bool} ]}`.
 
 - [ ] **Step 1: Failing tests**
@@ -695,10 +696,12 @@ async def test_layers_carry_engine_gate_and_engines_and_apply_the_rule(client, c
 from fastapi import APIRouter, Depends
 
 from app import shell
-from app.api.access import market_access
+from app.auth.deps import require
 from app.config import settings
 
-router = APIRouter(prefix="/api", dependencies=[Depends(market_access)])
+# `require("market.read")`, as Census B5's market router carries (identity Task I9a): the flag lives
+# in `permissions.allowed`, not in a wrapper.
+router = APIRouter(prefix="/api", dependencies=[Depends(require("market.read"))])
 LEAFLET = {
     "tiles": "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Base/MapServer/tile/{z}/{y}/{x}",
     "labels": "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}",
@@ -1468,7 +1471,15 @@ const API = 'http://localhost:8010';
 const PW = process.env.PERSONA_PASSWORD ?? PERSONA_DEFAULT_PASSWORD;
 
 /** The admin session every write below is made with: cookies from the real sign-in, the
- *  double-submit header `deps.check_origin_and_csrf` wants, and a fresh password confirmation. */
+ *  double-submit header `deps.check_origin_and_csrf` wants, and a fresh password confirmation.
+ *
+ *  `Origin` is `API` — the very origin these requests are sent to. That is deliberate and it is
+ *  what makes the helper work without setting `ALLOWED_ORIGINS` on the backend `webServer`:
+ *  `check_origin_and_csrf` compares the presented origin against `settings.origins` **plus**
+ *  `str(request.url)`, so a same-origin request is accepted whether or not the environment names
+ *  its own host. Point `API` at a different host than the requests go to and this breaks; if this
+ *  suite ever needs a cross-origin case, add `ORIGINS` to `frontend/tests/targets.ts`'s
+ *  `API_ENV_DEFAULTS` rather than guessing. (Noted 2026-09-07, identity Task I9a review.) */
 async function adminHeaders(page: Page): Promise<Record<string, string>> {
   await signInAs(page, 'design');
   const csrf = (await page.context().cookies()).find((c) => c.name === 'pm_csrf')!.value;

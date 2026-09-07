@@ -17,7 +17,7 @@ MATRIX: dict[str, frozenset[str]] = {
     "page.gate": _ALL,
     "account.self": _ALL - {"anonymous"},
     "page.browse": _MEMBERS, "listing.read": _MEMBERS,
-    "market.read": _MEMBERS,                     # + anonymous while MARKET_DATA_PUBLIC (effective_roles)
+    "market.read": _MEMBERS,                     # + anonymous while MARKET_DATA_PUBLIC (`allowed`, below — not `effective_roles`, which never reads a setting)
     "layer.google_live": _MEMBERS, "layer.satellite": _MEMBERS,
     "request.create": frozenset({"buyer", "seller"}), "request.read_own": frozenset({"buyer", "seller"}),
     "seller.apply": frozenset({"buyer"}),

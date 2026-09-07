@@ -5,6 +5,7 @@ from uuid import uuid4
 
 from app.auth import permissions as PM
 from app.auth.sessions import Principal
+from tests.conftest import walk_routes
 
 
 def P(*roles, state="active"):
@@ -107,32 +108,6 @@ def test_cli_entrypoint_prints_nothing_without_the_flag(monkeypatch, capsys):
 # --- fix round 1, Important 8: PUBLIC_ROUTES and AUDITED get the consumers spec §4 promised ---
 
 
-def _walk(routes, prefix=""):
-    """(method, path, route) for everything mounted, spelled the way PUBLIC_ROUTES spells it — the
-    raw path template (`/{path:path}`), not the compiled `path_format` (`/{path}`). FastAPI 0.141
-    keeps an included router as a wrapper object rather than flattening its routes, so the walk
-    recurses through `original_router` and carries the include prefix.
-
-    A `Mount` is recursed into when the mounted app exposes routes of its own (fix round 2
-    observation): `Mount.routes` is `getattr(self.app, "routes", [])`, so a StaticFiles mount
-    yields nothing and falls through to the GET-only line — while a mounted sub-application's
-    write routes are SEEN by the guard test instead of being invisible to it."""
-    from starlette.routing import Mount
-
-    for route in routes:
-        included = getattr(route, "original_router", None)
-        if included is not None:
-            yield from _walk(included.routes, prefix + route.include_context.prefix)
-        elif isinstance(route, Mount):
-            if route.routes:
-                yield from _walk(route.routes, prefix + route.path)
-            else:
-                yield "GET", prefix + route.path + "/{path:path}", None
-        else:
-            for method in sorted(route.methods):
-                yield method, prefix + route.path, route
-
-
 def _came_from_require(call):
     """True for `require()`'s own closure AND for anything wrapping it. Matched on where the
     callable was defined, because `functools.wraps` copies `__module__`/`__qualname__` onto the
@@ -166,14 +141,14 @@ def _permissions_of(route):
 def _unguarded(app):
     """(method, path) for every route that neither carries a readable `require(...)` guard nor is
     listed in `PUBLIC_ROUTES`."""
-    return [(method, path) for method, path, route in _walk(app.routes)
+    return [(method, path) for method, path, route in walk_routes(app.routes)
             if not any(perm in PM.MATRIX for perm in _permissions_of(route)) and (method, path) not in PM.PUBLIC_ROUTES]
 
 
 def _unresolvable(app):
     """(method, path) for every route carrying something that came from `require(...)` whose
     permission cannot be read back."""
-    return [(method, path) for method, path, route in _walk(app.routes) for _, perm in _guards_of(route) if perm is None]
+    return [(method, path) for method, path, route in walk_routes(app.routes) for _, perm in _guards_of(route) if perm is None]
 
 
 def _unaudited(app):
@@ -181,7 +156,7 @@ def _unaudited(app):
     calls `audit.write(`."""
     import inspect
 
-    return [(method, path) for method, path, route in _walk(app.routes)
+    return [(method, path) for method, path, route in walk_routes(app.routes)
             if any(perm in PM.AUDITED for perm in _permissions_of(route)) and "audit.write(" not in inspect.getsource(route.endpoint)]
 
 
@@ -219,7 +194,7 @@ def test_a_mounted_sub_application_is_walked_rather_than_assumed_static(dist):
 
     from app.main import create_app
 
-    assert ("GET", "/_app/{path:path}") in [(m, p) for m, p, _ in _walk(create_app(dist=dist).routes)]
+    assert ("GET", "/_app/{path:path}") in [(m, p) for m, p, _ in walk_routes(create_app(dist=dist).routes)]
 
     inner = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
 
@@ -230,7 +205,7 @@ def test_a_mounted_sub_application_is_walked_rather_than_assumed_static(dist):
     host = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
     host.router.routes.append(Mount("/api/sub", app=inner))
     host.router.routes.append(Mount("/files", app=StaticFiles(directory=str(dist))))
-    seen = [(m, p) for m, p, _ in _walk(host.routes)]
+    seen = [(m, p) for m, p, _ in walk_routes(host.routes)]
     assert ("POST", "/api/sub/danger") in seen
     assert ("GET", "/files/{path:path}") in seen
     # Neither is in PUBLIC_ROUTES, so both are reported — the point being that the POST inside the
@@ -312,7 +287,7 @@ def test_a_broken_guard_wrapper_is_an_error_not_a_silently_unwatched_route(conn,
 
     # Readable through the wrapper: guarded, resolvable, and its handler audits.
     assert _unguarded(scratch) == [] and _unresolvable(scratch) == [] and _unaudited(scratch) == []
-    assert _permissions_of(next(r for m, p, r in _walk(scratch.routes) if p == "/api/admin/users/decide")) == ["users.decide"]
+    assert _permissions_of(next(r for m, p, r in walk_routes(scratch.routes) if p == "/api/admin/users/decide")) == ["users.decide"]
 
     del wrapped.__wrapped__  # the chain is gone; the marker `functools.wraps` copied is not
     assert _unresolvable(scratch) == [("POST", "/api/admin/users/decide")]
@@ -382,7 +357,7 @@ def test_every_audited_action_is_named_after_a_permission(dist):
     from app.main import create_app
 
     drifted = []
-    for method, path, route in _walk(create_app(dist=dist).routes):
+    for method, path, route in walk_routes(create_app(dist=dist).routes):
         permissions = [p for p in _permissions_of(route) if p in PM.AUDITED]
         if not permissions:
             continue
@@ -428,11 +403,11 @@ def test_the_applicant_facing_audit_actions_name_no_permission_and_are_not_watch
     assert (A.SUBMIT_ACTION, A.ANSWER_ACTION, A.REAPPLY_ACTION) == ("applications.submit", "applications.answer", "applications.reapply")
     assert not {A.SUBMIT_ACTION, A.ANSWER_ACTION, A.REAPPLY_ACTION} & set(PM.MATRIX)
     assert "account.self" not in PM.AUDITED
-    watched = {(method, path) for method, path, route in _walk(create_app(dist=dist).routes)
+    watched = {(method, path) for method, path, route in walk_routes(create_app(dist=dist).routes)
                if any(perm in PM.AUDITED for perm in _permissions_of(route))}
     assert ("POST", "/api/applications") not in watched
     assert ("POST", "/api/applications/{application_id}/answer") not in watched
     # ...and the route really is mounted and really is guarded, so this is "not watched", not "not there".
-    guarded = {(method, path) for method, path, route in _walk(create_app(dist=dist).routes)
+    guarded = {(method, path) for method, path, route in walk_routes(create_app(dist=dist).routes)
                if "account.self" in _permissions_of(route)}
     assert ("POST", "/api/applications/{application_id}/answer") in guarded

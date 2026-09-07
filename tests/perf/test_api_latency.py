@@ -28,8 +28,15 @@ SIGNUP_BUDGET_MS = 300   # brief: 100 — John's default in fix round 1; one Arg
 SIGNIN_BUDGET_MS = 300   # the brief's number
 COLD_ME_BUDGET_MS = 60   # the review's ⚠️: /api/me with the principal cache MISSED (Redis -> Postgres)
 # Spec §6's budget for the admin review queue joins the dict in Task I9a: it is the one
-# administrative READ a reviewer waits on, and `migrations/015_admin_list_indexes.sql` exists
-# because it had nothing behind either half of its query.
+# administrative READ a reviewer waits on. What it measures here is the endpoint's own work —
+# routing, the permission check, one connection from the pool, the query, the JSON — against a
+# database with however many rows the dev/CI stack happens to hold, which on CI is nearly none. It
+# is therefore a gate on the code path and NOT on the indexes: whether `migrations/015`'s two
+# indexes are still being chosen is a question about a plan on a populated table, and
+# `tests/perf/test_query_plans.py::test_hot_query_uses_an_index[users_queue]` is what asks it
+# (2,000 seeded accounts, both index names asserted). The first version of this comment claimed
+# this budget was "about the INDEXES", which nothing here could have shown (I9a fix round 1,
+# Important 2).
 BUDGET_MS = {"/api/healthz": 20, "/": 15, "/api/me": 20, "/api/admin/users?state=pending": 150}   # Census B5 and Map engines M3/M4 extend this dict
 # Paths BUDGET_MS measures through the SIGNED-IN client rather than the anonymous one (Task I4):
 # `/api/me` answered anonymously is a 401 that never opens a connection, which is not the path the
@@ -99,9 +106,9 @@ async def staff(dist, db_ready):
     twelve lines is not a trade this file should make. The two bodies differ only by the
     `role_grant` INSERT, which is the whole point of having both.
 
-    The queue is measured on the shared dev database as it stands, whatever is in it — the budget
-    is about the INDEXES behind the query (`migrations/015_admin_list_indexes.sql`), not about a
-    row count this fixture would have to invent."""
+    The queue is measured on the shared dev database as it stands, whatever is in it, and the
+    comment beside `BUDGET_MS` says what that does and does not prove: the code path, not the query
+    plan. The plan is `tests/perf/test_query_plans.py`'s job, on a database it seeds itself."""
     from httpx import ASGITransport, AsyncClient
 
     from app.auth import passwords as P

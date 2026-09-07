@@ -29,7 +29,8 @@ from starlette.requests import Request
 from app.auth import deps
 from app.auth import permissions as PM
 from app.auth import sessions as S
-from tests.auth.test_permissions import _permissions_of, _walk
+from tests.auth.test_permissions import _permissions_of
+from tests.conftest import walk_routes
 
 MEMBER_ROLES = ("buyer", "seller", "staff", "admin")
 ORIGIN = "https://qa.foundation.vin"
@@ -40,7 +41,7 @@ def _rows(dist):
     """(method, path, permission) for every guarded route the app mounts, deduplicated and sorted."""
     from app.main import create_app
 
-    return sorted({(method, path, perm) for method, path, route in _walk(create_app(dist=dist).routes)
+    return sorted({(method, path, perm) for method, path, route in walk_routes(create_app(dist=dist).routes)
                    for perm in _permissions_of(route) if perm in PM.MATRIX})
 
 

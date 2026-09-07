@@ -31,10 +31,17 @@ async def test_signup_is_uniform_and_queues_one_verify_email(client, conn):
     assert r1.status_code == r2.status_code == 202 and r1.json() == r2.json() == {"status": "check_email"}
     rows = await _outbox(conn)
     # TWO rows since fix round 1's Critical 1: the new address gets its verify link, and the second
-    # (already registered) attempt tells the address's owner somebody tried to sign up as them — the
-    # equal commit-level work that closes the registration-timing leak.
-    assert [row[1] for row in rows] == ["verify_email", "account_exists"]
+    # attempt writes one too — the equal commit-level work that closes the registration-timing leak.
+    #
+    # The second row's TEMPLATE changed in I9a fix round 1 (Important 4): this address is still
+    # `unverified` after the first signup, so signing up again RE-ISSUES the verify link rather than
+    # sending `account_exists`, which is now the answer from `verified` onward. Both halves have
+    # their own case below — `test_signing_up_again_on_an_unverified_address_re_issues_the_verify_link`
+    # and `test_signing_up_again_on_a_verified_or_later_address_still_says_account_exists`. What this
+    # test is for is unchanged and still asserted above: one answer, one body, one row either way.
+    assert [row[1] for row in rows] == ["verify_email", "verify_email"]
     assert rows[0][0] == "New.Person@Gmail.com" and rows[0][2]["link"].startswith("https://qa.foundation.vin/verify?token=")
+    assert rows[1][2]["link"] != rows[0][2]["link"], "the re-issue must carry a new token"
     with conn.cursor() as cur:
         cur.execute("SELECT state FROM account WHERE email='new.person@gmail.com'"); assert cur.fetchone() == ("unverified",)
 
@@ -141,6 +148,12 @@ async def test_security_headers_on_every_response_and_no_state_change_on_get(cli
 
 BREACHED = "011151zangetsu"   # in the bundled NCSC top-100k list AND long/strong enough to clear the policy
 NEW_PW = "another-quiet-lantern-77"
+# The password a SECOND signup on somebody else's pending address presents. Deliberately
+# different from `PW`, because the point of the assertion that uses it is that a re-signup
+# does NOT change the account's password. A named constant rather than a literal in the call:
+# gitleaks' `generic-api-key` rule reads `"password": "<literal>"` as a secret, and CI scans
+# history (I9a re-review, pre-push blocker).
+STRANGER_PW = "stranger-lantern-quiet-88"
 LEGACY = {"Authorization": f"Bearer {settings.api_secret_key}"}
 
 
@@ -309,6 +322,85 @@ async def test_signup_does_the_same_work_for_a_new_and_an_existing_address(clien
     # WAL flush, which is single-digit milliseconds, so the ruling's borrowed tolerance made this
     # assertion inert — it passed with the `account_exists` enqueue removed (delta 2.8 ms).
     assert abs(statistics.median(new_s) - statistics.median(old_s)) < 0.020, (statistics.median(new_s), statistics.median(old_s))
+
+
+async def test_signing_up_again_on_an_unverified_address_re_issues_the_verify_link(client, conn):
+    """I9a fix round 1, Important 4. There is no re-send-verification endpoint, `password/forgot`
+    excludes `unverified` deliberately, and `decide` has no "verify" action \u2014 so before this an
+    account whose 24 h verify link had expired (or whose mail was `suppressed` by the QA allowlist)
+    had NO path to a working link, and the operator runbook's "have the applicant repeat the
+    action" walked into a dead end. Signing up again is the action a person naturally repeats, so
+    that is where the re-issue belongs.
+
+    Still uniform: the same 202 and the same body as every other branch. Still not a password
+    change \u2014 the row's `password_hash` is untouched, so a stranger signing up on somebody's pending
+    address cannot set their password, and the fresh link goes to the address's owner either way."""
+    email = f"reverify-{uuid.uuid4().hex[:8]}@example.org"
+    r1 = await client.post("/api/auth/signup", json={"email": email, "password": PW}, headers={"x-forwarded-for": _ip()})
+    assert r1.status_code == 202
+    (account_id,) = _rows(conn, "SELECT id FROM account WHERE email=%s", (email,))[0]
+    first_hash = _password_hash(conn, account_id)
+    first_link = (await _outbox(conn))[0][2]["link"]
+
+    r2 = await client.post("/api/auth/signup", json={"email": email.upper(), "password": STRANGER_PW},
+                           headers={"x-forwarded-for": _ip()})
+    assert r2.status_code == 202 and r2.json() == r1.json() == {"status": "check_email"}
+
+    rows = await _outbox(conn)
+    assert [row[1] for row in rows] == ["verify_email", "verify_email"], "the second attempt must re-issue, not send account_exists"
+    second_link = rows[1][2]["link"]
+    assert second_link != first_link, "the re-issue must carry a NEW token, not repeat the old link"
+    assert rows[1][0] == email.upper()          # the normalised form the caller supplied; citext, same mailbox
+    assert _password_hash(conn, account_id) == first_hash, "a re-signup must not change the password"
+    assert _rows(conn, "SELECT state FROM account WHERE id=%s", (account_id,))[0] == ("unverified",)
+
+    # Both links work, and each exactly once: the old token is not retired (retiring it would let
+    # anyone who knows a pending address invalidate its owner's link), and `consume_email_token`
+    # is what makes each single-use.
+    old_token = first_link.split("token=")[1]
+    assert T.consume_email_token(conn, old_token, "verify") == account_id
+    assert T.consume_email_token(conn, old_token, "verify") is None
+    assert T.consume_email_token(conn, second_link.split("token=")[1], "verify") == account_id
+
+
+async def test_signing_up_again_on_a_verified_or_later_address_still_says_account_exists(client, conn):
+    """The other half of Important 4's rule. Only `unverified` re-issues; from `verified` onward the
+    address's owner is told somebody tried to sign up as them, and no token is minted \u2014 a verify
+    link for an account that has already proved it holds the address would be a way in, not a
+    courtesy."""
+    for state in ("verified", "active", "pending", "suspended", "declined"):
+        email = f"exists-{state}-{uuid.uuid4().hex[:6]}@example.org"
+        with conn.cursor() as cur:
+            cur.execute("INSERT INTO account (email, password_hash, state) VALUES (%s,%s,%s)", (email, P.hash_password(PW), state))
+        r = await client.post("/api/auth/signup", json={"email": email, "password": PW}, headers={"x-forwarded-for": _ip()})
+        assert r.status_code == 202 and r.json() == {"status": "check_email"}, state
+        assert [row[1] for row in await _outbox(conn) if row[0] == email] == ["account_exists"], state
+        assert _rows(conn, "SELECT count(*) FROM email_token WHERE account_id = (SELECT id FROM account WHERE email=%s)", (email,)) == [(0,)], state
+
+
+async def test_the_re_issue_branch_answers_in_the_same_time_as_the_account_exists_branch(client, conn):
+    """Important 4's uniformity condition. The re-issue writes one `email_token` row that the
+    `account_exists` branch does not, so the two paths have to be shown to stay inside the same
+    20 ms window `test_signup_does_the_same_work_for_a_new_and_an_existing_address` uses \u2014 an INSERT
+    into a small table against a WAL flush both branches already pay."""
+    unverified = [f"u4-unver-{i}@example.org" for i in range(10)]
+    verified = [f"u4-ver-{i}@example.org" for i in range(10)]
+    with conn.cursor() as cur:
+        for email in unverified:
+            cur.execute("INSERT INTO account (email, password_hash, state) VALUES (%s,%s,'unverified')", (email, P.hash_password(PW)))
+        for email in verified:
+            cur.execute("INSERT INTO account (email, password_hash, state) VALUES (%s,%s,'verified')", (email, P.hash_password(PW)))
+    reissue_s, exists_s = [], []
+    for i in range(10):
+        for samples, email in ((reissue_s, unverified[i]), (exists_s, verified[i])):
+            t0 = time.perf_counter()
+            r = await client.post("/api/auth/signup", json={"email": email, "password": PW}, headers={"x-forwarded-for": _ip()})
+            samples.append(time.perf_counter() - t0)
+            assert r.status_code == 202, email
+    templates = sorted(row[1] for row in await _outbox(conn))
+    assert templates == ["account_exists"] * 10 + ["verify_email"] * 10
+    delta = abs(statistics.median(reissue_s) - statistics.median(exists_s))
+    assert delta < 0.020, (statistics.median(reissue_s), statistics.median(exists_s))
 
 
 @pytest.mark.parametrize("bad", ["a\x00b@example.org", "a\x01b@example.org", "a\u202eb@example.org", "a\ud800b@example.org"])

@@ -67,6 +67,21 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
     expect(md).toContain('one decision record');   // the basemap cross-reference, not a restatement
   });
 
+  // I9a review, Important 1: the Census plan deleted `app/api/access.py` and its wrapper in the
+  // same commit that left Map engines M3 importing them — two documents of record contradicting
+  // each other, with the false one on the side an implementer builds from. The wrapper's whole
+  // reason for existing (decide `MARKET_DATA_PUBLIC`) now lives in `permissions.allowed`, so there
+  // is no shape of this plan in which the name is correct: neither plan may carry the token at all.
+  it('neither the census nor the map-engines plan names the deleted market-access wrapper (I9a Important 1)', () => {
+    for (const [plan, md] of [[CENSUS, read(CENSUS)], [MAP_ENGINES, read(MAP_ENGINES)]] as Array<[string, string]>) {
+      const offenders = md.split('\n').filter((l) => l.includes('market_access'));
+      expect(offenders, `${plan} still names the deleted market_access wrapper`).toEqual([]);
+    }
+    // …and both routers must name the permission that replaced it.
+    expect(read(CENSUS)).toContain('Depends(require("market.read"))');
+    expect(read(MAP_ENGINES)).toContain('Depends(require("market.read"))');
+  });
+
   it('the census plan documents V3 rendering, the payroll label, the reserved word and the migration range', () => {
     const md = read(CENSUS);
     expect(md).toContain('community mosaic shading');

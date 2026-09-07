@@ -52,7 +52,7 @@ Budgets are numbers in tests. Raising a budget is a reviewed change with a reaso
 | `pageerror`/`console.error` fail rule; first-map-paint budget | Platform Task 3 (`harness.ts`), Task 4 (smoke) |
 | `tests/perf/test_api_latency.py` (healthz, shell) | Platform Task 5; endpoints appended by Census B5 and Map engines M3/M4 |
 | `frontend/tests/bundle-budget.test.ts` | Platform Task 1 (main bundle), Map engines M5 (engine chunks) |
-| `tests/perf/test_query_plans.py` | Census B5 (panel/communities), Map engines M1 (active-engine lookup) |
+| `tests/perf/test_query_plans.py` | **Created** by identity Task I9a (the admin review queue's two `migrations/015` indexes, and the session lookup), then extended by Census B5 (panel/communities) and Map engines M1 (active-engine lookup) as their tables land. *(Row corrected 2026-09-07: the file predates B5/M1 because Wave 2a needed it first; the §5 harness below is unchanged, its `active_engine` Seq-Scan exemption included, so M1's entry is one row in `PLANS`.)* |
 | Shell render micro-benchmark | Map engines M2 |
 | `scripts/k6-smoke.js`, `perf.yml` | Platform Task 10 |
 | Rollback procedure | Platform Task 9 (`DEPLOY.md`) |

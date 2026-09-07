@@ -40,6 +40,7 @@
 - **Cache gate (red-team C5):** panel and community payloads are cached under a key that includes a global `market:gate:v` counter bumped on any licence decision, and metrics are re-filtered through the gate on read — a blocked layer disappears within 60 s even from cached payloads.
 - **Secrets in errors (red-team C6):** the API key never appears in exceptions, logs or archive keys (`CensusClient.redact(url)`).
 - **Migration numbering:** Sub-project 3 Phase A uses `017`–`059`; Sub-project 2 owns `010`–`015` and the Seed Listings plan owns `016`; Sub-project 3 Phase B (listing-dependent) uses `060`+.
+- **Every new `/api/*` route is guarded or declared public.** A route carries `Depends(require("<perm>"))` from `app/auth/deps.py`, or its `(method, path)` joins `app.auth.permissions.PUBLIC_ROUTES` with a comment saying why it needs no credential. `tests/auth/test_permissions.py::test_every_route_is_guarded_or_public` walks `create_app()` and fails closed on anything that is neither — so a route added without a decision does not ship, it goes red. (Added 2026-09-07, identity Task I9a review, Minor 3.)
 - Every commit: conventional message, `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`, pushed to `origin` and `production`. Work on `feat/census-data-layer` in a worktree.
 
 ## Decisions recorded in this plan (confirm on review)
@@ -57,7 +58,7 @@
 | D10 | **Three bands.** `place` (the listing's city/CDP), `drive_10` (8 km), `drive_20` (16 km). Community mosaic shading and community-label figures use `place` by default; the panel's drive-time tiles use `drive_10`; `?band=` selects. | The approved design's community numbers are city-level (Cedar Park 81,900 = the city); the spec's catchments answer the drive-time question. Both are real needs; the band is explicit (red-team C3). |
 | D11 | **ZIP Code Business Patterns (`zbp`, `2022/zbp`, NAICS2017) is the community-level competition source**, aggregated over ZCTAs by area overlap; county CBP is the benchmark. Register it as a new cleared public-domain dataset (VIN Foundation to approve the addition to the spec's §2 table). | County CBP cannot render per-community competition and produced incoherent ratios (red-team C1). ZIPs ≈ ZCTAs; the approximation is labelled. |
 | D12 | **Population growth at place level** (2014–2018 → 2019–2023 place rows), county fallback; tract growth deferred until the 2010→2020 tract relationship file is loaded. | 2010 and 2020 tract GEOIDs differ; joining prior-vintage tracts on 2020 GEOIDs is wrong (red-team C2). |
-| D13 | **Market endpoints are member-gated** via `Depends(require("market.read"))` (Wave 2a's `app/auth/deps.py`), with `MARKET_DATA_PUBLIC` as the only way to open them (default false). *Amended 2026-09-07 (Task I9a): said "SP2's `require_member`", and the `app/api/access.py::market_access` wrapper this plan specified is **deleted** — the flag's semantics live in `app.auth.permissions.allowed`, which grants `market.read` to `anonymous` while it is set, so there is nothing left for a wrapper to decide.* | Spec §15 leaves public teaser vs gated to the VIN Foundation; default closed. |
+| D13 | **Market endpoints are member-gated** via `Depends(require("market.read"))` (Wave 2a's `app/auth/deps.py`), with `MARKET_DATA_PUBLIC` as the only way to open them (default false). *Amended 2026-09-07 (Task I9a): said "SP2's `require_member`", and the `app/api/access.py` wrapper this plan specified is **deleted** (its one function with it) — the flag's semantics live in `app.auth.permissions.allowed`, which grants `market.read` to `anonymous` while it is set, so there is nothing left for a wrapper to decide.* | Spec §15 leaves public teaser vs gated to the VIN Foundation; default closed. |
 | D14 | **Migration ranges:** SP3-A `017`–`059`, SP3-B `060`+. `001`–`002` are taken (`001_init`, `002_interest_signup`), SP2/identity holds `010`–`015` and the Seed Listings plan holds `016` (`016_listing.sql`). Inside SP3-A, `017`–`019` are Task A1's and `020` is taken by `020_license_audit.sql` (Task A8, renumbered from `007` on 2026-09-07 — it ALTERs and REFERENCES `dataset_registry`, which `017` creates). `003`–`009` are unassigned; anything that takes one must be a Platform-level migration with no dependency on later tables. | Phase B tables reference `listing(id)`, which SP2 creates; numbered ordering must guarantee it exists first. |
 | D15 | **The 2017 Google Places export is not a source.** `Report_Hospital_Competitor_All_US_ZipCode_FULL.csv` (audited 2026-09-05 — appendix below) stays out of the repository, bucket and database. The only content Google's terms let us keep is its 10,166 `place_id` values, and even those are not loaded until a Google-based mechanism (D17) is approved. The registry's `practice_locations` row names the file as blocked. | A 16-day snapshot (24 May–8 Jun 2017) covering 8,320 of ~41,700 ZIPs, Austin absent, 29.7 % individual-practitioner duplicates, ≈ 5 % non-veterinary rows; and Google Maps Platform Terms §3.2.3(a)/(c)(iv) + SST §14.2 forbid storing it, analysing it or drawing it on the Leaflet map. |
 | D16 | **Competitor points (Phase C) come from a permissively licensed, provenance-documented POI dataset, ranked:** (1) **Overture Maps Places** (CDLA-Permissive-2.0; Foursquare-sourced rows Apache-2.0; monthly GeoParquet on S3/Azure; per-feature `sources[]` and `confidence`; taxonomy entry `veterinarian`), (2) **Foursquare OS Places** (Apache-2.0; also an Overture source), (3) **VIN's member practice directory** (VIN-owned; consent review). OpenStreetMap `amenity=veterinary` (ODbL share-alike) is a coverage cross-check only, pending counsel. Google Places points are lawful only on a Google map (SST §14.1–14.2), which the approved Leaflet design excludes — not pursued. All candidate rows start `unresolved`. | Spec §12 excludes practice-location lists for undocumented provenance; these publish provenance and licence per record. They are storable, renderable on Leaflet and refreshable monthly — the three properties every Google route lacks. |
@@ -2295,8 +2296,9 @@ import httpx
 import pytest
 from httpx import ASGITransport
 
+from app.config import settings
 from app.main import create_app
-from tests.api.conftest import ORIGIN, auth_headers
+from tests.api.conftest import ORIGIN, PW, auth_headers
 
 
 @pytest.fixture
@@ -2324,10 +2326,12 @@ async def test_lists_registry_with_status_and_active_vintage(client, member):
 
 
 async def test_license_decision_updates_registry_and_logs(client, member):
-    # `licence.decide` is in `permissions.REAUTH`, so the session needs a password confirmation
-    # from the last 10 minutes: POST /api/auth/reauth, or stamp `session.reauth_at` directly.
+    # `licence.decide` is in `permissions.REAUTH`, so the session needs a password confirmation from
+    # the last 10 minutes or the answer is `403 REAUTH_REQUIRED` — the same `admin` shape the
+    # Map-engines plan's M4 block uses (Task I9a).
     _aid, cookies, csrf = member(("admin",))
     h = auth_headers(cookies, csrf)
+    assert (await client.post("/api/auth/reauth", headers=h, json={"password": PW})).status_code == 200
     r = await client.post("/api/admin/data-sources/imagery/license", headers=h,
                           json={"status": "cleared", "name": "Esri Imagery — commercial web display", "url": "https://example.test/terms", "notes": "signed 2026-09-05"})
     assert r.status_code == 200 and r.json()["license_status"] == "cleared"
@@ -3517,7 +3521,7 @@ Beat: `"materialize-nightly": {"task": "census.materialize_metrics", "schedule":
 *Amended 2026-09-07 (Wave 2a Task I9a): `app/api/access.py` is **not written** and `app/db.py` and
 `app/config.py`'s `market_data_public` are **reused from Wave 2a** — the setting shipped in Task I3
 and the flag's whole meaning lives in `app.auth.permissions.allowed`, which grants `market.read` to
-`anonymous` while it is set. A `market_access` wrapper would now be a second place where the same
+`anonymous` while it is set. An `app/api/access.py` wrapper would now be a second place where the same
 rule is decided, and the browser's twin (`can('market.read', me, { marketDataPublic })`, fed by
 `GET /api/config`) reads the same one.*
 
@@ -4425,7 +4429,7 @@ Satellite vendor · licensed pet rate vs ACS-derived · isochrones vs straight-l
 | C1 | **Competition layer incoherent.** CBP is county-level; the design renders per-community dots and Low/Moderate/High per community; `vets_per_10k` divided county establishments by catchment households (≈ 66/10k for Travis County vs the design's ≈ 2.5). No rendering/source plan existed for the layer. | High | D11: ZIP Code Business Patterns (`zbp`) aggregated over ZCTAs (A6, B3, B4); ratios computed over one geography; county apportionment fallback labelled derived; `GET /api/layers` + the layer rendering contract; caveat text per §5. |
 | C2 | **Growth joined 2014–2018 tracts (2010 GEOIDs) to 2020 tracts.** Tract definitions changed in 2020; many GEOIDs do not exist in both vintages. | High | D12: growth at place level with county fallback (B4); tract crosswalk deferred (Phase C). |
 | C3 | The design's community figures are city-level (Cedar Park 81,900), but the plan mapped them to `drive_10` catchments without saying so. | Medium | D10: three bands, `place` default for community surfaces, `drive_10` for the panel, `?band=` everywhere. |
-| C4 | **Market endpoints were unauthenticated**, returned a coordinate per listing (an anonymized listing becomes locatable), and enqueued a backfill for any id (queue flooding). | High | D13 + `Depends(require("market.read"))` (*amended 2026-09-07, Task I9a: was `market_access`, now deleted*); `location_disclosed` rule (D8); enqueue only for existing published listings (B5). |
+| C4 | **Market endpoints were unauthenticated**, returned a coordinate per listing (an anonymized listing becomes locatable), and enqueued a backfill for any id (queue flooding). | High | D13 + `Depends(require("market.read"))` (*amended 2026-09-07, Task I9a: was the `app/api/access.py` wrapper, now deleted*); `location_disclosed` rule (D8); enqueue only for existing published listings (B5). |
 | C5 | A cached panel kept a just-blocked layer for up to 24 h, violating "hides within one minute" (§11). | Medium | Gate version counter in every cache key (`gate.invalidate` bumps it) and re-filtering on read (A9, B5). |
 | C6 | The Census API key appeared in `CensusHTTPError` messages/logs; the ZCTA boundary file may be absent from GENZ2023; `4269::geography` cast should transform to 4326; archive-failure semantics unstated. | Medium | `redact()` in A3 with a test; GENZ2020 fallback in A4; `ST_Transform(…,4326)::geography` in B3/B4; archive failure fails the run (boto3 error propagates through `ingest.run`, recorded as `failed`). |
 | C7 | Migration numbers `005`/`006` collided with Sub-project 2's range and could sort before `listing` exists. | Medium | D14 ranges; Phase B → `060`/`061`. |

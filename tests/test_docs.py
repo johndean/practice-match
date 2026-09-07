@@ -718,16 +718,17 @@ def test_identity_runbook_endpoints_exist():
     routers' own parameter names), never with a literal id, and never with a query string inside
     the backticks: the route table holds templates and nothing else.
 
-    The walk is `tests/auth/test_permissions.py::_walk`, imported rather than restated: FastAPI
-    0.141 keeps an included router as a WRAPPER object instead of flattening its routes into
-    `app.routes`, so the obvious `{r.path for r in app.routes}` sees `/robots.txt`, `/` and the SPA
-    catch-all and nothing else — every `/api/*` path reads as absent, which would have made this
-    test fail against a perfectly correct runbook. One walker, in the module whose docstring
-    records that behaviour."""
+    The walk is `tests/conftest.py::walk_routes`, shared rather than restated: FastAPI 0.141 keeps
+    an included router as a WRAPPER object instead of flattening its routes into `app.routes`, so
+    the obvious `{r.path for r in app.routes}` sees `/robots.txt`, `/` and the SPA catch-all and
+    nothing else — every `/api/*` path reads as absent, which would have made this test fail
+    against a perfectly correct runbook. One walker, in the conftest both consumers can reach
+    (I9a review, Minor 4: it used to live in `tests/auth/test_permissions.py`, so reorganising
+    `tests/auth/` would have broken this docs test)."""
     from app.main import app
-    from tests.auth.test_permissions import _walk
+    from tests.conftest import walk_routes
 
-    templates = {path for _method, path, _route in _walk(app.routes)}
+    templates = {path for _method, path, _route in walk_routes(app.routes)}
     runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
     paths = set(re.findall(r"`(?:GET|POST) (/api/[^`\s]+)`", runbook))
     assert paths, "the runbook names no endpoints at all"
@@ -747,3 +748,50 @@ def test_deploy_md_documents_the_resend_dns_records():
     placeholder = "value from the Resend dashboard"
     assert text.count(placeholder) >= 5, f"every VALUE cell must read {placeholder!r} — DKIM x3, SPF, DMARC"
     assert "scripts/bootstrap_admin.py" in text, "the first-admin bootstrap command is undocumented"
+
+
+def _runbook_decision_table() -> dict[str, dict[str, str]]:
+    """`docs/RUNBOOK-identity.md` §3's decision table, keyed by action.
+
+    One row per action, written as `| \\`action\\` | From | To | Note | Email | Effect |` — the same
+    "transcribed server table, pinned back against the server" arrangement
+    `test_the_admin_users_tables_match_the_api` uses for `frontend/src/admin/users.ts`."""
+    text = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    rows: dict[str, dict[str, str]] = {}
+    for line in text.splitlines():
+        m = re.match(r"^\| `(\w+)` \| ([^|]*)\| ([^|]*)\| ([^|]*)\| ([^|]*)\| ([^|]*)\|$", line)
+        if m:
+            action, frm, to, note, email, effect = (g.strip() for g in m.groups())
+            rows[action] = {"from": frm, "to": to, "note": note, "email": email, "effect": effect}
+    return rows
+
+
+def test_the_runbook_decision_table_matches_the_api():
+    """Review Minor 7. §3 of the runbook transcribes three server tables — `TRANSITIONS`,
+    `NOTE_REQUIRED` and `EMAIL` — and until this pin the only thing watching it was the endpoint
+    walk, which cannot see a wrong from-state or a missing "a note is required". An operator reading
+    a stale row would take a 409 or a 422 at click time and have no way to know the page was wrong.
+
+    Deliberately NOT a check that the table is complete in the other direction on `from`: `revoke`'s
+    row says "every state but `revoked`" in prose, so what is pinned for it is that the prose is
+    TRUE of the API (every account state except `revoked`), which is the same fact spelled two ways."""
+    from app.api.admin_users import ACCOUNT_STATES, EMAIL, NOTE_REQUIRED, TRANSITIONS
+
+    table = _runbook_decision_table()
+    assert sorted(table) == sorted(TRANSITIONS), "the runbook's decision table and TRANSITIONS name different actions"
+    for action, row in table.items():
+        allowed_from, to = TRANSITIONS[action]
+        assert row["to"] == f"`{to}`", (action, row["to"])
+        if action == "revoke":
+            assert row["from"] == "every state but `revoked`", row["from"]
+            assert frozenset(ACCOUNT_STATES) - {"revoked"} == allowed_from, "revoke's prose no longer describes TRANSITIONS"
+        else:
+            assert frozenset(re.findall(r"`(\w+)`", row["from"])) == allowed_from, (action, row["from"])
+        required = action in NOTE_REQUIRED
+        assert ("**required**" in row["note"]) is required, (action, row["note"], required)
+        templates = {template for (_kind, act), template in EMAIL.items() if act == action}
+        if templates:
+            missing = sorted(t for t in templates if f"`{t}`" not in row["email"])
+            assert missing == [], f"{action}: the runbook does not name the email(s) it sends: {missing}"
+        else:
+            assert "**none**" in row["email"], f"{action} sends no email; the table must say so"

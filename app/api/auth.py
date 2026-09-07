@@ -287,8 +287,21 @@ def me_payload(conn: psycopg2.extensions.connection, principal: S.Principal) -> 
 @router.post("/auth/signup", status_code=202)
 async def signup(body: Creds, request: Request) -> dict[str, str]:
     """Uniform: a new address and an address already registered get the same 202, the same body and
-    — since fix round 1's Critical 1 — the same commit-level work. Only the new one is created; both
-    queue exactly one outbox row, so the COMMIT pays a WAL flush either way."""
+    — since fix round 1's Critical 1 — the same commit-level work. Only the new one is created; every
+    branch queues exactly one outbox row, so the COMMIT pays a WAL flush either way.
+
+    THREE branches since I9a fix round 1 (Important 4), not two. An address that already exists and
+    is still `unverified` gets its verify link RE-ISSUED, because there was otherwise no way to get
+    a working one: there is no re-send endpoint, `password/forgot` excludes `unverified` on purpose
+    (a reset link would be a way to take over an address whose owner has never proved they hold it),
+    and `decide` has no "verify" action — so an expired 24 h link, or one the QA `EMAIL_ALLOWLIST`
+    suppressed, was a dead end for the applicant and for the operator both. Signing up again is the
+    action a person repeats unprompted, so it is where the re-issue belongs.
+
+    From `verified` onward the answer is still `account_exists` and no token is minted: that account
+    has already proved it holds the address, so a fresh verify link would be a way in rather than a
+    courtesy. And no branch touches `password_hash` — a stranger signing up on somebody's pending
+    address cannot set their password, and the link goes to the address's owner either way."""
     r = sync_redis()
     limits.hit(r, "signup:ip", rate_limit_subject(request), *limits.SIGNUP_IP)
     as_typed, key = _address(body.email)
@@ -299,16 +312,26 @@ async def signup(body: Creds, request: Request) -> dict[str, str]:
     hashed = await P.hash_async(body.password)
     with closing(sync_conn()) as conn, conn:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO account (email, password_hash, state) VALUES (%s,%s,'unverified') ON CONFLICT (email) DO NOTHING RETURNING id", (as_typed, hashed))
-            row = cur.fetchone()
-        if row:
-            token = T.issue_email_token(conn, row[0], "verify", VERIFY_TTL)
+            # `DO UPDATE SET email = account.email`, not `DO NOTHING` (I9a fix round 1, Important 4):
+            # the branch below needs the EXISTING row's state, and this returns exactly one row
+            # whether the INSERT created it or conflicted — no second statement, so no window in
+            # which the row could vanish between the two, and no arm no test could reach. The
+            # "update" writes the column to the value it already holds, so `state` and
+            # `password_hash` are untouched (probed: the same `id` comes back and `password_hash`
+            # stays the first signup's). It also takes the row's lock, which serialises two
+            # simultaneous signups on one address instead of racing them.
+            cur.execute("""INSERT INTO account (email, password_hash, state) VALUES (%s,%s,'unverified')
+                            ON CONFLICT (email) DO UPDATE SET email = account.email
+                            RETURNING id, state""", (as_typed, hashed))
+            account_id, state = cast("tuple[UUID, str]", cur.fetchone())
+        if state == "unverified":
+            token = T.issue_email_token(conn, account_id, "verify", VERIFY_TTL)
             enqueue(conn, to=as_typed, template="verify_email", params={"link": _link("/verify", token)}, idempotency_key=_outbox_key())
         else:
-            # The address is already registered, so its OWNER is told somebody tried to sign up as
-            # them — equal work, and the only useful thing to do with the attempt. Addressed to the
-            # normalised form the caller supplied: `account.email` is citext, so it is the same
-            # mailbox as the stored row, differing at most in case.
+            # The address is already registered AND its owner has proved they hold it, so that owner is told
+            # somebody tried to sign up as them — equal work, and the only useful thing to do with
+            # the attempt. Addressed to the normalised form the caller supplied: `account.email` is
+            # citext, so it is the same mailbox as the stored row, differing at most in case.
             enqueue(conn, to=as_typed, template="account_exists", params={}, idempotency_key=_outbox_key())
     return {"status": "check_email"}
 

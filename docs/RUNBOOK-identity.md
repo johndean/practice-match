@@ -82,14 +82,17 @@ is deliberate.
 
 `POST /api/admin/users/{account_id}/decide` with `{"action": "…", "note": "…"}`.
 
-| Action | From | To | Note | Effect |
-|---|---|---|---|---|
-| `approve` | `pending`, `needs_review` | `active` | optional | grants the application's `kind` role; queues the approval email |
-| `decline` | `pending`, `needs_review` | `declined` | **required** | queues the decline email with your note |
-| `request_info` | `pending` | `needs_review` | **required** | your note becomes the applicant's `info_request`; queues the "we need more from you" email |
-| `suspend` | `active` | `suspended` | **required** | ends every session at once |
-| `reinstate` | `suspended` | `active` | optional | no email |
-| `revoke` | every state but `revoked` | `revoked` | **required** | revokes every role grant and ends every session — **needs re-auth** |
+Every action emails the member except `reinstate` — the Email column names the template, so you can
+find the row in `email_outbox` (§8) and know before you click that the person will hear about it.
+
+| Action | From | To | Note | Email | Effect |
+|---|---|---|---|---|---|
+| `approve` | `pending`, `needs_review` | `active` | optional | `application_approved` (buyer) / `seller_application_approved` | grants the application's `kind` role |
+| `decline` | `pending`, `needs_review` | `declined` | **required** | `application_declined` / `seller_application_declined`, carrying your note | — |
+| `request_info` | `pending` | `needs_review` | **required** | `application_info_requested` (one template for both kinds) | your note becomes the applicant's `info_request` |
+| `suspend` | `active` | `suspended` | **required** | `account_suspended` | ends every session at once |
+| `reinstate` | `suspended` | `active` | optional | **none** | — |
+| `revoke` | every state but `revoked` | `revoked` | **required** | `account_revoked` | revokes every role grant and ends every session — **needs re-auth** |
 
 * A missing note where one is required is `422 NOTE_REQUIRED`; an action the state does not allow is
   a `409`; an unknown action is `422 BAD_ACTION`.
@@ -166,6 +169,12 @@ carries the decision and the reviewer's note and nothing else.
 
 For reproducing a report, and for the paths the account screens call:
 
+* `POST /api/auth/signup` — `{"email": …, "password": …}`, answers `202 {"status": "check_email"}`
+  for every address there is. Worth knowing as an operator because it is **also the re-send path
+  for a verification link**: while the account is still `unverified`, signing up again re-issues a
+  fresh 24 h `verify` token and queues `verify_email` again (I9a fix round 1). It does **not**
+  change the password, and from `verified` onward it sends `account_exists` and mints nothing. §8's
+  table is where this matters.
 * `POST /api/applications` — `{"kind": "buyer"|"seller", "fields": {…}}`, answers `202`. A buyer
   applies from `verified` and the account moves to `pending`. A seller applies from an `active`
   buyer account and the account state does not move. A re-application after a decline is a **new
@@ -198,8 +207,24 @@ request path talks to Resend, so a missing email is one of five things — check
 2. **`status='suppressed'` on QA — the allowlist.** Outside production `EMAIL_ALLOWLIST` is
    fail-closed: an **empty** list delivers to **nobody** and every row is recorded `suppressed`.
    That is what stops a QA sign-up emailing a real person. Add the whole address (not a domain) to
-   `EMAIL_ALLOWLIST` on **both** the api and the worker for that environment, then have the
-   applicant repeat the action — a suppressed row is a finished row and is not retried.
+   `EMAIL_ALLOWLIST` on **both** the api and the worker for that environment. A suppressed row is a
+   finished row and is **not** retried, so the mail has to be caused again — and how depends on
+   which template it was. The same table applies to a row that was genuinely lost (`failed` past
+   its attempts, or `sent` to a mailbox that never received it):
+
+   | Template | How to cause it again |
+   |---|---|
+   | `verify_email` | The person **signs up again on the same address** — `POST /api/auth/signup`. While the account is still `unverified` that re-issues a fresh 24 h `verify` token and queues `verify_email` again (I9a fix round 1), so an expired or suppressed link is never a dead end. Their old link keeps working too, if they still have it. |
+   | `password_reset` | The person uses **Forgot password** — `POST /api/auth/password/forgot` — which always issues a fresh 1 h token and retires the previous one. Works from `verified` and `active` only. |
+   | `account_exists` | Nothing to do: it is a notice to the address's owner that somebody tried to sign up as them, not something they act on. |
+   | `application_received`, `application_info_requested` | The applicant re-submits: `POST /api/applications/{application_id}/answer` from `needs_review`, or a fresh `POST /api/applications` after a decline. |
+   | `application_approved`, `application_declined`, `seller_*`, `account_suspended`, `account_revoked` | **The decision cannot be repeated** — the state machine refuses a second decision from `active`/`declined`/`revoked`, and re-deciding would write a second audit row for one decision. Tell the person directly, and use the audit trail (§6) as the record of what was decided and when. |
+   | `password_changed`, `signin_new_device` | Notices of something that already happened; there is nothing to re-send. |
+
+   Only the first two rows are self-service. If you are tempted to reach into `email_outbox` and set
+   a row back to `queued`, don't: the sender claims rows by `status='queued'` and the row's
+   `idempotency_key` is what stops a double delivery, so hand-editing status is how one person gets
+   two links.
 
 3. **`status='bounced'` or `'complained'` — the suppression list.** Resend's webhook
    (`POST /api/webhooks/resend`) writes both the row status and an `email_suppression` entry:

@@ -162,3 +162,39 @@ def redis(monkeypatch):
     cache.reset()
     yield sync
     cache.reset()
+
+
+def walk_routes(routes, prefix=""):
+    """(method, path, route) for everything mounted on an app, spelled the way
+    `permissions.PUBLIC_ROUTES` spells it — the raw path template (`/{path:path}`), not the compiled
+    `path_format` (`/{path}`).
+
+    FastAPI 0.141 keeps an included router as a WRAPPER object rather than flattening its routes
+    into `app.routes`, so a plain `{r.path for r in app.routes}` sees `/robots.txt`, `/`, the
+    `/_app` mount and the SPA catch-all — and no `/api/*` path at all. The walk recurses through
+    `original_router` and carries the include prefix, which is the only way to see them.
+
+    A `Mount` is recursed into when the mounted app exposes routes of its own (I3 fix round 2
+    observation): `Mount.routes` is `getattr(self.app, "routes", [])`, so a StaticFiles mount
+    yields nothing and falls through to the GET-only line — while a mounted sub-application's
+    write routes are SEEN by the route-guard test instead of being invisible to it.
+
+    Lives here rather than inside `tests/auth/test_permissions.py` (I9a review, Minor 4): it has two
+    consumers now — that file's route-guard and audit drift tests, and
+    `tests/test_docs.py::test_identity_runbook_endpoints_exist` — and a helper reached through
+    another test module's namespace makes a reorganisation of `tests/auth/` break an unrelated docs
+    test. Not a fixture: it is a plain generator, called at module level in places."""
+    from starlette.routing import Mount
+
+    for route in routes:
+        included = getattr(route, "original_router", None)
+        if included is not None:
+            yield from walk_routes(included.routes, prefix + route.include_context.prefix)
+        elif isinstance(route, Mount):
+            if route.routes:
+                yield from walk_routes(route.routes, prefix + route.path)
+            else:
+                yield "GET", prefix + route.path + "/{path:path}", None
+        else:
+            for method in sorted(route.methods):
+                yield method, prefix + route.path, route

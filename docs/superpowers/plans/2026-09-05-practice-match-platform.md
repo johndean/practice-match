@@ -61,7 +61,7 @@
 | `app/checks.py` | `check_db(url)`, `check_redis(url)` → dicts. |
 | `app/api/health.py` | `/api/healthz`, `/api/healthz/deep`, `/api/{path}` 404. |
 | `app/static.py` | SPA serving: `/_app` immutable, files, `index.html` fallback. |
-| `app/main.py` | App factory + wiring. |
+| `app/main.py` | App factory + wiring. *(Amended 2026-09-07, identity Task I9a review Minor 3: every `/api/*` route wired here must carry `Depends(require("<perm>"))` from `app/auth/deps.py` or have its `(method, path)` in `app.auth.permissions.PUBLIC_ROUTES` with a reason — `tests/auth/test_permissions.py::test_every_route_is_guarded_or_public` walks `create_app()` and fails closed on anything that is neither.)* |
 | `app/tasks/celery_app.py` | Celery instance + `ping`. |
 | `migrations/001_init.sql` | `CREATE EXTENSION IF NOT EXISTS postgis;` |
 | `scripts/migrate.py` | Ledger runner (`run(dsn) -> list[str]`, CLI `main()`). |
