@@ -901,3 +901,84 @@ async def test_password_change_leaves_exactly_its_new_session_cached(client, con
     assert cached_principals() == {f"session:{new_hash}"}    # the two old principals are gone
     assert redis.sismember(f"account:{aid}:sessions", new_hash)
     assert (await client.get("/api/me", headers=auth_headers({"pm_session": new_raw}))).status_code == 200
+
+
+# ---------------------------------------------------------------------------------------
+# A-S4.1 (controller ruling, 2026-09-08) — `POST /api/auth/verify/resend`.
+#
+# The account-screens "Check your email" card offers "Send it again". Until now that re-posted
+# `POST /api/auth/signup`, which works for somebody who reached the card BY signing up (the client
+# still holds the password) and not at all for somebody who reached it by SIGNING IN as an
+# unverified account: there is no password in the browser's hand, and the endpoint needs one. The
+# API's uniform 202 hid the failure, so the card claimed to have sent a link that was never issued.
+#
+# This is the missing endpoint. It needs no password because it needs no credential the session
+# does not already carry, and it is `unverified`-only because from `verified` onward a fresh verify
+# link would be a way IN rather than a courtesy — the same reasoning `signup`'s third branch and
+# `password/forgot`'s `RESETTABLE_STATES` already apply.
+# ---------------------------------------------------------------------------------------
+async def test_resend_verification_issues_a_fresh_link_for_an_unverified_account(client, conn, member):
+    _aid, cookies, hdr = member((), state="unverified", email="resend-me@example.org")
+    r = await client.post("/api/auth/verify/resend", headers=auth_headers(cookies, hdr))
+    assert (r.status_code, r.json()) == (202, {"status": "check_email"})
+    rows = await _outbox(conn)
+    assert [row[1] for row in rows] == ["verify_email"]
+    assert rows[0][0] == "resend-me@example.org"
+    assert rows[0][2]["link"].startswith("https://qa.foundation.vin/verify?token=")
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM email_token WHERE purpose='verify' AND used_at IS NULL")
+        assert cur.fetchone() == (1,)
+        # 24 hours, like `signup`'s: the copy on the card says so.
+        cur.execute("SELECT expires_at > now() + interval '23 hours' AND expires_at < now() + interval '25 hours' FROM email_token")
+        assert cur.fetchone() == (True,)
+
+
+async def test_resend_verification_does_not_retire_the_link_already_in_flight(client, conn, member):
+    """Unlike `password/forgot`, which retires the previous reset link. A verification link is not
+    a way into an account — it only proves the address — and somebody who presses "Send it again"
+    while the first mail is still in transit must not be left holding two dead links. `signup`'s
+    re-issue branch behaves the same way, and the seeded fixture tokens the visual oracle consumes
+    depend on it."""
+    _aid, cookies, hdr = member((), state="unverified", email="resend-twice@example.org")
+    assert (await client.post("/api/auth/verify/resend", headers=auth_headers(cookies, hdr))).status_code == 202
+    assert (await client.post("/api/auth/verify/resend", headers=auth_headers(cookies, hdr))).status_code == 202
+    links = [row[2]["link"] for row in await _outbox(conn)]
+    assert len(links) == 2 and links[0] != links[1], "each press mints its own token"
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM email_token WHERE purpose='verify' AND used_at IS NULL")
+        assert cur.fetchone() == (2,), "the earlier link stays usable"
+
+
+async def test_resend_verification_refuses_every_state_but_unverified(client, conn, member):
+    """From `verified` onward the address has already been proved, so a fresh link would be a way
+    in rather than a courtesy; `suspended` and `revoked` may not be signed into at all. A 403 is
+    safe to be specific about here — the caller is the account holder, and telling them their
+    address is already confirmed discloses nothing they do not know."""
+    for state in ("verified", "active", "suspended", "revoked"):
+        _aid, cookies, hdr = member((), state=state, email=f"resend-{state}@example.org")
+        r = await client.post("/api/auth/verify/resend", headers=auth_headers(cookies, hdr))
+        assert (r.status_code, r.json()["error"]["code"]) == (403, "FORBIDDEN"), state
+    assert await _outbox(conn) == []
+
+
+async def test_resend_verification_needs_a_session(client):
+    """`account.self`, like `/api/me`: no cookie, no resend. An unverified principal HOLDS
+    `account.self` — `permissions.effective_roles` makes any non-active account an `applicant`,
+    and `account.self` is granted to every non-anonymous role — which is what lets the one account
+    state that needs this endpoint reach it."""
+    r = await client.post("/api/auth/verify/resend")
+    assert (r.status_code, r.json()["error"]["code"]) == (401, "UNAUTHORIZED")
+
+
+async def test_resend_verification_shares_signup_s_per_address_ceiling(client, conn, member):
+    """The same `SIGNUP_EMAIL` counter (3 per address per day) and the same Redis key, so pressing
+    "Send it again" and signing up again cannot be combined into six mails a day for one address."""
+    _aid, cookies, hdr = member((), state="unverified", email="resend-lim@example.org")
+    for i in range(3):
+        assert (await client.post("/api/auth/verify/resend", headers=auth_headers(cookies, hdr))).status_code == 202, i
+    r = await client.post("/api/auth/verify/resend", headers=auth_headers(cookies, hdr))
+    assert r.status_code == 429 and r.headers["retry-after"] == "86400"
+    # ...and the ceiling is SHARED with signup, keyed by the address rather than by the endpoint.
+    shared = await client.post("/api/auth/signup", json={"email": "resend-lim@example.org", "password": PW},
+                               headers={"x-forwarded-for": _ip()})
+    assert shared.status_code == 429

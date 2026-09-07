@@ -88,6 +88,19 @@ class TokenInvalid(AuthError):
     message = "This link is invalid or has expired."
 
 
+class AddressState(AuthError):
+    """`POST /auth/verify/resend` on an account that is not `unverified` (A-S4.1).
+
+    403 rather than the uniform 202 the ANONYMOUS endpoints answer with: this caller is the account
+    holder, identified by their own session, so there is no address enumeration to protect here —
+    and a silent 202 would tell somebody whose address is already confirmed that a link was on its
+    way when none was. The message stays `AuthError`'s generic one because this branch also catches
+    `suspended` and `revoked`, neither of which is "already confirmed"."""
+
+    status = 403
+    code = "FORBIDDEN"
+
+
 class EmailInvalid(AuthError):
     status = 422
     code = "EMAIL_INVALID"
@@ -333,6 +346,46 @@ async def signup(body: Creds, request: Request) -> dict[str, str]:
             # the attempt. Addressed to the normalised form the caller supplied: `account.email` is
             # citext, so it is the same mailbox as the stored row, differing at most in case.
             enqueue(conn, to=as_typed, template="account_exists", params={}, idempotency_key=_outbox_key())
+    return {"status": "check_email"}
+
+
+@router.post("/auth/verify/resend", status_code=202)
+async def resend_verification(principal: Self, request: Request) -> dict[str, str]:
+    """A fresh 24 h verify link for the signed-in account that has not confirmed its address yet
+    (A-S4.1, controller ruling 2026-09-08).
+
+    Until this existed the only way to re-issue a verify link was to sign up again — which needs
+    the password, and the account-screens "Check your email" card is also where somebody lands
+    after SIGNING IN as an unverified account, where the browser holds no password at all. The
+    card's "Send it again" then posted an empty one, the uniform 202 answered, and nothing was
+    sent. The session already identifies the account; nothing else is needed to mail its own
+    address.
+
+    `unverified` ONLY. From `verified` onward the address has been proved, so a fresh link would be
+    a way IN rather than a courtesy — the same line `signup`'s third branch and `password/forgot`'s
+    `RESETTABLE_STATES` already draw. A 403 rather than a uniform 202 because the caller IS the
+    account holder: there is no enumeration to protect here, and "your address is already
+    confirmed" is the useful answer.
+
+    The ceiling is `signup`'s own `SIGNUP_EMAIL` counter under `signup`'s own Redis key, so the two
+    ways of asking for a verify link share three per address per day rather than adding up to six.
+    No IP counter: this route needs a session, so it is not the anonymous amplification lever
+    `signup` is. Like `signup`'s re-issue, it does NOT retire the link already in flight — a
+    verification link is not a way into an account, and somebody who presses the button while the
+    first mail is still in transit must not end up holding two dead links.
+    """
+    with closing(sync_conn()) as conn, conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT email, state FROM account WHERE id=%s", (principal.account_id,))
+            row = cur.fetchone()
+        # `deps.LEGACY_ADMIN` passes `account.self` and names no `account` row (see
+        # `_password_hash_of`); it is not an unverified applicant, so it is refused with the rest.
+        if row is None or row[1] != "unverified":
+            raise AddressState
+        email = cast("str", row[0])
+        limits.hit(sync_redis(), "signup:email", _lookup_key(email), *limits.SIGNUP_EMAIL)
+        token = T.issue_email_token(conn, principal.account_id, "verify", VERIFY_TTL)
+        enqueue(conn, to=email, template="verify_email", params={"link": _link("/verify", token)}, idempotency_key=_outbox_key())
     return {"status": "check_email"}
 
 
