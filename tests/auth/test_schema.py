@@ -125,8 +125,9 @@ def test_every_at_column_is_timestamptz(conn):
         rows = cur.fetchall()
     # Every *_at/at column across the nine identity tables — a fixed, known count, which is the
     # point: a new one has to be acknowledged here. 22 -> 23 in Task I6 fix round 1, when
-    # `email_outbox.delivered_at` was added (F3).
-    assert len(rows) == 23, rows
+    # `email_outbox.delivered_at` was added (F3); 23 -> 25 in Task I5c, when the applicant's path
+    # back added `application.answered_at` and `application.resubmitted_at`.
+    assert len(rows) == 25, rows
     for table_name, column_name, data_type in rows:
         assert data_type == "timestamp with time zone", f"{table_name}.{column_name} is {data_type}"
 
@@ -145,3 +146,18 @@ def test_purpose_role_status_checks_are_constrained(conn):
             )
         with pytest.raises(psycopg2.errors.CheckViolation):
             cur.execute("INSERT INTO application (account_id, kind, fields, status) VALUES (%s,'buyer','{}','teleported')", (aid,))
+
+
+def test_an_application_carries_the_applicants_answer_and_when_they_re_submitted(conn):
+    """Task I5c (John's ruling, 2026-09-07): the answer to a reviewer's `info_request` is stored on
+    the SAME application row, with the moment it was written and the moment the row went back into
+    the queue. migrations/011 was amended in place — it had never been applied to a persistent
+    database (QA and production serve `main` at b9d01ad, before Wave 2a)."""
+    assert {"answer", "answered_at", "resubmitted_at"} <= set(cols(conn, "application"))
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO account (email, password_hash, state) VALUES ('answer@x.io','h','pending') RETURNING id")
+        aid = cur.fetchone()[0]
+        cur.execute("""INSERT INTO application (account_id, kind, fields, status, info_request, answer,
+                                                answered_at, resubmitted_at)
+                       VALUES (%s,'buyer','{}','pending','Which practice?','Cedar Park', now(), now()) RETURNING answer""", (aid,))
+        assert cur.fetchone() == ("Cedar Park",)

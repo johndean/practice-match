@@ -1171,3 +1171,55 @@ def test_minting_a_token_serialises_against_a_demotion_of_the_minter(conn, scrat
         "the mint read the grants from before the demotion"
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM api_token"); assert cur.fetchone()[0] == 0
+
+
+# --- Task I5c: staff see the applicant's answer and the rows behind the current one ---
+
+
+async def test_staff_detail_shows_answer_and_history(client, conn, member):
+    """The brief's `answered_then_declined_then_reapplied_account`, built from the real endpoints.
+
+    Its assertion is `d["application"]["answer"]` — the CURRENT application's answer — so the
+    account is driven through a second round of questions on the re-applied row: applied →
+    request info → answered → declined → re-applied → request info → answered. `application` is
+    then the open row (answered, `pending`) and `application_history` is the one declined row
+    behind it, which is what a reviewer opening the queue actually sees.
+    """
+    aid, acookies, ahdr = member((), state="verified", email="path-back@example.org")
+    _sid, scookies, shdr = member(("staff",), email="staff@example.org")
+
+    async def decide(action, note):
+        r = await client.post(f"/api/admin/users/{aid}/decide", headers=auth_headers(scookies, shdr),
+                              json={"action": action, "note": note})
+        assert r.status_code == 200, r.text
+
+    async def apply_and_answer(answer):
+        r = await client.post("/api/applications", headers=auth_headers(acookies, ahdr), json={"kind": "buyer", "fields": FIELDS})
+        assert r.status_code == 202, r.text
+        await decide("request_info", "Which practice do you work at now?")
+        answered = await client.post(f"/api/applications/{r.json()['id']}/answer",
+                                     headers=auth_headers(acookies, ahdr), json={"answer": answer})
+        assert answered.status_code == 200, answered.text
+        return r.json()["id"]
+
+    first = await apply_and_answer("Cedar Park Animal Hospital, 2 DVMs")
+    await decide("decline", "Consolidator-adjacent employer.")
+    second = await apply_and_answer("I left the group in March.")
+
+    d = (await client.get(f"/api/admin/users/{aid}", headers=auth_headers(scookies))).json()
+    assert d["application"]["answer"] and len(d["application_history"]) == 1 and d["application_history"][0]["decision"] == "decline"
+    assert d["application"]["id"] == second and d["application"]["status"] == "pending"
+    assert d["application"]["answered_at"] and d["application"]["resubmitted_at"]
+    # The earlier round's answer is not lost when the row closes — staff read it with the history.
+    assert d["application_history"][0]["id"] == first
+    assert d["application_history"][0]["answer"] == "Cedar Park Animal Hospital, 2 DVMs"
+    assert d["application_history"][0]["decision_note"] == "Consolidator-adjacent employer."
+    # `applications` (every row, newest first) is unchanged and still carries both.
+    assert [a["id"] for a in d["applications"]] == [second, first]
+
+
+async def test_the_detail_of_an_account_with_no_application_carries_none_and_an_empty_history(client, conn, member):
+    aid, _c, _h = member(("buyer",), email="no-application@example.org")
+    _sid, scookies, _shdr = member(("staff",), email="staff@example.org")
+    d = (await client.get(f"/api/admin/users/{aid}", headers=auth_headers(scookies))).json()
+    assert d["applications"] == [] and d["application"] is None and d["application_history"] == []

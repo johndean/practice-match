@@ -9,7 +9,14 @@ CREATE TABLE application (
   decided_by uuid REFERENCES account(id),
   decided_at timestamptz,
   decision_note text,
-  info_request text
+  info_request text,
+  -- The applicant's path back (John's ruling, 2026-09-07; spec §Lifecycle, amended). `answer` is
+  -- what they wrote in reply to `info_request`, on the SAME row, and `resubmitted_at` is when the
+  -- row went back into the queue as `pending`. A re-APPLICATION after a decline is a new row, not
+  -- a re-used one, so nothing here is needed for it.
+  answer text,
+  answered_at timestamptz,
+  resubmitted_at timestamptz
 );
 CREATE INDEX application_queue_idx ON application (status, submitted_at);
 

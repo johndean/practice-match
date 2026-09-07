@@ -41,6 +41,7 @@ import redis as redis_sync
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
+from app.api.applications import DECISION
 from app.auth import audit
 from app.auth import permissions as PM
 from app.auth import sessions as S
@@ -469,13 +470,21 @@ async def detail(account_id: UUID, request: Request, principal: DetailViewer) ->
             account = cur.fetchone()
             if account is None:
                 raise NotFound
-            cur.execute("""SELECT id, kind, fields, flags, status, submitted_at, decided_at, decision_note, info_request
+            cur.execute("""SELECT id, kind, fields, flags, status, submitted_at, decided_at, decision_note, info_request,
+                                  answer, answered_at, resubmitted_at
                              FROM application WHERE account_id=%s ORDER BY submitted_at DESC""", (account_id,))
             applications = [
                 {"id": str(r[0]), "kind": r[1], "fields": r[2], "flags": r[3], "status": r[4],
-                 "submitted_at": _iso(r[5]), "decided_at": _iso(r[6]), "decision_note": r[7], "info_request": r[8]}
+                 "submitted_at": _iso(r[5]), "decided_at": _iso(r[6]), "decision_note": r[7], "info_request": r[8],
+                 # The applicant's path back (I5c): the answer they gave to `info_request` and when
+                 # they re-submitted, on the row the question was asked about.
+                 "answer": r[9], "answered_at": _iso(r[10]), "resubmitted_at": _iso(r[11]),
+                 "decision": DECISION.get(r[4])}
                 for r in cur.fetchall()
             ]
+            # The row the reviewer acts on, and the rows behind it. Same rule as the applicant's own
+            # `GET /api/applications/me`: the open row, else the newest there is; never both.
+            current = next((a for a in applications if a["status"] in OPEN_STATUSES), applications[0] if applications else None)
             grants = _grants(cur, account_id)
         # `users.view_detail`, the name of the permission that guards this route — an auditor greps
         # `audit_log` for the permission, and the shortened `users.view` this used to write matched
@@ -485,6 +494,8 @@ async def detail(account_id: UUID, request: Request, principal: DetailViewer) ->
         "account": {"id": str(account[0]), "email": account[1], "state": account[2], "name": account[3],
                     "affiliation_label": account[4], "created_at": account[5].isoformat(), "last_sign_in_at": _iso(account[6])},
         "applications": applications,
+        "application": current,
+        "application_history": [a for a in applications if a is not current],
         "roles": [g["role"] for g in grants],
         "grants": grants,
     }

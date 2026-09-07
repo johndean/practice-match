@@ -122,16 +122,20 @@ async def test_a_second_seller_application_while_one_is_open_is_refused(client, 
         cur.execute("SELECT count(*) FROM application"); assert cur.fetchone()[0] == 1
 
 
-async def test_applications_me_returns_the_latest_row_per_kind(client, conn, member):
+async def test_applications_me_returns_the_open_row_and_the_history(client, conn, member):
+    """Reshaped in I5c from "the latest row per kind" to `{current, history}` (brief Step 3): the
+    applicant's own screen needs the row it can ACT on (answer, or re-apply behind it) and the
+    closed rows behind it, and `kind` now travels on each entry rather than being the key."""
     _aid, cookies, hdr = member((), state="verified", email="mine@example.org")
-    assert (await client.get("/api/applications/me", headers=auth_headers(cookies))).json() == {}
+    assert (await client.get("/api/applications/me", headers=auth_headers(cookies))).json() == {"current": None, "history": []}
     await client.post("/api/applications", headers=auth_headers(cookies, hdr), json={"kind": "buyer", "fields": FIELDS})
     with conn.cursor() as cur:
         cur.execute("UPDATE application SET status='needs_review', info_request='Which practice?'")
     body = (await client.get("/api/applications/me", headers=auth_headers(cookies))).json()
-    assert set(body) == {"buyer"}
-    assert body["buyer"]["status"] == "needs_review" and body["buyer"]["info_request"] == "Which practice?"
-    assert body["buyer"]["submitted_at"]
+    assert set(body) == {"current", "history"} and body["history"] == []
+    assert body["current"]["kind"] == "buyer"
+    assert body["current"]["status"] == "needs_review" and body["current"]["info_request"] == "Which practice?"
+    assert body["current"]["submitted_at"] and body["current"]["answer"] is None
 
 
 async def test_flags_are_empty_when_nothing_matches_and_when_no_keywords_are_configured(client, conn, member, monkeypatch):
@@ -157,7 +161,7 @@ async def test_the_legacy_operator_bearer_names_no_account_and_cannot_apply(clie
     for kind, fields in (("buyer", FIELDS), ("seller", SELLER_FIELDS)):
         r = await client.post("/api/applications", headers=bearer, json={"kind": kind, "fields": fields})
         assert (r.status_code, r.json()["error"]["code"]) == (401, "UNAUTHORIZED"), kind
-    assert (await client.get("/api/applications/me", headers=bearer)).json() == {}
+    assert (await client.get("/api/applications/me", headers=bearer)).json() == {"current": None, "history": []}
 
 
 # The vendored blocklist, pinned the way `tests/auth/test_passwords.py` pins `top100k.txt`: a
@@ -180,3 +184,199 @@ def test_the_disposable_domain_list_is_vendored_with_its_provenance():
     provenance = (Path(flags.DATA).parent / "PROVENANCE.md").read_text(encoding="utf-8")
     assert "disposable_domains.txt" in provenance and LIST_SHA256 in provenance and LIST_COMMIT in provenance
     assert json.dumps(sorted(flags._disposable()))  # a plain frozenset of str, nothing exotic
+
+
+# --- Task I5c: the applicant's path back (John's ruling, 2026-09-07) ---
+#
+# The brief's Step 1 names fixtures that do not exist here (`needs_review_applicant`,
+# `pending_applicant`, `declined_applicant`, `other_session`, `buyer_application_body`). They are
+# built from `member` + the real staff decision endpoint instead — going through
+# `POST /api/admin/users/{id}/decide` rather than UPDATE-ing the row by hand is what makes
+# `info_request`, `decision_note` and the account state actually match what a reviewer produces.
+# The brief's assertions are reproduced exactly.
+
+
+async def _open_application(client, member, email, kind="buyer", fields=None):
+    """A verified account with one open buyer application: `(account_id, cookies, headers, app_id)`."""
+    aid, cookies, hdr = member((), state="verified", email=email)
+    r = await client.post("/api/applications", headers=auth_headers(cookies, hdr),
+                          json={"kind": kind, "fields": fields or FIELDS})
+    assert r.status_code == 202, r.text
+    return aid, cookies, hdr, r.json()["id"]
+
+
+async def _decide(client, staff, account_id, action, note):
+    scookies, shdr = staff
+    r = await client.post(f"/api/admin/users/{account_id}/decide", headers=auth_headers(scookies, shdr),
+                          json={"action": action, "note": note})
+    assert r.status_code == 200, r.text
+    return r
+
+
+def _staff(member, email="staff-i5c@example.org"):
+    _sid, scookies, shdr = member(("staff",), email=email)
+    return scookies, shdr
+
+
+def _one(conn, sql, params=()):
+    with conn.cursor() as cur:
+        cur.execute(sql, params)
+        return cur.fetchone()
+
+
+async def test_applicant_answers_and_resubmits(client, conn, member):
+    aid, cookies, hdr, app_id = await _open_application(client, member, "answer@example.org")
+    await _decide(client, _staff(member), aid, "request_info", "Which practice?")
+    assert (await client.get("/api/applications/me", headers=auth_headers(cookies))).json()["current"]["info_request"] == "Which practice?"
+
+    r = await client.post(f"/api/applications/{app_id}/answer", headers=auth_headers(cookies, hdr),
+                          json={"answer": "Cedar Park Animal Hospital, 2 DVMs"})
+    assert r.status_code == 200 and r.json() == {"status": "pending"}
+    assert (await client.get("/api/me", headers=auth_headers(cookies))).json()["state"] == "pending"
+
+    status, answer, answered_at, resubmitted_at = _one(
+        conn, "SELECT status, answer, answered_at, resubmitted_at FROM application WHERE id=%s", (app_id,))
+    assert status == "pending" and answer.startswith("Cedar Park")
+    assert answered_at is not None and resubmitted_at is not None
+
+    assert _one(conn, "SELECT target_id, target_type FROM audit_log WHERE action='applications.answer'") == (app_id, "application")
+    template, key = _one(conn, "SELECT template, idempotency_key FROM email_outbox ORDER BY id DESC LIMIT 1")
+    assert template == "application_received" and key.endswith(f":{app_id}:2")
+
+
+async def test_answer_requires_needs_review_and_ownership(client, conn, member):
+    _pending_aid, pcookies, phdr, pending_id = await _open_application(client, member, "still-pending@example.org")
+    assert (await client.post(f"/api/applications/{pending_id}/answer", headers=auth_headers(pcookies, phdr),
+                              json={"answer": "x"})).status_code == 409
+
+    nr_aid, _nrcookies, _nrhdr, nr_id = await _open_application(client, member, "asked@example.org")
+    await _decide(client, _staff(member), nr_aid, "request_info", "Which practice?")
+    # Somebody else's application, in the one status that WOULD accept an answer: a uniform 404,
+    # never a 403 — the design's non-enumeration stance (spec §3/A5).
+    other = await client.post(f"/api/applications/{nr_id}/answer", headers=auth_headers(pcookies, phdr), json={"answer": "x"})
+    assert other.status_code == 404 and other.json()["error"]["code"] == "NOT_FOUND"
+    assert _one(conn, "SELECT status FROM application WHERE id=%s", (nr_id,)) == ("needs_review",)
+
+
+async def test_declined_applicant_reapplies(client, conn, member):
+    aid, cookies, hdr, old_id = await _open_application(client, member, "declined@example.org")
+    await _decide(client, _staff(member), aid, "decline", "Not enough detail.")
+
+    r = await client.post("/api/applications", headers=auth_headers(cookies, hdr), json={"kind": "buyer", "fields": FIELDS})
+    assert r.status_code == 202 and r.json()["id"] != old_id
+    assert (await client.get("/api/me", headers=auth_headers(cookies))).json()["state"] == "pending"
+
+    body = (await client.get("/api/applications/me", headers=auth_headers(cookies))).json()
+    assert [h["status"] for h in body["history"]] == ["declined"] and body["current"]["status"] == "pending"
+    assert body["history"][0]["decision"] == "decline" and body["history"][0]["reason"] == "Not enough detail."
+    assert body["history"][0]["decided_at"]
+    assert _one(conn, "SELECT target_id FROM audit_log WHERE action='applications.reapply'") == (r.json()["id"],)
+    assert _one(conn, "SELECT count(*) FROM application WHERE account_id=%s", (aid,)) == (2,)
+
+
+async def test_one_open_application_per_account(client, conn, member):
+    _aid, cookies, hdr, _app_id = await _open_application(client, member, "one-open@example.org")
+    assert (await client.post("/api/applications", headers=auth_headers(cookies, hdr),
+                              json={"kind": "buyer", "fields": FIELDS})).status_code == 409
+
+
+# --- supplemental (not in the brief's Step 1 — John's 100 % line-AND-branch ruling) ---
+
+
+async def test_the_open_application_rule_is_per_account_not_per_kind(client, conn, member):
+    """`decide` acts on the account's latest OPEN application whatever its kind, so two open rows
+    of different kinds would make a staff decision ambiguous. One open row per ACCOUNT (spec
+    §Lifecycle, amended 2026-09-07), not one per kind as the check read before I5c."""
+    aid, cookies, hdr = member(("buyer",), email="cross-kind@example.org")
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO application (account_id, kind, fields, status) VALUES (%s,'buyer',%s,'needs_review')",
+                    (aid, json.dumps(FIELDS)))
+    r = await client.post("/api/applications", headers=auth_headers(cookies, hdr),
+                          json={"kind": "seller", "fields": SELLER_FIELDS})
+    assert r.status_code == 409 and r.json()["error"]["code"] == "STATE"
+
+
+async def test_a_second_round_of_questions_gets_its_own_email_cause(client, conn, member):
+    """The idempotency key is `{account}:{template}:{application}:{n}`; a second re-submission of
+    the SAME row must not collide with the first, or the applicant's second confirmation is
+    silently dropped by `ON CONFLICT DO NOTHING`."""
+    aid, cookies, hdr, app_id = await _open_application(client, member, "twice-asked@example.org")
+    staff = _staff(member)
+    for n, answer in ((2, "Cedar Park Animal Hospital"), (3, "Two DVMs, one practice")):
+        await _decide(client, staff, aid, "request_info", "More, please.")
+        r = await client.post(f"/api/applications/{app_id}/answer", headers=auth_headers(cookies, hdr), json={"answer": answer})
+        assert r.status_code == 200
+        assert _one(conn, "SELECT idempotency_key FROM email_outbox ORDER BY id DESC LIMIT 1")[0].endswith(f":{app_id}:{n}")
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM email_outbox WHERE template='application_received'")
+        assert cur.fetchone()[0] == 3  # the original submission plus two re-submissions
+        cur.execute("SELECT count(*) FROM audit_log WHERE action='applications.answer'")
+        assert cur.fetchone()[0] == 2
+
+
+async def test_a_blank_answer_is_refused_and_leaves_the_row_under_review(client, conn, member):
+    """Staff asked a question; whitespace is not an answer, and must not put the row back in the
+    queue as though one had been given."""
+    aid, cookies, hdr, app_id = await _open_application(client, member, "blank@example.org")
+    await _decide(client, _staff(member), aid, "request_info", "Which practice?")
+    r = await client.post(f"/api/applications/{app_id}/answer", headers=auth_headers(cookies, hdr), json={"answer": "   "})
+    assert r.status_code == 422 and r.json()["error"]["code"] == "INVALID_REQUEST"
+    assert _one(conn, "SELECT status FROM application WHERE id=%s", (app_id,)) == ("needs_review",)
+    long = await client.post(f"/api/applications/{app_id}/answer", headers=auth_headers(cookies, hdr), json={"answer": "y" * 4_001})
+    assert long.status_code == 422 and long.json()["error"]["code"] == "INVALID_REQUEST"
+
+
+async def test_an_unknown_application_id_is_the_same_404(client, conn, member):
+    from uuid import uuid4
+    _aid, cookies, hdr, _app_id = await _open_application(client, member, "unknown-app@example.org")
+    r = await client.post(f"/api/applications/{uuid4()}/answer", headers=auth_headers(cookies, hdr), json={"answer": "x"})
+    assert r.status_code == 404 and r.json()["error"]["code"] == "NOT_FOUND"
+
+
+async def test_the_legacy_operator_bearer_names_no_account_and_cannot_answer(client, conn):
+    """`deps.LEGACY_ADMIN` passes `account.self` and names no `account` row (Task I9 deletes it).
+    The refusal is the generic 401, exactly as it is for submitting."""
+    from uuid import uuid4
+
+    from app.config import settings
+    r = await client.post(f"/api/applications/{uuid4()}/answer", headers={"Authorization": f"Bearer {settings.api_secret_key}"},
+                          json={"answer": "x"})
+    assert (r.status_code, r.json()["error"]["code"]) == (401, "UNAUTHORIZED")
+
+
+async def test_applications_me_falls_back_to_the_latest_closed_row_when_nothing_is_open(client, conn, member):
+    """No open row: `current` is the newest row there is (the approved buyer application), and the
+    rows behind it are the history — a row is never in both."""
+    aid, cookies, hdr, buyer_id = await _open_application(client, member, "closed-only@example.org")
+    staff = _staff(member)
+    await _decide(client, staff, aid, "request_info", "Which practice?")
+    await client.post(f"/api/applications/{buyer_id}/answer", headers=auth_headers(cookies, hdr), json={"answer": "Cedar Park"})
+    await _decide(client, staff, aid, "approve", "")
+    seller = await client.post("/api/applications", headers=auth_headers(cookies, hdr), json={"kind": "seller", "fields": SELLER_FIELDS})
+    assert seller.status_code == 202
+    await _decide(client, staff, aid, "decline", "Not this year.")
+
+    body = (await client.get("/api/applications/me", headers=auth_headers(cookies))).json()
+    assert body["current"]["id"] == seller.json()["id"] and body["current"]["kind"] == "seller" and body["current"]["status"] == "declined"
+    assert [(h["kind"], h["status"], h["decision"]) for h in body["history"]] == [("buyer", "approved", "approve")]
+    assert body["history"][0]["answer"] == "Cedar Park"
+
+
+async def test_a_seller_answer_leaves_the_account_active_and_queues_the_seller_template(client, conn, member):
+    """A seller application reaches `needs_review` from an account that stays `active` (the
+    decision table's seller override). Answering it must not move the account to `pending` — that
+    would strip the buyer role on the very next request."""
+    aid, cookies, hdr = member(("buyer",), email="seller-answer@example.org")
+    r = await client.post("/api/applications", headers=auth_headers(cookies, hdr), json={"kind": "seller", "fields": SELLER_FIELDS})
+    assert r.status_code == 202
+    app_id = r.json()["id"]
+    await _decide(client, _staff(member), aid, "request_info", "Which practice?")
+    assert _one(conn, "SELECT status FROM application WHERE id=%s", (app_id,)) == ("needs_review",)
+
+    answered = await client.post(f"/api/applications/{app_id}/answer", headers=auth_headers(cookies, hdr),
+                                 json={"answer": "Cedar Park Animal Hospital"})
+    assert answered.status_code == 200 and answered.json() == {"status": "pending"}
+    me = (await client.get("/api/me", headers=auth_headers(cookies))).json()
+    assert me["state"] == "active" and me["roles"] == ["buyer"]
+    template, key = _one(conn, "SELECT template, idempotency_key FROM email_outbox ORDER BY id DESC LIMIT 1")
+    assert template == "seller_application_received" and key.endswith(f":{app_id}:2")

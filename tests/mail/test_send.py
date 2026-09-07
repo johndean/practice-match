@@ -233,3 +233,34 @@ def test_the_session_purge_follows_the_resolvers_windows_rather_than_a_copy(conn
     assert MT.purge_sessions() == {"purged": 2}
     with conn.cursor() as cur:
         cur.execute("SELECT id_hash FROM session"); assert cur.fetchall() == [("live",)]
+
+
+def test_a_re_submitted_application_is_a_second_send_not_a_deduplicated_one(conn, monkeypatch):
+    """Task I5c. An applicant who answers a reviewer's question is confirmed with
+    `application_received` again — the same template, to the same address, about the SAME
+    application row. The idempotency key therefore carries a new cause
+    (`{account}:{template}:{application}:{n}`, `n` counting submissions of that row); without it
+    `enqueue`'s `ON CONFLICT DO NOTHING` drops the second confirmation silently, and Resend's own
+    `Idempotency-Key` would drop it again if it did not.
+    """
+    keys: list[str] = []
+
+    def handler(req: httpx.Request) -> httpx.Response:
+        keys.append(req.headers["Idempotency-Key"])
+        return httpx.Response(200, json={"id": f"re_{len(keys)}"})
+
+    monkeypatch.setattr(settings, "resend_api_key", "re_test")
+    monkeypatch.setattr(settings, "email_allowlist", "applicant@example.org")
+    monkeypatch.setattr(settings, "environment", "qa")
+    monkeypatch.setattr(MT, "_http", lambda: httpx.Client(transport=httpx.MockTransport(handler)))
+
+    account, application = "b0a1c2d3", "9f8e7d6c"
+    first = f"{account}:application_received:{application}"
+    second = f"{first}:2"
+    for key in (first, second):
+        assert OB.enqueue(conn, to="applicant@example.org", template="application_received", params={}, idempotency_key=key) is True
+    # ...and the same cause a second time is still one row, which is what makes the new cause necessary.
+    assert OB.enqueue(conn, to="applicant@example.org", template="application_received", params={}, idempotency_key=second) is False
+
+    assert MT.send_due() == {"sent": 2, "suppressed": 0, "failed": 0, "retried": 0}
+    assert keys == [first, second]

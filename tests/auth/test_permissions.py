@@ -405,3 +405,34 @@ def test_the_audited_action_rule_rejects_a_near_miss_name(dist):
     # `tokens.revoke` and nothing else of its own accord.
     assert near_miss not in {a for allowed in CASCADED_ACTIONS.values() for a in allowed}
     assert CASCADED_ACTIONS["roles.grant"] == frozenset({"tokens.revoke"})
+
+
+# --- Task I5c (2026-09-07): the applicant's own audit actions are OUTSIDE this test's reach ---
+
+
+def test_the_applicant_facing_audit_actions_name_no_permission_and_are_not_watched(dist):
+    """`application.submit`, `applications.answer` and `applications.reapply` are written by routes
+    guarded by `account.self`, which is not in `AUDITED` — spec §4 audits staff decisions, grants,
+    token events, resets, sign-in failure bursts and application-detail VIEWS, not an applicant
+    acting on their own row. The drift test above therefore never sees these three, and there is no
+    list for I5c to add them to.
+
+    Written down because the I5c brief asked for one ("`app/auth/audit.py` action names
+    (`applications.answer`, `applications.reapply`) + the AST drift test list"): the reason there is
+    nothing to add is that these actions name no permission BY DESIGN, and putting them in
+    `CASCADED_ACTIONS` — which is keyed by an AUDITED permission — would assert the opposite.
+    """
+    from app.api import applications as A
+    from app.main import create_app
+
+    assert (A.ANSWER_ACTION, A.REAPPLY_ACTION) == ("applications.answer", "applications.reapply")
+    assert not {A.ANSWER_ACTION, A.REAPPLY_ACTION, "application.submit"} & set(PM.MATRIX)
+    assert "account.self" not in PM.AUDITED
+    watched = {(method, path) for method, path, route in _walk(create_app(dist=dist).routes)
+               if any(perm in PM.AUDITED for perm in _permissions_of(route))}
+    assert ("POST", "/api/applications") not in watched
+    assert ("POST", "/api/applications/{application_id}/answer") not in watched
+    # ...and the route really is mounted and really is guarded, so this is "not watched", not "not there".
+    guarded = {(method, path) for method, path, route in _walk(create_app(dist=dist).routes)
+               if "account.self" in _permissions_of(route)}
+    assert ("POST", "/api/applications/{application_id}/answer") in guarded
