@@ -523,6 +523,8 @@ def test_the_playwright_persona_password_default_matches_seed_persona():
     assert presented.group(1) == seeded.group(1)
 
 
+@pytest.mark.xfail(strict=True, reason="Task S5 adds FIXTURE_TOKEN_PREFIX and the three state emails to "
+                                        "frontend/tests/harness.ts; remove this marker there")
 def test_the_harness_fixture_tokens_match_the_seed_scripts_pattern_and_the_three_new_state_emails():
     """Task S3/S5, same shape as the password pin above: `scripts/seed_persona.py`'s
     `FIXTURE_TOKENS` names the account and the `fixture-<purpose>-{n:02d}` pattern the visual
@@ -531,7 +533,10 @@ def test_the_harness_fixture_tokens_match_the_seed_scripts_pattern_and_the_three
 
     S3 ships only the seed side; the harness half (`FIXTURE_TOKEN_PREFIX` and the three new
     `*@practice-match.test` emails in `frontend/tests/harness.ts`) is Task S5's to add — so THIS
-    half of the pin is the one RED test S3 leaves behind on purpose, named in the task report."""
+    half of the pin is expected to fail until then (`xfail(strict=True)`: passes as an expected
+    failure today, and turns into a hard failure — XPASS — the moment S5 adds the constants,
+    which is exactly S5's RED; S5's GREEN is removing this marker). Every commit stays green on
+    its own this way, per the controller's residual on the S3 report."""
     from scripts import seed_persona
 
     assert seed_persona.FIXTURE_TOKENS == {
