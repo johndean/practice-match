@@ -19,7 +19,10 @@
 # archive its HEAD, and hand the CLI a plain directory with no `.git` to mis-resolve.
 # To deploy a branch: `scripts/deploy.sh QA .worktrees/<branch>`.
 #
-# Exit codes: 64 usage (bad environment, or a SOURCE_DIR that is not a git working tree)
+# Exit codes: 64 usage — a bad environment, or a SOURCE_DIR that is not a directory, is not
+#                a git working tree (a bare repository and a bare `.git` directory are not),
+#                has no commits, or whose committed tree carries no readable
+#                [project].version. Each of these says which. (Same list as DEPLOY.md.)
 #             65 the linked Railway project is not Practice Match (the 🚦 guard)
 #             66 SOURCE_DIR has uncommitted changes to tracked files
 #             67 the upload created no deployment, or the deployment did not reach SUCCESS
@@ -221,6 +224,11 @@ await_deployment() {
         echo "STOP: the $svc deployment for $env ended $status. Logs: railway logs --service $svc --environment $env --lines 100" >&2
         exit 67 ;;
     esac
+    # Deliberately NOT terminal: any other status — BUILDING, DEPLOYING, INITIALIZING, a
+    # SLEEPING serverless service, or whatever Railway adds next — keeps polling to the
+    # 15-minute bound and then exits 67. Guessing that an unfamiliar status means "done" is
+    # the one thing this fallback must never do; waiting out the bound is the fail-closed
+    # cost of not guessing, and DEPLOY_POLL_TIMEOUT is there to shorten it.
     if (( waited >= settle )); then
       echo "STOP: the $svc deployment for $env was still ${status:-UNKNOWN} after ${waited}s (bound ${settle}s); not calling that a good deploy" >&2
       exit 67
