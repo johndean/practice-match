@@ -336,6 +336,11 @@ def test_deploy_md_documents_the_archive_upload_and_the_new_exit_codes():
     assert "upload did not create a deployment" in text, "the fail-closed upload guard is undocumented"
     assert "strictly newer" in text, "the createdAt baseline rule is undocumented"
     assert "EXPECT_VERSION" in text, "the verifier's artefact check is undocumented"
+    # M2: the verifier's defaults are its own checkout's, so a hand-run after a SOURCE_DIR
+    # deploy needs both knobs passed explicitly or it fails a perfectly good deploy.
+    assert "EXPECT_SHA=<sha> EXPECT_VERSION=<version> scripts/verify-deploy.sh QA" in text, (
+        "the ready-to-paste re-verify line for a SOURCE_DIR deploy is undocumented"
+    )
 
 
 def test_claude_md_traffic_light_block_records_the_archive_upload():

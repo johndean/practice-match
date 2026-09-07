@@ -136,6 +136,12 @@ grep -q -- '--path-as-root' "$FAKE_LOG" || fail "railway up must pass --path-as-
 grep -q -- "--environment QA --service api" "$FAKE_LOG" || fail "api not deployed to QA"
 grep -q -- "--environment QA --service worker" "$FAKE_LOG" || fail "worker not deployed to QA"
 
+# M2: the verifier defaults EXPECT_SHA/EXPECT_VERSION to ITS OWN checkout, so a hand-run
+# after a SOURCE_DIR deploy would demand the wrong tree and fail a good deploy. deploy.sh
+# must hand the operator the line that does not.
+[[ "$out" == *"EXPECT_SHA=$repo_sha EXPECT_VERSION=9.9.9 scripts/verify-deploy.sh QA"* ]] \
+  || fail "a successful deploy must echo the ready-to-paste re-verify line; got: $out"
+
 # --- 2. BUILD_SHA travels inside the archive ------------------------------------
 grep -q "^UPLOAD_BUILD_SHA $repo_sha$" "$FAKE_LOG" \
   || fail "BUILD_SHA must carry SOURCE_DIR's short HEAD ($repo_sha); got: $(grep '^UPLOAD_BUILD_SHA' "$FAKE_LOG" || echo none)"

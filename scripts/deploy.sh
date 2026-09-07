@@ -202,3 +202,7 @@ for svc in api worker; do
   fi
 done
 [[ -n "${SKIP_VERIFY:-}" ]] || EXPECT_SHA="$SHA" EXPECT_VERSION="$VERSION" scripts/verify-deploy.sh "$ENV"
+# verify-deploy.sh defaults EXPECT_SHA/EXPECT_VERSION to ITS OWN checkout, so a later hand-run
+# after a SOURCE_DIR deploy would demand this checkout's tree and fail a perfectly good deploy
+# (M2). Hand over the line that does not.
+echo "→ to re-verify this deploy later: EXPECT_SHA=$SHA EXPECT_VERSION=$VERSION scripts/verify-deploy.sh $ENV"
