@@ -5964,6 +5964,80 @@ Run: `poetry run pytest tests/test_static.py tests/test_health.py -q -W error` �
 
 ---
 
+### Task 15: Latency gates survive a stalled shared runner without a weaker budget (hotfix, 2026-09-08)
+
+**Why.** `tests/perf/test_api_latency.py::test_interest_stored_path_p95_within_budget` failed on the johndean repository's CI for main @ 27bfc0f (p95 114.6 ms over 100 ms) while the identical commit passed on vin-swe: 45 of 50 samples at 7 ms and five spikes of 53–150 ms — a shared runner stalled while two repositories' jobs raced, exactly the "stalled runner shows as a block" the test's own docstring predicted after the same flake on 2026-09-07. The budgets are right (steady state is 7 ms); the MEASUREMENT must tell a stalled box from a slow endpoint. Rule: **a regression fails twice; a stalled runner does not.** Every p95 gate measures once and, only if that first p95 is over budget, measures once more and asserts the second — both sample sets are printed and named in the failure message, so a real regression still fails, loudly, with evidence. The budgets do not move.
+
+**Files:**
+- Create: `tests/perf/gate.py` (`gate_p95`), `tests/perf/test_gate.py`
+- Modify: `tests/perf/test_api_latency.py` (every gate — `test_p95_within_budget`, `test_anonymous_well_formed_bearer_p95_within_budget`, `test_interest_stored_path_p95_within_budget`, the sign-up / sign-in / cold-`/api/me` gates — measures through `gate_p95`), `docs/superpowers/specs/2026-09-05-quality-and-performance-policy.md` (§3 API-latency row), `tests/test_docs.py` (pin), `.github/workflows/quality.yml` only if `tests/perf` needs a marker (it does not: `gate.py` is a plain module under `tests/`)
+
+**Interfaces:**
+- Produces: `async def gate_p95(measure: Callable[[], Awaitable[list[float]]], budget_ms: float, *, label: str) -> float` — runs `measure()` (which returns the 50 samples in ms after its own warm-ups); if `p95_of(samples) <= budget_ms` returns it; otherwise runs `measure()` once more, prints `f"{label}: first p95 {a:.1f} ms over {budget_ms} ms — re-measured: p95 {b:.1f} ms; samples first {…} second {…}"`, and asserts `b <= budget_ms` with that message. `p95_of` moves into `gate.py` (re-exported from `test_api_latency.py` for the one Census/Map import path the M7 ruling named).
+
+- [ ] **Step 1: Failing tests** — `tests/perf/test_gate.py`:
+  ```python
+  import pytest
+  from tests.perf.gate import gate_p95, p95_of
+
+  async def _measure_seq(runs):
+      it = iter(runs)
+      async def measure():
+          return next(it)
+      return measure
+
+  async def test_passes_first_time_without_a_second_measurement(capsys):
+      calls = []
+      async def measure():
+          calls.append(1); return [5.0] * 50
+      assert await gate_p95(measure, 100, label="x") == 5.0
+      assert calls == [1]
+
+  async def test_a_stalled_first_run_is_re_measured_once_and_passes(capsys):
+      measure = await _measure_seq([[7.0] * 45 + [150.0, 112.0, 120.0, 116.0, 53.0], [7.0] * 50])
+      got = await gate_p95(measure, 100, label="/api/interest")
+      assert got == 7.0
+      out = capsys.readouterr().out
+      assert "first p95" in out and "re-measured" in out and "150" in out
+
+  async def test_a_regression_fails_twice_with_both_sample_sets(capsys):
+      measure = await _measure_seq([[130.0] * 50, [128.0] * 50])
+      with pytest.raises(AssertionError) as e:
+          await gate_p95(measure, 100, label="/api/interest")
+      assert "re-measured: p95 128.0 ms" in str(e.value) and "first p95 130.0" in str(e.value)
+
+  def test_p95_of_is_the_95th_percentile_by_rank():
+      assert p95_of([float(i) for i in range(1, 101)]) == 95.0
+  ```
+- [ ] **Step 2: RED** — `poetry run pytest tests/perf/test_gate.py -q` → FAIL (`No module named tests.perf.gate`).
+- [ ] **Step 3: Implement** `tests/perf/gate.py`:
+  ```python
+  """The p95 gate every latency test asserts through. A regression fails twice; a stalled shared runner does not (Task 15, 2026-09-08)."""
+  from collections.abc import Awaitable, Callable
+
+  def p95_of(samples: list[float]) -> float:
+      ordered = sorted(samples)
+      return ordered[max(0, int(round(0.95 * len(ordered))) - 1)]
+
+  async def gate_p95(measure: Callable[[], Awaitable[list[float]]], budget_ms: float, *, label: str) -> float:
+      first = await measure()
+      a = p95_of(first)
+      if a <= budget_ms:
+          return a
+      second = await measure()
+      b = p95_of(second)
+      msg = (f"{label}: first p95 {a:.1f} ms over {budget_ms:g} ms — re-measured: p95 {b:.1f} ms; "
+             f"samples first {[round(x) for x in first]} second {[round(x) for x in second]}")
+      print("\n" + msg)
+      assert b <= budget_ms, msg
+      return b
+  ```
+  Keep `p95_of`'s existing rank arithmetic if it differs — move the existing function verbatim and make the test match it. Then route every gate in `test_api_latency.py` through `gate_p95` (each test's loop becomes the `measure()` closure it hands in; warm-ups stay inside `measure()` so a re-measurement is warm too; row cleanup stays in the test's `finally`). Policy §3 row: "50 sequential requests per endpoint through the ASGI client after warm-up; asserts p95 — when the first p95 is over budget the endpoint is measured once more and the second decides (a regression fails twice; a stalled shared runner does not), both sample sets printed". `tests/test_docs.py`: pin that sentence and that `gate_p95` is imported by `test_api_latency.py`.
+- [ ] **Step 4: GREEN** — `poetry run pytest tests/perf tests/test_docs.py -q`; the full backend gate `poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov-fail-under=100`; `ruff check app tests scripts`.
+- [ ] **Step 5: Commit** — `test(perf): a regression fails twice, a stalled runner does not — every p95 gate re-measures once before failing (Task 15)`.
+
+---
+
 ## Red-team review (2026-09-05) — findings and dispositions
 
 | # | Finding | Severity | Disposition |
