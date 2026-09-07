@@ -49,7 +49,7 @@ def test_revocation_is_effective_on_the_next_request(conn, redis):
     aid = _member(conn)
     raw = S.create(conn, redis, aid, None, None)
     assert S.resolve(conn, redis, raw)
-    S.revoke_all(conn, redis, aid)
+    S.revoke_all_cache(redis, aid, S.revoke_all(conn, aid))
     assert S.resolve(conn, redis, raw) is None
     raw2 = S.create(conn, redis, aid, None, None)
     with conn.cursor() as cur:
@@ -207,7 +207,7 @@ def test_a_session_created_after_a_rotation_is_cached_at_once(conn, redis):
     budget. A timestamped tombstone only outranks principals read BEFORE it."""
     aid = _member(conn)
     S.create(conn, redis, aid, None, None)
-    S.revoke_all(conn, redis, aid)                                  # password change rotates every session …
+    S.revoke_all_cache(redis, aid, S.revoke_all(conn, aid))         # password change rotates every session …
     raw = S.create(conn, redis, aid, None, None)                    # … and issues a new one
     h = S.hash_id(raw)
     assert redis.exists(f"session:{h}")                             # cached at once, not in 60 s
@@ -360,3 +360,61 @@ def test_revoking_an_unknown_session_id_is_a_no_op(conn, redis):
     """revoke() now reads the owning account back from the UPDATE so it can prune the
     index (I5); a raw id that matches no row must simply do nothing."""
     S.revoke(conn, redis, "not-a-session-id-anyone-ever-issued")
+
+
+# --- I5c fix round 1, concern 2: the two halves of `revoke_all`, and what each one owns ---
+
+
+def test_revoke_all_writes_postgres_only_and_names_the_sessions_it_ended(conn, redis):
+    """The DB half. It returns the id hashes it revoked — the set `revoke_all_cache` clears once
+    the caller's transaction has committed — and it touches Redis not at all, which is what makes
+    the ordering the caller's to get right rather than this function's to get wrong."""
+    aid = _member(conn)
+    first, second = S.create(conn, redis, aid, None, None), S.create(conn, redis, aid, None, None)
+    hashes = {S.hash_id(first), S.hash_id(second)}
+
+    revoked = S.revoke_all(conn, aid)
+    assert revoked == hashes
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM session WHERE account_id=%s AND revoked_at IS NULL", (aid,))
+        assert cur.fetchone()[0] == 0
+    # Redis is untouched: both principals are still cached, and no tombstone has been stamped.
+    assert all(redis.exists(f"session:{h}") for h in hashes)
+    assert redis.exists(f"account:{aid}:invalidated") == 0
+
+    # ...and a second call has nothing left to revoke, which is the empty-set path.
+    assert S.revoke_all(conn, aid) == frozenset()
+
+
+def test_revoke_all_cache_clears_exactly_the_sessions_it_is_given(conn, redis):
+    """The Redis half. Per session, not a sweep of the account index: `app.api.auth.change` revokes
+    every session and issues a NEW one in the same transaction, and that one must stay cached
+    (NEW-3's `/api/me` budget). The account tombstone is stamped either way — it is what stops a
+    principal read before the commit from being installed after it."""
+    aid = _member(conn)
+    doomed = S.create(conn, redis, aid, None, None)
+    h = S.hash_id(doomed)
+    revoked = S.revoke_all(conn, aid)
+    survivor = S.create(conn, redis, aid, None, None)          # the rotation's replacement
+    sh = S.hash_id(survivor)
+
+    S.revoke_all_cache(redis, aid, revoked)
+
+    assert redis.exists(f"session:{h}") == 0                   # the revoked principal is gone …
+    assert redis.exists(f"session:{h}:revoked")                # … and tombstoned, like a sign-out
+    assert 0 < redis.ttl(f"session:{h}:revoked") <= S.CACHE_TTL
+    assert redis.sismember(f"account:{aid}:sessions", h) == 0
+    assert redis.exists(f"session:{sh}")                       # the replacement survives, cached at once
+    assert redis.sismember(f"account:{aid}:sessions", sh)
+    assert S.resolve(conn, redis, doomed) is None and S.resolve(conn, redis, survivor) is not None
+    assert 0 < redis.ttl(f"account:{aid}:invalidated") <= S.CACHE_TTL
+
+
+def test_revoke_all_cache_with_nothing_revoked_still_stamps_the_account_tombstone(conn, redis):
+    """An account with no live session — a reset for somebody who was never signed in. There is no
+    principal to drop, but the tombstone still has to be stamped: a request that read this
+    account's principal before the commit must not be able to install it afterwards."""
+    aid = _member(conn)
+    assert S.revoke_all(conn, aid) == frozenset()
+    S.revoke_all_cache(redis, aid, frozenset())
+    assert 0 < redis.ttl(f"account:{aid}:invalidated") <= S.CACHE_TTL

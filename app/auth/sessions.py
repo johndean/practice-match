@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Collection
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import Any, Literal, cast
@@ -203,7 +204,43 @@ def invalidate_account(r: redis_sync.Redis, account_id: UUID) -> None:
     r.set(_account_tombstone(account_id), _now_us(r), ex=CACHE_TTL)
 
 
-def revoke_all(conn: psycopg2.extensions.connection, r: redis_sync.Redis, account_id: UUID) -> None:
+def revoke_all(conn: psycopg2.extensions.connection, account_id: UUID) -> frozenset[str]:
+    """Ends every LIVE session of this account and returns their id hashes. **Postgres only.**
+
+    The Redis half is `revoke_all_cache`, which the caller runs once its transaction has COMMITTED
+    (I5c fix round 1, concern 2, ruled 2026-09-07). Splitting them is the whole point: this used to
+    mark `revoked_at` and delete the cached principals in one breath, inside the caller's
+    transaction, so a concurrent `resolve` landing between the deletion and the commit re-read the
+    still-live `session` row and re-cached the principal — a revoked account keeping its state and
+    roles for up to `CACHE_TTL`. The only thing standing in that window was the account tombstone,
+    which was itself stamped pre-commit; now the ordering is right AND the tombstone is still there.
+    """
     with conn.cursor() as cur:
-        cur.execute("UPDATE session SET revoked_at = now() WHERE account_id = %s AND revoked_at IS NULL", (account_id,))
-    invalidate_account(r, account_id)
+        cur.execute("UPDATE session SET revoked_at = now() WHERE account_id = %s AND revoked_at IS NULL RETURNING id_hash",
+                    (account_id,))
+        return frozenset(cast("str", row[0]) for row in cur.fetchall())
+
+
+def revoke_all_cache(r: redis_sync.Redis, account_id: UUID, revoked: Collection[str]) -> None:
+    """The Redis half of `revoke_all`, for AFTER the caller's transaction commits.
+
+    Per revoked session, rather than `invalidate_account`'s sweep of the whole account index, and
+    deliberately so: `app.api.auth.change` revokes every session and issues a NEW one in the SAME
+    transaction, so a post-commit sweep would delete the cache entry that rotation just wrote and,
+    with a fresh account tombstone stamped after it, decline to write it again for the full
+    `CACHE_TTL` — the `/api/me` budget regression NEW-3 was fixed to stop. `revoked` is exactly the
+    set of sessions whose state changed, so there is nothing else to touch.
+
+    Each revoked session gets the same tombstone `revoke()` leaves for a single sign-out, and the
+    ACCOUNT tombstone is stamped as well: that is what stops a principal READ before the commit
+    from being installed after it, which no ordering can prevent.
+    """
+    stamp = _now_us(r)
+    if revoked:
+        # One DELETE and one SREM for the whole set, not a round trip each (M10).
+        r.delete(*(f"session:{h}" for h in revoked))
+        r.srem(f"account:{account_id}:sessions", *revoked)
+        for h in revoked:
+            # One SET each: a tombstone carries its own TTL, which MSET cannot express.
+            r.set(_session_tombstone(h), stamp, ex=CACHE_TTL)
+    r.set(_account_tombstone(account_id), stamp, ex=CACHE_TTL)

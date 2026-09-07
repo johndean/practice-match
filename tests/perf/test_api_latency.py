@@ -75,7 +75,7 @@ async def signed_in(dist, db_ready):
                                    headers={"Cookie": f"pm_session={raw}"}) as c:
                 yield c
         finally:
-            S.revoke_all(conn, sync_redis(), account_id)   # drops the cached principals too, so the shared dev Redis is left clean
+            S.revoke_all_cache(sync_redis(), account_id, S.revoke_all(conn, account_id))   # drops the cached principals too, so the shared dev Redis is left clean
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM account WHERE id=%s", (account_id,))
     finally:

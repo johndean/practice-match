@@ -425,7 +425,9 @@ async def signout(request: Request, response: Response, principal: Self) -> dict
 async def signout_all(response: Response, principal: Self) -> dict[str, str]:
     _session_only(principal)
     with closing(sync_conn()) as conn, conn:
-        S.revoke_all(conn, sync_redis(), principal.account_id)
+        revoked = S.revoke_all(conn, principal.account_id)
+    # AFTER the commit (concern 2, ruled 2026-09-07): see `sessions.revoke_all`.
+    S.revoke_all_cache(sync_redis(), principal.account_id, revoked)
     clear_session_cookies(response)
     return {"status": "signed_out"}
 
@@ -476,9 +478,11 @@ async def reset(body: ResetIn, request: Request) -> dict[str, str]:
         with conn.cursor() as cur:
             cur.execute("UPDATE account SET password_hash=%s WHERE id=%s", (hashed, account_id))
         # Every other session goes: a reset is what somebody who has LOST the account does.
-        S.revoke_all(conn, sync_redis(), account_id)
+        revoked = S.revoke_all(conn, account_id)
         audit.write(conn, actor=None, action="password.reset", target_type="account", target_id=account_id, request=request)
         enqueue(conn, to=_email_of(conn, account_id), template="password_changed", params={}, idempotency_key=_outbox_key())
+    # AFTER the commit (concern 2, ruled 2026-09-07): see `sessions.revoke_all`.
+    S.revoke_all_cache(sync_redis(), account_id, revoked)
     return {"status": "reset"}
 
 
@@ -509,9 +513,11 @@ async def accept_invite(body: ResetIn, request: Request) -> dict[str, str]:
         _floor(body.password, privileged=privileged)
         with conn.cursor() as cur:
             cur.execute("UPDATE account SET password_hash=%s WHERE id=%s", (hashed, account_id))
-        S.revoke_all(conn, sync_redis(), account_id)
+        revoked = S.revoke_all(conn, account_id)
         audit.write(conn, actor=None, action="invite.accept", target_type="account", target_id=account_id, request=request)
         enqueue(conn, to=_email_of(conn, account_id), template="password_changed", params={}, idempotency_key=_outbox_key())
+    # AFTER the commit (concern 2, ruled 2026-09-07): see `sessions.revoke_all`.
+    S.revoke_all_cache(sync_redis(), account_id, revoked)
     return {"status": "accepted"}
 
 
@@ -537,11 +543,15 @@ async def change(body: ChangeIn, request: Request, response: Response, principal
             cur.execute("UPDATE account SET password_hash=%s WHERE id=%s", (hashed, principal.account_id))
         # Every session is revoked and THIS one re-issued, so the person who made the change stays
         # signed in and everybody else is turned out.
-        S.revoke_all(conn, r, principal.account_id)
+        revoked = S.revoke_all(conn, principal.account_id)
         raw = S.create(conn, r, principal.account_id, client_ip(request), request.headers.get("user-agent"))
         set_session_cookies(response, raw)
         audit.write(conn, actor=principal, action="password.change", target_type="account", target_id=principal.account_id, request=request)
         enqueue(conn, to=_email_of(conn, principal.account_id), template="password_changed", params={}, idempotency_key=_outbox_key())
+    # AFTER the commit (concern 2, ruled 2026-09-07). `revoke_all_cache` touches only the sessions
+    # `revoke_all` actually revoked, which is what leaves the one just created above cached —
+    # NEW-3's `/api/me` budget for the member who has only this second changed their password.
+    S.revoke_all_cache(r, principal.account_id, revoked)
     return {"status": "changed"}
 
 

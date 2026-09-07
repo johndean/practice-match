@@ -648,3 +648,75 @@ async def test_malformed_addresses_do_not_share_one_rate_limit_bucket(client, co
         assert r.status_code == 401, i
     # ...and the burst row that used to identify nothing but the constant pseudonym of "" is gone.
     assert _rows(conn, "SELECT count(*) FROM audit_log WHERE action='signin.failure_burst'")[0][0] == 0
+
+
+# --- fix round 1, concern 2 (ruled 2026-09-07): every `revoke_all` clears Redis AFTER its commit ---
+
+REVOKE_ALL_SITES = ("signout_all", "reset", "accept_invite", "change", "decide_revoke")
+
+
+@pytest.mark.parametrize("site", REVOKE_ALL_SITES)
+async def test_every_revoke_all_site_clears_the_cache_only_after_the_commit(client, conn, redis, member, monkeypatch, site):
+    """The same ordering class as review L5, at the five routes that end every session of an
+    account: `S.revoke_all` marked `session.revoked_at` and deleted the cached principals in the
+    same breath, while the UPDATE was still uncommitted. A concurrent `resolve` landing in that
+    window re-read the still-live row and re-cached the principal — a revoked account keeping its
+    state and roles for up to `sessions.CACHE_TTL`. The only thing standing in that window was the
+    account tombstone, which was itself stamped pre-commit.
+
+    The probe is at the Redis deletion itself rather than on any one function, so it holds however
+    the two halves are split: every time a `session:{h}` key belonging to the TARGET account is
+    dropped, `session.revoked_at` for that hash is read through the `conn` fixture — a second,
+    autocommitted connection, which can see only committed data. A NULL there means the cache was
+    dropped before the revocation was visible to anybody else.
+    """
+    aid, cookies, hdr = member(("buyer",), email="revoked-cache@example.org")
+    S.create(conn, redis, aid, None, None)  # a second live session, so there is always more than one to revoke
+
+    uncommitted: list[str] = []
+    dropped: list[str] = []
+    real_delete = redis.delete
+
+    def delete(*keys):
+        for key in keys:
+            name = key.decode() if isinstance(key, bytes) else str(key)
+            if not name.startswith("session:"):
+                continue
+            with conn.cursor() as cur:
+                cur.execute("SELECT revoked_at FROM session WHERE id_hash = %s AND account_id = %s", (name.split(":", 1)[1], aid))
+                row = cur.fetchone()
+            if row is None:  # somebody else's session (the staff reauth below deletes its own key)
+                continue
+            dropped.append(name)
+            if row[0] is None:
+                uncommitted.append(name)
+        return real_delete(*keys)
+
+    monkeypatch.setattr(redis, "delete", delete)
+
+    if site == "signout_all":
+        assert (await client.post("/api/auth/signout-all", headers=auth_headers(cookies, hdr))).status_code == 200
+    elif site == "reset":
+        token = T.issue_email_token(conn, aid, "reset", timedelta(hours=1))
+        assert (await client.post("/api/auth/password/reset", json={"token": token, "password": NEW_PW})).status_code == 200
+    elif site == "accept_invite":
+        token = T.issue_email_token(conn, aid, "invite", timedelta(hours=24))
+        assert (await client.post("/api/auth/accept-invite", json={"token": token, "password": NEW_PW})).status_code == 200
+    elif site == "change":
+        assert (await client.post("/api/auth/password/change", headers=auth_headers(cookies, hdr),
+                                  json={"current": PW, "new": NEW_PW})).status_code == 200
+    else:
+        _sid, scookies, shdr = member(("staff",), email="revoke-staff@example.org")
+        assert (await client.post("/api/auth/reauth", headers=auth_headers(scookies, shdr), json={"password": PW})).status_code == 200
+        assert (await client.post(f"/api/admin/users/{aid}/decide", headers=auth_headers(scookies, shdr),
+                                  json={"action": "revoke", "note": "Consolidator"})).status_code == 200
+
+    assert dropped, f"{site}: no cached principal was dropped at all — the probe proves nothing"
+    assert uncommitted == [], f"{site}: dropped before the revocation committed: {uncommitted}"
+    # ...and the revocation really did land, for every session the account had.
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM session WHERE account_id=%s AND revoked_at IS NULL", (aid,))
+        # `password/change` rotates: it revokes every session and issues ONE new one in the same
+        # transaction, which must survive — that is what NEW-3 fixed and what a post-commit sweep
+        # of the whole account index would undo.
+        assert cur.fetchone()[0] == (1 if site == "change" else 0)

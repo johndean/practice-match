@@ -517,10 +517,12 @@ async def test_revoking_an_accounts_sessions_makes_the_next_request_the_generic_
     has been suspended or revoked gets `403 FORBIDDEN`, not the generic 401 — the brief's own given
     test asserts that, and nothing new leaks by saying so, because the caller already holds that
     account's session cookie. The generic body arrives one step later: I5 revokes the account's
-    sessions as part of the same decision (`S.revoke_all`, which is `invalidate_account` plus the
-    `revoked_at` write — note that `invalidate_account` ALONE only drops the principal cache, so
-    the cookie still resolves and the answer is still 403). After `revoke_all` the cookie resolves
-    to nothing at all and the response is byte-identical to one carrying no credential."""
+    sessions as part of the same decision — `S.revoke_all` writes `revoked_at` and
+    `S.revoke_all_cache` drops the cached principals it named (split in I5c fix round 1 so the
+    cache is cleared only after the write commits). `invalidate_account` ALONE only drops the
+    principal cache, so the cookie still resolves and the answer is still 403; after the pair the
+    cookie resolves to nothing at all and the response is byte-identical to one carrying no
+    credential."""
     aid = _member(conn, ["buyer"]); raw = S.create(conn, redis, aid, None, None)
     assert (await _as(client, pm_session=raw).get("/read")).status_code == 200
     with conn.cursor() as cur:
@@ -529,7 +531,7 @@ async def test_revoking_an_accounts_sessions_makes_the_next_request_the_generic_
     dead_account = await _as(client, pm_session=raw).get("/read")
     assert dead_account.status_code == 403 and dead_account.json()["error"]["code"] == "FORBIDDEN"
 
-    S.revoke_all(conn, redis, aid)
+    S.revoke_all_cache(redis, aid, S.revoke_all(conn, aid))
     revoked = await _as(client, pm_session=raw).get("/read")
     anonymous = await _as(client).get("/read")
     assert revoked.status_code == anonymous.status_code == 401

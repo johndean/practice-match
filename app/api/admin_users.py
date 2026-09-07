@@ -22,18 +22,18 @@ Two shapes here are load-bearing and easy to undo by accident:
   (fix round 1, C2 — spec §4 audits "viewing an application detail"). Auditing the list wrote one
   row per poll of the I7 Users tab into a table whose triggers refuse DELETE.
 
-One ordering is deliberate and worth stating rather than discovering (fix round 1, N3): inside
-`decide` the session revocation (`S.revoke_all`) and the outbox `enqueue` both run BEFORE
-`decide_route`'s `audit.write`. A failure in the audit insert therefore rolls back the Postgres
-side — the decision, the grants, the outbox row — while the Redis session keys stay deleted. That
-is the fail-safe direction (the sessions end, the decision does not) and it is the one place in the
-app where the two stores can diverge, so the order stays as it is.
+No Redis write happens before the commit any more (I5c fix round 1, review L5 and concern 2, both
+ruled 2026-09-07). `decide` does the Postgres work only — including `S.revoke_all`, which writes
+`session.revoked_at` — and `decide_route` drops the cached principals AFTER the transaction
+commits, with `S.revoke_all_cache` for the suspend/revoke branch and `S.invalidate_account` for
+every other. Dropping a cache key while the decision was still uncommitted left a window in which
+a concurrent resolve could read the pre-decision principal and re-cache it for the full
+`sessions.CACHE_TTL`.
 
-The OTHER half of that Redis work moved in I5c fix round 1 (review L5): `S.invalidate_account`,
-which only deletes cache keys, now runs in `decide_route` AFTER the transaction commits. Dropping
-the cache while the decision was still uncommitted left a window in which a concurrent resolve
-could read the pre-decision state and re-cache it for the full `sessions.CACHE_TTL`. It has no
-fail-safe direction to preserve — a rolled-back decision leaves nothing to invalidate.
+That replaces fix round 1 N3's note, which recorded the old ordering (Redis before the audit
+insert) as the fail-safe direction — sessions ending even if the decision rolled back. It is moot
+now: nothing is deleted until the decision is committed, so there is no longer any way for the two
+stores to disagree, which is strictly better than choosing which way they should.
 """
 from __future__ import annotations
 
@@ -43,7 +43,6 @@ from typing import Annotated, Any, cast
 from uuid import UUID
 
 import psycopg2.extensions
-import redis as redis_sync
 from fastapi import APIRouter, Depends, Request
 from pydantic import BaseModel, Field
 
@@ -509,16 +508,18 @@ async def detail(account_id: UUID, request: Request, principal: DetailViewer) ->
 
 def decide(
     conn: psycopg2.extensions.connection,
-    r: redis_sync.Redis,
     *,
     actor: S.Principal,
     account_id: UUID,
     action: str,
     note: str,
-) -> tuple[str, list[str]]:
+) -> tuple[str, list[str], frozenset[str]]:
     """One staff decision, applied: spec §4's transition table, the role grant or revocation it
     implies, the application row it closes, the mail it queues and the sessions it ends. Returns
-    the account's new `(state, roles)`.
+    the account's new `(state, roles, revoked_sessions)` — the third element is the id hashes
+    `S.revoke_all` ended, which `decide_route` hands to `S.revoke_all_cache` after the commit
+    (concern 2, ruled 2026-09-07). It takes no Redis client any more, because after that split it
+    touches Postgres and nothing else — which is the property that makes the ordering safe.
 
     It does NOT write the audit row. The brief's Step 3 had it do so; the controller's ruling
     (2026-09-06) is that `audit.write(` must appear in each audited ENDPOINT's own source, because
@@ -573,15 +574,15 @@ def decide(
     if template is not None:
         enqueue(conn, to=email, template=template, params={"note": note},
                 idempotency_key=f"{account_id}:{template}:{application[0] if application is not None else action}")
+    revoked: frozenset[str] = frozenset()
     if action in ENDS_EVERY_SESSION:
         # `revoke_all`, not `invalidate_account`: dropping the principal cache alone leaves the
         # cookie resolving to a live session, so the suspended member gets a 403 on the routes
         # their (now empty) roles no longer reach instead of the generic 401 spec §3 asks for.
-        # It stays INSIDE the transaction because it writes `session.revoked_at` as well as
-        # clearing Redis; only the pure-Redis `invalidate_account` moved out (review L5, and the
-        # module docstring's note on the one ordering that is deliberate).
-        S.revoke_all(conn, r, account_id)
-    return to, roles
+        # The `session.revoked_at` WRITE belongs in this transaction; the Redis half is
+        # `revoke_all_cache`, which `decide_route` runs after the commit (concern 2).
+        revoked = S.revoke_all(conn, account_id)
+    return to, roles, revoked
 
 
 @router.post("/users/{account_id}/decide")
@@ -598,7 +599,7 @@ async def decide_route(account_id: UUID, body: Decision, request: Request, princ
         # `decide` refuses a missing account itself; this placeholder only ever survives to the
         # audit row's `before` if that stops being true.
         before = row[0] if row is not None else ""
-        state, roles = decide(conn, sync_redis(), actor=principal, account_id=account_id, action=body.action, note=body.note)
+        state, roles, revoked = decide(conn, actor=principal, account_id=account_id, action=body.action, note=body.note)
         audit.write(conn, actor=principal, action="users.revoke" if body.action == "revoke" else "users.decide",
                     target_type="account", target_id=account_id, before={"state": before},
                     after={"state": state, "roles": roles},
@@ -607,12 +608,14 @@ async def decide_route(account_id: UUID, body: Decision, request: Request, princ
                     # before/after; `reason` is not redacted, so nothing but the decision and the
                     # reviewer's note goes in it.
                     reason=body.action if not body.note.strip() else f"{body.action}: {body.note}", request=request)
-    # AFTER the commit above (review L5): `invalidate_account` only deletes Redis keys, so dropping
-    # the cache while the decision was still uncommitted left a window in which a concurrent
-    # resolve read the OLD state and re-cached it for the full `sessions.CACHE_TTL`. The
-    # suspend/revoke branch is not here — `revoke_all` writes to Postgres too and stays inside the
-    # transaction, which is what keeps the divergence direction the docstring describes.
-    if body.action not in ENDS_EVERY_SESSION:
+    # AFTER the commit above — BOTH branches (review L5, then concern 2). Either way this is a
+    # pure-Redis cache drop, and doing it while the decision was still uncommitted left a window in
+    # which a concurrent resolve read the pre-decision principal and re-cached it for the full
+    # `sessions.CACHE_TTL`. `revoke_all` did the `session.revoked_at` write inside the transaction
+    # and named the sessions it ended; clearing them is what is left.
+    if body.action in ENDS_EVERY_SESSION:
+        S.revoke_all_cache(sync_redis(), account_id, revoked)
+    else:
         S.invalidate_account(sync_redis(), account_id)
     return {"state": state, "roles": roles}
 
