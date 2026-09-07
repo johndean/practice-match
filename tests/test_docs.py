@@ -333,3 +333,8 @@ def test_deploy_md_says_an_applied_migration_is_immutable():
     assert "drop and recreate the database or restore the file" in text
     # ...and that no persistent environment is affected today: QA and production predate Wave 2a.
     assert "b9d01ad" in text
+    # Fix round 1, L4: the guarantee is not retroactive — a row applied before f3b7d41 carries no
+    # checksum and is never checked, so `001`/`002` on QA and production stay silently mutable.
+    assert "Enforcement begins with the files applied from `f3b7d41` onward" in text
+    assert "carry no checksum and are not checked" in text
+    assert "001_init.sql" in text
