@@ -935,6 +935,10 @@ git push origin HEAD && git push production HEAD
 
 ---
 
+**Controller amendment A-I5d.3b (2026-09-09; rulings on the I5d.3 review — APPROVED, 2 Medium, 6 Low, 3 Info; all Medium/Low closed at source in a fix round after I5d.4 lands, single writer).** M1 — a test pins D-I5d-5: `GET /api/admin/signups` is mounted (answers 401, not 404) with `SITE_MODE=coming_soon`. M2 — `test_limit_is_capped` is rewritten so it fails when the cap is removed (mutation probe recorded). L1 — a CSV test seeds `MAX_LIST + 1` rows and asserts every row is exported (pins `MAX_EXPORT` over `MAX_LIST`). L2 — a test exercises `BadFilter`'s empty-table message. L3 — the plan-gate RED is re-proved by a recorded mutation probe (remove the `signups_list` entry → red). L4 — the cursor is parsed and validated BEFORE a connection is opened (422 costs no scan). L5 — `COUNTS_SQL` joins the query-plan gate (no behaviour change; the table is small). L6 — `scripts/verify-deploy.sh`'s coming-soon message no longer claims the whole admin surface is unmounted (its shell test follows). I1 accepted (I5d.4 consumes the notify guard); I2 (streaming truncation under 200 on a mid-stream failure) and I3 (`MAX_EXPORT` truncates silently) are accepted and documented in RUNBOOK §12 by I5d.4.
+
+---
+
 ### Task I5d.4: The launch mail — template, `POST /api/admin/signups/launch-mail`, runbook
 
 *Standard-tier implementer. The write half: one message per sign-up, exactly once, through the existing outbox → Resend worker.*
@@ -1443,6 +1447,10 @@ The full gate, all four (CLAUDE.md):
 2. `npm run test:visual:baselines` then `npm run test:e2e` — **no screen changed**, so this proves zero regression rather than a new state. Any pixel that moves here is a bug in this task, not a new baseline.
 3. `scripts/deploy.sh QA`, then on `https://qa.foundation.vin`: sign in as an admin, `POST /api/auth/reauth`, dry-run the launch mail, send it, and confirm the outbox rows are `suppressed` for every address not on QA's `EMAIL_ALLOWLIST`. Download the CSV and open it in a spreadsheet.
 4. `scripts/deploy.sh production` and `scripts/verify-deploy.sh production`. **Production stays in coming-soon mode**, so the post-deploy check here is that the site is unchanged and that `POST /api/admin/signups/launch-mail` with `{"dry_run": false}` answers `409 NOT_LAUNCHED`. The launch mail itself is sent later, from the runbook's §12 order, on John's word.
+
+---
+
+**Controller amendment A-I5d.4b (2026-09-09; rulings on the I5d.4 review — APPROVED, 2 Medium, 7 Low; closed at source in a fix round after I5d.3's round 2, single writer).** M1 — the four in-flight resolutions are RATIFIED: (1) the runbook section is §13 (§12 was taken); (2) `postal_address` is frozen into each outbox row at enqueue (the runbook says so and tells the operator that correcting a wrong address after a batch is queued means deleting the queued rows, not just fixing the variable); (3) the two 409 gates bind real sends, and the dry run is exempt because it queues nothing and stamps nothing — A-I5d.4's "refuses to send" read literally; (4) the `launch_mail_approved` fixture on the brief-verbatim tests. M2 — §13 carries the `MAX_EXPORT` sentence the review words. L1 — "queues nothing and stamps nothing; it writes one audit row (`reason: dry_run`)" in the runbook and both docstrings. L2 — gate 2 strips whitespace (`(… or "").strip()`), tested with `"   "`. L3 — the footer's "on the Coming Soon page at foundation.vin" stays (the sign-up did happen there) with a comment saying so; queued for John beside the copy. L4 — the handler is a plain `def` (threadpool), like the export. L5 — gate order pinned end to end (`site_mode = "coming_soon"` in the address-gate test) and both refusal tests assert `launch_mailed_at` is still NULL. L6 — the fixture address is unmistakably fake (`"1 Test Street, Nowhere, XX 00000 (not a real address)"`). L7 — §13 step 2 names the legacy `API_SECRET_KEY` bearer's re-auth exemption (until Task I9) and that the copy and address gates still bind it. The reviewer's ⚠️2 (`with conn:` on an autocommit connection) is settled by one behavioural test asserting the send's inserts and the stamp roll back together on a mid-way failure.
 
 ---
 
