@@ -9,7 +9,8 @@ def test_registry_and_ledger_tables_match_spec_13(conn):
                                             "rows_written", "request_count", "raw_payload_uri", "error_detail"]
         assert _cols(cur, "dataset_registry") == ["dataset_key", "display_name", "api_dataset_id", "base_url", "vintage",
                                                   "naics_param", "refresh_cadence", "license_status", "license_name",
-                                                  "license_url", "attribution_text", "last_verified_at", "notes"]
+                                                  "license_url", "attribution_text", "last_verified_at", "notes",
+                                                  "drift_flagged"]  # 020_license_audit.sql (Task A8, spec §9)
         assert _cols(cur, "active_vintage") == ["dataset_key", "vintage", "activated_at", "activated_by", "note"]
         cur.execute("SELECT conname FROM pg_constraint WHERE conname = 'ingest_run_dataset_fk'")
         assert cur.fetchone(), "spec §13 adds the ingest_run → dataset_registry FK after the registry exists"
@@ -55,6 +56,20 @@ def test_market_state_seeds_all_six_demo_states(conn):
         cur.execute("SELECT reason FROM market_state WHERE state_fips = '08'")
         (reason,) = cur.fetchone()
         assert "South Lake Tahoe" not in reason
+
+
+def test_license_audit_log_matches_020_and_references_the_registry(conn):
+    # 020_license_audit.sql (Task A8, spec §9): the licence LEDGER, distinct from the security
+    # audit trail (app.auth.audit, A-C0 ¶3).
+    with conn.cursor() as cur:
+        assert _cols(cur, "license_audit_log") == ["id", "dataset_key", "checked_at", "url", "content_sha256", "http_status", "changed"]
+        cur.execute("SELECT indexname FROM pg_indexes WHERE tablename='license_audit_log'")
+        assert {"license_audit_log_ds_idx"} <= {r[0] for r in cur.fetchall()}
+        cur.execute("INSERT INTO license_audit_log (dataset_key, url) VALUES ('acs5', 'https://example.org/terms') RETURNING changed")
+        assert cur.fetchone() == (False,)  # `changed` defaults false
+    import psycopg2
+    with conn.cursor() as cur, pytest_raises(psycopg2.errors.ForeignKeyViolation):
+        cur.execute("INSERT INTO license_audit_log (dataset_key, url) VALUES ('not-a-real-dataset', 'https://example.org')")
 
 
 def test_osm_tiles_note_records_johns_carto_decision_not_pending(conn):
