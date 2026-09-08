@@ -2005,6 +2005,10 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
+**Controller amendment A-SL13 (2026-09-09; rulings on the SL3 review — APPROVED, 3 Medium, 9 Low; closed at source in a fix round after SL4 lands, single writer; SL4 was warned not to inherit them).** M1 — D10's "refuse anything else" means garbage, not blanks: for OPTIONAL numeric fields an empty string clears the value (null); required fields keep refusing; SL7's autosave depends on it. M2 — a write that would violate `listing_submittable_ck` (blanking `name`/`city`/`zip` on a non-draft) is validated before the statement and refused in the envelope (`409 NOT_SUBMITTABLE`), never a 500. M3 — a malformed JSON body is `400 BAD_JSON` in the envelope. L1 — every write is owner-scoped in the SQL (`AND seller_id = %s`), not only reads. L2–L9 — closed exactly as the review specifies. D26's data path (photographs and documents in the seller's draft read) is built in SL4 with the asset routes.
+
+---
+
 ### Task SL4: photographs and documents — upload, reorder, delete, and the locked read — **2.5 days**
 
 **Files:**
@@ -2255,6 +2259,10 @@ arms are a seed path under PHOTOS_ROOT and a seller asset id in the bucket.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
+
+---
+
+**Controller amendment A-SL15 (2026-09-09; rulings on SL4's report).** (1) **Assets are edits.** John's ruling — "editing a published listing re-enters review and removes it from the market until approved again" — covers adding, reordering or deleting a photograph or document: the asset routes apply D3 exactly as `patch_step` does (`published` → `in_review`, `submitted_at` stamped, the list cache dropped), in the same transaction; a draft or in-review listing is unaffected. (2) `Request.form()` is closed in `try/finally` on every multipart route (Starlette's `SpooledTemporaryFile` otherwise leaks under `-W error`) — recorded as the pattern for any future multipart route. (3) `python-multipart` is a runtime dependency (main group); SL9 confirms it reaches the image. (4) `serialise_draft` now carries `photos` (ordered, captioned from the upload filename or the seed inventory) and `documents` (with read URLs) — D26's data path; SL7's adapter reads them. (5) SL3's `patch_step` gets the same guarded `_json_body` (A-SL13 M3). (6) The two gate-forced departures (an `isinstance` check instead of `hasattr` + suppression; tests pointing `settings` at a moto bucket with an AWS-shaped endpoint) are accepted.
 
 ---
 
