@@ -3237,6 +3237,12 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
+**Controller amendment A-L5.2 (2026-09-08; rulings on the L5 review's policy findings).** (1) `name_disclosed` and `location_disclosed` are INDEPENDENT flags by design — a seller who hides the name but shows the address chose that; the Wave 2b disclosure switches must say so beside the switch (Rev 3 request: listing disclosure controls). Queued for John's vet. (2) The list cache (60 s, first page only) is a disclosure window the moment a seller or admin flips a flag to false: Wave 2b's toggle endpoints MUST invalidate the list cache (a hard requirement for that plan, not freshness polish). (3) An empty `?market=` means "no filter" for both the SQL and the cache key; only the first page is cached, so a crafted cursor mints no cache entry. Landed: `11c66a3`.
+
+**Controller amendment A-L2.1/A-L2.2 (2026-09-08; the type and price answers).** A-L2.1: the plan's plausibility floor (500,000) contradicted the "Under $500K" band; the floor is a plan invention, so it becomes 400,000 and `abc_animal_hospital` (1 DVM, 2,400 sq ft, est. 1987) is priced at 465,000. A-L2.2 (John: "they are all Small Animal"): none of the eighteen is a Mixed or Large-animal practice — those two `type` options are excluded from the A-L2 coverage requirement by name, John's words quoted in the test, and the demo set returns no results for them; D4's name-based derivation stays for the rest (Specialist → Specialty; ER / Critical Care / 24/7 emergency → Emergency; otherwise Small animal) unless John says "all eighteen Small animal".
+
+---
+
 ### Task L6: The frontend reads listings from the API, keeping every field name
 
 **Files:**
