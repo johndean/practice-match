@@ -90,10 +90,11 @@ export function resolveTargets(env: NodeJS.ProcessEnv, ports: { app: number; ref
   // A-S5.1 (John's ruling, 2026-09-08): `reset_rate_limits.py` is what makes consecutive LOCAL
   // runs independent. The limits themselves are untouched — `SIGNIN_IP` is still 30 per fixed
   // 15-minute window and `FORGOT_IP` still 10 per hour, and `tests/api/test_auth.py` still proves
-  // each refusal — but a suite that spends sixteen sign-ins, three forgot calls and one sign-up
-  // per run would otherwise have met `FORGOT_IP` on its third run of the hour, in the middle of a
-  // screenshot. The script refuses unless `ENVIRONMENT` is exactly `test` AND Redis is on
-  // loopback, so this line cannot reach QA or production; in CI it runs and deletes nothing.
+  // each refusal — but a suite that spends fourteen sign-ins, three forgot calls and one sign-up
+  // per run (the arithmetic is in `harness.ts`'s `personaSessionMemos` docstring) would otherwise
+  // have met `FORGOT_IP` on its third run of the hour, in the middle of a screenshot. The script
+  // refuses unless `ENVIRONMENT` is exactly `test` AND Redis is on loopback, so this line cannot
+  // reach QA or production; in CI it runs and deletes nothing.
   const api: WebServerSpec = {
     command: `poetry run python scripts/migrate.py && poetry run python scripts/reset_rate_limits.py && poetry run python scripts/seed_persona.py && poetry run uvicorn app.main:app --port ${ports.api}`,
     url: `http://localhost:${ports.api}/api/healthz`,

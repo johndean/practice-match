@@ -14,16 +14,23 @@ LOCAL environment accumulated, before the API starts serving.
 `seed_persona.py`; `frontend/tests/targets.test.ts` pins that. In CI it runs too and deletes
 nothing: each job gets a fresh Redis service.
 
+It runs on every run that actually STARTS the API (review round 1, M13): `targets.ts` sets
+`reuseExistingServer: !CI`, so a locally hand-started uvicorn already answering on the API port is
+adopted as-is and neither this script nor `seed_persona.py` runs against it. That is pre-existing
+behaviour the seed has always depended on, and it is named here so "consecutive local runs are
+independent" is read with the condition it carries.
+
 TWO conditions, both checked here rather than trusted to the caller — a script whose only safety
 is where it happens to be invoked from is one edit away from running somewhere else:
 
   * `ENVIRONMENT` must be exactly `test` (not a prefix, not case-folded), and
   * the Redis host must be loopback (`localhost` / `127.0.0.1` / `::1`).
 
-QA and production fail both, and either one alone is enough to refuse. The refusal is a non-zero
-exit and ONE line on stderr; nothing but the deleted count is ever printed, because a bucket key
-carries its subject as a truncated SHA-256 pseudonym — which `app/ratelimit.py` is careful to say
-is not an anonymisation — and a URL may carry a credential.
+QA and production fail both, and either one alone is enough to refuse — as does a URL that cannot
+be parsed at all, which is not a host this can show to be local. The refusal is a non-zero exit and
+ONE line on stderr; nothing but the deleted count is ever printed, because a bucket key carries its
+subject as a truncated SHA-256 pseudonym — which `app/ratelimit.py` is careful to say is not an
+anonymisation — and a URL may carry a credential.
 
 SCAN + DEL over `rl:*` — `app.ratelimit.bucket_key`'s own prefix — and never `FLUSHDB`: the 60 s
 session cache and the outbox's idempotency locks live in the same database, and dropping a live
@@ -59,8 +66,16 @@ def is_local_redis(url: str) -> bool:
     """Whether `url` names a Redis on this machine. `urlsplit().hostname` is the parsed host — it
     lower-cases, strips any `user:password@` and any `:port`, and yields `None` when there is no
     authority at all — so `redis://localhost.evil.example` and `redis://:pw@host` are both simply
-    not in the set, and a URL with no host is `None`, which is not in it either."""
-    return (urlsplit(url).hostname or "") in LOCAL_HOSTS
+    not in the set, and a URL with no host is `None`, which is not in it either.
+
+    A URL `urlsplit` cannot parse at all raises `ValueError` (`redis://[::1` — "Invalid IPv6 URL"),
+    and that is answered `False` rather than allowed to escape (review round 1, M5): unparseable is
+    not a host this can show to be local, and the caller's one-line refusal is the contract this
+    module documents."""
+    try:
+        return (urlsplit(url).hostname or "") in LOCAL_HOSTS
+    except ValueError:
+        return False
 
 
 def main(argv: Sequence[str] | None = None) -> int:
@@ -76,8 +91,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 2
     if not is_local_redis(settings.redis_url):
-        # The parsed hostname, never the URL: a URL may carry a password.
-        host = urlsplit(settings.redis_url).hostname or "(none)"
+        # The parsed hostname, never the URL: a URL may carry a password. A URL that does not parse
+        # has no hostname to name, so it is described rather than quoted.
+        try:
+            host = urlsplit(settings.redis_url).hostname or "(none)"
+        except ValueError:
+            host = "(unparseable)"
         print(f"[reset_rate_limits] refusing: Redis host is {host!r}, and this only runs against a local one", file=sys.stderr)
         return 2
 
@@ -91,7 +110,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         # command as `Awaitable[Any] | Any` so one stub can serve the sync and async clients both.
         # This is the SYNC client (`app.cache.sync_redis`), so the value is the int it says it is.
         deleted += cast("int", r.delete(key))
-    print(f"[reset_rate_limits] cleared {deleted} rate-limit bucket(s) on {settings.environment}")
+    # The count and nothing else (review round 1, M6): the environment is pinned to the constant
+    # `test` by the guard above, so printing it said nothing the docstring had not already promised
+    # would never be printed.
+    print(f"[reset_rate_limits] cleared {deleted} rate-limit bucket(s)")
     return 0
 
 

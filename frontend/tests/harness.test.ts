@@ -1,5 +1,5 @@
-import { describe, expect, it } from 'vitest';
-import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileRotate, memoFileTakeCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, throwawayEmail } from './harness';
+import { describe, expect, it, vi } from 'vitest';
+import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, throwawayEmail } from './harness';
 import type { Page } from '@playwright/test';
 import { resolveTargets } from './targets';
 
@@ -705,24 +705,40 @@ describe('fixture tokens — twelve per purpose, single use, spent in order (A-S
   // restarts after a failure continues the sequence instead of re-spending token 01 — which is
   // single-use and already gone.
   it('the run-scoped counter advances once per take and survives a restarted worker', () => {
+    // The take is a read, a decision and a write — the shape `takeCounter` uses (M8).
     let file: string | null = null;
-    const take = (name: string) => { const r = memoFileTakeCounter(file, name, 'run-A'); file = r.contents; return r.n; };
+    const take = (name: string) => { const n = memoFileCounter(file, name, 'run-A') + 1; file = memoFileSetCounter(file, name, n, 'run-A'); return n; };
     expect([take('verify'), take('verify'), take('verify')]).toEqual([1, 2, 3]);
     expect(take('reset'), 'each purpose counts on its own').toBe(1);
     // A restarted worker reads the same file and carries on.
-    expect(memoFileTakeCounter(file, 'verify', 'run-A').n).toBe(4);
+    expect(memoFileCounter(file, 'verify', 'run-A')).toBe(3);
+    expect(take('verify')).toBe(4);
   });
 
   it('another run\'s counters are never inherited, and neither are its jars', () => {
-    const previous = memoFileTakeCounter(memoFileUpdate(null, 'buyer', [{ name: 'pm_session', value: 'x' }], 'run-old'), 'verify', 'run-old').contents;
-    expect(memoFileTakeCounter(previous, 'verify', 'run-new').n, 'a fresh run starts at one').toBe(1);
-    expect(memoFileRead(memoFileTakeCounter(previous, 'verify', 'run-new').contents, 'buyer', 'run-new')).toBeNull();
+    const previous = memoFileSetCounter(memoFileUpdate(null, 'buyer', [{ name: 'pm_session', value: 'x' }], 'run-old'), 'verify', 7, 'run-old');
+    expect(memoFileCounter(previous, 'verify', 'run-new'), 'a fresh run starts at zero').toBe(0);
+    expect(memoFileRead(memoFileSetCounter(previous, 'verify', 1, 'run-new'), 'buyer', 'run-new')).toBeNull();
   });
 
   it('taking a counter leaves this run\'s persona jars alone', () => {
     const withJar = memoFileUpdate(null, 'buyer', [{ name: 'pm_session', value: 'x' }], 'run-A');
-    const after = memoFileTakeCounter(withJar, 'verify', 'run-A').contents;
+    const after = memoFileSetCounter(withJar, 'verify', 1, 'run-A');
     expect(memoFileRead(after, 'buyer', 'run-A')).toEqual([{ name: 'pm_session', value: 'x' }]);
+    expect(memoFileCounter(after, 'verify', 'run-A')).toBe(1);
+  });
+
+  // M14 (review round 1): the default run id is `randomUUID()` (hex and hyphens), but an outer
+  // harness may set `PW_RUN_ID` to a CI value carrying `/`, `:` or a space — which would make the
+  // live sign-up 422 with nothing pointing at the cause.
+  it('a run id that is not email-safe is sanitised rather than pasted into the local part', () => {
+    expect(throwawayEmail('signup', 'a/b:c d', 1)).toBe('e2e-a-b-c-d-signup-1@example.org');
+    expect(throwawayEmail('forgot', 'refs/heads/feat#3', 2)).toBe('e2e-refs-heads-feat-3-forgot-2@example.org');
+    // The default shape is already safe and must survive untouched.
+    expect(throwawayEmail('signup', '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0', 1)).toBe('e2e-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0-signup-1@example.org');
+    for (const address of [throwawayEmail('signup', 'a/b:c d', 1), throwawayEmail('forgot', '', 3)]) {
+      expect(address.split('@')[0], 'every local part is RFC-safe').toMatch(/^[A-Za-z0-9._-]+$/);
+    }
   });
 
   it('a throwaway address is distinct per take, so FORGOT_EMAIL is never the binding limit', () => {
@@ -733,6 +749,64 @@ describe('fixture tokens — twelve per purpose, single use, spent in order (A-S
       expect(address).toMatch(/^e2e-run-A-forgot-\d+@example\.org$/);
       expect(address, 'never a real mailbox: example.org is RFC 2606 reserved').toContain('@example.org');
     }
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// M4 (review round 1): the rotation is recorded only once the API has CONFIRMED it.
+//
+// `submitNotice` types two passwords, clicks the design's own button, and waits for the notice the
+// spec says that outcome produces. Recording the rotation before that wait means a submit the API
+// REFUSED — a spent token, a policy refusal — still writes `rotated` to the run's memo and forgets
+// a live session for a password change that never happened: the test fails at the wait, and every
+// later sign-in as that account 401s a long way from the cause. The notice IS the confirmation.
+//
+// Driven through a stub page, in an isolated module instance so the module-level rotation set and
+// persona memos this touches cannot leak into the rest of this file.
+// ---------------------------------------------------------------------------------------
+describe('submitNotice records a rotation only after the API confirms it (M4)', () => {
+  const stubPage = (waitFor: () => Promise<void>) => ({
+    getByLabel: () => ({ fill: async () => {} }),
+    getByRole: () => ({ click: async () => {} }),
+    getByText: () => ({ first: () => ({ waitFor }) })
+  }) as unknown as Page;
+
+  const freshHarness = async () => { vi.resetModules(); return import('./harness'); };
+
+  it('a submit the API refused leaves the memo un-rotated and the session intact', async () => {
+    const h = await freshHarness();
+    const jar = [{ name: 'pm_session', value: 'still-live' }] as unknown as NonNullable<typeof h.personaSessionMemos.verified.cookies>;
+    h.personaSessionMemos.verified.cookies = jar;
+
+    await expect(h.submitNotice(stubPage(() => Promise.reject(new Error('the notice never appeared'))), 'password-updated'))
+      .rejects.toThrow(/never appeared/);
+
+    expect(h.personaSessionMemos.verified.cookies, 'a session that is still live must not be forgotten').toBe(jar);
+    expect(h.personaCredentials('verified', {}).password, 'the password did not change, so the run must not think it did')
+      .toBe(h.PERSONA_DEFAULT_PASSWORD);
+  });
+
+  it('a submit the API accepted records the rotation and drops the session it revoked', async () => {
+    const h = await freshHarness();
+    h.personaSessionMemos.verified.cookies = [{ name: 'pm_session', value: 'about-to-be-revoked' }] as unknown as NonNullable<typeof h.personaSessionMemos.verified.cookies>;
+
+    await h.submitNotice(stubPage(() => Promise.resolve()), 'password-updated');
+
+    expect(h.personaSessionMemos.verified.cookies, 'the reset revoked every session this account had').toBeNull();
+    expect(h.personaCredentials('verified', {}).password).toBe(h.PERSONA_RESET_PASSWORD);
+  });
+
+  it('the same holds for an accepted invitation, which is the other password this run sets', async () => {
+    const h = await freshHarness();
+    expect(() => h.personaCredentials('invited', {})).toThrow();
+    await h.submitNotice(stubPage(() => Promise.resolve()), 'invite-set');
+    expect(h.personaCredentials('invited', {}).password).toBe(h.PERSONA_INVITE_PASSWORD);
+  });
+
+  it('an invitation the API REFUSED sets no password at all — the notice says so', async () => {
+    const h = await freshHarness();
+    await h.submitNotice(stubPage(() => Promise.resolve()), 'invite-expired');
+    expect(() => h.personaCredentials('invited', {}), 'a dead link set nothing').toThrow();
   });
 });
 

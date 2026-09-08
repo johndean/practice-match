@@ -39,10 +39,13 @@ def test_it_deletes_every_rate_limit_bucket_and_prints_how_many(redis, monkeypat
     assert redis.keys("rl:*") == []
     out = capsys.readouterr().out
     assert "3" in out, out
-    # Only the count. A subject enters a bucket key as a truncated SHA-256 pseudonym, which is not
-    # an anonymisation (app/ratelimit.py says so), and a CI log is not the place for either.
+    # Only the count (review round 1, M6). A subject enters a bucket key as a truncated SHA-256
+    # pseudonym, which is not an anonymisation (app/ratelimit.py says so), and a CI log is not the
+    # place for either — so the line names no subject, no URL, and no environment.
     assert "203.0.113.7" not in out
     assert "someone@example.org" not in out
+    assert "test" not in out, "the docstring promises nothing but the count"
+    assert out.strip() == "[reset_rate_limits] cleared 3 rate-limit bucket(s)"
 
 
 def test_it_leaves_every_other_key_in_the_database_alone(redis, monkeypatch):
@@ -113,6 +116,30 @@ def test_loopback_in_its_documented_spellings_is_accepted(redis, monkeypatch, ur
 
     assert reset_rate_limits.main([]) == 0
     assert redis.keys("rl:*") == []
+
+
+@pytest.mark.parametrize("url", ["redis://[::1", "redis://[not-an-ipv6]:6379/0"])
+def test_a_malformed_url_is_refused_by_the_same_one_line_contract(redis, monkeypatch, capsys, url):
+    """Review round 1, M5. `urlsplit('redis://[::1')` raises `ValueError: Invalid IPv6 URL`, so
+    before this the script exited with a traceback rather than the documented "non-zero exit and
+    ONE line on stderr". It always failed CLOSED — nothing was deleted and the exit was non-zero —
+    but a traceback is not the contract the docstring states, and a URL in one is exactly what the
+    refusal is careful never to print."""
+    monkeypatch.setattr(cache.settings, "environment", "test")
+    monkeypatch.setattr(cache.settings, "redis_url", url)
+    _limits(redis)
+
+    assert reset_rate_limits.main([]) != 0
+    assert len(redis.keys("rl:*")) == 3
+    err = capsys.readouterr().err
+    assert err.strip().count("\n") == 0, "one line to stderr, not a traceback"
+    assert "Traceback" not in err
+
+
+def test_is_local_redis_answers_false_for_a_url_it_cannot_parse():
+    """The guard's own contract, at the level M5 names: unparseable is NOT local."""
+    assert reset_rate_limits.is_local_redis("redis://[::1") is False
+    assert reset_rate_limits.is_local_redis("redis://localhost:6380/0") is True
 
 
 def test_a_url_with_no_host_at_all_is_refused(redis, monkeypatch):

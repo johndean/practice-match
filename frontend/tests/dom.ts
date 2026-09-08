@@ -477,19 +477,23 @@ export function walkPage(arg: { rootSelector: string; formTags: string[] }): Raw
     // form tag, so until now the app's textarea value was compared nowhere at all and only the
     // reference's own artefact was. Every other tag, the other two form tags included, keeps its
     // children: a <select>'s <option>s are real content.
+    // ONE return (review round 1, M7): the textarea rule guards the child COLLECTION rather than
+    // repeating the node literal, so a future change to the node's shape is made in one place and
+    // cannot silently miss this arm.
     const children: RawNode[] = [];
-    if (tag === 'textarea') return { tag, attrs, classList: Array.from(el.classList), style, children, ...(props ? { props } : {}) };
-    if (el.shadowRoot) {
-      const shadowChildren: RawNode[] = [];
-      for (const child of Array.from(el.shadowRoot.childNodes)) {
-        const w = walk(child);
-        if (w) shadowChildren.push(w);
+    if (tag !== 'textarea') {
+      if (el.shadowRoot) {
+        const shadowChildren: RawNode[] = [];
+        for (const child of Array.from(el.shadowRoot.childNodes)) {
+          const w = walk(child);
+          if (w) shadowChildren.push(w);
+        }
+        children.push({ shadow: shadowChildren });
       }
-      children.push({ shadow: shadowChildren });
-    }
-    for (const child of Array.from(el.childNodes)) {
-      const w = walk(child);
-      if (w) children.push(w);
+      for (const child of Array.from(el.childNodes)) {
+        const w = walk(child);
+        if (w) children.push(w);
+      }
     }
     return { tag, attrs, classList: Array.from(el.classList), style, children, ...(props ? { props } : {}) };
   }

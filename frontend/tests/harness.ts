@@ -288,13 +288,18 @@ export function expiredFixtureToken(kind: FixtureTokenKind): string {
 
 /** A throwaway address for the live sign-up and forgot flows — RFC 2606 `example.org`, never
  *  deliverable, distinct per run AND per take so `FORGOT_EMAIL` (3/h/address) and `SIGNUP_EMAIL`
- *  (3/day/address) are never the binding limit. Pure; `nextThrowawayEmail` takes the counter. */
+ *  (3/day/address) are never the binding limit. Pure; `nextThrowawayEmail` takes the counter.
+ *
+ *  The run id is SANITISED into the local part (review round 1, M14). `global-setup.ts` mints
+ *  `randomUUID()`, which is hex and hyphens and already safe — but `PW_RUN_ID` is deliberately
+ *  overridable by an outer harness (CI sharding, a wrapper script), and a value carrying `/`, `:`
+ *  or a space would make the live sign-up 422 with nothing in the failure pointing at the cause. */
 export function throwawayEmail(purpose: string, run: string, n: number): string {
-  return `e2e-${run || 'local'}-${purpose}-${n}@example.org`;
+  return `e2e-${run.replace(/[^A-Za-z0-9._-]/g, '-') || 'local'}-${purpose}-${n}@example.org`;
 }
 
 /**
- * The six seeded accounts, each as the `/api/me` payload `logic.js`'s A5.4 bootstrap reads
+ * The ten seeded accounts, each as the `/api/me` payload `logic.js`'s A5.4 bootstrap reads
  * (`scripts/seed_persona.py` writes them; `tests/test_docs.py` pins these strings against
  * `app.auth.labels.role_label` / `initials` for each persona's grants, in both languages).
  *
@@ -441,19 +446,27 @@ export function memoFileUpdate(existing: string | null, persona: string, cookies
 }
 
 /**
- * The next value of a run-scoped counter, and the file that records it (A-S5).
+ * A run-scoped counter: what this run has already taken, and the file that records a new value.
  *
  * Two things need one. The FIXTURE TOKENS are single-use — spending `01` twice gets a 400 from a
  * token the seed did emit but the first capture already burnt — and the THROWAWAY ADDRESSES must
  * differ per take or three `forgot` captures would spend `FORGOT_EMAIL`'s three per hour on one
  * address. Both live beside the persona jars, in the run's own file, so a worker Playwright
  * restarts after a failure carries on rather than starting over.
+ *
+ * Split into a read and a write (review round 1, M8) so a take is one read, one decision and one
+ * write, and the decision — `max(file, memory) + 1` — is visible in `takeCounter` rather than
+ * spread across a loop.
  */
-export function memoFileTakeCounter(existing: string | null, name: string, run: string): { n: number; contents: string } {
+export function memoFileCounter(existing: string | null, name: string, run: string): number {
+  return memoFor(existing, run).counters[name] ?? 0;
+}
+
+/** The file's contents with one counter set to `n`, leaving this run's jars and flags alone. */
+export function memoFileSetCounter(existing: string | null, name: string, n: number, run: string): string {
   const held = memoFor(existing, run);
-  const n = (held.counters[name] ?? 0) + 1;
   held.counters[name] = n;
-  return { n, contents: JSON.stringify({ run, ...held }) };
+  return JSON.stringify({ run, ...held });
 }
 
 /** Records that this run has rotated a persona's password — see `PERSONA_RESET_PASSWORD`. */
@@ -526,15 +539,15 @@ const counterMemo: Record<string, number> = {};
 
 function takeCounter(name: string): number {
   const run = runId();
-  const fromFile = run ? memoFileTakeCounter(readMemoFileText(), name, run) : null;
-  const n = Math.max(fromFile?.n ?? 0, (counterMemo[name] ?? 0) + 1);
+  const held = run ? memoFileCounter(readMemoFileText(), name, run) : 0;
+  // The higher of the two, so neither a missing file nor a stale read hands the same value out
+  // twice — then written ONCE (review round 1, M8; the loop it replaces called the pure helper
+  // two or three times per take and carried a fallback arm nothing could reach).
+  const n = Math.max(held, counterMemo[name] ?? 0) + 1;
   counterMemo[name] = n;
   if (run) {
     mkdirSync(dirname(MEMO_FILE), { recursive: true });
-    // Re-serialise from the value actually taken, so the `max` above is what the file records.
-    let contents = readMemoFileText();
-    for (let i = memoFileTakeCounter(contents, name, run).n; i <= n; i++) contents = memoFileTakeCounter(contents, name, run).contents;
-    writeFileSync(MEMO_FILE, contents ?? memoFileTakeCounter(null, name, run).contents);
+    writeFileSync(MEMO_FILE, memoFileSetCounter(readMemoFileText(), name, n, run));
   }
   return n;
 }
@@ -681,14 +694,36 @@ export async function personaSignOut(cookies: PersonaCookies, baseURL = appOrigi
  * favour of the first one's cookies and every later test would run as the wrong account — with
  * no failure anywhere near the cause.
  *
- * THE BUDGET. `app/auth/limits.py`'s `SIGNIN_IP = (30, 900)` counts EVERY attempt per IP, wrong
- * credentials included (`app/api/auth.py` calls `limits.hit` before it checks the password). A
- * full `app`-project run spends: one per persona that any state signs in as — `buyer`, `seller`,
- * `design`, `pending`, `declined` and, since A-S4, `verified` (`needsReview` is seeded and exported
- * for Task I8b, and no approved state uses it yet) — plus the reauth test's own standalone session,
- * plus the three form sign-ins in `signin-form.spec.ts` (the successful one, the deliberately wrong
- * password, and one the sign-out test consumes). TEN of thirty, with the memo and this file keeping
- * it there however many workers the run gets through.
+ * THE BUDGET — FOURTEEN of thirty (review round 1, I1/M3; traced against the real
+ * `POST /api/auth/signin` calls, not estimated).
+ *
+ * `app/auth/limits.py`'s `SIGNIN_IP = (30, 900)` counts EVERY attempt per IP, wrong credentials
+ * included (`app/api/auth.py` calls `limits.hit` before it checks the password). Playwright runs
+ * the `app` project with one worker, no retries and files in path order — `account-flows`, `dom`,
+ * `signin-form`, `smoke`, `visual` — so the trace is exact:
+ *
+ *   account-flows  7  `verified` (after its own reset), `invited`, `needsReview`, `design`
+ *                     (through `decideAs`, the reviewer that puts the applicant fixtures back),
+ *                     `declined`, `buyer`, `unverified`
+ *   dom           +2  `pending` and `seller`; every other state reuses a jar account-flows minted
+ *   signin-form   +3  the successful sign-in, the deliberately wrong password, the sign-out test's
+ *   smoke         +1  the reauth check's standalone `personaSignIn()` session
+ *   visual        +1  `gate-apply` re-signs `verified`, because dom's `gate-signin-password-updated`
+ *                     reset revoked the session and `personaPasswordRotated` forgot it
+ *
+ * TEN accounts are seeded and NINE of them are signed in as: `design`, `buyer`, `seller`,
+ * `pending`, `needsReview`, `declined`, `verified`, `unverified`, `invited`. The tenth,
+ * `verifyMe` (`verify-me@practice-match.test`), is never signed in as at all — it exists only to
+ * own the verify fixture tokens, because consuming one confirms its account for good (A-S5.2).
+ *
+ * Each RESET costs one extra: `POST /api/auth/password/reset` revokes every session the account
+ * had, so `personaPasswordRotated` drops the memo and the next state that needs `verified@` signs
+ * in again with the new password. Three resets happen per run (account-flows, dom, visual) and
+ * only one of them is followed by another `verified@` state, which is the `+1` above.
+ *
+ * The budget is PER RUN, not per quarter-hour: `scripts/reset_rate_limits.py` zeroes every `rl:*`
+ * counter at the start of every local run that actually starts the API (A-S5.1), so consecutive
+ * runs are independent and there is no window to wait out.
  *
  * The wrong password also counts toward `SIGNIN_EMAIL`'s ten failures per address per 15 minutes —
  * for `buyer@` only, and one of ten.
@@ -745,7 +780,8 @@ export async function signInAsPersona(page: Page, url = '/'): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------------------
-// `reach()` — the one entry point for all 28 approved states (amendment A-I8).
+// `reach()` — the one entry point for all 43 approved states (amendment A-I8; 28 until Task S5
+// added the fifteen account screens of spec §6).
 //
 // Until I8 both targets entered every state the same way, through the design's own PROTOTYPE
 // affordances: the jump bar (`jump()`), the "Prototype — access states" shortcuts, and the
@@ -993,21 +1029,21 @@ export async function settleExpectedApiFailures(page: Page, timeoutMs = 5_000): 
  * other four submit one of the design's own forms. Nothing here asserts the outcome: the pixel and
  * DOM oracles do that against the reference, and `account-flows.spec.ts` asserts the copy.
  */
-async function submitNotice(page: Page, key: NoticeKey): Promise<void> {
+export async function submitNotice(page: Page, key: NoticeKey): Promise<void> {
   if (key === 'reset-sent') {
     await page.getByLabel('Email', { exact: true }).fill(nextThrowawayEmail('forgot'));
     await page.getByRole('button', { name: 'Send reset link', exact: true }).click();
-  } else if (key === 'password-updated') {
-    await submitPasswordForm(page, PERSONA_RESET_PASSWORD);
-    // The reset revoked every session `verified@` had and changed its password: the run has to
-    // know both, or `gate-apply`'s next capture runs anonymous (A-S5 ruling 3).
-    personaPasswordRotated('verified');
-  } else if (key === 'invite-set' || key === 'invite-expired') {
-    await submitPasswordForm(page, PERSONA_INVITE_PASSWORD);
-    // Only the ACCEPTED one: an invitation the API refused set no password and revoked nothing.
-    if (key === 'invite-set') personaPasswordRotated('invited');
+  } else if (key === 'password-updated' || key === 'invite-set' || key === 'invite-expired') {
+    await submitPasswordForm(page, key === 'password-updated' ? PERSONA_RESET_PASSWORD : PERSONA_INVITE_PASSWORD);
   }
   await page.getByText(NOTICES[key], { exact: true }).first().waitFor({ state: 'visible' });
+  // AFTER the notice, never before (review round 1, M4). The notice IS the API's confirmation: a
+  // submit it REFUSED — a spent token, a policy refusal — would otherwise have the run record a
+  // password change that never happened and forget a session that is still live, and every later
+  // sign-in as that account would 401 a long way from the cause. Only the ACCEPTED invitation
+  // counts; a dead link set no password and revoked nothing.
+  if (key === 'password-updated') personaPasswordRotated('verified');
+  if (key === 'invite-set') personaPasswordRotated('invited');
 }
 
 /**
