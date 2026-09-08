@@ -441,18 +441,21 @@ copy or the address is in; only an actual send is gated.
 was configured when it was queued — the worker renders `email_outbox.params`, never the current
 `VIN_FOUNDATION_POSTAL_ADDRESS` setting. Fixing the Railway variable after a batch has already been
 queued does **not** fix those rows. To correct a wrong address caught before the worker has sent
-the batch (`status = 'queued'`; a `sent` row cannot be recalled):
+the batch (`status = 'queued'`; a `sent` row cannot be recalled). **Stop the mail worker first** (scale the
+`worker` service to zero or pause `mail.send`): a row the worker has already claimed still reads `status = 'queued'`
+until `mark()` runs, so deleting while the worker drains can double-mail up to one batch — the three statements below
+also carry `AND next_attempt_at <= now()` so an in-flight claim is never touched:
 
 ```sql
 -- 1. See which sign-ups this batch would affect (the idempotency key is "<signup id>:launch_announcement:1").
 SELECT id, to_email, split_part(idempotency_key, ':', 1) AS signup_id
-  FROM email_outbox WHERE template = 'launch_announcement' AND status = 'queued';
+  FROM email_outbox WHERE template = 'launch_announcement' AND status = 'queued' AND next_attempt_at <= now();
 -- 2. Clear launch_mailed_at for exactly those sign-ups, so the next real send picks them up again.
 UPDATE interest_signup SET launch_mailed_at = NULL
  WHERE id::text IN (SELECT split_part(idempotency_key, ':', 1)
-                       FROM email_outbox WHERE template = 'launch_announcement' AND status = 'queued');
+                       FROM email_outbox WHERE template = 'launch_announcement' AND status = 'queued' AND next_attempt_at <= now());
 -- 3. Delete the wrong-address rows — the worker has not sent them, so nothing already went out.
-DELETE FROM email_outbox WHERE template = 'launch_announcement' AND status = 'queued';
+DELETE FROM email_outbox WHERE template = 'launch_announcement' AND status = 'queued' AND next_attempt_at <= now();
 ```
 
 Then correct `VIN_FOUNDATION_POSTAL_ADDRESS` in Railway and repeat step 4 of the order above.
