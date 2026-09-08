@@ -46,7 +46,7 @@ railway_calls() { wc -l < "$FAKE_RAILWAY_LOG" | tr -d ' '; }
 
 # start_server <mode> [environment]. Modes: ok | spa_missing | deep_503 | no_postgis | no_site_mode |
 #   coming_ok | coming_wrong_shell | coming_interest_500 | coming_leak | coming_auth_live | coming_admin_live |
-#   coming_applications_live | coming_listings_live | coming_signups_live | listings_open | missing_keys |
+#   coming_applications_live | coming_listings_live | coming_signups_live | listings_open | signups_open | missing_keys |
 #   db_null | not_json | deep_json | wrong_version | no_config | config_not_bool | config_public
 # [environment] overrides the fake body's `environment` field (default qa) — M1's production-mode
 # cases reuse the same MODE bodies (coming_ok, ok) with environment: production instead of duplicating
@@ -120,6 +120,10 @@ class H(BaseHTTPRequestHandler):
             # reachable (401, not 404) behind the Coming Soon page.
             if MODE == "coming_signups_live":
                 self._send(401, "application/json", b'{"error":{"code":"UNAUTHORIZED","message":"Sign in to continue."}}')
+            elif MODE == "signups_open" and BODY["site_mode"] == "app":
+                # M-3: the app-mode analogue of listings_open — an anonymous 200 in app mode is
+                # every launch subscriber's email address, unguarded.
+                self._send(200, "application/json", b'{"items":[],"next_cursor":null,"counts":{}}')
             elif BODY["site_mode"] == "coming_soon":
                 self._send(404, "application/json", b'{"error":{"code":"NOT_FOUND"}}')
             else:
@@ -392,6 +396,19 @@ if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash script
 fi
 [[ "$out" == *"/api/listings answered 200 to an anonymous caller"* ]] || fail "the unguarded-listings failure must name itself; got: $out"
 [[ "$out" != *"listings guarded OK"* ]] || fail "must not claim listings guarded OK when it is not; got: $out"
+stop_server
+
+# --- 11f. Review round 1, M-3: the app-mode analogue of 11e for the sign-ups surface — an
+# unguarded /api/admin/signups in app mode leaks every launch subscriber's email address, a
+# strictly worse disclosure than the listings case that already earned its own negative. Today's
+# `[[ "$code" == "401" ]]` does catch a 200 (this is a coverage gap, not a live hole), but nothing
+# proved that before this case. --------------------------------------------------------------
+start_server signups_open
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
+  fail "an unguarded /api/admin/signups must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"/api/admin/signups answered 200 to an anonymous caller"* ]] || fail "the unguarded-signups failure must name itself; got: $out"
+[[ "$out" != *"signups guarded OK"* ]] || fail "must not claim signups guarded OK when it is not; got: $out"
 stop_server
 
 # --- 12. malformed healthz body (required keys absent) fails, no traceback -----

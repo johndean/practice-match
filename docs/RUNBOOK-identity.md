@@ -405,10 +405,26 @@ A-I5d.5 (John's ruling, 2026-09-09) gates the WHOLE Admin Launch Sign-ups router
 `POST /api/admin/signups/launch-mail` alike answer `404` before the flip, even to the legacy
 `API_SECRET_KEY` operator bearer (this supersedes D-I5d-5, which had mounted the router
 unconditionally so the list stayed readable before launch). To read the sign-ups before then, query
-the database directly:
+the database directly — the same `DATABASE_URL`-from-Railway pattern as §12's QA parity run and
+`DEPLOY.md`'s seeding recipe: pull the PostGIS service's `DATABASE_URL` into an env prefix so it
+never appears in argv and is never echoed, and run a python one-liner (reading it from its own
+process environment, never a command-line argument) that answers the row listing and the same count
+the dry run would have:
 
-```sql
-SELECT email, created_at FROM interest_signup ORDER BY created_at;
+```bash
+railway status                                                                                     # MUST print Project: Practice Match
+DATABASE_URL="$(railway variable list --service PostGIS --environment production --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["DATABASE_URL"])')" \
+  poetry run python3 -c '
+import os
+import psycopg2
+conn = psycopg2.connect(os.environ["DATABASE_URL"])
+with conn, conn.cursor() as cur:
+    cur.execute("SELECT email, created_at FROM interest_signup ORDER BY created_at")
+    for row in cur.fetchall():
+        print(row)
+    cur.execute("SELECT count(*) FILTER (WHERE launch_mailed_at IS NULL) AS not_mailed, count(*) FROM interest_signup")
+    print(cur.fetchone())
+'
 ```
 
 **Once `SITE_MODE=app`.** `GET /api/admin/signups` reads the list (staff or admin) and

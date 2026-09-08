@@ -268,7 +268,9 @@ class LaunchMailNotConfigured(AuthError):
 
 
 class SiteNotLaunched(AuthError):
-    """The launch mail, attempted while the site is still serving the Coming Soon page (D-I5d-5).
+    """The launch mail, attempted while the site is still serving the Coming Soon page (D-I5d-5,
+    superseded by A-I5d.5: the dry run is exempt from the in-handler 409, but the whole router is
+    absent before the flip).
 
     Not a permission problem — the caller may well be an admin — so it is a 409 about the world,
     not a 403 about them. The message the mail carries says Practice Match is open; sending it
@@ -324,11 +326,14 @@ def launch_mail(body: LaunchMailIn, request: Request, principal: Notifier) -> di
     that keeps a leaked automation credential away from the VIN Foundation's whole launch list.
 
     A REAL send is gated three ways, each a 409 about the world rather than the caller, checked in
-    this order (A-I5d.4 adds the first two to D-I5d-5's `SiteNotLaunched`): the copy must be
-    approved, the CAN-SPAM postal address must be configured, and the site must actually be open.
-    A DRY RUN is exempt from all three — D-I5d-5's "the count is readable, the message is not
-    sendable" — because it queues nothing, stamps nothing, and talks to nobody. It still writes one
-    audit row, `reason: dry_run`, the way rehearsing a mass mail deserves a trace.
+    this order (A-I5d.4 adds the first two to D-I5d-5's `SiteNotLaunched`, superseded by A-I5d.5:
+    the dry run is exempt from the in-handler 409, but the whole router is absent before the
+    flip): the copy must be approved, the CAN-SPAM postal address must be configured, and the site
+    must actually be open. A DRY RUN is exempt from all three — D-I5d-5's "the count is readable,
+    the message is not sendable" (superseded by A-I5d.5: the dry run is exempt from the in-handler
+    409, but the whole router is absent before the flip) — because it queues nothing, stamps
+    nothing, and talks to nobody. It still writes one audit row, `reason: dry_run`, the way
+    rehearsing a mass mail deserves a trace.
 
     Nothing here talks to Resend. The Celery `mail.send` task drains the outbox, applies
     `EMAIL_ALLOWLIST` outside production and refuses suppressed addresses, all unchanged."""

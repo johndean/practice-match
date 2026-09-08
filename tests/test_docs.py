@@ -1454,6 +1454,36 @@ def test_d_i5d_5_is_marked_superseded_by_a_i5d_5_without_being_deleted():
     )
 
 
+def test_every_plan_line_describing_the_pre_a_i5d_5_mount_carries_the_superseded_marker():
+    """Review round 1, M-2: A-I5d.5's first pass marked only the D-I5d-5 table row (`:52`) — four
+    more lines still described the superseded mount as CURRENT fact: the file map (`:70`), Task
+    I5d.3's own Modify list (`:386`), Open Questions §2 (`:1574`) and the Self-review (`:1587`).
+    Task I5d.5's Admin tab is still unbuilt, so this plan is still live, and the file map/Modify
+    list are exactly what a later implementer reads to learn the shape of `app/main.py` — the
+    review's own failure scenario (a later task re-derives the include from one of these and puts
+    it back outside the block).
+
+    Generic sweep, same shape as `test_persona_password_railway_set_instructions_are_marked_
+    superseded`: every line pairing the pre-ruling wording ("outside the `site_mode` block" /
+    "mounts the router in both site modes") with a description of the mount must carry the
+    superseded marker on that same line — so a fifth such line added later fails here too, instead
+    of silently reproducing the stale claim. `count == 4` pins that the sweep is finding exactly
+    the four the review named, not zero (a typo in the pattern) and not more (the pattern
+    over-matching, e.g. the historical Step 3 code-instruction line at `:872`, "one `include_router`
+    line **outside** the `site_mode == \"app\"` block" — its bold `**outside**` is why the plain
+    "outside the `site_mode" substring correctly does not match it; that line is a frozen record of
+    what Task I5d.3 already did, not a fact a later task would re-derive from, and the review did
+    not name it)."""
+    plan = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-08-launch-signups-admin.md").read_text()
+    matches = [line for line in plan.splitlines()
+               if "outside the `site_mode" in line or "mounts the router in both site modes" in line]
+    assert len(matches) == 4, f"expected exactly 4 matching lines, found {len(matches)}: {matches}"
+    for line in matches:
+        assert "(superseded 2026-09-09 by A-I5d.5" in line, (
+            f"line describes the pre-A-I5d.5 mount as current, without the superseded marker: {line!r}"
+        )
+
+
 def test_a_i5d_5_amendment_is_recorded_in_the_plan():
     """The plan gains a dated record of John's ruling, verbatim, and the operational consequence it
     has for production (which runs coming_soon until launch, so the sign-ups router is unreachable
@@ -1473,9 +1503,14 @@ def test_runbook_says_the_signups_router_is_app_mode_only():
     production before launch (D-I5d-5). A-I5d.5 reverses that: the whole router 404s until
     `SITE_MODE=app`, and an operator reads the sign-ups with SQL instead — this is the new pin for
     that wording (there was no prior pin naming the old "reachable before launch"/"both site
-    modes" phrasing to update)."""
+    modes" phrasing to update).
+
+    Review round 1, I-3: sliced to the next `## ` heading, the same way the DEPLOY.md test below
+    bounds its section — §13 is the last section today, so `404`/`SITE_MODE=app`/`API_SECRET_KEY`
+    each occur exactly once past this point and the bound is a no-op, but an unbounded slice would
+    let a later §14 satisfy any of these substrings instead."""
     runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
-    section = runbook.split("## 13. The launch email", 1)[1]
+    section = runbook.split("## 13. The launch email", 1)[1].split("\n## ", 1)[0]
     assert "SITE_MODE=app" in section
     assert "404" in section
     assert "API_SECRET_KEY" in section
@@ -1483,12 +1518,37 @@ def test_runbook_says_the_signups_router_is_app_mode_only():
         "§13 does not give the read-only SQL an operator uses before the launch flip"
     )
     assert "A-I5d.5" in section
+    # Review round 1, M-5: the SQL alone is not executable — no connection recipe, and no
+    # `not_mailed`/count(*) projection to answer the same question the (now-unreachable) dry run
+    # would have. The recipe must mirror the repo's own established DATABASE_URL-from-Railway
+    # pattern (DEPLOY.md's seeding recipe, RUNBOOK §12's QA parity run): the PostGIS service's
+    # `DATABASE_URL`, read into an env prefix, never argv, never echoed.
+    assert "railway variable list --service PostGIS --environment production --json" in section, (
+        "§13 does not give the connection recipe for pulling production's DATABASE_URL"
+    )
+    assert "argv" in section, "§13 does not say the DATABASE_URL is kept out of argv"
+    assert "SELECT count(*) FILTER (WHERE launch_mailed_at IS NULL) AS not_mailed, count(*) FROM interest_signup" in section, (
+        "§13 does not extend the projection with the not_mailed/count(*) the dry run would have answered"
+    )
 
 
 def test_deploy_md_names_admin_signups_among_app_mode_only_surfaces():
     """DEPLOY.md's Site mode section must say the admin sign-ups router is app-mode-only now,
-    alongside auth/applications/admin-users/listings, per A-I5d.5."""
+    alongside auth/applications/admin-users/listings, per A-I5d.5.
+
+    Review round 1, M-1: the original sentence ("probes each one on both environments (404 in
+    coming-soon mode, mounted-and-guarded in app mode)") overstated the app-mode half —
+    `scripts/verify-deploy.sh`'s `else` branch only probes `/api/listings` and
+    `/api/admin/signups`; auth, applications and `/api/admin/users` get no app-mode probe at all.
+    Pinned to the exact corrected wording so the false half cannot come back, and the old
+    overstatement is asserted absent."""
     deploy = (ROOT / "DEPLOY.md").read_text()
     section = deploy.split("## Site mode (Coming Soon on production)", 1)[1].split("\n## ", 1)[0]
     assert "/api/admin/signups" in section
     assert "A-I5d.5" in section
+    assert "probes all five on a coming-soon deployment, and `/api/listings` and `/api/admin/signups` on an app-mode one" in section, (
+        "DEPLOY.md does not state exactly what scripts/verify-deploy.sh probes in each mode"
+    )
+    assert "mounted-and-guarded in app mode" not in section, (
+        "DEPLOY.md still overstates the app-mode probe as covering all five surfaces (M-1)"
+    )

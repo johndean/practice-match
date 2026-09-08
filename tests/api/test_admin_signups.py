@@ -183,6 +183,21 @@ async def test_the_list_needs_signups_read(client, conn, buyer_headers):
     assert (await client.get(SIGNUPS)).status_code == 401
 
 
+async def test_the_legacy_operator_bearer_can_read_the_list_once_site_mode_is_app(client, conn):
+    """I-4 (I5d.5 review): the app-mode positive to go with
+    `test_the_admin_signups_router_is_absent_in_coming_soon_mode_per_a_i5d_5`'s denial-before-the-
+    flip — John's ruling's "even to an API_SECRET_KEY bearer" is a statement about who is refused
+    before the flip, and this is the other half: once `SITE_MODE=app` (the `client` fixture's
+    default), the bearer reaches 200 exactly like a real staff/admin session, because
+    `deps.LEGACY_ADMIN` resolves to an `admin`-role principal (`app/auth/deps.py:248-249`) — the
+    same shape as `tests/api/test_admin_users.py`'s
+    `test_the_legacy_operator_bearer_cannot_act_where_the_actor_must_name_an_account`, whose last
+    line pins the identical positive for `/api/admin/users`."""
+    seed(conn, 1)
+    bearer = {"Authorization": f"Bearer {settings.api_secret_key}"}
+    assert (await client.get(SIGNUPS, headers=bearer)).status_code == 200
+
+
 async def test_the_admin_signups_router_is_absent_in_coming_soon_mode_per_a_i5d_5(dist, redis, member, monkeypatch):
     """Controller amendment A-I5d.5 (John's ruling, 2026-09-09, verbatim): "Gate the entire Admin
     Launch Sign-ups router behind SITE_MODE=app. Do not expose the sign-up list or CSV export on
@@ -407,7 +422,8 @@ async def test_the_launch_mail_is_refused_while_the_site_is_still_coming_soon(cl
     r = await client.post(LAUNCH, json={"dry_run": False}, headers=admin_headers)
     assert r.status_code == 409 and r.json()["error"]["code"] == "NOT_LAUNCHED"
     # ...and the dry run still answers, which is the point of D-I5d-5: the count is readable on
-    # production before the flip, the message is not sendable.
+    # production before the flip, the message is not sendable (D-I5d-5, superseded by A-I5d.5: the
+    # dry run is exempt from the in-handler 409, but the whole router is absent before the flip).
     dry = await client.post(LAUNCH, json={"dry_run": True}, headers=admin_headers)
     assert dry.status_code == 200 and dry.json()["not_mailed"] == 2
 
@@ -491,7 +507,8 @@ async def test_the_launch_mail_refuses_a_real_send_while_the_copy_is_not_approve
     """Controller amendment A-I5d.4: John's ruling was "COPY NOT YET APPROVED. Do not send." —
     checked BEFORE the postal-address setting and before `SITE_MODE`, so this fires even though
     neither of those is configured either. The dry run answers regardless (D-I5d-5's "the count is
-    readable, the message is not sendable")."""
+    readable, the message is not sendable" — D-I5d-5, superseded by A-I5d.5: the dry run is exempt
+    from the in-handler 409, but the whole router is absent before the flip)."""
     ids = seed(conn, 2)
     r = await client.post(LAUNCH, json={"dry_run": False}, headers=admin_headers)
     assert r.status_code == 409 and r.json()["error"]["code"] == "LAUNCH_COPY_NOT_APPROVED"
