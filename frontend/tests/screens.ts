@@ -115,11 +115,6 @@ export const SCREENS: Screen[] = [
   { name: 'gate-pending', steps: async (p) => { await reach(p, { gate: 'pending', persona: 'pending' }); } },
   { name: 'gate-declined', steps: async (p) => { await reach(p, { gate: 'rejected', persona: 'declined' }); } },
   { name: 'browse', steps: browse },
-  // A13: the metro dropdown, open. The ruled change has no oracle state otherwise — the closed
-  // trigger is covered by every Browse state, but the panel the ruling is ABOUT would never be
-  // photographed or serialised. Reached the same way `browse-layer-menu` is: click, then wait for
-  // the thing the state exists to show, then the 400 ms settle every Browse state was taken with.
-  { name: 'browse-metro-menu', steps: async (p) => { await browse(p); await p.getByRole('button', { name: 'Metro area' }).click(); await p.getByRole('listbox', { name: 'Metro area' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
   // The Market data card's layer select (V3's `md.toggleLayerMenu` trigger). It is the first
   // UNLABELLED aria-haspopup="listbox" on the screen — A13's metro selector carries an
   // `aria-label` and comes first in the DOM, which is what `layerTrigger` excludes; Compare's
@@ -262,5 +257,18 @@ export const SCREENS: Screen[] = [
   { name: 'gate-signin-reset-sent', steps: async (p) => { await reach(p, { gate: 'signin', notice: 'reset-sent' }); } },
   { name: 'gate-signin-password-updated', steps: async (p) => { await reach(p, { gate: 'signin', notice: 'password-updated' }); } },
   { name: 'gate-signin-invite-set', steps: async (p) => { await reach(p, { gate: 'signin', notice: 'invite-set' }); } },
-  { name: 'gate-signin-invite-expired', steps: async (p) => { await provokes400(p, 'This invitation link is no longer valid. Ask the VIN Foundation for a new one.', () => reach(p, { gate: 'signin', notice: 'invite-expired' })); } }
+  { name: 'gate-signin-invite-expired', steps: async (p) => { await provokes400(p, 'This invitation link is no longer valid. Ask the VIN Foundation for a new one.', () => reach(p, { gate: 'signin', notice: 'invite-expired' })); } },
+  // A13: the metro dropdown, open — the 44th approved state (John's Q4 ruling), APPENDED rather
+  // than filed beside the other Browse states. `cross-plan-deltas.test.ts`'s `SCREENS.slice(0, 28)`
+  // pins the 28 Browse V3 states to their positions on the documented assumption that new states
+  // are appended, which is how Wave 2a's fifteen were added; inserting here would have pushed
+  // `header-1000` out of that window (controller ruling A on A13, 2026-09-08). Order is free:
+  // every consumer iterates or looks up by name, and `snapshotPathTemplate` names artefacts by
+  // state name, so the baselines and DOM snapshots are unaffected by where this line sits.
+  //
+  // The ruled change has no oracle state otherwise — the closed trigger is covered by every Browse
+  // state, but the panel the ruling is ABOUT would never be photographed or serialised. Reached
+  // the same way `browse-layer-menu` is: click, then wait for the thing the state exists to show,
+  // then the 400 ms settle every Browse state was taken with.
+  { name: 'browse-metro-menu', steps: async (p) => { await browse(p); await p.getByRole('button', { name: 'Metro area' }).click(); await p.getByRole('listbox', { name: 'Metro area' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } }
 ];
