@@ -82,6 +82,7 @@ async def _dispose_pools():
 
 
 import uuid
+import warnings
 
 import fakeredis
 
@@ -99,14 +100,87 @@ def _maintenance(migrate, dsn: str) -> str:
     return _normalized_base(migrate, dsn) + "/postgres"
 
 
+def _clone_database(admin, name: str, template: str) -> bool:
+    """`CREATE DATABASE <name> TEMPLATE <template>` on an autocommit maintenance connection.
+    Returns True when the copy happened.
+
+    Postgres refuses to copy a database any session is connected to ("source database ... is
+    being accessed by other users"). Nothing in this suite holds one — `template_dsn` lets
+    `migrate.run` close its connection before it yields — but another process on the shared
+    compose Postgres, or a test that opens one deliberately, can make it happen, and that is
+    not worth failing a run over. The fallback is exactly the pre-template path: create the
+    database empty and let the caller's `migrate.run` apply the whole ladder, slower but
+    identical in outcome. Returns False so the caller (and the test that provokes it) can tell
+    the two apart.
+
+    The notice is a real `warnings.warn` under an explicit `always` filter: the suite runs
+    `-W error`, which would otherwise turn the slow-but-correct fallback into the failure it
+    exists to avoid, while pytest's own recorder still logs it into the warnings summary."""
+    with admin.cursor() as cur:
+        try:
+            cur.execute(f'CREATE DATABASE "{name}" TEMPLATE "{template}"')
+            return True
+        except psycopg2.Error as exc:
+            if "being accessed by other users" not in str(exc):
+                raise
+            refusal = " ".join(str(exc).split())
+    with warnings.catch_warnings():
+        warnings.simplefilter("always")
+        warnings.warn(f"{refusal} — {name} falls back to create-then-migrate", stacklevel=2)
+    with admin.cursor() as cur:
+        cur.execute(f'CREATE DATABASE "{name}"')
+    return False
+
+
+@pytest.fixture(scope="session")
+def template_dsn(db_ready):
+    """The one already-migrated database every `scratch_dsn` is cloned from (platform task
+    P-TDB, the A-C0 ¶9 remedy). Yields its NAME, because `CREATE DATABASE ... TEMPLATE` names
+    a database rather than taking a DSN.
+
+    Running the whole migration ladder into a fresh database per test — `CREATE EXTENSION
+    postgis` included — was the backend gate's wall-clock bottleneck. It runs ONCE here
+    instead, and each test gets a copy.
+
+    Depends on `db_ready` so the existing session setup (the "is Postgres up" probe and the
+    shared dev database's own migration) still happens first and in the same order. Holds no
+    connection to the template while it lives: `migrate.run` opens and closes its own, and the
+    admin connection kept here is to the maintenance database — a template with a session
+    attached cannot be copied at all (see `_clone_database`)."""
+    from app.config import settings
+    from scripts import migrate
+
+    name = f"pm_tmpl_{uuid.uuid4().hex[:8]}"
+    admin = psycopg2.connect(_maintenance(migrate, settings.database_url))
+    admin.autocommit = True
+    try:
+        with admin.cursor() as cur:
+            cur.execute(f'CREATE DATABASE "{name}"')
+        try:
+            migrate.run(_normalized_base(migrate, settings.database_url) + f"/{name}")
+            yield name
+        finally:
+            with admin.cursor() as cur:
+                cur.execute(f'DROP DATABASE "{name}" WITH (FORCE)')
+    finally:
+        admin.close()
+
+
 @pytest.fixture
-def scratch_dsn():
+def scratch_dsn(template_dsn):
     """Fresh database with every migration applied; dropped afterwards. Loads
     scripts/migrate.py via a normal `import scripts.migrate` (scripts/ is a namespace
     package, no __init__.py needed) rather than a fresh throwaway module object per
     call, so a test can reach the exact `run` function this fixture calls through, by
     patching `scripts.migrate.run` directly (I5 fix round 1's failure-injection test
-    does this)."""
+    does this).
+
+    P-TDB: the database is a COPY of `template_dsn` rather than an empty database the whole
+    ladder is applied to — same end state, schema and ledger rows alike, at a fraction of the
+    cost. `migrate.run` still runs against it, deliberately: on a copy it applies nothing and
+    re-runs `refuse_changed_files`, so a tree that disagrees with the migrations already in the
+    template is still refused per test, and the failure-injection test above still has the seam
+    it patches."""
     from app.config import settings
     from scripts import migrate
 
@@ -114,8 +188,7 @@ def scratch_dsn():
     admin = psycopg2.connect(_maintenance(migrate, settings.database_url))
     admin.autocommit = True
     try:
-        with admin.cursor() as cur:
-            cur.execute(f'CREATE DATABASE "{name}"')
+        _clone_database(admin, name, template_dsn)
         dsn = _normalized_base(migrate, settings.database_url) + f"/{name}"
         try:
             # I5, fix round 1: migrate.run must run INSIDE this try — previously it ran
