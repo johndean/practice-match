@@ -226,13 +226,22 @@ class Component extends DCLogic {
 
   trackMenuDismiss() {
     const down = (e) => {
+      if (this.state.giveMenu) {
+        const give = this._giveMenuEl;
+        if (!(give && e.target && give.contains(e.target))) this.setState({ giveMenu: false });
+      }
       if (!this.state.marketMenu) return;
       const host = this._marketMenuEl;
       if (host && e.target && host.contains(e.target)) return;
       this.setState({ marketMenu: false, marketMenuAt: -1 });
     };
     const key = (e) => {
-      if (!this.state.marketMenu || e.key !== "Escape") return;
+      if (e.key !== "Escape") return;
+      if (this.state.giveMenu) {
+        this.setState({ giveMenu: false });
+        if (this._giveButtonEl) this._giveButtonEl.focus();
+      }
+      if (!this.state.marketMenu) return;
       this.setState({ marketMenu: false, marketMenuAt: -1 });
     };
     this._onDocDown = down;
@@ -267,6 +276,14 @@ class Component extends DCLogic {
     if (this.state.gate === "verify" && !this.state.gateToken) this.setState({ gate: "verify-expired" });
     else if (this.state.gate === "verify" && this.props.auth) this.props.auth.verify(this.state.gateToken).then(() => this.setState({ gate: "signin", gateToken: "", formNotice: "Your address is verified. Sign in to complete your access request." }), () => this.setState({ gate: "verify-expired", gateToken: "" }));
   }
+
+  // Arrow-key movement inside the Give menu. Focus IS the highlight — vinfoundation.org has
+  // no focus style of its own either — so this moves focus and nothing else. Wraps both ways.
+  giveFocus = (i) => {
+    const els = (this._giveItemEls || []).filter(Boolean);
+    if (!els.length) return;
+    els[((i % els.length) + els.length) % els.length].focus();
+  };
 
   money(n) {
     if (n == null || n === "") return "—";
@@ -1461,6 +1478,42 @@ class Component extends DCLogic {
       me: Object.assign({ email: s.email }, s.me),
       userMenuOpen: !!s.userMenu,
       toggleUserMenu: () => this.setState({ userMenu: !s.userMenu }),
+      // The Give control, measured on vinfoundation.org (John, 2026-09-08). The literals are
+      // the live site's, not this design's tokens: #339dde is the idle pill, #07386f the
+      // hover/open pill and the panel border and the row text, 10px the pill radius, 4.34px
+      // the gap from the pill to the 3px underline, 28px the gap from the pill to the panel.
+      giveMenuOpen: !!s.giveMenu,
+      toggleGiveMenu: () => this.setState({ giveMenu: !s.giveMenu, navMenu: false, userMenu: false }),
+      giveMenuRef: (el) => { this._giveMenuEl = el || null; },
+      giveButtonRef: (el) => { this._giveButtonEl = el || null; },
+      giveWrapStyle: "position: relative; display: flex; align-items: center;",
+      giveButtonStyle: "display: flex; align-items: center; padding: 2px 22px; font-family: 'Montserrat', var(--rf-display); font-size: 18px; font-weight: 600; line-height: 24.3px; white-space: nowrap; color: #ffffff; background: " +
+        (s.giveMenu ? "#07386f" : "#339dde") + "; border: 0; border-radius: 10px; cursor: pointer; transition: background .4s;",
+      giveUnderlineStyle: "position: absolute; left: 0; right: 0; top: calc(100% + 4.34px); height: 3px; background: #339dde; transform-origin: center; transition: transform .3s cubic-bezier(.58,.3,.005,1); transform: scaleX(" +
+        (s.giveMenu ? "1" : "var(--rf-give-underline, 0)") + ");",
+      giveLinks: [
+        { label: "Annual Fund", href: "https://vinfoundation.org/give/" },
+        { label: "Cor Group", href: "https://vinfoundation.org/cor/" },
+        { label: "Legacy Giving", href: "https://vinfoundation.org/legacy-giving/" },
+        { label: "Dr. Sophia Yin Memorial Fund", href: "https://vinfoundation.org/resources/dr-sophia-yin-memorial-fund/" }
+      ].map((g, i) => Object.assign({}, g, {
+        rowStyle: "display: flex; align-items: center; padding: 8px 20px; border-left: 8px solid transparent; font-family: 'Montserrat', var(--rf-display); font-size: 14px; font-weight: 600; line-height: 21px; color: #07386f; background: none; white-space: nowrap; text-decoration: none;",
+        ref: (el) => { const a = this._giveItemEls || (this._giveItemEls = []); a[i] = el || null; },
+        keys: (e) => {
+          if (e.key === "ArrowDown") { e.preventDefault(); return this.giveFocus(i + 1); }
+          if (e.key === "ArrowUp") { e.preventDefault(); return this.giveFocus(i - 1); }
+          if (e.key === "Home") { e.preventDefault(); return this.giveFocus(0); }
+          if (e.key === "End") { e.preventDefault(); return this.giveFocus(-1); }
+        },
+        pick: () => this.setState({ giveMenu: false })
+      })),
+      giveMenuKeys: (e) => {
+        if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+        e.preventDefault();
+        const at = e.key === "ArrowDown" ? 0 : -1;
+        if (s.giveMenu) return this.giveFocus(at);
+        this.setState({ giveMenu: true, navMenu: false, userMenu: false }, () => this.giveFocus(at));
+      },
       signOut: () => (this.props.auth ? this.props.auth.signOut().catch(() => {}) : Promise.resolve()).then(() => this.setState({
         userMenu: false, auth: false, screen: "gate", gate: "signin", pw: "",
         interest: "closed", activeId: null, hoverId: null, sellerView: "dash", wizSubmitted: false, formError: ""

@@ -1,6 +1,21 @@
 /* Global rules ported from the approved prototype. Everything else is inline by
    design: the approved values live on the elements they style. */
 
+/* Montserrat 600 — the face vinfoundation.org sets the Give button in, self-hosted under the
+   SIL Open Font Licence 1.1 (public/assets/fonts/OFL.txt, shipped beside the file). Ported from
+   the V3 reference helmet, where amendment A14.6 declares it (John, 2026-09-08: "Self-host
+   Montserrat 600 under the SIL Open Font Licence, scoped exclusively to the Give button and its
+   menu"); the ONE difference from the reference's rule is the platform spec's §3 rule-1 asset
+   rewrite, `assets/` -> `/assets/`. frontend/tests/fonts.test.ts derives this rule from the
+   reference's and proves the two copies of the file are byte-identical, so the zero-tolerance
+   pixel gate can never be comparing two different typefaces. Scoped to the Give trigger and its
+   menu rows by the design itself (A14.2): nothing else in the app names the family. */
+@font-face {
+  font-family: 'Montserrat';
+  src: url('/assets/fonts/Montserrat-SemiBold.woff2') format('woff2');
+  font-weight: 600; font-style: normal; font-display: swap;
+}
+
 body {
   margin: 0;
   background: var(--vf-white);

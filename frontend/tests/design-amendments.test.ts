@@ -113,11 +113,17 @@ describe('local design amendments (spec D15)', () => {
     // ones — `market:` (whose only reader was `<select value="{{ market }}">`) and the option
     // rows' `v: m` (the `<option value>` a role="option" button does not have).
     'A13.6', 'A13.7',
+    // A14 — the header's Give button IS vinfoundation.org's Give dropdown (John, 2026-09-08),
+    // measured on the live site rather than composed from this design's tokens. Six literal
+    // edits: the focus helper, the renderVals keys, the markup, the two Give branches inside
+    // A13's shared `trackMenuDismiss` closures, and the `@font-face` that self-hosts the live
+    // site's Montserrat 600 — scoped to this control alone, which is John's ruling.
+    'A14.1', 'A14.2', 'A14.3', 'A14.4', 'A14.5', 'A14.6',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(89);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(95);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -315,6 +321,45 @@ describe('local design amendments (spec D15)', () => {
     expect(amended).not.toContain('onChange="{{ setMarket }}"');
     // The five filter selects, the sort select and the wizard's stay native (scope, Q1).
     expect((amended.match(/<select /g) ?? []).length, 'A13 changed a select outside its scope').toBe(4);
+  });
+
+  // A14 (John, 2026-09-08: "the Give button must be identical to the https://vinfoundation.org/
+  // where the button is an actual drop down (match button design pixel-by-pixel)"). The pristine
+  // file has ONE Give control — an inert <button> at V3:104, outside both the signedIn and the
+  // signedOut blocks, so it is in the header of every screen. After A14 it is a trigger plus a
+  // four-item menu, and the four hrefs are John's, verbatim.
+  it('A14 turns the one Give button into a dropdown with John\'s four links', () => {
+    expect(pristine.split('>Give</button>').length - 1, 'the pristine file has exactly one Give button').toBe(1);
+    const amended = readFileSync(AMENDED, 'utf8');
+    expect(amended.split('role="menuitem"').length - 1).toBe(1);            // one row template, sc-for'd four times
+    expect(amended).toContain('aria-haspopup="menu"');
+    for (const href of ['https://vinfoundation.org/give/', 'https://vinfoundation.org/cor/',
+      'https://vinfoundation.org/legacy-giving/', 'https://vinfoundation.org/resources/dr-sophia-yin-memorial-fund/']) {
+      expect(amended.split(href).length - 1, `${href} is not in the amended design exactly once`).toBe(1);
+    }
+    expect(amended, 'a Give link must not open a new tab — the live site\'s do not').not.toContain('target="_blank"');
+  });
+
+  // A14.6 + the ruling: "Self-host Montserrat 600 under the SIL Open Font Licence, scoped
+  // exclusively to the Give button and its menu. Keep the rest of the design typography
+  // unchanged." The scope is the whole point, and it is machine-checked here rather than
+  // promised: exactly one @font-face, exactly two declarations that name the family, and both of
+  // them inside the two style strings A14.2 builds.
+  it('A14.6 self-hosts Montserrat 600 and scopes it to the Give control alone', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    expect(pristine, 'the bundle loads no Montserrat of any kind').not.toContain('Montserrat');
+    expect(amended.split('@font-face').length - 1, 'A14 adds exactly one @font-face').toBe(1);
+    expect(amended).toContain("src: url('assets/fonts/Montserrat-SemiBold.woff2') format('woff2');");
+    expect(amended).toContain('font-weight: 600; font-style: normal; font-display: swap;');
+    // Two readers, and only two: the trigger's style and the menu row's style.
+    expect(amended.split("font-family: 'Montserrat', var(--rf-display)").length - 1).toBe(2);
+    expect((amended.match(/Montserrat/g) ?? []).length, 'Montserrat is named only by the @font-face and its two readers').toBe(5);
+    // …and no OTHER element's face changed: every remaining font-family in the design is the
+    // bundle's own token or its own literal stack.
+    for (const decl of [...amended.matchAll(/font-family:\s*([^;"']*(?:'[^']*')?[^;"]*)/g)].map((m) => m[0])) {
+      expect(decl.includes('Montserrat') || decl.includes('--rf-display') || decl.includes('--rf-serif') || decl.includes('ProximaNova') || decl.includes('inherit'),
+        `A14 must not restyle anything but the Give control: ${decl}`).toBe(true);
+    }
   });
 
   it('the amended reference is the pristine Rev 2 file plus exactly the ruled edits', () => {

@@ -1678,3 +1678,214 @@ describe('A13 — the metro dropdown', () => {
     expect(c.state.marketMenuAt).toBe(3);
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A14 — the header's Give button IS vinfoundation.org's Give dropdown (John, 2026-09-08:
+// "the Give button must be identical to the https://vinfoundation.org/ where the button is an
+// actual drop down (match button design pixel-by-pixel)"). Every literal asserted below was
+// measured on the live site on 2026-09-08; the plan's measurement table names the stylesheet and
+// the selector each one came from. The three mechanisms the live site has NO counterpart for —
+// Escape, outside-click and Arrow/Home/End movement — are John's ruling, not measurement, and are
+// characterised here branch by branch exactly as A13's are.
+// ---------------------------------------------------------------------------------------
+describe('A14 — the Give dropdown', () => {
+  // A13's rule, for A13's reason: three cases below arm real `document` listeners through
+  // `componentDidMount`, and a failed assertion would otherwise leave one bound to a dead
+  // component for the rest of the file. `componentWillUnmount` is a no-op if nothing mounted.
+  afterEach(() => { c.componentWillUnmount(); });
+
+  /** The four links, wired to real anchors, so `giveFocus` has something to move focus between. */
+  const rowEls = () => {
+    const els = [0, 1, 2, 3].map(() => {
+      const a = document.createElement('a');
+      a.href = '#';
+      document.body.appendChild(a);
+      return a;
+    });
+    c.renderVals().giveLinks.forEach((g: any, i: number) => g.ref(els[i]));
+    return els;
+  };
+  const prevent = () => { /* the handlers call it; nothing here needs to observe it */ };
+
+  it('starts closed, and the trigger carries the live pill in its idle colours', () => {
+    const v = c.renderVals();
+    expect(v.giveMenuOpen).toBe(false);
+    expect(v.giveButtonStyle).toContain('background: #339dde');
+    expect(v.giveButtonStyle).toContain('border-radius: 10px');
+    expect(v.giveButtonStyle).toContain('padding: 2px 22px');
+    expect(v.giveButtonStyle).toContain('font-size: 18px');
+    expect(v.giveButtonStyle).toContain('line-height: 24.3px');
+    // John's ruling: Montserrat 600, self-hosted, scoped to this control and its menu.
+    expect(v.giveButtonStyle).toContain("font-family: 'Montserrat', var(--rf-display)");
+    expect(v.giveButtonStyle).toContain('font-weight: 600');
+    // Closed, the underline is scaled to the hover variable, which is unset until :hover.
+    expect(v.giveUnderlineStyle).toContain('transform: scaleX(var(--rf-give-underline, 0))');
+    expect(v.giveUnderlineStyle).toContain('top: calc(100% + 4.34px)');
+    expect(v.giveUnderlineStyle).toContain('height: 3px');
+    expect(v.giveUnderlineStyle).toContain('background: #339dde');
+  });
+
+  it('the trigger opens and closes it, and opening closes the other two header menus', () => {
+    c.setState({ auth: true, screen: 'browse', navMenu: true, userMenu: true });
+    c.renderVals().toggleGiveMenu();
+    expect(c.state).toMatchObject({ giveMenu: true, navMenu: false, userMenu: false });
+    const open = c.renderVals();
+    expect(open.giveMenuOpen).toBe(true);
+    expect(open.giveButtonStyle).toContain('background: #07386f');   // the live hover/open navy
+    expect(open.giveUnderlineStyle).toContain('transform: scaleX(1)');
+    open.toggleGiveMenu();
+    expect(c.state.giveMenu).toBe(false);
+  });
+
+  it('carries John\'s four links, in his order, with his hrefs and no target', () => {
+    const rows = c.renderVals().giveLinks;
+    expect(rows.map((g: any) => g.label)).toEqual(['Annual Fund', 'Cor Group', 'Legacy Giving', 'Dr. Sophia Yin Memorial Fund']);
+    expect(rows.map((g: any) => g.href)).toEqual([
+      'https://vinfoundation.org/give/',
+      'https://vinfoundation.org/cor/',
+      'https://vinfoundation.org/legacy-giving/',
+      'https://vinfoundation.org/resources/dr-sophia-yin-memorial-fund/'
+    ]);
+    for (const g of rows) {
+      expect(g.rowStyle).toContain('font-size: 14px');
+      expect(g.rowStyle).toContain('padding: 8px 20px');
+      expect(g.rowStyle).toContain('border-left: 8px solid transparent');
+      expect(g.rowStyle).toContain('color: #07386f');
+      expect(g.rowStyle).toContain("font-family: 'Montserrat', var(--rf-display)");
+      expect(g.rowStyle).toContain('text-decoration: none');   // beats the design's own a:hover underline
+    }
+    // The rows carry exactly what the markup reads — no orphan keys (the A2.3/A13.6 rule).
+    expect(Object.keys(rows[0]).sort()).toEqual(['href', 'keys', 'label', 'pick', 'ref', 'rowStyle']);
+  });
+
+  it('choosing a link closes the menu', () => {
+    c.setState({ giveMenu: true });
+    c.renderVals().giveLinks[2].pick();
+    expect(c.state.giveMenu).toBe(false);
+  });
+
+  it('Escape closes it and returns focus to the trigger; Escape while closed is a no-op', () => {
+    const btn = document.createElement('button');
+    document.body.appendChild(btn);
+    try {
+      c.componentDidMount();
+      c.renderVals().giveButtonRef(btn);
+      c.setState({ giveMenu: true });
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      expect(c.state.giveMenu).toBe(false);
+      expect(document.activeElement).toBe(btn);
+      btn.blur();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));   // no-op, no throw
+      expect(c.state.giveMenu).toBe(false);
+      // A non-Escape key never closes anything.
+      c.setState({ giveMenu: true });
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }));
+      expect(c.state.giveMenu).toBe(true);
+      // …and with no trigger recorded, Escape still closes rather than throwing.
+      c.renderVals().giveButtonRef(null);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      expect(c.state.giveMenu).toBe(false);
+    } finally {
+      btn.remove();
+    }
+  });
+
+  it('a pointerdown outside closes it; one inside the wrapper does not', () => {
+    const host = document.createElement('div');
+    const inside = document.createElement('a');
+    host.appendChild(inside);
+    document.body.appendChild(host);
+    try {
+      c.componentDidMount();
+      c.renderVals().giveMenuRef(host);
+      // The closed menu takes the handler's own early exit — the branch nothing else reaches.
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.giveMenu).toBeFalsy();
+      c.setState({ giveMenu: true });
+      inside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.giveMenu, 'a click inside the menu must not dismiss it').toBe(true);
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.giveMenu).toBe(false);
+      // …and with no wrapper recorded, an outside click still closes rather than throwing.
+      c.renderVals().giveMenuRef(null);
+      c.setState({ giveMenu: true });
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.giveMenu).toBe(false);
+    } finally {
+      host.remove();
+    }
+  });
+
+  it('ArrowDown from the trigger opens it on the first link, ArrowUp on the last', () => {
+    const els = rowEls();
+    try {
+      c.renderVals().giveMenuKeys({ key: 'ArrowDown', preventDefault: prevent });
+      expect(c.state.giveMenu).toBe(true);
+      expect(document.activeElement).toBe(els[0]);
+      c.setState({ giveMenu: false });
+      c.renderVals().giveMenuKeys({ key: 'ArrowUp', preventDefault: prevent });
+      expect(document.activeElement).toBe(els[3]);
+      // A key that is neither arrow leaves it alone (Enter/Space is the button's own click).
+      c.setState({ giveMenu: false });
+      c.renderVals().giveMenuKeys({ key: 'Enter', preventDefault: prevent });
+      expect(c.state.giveMenu).toBe(false);
+      // Already open: the arrows only move focus.
+      c.setState({ giveMenu: true });
+      c.renderVals().giveMenuKeys({ key: 'ArrowDown', preventDefault: prevent });
+      expect(document.activeElement).toBe(els[0]);
+    } finally {
+      els.forEach((e) => e.remove());
+    }
+  });
+
+  it('opening from the trigger closes the other two header menus too', () => {
+    const els = rowEls();
+    try {
+      c.setState({ auth: true, screen: 'browse', navMenu: true, userMenu: true });
+      c.renderVals().giveMenuKeys({ key: 'ArrowDown', preventDefault: prevent });
+      expect(c.state).toMatchObject({ giveMenu: true, navMenu: false, userMenu: false });
+    } finally {
+      els.forEach((e) => e.remove());
+    }
+  });
+
+  it('the arrows wrap at both ends inside the menu, and Home/End jump', () => {
+    const els = rowEls();
+    try {
+      const rows = c.renderVals().giveLinks;
+      rows.forEach((g: any, i: number) => g.ref(els[i]));
+      rows[3].keys({ key: 'ArrowDown', preventDefault: prevent });
+      expect(document.activeElement, 'past the last link, focus wraps to the first').toBe(els[0]);
+      rows[0].keys({ key: 'ArrowUp', preventDefault: prevent });
+      expect(document.activeElement, 'before the first link, focus wraps to the last').toBe(els[3]);
+      rows[2].keys({ key: 'End', preventDefault: prevent });
+      expect(document.activeElement).toBe(els[3]);
+      rows[2].keys({ key: 'Home', preventDefault: prevent });
+      expect(document.activeElement).toBe(els[0]);
+      rows[1].keys({ key: 'x', preventDefault: prevent });
+      expect(document.activeElement, 'an unhandled key changes nothing').toBe(els[0]);
+      // A detached row (Vue has unmounted the menu) is skipped rather than focused…
+      rows.forEach((g: any) => g.ref(null));
+      rows[0].keys({ key: 'ArrowDown', preventDefault: prevent });   // no throw
+      expect(document.activeElement).toBe(els[0]);
+    } finally {
+      els.forEach((e) => e.remove());
+    }
+    // …and so is a component whose rows have never been rendered at all.
+    const fresh: any = new Component({});
+    fresh.renderVals().giveLinks[0].keys({ key: 'Home', preventDefault: prevent });   // no throw
+    expect(fresh.state.giveMenu).toBeFalsy();
+  });
+
+  it('A13\'s metro dismissals are unchanged by A14\'s branches', () => {
+    // The two closures are shared. A Give branch that is inert while `giveMenu` is falsy must
+    // leave the metro menu's Escape and outside-click behaving exactly as A13 left them.
+    c.componentDidMount();
+    c.setState({ marketMenu: true, marketMenuAt: 2, giveMenu: false });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(c.state).toMatchObject({ marketMenu: false, marketMenuAt: -1 });
+    c.setState({ marketMenu: true, marketMenuAt: 2 });
+    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    expect(c.state).toMatchObject({ marketMenu: false, marketMenuAt: -1 });
+  });
+});

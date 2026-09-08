@@ -1382,10 +1382,247 @@ const A13_7: Amendment = {
   count: 1
 };
 
+/** A14 — the header's Give button IS the VIN Foundation site's Give dropdown (John, 2026-09-08:
+ *  "match button design pixel-by-pixel").
+ *
+ *  Unlike A13, which composes from THIS design's popover pattern, every literal here was measured
+ *  on https://vinfoundation.org/ on 2026-09-08 and is cited in the plan's measurement table by the
+ *  stylesheet and selector it came from. Two of those values could not be taken from the bundle,
+ *  and John ruled on both rather than either being guessed: the live face is Montserrat 600, which
+ *  this design does not load and whose weight ProximaNova does not have (Q1 → A14.6 self-hosts it
+ *  under the SIL Open Font Licence, scoped to this control and its menu and to nothing else), and
+ *  the live navy is #07386f where `--vf-navy` is #003a70 (Q2 → the live literal, because
+ *  "pixel-by-pixel" names the live site). The light blue needed no decision — `--vf-accent`
+ *  (V3:22) is already #339dde, the same hex as the live pill.
+ *
+ *  Structure. The live control is `li.give-button > a.elementor-item > span.sub-arrow` with a
+ *  sibling `ul.sub-menu`, and the pill/typography split across the li and the a. A14 folds the two
+ *  boxes into one <button> whose padding is the li's vertical and the a's horizontal (`2px 22px`),
+ *  which reproduces the measured 28.30 px height and the same text baseline, and wraps it in the
+ *  header's own `position: relative` div (V3:88) so the underline and the panel can anchor.
+ *
+ *  Three mechanisms have no counterpart anywhere in this design and are composed, not measured
+ *  (John's ruling: click-to-open, keyboard navigation, Escape, outside-click dismissal): Escape
+ *  and outside-click (A14.4/A14.5, sharing A13's `trackMenuDismiss`), Arrow/Home/End movement
+ *  (A14.1's `giveFocus` plus A14.2's per-row `keys`), and the CSS custom property
+ *  `--rf-give-underline` that lets the wrapper's :hover drive a child element's transform. The
+ *  last one exists because the live underline is an `::after` on the link and this design's only
+ *  pseudo idiom is a flat `style-hover` (42 uses, no other kind) — it cannot express
+ *  `:hover::after`. A single inherited variable, set by the wrapper's own hover rule and read by
+ *  the underline's inline `scaleX()`, reproduces the live behaviour exactly: hovering anywhere on
+ *  the control OR the open panel shows the bar, which is what `li:hover` does on the live site
+ *  because the panel is inside the li there.
+ *
+ *  There is no keyboard HIGHLIGHT: focus is the highlight, exactly as on vinfoundation.org, which
+ *  has no focus style of its own. That is also why no `style-focus` appears here — the design has
+ *  never used a `style-` kind other than `hover`, and inventing one would be an untested path on
+ *  the reference runtime.
+ */
+const A14 = {
+  date: '2026-09-08',
+  ruling: 'the Give button must be identical to the https://vinfoundation.org/ where the button is an actual drop down (match button design pixel-by-pixel)'
+};
+
+/** A14.1 — `giveFocus`, a class property beside the other class members, so the trigger's key
+ *  handler and each row's key handler share one implementation. Anchored on `money(n) {`
+ *  (script V3:1893, one occurrence), the first member after `componentDidMount`, so it does not
+ *  collide with A13.1's `setF` anchor. Detached rows are filtered out: Vue calls a function ref
+ *  with `null` on unmount, and the menu unmounts every time it closes. */
+const A14_1: Amendment = {
+  id: 'A14.1', ...A14,
+  find: '  money(n) {\n',
+  replace: [
+    '  // Arrow-key movement inside the Give menu. Focus IS the highlight — vinfoundation.org has',
+    '  // no focus style of its own either — so this moves focus and nothing else. Wraps both ways.',
+    '  giveFocus = (i) => {',
+    '    const els = (this._giveItemEls || []).filter(Boolean);',
+    '    if (!els.length) return;',
+    '    els[((i % els.length) + els.length) % els.length].focus();',
+    '  };',
+    '',
+    '  money(n) {',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A14.2 — `renderVals()`: the menu's open state, the two refs, the trigger and underline styles,
+ *  the four links with their row style, per-row ref, per-row key handler and dismiss-on-choose,
+ *  and the trigger's own key handler. Anchored after `toggleUserMenu` (one occurrence), which is
+ *  the header block's last key, so the Give keys sit with the header's other two menus. The two
+ *  `'Montserrat'` declarations are the ONLY two in the design: A14.6's face reaches this control
+ *  and its menu and nothing else, which is the scope John's ruling names. */
+const A14_2: Amendment = {
+  id: 'A14.2', ...A14,
+  find: '      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu }),\n',
+  replace: [
+    '      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu }),',
+    '      // The Give control, measured on vinfoundation.org (John, 2026-09-08). The literals are',
+    '      // the live site\'s, not this design\'s tokens: #339dde is the idle pill, #07386f the',
+    '      // hover/open pill and the panel border and the row text, 10px the pill radius, 4.34px',
+    '      // the gap from the pill to the 3px underline, 28px the gap from the pill to the panel.',
+    '      giveMenuOpen: !!s.giveMenu,',
+    '      toggleGiveMenu: () => this.setState({ giveMenu: !s.giveMenu, navMenu: false, userMenu: false }),',
+    '      giveMenuRef: (el) => { this._giveMenuEl = el || null; },',
+    '      giveButtonRef: (el) => { this._giveButtonEl = el || null; },',
+    '      giveWrapStyle: "position: relative; display: flex; align-items: center;",',
+    '      giveButtonStyle: "display: flex; align-items: center; padding: 2px 22px; font-family: \'Montserrat\', var(--rf-display); font-size: 18px; font-weight: 600; line-height: 24.3px; white-space: nowrap; color: #ffffff; background: " +',
+    '        (s.giveMenu ? "#07386f" : "#339dde") + "; border: 0; border-radius: 10px; cursor: pointer; transition: background .4s;",',
+    '      giveUnderlineStyle: "position: absolute; left: 0; right: 0; top: calc(100% + 4.34px); height: 3px; background: #339dde; transform-origin: center; transition: transform .3s cubic-bezier(.58,.3,.005,1); transform: scaleX(" +',
+    '        (s.giveMenu ? "1" : "var(--rf-give-underline, 0)") + ");",',
+    '      giveLinks: [',
+    '        { label: "Annual Fund", href: "https://vinfoundation.org/give/" },',
+    '        { label: "Cor Group", href: "https://vinfoundation.org/cor/" },',
+    '        { label: "Legacy Giving", href: "https://vinfoundation.org/legacy-giving/" },',
+    '        { label: "Dr. Sophia Yin Memorial Fund", href: "https://vinfoundation.org/resources/dr-sophia-yin-memorial-fund/" }',
+    '      ].map((g, i) => Object.assign({}, g, {',
+    '        rowStyle: "display: flex; align-items: center; padding: 8px 20px; border-left: 8px solid transparent; font-family: \'Montserrat\', var(--rf-display); font-size: 14px; font-weight: 600; line-height: 21px; color: #07386f; background: none; white-space: nowrap; text-decoration: none;",',
+    '        ref: (el) => { const a = this._giveItemEls || (this._giveItemEls = []); a[i] = el || null; },',
+    '        keys: (e) => {',
+    '          if (e.key === "ArrowDown") { e.preventDefault(); return this.giveFocus(i + 1); }',
+    '          if (e.key === "ArrowUp") { e.preventDefault(); return this.giveFocus(i - 1); }',
+    '          if (e.key === "Home") { e.preventDefault(); return this.giveFocus(0); }',
+    '          if (e.key === "End") { e.preventDefault(); return this.giveFocus(-1); }',
+    '        },',
+    '        pick: () => this.setState({ giveMenu: false })',
+    '      })),',
+    '      giveMenuKeys: (e) => {',
+    '        if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;',
+    '        e.preventDefault();',
+    '        const at = e.key === "ArrowDown" ? 0 : -1;',
+    '        if (s.giveMenu) return this.giveFocus(at);',
+    '        this.setState({ giveMenu: true, navMenu: false, userMenu: false }, () => this.giveFocus(at));',
+    '      },',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A14.3 — the markup. The inert <button> at V3:104 becomes the header's own wrapper/trigger/
+ *  sc-if/panel shape (V3:88-98) carrying the measured live values. The chevron is Font Awesome
+ *  Free 5.15.4's `solid/angle-down` inlined verbatim — the live glyph, at the live 11.25 x 18 px
+ *  box (FA's .625em advance at 18px) — rather than a new icon file, so `icons.test.ts` and the
+ *  bundle's asset folder are both untouched; inline <svg> with a camelCase viewBox is already a
+ *  design idiom (V3:1416) and `parseDocument` runs with `lowerCaseAttributeNames: false`.
+ *  `text-decoration: none` appears in the row's hover as well as its base because the design's own
+ *  `a:hover { text-decoration: underline }` (V3:54) would otherwise underline every row; a
+ *  generated `.sch…:hover` (0,2,0) beats `a:hover` (0,1,1) on both targets. The panel is
+ *  `width: max-content` because an absolutely positioned box shrink-to-fits inside its ~106px
+ *  containing block otherwise — the live site reaches the same 264px through SmartMenus' inline
+ *  width, and `min-width: 130px` is its measured `subMenusMinWidth: "10em"` at the panel's 13px em. */
+const A14_3: Amendment = {
+  id: 'A14.3', ...A14,
+  find: '        <button style="font-family: var(--rf-display); font-size: 14px; font-weight: 500; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; padding: 10px 20px; cursor: pointer;" style-hover="background: var(--color-navy);">Give</button>\n',
+  replace: [
+    '        <div ref="{{ giveMenuRef }}" style="{{ giveWrapStyle }}" style-hover="--rf-give-underline: 1;">',
+    '          <button ref="{{ giveButtonRef }}" onClick="{{ toggleGiveMenu }}" onKeyDown="{{ giveMenuKeys }}" aria-haspopup="menu" aria-expanded="{{ giveMenuOpen }}" style="{{ giveButtonStyle }}" style-hover="background: #07386f;">Give<span style="display: flex; align-items: center; line-height: 1; padding: 10px 0 10px 10px; margin: -10px 0;"><svg width="11.25" height="18" viewBox="0 0 320 512" fill="currentColor" aria-hidden="true" style="display: block;"><path d="M143 352.3L7 216.3c-9.4-9.4-9.4-24.6 0-33.9l22.6-22.6c9.4-9.4 24.6-9.4 33.9 0l96.4 96.4 96.4-96.4c9.4-9.4 24.6-9.4 33.9 0l22.6 22.6c9.4 9.4 9.4 24.6 0 33.9l-136 136c-9.2 9.4-24.4 9.4-33.8 0z"></path></svg></span></button>',
+    '          <div style="{{ giveUnderlineStyle }}"></div>',
+    '          <sc-if value="{{ giveMenuOpen }}" hint-placeholder-val="{{ false }}">',
+    '            <div role="menu" aria-label="Give" style="position: absolute; left: 0; top: calc(100% + 28px); z-index: 60; width: max-content; min-width: 130px; padding: 0; background: #ffffff; border: 1px solid #07386f; border-radius: 0;">',
+    '              <sc-for list="{{ giveLinks }}" as="g" hint-placeholder-count="4">',
+    '                <a href="{{ g.href }}" role="menuitem" ref="{{ g.ref }}" onClick="{{ g.pick }}" onKeyDown="{{ g.keys }}" style="{{ g.rowStyle }}" style-hover="background: #07386f; color: #ffffff; text-decoration: none;">{{ g.label }}</a>',
+    '              </sc-for>',
+    '            </div>',
+    '          </sc-if>',
+    '        </div>',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A14.4 — the Give branch of A13.4's `pointerdown` closure. Placed AHEAD of the metro guard and
+ *  written so it changes nothing about it: if `giveMenu` is falsy the block is skipped entirely,
+ *  and if it is open the click is tested against the Give wrapper alone. */
+const A14_4: Amendment = {
+  id: 'A14.4', ...A14,
+  find: [
+    '    const down = (e) => {',
+    '      if (!this.state.marketMenu) return;',
+    ''
+  ].join('\n'),
+  replace: [
+    '    const down = (e) => {',
+    '      if (this.state.giveMenu) {',
+    '        const give = this._giveMenuEl;',
+    '        if (!(give && e.target && give.contains(e.target))) this.setState({ giveMenu: false });',
+    '      }',
+    '      if (!this.state.marketMenu) return;',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A14.5 — the Give branch of A13.4's `keydown` closure. A13's single guard
+ *  (`!marketMenu || key !== "Escape"`) becomes two with the same net effect for the metro menu —
+ *  proved by `logic.test.ts`'s "A13's metro dismissals are unchanged" case — with the Give close,
+ *  and the focus return the live site gets for free from the browser, in between. */
+const A14_5: Amendment = {
+  id: 'A14.5', ...A14,
+  find: [
+    '    const key = (e) => {',
+    '      if (!this.state.marketMenu || e.key !== "Escape") return;',
+    '      this.setState({ marketMenu: false, marketMenuAt: -1 });',
+    '    };',
+    ''
+  ].join('\n'),
+  replace: [
+    '    const key = (e) => {',
+    '      if (e.key !== "Escape") return;',
+    '      if (this.state.giveMenu) {',
+    '        this.setState({ giveMenu: false });',
+    '        if (this._giveButtonEl) this._giveButtonEl.focus();',
+    '      }',
+    '      if (!this.state.marketMenu) return;',
+    '      this.setState({ marketMenu: false, marketMenuAt: -1 });',
+    '    };',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A14.6 — the face itself (John, 2026-09-08, ruling A14 GO: "Self-host Montserrat 600 under the
+ *  SIL Open Font Licence, scoped exclusively to the Give button and its menu. Keep the rest of the
+ *  design typography unchanged."). One `@font-face` in the helmet's own <style> block, beside the
+ *  `:root` tokens — the design's only stylesheet of its own — pointing at the official Montserrat
+ *  SemiBold woff2 the bundle now ships in `assets/fonts/`, with `OFL.txt` beside it.
+ *
+ *  It reaches the two targets by the two paths every other bundle asset does: the reference server
+ *  serves the bundle root, so `assets/fonts/…` resolves there; the app carries the same rule in
+ *  `frontend/src/styles/global.css` — the helmet's port, where the four Leaflet tooltip rules
+ *  already live — under the platform spec's §3 rule-1 rewrite (`assets/` → `/assets/`), against a
+ *  byte-identical copy in `frontend/public/assets/fonts/`. `frontend/tests/fonts.test.ts` derives
+ *  the app's rule FROM this one and proves the two copies of the file are identical, so the pixel
+ *  gate can never be comparing two different typefaces.
+ *
+ *  Nothing else changes face: `--rf-display` and `--rf-serif` are untouched, and the only two
+ *  declarations naming the family in the whole design are A14.2's trigger and row styles
+ *  (asserted both ways in `design-amendments.test.ts`). A1's ruling — "keep the V2 header and do
+ *  not restyle header or fonts" — is why the scope is stated as a rule and machine-checked rather
+ *  than left to review. */
+const A14_6: Amendment = {
+  id: 'A14.6', ...A14,
+  find: '<style>\n  :root {\n',
+  replace: [
+    '<style>',
+    '  /* Montserrat 600 — the face vinfoundation.org sets the Give button in, self-hosted under',
+    '     the SIL Open Font Licence 1.1 (assets/fonts/OFL.txt, shipped beside the file). Scoped to',
+    '     the Give control and its menu by A14.2; no other element names it. */',
+    '  @font-face {',
+    '    font-family: \'Montserrat\';',
+    '    src: url(\'assets/fonts/Montserrat-SemiBold.woff2\') format(\'woff2\');',
+    '    font-weight: 600; font-style: normal; font-display: swap;',
+    '  }',
+    '  :root {',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
     A7_3, A7_4, A8_1a, A8_1b, A8_1c, A8_2, A8_3a, A8_3b, A8_4a, A8_4b, A8_5, A8_6, A8_7, A8_8a, A8_8b,
     A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5, A12_6, A12_7, A12_8, A12_9, A12_10, A12_11,
-    A13_1, A13_2, A13_3, A13_4, A13_5, A13_6, A13_7];
+    A13_1, A13_2, A13_3, A13_4, A13_5, A13_6, A13_7,
+    A14_1, A14_2, A14_3, A14_4, A14_5, A14_6];
 }
