@@ -294,6 +294,11 @@ class Component extends DCLogic {
       clearTimeout(this._t);
       this._t = setTimeout(() => this.setState({ loading: false }), 320);
     });
+    // The choice unmounts the row the pointer or the keyboard was on, so focus would land on
+    // <body>. A native select leaves the user on the control; so does this one.
+    const host = this._marketMenuEl;
+    const trigger = host && host.querySelector('button[aria-haspopup="listbox"]');
+    if (trigger) trigger.focus();
   };
 
   // Moving the keyboard highlight. The rows are all in the DOM while the menu is open, so the

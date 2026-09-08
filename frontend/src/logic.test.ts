@@ -1560,6 +1560,63 @@ describe('A13 — the metro dropdown', () => {
     expect(c2.state.marketMenuAt).toBe(1);
   });
 
+  // Round 4 (ruled): a choice unmounts the row the pointer or the keyboard was on, and without
+  // this focus lands on <body> — a keyboard user is dropped out of the control they were driving.
+  // A native <select> leaves focus on itself; so does the design's own listbox, whose rows sit
+  // inside the trigger's own card. Focus goes back to the trigger, whichever way the choice came.
+  describe('focus returns to the trigger after a choice', () => {
+    const field = () => {
+      const host = document.createElement('div');
+      const trigger = document.createElement('button');
+      trigger.setAttribute('aria-haspopup', 'listbox');
+      host.appendChild(trigger);
+      document.body.appendChild(host);
+      const spy = vi.spyOn(trigger, 'focus');
+      return { host, trigger, spy };
+    };
+
+    it('after a mouse choice on an option row', () => {
+      const { host, spy } = field();
+      try {
+        c.renderVals().marketMenuRef(host);
+        c.renderVals().toggleMarketMenu();
+        c.renderVals().marketOptions[2].go();
+        expect(c.state.market).toBe('Orlando, FL');
+        expect(spy, 'the row it was on has just been unmounted').toHaveBeenCalled();
+      } finally {
+        host.remove();
+      }
+    });
+
+    it('after Enter on the keyboard', () => {
+      const { host, spy } = field();
+      try {
+        c.renderVals().marketMenuRef(host);
+        c.renderVals().toggleMarketMenu();
+        c.renderVals().marketMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() });
+        c.renderVals().marketMenuKeys({ key: 'Enter', preventDefault: vi.fn() });
+        expect(c.state.market).toBe('Sacramento, CA');
+        expect(spy).toHaveBeenCalled();
+      } finally {
+        host.remove();
+      }
+    });
+
+    it('and copes with no field recorded, and with a field that holds no trigger', () => {
+      c.renderVals().marketOptions[1].go();                 // no ref yet — must not throw
+      expect(c.state.market).toBe('Sacramento, CA');
+      const bare = document.createElement('div');
+      document.body.appendChild(bare);
+      try {
+        c.renderVals().marketMenuRef(bare);
+        c.renderVals().marketOptions[3].go();
+        expect(c.state.market).toBe('Atlanta, GA');
+      } finally {
+        bare.remove();
+      }
+    });
+  });
+
   // M2 (review, round 1, ruled): `Object.keys(MARKETS).indexOf(s.market)` is -1 whenever the
   // current market is not one MARKETS holds — the shape Seed Listings can produce, since
   // `applyListings` DELETES a market with no listings left (`listings/load.ts`). Unclamped,

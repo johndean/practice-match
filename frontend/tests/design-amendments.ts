@@ -1125,7 +1125,8 @@ const A13 = {
 /** A13.1 — `setMarket` becomes a class property beside `setF`, so the option rows can call it and
  *  there is exactly one implementation of the transition. The first line is `setF`'s own
  *  event-or-value idiom (V3:1907), verbatim; the `setState` body is the old `setMarket`'s
- *  (V3:3173–3176), verbatim, plus the two keys that close the menu on a choice. */
+ *  (V3:3173–3176), verbatim, plus the two keys that close the menu on a choice and the focus
+ *  return that keeps the user on the control the choice was made from (round 4 ruling). */
 const A13_1: Amendment = {
   id: 'A13.1', ...A13,
   find: [
@@ -1153,6 +1154,11 @@ const A13_1: Amendment = {
     '      clearTimeout(this._t);',
     '      this._t = setTimeout(() => this.setState({ loading: false }), 320);',
     '    });',
+    '    // The choice unmounts the row the pointer or the keyboard was on, so focus would land on',
+    '    // <body>. A native select leaves the user on the control; so does this one.',
+    '    const host = this._marketMenuEl;',
+    '    const trigger = host && host.querySelector(\'button[aria-haspopup="listbox"]\');',
+    '    if (trigger) trigger.focus();',
     '  };',
     '',
     '  // Moving the keyboard highlight. The rows are all in the DOM while the menu is open, so the',
