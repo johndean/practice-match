@@ -30,7 +30,7 @@ from dataclasses import dataclass
 import httpx
 import psycopg2
 import psycopg2.extensions
-import shapefile  # type: ignore[import-untyped]  # pyshp ships no py.typed marker / stubs
+import shapefile  # type: ignore[import-untyped]  # pyshp ships no py.typed marker / stubs (A4 review m-2: its `stubs` extra was not evaluated as an alternative)
 from shapely import wkb
 from shapely.geometry import MultiPolygon, Polygon, shape
 from shapely.geometry.base import BaseGeometry
@@ -150,7 +150,12 @@ def _get_with_fallback(http: httpx.Client, spec: BoundarySpec, vintage: str) -> 
     if resp.status_code == 404 and spec.summary_level == "860":
         fallback_url = spec.url.replace(f"GENZ{vintage}", "GENZ2020").replace(f"cb_{vintage}_", "cb_2020_")
         resp = http.get(fallback_url, timeout=_TIMEOUT)
-    if resp.status_code >= 400:
+    # Only a 2xx is a success (A-C3b's M2 ruling, "now the written rule for every downloader" --
+    # A-C4 ¶1). A 3xx must never reach `parse_shapefile`: `follow_redirects=False` at the call
+    # site means it is never transparently followed, but without this check it was also never
+    # REJECTED, so a redirect page flowed into the zip parser as an uncaught `BadZipFile` instead
+    # of this documented, redacted error (A4 review round 1, M-2).
+    if resp.status_code < 200 or resp.status_code >= 300:
         raise CensusHTTPError(resp.status_code, str(resp.url))
     return resp
 

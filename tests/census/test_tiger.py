@@ -80,6 +80,32 @@ def test_parse_shapefile_leaves_a_naturally_multipart_geometry_untouched():
     assert len(g.geoms) == 2
 
 
+def test_parse_shapefile_nests_an_interior_ring_as_a_hole():
+    """A4 review m-1: nothing previously constructed a record with an exterior ring plus a hole
+    (e.g. a county with a water body punched out) to prove pyshp's ring-orientation-based GeoJSON
+    conversion nests it as a Polygon interior ring rather than a second exterior ring. The
+    shapefile format requires the exterior ring clockwise and a hole counter-clockwise (pyshp's
+    own `Writer.poly` docstring) -- both rings below are wound accordingly."""
+    outer = [(-97.9, 30.5), (-97.9, 30.6), (-97.8, 30.6), (-97.8, 30.5), (-97.9, 30.5)]   # clockwise
+    hole = [(-97.87, 30.53), (-97.83, 30.53), (-97.83, 30.57), (-97.87, 30.57), (-97.87, 30.53)]   # counter-clockwise
+    shp, shx, dbf = io.BytesIO(), io.BytesIO(), io.BytesIO()
+    w = shapefile.Writer(shp=shp, shx=shx, dbf=dbf, shapeType=shapefile.POLYGON)
+    w.field("GEOID", "C", 11); w.field("NAMELSAD", "C", 40); w.field("STATEFP", "C", 2); w.field("COUNTYFP", "C", 3); w.field("ALAND", "N", 14, 0)
+    w.poly([outer, hole])
+    w.record("48453000104", "Census Tract 1.04", "48", "453", 999)
+    w.close()
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("h.shp", shp.getvalue()); z.writestr("h.shx", shx.getvalue()); z.writestr("h.dbf", dbf.getvalue())
+
+    rows = parse_shapefile(buf.getvalue(), TRACT)
+    from shapely import wkb
+    g = wkb.loads(rows[0].wkb)
+    assert g.geom_type == "MultiPolygon" and len(g.geoms) == 1
+    assert len(g.geoms[0].interiors) == 1
+    assert g.is_valid
+
+
 def test_upsert_is_idempotent_and_computes_centroid(conn):
     rows = parse_shapefile(_zip_with_shapefile(RECORDS), TRACT)
     assert upsert_geo(conn, rows, "2023") == 2
@@ -248,6 +274,22 @@ def test_a_malformed_body_is_never_archived(conn, store):
     with pytest.raises(zipfile.BadZipFile):
         load_boundaries(conn, http, ["48"], "2023", archive=store)
     assert store.exists("census/tiger/2023/cb_2023_us_nation_5m.zip") is False
+
+
+def test_a_3xx_response_raises_a_redacted_census_http_error_not_a_bad_zip_file(conn):
+    """A4 review M-2 / A-C4 ¶1: only a 2xx is a success everywhere in this programme now,
+    `tiger.py` included. `follow_redirects=False` (the caller's concern) means a genuine 3xx from
+    www2.census.gov is never transparently followed -- but before this fix it was also never
+    REJECTED here, so the redirect page flowed into `parse_shapefile` and blew up as an uncaught
+    `zipfile.BadZipFile` instead of the documented, redacted `CensusHTTPError`."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(302, headers={"Location": "https://www2.census.gov/elsewhere"})
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    with pytest.raises(CensusHTTPError) as exc:
+        load_boundaries(conn, http, ["48"], "2023")
+    assert exc.value.status == 302
 
 
 def test_a_persistent_5xx_raises_a_redacted_census_http_error(conn):
