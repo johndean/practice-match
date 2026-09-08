@@ -2919,7 +2919,7 @@ class Component extends DCLogic {
       status: statusMap[s.gate] || statusMap.pending,
       gatePoints: [
         { n: "1", title: "Approved members only", body: "The VIN Foundation reviews every applicant. Corporate groups and consolidators are not admitted." },
-        { n: "2", title: "Sellers control location & disclosure", body: "Properties are mapped using precise coordinates, while the exact location details, financial packets, and floor plans are only revealed when the seller authorizes access." },
+        { n: "2", title: "Sellers control what buyers can see", body: "The property is accurately mapped, but financial information, and floor plans are only shared with the seller’s approval." },
         { n: "3", title: "One clear next step", body: "Buyers express interest; sellers decide whether to engage. No brokers in the middle." }
       ],
       form: { email: s.email, pw: s.pw, error: !!s.formError, errorText: s.formError },

@@ -385,8 +385,8 @@ describe('logic.js — characterisation of the approved prototype (file untouche
   it('gatePoints[1] carries the ruled "Sellers control location & disclosure" copy (A10)', () => {
     const points = c.renderVals().gatePoints;
     expect(points[0].title).toBe('Approved members only');
-    expect(points[1].title).toBe('Sellers control location & disclosure');
-    expect(points[1].body).toBe('Properties are mapped using precise coordinates, while the exact location details, financial packets, and floor plans are only revealed when the seller authorizes access.');
+    expect(points[1].title).toBe('Sellers control what buyers can see');
+    expect(points[1].body).toBe('The property is accurately mapped, but financial information, and floor plans are only shared with the seller’s approval.');
     expect(points[2].title).toBe('One clear next step');
   });
 });

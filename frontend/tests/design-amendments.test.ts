@@ -78,11 +78,14 @@ describe('local design amendments (spec D15)', () => {
     'A10',
     // A11 — unifies the docked panel's other-tabs CTA with the Insights tab's (John, 2026-09-08).
     'A11',
+    // A10.2 — John revised A10's wording later the same day; A10 stays as the record of the
+    // first ruling and A10.2 applies after it.
+    'A10.2',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(53);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(54);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
