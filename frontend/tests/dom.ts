@@ -175,7 +175,12 @@ export function normalise(raw: RawNode, opts: NormaliseOptions = {}): DomNode {
         attrs,
         class: el.classList.map((c) => (pseudoHook.test(c) ? '<pseudo>' : c)).sort(),
         style: el.style.slice().sort(byString),
-        children: el.children
+        // A-S5.2 (S-2): a <textarea>'s children ARE its default value, which React writes when it
+        // fills one and Vue does not — a framework difference in how the same rendered text is
+        // stored, compared by `props.value` instead (see `walkPage`). The walker already declines
+        // to record them, so this is what makes the rule true of a node from ANY source: a
+        // snapshot file written before the rule existed still compares by value.
+        children: el.tag === 'textarea' ? [] : el.children
           .filter((n) => !isWhitespaceOnlyText(n))
           .map((n) =>
             normalise(
@@ -460,7 +465,20 @@ export function walkPage(arg: { rootSelector: string; formTags: string[] }): Raw
       if (isCheckableInput && 'checked' in live) props.push(['checked', String(live.checked)]);
       if (isFormTag && 'value' in live) props.push(['value', String(live.value)]);
     }
+    // A-S5.2 (S-2): a <textarea>'s children ARE its default value, and the two runtimes write a
+    // filled one differently — React sets `defaultValue` as well as `value`, so the text lands in
+    // the element's children; Vue sets the property alone, so there are none. That is a framework
+    // difference in how the same rendered text is stored, not a design difference: measured on
+    // `gate-reapply`, the one approved state with a non-empty textarea, the two targets are
+    // pixel-identical and the oracle reported `child count 1 ≠ 0` on that single node.
+    //
+    // So a textarea is compared by its VALUE, which `props` above already records — and that is
+    // strictly stronger than what came before, because `value` is excluded from `attrs` for every
+    // form tag, so until now the app's textarea value was compared nowhere at all and only the
+    // reference's own artefact was. Every other tag, the other two form tags included, keeps its
+    // children: a <select>'s <option>s are real content.
     const children: RawNode[] = [];
+    if (tag === 'textarea') return { tag, attrs, classList: Array.from(el.classList), style, children, ...(props ? { props } : {}) };
     if (el.shadowRoot) {
       const shadowChildren: RawNode[] = [];
       for (const child of Array.from(el.shadowRoot.childNodes)) {

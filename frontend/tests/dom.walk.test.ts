@@ -88,6 +88,56 @@ describe('walkPage — rule C narrowed (fix round 2, item 2): value on input/sel
     expect(select.props).toEqual([['value', 'a']]);
   });
 
+  // ---------------------------------------------------------------------------------------
+  // A-S5.2 (S-2): a <textarea> is compared by its VALUE, never by its children.
+  //
+  // A textarea's child text IS its default value, and the two runtimes materialise a filled one
+  // differently: React writes `defaultValue` as well as `value` (so the text lands in the
+  // element's children), Vue sets the property alone (so there are none). Measured on
+  // `gate-reapply`, the one approved state with a non-empty textarea: pixel-identical on both
+  // targets, and the DOM oracle reported `child count 1 ≠ 0` on that one node.
+  //
+  // Comparing the value instead is strictly STRONGER than what came before: `value` is already
+  // excluded from `attrs` for every form tag, so before this the app's textarea value was
+  // compared nowhere at all, and only the reference's framework artefact was.
+  // ---------------------------------------------------------------------------------------
+  it('textarea: props carries the value, and its children — the default value — are not recorded', () => {
+    document.body.innerHTML = '<div id="root"><textarea id="a">typed by React</textarea></div>';
+    const area = (walk('#root') as RawElement).children[0] as RawElement;
+    expect(area.props).toEqual([['value', 'typed by React']]);
+    expect(area.children, 'the child text IS the default value, and only one runtime writes it').toEqual([]);
+  });
+
+  it('textarea: the same value written two ways compares equal, children or no children', () => {
+    // React's shape (value in the children) and Vue's shape (value in the property alone).
+    document.body.innerHTML = '<div id="root"><textarea id="react">same words</textarea><textarea id="vue"></textarea></div>';
+    (document.getElementById('vue') as HTMLTextAreaElement).value = 'same words';
+    const [reactSide, vueSide] = (walk('#root') as RawElement).children as RawElement[];
+    expect(reactSide.props).toEqual(vueSide.props);
+    expect(reactSide.children).toEqual(vueSide.children);
+    expect({ ...reactSide, attrs: [] }).toEqual({ ...vueSide, attrs: [] });
+  });
+
+  it('textarea: two DIFFERENT values still differ — the rule hides nothing', () => {
+    document.body.innerHTML = '<div id="root"><textarea id="a">one</textarea><textarea id="b">two</textarea></div>';
+    const [a, b] = (walk('#root') as RawElement).children as RawElement[];
+    expect(a.props).not.toEqual(b.props);
+  });
+
+  it('textarea: an empty one is unchanged — no children, and an empty value', () => {
+    document.body.innerHTML = '<div id="root"><textarea id="a"></textarea></div>';
+    const area = (walk('#root') as RawElement).children[0] as RawElement;
+    expect(area.props).toEqual([['value', '']]);
+    expect(area.children).toEqual([]);
+  });
+
+  it('every OTHER tag still records its children, including the other two form tags', () => {
+    document.body.innerHTML = '<div id="root"><p>kept</p><select id="s"><option value="a">A</option></select></div>';
+    const [para, select] = (walk('#root') as RawElement).children as RawElement[];
+    expect(para.children).toEqual([{ text: 'kept' }]);
+    expect(select.children.length, 'a <select>\'s <option> children are real content').toBe(1);
+  });
+
   it('never reads `selected` — an <option>, not a form tag, gets no props at all', () => {
     document.body.innerHTML = '<div id="root"><select id="s"><option id="o" value="a" selected>A</option></select></div>';
     const select = (walk('#root') as RawElement).children[0] as RawElement;
