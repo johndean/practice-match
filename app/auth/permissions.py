@@ -65,7 +65,11 @@ TOKEN_DENIED = frozenset({"tokens.manage"})
 # Enforcement) — fix round 1, Important 8, which is also why the routes that already shipped are
 # spelled out rather than waved through by the test.
 PUBLIC_ROUTES: frozenset[tuple[str, str]] = frozenset({
-    ("GET", "/api/healthz"), ("GET", "/api/healthz/deep"), ("GET", "/robots.txt"), ("GET", "/"), ("GET", "/{path:path}"),
+    # Task 13a: HEAD mirrors GET on every one of these — same handler, same public surface, body
+    # stripped by Starlette; not a new permission decision, just HEAD joining the GET entry it
+    # already shares a route with. Kept beside each GET twin rather than listed separately.
+    ("GET", "/api/healthz"), ("HEAD", "/api/healthz"), ("GET", "/api/healthz/deep"), ("HEAD", "/api/healthz/deep"),
+    ("GET", "/robots.txt"), ("HEAD", "/robots.txt"), ("GET", "/"), ("HEAD", "/"), ("GET", "/{path:path}"), ("HEAD", "/{path:path}"),
     # The flag ABOUT anonymous visitors (A-I7.2): requiring a credential to read whether an
     # anonymous visitor holds `market.read` would be circular. Reads one setting, writes nothing.
     ("GET", "/api/config"),
@@ -78,12 +82,8 @@ PUBLIC_ROUTES: frozenset[tuple[str, str]] = frozenset({
     ("POST", "/api/interest"),         # the Coming Soon launch-notification sign-up: anonymous by design, rate-limited instead
     # `app.api.health.not_found_router`'s catch-all: it exists so an unknown /api/* path answers a
     # JSON 404 instead of falling through to the SPA's index.html. It reads nothing and writes
-    # nothing, on any method.
+    # nothing, on any method (HEAD included, Task 13a).
     *((method, "/api/{path:path}") for method in ("DELETE", "GET", "HEAD", "PATCH", "POST", "PUT")),
-    # Task 13a: HEAD now mirrors GET on these same routes (uptime monitors, link checkers) — same
-    # handler, same public surface, body stripped by Starlette. Not a new permission decision, just
-    # HEAD joining the GET entry it already shares a route with.
-    ("HEAD", "/api/healthz"), ("HEAD", "/api/healthz/deep"), ("HEAD", "/robots.txt"), ("HEAD", "/"), ("HEAD", "/{path:path}"),
 })
 
 
