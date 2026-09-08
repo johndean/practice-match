@@ -22,7 +22,7 @@ DOCS = [ROOT / "README.md", ROOT / "CLAUDE.md", ROOT / "DEPLOY.md", *sorted((ROO
 REQUIRED_CI_COMMANDS = (
     "poetry run ruff check app tests scripts",
     "poetry run mypy app --strict",
-    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/prepare_photos.py --strict",
+    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/prepare_photos.py scripts/seed_listings.py --strict",
     "poetry run pytest -q -W error",
     # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
     # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
@@ -856,3 +856,11 @@ def test_the_identity_spec_states_the_unverified_re_issue_rule():
         "the amended default must still name both halves: `account_exists` from verified onward, re-issue while unverified"
     )
     assert "amended 2026-09-07" in default, "the amendment is undated"
+
+
+def test_deploy_md_documents_how_to_seed_qa():
+    """The seed run is a hand operation on QA; DEPLOY.md is where hand operations live."""
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    assert "## Seeding the demo hospitals (QA)" in deploy
+    assert "python scripts/seed_listings.py --reset" in deploy
+    assert "never on production without John's go" in deploy

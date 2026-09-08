@@ -44,6 +44,13 @@ worker_uid=$(docker exec pm-worker id -u)
   echo "FAIL: expected uid 10001 in both containers, got api=$api_uid worker=$worker_uid"; exit 1;
 }
 echo "non-root OK"
+# The seeder reads seeds/hospitals.json in-container and the photo endpoint serves
+# seeds/hospitals/photos/*.webp off disk, so the Dockerfile's COPY has to have actually
+# landed. Grepping the Dockerfile proves nothing about the built image.
+for seed_file in seeds/hospitals.json seeds/hospitals/photos/index.json; do
+  docker exec pm-api test -f "$seed_file" || { echo "FAIL: $seed_file missing from the image" >&2; exit 1; }
+done
+echo "seed data in image OK"
 coming_body=$(curl -fsS http://localhost:8012/)
 [[ "$coming_body" == *'VIN Foundation — Coming Soon'* && "$coming_body" != *'<title>Practice Match'* ]] \
   || { echo "FAIL: SITE_MODE=coming_soon did not serve the coming-soon shell"; exit 1; }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Exercises scripts/verify-image.sh's control flow (cleanup ordering, the seven
+# Exercises scripts/verify-image.sh's control flow (cleanup ordering, the eight
 # OK-line checks) against fake `docker` and `curl` executables, so it never
 # touches the real Docker daemon or the compose services.
 set -euo pipefail; cd "$(dirname "$0")/../.."
@@ -27,6 +27,10 @@ esac
 DOCKEREOF
 chmod +x "$FAKE_BIN/docker"
 
+# A function, not a bare heredoc: the I8 case at the end of this file needs the HEALTHY curl
+# back after the O1 case has replaced it with a broken one, and a second copy of the body would
+# be a second thing to keep in step.
+write_healthy_curl() {
 cat > "$FAKE_BIN/curl" <<'CURLEOF'
 #!/usr/bin/env bash
 echo "curl $*" >> "$FAKE_LOG"
@@ -46,6 +50,8 @@ else
 fi
 CURLEOF
 chmod +x "$FAKE_BIN/curl"
+}
+write_healthy_curl
 
 set +e
 PATH="$FAKE_BIN:$PATH" bash scripts/verify-image.sh > "$WORKDIR/out" 2>&1
@@ -55,7 +61,7 @@ set -e
 [[ $code -eq 0 ]] || { cat "$WORKDIR/out"; fail "verify-image.sh exited $code against the fake docker/curl"; }
 
 out=$(cat "$WORKDIR/out")
-for line in "api healthz OK" "index.html served" "SPA fallback OK" "worker health OK" "celery booted" "non-root OK" "coming soon OK"; do
+for line in "api healthz OK" "index.html served" "SPA fallback OK" "worker health OK" "celery booted" "non-root OK" "seed data in image OK" "coming soon OK"; do
   [[ "$out" == *"$line"* ]] || fail "missing expected output line: $line — got:
 $out"
 done
@@ -104,3 +110,33 @@ out2=$(cat "$WORKDIR/out2")
 [[ "$out2" == *"FAIL: index.html"* ]] || fail "the broken-index failure must name itself; got: $out2"
 
 echo "verify-image.sh negative case OK (O1)"
+
+# --- I8: a seeds/ directory missing from the image must fail the script ---
+# The O1 case above left a broken-index curl behind; this case must fail on the seeds check,
+# not on that one.
+write_healthy_curl
+cat > "$FAKE_BIN/docker" <<'DOCKEREOF3'
+#!/usr/bin/env bash
+echo "docker $*" >> "$FAKE_LOG"
+case "$1" in
+  build) exit 0 ;;
+  run) echo fake0000container ;;
+  rm) exit 0 ;;
+  exec) if [[ "$*" == *"test -f"* ]]; then exit 1; fi; echo 10001 ;;
+  logs) echo "fake celery@fakehost ready." ;;
+  *) exit 0 ;;
+esac
+DOCKEREOF3
+chmod +x "$FAKE_BIN/docker"
+: > "$FAKE_LOG"
+
+set +e
+PATH="$FAKE_BIN:$PATH" bash scripts/verify-image.sh > "$WORKDIR/out3" 2>&1
+code3=$?
+set -e
+
+[[ $code3 -ne 0 ]] || { cat "$WORKDIR/out3"; fail "verify-image.sh must fail when seeds/ is missing from the image; it exited 0"; }
+out3=$(cat "$WORKDIR/out3")
+[[ "$out3" == *"FAIL: seeds/hospitals.json missing from the image"* ]] || fail "the missing-seeds failure must name the file; got: $out3"
+
+echo "verify-image.sh seed-data negative case OK (I8)"

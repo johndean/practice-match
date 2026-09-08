@@ -49,6 +49,10 @@ RUN poetry install --only main --no-root --no-cache
 COPY app/ ./app/
 COPY migrations/ ./migrations/
 COPY scripts/ ./scripts/
+# The eighteen demo hospitals and their photographs (spec 2026-09-06 D3/D7): the `seed` role
+# reads seeds/hospitals.json in-container, and GET /api/listings/{id}/photos/{n} serves the
+# committed WebP files from seeds/hospitals/photos/. ~15 MB.
+COPY seeds/ ./seeds/
 COPY --from=frontend-build /work/frontend/dist/ ./frontend/dist/
 COPY --from=coming-soon-build /work/coming-soon/dist/ ./coming-soon/dist/
 # /app/BUILD_SHA is what /api/healthz reports as commit_sha: scripts/deploy.sh writes the

@@ -68,3 +68,16 @@ def test_ignore_files_keep_the_coming_soon_build_and_modules_out():
 def test_coming_soon_build_emits_its_bundle_under_app_like_the_marketplace():
     # app/static.py mounts /_app at boot; without this the api crashes in coming-soon mode (11b, 2026-09-06).
     assert "assetsDir: '_app'" in (ROOT / "coming-soon" / "vite.config.js").read_text()
+
+
+def test_dockerfile_ships_the_seed_data_and_photographs():
+    """scripts/seed_listings.py runs inside the api container and app/api/listings.py serves
+    the WebP files off disk, so seeds/ must be in the image (spec 2026-09-06 D3/D7)."""
+    d = (ROOT / "Dockerfile").read_text()
+    assert "COPY seeds/ ./seeds/" in d
+
+
+def test_seed_data_is_not_ignored_by_the_image_or_upload_filters():
+    for name in (".railwayignore", ".dockerignore"):
+        entries = (ROOT / name).read_text().split()
+        assert not any(e.rstrip("/") == "seeds" for e in entries), f"{name} excludes seeds/"

@@ -35,5 +35,9 @@ printf '1\n' > "$FAKE/codes"; set +e; out=$(run_api); code=$?; set -e
 printf '4\n' > "$FAKE/codes"; set +e; out=$(run_api); code=$?; set -e
 [[ $code -eq 4 && "$out" != *"fake uvicorn"* && "$out" == *"migration failed (exit 4)"* ]] || fail "a changed applied migration (exit 4) must stop the container before uvicorn (exit $code), got: $out"
 
+out=$(DRY_RUN=1 bash scripts/start.sh seed) || fail "seed role exited non-zero"
+[[ "$out" == *"python scripts/seed_listings.py"* ]] || fail "seed role should run the seeder, got: $out"
+[[ "$out" != *uvicorn* && "$out" != *celery* ]] || fail "the seed role must not start a server, got: $out"
+
 if DRY_RUN=1 bash scripts/start.sh bogus 2>/dev/null; then fail "unknown role must exit non-zero"; fi
 echo "start.sh dispatcher OK"

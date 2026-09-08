@@ -84,6 +84,16 @@ HTTPServer(('0.0.0.0', port), H).serve_forever()
     mcmd=(python scripts/migrate.py)
     if [[ "${DRY_RUN:-0}" == "1" ]]; then echo "${mcmd[*]}"; else exec "${mcmd[@]}"; fi
     ;;
+  seed)
+    # One-shot: load the eighteen demo hospitals (spec 2026-09-06 D7). Run by hand inside the
+    # api container (`railway ssh`) or as a one-off service command; never on production
+    # without John's go — the seeder refuses ENVIRONMENT=production outright. Arguments after
+    # the role are passed through, so `start.sh seed --reset` sweeps the existing seed rows
+    # first (every run removes the seed rows the file no longer carries — amendment A-L4).
+    shift || true
+    scmd=(python scripts/seed_listings.py "$@")
+    if [[ "${DRY_RUN:-0}" == "1" ]]; then echo "${scmd[*]}"; else exec "${scmd[@]}"; fi
+    ;;
   *)
-    echo "unknown role: $role (expected api | worker | migrate)" >&2; exit 2 ;;
+    echo "unknown role: $role (expected api | worker | migrate | seed)" >&2; exit 2 ;;
 esac

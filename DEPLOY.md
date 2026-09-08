@@ -150,6 +150,33 @@ for i in 1 2 3 4 5 6; do curl -sS -o /dev/null -w "%{http_code} " -X POST -H 'Co
 for i in 1 2 3 4 5 6; do curl -sS -o /dev/null -w "%{http_code} " -X POST -H 'Content-Type: application/json' -H "X-Forwarded-For: 198.51.100.$i" -H "X-Forwarded-For: 198.51.100.99" -d "{\"email\":\"probe-$T-b$i@example.invalid\"}" https://qa.foundation.vin/api/interest; done; echo
 ```
 
+## Seeding the demo hospitals (QA)
+
+The eighteen demo hospitals (`seeds/hospitals.json`, spec 2026-09-06 D7) are loaded by
+`scripts/seed_listings.py`, which ships in the image together with `seeds/`. It is idempotent
+(an upsert by `slug`, so the rows keep their ids and their photo URLs stay valid), and **every**
+run also deletes the `source='seed'` rows the file no longer carries, in the same transaction as
+the upsert (amendment A-L4). `--reset` is the bigger hammer: it deletes every `source='seed'`
+row first, reaching the same end state with fresh ids. A `source='seller'` row is never touched
+by either path. It is a hand operation, and it is never on production without John's go — the
+script refuses `ENVIRONMENT=production` outright (exit 2).
+
+```bash
+railway status                                   # MUST print Project: Practice Match
+railway ssh --service api --environment QA       # John's ed25519 key; the CLI needs a key on file
+python scripts/seed_listings.py --reset          # inside the container
+# first --reset run: "[seed] inserted 18, updated 0, removed 0" then "[seed] done - 18 listings"
+# a second --reset run: "inserted 18, updated 0, removed 18" (fresh ids); without --reset:
+# "inserted 0, updated 18, removed N", N being the seed rows the file no longer carries
+```
+
+Exit codes: `0` done · `2` refused (`ENVIRONMENT=production`, or `DATABASE_URL` unset) · `3`
+database unreachable (retry) · `4` the seed data is missing or malformed (fix the file,
+redeploy). Anything else — in particular a traceback — means the image is wrong, not the data.
+The same run is available as a container role: `bash scripts/start.sh seed --reset`, for a
+one-off Railway service command. `python -m scripts.seed_listings --reset` works too, from
+`/app`.
+
 ## Rollback
 
 Redeploy the previous image/deployment for the service — Railway dashboard → the service → **Deployments** → pick the last good one → **Redeploy** — then re-run `scripts/verify-deploy.sh <env>` to confirm.

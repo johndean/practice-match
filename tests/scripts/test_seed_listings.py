@@ -1,0 +1,317 @@
+"""scripts/seed_listings.py against a scratch database (spec 2026-09-06 D7, amendments A-L4/A-L5)."""
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+import psycopg2
+import pytest
+
+from scripts import seed_listings as SL
+
+ROOT = Path(__file__).resolve().parent.parent.parent
+
+
+def _count(dsn: str, where: str = "TRUE") -> int:
+    with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+        # `where` is always a literal written in this file — never a value from a request.
+        cur.execute(f"SELECT count(*) FROM listing WHERE {where}")
+        return int(cur.fetchone()[0])
+
+
+def _plant(dsn: str, slug: str, source: str) -> None:
+    """One extra row, the way A-L4's matrix needs it. `source` is constrained by
+    migrations/016_listing.sql to 'seed' | 'seller', so 'seller' IS the "any other source" row
+    A-L4 asks for — a 'member' row cannot exist in this table at all."""
+    with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO listing (slug, name, city, state, area, type, market, source, status)"
+            " VALUES (%s,'Planted listing','Austin','TX','Austin','Small animal','Austin, TX',%s,'published')",
+            (slug, source),
+        )
+
+
+def test_seed_writes_eighteen_published_seed_rows(scratch_dsn: str) -> None:
+    assert SL.seed(scratch_dsn) == 18
+    assert _count(scratch_dsn) == 18
+    assert _count(scratch_dsn, "source = 'seed' AND status = 'published'") == 18
+
+
+def test_seed_is_idempotent(scratch_dsn: str) -> None:
+    SL.seed(scratch_dsn)
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT id, created_at FROM listing ORDER BY slug")
+        before = cur.fetchall()
+    assert SL.seed(scratch_dsn) == 18
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT id, created_at FROM listing ORDER BY slug")
+        after = cur.fetchall()
+    assert _count(scratch_dsn) == 18
+    assert after == before, "an upsert by slug must keep the same row, id and created_at"
+    # A-L5: name_disclosed is written from each row's own JSON value, on every import.
+    hospitals = {h["slug"]: h for h in SL.load_seed(SL.SEEDS_FILE)}
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT slug, name_disclosed FROM listing")
+        disclosed = dict(cur.fetchall())
+    assert disclosed == {slug: h["name_disclosed"] for slug, h in hospitals.items()}
+    assert all(disclosed.values()), "John's eighteen demo hospitals show their names on QA (A-L5)"
+
+
+def test_reset_removes_seed_rows_but_never_seller_rows(scratch_dsn: str) -> None:
+    SL.seed(scratch_dsn)
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO listing (slug, name, city, state, area, type, market, source, status)"
+            " VALUES ('sellers-own','Seller listing','Austin','TX','Austin','Small animal','Austin, TX','seller','published')"
+        )
+    assert SL.seed(scratch_dsn, reset=True) == 18
+    assert _count(scratch_dsn, "source = 'seed'") == 18
+    assert _count(scratch_dsn, "source = 'seller'") == 1
+
+
+def test_every_row_carries_the_seed_files_own_values(scratch_dsn: str) -> None:
+    SL.seed(scratch_dsn)
+    hospitals = {h["slug"]: h for h in SL.load_seed(SL.SEEDS_FILE)}
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT slug, name, street, city, state, zip, phone, hours, area, market, type, status,"
+            " source, location_disclosed, price, rev, docs, rooms, sqft, bldg, est, note, staff,"
+            " services, facility, ownership FROM listing"
+        )
+        for row in cur.fetchall():
+            h = hospitals[row[0]]
+            assert row[1:14] == (
+                h["name"], h["street"], h["city"], h["state"], h["zip"], h["phone"], h["hours"],
+                h["area"], h["market"], h["type"], "published", "seed", True,
+            ), h["slug"]
+            assert row[14:] == (
+                h["price"], h["rev"], h["docs"], h["rooms"], h["sqft"], h["bldg"], h["est"],
+                h["note"], h["staff"], h["services"], h["facility"], h["ownership"],
+            ), h["slug"]
+
+
+def test_the_point_is_stored_longitude_first(scratch_dsn: str) -> None:
+    """ST_MakePoint takes (x, y) = (lng, lat). Swapping them passes every test that does not
+    read the geometry back — so this one reads it back."""
+    SL.seed(scratch_dsn)
+    hospitals = {h["slug"]: h for h in SL.load_seed(SL.SEEDS_FILE)}
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT slug, ST_Y(geom::geometry), ST_X(geom::geometry) FROM listing")
+        for slug, lat, lng in cur.fetchall():
+            assert round(float(lat), 6) == hospitals[slug]["lat"], slug
+            assert round(float(lng), 6) == hospitals[slug]["lng"], slug
+
+
+def test_listed_at_is_computed_from_listed_days_ago(scratch_dsn: str) -> None:
+    SL.seed(scratch_dsn)
+    hospitals = {h["slug"]: h for h in SL.load_seed(SL.SEEDS_FILE)}
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT slug, EXTRACT(DAY FROM now() - listed_at)::int FROM listing")
+        for slug, days in cur.fetchall():
+            assert days == hospitals[slug]["listed_days_ago"], slug
+
+
+def test_photos_come_from_the_committed_inventory(scratch_dsn: str) -> None:
+    SL.seed(scratch_dsn)
+    index = json.loads(SL.PHOTO_INDEX.read_text(encoding="utf-8"))["hospitals"]
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT slug, photos FROM listing")
+        for slug, photos in cur.fetchall():
+            assert photos == [f"{slug}/{e['file']}" for e in index[slug]], slug
+            assert 1 <= len(photos) <= 4, slug
+
+
+def test_main_seeds_from_the_environment(scratch_dsn: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    assert SL.main([]) == 0
+    assert _count(scratch_dsn) == 18
+    assert SL.main(["--reset"]) == 0
+    assert _count(scratch_dsn) == 18
+
+
+def test_main_returns_two_without_a_database_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    assert SL.main([]) == 2
+
+
+def test_main_returns_three_when_the_database_is_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
+    assert SL.main([]) == 3
+
+
+def test_main_returns_four_when_the_seed_file_is_malformed(
+    scratch_dsn: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    broken = tmp_path / "hospitals.json"
+    broken.write_text('{"version": 1}', encoding="utf-8")
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setattr(SL, "SEEDS_FILE", broken)
+    assert SL.main([]) == 4
+
+
+def test_main_returns_four_when_the_seed_file_is_absent(
+    scratch_dsn: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setattr(SL, "SEEDS_FILE", tmp_path / "absent.json")
+    assert SL.main([]) == 4
+
+
+def test_photo_paths_is_empty_for_an_unknown_slug() -> None:
+    assert SL.photo_paths("not-a-hospital", {"hospitals": {}}) == []
+
+
+def test_normalize_dsn_agrees_with_the_migration_runner() -> None:
+    """scripts/seed_listings.py duplicates normalize_dsn because it must run as a bare script
+    inside the container (pre-flight C1). This pins the copy to the original. The runner is
+    loaded by file path, the way tests/test_migrate.py already loads it."""
+    import importlib.util
+
+    spec = importlib.util.spec_from_file_location("migrate_probe", ROOT / "scripts" / "migrate.py")
+    assert spec is not None and spec.loader is not None
+    migrate = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migrate)
+    for dsn in (
+        "postgres://u:p@h:5432/db",
+        "postgresql://u:p@h:5432/db",
+        "postgresql+asyncpg://u:p@h:5432/db",
+        "postgresql://u:p@h:5432/db?sslmode=require",
+    ):
+        assert SL.normalize_dsn(dsn) == migrate.normalize_dsn(dsn), dsn
+
+
+def test_the_module_runs_as_a_bare_script_from_the_repo_root() -> None:
+    """The container runs `python scripts/seed_listings.py`, which puts scripts/ — not the repo
+    root — on sys.path. A package-relative import in this file is a QA-only crash that neither
+    pytest nor runpy would catch, because both already have the repo root on the path
+    (pre-flight C1). This is the test that would have caught it."""
+    import os
+
+    env = {k: v for k, v in os.environ.items() if k != "DATABASE_URL"}
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "seed_listings.py")],
+        capture_output=True, text=True, check=False, cwd=ROOT, env=env,
+    )
+    assert result.returncode == 2, (result.returncode, result.stdout, result.stderr)
+    assert "DATABASE_URL" in result.stderr
+    assert "ModuleNotFoundError" not in result.stderr and "Traceback" not in result.stderr
+
+
+def test_the_module_runs_as_a_bare_script_from_any_working_directory(tmp_path: Path) -> None:
+    """`railway ssh` drops the operator into /app, but a one-off Railway service command can
+    start anywhere. ROOT is resolved from __file__, so neither the seed file nor the photo
+    inventory depends on the working directory."""
+    import os
+
+    env = {k: v for k, v in os.environ.items() if k != "DATABASE_URL"}
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "seed_listings.py")],
+        capture_output=True, text=True, check=False, cwd=tmp_path, env=env,
+    )
+    assert result.returncode == 2, result.stderr
+
+
+def test_main_returns_four_when_the_seed_file_has_no_hospitals(
+    scratch_dsn: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The `not isinstance(...) or not hospitals` arm of load_seed — the two exit-4 tests above
+    reach the `except` clause instead (pre-flight C2)."""
+    empty = tmp_path / "hospitals.json"
+    empty.write_text('{"version": 1, "hospitals": []}', encoding="utf-8")
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setattr(SL, "SEEDS_FILE", empty)
+    assert SL.main([]) == 4
+
+
+def test_main_returns_four_when_the_hospitals_key_is_not_a_list(
+    scratch_dsn: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The other half of the same `or` (pre-flight C2)."""
+    wrong = tmp_path / "hospitals.json"
+    wrong.write_text('{"version": 1, "hospitals": {"a": 1}}', encoding="utf-8")
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setattr(SL, "SEEDS_FILE", wrong)
+    assert SL.main([]) == 4
+
+
+def test_main_returns_four_when_the_photo_inventory_is_absent(
+    scratch_dsn: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """load_photo_index's own `raise SeedDataError` — nothing else perturbs PHOTO_INDEX
+    (pre-flight C2)."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setattr(SL, "PHOTO_INDEX", tmp_path / "absent.json")
+    assert SL.main([]) == 4
+
+
+def test_row_params_names_the_missing_field() -> None:
+    """row_params' `except KeyError` arm (pre-flight C2)."""
+    with pytest.raises(SL.SeedDataError) as exc:
+        SL.row_params({"slug": "x"}, [])
+    assert "x" in str(exc.value) and "name" in str(exc.value)
+
+
+def test_the_main_guard_is_covered(monkeypatch: pytest.MonkeyPatch) -> None:
+    """runpy re-executes the file in THIS process with __name__ == "__main__", so pytest-cov
+    sees the guard; the subprocess tests above prove the same entry point works when the repo
+    root is NOT on sys.path, which coverage can never see."""
+    import runpy
+
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(sys, "argv", ["seed_listings.py"])
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(ROOT / "scripts" / "seed_listings.py"), run_name="__main__")
+    assert exc.value.code == 2
+
+
+# --- A-L4 (John, 2026-09-08: "must remove the old seeded data when importing the new data") ---
+# Removal is UNCONDITIONAL on every import, in the same transaction as the upsert; --reset stays
+# as the documented full wipe. Rows with any other `source` are never touched by either path.
+
+
+def test_a_stale_seed_row_is_removed_by_a_plain_import(scratch_dsn: str) -> None:
+    """A-L4: a `source='seed'` row whose slug is no longer in seeds/hospitals.json goes, with no
+    --reset — otherwise QA keeps yesterday's hospitals beside today's."""
+    _plant(scratch_dsn, "withdrawn-last-week", "seed")
+    assert _count(scratch_dsn, "slug = 'withdrawn-last-week'") == 1
+    assert SL.seed(scratch_dsn) == 18
+    assert _count(scratch_dsn, "slug = 'withdrawn-last-week'") == 0
+    assert _count(scratch_dsn, "source = 'seed'") == 18
+
+
+def test_a_non_seed_row_survives_a_plain_import(scratch_dsn: str) -> None:
+    """A-L4, the other mode: `source` is constrained to 'seed' | 'seller' by
+    migrations/016_listing.sql, so a seller's own listing is every non-seed row there can be."""
+    _plant(scratch_dsn, "sellers-own", "seller")
+    assert SL.seed(scratch_dsn) == 18
+    assert _count(scratch_dsn, "source = 'seller'") == 1
+    assert _count(scratch_dsn, "source = 'seed'") == 18
+
+
+def test_reset_on_an_empty_table_still_seeds_eighteen(scratch_dsn: str) -> None:
+    """A-L4: --reset is a full wipe of the seed rows and then the import — on a table that has
+    none, it is simply the import."""
+    assert SL.seed(scratch_dsn, reset=True) == 18
+    assert _count(scratch_dsn, "source = 'seed' AND status = 'published'") == 18
+
+
+def test_the_summary_line_reports_inserted_updated_and_removed(
+    scratch_dsn: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A-L4: "the exit summary prints inserted / updated / removed counts"."""
+    _plant(scratch_dsn, "withdrawn-last-week", "seed")
+    SL.seed(scratch_dsn)
+    assert "[seed] inserted 18, updated 0, removed 1" in capsys.readouterr().out
+    SL.seed(scratch_dsn)
+    assert "[seed] inserted 0, updated 18, removed 0" in capsys.readouterr().out
+    SL.seed(scratch_dsn, reset=True)
+    assert "[seed] inserted 18, updated 0, removed 18" in capsys.readouterr().out
+
+
+def test_main_refuses_to_run_against_production(scratch_dsn: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """"Never on production without John's go" (D7), enforced the way scripts/seed_persona.py
+    enforces its own: exit 2, on stderr, before anything is opened."""
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    assert SL.main([]) == 2
+    assert _count(scratch_dsn) == 0, "the production refusal must happen before any write"
