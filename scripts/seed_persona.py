@@ -31,7 +31,13 @@ screens have something to show.
 Task S3 also seeds `unverified@`, `verified@` and `invited@practice-match.test` — one account per
 state the sign-up/verify/reset/accept-invite screens start from — and twelve single-use
 `email_token` fixture rows per purpose (`FIXTURE_TOKENS`), recreated every run for the visual
-harness to consume through the real endpoints.
+harness to consume through the real endpoints. A-S5.2 adds a TENTH account, `verify-me@`, purely to
+own the verify tokens: consuming one flips its account to `verified` for good, and the oracle needs
+`unverified@` to still be unverified after every capture.
+
+TEN accounts in all: `design@`, `buyer@`, `seller@` (members); `pending@`, `needs-review@`,
+`declined@` (applicants with a state to render); `unverified@`, `verify-me@`, `verified@`,
+`invited@` (the identity screens).
 
     ENVIRONMENT=qa poetry run python scripts/seed_persona.py
 
@@ -102,8 +108,17 @@ PERSONA_APPLICATION = {
 # persona password like every other fixture above; `invited@` does not — see INVITED_* below.
 IDENTITY_STATE_PERSONAS: tuple[tuple[str, str, str], ...] = (
     ("unverified@practice-match.test", "unverified", "Unverified Applicant"),
+    # A-S5.2 (S-1). `POST /api/auth/verify` is `UPDATE account SET state='verified' WHERE
+    # state='unverified'`, so the FIRST fixture verify token a run consumes confirms its account
+    # for good. The oracle's `gate-check-email` state and its "Send it again" flow both need an
+    # account that is still `unverified` at every capture, and `dom.spec.ts` and `visual.spec.ts`
+    # each drive the whole state list — so no test ordering can keep one account doing both jobs.
+    # This account owns the verify tokens and nothing else: no state signs in as it, and burning it
+    # costs nothing.
+    ("verify-me@practice-match.test", "unverified", "Verify Fixture"),
     ("verified@practice-match.test", "verified", "Verified Applicant"),
 )
+VERIFY_FIXTURE_EMAIL = "verify-me@practice-match.test"
 # A real Argon2id hash of a secret generated fresh and never stored anywhere but this hash — not
 # `bootstrap_admin.py`'s `NO_PASSWORD` sentinel, because the point here is proving the *shared*
 # persona password specifically does not open this account, and a sentinel can't verify against
@@ -147,7 +162,7 @@ DECLINED_DECISION_NOTE = "Employer is outside the marketplace's current pilot re
 FIXTURE_TOKEN_PREFIX = "fixture-"
 FIXTURE_TOKEN_COUNT = 12
 FIXTURE_TOKENS: dict[str, tuple[str, str]] = {
-    "verify": ("unverified@practice-match.test", "fixture-verify-{n:02d}"),
+    "verify": (VERIFY_FIXTURE_EMAIL, "fixture-verify-{n:02d}"),
     "reset": ("verified@practice-match.test", "fixture-reset-{n:02d}"),
     "invite": (INVITED_EMAIL, "fixture-invite-{n:02d}"),
 }
@@ -271,21 +286,28 @@ def main(argv: Sequence[str] | None = None) -> int:
                     (declined_id, json.dumps(DECLINED_FIELDS), account_id, DECLINED_DECISION_NOTE))
 
         # Twelve fresh single-use tokens per purpose. Deleted first so neither a used row from the
-        # last run nor a stale one survives a re-seed.
+        # last run nor a stale one survives a re-seed — and deleted BY HASH as well as by account
+        # (A-S5.2): `email_token.token_hash` is globally unique and these twelve raw values are
+        # documented constants, so when a purpose's owner changes — as `verify` did, from
+        # `unverified@` to `verify-me@` — the previous owner's rows collide with the ones this run
+        # is about to insert. A fresh database never sees it; every database seeded before the
+        # move does, and the seed died on a `UniqueViolation` rather than reclaiming its own token.
         for purpose, (email, pattern) in FIXTURE_TOKENS.items():
             target_id = identity_ids[email]
+            hashes = [T.hash(pattern.format(n=n)) for n in range(1, FIXTURE_TOKEN_COUNT + 1)]
+            cur.execute("DELETE FROM email_token WHERE token_hash = ANY(%s)", (hashes,))
             cur.execute("DELETE FROM email_token WHERE account_id=%s AND purpose=%s", (target_id, purpose))
-            for n in range(1, FIXTURE_TOKEN_COUNT + 1):
-                raw = pattern.format(n=n)
+            for raw_hash in hashes:
                 cur.execute("""INSERT INTO email_token (account_id, purpose, token_hash, expires_at)
                                VALUES (%s,%s,%s, now() + %s::interval)""",
-                            (target_id, purpose, T.hash(raw), FIXTURE_TTL[purpose]))
+                            (target_id, purpose, raw_hash, FIXTURE_TTL[purpose]))
     print(f"[seed_persona] {PERSONA_EMAIL} is ready on {settings.environment} — roles: {', '.join(PERSONA_ROLES)}")
     oracles = ", ".join(f"{email} ({'+'.join(roles)})" for email, roles in ORACLE_PERSONAS)
     print(f"[seed_persona] oracle personas: {oracles}")
     print(f"[seed_persona] gate-state personas: {', '.join(f'{e} ({s})' for e, s, _ in STATE_PERSONAS)}")
     identity = ", ".join(f"{e} ({s})" for e, s, _ in IDENTITY_STATE_PERSONAS)
     print(f"[seed_persona] identity-screen personas: {identity}, {INVITED_EMAIL} ({INVITED_STATE}, invite-only sign-in)")
+    print(f"[seed_persona] the verify fixture tokens belong to {VERIFY_FIXTURE_EMAIL}, so no other account is confirmed by a test")
     print(f"[seed_persona] fixture tokens: {FIXTURE_TOKEN_COUNT} per purpose ({', '.join(sorted(FIXTURE_TOKENS))}), recreated this run")
     return 0
 

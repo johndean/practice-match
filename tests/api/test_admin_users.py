@@ -562,13 +562,18 @@ def test_seed_persona_upserts_the_design_account_and_never_prints_its_password(c
     assert "production" in capsys.readouterr().err
 
 
-async def test_seed_persona_seeds_the_three_identity_screen_accounts(client, conn, monkeypatch):
-    """Task S3: the sign-up/verify/reset/accept-invite screens' oracle needs an account in each of
-    the three states those flows start from. `unverified@` and `verified@` take the same documented
-    password as every other fixture; `invited@` is deliberately given a password nobody is ever
-    told (a fresh random secret, hashed and discarded) — the only way into that account is the
-    invite token, so signing in with the shared persona password must fail exactly like a stranger
-    who does not hold the link."""
+async def test_seed_persona_seeds_the_four_identity_screen_accounts(client, conn, monkeypatch):
+    """Task S3, widened by A-S5.2: the sign-up/verify/reset/accept-invite screens' oracle needs an
+    account in each state those flows start from. `unverified@`, `verified@` and `verify-me@` take
+    the same documented password as every other fixture; `invited@` is deliberately given a
+    password nobody is ever told (a fresh random secret, hashed and discarded) — the only way into
+    that account is the invite token, so signing in with the shared persona password must fail
+    exactly like a stranger who does not hold the link.
+
+    `verify-me@` is the TENTH account and exists for one reason (A-S5.2, S-1): consuming a verify
+    token flips its account to `verified` for good, and `gate-check-email` and the resend flow both
+    need `unverified@` to still be unverified. The tokens belong to this account instead, and no
+    state ever signs in as it."""
     from app.auth import passwords as P
     from scripts import seed_persona
 
@@ -578,6 +583,7 @@ async def test_seed_persona_seeds_the_three_identity_screen_accounts(client, con
 
     expected_state = {
         "unverified@practice-match.test": "unverified",
+        "verify-me@practice-match.test": "unverified",
         "verified@practice-match.test": "verified",
         "invited@practice-match.test": "verified",
     }
@@ -588,9 +594,11 @@ async def test_seed_persona_seeds_the_three_identity_screen_accounts(client, con
     assert [r[0] for r in rows] == sorted(expected_state)
     by_email = {r[0]: r for r in rows}
     assert by_email["unverified@practice-match.test"][1:3] == ("unverified", "Unverified Applicant")
+    assert by_email["verify-me@practice-match.test"][1:3] == ("unverified", "Verify Fixture")
     assert by_email["verified@practice-match.test"][1:3] == ("verified", "Verified Applicant")
     assert by_email["invited@practice-match.test"][1:3] == ("verified", "Invited Staff")
     assert P.verify(INVITE_PW, by_email["unverified@practice-match.test"][3])
+    assert P.verify(INVITE_PW, by_email["verify-me@practice-match.test"][3])
     assert P.verify(INVITE_PW, by_email["verified@practice-match.test"][3])
     assert not P.verify(INVITE_PW, by_email["invited@practice-match.test"][3]), \
         "invited@ must NOT accept the shared persona password"
@@ -647,7 +655,11 @@ async def test_seed_persona_recreates_twelve_single_use_fixture_tokens_per_purpo
     _run_cli(seed_persona, [])                                                  # idempotent
 
     assert seed_persona.FIXTURE_TOKENS == {
-        "verify": ("unverified@practice-match.test", "fixture-verify-{n:02d}"),
+        # A-S5.2 (S-1): the verify tokens belong to `verify-me@`, not `unverified@`. Consuming one
+        # flips its account to `verified` for the rest of the run, and the oracle's
+        # `gate-check-email` state and its resend flow both need `unverified@` to still be
+        # unverified after every capture — so the account the tokens burn is one nothing else uses.
+        "verify": ("verify-me@practice-match.test", "fixture-verify-{n:02d}"),
         "reset": ("verified@practice-match.test", "fixture-reset-{n:02d}"),
         "invite": ("invited@practice-match.test", "fixture-invite-{n:02d}"),
     }
@@ -667,7 +679,13 @@ async def test_seed_persona_recreates_twelve_single_use_fixture_tokens_per_purpo
     assert first.status_code == 200
     again = await client.post("/api/auth/verify", json={"token": verify_token})
     assert again.status_code in (400, 401, 422)
-    assert _count("verify", "unverified@practice-match.test") == (12, 11), "one token is now used"
+    assert _count("verify", "verify-me@practice-match.test") == (12, 11), "one token is now used"
+    # A-S5.2 (S-1), the invariant the whole account exists for: the verify that just succeeded
+    # confirmed `verify-me@` and left `unverified@` exactly as the seed wrote it.
+    with conn.cursor() as cur:
+        cur.execute("SELECT email, state FROM account WHERE email = ANY(%s) ORDER BY email",
+                    (["unverified@practice-match.test", "verify-me@practice-match.test"],))
+        assert cur.fetchall() == [("unverified@practice-match.test", "unverified"), ("verify-me@practice-match.test", "verified")]
 
     _run_cli(seed_persona, [])                                                  # re-seed after consumption
     for purpose, (email, _pattern) in seed_persona.FIXTURE_TOKENS.items():
@@ -680,6 +698,45 @@ async def test_seed_persona_recreates_twelve_single_use_fixture_tokens_per_purpo
     invite_token = seed_persona.FIXTURE_TOKENS["invite"][1].format(n=3)
     invite_r = await client.post("/api/auth/accept-invite", json={"token": invite_token, "password": "quiet-orbit-lantern-72"})
     assert invite_r.status_code == 200
+
+
+async def test_seed_persona_reclaims_a_fixture_token_that_used_to_belong_to_another_account(conn, monkeypatch):
+    """A-S5.2, found by running the seed against a database seeded before the ruling.
+
+    `email_token.token_hash` is globally UNIQUE and the twelve raw values per purpose are
+    documented CONSTANTS — so when a purpose's owner changes (the `verify` tokens moved from
+    `unverified@` to `verify-me@`), the rows the previous owner still holds collide with the rows
+    this run is about to insert, and the seed died with a `UniqueViolation` on a database that had
+    ever been seeded before. A fresh database and CI never saw it; every developer's would.
+
+    The delete is therefore by the HASHES this run is about to write as well as by the account, so
+    a fixture token is reclaimed from whoever holds it."""
+    from app.auth import tokens as T
+    from scripts import seed_persona
+
+    monkeypatch.setenv("PERSONA_PASSWORD", INVITE_PW)
+    _run_cli(seed_persona, [])
+
+    # Move one of the twelve verify tokens onto a DIFFERENT account, exactly as the pre-A-S5.2
+    # seed left it, and re-seed.
+    raw = seed_persona.FIXTURE_TOKENS["verify"][1].format(n=1)
+    with conn.cursor() as cur:
+        cur.execute("SELECT id FROM account WHERE email=%s", ("unverified@practice-match.test",))
+        squatter = cur.fetchone()[0]
+        cur.execute("DELETE FROM email_token WHERE token_hash=%s", (T.hash(raw),))
+        cur.execute("""INSERT INTO email_token (account_id, purpose, token_hash, expires_at)
+                       VALUES (%s,'verify',%s, now() + interval '24 hours')""", (squatter, T.hash(raw)))
+    conn.commit()
+
+    _run_cli(seed_persona, [])                                                  # must not raise
+
+    with conn.cursor() as cur:
+        cur.execute("""SELECT a.email FROM email_token t JOIN account a ON a.id = t.account_id
+                        WHERE t.token_hash = %s""", (T.hash(raw),))
+        assert cur.fetchall() == [("verify-me@practice-match.test",)], "the token was not reclaimed"
+        cur.execute("""SELECT count(*) FROM email_token t JOIN account a ON a.id = t.account_id
+                        WHERE a.email=%s AND t.purpose='verify'""", ("unverified@practice-match.test",))
+        assert cur.fetchone()[0] == 0, "the previous owner must be left with none"
 
 
 def test_seed_persona_deletes_only_the_buyer_application_row_it_owns(conn, monkeypatch):
