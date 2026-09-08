@@ -18,6 +18,7 @@ dependencies = [
   "anyio>=4.0",  # explicit: app/auth/passwords.py calls anyio.to_thread.run_sync directly; previously only a transitive dep of httpx/starlette (I2 review M5)
   "argon2-cffi (>=25.1.0,<26.0.0)",
   "zxcvbn (>=4.5.0,<5.0.0)",
+  "boto3 (>=1.43.89,<2.0.0)",
 ]
 
 [tool.poetry]
@@ -38,6 +39,8 @@ types-zxcvbn = "^4.5.0.20260518"
 # serves already-encoded WebP bytes off disk and never opens an image, so this must NOT move
 # to the main group — the runtime image is built with `poetry install --only main`.
 pillow = ">=11.0"
+moto = {extras = ["s3"], version = "^5.2.3"}
+boto3-stubs = {extras = ["s3"], version = "^1.43.89"}
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
