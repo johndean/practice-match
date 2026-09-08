@@ -1077,3 +1077,30 @@ def test_local_amendments_row_count_matches_design_amendments():
         f"LOCAL_AMENDMENTS.md has {len(rows)} rows; expected {literal_count + 1} "
         f"({literal_count} literal amendments + one collapsed A1 row)"
     )
+
+
+def test_runbook_qa_parity_sign_in_budget_matches_the_harness_trace():
+    """S6 review round 1 (Critical). The runbook's QA parity run section stated the sign-in budget
+    as "sixteen" of `SIGNIN_IP`'s thirty — a stale figure carried over from the account-screens
+    plan's A-S5 (3) paragraph, which A-S5.1 already corrected to FOURTEEN (traced exactly against
+    real `POST /api/auth/signin` calls, not estimated: `frontend/tests/harness.ts`'s "THE BUDGET"
+    docstring, 7 + 2 + 3 + 1 + 1). The reseed itself spends no sign-ins, so the number the runbook
+    quotes for "one full parity run" is the harness's traced number and nothing else.
+
+    Pinned by reading the word out of BOTH files rather than hard-coding it here, so the two can
+    never drift apart silently again — whichever one next changes, this fails until the other
+    agrees with it."""
+    harness = (ROOT / "frontend" / "tests" / "harness.ts").read_text()
+    budget_line = next((line for line in harness.splitlines() if "THE BUDGET" in line), None)
+    assert budget_line is not None, "frontend/tests/harness.ts no longer carries a 'THE BUDGET' line"
+    harness_match = re.search(r"THE BUDGET — (\w+) of thirty", budget_line)
+    assert harness_match, f"could not read the traced sign-in count out of: {budget_line!r}"
+
+    runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    runbook_match = re.search(r"(\w+) of `SIGNIN_IP`'s thirty sign-ins per FIXED", runbook)
+    assert runbook_match, "docs/RUNBOOK-identity.md no longer states the QA parity sign-in budget this way"
+
+    assert runbook_match.group(1).lower() == harness_match.group(1).lower(), (
+        f"docs/RUNBOOK-identity.md says {runbook_match.group(1)!r} of thirty sign-ins; "
+        f"frontend/tests/harness.ts's traced budget says {harness_match.group(1)!r} — they must agree"
+    )

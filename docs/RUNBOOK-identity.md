@@ -351,10 +351,10 @@ rm -f /tmp/pm-qa-vars.json
 * It refuses any host outside `qa.foundation.vin`, `localhost` or `127.0.0.1`, and refuses
   `ENVIRONMENT=production` outright — the run does not start rather than reseeding the wrong
   database. What it prints instead is the target database name and host, never the DSN.
-* QA's real sign-in rate limit stays real: sixteen of `SIGNIN_IP`'s thirty sign-ins per FIXED
-  fifteen-minute window are enough for one full parity run, so budget **one run per window**. A
-  `429` mid-run means wait for the quarter-hour boundary and re-run — never loosen the limit to
-  make it pass.
+* QA's real sign-in rate limit stays real: fourteen of `SIGNIN_IP`'s thirty sign-ins per FIXED
+  fifteen-minute window are enough for one full parity run (`frontend/tests/harness.ts`'s traced
+  budget: 7 + 2 + 3 + 1 + 1), so budget **one run per window**. A `429` mid-run means wait for the
+  quarter-hour boundary and re-run — never loosen the limit to make it pass.
 * Only **one remote run at a time**: the fixture restoration is unconditional and the throwaway
   `e2e-…@example.org` sweep is global, so a second run started before the first finishes races the
   same fixtures and addresses.
