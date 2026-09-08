@@ -86,13 +86,6 @@ SELECT id, slug, name, street, city, state, zip, phone, hours, status, location_
        note, staff, services, facility, ownership, photos
   FROM listing
 """
-_COLUMNS = (
-    "id", "slug", "name", "street", "city", "state", "zip", "phone", "hours", "status",
-    "location_disclosed", "name_disclosed", "lat", "lng", "area", "type", "market", "price",
-    "rev", "docs", "rooms", "sqft", "bldg", "est", "listed_at", "note", "staff", "services",
-    "facility", "ownership", "photos",
-)
-
 
 def _error(code: str, message: str, status: int) -> JSONResponse:
     """Decision A5's body for the refusals this module raises itself."""
@@ -173,7 +166,13 @@ def photo_file(photos: list[str], n: int) -> Path | None:
 def serialise(row: Mapping[str, Any], now: datetime) -> dict[str, Any]:
     """One database row as the JSON contract Task L6 maps, with both disclosure flags applied —
     see the module docstring: an undisclosed address loses its street, postcode, telephone number
-    and point, an undisclosed name loses the name and the slug that spells it."""
+    and point, an undisclosed name loses the name and the slug that spells it.
+
+    **The two flags are INDEPENDENT by design (A-L5.2, ruled 2026-09-08).** A listing may hide its
+    name and still show its address, point and telephone number — a buyer could then find the name
+    in a search, and that is the seller's own choice under "Sellers control what buyers can see",
+    not a leak to close here. Wave 2b's UI says so beside the two switches. Do not "fix" this by
+    making one flag imply the other."""
     disclosed = bool(row["location_disclosed"])
     named = bool(row["name_disclosed"])
     listing_id = str(row["id"])
@@ -207,9 +206,14 @@ def serialise(row: Mapping[str, Any], now: datetime) -> dict[str, Any]:
 
 
 def _rows(conn: Any, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+    """Rows as dicts keyed by the names the QUERY produced — `cur.description`, not a tuple kept
+    beside `_SELECT` by hand (review round 2, M5). A hand-kept tuple is checked for LENGTH by
+    `strict=True` and for nothing else, so swapping two columns in one of the two lists mis-mapped
+    every row in silence. `lat`/`lng` come through because `_SELECT` aliases them."""
     with conn.cursor() as cur:
         cur.execute(sql, params)
-        return [dict(zip(_COLUMNS, row, strict=True)) for row in cur.fetchall()]
+        columns = [d[0] for d in cur.description]
+        return [dict(zip(columns, row, strict=True)) for row in cur.fetchall()]
 
 
 def _parse_limit(raw: str | None) -> int | None:
@@ -226,7 +230,12 @@ async def list_listings(request: Request) -> Response:
     limit = _parse_limit(request.query_params.get("limit"))
     if limit is None:
         return _error("BAD_REQUEST", "Invalid limit.", 400)
-    market = request.query_params.get("market")
+    # `or None`, so an EMPTY `?market=` means "no filter" to the SQL below AND to the cache key
+    # (review round 2, I1). They disagreed: the key was `listings:v1:::50` for both spellings while
+    # the query filtered on `market = ''`, which matches no row — so whichever spelling arrived
+    # first decided, for sixty seconds and for every member, whether Browse showed everything or
+    # nothing.
+    market = request.query_params.get("market") or None
     if market is not None and len(market) > MAX_MARKET_LEN:
         return _error("BAD_REQUEST", "Invalid market.", 400)
     raw_cursor = request.query_params.get("cursor")
@@ -237,20 +246,32 @@ async def list_listings(request: Request) -> Response:
         except ValueError:
             return _error("BAD_REQUEST", "Invalid cursor.", 400)
 
-    # One key per (market, cursor, limit) — the three inputs that change the answer. The list is
-    # published-only and carries no per-account field, so every member sees the same bytes and the
-    # cache is safe to share across principals; if a later task adds a per-account field to this
-    # payload, this key must gain the account id or the cache must go.
+    # One key per (market, limit) — after I1 above, the two inputs that change a FIRST page. The
+    # list is published-only and carries no per-account field, so every member sees the same bytes
+    # and the cache is safe to share across principals; if a later task adds a per-account field to
+    # this payload, this key must gain the account id or the cache must go.
+    #
+    # Only the first page is cached (review round 2, M2). `decode_cursor` accepts any ISO timestamp
+    # paired with any UUID and nothing rate-limits this route, so a cacheable cursor page let one
+    # member mint an unbounded number of distinct entries — up to two hundred listings each, sixty
+    # seconds each — and evict everything else from a small Railway Redis. Page one is the page
+    # Browse loads and the only one whose key a caller cannot vary at will; later pages go straight
+    # to the database, which is what the keyset index is for. The empty third segment keeps the
+    # `listings:v1:<market>:<cursor>:<limit>` shape, so a later task that signs cursors can make
+    # them cacheable again without a v2.
     #
     # Nothing INVALIDATES it, by design: the only writer today is `scripts/seed_listings.py`, run
     # by hand in the api container, and a 60 s TTL is a shorter wait than the `railway ssh` session
     # that seeded it. Wave 2b's seller edits are the point at which this needs a real invalidation
-    # (drop the `listings:v1:*` keys on write), and it is theirs to add, not this task's.
-    cache_key = f"listings:v1:{market or ''}:{raw_cursor or ''}:{limit}"
-    redis_ = sync_redis()
-    cached = redis_.get(cache_key)
-    if cached is not None:
-        return Response(content=cached, media_type="application/json")
+    # (drop the `listings:v1:*` keys on write), and it is theirs to add, not this task's — a hard
+    # requirement there rather than a nice-to-have, because a disclosure flag turned OFF must stop
+    # reaching buyers at once (review round 2, M4).
+    first_page = raw_cursor is None
+    cache_key = f"listings:v1:{market or ''}::{limit}"
+    if first_page:
+        cached = sync_redis().get(cache_key)
+        if cached is not None:
+            return Response(content=cached, media_type="application/json")
 
     where = ["status = 'published'"]
     params: list[Any] = []
@@ -272,17 +293,39 @@ async def list_listings(request: Request) -> Response:
         "next_cursor": encode_cursor(page[-1]["listed_at"], UUID(str(page[-1]["id"]))) if more else None,
     }
     payload = json.dumps(body)
-    redis_.setex(cache_key, LIST_TTL_S, payload)
+    if first_page:
+        sync_redis().setex(cache_key, LIST_TTL_S, payload)
     return Response(content=payload, media_type="application/json")
 
 
-def _published(conn: Any, listing_id: str) -> dict[str, Any] | None:
+def _parsed_uuid(listing_id: str) -> UUID | None:
+    """The path segment as a UUID, or None — a listing id that is not one names no listing, so it
+    is this module's 404 rather than FastAPI's 422 on a `UUID` path parameter."""
     try:
-        parsed = UUID(listing_id)
+        return UUID(listing_id)
     except ValueError:
+        return None
+
+
+def _published(conn: Any, listing_id: str) -> dict[str, Any] | None:
+    parsed = _parsed_uuid(listing_id)
+    if parsed is None:
         return None
     rows = _rows(conn, f"{_SELECT} WHERE id = %s AND status = 'published'", (parsed,))
     return rows[0] if rows else None
+
+
+def _published_photos(conn: Any, listing_id: str) -> list[str] | None:
+    """The `photos` of one published listing, or None when there is no such listing.
+
+    One column, not `_SELECT`'s thirty-one and its two PostGIS accessors (review round 2, M6): the
+    photo route uses nothing else, and a query that says what the route means cannot drift into
+    reading something it should not."""
+    parsed = _parsed_uuid(listing_id)
+    if parsed is None:
+        return None
+    rows = _rows(conn, "SELECT photos FROM listing WHERE id = %s AND status = 'published'", (parsed,))
+    return photo_list(rows[0]["photos"]) if rows else None
 
 
 @router.get("/listings/{listing_id}", dependencies=[Depends(REQUIRE_LISTING_READ)])
@@ -297,10 +340,10 @@ async def get_listing(listing_id: str) -> Response:
 @router.get("/listings/{listing_id}/photos/{n}", dependencies=[Depends(REQUIRE_LISTING_READ)])
 async def get_listing_photo(listing_id: str, n: int) -> Response:
     with closing(sync_conn()) as conn, conn:
-        row = _published(conn, listing_id)
-    if row is None:
+        photos = _published_photos(conn, listing_id)
+    if photos is None:
         return _error("NOT_FOUND", "No such listing.", 404)
-    path = photo_file(photo_list(row["photos"]), n)
+    path = photo_file(photos, n)
     if path is None:
         return _error("NOT_FOUND", "No such photograph.", 404)
     return Response(

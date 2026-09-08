@@ -257,8 +257,9 @@ async def test_an_unknown_listing_id_is_a_404_not_a_500(client: Any, conn: Any, 
 
 async def test_a_non_uuid_listing_id_is_a_404_not_a_500(client: Any, conn: Any, redis: Any, member: Any) -> None:
     _, cookies, headers = member()
-    r = await client.get("/api/listings/not-a-uuid", headers=auth_headers(cookies, headers))
-    assert r.status_code == 404
+    for path in ("/api/listings/not-a-uuid", "/api/listings/not-a-uuid/photos/1"):
+        r = await client.get(path, headers=auth_headers(cookies, headers))
+        assert r.status_code == 404, path
 
 
 async def test_the_list_is_cached_for_sixty_seconds(client: Any, conn: Any, redis: Any, member: Any) -> None:
@@ -273,23 +274,64 @@ async def test_the_list_is_cached_for_sixty_seconds(client: Any, conn: Any, redi
     assert second.json() == first.json(), "the second read must come from the cache"
 
 
-async def test_the_cache_key_separates_market_cursor_and_limit(
+async def test_the_cache_key_separates_market_and_limit(
     client: Any, conn: Any, redis: Any, member: Any
 ) -> None:
-    """One key per (market, cursor, limit): a `?market=` answer must never be served to a caller
-    who asked for the whole list, nor a page-2 answer to a caller asking for page 1."""
+    """One key per (market, limit): a `?market=` answer must never be served to a caller who asked
+    for the whole list, nor a one-row page to a caller who asked for two. (The cursor left the key
+    with M2 below — only the first page is cached at all.)"""
     _insert(conn, market="Austin, TX", days=1)
     _insert(conn, market="Dallas, TX", days=2)
     _, cookies, headers = member()
     auth = auth_headers(cookies, headers)
-    everything = (await client.get("/api/listings?limit=1", headers=auth)).json()
+    one = (await client.get("/api/listings?limit=1", headers=auth)).json()
     dallas = (await client.get("/api/listings?limit=1&market=Dallas%2C+TX", headers=auth)).json()
-    page_two = (await client.get(
-        f"/api/listings?limit=1&cursor={everything['next_cursor']}", headers=auth)).json()
+    two = (await client.get("/api/listings?limit=2", headers=auth)).json()
     assert len(set(redis.keys("listings:v1:*"))) == 3
-    assert everything["items"][0]["market"] == "Austin, TX"
+    assert one["items"][0]["market"] == "Austin, TX"
     assert dallas["items"][0]["market"] == "Dallas, TX"
-    assert page_two["items"][0]["market"] == "Dallas, TX"
+    assert [item["market"] for item in two["items"]] == ["Austin, TX", "Dallas, TX"]
+
+
+async def test_an_empty_market_parameter_does_not_poison_the_unfiltered_list(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """Review round 2, I1. `?market=` and no `market` at all mean the same query — no filter — so
+    they may share one cache entry, but only BECAUSE they mean the same thing.
+
+    They shared the key `listings:v1:::50` while the SQL filtered on `market = ''`, which matches
+    no row (the column is NOT NULL and every value is a real metro), so whichever spelling arrived
+    first decided what every member saw for the next sixty seconds: `?market=` first blanked
+    Browse, the plain list first made `?market=` return every market."""
+    _insert(conn, market="Austin, TX")
+    _, cookies, headers = member()
+    auth = auth_headers(cookies, headers)
+    empty = (await client.get("/api/listings?market=", headers=auth)).json()
+    plain = (await client.get("/api/listings", headers=auth)).json()
+    assert empty["items"], "an empty ?market= must mean no filter, not `market = \'\'`"
+    assert plain["items"], "the empty filter blanked the list"
+    assert plain == empty
+    assert len(set(redis.keys("listings:v1:*"))) == 1, "one meaning, one key"
+    filtered = (await client.get("/api/listings?market=Austin%2C+TX", headers=auth)).json()
+    assert filtered["items"]
+    assert len(set(redis.keys("listings:v1:*"))) == 2, "a real filter means a different key"
+
+
+async def test_only_the_first_page_is_cached(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """Review round 2, M2. `decode_cursor` accepts any ISO timestamp plus any UUID and the route
+    is not rate-limited, so a cacheable cursor page let one member mint unlimited Redis entries."""
+    _insert(conn, days=1)
+    _insert(conn, days=2)
+    _, cookies, headers = member()
+    auth = auth_headers(cookies, headers)
+    crafted = encode_cursor(datetime.now(UTC), uuid4())
+    later = await client.get(f"/api/listings?cursor={crafted}", headers=auth)
+    assert later.status_code == 200
+    assert list(redis.keys("listings:v1:*")) == [], "a cursor page must never write a cache entry"
+    assert (await client.get("/api/listings", headers=auth)).status_code == 200
+    assert len(list(redis.keys("listings:v1:*"))) == 1, "the first page still caches"
 
 
 async def test_a_photo_path_can_never_escape_the_photo_root(
@@ -436,9 +478,10 @@ def test_the_listings_routes_are_guarded_not_public(dist: Any) -> None:
         ("GET", "/api/listings/{listing_id}/photos/{n}"),
     ]
     for (method, path), route in mounted.items():
-        guards = [deps.permission_of(d.call) for d in route.dependant.dependencies
-                  if isinstance(d.call, type(REQUIRE_LISTING_READ))]
-        assert "listing.read" in guards, (method, path)
+        # `permission_of` already answers None for anything that is not a `require(...)` guard, so
+        # it is the whole filter — no isinstance dance in front of it (review round 2, M9).
+        guards = [p for d in route.dependant.dependencies if (p := deps.permission_of(d.call))]
+        assert guards == ["listing.read"], (method, path)
     # (g): one hoisted constant, shared by all three, never wrapped.
     assert deps.permission_of(REQUIRE_LISTING_READ) == "listing.read"
     assert Depends(REQUIRE_LISTING_READ).dependency is REQUIRE_LISTING_READ

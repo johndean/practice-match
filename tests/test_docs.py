@@ -882,3 +882,10 @@ def test_deploy_md_documents_how_to_seed_qa():
     plain = section.find("python scripts/seed_listings.py  ")
     reset = section.find("python scripts/seed_listings.py --reset")
     assert 0 <= plain < reset, "the runbook's headline command must be the plain import (M3)"
+    # L5 review round 2, M8: the seeder does not invalidate the 60 s Redis cache in front of
+    # `GET /api/listings` (ruled, A-L5.1(4)), so the runbook has to say that a browse still showing
+    # the previous eighteen straight after a seed is that cache and not a failed import —
+    # otherwise the next operator re-runs a successful seed looking for a fault.
+    assert "caches each page in Redis for 60 s" in section
+    assert "the seeder does not invalidate it" in section
+    assert "not a failed import" in section
