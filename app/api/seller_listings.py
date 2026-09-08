@@ -105,6 +105,20 @@ BLDG_IN = {"Included": "Included", "Available separately": "Separate", "Leased":
 BLDG_OUT = {value: key for key, value in BLDG_IN.items()}
 MONEY_FIELDS = ("price", "rev")
 INT_FIELDS = ("est", "docs", "rooms", "sqft")
+# A-SL13 M1. D10's "refuse anything else" means garbage, not blanks. `state.w` initialises every
+# numeric to `""` (logic.js:204); step 4 validates nothing at all and step 3 lets `rev` be blank
+# whenever the range option is on (logic.js:1217), so the resting value SL7's autosave PATCHes IS
+# the empty string — and a seller who has typed a number must be able to clear it again. `est` and
+# `price` are not here: the design's own step validation guarantees both before it advances, and
+# `listing_submittable_ck` demands them, so a blank one is the adapter disagreeing with the design.
+OPTIONAL_NUMERIC = ("rev", "docs", "rooms", "sqft")
+# 016's column types, so a number that cannot fit is a refusal rather than psycopg2's
+# NumericValueOutOfRange escaping as a 500 (review L3). Negatives never arrive: `isdecimal()`.
+INT_MAX, BIGINT_MAX = 2**31 - 1, 2**63 - 1
+# `listing_submittable_ck`'s own list and its own exemptions (030). Mirrored rather than inferred:
+# when the CHECK changes, this is the line that has to change with it (review M2).
+REQUIRED_ONCE_SUBMITTED = ("name", "city", "zip", "type", "est", "price")
+SUBMITTABLE_EXEMPT = ("draft", "withdrawn")
 
 _COLUMNS = """id, slug, name, city, zip, state, area, market, type, est, ownership, price, rev,
               docs, rooms, sqft, hours, services, bldg, facility_type, facility, status,
@@ -120,20 +134,28 @@ class Refusal(Exception):
         self.code, self.message, self.status = code, message, status
 
 
-def _number(field: str, raw: object) -> int:
+def _number(field: str, raw: object) -> int | None:
     """A money or integer field as the design's text inputs produce it ("1,450,000", "$2,100,000").
 
     D10's last paragraph: strip `,`, `$` and spaces, refuse anything else. Not `int(float(x))` — a
-    seller typing "1.45m" must be told, not silently given a practice worth one dollar."""
+    seller typing "1.45m" must be told, not silently given a practice worth one dollar.
+
+    An empty string CLEARS an optional field (A-SL13 M1) and still refuses a required one, and a
+    number the column cannot hold is a 422 rather than a 500 (review L3)."""
     if isinstance(raw, int) and not isinstance(raw, bool):
         cleaned = str(raw)
     elif isinstance(raw, str):
+        if not raw.strip() and field in OPTIONAL_NUMERIC:
+            return None
         cleaned = raw.replace(",", "").replace("$", "").replace(" ", "")
     else:
         raise Refusal("BAD_REQUEST", f"{field} must be a number.", 400)
     if not cleaned.isdecimal():
         raise Refusal("BAD_REQUEST", f"{field} must be a number.", 400)
-    return int(cleaned)
+    value = int(cleaned)
+    if value > (BIGINT_MAX if field in MONEY_FIELDS else INT_MAX):
+        raise Refusal("OUT_OF_RANGE", f"{field} is larger than this listing can hold.", 422)
+    return value
 
 
 def _text(field: str, raw: object) -> str | None:
@@ -143,6 +165,11 @@ def _text(field: str, raw: object) -> str | None:
         raise Refusal("BAD_REQUEST", f"{field} must be text.", 400)
     if len(raw) > MAX_TEXT:
         raise Refusal("BAD_REQUEST", f"{field} is too long.", 400)
+    if "\x00" in raw:
+        # psycopg2 raises a bare `ValueError("A string literal cannot contain NUL")` from
+        # `cur.execute`, which reached the client as a 500 (review L3). Postgres cannot store one
+        # in a `text` column at all, so this is the column's own rule said early.
+        raise Refusal("BAD_TEXT", f"{field} must not contain a null character.", 422)
     return raw.strip() or None
 
 
@@ -374,7 +401,8 @@ async def create(principal: Owner) -> Response:
                     (principal.account_id,))
         # RETURNING id on a just-inserted row always yields exactly one row (`applications.py:220`).
         listing_id = cast("tuple[UUID]", cur.fetchone())[0]
-        cur.execute("UPDATE listing SET slug = %s WHERE id = %s", (f"listing-{listing_id}", listing_id))
+        cur.execute("UPDATE listing SET slug = %s WHERE id = %s AND seller_id = %s",
+                    (f"listing-{listing_id}", listing_id, principal.account_id))
     return JSONResponse({"id": str(listing_id)}, status_code=201)
 
 
@@ -396,10 +424,8 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
     published -> in_review transition and dropping the listings cache after the commit (D16)."""
     hit(sync_redis(), "listing:patch", str(principal.account_id), *LISTING_PATCH)
     raw_step = request.query_params.get("step", "")
-    body = await request.json() if await request.body() else {}
-    if not isinstance(body, dict):
-        return _error("BAD_REQUEST", "Body must be an object.", 400)
     try:
+        body = await _json_body(request)
         step = int(raw_step) if raw_step.isdecimal() else -1
         columns = columns_for(step, body)
         with closing(sync_conn()) as conn, conn:
@@ -411,14 +437,23 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
             # transition alone does the removing — no new code on the read side. Subsequent PATCHes
             # in the same review cycle do not re-transition, which is why this is `== 'published'`
             # and not `!= 'in_review'`.
+            # A-SL13 M2: `listing_submittable_ck` forbids clearing any of these once the listing
+            # has been submitted, and the design invites the attempt — the seller "may keep
+            # editing" an in-review listing (App.vue:1259). Refused BEFORE the statement, so the
+            # CHECK can never become the 500 this module's own comment promises it never will.
+            cleared = [name for name in REQUIRED_ONCE_SUBMITTED if name in columns and columns[name] is None]
+            if cleared and row["status"] not in SUBMITTABLE_EXEMPT:
+                raise Refusal("NOT_SUBMITTABLE",
+                              f"A submitted listing cannot have {', '.join(cleared)} cleared.", 409)
             leaving_market = row["status"] == "published"
             assignments = ", ".join(f"{name} = %({name})s" for name in columns)
             sets = f"{assignments}, " if assignments else ""
             if leaving_market:
                 sets += "status = 'in_review', submitted_at = now(), "
             with conn.cursor() as cur:
-                cur.execute(f"UPDATE listing SET {sets}updated_at = now() WHERE id = %(id)s",
-                            {**columns, "id": row["id"]})
+                cur.execute(f"UPDATE listing SET {sets}updated_at = now()"
+                            " WHERE id = %(id)s AND seller_id = %(seller)s",
+                            {**columns, "id": row["id"], "seller": principal.account_id})
             if leaving_market:
                 audit.write(conn, actor=principal, action=EDIT_ACTION, target_type="listing",
                             target_id=row["id"], before={"status": "published"}, after={"status": "in_review"},
@@ -601,7 +636,7 @@ async def _json_body(request: Request) -> dict[str, Any]:
     try:
         body = await request.json() if await request.body() else {}
     except ValueError as exc:
-        raise Refusal("BAD_REQUEST", "Body must be JSON.", 400) from exc
+        raise Refusal("BAD_JSON", "Body must be JSON.", 400) from exc
     if not isinstance(body, dict):
         raise Refusal("BAD_REQUEST", "Body must be an object.", 400)
     return body

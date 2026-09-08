@@ -502,3 +502,146 @@ async def test_the_draft_carries_its_assets_in_upload_order(client: Any, conn: A
         ("accounts.pdf", "other", "application/pdf", 91_000),
     ]
     assert all(asset["id"] for asset in body["assets"])
+
+
+@pytest.mark.parametrize(("step", "fields", "column"), [
+    (4, {"docs": ""}, "docs"), (4, {"rooms": "  "}, "rooms"), (4, {"sqft": ""}, "sqft"),
+    (3, {"rev": ""}, "rev"),
+])
+async def test_an_optional_numeric_field_is_cleared_by_an_empty_string(
+    client: Any, conn: Any, member: Any, step: int, fields: dict[str, Any], column: str
+) -> None:
+    """A-SL13 M1. D10's "refuse anything else" means garbage, not blanks. `state.w` initialises
+    every numeric to `""` (logic.js:204), step 4 validates nothing and step 3 lets `rev` be blank
+    whenever the range option is on (logic.js:1217) — so the resting value the adapter PATCHes IS
+    the empty string, and a seller must be able to CLEAR a number once set."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    signed = auth_headers(cookies, headers)
+    await client.patch(f"/api/seller/listings/{listing_id}?step={step}", json={column: "7"}, headers=signed)
+
+    response = await client.patch(f"/api/seller/listings/{listing_id}?step={step}", json=fields, headers=signed)
+    assert response.status_code == 200, response.text
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT {column} FROM listing WHERE id=%s", (listing_id,))
+        assert cur.fetchone() == (None,)
+
+
+async def test_step_three_saves_with_the_range_option_and_no_revenue(client: Any, conn: Any, member: Any) -> None:
+    """The whole of M1's worked example: the design's own step-3 shape when the seller picks the
+    range option, which used to be a 400 the wizard could never get past."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    response = await client.patch(f"/api/seller/listings/{listing_id}?step=3",
+                                  json={"price": "1,450,000", "rev": "", "revBand": True},
+                                  headers=auth_headers(cookies, headers))
+    assert response.status_code == 200, response.text
+    with conn.cursor() as cur:
+        cur.execute("SELECT price, rev, rev_disclosed FROM listing WHERE id=%s", (listing_id,))
+        assert cur.fetchone() == (1450000, None, False)
+
+
+@pytest.mark.parametrize(("step", "field"), [(1, "est"), (3, "price")])
+async def test_a_required_numeric_field_still_refuses_a_blank(client: Any, conn: Any, member: Any, step: int, field: str) -> None:
+    """The other half of M1's ruling: `est` and `price` are what `listing_submittable_ck` demands
+    and what the design's own step validation guarantees before it PATCHes, so a blank one is the
+    adapter disagreeing with the design — a 400 to see, not a null to absorb."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    response = await client.patch(f"/api/seller/listings/{listing_id}?step={step}", json={field: ""},
+                                  headers=auth_headers(cookies, headers))
+    assert response.status_code == 400
+    assert response.json() == {"error": {"code": "BAD_REQUEST", "message": f"{field} must be a number."}}
+
+
+@pytest.mark.parametrize("status", ["in_review", "paused", "declined", "published"])
+async def test_blanking_a_required_field_on_a_submitted_listing_is_refused_not_a_500(
+    client: Any, conn: Any, member: Any, status: str
+) -> None:
+    """A-SL13 M2. `listing_submittable_ck` forbids it, and the design invites it — the seller "may
+    keep editing" an in-review listing. A CHECK the request can reach must be validated before the
+    statement, or psycopg2's CheckViolation escapes as a 500."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET name='A', city='C', zip='7', type='Small animal', est=1998,"
+                    " price=1, state='TX', market='Austin, TX', area='C', status=%s WHERE id=%s",
+                    (status, listing_id))
+
+    response = await client.patch(f"/api/seller/listings/{listing_id}?step=1", json={"name": "   "},
+                                  headers=auth_headers(cookies, headers))
+    assert response.status_code == 409, response.text
+    assert response.json() == {"error": {"code": "NOT_SUBMITTABLE",
+                                         "message": "A submitted listing cannot have name cleared."}}
+    with conn.cursor() as cur:
+        cur.execute("SELECT name, status FROM listing WHERE id=%s", (listing_id,))
+        assert cur.fetchone() == ("A", status)
+
+
+async def test_a_draft_may_still_be_blanked(client: Any, conn: Any, member: Any) -> None:
+    """M2's other arm: a draft is exempt from the CHECK, so clearing a field there is a save."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    signed = auth_headers(cookies, headers)
+    await client.patch(f"/api/seller/listings/{listing_id}?step=1", json={"name": "A"}, headers=signed)
+
+    assert (await client.patch(f"/api/seller/listings/{listing_id}?step=1", json={"name": ""},
+                               headers=signed)).status_code == 200
+    with conn.cursor() as cur:
+        cur.execute("SELECT name FROM listing WHERE id=%s", (listing_id,))
+        assert cur.fetchone() == (None,)
+
+
+async def test_a_body_that_is_not_json_at_all_is_refused_in_the_envelope(client: Any, conn: Any, member: Any) -> None:
+    """A-SL13 M3: `json.JSONDecodeError` used to escape `request.json()` as a 500."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    response = await client.patch(
+        f"/api/seller/listings/{listing_id}?step=1", content=b"{not json",
+        headers={**auth_headers(cookies, headers), "Content-Type": "application/json"},
+    )
+    assert response.status_code == 400, response.text
+    assert response.json() == {"error": {"code": "BAD_JSON", "message": "Body must be JSON."}}
+
+
+@pytest.mark.parametrize(("step", "field", "value"), [
+    (1, "est", "99999999999"), (4, "rooms", "2147483648"), (3, "price", "9" * 20),
+])
+async def test_a_number_beyond_its_columns_range_is_refused_in_the_envelope(
+    client: Any, conn: Any, member: Any, step: int, field: str, value: str
+) -> None:
+    """A-SL13 L3: `integer` and `bigint` have ends, and psycopg2's NumericValueOutOfRange was a 500."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    response = await client.patch(f"/api/seller/listings/{listing_id}?step={step}", json={field: value},
+                                  headers=auth_headers(cookies, headers))
+    assert response.status_code == 422, response.text
+    assert response.json()["error"]["code"] == "OUT_OF_RANGE"
+
+
+async def test_text_carrying_a_null_character_is_refused_in_the_envelope(client: Any, conn: Any, member: Any) -> None:
+    """L3's other half: psycopg2 raises "A string literal cannot contain NUL" as a plain ValueError,
+    which reached the client as a 500."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    response = await client.patch(f"/api/seller/listings/{listing_id}?step=1", json={"name": "a\x00b"},
+                                  headers=auth_headers(cookies, headers))
+    assert response.status_code == 422, response.text
+    assert response.json() == {"error": {"code": "BAD_TEXT", "message": "name must not contain a null character."}}
+
+
+def test_every_write_to_the_listing_table_is_owner_scoped_in_the_sql() -> None:
+    """A-SL13 L1, as a drift guard rather than a request: ownership belongs in the statement, not
+    only in the SELECT that preceded it in the same transaction. No exploit exists today — nothing
+    reassigns `seller_id` at request time — but SL5 will copy these statements, and a write scoped
+    by id alone is one refactor away from being reachable."""
+    import re
+    from pathlib import Path
+
+    from app.api import seller_listings as SL
+
+    source = " ".join(Path(SL.__file__).read_text().split())
+    statements = re.findall(r"UPDATE listing SET.{0,400}?WHERE[^\"]*", source)
+    assert statements, "the module must still contain the writes this test guards"
+    for statement in statements:
+        assert "seller_id = %" in statement, statement

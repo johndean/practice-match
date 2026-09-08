@@ -730,7 +730,7 @@ async def test_a_malformed_json_body_on_reorder_is_a_400_in_the_envelope(client:
         headers={**auth_headers(cookies, headers), "Content-Type": "application/json"},
     )
     assert response.status_code == 400, response.text
-    assert response.json() == {"error": {"code": "BAD_REQUEST", "message": "Body must be JSON."}}
+    assert response.json() == {"error": {"code": "BAD_JSON", "message": "Body must be JSON."}}
 
 
 async def test_the_draft_read_carries_its_photographs_in_order_and_its_documents(
