@@ -407,6 +407,10 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
+**Controller amendment A-L2 (2026-09-08; John: "I have provided the hospital seed data & only need to generate fake data for all missing fields to cover all filters in the BROWSE PRACTICES").** D4's demo values are DISTRIBUTED, not merely plausible: every option of every Browse filter in the design (`frontend/src/logic.js`, the `filters:` definitions — practice type; asking price bands `u500`/`500-1000`/`1000-2000`/`o2000`; gross revenue bands `u1000`/`1000-2500`/`o2500`; the doctors bands; property; each option under "More filters") matches at least ONE of the eighteen hospitals, and "Any" matches all eighteen. Proof: `tests/seeds/test_hospitals_json.py` gains a coverage test that READS the option lists from `frontend/src/logic.js` (a pinned regex over the `filters:` block, so a design change is noticed) and asserts, per filter and per non-"Any" option, that a seeded hospital matches under the design's own predicate (the same band boundaries the design applies). RED first with the plan's original values; adjust the demo values in the JSON until green. John's own fields (name, city/state, address, phone, hours) are never changed; `type` still derives from the name per D4. The report lists per-option counts as a table.
+
+---
+
 ### Task L2: `seeds/hospitals.json` — John's eighteen rows, geocoded
 
 **Files:**
@@ -1749,6 +1753,10 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
+**Controller amendment A-L4 (2026-09-08; John: "must remove the old seeded data when importing the new data").** Refines D7: removal is UNCONDITIONAL on every import, not behind `--reset` — in the same transaction as the upsert, delete every `listing` row with `source = 'seed'` whose `slug` is not in the incoming `seeds/hospitals.json`, then upsert the rest by `slug` (survivors keep their ids, so photo URLs and deep links stay valid); the exit summary prints inserted / updated / removed counts. `--reset` remains as a documented full wipe of `source = 'seed'` rows before the import (same end state, different id continuity) — not the default. Rows with any other `source` are NEVER touched — a test plants a `source = 'member'` row and re-seeds both ways. Tests, RED first on the scratch database: a stale seed row disappears on a plain import; the eighteen survive a second import with the same ids; the non-seed row survives both modes; the summary line; `--reset` on an empty table still seeds eighteen. (The design's fixture practices live in `frontend/src/logic.js`, not the database; L6 is where the API's rows replace them on QA.)
+
+---
+
 ### Task L4: `scripts/seed_listings.py` and the `seed` container role
 
 **Files:**
@@ -2415,6 +2423,10 @@ railway ssh run.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
+
+---
+
+**Controller amendment A-L5 (2026-09-08; John: card-name visibility "should be surfaced as an option for the Seller / VIN Admin to set what is visible/hidden or shown").** Disclosure is per listing, seller-set, admin-overridable and SERVER-enforced — a hidden value never reaches a buyer's browser. In this plan: (L1, second commit) `name_disclosed boolean NOT NULL DEFAULT false` beside `location_disclosed` in `migrations/016_listing.sql` — the migration is unreleased (applied only to per-session test databases), so it is edited in place, RED via the schema contract test first; (L2) every row of `seeds/hospitals.json` carries `"name_disclosed": true` (John's demo hospitals show their names on QA), required by the JSON schema test; (L5) `GET /api/listings` and `GET /api/listings/{id}` return `name` = the stored name when `name_disclosed`, else the design's anonymised label (`<area> Veterinary`, the `practiceName` fallback), plus `name_disclosed`; a hidden name appears nowhere in any response body (tests both ways), the same rule D8 already applies to an undisclosed location; (L6/A12) `practiceName` reads `p.name || NAMES[p.id] || p.area + " Veterinary"` — unchanged; the server decides what `p.name` is. The CONTROLS — a "Show practice name" switch beside the design's existing "Show revenue as a range" toggle in the seller wizard, the same switches with an admin override on the VIN Admin Listings tab — are Wave 2b UI and a Rev 3 design item (`docs/design-reference/requests/2026-09-08-rev3-listing-disclosure-controls.md`, on main). Principle: name, location, financials (revBand) and floor plans/documents are disclosure flags of one kind — "Sellers control what buyers can see".
 
 ---
 
