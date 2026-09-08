@@ -7,7 +7,7 @@
 // all twenty-one fixtures, and on `MARKETS` too; if it ever fails, the pixel gate is about to
 // fail with it and the fix belongs there, never in the tolerance.
 //
-// THE ONE PLACE THIS IS NOT WHAT THE SERVER WOULD SEND: `name`. The real endpoint never returns
+// THE ONE FIELD THAT IS NOT WHAT THE SERVER WOULD SEND: `name`. The real endpoint never returns
 // null — a listing whose `name_disclosed` is false is served the design's own anonymised label,
 // `<area> Veterinary` (A-L5, `app/api/listings.py`'s `anonymised_name`). But the design's
 // twenty-one fixtures carry no name at all: their titles come from `practiceName`'s own `NAMES`
@@ -34,6 +34,7 @@ export function toApiShape(p, i) {
     id: p.id,
     slug: null,
     name: null,
+    name_disclosed: true,
     market: p.market,
     area: p.area,
     type: p.type,

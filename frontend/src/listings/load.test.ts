@@ -7,6 +7,7 @@ function row(over: Partial<ApiListing> = {}): ApiListing {
     id: '11111111-1111-1111-1111-111111111111',
     slug: 'p1',
     name: null,
+    name_disclosed: false,
     market: 'Austin, TX',
     area: 'Cedar Park',
     type: 'Small animal',

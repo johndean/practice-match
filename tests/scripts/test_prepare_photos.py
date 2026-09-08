@@ -286,3 +286,18 @@ def test_the_main_guard_is_covered_in_process(tmp_path: Path, monkeypatch: pytes
     with pytest.raises(SystemExit) as exc:
         runpy.run_path(str(ROOT / "scripts" / "prepare_photos.py"), run_name="__main__")
     assert exc.value.code == 2
+
+
+def test_prepare_refuses_a_slug_that_is_not_a_slug(tmp_path: Path) -> None:
+    """Final review M2. `prepare()` does `shutil.rmtree(out_root / slug)`, and `--slugs` reaches
+    it from argv unchecked — so `../..` would delete outside `seeds/hospitals/photos`. It is a
+    hand-run developer script, which is exactly the kind that earns a guard under the repo's
+    "no destructive actions" rule. The refusal has to come BEFORE the folder lookup, or a
+    traversing slug that happens to name a real folder would still reach the rmtree."""
+    keep = tmp_path / "out" / "keep.txt"
+    keep.parent.mkdir(parents=True)
+    keep.write_text("not mine to delete")
+    for bad in ("../..", "a/b", ".", "..", ".hidden"):
+        with pytest.raises(ValueError, match="is not a slug"):
+            PP.prepare(tmp_path / "src", tmp_path / "out", [bad])
+    assert keep.exists()

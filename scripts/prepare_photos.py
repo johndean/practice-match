@@ -108,6 +108,12 @@ def prepare(source_root: Path, out_root: Path, slugs: list[str]) -> dict[str, li
     """Encode every slug's first `MAX_PHOTOS` photographs and write `out_root/index.json`."""
     index: dict[str, list[dict[str, Any]]] = {}
     for slug in slugs:
+        # `--slugs` reaches this straight from argv, and the rmtree below is driven by it: a slug
+        # of `../..` would delete outside `seeds/hospitals/photos` (final review M2). Refused
+        # BEFORE the folder lookup, so a traversing value that happens to name a real folder is
+        # still refused rather than acted on.
+        if "/" in slug or slug.startswith("."):
+            raise ValueError(f"{slug!r} is not a slug")
         folder = source_root / (slug + FOLDER_SUFFIX)
         if not folder.is_dir():
             raise FileNotFoundError(f"no photograph folder {folder}")

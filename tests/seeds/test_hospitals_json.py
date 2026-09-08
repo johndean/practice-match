@@ -352,3 +352,15 @@ def test_the_excluded_options_are_exactly_the_two_john_named() -> None:
     assert EXCLUDED_OPTIONS == {("type", "Mixed"), ("type", "Large animal")}
     for key, value in EXCLUDED_OPTIONS:
         assert value in design_filter_options()[key], (key, value, "excluded an option the design no longer offers")
+
+
+def test_at_least_one_hospital_is_in_the_designs_default_market() -> None:
+    """Final review M4. `logic.js` reads `MARKETS[s.market || "Austin, TX"].center` on EVERY
+    render, and `frontend/src/listings/load.ts`'s `applyListings` deletes any market with no
+    listing left — so a seed file with no Austin hospital is a blank app on QA, not a red test.
+    A-L6.1 recorded this as latent for Wave 2b on the premise that the seed set contains Austin;
+    this is that premise, pinned, because `seeds/hospitals.json` is a file John edits."""
+    assert any(h["market"] == "Austin, TX" for h in load()), (
+        "no hospital is in the design's default market; frontend/src/logic.js reads "
+        'MARKETS["Austin, TX"].center on every render and applyListings would have dropped it'
+    )

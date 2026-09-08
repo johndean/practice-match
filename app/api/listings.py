@@ -271,8 +271,11 @@ async def list_listings(request: Request) -> Response:
     # reaching buyers at once (review round 2, M4).
     first_page = raw_cursor is None
     cache_key = f"listings:v1:{market or ''}::{limit}"
-    if first_page:
-        cached = sync_redis().get(cache_key)
+    # One binding for both ends of the cache (final review M9): the read below and the write at
+    # the end of this function must not be able to reach two different clients.
+    cache = sync_redis() if first_page else None
+    if cache is not None:
+        cached = cache.get(cache_key)
         if cached is not None:
             return Response(content=cached, media_type="application/json")
 
@@ -296,8 +299,8 @@ async def list_listings(request: Request) -> Response:
         "next_cursor": encode_cursor(page[-1]["listed_at"], UUID(str(page[-1]["id"]))) if more else None,
     }
     payload = json.dumps(body)
-    if first_page:
-        sync_redis().setex(cache_key, LIST_TTL_S, payload)
+    if cache is not None:
+        cache.setex(cache_key, LIST_TTL_S, payload)
     return Response(content=payload, media_type="application/json")
 
 

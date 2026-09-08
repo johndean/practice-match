@@ -94,4 +94,4 @@ def test_the_dockerfile_states_the_real_size_of_the_seed_payload():
     for 3.6 (L4 review M2). A drift test rather than a constant: change the photographs and this
     is what tells you the comment did not move with them."""
     mib = sum(f.stat().st_size for f in (ROOT / "seeds").rglob("*") if f.is_file()) / (1024 * 1024)
-    assert f"~{mib:.1f} MB" in (ROOT / "Dockerfile").read_text(), f"seeds/ is {mib:.2f} MiB; the Dockerfile comment disagrees"
+    assert f"~{mib:.1f} MiB" in (ROOT / "Dockerfile").read_text(), f"seeds/ is {mib:.2f} MiB; the Dockerfile comment disagrees"

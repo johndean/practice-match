@@ -33,6 +33,10 @@ export interface ApiListing {
   // contract and its nullability is the reason why.
   slug: string | null;
   name: string | null;
+  // A-L5: served on every row, and dropped by `toPractice` — the design has no field for it.
+  // Declared because the contract has it: `design-listings.mjs` claims to be `toPractice`'s exact
+  // inverse, and a field the server sends and the stub does not is a gap in that claim (M1).
+  name_disclosed: boolean;
   market: string;
   area: string;
   type: string;
@@ -144,7 +148,9 @@ export function toPractice(row: ApiListing): Practice {
     ownership: row.ownership,
     market: row.market
   };
-  if (row.name !== null) p.name = row.name;
+  // `!= null`, not `!== null` (M7): a malformed row with the key ABSENT would otherwise set
+  // `p.name = undefined`, which is a key the design's `p.name ||` chain then has to absorb.
+  if (row.name != null) p.name = row.name;
   if (row.photos.length > 0) p.photos = row.photos;
   return p;
 }
