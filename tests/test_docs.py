@@ -22,7 +22,10 @@ DOCS = [ROOT / "README.md", ROOT / "CLAUDE.md", ROOT / "DEPLOY.md", *sorted((ROO
 REQUIRED_CI_COMMANDS = (
     "poetry run ruff check app tests scripts",
     "poetry run mypy app --strict",
-    "scripts/bootstrap_admin.py scripts/seed_persona.py --strict",
+    # S5 review round 2: `scripts/reset_rate_limits.py` joins the list. The joined form pins the
+    # flags' order and adjacency, so a new script has to be added here as well as to the workflow;
+    # `test_ci_strict_mypy_covers_every_python_script` below is the rule that says WHICH scripts.
+    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py --strict",
     "poetry run pytest -q -W error",
     # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
     # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
@@ -128,6 +131,31 @@ def test_ci_workflow_runs_every_gate():
     text = path.read_text()
     for cmd in REQUIRED_CI_COMMANDS:
         assert cmd in text, cmd
+
+
+def test_ci_strict_mypy_covers_every_python_script():
+    """S5 review round 2 (the implementer's own residual, ruled a gap): every `scripts/*.py` that
+    CI measures for coverage must also be type-checked, and the file list is written out by hand in
+    `quality.yml`.
+
+    `scripts/reset_rate_limits.py` (A-S5.1) was added with tests and 100 % branch coverage but was
+    never added to that hand-written list, so CI ran ruff and pytest over it and mypy over
+    everything else — a gap nothing could see, because the only pin was a substring naming the
+    three scripts that WERE listed. The rule is stated once here instead: the strict mypy step
+    names every Python file under `scripts/`, so the next script is caught by this test rather than
+    by a reviewer.
+
+    Deliberately derived from the directory, not from a literal list — a list would have to be
+    edited alongside the workflow, which is the failure mode this exists to prevent."""
+    step = next(
+        line for line in (ROOT / ".github" / "workflows" / "quality.yml").read_text().splitlines()
+        if "mypy" in line and "--strict" in line and "scripts/" in line
+    )
+    missing = sorted(p.name for p in (ROOT / "scripts").glob("*.py") if f"scripts/{p.name}" not in step)
+    assert missing == [], (
+        f"{missing} are measured by CI's `--cov=scripts` but are not in its strict mypy step "
+        f"({step.strip()}) — add them there, beside the others"
+    )
 
 
 def test_ci_workflow_installs_no_ad_hoc_tooling():
