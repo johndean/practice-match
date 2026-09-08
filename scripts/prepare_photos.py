@@ -7,8 +7,11 @@ Reads  <source>/<slug>_individual_images/  — up to four images in folder order
 Writes <out>/<slug>/1.webp … 4.webp, each ≤ 1600 px on the long edge and ≤ 250 KB, with every
        piece of metadata stripped, plus <out>/index.json carrying a SHA-256 per file.
 
-The source folders are never modified and never copied wholesale. Pillow is a DEV dependency:
-this runs once, by hand; the API only ever reads the bytes this wrote.
+The source folders are never modified and never copied wholesale. The normalisation rules
+themselves (the size/byte ceilings, the quality ladder, the metadata stripping) live in
+`app.media.encode`, shared with the seller-upload request path (spec 2026-09-08 D15) — this
+script is the hand-run half of that pipeline; the API's is the other. Pillow is therefore a MAIN
+dependency now, not dev-only: see `app/media/encode.py` for why.
 """
 from __future__ import annotations
 
@@ -20,25 +23,32 @@ import sys
 from pathlib import Path
 from typing import Any
 
-from PIL import Image, ImageOps
+from PIL import Image
 
+# Unconditionally, before the `app.media.encode` import below: `python scripts/prepare_photos.py`
+# puts `scripts/` on `sys.path[0]`, not the repository root — the same executability gap
+# `scripts/bootstrap_admin.py` documents. Unlike those scripts, this one's constants and
+# `encode_webp` are read by module-level functions the tests call directly (`PP.MAX_BYTES`,
+# `PP.encode`, `PP.source_images`), not only from `main()`, so the import cannot be deferred into
+# a function body without losing that surface. The insert is idempotent and costs nothing on a
+# one-shot, hand-run CLI.
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from app.media.encode import (
+    FALLBACK_EDGE_PX,
+    IMAGE_SUFFIXES,
+    MAX_BYTES,
+    MAX_EDGE_PX,
+    MAX_PHOTOS,
+    QUALITY_LADDER,
+    encode_webp,
+)
+
 SEEDS_FILE = ROOT / "seeds" / "hospitals.json"
 DEFAULT_SOURCE = Path.home() / "Downloads" / "VIN FOUNDATION" / "Hospital images" / "ALL HOSPITAL SEED DATA"
 DEFAULT_OUT = ROOT / "seeds" / "hospitals" / "photos"
 FOLDER_SUFFIX = "_individual_images"
-
-MAX_PHOTOS = 4
-MAX_EDGE_PX = 1600
-MAX_BYTES = 250 * 1024
-IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
-# Quality ladder, then a dimension step. Every rung is tried in order until one lands under
-# MAX_BYTES; the last rung is low enough that a photograph cannot fail to fit even when it is
-# already at or below both edge sizes and so is never downscaled (verified against a
-# deliberately incompressible worst case: uniform random noise, which no real photograph
-# approaches — see tests/scripts/test_prepare_photos.py's `_noisy` fixture).
-QUALITY_LADDER = (82, 72, 62, 52, 44, 20)
-FALLBACK_EDGE_PX = 1100
 
 
 def sha256_of(path: Path) -> str:
@@ -75,33 +85,25 @@ def caption_of(source_name: str) -> str:
     return stem.replace("_", " ").capitalize()
 
 
-def _flattened(src: Path, max_edge: int) -> Image.Image:
-    """`src` opened, EXIF-rotated, alpha flattened onto white, downscaled to `max_edge` on the
-    long edge (never upscaled), and carrying no metadata — a fresh RGB image holds none."""
-    with Image.open(src) as opened:
-        rotated = ImageOps.exif_transpose(opened)
-        rgb = rotated.convert("RGB")
-    if max(rgb.size) > max_edge:
-        rgb.thumbnail((max_edge, max_edge), Image.Resampling.LANCZOS)
-    clean = Image.new("RGB", rgb.size)
-    clean.paste(rgb)
-    return clean
-
-
 def encode(src: Path, dest: Path) -> dict[str, Any]:
-    """Write `src` to `dest` as WebP within both ceilings; return its inventory entry."""
+    """Write `src` to `dest` as WebP within both ceilings; return its inventory entry.
+
+    The normalisation itself — EXIF-rotate, flatten alpha onto white, downscale, walk the quality
+    ladder, strip every metadatum — is `app.media.encode.encode_webp`'s (spec 2026-09-08 D15): the
+    request-path encoder and this hand-run pipeline share the one implementation so they can never
+    drift apart."""
     dest.parent.mkdir(parents=True, exist_ok=True)
-    for edge in (MAX_EDGE_PX, FALLBACK_EDGE_PX):
-        image = _flattened(src, edge)
-        for quality in QUALITY_LADDER:
-            image.save(dest, format="WEBP", quality=quality, method=6)
-            if dest.stat().st_size <= MAX_BYTES:
-                return {
-                    "file": dest.name, "source": src.name, "caption": caption_of(src.name),
-                    "bytes": dest.stat().st_size, "width": image.width, "height": image.height,
-                    "quality": quality, "sha256": sha256_of(dest),
-                }
-    raise RuntimeError(f"{src.name} will not fit in {MAX_BYTES} bytes at {FALLBACK_EDGE_PX}px/q{QUALITY_LADDER[-1]}")
+    encoded = encode_webp(src.read_bytes())
+    if encoded is None:
+        raise RuntimeError(f"{src.name} will not fit in {MAX_BYTES} bytes at {FALLBACK_EDGE_PX}px/q{QUALITY_LADDER[-1]}")
+    data, digest = encoded
+    dest.write_bytes(data)
+    with Image.open(dest) as image:
+        width, height = image.size
+    return {
+        "file": dest.name, "source": src.name, "caption": caption_of(src.name),
+        "bytes": len(data), "width": width, "height": height, "sha256": digest,
+    }
 
 
 def prepare(source_root: Path, out_root: Path, slugs: list[str]) -> dict[str, list[dict[str, Any]]]:

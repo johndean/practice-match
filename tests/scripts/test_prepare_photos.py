@@ -274,6 +274,21 @@ def test_the_module_runs_as_a_script(tmp_path: Path) -> None:
     assert result.returncode == 2
 
 
+def test_the_module_runs_as_a_bare_script_from_any_working_directory(tmp_path: Path) -> None:
+    """`python scripts/prepare_photos.py` puts `scripts/` on `sys.path[0]`, not the repository
+    root — the executability gap Task L4 found for `seed_listings.py`, mirrored here now that this
+    script imports `app.media.encode` (task SL2). `cwd=tmp_path` is a directory with no relation
+    to the repository, so this fails with `ModuleNotFoundError` (exit 1, no clean stderr message)
+    if the `sys.path` fix at the top of the module ever regresses; it must keep returning the
+    ordinary "no such folder" exit 2 instead."""
+    result = subprocess.run(
+        [sys.executable, str(ROOT / "scripts" / "prepare_photos.py"),
+         "--source", str(tmp_path), "--out", str(tmp_path / "out"), "--slugs", "nope"],
+        capture_output=True, text=True, check=False, cwd=tmp_path,
+    )
+    assert result.returncode == 2, result.stderr
+
+
 def test_the_main_guard_is_covered_in_process(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """runpy re-executes the file in THIS process with __name__ == "__main__", so pytest-cov
     sees the guard and its body (the subprocess above cannot report coverage back)."""
