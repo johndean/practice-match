@@ -240,7 +240,7 @@ def _floor(pw: str, *, privileged: bool, user_inputs: list[str] | None = None) -
         raise PasswordPolicy(str(e)) from None
 
 
-async def _screen(pw: str, user_inputs: list[str] | None = None) -> None:
+async def _screen(pw: str, *, user_inputs: list[str] | None = None) -> None:
     """The half of the policy that needs NO database: the ordinary floor and the breach screen.
 
     Always called before a connection is opened. `is_pwned_async`, never the blocking `is_pwned`: it
@@ -326,7 +326,7 @@ async def signup(body: Creds, request: Request) -> dict[str, str]:
     # Screened and hashed BEFORE any connection: the breach screen is a 2 s-timeout network call and
     # the hash is ~97 ms, neither of which may be held across an open transaction.
     # I11: sign-up knows only the email — no account row exists yet for a name to come from.
-    await _screen(body.password, P.user_inputs_for(as_typed))
+    await _screen(body.password, user_inputs=P.user_inputs_for(as_typed))
     hashed = await P.hash_async(body.password)
     with closing(sync_conn()) as conn, conn:
         with conn.cursor() as cur:
@@ -644,7 +644,7 @@ async def change(body: ChangeIn, request: Request, response: Response, principal
     email, display_name = cast("tuple[str, str | None]", identity)
     user_inputs = P.user_inputs_for(email, display_name)
     _floor(body.new, privileged=bool(principal.roles & {"staff", "admin"}), user_inputs=user_inputs)
-    await _screen(body.new, user_inputs)
+    await _screen(body.new, user_inputs=user_inputs)
     hashed = await P.hash_async(body.new)
     with closing(sync_conn()) as conn, conn:
         with conn.cursor() as cur:
