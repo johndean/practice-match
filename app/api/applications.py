@@ -296,7 +296,7 @@ async def answer(application_id: UUID, body: AnswerIn, request: Request, princip
 
 
 MINE = """SELECT id, kind, status, info_request, answer, answered_at, resubmitted_at, submitted_at,
-                 decision_note, decided_at
+                 decision_note, decided_at, fields
             FROM application WHERE account_id=%s ORDER BY submitted_at DESC, id DESC"""
 
 
@@ -305,7 +305,14 @@ def _mine_row(r: tuple[Any, ...]) -> dict[str, Any]:
             "answered_at": _iso(r[5]), "resubmitted_at": _iso(r[6]), "submitted_at": r[7].isoformat(),
             # `decision_note` — the column's own name, and the one the staff detail already used
             # (review L2). It was `reason` here, so the two endpoints named one column two ways.
-            "decision": DECISION.get(r[2]), "decision_note": r[8], "decided_at": _iso(r[9])}
+            "decision": DECISION.get(r[2]), "decision_note": r[8], "decided_at": _iso(r[9]),
+            # A-S4 (controller ruling, 2026-09-08): the applicant's own answers, so a declined
+            # applicant's "Reply with more information" can open the Request Access form pre-filled
+            # (account-screens spec §3, "Re-apply needs no new screen"). This is the only endpoint
+            # that can serve them, and there is nothing here to withhold from the person who wrote
+            # it. `flags` — the reviewer's consolidator/disposable-domain hints — is NOT the same
+            # thing and stays on the staff endpoints only.
+            "fields": r[10]}
 
 
 @router.get("/applications/me")

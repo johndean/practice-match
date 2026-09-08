@@ -186,6 +186,10 @@ describe('playwright.config.ts pins Chromium\'s raster', () => {
   });
 });
 
+/** The one line that turns a FAILING run's trace off on a live deployment and nowhere else. Two
+ *  spec files type passwords into the design's own cards, and both carry it verbatim. */
+const USE_TRACE = /^test\.use\(\{ trace: process\.env\.PW_APP_URL \? 'off' : 'retain-on-failure' \}\);$/m;
+
 // ---------------------------------------------------------------------------------------
 // Review round 2, ruling 1. The form sign-in tests (I2) type a password into the design's own
 // card, so a FAILING run's trace carries it — and CI publishes `frontend/test-results`.
@@ -212,8 +216,6 @@ describe('the form sign-in tests turn their trace off on a live run (round 3, ru
   // default, so a trace discloses nothing. The one run where it is a real secret is a live one —
   // `PW_APP_URL` set, the QA hand-back, with `PERSONA_PASSWORD` from Railway — and CI publishes
   // `frontend/test-results`. The tests still RUN there: the form is what Task I10 must prove on QA.
-  const USE_TRACE = /^test\.use\(\{ trace: process\.env\.PW_APP_URL \? 'off' : 'retain-on-failure' \}\);$/m;
-
   it('carries the PW_APP_URL-conditional trace at the top level of signin-form.spec.ts', () => {
     const spec = withoutComments(readFileSync(SIGNIN_FORM, 'utf8'));
     expect(spec, 'the live-run trace override is gone').toMatch(USE_TRACE);
@@ -260,6 +262,42 @@ describe('the form sign-in tests turn their trace off on a live run (round 3, ru
 });
 
 // ---------------------------------------------------------------------------------------
+// Task S5 — `account-flows.spec.ts`, the same three facts as `signin-form.spec.ts` above.
+//
+// It is the only place the account lifecycle is proven END TO END against the real API: sign up,
+// verify (and the same link a second time), forgot, reset, accept an invitation, answer a
+// reviewer, re-apply after a decline, resend a verification link, and a member refused a route
+// their access does not include. The fifteen approved states photograph those outcomes; this
+// file is what proves each one was produced by the product rather than posed.
+// ---------------------------------------------------------------------------------------
+describe('account-flows.spec.ts — the live account flows (Task S5)', () => {
+  const FLOWS = join(fileURLToPath(new URL('.', import.meta.url)), 'account-flows.spec.ts');
+
+  it('is in the app project, or Playwright would never run it', () => {
+    expect(
+      project('app'),
+      'account-flows.spec.ts is not matched by the app project, so every live proof of the account ' +
+      'lifecycle (spec §6/§8) would silently stop running while the screenshots kept passing.'
+    ).toContain('account-flows');
+  });
+
+  it('carries the same PW_APP_URL-conditional trace at the top level, for the same reason', () => {
+    // It types passwords into the design's own cards — a reset, an invitation, a sign-up — so a
+    // FAILING run's trace carries them, and CI publishes `frontend/test-results`. Locally and in
+    // CI they are documented test-only constants; the one run where a password is a real secret
+    // is a live one.
+    const spec = withoutComments(readFileSync(FLOWS, 'utf8'));
+    expect(spec).toMatch(USE_TRACE);
+    const firstDescribe = spec.indexOf('test.describe(');
+    expect(spec.search(USE_TRACE)).toBeLessThan(firstDescribe === -1 ? spec.length : firstDescribe);
+  });
+
+  it('does not skip itself on a live run — QA is exactly where these flows must be proven', () => {
+    expect(withoutComments(readFileSync(FLOWS, 'utf8'))).not.toMatch(/test\.skip\([^)]*PW_APP_URL/);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
 // Round 3, ruling 2: the run id comes from the RUNNER, so a restarted worker can still read the
 // memo file the run wrote. `globalSetup` is the only place a value can be minted once per run and
 // inherited by every worker; `tests/global-setup.ts` mints it and clears a foreign run's file.
@@ -272,6 +310,19 @@ describe('playwright.config.ts mints one run id per run (round 3, ruling 2)', ()
       'cannot bridge the worker restart Playwright performs after every test failure — and a ' +
       'failing run pays its sign-ins again until SIGNIN_IP answers 429 (review round 1, M3).'
     ).toMatch(/globalSetup\s*:\s*['"]\.\/global-setup(\.ts)?['"]/);
+  });
+
+  // Fix round 1, ruling 1 (2026-09-08): John's ruling has an "after" half — "shared QA fixtures
+  // must not be left in a mutated state after a live QA run" — and only a `globalTeardown` can
+  // meet it. It is registered here, beside globalSetup, and reseeds a REMOTE run's target through
+  // the same planner (`tests/global-teardown.ts`); a local run is unaffected.
+  it('registers tests/global-teardown.ts', () => {
+    expect(
+      withoutComments(readFileSync(CONFIG, 'utf8')),
+      'without globalTeardown a live QA run ends with QA\'s fixtures however the eight account ' +
+      'flows left them — a consumed verify token, a rotated password, an answered application — ' +
+      'until some later run happens to reseed them (S7 fix round 1)'
+    ).toMatch(/globalTeardown\s*:\s*['"]\.\/global-teardown(\.ts)?['"]/);
   });
 
   it('leaves the reference project and the raster flag untouched by that addition', () => {

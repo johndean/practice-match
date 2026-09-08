@@ -1,5 +1,5 @@
 import type { Page } from '@playwright/test';
-import { atTop, btn, click, reach, waitMap } from './harness';
+import { DECLINED_FIELDS, NEEDS_REVIEW_INFO_REQUEST, atTop, btn, click, expectApiStatus, reach, settleExpectedApiFailures, waitMap } from './harness';
 
 export interface Screen {
   name: string;
@@ -37,11 +37,70 @@ const MODAL = 'div[style*="z-index: 900"]';
 const PHONE = 'div[style*="width: 390px"][style*="height: 800px"]';
 const SHEET = 'div[style*="z-index: 700"]';
 
+// ---------------------------------------------------------------------------------------
+// The fifteen account-screen states (spec §6, controller amendment A-S5). Three helpers, and
+// then one entry per state — everything else about them is in `reach()`.
+// ---------------------------------------------------------------------------------------
+
+/**
+ * A state whose APP entry deliberately provokes a real `TOKEN_INVALID` (400) from the API, which
+ * Chromium logs as a console error `prepare()` would otherwise fail the test on.
+ *
+ * The allowance is armed here, next to the state that needs it, for one status and one line; and
+ * it is ASSERTED to have been used, so a state that quietly stopped provoking its 4xx fails rather
+ * than passing on a dead exemption. On the reference nothing is armed and nothing is allowed —
+ * there is no API there to fail.
+ */
+const provokes400 = async (p: Page, shows: string, enter: () => Promise<void>) => {
+  expectApiStatus(p, 400);
+  await enter();
+  await p.getByText(shows).first().waitFor({ state: 'visible' });
+  await settleExpectedApiFailures(p);
+};
+
+/**
+ * `gate-reapply` — the ONE state whose data cannot reach the reference (A-S5 ruling 2).
+ *
+ * The app's form arrives pre-filled from `GET /api/applications/me`, and the reference has no
+ * adapter to fetch anything with. These six inputs are the design's OWN, so the state is put in
+ * one place by typing the seeded values into both targets: `fill()` REPLACES, so it is idempotent
+ * on the app, where they are already there. What that costs is the pre-fill's own proof, and
+ * `account-flows.spec.ts` pays it — it asserts every seeded value BEFORE typing anything.
+ *
+ * The blur at the end is not cosmetic: `fill()` focuses programmatically, which sets
+ * `:focus-visible` in Chromium, and a focus ring on the last field would be a pixel difference
+ * between two captures that happened to end on different fields.
+ */
+const fillDeclinedApplication = async (p: Page) => {
+  for (const [label, value] of [
+    ['Full name and credentials', DECLINED_FIELDS.name],
+    ['VIN member ID (if you have one)', ''],
+    ['Veterinary school and graduation year', DECLINED_FIELDS.school_year],
+    ['License state', DECLINED_FIELDS.license_state],
+    ['Current practice or employer', DECLINED_FIELDS.employer],
+    ['Why do you want access?', DECLINED_FIELDS.intent]
+  ] as const) {
+    await p.getByLabel(label, { exact: true }).fill(value);
+  }
+  await p.getByRole('checkbox').first().setChecked(DECLINED_FIELDS.affirm);
+  await p.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  // Playwright scrolls each field into view before it fills it, and the design's `<header>` is
+  // `position: sticky` — which a fullPage screenshot composites at the offset it PAINTS at, so a
+  // page left scrolled by N pixels puts the whole header N pixels down the capture while the flow
+  // content behind it does not move. That is the `interest-modal` failure `atTop` was written for
+  // (see harness.ts), and it is why the first run of this state differed from the reference by
+  // 3,381 pixels — every one of them in the header. Pinned to the top, exactly as that state is.
+  await atTop(p, 'header');
+};
+
 export const SCREENS: Screen[] = [
   { name: 'gate-signin', steps: async (p) => { await reach(p); } },
-  // The design's own "Request access" link on the sign-in card (`goApply`) — a link, not a
-  // prototype shortcut, so it survives the launch removal and `reach` clicks it on the app.
-  { name: 'gate-apply', steps: async (p) => { await reach(p, { gate: 'apply' }); } },
+  // A-S4: reached by BEING an address that is confirmed and has not applied — A5.4's bootstrap
+  // lands `verified@` on the Request Access card, on both targets. The design's own "Request
+  // access" link used to be the way in; A8.1c sends an anonymous visitor's click to the sign-up
+  // card instead, which is correct (there is no application without an account) and is why this
+  // state now names an account like the two status gates below do.
+  { name: 'gate-apply', steps: async (p) => { await reach(p, { gate: 'apply', persona: 'verified' }); } },
   // The two status gates were reached by the "Prototype — access states" buttons (A6.2 removes
   // them). On the app they are now reached by BEING in that state: `reach` signs in as the
   // seeded `pending@` / `declined@` account and A5.4's bootstrap maps the account's state to
@@ -153,5 +212,42 @@ export const SCREENS: Screen[] = [
       await p.getByText('Exterior photo').first().waitFor({ state: 'visible' });
     } },
   { name: 'header-1100', viewport: { width: 1100, height: 940 }, steps: browse },
-  { name: 'header-1000', viewport: { width: 1000, height: 940 }, steps: browse }
+  { name: 'header-1000', viewport: { width: 1000, height: 940 }, steps: browse },
+
+  // ---------------------------------------------------------------------------------------
+  // The account screens (spec §6). Each is a new value of `state.gate`, so the reference reaches
+  // every one through `startGate` and the app through the real route, the real account or the
+  // real token — see harness.ts's `referenceUrl`/`appPlan` for the two drivers and why they
+  // differ where they do.
+  // ---------------------------------------------------------------------------------------
+  { name: 'gate-signup', steps: async (p) => { await reach(p, { gate: 'signup' }); } },
+  // Reached by BEING an address that has not confirmed itself: A8.3b's bootstrap lands
+  // `unverified@` here and puts its address in the card's own copy, which is why this state names
+  // an account on both targets rather than only on the app.
+  { name: 'gate-check-email', steps: async (p) => { await reach(p, { gate: 'check-email', persona: 'unverified' }); } },
+  // A token no seed created: the API's own 400 is what produces this card, not an assertion.
+  { name: 'gate-verify-expired', steps: async (p) => { await provokes400(p, 'This link is no longer valid', () => reach(p, { gate: 'verify-expired' })); } },
+  { name: 'gate-forgot', steps: async (p) => { await reach(p, { gate: 'forgot' }); } },
+  // The form renders from the token in the URL and spends it only on submit, which this state
+  // never does — the run's counter still advances (see `appPlan`).
+  { name: 'gate-reset', steps: async (p) => { await reach(p, { gate: 'reset' }); } },
+  // Two matching passwords against an unseeded token: the policy passes, the token does not, and
+  // the card is `POST /api/auth/password/reset`'s real verdict.
+  { name: 'gate-reset-expired', steps: async (p) => { await provokes400(p, 'This link is no longer valid', () => reach(p, { gate: 'reset-expired' })); } },
+  { name: 'gate-invite', steps: async (p) => { await reach(p, { gate: 'invite' }); } },
+  // The reviewer's question comes from the seeded application on the app and from A9.1's
+  // `startAnswerNote` on the reference — the same words, pinned against the seed in test_docs.py.
+  { name: 'gate-answer', steps: async (p) => { await reach(p, { gate: 'answer', persona: 'needsReview', note: NEEDS_REVIEW_INFO_REQUEST }); } },
+  // A signed-in buyer deep-linking a route their access does not include. The only account-screen
+  // state captured signed in, which is why the reference reaches it through `startScreen`.
+  { name: 'gate-unavailable', steps: async (p) => { await reach(p, { gate: 'unavailable', persona: 'buyer' }); } },
+  { name: 'gate-reapply', steps: async (p) => { await reach(p, { gate: 'apply', persona: 'declined' }); await fillDeclinedApplication(p); } },
+  // The five outcomes that end on the sign-in card with a message (spec §3's notice slot). The
+  // app performs the real flow — a verify link, a reset request, a reset, an accepted invitation,
+  // a dead one — and the reference is handed the same words through `startNotice`.
+  { name: 'gate-signin-verified', steps: async (p) => { await reach(p, { gate: 'signin', notice: 'verified' }); } },
+  { name: 'gate-signin-reset-sent', steps: async (p) => { await reach(p, { gate: 'signin', notice: 'reset-sent' }); } },
+  { name: 'gate-signin-password-updated', steps: async (p) => { await reach(p, { gate: 'signin', notice: 'password-updated' }); } },
+  { name: 'gate-signin-invite-set', steps: async (p) => { await reach(p, { gate: 'signin', notice: 'invite-set' }); } },
+  { name: 'gate-signin-invite-expired', steps: async (p) => { await provokes400(p, 'This invitation link is no longer valid. Ask the VIN Foundation for a new one.', () => reach(p, { gate: 'signin', notice: 'invite-expired' })); } }
 ];

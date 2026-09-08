@@ -153,6 +153,22 @@ def to_typescript() -> str:
     return "\n".join(lines)
 
 
+def _emit_ts() -> None:
+    """The `--ts` CLI's own body, pulled out of the `__main__` guard so a test can drive it with a
+    monkeypatched `MATRIX` (Task I12, ruling #5, verbatim: "must never silently generate an empty
+    permission file"). `runpy.run_path` re-executes this file from source for the CLI's success
+    and no-flag tests below, so a monkeypatched `MATRIX` on the already-imported module would be
+    invisible to a fresh execution — this function is what a test calls directly instead.
+
+    Refuses closed: one line on stderr, a non-zero exit, and nothing on stdout — so `gen:permissions`'s
+    `> permissions.ts.new && mv permissions.ts.new permissions.ts` shape never has a `.new` file to move.
+    """
+    if not MATRIX:
+        print("app.auth.permissions --ts: MATRIX is empty — refusing to emit an empty permission twin", file=sys.stderr)
+        sys.exit(1)
+    sys.stdout.write(to_typescript())
+
+
 if __name__ == "__main__":
     if "--ts" in sys.argv:
-        sys.stdout.write(to_typescript())
+        _emit_ts()

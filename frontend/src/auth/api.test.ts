@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { AuthError, apply, config, csrfToken, me, reauth, signIn, signOut, signUp, verify } from './api';
+import { AuthError, acceptInvite, answer, applicationsMe, apply, config, csrfToken, forgot, me, reauth, resendVerification, reset, signIn, signOut, signUp, verify } from './api';
 
 interface Call { url: string; init: { method: string; credentials: string; headers: Record<string, string>; body?: string } }
 
@@ -103,6 +103,27 @@ describe('the state-changing calls send X-CSRF-Token, read from the cookie', () 
   });
 });
 
+// A-S4.1: the session-authenticated re-send behind the "Check your email" card's "Send it again".
+// No body at all — the account IS the argument — and the CSRF double-submit like every other state
+// change.
+describe('resendVerification()', () => {
+  it('POSTs /api/auth/verify/resend with the CSRF header and no body', async () => {
+    document.cookie = 'pm_csrf=double-submit';
+    const calls = stubFetch({ status: 202, body: { status: 'check_email' } });
+    expect(await resendVerification()).toEqual({ status: 'check_email' });
+    expect(calls[0].url).toBe('/api/auth/verify/resend');
+    expect(calls[0].init.method).toBe('POST');
+    expect(calls[0].init.headers['X-CSRF-Token']).toBe('double-submit');
+    expect(calls[0].init.body, 'the account is the argument; there is nothing to send').toBeUndefined();
+  });
+
+  it('throws the server\'s own AuthError when the account is not unverified', async () => {
+    stubFetch({ status: 403, body: { error: { code: 'FORBIDDEN', message: 'Your account cannot do this.' } } });
+    const thrown = (await resendVerification().catch((e: unknown) => e)) as AuthError;
+    expect([thrown.code, thrown.message]).toEqual(['FORBIDDEN', 'Your account cannot do this.']);
+  });
+});
+
 describe('me()', () => {
   it('GETs /api/me and returns the payload, with no CSRF header on a read', async () => {
     const calls = stubFetch({ status: 200, body: PERSONA });
@@ -121,6 +142,92 @@ describe('me()', () => {
   it('still throws on anything else, so a broken API is never read as "signed out"', async () => {
     stubFetch({ status: 500, body: { error: { code: 'INTERNAL', message: 'boom' } } });
     await expect(me()).rejects.toMatchObject({ code: 'INTERNAL' });
+  });
+});
+
+describe('forgot, reset, acceptInvite, answer — POST with credentials and the CSRF header', () => {
+  it('post the exact path and body, and return the parsed body', async () => {
+    document.cookie = 'pm_csrf=double-submit';
+    const calls = stubFetch(
+      { status: 202, body: { status: 'check_email' } },
+      { status: 200, body: { status: 'reset' } },
+      { status: 200, body: { status: 'active' } },
+      { status: 200, body: { status: 'pending' } }
+    );
+    expect(await forgot('a@b.co')).toEqual({ status: 'check_email' });
+    expect(await reset('tok', 'newpw')).toEqual({ status: 'reset' });
+    expect(await acceptInvite('tok', 'newpw')).toEqual({ status: 'active' });
+    expect(await answer('ap1', 'Yes, I confirm.')).toEqual({ status: 'pending' });
+    expect(calls.map((c) => c.url)).toEqual([
+      '/api/auth/password/forgot',
+      '/api/auth/password/reset',
+      '/api/auth/accept-invite',
+      '/api/applications/ap1/answer'
+    ]);
+    expect(calls.map((c) => c.init.method)).toEqual(Array(4).fill('POST'));
+    expect(calls.map((c) => c.init.credentials)).toEqual(Array(4).fill('same-origin'));
+    expect(calls.map((c) => c.init.headers['X-CSRF-Token'])).toEqual(Array(4).fill('double-submit'));
+    expect(calls.map((c) => c.init.body)).toEqual([
+      JSON.stringify({ email: 'a@b.co' }),
+      JSON.stringify({ token: 'tok', password: 'newpw' }),
+      JSON.stringify({ token: 'tok', password: 'newpw' }),
+      JSON.stringify({ answer: 'Yes, I confirm.' })
+    ]);
+  });
+
+  it('answer() encodes the application id into the path', async () => {
+    const calls = stubFetch({ status: 200, body: { status: 'pending' } });
+    await answer('needs/slash', 'ok');
+    expect(calls[0].url).toBe('/api/applications/needs%2Fslash/answer');
+  });
+
+  it('throws the server\'s AuthError on a 4xx, like every other call', async () => {
+    stubFetch({ status: 400, body: { error: { code: 'TOKEN_EXPIRED', message: 'This link has expired.' } } });
+    await expect(reset('stale', 'newpw')).rejects.toMatchObject({ code: 'TOKEN_EXPIRED' });
+  });
+
+  it('forgot throws the server\'s AuthError, with its code and message, on a 4xx', async () => {
+    stubFetch({ status: 429, body: { error: { code: 'RATE_LIMITED', message: 'Too many attempts. Try again later.' } } });
+    const thrown = await forgot('a@b.co').catch((e: unknown) => e);
+    expect(thrown).toBeInstanceOf(AuthError);
+    expect((thrown as AuthError).code).toBe('RATE_LIMITED');
+    expect((thrown as AuthError).message).toBe('Too many attempts. Try again later.');
+  });
+
+  it('acceptInvite throws the server\'s AuthError, with its code and message, on a 4xx', async () => {
+    stubFetch({ status: 400, body: { error: { code: 'TOKEN_EXPIRED', message: 'This invite has expired.' } } });
+    const thrown = await acceptInvite('tok', 'newpw').catch((e: unknown) => e);
+    expect(thrown).toBeInstanceOf(AuthError);
+    expect((thrown as AuthError).code).toBe('TOKEN_EXPIRED');
+    expect((thrown as AuthError).message).toBe('This invite has expired.');
+  });
+
+  it('answer throws the server\'s AuthError, with its code and message, on a 4xx', async () => {
+    stubFetch({ status: 409, body: { error: { code: 'ALREADY_ANSWERED', message: 'This application already has an answer on file.' } } });
+    const thrown = await answer('ap1', 'Yes, I confirm.').catch((e: unknown) => e);
+    expect(thrown).toBeInstanceOf(AuthError);
+    expect((thrown as AuthError).code).toBe('ALREADY_ANSWERED');
+    expect((thrown as AuthError).message).toBe('This application already has an answer on file.');
+  });
+});
+
+describe('applicationsMe()', () => {
+  it('GETs /api/applications/me and returns {current, history}, with no CSRF header on a read', async () => {
+    const rows = {
+      current: { id: 'ap1', kind: 'buyer', status: 'pending', info_request: null, answer: null, fields: { name: 'A' }, decision_note: null },
+      history: []
+    };
+    const calls = stubFetch({ status: 200, body: rows });
+    expect(await applicationsMe()).toEqual(rows);
+    expect(calls[0].url).toBe('/api/applications/me');
+    expect(calls[0].init.method).toBe('GET');
+    expect(calls[0].init.headers['X-CSRF-Token']).toBeUndefined();
+    expect(calls[0].init.body).toBeUndefined();
+  });
+
+  it('throws like every other read when the endpoint is broken', async () => {
+    stubFetch({ status: 500, body: { error: { code: 'INTERNAL', message: 'boom' } } });
+    await expect(applicationsMe()).rejects.toMatchObject({ code: 'INTERNAL' });
   });
 });
 

@@ -31,7 +31,14 @@ export const BLANK_GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAA
 
 export async function prepare(page: Page): Promise<void> {
   page.on('pageerror', (e) => { throw new Error(`page error: ${e.message}`); });
-  page.on('console', (m) => { if (m.type() === 'error') throw new Error(`console.error: ${m.text()}`); });
+  // A-S5 ruling 4: three approved states deliberately provoke a real 400 from the API, and
+  // Chromium logs every 4xx subresource as a console error. `expectApiStatus` arms ONE status at
+  // a time from the state's own steps; everything else still fails here, at the cause.
+  page.on('console', (m) => {
+    if (m.type() !== 'error') return;
+    if (consumeExpectedApiFailure(page, m.text())) return;
+    throw new Error(`console.error: ${m.text()}`);
+  });
   // ---------------------------------------------------------------------------------------
   // B2 (A-I8.2): suppress the design runtime's re-fetch of its own document, on the REFERENCE
   // ORIGIN ONLY. `support.js`'s `boot()` guards that re-fetch on `window.__resources`
@@ -200,7 +207,118 @@ export const PERSONA_EMAIL = 'design@practice-match.test';
 export const PERSONA_DEFAULT_PASSWORD = 'design-persona-quiet-lantern-42';
 
 /**
- * The six seeded accounts, each as the `/api/me` payload `logic.js`'s A5.4 bootstrap reads
+ * The password the reset flows SET (A-S5 ruling 3), and therefore the one `verified@` has for the
+ * rest of a run once any of them has run. Built exactly as the constant above is — a documented
+ * test-only phrase on an RFC 6761 `.test` address that `seed_persona.py` refuses to write on
+ * production, and long enough for the privileged floor (14) as well as the ordinary one (12).
+ *
+ * `POST /api/auth/password/reset` rotates the password AND revokes every session, and `verified@`
+ * is also `gate-apply`'s screenshot persona (A-S4) — so the run records the rotation in its own
+ * memo file and `personaCredentials('verified')` answers with this from then on. The seed writes
+ * the default back at the start of the next run.
+ */
+export const PERSONA_RESET_PASSWORD = 'design-persona-second-lantern-77';
+
+/** The password the accept-invite flows set on `invited@` — a third documented constant, because
+ *  that account starts with no usable one at all and the design's own card is what gives it one.
+ *  Fourteen characters or more: the invite card says staff passwords are, and a future invite may
+ *  land on an account the server treats as privileged. */
+export const PERSONA_INVITE_PASSWORD = 'design-persona-third-lantern-93';
+
+/**
+ * The reviewer's question `scripts/seed_persona.py` writes on `needs-review@`'s open application
+ * (`NEEDS_REVIEW_INFO_REQUEST`), and the seeded answers on `declined@`'s declined one
+ * (`DECLINED_FIELDS`). Both are ONE fact in two languages — `tests/test_docs.py` pins them equal —
+ * because the oracle renders them: the answer card's note reaches the reference through A9.1's
+ * `startAnswerNote`, and the re-apply form is filled with these values on both targets (A-S5
+ * ruling 2), while `account-flows.spec.ts` proves the APP got them from the API.
+ */
+export const NEEDS_REVIEW_INFO_REQUEST = 'Which practice do you work at now, and in what role?';
+export const DECLINED_FIELDS = {
+  name: 'Declined Applicant, DVM',
+  school_year: 'Texas A&M, 2012',
+  license_state: 'TX',
+  employer: 'Hill Country Veterinary Clinic',
+  intent: 'Exploring ownership within two years.',
+  affirm: true
+} as const;
+
+/**
+ * The five outcomes that end on the SIGN-IN card with a message (spec §3's notice slot), and the
+ * spec's own copy for each. The reference is handed the text through `startNotice`; the app
+ * performs the flow and `logic.js` produces the text — so the pixel gate compares the spec's copy
+ * against what the code actually says, and `account-flows.spec.ts` asserts it a third time.
+ */
+export const NOTICES = {
+  verified: 'Your address is verified. Sign in to complete your access request.',
+  'reset-sent': 'If that address has an account, a reset link is on its way. It is valid for 1 hour.',
+  'password-updated': 'Password updated. Sign in with your new password.',
+  'invite-set': 'Your password is set. Sign in with your email and the password you just chose.',
+  'invite-expired': 'This invitation link is no longer valid. Ask the VIN Foundation for a new one.'
+} as const;
+export type NoticeKey = keyof typeof NOTICES;
+
+/**
+ * The single-use fixture tokens `scripts/seed_persona.py` inserts, twelve per purpose, recreated
+ * every run. `tests/test_docs.py` pins these constants against the script's own `FIXTURE_TOKENS`
+ * and `FIXTURE_TOKEN_PREFIX`, so the two never drift out of the one shape a raw token is allowed
+ * to look like. They are documented test constants, not secrets: the accounts are `.test` and the
+ * seed refuses to run against production.
+ */
+export const FIXTURE_TOKEN_PREFIX = 'fixture-';
+export const FIXTURE_TOKEN_COUNT = 12;
+export const FIXTURE_TOKENS = { verify: 'fixture-verify-', reset: 'fixture-reset-', invite: 'fixture-invite-' } as const;
+export type FixtureTokenKind = keyof typeof FIXTURE_TOKENS;
+
+/** The nth seeded token for a purpose, 1-based. Pure, so the budget is countable without spending
+ *  it; past twelve it throws rather than invent a token the seed never inserted — which the API
+ *  would answer with a 400 far from the cause. */
+export function fixtureToken(kind: FixtureTokenKind, n: number): string {
+  if (!Number.isInteger(n) || n < 1 || n > FIXTURE_TOKEN_COUNT) {
+    throw new Error(`fixture ${kind} token ${n} does not exist: scripts/seed_persona.py inserts ${FIXTURE_TOKEN_COUNT} per purpose per run, and this run has spent them all`);
+  }
+  return `${FIXTURE_TOKENS[kind]}${String(n).padStart(2, '0')}`;
+}
+
+/** A token of the documented shape that NO seed ever created, so the real endpoint answers its
+ *  real 400 — which is how the two expired cards and the invite-expired notice are reached. */
+export function expiredFixtureToken(kind: FixtureTokenKind): string {
+  return `${FIXTURE_TOKENS[kind]}expired`;
+}
+
+/**
+ * The one shape every throwaway address has, mirrored by `scripts/seed_persona.py`'s
+ * `THROWAWAY_EMAIL_PATTERN` and pinned equal to it by `tests/test_docs.py` (S7 fix round 1, John's
+ * ruling of 2026-09-08).
+ *
+ * It is not decoration: the seed's restoration DELETES the accounts the live sign-up flow creates,
+ * and this is the shape it recognises them by. Anchored at both ends and with a literal
+ * `@example.org` — a wider pattern (`e2e-%@example.org` as a SQL LIKE, say) would also match
+ * `e2e-x@evil.example.org`, i.e. somebody else's account at somebody else's domain.
+ */
+export const THROWAWAY_EMAIL_PATTERN = '^e2e-[A-Za-z0-9._-]+@example\\.org$';
+
+/** A throwaway address for the live sign-up and forgot flows — RFC 2606 `example.org`, never
+ *  deliverable, distinct per run AND per take so `FORGOT_EMAIL` (3/h/address) and `SIGNUP_EMAIL`
+ *  (3/day/address) are never the binding limit. Pure; `nextThrowawayEmail` takes the counter.
+ *
+ *  The run id is SANITISED into the local part (review round 1, M14). `global-setup.ts` mints
+ *  `randomUUID()`, which is hex and hyphens and already safe — but `PW_RUN_ID` is deliberately
+ *  overridable by an outer harness (CI sharding, a wrapper script), and a value carrying `/`, `:`
+ *  or a space would make the live sign-up 422 with nothing in the failure pointing at the cause.
+ *
+ *  `purpose` goes through the SAME class (fix round 2, M4). Both call sites pass a literal today,
+ *  so nothing is wrong — but an unsanitised character would mint an address that
+ *  `THROWAWAY_EMAIL_PATTERN` does not match, and the account behind it would then survive every
+ *  restoration and sit on QA for ever, which is the exact leak fix round 1 was ruled to close. */
+const emailSafe = (part: string): string => part.replace(/[^A-Za-z0-9._-]/g, '-');
+
+export function throwawayEmail(purpose: string, run: string, n: number): string {
+  return `e2e-${emailSafe(run) || 'local'}-${emailSafe(purpose)}-${n}@example.org`;
+}
+
+/**
+ * The ten seeded accounts, each as the `/api/me` payload `logic.js`'s A5.4 bootstrap reads
  * (`scripts/seed_persona.py` writes them; `tests/test_docs.py` pins these strings against
  * `app.auth.labels.role_label` / `initials` for each persona's grants, in both languages).
  *
@@ -224,14 +342,56 @@ export const PERSONAS = {
   seller: { email: 'seller@practice-match.test', name: 'Dr. Rachel Mendes', role: 'Approved buyer and seller · StartUp Club', initials: 'RM', state: 'active', roles: ['buyer', 'seller'] },
   pending: { email: 'pending@practice-match.test', name: 'Pending Applicant', role: 'Applicant', initials: 'PA', state: 'pending', roles: [] },
   needsReview: { email: 'needs-review@practice-match.test', name: 'Applicant Under Review', role: 'Applicant', initials: 'AR', state: 'needs_review', roles: [] },
-  declined: { email: 'declined@practice-match.test', name: 'Declined Applicant', role: 'Applicant', initials: 'DA', state: 'declined', roles: [] }
+  declined: { email: 'declined@practice-match.test', name: 'Declined Applicant', role: 'Applicant', initials: 'DA', state: 'declined', roles: [] },
+  // A-S4 (Task S4): an address that is confirmed and has never applied. A5.4's bootstrap lands it
+  // on the Request Access card, which is how the APP reaches `gate-apply` now that A8.1c sends an
+  // anonymous visitor's "Request access" click to the sign-up card instead. Seeded by Task S3.
+  verified: { email: 'verified@practice-match.test', name: 'Verified Applicant', role: 'Applicant', initials: 'VA', state: 'verified', roles: [] },
+  // A-S5 (Task S5): the two remaining identity states. `unverified@` is where the check-email card
+  // and the resend flow start; `invited@` is a `verified` account with NO usable password — the
+  // seed hashes a secret it generates fresh and keeps nowhere, so the invite token is the only way
+  // in, and `personaCredentials('invited')` throws rather than hand back a credential that cannot
+  // work.
+  unverified: { email: 'unverified@practice-match.test', name: 'Unverified Applicant', role: 'Applicant', initials: 'UA', state: 'unverified', roles: [] },
+  invited: { email: 'invited@practice-match.test', name: 'Invited Staff', role: 'Applicant', initials: 'IS', state: 'verified', roles: [] },
+  // A-S5.2 (S-1): the tenth account, and the one nothing ever signs in as. `POST /api/auth/verify`
+  // confirms its account for good, so the twelve `verify` fixture tokens belong to THIS one rather
+  // than to `unverified@` — which `gate-check-email` and the resend flow need to still be
+  // unverified after every capture. It is named here because the harness is where the seeded
+  // fixtures are mirrored, and `tests/test_docs.py` pins the address against the seed.
+  verifyMe: { email: 'verify-me@practice-match.test', name: 'Verify Fixture', role: 'Applicant', initials: 'VF', state: 'unverified', roles: [] }
 } as const;
 
 export type PersonaKey = keyof typeof PERSONAS;
 
-/** The credential `POST /api/auth/signin` is given. Pure, so harness.test.ts can pin it. */
-export function personaCredentials(persona: PersonaKey = 'design', env: NodeJS.ProcessEnv = process.env): { email: string; password: string } {
+/**
+ * The credential `POST /api/auth/signin` is given, as a PURE function of whether this run has
+ * already rotated that account's password (A-S5 ruling 3) — so harness.test.ts can pin both arms
+ * without a filesystem.
+ *
+ * `PERSONA_PASSWORD` (the live QA run's real secret, from Railway) overrides the documented
+ * default and cannot override the ROTATED value: after a reset the account has the password the
+ * reset set, whatever the environment holds.
+ */
+export function credentialsFor(persona: PersonaKey, rotated: boolean, env: NodeJS.ProcessEnv = process.env): { email: string; password: string } {
+  const set = ROTATED_PASSWORD[persona];
+  if (rotated && set) return { email: PERSONAS[persona].email, password: set };
+  if (persona === 'invited') {
+    throw new Error('invited@practice-match.test has no usable password: the seed hashes a secret it keeps nowhere, and the invite fixture token is the only way in until this run accepts an invitation for it');
+  }
   return { email: PERSONAS[persona].email, password: env.PERSONA_PASSWORD ?? PERSONA_DEFAULT_PASSWORD };
+}
+
+/** What each account's password BECOMES once this run has set one on it — a reset for `verified@`,
+ *  an accepted invitation for `invited@`. No other persona has a flow that changes its password. */
+const ROTATED_PASSWORD: Partial<Record<PersonaKey, string>> = {
+  verified: PERSONA_RESET_PASSWORD,
+  invited: PERSONA_INVITE_PASSWORD
+};
+
+/** `credentialsFor`, reading this run's rotation flag off the memo file. */
+export function personaCredentials(persona: PersonaKey = 'design', env: NodeJS.ProcessEnv = process.env): { email: string; password: string } {
+  return credentialsFor(persona, rotatedMemo.has(persona) || memoFileIsRotated(readMemoFileText(), persona, runId()), env);
 }
 
 /**
@@ -299,11 +459,57 @@ export function isStaleMemoFile(existing: string | null, run: string): boolean {
  *  name sessions that may since have been revoked, and re-adding one would run every later test as
  *  the wrong account with no failure anywhere near the cause. */
 export function memoFileUpdate(existing: string | null, persona: string, cookies: unknown[] | null, run: string): string {
-  let sessions: Record<string, unknown[]> = {};
+  const held = memoFor(existing, run);
+  if (cookies) held.sessions[persona] = cookies; else delete held.sessions[persona];
+  return JSON.stringify({ run, ...held });
+}
+
+/**
+ * A run-scoped counter: what this run has already taken, and the file that records a new value.
+ *
+ * Two things need one. The FIXTURE TOKENS are single-use — spending `01` twice gets a 400 from a
+ * token the seed did emit but the first capture already burnt — and the THROWAWAY ADDRESSES must
+ * differ per take or three `forgot` captures would spend `FORGOT_EMAIL`'s three per hour on one
+ * address. Both live beside the persona jars, in the run's own file, so a worker Playwright
+ * restarts after a failure carries on rather than starting over.
+ *
+ * Split into a read and a write (review round 1, M8) so a take is one read, one decision and one
+ * write, and the decision — `max(file, memory) + 1` — is visible in `takeCounter` rather than
+ * spread across a loop.
+ */
+export function memoFileCounter(existing: string | null, name: string, run: string): number {
+  return memoFor(existing, run).counters[name] ?? 0;
+}
+
+/** The file's contents with one counter set to `n`, leaving this run's jars and flags alone. */
+export function memoFileSetCounter(existing: string | null, name: string, n: number, run: string): string {
+  const held = memoFor(existing, run);
+  held.counters[name] = n;
+  return JSON.stringify({ run, ...held });
+}
+
+/** Records that this run has rotated a persona's password — see `PERSONA_RESET_PASSWORD`. */
+export function memoFileRotate(existing: string | null, persona: string, run: string): string {
+  const held = memoFor(existing, run);
+  if (!held.rotated.includes(persona)) held.rotated.push(persona);
+  return JSON.stringify({ run, ...held });
+}
+
+/** Whether THIS run has rotated that persona's password. A foreign or absent file means no: the
+ *  seed writes the documented default back at the start of every run. */
+export function memoFileIsRotated(existing: string | null, persona: string, run: string): boolean {
+  if (!run) return false;
   const held = parseMemoFile(existing);
-  if (held && held.run === run) sessions = held.sessions;
-  if (cookies) sessions[persona] = cookies; else delete sessions[persona];
-  return JSON.stringify({ run, sessions });
+  return !!held && held.run === run && held.rotated.includes(persona);
+}
+
+/** This run's memo, or a fresh empty one — the single place "a foreign run's file is not ours"
+ *  is decided for jars, counters and the rotation flag alike. */
+function memoFor(existing: string | null, run: string): Omit<HeldMemo, 'run'> {
+  const held = parseMemoFile(existing);
+  return held && held.run === run
+    ? { sessions: held.sessions, counters: held.counters, rotated: held.rotated }
+    : { sessions: {}, counters: {}, rotated: [] };
 }
 
 /** One persona's jar for THIS run, or null. An absent, corrupt, wrong-shaped or foreign-run file
@@ -317,20 +523,83 @@ export function memoFileRead(existing: string | null, persona: string, run: stri
   return Array.isArray(jar) ? jar : null;
 }
 
-function parseMemoFile(existing: string | null): { run: string; sessions: Record<string, unknown[]> } | null {
+interface HeldMemo { run: string; sessions: Record<string, unknown[]>; counters: Record<string, number>; rotated: string[] }
+
+function parseMemoFile(existing: string | null): HeldMemo | null {
   if (!existing) return null;
   try {
     const parsed: unknown = JSON.parse(existing);
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return null;
-    const { run, sessions } = parsed as { run?: unknown; sessions?: unknown };
+    const { run, sessions, counters, rotated } = parsed as { run?: unknown; sessions?: unknown; counters?: unknown; rotated?: unknown };
     if (typeof run !== 'string' || !sessions || typeof sessions !== 'object' || Array.isArray(sessions)) return null;
-    return { run, sessions: sessions as Record<string, unknown[]> };
+    // `counters` and `rotated` are A-S5's additions and are DEFAULTED rather than required: a
+    // file written before they existed is still this run's memo, and the whole point of the file
+    // is to be a cache that never fails a run over its own shape.
+    return {
+      run,
+      sessions: sessions as Record<string, unknown[]>,
+      counters: counters && typeof counters === 'object' && !Array.isArray(counters) ? { ...(counters as Record<string, number>) } : {},
+      rotated: Array.isArray(rotated) ? rotated.filter((r): r is string => typeof r === 'string') : []
+    };
   } catch {
     return null;
   }
 }
 
 const readMemoFileText = (): string | null => (existsSync(MEMO_FILE) ? readFileSync(MEMO_FILE, 'utf8') : null);
+
+/**
+ * The in-process half of the run-scoped counters. The file is authoritative across workers; this
+ * is what keeps a single worker correct when there is no run id to write a file under (a vitest
+ * process, or `playwright test` with the globalSetup removed). The two are combined with `max`,
+ * so neither a missing file nor a stale read can hand the same token out twice.
+ */
+const counterMemo: Record<string, number> = {};
+
+function takeCounter(name: string): number {
+  const run = runId();
+  const held = run ? memoFileCounter(readMemoFileText(), name, run) : 0;
+  // The higher of the two, so neither a missing file nor a stale read hands the same value out
+  // twice — then written ONCE (review round 1, M8; the loop it replaces called the pure helper
+  // two or three times per take and carried a fallback arm nothing could reach).
+  const n = Math.max(held, counterMemo[name] ?? 0) + 1;
+  counterMemo[name] = n;
+  if (run) {
+    mkdirSync(dirname(MEMO_FILE), { recursive: true });
+    writeFileSync(MEMO_FILE, memoFileSetCounter(readMemoFileText(), name, n, run));
+  }
+  return n;
+}
+
+/** The next unspent fixture token of a purpose, for THIS run. Throws past twelve (see
+ *  `fixtureToken`), naming the purpose and the seed. */
+export function nextFixtureToken(kind: FixtureTokenKind): string {
+  return fixtureToken(kind, takeCounter(`token:${kind}`));
+}
+
+/** The next throwaway address for a live flow — distinct per run and per take. */
+export function nextThrowawayEmail(purpose: string): string {
+  return throwawayEmail(purpose, runId(), takeCounter(`email:${purpose}`));
+}
+
+/**
+ * Records that a reset has just changed a persona's password, and drops the session it revoked
+ * with it (A-S5 ruling 3). BOTH halves matter: the memoised jar names a session
+ * `POST /api/auth/password/reset` has revoked, and re-adding it to the next context would run
+ * every later capture anonymous with no failure anywhere near the cause.
+ */
+export function personaPasswordRotated(persona: PersonaKey): void {
+  const run = runId();
+  if (run) {
+    mkdirSync(dirname(MEMO_FILE), { recursive: true });
+    writeFileSync(MEMO_FILE, memoFileRotate(readMemoFileText(), persona, run));
+  }
+  rotatedMemo.add(persona);
+  forgetPersonaSession(persona);
+}
+
+/** The in-process half of the rotation flag, for the same reason `counterMemo` exists. */
+const rotatedMemo = new Set<PersonaKey>();
 
 function writeMemoFile(persona: PersonaKey, cookies: PersonaCookies | null): void {
   const run = runId();
@@ -444,21 +713,55 @@ export async function personaSignOut(cookies: PersonaCookies, baseURL = appOrigi
  * favour of the first one's cookies and every later test would run as the wrong account — with
  * no failure anywhere near the cause.
  *
- * THE BUDGET. `app/auth/limits.py`'s `SIGNIN_IP = (30, 900)` counts EVERY attempt per IP, wrong
- * credentials included (`app/api/auth.py` calls `limits.hit` before it checks the password). A
- * full `app`-project run spends: one per persona that any state signs in as — `buyer`, `seller`,
- * `design`, `pending`, `declined` (`needsReview` is seeded and exported for Task I8b, and no
- * approved state uses it yet) — plus the reauth test's own standalone session, plus the three
- * form sign-ins in `signin-form.spec.ts` (the successful one, the deliberately wrong password, and
- * one the sign-out test consumes). Nine of thirty, with the memo and this file keeping it there
- * however many workers the run gets through.
+ * THE BUDGET — FOURTEEN of thirty (review round 1, I1/M3; traced against the real
+ * `POST /api/auth/signin` calls, not estimated).
+ *
+ * `app/auth/limits.py`'s `SIGNIN_IP = (30, 900)` counts EVERY attempt per IP, wrong credentials
+ * included (`app/api/auth.py` calls `limits.hit` before it checks the password). Playwright runs
+ * the `app` project with one worker, no retries and files in path order — `account-flows`, `dom`,
+ * `signin-form`, `smoke`, `visual` — so the trace is exact:
+ *
+ *   account-flows  7  `verified` (after its own reset), `invited`, `needsReview`, `design`
+ *                     (through `decideAs`, the reviewer that puts the applicant fixtures back),
+ *                     `declined`, `buyer`, `unverified`
+ *   dom           +2  `pending` and `seller`; every other state reuses a jar account-flows minted
+ *   signin-form   +3  the successful sign-in, the deliberately wrong password, the sign-out test's
+ *   smoke         +1  the reauth check's standalone `personaSignIn()` session
+ *   visual        +1  `gate-apply` re-signs `verified`, because dom's `gate-signin-password-updated`
+ *                     reset revoked the session and `personaPasswordRotated` forgot it
+ *
+ * TEN accounts are seeded and NINE of them are signed in as: `design`, `buyer`, `seller`,
+ * `pending`, `needsReview`, `declined`, `verified`, `unverified`, `invited`. The tenth,
+ * `verifyMe` (`verify-me@practice-match.test`), is never signed in as at all — it exists only to
+ * own the verify fixture tokens, because consuming one confirms its account for good (A-S5.2).
+ *
+ * Each RESET costs one extra: `POST /api/auth/password/reset` revokes every session the account
+ * had, so `personaPasswordRotated` drops the memo and the next state that needs `verified@` signs
+ * in again with the new password. Three resets happen per run (account-flows, dom, visual) and
+ * only one of them is followed by another `verified@` state, which is the `+1` above.
+ *
+ * The budget is PER RUN, not per quarter-hour: `scripts/reset_rate_limits.py` zeroes every `rl:*`
+ * counter at the start of every local run that actually starts the API (A-S5.1), so consecutive
+ * runs are independent and there is no window to wait out.
+ *
+ * A REMOTE run (`PW_APP_URL`) differs on both halves of that, and Task S7 (John, 2026-09-08) is
+ * where the difference is handled. Nothing clears QA's counters — its rate limits are the real
+ * ones, deliberately (A-S5.1), so two runs of this suite against QA are fifteen minutes apart, one
+ * fixed `SIGNIN_IP` window. The FIXTURES, though, are reseeded either way: a local run's `api` web
+ * server runs `seed_persona` before it serves (A-I7), and a remote run runs the same script against
+ * the target from `frontend/tests/global-setup.ts` before its first test — so every run of this
+ * suite, local or live, starts from the same known baseline, and the eight live account flows
+ * cannot leave the next one photographing what this one consumed.
+ * `tests/scripts/test_seed_persona_restores.py` is the proof that the reseed really does restore.
  *
  * The wrong password also counts toward `SIGNIN_EMAIL`'s ten failures per address per 15 minutes —
  * for `buyer@` only, and one of ten.
  */
 export const personaSessionMemos: Record<PersonaKey, { cookies: PersonaCookies | null }> = {
   design: { cookies: null }, buyer: { cookies: null }, seller: { cookies: null },
-  pending: { cookies: null }, needsReview: { cookies: null }, declined: { cookies: null }
+  pending: { cookies: null }, needsReview: { cookies: null }, declined: { cookies: null },
+  verified: { cookies: null }, unverified: { cookies: null }, invited: { cookies: null },
+  verifyMe: { cookies: null }
 };
 
 /**
@@ -506,7 +809,8 @@ export async function signInAsPersona(page: Page, url = '/'): Promise<void> {
 }
 
 // ---------------------------------------------------------------------------------------
-// `reach()` — the one entry point for all 28 approved states (amendment A-I8).
+// `reach()` — the one entry point for all 43 approved states (amendment A-I8; 28 until Task S5
+// added the fifteen account screens of spec §6).
 //
 // Until I8 both targets entered every state the same way, through the design's own PROTOTYPE
 // affordances: the jump bar (`jump()`), the "Prototype — access states" shortcuts, and the
@@ -526,15 +830,25 @@ export async function signInAsPersona(page: Page, url = '/'): Promise<void> {
 // harness.test.ts can pin them without a browser.
 // ---------------------------------------------------------------------------------------
 
+export type ReachGate = 'signin' | 'apply' | 'pending' | 'rejected' | 'signup' | 'check-email'
+  | 'verify-expired' | 'forgot' | 'reset' | 'reset-expired' | 'invite' | 'answer' | 'unavailable';
+
 export interface ReachTarget {
   /** The prototype screen. Anything but `gate` needs a session on the app. */
   screen?: 'gate' | 'browse' | 'detail' | 'requests' | 'seller' | 'admin';
-  /** Which gate state, when `screen` is the gate. */
-  gate?: 'signin' | 'apply' | 'pending' | 'rejected';
+  /** Which gate state, when `screen` is the gate — every value `startGate` declares (A8.8a). */
+  gate?: ReachGate;
   /** `mobile` asks for the prototype's own 390×800 phone frame, not a browser resize. */
   viewport?: 'desktop' | 'mobile';
   /** Overrides the persona the app signs in as. The reference ignores it — it has no session. */
   persona?: PersonaKey;
+  /** One of the five outcomes that land on the sign-in card with a message (spec §3's notice
+   *  slot). The reference is handed `NOTICES[key]` through `startNotice`; the app performs the
+   *  real flow that produces it. */
+  notice?: NoticeKey;
+  /** The reviewer's question on the applicant-answer card. The app fetches it; the reference is
+   *  handed it through A9.1's `startAnswerNote` (A-S5) — there is no other way in. */
+  note?: string;
 }
 
 /**
@@ -570,8 +884,9 @@ export function personaFor(target: ReachTarget = {}): PersonaKey | null {
 }
 
 /** The account handed to the REFERENCE: the same one the app signs in as, so both targets render
- *  the same header. `null` only where the app signs nobody in either (the sign-in and application
- *  gates). A5.4 reads it and, since review round 1's I1, leaves a set `startScreen` in charge of
+ *  the same header. `null` only where the app signs nobody in either — the sign-in gate (the
+ *  application gate joined the signed-in states in A-S4). A5.4 reads it and, since review round 1's
+ *  I1, leaves a set `startScreen` in charge of
  *  WHICH screen — so one navigation puts the reference exactly where the app's deep link puts the
  *  app, with no clicking in between. */
 export function referenceMe(persona: PersonaKey | null): (typeof PERSONAS)[PersonaKey] | null {
@@ -579,29 +894,117 @@ export function referenceMe(persona: PersonaKey | null): (typeof PERSONAS)[Perso
 }
 
 /**
+ * `gate-reapply`: a DECLINED account reaching the application form. It is the one state whose two
+ * targets take a different number of steps — on the app the account clicks through its own card,
+ * on the reference `startGate: 'apply'` puts it straight there — and the one place `me` has to be
+ * withheld from a state that names a persona, because a `declined` account maps the gate back to
+ * its own card (measured against the real `Component`).
+ */
+const isReapply = (target: ReachTarget): boolean => target.gate === 'apply' && target.persona === 'declined';
+
+/**
+ * The gates the APP captures SIGNED IN. Only `unavailable`: a member who deep-links a route their
+ * access does not include. No `me` can buy `auth: true` on a gate screen — an `active` account
+ * overrides the gate and lands on Browse (pinned in logic.test.ts) — so the reference sets `auth`
+ * the only other way A5.4 offers, `startScreen`, and `startGate` then puts it back on the gate.
+ * `state.me` stays the design's own fixture identity, which by the A-I8.2 invariant is
+ * letter-for-letter `buyer@`'s computed label: the account the app captures this state as.
+ */
+const SIGNED_IN_GATES = new Set<ReachGate>(['unavailable']);
+
+/** The `startScreen` the reference is given — `browse` where the capture must be signed in. */
+export function referenceScreen(target: ReachTarget = {}): NonNullable<ReachTarget['screen']> {
+  return target.gate && SIGNED_IN_GATES.has(target.gate) ? 'browse' : (target.screen ?? 'gate');
+}
+
+/**
+ * The account the reference is given, or null. Withheld for the three gates where an account
+ * would override the gate the state IS: `unavailable` (an active account lands on Browse),
+ * `answer` (a `needs_review` account maps to the "under review" card) and the declined re-apply.
+ * Nothing is lost — an applicant's `auth` is false on both targets and the gate screen's header is
+ * driven by `auth` alone, while `unavailable`'s identity comes from the design's own fixture.
+ */
+export function referencePersona(target: ReachTarget = {}): PersonaKey | null {
+  if (isReapply(target) || target.gate === 'answer' || (target.gate && SIGNED_IN_GATES.has(target.gate))) return null;
+  return personaFor(target);
+}
+
+/**
  * The reference's entry: the design at `/` — the runtime resolves its own relative assets against
- * it — with all four prototype props named on every request, so no state inherits a value another
+ * it — with all six prototype props named on every request, so no state inherits a value another
  * state set.
  */
 export function referenceUrl(target: ReachTarget = {}): string {
   return `/?props=${encodeURIComponent(JSON.stringify({
-    startScreen: target.screen ?? 'gate',
+    startScreen: referenceScreen(target),
     startGate: target.gate ?? '',
     startViewport: target.viewport ?? 'desktop',
-    me: referenceMe(personaFor(target))
+    me: referenceMe(referencePersona(target)),
+    // A8.8b / A9.1: the two message props. Always named, so a notice or a note cannot leak from
+    // one capture into the next.
+    startNotice: target.notice ? NOTICES[target.notice] : '',
+    startAnswerNote: target.note ?? ''
   }))}`;
 }
 
-/** The app's plan for a target: which account to be, which URL to open, and — for the one gate
- *  state the design reaches by a link rather than by an account — what to click after. */
-export function appPlan(target: ReachTarget = {}): { persona: PersonaKey | null; url: string; click: string | null } {
+/** The app's route per gate value that has one of its own (spec §5's five public pages, plus the
+ *  member route whose refusal IS the `unavailable` state). A gate absent from this table is reached
+ *  by BEING an account in that state, at `/`. */
+const GATE_ROUTE: Partial<Record<ReachGate, (token: string) => string>> = {
+  signup: () => '/signup',
+  forgot: () => '/forgot',
+  // A token the seed never created, so the real endpoint answers its real 400 and the card is the
+  // API's own verdict rather than a state the harness asserted into being.
+  'verify-expired': () => `/verify?token=${expiredFixtureToken('verify')}`,
+  'reset-expired': () => `/reset?token=${expiredFixtureToken('reset')}`,
+  // The forms render from the token in the URL and SPEND it only on submit, which these two
+  // states never do — but the counter still advances, because a token in a URL has been handed to
+  // the API and the next capture must not gamble on it having been left unused.
+  reset: (token) => `/reset?token=${token}`,
+  invite: (token) => `/accept-invite?token=${token}`,
+  unavailable: () => '/admin'
+};
+
+/** The URL each notice state's REAL flow starts at. The submit itself is `submitNotice`. */
+const NOTICE_ROUTE: Record<NoticeKey, (token: string) => string> = {
+  verified: (token) => `/verify?token=${token}`,
+  'reset-sent': () => '/forgot',
+  'password-updated': (token) => `/reset?token=${token}`,
+  'invite-set': (token) => `/accept-invite?token=${token}`,
+  'invite-expired': () => `/accept-invite?token=${expiredFixtureToken('invite')}`
+};
+
+const GATE_TOKEN: Partial<Record<ReachGate, FixtureTokenKind>> = { reset: 'reset', invite: 'invite' };
+const NOTICE_TOKEN: Record<NoticeKey, FixtureTokenKind | null> = {
+  verified: 'verify', 'reset-sent': null, 'password-updated': 'reset', 'invite-set': 'invite', 'invite-expired': null
+};
+
+/** Which seeded fixture token a target's APP entry takes, or null. Pure, so the run's whole token
+ *  budget is countable in harness.test.ts without spending one. */
+export function appTokenKind(target: ReachTarget = {}): FixtureTokenKind | null {
+  if (target.notice) return NOTICE_TOKEN[target.notice];
+  return (target.gate && GATE_TOKEN[target.gate]) ?? null;
+}
+
+/** The app's plan for a target: which account to be, which URL to open, and — for `gate-reapply`
+ *  alone — which of the design's own buttons to press on arrival.
+ *
+ *  The `click` field went away in A-S4 when the last state that needed one stopped needing it, and
+ *  comes back here for exactly one: a declined account reaches the application form through its own
+ *  card's "Reply with more information", which is the route spec §3 describes and the only one the
+ *  app has.
+ *
+ *  Pure: the fixture token is passed IN, because taking one writes to the run's memo file and this
+ *  function is pinned by unit tests that must spend nothing. */
+export function appPlan(target: ReachTarget = {}, token = ''): { persona: PersonaKey | null; url: string; click?: string } {
+  if (target.notice) return { persona: null, url: NOTICE_ROUTE[target.notice](token) };
+  const route = target.gate && GATE_ROUTE[target.gate];
+  if (route) return { persona: personaFor(target), url: route(token) };
   const screen = target.screen ?? 'gate';
   return {
     persona: personaFor(target),
     url: ROUTE[screen] + (target.viewport === 'mobile' ? '?viewport=mobile' : ''),
-    // "Request access" is the design's own link on the sign-in card (`goApply`), not a prototype
-    // shortcut, so it survives the launch removal and is the honest way onto that gate.
-    click: screen === 'gate' && target.gate === 'apply' ? 'Request access' : null
+    ...(isReapply(target) ? { click: 'Reply with more information' } : {})
   };
 }
 
@@ -618,11 +1021,58 @@ export async function reach(page: Page, target: ReachTarget = {}): Promise<void>
     await page.goto(referenceUrl(target));
     return mounted(page);
   }
-  const plan = appPlan(target);
+  const kind = appTokenKind(target);
+  const plan = appPlan(target, kind ? nextFixtureToken(kind) : '');
   if (plan.persona) await signInAs(page, plan.persona, plan.url);
   else await page.goto(plan.url);
   await mounted(page);
   if (plan.click) await click(page, plan.click);
+  if (target.gate === 'reset-expired') await submitPasswordForm(page, PERSONA_RESET_PASSWORD);
+  if (target.notice) await submitNotice(page, target.notice);
+}
+
+/** The design's own two-password form — the reset and invite cards share it byte for byte. */
+async function submitPasswordForm(page: Page, pw: string): Promise<void> {
+  await page.getByLabel('New password', { exact: true }).fill(pw);
+  await page.getByLabel('Confirm password', { exact: true }).fill(pw);
+  await page.getByRole('button', { name: 'Save password', exact: true }).click();
+}
+
+/**
+ * Waits until every `expectApiStatus` arming has been consumed, then asserts it.
+ *
+ * Chromium delivers a console event asynchronously, so the card the 4xx produces can be visible a
+ * few milliseconds before the line arrives. The ASSERTION is the pure one above; this only decides
+ * when to make it, and it fails through that same assertion when the line never comes.
+ */
+export async function settleExpectedApiFailures(page: Page, timeoutMs = 5_000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while ((armedApiFailures.get(page)?.length ?? 0) > 0 && Date.now() < deadline) await page.waitForTimeout(50);
+  assertExpectedApiFailuresObserved(page);
+}
+
+/**
+ * The APP half of a notice state: the real flow the spec says produces that message.
+ *
+ * `verified` needs nothing — the `/verify` landing posts its token on arrival (A8.3b) — and the
+ * other four submit one of the design's own forms. Nothing here asserts the outcome: the pixel and
+ * DOM oracles do that against the reference, and `account-flows.spec.ts` asserts the copy.
+ */
+export async function submitNotice(page: Page, key: NoticeKey): Promise<void> {
+  if (key === 'reset-sent') {
+    await page.getByLabel('Email', { exact: true }).fill(nextThrowawayEmail('forgot'));
+    await page.getByRole('button', { name: 'Send reset link', exact: true }).click();
+  } else if (key === 'password-updated' || key === 'invite-set' || key === 'invite-expired') {
+    await submitPasswordForm(page, key === 'password-updated' ? PERSONA_RESET_PASSWORD : PERSONA_INVITE_PASSWORD);
+  }
+  await page.getByText(NOTICES[key], { exact: true }).first().waitFor({ state: 'visible' });
+  // AFTER the notice, never before (review round 1, M4). The notice IS the API's confirmation: a
+  // submit it REFUSED — a spent token, a policy refusal — would otherwise have the run record a
+  // password change that never happened and forget a session that is still live, and every later
+  // sign-in as that account would 401 a long way from the cause. Only the ACCEPTED invitation
+  // counts; a dead link set no password and revoked nothing.
+  if (key === 'password-updated') personaPasswordRotated('verified');
+  if (key === 'invite-set') personaPasswordRotated('invited');
 }
 
 /**
@@ -638,5 +1088,74 @@ export async function placeholderRings(page: Page): Promise<string[]> {
         return !ring || getComputedStyle(ring).display !== 'none';
       })
       .map((el) => el.id || '(no id)')
+  );
+}
+
+/**
+ * True for the one console line Chromium logs for `signin-form.spec.ts`'s wrong-password
+ * case, which deliberately provokes a 401 and needs to recognise its own line rather than
+ * fail on it. Chromium's wording differs by transport: HTTP/1.1 (Vite's dev proxy — every
+ * local and CI run) carries a reason phrase, "Failed to load resource: the server responded
+ * with a status of 401 (Unauthorized)"; HTTP/2 (a live deployment, e.g.
+ * `PW_APP_URL=https://qa.foundation.vin`) has no reason phrase at the protocol level, so
+ * Chromium logs "… a status of 401 ()" instead. Matching `/401 \(Unauthorized\)/` — the
+ * original filter — missed the second form, so the deliberate 401 leaked through the filter
+ * and failed the test only on a live run (found running the parity suite against QA). Matched
+ * on the status code alone, word-bounded so a status that merely CONTAINS "401" (e.g. a 4010)
+ * is not mistaken for it, and any other console error still fails the test as before.
+ */
+export function isExpectedApiFailure(status: number, message: string): boolean {
+  return new RegExp(`status of ${status}\\b`).test(message);
+}
+
+/** `isExpectedApiFailure(401, …)` under the name signin-form.spec.ts has always called it. */
+export function isExpectedSignInFailure401(message: string): boolean {
+  return isExpectedApiFailure(401, message);
+}
+
+// ---------------------------------------------------------------------------------------
+// The per-page console-error allow-list (controller amendment A-S5, ruling 4).
+//
+// Three approved states deliberately provoke `TOKEN_INVALID` — a real 400 — and Chromium logs
+// every 4xx subresource as a console error, which `prepare()`'s gate otherwise fails the test on.
+// The exemption is deliberately small and deliberately noisy:
+//
+//   * ONE status per arming, consumed by exactly ONE matching line — a second 400 still fails;
+//   * armed from the STATE's own steps, so nothing is exempt run-wide;
+//   * armed only on the APP: the reference has no API and must never be exempted from anything;
+//   * and an arming nobody consumed is itself a FAILURE (`assertExpectedApiFailuresObserved`),
+//     because a dead exemption means the state quietly stopped provoking the 4xx it exists to show.
+//
+// It lives here rather than in visual.spec.ts/dom.spec.ts because those two are not S5's files —
+// and this is the better seam anyway: the fact "this state provokes a 400" belongs beside the
+// state, in screens.ts, not in every spec that drives it.
+// ---------------------------------------------------------------------------------------
+const armedApiFailures = new WeakMap<Page, number[]>();
+const observedApiFailures = new WeakMap<Page, number[]>();
+
+/** Allows exactly one console error for `status` on this page. A no-op on the reference. */
+export function expectApiStatus(page: Page, status: number): void {
+  if (driverFor(page.url()) !== 'app') return;
+  armedApiFailures.set(page, [...(armedApiFailures.get(page) ?? []), status]);
+}
+
+/** Whether this console line answers an arming — and if so, spends it. */
+export function consumeExpectedApiFailure(page: Page, message: string): boolean {
+  const armed = armedApiFailures.get(page);
+  if (!armed) return false;
+  const at = armed.findIndex((status) => isExpectedApiFailure(status, message));
+  if (at < 0) return false;
+  const [status] = armed.splice(at, 1);
+  observedApiFailures.set(page, [...(observedApiFailures.get(page) ?? []), status]);
+  return true;
+}
+
+/** Throws unless every armed allowance was actually used. */
+export function assertExpectedApiFailuresObserved(page: Page): void {
+  const armed = armedApiFailures.get(page) ?? [];
+  if (armed.length === 0) return;
+  throw new Error(
+    `expectApiStatus armed ${armed.join(', ')} and the page never logged it: this state is supposed to `
+    + 'provoke that failure, so an allowance nobody used means it stopped doing so'
   );
 }

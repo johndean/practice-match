@@ -1,7 +1,7 @@
 {
   "name": "practice-match",
   "private": true,
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -15,7 +15,7 @@
     "test:visual:baselines": "playwright test --config=tests/playwright.config.ts --project=reference",
     "test:cs:baselines": "playwright test --config=tests/playwright.config.ts --project=coming-soon-reference",
     "test:cs": "playwright test --config=tests/playwright.config.ts --project=coming-soon",
-    "gen:permissions": "cd .. && DATABASE_URL=${DATABASE_URL:-postgresql://pm:pm_dev_pw@localhost:5433/practice_match} REDIS_URL=${REDIS_URL:-redis://localhost:6380/0} ENVIRONMENT=${ENVIRONMENT:-test} API_SECRET_KEY=${API_SECRET_KEY:-test_only_secret_change_me} poetry run python -m app.auth.permissions --ts > frontend/src/auth/permissions.ts.new && mv frontend/src/auth/permissions.ts.new frontend/src/auth/permissions.ts",
+    "gen:permissions": "cd .. && DATABASE_URL=${DATABASE_URL:?set DATABASE_URL (the test database) - gen:permissions refuses to guess} REDIS_URL=${REDIS_URL:?set REDIS_URL (the test Redis) - gen:permissions refuses to guess} ENVIRONMENT=${ENVIRONMENT:?set ENVIRONMENT (the test environment) - gen:permissions refuses to guess} API_SECRET_KEY=${API_SECRET_KEY:?set API_SECRET_KEY (the test secret) - gen:permissions refuses to guess} poetry run python -m app.auth.permissions --ts > frontend/src/auth/permissions.ts.new && mv frontend/src/auth/permissions.ts.new frontend/src/auth/permissions.ts",
     "gen:design": "vite-node scripts/apply-amendments.ts",
     "gen:app": "node scripts/convert-dc.mjs ../docs/design-reference/design_handoff_practice_match_v3/'Practice Match V3.dc.html' src/app.setup.js src/App.vue src/generated/pseudo.css"
   },

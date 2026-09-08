@@ -8,9 +8,11 @@
  * adapter called `api.signIn` and handed the answer straight back WITHOUT writing it into the
  * store, so after an interactive sign-in through the design's own form `useMe().me.value` stayed
  * null while `logic.js` believed it was signed in — and the next `guard()` asked
- * `can('page.browse', null)`, got false, and sent the member to the empty `unavailable` gate.
+ * `can('page.browse', null)`, got false, and sent the member to the `unavailable` gate — which at
+ * the time rendered an empty column, since the card A8.4 fills did not exist yet.
  * `main.ts`'s load-before-mount hid it from every reload path.
  */
+import type { ApplicationsMe, Status } from './api';
 import type { Me, MeStore } from './me';
 
 /** The `/api/auth/*` client, narrowed to what the adapter uses — so a test can supply a fake
@@ -18,12 +20,30 @@ import type { Me, MeStore } from './me';
 export interface AuthApi {
   signIn(email: string, password: string): Promise<Me>;
   signOut(): Promise<unknown>;
+  signUp(email: string, password: string): Promise<Status>;
+  verify(token: string): Promise<Status>;
+  forgot(email: string): Promise<Status>;
+  reset(token: string, password: string): Promise<Status>;
+  acceptInvite(token: string, password: string): Promise<Status>;
+  apply(kind: string, fields: Record<string, unknown>): Promise<{ id: string; status: string }>;
+  answer(applicationId: string, answer: string): Promise<Status>;
+  applicationsMe(): Promise<ApplicationsMe>;
+  resendVerification(): Promise<Status>;
 }
 
 /** What `logic.js` sees as `this.props.auth`. */
 export interface AuthAdapter {
   signIn(email: string, password: string): Promise<Me>;
   signOut(): Promise<void>;
+  signUp(email: string, password: string): Promise<Status>;
+  verify(token: string): Promise<Status>;
+  forgot(email: string): Promise<Status>;
+  reset(token: string, password: string): Promise<Status>;
+  acceptInvite(token: string, password: string): Promise<Status>;
+  apply(kind: string, fields: Record<string, unknown>): Promise<{ id: string; status: string }>;
+  answer(applicationId: string, answer: string): Promise<Status>;
+  applicationsMe(): Promise<ApplicationsMe>;
+  resendVerification(): Promise<Status>;
 }
 
 /** The store, narrowed to the two writes the adapter performs. */
@@ -53,6 +73,20 @@ export function makeAuthAdapter(api: AuthApi, store: AuthStore): AuthAdapter {
       } finally {
         store.clear();
       }
-    }
+    },
+    // The rest of the account lifecycle: plain pass-throughs. Unlike signIn/signOut, none of
+    // these has an opinion about the store — a sign-up, a reset, an application answer, none of
+    // them changes who `useMe()` says the visitor is, so none of them touches it.
+    signUp: (email, password) => api.signUp(email, password),
+    verify: (token) => api.verify(token),
+    forgot: (email) => api.forgot(email),
+    reset: (token, password) => api.reset(token, password),
+    acceptInvite: (token, password) => api.acceptInvite(token, password),
+    apply: (kind, fields) => api.apply(kind, fields),
+    answer: (applicationId, text) => api.answer(applicationId, text),
+    applicationsMe: () => api.applicationsMe(),
+    // A-S4.1: the "Send it again" button's other branch — used when the visitor reached the
+    // check-email card by SIGNING IN rather than by signing up, so no password is in hand.
+    resendVerification: () => api.resendVerification()
   };
 }

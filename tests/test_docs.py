@@ -22,7 +22,12 @@ DOCS = [ROOT / "README.md", ROOT / "CLAUDE.md", ROOT / "DEPLOY.md", *sorted((ROO
 REQUIRED_CI_COMMANDS = (
     "poetry run ruff check app tests scripts",
     "poetry run mypy app --strict",
-    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/prepare_photos.py scripts/seed_listings.py --strict",
+    # S5 review round 2: `scripts/reset_rate_limits.py` joins the list. The joined form pins the
+    # flags' order and adjacency, so a new script has to be added here as well as to the workflow;
+    # `test_ci_strict_mypy_covers_every_python_script` below is the rule that says WHICH scripts.
+    # M2 (2026-09-08): the seed-listings scripts join the same line — the merged workflow runs the
+    # union of both branches' scripts, and this pin is that union verbatim.
+    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py --strict",
     "poetry run pytest -q -W error",
     # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
     # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
@@ -128,6 +133,31 @@ def test_ci_workflow_runs_every_gate():
     text = path.read_text()
     for cmd in REQUIRED_CI_COMMANDS:
         assert cmd in text, cmd
+
+
+def test_ci_strict_mypy_covers_every_python_script():
+    """S5 review round 2 (the implementer's own residual, ruled a gap): every `scripts/*.py` that
+    CI measures for coverage must also be type-checked, and the file list is written out by hand in
+    `quality.yml`.
+
+    `scripts/reset_rate_limits.py` (A-S5.1) was added with tests and 100 % branch coverage but was
+    never added to that hand-written list, so CI ran ruff and pytest over it and mypy over
+    everything else — a gap nothing could see, because the only pin was a substring naming the
+    three scripts that WERE listed. The rule is stated once here instead: the strict mypy step
+    names every Python file under `scripts/`, so the next script is caught by this test rather than
+    by a reviewer.
+
+    Deliberately derived from the directory, not from a literal list — a list would have to be
+    edited alongside the workflow, which is the failure mode this exists to prevent."""
+    step = next(
+        line for line in (ROOT / ".github" / "workflows" / "quality.yml").read_text().splitlines()
+        if "mypy" in line and "--strict" in line and "scripts/" in line
+    )
+    missing = sorted(p.name for p in (ROOT / "scripts").glob("*.py") if f"scripts/{p.name}" not in step)
+    assert missing == [], (
+        f"{missing} are measured by CI's `--cov=scripts` but are not in its strict mypy step "
+        f"({step.strip()}) — add them there, beside the others"
+    )
 
 
 def test_ci_workflow_installs_no_ad_hoc_tooling():
@@ -523,6 +553,93 @@ def test_the_playwright_persona_password_default_matches_seed_persona():
     assert presented.group(1) == seeded.group(1)
 
 
+def test_the_harness_fixture_tokens_match_the_seed_scripts_pattern_and_the_three_new_state_emails():
+    """Task S3/S5, same shape as the password pin above: `scripts/seed_persona.py`'s
+    `FIXTURE_TOKENS` names the account and the `fixture-<purpose>-{n:02d}` pattern the visual
+    harness (Task S5) mirrors as test-only constants, so the two never drift out of the one
+    documented `fixture-<purpose>-NN` shape a raw token is ever allowed to look like.
+
+    S3 shipped only the seed side and landed this as `xfail(strict=True)` so the branch stayed
+    green; Task S5 added `FIXTURE_TOKEN_PREFIX`, `FIXTURE_TOKENS` and the three
+    `*@practice-match.test` emails to `frontend/tests/harness.ts`, which turned the marker into an
+    XPASS — S5's RED — and removing it is the GREEN."""
+    from scripts import seed_persona
+
+    assert seed_persona.FIXTURE_TOKENS == {
+        # A-S5.2 (S-1): the verify tokens belong to `verify-me@`, the tenth account, because
+        # consuming one confirms its account for good and the oracle needs `unverified@` to stay
+        # unverified at every capture.
+        "verify": ("verify-me@practice-match.test", "fixture-verify-{n:02d}"),
+        "reset": ("verified@practice-match.test", "fixture-reset-{n:02d}"),
+        "invite": ("invited@practice-match.test", "fixture-invite-{n:02d}"),
+    }
+    assert seed_persona.FIXTURE_TOKEN_PREFIX == "fixture-"
+
+    harness = (ROOT / "frontend" / "tests" / "harness.ts").read_text()
+    presented = re.search(r"^export const FIXTURE_TOKEN_PREFIX = '([^']+)';$", harness, re.MULTILINE)
+    assert presented, "frontend/tests/harness.ts does not yet define FIXTURE_TOKEN_PREFIX (Task S5)"
+    assert presented.group(1) == seed_persona.FIXTURE_TOKEN_PREFIX
+    for email, _pattern in seed_persona.FIXTURE_TOKENS.values():
+        assert email in harness, f"frontend/tests/harness.ts does not yet name {email} (Task S5)"
+
+    # The harness builds each raw token from its own prefix table, so the two spellings of the
+    # SAME twelve values are pinned equal rather than merely similar-looking.
+    prefixes = re.search(r"^export const FIXTURE_TOKENS = \{ (.+) \} as const;$", harness, re.MULTILINE)
+    assert prefixes, "frontend/tests/harness.ts no longer writes FIXTURE_TOKENS as one line"
+    presented_prefixes = dict(re.findall(r"(\w+): '([^']+)'", prefixes.group(1)))
+    count = re.search(r"^export const FIXTURE_TOKEN_COUNT = (\d+);$", harness, re.MULTILINE)
+    assert count and int(count.group(1)) == seed_persona.FIXTURE_TOKEN_COUNT
+    for purpose, (_email, pattern) in seed_persona.FIXTURE_TOKENS.items():
+        for n in range(1, seed_persona.FIXTURE_TOKEN_COUNT + 1):
+            assert pattern.format(n=n) == f"{presented_prefixes[purpose]}{n:02d}", (purpose, n)
+
+
+def test_the_throwaway_address_shape_is_one_string_the_harness_and_the_seed_both_hold():
+    """Task S7 fix round 1, ruling 4 (2026-09-08). The live sign-up and forgot flows create a real
+    account per run at `e2e-<run>-<purpose>-<n>@example.org`, and `scripts/seed_persona.py`'s
+    restoration now DELETES those accounts — so the shape it deletes by and the shape
+    `frontend/tests/harness.ts`'s `throwawayEmail` produces must be one string, not two that look
+    alike. A pattern that drifted wider than the addresses the harness makes would remove an
+    account nobody meant it to; one that drifted narrower would silently stop cleaning up.
+
+    Same shape as the fixture-token pin above: the seed owns the value, the harness mirrors it, and
+    this is what keeps them equal."""
+    from scripts import seed_persona
+
+    harness = (ROOT / "frontend" / "tests" / "harness.ts").read_text()
+    presented = re.search(r"^export const THROWAWAY_EMAIL_PATTERN = '([^']+)';$", harness, re.MULTILINE)
+    assert presented, "frontend/tests/harness.ts does not define THROWAWAY_EMAIL_PATTERN (S7 fix round 1)"
+    # The TS source escapes the backslash; the pattern itself is what both sides compile.
+    assert presented.group(1).replace("\\\\", "\\") == seed_persona.THROWAWAY_EMAIL_PATTERN
+
+    # …and it really is the shape the harness's own builder produces.
+    builder = re.search(r"return `e2e-\$\{[^`]*\}@example\.org`;", harness)
+    assert builder, "frontend/tests/harness.ts's throwawayEmail no longer builds e2e-…@example.org"
+    assert re.match(seed_persona.THROWAWAY_EMAIL_PATTERN, "e2e-run-A-signup-1@example.org")
+    assert not re.match(seed_persona.THROWAWAY_EMAIL_PATTERN, "e2e-run-A-signup-1@evil.example.org")
+
+
+def test_the_harness_carries_the_seeded_application_data_the_oracle_renders():
+    """A-S5 ruling 2, the same pin one level deeper. Two of the fifteen approved states RENDER
+    seeded application data: the applicant-answer card shows `needs-review@`'s `info_request`
+    (the reference gets it through A9.1's `startAnswerNote`), and the re-apply form is filled with
+    `declined@`'s `fields` on both targets. If the seed and the harness ever disagreed, the two
+    targets would render different words and fifteen baselines would be wrong — so they are one
+    fact in two languages, like the password and the token pattern above."""
+    from scripts import seed_persona
+
+    harness = (ROOT / "frontend" / "tests" / "harness.ts").read_text()
+    note = re.search(r"^export const NEEDS_REVIEW_INFO_REQUEST = '([^']+)';$", harness, re.MULTILINE)
+    assert note, "frontend/tests/harness.ts no longer defines NEEDS_REVIEW_INFO_REQUEST"
+    assert note.group(1) == seed_persona.NEEDS_REVIEW_INFO_REQUEST
+
+    block = re.search(r"^export const DECLINED_FIELDS = \{\n(.*?)^\} as const;$", harness, re.MULTILINE | re.DOTALL)
+    assert block, "frontend/tests/harness.ts no longer defines DECLINED_FIELDS as a literal object"
+    presented = dict(re.findall(r"^\s*(\w+): '(.*)',?$", block.group(1), re.MULTILINE))
+    presented["affirm"] = bool(re.search(r"^\s*affirm: true,?$", block.group(1), re.MULTILINE))
+    assert presented == seed_persona.DECLINED_FIELDS, (presented, seed_persona.DECLINED_FIELDS)
+
+
 def test_claude_md_does_not_claim_v2_byte_identity_after_the_launch_removal():
     """Review round 1, I3. Two sentences in CLAUDE.md outlived their truth: the thirteen non-Browse
     screens WERE byte-identical to V2 from Task V13 until Task I8a's launch removal (A6, ruled
@@ -546,18 +663,26 @@ def test_claude_md_does_not_claim_v2_byte_identity_after_the_launch_removal():
     assert "remains the **pre-V3 oracle**" in text
 
 
-def test_claude_md_counts_the_five_prototype_props_and_says_which_are_read():
+def test_claude_md_counts_the_seven_prototype_props_and_says_which_are_read():
     """Review round 1, M5. The launch-removal section said "the four prototype props" after A5.7
     added a fifth, and described `prototypeBar` as one of the reference's ways into a state — but
     A6.4b removed the only expression that ever read it, so it is declared for the parity check in
-    `app-generated.test.ts` and for nothing else."""
+    `app-generated.test.ts` and for nothing else.
+
+    Final-review I2 (S6 round 2): the account screens (Task S4/S5) added two more the same way —
+    `startNotice` and `startAnswerNote` — so `frontend/src/app.setup.js` declares SEVEN, not five;
+    the count was left at "five" after the enumeration in the same paragraph was widened to name
+    both, so a green pin was actively blocking the correction. The name loop below now iterates all
+    seven, not five, so a future prototype prop added to the design without a matching name here
+    fails this pin rather than passing it silently (I2's own secondary finding)."""
     text = (ROOT / "CLAUDE.md").read_text()
-    assert "All five prototype props stay **declared**" in text
+    assert "All seven prototype props stay **declared**" in text
+    assert "All five prototype props" not in text
     assert "the four prototype props" not in text
     assert "`prototypeBar` is declared for that parity check alone" in text
-    # The five, by name, in the section that lists them.
+    # The seven, by name, in the section that lists them.
     section = text.split("## Launch-removal list")[1]
-    for prop in ("prototypeBar", "startScreen", "startViewport", "startGate", "me"):
+    for prop in ("prototypeBar", "startScreen", "startViewport", "startGate", "me", "startNotice", "startAnswerNote"):
         assert f"`{prop}`" in section, prop
 
 
@@ -575,7 +700,7 @@ def _harness_personas() -> dict[str, dict[str, object]]:
         key, email, name, role, initials, state, roles = m.groups()
         found[key] = {"email": email, "name": name, "role": role, "initials": initials, "state": state,
                       "roles": tuple(r.strip().strip("'") for r in roles.split(",") if r.strip())}
-    assert len(found) == 6, f"expected the six harness personas as one line each, read {sorted(found)}"
+    assert len(found) == 10, f"expected the ten harness personas as one line each, read {sorted(found)}"
     return found
 
 
@@ -591,20 +716,33 @@ def test_the_harness_personas_are_the_accounts_seed_persona_seeds_with_the_label
     from app.auth.labels import initials, role_label
     from scripts import seed_persona
 
+    # A-S4: `IDENTITY_STATE_PERSONAS` (Task S3's `unverified@` and `verified@`) is read alongside
+    # `STATE_PERSONAS` — the harness names `verified@` since Task S4, because it is the account the
+    # app reaches `gate-apply` as. Both tuples have the same (email, state, display name) shape and
+    # neither carries a role grant, so they merge into one map here.
+    #
+    # A-S5 (Task S5): `invited@` joins them. It is seeded from its own `INVITED_*` constants rather
+    # than a tuple, because it is the one account with no usable password — but it is an applicant
+    # like the rest, so the same three facts describe it and it is spelled as a triple here.
+    state_personas = (
+        *seed_persona.STATE_PERSONAS,
+        *seed_persona.IDENTITY_STATE_PERSONAS,
+        (seed_persona.INVITED_EMAIL, seed_persona.INVITED_STATE, seed_persona.INVITED_NAME),
+    )
     seeded_roles: dict[str, tuple[str, ...]] = {
         seed_persona.PERSONA_EMAIL: seed_persona.PERSONA_ROLES,
         **{email: roles for email, roles in seed_persona.ORACLE_PERSONAS},
-        **{email: () for email, _state, _name in seed_persona.STATE_PERSONAS},
+        **{email: () for email, _state, _name in state_personas},
     }
     seeded_names: dict[str, str] = {
         seed_persona.PERSONA_EMAIL: seed_persona.PERSONA_NAME,
         **{email: seed_persona.PERSONA_NAME for email, _roles in seed_persona.ORACLE_PERSONAS},
-        **{email: name for email, _state, name in seed_persona.STATE_PERSONAS},
+        **{email: name for email, _state, name in state_personas},
     }
     # Only the three members carry an affiliation; an applicant has none to confirm yet, which is
     # rather the point for `declined@`.
     members = {seed_persona.PERSONA_EMAIL, *(email for email, _roles in seed_persona.ORACLE_PERSONAS)}
-    seeded_states: dict[str, str] = {email: state for email, state, _name in seed_persona.STATE_PERSONAS}
+    seeded_states: dict[str, str] = {email: state for email, state, _name in state_personas}
 
     for key, persona in _harness_personas().items():
         email = str(persona["email"])
@@ -889,3 +1027,233 @@ def test_deploy_md_documents_how_to_seed_qa():
     assert "caches each page in Redis for 60 s" in section
     assert "the seeder does not invalidate it" in section
     assert "not a failed import" in section
+
+
+# --- Task S6: docs and drift, once the account screens (S1-S5), the reseed (S7) and main (M1) are
+# in ------------------------------------------------------------------------------------------
+# Every count below is a fact stated by hand in prose somewhere (CLAUDE.md, LOCAL_AMENDMENTS.md,
+# the runbook) that a generated or hand-maintained SOURCE also carries — the same drift class as
+# the backend-gate and coverage-exclusion pins above, applied to the numbers this merge changed.
+
+
+def test_claude_md_approved_screen_count_matches_screens_ts():
+    """`frontend/tests/screens.ts`'s `SCREENS` grew from 28 (Browse V3) to 43 once Wave 2a's
+    fifteen account-screen states (spec §6, controller amendment A-S5) were appended, and
+    CLAUDE.md's "Layout" line names the count by hand. Counted the same way
+    `frontend/tests/cross-plan-deltas.test.ts` counts it on the TypeScript side (`SCREENS.length`);
+    here it is a regex over the array literal, since nothing in this suite runs a TS parser."""
+    screens_ts = (ROOT / "frontend" / "tests" / "screens.ts").read_text()
+    # Anchored to the START of a line: several steps also call `getByRole(..., { name: '...' })`,
+    # which is the SAME four characters but not a new `Screen` entry — the naive substring count
+    # read 48 here, not 43, until this anchored it (measured while writing this pin).
+    count = len(re.findall(r"^\s*\{ name: '", screens_ts, re.MULTILINE))
+    assert count > 28, "frontend/tests/screens.ts lost states, or the `{ name: '...` marker changed"
+
+    claude = (ROOT / "CLAUDE.md").read_text()
+    layout = next((line for line in claude.splitlines() if line.startswith("`frontend/` Vue app")), None)
+    assert layout is not None, "CLAUDE.md's Layout line is missing or no longer starts with `frontend/` Vue app"
+    assert f"the {count} approved states" in layout, (
+        f"CLAUDE.md's Layout line does not name {count}, frontend/tests/screens.ts's real SCREENS.length: {layout!r}"
+    )
+
+
+def test_runbook_names_the_five_account_routes():
+    """Task S6. Five routed pages joined the app with the account screens
+    (`frontend/src/router/routes.ts`): `/signup`, `/forgot` (no token) and `/verify`, `/reset`,
+    `/accept-invite` (each reads a `?token=` once). An operator reading a bug report about one of
+    them needs the runbook to name it — the same "a path here is a path the server serves" contract
+    `test_identity_runbook_endpoints_exist` holds the API paths to, extended to the frontend
+    routes the verify/reset/invite links and a bare sign-up/forgot visit actually open."""
+    text = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    missing = [r for r in ("/signup", "/forgot", "/verify", "/reset", "/accept-invite") if f"`{r}`" not in text]
+    assert missing == [], f"docs/RUNBOOK-identity.md does not name these account routes: {missing}"
+
+
+def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
+    """The merge of this branch's account-screen amendments (A8, A9) with `main`'s A10/A11 grew
+    both the family count and the entry count `CLAUDE.md`'s "Source of truth" paragraph states by
+    hand — it read "Nine families, 54 entries … 30 literals" before this task and named A10/A11
+    but not A8/A9, the same drift class the pre-merge count went stale by.
+
+    Families: a literal amendment's id (`A2`, `A2.2`, `A5.3a`, `A10.2`, …) always starts `A` then a
+    number, so its family is that number; A1 itself never appears as a literal id — it is DERIVED
+    (`deriveTypographyB`, driven by V2 vs the pristine bundle) — so it is added by hand as the one
+    family the regex cannot see. Entries: the literal count plus A1's own derived count, read from
+    `design-amendments.test.ts`'s own `Array.from({ length: N }, ...)` rather than duplicated here,
+    so the two files cannot drift against each other silently."""
+    ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
+    literal_families = re.findall(r"id: 'A(\d+)", ts)
+    assert literal_families, "frontend/tests/design-amendments.ts: no literal amendment ids found (id: 'A<n>...)"
+    family_count = len({int(n) for n in literal_families}) + 1  # +1 for A1, derived not literal
+    literal_count = len(literal_families)
+
+    test_ts = (ROOT / "frontend" / "tests" / "design-amendments.test.ts").read_text()
+    a1_match = re.search(r"Array\.from\(\{ length: (\d+) \}, \(_, i\) => `A1\.\$\{i \+ 1\}`\)", test_ts)
+    assert a1_match, "design-amendments.test.ts no longer derives A1's ids from Array.from({ length: N }, ...)"
+    a1_count = int(a1_match.group(1))
+    entry_count = literal_count + a1_count
+
+    number_words = {n: w for n, w in enumerate(
+        ("Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+         "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen"))}
+    assert family_count in number_words, f"no spelled-out word on hand for {family_count} families"
+
+    claude = (ROOT / "CLAUDE.md").read_text()
+    assert f"{number_words[family_count]} families, {entry_count} entries" in claude, (
+        f"CLAUDE.md's family/entry count sentence does not match design-amendments.ts: "
+        f"{family_count} families, {entry_count} entries ({a1_count} derived + {literal_count} literals)"
+    )
+    assert f"A1's {a1_count} derived edits plus {literal_count} literals" in claude
+
+
+def test_local_amendments_row_count_matches_design_amendments():
+    """`LOCAL_AMENDMENTS.md` carries one table row per amendment id, with A1's derived edits
+    collapsed to a single row (`frontend/tests/design-amendments.test.ts` proves the collapse and
+    the ordering on the TypeScript side); here the row count is cross-checked against the same
+    literal-id count the family/entry test above reads, so a row silently added or dropped on
+    either side fails here rather than only in the frontend suite."""
+    ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
+    literal_count = len(re.findall(r"id: 'A(\d+)", ts))
+    md = (ROOT / "docs" / "design-reference" / "design_handoff_practice_match_v3" / "LOCAL_AMENDMENTS.md").read_text()
+    rows = re.findall(r"^\|\s*(A[\w.]+)\s*\|", md, re.MULTILINE)
+    assert len(rows) == literal_count + 1, (
+        f"LOCAL_AMENDMENTS.md has {len(rows)} rows; expected {literal_count + 1} "
+        f"({literal_count} literal amendments + one collapsed A1 row)"
+    )
+
+
+def test_runbook_qa_parity_sign_in_budget_matches_the_harness_trace():
+    """S6 review round 1 (Critical). The runbook's QA parity run section stated the sign-in budget
+    as "sixteen" of `SIGNIN_IP`'s thirty — a stale figure carried over from the account-screens
+    plan's A-S5 (3) paragraph, which A-S5.1 already corrected to FOURTEEN (traced exactly against
+    real `POST /api/auth/signin` calls, not estimated: `frontend/tests/harness.ts`'s "THE BUDGET"
+    docstring, 7 + 2 + 3 + 1 + 1). The reseed itself spends no sign-ins, so the number the runbook
+    quotes for "one full parity run" is the harness's traced number and nothing else.
+
+    Pinned by reading the word out of BOTH files rather than hard-coding it here, so the two can
+    never drift apart silently again — whichever one next changes, this fails until the other
+    agrees with it."""
+    harness = (ROOT / "frontend" / "tests" / "harness.ts").read_text()
+    budget_line = next((line for line in harness.splitlines() if "THE BUDGET" in line), None)
+    assert budget_line is not None, "frontend/tests/harness.ts no longer carries a 'THE BUDGET' line"
+    harness_match = re.search(r"THE BUDGET — (\w+) of thirty", budget_line)
+    assert harness_match, f"could not read the traced sign-in count out of: {budget_line!r}"
+
+    runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    runbook_match = re.search(r"(\w+) of `SIGNIN_IP`'s thirty sign-ins per FIXED", runbook)
+    assert runbook_match, "docs/RUNBOOK-identity.md no longer states the QA parity sign-in budget this way"
+
+    assert runbook_match.group(1).lower() == harness_match.group(1).lower(), (
+        f"docs/RUNBOOK-identity.md says {runbook_match.group(1)!r} of thirty sign-ins; "
+        f"frontend/tests/harness.ts's traced budget says {harness_match.group(1)!r} — they must agree"
+    )
+
+
+# --- S6 fix round 2: every stale statement the final review and its docs-drift sweep found ---------
+
+
+def _collapse_whitespace(text: str) -> str:
+    """Markdown soft-wraps one prose sentence differently in different documents (a table row on
+    one line in `DEPLOY.md`, wrapped across several in `docs/RUNBOOK-identity.md`), so a literal
+    substring search across documents has to look past line breaks to compare the same words."""
+    return re.sub(r"\s+", " ", text)
+
+
+PERSONA_PASSWORD_RAILWAY_NOTE = (
+    "stored on the QA `api` service in Railway as the operator's secret store; read by no service; "
+    "passed to the seed and the harness through the shell; never on production"
+)
+
+
+def test_persona_password_railway_storage_is_one_fact_in_every_document():
+    """Controller ruling A-S6.1 (2026-09-08, final-review I3). `docs/RUNBOOK-identity.md`'s QA
+    parity run (§12) reads `PERSONA_PASSWORD` out of Railway, which `DEPLOY.md`, `.env.example` and
+    this runbook's own §11 all said, before this ruling, could never happen ("never a Railway
+    variable" / "Never set it in Railway"). A-S6.1 settles it — `PERSONA_PASSWORD` IS stored on QA
+    as an operator secret nobody's code reads — so all four sites state ONE fact, in these words.
+    Whitespace is collapsed before comparing (see `_collapse_whitespace`), because the same sentence
+    wraps differently in each document."""
+    deploy = _collapse_whitespace((ROOT / "DEPLOY.md").read_text())
+    example = _collapse_whitespace((ROOT / ".env.example").read_text())
+    runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    section_11 = _collapse_whitespace(runbook.split("## 11. Test and QA accounts")[1].split("## 12.")[0])
+    section_12 = _collapse_whitespace(runbook.split("## 12. QA parity run")[1])
+
+    for name, text in (
+        ("DEPLOY.md", deploy),
+        (".env.example", example),
+        ("docs/RUNBOOK-identity.md §11", section_11),
+        ("docs/RUNBOOK-identity.md §12", section_12),
+    ):
+        assert PERSONA_PASSWORD_RAILWAY_NOTE in text, f"{name} does not carry A-S6.1's sentence verbatim"
+
+
+def test_runbook_qa_parity_command_pins_the_playwright_config_flag():
+    """Final-review docs-drift sweep, item 3. `frontend/tests/playwright.config.ts` is the only
+    Playwright config in the repo, and `frontend/package.json`'s `test:e2e` script already runs
+    `playwright test --config=tests/playwright.config.ts --project=app` from `frontend/`. The QA
+    parity command in the runbook has to match that shape — a bare `npx playwright test
+    --project=app` run from the repo root (no `cd frontend`, no `--config=`) cannot find the config
+    at all."""
+    scripts = json.loads((ROOT / "frontend" / "package.json").read_text())["scripts"]
+    assert "--config=tests/playwright.config.ts --project=app" in scripts["test:e2e"], scripts["test:e2e"]
+    config_files = list((ROOT / "frontend").rglob("playwright.config.ts"))
+    assert [p.relative_to(ROOT / "frontend") for p in config_files] == [Path("tests/playwright.config.ts")], (
+        f"expected exactly one config at frontend/tests/playwright.config.ts, found {config_files}"
+    )
+
+    runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    section_12 = runbook.split("## 12. QA parity run")[1]
+    assert "--config=tests/playwright.config.ts --project=app" in section_12, (
+        "docs/RUNBOOK-identity.md §12's QA parity command does not pass --config=tests/playwright.config.ts"
+    )
+    assert "cd frontend" in section_12, "docs/RUNBOOK-identity.md §12's command no longer cds into frontend/ first"
+
+
+def test_deploy_md_says_ten_test_accounts():
+    """Final-review docs-drift sweep, item 11. `DEPLOY.md`'s QA persona accounts bullet said "the
+    six `.test` accounts" — stale since Task S3/S7 grew the seed to ten (three members, three
+    applicants, four identity-screen accounts)."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "seeds the ten `.test` accounts" in text, "DEPLOY.md does not say the seed produces ten accounts"
+    assert "the six `.test` accounts" not in text
+
+
+def test_spec_names_verify_me_as_the_verify_token_owner():
+    """Final-review docs-drift sweep, item 8. A-S5.2 (S-1) moved the `verify` fixture tokens off
+    `unverified@` and onto a tenth account, `verify-me@`, created solely to own them — consuming one
+    during a test must never confirm the account the check-email/resend states need to stay
+    `unverified`. The design spec's own fixture paragraph still named `unverified@` as the token
+    owner; this pins it against `scripts/seed_persona.py`'s own mapping, which is the fact of
+    record (`tests/test_docs.py::test_the_harness_fixture_tokens_match_the_seed_scripts_pattern_and_the_three_new_state_emails`
+    pins the same mapping on the harness side)."""
+    from scripts import seed_persona
+
+    verify_email, _pattern = seed_persona.FIXTURE_TOKENS["verify"]
+    assert verify_email == "verify-me@practice-match.test"
+
+    spec = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-07-account-screens-design.md").read_text()
+    assert "twelve each of `verify` (for `verify-me@`" in spec, (
+        "the spec's fixtures paragraph no longer names verify-me@ as the verify token owner"
+    )
+    assert "twelve each of `verify` (for `unverified@`" not in spec
+
+
+def test_runbook_uses_the_singular_railway_variable_list_spelling():
+    """Final-review M7 / docs-drift sweep item 7. `CLAUDE.md`'s "Common operations" pins `railway
+    variable list --service api --environment QA --json` (the singular, subcommand form the
+    installed CLI, 5.26.0, documents); the runbook's QA parity command used the plural
+    `railway variables --service api --environment QA --json` instead, which M7 could not rule out
+    as simply wrong for the installed CLI. Pinned so the two spellings of the SAME listing
+    invocation cannot drift apart again — this checks the exact command CLAUDE.md pins, not merely
+    that the word "variable" appears somewhere."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    command_match = re.search(r"railway variable list --service api --environment QA --json", claude)
+    assert command_match, "CLAUDE.md no longer pins the railway variable list command this test compares against"
+
+    runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    assert command_match.group(0) in runbook, (
+        "docs/RUNBOOK-identity.md's QA parity command does not use CLAUDE.md's pinned "
+        "'railway variable list' spelling"
+    )
+    assert "railway variables --service api --environment QA --json" not in runbook

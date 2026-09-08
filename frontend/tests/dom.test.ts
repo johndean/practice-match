@@ -592,3 +592,40 @@ describe('summarise', () => {
     expect(out[40]).toBe('… and 1 more (41 total)');
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A-S5.2 (S-2) at the level that matters: what `diff()` reports for a filled <textarea>.
+//
+// The three cases the ruling names, expressed through the whole pipeline the oracle runs —
+// `walkPage` → `normalise` → `diff` — with the two runtimes' shapes as the inputs: React writes a
+// filled textarea's text into the element's CHILDREN (it sets `defaultValue` alongside `value`),
+// Vue sets the property alone. Same rendered text, two storage shapes; the oracle now compares the
+// text, which it did not compare at all before (`value` is excluded from `attrs` for every form
+// tag, so only the reference's own artefact was ever in the snapshot).
+// ---------------------------------------------------------------------------------------
+describe('a <textarea> is compared by its value, not by its children (A-S5.2)', () => {
+  /** The reference's shape: the value materialised as the element's child text. */
+  const reactSide = (value: string): RawElement =>
+    el({ tag: 'textarea', props: [['value', value]], children: value ? [{ text: value }] : [] });
+  /** The app's shape: the value on the property alone. */
+  const vueSide = (value: string): RawElement =>
+    el({ tag: 'textarea', props: [['value', value]], children: [] });
+
+  it('the same value written two ways is no difference at all', () => {
+    expect(diff(normalise(reactSide('Exploring ownership within two years.')), normalise(vueSide('Exploring ownership within two years.')))).toEqual([]);
+  });
+
+  it('two different values ARE a difference — the rule hides nothing', () => {
+    const lines = diff(normalise(reactSide('one')), normalise(vueSide('two')));
+    expect(lines.join('\n')).toContain('value');
+    expect(lines).not.toEqual([]);
+  });
+
+  it('an empty textarea is unchanged on both sides', () => {
+    expect(diff(normalise(reactSide('')), normalise(vueSide('')))).toEqual([]);
+  });
+
+  it('a value present on one side only is still a difference', () => {
+    expect(diff(normalise(reactSide('typed')), normalise(vueSide('')))).not.toEqual([]);
+  });
+});

@@ -170,6 +170,115 @@ async def test_signup_refuses_a_password_that_has_appeared_in_a_breach(client):
     assert r.status_code == 422 and "data breach" in r.json()["error"]["message"]
 
 
+# --- I11: zxcvbn `user_inputs` — a password built from the member's own email or name is weak.
+# Fabricated (non-dictionary) strings: each scores 4 out of zxcvbn's own scale on its own — no
+# resemblance to any of its built-in dictionaries or the bundled breach list (verified directly
+# against both before these were written) — so a refusal below can only be the per-member check,
+# never the length floor, the general dictionary/pattern screen, or the breach screen. ---
+I11_LOCAL = "vqxrtmbklzhp"              # exactly MIN_LEN (12 chars) on its own
+I11_DIGITS_LOCAL = "bxkqlmrvthez"       # the local part I11_DIGITS_PW is built from
+I11_DIGITS_PW = I11_DIGITS_LOCAL + "99"
+I11_DOMAIN = "qzytlorvbnkm"
+I11_NAME = "zqmoprtlvbhk"
+
+
+async def test_signup_refuses_a_password_that_is_its_own_local_part_but_accepts_it_for_another_address(client, conn):
+    r = await client.post("/api/auth/signup", json={"email": f"{I11_LOCAL}@example.org", "password": I11_LOCAL})
+    assert r.status_code == 422 and "stronger" in r.json()["error"]["message"]
+    r = await client.post("/api/auth/signup", json={"email": "unrelated@example.org", "password": I11_LOCAL})
+    assert r.status_code == 202
+
+
+async def test_signup_refuses_a_password_that_is_its_local_part_plus_digits_but_accepts_it_for_another_address(client, conn):
+    r = await client.post("/api/auth/signup", json={"email": f"{I11_DIGITS_LOCAL}@example.org", "password": I11_DIGITS_PW})
+    assert r.status_code == 422 and "stronger" in r.json()["error"]["message"]
+    r = await client.post("/api/auth/signup", json={"email": "unrelated@example.org", "password": I11_DIGITS_PW})
+    assert r.status_code == 202
+
+
+async def test_signup_refuses_a_password_that_is_its_own_domain_but_accepts_it_for_another_address(client, conn):
+    r = await client.post("/api/auth/signup", json={"email": f"buyer@{I11_DOMAIN}.org", "password": I11_DOMAIN})
+    assert r.status_code == 422 and "stronger" in r.json()["error"]["message"]
+    r = await client.post("/api/auth/signup", json={"email": "buyer@different.org", "password": I11_DOMAIN})
+    assert r.status_code == 202
+
+
+def _seeded_account(conn, *, email, display_name=None):
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO account (email, password_hash, state, display_name) VALUES (%s,%s,'active',%s) RETURNING id",
+                    (email, P.hash_password(PW), display_name))
+        return cur.fetchone()[0]
+
+
+# (password, the account's own email, the account's own name-or-None) for the local part, the
+# local part plus digits, the domain, and a name token — the four candidates the brief's Step 1
+# names, each otherwise clearing both the length floor and zxcvbn's own dictionary/pattern screen.
+I11_CASES = [
+    (I11_LOCAL, f"{I11_LOCAL}@example.org", None),
+    (I11_DIGITS_PW, f"{I11_DIGITS_LOCAL}@example.org", None),
+    (I11_DOMAIN, f"buyer@{I11_DOMAIN}.org", None),
+    (I11_NAME, "pat@example.org", I11_NAME),
+]
+
+
+async def test_password_reset_refuses_a_password_built_from_the_account_s_own_email_or_name(client, conn):
+    """I11: `password/reset` reads the account row (email, name) the token names, so the SAME
+    candidate is refused for the account it belongs to and accepted for an unrelated one — the
+    check is per-member, not a global blacklist."""
+    for n, (password, owner_email, name) in enumerate(I11_CASES):
+        owner = _seeded_account(conn, email=owner_email, display_name=name)
+        owner_token = T.issue_email_token(conn, owner, "reset", timedelta(hours=1))
+        refused = await client.post("/api/auth/password/reset", json={"token": owner_token, "password": password})
+        assert refused.status_code == 422 and "stronger" in refused.json()["error"]["message"], password
+
+        stranger = _seeded_account(conn, email=f"stranger{n}@example.org", display_name="Someone Else")
+        stranger_token = T.issue_email_token(conn, stranger, "reset", timedelta(hours=1))
+        accepted = await client.post("/api/auth/password/reset", json={"token": stranger_token, "password": password})
+        assert accepted.status_code == 200, password
+
+
+async def test_accept_invite_refuses_a_password_built_from_the_account_s_own_email_or_name(client, conn):
+    """The same rule at the other seam that reads an `account` row before hashing a new password.
+    Not a bootstrap-admin account: the endpoint's own comment says a future invite need not be
+    privileged, and a plain account exercises exactly that path here."""
+    for n, (password, owner_email, name) in enumerate(I11_CASES):
+        owner = _seeded_account(conn, email=owner_email, display_name=name)
+        owner_token = T.issue_email_token(conn, owner, "invite", timedelta(hours=1))
+        refused = await client.post("/api/auth/accept-invite", json={"token": owner_token, "password": password})
+        assert refused.status_code == 422 and "stronger" in refused.json()["error"]["message"], password
+
+        stranger = _seeded_account(conn, email=f"stranger-invite{n}@example.org", display_name="Someone Else")
+        stranger_token = T.issue_email_token(conn, stranger, "invite", timedelta(hours=1))
+        accepted = await client.post("/api/auth/accept-invite", json={"token": stranger_token, "password": password})
+        assert accepted.status_code == 200, password
+
+
+def _seeded_member(conn, redis, *, email, display_name=None):
+    """`_seeded_account` plus a real session — `password/change` is session-authenticated, unlike
+    the three token seams above. `effective_roles` folds "applicant" into every active account
+    regardless of `role_grant` rows, so this passes `account.self` with none."""
+    aid = _seeded_account(conn, email=email, display_name=display_name)
+    raw = S.create(conn, redis, aid, "203.0.113.5", "pytest")
+    return aid, {"pm_session": raw, "pm_csrf": "csrf-1"}, {"X-CSRF-Token": "csrf-1", "Origin": ORIGIN}
+
+
+async def test_password_change_refuses_a_password_built_from_the_account_s_own_email_or_name(client, conn, redis):
+    """I11 review round 1: `password/change` is a seam too — the session already names the
+    account row (no token to consume), so the same per-member check applies here as at reset and
+    accept-invite. `current` is always `PW`, so a refusal below can only be the new password's own
+    weakness, never the re-authentication check."""
+    for n, (password, owner_email, name) in enumerate(I11_CASES):
+        _owner, cookies, hdr = _seeded_member(conn, redis, email=owner_email, display_name=name)
+        refused = await client.post("/api/auth/password/change", headers=auth_headers(cookies, hdr),
+                                     json={"current": PW, "new": password})
+        assert refused.status_code == 422 and "stronger" in refused.json()["error"]["message"], password
+
+        _stranger, s_cookies, s_hdr = _seeded_member(conn, redis, email=f"stranger-change{n}@example.org", display_name="Someone Else")
+        accepted = await client.post("/api/auth/password/change", headers=auth_headers(s_cookies, s_hdr),
+                                      json={"current": PW, "new": password})
+        assert accepted.status_code == 200, password
+
+
 async def test_a_new_account_can_verify_sign_in_and_read_its_own_profile(client, conn):
     """Sign-up leaves `display_name` and `affiliation_label` unset until the application is filled
     in, so `/api/me` answers with the design's fallbacks — an empty name, "?" initials, "Applicant"."""
@@ -901,3 +1010,97 @@ async def test_password_change_leaves_exactly_its_new_session_cached(client, con
     assert cached_principals() == {f"session:{new_hash}"}    # the two old principals are gone
     assert redis.sismember(f"account:{aid}:sessions", new_hash)
     assert (await client.get("/api/me", headers=auth_headers({"pm_session": new_raw}))).status_code == 200
+
+
+# ---------------------------------------------------------------------------------------
+# A-S4.1 (controller ruling, 2026-09-08) — `POST /api/auth/verify/resend`.
+#
+# The account-screens "Check your email" card offers "Send it again". Until now that re-posted
+# `POST /api/auth/signup`, which works for somebody who reached the card BY signing up (the client
+# still holds the password) and not at all for somebody who reached it by SIGNING IN as an
+# unverified account: there is no password in the browser's hand, and the endpoint needs one. The
+# API's uniform 202 hid the failure, so the card claimed to have sent a link that was never issued.
+#
+# This is the missing endpoint. It needs no password because it needs no credential the session
+# does not already carry, and it is `unverified`-only because from `verified` onward a fresh verify
+# link would be a way IN rather than a courtesy — the same reasoning `signup`'s third branch and
+# `password/forgot`'s `RESETTABLE_STATES` already apply.
+# ---------------------------------------------------------------------------------------
+async def test_resend_verification_issues_a_fresh_link_for_an_unverified_account(client, conn, member):
+    _aid, cookies, hdr = member((), state="unverified", email="resend-me@example.org")
+    r = await client.post("/api/auth/verify/resend", headers=auth_headers(cookies, hdr))
+    assert (r.status_code, r.json()) == (202, {"status": "check_email"})
+    rows = await _outbox(conn)
+    assert [row[1] for row in rows] == ["verify_email"]
+    assert rows[0][0] == "resend-me@example.org"
+    assert rows[0][2]["link"].startswith("https://qa.foundation.vin/verify?token=")
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM email_token WHERE purpose='verify' AND used_at IS NULL")
+        assert cur.fetchone() == (1,)
+        # 24 hours, like `signup`'s: the copy on the card says so.
+        cur.execute("SELECT expires_at > now() + interval '23 hours' AND expires_at < now() + interval '25 hours' FROM email_token")
+        assert cur.fetchone() == (True,)
+
+
+async def test_resend_verification_does_not_retire_the_link_already_in_flight(client, conn, member):
+    """Unlike `password/forgot`, which retires the previous reset link. A verification link is not
+    a way into an account — it only proves the address — and somebody who presses "Send it again"
+    while the first mail is still in transit must not be left holding two dead links. `signup`'s
+    re-issue branch behaves the same way, and the seeded fixture tokens the visual oracle consumes
+    depend on it."""
+    _aid, cookies, hdr = member((), state="unverified", email="resend-twice@example.org")
+    assert (await client.post("/api/auth/verify/resend", headers=auth_headers(cookies, hdr))).status_code == 202
+    assert (await client.post("/api/auth/verify/resend", headers=auth_headers(cookies, hdr))).status_code == 202
+    links = [row[2]["link"] for row in await _outbox(conn)]
+    assert len(links) == 2 and links[0] != links[1], "each press mints its own token"
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM email_token WHERE purpose='verify' AND used_at IS NULL")
+        assert cur.fetchone() == (2,), "the earlier link stays usable"
+
+
+async def test_resend_verification_refuses_every_state_but_unverified(client, conn, member):
+    """From `verified` onward the address has already been proved, so a fresh link would be a way
+    in rather than a courtesy; `suspended` and `revoked` may not be signed into at all. A 403 is
+    safe to be specific about here — the caller is the account holder, and telling them their
+    address is already confirmed discloses nothing they do not know."""
+    for state in ("verified", "active", "suspended", "revoked"):
+        _aid, cookies, hdr = member((), state=state, email=f"resend-{state}@example.org")
+        r = await client.post("/api/auth/verify/resend", headers=auth_headers(cookies, hdr))
+        assert (r.status_code, r.json()["error"]["code"]) == (403, "FORBIDDEN"), state
+    assert await _outbox(conn) == []
+
+
+async def test_resend_verification_refuses_the_legacy_operator_bearer(client, conn):
+    """The `row is None` arm. `deps.LEGACY_ADMIN` is the `API_SECRET_KEY` bearer's synthetic id: it
+    passes `account.self` and names no `account` row at all (the same hole `_password_hash_of`
+    guards), so reading `row[1]` off the missing row would be a `TypeError` — a 500 on a credential
+    path — instead of the refusal every non-unverified caller gets. It is not an unverified
+    applicant, so it is refused with the rest."""
+    from app.config import settings
+
+    r = await client.post("/api/auth/verify/resend", headers={"Authorization": f"Bearer {settings.api_secret_key}"})
+    assert (r.status_code, r.json()["error"]["code"]) == (403, "FORBIDDEN")
+    assert await _outbox(conn) == []
+
+
+async def test_resend_verification_needs_a_session(client):
+    """`account.self`, like `/api/me`: no cookie, no resend. An unverified principal HOLDS
+    `account.self` — `permissions.effective_roles` makes any non-active account an `applicant`,
+    and `account.self` is granted to every non-anonymous role — which is what lets the one account
+    state that needs this endpoint reach it."""
+    r = await client.post("/api/auth/verify/resend")
+    assert (r.status_code, r.json()["error"]["code"]) == (401, "UNAUTHORIZED")
+
+
+async def test_resend_verification_shares_signup_s_per_address_ceiling(client, conn, member):
+    """The same `SIGNUP_EMAIL` counter (3 per address per day) and the same Redis key, so pressing
+    "Send it again" and signing up again cannot be combined into six mails a day for one address."""
+    _aid, cookies, hdr = member((), state="unverified", email="resend-lim@example.org")
+    for i in range(3):
+        assert (await client.post("/api/auth/verify/resend", headers=auth_headers(cookies, hdr))).status_code == 202, i
+    r = await client.post("/api/auth/verify/resend", headers=auth_headers(cookies, hdr))
+    assert r.status_code == 429 and r.headers["retry-after"] == "86400"
+    # ...and the ceiling is SHARED with signup, keyed by the address rather than by the endpoint.
+    shared = await client.post("/api/auth/signup", json={"email": "resend-lim@example.org", "password": PW},
+                               headers={"x-forwarded-for": _ip()})
+    assert shared.status_code == 429

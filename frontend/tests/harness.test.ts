@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
-import { BLANK_GIF, MEMO_FILE, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, appOrigin, appPlan, driverFor, forgetPersonaSession, memoFileRead, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, referenceMe, referenceOrigin, referenceUrl, runId } from './harness';
+import { describe, expect, it, vi } from 'vitest';
+import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
+import type { Page } from '@playwright/test';
 import { resolveTargets } from './targets';
 
 // The stubbed basemap tile must be TRANSPARENT, not merely blank-looking (controller ruling
@@ -243,8 +244,8 @@ describe('appOrigin (A-I7.2)', () => {
 // browser: which target a page is on, what URL the reference needs, and what the app needs.
 // ---------------------------------------------------------------------------------------
 describe('PERSONAS — the /api/me payload of each seeded account (D-I8-4, A-I8.2)', () => {
-  it('are the six accounts scripts/seed_persona.py writes', () => {
-    expect(Object.keys(PERSONAS)).toEqual(['design', 'buyer', 'seller', 'pending', 'needsReview', 'declined']);
+  it('are the ten accounts scripts/seed_persona.py writes', () => {
+    expect(Object.keys(PERSONAS)).toEqual(['design', 'buyer', 'seller', 'pending', 'needsReview', 'declined', 'verified', 'unverified', 'invited', 'verifyMe']);
   });
 
   it('carry the /api/me fields logic.js reads, so the reference can be handed the same account', () => {
@@ -273,24 +274,38 @@ describe('PERSONAS — the /api/me payload of each seeded account (D-I8-4, A-I8.
     }
   });
 
-  it('give the three applicants their states and no roles', () => {
+  it('give the four applicants their states and no roles', () => {
     expect(PERSONAS.pending.state).toBe('pending');
     expect(PERSONAS.needsReview.state).toBe('needs_review');
     expect(PERSONAS.declined.state).toBe('declined');
-    for (const key of ['pending', 'needsReview', 'declined'] as const) {
+    // A-S4 (Task S4): `verified@` is an address that has been confirmed and has never applied.
+    // A5.4's bootstrap lands it on the Request Access card, which is how the APP now reaches
+    // `gate-apply` — the design's own "Request access" link sends an anonymous visitor to the
+    // sign-up card since A8.1c, so the link is no longer that state's way in. S3 seeded it.
+    expect(PERSONAS.verified.state).toBe('verified');
+    expect(PERSONAS.verified.email).toBe('verified@practice-match.test');
+    // `labels.initials("Verified Applicant")` — the seed's display name for the account.
+    expect(PERSONAS.verified.initials).toBe('VA');
+    // A-S5 (Task S5): the last two identity states — see the block of its own further down.
+    expect(PERSONAS.unverified.state).toBe('unverified');
+    expect(PERSONAS.invited.state, 'invited@ is `verified`; what it lacks is a password').toBe('verified');
+    for (const key of ['pending', 'needsReview', 'declined', 'verified', 'unverified', 'invited', 'verifyMe'] as const) {
       expect(PERSONAS[key].roles).toEqual([]);
       expect(PERSONAS[key].role, 'labels.role_label with no grants and no affiliation').toBe('Applicant');
     }
   });
 
-  it('present the one documented password, whichever persona is asked for', () => {
+  it('present the one documented password, whichever persona is asked for — bar the invited one', () => {
     for (const key of Object.keys(PERSONAS) as (keyof typeof PERSONAS)[]) {
+      // `invited@` is the exception the seed built on purpose: no usable password at all, so
+      // asking for one throws rather than hands back a credential that cannot work (A-S5).
+      if (key === 'invited') { expect(() => personaCredentials(key, {})).toThrow(); continue; }
       expect(personaCredentials(key, {})).toEqual({ email: PERSONAS[key].email, password: PERSONA_DEFAULT_PASSWORD });
       expect(personaCredentials(key, { PERSONA_PASSWORD: 'from-railway' }).password).toBe('from-railway');
     }
   });
 
-  it('memoise one session EACH, so six personas spend at most six of SIGNIN_IP\'s thirty attempts', () => {
+  it('memoise one session EACH, so ten personas spend at most ten of SIGNIN_IP\'s thirty attempts', () => {
     expect(Object.keys(personaSessionMemos).sort()).toEqual(Object.keys(PERSONAS).sort());
     expect(personaSessionMemo, 'signInAsPersona\'s memo IS the design persona\'s (A-I7\'s budget, unchanged)').toBe(personaSessionMemos.design);
   });
@@ -349,14 +364,19 @@ describe('referenceMe — the account the reference is handed (A5.7 / A-I8.2)', 
 describe('referenceUrl — the design\'s own props, injected per request (A-I8 / D-I8-3)', () => {
   const props = (url: string) => JSON.parse(decodeURIComponent(new URL(url, 'http://x').searchParams.get('props')!));
 
-  it('always serves the design at "/" and names all four prototype props on every request', () => {
+  // FIVE since A8.8b declared `startNotice`: the sentence this pins — "named on every request, so
+  // no state inherits a value another state set" — is only true of a prop the payload actually
+  // carries, and `startNotice` is the one that decides whether the sign-in card shows a message.
+  // It is always `''` until Task S5 gives `reach()` a `notice` option; naming it is what stops a
+  // notice state, once S5 adds one, leaking into the next capture.
+  it('always serves the design at "/" and names all six prototype props on every request', () => {
     const url = referenceUrl();
     expect(url.startsWith('/?props=')).toBe(true);
-    expect(props(url)).toEqual({ startScreen: 'gate', startGate: '', startViewport: 'desktop', me: null });
+    expect(props(url)).toEqual({ startScreen: 'gate', startGate: '', startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: '' });
   });
 
   it('names the screen and hands over that state\'s own account, for every member family', () => {
-    expect(props(referenceUrl({ screen: 'browse' }))).toEqual({ startScreen: 'browse', startGate: '', startViewport: 'desktop', me: PERSONAS.buyer });
+    expect(props(referenceUrl({ screen: 'browse' }))).toEqual({ startScreen: 'browse', startGate: '', startViewport: 'desktop', me: PERSONAS.buyer, startNotice: '', startAnswerNote: '' });
     expect(props(referenceUrl({ screen: 'detail' })).me).toEqual(PERSONAS.buyer);
     expect(props(referenceUrl({ screen: 'requests' })).me).toEqual(PERSONAS.buyer);
     expect(props(referenceUrl({ screen: 'seller' }))).toMatchObject({ startScreen: 'seller', me: PERSONAS.seller });
@@ -385,25 +405,38 @@ describe('referenceUrl — the design\'s own props, injected per request (A-I8 /
 
 describe('appPlan — a real session and a real route (A-I8, A-I8.2)', () => {
   it('signs the state\'s own persona in and deep-links its route', () => {
-    expect(appPlan({ screen: 'browse' })).toEqual({ persona: 'buyer', url: '/browse', click: null });
-    expect(appPlan({ screen: 'detail' })).toEqual({ persona: 'buyer', url: '/practices/p1', click: null });
-    expect(appPlan({ screen: 'requests' })).toEqual({ persona: 'buyer', url: '/requests', click: null });
-    expect(appPlan({ screen: 'seller' })).toEqual({ persona: 'seller', url: '/seller', click: null });
-    expect(appPlan({ screen: 'admin' })).toEqual({ persona: 'design', url: '/admin', click: null });
+    expect(appPlan({ screen: 'browse' })).toEqual({ persona: 'buyer', url: '/browse' });
+    expect(appPlan({ screen: 'detail' })).toEqual({ persona: 'buyer', url: '/practices/p1' });
+    expect(appPlan({ screen: 'requests' })).toEqual({ persona: 'buyer', url: '/requests' });
+    expect(appPlan({ screen: 'seller' })).toEqual({ persona: 'seller', url: '/seller' });
+    expect(appPlan({ screen: 'admin' })).toEqual({ persona: 'design', url: '/admin' });
   });
 
   it('signs nobody in for the sign-in gate: that is what an anonymous visitor sees', () => {
-    expect(appPlan()).toEqual({ persona: null, url: '/', click: null });
-    expect(appPlan({ gate: 'signin' })).toEqual({ persona: null, url: '/', click: null });
+    expect(appPlan()).toEqual({ persona: null, url: '/' });
+    expect(appPlan({ gate: 'signin' })).toEqual({ persona: null, url: '/' });
   });
 
-  it('reaches the application gate by the design\'s own link, which no launch removal touches', () => {
-    expect(appPlan({ gate: 'apply' })).toEqual({ persona: null, url: '/', click: 'Request access' });
+  // A-S4: the design's own "Request access" link used to be this state's way in on the app.
+  // A8.1c makes that link open the SIGN-UP card for an anonymous visitor — correct product
+  // behaviour, since an applicant needs an account first — so the application gate is reached
+  // the way the spec says a verified address reaches it: by being one. Nothing is clicked on
+  // any state any more, so `appPlan` no longer carries a click at all.
+  it('reaches the application gate by signing in as an address that is verified and has not applied', () => {
+    expect(appPlan({ gate: 'apply', persona: 'verified' })).toEqual({ persona: 'verified', url: '/' });
+  });
+
+  // A-S5 restores ONE click, for `gate-reapply` alone: a declined account reaches the application
+  // form through its own card. Every other state is still an account and a route.
+  it('carries no click for any state but the declined account\'s re-apply', () => {
+    for (const target of [{}, { gate: 'signin' as const }, { gate: 'apply' as const, persona: 'verified' as const }, { screen: 'browse' as const }]) {
+      expect(appPlan(target), JSON.stringify(target)).not.toHaveProperty('click');
+    }
   });
 
   it('reaches the two status gates by signing in as an account actually in that state', () => {
-    expect(appPlan({ gate: 'pending', persona: 'pending' })).toEqual({ persona: 'pending', url: '/', click: null });
-    expect(appPlan({ gate: 'rejected', persona: 'declined' })).toEqual({ persona: 'declined', url: '/', click: null });
+    expect(appPlan({ gate: 'pending', persona: 'pending' })).toEqual({ persona: 'pending', url: '/' });
+    expect(appPlan({ gate: 'rejected', persona: 'declined' })).toEqual({ persona: 'declined', url: '/' });
   });
 
   it('asks for the phone frame through the URL query, the only way left (D-I8-7)', () => {
@@ -528,8 +561,13 @@ describe('driverFor — which target the page is on (A-I8)', () => {
   });
 
   it('defaults to the app project\'s own origin, which is what reach() relies on', () => {
-    expect(driverFor(`${appOrigin({})}/browse`)).toBe('app');
-    expect(driverFor(`${referenceOrigin({})}/`)).toBe('reference');
+    // `appOrigin()`/`referenceOrigin()` with NO argument — the same environment lookup
+    // `driverFor`'s own default parameter uses (`appUrl = appOrigin()`, harness.ts). `appOrigin({})`
+    // pins the constant `http://localhost:5173` regardless of the real environment, so under
+    // `PW_APP_PORT` this URL and driverFor's internal default disagreed and the test failed for a
+    // reason unrelated to what it is meant to pin (I12, housekeeping).
+    expect(driverFor(`${appOrigin()}/browse`)).toBe('app');
+    expect(driverFor(`${referenceOrigin()}/`)).toBe('reference');
   });
 
   it('refuses a page that has not navigated, rather than guessing the reference', () => {
@@ -551,5 +589,480 @@ describe('referenceOrigin — where the design server answers (A-I8.2 / B2)', ()
   it('is never the app\'s origin, so the template-refetch guard cannot reach the app', () => {
     expect(referenceOrigin({})).not.toBe(appOrigin({}));
     expect(referenceOrigin({})).not.toBe(resolveTargets({}, { app: 5173, ref: 5174, cs: 5175, api: 8017 }).baseURL);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// signin-form.spec.ts's wrong-password case deliberately provokes a 401 and filters the one
+// console line Chromium logs for it out of the errors the test otherwise fails on. Chromium's
+// wording differs by transport: HTTP/1.1 (Vite's dev proxy — every local and CI run) carries a
+// reason phrase, "Failed to load resource: the server responded with a status of 401
+// (Unauthorized)"; HTTP/2 (a live deployment, e.g. PW_APP_URL=https://qa.foundation.vin) has no
+// reason phrase at the protocol level, so Chromium logs "… a status of 401 ()" instead.
+// Matching `/401 \(Unauthorized\)/` — the original filter — missed the second form, so the
+// deliberate 401 leaked through and failed the test only on a live run. Matching the status
+// code alone, word-bounded, recognises the line under both transports without swallowing an
+// unrelated status that happens to share the digits.
+// ---------------------------------------------------------------------------------------
+describe('isExpectedSignInFailure401 — the sign-in form\'s deliberate 401, across transports', () => {
+  it('matches the HTTP/1.1 console line (a reason phrase present, via Vite\'s dev proxy)', () => {
+    expect(isExpectedSignInFailure401('Failed to load resource: the server responded with a status of 401 (Unauthorized)')).toBe(true);
+  });
+
+  it('matches the HTTP/2 console line (no reason phrase — a live QA/production run)', () => {
+    expect(isExpectedSignInFailure401('Failed to load resource: the server responded with a status of 401 ()')).toBe(true);
+  });
+
+  it('does not match an unrelated console error', () => {
+    expect(isExpectedSignInFailure401('Failed to load resource: the server responded with a status of 429 (Too Many Requests)')).toBe(false);
+  });
+
+  it('is word-bounded: a status code that merely contains "401" is not mistaken for it', () => {
+    expect(isExpectedSignInFailure401('Failed to load resource: the server responded with a status of 4010 (Bogus)')).toBe(false);
+    expect(isExpectedSignInFailure401('some other line mentioning 14010 in passing')).toBe(false);
+  });
+
+  it('does not match an ordinary page error unrelated to any HTTP status', () => {
+    expect(isExpectedSignInFailure401('pageerror: TypeError: something failed')).toBe(false);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Task S5 (controller amendment A-S5) — the fifteen account-screen states.
+//
+// Everything below is the DECISION half of `reach()`: which account, which URL, which fixture
+// token, which prototype prop. All of it is pure so the run's whole rate-limit and token budget
+// can be counted here, without a browser and without spending either.
+// ---------------------------------------------------------------------------------------
+describe('the three identity personas (A-S5)', () => {
+  it('names the accounts scripts/seed_persona.py seeds for the account screens', () => {
+    expect(PERSONAS.unverified).toEqual({ email: 'unverified@practice-match.test', name: 'Unverified Applicant', role: 'Applicant', initials: 'UA', state: 'unverified', roles: [] });
+    expect(PERSONAS.verified).toMatchObject({ email: 'verified@practice-match.test', state: 'verified' });
+    expect(PERSONAS.invited).toEqual({ email: 'invited@practice-match.test', name: 'Invited Staff', role: 'Applicant', initials: 'IS', state: 'verified', roles: [] });
+    // A-S5.2: the tenth account. It exists only to own the verify tokens — consuming one confirms
+    // its account for good, and `unverified@` has to survive every capture unconfirmed.
+    expect(PERSONAS.verifyMe).toEqual({ email: 'verify-me@practice-match.test', name: 'Verify Fixture', role: 'Applicant', initials: 'VF', state: 'unverified', roles: [] });
+  });
+
+  // The seed hashes a secret it generates fresh and keeps nowhere, precisely so the shared
+  // persona password does not open this account: the invite token is the only way in. Asking for
+  // a credential that cannot exist is a bug in the caller, and it says so where the caller is.
+  it('personaCredentials refuses the invited account, which has no usable password', () => {
+    expect(() => personaCredentials('invited')).toThrow(/invited@practice-match\.test/);
+    expect(() => credentialsFor('invited', false)).toThrow(/token/i);
+  });
+
+  // …until the run accepts an invitation for it, which is the moment it HAS one. That is the same
+  // fact the rotation flag records for `verified@`, and the same mechanism records it.
+  it('credentialsFor hands back the invited account\'s password once this run has set one', () => {
+    expect(credentialsFor('invited', true, {})).toEqual({ email: 'invited@practice-match.test', password: PERSONA_INVITE_PASSWORD });
+    expect(PERSONA_INVITE_PASSWORD.length, 'the invite card says staff passwords are at least 14').toBeGreaterThanOrEqual(14);
+    expect(PERSONA_INVITE_PASSWORD).not.toBe(PERSONA_RESET_PASSWORD);
+  });
+
+  it('credentialsFor hands back the documented default until the run rotates it, then the new one', () => {
+    expect(credentialsFor('verified', false, {})).toEqual({ email: 'verified@practice-match.test', password: PERSONA_DEFAULT_PASSWORD });
+    expect(credentialsFor('verified', true, {})).toEqual({ email: 'verified@practice-match.test', password: PERSONA_RESET_PASSWORD });
+    // PERSONA_PASSWORD still wins for the un-rotated case (the live QA run), and cannot win for
+    // the rotated one: the password the reset SET is the one the account now has.
+    expect(credentialsFor('buyer', false, { PERSONA_PASSWORD: 'from-railway' }).password).toBe('from-railway');
+    expect(credentialsFor('verified', true, { PERSONA_PASSWORD: 'from-railway' }).password).toBe(PERSONA_RESET_PASSWORD);
+  });
+
+  it('the two documented passwords differ, or the rotation would prove nothing', () => {
+    expect(PERSONA_RESET_PASSWORD).not.toBe(PERSONA_DEFAULT_PASSWORD);
+    expect(PERSONA_RESET_PASSWORD.length, 'the server floor is 12, and 14 for a privileged account').toBeGreaterThanOrEqual(14);
+  });
+});
+
+describe('fixture tokens — twelve per purpose, single use, spent in order (A-S5)', () => {
+  it('mirrors the seed script\'s documented pattern exactly', () => {
+    expect(FIXTURE_TOKEN_PREFIX).toBe('fixture-');
+    expect(FIXTURE_TOKENS).toEqual({ verify: 'fixture-verify-', reset: 'fixture-reset-', invite: 'fixture-invite-' });
+    expect(FIXTURE_TOKEN_COUNT).toBe(12);
+    for (const prefix of Object.values(FIXTURE_TOKENS)) expect(prefix.startsWith(FIXTURE_TOKEN_PREFIX)).toBe(true);
+  });
+
+  it('numbers them 01…12, zero-padded, as the seed inserts them', () => {
+    expect(fixtureToken('verify', 1)).toBe('fixture-verify-01');
+    expect(fixtureToken('reset', 9)).toBe('fixture-reset-09');
+    expect(fixtureToken('invite', 12)).toBe('fixture-invite-12');
+  });
+
+  it('refuses to invent a thirteenth, naming the purpose and the seed', () => {
+    expect(() => fixtureToken('verify', 13)).toThrow(/verify/);
+    expect(() => fixtureToken('verify', 13)).toThrow(/seed_persona/);
+    expect(() => fixtureToken('reset', 0)).toThrow();
+  });
+
+  // The expired cards and the invite-expired notice need a token the seed NEVER created, so the
+  // real endpoint answers its real 400. It has to look like a fixture token and be none of them.
+  it('the expired token is of the documented shape and is not one of the twelve', () => {
+    expect(expiredFixtureToken('verify')).toBe('fixture-verify-expired');
+    for (const kind of ['verify', 'reset', 'invite'] as const) {
+      const all = Array.from({ length: FIXTURE_TOKEN_COUNT }, (_, i) => fixtureToken(kind, i + 1));
+      expect(all).not.toContain(expiredFixtureToken(kind));
+      expect(expiredFixtureToken(kind).startsWith(FIXTURE_TOKENS[kind])).toBe(true);
+    }
+  });
+
+  // The counter lives in the run's own memo file beside the persona jars, so a worker Playwright
+  // restarts after a failure continues the sequence instead of re-spending token 01 — which is
+  // single-use and already gone.
+  it('the run-scoped counter advances once per take and survives a restarted worker', () => {
+    // The take is a read, a decision and a write — the shape `takeCounter` uses (M8).
+    let file: string | null = null;
+    const take = (name: string) => { const n = memoFileCounter(file, name, 'run-A') + 1; file = memoFileSetCounter(file, name, n, 'run-A'); return n; };
+    expect([take('verify'), take('verify'), take('verify')]).toEqual([1, 2, 3]);
+    expect(take('reset'), 'each purpose counts on its own').toBe(1);
+    // A restarted worker reads the same file and carries on.
+    expect(memoFileCounter(file, 'verify', 'run-A')).toBe(3);
+    expect(take('verify')).toBe(4);
+  });
+
+  it('another run\'s counters are never inherited, and neither are its jars', () => {
+    const previous = memoFileSetCounter(memoFileUpdate(null, 'buyer', [{ name: 'pm_session', value: 'x' }], 'run-old'), 'verify', 7, 'run-old');
+    expect(memoFileCounter(previous, 'verify', 'run-new'), 'a fresh run starts at zero').toBe(0);
+    expect(memoFileRead(memoFileSetCounter(previous, 'verify', 1, 'run-new'), 'buyer', 'run-new')).toBeNull();
+  });
+
+  it('taking a counter leaves this run\'s persona jars alone', () => {
+    const withJar = memoFileUpdate(null, 'buyer', [{ name: 'pm_session', value: 'x' }], 'run-A');
+    const after = memoFileSetCounter(withJar, 'verify', 1, 'run-A');
+    expect(memoFileRead(after, 'buyer', 'run-A')).toEqual([{ name: 'pm_session', value: 'x' }]);
+    expect(memoFileCounter(after, 'verify', 'run-A')).toBe(1);
+  });
+
+  // M14 (review round 1): the default run id is `randomUUID()` (hex and hyphens), but an outer
+  // harness may set `PW_RUN_ID` to a CI value carrying `/`, `:` or a space — which would make the
+  // live sign-up 422 with nothing pointing at the cause.
+  it('a run id that is not email-safe is sanitised rather than pasted into the local part', () => {
+    expect(throwawayEmail('signup', 'a/b:c d', 1)).toBe('e2e-a-b-c-d-signup-1@example.org');
+    expect(throwawayEmail('forgot', 'refs/heads/feat#3', 2)).toBe('e2e-refs-heads-feat-3-forgot-2@example.org');
+    // The default shape is already safe and must survive untouched.
+    expect(throwawayEmail('signup', '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0', 1)).toBe('e2e-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0-signup-1@example.org');
+    // Fix round 2, M4: `purpose` is sanitised by the same class. Both call sites pass a literal
+    // today, but a caller with a space or a slash would mint an address the seed's restoration
+    // pattern does NOT match — and the account would then stay on QA for ever, which is the exact
+    // leak round 1 was ruled to close.
+    expect(throwawayEmail('sign up', 'run-A', 1)).toBe('e2e-run-A-sign-up-1@example.org');
+    expect(throwawayEmail('forgot/again', 'run-A', 2)).toBe('e2e-run-A-forgot-again-2@example.org');
+    for (const address of [throwawayEmail('signup', 'a/b:c d', 1), throwawayEmail('forgot', '', 3)]) {
+      expect(address.split('@')[0], 'every local part is RFC-safe').toMatch(/^[A-Za-z0-9._-]+$/);
+    }
+  });
+
+  // Fix round 1, ruling 4 (2026-09-08): the seed now DELETES these accounts on every restoration,
+  // so the shape they are recognised by has to be one string, shared — `scripts/seed_persona.py`
+  // mirrors `THROWAWAY_EMAIL_PATTERN` and `tests/test_docs.py` pins the two equal. A pattern that
+  // drifted wider than the addresses this function makes would delete somebody else's account.
+  it('every address it makes matches the one pattern the seed deletes by, and nothing else does', () => {
+    const shape = new RegExp(THROWAWAY_EMAIL_PATTERN);
+    for (const address of [
+      throwawayEmail('signup', '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0', 1),
+      throwawayEmail('forgot', 'a/b:c d', 12),
+      throwawayEmail('signup', '', 3),
+      throwawayEmail('sign up', 'run-A', 1)                    // M4: an unsanitised purpose would escape it
+    ]) expect(address, address).toMatch(shape);
+    for (const other of [
+      'e2e-run-signup-1@example.org.uk',
+      'e2e-run-signup-1@evil.example.org',
+      'not-e2e-run-signup-1@example.org',
+      'buyer@practice-match.test',
+      'someone@example.org'
+    ]) expect(other, other).not.toMatch(shape);
+  });
+
+  it('a throwaway address is distinct per take, so FORGOT_EMAIL is never the binding limit', () => {
+    const a = throwawayEmail('forgot', 'run-A', 1);
+    const b = throwawayEmail('forgot', 'run-A', 2);
+    expect(a).not.toBe(b);
+    for (const address of [a, b]) {
+      expect(address).toMatch(/^e2e-run-A-forgot-\d+@example\.org$/);
+      expect(address, 'never a real mailbox: example.org is RFC 2606 reserved').toContain('@example.org');
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// M4 (review round 1): the rotation is recorded only once the API has CONFIRMED it.
+//
+// `submitNotice` types two passwords, clicks the design's own button, and waits for the notice the
+// spec says that outcome produces. Recording the rotation before that wait means a submit the API
+// REFUSED — a spent token, a policy refusal — still writes `rotated` to the run's memo and forgets
+// a live session for a password change that never happened: the test fails at the wait, and every
+// later sign-in as that account 401s a long way from the cause. The notice IS the confirmation.
+//
+// Driven through a stub page, in an isolated module instance so the module-level rotation set and
+// persona memos this touches cannot leak into the rest of this file.
+// ---------------------------------------------------------------------------------------
+describe('submitNotice records a rotation only after the API confirms it (M4)', () => {
+  const stubPage = (waitFor: () => Promise<void>) => ({
+    getByLabel: () => ({ fill: async () => {} }),
+    getByRole: () => ({ click: async () => {} }),
+    getByText: () => ({ first: () => ({ waitFor }) })
+  }) as unknown as Page;
+
+  const freshHarness = async () => { vi.resetModules(); return import('./harness'); };
+
+  it('a submit the API refused leaves the memo un-rotated and the session intact', async () => {
+    const h = await freshHarness();
+    const jar = [{ name: 'pm_session', value: 'still-live' }] as unknown as NonNullable<typeof h.personaSessionMemos.verified.cookies>;
+    h.personaSessionMemos.verified.cookies = jar;
+
+    await expect(h.submitNotice(stubPage(() => Promise.reject(new Error('the notice never appeared'))), 'password-updated'))
+      .rejects.toThrow(/never appeared/);
+
+    expect(h.personaSessionMemos.verified.cookies, 'a session that is still live must not be forgotten').toBe(jar);
+    expect(h.personaCredentials('verified', {}).password, 'the password did not change, so the run must not think it did')
+      .toBe(h.PERSONA_DEFAULT_PASSWORD);
+  });
+
+  it('a submit the API accepted records the rotation and drops the session it revoked', async () => {
+    const h = await freshHarness();
+    h.personaSessionMemos.verified.cookies = [{ name: 'pm_session', value: 'about-to-be-revoked' }] as unknown as NonNullable<typeof h.personaSessionMemos.verified.cookies>;
+
+    await h.submitNotice(stubPage(() => Promise.resolve()), 'password-updated');
+
+    expect(h.personaSessionMemos.verified.cookies, 'the reset revoked every session this account had').toBeNull();
+    expect(h.personaCredentials('verified', {}).password).toBe(h.PERSONA_RESET_PASSWORD);
+  });
+
+  it('the same holds for an accepted invitation, which is the other password this run sets', async () => {
+    const h = await freshHarness();
+    expect(() => h.personaCredentials('invited', {})).toThrow();
+    await h.submitNotice(stubPage(() => Promise.resolve()), 'invite-set');
+    expect(h.personaCredentials('invited', {}).password).toBe(h.PERSONA_INVITE_PASSWORD);
+  });
+
+  it('an invitation the API REFUSED sets no password at all — the notice says so', async () => {
+    const h = await freshHarness();
+    await h.submitNotice(stubPage(() => Promise.resolve()), 'invite-expired');
+    expect(() => h.personaCredentials('invited', {}), 'a dead link set nothing').toThrow();
+  });
+});
+
+describe('the rotation flag — a reset changes verified@\'s password for the rest of the run (A-S5)', () => {
+  // `POST /api/auth/password/reset` rotates the password AND revokes every session, and
+  // `verified@` is also `gate-apply`'s screenshot persona (A-S4). Without this the memoised jar
+  // would name a revoked session and every later capture would run anonymous, with no failure
+  // anywhere near the cause.
+  it('is off until set, on afterwards, and scoped to the run and the persona', () => {
+    expect(memoFileIsRotated(null, 'verified', 'run-A')).toBe(false);
+    const rotated = memoFileRotate(null, 'verified', 'run-A');
+    expect(memoFileIsRotated(rotated, 'verified', 'run-A')).toBe(true);
+    expect(memoFileIsRotated(rotated, 'buyer', 'run-A'), 'one account\'s reset is not another\'s').toBe(false);
+    expect(memoFileIsRotated(rotated, 'verified', 'run-B'), 'the seed restores the password next run').toBe(false);
+  });
+
+  it('setting it twice is the same as setting it once, and it keeps the run\'s jars', () => {
+    const jar = memoFileUpdate(null, 'buyer', [{ name: 'pm_session', value: 'x' }], 'run-A');
+    const once = memoFileRotate(jar, 'verified', 'run-A');
+    const twice = memoFileRotate(once, 'verified', 'run-A');
+    expect(memoFileIsRotated(twice, 'verified', 'run-A')).toBe(true);
+    expect(memoFileRead(twice, 'buyer', 'run-A')).toEqual([{ name: 'pm_session', value: 'x' }]);
+  });
+});
+
+describe('referenceUrl for the fifteen account states (A-S5)', () => {
+  const props = (url: string) => JSON.parse(decodeURIComponent(new URL(url, 'http://x').searchParams.get('props')!));
+
+  it('reaches the four form cards and the three status cards through startGate alone', () => {
+    for (const gate of ['signup', 'forgot', 'reset', 'invite', 'verify-expired', 'reset-expired'] as const) {
+      expect(props(referenceUrl({ gate })), gate).toEqual({ startScreen: 'gate', startGate: gate, startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: '' });
+    }
+  });
+
+  // The check-email card prints the address it wrote to, and the app has a session to take it
+  // from — so the reference is handed the same account, exactly as the two status gates are.
+  it('hands the unverified account over for the check-email card, which prints its address', () => {
+    expect(props(referenceUrl({ gate: 'check-email', persona: 'unverified' }))).toMatchObject({ startGate: 'check-email', me: PERSONAS.unverified });
+  });
+
+  // Measured against the real Component: `startGate` is applied BEFORE the account branch, and a
+  // `needs_review` account maps to the "under review" card — so passing `me` here would put the
+  // reference on the wrong card. Nothing is lost: an applicant's `auth` is false on both targets,
+  // and the gate screen's header is driven by `auth` alone.
+  it('withholds the account for the answer card, and carries the note through A9.1\'s prop', () => {
+    const p = props(referenceUrl({ gate: 'answer', persona: 'needsReview', note: NEEDS_REVIEW_INFO_REQUEST }));
+    expect(p).toEqual({ startScreen: 'gate', startGate: 'answer', startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: NEEDS_REVIEW_INFO_REQUEST });
+  });
+
+  // The app captures this one SIGNED IN — a buyer who deep-linked a route their access does not
+  // include — and no `me` can buy `auth: true` on a gate screen (an active account overrides the
+  // gate and lands on Browse). `startScreen` sets `auth`; `startGate` then puts it back on the
+  // gate; and the design's own fixture identity is, letter for letter, `buyer@`'s computed label.
+  it('buys the signed-in header for the unavailable card through startScreen, with no account', () => {
+    expect(props(referenceUrl({ gate: 'unavailable', persona: 'buyer' }))).toEqual({ startScreen: 'browse', startGate: 'unavailable', startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: '' });
+    expect(referenceScreen({ gate: 'unavailable', persona: 'buyer' })).toBe('browse');
+    expect(referencePersona({ gate: 'unavailable', persona: 'buyer' })).toBeNull();
+  });
+
+  // The declined account's re-apply: `startGate: 'apply'` puts the reference straight on the
+  // form, and `me` is withheld for the same reason as the answer card — a declined account maps
+  // back to its own card.
+  it('withholds the account for the declined re-apply, whose card the reference skips', () => {
+    expect(props(referenceUrl({ gate: 'apply', persona: 'declined' }))).toMatchObject({ startGate: 'apply', me: null });
+    expect(props(referenceUrl({ gate: 'apply', persona: 'verified' })), 'the ordinary application gate is unchanged').toMatchObject({ startGate: 'apply', me: PERSONAS.verified });
+  });
+
+  it('drives the five notice states through startNotice, with the spec\'s own copy', () => {
+    for (const key of Object.keys(NOTICES) as Array<keyof typeof NOTICES>) {
+      expect(props(referenceUrl({ gate: 'signin', notice: key })), key).toEqual({ startScreen: 'gate', startGate: 'signin', startViewport: 'desktop', me: null, startNotice: NOTICES[key], startAnswerNote: '' });
+    }
+  });
+
+  it('the five notice texts are the spec\'s §3 copy, letter for letter', () => {
+    expect(NOTICES).toEqual({
+      verified: 'Your address is verified. Sign in to complete your access request.',
+      'reset-sent': 'If that address has an account, a reset link is on its way. It is valid for 1 hour.',
+      'password-updated': 'Password updated. Sign in with your new password.',
+      'invite-set': 'Your password is set. Sign in with your email and the password you just chose.',
+      'invite-expired': 'This invitation link is no longer valid. Ask the VIN Foundation for a new one.'
+    });
+  });
+});
+
+describe('appPlan for the fifteen account states — real routes, real tokens (A-S5)', () => {
+  it('opens the two public forms at their own routes, signed in as nobody', () => {
+    expect(appPlan({ gate: 'signup' })).toEqual({ persona: null, url: '/signup' });
+    expect(appPlan({ gate: 'forgot' })).toEqual({ persona: null, url: '/forgot' });
+  });
+
+  it('carries a fixture token into the reset and invite forms, which render without spending it', () => {
+    expect(appPlan({ gate: 'reset' }, 'fixture-reset-03')).toEqual({ persona: null, url: '/reset?token=fixture-reset-03' });
+    expect(appPlan({ gate: 'invite' }, 'fixture-invite-03')).toEqual({ persona: null, url: '/accept-invite?token=fixture-invite-03' });
+    expect(appTokenKind({ gate: 'reset' })).toBe('reset');
+    expect(appTokenKind({ gate: 'invite' })).toBe('invite');
+  });
+
+  it('uses a token no seed created for the expired cards, so the real endpoint answers its real 400', () => {
+    expect(appPlan({ gate: 'verify-expired' })).toEqual({ persona: null, url: '/verify?token=fixture-verify-expired' });
+    expect(appPlan({ gate: 'reset-expired' })).toEqual({ persona: null, url: '/reset?token=fixture-reset-expired' });
+    expect(appTokenKind({ gate: 'verify-expired' }), 'an unseeded token spends none of the twelve').toBeNull();
+    expect(appTokenKind({ gate: 'reset-expired' })).toBeNull();
+  });
+
+  it('reaches the check-email and answer cards by BEING an account in that state', () => {
+    expect(appPlan({ gate: 'check-email', persona: 'unverified' })).toEqual({ persona: 'unverified', url: '/' });
+    expect(appPlan({ gate: 'answer', persona: 'needsReview', note: 'anything' })).toEqual({ persona: 'needsReview', url: '/' });
+  });
+
+  it('reaches the unavailable card by deep-linking a route the account may not open', () => {
+    expect(appPlan({ gate: 'unavailable', persona: 'buyer' })).toEqual({ persona: 'buyer', url: '/admin' });
+  });
+
+  it('reaches the re-apply form through the declined card\'s own primary button', () => {
+    expect(appPlan({ gate: 'apply', persona: 'declined' })).toEqual({ persona: 'declined', url: '/', click: 'Reply with more information' });
+    expect(appPlan({ gate: 'apply', persona: 'verified' }), 'a verified address lands on the form with no click').toEqual({ persona: 'verified', url: '/' });
+  });
+
+  it('drives each notice state through the real flow that produces it', () => {
+    expect(appPlan({ gate: 'signin', notice: 'verified' }, 'fixture-verify-05')).toEqual({ persona: null, url: '/verify?token=fixture-verify-05' });
+    expect(appPlan({ gate: 'signin', notice: 'reset-sent' })).toEqual({ persona: null, url: '/forgot' });
+    expect(appPlan({ gate: 'signin', notice: 'password-updated' }, 'fixture-reset-05')).toEqual({ persona: null, url: '/reset?token=fixture-reset-05' });
+    expect(appPlan({ gate: 'signin', notice: 'invite-set' }, 'fixture-invite-05')).toEqual({ persona: null, url: '/accept-invite?token=fixture-invite-05' });
+    expect(appPlan({ gate: 'signin', notice: 'invite-expired' })).toEqual({ persona: null, url: '/accept-invite?token=fixture-invite-expired' });
+  });
+
+  // The whole run's token budget, counted here rather than discovered at token thirteen.
+  it('spends three verify, five reset and five invite tokens of the twelve seeded per purpose', () => {
+    const perRun = [
+      // visual.spec.ts and dom.spec.ts each drive every state once…
+      ...[{ gate: 'reset' as const }, { gate: 'invite' as const }, { gate: 'signin' as const, notice: 'verified' as const },
+        { gate: 'signin' as const, notice: 'password-updated' as const }, { gate: 'signin' as const, notice: 'invite-set' as const }],
+      ...[{ gate: 'reset' as const }, { gate: 'invite' as const }, { gate: 'signin' as const, notice: 'verified' as const },
+        { gate: 'signin' as const, notice: 'password-updated' as const }, { gate: 'signin' as const, notice: 'invite-set' as const }],
+      // …and account-flows.spec.ts consumes one of each purpose in its live flows.
+      { gate: 'signin' as const, notice: 'verified' as const }, { gate: 'signin' as const, notice: 'password-updated' as const }, { gate: 'signin' as const, notice: 'invite-set' as const }
+    ];
+    const spent = { verify: 0, reset: 0, invite: 0 };
+    for (const target of perRun) { const kind = appTokenKind(target); if (kind) spent[kind] += 1; }
+    expect(spent).toEqual({ verify: 3, reset: 5, invite: 5 });
+    for (const n of Object.values(spent)) expect(n).toBeLessThanOrEqual(FIXTURE_TOKEN_COUNT);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// The console-error allow-list (A-S5 ruling 4).
+//
+// Three states deliberately provoke `TOKEN_INVALID` — a real 400 — and Chromium logs every 4xx
+// subresource as a console error `prepare()` otherwise fails the test on. The exemption is one
+// status per arming, consumed by exactly one matching line, and it must actually be CONSUMED:
+// an allowance nobody used means the state stopped provoking the failure it exists to show.
+// ---------------------------------------------------------------------------------------
+describe('expectApiStatus — a per-page, per-status allowance, never a blanket exemption (A-S5)', () => {
+  // `appOrigin()`/`referenceOrigin()` with NO argument (I12 review round 1): `expectApiStatus` and
+  // `consumeExpectedApiFailure` call `driverFor(page.url())` with no second argument either, so
+  // `driverFor`'s own default (`appUrl = appOrigin()`) reads the REAL environment. Freezing this
+  // mock page's URL to the `{}` default (`localhost:5173`) while `driverFor` compares it against
+  // whatever `PW_APP_PORT` actually holds is the same drift the `driverFor` describe above fixed.
+  const appPage = () => ({ url: () => `${appOrigin()}/` }) as unknown as Page;
+  const referencePage = () => ({ url: () => `${referenceOrigin()}/` }) as unknown as Page;
+  const line = (status: number) => `Failed to load resource: the server responded with a status of ${status} (Bad Request)`;
+
+  it('consumes exactly one matching console error per arming', () => {
+    const page = appPage();
+    expectApiStatus(page, 400);
+    expect(consumeExpectedApiFailure(page, line(400)), 'the armed one is allowed').toBe(true);
+    expect(consumeExpectedApiFailure(page, line(400)), 'a second 400 is not covered by one arming').toBe(false);
+  });
+
+  it('never allows a status that was not armed', () => {
+    const page = appPage();
+    expectApiStatus(page, 400);
+    expect(consumeExpectedApiFailure(page, line(429))).toBe(false);
+    expect(consumeExpectedApiFailure(page, 'pageerror: TypeError: something failed')).toBe(false);
+  });
+
+  it('allows nothing at all on a page that armed nothing', () => {
+    expect(consumeExpectedApiFailure(appPage(), line(400))).toBe(false);
+  });
+
+  it('arms nothing on the reference, which has no API to fail', () => {
+    const page = referencePage();
+    expectApiStatus(page, 400);
+    expect(consumeExpectedApiFailure(page, line(400))).toBe(false);
+    expect(() => assertExpectedApiFailuresObserved(page), 'and so has nothing to be unobserved').not.toThrow();
+  });
+
+  it('fails when an armed allowance was never used — a dead exemption hides a broken state', () => {
+    const page = appPage();
+    expectApiStatus(page, 400);
+    expect(() => assertExpectedApiFailuresObserved(page)).toThrow(/400/);
+    expect(() => assertExpectedApiFailuresObserved(page)).toThrow(/never/i);
+  });
+
+  it('passes once every armed allowance has been consumed, and re-arms cleanly', () => {
+    const page = appPage();
+    expectApiStatus(page, 400);
+    consumeExpectedApiFailure(page, line(400));
+    expect(() => assertExpectedApiFailuresObserved(page)).not.toThrow();
+    expectApiStatus(page, 400);
+    expect(() => assertExpectedApiFailuresObserved(page)).toThrow(/400/);
+  });
+
+  it('isExpectedApiFailure is the sign-in filter generalised, and 401 still goes through it', () => {
+    expect(isExpectedApiFailure(400, line(400))).toBe(true);
+    expect(isExpectedApiFailure(400, 'Failed to load resource: the server responded with a status of 400 ()')).toBe(true);
+    expect(isExpectedApiFailure(400, line(4001)), 'word-bounded').toBe(false);
+    expect(isExpectedSignInFailure401('Failed to load resource: the server responded with a status of 401 ()')).toBe(true);
+  });
+});
+
+describe('the seeded application data the oracle types back (A-S5 ruling 2)', () => {
+  it('DECLINED_FIELDS is the seed script\'s row, which is what the re-apply form is pre-filled with', () => {
+    expect(DECLINED_FIELDS).toEqual({
+      name: 'Declined Applicant, DVM',
+      school_year: 'Texas A&M, 2012',
+      license_state: 'TX',
+      employer: 'Hill Country Veterinary Clinic',
+      intent: 'Exploring ownership within two years.',
+      affirm: true
+    });
+  });
+
+  it('NEEDS_REVIEW_INFO_REQUEST is the reviewer\'s question the seed writes', () => {
+    expect(NEEDS_REVIEW_INFO_REQUEST).toBe('Which practice do you work at now, and in what role?');
   });
 });

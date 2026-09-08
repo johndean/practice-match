@@ -3,6 +3,8 @@ import sys
 from pathlib import Path
 from uuid import uuid4
 
+import pytest
+
 from app.auth import permissions as PM
 from app.auth.sessions import Principal
 from tests.conftest import walk_routes
@@ -103,6 +105,29 @@ def test_cli_entrypoint_prints_nothing_without_the_flag(monkeypatch, capsys):
     monkeypatch.setattr(sys, "argv", ["app.auth.permissions"])
     runpy.run_path(PM.__file__, run_name="__main__")
     assert capsys.readouterr().out == ""
+
+
+# --- Task I12 (John's ruling #5, verbatim, 2026-09-08): "The permission-table regeneration
+# command must fail closed/refuse to run when any of the four required test-environment settings
+# are missing. It must never silently generate an empty permission file." The four settings are
+# `gen:permissions`' concern (frontend/package.json, pinned by frontend/tests/gen-permissions.test.ts);
+# this is the OTHER half — the emitter itself refuses to produce an empty twin no matter how it is
+# invoked, which is what stands between a coding mistake upstream and a silently-empty commit.
+#
+# `_emit_ts` is monkeypatched directly rather than driven through `runpy.run_path` (as the two
+# tests above do): `run_path` re-executes this file fresh from source, so it always redefines its
+# OWN non-empty `MATRIX` from the literal dict and never sees a patch made to the already-imported
+# `PM` module. Calling `PM._emit_ts()` after `monkeypatch.setattr(PM, "MATRIX", {})` reaches the
+# same code, reading the same module-global `MATRIX` `_emit_ts` closes over, without that gap.
+def test_ts_emitter_refuses_an_empty_matrix(monkeypatch, capsys):
+    monkeypatch.setattr(PM, "MATRIX", {})
+    with pytest.raises(SystemExit) as excinfo:
+        PM._emit_ts()
+    assert excinfo.value.code == 1
+    out, err = capsys.readouterr()
+    assert out == "", "a refusal must never write a partial (or empty) twin to stdout"
+    assert err.count("\n") == 1, "exactly one stderr line — not a traceback"
+    assert "MATRIX is empty" in err
 
 
 # --- fix round 1, Important 8: PUBLIC_ROUTES and AUDITED get the consumers spec §4 promised ---

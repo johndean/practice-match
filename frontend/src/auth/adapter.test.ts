@@ -12,6 +12,7 @@
 // tests: `app.setup.js` is copied verbatim into App.vue by the generator and is not measured.
 import { describe, expect, it } from 'vitest';
 import { makeAuthAdapter } from './adapter';
+import type { AuthApi } from './adapter';
 import type { Me } from './me';
 
 const ME: Me = {
@@ -32,14 +33,34 @@ function fakeStore() {
   };
 }
 
+const STATUS = { status: 'check_email' };
+
+/** A complete `AuthApi`, so a test can override just the one method it exercises. */
+function fakeApi(overrides: Partial<AuthApi> = {}): AuthApi {
+  return {
+    signIn: () => Promise.resolve(ME),
+    signOut: () => Promise.resolve({ status: 'signed_out' }),
+    signUp: () => Promise.resolve(STATUS),
+    verify: () => Promise.resolve(STATUS),
+    forgot: () => Promise.resolve(STATUS),
+    reset: () => Promise.resolve(STATUS),
+    acceptInvite: () => Promise.resolve(STATUS),
+    apply: () => Promise.resolve({ id: 'ap1', status: 'pending' }),
+    answer: () => Promise.resolve(STATUS),
+    applicationsMe: () => Promise.resolve({ current: null, history: [] }),
+    resendVerification: () => Promise.resolve(STATUS),
+    ...overrides
+  };
+}
+
 describe('makeAuthAdapter (C1)', () => {
   it('writes the account into the store BEFORE its own promise resolves', async () => {
     const store = fakeStore();
     const calls: string[] = [];
-    const adapter = makeAuthAdapter({
+    const adapter = makeAuthAdapter(fakeApi({
       signIn: (email, password) => { calls.push(`signIn(${email},${password})`); return Promise.resolve(ME); },
       signOut: () => Promise.resolve({ status: 'signed_out' })
-    }, store);
+    }), store);
 
     // The ordering IS the fix: `logic.js`'s own `.then` runs when this promise settles, and the
     // very next `guard()` reads the store. Asserted by observing the store at the moment the
@@ -55,7 +76,7 @@ describe('makeAuthAdapter (C1)', () => {
   it('leaves the store alone when the sign-in is refused, and passes the refusal on', async () => {
     const store = fakeStore();
     const refusal = new Error('Email or password is incorrect.');
-    const adapter = makeAuthAdapter({ signIn: () => Promise.reject(refusal), signOut: () => Promise.resolve(null) }, store);
+    const adapter = makeAuthAdapter(fakeApi({ signIn: () => Promise.reject(refusal) }), store);
 
     await expect(adapter.signIn('buyer@practice-match.test', 'wrong')).rejects.toBe(refusal);
 
@@ -66,10 +87,9 @@ describe('makeAuthAdapter (C1)', () => {
   it('ends the session and then clears the store', async () => {
     const store = fakeStore();
     const calls: string[] = [];
-    const adapter = makeAuthAdapter({
-      signIn: () => Promise.resolve(ME),
+    const adapter = makeAuthAdapter(fakeApi({
       signOut: () => { calls.push('signOut()'); return Promise.resolve({ status: 'signed_out' }); }
-    }, store);
+    }), store);
     store.set(ME);
 
     await adapter.signOut();
@@ -85,12 +105,122 @@ describe('makeAuthAdapter (C1)', () => {
     // trust. The rejection is still propagated, for a caller that wants to know.
     const store = fakeStore();
     const failure = new Error('network');
-    const adapter = makeAuthAdapter({ signIn: () => Promise.resolve(ME), signOut: () => Promise.reject(failure) }, store);
+    const adapter = makeAuthAdapter(fakeApi({ signOut: () => Promise.reject(failure) }), store);
     store.set(ME);
 
     await expect(adapter.signOut()).rejects.toBe(failure);
 
     expect(store.held, 'the store must not outlive the screen that named it').toBeNull();
     expect(store.writes).toEqual(['set(buyer@practice-match.test)', 'clear()']);
+  });
+});
+
+// S1: the eight account-lifecycle methods the later gate screens (routes, forgot/reset,
+// accept-invite, the application status card) call through. Every one is a plain pass-through —
+// unlike signIn/signOut, none of them has an opinion about the store — so each test asserts the
+// same three things: the same-named `api` function is called with the same arguments, its result
+// is handed straight back, and the store is left exactly as it was found.
+describe('makeAuthAdapter — the nine lifecycle pass-throughs', () => {
+  // A-S4.1: the ninth. Like the other eight it has no opinion about the store — a re-sent
+  // verification mail does not change who `useMe()` says the visitor is.
+  it('resendVerification calls api.resendVerification with no arguments and returns its result, untouched by the store', async () => {
+    const calls: unknown[] = [];
+    const store = fakeStore();
+    const adapter = makeAuthAdapter(fakeApi({ resendVerification: (...args: unknown[]) => { calls.push(args); return Promise.resolve(STATUS); } }), store);
+
+    expect(await adapter.resendVerification()).toBe(STATUS);
+
+    expect(calls).toEqual([[]]);
+    expect(store.writes).toEqual([]);
+  });
+
+  it('signUp calls api.signUp with the same arguments and returns its result, untouched by the store', async () => {
+    const calls: unknown[] = [];
+    const store = fakeStore();
+    const adapter = makeAuthAdapter(fakeApi({ signUp: (email, password) => { calls.push([email, password]); return Promise.resolve(STATUS); } }), store);
+
+    expect(await adapter.signUp('a@b.co', 'pw')).toBe(STATUS);
+
+    expect(calls).toEqual([['a@b.co', 'pw']]);
+    expect(store.writes).toEqual([]);
+  });
+
+  it('verify calls api.verify with the same argument and returns its result, untouched by the store', async () => {
+    const calls: unknown[] = [];
+    const store = fakeStore();
+    const adapter = makeAuthAdapter(fakeApi({ verify: (token) => { calls.push([token]); return Promise.resolve(STATUS); } }), store);
+
+    expect(await adapter.verify('tok')).toBe(STATUS);
+
+    expect(calls).toEqual([['tok']]);
+    expect(store.writes).toEqual([]);
+  });
+
+  it('forgot calls api.forgot with the same argument and returns its result, untouched by the store', async () => {
+    const calls: unknown[] = [];
+    const store = fakeStore();
+    const adapter = makeAuthAdapter(fakeApi({ forgot: (email) => { calls.push([email]); return Promise.resolve(STATUS); } }), store);
+
+    expect(await adapter.forgot('a@b.co')).toBe(STATUS);
+
+    expect(calls).toEqual([['a@b.co']]);
+    expect(store.writes).toEqual([]);
+  });
+
+  it('reset calls api.reset with the same arguments and returns its result, untouched by the store', async () => {
+    const calls: unknown[] = [];
+    const store = fakeStore();
+    const adapter = makeAuthAdapter(fakeApi({ reset: (token, password) => { calls.push([token, password]); return Promise.resolve(STATUS); } }), store);
+
+    expect(await adapter.reset('tok', 'newpw')).toBe(STATUS);
+
+    expect(calls).toEqual([['tok', 'newpw']]);
+    expect(store.writes).toEqual([]);
+  });
+
+  it('acceptInvite calls api.acceptInvite with the same arguments and returns its result, untouched by the store', async () => {
+    const calls: unknown[] = [];
+    const store = fakeStore();
+    const adapter = makeAuthAdapter(fakeApi({ acceptInvite: (token, password) => { calls.push([token, password]); return Promise.resolve(STATUS); } }), store);
+
+    expect(await adapter.acceptInvite('tok', 'newpw')).toBe(STATUS);
+
+    expect(calls).toEqual([['tok', 'newpw']]);
+    expect(store.writes).toEqual([]);
+  });
+
+  it('apply calls api.apply with the same arguments and returns its result, untouched by the store', async () => {
+    const calls: unknown[] = [];
+    const store = fakeStore();
+    const result = { id: 'ap1', status: 'pending' };
+    const adapter = makeAuthAdapter(fakeApi({ apply: (kind, fields) => { calls.push([kind, fields]); return Promise.resolve(result); } }), store);
+
+    expect(await adapter.apply('buyer', { name: 'A' })).toBe(result);
+
+    expect(calls).toEqual([['buyer', { name: 'A' }]]);
+    expect(store.writes).toEqual([]);
+  });
+
+  it('answer calls api.answer with the same arguments and returns its result, untouched by the store', async () => {
+    const calls: unknown[] = [];
+    const store = fakeStore();
+    const adapter = makeAuthAdapter(fakeApi({ answer: (applicationId, text) => { calls.push([applicationId, text]); return Promise.resolve(STATUS); } }), store);
+
+    expect(await adapter.answer('ap1', 'Yes, I confirm.')).toBe(STATUS);
+
+    expect(calls).toEqual([['ap1', 'Yes, I confirm.']]);
+    expect(store.writes).toEqual([]);
+  });
+
+  it('applicationsMe calls api.applicationsMe with no arguments and returns its result, untouched by the store', async () => {
+    const calls: unknown[] = [];
+    const store = fakeStore();
+    const result = { current: null, history: [] };
+    const adapter = makeAuthAdapter(fakeApi({ applicationsMe: () => { calls.push([]); return Promise.resolve(result); } }), store);
+
+    expect(await adapter.applicationsMe()).toBe(result);
+
+    expect(calls).toEqual([[]]);
+    expect(store.writes).toEqual([]);
   });
 });

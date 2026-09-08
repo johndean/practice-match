@@ -184,7 +184,9 @@ For reproducing a report, and for the paths the account screens call:
   `application_received` is queued again. Only from `needs_review`, only the caller's own row (a
   row that is neither is one indistinguishable `404`).
 * `GET /api/applications/me` — `current` (the one open row, or the newest row when nothing is open)
-  and `history` behind it, with `info_request`, `decision`, `decision_note` and `decided_at`.
+  and `history` behind it, with `info_request`, `decision`, `decision_note`, `decided_at` and
+  `fields` (the applicant's own last answers — `_mine_row` in `app/api/applications.py` — which is
+  what pre-fills the re-apply form after a decline).
 * `GET /api/config` — public, no credential: `{"market_data_public": false}`. The browser reads it
   before `/api/me` on every page load, and `scripts/verify-deploy.sh` probes it. On production the
   boolean must be `false`.
@@ -214,7 +216,7 @@ request path talks to Resend, so a missing email is one of five things — check
 
    | Template | How to cause it again |
    |---|---|
-   | `verify_email` | The person **signs up again on the same address** — `POST /api/auth/signup`. While the account is still `unverified` that re-issues a fresh 24 h `verify` token and queues `verify_email` again (I9a fix round 1), so an expired or suppressed link is never a dead end. Their old link keeps working too, if they still have it. **Three attempts per address per 24 hours** (`limits.SIGNUP_EMAIL`): the fourth is refused `429` *before* any mail is queued — so fix the allowlist (or whatever suppressed the row) **before** asking them to try again, or you spend an attempt on a mail that will be suppressed too. The window is a fixed 24 h bucket, not a rolling one, so it clears at the boundary and `Retry-After` reports the whole 24 h as an upper bound rather than the real wait. There is no operator override, and the bucket is keyed on the address, so nothing done on another one shortens it. |
+   | `verify_email` | The person **signs up again on the same address** — `POST /api/auth/signup` — or, if they are already signed in on the unverified account, presses **Send it again** on the "Check your email" card, which is `POST /api/auth/verify/resend` (session-authenticated, `unverified` only, A-S4.1) and needs no password. Either way, while the account is still `unverified` a fresh 24 h `verify` token is issued and `verify_email` queued again (I9a fix round 1), so an expired or suppressed link is never a dead end. Their old link keeps working too, if they still have it. **Three attempts per address per 24 hours** (`limits.SIGNUP_EMAIL`, SHARED by both routes — they count into one bucket keyed on the address): the fourth is refused `429` *before* any mail is queued — so fix the allowlist (or whatever suppressed the row) **before** asking them to try again, or you spend an attempt on a mail that will be suppressed too. The window is a fixed 24 h bucket, not a rolling one, so it clears at the boundary and `Retry-After` reports the whole 24 h as an upper bound rather than the real wait. There is no operator override, and the bucket is keyed on the address, so nothing done on another one shortens it. |
    | `password_reset` | The person uses **Forgot password** — `POST /api/auth/password/forgot` — which always issues a fresh 1 h token and retires the previous one. Works from `verified` and `active` only. |
    | `account_exists` | Nothing to do: it is a notice to the address's owner that somebody tried to sign up as them, not something they act on. |
    | `application_received`, `application_info_requested` | The applicant re-submits: `POST /api/applications/{application_id}/answer` from `needs_review`, or a fresh `POST /api/applications` after a decline. |
@@ -248,8 +250,13 @@ request path talks to Resend, so a missing email is one of five things — check
    `provider_id`, and check `RESEND_WEBHOOK_SECRET` is set on the api — unset, the webhook answers
    `401` to every call rather than trusting one.
 
-The links inside verify and reset mail point at `LINK_BASE_URL`. A wrong value sends people to the
-other environment, which looks exactly like "the link doesn't work".
+The app serves five account routes: `/signup` and `/forgot` (no token) and `/verify`, `/reset`,
+`/accept-invite` (each reads a `?token=` from the query string once and never writes one back into
+the address bar). The links inside verify and reset mail, and the invite link
+`scripts/bootstrap_admin.py` prints (§1 — it is handed over directly, never queued as mail), all
+point at `LINK_BASE_URL` plus one of those three: `/verify?token=…`, `/reset?token=…`,
+`/accept-invite?token=…`. A wrong `LINK_BASE_URL` value sends people to the other environment,
+which looks exactly like "the link doesn't work".
 
 ## 9. A locked-out member
 
@@ -299,10 +306,17 @@ While it is mismatched the webhook answers `401`, so bounces are not recorded �
 
 ## 11. Test and QA accounts
 
-`scripts/seed_persona.py` seeds the six accounts the visual suite and a QA click-through need — three
+`scripts/seed_persona.py` seeds the ten accounts the visual suite and a QA click-through need — three
 members (`buyer@`, `seller@`, `design@practice-match.test`, all "Dr. Rachel Mendes of the StartUp
-Club", differing only in grants) and three applicants (`pending@`, `needs-review@`,
-`declined@practice-match.test`), one per gate state. Idempotent; run it as often as you like.
+Club", differing only in grants), three applicants (`pending@`, `needs-review@`,
+`declined@practice-match.test`, one per gate state — only `needs-review@` and `declined@` carry a
+real application row; `pending@` has none) and four identity-screen accounts (`unverified@`,
+`verify-me@`, `verified@`, `invited@practice-match.test`) covering the two states the
+sign-up/verify/forgot/reset/accept-invite screens start from (`unverified@` and `verify-me@` are
+both `unverified`; `verified@` and `invited@` are both `verified`). `verify-me@` exists solely to own
+the twelve `verify` fixture tokens, so consuming one during a test never confirms the `unverified@`
+account the check-email/resend states need to stay unverified. Idempotent; run it as often as you
+like.
 
 ```bash
 PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py
@@ -310,11 +324,55 @@ PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py
 
 * It **refuses on production, with no override flag** (exit 2). A fixture account holding `admin` on
   the stakeholders' real data is not something a `--yes` should be able to buy.
-* `PERSONA_PASSWORD` is read from the shell only — never a Railway variable, nothing in the api or
-  worker reads it. Unset, the script uses its documented default (`.env.example`), which is also the
-  Playwright harness's default and is pinned equal to it by
+* `PERSONA_PASSWORD` is stored on the QA `api` service in Railway as the operator's secret store;
+  read by no service; passed to the seed and the harness through the shell; never on production
+  (A-S6.1) — `scripts/seed_persona.py` and the Playwright harness read it from the shell they are
+  given, never Railway directly. Unset, the script falls back to its own documented default
+  (`scripts/seed_persona.py`'s `DEFAULT_PASSWORD`), which is also the Playwright harness's default
+  and is pinned equal to it by
   `tests/test_docs.py::test_the_playwright_persona_password_default_matches_seed_persona`.
 * The addresses are all `.test` (RFC 6761): never deliverable, by design. They are also why the QA
   `EMAIL_ALLOWLIST` can stay empty.
 * These are not a way in for a real reviewer. Real people get `scripts/bootstrap_admin.py` (§1) and
   a grant (§4).
+
+## 12. QA parity run
+
+Any Playwright invocation pointed at a live `PW_APP_URL` — visual, DOM, smoke, the account flows,
+whichever project — reseeds QA's fixtures automatically, before the first test AND after the last
+(`frontend/tests/global-setup.ts` / `global-teardown.ts`, Task S7): the run needs no manual seed
+step and cannot leave QA's fixtures mutated for whoever opens it next.
+
+```bash
+railway status                                                                       # must print: Project: Practice Match
+railway variable list --service api --environment QA --json > /tmp/pm-qa-vars.json   # names AND values — never cat this file
+cd frontend
+env $(python3 -c 'import json; d = json.load(open("/tmp/pm-qa-vars.json")); print(" ".join(f"{k}={d[k]}" for k in ("DATABASE_URL","PERSONA_PASSWORD","API_SECRET_KEY","ENVIRONMENT","REDIS_URL")))') \
+    PW_APP_URL=https://qa.foundation.vin npx playwright test --config=tests/playwright.config.ts --project=app
+rm -f /tmp/pm-qa-vars.json
+```
+
+`npm run test:e2e` is the same command (`frontend/package.json`'s script already carries
+`--config=tests/playwright.config.ts --project=app`; `frontend/tests/playwright.config.ts` is the
+only config in the repo), with `PW_APP_URL` and the five variables set ahead of it instead.
+
+* The reseed needs exactly five variables — `DATABASE_URL`, `PERSONA_PASSWORD`, `API_SECRET_KEY`,
+  `ENVIRONMENT`, `REDIS_URL` — pulled from Railway in the one JSON read above and handed straight
+  into the subprocess environment; a refusal names whichever of the five is missing. Never print
+  the file, and delete it when you are done. `PERSONA_PASSWORD` is stored on the QA `api` service in
+  Railway as the operator's secret store; read by no service; passed to the seed and the harness
+  through the shell; never on production (A-S6.1) — the other four are real `Settings` fields the
+  api and worker also read.
+* On a refusal — a host outside `qa.foundation.vin`/`localhost`/`127.0.0.1`, or
+  `ENVIRONMENT=production` — the planner prints `remote reseed refuses this target:
+  <host>/<ENVIRONMENT> — only QA and local test hosts may be reseeded`
+  (`frontend/tests/global-setup.ts`) and the run never starts. When it DOES run, the seed itself
+  prints the target database name and host, never the DSN (`[seed_persona] target database <db> on
+  <host>`, `scripts/seed_persona.py`).
+* QA's real sign-in rate limit stays real: fourteen of `SIGNIN_IP`'s thirty sign-ins per FIXED
+  fifteen-minute window are enough for one full parity run (`frontend/tests/harness.ts`'s traced
+  budget: 7 + 2 + 3 + 1 + 1), so budget **one run per window**. A `429` mid-run means wait for the
+  quarter-hour boundary and re-run — never loosen the limit to make it pass.
+* Only **one remote run at a time**: the fixture restoration is unconditional and the throwaway
+  `e2e-…@example.org` sweep is global, so a second run started before the first finishes races the
+  same fixtures and addresses.

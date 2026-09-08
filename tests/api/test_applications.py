@@ -136,6 +136,16 @@ async def test_applications_me_returns_the_open_row_and_the_history(client, conn
     assert body["current"]["kind"] == "buyer"
     assert body["current"]["status"] == "needs_review" and body["current"]["info_request"] == "Which practice?"
     assert body["current"]["submitted_at"] and body["current"]["answer"] is None
+    # A-S4 (controller ruling, 2026-09-08): the applicant's OWN answers travel with the row. The
+    # declined card's "Reply with more information" opens the Request Access form pre-filled from
+    # `current.fields` (account-screens spec §3, "Re-apply needs no new screen"), and this endpoint
+    # is the only place the client can read them. There is nothing here to withhold from the person
+    # who wrote it — `flags` (the reviewer's hints) is a different matter and stays out.
+    assert body["current"]["fields"] == FIELDS
+    # The whole shape, pinned: a key added or dropped here is a client contract change.
+    assert set(body["current"]) == {"id", "kind", "status", "fields", "info_request", "answer", "answered_at",
+                                    "resubmitted_at", "submitted_at", "decision", "decision_note", "decided_at"}
+    assert "flags" not in body["current"], "the reviewer's hints are not the applicant's to read"
 
 
 async def test_flags_are_empty_when_nothing_matches_and_when_no_keywords_are_configured(client, conn, member, monkeypatch):
@@ -360,6 +370,9 @@ async def test_applications_me_falls_back_to_the_latest_closed_row_when_nothing_
     assert body["current"]["id"] == seller.json()["id"] and body["current"]["kind"] == "seller" and body["current"]["status"] == "declined"
     assert [(h["kind"], h["status"], h["decision"]) for h in body["history"]] == [("buyer", "approved", "approve")]
     assert body["history"][0]["answer"] == "Cedar Park"
+    # A-S4: `fields` travels on every entry, not only on `current` — one row shape, both lists.
+    assert body["history"][0]["fields"] == FIELDS
+    assert body["current"]["fields"] == SELLER_FIELDS
 
 
 async def test_a_seller_answer_leaves_the_account_active_and_queues_the_seller_template(client, conn, member):

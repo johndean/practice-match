@@ -2712,13 +2712,19 @@ The "Mobile view" / "Desktop view" toggle lives in the jump bar and leaves with 
 
 **Decisions for John recorded with this amendment (defaults applied unless he objects):** D-I8-1 the D15 mechanism carries the wiring and the launch removal; D-I8-2 `prototypeBar`/`startScreen`/`startViewport`/`startGate` stay DECLARED (the app never passes the first three; `startViewport` only from `?viewport=`); D-I8-3 the reference server's `?props=` injection; D-I8-4 the three seeded state personas (test/QA only; refused on production); D-I8-5 the `unavailable` copy (I8b) and `verified → apply`; D-I8-6 the baseline manifest is re-frozen after the launch removal (a design change by ruled amendment, not a code leak); D-I8-7 the phone-frame presentation stays reachable via `?viewport=mobile` until a responsive design exists. **D-I8-8 (A-I8.2):** the oracle persona is a buyer, so the header stays the design's on 19 states; the nine seller/admin states show the label of the account that can open them and re-baseline in commit 1; the reference receives the same account through a `me` prototype prop. **A-I8.1 (2026-09-07, after the implementer's NEEDS_CONTEXT):** R1 ordering (the bootstrap moves to commit 1), A6.6, the blank-line rule and `booted()`'s new anchor; `gate: 'unavailable'` renders an empty gate column until I8b supplies the ruled copy — known, on John's queue, not patched around.
 
-#### Task I8b (blocked on the Rev 3 design): the `unavailable` gate, the applicant's answer / re-submit and re-apply screens, and the application wired to the API
+#### Task I8b (DONE — executed by the account-screens plan): the `unavailable` gate, the applicant's answer / re-submit and re-apply screens, and the application wired to the API
+
+**Done, 2026-09-08.** John's Rev 3 package materialised as `docs/superpowers/specs/2026-09-07-account-screens-design.md`, and this task's work is Tasks S1–S7 of `docs/superpowers/plans/2026-09-08-account-screens.md` (spec §6 approved 2026-09-08): the `unavailable` gate (title "This page is not available to your account"), the applicant's answer/re-submit card and the `declined` re-apply form. Written as amendments **A8** (thirteen literal edits, A8.1a–A8.8b) plus **A9** (A9.1a/b, the `startAnswerNote` prototype prop, controller amendment A-S5) exactly as this paragraph anticipated; `submitApply` → `POST /api/applications` is wired in A8.6. The original text below is kept as the record of what this task asked for before Rev 3 existed.
 
 Waits for John's copy for `unavailable` (title ruled: "This page is not available to your account"; kicker/body/CTA proposed in `task-I8-preflight.md`) and for the Rev 3 screens for `needs_review` (answer + Re-submit) and `declined` (Re-apply). The application (`submitApply` → `POST /api/applications`) is wired here too, because it presupposes a verified account and therefore the sign-up flow of I8c. Written as amendments (A8) when the design exists; the harness `PERSONAS` already carry `needsReview` and `declined` for its screens.
 
-#### Task I8c (blocked on the Rev 3 design): the account pages the API already serves
+#### Task I8c (DONE — executed by the account-screens plan): the account pages the API already serves
+
+**Done, 2026-09-08.** Same package, same plan: sign-up and "check your email" (A8.3b/A8.4b), the `/verify` landing (`gate-verify-expired`'s provoked 400, spec §6), forgot-password and set-a-new-password (`/reset?token=`), accept-invite (`/accept-invite?token=`) are all live routes now (`frontend/src/router/routes.ts`), each with its own approved states in `screens.ts` (43 in all, up from 28) and its reference amendments. The original text below is kept as the record of what this task asked for before Rev 3 existed.
 
 Sign-up (email + password) and "check your email"; the `/verify` landing (POSTs the token from its URL, replaces history — spec §API); forgot-password and set-a-new-password (`/reset?token=`); accept-invite (`/accept-invite?token=`, the four admins' link from `scripts/bootstrap_admin.py`). Each is a routed page the design does not have; `routes.ts` and `ROUTE_PERMS` grow with them; the reference must render them too (a new design export or amendments). Written when the design exists. Until then Task I10's "open the invite link, set the admin password" and "sign up as a stranger" steps cannot run — see the artifact's top action.
+
+**Task I8's one remaining piece is Task I10** (QA end-to-end verification and hand-back, below): I8a, I8b and I8c are all done; I10's own steps — the real stranger's flow on QA, the Playwright gate against `PW_APP_URL`, and the production hand-back — have not run yet.
 
 ---
 
@@ -2780,6 +2786,30 @@ Run: `poetry run pytest tests/test_docs.py tests/perf -q` → **FAIL**.
 
 ---
 
+### Task I11: zxcvbn `user_inputs` — John's ruling, 2026-09-08 ("ADD user_inputs — Password strength validation should also penalize passwords derived from the member's own email address or name")
+
+**Files:** Modify the password-strength module under `app/auth/` (where zxcvbn is called), its callers in `app/api/auth.py` (sign-up, `password/reset`, `accept-invite`) and `app/api/*` wherever a password is set; tests beside each. Never: the floor values, the messages' wording (spec §3), the frontend.
+
+**Rule:** `user_inputs` = the account's email (as typed and normalised), its local part, the local part split on `.`, `_`, `-`, `+`, each domain label, and — where the account or application row is known (reset, accept-invite, answer/re-apply) — every whitespace-separated token of the person's name of three or more characters. Sign-up knows only the email.
+
+- [ ] **Step 1: RED.** For each seam: a password that is the local part (`buyer` for `buyer@…`), the local part plus digits, the domain, and a name token, each otherwise above the floor, is REFUSED with the existing weak-password response; the same strings for a different account are ACCEPTED. Run → FAIL.
+- [ ] **Step 2: GREEN.** A pure `user_inputs_for(email, name=None) -> list[str]` (unit-tested, deterministic order, de-duplicated, lower-cased) passed to zxcvbn at every seam. Backend gate 100 %; ruff; CI's two mypy commands.
+- [ ] **Step 3: Commit** — `feat(auth): zxcvbn user_inputs — a password built from the member's own email or name is weak (I11)` with the trailer.
+
+---
+
+### Task I12: Fail-closed permission-table regeneration and test hygiene — John's rulings, 2026-09-08
+
+**Ruling (#5, verbatim):** "The permission-table regeneration command must fail closed/refuse to run when any of the four required test-environment settings are missing. It must never silently generate an empty permission file."
+
+**Files:** Modify `frontend/package.json` (`gen:permissions`), the test that pins that script string (find it — `frontend/tests/*.test.ts` greps `gen:permissions`), `app/auth/permissions.py` (`--ts` emitter), `tests/auth/test_permissions.py`, `frontend/tests/harness.test.ts` (housekeeping below).
+
+- [ ] **Step 1: RED.** (a) The package.json pin asserts the script uses `${VAR:?…}` for `DATABASE_URL`, `REDIS_URL`, `ENVIRONMENT`, `API_SECRET_KEY` and carries NO `:-` default → FAIL. (b) `python -m app.auth.permissions --ts` with an empty matrix (monkeypatched) exits non-zero and writes NOTHING to stdout → FAIL. (c) Housekeeping found by the controller gate run: `harness.test.ts` "driverFor … defaults to the app project's own origin" hard-codes `http://localhost:5173` while `harness.ts` derives the app origin from `PW_APP_PORT`; the test must derive its fixture URL the same way (RED: run it with `PW_APP_PORT=5273` — it fails today).
+- [ ] **Step 2: GREEN.** `gen:permissions` uses `${DATABASE_URL:?set DATABASE_URL (test database) — gen:permissions refuses to guess}` etc. (bash `:?` aborts on unset/empty), keeps the `> permissions.ts.new && mv` so a failure never touches `permissions.ts`; the emitter refuses an empty matrix with one stderr line; the harness test derives the URL. Frontend 100 %, backend gate 100 %, the six shell suites (any test_*.sh that greps package.json).
+- [ ] **Step 3: Commit** — `fix(permissions): gen:permissions fails closed on missing settings and an empty matrix; harness test derives the app origin (I12)` with the trailer.
+
+---
+
 ### Task I10: QA end-to-end verification and hand-back
 
 **Executable gates for this task (its RED/GREEN):** `scripts/verify-deploy.sh QA` (itself tested by `tests/scripts/test_verify_deploy.sh`), the persona-driven Playwright suite against `PW_APP_URL`, `perf.yml`, and `tests/test_docs.py::test_identity_variables_are_documented`. Any defect found in Step 4 is first reproduced as a failing test in the responsible task (I4–I8), fixed, and redeployed — never patched on QA by hand.
@@ -2792,6 +2822,13 @@ Run: `poetry run pytest tests/test_docs.py tests/perf -q` → **FAIL**.
 - [ ] **Step 6: Production** — `scripts/deploy.sh production`, `verify-deploy.sh production`, `bootstrap_admin.py` on production with John's address, no persona, `EMAIL_ALLOWLIST` unset (production sends to anyone), confirm one real sign-up end to end with a VIN Foundation mailbox, then `git tag v0.3.0` and finish the branch.
 
 ---
+
+## Rulings recorded 2026-09-08 (John)
+
+- **Task I5d** (launch sign-ups: admin read, CSV export, launch mail; Admin tab gated on Rev 3) is planned in its own file, `docs/superpowers/plans/2026-09-08-launch-signups-admin.md` (GO, 2026-09-08); the Rev 3 request is `docs/design-reference/requests/2026-09-08-rev3-admin-launch-signups-tab.md`, which also carries the Permissions table's plain-language "Meaning" values John's #6 ruling requires from Rev 3 (six-column table kept; Meaning temporarily empty; not complete until Rev 3 supplies them).
+- **Sender confirmed:** "Use `no-reply@foundation.vin` as the sender, with display name VIN Foundation — Practice Match" — already `app/config.py`'s `mail_from` default; spec §2's open item closes. `MAIL_REPLY_TO`'s mailbox is still John's.
+- **I8 approach confirmed** (item 6): byte-identical ported script, one generated `App.vue`, pixel parity, the real-API branch in sign-in/apply/sign-out with fixture behaviour kept on the design preview, jump bar/shortcuts/demo credentials removed from the design (A6), prototype props declared but unused by the app (D-I8-2), the oracle through the design server's query-string switch. John wrote "only the three seeded QA/test accounts (pending, declined, needs-review)"; the oracle in fact uses TEN seeded TEST accounts — those three, plus `design`/`buyer`/`seller` (A-I7, A-I8, A-I8.2) and `unverified`/`verified`/`invited`/`verify-me` (account-screens spec §6 approved 2026-09-08; A-S5.2). Test and QA databases only; production is never seeded. Flagged on the artifact for his vet; unchanged until he rules.
+- **I11 and I12** above record his "ADD user_inputs" and "#5 CHANGE" rulings.
 
 ## Red-team review (2026-09-05) — findings and dispositions
 

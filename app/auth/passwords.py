@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import logging
+import re
 import threading
 from functools import lru_cache
 from pathlib import Path
@@ -27,8 +28,55 @@ class PasswordPolicyError(ValueError):
     pass
 
 
-def validate(pw: str, *, privileged: bool) -> None:
-    """Strength is scored on the first 72 characters; length up to 256 is accepted."""
+def user_inputs_for(email: str, name: str | None = None) -> list[str]:
+    """zxcvbn's `user_inputs`: fed to `validate` so a password built from the MEMBER'S OWN
+    identifiers is scored like any other dictionary word instead of like a random string (John's
+    ruling, 2026-09-08 — I11: "Password strength validation should also penalize passwords
+    derived from the member's own email address or name").
+
+    Pure and deterministic; every value lower-cased and de-duplicated (first occurrence wins) —
+    zxcvbn's own `user_inputs` handling lower-cases its list before matching (see
+    `zxcvbn/__init__.py`), so folding case here just keeps this function's OWN order
+    inspectable rather than leaving it to however zxcvbn happens to fold it.
+
+    In order: the email as given, its lower-cased ("normalised") form, the local part, the local
+    part split on the separators an address commonly encodes structure with (`.`, `_`, `-`, `+`
+    — so "buyer+demo@x" also yields "buyer" and "demo"), each label of the domain (so a
+    sub-domain's every label is caught, not just the registrable domain), and — only when the
+    caller knows the member's name (a reset or an accept-invite reads it off the account row) —
+    every whitespace-separated token of it that is three characters or longer, so a two-letter
+    token (initials, "Al") does not become a blacklisted fragment for every password belonging to
+    everybody who shares it.
+
+    Sign-up knows only the email; `name=None` there is deliberate, not a placeholder for it."""
+    local, _, domain = email.partition("@")
+    candidates = [email, email.lower(), local, *re.split(r"[._+-]", local), *domain.split(".")]
+    if name:
+        candidates += [token for token in name.split() if len(token) >= 3]
+    seen: list[str] = []
+    for candidate in candidates:
+        lowered = candidate.lower()
+        if lowered and lowered not in seen:
+            seen.append(lowered)
+    return seen
+
+
+# I11 review round 1: the vendored zxcvbn's OWN `user_inputs` support — not our code — mutates a
+# MODULE-LEVEL dict (`zxcvbn.matching.RANKED_DICTIONARIES['user_inputs'] = ...`, inside `zxcvbn()`
+# itself) and then reads it back mid-match; two concurrent calls with DIFFERENT `user_inputs` can
+# interleave on that shared global and score one call against the other's dictionary. `validate`
+# runs synchronously on the caller's thread today (never offloaded via `anyio.to_thread` the way
+# `hash_password`/`is_pwned` are), so nothing calls it concurrently in practice — this lock keeps
+# that true structurally, not by convention, if `validate` is ever moved onto a worker thread.
+_zxcvbn_lock = threading.Lock()
+
+
+def validate(pw: str, *, privileged: bool, user_inputs: list[str] | None = None) -> None:
+    """Strength is scored on the first 72 characters; length up to 256 is accepted.
+
+    `user_inputs` (I11): the member's own identifiers, from `user_inputs_for` — passed straight
+    through to zxcvbn, which treats each one as a rank-1 dictionary word for THIS scoring call
+    only, under `_zxcvbn_lock` (see its comment)."""
     floor = MIN_LEN_PRIVILEGED if privileged else MIN_LEN
     if len(pw) < floor:
         raise PasswordPolicyError(f"Use at least {floor} characters.")
@@ -37,7 +85,9 @@ def validate(pw: str, *, privileged: bool) -> None:
     # Scored on the first SCORE_LEN characters: zxcvbn raises a bare ValueError above its
     # own 72-char cap (so the 73-MAX_LEN window used to 500), and raising that cap instead
     # would hand an unauthenticated caller 141-311 ms of quadratic CPU per request (C1).
-    if zxcvbn(pw[:SCORE_LEN])["score"] < MIN_SCORE:
+    with _zxcvbn_lock:
+        score = zxcvbn(pw[:SCORE_LEN], user_inputs=user_inputs)["score"]
+    if score < MIN_SCORE:
         raise PasswordPolicyError("Choose a stronger password — longer phrases beat symbols.")
 
 

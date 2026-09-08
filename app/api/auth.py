@@ -88,6 +88,19 @@ class TokenInvalid(AuthError):
     message = "This link is invalid or has expired."
 
 
+class AddressState(AuthError):
+    """`POST /auth/verify/resend` on an account that is not `unverified` (A-S4.1).
+
+    403 rather than the uniform 202 the ANONYMOUS endpoints answer with: this caller is the account
+    holder, identified by their own session, so there is no address enumeration to protect here —
+    and a silent 202 would tell somebody whose address is already confirmed that a link was on its
+    way when none was. The message stays `AuthError`'s generic one because this branch also catches
+    `suspended` and `revoked`, neither of which is "already confirmed"."""
+
+    status = 403
+    code = "FORBIDDEN"
+
+
 class EmailInvalid(AuthError):
     status = 422
     code = "EMAIL_INVALID"
@@ -214,22 +227,26 @@ def _outbox_key() -> str:
     return uuid.uuid4().hex
 
 
-def _floor(pw: str, *, privileged: bool) -> None:
+def _floor(pw: str, *, privileged: bool, user_inputs: list[str] | None = None) -> None:
     """The length and strength floor. Microseconds, and the only half of the policy that needs to
-    know whether the account is privileged — which for a reset is only knowable from the database."""
+    know whether the account is privileged — which for a reset is only knowable from the database.
+
+    `user_inputs` (I11): the member's own email/name, from `P.user_inputs_for` — None where the
+    caller has no identifiers to feed it yet (`_screen`'s pre-connection pass; `signup` knows only
+    the email throughout)."""
     try:
-        P.validate(pw, privileged=privileged)
+        P.validate(pw, privileged=privileged, user_inputs=user_inputs)
     except P.PasswordPolicyError as e:
         raise PasswordPolicy(str(e)) from None
 
 
-async def _screen(pw: str) -> None:
+async def _screen(pw: str, *, user_inputs: list[str] | None = None) -> None:
     """The half of the policy that needs NO database: the ordinary floor and the breach screen.
 
     Always called before a connection is opened. `is_pwned_async`, never the blocking `is_pwned`: it
     is a 2 s-timeout network call, and holding a Postgres transaction across it parks a backend
     idle-in-transaction for the whole timeout (fix round 1, Important 5)."""
-    _floor(pw, privileged=False)
+    _floor(pw, privileged=False, user_inputs=user_inputs)
     if await P.is_pwned_async(pw):
         raise PasswordPolicy("That password has appeared in a data breach. Choose another.")
 
@@ -308,7 +325,8 @@ async def signup(body: Creds, request: Request) -> dict[str, str]:
     limits.hit(r, "signup:email", key, *limits.SIGNUP_EMAIL)
     # Screened and hashed BEFORE any connection: the breach screen is a 2 s-timeout network call and
     # the hash is ~97 ms, neither of which may be held across an open transaction.
-    await _screen(body.password)
+    # I11: sign-up knows only the email — no account row exists yet for a name to come from.
+    await _screen(body.password, user_inputs=P.user_inputs_for(as_typed))
     hashed = await P.hash_async(body.password)
     with closing(sync_conn()) as conn, conn:
         with conn.cursor() as cur:
@@ -333,6 +351,52 @@ async def signup(body: Creds, request: Request) -> dict[str, str]:
             # the attempt. Addressed to the normalised form the caller supplied: `account.email` is
             # citext, so it is the same mailbox as the stored row, differing at most in case.
             enqueue(conn, to=as_typed, template="account_exists", params={}, idempotency_key=_outbox_key())
+    return {"status": "check_email"}
+
+
+@router.post("/auth/verify/resend", status_code=202)
+async def resend_verification(principal: Self, request: Request) -> dict[str, str]:
+    """A fresh 24 h verify link for the signed-in account that has not confirmed its address yet
+    (A-S4.1, controller ruling 2026-09-08).
+
+    Until this existed the only way to re-issue a verify link was to sign up again — which needs
+    the password, and the account-screens "Check your email" card is also where somebody lands
+    after SIGNING IN as an unverified account, where the browser holds no password at all. The
+    card's "Send it again" then posted an empty one, the uniform 202 answered, and nothing was
+    sent. The session already identifies the account; nothing else is needed to mail its own
+    address.
+
+    `unverified` ONLY. From `verified` onward the address has been proved, so a fresh link would be
+    a way IN rather than a courtesy — the same line `signup`'s third branch and `password/forgot`'s
+    `RESETTABLE_STATES` already draw. A 403 rather than the uniform 202 the ANONYMOUS endpoints
+    answer with, because there is no enumeration to protect from a caller who is the account
+    holder; but the refusal is `AddressState`, whose message is `AuthError`'s generic "Your account
+    cannot do this." and NOT a per-state explanation. Two reasons: the branch also catches
+    `suspended` and `revoked`, which are not "already confirmed", and inventing user-facing copy is
+    not this task's to do. The client swallows it (`logic.js`'s `.catch(() => {})` on the card's
+    "Send it again"), which is right — the only way to press that button on a non-`unverified`
+    account is a screen left open across a state change, and the answer to a stale screen is not an
+    error message.
+
+    The ceiling is `signup`'s own `SIGNUP_EMAIL` counter under `signup`'s own Redis key, so the two
+    ways of asking for a verify link share three per address per day rather than adding up to six.
+    No IP counter: this route needs a session, so it is not the anonymous amplification lever
+    `signup` is. Like `signup`'s re-issue, it does NOT retire the link already in flight — a
+    verification link is not a way into an account, and somebody who presses the button while the
+    first mail is still in transit must not end up holding two dead links.
+    """
+    with closing(sync_conn()) as conn, conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT email, state FROM account WHERE id=%s", (principal.account_id,))
+            row = cur.fetchone()
+        # `deps.LEGACY_ADMIN` passes `account.self` and names no `account` row (see
+        # `_password_hash_of`); it is not an unverified applicant, so it is refused with the rest.
+        if row is None or row[1] != "unverified":
+            raise AddressState
+        email = cast("str", row[0])
+        limits.hit(sync_redis(), "signup:email", _lookup_key(email), *limits.SIGNUP_EMAIL)
+        token = T.issue_email_token(conn, principal.account_id, "verify", VERIFY_TTL)
+        enqueue(conn, to=email, template="verify_email", params={"link": _link("/verify", token)}, idempotency_key=_outbox_key())
     return {"status": "check_email"}
 
 
@@ -495,11 +559,16 @@ async def reset(body: ResetIn, request: Request) -> dict[str, str]:
         if not account_id:
             raise TokenInvalid
         with conn.cursor() as cur:
-            cur.execute("SELECT EXISTS (SELECT 1 FROM role_grant WHERE account_id=%s AND role IN ('staff','admin') AND revoked_at IS NULL)", (account_id,))
-            privileged = cast("tuple[bool]", cur.fetchone())[0]
+            # I11: `email` and `display_name` ride along with the existing privileged lookup — one
+            # query either way — so `user_inputs_for` has the account's own identifiers to screen
+            # this password against.
+            cur.execute("""SELECT email, display_name,
+                                  EXISTS (SELECT 1 FROM role_grant WHERE account_id=%s AND role IN ('staff','admin') AND revoked_at IS NULL)
+                             FROM account WHERE id=%s""", (account_id, account_id))
+            email, display_name, privileged = cast("tuple[str, str | None, bool]", cur.fetchone())
         # A policy refusal here rolls the token consumption back with it, so a link is never burnt
         # by a password the policy was always going to reject.
-        _floor(body.password, privileged=privileged)
+        _floor(body.password, privileged=privileged, user_inputs=P.user_inputs_for(email, display_name))
         with conn.cursor() as cur:
             cur.execute("UPDATE account SET password_hash=%s WHERE id=%s", (hashed, account_id))
         # Every other session goes: a reset is what somebody who has LOST the account does.
@@ -531,11 +600,16 @@ async def accept_invite(body: ResetIn, request: Request) -> dict[str, str]:
         if not account_id:
             raise TokenInvalid
         with conn.cursor() as cur:
-            cur.execute("SELECT EXISTS (SELECT 1 FROM role_grant WHERE account_id=%s AND role IN ('staff','admin') AND revoked_at IS NULL)", (account_id,))
-            privileged = cast("tuple[bool]", cur.fetchone())[0]
+            # I11: `email` and `display_name` ride along with the existing privileged lookup — one
+            # query either way — so `user_inputs_for` has the account's own identifiers to screen
+            # this password against.
+            cur.execute("""SELECT email, display_name,
+                                  EXISTS (SELECT 1 FROM role_grant WHERE account_id=%s AND role IN ('staff','admin') AND revoked_at IS NULL)
+                             FROM account WHERE id=%s""", (account_id, account_id))
+            email, display_name, privileged = cast("tuple[str, str | None, bool]", cur.fetchone())
         # A policy refusal here rolls the token consumption back with it, so an invite is never
         # burnt by a password the policy was always going to reject.
-        _floor(body.password, privileged=privileged)
+        _floor(body.password, privileged=privileged, user_inputs=P.user_inputs_for(email, display_name))
         with conn.cursor() as cur:
             cur.execute("UPDATE account SET password_hash=%s WHERE id=%s", (hashed, account_id))
         revoked = S.revoke_all(conn, account_id)
@@ -556,12 +630,21 @@ async def change(body: ChangeIn, request: Request, response: Response, principal
     r = sync_redis()
     with closing(sync_conn()) as lookup, lookup:
         current = _password_hash_of(lookup, principal.account_id)
+        # I11 review round 1: `password/change` is the one other seam that sets a password, and
+        # the account row is already known from the session (no token to consume first, unlike
+        # reset/accept-invite) — read alongside the hash, in the SAME connection, so `_floor`'s
+        # `user_inputs` has the member's own email/name to screen this new password against.
+        with lookup.cursor() as cur:
+            cur.execute("SELECT email, display_name FROM account WHERE id=%s", (principal.account_id,))
+            identity = cur.fetchone()
     # Released before both Argon2id hops and the breach screen (Important 5). `principal.roles` is
     # already known, so the privileged floor needs no database either.
     if current is None or not await P.verify_async(body.current, current):
         raise InvalidCredentials
-    _floor(body.new, privileged=bool(principal.roles & {"staff", "admin"}))
-    await _screen(body.new)
+    email, display_name = cast("tuple[str, str | None]", identity)
+    user_inputs = P.user_inputs_for(email, display_name)
+    _floor(body.new, privileged=bool(principal.roles & {"staff", "admin"}), user_inputs=user_inputs)
+    await _screen(body.new, user_inputs=user_inputs)
     hashed = await P.hash_async(body.new)
     with closing(sync_conn()) as conn, conn:
         with conn.cursor() as cur:

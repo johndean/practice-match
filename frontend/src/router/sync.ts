@@ -3,11 +3,17 @@ import type { Me } from '../auth/me';
 import type { Permission } from '../auth/permissions';
 
 export type Screen = 'gate' | 'browse' | 'detail' | 'requests' | 'seller' | 'admin';
-export interface RoutedState { screen: string; detailId?: string; adminTab?: string; gate?: string; auth?: boolean }
+export interface RoutedState { screen: string; detailId?: string; adminTab?: string; gate?: string; auth?: boolean; gateToken?: string }
 export interface RouteTarget { path: string; query: Record<string, string> }
 interface RouteLike { path: string; params: Record<string, unknown>; query: Record<string, unknown> }
 
 const ADMIN_TABS = ['users', 'listings', 'activity', 'data'] as const;
+
+// The five account pages (Task S2): each is a gate sub-state, not its own screen — the gate
+// column is what varies. Kept as one bare-path table both ways so a route added here can
+// never drift between the route -> state and state -> route directions.
+const GATE_ROUTES: Record<string, string> = { '/signup': 'signup', '/forgot': 'forgot', '/verify': 'verify', '/reset': 'reset', '/accept-invite': 'invite' };
+const GATE_PATHS: Record<string, string> = Object.fromEntries(Object.entries(GATE_ROUTES).map(([p, g]) => [g, p]));
 
 export function stateToRoute(s: RoutedState): RouteTarget {
   switch (s.screen) {
@@ -19,7 +25,13 @@ export function stateToRoute(s: RoutedState): RouteTarget {
       const tab = s.adminTab || 'users';
       return { path: '/admin', query: tab === 'users' ? {} : { tab } };
     }
-    default: return { path: '/', query: {} };
+    // A token, if any, is captured once into state (gateToken) and never written back to
+    // the address bar — every gate value, new or old, maps to its bare path only.
+    // `Object.hasOwn` (review Minor 5): `s.gate` is visitor/URL-derived, so an unguarded
+    // `GATE_PATHS[s.gate]` would read through `Object.prototype` for a value like
+    // `"constructor"` — unreachable today (no code produces such a gate value) but a hazard
+    // worth retiring rather than arguing away.
+    default: return { path: (s.screen === 'gate' && s.gate && Object.hasOwn(GATE_PATHS, s.gate) ? GATE_PATHS[s.gate] : '') || '/', query: {} };
   }
 }
 
@@ -36,6 +48,11 @@ export function routeToPatch(to: RouteLike): Partial<RoutedState> {
   if (to.path === '/requests') return { screen: 'requests' };
   if (to.path === '/seller') return { screen: 'seller' };
   if (to.path === '/admin') return { screen: 'admin', adminTab: pick(to.query.tab, ADMIN_TABS, 'users') };
+  // `Object.hasOwn`, not `to.path in GATE_ROUTES` (review Minor 5): `to.path` comes straight
+  // off the URL, so an unguarded `in` reads through `Object.prototype` for a path like
+  // `/constructor`. Every real route starts with `/` and vue-router's own catch-all would
+  // 404 anything else first, so this is unreachable today — retired anyway.
+  if (Object.hasOwn(GATE_ROUTES, to.path)) return { screen: 'gate', gate: GATE_ROUTES[to.path], gateToken: typeof to.query.token === 'string' ? to.query.token : '' };
   return { screen: 'gate' };
 }
 

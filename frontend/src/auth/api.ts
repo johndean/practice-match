@@ -85,9 +85,57 @@ export async function verify(token: string): Promise<Status> {
   return payload<Status>(await call('POST', '/auth/verify', { token }));
 }
 
+/**
+ * A fresh 24 h verification link for the SIGNED-IN account that has not confirmed its address
+ * (A-S4.1). No body: the session names the account, which is the whole reason this exists —
+ * `signUp` needs the password, and somebody who reached the "Check your email" card by signing in
+ * as an unverified account has none in hand.
+ *
+ * 403 `FORBIDDEN` from `verified` onward (and for `suspended`/`revoked`), which the caller renders
+ * as the server's own message like every other refusal.
+ */
+export async function resendVerification(): Promise<Status> {
+  return payload<Status>(await call('POST', '/auth/verify/resend'));
+}
+
+/** 202 either way, same as `signUp` — a registered and an unregistered address must read alike. */
+export async function forgot(email: string): Promise<Status> {
+  return payload<Status>(await call('POST', '/auth/password/forgot', { email }));
+}
+
+export async function reset(token: string, password: string): Promise<Status> {
+  return payload<Status>(await call('POST', '/auth/password/reset', { token, password }));
+}
+
+export async function acceptInvite(token: string, password: string): Promise<Status> {
+  return payload<Status>(await call('POST', '/auth/accept-invite', { token, password }));
+}
+
 /** The buyer or seller application. 202 + the row it created. */
 export async function apply(kind: string, fields: Record<string, unknown>): Promise<{ id: string; status: string }> {
   return payload<{ id: string; status: string }>(await call('POST', '/applications', { kind, fields }));
+}
+
+/** One row of `/api/applications/me` — the applicant's current or a past application. */
+export interface ApplicationRow {
+  id: string;
+  kind: string;
+  status: string;
+  info_request: string | null;
+  answer: string | null;
+  fields: Record<string, unknown>;
+  decision_note: string | null;
+}
+
+export interface ApplicationsMe { current: ApplicationRow | null; history: ApplicationRow[] }
+
+/** The applicant's reply to an admin's `info_request` on their current application. */
+export async function answer(applicationId: string, answer: string): Promise<Status> {
+  return payload<Status>(await call('POST', `/applications/${encodeURIComponent(applicationId)}/answer`, { answer }));
+}
+
+export async function applicationsMe(): Promise<ApplicationsMe> {
+  return payload<ApplicationsMe>(await call('GET', '/applications/me'));
 }
 
 /**

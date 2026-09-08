@@ -93,7 +93,7 @@
               <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">
                 <div style="padding: 22px 26px; background: var(--rf-band);">
                   <div style="font-family: var(--rf-display); font-size: 20px; font-weight: 800; color: var(--color-navy); text-transform: uppercase; letter-spacing: .02em;">Member Sign In</div>
-                  <div style="font-size: 13px; color: #494949; margin-top: 3px;">Use your VIN credentials.</div>
+                  <div style="font-size: 13px; color: #494949; margin-top: 3px;">Use the email and password you registered with.</div>
                 </div>
                 <div style="padding: 24px 26px 26px; display: flex; flex-direction: column; gap: 16px;">
                   <label style="display: flex; flex-direction: column; gap: 6px;">
@@ -108,7 +108,7 @@
                     <div style="display: flex; gap: 9px; padding: 11px 13px; background: #f5f5f5; border-left: 3px solid var(--vf-text); border-radius: 4px; font-size: 13px; line-height: 1.5; color: #494949;"><span v-if="__s(v.form?.errorText) !== null" class="sc-interp">{{ __s(v.form?.errorText) }}</span></div>
                   </template>
                   <button class="sch2" @click="v.signIn" style="font-family: var(--rf-display); height: 48px; font-size: 15px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;">Sign in</button>
-                  <div style="text-align: center; font-size: 14px; color: #494949;">Not approved yet? <a href="#apply" @click="v.goApply">Request access</a></div>
+                  <div style="text-align: center; font-size: 14px; color: #494949;">Not approved yet? <a href="#apply" @click="v.goApply">Request access</a> · <a href="#forgot" @click="v.goForgot">Forgot your password?</a></div>
                 </div>
               </div>
             </template>
@@ -163,6 +163,118 @@
                     <button class="sch2" @click="v.status?.primary?.go" style="font-family: var(--rf-display); flex: 1; height: 46px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;"><span v-if="__s(v.status?.primary?.label) !== null" class="sc-interp">{{ __s(v.status?.primary?.label) }}</span></button>
                     <button class="sch0" @click="v.goSignin" style="font-family: var(--rf-display); height: 46px; padding: 0 18px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">Sign out</button>
                   </div>
+                </div>
+              </div>
+            </template>
+
+            <template v-if="v.gateSignup">
+              <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">
+                <div style="padding: 22px 26px; background: var(--rf-band);">
+                  <div style="font-family: var(--rf-display); font-size: 20px; font-weight: 800; color: var(--color-navy); text-transform: uppercase; letter-spacing: .02em;">Request Access</div>
+                  <div style="font-size: 13px; line-height: 1.5; color: #494949; margin-top: 4px;">Start with the email and password you will sign in with.</div>
+                </div>
+                <div style="padding: 24px 26px 26px; display: flex; flex-direction: column; gap: 16px;">
+                  <label style="display: flex; flex-direction: column; gap: 6px;">
+                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">Email</span>
+                    <input :value="(v.signupForm?.email) ?? ''" @input="v.setSignupEmail" style="height: 44px; padding: 0 13px; font-size: 15px; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none;">
+                  </label>
+                  <label style="display: flex; flex-direction: column; gap: 6px;">
+                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">Password</span>
+                    <input type="password" :value="(v.signupForm?.pw) ?? ''" @input="v.setSignupPw" placeholder="At least 12 characters" style="height: 44px; padding: 0 13px; font-size: 15px; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none;">
+                  </label>
+                  <template v-if="v.signupForm?.error">
+                    <div style="display: flex; gap: 9px; padding: 11px 13px; background: #f5f5f5; border-left: 3px solid var(--vf-text); border-radius: 4px; font-size: 13px; line-height: 1.5; color: #494949;"><span v-if="__s(v.signupForm?.errorText) !== null" class="sc-interp">{{ __s(v.signupForm?.errorText) }}</span></div>
+                  </template>
+                  <button class="sch2" @click="v.submitSignup" style="font-family: var(--rf-display); height: 48px; font-size: 15px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;">Create account</button>
+                  <div style="text-align: center; font-size: 14px; color: #494949;">Already have an account? <a href="#signin" @click="v.goSignin">Sign in</a></div>
+                </div>
+              </div>
+            </template>
+
+            <template v-if="v.gateForgot">
+              <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">
+                <div style="padding: 22px 26px; background: var(--rf-band);">
+                  <div style="font-family: var(--rf-display); font-size: 20px; font-weight: 800; color: var(--color-navy); text-transform: uppercase; letter-spacing: .02em;">Reset your password</div>
+                  <div style="font-size: 13px; line-height: 1.5; color: #494949; margin-top: 4px;">We will email you a link.</div>
+                </div>
+                <div style="padding: 24px 26px 26px; display: flex; flex-direction: column; gap: 16px;">
+                  <label style="display: flex; flex-direction: column; gap: 6px;">
+                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">Email</span>
+                    <input :value="(v.forgotForm?.email) ?? ''" @input="v.setForgotEmail" style="height: 44px; padding: 0 13px; font-size: 15px; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none;">
+                  </label>
+                  <template v-if="v.forgotForm?.error">
+                    <div style="display: flex; gap: 9px; padding: 11px 13px; background: #f5f5f5; border-left: 3px solid var(--vf-text); border-radius: 4px; font-size: 13px; line-height: 1.5; color: #494949;"><span v-if="__s(v.forgotForm?.errorText) !== null" class="sc-interp">{{ __s(v.forgotForm?.errorText) }}</span></div>
+                  </template>
+                  <button class="sch2" @click="v.submitForgot" style="font-family: var(--rf-display); height: 48px; font-size: 15px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;">Send reset link</button>
+                  <div style="text-align: center; font-size: 14px; color: #494949;"><a href="#signin" @click="v.goSignin">Back to sign in</a></div>
+                </div>
+              </div>
+            </template>
+
+            <template v-if="v.gateReset">
+              <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">
+                <div style="padding: 22px 26px; background: var(--rf-band);">
+                  <div style="font-family: var(--rf-display); font-size: 20px; font-weight: 800; color: var(--color-navy); text-transform: uppercase; letter-spacing: .02em;">Choose a new password</div>
+                  <div style="font-size: 13px; line-height: 1.5; color: #494949; margin-top: 4px;">At least 12 characters. Your other sessions will be signed out.</div>
+                </div>
+                <div style="padding: 24px 26px 26px; display: flex; flex-direction: column; gap: 16px;">
+                  <label style="display: flex; flex-direction: column; gap: 6px;">
+                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">New password</span>
+                    <input type="password" :value="(v.resetForm?.pw) ?? ''" @input="v.setResetPw" style="height: 44px; padding: 0 13px; font-size: 15px; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none;">
+                  </label>
+                  <label style="display: flex; flex-direction: column; gap: 6px;">
+                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">Confirm password</span>
+                    <input type="password" :value="(v.resetForm?.pw2) ?? ''" @input="v.setResetPw2" style="height: 44px; padding: 0 13px; font-size: 15px; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none;">
+                  </label>
+                  <template v-if="v.resetForm?.error">
+                    <div style="display: flex; gap: 9px; padding: 11px 13px; background: #f5f5f5; border-left: 3px solid var(--vf-text); border-radius: 4px; font-size: 13px; line-height: 1.5; color: #494949;"><span v-if="__s(v.resetForm?.errorText) !== null" class="sc-interp">{{ __s(v.resetForm?.errorText) }}</span></div>
+                  </template>
+                  <button class="sch2" @click="v.submitReset" style="font-family: var(--rf-display); height: 48px; font-size: 15px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;">Save password</button>
+                  <div style="text-align: center; font-size: 14px; color: #494949;"><a href="#signin" @click="v.goSignin">Back to sign in</a></div>
+                </div>
+              </div>
+            </template>
+
+            <template v-if="v.gateInvite">
+              <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">
+                <div style="padding: 22px 26px; background: var(--rf-band);">
+                  <div style="font-family: var(--rf-display); font-size: 20px; font-weight: 800; color: var(--color-navy); text-transform: uppercase; letter-spacing: .02em;">Set your password</div>
+                  <div style="font-size: 13px; line-height: 1.5; color: #494949; margin-top: 4px;">You have been invited to the Practice Match team. Staff passwords are at least 14 characters.</div>
+                </div>
+                <div style="padding: 24px 26px 26px; display: flex; flex-direction: column; gap: 16px;">
+                  <label style="display: flex; flex-direction: column; gap: 6px;">
+                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">New password</span>
+                    <input type="password" :value="(v.inviteForm?.pw) ?? ''" @input="v.setInvitePw" style="height: 44px; padding: 0 13px; font-size: 15px; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none;">
+                  </label>
+                  <label style="display: flex; flex-direction: column; gap: 6px;">
+                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">Confirm password</span>
+                    <input type="password" :value="(v.inviteForm?.pw2) ?? ''" @input="v.setInvitePw2" style="height: 44px; padding: 0 13px; font-size: 15px; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none;">
+                  </label>
+                  <template v-if="v.inviteForm?.error">
+                    <div style="display: flex; gap: 9px; padding: 11px 13px; background: #f5f5f5; border-left: 3px solid var(--vf-text); border-radius: 4px; font-size: 13px; line-height: 1.5; color: #494949;"><span v-if="__s(v.inviteForm?.errorText) !== null" class="sc-interp">{{ __s(v.inviteForm?.errorText) }}</span></div>
+                  </template>
+                  <button class="sch2" @click="v.submitInvite" style="font-family: var(--rf-display); height: 48px; font-size: 15px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;">Save password</button>
+                  <div style="text-align: center; font-size: 14px; color: #494949;"><a href="#signin" @click="v.goSignin">Back to sign in</a></div>
+                </div>
+              </div>
+            </template>
+
+            <template v-if="v.gateAnswer">
+              <div style="background: var(--color-white); border: 1px solid var(--rf-line); border-radius: 10px; box-shadow: var(--shadow-md); overflow: hidden;">
+                <div style="padding: 22px 26px; background: var(--rf-band);">
+                  <div style="font-family: var(--rf-display); font-size: 20px; font-weight: 800; color: var(--color-navy); text-transform: uppercase; letter-spacing: .02em;">More information requested</div>
+                  <div style="font-size: 13px; line-height: 1.5; color: #494949; margin-top: 4px;"><span v-if="__s(v.answerForm?.note) !== null" class="sc-interp">{{ __s(v.answerForm?.note) }}</span></div>
+                </div>
+                <div style="padding: 24px 26px 26px; display: flex; flex-direction: column; gap: 16px;">
+                  <label style="display: flex; flex-direction: column; gap: 6px;">
+                    <span style="font-size: 12px; font-weight: 500; color: var(--color-steel);">Your answer</span>
+                    <textarea :value="(v.answerForm?.text) ?? ''" @input="v.setAnswer" rows="4" style="padding: 10px 13px; font-size: 14px; line-height: 1.5; color: var(--color-navy); border: 1px solid var(--border-subtle); border-radius: 6px; outline: none; resize: vertical;"></textarea>
+                  </label>
+                  <template v-if="v.answerForm?.error">
+                    <div style="display: flex; gap: 9px; padding: 11px 13px; background: #f5f5f5; border-left: 3px solid var(--vf-text); border-radius: 4px; font-size: 13px; line-height: 1.5; color: #494949;"><span v-if="__s(v.answerForm?.errorText) !== null" class="sc-interp">{{ __s(v.answerForm?.errorText) }}</span></div>
+                  </template>
+                  <button class="sch2" @click="v.submitAnswer" style="font-family: var(--rf-display); height: 48px; font-size: 15px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; cursor: pointer;">Re-submit request</button>
+                  <div style="text-align: center; font-size: 14px; color: #494949;"><a href="#signout" @click="v.goSignOut">Sign out</a></div>
                 </div>
               </div>
             </template>
@@ -1499,6 +1611,17 @@ const props = defineProps({
   // `?props=`). The app never passes it — it signs in as a real account instead, and A5.4 maps
   // that account's state to the gate.
   startGate: { type: String, default: '' },
+  // A8.8b: the message the sign-in card shows on load. Four account outcomes (a verified
+  // address, a reset link requested, a password updated, an invitation accepted) end on the
+  // sign-in card with a notice, and the REFERENCE has no API to produce the outcome — so the
+  // oracle hands it the notice directly, through the design's own prop mechanism. The app never
+  // passes it: it reaches those states by actually performing them.
+  startNotice: { type: String, default: '' },
+  // A9.1 (A-S5): the applicant's question on the answer card. `GET /api/applications/me` is the
+  // app's source for it and the REFERENCE has no adapter to call it with, so the oracle hands the
+  // note over the same prop seam `startNotice` uses. The app never passes it — it fetches the
+  // real question — which is why the default is empty and renders nothing.
+  startAnswerNote: { type: String, default: '' },
   // V3 C10: three named palettes — `distinct` (default), `cool`, `colorblind`.
   layerPalette: { type: String, default: 'distinct' },
   // A5.1 / A5.3: the real `/api/auth/*` client, as the prototype's `auth` adapter — the seam the

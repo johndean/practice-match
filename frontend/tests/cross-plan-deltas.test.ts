@@ -224,12 +224,33 @@ describe('the Browse V3 plan describes what shipped', () => {
     expect(md).toContain('reference-exact');
   });
 
+  /** The 28 states Browse V3 shipped, in the order `screens.ts` has always listed them. Wave 2a's
+   *  fifteen account screens are appended AFTER these, so this list is the "did any of the 28
+   *  move?" half of the count pin below. */
+  const BROWSE_V3_STATES = [
+    'gate-signin', 'gate-apply', 'gate-pending', 'gate-declined',
+    'browse', 'browse-layer-menu', 'browse-compare-open', 'browse-legend-collapsed', 'browse-layers-open', 'browse-market-panel',
+    'detail', 'interest-modal', 'requests', 'seller-dash',
+    'wizard-step-1', 'wizard-step-7', 'wizard-preview', 'wizard-done',
+    'admin-users', 'admin-listings', 'admin-requests', 'admin-data-sources',
+    'mobile-list', 'mobile-map', 'mobile-sheet', 'mobile-detail',
+    'header-1100', 'header-1000'
+  ];
+
   // V10's fix round added the 28th state after V9 had written the plan's prose; CLAUDE.md was
   // updated and the plan was not, so Appendix A — the table Global Constraint (a) is discharged
   // against — counted 27 (M1).
   it('counts the 28 states that shipped, not the 27 V9 produced (M1)', () => {
     const md = read(BROWSE_V3);
-    expect(SCREENS, 'the approved screen list itself moved').toHaveLength(28);
+    // Browse V3 shipped 28, and this plan's prose is the record of THAT — a historical claim that
+    // stays true however the list grows afterwards. What must not change is that all 28 are still
+    // approved states: Wave 2a's account screens (spec §6, Task S5) are 15 MORE, appended, and the
+    // whole point of that task was that the 28 keep their pixels and their DOM. So the count is
+    // asserted as "the 28 are all still here, and the list has only grown", which is what this pin
+    // was always for — a state quietly leaving would otherwise pass a bare length check the moment
+    // another was added.
+    expect(SCREENS.length, 'the approved screen list shrank — a state left').toBeGreaterThanOrEqual(28);
+    expect(SCREENS.slice(0, 28).map((s) => s.name), 'the 28 Browse V3 states moved or were reordered').toEqual(BROWSE_V3_STATES);
     expect(md).toContain('`SCREENS` (28 entries)');
     expect(md).toContain('28-state `dom.spec.ts` + 28-state `visual.spec.ts`');
     expect(md).toContain('for **all 28** states + the 28-state DOM oracle');
