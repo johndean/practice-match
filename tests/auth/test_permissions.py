@@ -436,3 +436,42 @@ def test_the_applicant_facing_audit_actions_name_no_permission_and_are_not_watch
     guarded = {(method, path) for method, path, route in walk_routes(create_app(dist=dist).routes)
                if "account.self" in _permissions_of(route)}
     assert ("POST", "/api/applications/{application_id}/answer") in guarded
+
+
+def test_the_launch_signup_permissions_read_staff_export_staff_notify_admin():
+    """Task I5d (John, 2026-09-08). The matrix's own rule, applied: reading and reviewing are
+    staff+admin (`users.review`, `data_sources.read`, `audit.read`); the irreversible, governing
+    actions are admin-only and re-authenticated (`roles.grant`, `tokens.manage`, `users.revoke`).
+    A launch mail cannot be unsent, so it is the second kind."""
+    assert PM.MATRIX["signups.read"] == frozenset({"staff", "admin"})
+    assert PM.MATRIX["signups.export"] == frozenset({"staff", "admin"})
+    assert PM.MATRIX["signups.notify"] == frozenset({"admin"})
+
+
+def test_the_launch_mail_is_re_authenticated_and_therefore_out_of_every_api_tokens_reach():
+    """D-I5d-2: `signups.notify` in REAUTH is also the containment. `deps.require` refuses a token
+    principal on any REAUTH permission with `TokenCannotReauth`, so no automation credential — not
+    even a leaked `admin` one — can mail the VIN Foundation's entire launch list."""
+    assert "signups.notify" in PM.REAUTH
+    assert "signups.read" not in PM.REAUTH and "signups.export" not in PM.REAUTH
+
+
+def test_the_bulk_export_and_the_launch_mail_are_audited_and_the_polled_list_is_not():
+    """The C2 rule (I5 fix round 1) applied to this tab: the LIST is polled by a screen and must
+    not write one `audit_log` row per poll into a table whose triggers refuse DELETE. The export
+    and the send are each one bounded, deliberate act, and both leave a row."""
+    assert {"signups.export", "signups.notify"} <= PM.AUDITED
+    assert "signups.read" not in PM.AUDITED
+
+
+def test_the_launch_signup_permissions_are_administrative_by_derivation():
+    """`ADMINISTRATIVE` is derived from the matrix, never listed, so this is a check that the three
+    rows really are staff-or-narrower — which is what keeps `may_mint` from letting a member-role
+    token administer the sign-up list."""
+    assert {"signups.read", "signups.export", "signups.notify"} <= PM.ADMINISTRATIVE
+
+
+def test_token_denied_is_unchanged_by_task_i5d():
+    """D-I5d-3, written down so a later widening has to argue for itself in a diff. `tokens.manage`
+    is still the only permission subtracted from a token principal's set."""
+    assert PM.TOKEN_DENIED == frozenset({"tokens.manage"})
