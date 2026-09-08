@@ -1,5 +1,6 @@
 """`scripts/census_load.py` -- the operator CLI (Task A4's `--tiger`; task A5 adds `acs`; task A6
-adds `cbp`/`zbp`/`qwi`/`bds`).
+adds `cbp`/`zbp`/`qwi`/`bds`; task A7 adds `activate`, the only path that flips `active_vintage`
+-- never automatic, never from a Celery task).
 
 Runs inside the worker image (`railway run --service worker -- python scripts/census_load.py
 tiger`) or locally against docker-compose; every subcommand is idempotent. This file tests the
@@ -33,6 +34,7 @@ from app.census import bds as census_bds
 from app.census import cbp as census_cbp
 from app.census import qwi as census_qwi
 from app.census import tiger as census_tiger
+from app.census import vintage as census_vintage
 from app.census import zbp as census_zbp
 from scripts import census_load
 
@@ -919,4 +921,91 @@ def test_the_main_guard_is_covered(monkeypatch):
     monkeypatch.setattr(sys, "argv", ["census_load.py", "tiger"])
     with pytest.raises(SystemExit) as exc:
         runpy.run_path(str(ROOT / "scripts" / "census_load.py"), run_name="__main__")
+    assert exc.value.code == 2
+
+
+# --- activate subcommand (Task A7) ------------------------------------------------------------
+# `activate` never touches the Census API -- no `CENSUS_API_KEY`/`CENSUS_CONTACT_EMAIL` gate, no
+# `market_state` query, no HTTP client -- so it shares only two arms with the load subcommands
+# above (DATABASE_URL missing, database unreachable) plus its own success and refusal arms.
+# `app.census.vintage.activate` itself is exercised at 100 % branch by `tests/census/test_vintage
+# .py` against a real database; this file, per its own docstring, tests only the CLI's wiring, so
+# `vintage.activate` is monkeypatched throughout exactly as every other loader above is.
+
+def test_cmd_activate_calls_vintage_activate_and_prints_the_report(scratch_dsn, monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    captured: dict = {}
+
+    def fake_activate(conn, dataset_key, vint, by, *, force=False):
+        captured["dataset_key"] = dataset_key
+        captured["vint"] = vint
+        captured["by"] = by
+        captured["force"] = force
+        return census_vintage.Report(dataset_key, vint, None, 10, 0, None, "succeeded")
+
+    monkeypatch.setattr(census_vintage, "activate", fake_activate)
+
+    assert census_load.main(["activate", "acs5", "2019\u20132023", "--by", "john"]) == 0
+
+    assert captured == {"dataset_key": "acs5", "vint": "2019\u20132023", "by": "john", "force": False}
+    out = capsys.readouterr().out
+    assert "acs5" in out and "2019\u20132023" in out and "now active" in out
+
+
+def test_cmd_activate_passes_the_force_flag_through(scratch_dsn, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    captured: dict = {}
+
+    def fake_activate(conn, dataset_key, vint, by, *, force=False):
+        captured["force"] = force
+        return census_vintage.Report(dataset_key, vint, "2018\u20132022", 40, 100, 0.4, "succeeded")
+
+    monkeypatch.setattr(census_vintage, "activate", fake_activate)
+
+    assert census_load.main(["activate", "acs5", "2019\u20132023", "--by", "john", "--force"]) == 0
+
+    assert captured["force"] is True
+
+
+def test_cmd_activate_returns_two_without_a_database_url(monkeypatch, capsys):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    assert census_load.main(["activate", "acs5", "2019\u20132023", "--by", "john"]) == 2
+    assert "DATABASE_URL" in capsys.readouterr().err
+
+
+def test_cmd_activate_returns_three_when_the_database_is_unreachable(monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
+
+    assert census_load.main(["activate", "acs5", "2019\u20132023", "--by", "john"]) == 3
+    assert "database unreachable" in capsys.readouterr().err
+
+
+def test_cmd_activate_returns_five_when_refused(scratch_dsn, monkeypatch, capsys):
+    def fake_activate(conn, dataset_key, vint, by, *, force=False):
+        raise census_vintage.ActivationRefused(
+            "row count ratio 0.40 vs active vintage 2018\u20132022 is outside [0.8, 1.25]; pass force=True after review"
+        )
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setattr(census_vintage, "activate", fake_activate)
+
+    assert census_load.main(["activate", "acs5", "2019\u20132023", "--by", "john"]) == 5
+    err = capsys.readouterr().err
+    assert "activation refused" in err and "ratio" in err
+
+
+def test_cmd_activate_rejects_an_unknown_dataset_key(capsys):
+    """`dataset_key` is drawn from `vintage.TABLE_FOR`, the same closed set `qa()`/`activate()`
+    index into -- an unknown key is refused by argparse itself (exit 2, "refused before anything
+    is opened") rather than reaching a bare `KeyError` inside `vintage.qa`."""
+    with pytest.raises(SystemExit) as exc:
+        census_load.main(["activate", "not_a_real_dataset", "2019\u20132023", "--by", "john"])
+    assert exc.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err
+
+
+def test_cmd_activate_requires_by(capsys):
+    with pytest.raises(SystemExit) as exc:
+        census_load.main(["activate", "acs5", "2019\u20132023"])
     assert exc.value.code == 2

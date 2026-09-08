@@ -11,8 +11,13 @@ loads ACS detailed/subject/prior-vintage tables (`app/census/acs.py`) into `acs_
 NAICS-2017 alias for 459910), `zbp` (`app/census/zbp.py`, ZIP-level competition, plan D11), `qwi`
 (`app/census/qwi.py`, resolving the latest published quarter via `qwi.latest_available` when
 `--year`/`--quarter` are omitted, then trimming to the newest 20 quarters), and `bds`
-(`app/census/bds.py`, `--year` required -- BDS has no "latest" auto-resolution). Later tasks
-(A7-A9) add `activate`, … to the same subparser tree.
+(`app/census/bds.py`, `--year` required -- BDS has no "latest" auto-resolution). Task A7 adds
+`activate` (`app/census/vintage.py`): the only path that flips `active_vintage`, the table the API
+reads -- never automatic, never run from a Celery task. It first runs a QA diff (`vintage.qa`)
+against whatever vintage is currently active for that dataset and refuses (exit 5) unless the
+candidate vintage's latest `ingest_run` succeeded and, when a prior vintage exists, the row-count
+ratio falls inside `[0.8, 1.25]`; `--force` overrides the ratio check only, and the printed
+`Report` is the record of why. Later tasks (A8-A9) add more subcommands to the same tree.
 
 Exit codes follow the shared scheme every `census_load.py` subcommand uses (A-C4 ¶2, aligned
 with `scripts/seed_listings.py`): 0 done; 2 refused before anything is opened (no subcommand --
@@ -26,7 +31,8 @@ is unreachable (retryable); 4 a download or API fetch
 failed (`CensusHTTPError`, its message already redacted -- A-C3 (3)); 5 validation failed -- every
 loader raises this when a response is missing an expected variable (`VariableMissing`; spec
 §4/¶12, a partial vintage that must never go active) -- reserved more broadly for malformed
-bodies or bounds once a subcommand that can hit those lands.
+bodies or bounds, and is what `activate` returns for a QA diff or ingest-run status `vintage.qa`
+refuses on (`ActivationRefused`).
 
 The `app.*` imports are inside each `cmd_*` function for the reason `scripts/bootstrap_admin.py`
 and `scripts/reset_rate_limits.py` record: `python scripts/census_load.py` puts `scripts/` on
@@ -349,12 +355,40 @@ def cmd_qwi(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_activate(args: argparse.Namespace) -> int:
+    from app.census import vintage
+
+    # Unlike every load subcommand above, `activate` never touches the Census API: no key, no
+    # contact, no `market_state` query, no HTTP client -- it only reads/writes the database, so
+    # it shares just the DATABASE_URL/unreachable arms with them.
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        print("[census_load] DATABASE_URL is not set", file=sys.stderr)
+        return 2
+    try:
+        conn = _conn(dsn)
+    except psycopg2.OperationalError as exc:
+        print(f"[census_load] database unreachable: {type(exc).__name__}", file=sys.stderr)
+        return 3
+    try:
+        rep = vintage.activate(conn, args.dataset_key, args.vintage, args.by, force=args.force)
+    except vintage.ActivationRefused as exc:
+        # A refused diff or a non-succeeded ingest_run is "validation failed" (A-C4 ¶2's exit 5)
+        # -- `active_vintage` is untouched, exactly as a bad ratio without `--force` leaves it.
+        print(f"[census_load] activation refused: {exc}", file=sys.stderr)
+        return 5
+    print(rep)
+    print(f"[census_load] {rep.dataset_key} is now active at vintage {rep.vintage!r} (by {args.by})")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     # Imported here, not inside `cmd_acs` alone (A5's review of itself): `--dataset`'s `choices`
     # must be built while the parser itself is under construction, before `parse_args` runs --
     # this is still "inside a function", never at module scope, so the sys.path reason `cmd_*`'s
-    # own imports are deferred for (see the module docstring) does not apply here either.
-    from app.census import acs
+    # own imports are deferred for (see the module docstring) does not apply here either. `activate`
+    # (Task A7) needs `vintage.TABLE_FOR` the same way, for `dataset_key`'s `choices`.
+    from app.census import acs, vintage
 
     p = argparse.ArgumentParser(prog="census_load", description="Operator entry points for the market-data layer.")
     sub = p.add_subparsers(dest="cmd", required=True)
@@ -376,6 +410,12 @@ def main(argv: list[str] | None = None) -> int:
     b = sub.add_parser("bds", help="load Business Dynamics Statistics for every market_state state")
     b.add_argument("--year", type=int, required=True, help="BDS data year, e.g. 2022")
     b.set_defaults(fn=cmd_bds)
+    v = sub.add_parser("activate", help="flip active_vintage for a dataset after a QA diff -- the only path that makes a loaded vintage the one the API reads")
+    v.add_argument("dataset_key", choices=sorted(vintage.TABLE_FOR), help="dataset_registry key to activate (e.g. acs5)")
+    v.add_argument("vintage", help="vintage string to activate, exactly as ingested (e.g. '2019\u20132023')")
+    v.add_argument("--by", required=True, help="operator name recorded in active_vintage.activated_by")
+    v.add_argument("--force", action="store_true", help="activate despite a row-count ratio outside [0.8, 1.25] (reviewed override)")
+    v.set_defaults(fn=cmd_activate)
     args = p.parse_args(argv)
     result: int = args.fn(args)
     return result
