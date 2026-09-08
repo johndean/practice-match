@@ -1462,9 +1462,23 @@ const A14_2: Amendment = {
     '      // hover/open pill and the panel border and the row text, 10px the pill radius, 4.34px',
     '      // the gap from the pill to the 3px underline, 28px the gap from the pill to the panel.',
     '      giveMenuOpen: !!s.giveMenu,',
-    '      toggleGiveMenu: () => this.setState({ giveMenu: !s.giveMenu, navMenu: false, userMenu: false }),',
+    '      // `giveMenuAt: null` on every pointer open: the pending index below belongs to the',
+    '      // KEYBOARD, and a stale one would drag a mouse user into the list on the next open.',
+    '      toggleGiveMenu: () => this.setState({ giveMenu: !s.giveMenu, giveMenuAt: null, navMenu: false, userMenu: false }),',
     '      giveMenuRef: (el) => { this._giveMenuEl = el || null; },',
     '      giveButtonRef: (el) => { this._giveButtonEl = el || null; },',
+    '      // The panel\'s own mount is the first moment its links exist, so it is where an arrow',
+    '      // key that OPENED the menu spends its pending index — the arrow itself cannot, having',
+    '      // seeded it while the sc-if was still unrendered. Same callback-ref idiom the compare',
+    '      // menu ships (md.compareMenuRef) and A13 reuses for marketPanelRef, and it fires on',
+    '      // mount on both targets, children before parent, so the row refs are already in.',
+    '      // Spent once: a re-render mounts the panel again and must not re-steal focus.',
+    '      givePanelRef: (el) => {',
+    '        const at = this.state.giveMenuAt;',
+    '        if (!el || at == null) return;',
+    '        this.setState({ giveMenuAt: null });',
+    '        this.giveFocus(at);',
+    '      },',
     '      giveWrapStyle: "position: relative; display: flex; align-items: center;",',
     '      giveButtonStyle: "display: flex; align-items: center; padding: 2px 22px; font-family: \'Montserrat\', var(--rf-display); font-size: 18px; font-weight: 600; line-height: 24.3px; white-space: nowrap; color: #ffffff; background: " +',
     '        (s.giveMenu ? "#07386f" : "#339dde") + "; border: 0; border-radius: 10px; cursor: pointer; transition: background .4s;",',
@@ -1491,7 +1505,10 @@ const A14_2: Amendment = {
     '        e.preventDefault();',
     '        const at = e.key === "ArrowDown" ? 0 : -1;',
     '        if (s.giveMenu) return this.giveFocus(at);',
-    '        this.setState({ giveMenu: true, navMenu: false, userMenu: false }, () => this.giveFocus(at));',
+    '        // Already-open: the panel is mounted, so focus moves here and now. Opening CANNOT do',
+    '        // that — the app\'s setState runs its callback synchronously (dc-logic.js) and Vue',
+    '        // has not rendered the panel yet, so the index is seeded and givePanelRef spends it.',
+    '        this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false });',
     '      },',
     ''
   ].join('\n'),
@@ -1515,10 +1532,10 @@ const A14_3: Amendment = {
   find: '        <button style="font-family: var(--rf-display); font-size: 14px; font-weight: 500; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; padding: 10px 20px; cursor: pointer;" style-hover="background: var(--color-navy);">Give</button>\n',
   replace: [
     '        <div ref="{{ giveMenuRef }}" style="{{ giveWrapStyle }}" style-hover="--rf-give-underline: 1;">',
-    '          <button ref="{{ giveButtonRef }}" onClick="{{ toggleGiveMenu }}" onKeyDown="{{ giveMenuKeys }}" aria-haspopup="menu" aria-expanded="{{ giveMenuOpen }}" style="{{ giveButtonStyle }}" style-hover="background: #07386f;">Give<span style="display: flex; align-items: center; line-height: 1; padding: 10px 0 10px 10px; margin: -10px 0;"><svg width="11.25" height="18" viewBox="0 0 320 512" fill="currentColor" aria-hidden="true" style="display: block;"><path d="M143 352.3L7 216.3c-9.4-9.4-9.4-24.6 0-33.9l22.6-22.6c9.4-9.4 24.6-9.4 33.9 0l96.4 96.4 96.4-96.4c9.4-9.4 24.6-9.4 33.9 0l22.6 22.6c9.4 9.4 9.4 24.6 0 33.9l-136 136c-9.2 9.4-24.4 9.4-33.8 0z"></path></svg></span></button>',
+    '          <button ref="{{ giveButtonRef }}" onClick="{{ toggleGiveMenu }}" onKeyDown="{{ giveMenuKeys }}" aria-haspopup="menu" aria-controls="give-menu" aria-expanded="{{ giveMenuOpen }}" style="{{ giveButtonStyle }}" style-hover="background: #07386f;">Give<span style="display: flex; align-items: center; line-height: 1; padding: 10px 0 10px 10px; margin: -10px 0;"><svg width="11.25" height="18" viewBox="0 0 320 512" fill="currentColor" aria-hidden="true" style="display: block;"><path d="M143 352.3L7 216.3c-9.4-9.4-9.4-24.6 0-33.9l22.6-22.6c9.4-9.4 24.6-9.4 33.9 0l96.4 96.4 96.4-96.4c9.4-9.4 24.6-9.4 33.9 0l22.6 22.6c9.4 9.4 9.4 24.6 0 33.9l-136 136c-9.2 9.4-24.4 9.4-33.8 0z"></path></svg></span></button>',
     '          <div style="{{ giveUnderlineStyle }}"></div>',
     '          <sc-if value="{{ giveMenuOpen }}" hint-placeholder-val="{{ false }}">',
-    '            <div role="menu" aria-label="Give" style="position: absolute; left: 0; top: calc(100% + 28px); z-index: 60; width: max-content; min-width: 130px; padding: 0; background: #ffffff; border: 1px solid #07386f; border-radius: 0;">',
+    '            <div role="menu" aria-label="Give" id="give-menu" ref="{{ givePanelRef }}" style="position: absolute; left: 0; top: calc(100% + 28px); z-index: 60; width: max-content; min-width: 130px; padding: 0; background: #ffffff; border: 1px solid #07386f; border-radius: 0;">',
     '              <sc-for list="{{ giveLinks }}" as="g" hint-placeholder-count="4">',
     '                <a href="{{ g.href }}" role="menuitem" ref="{{ g.ref }}" onClick="{{ g.pick }}" onKeyDown="{{ g.keys }}" style="{{ g.rowStyle }}" style-hover="background: #07386f; color: #ffffff; text-decoration: none;">{{ g.label }}</a>',
     '              </sc-for>',
@@ -1580,6 +1597,60 @@ const A14_5: Amendment = {
   count: 1
 };
 
+/** A14.7 — Tab out of the open menu closes it (review round 1, m2 — ruled). John's ruling named
+ *  Escape and outside-click; Tab is the third way out of a menu the keyboard can now enter, and
+ *  without it the panel stayed open behind the focus ring — the same "a dropdown a keyboard cannot
+ *  dismiss is not shippable" reasoning A13 and A14.4/A14.5 already applied. The live site has no
+ *  focusout dismissal either, because it has no keyboard entry to need one.
+ *
+ *  Modelled on A13.4's own two closures and registered and torn down beside them, so
+ *  `trackMenuDismiss` keeps having exactly one shape. `relatedTarget` is where focus is GOING:
+ *  anywhere inside the wrapper (the trigger, another row) is a move within the control, and `null`
+ *  is the browser leaving the document — a window blur, which must not close anything. The metro
+ *  menu is untouched: this closure reads `giveMenu` and nothing else. */
+const A14_7: Amendment = {
+  id: 'A14.7', ...A14,
+  find: [
+    '    this._onDocDown = down;',
+    '    this._onDocKey = key;',
+    '    document.addEventListener("pointerdown", down, true);',
+    '    document.addEventListener("keydown", key, true);',
+    '  }',
+    '',
+    '  componentWillUnmount() {',
+    '    if (this._onResize) window.removeEventListener("resize", this._onResize);',
+    '    if (this._onDocDown) document.removeEventListener("pointerdown", this._onDocDown, true);',
+    '    if (this._onDocKey) document.removeEventListener("keydown", this._onDocKey, true);',
+    '  }',
+    ''
+  ].join('\n'),
+  replace: [
+    '    const out = (e) => {',
+    '      if (!this.state.giveMenu) return;',
+    '      const give = this._giveMenuEl;',
+    '      const to = e.relatedTarget;',
+    '      if (!to || (give && give.contains(to))) return;',
+    '      this.setState({ giveMenu: false });',
+    '    };',
+    '    this._onDocDown = down;',
+    '    this._onDocKey = key;',
+    '    this._onDocOut = out;',
+    '    document.addEventListener("pointerdown", down, true);',
+    '    document.addEventListener("keydown", key, true);',
+    '    document.addEventListener("focusout", out, true);',
+    '  }',
+    '',
+    '  componentWillUnmount() {',
+    '    if (this._onResize) window.removeEventListener("resize", this._onResize);',
+    '    if (this._onDocDown) document.removeEventListener("pointerdown", this._onDocDown, true);',
+    '    if (this._onDocKey) document.removeEventListener("keydown", this._onDocKey, true);',
+    '    if (this._onDocOut) document.removeEventListener("focusout", this._onDocOut, true);',
+    '  }',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
 /** A14.6 — the face itself (John, 2026-09-08, ruling A14 GO: "Self-host Montserrat 600 under the
  *  SIL Open Font Licence, scoped exclusively to the Give button and its menu. Keep the rest of the
  *  design typography unchanged."). One `@font-face` in the helmet's own <style> block, beside the
@@ -1624,5 +1695,5 @@ export function amendments(): Amendment[] {
     A7_3, A7_4, A8_1a, A8_1b, A8_1c, A8_2, A8_3a, A8_3b, A8_4a, A8_4b, A8_5, A8_6, A8_7, A8_8a, A8_8b,
     A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5, A12_6, A12_7, A12_8, A12_9, A12_10, A12_11,
     A13_1, A13_2, A13_3, A13_4, A13_5, A13_6, A13_7,
-    A14_1, A14_2, A14_3, A14_4, A14_5, A14_6];
+    A14_1, A14_2, A14_3, A14_4, A14_5, A14_6, A14_7];
 }

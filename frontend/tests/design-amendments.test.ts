@@ -119,11 +119,15 @@ describe('local design amendments (spec D15)', () => {
     // A13's shared `trackMenuDismiss` closures, and the `@font-face` that self-hosts the live
     // site's Montserrat 600 — scoped to this control alone, which is John's ruling.
     'A14.1', 'A14.2', 'A14.3', 'A14.4', 'A14.5', 'A14.6',
+    // A14.7 (review round 1, m2 — ruled): Tab out of the open menu closes it, the third
+    // dismissal beside A14.4's outside-click and A14.5's Escape, registered and torn down
+    // in A13.4's own `trackMenuDismiss`.
+    'A14.7',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(95);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(96);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -338,6 +342,31 @@ describe('local design amendments (spec D15)', () => {
       expect(amended.split(href).length - 1, `${href} is not in the amended design exactly once`).toBe(1);
     }
     expect(amended, 'a Give link must not open a new tab — the live site\'s do not').not.toContain('target="_blank"');
+    // m1 (review round 1, ruled): the same pairing A13's round 5 gave the metro control — a
+    // trigger that names the panel it controls, and a panel that carries that id. Without it the
+    // two dropdowns shipping together are inconsistent, and `aria-haspopup` alone leaves an
+    // assistive technology no route from the button to the menu.
+    expect(amended, 'the trigger must control the panel by id')
+      .toContain('aria-haspopup="menu" aria-controls="give-menu" aria-expanded="{{ giveMenuOpen }}"');
+    expect(amended, 'and the panel must carry that id')
+      .toContain('<div role="menu" aria-label="Give" id="give-menu" ref="{{ givePanelRef }}"');
+    // C1 (review round 1, ruled): the panel's mount ref is what spends the arrow keys' pending
+    // index, so its presence in the DESIGN is what makes the keyboard work on BOTH targets.
+    expect(amended, 'the arrow keys must not focus inside a setState callback — the app has not rendered yet')
+      .not.toContain('}, () => this.giveFocus(');
+    expect(amended).toContain('this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false });');
+  });
+
+  // A14.7 (m2): the third dismissal, and the proof it left A13's two exactly as they were.
+  it('A14.7 adds a focusout dismissal to trackMenuDismiss without touching the metro branches', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    expect(amended).toContain('document.addEventListener("focusout", out, true);');
+    expect(amended).toContain('if (this._onDocOut) document.removeEventListener("focusout", this._onDocOut, true);');
+    // Window blur (relatedTarget null) and a move inside the control are both non-dismissals.
+    expect(amended).toContain('if (!to || (give && give.contains(to))) return;');
+    // A13's own two closures, byte for byte, after all three A14 edits to the function.
+    expect(amended, 'A14 changed the metro menu\'s outside-click').toContain('      if (!this.state.marketMenu) return;\n      const host = this._marketMenuEl;\n      if (host && e.target && host.contains(e.target)) return;\n      this.setState({ marketMenu: false, marketMenuAt: -1 });');
+    expect((amended.match(/marketMenu: false, marketMenuAt: -1/g) ?? []).length, 'A13 had exactly these three metro dismissal sites and still does').toBe(3);
   });
 
   // A14.6 + the ruling: "Self-host Montserrat 600 under the SIL Open Font Licence, scoped

@@ -1816,25 +1816,96 @@ describe('A14 — the Give dropdown', () => {
     }
   });
 
-  it('ArrowDown from the trigger opens it on the first link, ArrowUp on the last', () => {
-    const els = rowEls();
+  // C1 (review round 1, ruled). The app's `setState` runs its callback SYNCHRONOUSLY
+  // (`dc-logic.js`: `Object.assign(this.state, next); if (typeof cb === "function") cb();`) and
+  // Vue re-renders in a later microtask, so an ArrowDown that opened the menu and then focused a
+  // row inside the callback found `sc-if` unmounted, no row refs called, and focus left on the
+  // trigger — while the REFERENCE's React `setState` fires post-commit and worked. Two runtimes,
+  // two behaviours, and no gate can see it: the 45 states are captured by mouse and `screens.ts`
+  // presses no keys. The fix is A13's own mount-ref idiom (`marketPanelRef`, its round 5): the
+  // keys seed a PENDING index and the panel's callback ref spends it when the elements exist.
+  //
+  // So this case must not pre-wire the refs. It reproduces the app's real order — the handler
+  // first, against nothing, then the rows arriving, then the panel mounting — and it is the order
+  // that makes it RED against the code before the fix.
+  it('ArrowDown from the trigger opens it on the first link, ArrowUp on the last — at panel mount, not at keypress', () => {
+    const panel = document.createElement('div');
+    document.body.appendChild(panel);
+    const els = [0, 1, 2, 3].map(() => { const a = document.createElement('a'); a.href = '#'; document.body.appendChild(a); return a; });
     try {
+      // 1. the keypress, with the menu shut and NOT ONE row rendered — the app's real state here
       c.renderVals().giveMenuKeys({ key: 'ArrowDown', preventDefault: prevent });
-      expect(c.state.giveMenu).toBe(true);
-      expect(document.activeElement).toBe(els[0]);
+      expect(c.state.giveMenu, 'the menu opens on the keypress, as before').toBe(true);
+      expect(document.activeElement, 'there is nothing to focus yet — the panel has not mounted').not.toBe(els[0]);
+      // 2. Vue commits: the rows' refs run, then the panel's (children before parent, both
+      //    runtimes), and THAT is when the pending index is spent.
+      c.renderVals().giveLinks.forEach((g: any, i: number) => g.ref(els[i]));
+      c.renderVals().givePanelRef(panel);
+      expect(document.activeElement, 'ArrowDown opens on the first link').toBe(els[0]);
+      // 3. the same for ArrowUp, which opens on the LAST link
       c.setState({ giveMenu: false });
+      c.renderVals().giveLinks.forEach((g: any) => g.ref(null));
       c.renderVals().giveMenuKeys({ key: 'ArrowUp', preventDefault: prevent });
-      expect(document.activeElement).toBe(els[3]);
+      expect(document.activeElement, 'still nothing to focus').not.toBe(els[3]);
+      c.renderVals().giveLinks.forEach((g: any, i: number) => g.ref(els[i]));
+      c.renderVals().givePanelRef(panel);
+      expect(document.activeElement, 'ArrowUp opens on the last link').toBe(els[3]);
       // A key that is neither arrow leaves it alone (Enter/Space is the button's own click).
       c.setState({ giveMenu: false });
       c.renderVals().giveMenuKeys({ key: 'Enter', preventDefault: prevent });
       expect(c.state.giveMenu).toBe(false);
-      // Already open: the arrows only move focus.
+      // Already open, the panel already mounted: the arrows move focus there and then.
       c.setState({ giveMenu: true });
+      els[3].focus();
       c.renderVals().giveMenuKeys({ key: 'ArrowDown', preventDefault: prevent });
       expect(document.activeElement).toBe(els[0]);
     } finally {
       els.forEach((e) => e.remove());
+      panel.remove();
+    }
+  });
+
+  // The other half of C1: the pending index is the KEYBOARD's, so a menu opened with the mouse
+  // must mount with focus left exactly where the pointer put it. A ref that focused on every
+  // mount would drag a mouse user into the list, and would re-steal focus on every re-render
+  // while the menu is open.
+  it('a mouse-opened menu does not steal focus when the panel mounts, and the ref is spent once', () => {
+    const panel = document.createElement('div');
+    document.body.appendChild(panel);
+    const els = rowEls();
+    const outside = document.createElement('button');
+    document.body.appendChild(outside);
+    try {
+      outside.focus();
+      c.renderVals().toggleGiveMenu();
+      c.renderVals().givePanelRef(panel);
+      expect(document.activeElement, 'a click opened it — focus belongs to the pointer').toBe(outside);
+      // …and a keyboard open is spent exactly once: a re-render's second ref call is inert.
+      c.setState({ giveMenu: false });
+      c.renderVals().giveMenuKeys({ key: 'ArrowDown', preventDefault: prevent });
+      c.renderVals().givePanelRef(panel);
+      expect(document.activeElement).toBe(els[0]);
+      outside.focus();
+      c.renderVals().givePanelRef(panel);
+      expect(document.activeElement, 'the pending index was spent on the first mount').toBe(outside);
+      // Unmount hands the ref null, which must not focus anything or throw.
+      els[0].blur();
+      c.renderVals().givePanelRef(null);
+      expect(document.activeElement).toBe(outside);
+      // …and a stale index cannot survive into a later MOUSE open: an arrow that opened the menu
+      // and was then dismissed before the panel ever mounted leaves an index nothing spent.
+      c.setState({ giveMenu: false });
+      c.renderVals().giveMenuKeys({ key: 'ArrowUp', preventDefault: prevent });   // opens, seeds an index
+      expect(c.state.giveMenuAt, 'the arrow seeded a pending index the panel never spent').toBe(-1);
+      c.renderVals().toggleGiveMenu();                                            // shut with the pointer
+      c.renderVals().toggleGiveMenu();                                            // re-opened with the pointer
+      outside.focus();
+      c.renderVals().givePanelRef(panel);
+      expect(document.activeElement, 'a pointer open must never inherit a keyboard\'s pending index').toBe(outside);
+    } finally {
+      els.forEach((e) => e.remove());
+      outside.remove();
+      panel.remove();
     }
   });
 
@@ -1875,6 +1946,58 @@ describe('A14 — the Give dropdown', () => {
     const fresh: any = new Component({});
     fresh.renderVals().giveLinks[0].keys({ key: 'Home', preventDefault: prevent });   // no throw
     expect(fresh.state.giveMenu).toBeFalsy();
+  });
+
+  // m2 (review round 1, ruled). Escape and outside-click were the two dismissals John's ruling
+  // named; Tab is the third way out of a menu a keyboard can now enter, and without this it left
+  // the panel open behind the focus ring. `relatedTarget` is where focus is GOING: anywhere inside
+  // the wrapper — the trigger, another row — is a move within the control, and `null` is the
+  // browser leaving the document altogether, which is not a dismissal either.
+  it('Tab out of the menu closes it; moving focus within the control, or out of the document, does not', () => {
+    const host = document.createElement('div');
+    const trigger = document.createElement('button');
+    const row = document.createElement('a');
+    row.href = '#';
+    host.append(trigger, row);
+    const outside = document.createElement('button');
+    document.body.append(host, outside);
+    try {
+      c.componentDidMount();
+      c.renderVals().giveMenuRef(host);
+      // Closed: the handler's own early exit.
+      row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: outside }));
+      expect(c.state.giveMenu).toBeFalsy();
+      // Open, and focus moves from a row to the trigger — still inside the control.
+      c.setState({ giveMenu: true });
+      row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: trigger }));
+      expect(c.state.giveMenu, 'a move within the control is not a dismissal').toBe(true);
+      // Focus leaving the document entirely (relatedTarget null) is not a dismissal either.
+      row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
+      expect(c.state.giveMenu, 'the window losing focus must not close the menu').toBe(true);
+      // Tab out: focus lands on something outside the wrapper.
+      row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: outside }));
+      expect(c.state.giveMenu).toBe(false);
+      // …and with no wrapper recorded, a focusout out of the control still closes rather than throwing.
+      c.renderVals().giveMenuRef(null);
+      c.setState({ giveMenu: true });
+      row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: outside }));
+      expect(c.state.giveMenu).toBe(false);
+    } finally {
+      host.remove();
+      outside.remove();
+    }
+  });
+
+  it('componentWillUnmount removes all three document listeners trackMenuDismiss added', () => {
+    const add = vi.spyOn(document, 'addEventListener');
+    const remove = vi.spyOn(document, 'removeEventListener');
+    c.componentDidMount();
+    c.componentWillUnmount();
+    const kinds = (calls: unknown[][]) => calls.map(([t]) => t).filter((t) => t === 'pointerdown' || t === 'keydown' || t === 'focusout').sort();
+    expect(kinds(add.mock.calls)).toEqual(['focusout', 'keydown', 'pointerdown']);
+    expect(kinds(remove.mock.calls)).toEqual(['focusout', 'keydown', 'pointerdown']);
+    add.mockRestore();
+    remove.mockRestore();
   });
 
   it('A13\'s metro dismissals are unchanged by A14\'s branches', () => {

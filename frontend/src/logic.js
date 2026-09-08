@@ -244,16 +244,26 @@ class Component extends DCLogic {
       if (!this.state.marketMenu) return;
       this.setState({ marketMenu: false, marketMenuAt: -1 });
     };
+    const out = (e) => {
+      if (!this.state.giveMenu) return;
+      const give = this._giveMenuEl;
+      const to = e.relatedTarget;
+      if (!to || (give && give.contains(to))) return;
+      this.setState({ giveMenu: false });
+    };
     this._onDocDown = down;
     this._onDocKey = key;
+    this._onDocOut = out;
     document.addEventListener("pointerdown", down, true);
     document.addEventListener("keydown", key, true);
+    document.addEventListener("focusout", out, true);
   }
 
   componentWillUnmount() {
     if (this._onResize) window.removeEventListener("resize", this._onResize);
     if (this._onDocDown) document.removeEventListener("pointerdown", this._onDocDown, true);
     if (this._onDocKey) document.removeEventListener("keydown", this._onDocKey, true);
+    if (this._onDocOut) document.removeEventListener("focusout", this._onDocOut, true);
   }
 
   componentDidMount() {
@@ -1483,9 +1493,23 @@ class Component extends DCLogic {
       // hover/open pill and the panel border and the row text, 10px the pill radius, 4.34px
       // the gap from the pill to the 3px underline, 28px the gap from the pill to the panel.
       giveMenuOpen: !!s.giveMenu,
-      toggleGiveMenu: () => this.setState({ giveMenu: !s.giveMenu, navMenu: false, userMenu: false }),
+      // `giveMenuAt: null` on every pointer open: the pending index below belongs to the
+      // KEYBOARD, and a stale one would drag a mouse user into the list on the next open.
+      toggleGiveMenu: () => this.setState({ giveMenu: !s.giveMenu, giveMenuAt: null, navMenu: false, userMenu: false }),
       giveMenuRef: (el) => { this._giveMenuEl = el || null; },
       giveButtonRef: (el) => { this._giveButtonEl = el || null; },
+      // The panel's own mount is the first moment its links exist, so it is where an arrow
+      // key that OPENED the menu spends its pending index — the arrow itself cannot, having
+      // seeded it while the sc-if was still unrendered. Same callback-ref idiom the compare
+      // menu ships (md.compareMenuRef) and A13 reuses for marketPanelRef, and it fires on
+      // mount on both targets, children before parent, so the row refs are already in.
+      // Spent once: a re-render mounts the panel again and must not re-steal focus.
+      givePanelRef: (el) => {
+        const at = this.state.giveMenuAt;
+        if (!el || at == null) return;
+        this.setState({ giveMenuAt: null });
+        this.giveFocus(at);
+      },
       giveWrapStyle: "position: relative; display: flex; align-items: center;",
       giveButtonStyle: "display: flex; align-items: center; padding: 2px 22px; font-family: 'Montserrat', var(--rf-display); font-size: 18px; font-weight: 600; line-height: 24.3px; white-space: nowrap; color: #ffffff; background: " +
         (s.giveMenu ? "#07386f" : "#339dde") + "; border: 0; border-radius: 10px; cursor: pointer; transition: background .4s;",
@@ -1512,7 +1536,10 @@ class Component extends DCLogic {
         e.preventDefault();
         const at = e.key === "ArrowDown" ? 0 : -1;
         if (s.giveMenu) return this.giveFocus(at);
-        this.setState({ giveMenu: true, navMenu: false, userMenu: false }, () => this.giveFocus(at));
+        // Already-open: the panel is mounted, so focus moves here and now. Opening CANNOT do
+        // that — the app's setState runs its callback synchronously (dc-logic.js) and Vue
+        // has not rendered the panel yet, so the index is seeded and givePanelRef spends it.
+        this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false });
       },
       signOut: () => (this.props.auth ? this.props.auth.signOut().catch(() => {}) : Promise.resolve()).then(() => this.setState({
         userMenu: false, auth: false, screen: "gate", gate: "signin", pw: "",
