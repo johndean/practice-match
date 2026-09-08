@@ -2404,7 +2404,7 @@ class Component extends DCLogic {
         ["treatment", "Treatment area"]
       ].map((v, i) => {
         const id = "ph-" + p.id + "-" + v[0];
-        return { id, caption: v[1], index: i + 1, placeholder: name + " — " + v[1], src: SRC[id] || "", hasSrc: !!SRC[id], noSrc: !SRC[id] };
+        return { id, caption: v[1], index: i + 1, placeholder: name + " — " + v[1], src: SRC[id] || (p.photos && p.photos[i]) || "", hasSrc: !!(SRC[id] || (p.photos && p.photos[i])), noSrc: !(SRC[id] || (p.photos && p.photos[i])) };
       });
     }
     const equine = p.type === "Large animal";
@@ -2421,17 +2421,17 @@ class Component extends DCLogic {
       caption: v[1],
       index: i + 1,
       placeholder: name + " — " + v[1],
-      src: "", hasSrc: false, noSrc: true
+      src: (p.photos && p.photos[i]) || "", hasSrc: !!(p.photos && p.photos[i]), noSrc: !(p.photos && p.photos[i])
     }));
   }
 
   heroSrc(p) {
-    return p.id === "p2" ? "assets/photos/round-rock-exterior-street.webp" : "";
+    return (p.photos && p.photos[0]) || (p.id === "p2" ? "assets/photos/round-rock-exterior-street.webp" : "");
   }
 
   // Thumbnail-safe variant: reads at small sizes where the wide street view does not.
   thumbSrc(p) {
-    return p.id === "p2" ? "assets/photos/round-rock-exterior-parking.jpeg" : "";
+    return (p.photos && p.photos[0]) || (p.id === "p2" ? "assets/photos/round-rock-exterior-parking.jpeg" : "");
   }
 
   practiceName(p) {
@@ -2443,7 +2443,7 @@ class Component extends DCLogic {
       o1: "Winter Park Animal Hospital", o2: "Lake Mary Pet Clinic", o3: "Kissimmee Emergency Vet", o4: "Oviedo Mixed Practice",
       g1: "Marietta Animal Hospital", g2: "Decatur Veterinary Clinic", g3: "Alpharetta Veterinary Specialists", g4: "Peachtree Equine"
     };
-    return NAMES[p.id] || p.area + " Veterinary";
+    return p.name || NAMES[p.id] || p.area + " Veterinary";
   }
 
   stateOf(market) { return (market || "Austin, TX").split(", ")[1] || "TX"; }

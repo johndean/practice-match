@@ -91,11 +91,15 @@ describe('local design amendments (spec D15)', () => {
     // A10.2 — John revised A10's wording later the same day; A10 stays as the record of the
     // first ruling and A10.2 applies after it.
     'A10.2',
+    // A12 — the Seed Listings launch (John, 2026-09-08). Five literal script edits so the design
+    // reads a listing's own name and photographs; the fixtures carry neither key, so every
+    // approved state keeps its pixels.
+    'A12.1', 'A12.2', 'A12.3', 'A12.4', 'A12.5',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(71);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(76);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

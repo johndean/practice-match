@@ -1135,4 +1135,64 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
       expect(flags.filter((f) => off[f]), `${gate} off the gate screen`).toEqual([]);
     }
   });
+
+  // -----------------------------------------------------------------------------------------
+  // A12 — the design reads a listing's own name and photographs (Seed Listings, John 2026-09-08:
+  // "Eighteen demo hospitals with real addresses and photos replace the design's fixture
+  // practices on QA"). Five literal script edits, so the SEEDED data reaches the title slot and
+  // the photo slots the design already had; the design's own fixtures carry neither key, so both
+  // fallbacks still fire and every approved state keeps its pixels. Both halves are pinned here.
+  // -----------------------------------------------------------------------------------------
+  const SEEDED = {
+    id: 'abc-animal-hospital', area: 'Cedar Park', type: 'Small animal', market: 'Austin, TX',
+    name: 'ABC Animal Hospital',
+    photos: ['/api/listings/a1/photos/1', '/api/listings/a1/photos/2']
+  };
+
+  it('a listing that carries a name renders it in the title slot (A12.1)', () => {
+    expect(c.practiceName(SEEDED)).toBe('ABC Animal Hospital');
+  });
+
+  it('a listing that carries photographs fills the hero, the thumbnail and the photo slots (A12.2–A12.5)', () => {
+    expect(c.heroSrc(SEEDED)).toBe('/api/listings/a1/photos/1');
+    expect(c.thumbSrc(SEEDED)).toBe('/api/listings/a1/photos/1');
+    const slots = c.photoSet(SEEDED);
+    expect(slots.map((s: any) => s.src)).toEqual(['/api/listings/a1/photos/1', '/api/listings/a1/photos/2', '', '', '', '']);
+    expect(slots.map((s: any) => s.hasSrc)).toEqual([true, true, false, false, false, false]);
+    expect(slots.map((s: any) => s.noSrc)).toEqual([false, false, true, true, true, true]);
+    // The design's own six captions, order and placeholder text are untouched — only the name
+    // inside the placeholder is now the listing's.
+    expect(slots.map((s: any) => s.caption)).toEqual([
+      'Exterior — street view', 'Reception and waiting', 'Exam room', 'Treatment area', 'Surgery suite', 'Boarding and runs'
+    ]);
+    expect(slots[0].placeholder).toBe('ABC Animal Hospital — Exterior — street view');
+    expect(slots[0].id).toBe('ph-abc-animal-hospital-exterior');
+  });
+
+  // The other half, and the reason every approved state keeps its pixels: a practice with no
+  // `name` and no `photos` — which is every fixture the design ships, and every row the D6 stub
+  // returns — renders exactly what it rendered before A12.
+  it('a design fixture practice renders exactly as it did before A12 — the fixture name map wins', () => {
+    expect(c.practiceName({ id: 'p1', area: 'Cedar Park' })).toBe('Cedar Park Animal Hospital');
+    expect(c.practiceName({ id: 'g4', area: 'Peachtree City' })).toBe('Peachtree Equine');
+    expect(c.practiceName({ id: 'zz', area: 'Nowhere' })).toBe('Nowhere Veterinary');
+  });
+
+  it('a design fixture practice renders exactly as it did before A12 — the p2 assets and the empty slots', () => {
+    const p1 = { id: 'p1', area: 'Cedar Park', type: 'Small animal' };
+    const p2 = { id: 'p2', area: 'Round Rock', type: 'Small animal' };
+    expect(c.heroSrc(p1)).toBe('');
+    expect(c.thumbSrc(p1)).toBe('');
+    expect(c.heroSrc(p2)).toBe('/assets/photos/round-rock-exterior-street.webp');
+    expect(c.thumbSrc(p2)).toBe('/assets/photos/round-rock-exterior-parking.jpeg');
+    expect(c.photoSet(p1).map((s: any) => [s.src, s.hasSrc, s.noSrc])).toEqual(Array(6).fill(['', false, true]));
+    expect(c.photoSet(p2).map((s: any) => s.src)).toEqual([
+      '/assets/photos/round-rock-exterior-street.webp',
+      '/assets/photos/round-rock-exterior-side.webp',
+      '/assets/photos/round-rock-exterior-parking.jpeg',
+      '', '', ''
+    ]);
+    expect(c.photoSet(p2).map((s: any) => s.hasSrc)).toEqual([true, true, true, false, false, false]);
+    expect(c.photoSet(p2).map((s: any) => s.noSrc)).toEqual([false, false, false, true, true, true]);
+  });
 });

@@ -943,9 +943,80 @@ const A10_2: Amendment = {
   count: 1
 };
 
+/** A12 — the design's script reads a LISTING's own name and photographs (Seed Listings, John
+ *  2026-09-08; the plan's Task L6 STOP, resolved by option (iii) through the D15 engine rather
+ *  than by hand-editing the ported `logic.js`, which `app-generated.test.ts` forbids byte for
+ *  byte). Five literal script edits at the five sites the STOP note enumerates — `practiceName`,
+ *  both `photoSet` branches, `heroSrc` and `thumbSrc` — each written so the design's OWN data
+ *  still wins where it exists:
+ *
+ *    - `p.name` is consulted FIRST in `practiceName`, and the fixtures carry no `name`, so the
+ *      `NAMES` map and the `p.area + " Veterinary"` fallback behave exactly as before;
+ *    - `p.photos` is consulted AFTER `SRC` in `photoSet`'s `p2` branch (the three real
+ *      photographs the design ships for that one practice stay where the design put them) and
+ *      is the only source in the generic branch, which had none;
+ *    - `heroSrc`/`thumbSrc` prefer `p.photos[0]` and otherwise return the design's own `p2`
+ *      expression unchanged — the street view for the hero, the parking photograph for the
+ *      thumbnail.
+ *
+ *  It is therefore PIXEL-SAFE by construction: no fixture practice carries either key, and
+ *  `src/listings/load.ts`'s `toPractice` adds them only when the API actually sent them, which
+ *  the D6 design-fixture stub never does. Proved twice over — `src/logic.test.ts` characterises
+ *  both halves, and the 43 approved states keep their baseline hashes.
+ */
+const L6 = {
+  date: '2026-09-08',
+  ruling: 'Eighteen demo hospitals with real addresses and photos replace the design\'s fixture practices on QA (John, 2026-09-08 — Seed Listings launch)'
+};
+
+/** A12.1 — the title slot (D5/A-L5: the server decides what `p.name` is; a listing whose name is
+ *  not disclosed is served the design's own anonymised label, so this one expression honours the
+ *  disclosure flag without knowing about it). */
+const A12_1: Amendment = {
+  id: 'A12.1', ...L6,
+  find: 'return NAMES[p.id] || p.area + " Veterinary";',
+  replace: 'return p.name || NAMES[p.id] || p.area + " Veterinary";', count: 1
+};
+
+/** A12.2 — `photoSet`'s `p2` branch. `SRC` (the design's three committed photographs, keyed by
+ *  slot id) keeps precedence; a seeded listing's photographs fill the slots in order behind it. */
+const A12_2: Amendment = {
+  id: 'A12.2', ...L6,
+  find: 'src: SRC[id] || "", hasSrc: !!SRC[id], noSrc: !SRC[id] };',
+  replace: 'src: SRC[id] || (p.photos && p.photos[i]) || "", hasSrc: !!(SRC[id] || (p.photos && p.photos[i])), noSrc: !(SRC[id] || (p.photos && p.photos[i])) };',
+  count: 1
+};
+
+/** A12.3 — `photoSet`'s generic branch, which gave every practice but `p2` six empty slots by
+ *  construction. The captions, their order and the placeholder text are the design's, untouched. */
+const A12_3: Amendment = {
+  id: 'A12.3', ...L6,
+  find: '      src: "", hasSrc: false, noSrc: true',
+  replace: '      src: (p.photos && p.photos[i]) || "", hasSrc: !!(p.photos && p.photos[i]), noSrc: !(p.photos && p.photos[i])',
+  count: 1
+};
+
+/** A12.4 — the hero photograph (the detail screen's lead image). */
+const A12_4: Amendment = {
+  id: 'A12.4', ...L6,
+  find: 'return p.id === "p2" ? "assets/photos/round-rock-exterior-street.webp" : "";',
+  replace: 'return (p.photos && p.photos[0]) || (p.id === "p2" ? "assets/photos/round-rock-exterior-street.webp" : "");',
+  count: 1
+};
+
+/** A12.5 — the thumbnail-safe variant (the results card). The design's own `p2` expression is the
+ *  PARKING photograph, which reads at small sizes where the wide street view does not; a seeded
+ *  listing has no such curated pick, so it takes its first photograph as the hero does. */
+const A12_5: Amendment = {
+  id: 'A12.5', ...L6,
+  find: 'return p.id === "p2" ? "assets/photos/round-rock-exterior-parking.jpeg" : "";',
+  replace: 'return (p.photos && p.photos[0]) || (p.id === "p2" ? "assets/photos/round-rock-exterior-parking.jpeg" : "");',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
     A7_3, A7_4, A8_1a, A8_1b, A8_1c, A8_2, A8_3a, A8_3b, A8_4a, A8_4b, A8_5, A8_6, A8_7, A8_8a, A8_8b,
-    A9_1a, A9_1b, A10, A11, A10_2];
+    A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5];
 }
