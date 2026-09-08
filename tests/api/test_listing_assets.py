@@ -857,11 +857,14 @@ async def test_a_seed_listings_tiles_are_named_by_the_seed_caption(client: Any, 
         cur.execute("UPDATE listing SET seller_id=%s WHERE id=%s", (account_id, listing_id))
 
     body = (await client.get(f"/api/seller/listings/{listing_id}", headers=auth_headers(cookies, headers))).json()
+    # The committed inventory's own captions, which A-L9 changed with the photographs themselves:
+    # the seed set is the six the design's photo slots select, so files 2-4 are the reception, the
+    # exam room and the treatment area rather than three more exteriors.
     assert body["photos"] == [
         {"id": "1111_pet_hospital/1.webp", "name": "Exterior — front view"},
-        {"id": "1111_pet_hospital/2.webp", "name": "Exterior — entrance view"},
-        {"id": "1111_pet_hospital/3.webp", "name": "Exterior — monument sign"},
-        {"id": "1111_pet_hospital/4.webp", "name": "Exterior — street corner view"},
+        {"id": "1111_pet_hospital/2.webp", "name": "Interior — reception"},
+        {"id": "1111_pet_hospital/3.webp", "name": "Interior — exam room"},
+        {"id": "1111_pet_hospital/4.webp", "name": "Interior — treatment area"},
         # An entry the inventory does not name still renders as a tile, by its own file name.
         {"id": "1111_pet_hospital/nope.webp", "name": "nope.webp"},
     ]
