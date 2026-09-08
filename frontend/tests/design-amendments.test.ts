@@ -305,6 +305,13 @@ describe('local design amendments (spec D15)', () => {
       .toContain('aria-expanded="{{ marketMenuOpen }}" aria-activedescendant="{{ marketActiveId }}"');
     expect(amended, 'and not on the panel, which never holds focus')
       .not.toContain('<div role="listbox" aria-label="Metro area" aria-activedescendant=');
+    // …and the reference has to RESOLVE: ARIA looks for the active descendant inside the element
+    // carrying the attribute or inside the one it owns/controls, and the panel is the trigger's
+    // sibling. `aria-controls` is what makes the pair reachable (round 5, N4).
+    expect(amended, 'the trigger must control the panel by id')
+      .toContain('aria-haspopup="listbox" aria-controls="metro-listbox" aria-expanded="{{ marketMenuOpen }}"');
+    expect(amended, 'and the panel must carry that id')
+      .toContain('<div role="listbox" aria-label="Metro area" id="metro-listbox"');
     expect(amended).not.toContain('onChange="{{ setMarket }}"');
     // The five filter selects, the sort select and the wizard's stay native (scope, Q1).
     expect((amended.match(/<select /g) ?? []).length, 'A13 changed a select outside its scope').toBe(4);

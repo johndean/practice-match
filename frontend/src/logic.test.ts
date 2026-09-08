@@ -1560,6 +1560,38 @@ describe('A13 — the metro dropdown', () => {
     expect(c2.state.marketMenuAt).toBe(1);
   });
 
+  // N3 (re-review, ruled): OPENING has to scroll too. `toggleMarketMenu` and the
+  // Arrow-on-a-closed-menu branch seed the highlight while the panel is still unrendered, so
+  // there is no row to scroll to yet; the scroll therefore hangs off the panel's own mount —
+  // the design's own callback-ref idiom (`md.compareMenuRef`) — and runs on both targets at the
+  // moment the rows exist. Without it, a seeded market list longer than the panel opens scrolled
+  // to the top with the active row off-screen, which is the Q5 case I3 exists for.
+  it('opening the menu scrolls the highlighted row into view', () => {
+    const rows = MARKET_KEYS.map((_, i) => {
+      const b = document.createElement('button');
+      b.id = `market-opt-${i}`;
+      (b as any).scrollIntoView = vi.fn();
+      document.body.appendChild(b);
+      return b;
+    });
+    const panel = document.createElement('div');
+    document.body.appendChild(panel);
+    try {
+      c.setState({ market: 'Orlando, FL' });              // index 2 — a non-zero highlight
+      c.renderVals().toggleMarketMenu();
+      expect(c.state.marketMenuAt).toBe(2);
+      c.renderVals().marketPanelRef(panel);               // the panel mounts, and the rows exist
+      expect((rows[2] as any).scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+      expect((rows[0] as any).scrollIntoView).not.toHaveBeenCalled();
+      // unmount hands the ref null, which must not scroll anything or throw
+      c.renderVals().marketPanelRef(null);
+      expect((rows[2] as any).scrollIntoView).toHaveBeenCalledTimes(1);
+    } finally {
+      rows.forEach((b) => b.remove());
+      panel.remove();
+    }
+  });
+
   // Round 4 (ruled): a choice unmounts the row the pointer or the keyboard was on, and without
   // this focus lands on <body> — a keyboard user is dropped out of the control they were driving.
   // A native <select> leaves focus on itself; so does the design's own listbox, whose rows sit

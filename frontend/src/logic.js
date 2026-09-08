@@ -301,13 +301,19 @@ class Component extends DCLogic {
     if (trigger) trigger.focus();
   };
 
-  // Moving the keyboard highlight. The rows are all in the DOM while the menu is open, so the
-  // one being highlighted is scrolled into view here rather than after a re-render: the panel
-  // scrolls at its max-height as soon as the market list is longer than the design's four.
-  moveMarketHighlight = (i) => {
-    this.setState({ marketMenuAt: i });
+  // Bringing a row into view. The panel scrolls at its max-height as soon as the market list
+  // is longer than the design's four, so both the arrow keys and the panel's own mount need
+  // this: one while the rows are already there, one at the moment they arrive.
+  scrollMarketOption = (i) => {
     const row = document.getElementById("market-opt-" + i);
     if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+  };
+
+  // Moving the keyboard highlight. The rows are all in the DOM while the menu is open, so the
+  // one being highlighted is scrolled into view here rather than after a re-render.
+  moveMarketHighlight = (i) => {
+    this.setState({ marketMenuAt: i });
+    this.scrollMarketOption(i);
   };
 
   // ---- Browse Practices: map, market layers, results -------------------------------------------------
@@ -1582,6 +1588,11 @@ class Component extends DCLogic {
       marketCaretStyle: "flex: none; display: block; transition: transform 150ms var(--easing-out); transform: rotate(" +
         (s.marketMenu ? "180deg" : "0deg") + ");",
       marketMenuRef: (el) => { this._marketMenuEl = el || null; },
+      // The panel's own mount is when the option rows first exist, so it is where OPENING
+      // scrolls the highlighted row into view — the arrow keys cannot, having seeded the
+      // highlight while the panel was still unrendered. Same callback-ref idiom the compare
+      // menu already ships (md.compareMenuRef), and it fires on mount on both targets.
+      marketPanelRef: (el) => { if (el) this.scrollMarketOption(this.state.marketMenuAt); },
       marketMenuKeys: (e) => {
         const keys = Object.keys(MARKETS);
         // Math.max: a market MARKETS no longer holds (Seed Listings drops a metro with no
