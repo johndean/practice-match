@@ -170,6 +170,89 @@ async def test_signup_refuses_a_password_that_has_appeared_in_a_breach(client):
     assert r.status_code == 422 and "data breach" in r.json()["error"]["message"]
 
 
+# --- I11: zxcvbn `user_inputs` — a password built from the member's own email or name is weak.
+# Fabricated (non-dictionary) strings: each scores 4 out of zxcvbn's own scale on its own — no
+# resemblance to any of its built-in dictionaries or the bundled breach list (verified directly
+# against both before these were written) — so a refusal below can only be the per-member check,
+# never the length floor, the general dictionary/pattern screen, or the breach screen. ---
+I11_LOCAL = "vqxrtmbklzhp"              # exactly MIN_LEN (12 chars) on its own
+I11_DIGITS_LOCAL = "bxkqlmrvthez"       # the local part I11_DIGITS_PW is built from
+I11_DIGITS_PW = I11_DIGITS_LOCAL + "99"
+I11_DOMAIN = "qzytlorvbnkm"
+I11_NAME = "zqmoprtlvbhk"
+
+
+async def test_signup_refuses_a_password_that_is_its_own_local_part_but_accepts_it_for_another_address(client, conn):
+    r = await client.post("/api/auth/signup", json={"email": f"{I11_LOCAL}@example.org", "password": I11_LOCAL})
+    assert r.status_code == 422 and "stronger" in r.json()["error"]["message"]
+    r = await client.post("/api/auth/signup", json={"email": "unrelated@example.org", "password": I11_LOCAL})
+    assert r.status_code == 202
+
+
+async def test_signup_refuses_a_password_that_is_its_local_part_plus_digits_but_accepts_it_for_another_address(client, conn):
+    r = await client.post("/api/auth/signup", json={"email": f"{I11_DIGITS_LOCAL}@example.org", "password": I11_DIGITS_PW})
+    assert r.status_code == 422 and "stronger" in r.json()["error"]["message"]
+    r = await client.post("/api/auth/signup", json={"email": "unrelated@example.org", "password": I11_DIGITS_PW})
+    assert r.status_code == 202
+
+
+async def test_signup_refuses_a_password_that_is_its_own_domain_but_accepts_it_for_another_address(client, conn):
+    r = await client.post("/api/auth/signup", json={"email": f"buyer@{I11_DOMAIN}.org", "password": I11_DOMAIN})
+    assert r.status_code == 422 and "stronger" in r.json()["error"]["message"]
+    r = await client.post("/api/auth/signup", json={"email": "buyer@different.org", "password": I11_DOMAIN})
+    assert r.status_code == 202
+
+
+def _seeded_account(conn, *, email, display_name=None):
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO account (email, password_hash, state, display_name) VALUES (%s,%s,'active',%s) RETURNING id",
+                    (email, P.hash_password(PW), display_name))
+        return cur.fetchone()[0]
+
+
+# (password, the account's own email, the account's own name-or-None) for the local part, the
+# local part plus digits, the domain, and a name token — the four candidates the brief's Step 1
+# names, each otherwise clearing both the length floor and zxcvbn's own dictionary/pattern screen.
+I11_CASES = [
+    (I11_LOCAL, f"{I11_LOCAL}@example.org", None),
+    (I11_DIGITS_PW, f"{I11_DIGITS_LOCAL}@example.org", None),
+    (I11_DOMAIN, f"buyer@{I11_DOMAIN}.org", None),
+    (I11_NAME, "pat@example.org", I11_NAME),
+]
+
+
+async def test_password_reset_refuses_a_password_built_from_the_account_s_own_email_or_name(client, conn):
+    """I11: `password/reset` reads the account row (email, name) the token names, so the SAME
+    candidate is refused for the account it belongs to and accepted for an unrelated one — the
+    check is per-member, not a global blacklist."""
+    for n, (password, owner_email, name) in enumerate(I11_CASES):
+        owner = _seeded_account(conn, email=owner_email, display_name=name)
+        owner_token = T.issue_email_token(conn, owner, "reset", timedelta(hours=1))
+        refused = await client.post("/api/auth/password/reset", json={"token": owner_token, "password": password})
+        assert refused.status_code == 422 and "stronger" in refused.json()["error"]["message"], password
+
+        stranger = _seeded_account(conn, email=f"stranger{n}@example.org", display_name="Someone Else")
+        stranger_token = T.issue_email_token(conn, stranger, "reset", timedelta(hours=1))
+        accepted = await client.post("/api/auth/password/reset", json={"token": stranger_token, "password": password})
+        assert accepted.status_code == 200, password
+
+
+async def test_accept_invite_refuses_a_password_built_from_the_account_s_own_email_or_name(client, conn):
+    """The same rule at the other seam that reads an `account` row before hashing a new password.
+    Not a bootstrap-admin account: the endpoint's own comment says a future invite need not be
+    privileged, and a plain account exercises exactly that path here."""
+    for n, (password, owner_email, name) in enumerate(I11_CASES):
+        owner = _seeded_account(conn, email=owner_email, display_name=name)
+        owner_token = T.issue_email_token(conn, owner, "invite", timedelta(hours=1))
+        refused = await client.post("/api/auth/accept-invite", json={"token": owner_token, "password": password})
+        assert refused.status_code == 422 and "stronger" in refused.json()["error"]["message"], password
+
+        stranger = _seeded_account(conn, email=f"stranger-invite{n}@example.org", display_name="Someone Else")
+        stranger_token = T.issue_email_token(conn, stranger, "invite", timedelta(hours=1))
+        accepted = await client.post("/api/auth/accept-invite", json={"token": stranger_token, "password": password})
+        assert accepted.status_code == 200, password
+
+
 async def test_a_new_account_can_verify_sign_in_and_read_its_own_profile(client, conn):
     """Sign-up leaves `display_name` and `affiliation_label` unset until the application is filled
     in, so `/api/me` answers with the design's fallbacks — an empty name, "?" initials, "Applicant"."""

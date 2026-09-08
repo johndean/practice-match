@@ -227,22 +227,26 @@ def _outbox_key() -> str:
     return uuid.uuid4().hex
 
 
-def _floor(pw: str, *, privileged: bool) -> None:
+def _floor(pw: str, *, privileged: bool, user_inputs: list[str] | None = None) -> None:
     """The length and strength floor. Microseconds, and the only half of the policy that needs to
-    know whether the account is privileged — which for a reset is only knowable from the database."""
+    know whether the account is privileged — which for a reset is only knowable from the database.
+
+    `user_inputs` (I11): the member's own email/name, from `P.user_inputs_for` — None where the
+    caller has no identifiers to feed it yet (`_screen`'s pre-connection pass; `signup` knows only
+    the email throughout)."""
     try:
-        P.validate(pw, privileged=privileged)
+        P.validate(pw, privileged=privileged, user_inputs=user_inputs)
     except P.PasswordPolicyError as e:
         raise PasswordPolicy(str(e)) from None
 
 
-async def _screen(pw: str) -> None:
+async def _screen(pw: str, user_inputs: list[str] | None = None) -> None:
     """The half of the policy that needs NO database: the ordinary floor and the breach screen.
 
     Always called before a connection is opened. `is_pwned_async`, never the blocking `is_pwned`: it
     is a 2 s-timeout network call, and holding a Postgres transaction across it parks a backend
     idle-in-transaction for the whole timeout (fix round 1, Important 5)."""
-    _floor(pw, privileged=False)
+    _floor(pw, privileged=False, user_inputs=user_inputs)
     if await P.is_pwned_async(pw):
         raise PasswordPolicy("That password has appeared in a data breach. Choose another.")
 
@@ -321,7 +325,8 @@ async def signup(body: Creds, request: Request) -> dict[str, str]:
     limits.hit(r, "signup:email", key, *limits.SIGNUP_EMAIL)
     # Screened and hashed BEFORE any connection: the breach screen is a 2 s-timeout network call and
     # the hash is ~97 ms, neither of which may be held across an open transaction.
-    await _screen(body.password)
+    # I11: sign-up knows only the email — no account row exists yet for a name to come from.
+    await _screen(body.password, P.user_inputs_for(as_typed))
     hashed = await P.hash_async(body.password)
     with closing(sync_conn()) as conn, conn:
         with conn.cursor() as cur:
@@ -554,11 +559,16 @@ async def reset(body: ResetIn, request: Request) -> dict[str, str]:
         if not account_id:
             raise TokenInvalid
         with conn.cursor() as cur:
-            cur.execute("SELECT EXISTS (SELECT 1 FROM role_grant WHERE account_id=%s AND role IN ('staff','admin') AND revoked_at IS NULL)", (account_id,))
-            privileged = cast("tuple[bool]", cur.fetchone())[0]
+            # I11: `email` and `display_name` ride along with the existing privileged lookup — one
+            # query either way — so `user_inputs_for` has the account's own identifiers to screen
+            # this password against.
+            cur.execute("""SELECT email, display_name,
+                                  EXISTS (SELECT 1 FROM role_grant WHERE account_id=%s AND role IN ('staff','admin') AND revoked_at IS NULL)
+                             FROM account WHERE id=%s""", (account_id, account_id))
+            email, display_name, privileged = cast("tuple[str, str | None, bool]", cur.fetchone())
         # A policy refusal here rolls the token consumption back with it, so a link is never burnt
         # by a password the policy was always going to reject.
-        _floor(body.password, privileged=privileged)
+        _floor(body.password, privileged=privileged, user_inputs=P.user_inputs_for(email, display_name))
         with conn.cursor() as cur:
             cur.execute("UPDATE account SET password_hash=%s WHERE id=%s", (hashed, account_id))
         # Every other session goes: a reset is what somebody who has LOST the account does.
@@ -590,11 +600,16 @@ async def accept_invite(body: ResetIn, request: Request) -> dict[str, str]:
         if not account_id:
             raise TokenInvalid
         with conn.cursor() as cur:
-            cur.execute("SELECT EXISTS (SELECT 1 FROM role_grant WHERE account_id=%s AND role IN ('staff','admin') AND revoked_at IS NULL)", (account_id,))
-            privileged = cast("tuple[bool]", cur.fetchone())[0]
+            # I11: `email` and `display_name` ride along with the existing privileged lookup — one
+            # query either way — so `user_inputs_for` has the account's own identifiers to screen
+            # this password against.
+            cur.execute("""SELECT email, display_name,
+                                  EXISTS (SELECT 1 FROM role_grant WHERE account_id=%s AND role IN ('staff','admin') AND revoked_at IS NULL)
+                             FROM account WHERE id=%s""", (account_id, account_id))
+            email, display_name, privileged = cast("tuple[str, str | None, bool]", cur.fetchone())
         # A policy refusal here rolls the token consumption back with it, so an invite is never
         # burnt by a password the policy was always going to reject.
-        _floor(body.password, privileged=privileged)
+        _floor(body.password, privileged=privileged, user_inputs=P.user_inputs_for(email, display_name))
         with conn.cursor() as cur:
             cur.execute("UPDATE account SET password_hash=%s WHERE id=%s", (hashed, account_id))
         revoked = S.revoke_all(conn, account_id)

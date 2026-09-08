@@ -11,6 +11,47 @@ from argon2 import extract_parameters
 from app.auth import passwords as P
 
 
+def test_user_inputs_for_order_dedup_lowercasing_plus_tags_and_subdomains():
+    """I11's rule, exactly: the email as given, its lower-cased form, the local part, the local
+    part split on `.` `_` `-` `+`, then each label of the domain — de-duplicated (first occurrence
+    wins) and every entry lower-cased. No name is known here, matching sign-up."""
+    assert P.user_inputs_for("Buyer.Smith+demo@Mail.Example.CO.UK") == [
+        "buyer.smith+demo@mail.example.co.uk",
+        "buyer.smith+demo",
+        "buyer",
+        "smith",
+        "demo",
+        "mail",
+        "example",
+        "co",
+        "uk",
+    ]
+
+
+def test_user_inputs_for_applies_the_three_character_rule_to_name_tokens_and_dedupes_across_them():
+    """The name is only ever known when the caller has one (reset, accept-invite): every
+    whitespace-separated token three characters or longer, in order, after the email-derived
+    entries — "Al" and "Wu" (two characters) are dropped, and "org" is not repeated because the
+    domain label already put it in the list."""
+    assert P.user_inputs_for("pat@example.org", "Al Wu Org Pat Dr. Rachel Mendes") == [
+        "pat@example.org",
+        "pat",
+        "example",
+        "org",
+        "dr.",
+        "rachel",
+        "mendes",
+    ]
+
+
+def test_user_inputs_for_is_pure_and_returns_the_empty_email_alone_without_a_name():
+    assert P.user_inputs_for("solo@example.org") == ["solo@example.org", "solo", "example", "org"]
+    # Purity: calling it again with the same arguments is the same list, not a shared mutable one.
+    a = P.user_inputs_for("solo@example.org")
+    b = P.user_inputs_for("solo@example.org")
+    assert a == b and a is not b
+
+
 def test_policy_lengths_and_strength():
     with pytest.raises(P.PasswordPolicyError, match="12"):
         P.validate("short-one", privileged=False)
@@ -21,6 +62,17 @@ def test_policy_lengths_and_strength():
     with pytest.raises(P.PasswordPolicyError, match="stronger"):
         P.validate("password12345", privileged=False)      # zxcvbn score < 3
     P.validate("orbit-lantern-quiet-42", privileged=True)  # ok
+
+
+# I11: fabricated (non-dictionary) strings — each scores 4 out of zxcvbn's scale on its own (no
+# resemblance to any of its built-in dictionaries), so a refusal below can only be the NEW
+# `user_inputs` screen, never the length floor or a pre-existing dictionary/pattern one.
+def test_validate_refuses_a_password_built_from_the_passed_user_inputs_and_accepts_it_otherwise():
+    strong_alone = "vqxrtmbklzhp"                    # 12 chars, MIN_LEN exactly
+    P.validate(strong_alone, privileged=False)                              # no user_inputs: fine
+    P.validate(strong_alone, privileged=False, user_inputs=["unrelated"])    # unrelated: still fine
+    with pytest.raises(P.PasswordPolicyError, match="stronger"):
+        P.validate(strong_alone, privileged=False, user_inputs=P.user_inputs_for("vqxrtmbklzhp@example.org"))
 
 
 def test_long_passphrases_are_scored_not_crashed():
