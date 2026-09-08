@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
+from app.api.admin_signups import router as admin_signups_router
 from app.api.admin_users import router as admin_users_router
 from app.api.applications import router as applications_router
 from app.api.auth import router as auth_router
@@ -85,6 +86,13 @@ def create_app(dist: Path | None = None) -> FastAPI:
         # absent rather than merely guarded, and `scripts/verify-deploy.sh production` probes
         # that alongside the auth, applications and admin surfaces.
         app.include_router(listings_router)
+    # UNCONDITIONALLY, unlike `admin_users_router` above (Task I5d, D-I5d-5): `interest_signup` is
+    # filled by the Coming Soon page, so the rows this reads only exist on PRODUCTION, which runs
+    # `coming_soon` until launch. Gating it the same way would make the capability unreachable
+    # exactly where the data is. Every route on it is `require(...)`-guarded, and the one action
+    # that could do harm — the mail whose copy says the site is open — refuses with 409
+    # NOT_LAUNCHED until `SITE_MODE=app`.
+    app.include_router(admin_signups_router)
     app.include_router(interest_router)
     # Resend's delivery events (Task I6). NOT gated on `site_mode`, unlike the auth surface: the
     # provider posts to whichever host sent the mail, and a bounce that arrives after a launch

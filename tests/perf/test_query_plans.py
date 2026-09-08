@@ -26,6 +26,8 @@ from typing import Any
 
 import pytest
 
+from app.api.admin_signups import LIST_SQL as SIGNUPS_LIST_SQL
+from app.api.admin_signups import MAX_LIST as SIGNUPS_MAX_LIST
 from app.api.admin_users import LIST_SQL, MAX_LIST
 
 # Task I9a fix round 1, Important 2. `users_queue` is `GET /api/admin/users?state=pending` — the
@@ -49,6 +51,10 @@ PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
         "EXPLAIN (FORMAT JSON) SELECT account_id FROM session WHERE id_hash=%s",
         ("x",),
     ),
+    "signups_list": (
+        "EXPLAIN (FORMAT JSON) " + SIGNUPS_LIST_SQL,
+        {"source": None, "consent_version": None, "cursor_at": None, "cursor_id": None, "limit": SIGNUPS_MAX_LIST + 1},
+    ),
 }
 
 # The index each plan must be using, by name. Absent for an entry whose only claim is its shape.
@@ -60,6 +66,7 @@ INDEXES: dict[str, tuple[str, ...]] = {
     # per account row.
     "users_queue": ("account_listing_idx", "application_account_idx"),
     "session_lookup": ("session_pkey",),
+    "signups_list": ("interest_signup_listing_idx",),
 }
 
 
@@ -83,7 +90,18 @@ def _seed_admin_queue(conn: Any) -> None:
         cur.execute("ANALYZE role_grant")
 
 
-SEEDS: dict[str, Any] = {"users_queue": _seed_admin_queue}
+def _seed_signups(conn: Any) -> None:
+    """2,000 sign-ups a minute apart, then ANALYZE — without rows and statistics the planner sorts
+    a 10-page estimate and the index assertion is a coin toss."""
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO interest_signup (email, email_normalised, consent_version, source, created_at)
+                       SELECT 'plan-'||i||'@x.test', 'plan-'||i||'@x.test', 'coming-soon-v1', 'coming-soon',
+                              now() - (i || ' minutes')::interval
+                         FROM generate_series(1, 2000) i""")
+        cur.execute("ANALYZE interest_signup")
+
+
+SEEDS: dict[str, Any] = {"users_queue": _seed_admin_queue, "signups_list": _seed_signups}
 
 
 def _node_types(plan: dict[str, Any]) -> list[str]:
