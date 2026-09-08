@@ -231,6 +231,10 @@ git push origin HEAD && git push production HEAD
 
 ---
 
+**Controller amendment A-I5d.1 (2026-09-08; ruling on I5d.1's NEEDS_CONTEXT).** The brief's Step 4 claim that `tests/auth/test_matrix.py` "needs no edit" was false: `test_a_minter_may_never_mint_a_token_that_administers_more_than_it_does` pins the exact `ADMINISTRATIVE` set (16 → 19 with the three signups permissions) and `test_every_reauth_permission_is_either_swept_or_listed_with_its_reason` requires every no-route `REAUTH` permission to be listed in `REAUTH_OUTSIDE_THE_SWEEP` with a reason. Both pins are amended in I5d.1 (RED observed as the two failures), `signups.notify` listed as "no route yet (I5d.4 mounts POST /api/admin/signups/launch-mail)"; I5d.4 removes that entry when the route mounts (add to I5d.4's steps). Files list of I5d.1 gains `tests/auth/test_matrix.py`.
+
+---
+
 ### Task I5d.2: `migrations/003_launch_signups.sql` — the idempotency column and the two indexes
 
 *Standard-tier implementer. Schema only; no Python changes.*
