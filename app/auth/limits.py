@@ -30,6 +30,11 @@ FORGOT_IP, TOKEN_IP = (10, 3600), (30, 3600)
 # script cannot fill a bucket. `LISTING_PATCH` is the autosave — the design's own "Saved
 # automatically" fires once per step, not per keystroke, so 240/hour is four hours of continuous work.
 LISTING_PATCH, LISTING_UPLOAD, LISTING_SUBMIT = (240, 3600), (40, 3600), (20, 3600)
+# The three D17 left out, added by the SL3/SL4 reviews (A-SL13 L4, A-SL16 M3): `create` mints a
+# row (and a unique slug) per call, `reorder` is a PATCH like any other, and `delete` makes a bucket
+# round trip per call. Same shape, same per-account key, generous enough that nobody working through
+# the wizard meets one.
+LISTING_CREATE, LISTING_REORDER, LISTING_DELETE = (60, 3600), (240, 3600), (40, 3600)
 
 
 def check(r: Any, scope: str, subject: str, limit: int, window_s: int) -> None:

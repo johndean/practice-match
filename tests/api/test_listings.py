@@ -22,10 +22,10 @@ from tests.api.conftest import auth_headers
 
 INSERT = (
     "INSERT INTO listing (slug, name, street, city, state, zip, phone, hours, status,"
-    " location_disclosed, name_disclosed, geom, area, type, market, price, rev, docs, rooms, sqft,"
+    " location_disclosed, name_disclosed, rev_disclosed, geom, area, type, market, price, rev, docs, rooms, sqft,"
     " bldg, est, listed_at, note, staff, services, facility, ownership, photos, source)"
     " VALUES (%(slug)s,%(name)s,%(street)s,%(city)s,%(state)s,%(zip)s,%(phone)s,%(hours)s,"
-    " %(status)s,%(disclosed)s,%(name_disclosed)s,"
+    " %(status)s,%(disclosed)s,%(name_disclosed)s,%(rev_disclosed)s,"
     " ST_SetSRID(ST_MakePoint(%(lng)s,%(lat)s),4326)::geography,"
     " %(area)s,'Small animal',%(market)s,1000000,1500000,2,4,3000,'Included',2001,"
     " now() - make_interval(days => %(days)s),'n','s','sv','f','o',%(photos)s::jsonb,'seed')"
@@ -39,6 +39,7 @@ def _insert(conn: Any, **over: Any) -> str:
         "city": "Austin", "state": "TX", "zip": "78701", "phone": "(512) 555-0100",
         "hours": "24/7", "status": "published", "disclosed": True, "name_disclosed": True,
         "lat": 30.2672, "lng": -97.7431, "area": "Austin", "market": "Austin, TX", "days": 3,
+        "rev_disclosed": True,
         "photos": json.dumps([]),
     }
     params.update(over)
@@ -354,11 +355,16 @@ async def test_an_over_long_market_is_a_400_in_the_a5_shape(
 
 
 def _row(**over: Any) -> dict[str, Any]:
-    """A `listing` row as `_rows()` builds one, for the direct `serialise` unit tests below."""
+    """A `listing` row as `_rows()` builds one, for the direct `serialise` unit tests below.
+
+    `rev_disclosed` is here because `_SELECT` selects it (D22, SL3): without it every direct test
+    below silently exercised the BLANKED arm, and the docstring's claim to be "a row as `_rows()`
+    builds one" was false (SL3 review L8)."""
     base: dict[str, Any] = {
         "id": uuid4(), "slug": "s", "name": "N", "street": "1 Main St", "city": "Austin",
         "state": "TX", "zip": "78701", "phone": "(512) 555-0100", "hours": "24/7",
         "status": "published", "location_disclosed": True, "name_disclosed": True,
+        "rev_disclosed": True,
         "lat": 30.2672, "lng": -97.7431,
         "area": "Austin", "type": "Small animal", "market": "Austin, TX", "price": 1,
         "rev": 2, "docs": 3, "rooms": 4, "sqft": 5, "bldg": "Included", "est": 2001,
@@ -559,3 +565,20 @@ async def test_the_listings_routes_exist_only_in_app_mode(dist: Any, redis: Any,
             r = await c.get(path)
             assert r.status_code == 401, path
             assert r.json() == {"error": {"code": "UNAUTHORIZED", "message": "Sign in to continue."}}
+
+
+async def test_a_disclosed_revenue_reaches_a_buyer_and_a_hidden_one_does_not(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """D22 end to end (SL3 review L8). Every direct `serialise` test exercised the blanked arm and
+    every planted row defaulted the flag off, so no test covered `rev` actually reaching a buyer —
+    which is what all eighteen demo hospitals do."""
+    shown = _insert(conn)
+    hidden = _insert(conn, rev_disclosed=False)
+    _, cookies, headers = member()
+    auth = auth_headers(cookies, headers)
+
+    assert (await client.get(f"/api/listings/{shown}", headers=auth)).json()["rev"] == 1500000
+    assert (await client.get(f"/api/listings/{hidden}", headers=auth)).json()["rev"] is None
+    listed = {item["id"]: item["rev"] for item in (await client.get("/api/listings", headers=auth)).json()["items"]}
+    assert listed[shown] == 1500000 and listed[hidden] is None

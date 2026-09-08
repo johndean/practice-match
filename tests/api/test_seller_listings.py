@@ -300,16 +300,35 @@ async def test_the_draft_serialiser_returns_the_owners_unblanked_truth(client: A
 
 async def test_a_patch_drops_every_listings_cache_key_after_the_commit(client: Any, conn: Any, redis: Any, member: Any) -> None:
     """D16, and the ordering `admin_users.py` learned in I5c fix round 1: the drop happens AFTER the
-    transaction commits, never before, or a concurrent read re-caches the pre-write payload."""
+    transaction commits, never before, or a concurrent read re-caches the pre-write payload.
+
+    On a PUBLISHED listing, which is D16's own scope — "every write that can change a published
+    payload" (A-SL13 L6). The draft arm is the test below."""
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status='published', name='A', city='C', zip='7',"
+                    " type='Small animal', est=1998, price=1, state='TX', market='Austin, TX',"
+                    " area='C' WHERE id=%s", (listing_id,))
     redis.set("listings:v1:::50", b'{"items": []}')
     redis.set("listings:v1:Austin, TX::50", b'{"items": []}')
     redis.set("session:keep-me", b"x")
-    await client.patch(f"/api/seller/listings/{listing_id}?step=1", json={"name": "A"}, headers=auth_headers(cookies, headers))
+    await client.patch(f"/api/seller/listings/{listing_id}?step=4", json={"rooms": "6"}, headers=auth_headers(cookies, headers))
     assert redis.get("listings:v1:::50") is None
     assert redis.get("listings:v1:Austin, TX::50") is None
     assert redis.get("session:keep-me") == b"x"
+
+
+async def test_a_drafts_autosave_leaves_the_browse_cache_alone(client: Any, conn: Any, redis: Any, member: Any) -> None:
+    """A-SL13 L6. A draft is in no published payload, and the autosave fires once per step: a SCAN
+    plus a DELETE per key on each of 240 patches an hour flushed Browse for every reader."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    redis.set("listings:v1:::50", b'{"items": []}')
+
+    assert (await client.patch(f"/api/seller/listings/{listing_id}?step=1", json={"name": "A"},
+                               headers=auth_headers(cookies, headers))).status_code == 200
+    assert redis.get("listings:v1:::50") == b'{"items": []}'
 
 
 async def test_the_patch_rate_limit_is_per_account_and_refuses_in_the_envelope(client: Any, conn: Any, redis: Any, member: Any, monkeypatch: Any) -> None:
@@ -645,3 +664,70 @@ def test_every_write_to_the_listing_table_is_owner_scoped_in_the_sql() -> None:
     assert statements, "the module must still contain the writes this test guards"
     for statement in statements:
         assert "seller_id = %" in statement, statement
+
+
+async def test_the_unowned_404_is_byte_identical_to_the_missing_404(client: Any, conn: Any, member: Any) -> None:
+    """A-SL13 L2. The existing test asserted only the code, so an SL4 route that invented "You do
+    not own this listing." would have passed it — and that sentence is an existence oracle."""
+    from uuid import uuid4
+
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    _, thief_cookies, thief_headers = member(roles=("buyer", "seller"), email="sl-thief2@example.org")
+    signed = auth_headers(thief_cookies, thief_headers)
+
+    unowned = await client.get(f"/api/seller/listings/{listing_id}", headers=signed)
+    missing = await client.get(f"/api/seller/listings/{uuid4()}", headers=signed)
+    not_a_uuid = await client.get("/api/seller/listings/nope", headers=signed)
+    assert unowned.status_code == missing.status_code == not_a_uuid.status_code == 404
+    assert unowned.json() == missing.json() == not_a_uuid.json() == {
+        "error": {"code": "NOT_FOUND", "message": "No such listing."}}
+
+
+async def test_the_dashboard_reads_every_listings_assets_in_one_query(
+    client: Any, conn: Any, member: Any, monkeypatch: Any
+) -> None:
+    """A-SL13 L5: `assets_of` inside the page comprehension was 201 round trips at `limit=200`."""
+    from app.api import seller_listings as SL
+
+    calls: list[list[Any]] = []
+    original = SL.assets_for
+
+    def _spy(conn_: Any, listing_ids: list[Any]) -> Any:
+        calls.append(list(listing_ids))
+        return original(conn_, listing_ids)
+
+    _, cookies, headers = _seller(member)
+    ids = [await _create(client, cookies, headers) for _ in range(3)]
+    with conn.cursor() as cur:
+        for listing_id in ids:
+            cur.execute("INSERT INTO listing_asset (listing_id, kind, name, content_type, byte_size, sha256,"
+                        " storage_key) VALUES (%s,'photo','1.webp','image/webp',2048,'sha',%s)",
+                        (listing_id, f"listings/{listing_id}/photos/1.webp"))
+    monkeypatch.setattr(SL, "assets_for", _spy)
+
+    body = (await client.get("/api/seller/listings", headers=auth_headers(cookies, headers))).json()
+    assert [len(item["assets"]) for item in body["items"]] == [1, 1, 1]
+    assert len(calls) == 1 and len(calls[0]) == 3
+
+
+async def test_a_seller_with_no_listings_sees_an_empty_page(client: Any, conn: Any, member: Any) -> None:
+    """`assets_for`'s empty arm, and the first thing a new seller's dashboard asks for."""
+    _, cookies, headers = _seller(member)
+    response = await client.get("/api/seller/listings", headers=auth_headers(cookies, headers))
+    assert response.status_code == 200
+    assert response.json() == {"items": [], "next_cursor": None}
+
+
+async def test_the_create_rate_limit_is_per_account(client: Any, conn: Any, redis: Any, member: Any, monkeypatch: Any) -> None:
+    """A-SL13 L4: D17 named three buckets and left `create` out, so an authenticated seller could
+    mint unbounded rows."""
+    from app.api import seller_listings as SL
+
+    monkeypatch.setattr(SL, "LISTING_CREATE", (1, 3600))
+    _, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    assert (await client.post("/api/seller/listings", headers=signed)).status_code == 201
+
+    refused = await client.post("/api/seller/listings", headers=signed)
+    assert refused.status_code == 429 and refused.json()["error"]["code"] == "RATE_LIMITED"

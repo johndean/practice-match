@@ -57,7 +57,14 @@ from app.auth import audit
 from app.auth import permissions as P
 from app.auth import sessions as S
 from app.auth.deps import require
-from app.auth.limits import LISTING_PATCH, LISTING_UPLOAD, hit
+from app.auth.limits import (
+    LISTING_CREATE,
+    LISTING_DELETE,
+    LISTING_PATCH,
+    LISTING_REORDER,
+    LISTING_UPLOAD,
+    hit,
+)
 from app.cache import sync_redis
 from app.config import settings
 from app.db import sync_conn
@@ -254,10 +261,12 @@ def seed_captions() -> dict[str, str]:
     rather than failing a draft read."""
     try:
         index = json.loads(PHOTO_INDEX.read_text())
-    except OSError:
+        return {f"{slug}/{photo['file']}": photo["caption"]
+                for slug, photos in index["hospitals"].items() for photo in photos}
+    except (OSError, ValueError, KeyError):
+        # Absent, malformed or restructured, the answer is the same fallback the docstring promises
+        # (review L10). A draft read must not 500 because an inventory file changed shape.
         return {}
-    return {f"{slug}/{photo['file']}": photo["caption"]
-            for slug, photos in index["hospitals"].items() for photo in photos}
 
 
 def photo_tiles(row: dict[str, Any], assets: list[dict[str, Any]]) -> list[dict[str, str]]:
@@ -341,12 +350,29 @@ def owned_row(conn: Any, listing_id: str, principal: S.Principal) -> dict[str, A
     return row
 
 
-def assets_of(conn: Any, listing_id: Any) -> list[dict[str, Any]]:
+def assets_for(conn: Any, listing_ids: list[Any]) -> dict[Any, list[dict[str, Any]]]:
+    """Every listing's assets, in ONE round trip (review L5).
+
+    The dashboard used to call `assets_of` inside its comprehension: at `limit=200` that is 201
+    queries for a screen that renders a name and a status. `ANY(%s)` is one, and the grouping is
+    seeded from `listing_ids` so a listing with no assets still gets its empty list."""
+    grouped: dict[Any, list[dict[str, Any]]] = {listing_id: [] for listing_id in listing_ids}
+    if not listing_ids:
+        # `= ANY('{}')` has no type Postgres can infer, and a dashboard with no listings is the
+        # first thing a new seller sees.
+        return grouped
     with conn.cursor() as cur:
-        cur.execute("SELECT id, kind, name, content_type, byte_size FROM listing_asset"
-                    " WHERE listing_id = %s ORDER BY created_at, id", (listing_id,))
-        return [{"id": str(r[0]), "kind": r[1], "name": r[2], "content_type": r[3], "byte_size": r[4]}
-                for r in cur.fetchall()]
+        cur.execute("SELECT listing_id, id, kind, name, content_type, byte_size FROM listing_asset"
+                    " WHERE listing_id = ANY(%s) ORDER BY listing_id, created_at, id", (listing_ids,))
+        for r in cur.fetchall():
+            grouped[r[0]].append({"id": str(r[1]), "kind": r[2], "name": r[3],
+                                  "content_type": r[4], "byte_size": r[5]})
+    return grouped
+
+
+def assets_of(conn: Any, listing_id: Any) -> list[dict[str, Any]]:
+    """One listing's assets — `assets_for`'s single-row case, so both read the same query."""
+    return assets_for(conn, [listing_id])[listing_id]
 
 
 def _refused(exc: Refusal) -> JSONResponse:
@@ -379,7 +405,8 @@ async def list_mine(request: Request) -> Response:
         rows = _rows(conn, f"SELECT {_COLUMNS} FROM listing WHERE {where} ORDER BY updated_at DESC, id DESC LIMIT %s",
                      (*params, limit + 1))
         page = rows[:limit]
-        items = [serialise_draft(row, assets_of(conn, row["id"])) for row in page]
+        assets = assets_for(conn, [row["id"] for row in page])
+        items = [serialise_draft(row, assets[row["id"]]) for row in page]
     # `page` is never empty when `more` is true (one extra row was asked for and arrived), so the
     # cursor is read off `page[-1]` without a second emptiness test — an arm no request can reach
     # is an arm no test can cover (Global Constraint (a)).
@@ -398,7 +425,12 @@ async def create(principal: Owner) -> Response:
     `slug = 'listing-' || id` (D13). It stays `NOT NULL UNIQUE`, nothing about the seeder's
     `ON CONFLICT (slug)` changes, and the first publish rewrites it to the name plus the first
     eight characters of the id — so a seller's "ABC Animal Hospital" can never collide with a seed
-    slug of the same name and can never make `seed_listings.py` refuse (exit 5)."""
+    slug of the same name and can never make `seed_listings.py` refuse (exit 5).
+
+    Rate-limited like every other write (review L4): D17 named three buckets and left this one out,
+    but an authenticated seller can otherwise mint unbounded rows, each taking the `slug=''`
+    serialisation point on the way."""
+    hit(sync_redis(), "listing:create", str(principal.account_id), *LISTING_CREATE)
     with closing(sync_conn()) as conn, conn, conn.cursor() as cur:
         cur.execute("INSERT INTO listing (slug, source, status, seller_id) VALUES ('', 'seller', 'draft', %s) RETURNING id",
                     (principal.account_id,))
@@ -470,7 +502,12 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
     # AFTER the commit (D16, and I5c fix round 1's ordering): a disclosure flag turned OFF must stop
     # reaching buyers at once, and dropping the key while the write was uncommitted would leave a
     # window in which a concurrent read re-cached the pre-write payload for the full TTL.
-    drop_list_cache(sync_redis())
+    #
+    # Only when the listing WAS on the market, which is D16's own wording — "every write that can
+    # change a published payload" (review L6). A draft's autosave changes nothing a buyer can read,
+    # and a SCAN plus a DELETE per key on each of 240 patches an hour flushes Browse for everyone.
+    if leaving_market:
+        drop_list_cache(sync_redis())
     return JSONResponse(payload)
 
 
@@ -759,11 +796,12 @@ async def upload_photo(listing_id: str, request: Request, principal: Owner) -> R
                 cur.execute("UPDATE listing SET photos = %s::jsonb, updated_at = now()"
                             " WHERE id = %s AND seller_id = %s",
                             (json.dumps([*photos, str(asset_id)]), row["id"], principal.account_id))
-            take_off_market(conn, row, principal, request)
+            on_market = take_off_market(conn, row, principal, request)
             payload = _asset_payload(asset_id, "photo", name, "image/webp", len(webp))
     except Refusal as exc:
         return _refused(exc)
-    drop_list_cache(sync_redis())
+    if on_market:
+        drop_list_cache(sync_redis())
     return JSONResponse(payload, status_code=201)
 
 
@@ -775,6 +813,7 @@ async def reorder_photos(listing_id: str, request: Request, principal: Owner) ->
     of that array — no `listing_asset` row carries a position to disagree with it. The list must be
     a permutation of what is already there: a partial list would silently DELETE photographs from
     the gallery, which is not what dragging a tile means."""
+    hit(sync_redis(), "listing:reorder", str(principal.account_id), *LISTING_REORDER)
     try:
         body = await _json_body(request)
         ids = body.get("ids")
@@ -791,11 +830,12 @@ async def reorder_photos(listing_id: str, request: Request, principal: Owner) ->
                 cur.execute("UPDATE listing SET photos = %s::jsonb, updated_at = now()"
                             " WHERE id = %s AND seller_id = %s",
                             (json.dumps(ids), row["id"], principal.account_id))
-            take_off_market(conn, row, principal, request)
+            on_market = take_off_market(conn, row, principal, request)
             payload = serialise_draft(locked_row(conn, listing_id, principal), assets_of(conn, row["id"]))
     except Refusal as exc:
         return _refused(exc)
-    drop_list_cache(sync_redis())
+    if on_market:
+        drop_list_cache(sync_redis())
     return JSONResponse(payload)
 
 
@@ -813,6 +853,7 @@ async def delete_asset(listing_id: str, asset_id: str, request: Request, princip
     The object goes FIRST, inside the transaction (A-SL16 M2): a delete that cannot remove the
     object refuses and leaves the row exactly where it was, which is recoverable. The other order
     answers 500 for work that was already done and 404 on the retry."""
+    hit(sync_redis(), "listing:delete", str(principal.account_id), *LISTING_DELETE)
     try:
         store = store_for_request()
         parsed = _asset_uuid(asset_id)
@@ -835,10 +876,11 @@ async def delete_asset(listing_id: str, asset_id: str, request: Request, princip
                     cur.execute("UPDATE listing SET photos = %s::jsonb, updated_at = now()"
                                 " WHERE id = %s AND seller_id = %s",
                                 (json.dumps(remaining), row["id"], principal.account_id))
-            take_off_market(conn, row, principal, request)
+            on_market = take_off_market(conn, row, principal, request)
     except Refusal as exc:
         return _refused(exc)
-    drop_list_cache(sync_redis())
+    if on_market:
+        drop_list_cache(sync_redis())
     return Response(status_code=204)
 
 
@@ -876,11 +918,12 @@ async def upload_document(listing_id: str, request: Request, principal: Owner) -
             asset_id, key = _insert_asset(conn, row["id"], kind, name, content_type, data,
                                           sha256_hex(data), DOCUMENT_TYPES[content_type])
             _put(store, key, data, content_type)
-            take_off_market(conn, row, principal, request)
+            on_market = take_off_market(conn, row, principal, request)
             payload = _asset_payload(asset_id, kind, name, content_type, len(data))
     except Refusal as exc:
         return _refused(exc)
-    drop_list_cache(sync_redis())
+    if on_market:
+        drop_list_cache(sync_redis())
     return JSONResponse(payload, status_code=201)
 
 
@@ -900,17 +943,28 @@ async def read_document(listing_id: str, asset_id: str, principal: Reader) -> Re
         parsed_asset = _asset_uuid(asset_id, "document")
         parsed_listing = _asset_uuid(listing_id, "document")
         with closing(sync_conn()) as conn, conn, conn.cursor() as cur:
-            cur.execute("SELECT a.content_type, a.storage_key, l.seller_id FROM listing_asset a"
-                        " JOIN listing l ON l.id = a.listing_id"
+            cur.execute("SELECT a.content_type, a.storage_key, l.seller_id, l.documents_disclosed, l.status"
+                        " FROM listing_asset a JOIN listing l ON l.id = a.listing_id"
                         " WHERE a.id = %s AND a.listing_id = %s AND a.kind <> 'photo'",
                         (parsed_asset, parsed_listing))
             found = cur.fetchone()
         if found is None:
             raise Refusal("NOT_FOUND", "No such document.", 404)
-        content_type, key, seller_id = found
+        content_type, key, seller_id, disclosed, status = found
+        # Three ways in, and the third is the one the design draws. The owner and staff read a
+        # document whatever its flags say; everybody else reads it only while the seller's step-7
+        # switch discloses it AND the listing is on the market — D22's "enforced only on the
+        # document read route", and this module's own promise that a document stops being readable
+        # the moment the listing is unpublished (review L1).
+        #
         # Staff by the MATRIX, not by a hard-coded role tuple: `listing.review` is the staff/admin
-        # capability the reviewer already holds, so a later role change moves both together.
-        if seller_id != principal.account_id and not P.allowed("listing.review", principal):
+        # capability the reviewer already holds, so a later role change moves both together. The
+        # buyer-with-an-accepted-request arm the requests sub-project adds attaches HERE, beside
+        # `disclosed`, and needs no other change.
+        allowed = (seller_id == principal.account_id
+                   or P.allowed("listing.review", principal)
+                   or (disclosed and status == "published"))
+        if not allowed:
             raise Refusal("LOCKED", "This document is locked until the seller approves access.", 403)
         store = store_for_request()
         content = _fetch(store, key)

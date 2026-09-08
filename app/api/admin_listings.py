@@ -13,6 +13,10 @@ asserts absent.
 
 `serialise_draft` is imported from `app.api.seller_listings`, not re-implemented: the reviewer and
 the owner must see the same draft, and two serialisers for one contract is how they stop agreeing.
+`_row` is imported under its private name for the same reason and is deliberately left alone (SL3
+review L7): it is the seller module's own "one row by id, or None for anything that is not one",
+the reviewer needs exactly that, and renaming a function two modules read would be a wider diff
+than the nit is worth. The underscore says "not the API surface", not "not importable".
 """
 from __future__ import annotations
 

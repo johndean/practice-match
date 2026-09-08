@@ -407,21 +407,22 @@ def _asset_bytes(conn: Any, listing_id: str, entry: str) -> bytes | None:
 
 @router.get("/listings/{listing_id}/photos/{n}", dependencies=[Depends(REQUIRE_LISTING_READ)])
 async def get_listing_photo(listing_id: str, n: int) -> Response:
+    # ONE connection for both arms (A-SL16 L8): this is the hottest read on the buyer surface, and
+    # the seller arm used to close this one and open a second to resolve the asset.
     with closing(sync_conn()) as conn, conn:
         photos = _published_photos(conn, listing_id)
-    if photos is None:
-        return _error("NOT_FOUND", "No such listing.", 404)
-    entry = photos[n - 1] if 1 <= n <= len(photos) else None
-    if entry is not None and "/" not in entry:
-        # A seller's photograph: `listing.photos` holds the asset uuid, not a path. A seed entry
-        # always contains a "/" (`<slug>/<n>.webp`), so the two are told apart by the value itself
-        # rather than by a second query for the row's `source`.
-        with closing(sync_conn()) as conn, conn:
+        if photos is None:
+            return _error("NOT_FOUND", "No such listing.", 404)
+        entry = photos[n - 1] if 1 <= n <= len(photos) else None
+        if entry is not None and "/" not in entry:
+            # A seller's photograph: `listing.photos` holds the asset uuid, not a path. A seed
+            # entry always contains a "/" (`<slug>/<n>.webp`), so the two are told apart by the
+            # value itself rather than by a second query for the row's `source`.
             content = _asset_bytes(conn, listing_id, entry)
-        if content is None:
-            return _error("NOT_FOUND", "No such photograph.", 404)
-        return Response(content=content, media_type="image/webp",
-                        headers={"Cache-Control": PHOTO_CACHE_CONTROL})
+            if content is None:
+                return _error("NOT_FOUND", "No such photograph.", 404)
+            return Response(content=content, media_type="image/webp",
+                            headers={"Cache-Control": PHOTO_CACHE_CONTROL})
     path = photo_file(photos, n)
     if path is None:
         return _error("NOT_FOUND", "No such photograph.", 404)

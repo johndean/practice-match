@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import io
 import json
+from contextlib import closing
 from typing import Any
 from uuid import uuid4
 
@@ -46,14 +47,28 @@ RETURNING id
 """
 
 
+def _intercepted_by_moto(endpoint: str) -> bool:
+    """Whether moto 5 will intercept a request to `endpoint`, asserting rather than reporting.
+
+    A-SL16 M4: moto matches the request URL, so a bucket endpoint from the fleet ESCAPES `mock_aws`
+    and makes a real HTTPS call — which is what happened the first time this fixture was written.
+    The credentials are dummies, so such a call would fail rather than reach a real bucket; a test
+    suite that can talk to the internet is still not a test suite."""
+    assert endpoint.endswith(".amazonaws.com"), (
+        f"{endpoint} escapes moto's interceptor; the fake bucket must be an AWS-shaped host")
+    return True
+
+
 @pytest.fixture
 def store(monkeypatch: Any) -> Any:
     """A moto bucket, reached through the real `ObjectStore.from_settings`."""
+    _intercepted_by_moto(ENDPOINT)
     with mock_aws():
         boto3.client("s3", region_name="us-east-1").create_bucket(Bucket=BUCKET)
         for name, value in (("s3_endpoint_url", ENDPOINT), ("s3_bucket", BUCKET),
                             ("s3_access_key_id", "AKIA"), ("s3_secret_access_key", "secret")):
             monkeypatch.setattr(settings, name, value)
+        _intercepted_by_moto(str(settings.s3_endpoint_url))
         yield ObjectStore.from_settings(settings)
 
 
@@ -627,12 +642,34 @@ async def test_the_upload_rate_limit_is_per_account(client: Any, conn: Any, redi
 
 
 async def test_every_asset_write_drops_the_listings_cache_after_the_commit(
-    client: Any, conn: Any, redis: Any, member: Any, store: Any
+    client: Any, conn: Any, redis: Any, member: Any, store: Any, scratch_dsn: Any, monkeypatch: Any
 ) -> None:
-    """D16, four writers. `session:*` is left alone — the drop is a prefix scan, not a flush."""
+    """D16, four writers, and the ORDERING the name claims (A-SL16 L7).
+
+    The drop is spied on with a SECOND connection: whatever it can see at the moment
+    `drop_list_cache` runs is what a concurrent reader could see, so a spy that finds the new
+    `photos` value proves the transaction had already committed. Dropping the key while the write
+    was still uncommitted would leave a window in which a concurrent read re-cached the pre-write
+    payload for the full TTL."""
+    import psycopg2
+
+    from app.api import seller_listings as SL
+
+    seen: list[Any] = []
+    original = SL.drop_list_cache
+
+    def _spy(cache: Any) -> int:
+        with closing(psycopg2.connect(scratch_dsn)) as probe, probe.cursor() as cur:
+            cur.execute("SELECT photos, status FROM listing WHERE id = %s", (listing_id,))
+            seen.append(cur.fetchone())
+        removed: int = original(cache)
+        return removed
+
+    monkeypatch.setattr(SL, "drop_list_cache", _spy)
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
     signed = auth_headers(cookies, headers)
+    _publish(conn, listing_id)
 
     def _plant() -> None:
         redis.set("listings:v1:Austin, TX::50", b"stale")
@@ -642,20 +679,40 @@ async def test_every_asset_write_drops_the_listings_cache_after_the_commit(
     photo = (await _upload_photo(client, listing_id, signed)).json()["id"]
     assert redis.get("listings:v1:Austin, TX::50") is None
     assert redis.get("session:keep") == b"kept"
+    # The committed row, seen from outside the request's own transaction.
+    assert seen[-1] == ([photo], "in_review")
 
+    _republish(conn, listing_id)
     _plant()
     assert (await _upload_document(client, listing_id, signed)).status_code == 201
     assert redis.get("listings:v1:Austin, TX::50") is None
 
+    _republish(conn, listing_id)
     _plant()
     assert (await client.patch(f"/api/seller/listings/{listing_id}/photos", json={"ids": [photo]},
                                headers=signed)).status_code == 200
     assert redis.get("listings:v1:Austin, TX::50") is None
 
+    _republish(conn, listing_id)
     _plant()
     assert (await client.delete(f"/api/seller/listings/{listing_id}/assets/{photo}", headers=signed)).status_code == 204
     assert redis.get("listings:v1:Austin, TX::50") is None
     assert redis.get("session:keep") == b"kept"
+    assert seen[-1] == ([], "in_review")
+
+
+async def test_an_asset_write_on_a_draft_leaves_the_browse_cache_alone(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any
+) -> None:
+    """D16's own words are "every write that CAN change a published payload" (review L6). A draft's
+    photographs are in no published payload, and a `SCAN` plus a `DELETE` per key on every upload
+    flushes Browse for everyone who is reading it."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    redis.set("listings:v1:Austin, TX::50", b"fresh")
+
+    assert (await _upload_photo(client, listing_id, auth_headers(cookies, headers))).status_code == 201
+    assert redis.get("listings:v1:Austin, TX::50") == b"fresh"
 
 
 async def test_a_non_owner_gets_404_on_every_asset_route(client: Any, conn: Any, redis: Any, member: Any, store: Any) -> None:
@@ -763,13 +820,20 @@ async def test_a_seed_listings_tiles_are_named_by_the_seed_caption(client: Any, 
     the demo seller on QA (D25), so Edit on one reads through this serialiser too — and its
     `listing.photos` entries are relative paths that name no `listing_asset` row."""
     account_id, cookies, headers = _seller(member)
-    listing_id = _seed_listing(conn, ["1111_pet_hospital/1.webp", "1111_pet_hospital/nope.webp"])
+    photos = [f"1111_pet_hospital/{n}.webp" for n in (1, 2, 3, 4)]
+    listing_id = _seed_listing(conn, [*photos, "1111_pet_hospital/nope.webp"])
     with conn.cursor() as cur:
         cur.execute("UPDATE listing SET seller_id=%s WHERE id=%s", (account_id, listing_id))
 
     body = (await client.get(f"/api/seller/listings/{listing_id}", headers=auth_headers(cookies, headers))).json()
-    assert body["photos"] == [{"id": "1111_pet_hospital/1.webp", "name": "Exterior — front view"},
-                              {"id": "1111_pet_hospital/nope.webp", "name": "nope.webp"}]
+    assert body["photos"] == [
+        {"id": "1111_pet_hospital/1.webp", "name": "Exterior — front view"},
+        {"id": "1111_pet_hospital/2.webp", "name": "Exterior — entrance view"},
+        {"id": "1111_pet_hospital/3.webp", "name": "Exterior — monument sign"},
+        {"id": "1111_pet_hospital/4.webp", "name": "Exterior — street corner view"},
+        # An entry the inventory does not name still renders as a tile, by its own file name.
+        {"id": "1111_pet_hospital/nope.webp", "name": "nope.webp"},
+    ]
     assert body["documents"] == []
 
 
@@ -1089,3 +1153,108 @@ async def test_a_spreadsheet_whose_bytes_are_not_a_zip_is_refused(
         content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
     assert refused.status_code == 422
     assert refused.json()["error"]["code"] == "BAD_DOCUMENT"
+
+
+def test_the_store_fixture_only_ever_talks_to_a_host_moto_intercepts() -> None:
+    """A-SL16 M4. The rule was prose in a docstring, and prose is enforced by nothing: moto 5
+    matches the request URL, so a Railway-shaped endpoint escapes `mock_aws` and makes a real HTTPS
+    call (it did, once). The fixture asserts through this function, and this proves it bites."""
+    from tests.api.test_listing_assets import _intercepted_by_moto
+
+    assert _intercepted_by_moto(ENDPOINT) is True
+    with pytest.raises(AssertionError):
+        _intercepted_by_moto("https://bucket.up.railway.app")
+
+
+@pytest.mark.parametrize(("disclosed", "status", "expected"), [
+    (True, "published", 200), (False, "published", 403), (True, "draft", 403),
+])
+async def test_a_member_reads_a_document_only_while_the_seller_discloses_it(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any, disclosed: bool, status: str, expected: int
+) -> None:
+    """A-SL16 L1, and D22's own sentence: `documents_disclosed` "is enforced only on the document
+    read route (D19)". The seller's step-7 switch is what says whether a document is locked, and a
+    listing that is not on the market discloses nothing to anybody — the module's comment already
+    promises that "a document stops being readable the moment the listing is unpublished".
+
+    The owner and staff arms are untouched: they read either way, which is what makes this the
+    attachment point for the requests sub-project's buyer-with-an-accepted-request arm."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    signed = auth_headers(cookies, headers)
+    asset_id = (await _upload_document(client, listing_id, signed)).json()["id"]
+    if status == "published":
+        _publish(conn, listing_id)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET documents_disclosed = %s WHERE id = %s", (disclosed, listing_id))
+    _, buyer_cookies, buyer_headers = member(roles=("buyer",), email="sl4-buyer@example.org")
+
+    response = await client.get(f"/api/seller/listings/{listing_id}/documents/{asset_id}",
+                                headers=auth_headers(buyer_cookies, buyer_headers))
+    assert response.status_code == expected, response.text
+    assert (await client.get(f"/api/seller/listings/{listing_id}/documents/{asset_id}",
+                             headers=signed)).status_code == 200
+
+
+async def test_the_seller_photo_arm_opens_one_connection(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any, monkeypatch: Any
+) -> None:
+    """A-SL16 L8: the route used to close its first connection and open a second to resolve the
+    asset, doubling the pool cost of the hottest read on the buyer surface."""
+    from app.api import listings as L
+
+    opened: list[int] = []
+    original = L.sync_conn
+    monkeypatch.setattr(L, "sync_conn", lambda: (opened.append(1), original())[1])
+
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    await _upload_photo(client, listing_id, auth_headers(cookies, headers))
+    _publish(conn, listing_id)
+    _, buyer_cookies, buyer_headers = member(roles=("buyer",), email="sl4-buyer@example.org")
+    opened.clear()
+
+    response = await client.get(f"/api/listings/{listing_id}/photos/1",
+                                headers=auth_headers(buyer_cookies, buyer_headers))
+    assert response.status_code == 200
+    assert len(opened) == 1
+
+
+@pytest.mark.parametrize("content", ["{not json", '{"hospitals": {"a": [{"file": "1.webp"}]}}', '{"nope": {}}'])
+def test_a_broken_photo_inventory_leaves_every_tile_named_by_its_file(tmp_path: Any, monkeypatch: Any, content: str) -> None:
+    """A-SL16 L10: the docstring promises a fallback, and it only had one for a MISSING file — a
+    malformed or restructured `index.json` raised `JSONDecodeError` or `KeyError` straight out of a
+    draft read, which is a 500 on Edit."""
+    from app.api import seller_listings as SL
+
+    index = tmp_path / "index.json"
+    index.write_text(content)
+    monkeypatch.setattr(SL, "PHOTO_INDEX", index)
+    assert SL.seed_captions.__wrapped__() == {}
+
+
+@pytest.mark.parametrize(("route", "constant"), [("reorder", "LISTING_REORDER"), ("delete", "LISTING_DELETE")])
+async def test_the_reorder_and_delete_rate_limits_are_per_account(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any, monkeypatch: Any, route: str, constant: str
+) -> None:
+    """A-SL16 M3: two authenticated write routes had no ceiling at all, and `delete_asset` makes an
+    unbounded number of bucket round trips."""
+    from app.api import seller_listings as SL
+
+    monkeypatch.setattr(SL, constant, (1, 3600))
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    signed = auth_headers(cookies, headers)
+    first = (await _upload_photo(client, listing_id, signed)).json()["id"]
+    second = (await _upload_photo(client, listing_id, signed)).json()["id"]
+
+    async def _call(asset_id: str) -> Any:
+        if route == "reorder":
+            return await client.patch(f"/api/seller/listings/{listing_id}/photos",
+                                      json={"ids": [first, second]}, headers=signed)
+        return await client.delete(f"/api/seller/listings/{listing_id}/assets/{asset_id}", headers=signed)
+
+    assert (await _call(first)).status_code in (200, 204)
+    refused = await _call(second)
+    assert refused.status_code == 429, refused.text
+    assert refused.json()["error"]["code"] == "RATE_LIMITED"
