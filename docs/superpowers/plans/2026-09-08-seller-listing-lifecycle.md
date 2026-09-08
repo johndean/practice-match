@@ -1177,6 +1177,10 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
+**Controller amendment A-SL12 (2026-09-09; rulings on the SL2 review — APPROVED, 2 Medium, 2 Low; closed at source in a round after SL3, single writer).** M1 — `encode_webp` catches `PIL.Image.DecompressionBombError` (and sets an explicit `Image.MAX_IMAGE_PIXELS` bound as a module constant) so it keeps its "None, never an exception" contract; tested with an oversized synthetic image. M2 — the test fixture is typed `pytest.MonkeyPatch`; the `# type: ignore[attr-defined]` (a suppression, forbidden by Global Constraint (c)) and the dead `import pytest`/`del pytest` pair go. L3 — `ObjectStore.delete()` returns `bool` per A-SL1: fixed on the CENSUS branch in A3's fix round (A-C3b) and cherry-picked here so both copies stay byte-identical; nothing on this branch edits `app/storage.py` directly. L4 — accepted: seed-corpus byte-identity is asserted structurally (the script calls the shared encoder) plus synthetic fixtures; the raw sources live only on John's machine. SL4's dispatch carries the M1 note (the upload route must not assume the encoder never raises until M1 lands).
+
+---
+
 ### Task SL3: `app/api/seller_listings.py` — create, list, read and the per-step PATCH — **2.5 days**
 
 **Files:**
@@ -1994,6 +1998,10 @@ null as an em dash, and 020 backfilled every seed to true, so no screen moves.
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 ```
+
+---
+
+**Controller amendment A-SL11 (2026-09-09; ruling on SL3's NEEDS_CONTEXT).** The spec's D3 stamps `listing.submitted_at` and SL3/SL5 read it, but no migration produced it — a plan gap. SL3 adds `migrations/032_listing_submitted_at.sql` (`ALTER TABLE listing ADD COLUMN submitted_at timestamptz;`; 032 is free in this tree and the Census worktree) and the `EXPECTED_COLUMNS` row, RED first. The staff read `GET /api/admin/listings/{id}` (A-SL8) is built in SL3 as the first route of `app/api/admin_listings.py`, which SL5 extends. The collision test uses the shared `walk_routes`. Gate-forced edits to the brief's verbatim code (two unreachable branches, `_one_of` typing, an unused import, supplemental `list_mine` tests) are accepted and recorded. For SL6: the seeder's UPSERT must write `rev_disclosed`/`documents_disclosed` on insert (030's backfill covers only pre-existing rows).
 
 ---
 
