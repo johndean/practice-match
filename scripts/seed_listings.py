@@ -147,16 +147,22 @@ def load_photo_index(path: Path) -> dict[str, Any]:
     return dict(loaded)
 
 
-def photo_paths(slug: str, index: dict[str, Any]) -> list[str]:
-    """Relative paths under seeds/hospitals/photos/, in inventory order."""
+def photo_paths(slug: str, index: dict[str, Any]) -> list[str | None]:
+    """Relative paths under seeds/hospitals/photos/, in inventory order — which is the design's
+    SLOT order, with `None` for a slot the curation left empty (A-L10).
+
+    Positional, never compacted: `p.photos[i]` fills the design's photo slot `i` (amendment
+    A12.2), so dropping an empty slot would slide every later photograph up one and caption it
+    with the subject it does not show. A `None` reaches the browser as JSON `null`, where the
+    design's own `photoSet` renders its placeholder for that slot."""
     entries = index.get("hospitals", {}).get(slug, [])
     try:
-        return [f"{slug}/{entry['file']}" for entry in entries]
+        return [None if entry["file"] is None else f"{slug}/{entry['file']}" for entry in entries]
     except (KeyError, TypeError) as exc:
         raise SeedDataError(f"{slug}: photo inventory entry is unusable ({type(exc).__name__})") from None
 
 
-def row_params(hospital: dict[str, Any], photos: list[str]) -> dict[str, Any]:
+def row_params(hospital: dict[str, Any], photos: list[str | None]) -> dict[str, Any]:
     keys = (
         "slug", "name", "street", "city", "state", "zip", "phone", "hours", "status",
         "location_disclosed", "name_disclosed", "lat", "lng", "area", "type", "market",

@@ -116,13 +116,22 @@ def test_listed_at_is_computed_from_listed_days_ago(scratch_dsn: str) -> None:
 
 
 def test_photos_come_from_the_committed_inventory(scratch_dsn: str) -> None:
+    """A-L10: the list is POSITIONAL — six entries, one per design slot, `null` where the slot is
+    empty — so `p.photos[i]` still fills the design's slot `i` (A12.2) when a middle slot has no
+    truthful photograph."""
     SL.seed(scratch_dsn)
     index = json.loads(SL.PHOTO_INDEX.read_text(encoding="utf-8"))["hospitals"]
     with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
         cur.execute("SELECT slug, photos FROM listing")
         for slug, photos in cur.fetchall():
-            assert photos == [f"{slug}/{e['file']}" for e in index[slug]], slug
+            assert photos == [
+                None if e["file"] is None else f"{slug}/{e['file']}" for e in index[slug]
+            ], slug
             assert len(photos) == 6, slug   # the design's six photo slots (A-L9)
+    # …and the empty slots really are in there, or this test is only re-stating A-L9.
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM listing, jsonb_array_elements(photos) e WHERE e = 'null'")
+        assert int(cur.fetchone()[0]) == 35, "A-L10 leaves 35 of the 108 slots empty"
 
 
 def test_main_seeds_from_the_environment(scratch_dsn: str, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -179,6 +188,18 @@ def test_main_returns_four_when_the_seed_file_is_absent(
 
 def test_photo_paths_is_empty_for_an_unknown_slug() -> None:
     assert SL.photo_paths("not-a-hospital", {"hospitals": {}}) == []
+
+
+def test_photo_paths_keeps_an_empty_slot_as_a_null_in_place(tmp_path: Path) -> None:
+    """A-L10, the unit: a slot the curation left empty is stored as `null` AT ITS POSITION, never
+    dropped. Dropping it would slide every later photograph up one slot and put it under someone
+    else's caption — the exact mislabelling this hotfix exists to end."""
+    index = {"hospitals": {"h": [
+        {"slot": "exterior", "file": "1.webp"},
+        {"slot": "lobby", "file": None},
+        {"slot": "exam", "file": "3.webp"},
+    ]}}
+    assert SL.photo_paths("h", index) == ["h/1.webp", None, "h/3.webp"]
 
 
 def test_normalize_dsn_agrees_with_the_migration_runner() -> None:

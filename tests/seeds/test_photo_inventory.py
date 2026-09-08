@@ -11,8 +11,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 PHOTOS = ROOT / "seeds" / "hospitals" / "photos"
 INDEX = PHOTOS / "index.json"
+CURATION = PHOTOS / "curation.json"
 # Deliberately BELOW what the per-file ceiling would allow (108 x 250 KB is 26 MB): the committed
-# set is 4.0 MB, so 18 MB stays a real guard against a runaway rather than a restatement of MAX_BYTES.
+# set is 2.3 MB since A-L10 (73 files, was 108/4.0 MB), so 18 MB stays a real guard against a
+# runaway rather than a restatement of MAX_BYTES.
 TOTAL_CEILING_BYTES = 18 * 1024 * 1024
 MAX_BYTES = 250 * 1024
 MAX_PHOTOS = 6   # the design renders six photo slots per practice (A-L9); more can never be shown
@@ -20,6 +22,14 @@ MAX_PHOTOS = 6   # the design renders six photo slots per practice (A-L9); more 
 
 def inventory() -> dict[str, list[dict[str, object]]]:
     return json.loads(INDEX.read_text(encoding="utf-8"))["hospitals"]
+
+
+def curation() -> dict[str, dict[str, object]]:
+    """The content-verified map (A-L10), without its `_comment`. This module reads it as DATA the
+    committed tree must agree with — the map is what a human verified, the tree is what a script
+    produced from it, and this file is where the two are made to match."""
+    loaded = json.loads(CURATION.read_text(encoding="utf-8"))
+    return {slug: slots for slug, slots in loaded.items() if not slug.startswith("_")}
 
 
 def seed_slugs() -> list[str]:
@@ -33,17 +43,59 @@ def test_every_seeded_hospital_has_photographs() -> None:
         assert slug in inv and 1 <= len(inv[slug]) <= MAX_PHOTOS, slug
 
 
-def test_every_seeded_hospital_fills_all_six_of_the_designs_photo_slots() -> None:
+def test_every_seeded_hospital_carries_all_six_of_the_designs_photo_slots() -> None:
     """A-L9 (John, 2026-09-09: "the seed phase failed to upload ALL the images"). The detail page
-    renders six captioned slots per practice and every source folder holds at least eight
-    photographs, so a hospital carrying fewer than six means the pipeline dropped some again —
-    which is exactly what `[:4]` did, leaving 70 exteriors and 2 interiors across the eighteen."""
+    renders six captioned slots per practice, so the inventory carries an entry for every one —
+    a photograph or, since A-L10, an explicit empty. A hospital with fewer than six ENTRIES means
+    the pipeline dropped a slot again, which is exactly what `[:4]` did."""
     inv = inventory()
     for slug in seed_slugs():
         assert len(inv[slug]) == MAX_PHOTOS, (slug, len(inv[slug]))
         slots = [e["slot"] for e in inv[slug]]
         assert slots[0] == "exterior", (slug, slots)
         assert len(set(slots)) == MAX_PHOTOS, (slug, slots)
+
+
+def test_the_inventory_is_the_curation_slot_for_slot() -> None:
+    """A-L10 (John, 2026-09-09: "match the description"). The design's caption is fixed per slot,
+    so the ONLY thing that makes a caption true is the photograph at that POSITION showing that
+    subject. The controller verified that by looking at every source image; this asserts the
+    committed tree is exactly what he verified — same slots in the same order, the same source
+    file in each, and an empty where he found nothing truthful."""
+    inv = inventory()
+    cur = curation()
+    assert set(cur) == set(seed_slugs()), "the curation must name every seeded hospital and no other"
+    for slug, slots in cur.items():
+        assert [e["slot"] for e in inv[slug]] == list(slots), slug
+        assert [e["source"] for e in inv[slug]] == list(slots.values()), slug
+
+
+def test_a_curated_photograph_sits_at_its_slots_own_position() -> None:
+    """`p.photos[i]` fills the design's slot `i` (A12.2), so slot `k` is `<k>.webp` and an empty
+    slot leaves a GAP in the numbering rather than pulling the next photograph forward."""
+    for slug, entries in inventory().items():
+        for position, entry in enumerate(entries, start=1):
+            expected = None if entry["source"] is None else f"{position}.webp"
+            assert entry["file"] == expected, (slug, position, entry["file"])
+
+
+def test_the_committed_set_fills_seventy_three_of_the_hundred_and_eight_slots() -> None:
+    """The measured outcome of A-L10, pinned: 73 slots carry a content-verified photograph and 35
+    stay empty, where the design renders its own placeholder (absent beats faked). Four hospitals
+    have nothing but an exterior — their interiors exist only as collage fragments or mislabeled
+    exteriors — and John owes clean images for them; the plan record says so, and this test is
+    what will notice when they arrive."""
+    inv = inventory()
+    filled = [e for entries in inv.values() for e in entries if e["file"] is not None]
+    assert (len(filled), sum(len(e) for e in inv.values())) == (73, 108)
+    exterior_only = sorted(
+        slug for slug, entries in inv.items()
+        if [e["slot"] for e in entries if e["file"] is not None] == ["exterior"]
+    )
+    assert exterior_only == [
+        "1111_pet_hospital", "ghi_veterinary_hospital", "pqr_veterinary_hospital",
+        "stu_veterinary_specialist_center",
+    ]
 
 
 def test_the_inventory_names_no_hospital_that_is_not_seeded() -> None:
@@ -53,6 +105,8 @@ def test_the_inventory_names_no_hospital_that_is_not_seeded() -> None:
 def test_every_committed_file_matches_its_recorded_hash_and_size() -> None:
     for slug, entries in inventory().items():
         for entry in entries:
+            if entry["file"] is None:
+                continue
             path = PHOTOS / slug / str(entry["file"])
             data = path.read_bytes()
             assert hashlib.sha256(data).hexdigest() == entry["sha256"], path
@@ -62,7 +116,8 @@ def test_every_committed_file_matches_its_recorded_hash_and_size() -> None:
 
 def test_the_tree_holds_nothing_the_inventory_does_not_name() -> None:
     on_disk = {f"{p.parent.name}/{p.name}" for p in PHOTOS.rglob("*.webp")}
-    named = {f"{slug}/{e['file']}" for slug, entries in inventory().items() for e in entries}
+    named = {f"{slug}/{e['file']}" for slug, entries in inventory().items()
+             for e in entries if e["file"] is not None}
     assert on_disk == named
 
 
@@ -72,14 +127,23 @@ def test_every_committed_photograph_has_a_caption_and_a_source() -> None:
     fixed per slot — `slot` is what makes it true of the photograph underneath it."""
     for slug, entries in inventory().items():
         for entry in entries:
+            assert isinstance(entry["slot"], str) and entry["slot"], (slug, entry["file"])
+            if entry["file"] is None:
+                # An empty slot is a statement, not a photograph (A-L10): no bytes, no caption,
+                # no source, and no measured field claiming otherwise.
+                assert entry == {"slot": entry["slot"], "file": None, "source": None, "caption": None}, slug
+                continue
             assert isinstance(entry["caption"], str) and entry["caption"], (slug, entry["file"])
             assert isinstance(entry["source"], str) and entry["source"], (slug, entry["file"])
-            assert isinstance(entry["slot"], str) and entry["slot"], (slug, entry["file"])
 
 
-def test_files_are_numbered_from_one_without_gaps() -> None:
+def test_files_are_numbered_by_the_slot_they_fill() -> None:
+    """Not "from one without gaps" any more (A-L10): the number IS the design's slot position, so
+    a hospital whose surgery slot is empty jumps from `4.webp` to `6.webp`."""
     for slug, entries in inventory().items():
-        assert [e["file"] for e in entries] == [f"{n}.webp" for n in range(1, len(entries) + 1)], slug
+        assert [e["file"] for e in entries] == [
+            None if e["file"] is None else f"{n}.webp" for n, e in enumerate(entries, start=1)
+        ], slug
 
 
 def test_the_committed_set_stays_under_the_size_ceiling() -> None:

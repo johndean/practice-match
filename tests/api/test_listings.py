@@ -559,3 +559,52 @@ async def test_the_listings_routes_exist_only_in_app_mode(dist: Any, redis: Any,
             r = await c.get(path)
             assert r.status_code == 401, path
             assert r.json() == {"error": {"code": "UNAUTHORIZED", "message": "Sign in to continue."}}
+
+
+# --- A-L10: a photo slot with no truthful photograph stays empty -----------------------------
+# John, 2026-09-09: "match the description". The caption under each photograph is the DESIGN's
+# fixed slot caption, so `photos` is POSITIONAL — position `n` is the design's slot `n` — and a
+# slot the curation left empty travels as JSON `null` all the way to `photoSet`, which renders the
+# design's own placeholder for it. Compacting the list here would slide every later photograph up
+# one slot and caption it with a subject it does not show.
+
+EMPTY_SLOTS = ["abc_animal_hospital/1.webp", None, "abc_animal_hospital/2.webp", None, None, None]
+
+
+def test_photo_list_keeps_a_null_slot_in_place() -> None:
+    """Both decode arms — psycopg2's list and the json string — carry the null through."""
+    assert photo_list(["a/1.webp", None]) == ["a/1.webp", None]
+    assert photo_list('["a/1.webp", null]') == ["a/1.webp", None]
+
+
+def test_serialise_emits_null_for_an_empty_photo_slot() -> None:
+    body = serialise(_row(photos=EMPTY_SLOTS), datetime(2026, 9, 6, tzinfo=UTC))
+    listing_id = body["id"]
+    assert body["photos"] == [
+        f"/api/listings/{listing_id}/photos/1", None, f"/api/listings/{listing_id}/photos/3",
+        None, None, None,
+    ]
+
+
+def test_photo_file_treats_an_empty_slot_exactly_like_an_out_of_range_index() -> None:
+    assert photo_file(EMPTY_SLOTS, 2) is None
+    assert photo_file(EMPTY_SLOTS, 3) is not None
+
+
+async def test_an_empty_photo_slot_is_a_404_and_the_slot_after_it_still_serves(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """The route half: slot 2 is empty, slot 3 is a real photograph, and asking for slot 3 must
+    not have been shifted onto slot 2's bytes."""
+    listing_id = _insert(conn, photos=json.dumps(EMPTY_SLOTS))
+    _, cookies, headers = member()
+    auth = auth_headers(cookies, headers)
+    empty = await client.get(f"/api/listings/{listing_id}/photos/2", headers=auth)
+    assert empty.status_code == 404
+    assert empty.json() == {"error": {"code": "NOT_FOUND", "message": "No such photograph."}}
+    filled = await client.get(f"/api/listings/{listing_id}/photos/3", headers=auth)
+    assert filled.status_code == 200
+    assert filled.headers["content-type"] == "image/webp"
+    assert filled.content[:4] == b"RIFF" and filled.content[8:12] == b"WEBP"
+    # …and an empty slot is not a hole in the wall: it is still a member endpoint.
+    assert (await client.get(f"/api/listings/{listing_id}/photos/2")).status_code == 401
