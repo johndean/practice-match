@@ -337,6 +337,14 @@ describe('the oracles skip a remote target (A-L6.2 (2))', () => {
     }
   });
 
+  // I2 (final review): smoke.spec.ts is deliberately KEPT in the remote run, and RUNBOOK §12 and
+  // the L7 hand-back both name it as this release's verification — so it may not assert the
+  // DESIGN's fixture id shape. On seeded QA a listing's route is `/practices/<uuid>`.
+  it('smoke.spec.ts asserts no listing route in the design\'s fixture id shape (final review I2)', () => {
+    const spec = withoutComments(readFileSync(SMOKE, 'utf8'));
+    expect(spec, 'a /practices/p<digits> assertion fails against a seeded target').not.toMatch(/practices\\\/p\\d/);
+  });
+
   it('the runbook says the remote run is smoke, sign-in and account flows from here', () => {
     const runbook = readFileSync(join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', 'docs', 'RUNBOOK-identity.md'), 'utf8');
     expect(runbook, 'RUNBOOK-identity.md does not record the A-L6.2 scope of the remote parity run').toContain('A-L6.2');

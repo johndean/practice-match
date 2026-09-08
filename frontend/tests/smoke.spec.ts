@@ -433,7 +433,11 @@ test.describe('mobile: the same map, market data in a sheet', () => {
     await page.waitForTimeout(500);
     await expect(page).toHaveURL(/\/browse$/);              // first tap selects, it does not navigate
     await page.locator('.leaflet-marker-icon').first().click();
-    await expect(page).toHaveURL(/\/practices\/p\d+$/);
+    // Either id shape (final review I2): locally the D6 stub serves the design's own fixtures, so
+    // the route is `/practices/p3`; on a seeded target (`PW_APP_URL`, the QA parity run this spec
+    // is deliberately kept in) the listing's id is a uuid and the route is `/practices/<uuid>`.
+    // What is being proved is the NAVIGATION, not which practice the pin happened to be.
+    await expect(page).toHaveURL(/\/practices\/[A-Za-z0-9-]+$/);
   });
 
   // A2 (spec D17, John: "resolve this"). Root cause (systematic-debugging, task V14 report):
@@ -450,7 +454,8 @@ test.describe('mobile: the same map, market data in a sheet', () => {
     const area = (await card.locator('div[style*="font-size: 15px"]').innerText()).trim();
 
     await card.click();
-    await expect(page).toHaveURL(/\/practices\/p\d+$/);
+    // Either id shape (final review I2) — see the comment on the second-pin-tap case above.
+    await expect(page).toHaveURL(/\/practices\/[A-Za-z0-9-]+$/);
     await expect(page.getByText('Exterior photo').first()).toBeVisible();
     await expect(phone(page).getByText(area, { exact: false }).first()).toBeVisible();
   });
