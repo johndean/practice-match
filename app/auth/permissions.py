@@ -79,7 +79,11 @@ PUBLIC_ROUTES: frozenset[tuple[str, str]] = frozenset({
     # `app.api.health.not_found_router`'s catch-all: it exists so an unknown /api/* path answers a
     # JSON 404 instead of falling through to the SPA's index.html. It reads nothing and writes
     # nothing, on any method.
-    *((method, "/api/{path:path}") for method in ("DELETE", "GET", "PATCH", "POST", "PUT")),
+    *((method, "/api/{path:path}") for method in ("DELETE", "GET", "HEAD", "PATCH", "POST", "PUT")),
+    # Task 13a: HEAD now mirrors GET on these same routes (uptime monitors, link checkers) — same
+    # handler, same public surface, body stripped by Starlette. Not a new permission decision, just
+    # HEAD joining the GET entry it already shares a route with.
+    ("HEAD", "/api/healthz"), ("HEAD", "/api/healthz/deep"), ("HEAD", "/robots.txt"), ("HEAD", "/"), ("HEAD", "/{path:path}"),
 })
 
 

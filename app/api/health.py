@@ -66,13 +66,13 @@ async def _body() -> HealthBody:
     }
 
 
-@router.get("/healthz")
+@router.api_route("/healthz", methods=["GET", "HEAD"])
 async def healthz() -> HealthBody:
     """Railway's healthcheck. Always 200; component state is inside the body."""
     return await _body()
 
 
-@router.get("/healthz/deep")
+@router.api_route("/healthz/deep", methods=["GET", "HEAD"])
 async def healthz_deep() -> JSONResponse:
     """Post-deploy probe (scripts/verify-deploy.sh). 503 unless every component is up."""
     body = await _body()
@@ -80,7 +80,7 @@ async def healthz_deep() -> JSONResponse:
     return JSONResponse(body, status_code=code)
 
 
-@not_found_router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"], include_in_schema=False)
+@not_found_router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD"], include_in_schema=False)
 async def api_not_found(path: str) -> JSONResponse:
     return JSONResponse(
         {"ok": False, "error": {"code": "NOT_FOUND", "message": f"No API route /api/{path}"}},
