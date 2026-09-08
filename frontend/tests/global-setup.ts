@@ -112,7 +112,7 @@ export interface RemoteReseedPlan {
  * not start — the alternative is a green run that proves nothing, because the state it
  * photographed came from the run before it.
  *
- * An empty string counts as missing: `PERSONA_PASSWORD=` from a shell whose Railway lookup failed
+ * An empty string counts as missing: `PERSONA_PASSWORD=` from a shell whose Keychain read failed
  * would otherwise seed every fixture account with a hash of the empty string.
  */
 export function remoteReseedPlan(env: NodeJS.ProcessEnv): RemoteReseedPlan {

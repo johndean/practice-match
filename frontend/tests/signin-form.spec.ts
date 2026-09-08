@@ -7,10 +7,10 @@ import { PERSONAS, isExpectedSignInFailure401, personaCredentials, prepare } fro
 // These three tests type a password into the design's own sign-in card, so a FAILING run's trace
 // carries it — and CI publishes `frontend/test-results`. In every local and CI run that password is
 // the documented test-only default, so a trace there discloses nothing; the one run where it is a
-// real secret is a live one (`PW_APP_URL` set — the QA hand-back, with `PERSONA_PASSWORD` from
-// Railway). When `PW_APP_URL` is unset this resolves to the project's own `retain-on-failure`, so
-// nothing changes locally or in CI, and the TESTS are never skipped: the form is precisely what
-// Task I10 has to prove on QA.
+// real secret is a live one (`PW_APP_URL` set — the QA hand-back, with `PERSONA_PASSWORD` from the
+// operator's Keychain, never Railway, A-S6.2). When `PW_APP_URL` is unset this resolves to the
+// project's own `retain-on-failure`, so nothing changes locally or in CI, and the TESTS are never
+// skipped: the form is precisely what Task I10 has to prove on QA.
 //
 // This is why they live in a FILE of their own rather than a describe inside smoke.spec.ts:
 // Playwright refuses `use({ trace })` inside a describe group — "because it forces a new worker" —
