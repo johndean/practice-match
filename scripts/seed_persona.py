@@ -41,6 +41,16 @@ TEN accounts in all: `design@`, `buyer@`, `seller@` (members); `pending@`, `need
 
     ENVIRONMENT=qa poetry run python scripts/seed_persona.py
 
+Task S7 (John's ruling, 2026-09-08) makes idempotence a stronger promise: this script RESTORES.
+Run over fixtures a full Playwright run has just mutated — verify, reset and invite tokens
+consumed, `verify-me@` confirmed, `verified@`'s password rotated, `invited@` given one,
+`needs-review@`'s application answered, a second row on `declined@`, and a live verify link the
+resend endpoint minted for `unverified@` — it puts every one of them back exactly as a fresh seed
+leaves them, so a remote run can begin from a known baseline and be repeated without any manual
+step. `tests/scripts/test_seed_persona_restores.py` proves it end to end and says what is
+deliberately NOT restored (sessions, the audit log, the API's own `email_outbox` rows) and why.
+`frontend/tests/global-setup.ts` is what runs this against the target before a `PW_APP_URL` run.
+
 It **refuses on production, with no override flag** (exit 2). A fixture account with `admin` on the
 stakeholders' real data is not something a `--yes` should be able to buy.
 
@@ -206,6 +216,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                          RETURNING id""", (PERSONA_EMAIL, hashed, PERSONA_NAME, PERSONA_AFFILIATION))
         # INSERT ... ON CONFLICT DO UPDATE ... RETURNING always yields exactly one row.
         account_id = cast("tuple[UUID]", cur.fetchone())[0]
+        # Task S7: every account this script owns, collected as it is upserted — the scope of the
+        # `email_token` delete below. Built from the ids the upserts RETURN rather than from a
+        # second query, so it can never name an account these ten emails do not.
+        fixture_ids: list[UUID] = [account_id]
         for role in PERSONA_ROLES:
             cur.execute("INSERT INTO role_grant (account_id, role, granted_by) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
                         (account_id, role, account_id))
@@ -225,6 +239,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                                        display_name=EXCLUDED.display_name, affiliation_label=EXCLUDED.affiliation_label
                              RETURNING id""", (email, hashed, PERSONA_NAME, PERSONA_AFFILIATION))
             oracle_id = cast("tuple[UUID]", cur.fetchone())[0]
+            fixture_ids.append(oracle_id)
             for role in roles:
                 cur.execute("INSERT INTO role_grant (account_id, role, granted_by) VALUES (%s,%s,%s) ON CONFLICT DO NOTHING",
                             (oracle_id, role, account_id))
@@ -240,6 +255,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                              RETURNING id""", (email, hashed, state, display_name))
             aid = cast("tuple[UUID]", cur.fetchone())[0]
             state_persona_ids[email] = aid
+            fixture_ids.append(aid)
             audit.write(conn, actor=None, action="persona.seed", target_type="account",
                         target_id=aid, reason="seed_persona.py")
 
@@ -255,6 +271,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                                        display_name=EXCLUDED.display_name
                              RETURNING id""", (email, hashed, state, display_name))
             identity_ids[email] = cast("tuple[UUID]", cur.fetchone())[0]
+            fixture_ids.append(identity_ids[email])
             audit.write(conn, actor=None, action="persona.seed", target_type="account",
                         target_id=identity_ids[email], reason="seed_persona.py")
 
@@ -266,6 +283,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                                    display_name=EXCLUDED.display_name
                          RETURNING id""", (INVITED_EMAIL, invited_hashed, INVITED_STATE, INVITED_NAME))
         identity_ids[INVITED_EMAIL] = cast("tuple[UUID]", cur.fetchone())[0]
+        fixture_ids.append(identity_ids[INVITED_EMAIL])
         audit.write(conn, actor=None, action="persona.seed", target_type="account",
                     target_id=identity_ids[INVITED_EMAIL], reason="seed_persona.py")
 
@@ -285,18 +303,35 @@ def main(argv: Sequence[str] | None = None) -> int:
                        VALUES (%s, 'buyer', %s, 'declined', %s, now(), %s)""",
                     (declined_id, json.dumps(DECLINED_FIELDS), account_id, DECLINED_DECISION_NOTE))
 
+        # Task S7 (John's ruling, 2026-09-08: "shared QA fixtures must not be left in a mutated
+        # state after a live QA run"). Every `email_token` row on a fixture account goes, not only
+        # the rows of the three (account, purpose) pairs seeded below — because the run ISSUES
+        # tokens the seed never wrote: `POST /api/auth/verify/resend`, which `account-flows.spec.ts`
+        # calls as `unverified@`, mints that account a live verify link, and `unverified@` owns no
+        # fixture purpose at all, so nothing here reclaimed it. `tests/scripts/
+        # test_seed_persona_restores.py` failed on exactly that one row, and only that one, before
+        # this line existed; unbounded, it accumulated one live link per QA run.
+        #
+        # Scoped to the accounts this script owns, by email — `fixture_ids` holds the ids the ten
+        # upserts above returned and nothing else, so no other account's token is ever in range.
+        # An `email_token` row on a fixture account is by construction a test artefact: unlike the
+        # `application` table (review round 1, Minor 1, whose `kind='buyer'` scoping stands), there
+        # is no kind of row here that a later task could own on the same account.
+        cur.execute("DELETE FROM email_token WHERE account_id = ANY(%s)", (fixture_ids,))
+
         # Twelve fresh single-use tokens per purpose. Deleted first so neither a used row from the
-        # last run nor a stale one survives a re-seed — and deleted BY HASH as well as by account
-        # (A-S5.2): `email_token.token_hash` is globally unique and these twelve raw values are
-        # documented constants, so when a purpose's owner changes — as `verify` did, from
-        # `unverified@` to `verify-me@` — the previous owner's rows collide with the ones this run
-        # is about to insert. A fresh database never sees it; every database seeded before the
-        # move does, and the seed died on a `UniqueViolation` rather than reclaiming its own token.
+        # last run nor a stale one survives a re-seed — and deleted BY HASH as well (A-S5.2):
+        # `email_token.token_hash` is globally unique and these twelve raw values are documented
+        # constants, so when a purpose's owner changes — as `verify` did, from `unverified@` to
+        # `verify-me@` — the previous owner's rows collide with the ones this run is about to
+        # insert. A fresh database never sees it; every database seeded before the move does, and
+        # the seed died on a `UniqueViolation` rather than reclaiming its own token. The by-hash
+        # delete stays alongside the account-wide one above: a squatter need not be a fixture
+        # account, and only this form reclaims a documented token from an arbitrary holder.
         for purpose, (email, pattern) in FIXTURE_TOKENS.items():
             target_id = identity_ids[email]
             hashes = [T.hash(pattern.format(n=n)) for n in range(1, FIXTURE_TOKEN_COUNT + 1)]
             cur.execute("DELETE FROM email_token WHERE token_hash = ANY(%s)", (hashes,))
-            cur.execute("DELETE FROM email_token WHERE account_id=%s AND purpose=%s", (target_id, purpose))
             for raw_hash in hashes:
                 cur.execute("""INSERT INTO email_token (account_id, purpose, token_hash, expires_at)
                                VALUES (%s,%s,%s, now() + %s::interval)""",

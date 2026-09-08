@@ -725,6 +725,16 @@ export async function personaSignOut(cookies: PersonaCookies, baseURL = appOrigi
  * counter at the start of every local run that actually starts the API (A-S5.1), so consecutive
  * runs are independent and there is no window to wait out.
  *
+ * A REMOTE run (`PW_APP_URL`) differs on both halves of that, and Task S7 (John, 2026-09-08) is
+ * where the difference is handled. Nothing clears QA's counters — its rate limits are the real
+ * ones, deliberately (A-S5.1), so two runs of this suite against QA are fifteen minutes apart, one
+ * fixed `SIGNIN_IP` window. The FIXTURES, though, are reseeded either way: a local run's `api` web
+ * server runs `seed_persona` before it serves (A-I7), and a remote run runs the same script against
+ * the target from `frontend/tests/global-setup.ts` before its first test — so every run of this
+ * suite, local or live, starts from the same known baseline, and the eight live account flows
+ * cannot leave the next one photographing what this one consumed.
+ * `tests/scripts/test_seed_persona_restores.py` is the proof that the reseed really does restore.
+ *
  * The wrong password also counts toward `SIGNIN_EMAIL`'s ten failures per address per 15 minutes —
  * for `buyer@` only, and one of ten.
  */
