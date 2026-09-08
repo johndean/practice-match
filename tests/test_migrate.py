@@ -231,7 +231,7 @@ def test_migration_files_never_manage_their_own_transaction():
         assert not match, f"{path.name} must not manage its own transaction: {match.group(0)!r}"
 
 
-def test_scratch_dsn_cleans_up_when_migrate_run_fails(request, monkeypatch):
+def test_scratch_dsn_cleans_up_when_migrate_run_fails(request, monkeypatch, template_dsn):
     """I5 fix round 1: tests/conftest.py's `scratch_dsn` fixture must run `migrate.run`
     inside its `try` so a failing migration doesn't leak the just-created `pm_test_*`
     database (or the admin connection) on the compose Postgres every worktree on port
@@ -241,7 +241,12 @@ def test_scratch_dsn_cleans_up_when_migrate_run_fails(request, monkeypatch):
     deterministic database name rather than scanning for any `pm_test_%` — the compose
     Postgres is shared with other concurrently-running test processes on this port, so
     a global scan can see (and misattribute) an unrelated, legitimately in-flight
-    scratch database from one of those."""
+    scratch database from one of those.
+
+    P-TDB: `template_dsn` is taken as a fixture ARGUMENT so the session template is built
+    before `migrate.run` is replaced below. Without it, a session in which this is the first
+    test to touch the database would build the template through the raising stub, and pytest
+    caches a session fixture's setup ERROR and re-raises it for every later test."""
     fixed = uuid.UUID("00000000-0000-0000-0000-0000000000fe")
     monkeypatch.setattr(uuid, "uuid4", lambda: fixed)
     expected_name = f"pm_test_{fixed.hex[:8]}"

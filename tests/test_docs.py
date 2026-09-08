@@ -135,6 +135,20 @@ def test_ci_workflow_runs_every_gate():
         assert cmd in text, cmd
 
 
+def test_readme_describes_the_session_template_database():
+    """Platform task P-TDB. The suite no longer migrates a database per test: it migrates one
+    session template and clones it, and falls back to the old path when Postgres refuses to copy
+    a template something is connected to. Both halves are operator-visible — a `pm_tmpl_*`
+    database on the shared compose Postgres, and a warnings-summary line on a slow run — so the
+    README section that tells someone how to run the suite has to say so. Pinned on the two
+    strings that identify each half (the name pattern the fixture builds, and Postgres's own
+    refusal text the fallback keys on), so the paragraph cannot be deleted or reworded away from
+    what `tests/conftest.py` actually does."""
+    text = (ROOT / "README.md").read_text()
+    for phrase in ("pm_tmpl_", "TEMPLATE", "being accessed by other users"):
+        assert phrase in text, f"README.md no longer describes the suite's template database: {phrase!r} is missing"
+
+
 def test_ci_strict_mypy_covers_every_python_script():
     """S5 review round 2 (the implementer's own residual, ruled a gap): every `scripts/*.py` that
     CI measures for coverage must also be type-checked, and the file list is written out by hand in

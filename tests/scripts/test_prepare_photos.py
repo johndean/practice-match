@@ -74,22 +74,37 @@ def _flat(path: Path, size: tuple[int, int], *, patch: tuple[int, int] | None = 
 
 @pytest.fixture(scope="module")
 def source(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Five named images (four kept, one dropped) plus a dotfile and a non-image, generated
-    once for the whole module. Only the first is larger than MAX_EDGE_PX — mostly flat colour
-    with a small noise patch, so it still compresses on the first quality rung while genuinely
-    exercising the resize path; the fifth ("...treatment...") is never opened by
-    `source_images()` (filename-only filtering), so it is a stub, not a real image."""
+    """Eight named images — the six the design's default slots select, one spare exterior no
+    slot can take, and one stub — plus a dotfile and a non-image, generated once for the whole
+    module. Only the first is larger than MAX_EDGE_PX — mostly flat colour with a small noise
+    patch, so it still compresses on the first quality rung while genuinely exercising the
+    resize path; the last ("...stub...") is never opened by `source_images()` (filename-only
+    filtering), so it is a stub, not a real image. No slot's keywords name the stub and all six
+    slots match before any fallback could reach it, so a regression to "the first six in folder
+    order" (the A-L9 failure, one rung along) fails loudly here rather than silently."""
     root = tmp_path_factory.mktemp("photos-source")
     folder = root / "demo_hospital_individual_images"
     folder.mkdir()
     _flat(folder / "01_exterior_front.png", (1620, 20), patch=(40, 20))
-    _flat(folder / "02_exterior_side.jpg", (24, 24), metadata=True)
-    _flat(folder / "03_interior_lobby.png", (24, 24))
+    _flat(folder / "02_exterior_side.jpg", (24, 24))
+    _flat(folder / "03_interior_lobby.jpg", (24, 24), metadata=True)
     _flat(folder / "04_interior_exam.png", (24, 24))
-    (folder / "05_interior_treatment.png").write_bytes(b"stub, never opened by source_images()")
+    _flat(folder / "05_interior_treatment.png", (24, 24))
+    _flat(folder / "06_interior_surgery.png", (24, 24))
+    _flat(folder / "07_interior_kennels.png", (24, 24))
+    (folder / "08_interior_stub.png").write_bytes(b"stub, never opened by source_images()")
     (folder / ".DS_Store").write_bytes(b"\x00\x01junk")
     (folder / "notes.txt").write_text("not an image")
     return root
+
+
+def _folder(root: Path, slug: str, names: list[str]) -> Path:
+    """One source folder of tiny flat images, named as John's curated folders name them."""
+    folder = root / f"{slug}{PP.FOLDER_SUFFIX}"
+    folder.mkdir(parents=True)
+    for name in names:
+        _flat(folder / name, (24, 24))
+    return folder
 
 
 @pytest.fixture(scope="module")
@@ -108,22 +123,32 @@ def oversized_source(tmp_path_factory: pytest.TempPathFactory) -> Path:
 
 def test_source_images_are_sorted_and_exclude_non_images(source: Path) -> None:
     names = [p.name for p in PP.source_images(source / "demo_hospital_individual_images")]
-    assert names == ["01_exterior_front.png", "02_exterior_side.jpg", "03_interior_lobby.png",
-                     "04_interior_exam.png", "05_interior_treatment.png"]
+    assert names == ["01_exterior_front.png", "02_exterior_side.jpg", "03_interior_lobby.jpg",
+                     "04_interior_exam.png", "05_interior_treatment.png", "06_interior_surgery.png",
+                     "07_interior_kennels.png", "08_interior_stub.png"]
 
 
-def test_prepare_keeps_at_most_four_in_folder_order(source: Path, tmp_path: Path) -> None:
+def test_prepare_fills_the_designs_six_slots_not_the_first_six_in_folder_order(
+    source: Path, tmp_path: Path
+) -> None:
+    """A-L9. The cap was `sorted(folder)[:4]`, and John's folders number the exteriors first, so
+    the seed kept four exteriors and dropped every interior. The set is now the six files the
+    design's own slots name, in SLOT order — `p.photos[i]` fills slot `i` (amendment A12.2)."""
     out = tmp_path / "photos"
-    index = PP.prepare(source, out, ["demo_hospital"])
+    index = PP.prepare(source, out, ["demo_hospital"], {})
     entries = index["demo_hospital"]
-    assert [e["file"] for e in entries] == ["1.webp", "2.webp", "3.webp", "4.webp"]
-    assert [e["source"] for e in entries] == ["01_exterior_front.png", "02_exterior_side.jpg",
-                                              "03_interior_lobby.png", "04_interior_exam.png"]
+    assert [e["file"] for e in entries] == ["1.webp", "2.webp", "3.webp", "4.webp", "5.webp", "6.webp"]
+    assert [e["slot"] for e in entries] == list(PP.DEFAULT_SLOTS)
+    assert [e["source"] for e in entries] == [
+        "01_exterior_front.png", "03_interior_lobby.jpg", "04_interior_exam.png",
+        "05_interior_treatment.png", "06_interior_surgery.png", "07_interior_kennels.png",
+    ]
+    assert "02_exterior_side.jpg" not in {e["source"] for e in entries}, "no slot takes a second exterior"
 
 
 def test_every_output_is_webp_within_the_dimension_and_size_ceilings(source: Path, tmp_path: Path) -> None:
     out = tmp_path / "photos"
-    PP.prepare(source, out, ["demo_hospital"])
+    PP.prepare(source, out, ["demo_hospital"], {})
     for path in sorted((out / "demo_hospital").glob("*.webp")):
         assert path.stat().st_size <= PP.MAX_BYTES, (path.name, path.stat().st_size)
         with Image.open(path) as img:
@@ -133,15 +158,17 @@ def test_every_output_is_webp_within_the_dimension_and_size_ceilings(source: Pat
 
 def test_the_fixture_sources_really_carry_metadata(source: Path) -> None:
     """Guards the guard: if this stops holding, `test_metadata_is_stripped` below is vacuous
-    again and the stripping could be deleted with a green suite (pre-flight M2)."""
-    with Image.open(source / "demo_hospital_individual_images" / "02_exterior_side.jpg") as img:
+    again and the stripping could be deleted with a green suite (pre-flight M2). The block sits
+    on the lobby photograph because A-L9 selects that one — the second exterior it used to sit
+    on is no longer encoded, which would have made the stripping test vacuous a second way."""
+    with Image.open(source / "demo_hospital_individual_images" / "03_interior_lobby.jpg") as img:
         assert img.info.get("icc_profile"), "the fixture lost its ICC profile"
         assert img.getexif().get(0x0110) == "Practice Match test camera", "the fixture lost its EXIF"
 
 
 def test_metadata_is_stripped(source: Path, tmp_path: Path) -> None:
     out = tmp_path / "photos"
-    PP.prepare(source, out, ["demo_hospital"])
+    PP.prepare(source, out, ["demo_hospital"], {})
     for path in sorted((out / "demo_hospital").glob("*.webp")):
         with Image.open(path) as img:
             assert "exif" not in img.info and "icc_profile" not in img.info and "xmp" not in img.info
@@ -150,7 +177,7 @@ def test_metadata_is_stripped(source: Path, tmp_path: Path) -> None:
 
 def test_the_inventory_records_a_matching_sha256_and_dimensions(source: Path, tmp_path: Path) -> None:
     out = tmp_path / "photos"
-    PP.prepare(source, out, ["demo_hospital"])
+    PP.prepare(source, out, ["demo_hospital"], {})
     index = json.loads((out / "index.json").read_text(encoding="utf-8"))
     for entry in index["hospitals"]["demo_hospital"]:
         path = out / "demo_hospital" / str(entry["file"])
@@ -176,9 +203,10 @@ def test_caption_of_reads_the_curated_filename(name: str, expected: str) -> None
 
 
 def test_the_inventory_records_a_caption_per_photograph(source: Path, tmp_path: Path) -> None:
-    index = PP.prepare(source, tmp_path / "photos", ["demo_hospital"])
+    index = PP.prepare(source, tmp_path / "photos", ["demo_hospital"], {})
     assert [e["caption"] for e in index["demo_hospital"]] == [
-        "Exterior — front", "Exterior — side", "Interior — lobby", "Interior — exam"
+        "Exterior — front", "Interior — lobby", "Interior — exam",
+        "Interior — treatment", "Interior — surgery", "Interior — kennels",
     ]
 
 
@@ -210,18 +238,19 @@ def test_main_returns_two_when_an_image_will_not_fit(oversized_source: Path, tmp
     ) == 2
 
 
-def test_a_folder_with_fewer_than_four_images_yields_what_it_has(tmp_path: Path) -> None:
+def test_a_folder_with_fewer_than_six_images_yields_what_it_has(tmp_path: Path) -> None:
     root = tmp_path / "src"
     folder = root / "thin_individual_images"
     folder.mkdir(parents=True)
     _flat(folder / "01_only.png", (100, 80))
-    index = PP.prepare(root, tmp_path / "out", ["thin"])
+    index = PP.prepare(root, tmp_path / "out", ["thin"], {})
     assert [e["file"] for e in index["thin"]] == ["1.webp"]
+    assert [e["slot"] for e in index["thin"]] == ["exterior"]
 
 
 def test_a_missing_folder_is_reported_not_skipped_silently(tmp_path: Path) -> None:
     with pytest.raises(FileNotFoundError) as exc:
-        PP.prepare(tmp_path / "src", tmp_path / "out", ["absent"])
+        PP.prepare(tmp_path / "src", tmp_path / "out", ["absent"], {})
     assert "absent_individual_images" in str(exc.value)
 
 
@@ -230,16 +259,16 @@ def test_a_small_image_is_not_upscaled(tmp_path: Path) -> None:
     folder = root / "small_individual_images"
     folder.mkdir(parents=True)
     _flat(folder / "01_small.png", (240, 160))
-    PP.prepare(root, tmp_path / "out", ["small"])
+    PP.prepare(root, tmp_path / "out", ["small"], {})
     with Image.open(tmp_path / "out" / "small" / "1.webp") as img:
         assert img.size == (240, 160)
 
 
 def test_prepare_is_idempotent_and_replaces_a_stale_output(source: Path, tmp_path: Path) -> None:
     out = tmp_path / "photos"
-    first = PP.prepare(source, out, ["demo_hospital"])
+    first = PP.prepare(source, out, ["demo_hospital"], {})
     (out / "demo_hospital" / "9.webp").write_bytes(b"stale")
-    second = PP.prepare(source, out, ["demo_hospital"])
+    second = PP.prepare(source, out, ["demo_hospital"], {})
     assert first == second
     assert not (out / "demo_hospital" / "9.webp").exists(), "a stale file must not survive a re-run"
 
@@ -299,5 +328,201 @@ def test_prepare_refuses_a_slug_that_is_not_a_slug(tmp_path: Path) -> None:
     keep.write_text("not mine to delete")
     for bad in ("../..", "a/b", ".", "..", ".hidden"):
         with pytest.raises(ValueError, match="is not a slug"):
-            PP.prepare(tmp_path / "src", tmp_path / "out", [bad])
+            PP.prepare(tmp_path / "src", tmp_path / "out", [bad], {})
     assert keep.exists()
+
+
+# --- A-L9: the design's six photo slots ------------------------------------------------------
+# John, 2026-09-09: "the seed phase failed to upload ALL the images - only exterior where
+# uploaded and none of the interior images are being rendered". The detail page renders exactly
+# six captioned slots per practice, chosen by practice type (`photoSet(p)` in the V3 design), and
+# `p.photos[i]` fills slot `i` (amendment A12.2) — so the seed carries six photographs and each
+# one is the source image whose curated filename matches its slot's subject, which is what makes
+# the design's own captions true of the photographs shown.
+
+
+def test_max_photos_is_the_length_of_every_design_slot_list() -> None:
+    """Six is not a taste: it is how many slots `photoSet(p)` renders. A seventh photograph
+    could never be displayed, and a slot list of five would leave one slot blank."""
+    assert PP.MAX_PHOTOS == 6
+    for label, slots in [("default", PP.DEFAULT_SLOTS), *PP.SLOTS_BY_TYPE.items()]:
+        assert len(slots) == PP.MAX_PHOTOS, label
+        assert len(set(slots)) == PP.MAX_PHOTOS, f"{label} names a slot twice"
+
+
+def test_the_slot_lists_are_the_four_the_design_renders() -> None:
+    """Verbatim from `photoSet(p)` in `Practice Match V3.dc.html`: the equine list, the
+    Emergency list, the Specialty list and the fallback the seeds' "Small animal" takes."""
+    assert PP.DEFAULT_SLOTS == ("exterior", "lobby", "exam", "treatment", "surgery", "kennel")
+    assert PP.SLOTS_BY_TYPE == {
+        "Large animal": ("exterior", "barn", "office", "truck", "lab", "grounds"),
+        "Emergency": ("exterior", "triage", "treatment", "icu", "surgery", "imaging"),
+        "Specialty": ("exterior", "lobby", "consult", "surgery", "imaging", "recovery"),
+    }
+    named = {slot for slots in (PP.DEFAULT_SLOTS, *PP.SLOTS_BY_TYPE.values()) for slot in slots}
+    assert set(PP.SLOT_KEYWORDS) == named, "every slot the design renders needs its keywords, and no others"
+
+
+@pytest.mark.parametrize(
+    "name, expected",
+    [("10_interior_ct_scanner_room.png", "interior_ct_scanner_room"),
+     ("01_Exterior_Front.JPG", "exterior_front"),
+     ("hospital front.jpg", "hospital front"),
+     ("2222.png", "2222")],
+)
+def test_descriptor_of_drops_the_leading_number_and_lower_cases(name: str, expected: str) -> None:
+    assert PP.descriptor_of(name) == expected
+
+
+def test_a_small_animal_folder_fills_the_default_slots_though_its_interiors_are_numbered_last(tmp_path: Path) -> None:
+    """The exact shape of John's folders and of the failure: five exteriors first, the interiors
+    after them. Under `[:4]` this hospital shipped four exteriors and no interior at all."""
+    root = tmp_path / "src"
+    _folder(root, "small", [
+        "01_exterior_front_view.png", "02_exterior_entrance_view.png", "03_exterior_monument_sign.png",
+        "04_exterior_street_corner_view.png", "05_exterior_parking_view.png", "06_interior_reception.png",
+        "07_interior_waiting_area.png", "08_interior_exam_room.png", "09_interior_treatment_area.png",
+        "10_interior_surgery_room.png", "11_interior_kennel_hallway.png",
+    ])
+    index = PP.prepare(root, tmp_path / "out", ["small"], {"small": "Small animal"})
+    assert [(e["slot"], e["source"]) for e in index["small"]] == [
+        ("exterior", "01_exterior_front_view.png"),
+        ("lobby", "06_interior_reception.png"),
+        ("exam", "08_interior_exam_room.png"),
+        ("treatment", "09_interior_treatment_area.png"),
+        ("surgery", "10_interior_surgery_room.png"),
+        ("kennel", "11_interior_kennel_hallway.png"),
+    ]
+
+
+def test_an_emergency_folder_fills_triage_icu_and_imaging(tmp_path: Path) -> None:
+    root = tmp_path / "src"
+    _folder(root, "er", [
+        "01_exterior_main_front_dusk.png", "02_exterior_monument_sign.png", "03_exterior_emergency_entrance.png",
+        "04_interior_reception.png", "05_interior_treatment_area.png", "06_interior_ct_scanner.png",
+        "07_interior_icu.png", "08_interior_surgery_room.png",
+    ])
+    index = PP.prepare(root, tmp_path / "out", ["er"], {"er": "Emergency"})
+    assert [(e["slot"], e["source"]) for e in index["er"]] == [
+        ("exterior", "01_exterior_main_front_dusk.png"),
+        ("triage", "04_interior_reception.png"),     # no "triage" file: the design's caption is "Triage and intake"
+        ("treatment", "05_interior_treatment_area.png"),
+        ("icu", "07_interior_icu.png"),
+        ("surgery", "08_interior_surgery_room.png"),
+        ("imaging", "06_interior_ct_scanner.png"),   # "ct_" — the CT room is the imaging room
+    ]
+
+
+def test_a_specialty_folder_fills_consult_imaging_and_recovery(tmp_path: Path) -> None:
+    root = tmp_path / "src"
+    _folder(root, "spec", [
+        "01_exterior_front_entrance.png", "02_exterior_street_side_view.png", "03_interior_reception.png",
+        "04_interior_exam_room.png", "05_interior_mri_ct_room.png", "06_interior_surgery_room.png",
+        "07_interior_recovery_ward.png",
+    ])
+    index = PP.prepare(root, tmp_path / "out", ["spec"], {"spec": "Specialty"})
+    assert [(e["slot"], e["source"]) for e in index["spec"]] == [
+        ("exterior", "01_exterior_front_entrance.png"),
+        ("lobby", "03_interior_reception.png"),
+        ("consult", "04_interior_exam_room.png"),    # an exam room IS the consult room
+        ("surgery", "06_interior_surgery_room.png"),
+        ("imaging", "05_interior_mri_ct_room.png"),
+        ("recovery", "07_interior_recovery_ward.png"),
+    ]
+
+
+def test_a_large_animal_folder_fills_the_equine_slots(tmp_path: Path) -> None:
+    """No seeded hospital is "Large animal" today, but the design renders the list and the seed
+    file is data — a hospital typed that way tomorrow must not silently fall to the default."""
+    root = tmp_path / "src"
+    _folder(root, "equine", [
+        "01_exterior_front.png", "02_interior_barn_stocks.png", "03_interior_office_pharmacy.png",
+        "04_exterior_ambulatory_truck.png", "05_interior_lab_storage.png", "06_exterior_turnout_paddock.png",
+    ])
+    index = PP.prepare(root, tmp_path / "out", ["equine"], {"equine": "Large animal"})
+    assert [(e["slot"], e["source"]) for e in index["equine"]] == [
+        ("exterior", "01_exterior_front.png"),
+        ("barn", "02_interior_barn_stocks.png"),
+        ("office", "03_interior_office_pharmacy.png"),
+        ("truck", "04_exterior_ambulatory_truck.png"),
+        ("lab", "05_interior_lab_storage.png"),
+        ("grounds", "06_exterior_turnout_paddock.png"),
+    ]
+
+
+def test_an_unmatched_slot_takes_the_first_unused_interior_then_any_file(tmp_path: Path) -> None:
+    """A slot no keyword reaches still gets a photograph, and it prefers an interior: the four
+    other slots are interior subjects, so an unused exterior is the last thing that fits one.
+    With nothing unused left the slot is simply not filled — never a duplicate."""
+    root = tmp_path / "src"
+    _folder(root, "spare", ["01_exterior_front.png", "02_interior_corridor.png",
+                            "03_interior_hallway.png", "04_exterior_side.png"])
+    index = PP.prepare(root, tmp_path / "out", ["spare"], {})
+    assert [(e["slot"], e["source"]) for e in index["spare"]] == [
+        ("exterior", "01_exterior_front.png"),
+        ("lobby", "02_interior_corridor.png"),   # first unused interior
+        ("exam", "03_interior_hallway.png"),     # second unused interior
+        ("treatment", "04_exterior_side.png"),   # no interior left: any unused file
+    ]
+    assert len({e["source"] for e in index["spare"]}) == 4, "a file may fill only one slot"
+
+
+def test_a_thin_folder_labels_each_photograph_with_the_slot_it_actually_fills(tmp_path: Path) -> None:
+    """Three images, six slots: `kennel` matched by keyword while `exam`, `treatment` and
+    `surgery` found nothing left, so the third file is the KENNEL photograph. Numbering the
+    entries by position would caption a boarding run "Exam room" — the very mislabelling A-L9
+    exists to stop."""
+    root = tmp_path / "src"
+    _folder(root, "thin3", ["01_exterior_front.png", "02_interior_reception.png", "03_interior_kennels.png"])
+    index = PP.prepare(root, tmp_path / "out", ["thin3"], {})
+    assert [(e["file"], e["slot"], e["source"]) for e in index["thin3"]] == [
+        ("1.webp", "exterior", "01_exterior_front.png"),
+        ("2.webp", "lobby", "02_interior_reception.png"),
+        ("3.webp", "kennel", "03_interior_kennels.png"),
+    ]
+
+
+def test_an_unknown_or_missing_practice_type_takes_the_default_slot_list(tmp_path: Path) -> None:
+    assert PP.slots_for("Mobile clinic") == PP.DEFAULT_SLOTS
+    assert PP.slots_for("Specialty") == PP.SLOTS_BY_TYPE["Specialty"]
+    root = tmp_path / "src"
+    _folder(root, "odd", ["01_exterior_front.png", "02_interior_reception.png", "03_interior_exam_room.png",
+                          "04_interior_treatment_area.png", "05_interior_surgery_room.png",
+                          "06_interior_kennels.png"])
+    unknown = PP.prepare(root, tmp_path / "unknown", ["odd"], {"odd": "Mobile clinic"})
+    missing = PP.prepare(root, tmp_path / "missing", ["odd"], {})
+    assert [e["slot"] for e in unknown["odd"]] == list(PP.DEFAULT_SLOTS)
+    assert [e["slot"] for e in missing["odd"]] == list(PP.DEFAULT_SLOTS)
+
+
+def test_select_for_slots_returns_the_chosen_files_in_slot_order(tmp_path: Path) -> None:
+    """The rule on its own, with no encoding: slot order, not folder order."""
+    folder = _folder(tmp_path / "src", "sel", [
+        "01_exterior_front.png", "02_interior_reception.png", "03_interior_ct_imaging_room.png",
+        "04_interior_treatment_area.png", "05_interior_icu.png", "06_interior_surgery_room.png",
+    ])
+    chosen = PP.select_for_slots(PP.source_images(folder), list(PP.SLOTS_BY_TYPE["Emergency"]))
+    assert [p.name for p in chosen] == [
+        "01_exterior_front.png", "02_interior_reception.png", "04_interior_treatment_area.png",
+        "05_interior_icu.png", "06_interior_surgery_room.png", "03_interior_ct_imaging_room.png",
+    ]
+
+
+def test_main_reads_each_hospitals_type_from_the_seed_file(tmp_path: Path) -> None:
+    """Which of the design's four lists a hospital's photographs fill is data, read from
+    `seeds/hospitals.json` where the default slugs are read — so a hand re-run of one slug
+    selects exactly the six files the full run would."""
+    slug = "6666_dallas_veterinary_specialist_hospital"
+    assert PP.seed_types()[slug] == "Specialty"
+    assert set(PP.seed_types()) == set(PP.seed_slugs())
+    root = tmp_path / "src"
+    _folder(root, slug, ["01_exterior_front_entrance.png", "06_interior_lobby.png", "08_interior_exam_room.png",
+                         "09_interior_treatment_surgery_area.png", "10_interior_ct_scanner.png",
+                         "11_interior_recovery_ward.png"])
+    out = tmp_path / "out"
+    assert PP.main(["--source", str(root), "--out", str(out), "--slugs", slug]) == 0
+    index = json.loads((out / "index.json").read_text(encoding="utf-8"))
+    assert index["max_photos"] == 6
+    assert [e["slot"] for e in index["hospitals"][slug]] == list(PP.SLOTS_BY_TYPE["Specialty"]), (
+        "main() fell back to the default slot list instead of reading the seed file's type"
+    )

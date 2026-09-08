@@ -122,7 +122,7 @@ def test_photos_come_from_the_committed_inventory(scratch_dsn: str) -> None:
         cur.execute("SELECT slug, photos FROM listing")
         for slug, photos in cur.fetchall():
             assert photos == [f"{slug}/{e['file']}" for e in index[slug]], slug
-            assert 1 <= len(photos) <= 4, slug
+            assert len(photos) == 6, slug   # the design's six photo slots (A-L9)
 
 
 def test_main_seeds_from_the_environment(scratch_dsn: str, monkeypatch: pytest.MonkeyPatch) -> None:
