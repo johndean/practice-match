@@ -65,8 +65,13 @@ class ObjectStore:
                 return None
             raise
 
-    def delete(self, key: str) -> None:
+    def delete(self, key: str) -> bool:
+        """Removes `key`, reporting whether it was actually there to remove (A-SL1): S3's
+        `delete_object` succeeds unconditionally on a key that never existed, so the caller
+        would otherwise have no way to tell a real deletion from a no-op."""
+        existed = self.exists(key)
         self._s3.delete_object(Bucket=self.bucket, Key=key)
+        return existed
 
     def list(self, prefix: str) -> list[str]:
         resp = self._s3.list_objects_v2(Bucket=self.bucket, Prefix=prefix)
