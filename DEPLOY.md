@@ -168,6 +168,17 @@ never on production without John's go — against `ENVIRONMENT=production` the s
 unless the operator says it out loud with `--production`, exactly as `scripts/bootstrap_admin.py`
 does; with the flag, the run's first line of output names the environment it is writing to.
 
+**The photographs (A-L9, 2026-09-09).** Each hospital carries **six**, one for every photo slot the
+design's detail page renders — `photoSet(p)` in `Practice Match V3.dc.html` gives an exterior plus
+five subjects chosen by practice type, and nothing beyond six can be displayed. They are selected
+from John's curated source folders by what the filename says the photograph shows, so the design's
+fixed caption is true of the picture under it; `scripts/prepare_photos.py` writes
+`seeds/hospitals/photos/<slug>/1.webp … 6.webp` and the `index.json` beside them, and both are
+committed to the repository and baked into the image. The seeder uploads no bytes — it records the
+relative paths, and the `api` service serves the files off disk at `/api/listings/{id}/photos/{n}`.
+Re-run `poetry run python scripts/prepare_photos.py` only when the source folders change; it needs
+Pillow (a dev dependency) and is never part of a deploy.
+
 **How it is actually run (A-L7 (3)):** locally, against the QA PostGIS service's public URL, with
 `ENVIRONMENT=qa` and that URL handed to the process in its environment and never printed (the
 script reads only `DATABASE_URL` and `ENVIRONMENT`; the `api` service's `DATABASE_URL` is the
