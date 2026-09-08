@@ -220,6 +220,18 @@ def test_cmd_acs_accepts_a_dataset_override(scratch_dsn, monkeypatch):
     assert captured["dataset_keys"] == ["acs5"]
 
 
+def test_cmd_acs_dataset_choices_reject_an_unknown_dataset_key(capsys):
+    """A5's review of itself: `acs.load`'s `VARIABLES[dataset_key]` lookup raises a raw
+    `KeyError` for a dataset that is not one of the three ACS datasets (e.g. an industry
+    dataset key such as `cbp`) -- argparse's own `choices=sorted(acs.VARIABLES)` on `--dataset`
+    turns that into the same "refused before anything is opened" shape as a missing
+    `CENSUS_API_KEY`, exit 2, before the database or the network is ever touched."""
+    with pytest.raises(SystemExit) as exc:
+        census_load.main(["acs", "--dataset", "cbp"])
+    assert exc.value.code == 2
+    assert "invalid choice" in capsys.readouterr().err
+
+
 def test_cmd_acs_builds_the_client_factory_from_the_required_key_and_contact_never_a_default(scratch_dsn, monkeypatch):
     """The brief's own draft CLI snippet built the client from `settings.census_contact_email`
     directly, which is `None` by default and would surface as a bare `ValueError` deep inside
@@ -365,6 +377,26 @@ def test_cmd_acs_returns_five_when_a_dataset_fails_validation(scratch_dsn, monke
     assert census_load.main(["acs", "--dataset", "acs5"]) == 5
     err = capsys.readouterr().err
     assert "acs5 failed validation" in err and "B19013_001E" in err
+
+
+def test_cmd_acs_returns_two_when_a_dataset_is_licence_gated(scratch_dsn, monkeypatch, capsys):
+    """A5's review of itself (A-C5 record): `acs.load` raises `PermissionError` for a dataset
+    that is `unresolved`/`blocked` (spec §1 licensing gate, exercised by
+    `tests/census/test_acs.py::test_load_refuses_a_dataset_that_is_not_cleared`) -- that is a
+    refusal, not a download failure, so it must map to exit 2 ("refused before anything is
+    opened", A-C4 ¶2), never surface as an uncaught exception out of `main()`."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+
+    def fake_load(conn, client_factory, dataset_key, states):
+        raise PermissionError(f"{dataset_key} is blocked; loads are refused (spec §1 licensing gate)")
+
+    monkeypatch.setattr(census_acs, "load", fake_load)
+
+    assert census_load.main(["acs", "--dataset", "acs5"]) == 2
+    err = capsys.readouterr().err
+    assert "acs5" in err and "refused" in err
 
 
 def test_normalize_dsn_handles_the_legacy_postgres_scheme_and_asyncpg():

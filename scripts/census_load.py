@@ -11,9 +11,11 @@ loads ACS detailed/subject/prior-vintage tables (`app/census/acs.py`) into `acs_
 
 Exit codes follow the shared scheme every `census_load.py` subcommand uses (A-C4 ¶2, aligned
 with `scripts/seed_listings.py`): 0 done; 2 refused before anything is opened (no subcommand --
-argparse's own exit -- `DATABASE_URL` unset, or a required Census setting missing --
+argparse's own exit -- `DATABASE_URL` unset, a required Census setting missing --
 `require_key`/`require_contact` in `app/census/client.py` now raise `SystemExit(2)`, superseding
-A-C3 ¶2's `SystemExit(3)`); 3 the database is unreachable (retryable); 4 a download or API fetch
+A-C3 ¶2's `SystemExit(3)` -- or a dataset that is licence-gated: `acs.load`'s `PermissionError`
+for an `unresolved`/`blocked` `dataset_registry` row, spec §1, is a refusal too); 3 the database
+is unreachable (retryable); 4 a download or API fetch
 failed (`CensusHTTPError`, its message already redacted -- A-C3 (3)); 5 validation failed -- `acs`
 raises this when a response is missing an expected variable (`VariableMissing`; spec §4/¶12, a
 partial vintage that must never go active) -- reserved more broadly for malformed bodies or
@@ -134,6 +136,12 @@ def cmd_acs(args: argparse.Namespace) -> int:
     for ds_key in args.dataset:
         try:
             n = acs.load(conn, factory, ds_key, states)
+        except PermissionError as exc:
+            # A licence-gated dataset (spec §1: `unresolved`/`blocked` never ingested) is a
+            # refusal, not a download failure -- exit 2, "refused before anything is opened"
+            # (A-C4 ¶2), never an uncaught exception out of `main()` (A5's review of itself).
+            print(f"[census_load] {ds_key} refused: {exc}", file=sys.stderr)
+            return 2
         except CensusHTTPError as exc:
             # CensusHTTPError's own message is already redacted (A-C3 (3)).
             print(f"[census_load] {ds_key} download failed: {exc}", file=sys.stderr)
@@ -148,13 +156,19 @@ def cmd_acs(args: argparse.Namespace) -> int:
 
 
 def main(argv: list[str] | None = None) -> int:
+    # Imported here, not inside `cmd_acs` alone (A5's review of itself): `--dataset`'s `choices`
+    # must be built while the parser itself is under construction, before `parse_args` runs --
+    # this is still "inside a function", never at module scope, so the sys.path reason `cmd_*`'s
+    # own imports are deferred for (see the module docstring) does not apply here either.
+    from app.census import acs
+
     p = argparse.ArgumentParser(prog="census_load", description="Operator entry points for the market-data layer.")
     sub = p.add_subparsers(dest="cmd", required=True)
     t = sub.add_parser("tiger", help="load TIGER boundary files for every market_state state")
     t.add_argument("--vintage", default="2023", help="TIGER cartographic boundary vintage year (default: 2023)")
     t.set_defaults(fn=cmd_tiger)
     a = sub.add_parser("acs", help="load ACS detailed/subject/prior tables for every market_state state")
-    a.add_argument("--dataset", nargs="+", default=["acs5", "acs5_subject", "acs5_prior"],
+    a.add_argument("--dataset", nargs="+", default=["acs5", "acs5_subject", "acs5_prior"], choices=sorted(acs.VARIABLES),
                     help="dataset_registry keys to load (default: all three ACS datasets)")
     a.set_defaults(fn=cmd_acs)
     args = p.parse_args(argv)

@@ -85,7 +85,10 @@ def test_to_measures_pairs_estimates_with_moe_and_keeps_nulls():
     assert len(ms) == 2 * 7
 
 
-def test_load_writes_rows_and_a_succeeded_run(conn):
+def _full_state_handler():
+    """One tract-level fixture pull (`FIX`) plus one minimal row for every other geography
+    level `acs.GEOGRAPHIES` visits for state 48 -- shared by the write test and the idempotency
+    test below (A5's review of itself)."""
     def handler(r: httpx.Request):
         if "for=tract" in str(r.url):
             return httpx.Response(200, json=FIX)
@@ -94,10 +97,14 @@ def test_load_writes_rows_and_a_succeeded_run(conn):
                               else ["state"] if "for=state" in str(r.url) else ["metropolitan statistical area/micropolitan statistical area"] if "metropolitan" in str(r.url) else ["us"])
         vals = ["X", "10", "1", "5", "1", "50000", "100", "30000", "40.0", "3", "6"] + (["48", "001"] if len(hdr) == 13 and hdr[-1] == "county" else ["48", "00001"] if hdr[-1] == "place" else ["48"] if hdr[-1] == "state" else ["12420"] if "metropolitan" in hdr[-1] else ["1"])
         return httpx.Response(200, json=[hdr, vals])
+    return handler
+
+
+def test_load_writes_rows_and_a_succeeded_run(conn):
     reg = load_registry(conn)
 
     def factory(ds):
-        return CensusClient("K", ds, None, transport=httpx.MockTransport(handler), contact=CONTACT)
+        return CensusClient("K", ds, None, transport=httpx.MockTransport(_full_state_handler()), contact=CONTACT)
 
     written = acs.load(conn, factory, "acs5", ["48"])
     with conn.cursor() as cur:
@@ -108,6 +115,25 @@ def test_load_writes_rows_and_a_succeeded_run(conn):
         cur.execute("SELECT status, rows_written FROM ingest_run WHERE dataset_key='acs5' ORDER BY id DESC LIMIT 1")
         status, rows = cur.fetchone()
     assert status == "succeeded" and rows == written > 16
+
+
+def test_load_is_idempotent_on_a_rerun(conn):
+    """A5's review of itself: re-running a load (an operator retry, or a scheduled reload of
+    the same vintage) upserts, never duplicates -- `acs_measure`'s primary key
+    (geo_id, summary_level, vintage, variable) and the UPSERT's `ON CONFLICT DO UPDATE` already
+    guarantee this; this proves it end to end, the way `test_tiger.py
+    ::test_upsert_is_idempotent_and_computes_centroid` proves the same property for `geo_area`."""
+    def factory(ds):
+        return CensusClient("K", ds, None, transport=httpx.MockTransport(_full_state_handler()), contact=CONTACT)
+
+    first = acs.load(conn, factory, "acs5", ["48"])
+    second = acs.load(conn, factory, "acs5", ["48"])
+    assert first == second > 16  # every geography level, same convention as the write test above
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM acs_measure")
+        assert cur.fetchone()[0] == first  # still the same total, not doubled
+        cur.execute("SELECT count(*) FROM ingest_run WHERE dataset_key='acs5'")
+        assert cur.fetchone()[0] == 2  # one ledger row per run, even though the data didn't grow
 
 
 def test_load_refuses_a_dataset_that_is_not_cleared(conn):
