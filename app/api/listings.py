@@ -64,7 +64,9 @@ from fastapi.responses import JSONResponse, Response
 
 from app.auth.deps import require
 from app.cache import sync_redis
+from app.config import settings
 from app.db import sync_conn
+from app.storage import ObjectStore
 
 router = APIRouter(prefix="/api")
 
@@ -366,12 +368,48 @@ async def get_listing(listing_id: str) -> Response:
     return JSONResponse(serialise(row, datetime.now(UTC)))
 
 
+def _asset_bytes(conn: Any, listing_id: str, entry: str) -> bytes | None:
+    """A seller-uploaded photograph's bytes, or None.
+
+    The SECOND arm of `listing.photos`'s single `if` (spec 2026-09-08 D15 reason 3): a
+    `source='seed'` entry is a relative path resolved under PHOTOS_ROOT by `photo_file`, and a
+    seller entry is an asset uuid resolved here. Both arms are tested, and the URL the browser asks
+    for is identical — which is why no amendment, no baseline and no `toPractice` field moves.
+
+    Every "no" is the same None, and the route's 404: an entry that is not a uuid, a uuid that
+    names no asset of this listing, an unconfigured bucket, an object that is gone. A photograph
+    that cannot be served is a missing photograph, never a 500."""
+    try:
+        asset_id = UUID(entry)
+    except ValueError:
+        return None
+    with conn.cursor() as cur:
+        cur.execute("SELECT storage_key FROM listing_asset WHERE id=%s AND listing_id=%s AND kind='photo'",
+                    (asset_id, UUID(listing_id)))
+        found = cur.fetchone()
+    if found is None:
+        return None
+    store = ObjectStore.from_settings(settings)
+    return store.get(found[0]) if store is not None else None
+
+
 @router.get("/listings/{listing_id}/photos/{n}", dependencies=[Depends(REQUIRE_LISTING_READ)])
 async def get_listing_photo(listing_id: str, n: int) -> Response:
     with closing(sync_conn()) as conn, conn:
         photos = _published_photos(conn, listing_id)
     if photos is None:
         return _error("NOT_FOUND", "No such listing.", 404)
+    entry = photos[n - 1] if 1 <= n <= len(photos) else None
+    if entry is not None and "/" not in entry:
+        # A seller's photograph: `listing.photos` holds the asset uuid, not a path. A seed entry
+        # always contains a "/" (`<slug>/<n>.webp`), so the two are told apart by the value itself
+        # rather than by a second query for the row's `source`.
+        with closing(sync_conn()) as conn, conn:
+            content = _asset_bytes(conn, listing_id, entry)
+        if content is None:
+            return _error("NOT_FOUND", "No such photograph.", 404)
+        return Response(content=content, media_type="image/webp",
+                        headers={"Cache-Control": PHOTO_CACHE_CONTROL})
     path = photo_file(photos, n)
     if path is None:
         return _error("NOT_FOUND", "No such photograph.", 404)

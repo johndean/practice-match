@@ -33,27 +33,44 @@ purpose rather than leaving it to be noticed.
 """
 from __future__ import annotations
 
+import json
 from contextlib import closing
 from datetime import UTC, datetime
+from functools import lru_cache
 from typing import Annotated, Any, cast
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
+from python_multipart.exceptions import FormParserError
 
-from app.api.listings import _error, drop_list_cache
+# Starlette's own UploadFile, not FastAPI's subclass of it: the form parser produces the base
+# class, so `isinstance(field, fastapi.UploadFile)` is False for every real upload.
+from starlette.datastructures import UploadFile
+from starlette.formparsers import MultiPartException
+
+from app.api.listings import PHOTOS_ROOT, REQUIRE_LISTING_READ, _error, drop_list_cache, photo_list
 from app.auth import audit
+from app.auth import permissions as P
 from app.auth import sessions as S
 from app.auth.deps import require
-from app.auth.limits import LISTING_PATCH, hit
+from app.auth.limits import LISTING_PATCH, LISTING_UPLOAD, hit
 from app.cache import sync_redis
+from app.config import settings
 from app.db import sync_conn
+from app.media.encode import MAX_PHOTOS, encode_webp, sha256_hex
+from app.storage import ObjectStore
 
 router = APIRouter(prefix="/api/seller")
 
 # Hoisted, never wrapped (Global Constraint (f)).
 REQUIRE_MANAGE_OWN = require("listing.manage_own")
 Owner = Annotated[S.Principal, Depends(REQUIRE_MANAGE_OWN)]
+# The document read is `listing.read`'s, not `listing.manage_own`'s: every member may ASK for a
+# document and the handler decides (D19). The guard object is `app/api/listings.py`'s own, imported
+# rather than re-created, because `deps.permission_of` resolves a route's permission by the guard's
+# IDENTITY — a second `require("listing.read")` here would be a second object for one permission.
+Reader = Annotated[S.Principal, Depends(REQUIRE_LISTING_READ)]
 
 MAX_LIST = 200
 DEFAULT_LIMIT = 50
@@ -192,6 +209,40 @@ def columns_for(step: int, body: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+PHOTO_INDEX = PHOTOS_ROOT / "index.json"
+
+
+@lru_cache(maxsize=1)
+def seed_captions() -> dict[str, str]:
+    """`<slug>/<file>` -> the caption `scripts/prepare_photos.py` recorded, read once per process.
+
+    D26's other half: "the step-6 tile name is the seed caption or the uploaded filename". A seed
+    row belongs to the demo seller on QA (D25), so Edit on one reaches `serialise_draft` and its
+    `listing.photos` entries are relative paths that name no `listing_asset` row — the caption is
+    the only name those tiles can have. The file is committed and copied into the image
+    (`Dockerfile`: `COPY seeds/ ./seeds/`); an environment without it falls back to the file name
+    rather than failing a draft read."""
+    try:
+        index = json.loads(PHOTO_INDEX.read_text())
+    except OSError:
+        return {}
+    return {f"{slug}/{photo['file']}": photo["caption"]
+            for slug, photos in index["hospitals"].items() for photo in photos}
+
+
+def photo_tiles(row: dict[str, Any], assets: list[dict[str, Any]]) -> list[dict[str, str]]:
+    """Step 6's tiles in `listing.photos`' own order, named as D26 says.
+
+    Order comes from `listing.photos` and from nowhere else (D15 reason 3), which is why this is a
+    projection of that array rather than a second sort of `assets`: a seller upload is named by the
+    filename they chose, a seed path by its caption, and anything else by its own last segment so a
+    stale entry still renders as a tile instead of throwing."""
+    names = {asset["id"]: asset["name"] for asset in assets if asset["kind"] == "photo"}
+    captions = seed_captions()
+    return [{"id": entry, "name": names.get(entry) or captions.get(entry) or entry.rsplit("/", 1)[-1]}
+            for entry in photo_list(row["photos"])]
+
+
 def serialise_draft(row: dict[str, Any], assets: list[dict[str, Any]]) -> dict[str, Any]:
     """The OWNER's own truth (D11) — every column unblanked, nulls preserved, plus `assets[]`.
 
@@ -219,6 +270,12 @@ def serialise_draft(row: dict[str, Any], assets: list[dict[str, Any]]) -> dict[s
         "submitted_at": row["submitted_at"].isoformat() if row["submitted_at"] else None,
         "updated_at": row["updated_at"].isoformat(),
         "assets": assets,
+        # The two ordered views step 6 renders (D26). `assets` stays exactly as SL3 wrote it — the
+        # upload-ordered whole — and these are the projections: photographs in `listing.photos`'
+        # order, documents with the route that reads each one back under D19's lock.
+        "photos": photo_tiles(row, assets),
+        "documents": [{**asset, "url": f"/api/seller/listings/{row['id']}/documents/{asset['id']}"}
+                      for asset in assets if asset["kind"] != "photo"],
     }
 
 
@@ -377,3 +434,364 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
     # window in which a concurrent read re-cached the pre-write payload for the full TTL.
     drop_list_cache(sync_redis())
     return JSONResponse(payload)
+
+
+# --- Assets (D14, D15, D18, D19) -----------------------------------------------------------------
+#
+# Photographs are RE-ENCODED (app/media/encode.py) and documents are stored as uploaded. Both are
+# read back through an API route, never a signed URL: the permission decision is per request, so a
+# document stops being readable the moment the listing is unpublished or the account is suspended
+# — which a URL minted an hour ago cannot express (D15 reason 1).
+PHOTO_TYPES = ("image/jpeg", "image/png", "image/webp")
+MAX_PHOTO_BYTES = 15 * 1024 * 1024
+# D18/Q3, John's ruled default: PDF, CSV and XLSX. The design names a spreadsheet ("Equipment list ·
+# Spreadsheet", logic.js:1290) and only ever shows the badges "Photo" and "PDF", so CSV and XLSX are
+# badged with the uppercased extension — a new VALUE in an existing slot, not new markup.
+DOCUMENT_TYPES = {
+    "application/pdf": ".pdf",
+    "text/csv": ".csv",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": ".xlsx",
+}
+DOCUMENT_KINDS = ("floor_plan", "financials", "equipment", "other")
+MAX_DOCUMENT_BYTES = 25 * 1024 * 1024
+MAX_DOCUMENTS = 6
+DOCUMENT_HEADERS = {"Content-Disposition": "attachment", "X-Content-Type-Options": "nosniff",
+                    "Cache-Control": "private, no-store"}
+# What a multipart envelope costs on top of the file itself: two boundaries, the part headers and
+# the `kind` field. The declared `Content-Length` is checked against `limit + this` BEFORE the body
+# is read, and what actually arrived is checked against `limit` exactly.
+MULTIPART_OVERHEAD = 4096
+MAX_FILENAME = 200
+
+
+def store_for_request() -> ObjectStore:
+    """The configured store, or a `Refusal` the route renders as a 503.
+
+    `from_settings` returning None is a legitimate state (a developer's machine, a fresh test
+    database), and the API must keep serving every READ there — including the eighteen seed
+    hospitals' photographs, which come off disk and need no bucket at all. Only the writes stop,
+    and they say why."""
+    store = ObjectStore.from_settings(settings)
+    if store is None:
+        raise Refusal("STORAGE_UNAVAILABLE",
+                      "Uploads are unavailable: object storage is not configured (S3_BUCKET).", 503)
+    return store
+
+
+def locked_row(conn: Any, listing_id: str, principal: S.Principal) -> dict[str, Any]:
+    """This principal's listing, LOCKED for the rest of the transaction, scoped IN THE SQL.
+
+    Two things at once, both load-bearing (SL3 review):
+
+    * the ownership predicate is in the statement rather than in a Python comparison after a read
+      by id, so no write in this module can be reached by a caller the SELECT would have refused;
+    * `FOR UPDATE` serialises two concurrent uploads to the same listing, which is what makes the
+      four-photo cap a real cap rather than a check-then-act race. A second request waits here and
+      then counts four photographs, instead of counting three at the same instant as the first.
+
+    A listing that is not this principal's is a 404, never a 403 (D7)."""
+    try:
+        parsed = UUID(listing_id)
+    except ValueError:
+        raise Refusal("NOT_FOUND", "No such listing.", 404) from None
+    rows = _rows(conn, f"SELECT {_COLUMNS} FROM listing WHERE id = %s AND seller_id = %s FOR UPDATE",
+                 (parsed, principal.account_id))
+    if not rows:
+        raise Refusal("NOT_FOUND", "No such listing.", 404)
+    return rows[0]
+
+
+def _writable(row: dict[str, Any]) -> None:
+    """Withdrawn is terminal — the same rule the per-step PATCH applies, said once for the assets."""
+    if row["status"] == "withdrawn":
+        raise Refusal("STATE", "A withdrawn listing can no longer be edited.", 409)
+
+
+def _asset_uuid(asset_id: str, noun: str = "asset") -> UUID:
+    """A path segment as a uuid, or the 404 that segment names. Never FastAPI's 422 on a `UUID`
+    path parameter, which would answer `{"detail": [...]}` instead of the envelope."""
+    try:
+        return UUID(asset_id)
+    except ValueError:
+        raise Refusal("NOT_FOUND", f"No such {noun}.", 404) from None
+
+
+def _sniffed(content_type: str, data: bytes) -> bool:
+    """Whether the BYTES agree with the declared type (D15's "content sniffed rather than trusted").
+
+    A browser sets `Content-Type` from the file extension, and an extension is a claim the uploader
+    controls. This is not a virus scan and does not pretend to be one; it is the cheap check that a
+    thing stored as a PDF and served with `Content-Disposition: attachment` really is one."""
+    if content_type == "application/pdf":
+        return data.startswith(b"%PDF-")
+    if content_type.endswith("spreadsheetml.sheet"):
+        return data.startswith(b"PK\x03\x04")
+    try:
+        data.decode("utf-8")
+    except UnicodeDecodeError:
+        return False
+    return True
+
+
+async def _upload_bytes(request: Request, limit: int) -> tuple[str, str, bytes]:
+    """(filename, content_type, bytes) from a one-file multipart body, refusing an oversized one.
+
+    The ceiling is applied to the DECLARED length first, before a byte of the body is read, so a
+    40 MB "photograph" is never spooled to disk and never handed to Pillow; then to what actually
+    arrived, because `Content-Length` is the client's claim about itself."""
+    declared = request.headers.get("content-length", "")
+    if declared.isdecimal() and int(declared) > limit + MULTIPART_OVERHEAD:
+        raise Refusal("TOO_LARGE", f"The file is larger than {limit // (1024 * 1024)} MB.", 413)
+    try:
+        form = await request.form()
+    except (MultiPartException, FormParserError) as exc:
+        # Two libraries, two exceptions, one refusal: Starlette raises its own for the limits it
+        # enforces (too many parts, an oversized non-file part) and lets python-multipart's own
+        # parse error through untouched. A body that is not the multipart form it claims to be is
+        # the caller's 400, never an unhandled 500.
+        raise Refusal("BAD_REQUEST", "The upload could not be read as a multipart form.", 400) from exc
+    # `form.close()` on every path, including the refusals: Starlette spools a file part to a
+    # `SpooledTemporaryFile` that rolls over to disk past 1 MB, and only FastAPI's own parameter
+    # machinery closes it — a route that calls `request.form()` itself owns the handle. Left open,
+    # every upload leaks one temporary file (and, under `-W error`, a ResourceWarning that fails
+    # the suite). The string parts survive the close, so `kind` is still readable after it.
+    try:
+        # `isinstance`, not two `hasattr`s: it is what narrows the `UploadFile | str | None` a form
+        # field really is, so this reads without a `# type: ignore` (Global Constraint (c)). A JSON
+        # body parses to an empty form and a misnamed part leaves `None` — both are this refusal.
+        field = form.get("file")
+        if not isinstance(field, UploadFile):
+            raise Refusal("BAD_REQUEST", "A single `file` part is required.", 400)
+        data = await field.read()
+        if len(data) > limit:
+            raise Refusal("TOO_LARGE", f"The file is larger than {limit // (1024 * 1024)} MB.", 413)
+        # The filename is DISPLAY only — the object key is derived from the listing id and a
+        # server-generated uuid, never from anything the uploader typed. `rsplit` drops a smuggled
+        # path so the wizard's tile cannot render one.
+        name = (field.filename or "file").rsplit("/", 1)[-1][:MAX_FILENAME]
+        return name, field.content_type or "", data
+    finally:
+        await form.close()
+
+
+async def _json_body(request: Request) -> dict[str, Any]:
+    """The request's JSON object, or a `Refusal` — never a raw `JSONDecodeError` (SL3 review)."""
+    try:
+        body = await request.json() if await request.body() else {}
+    except ValueError as exc:
+        raise Refusal("BAD_REQUEST", "Body must be JSON.", 400) from exc
+    if not isinstance(body, dict):
+        raise Refusal("BAD_REQUEST", "Body must be an object.", 400)
+    return body
+
+
+def _insert_asset(conn: Any, listing_id: UUID, kind: str, name: str, content_type: str,
+                  data: bytes, digest: str, suffix: str) -> tuple[UUID, str]:
+    """The row, then the object, then the row's key — the (asset id, storage key) pair.
+
+    The object is written BEFORE the transaction commits: a committed row pointing at an object
+    that was never written is a broken listing, while an object with no row is a few kilobytes
+    nothing reads. Fail in the direction that leaves the database honest."""
+    folder = "photos" if kind == "photo" else "documents"
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO listing_asset (listing_id, kind, name, content_type, byte_size, sha256, storage_key)"
+                    " VALUES (%s,%s,%s,%s,%s,%s,'') RETURNING id",
+                    (listing_id, kind, name, content_type, len(data), digest))
+        # RETURNING id on a just-inserted row always yields exactly one row (`applications.py:220`).
+        asset_id = cast("tuple[UUID]", cur.fetchone())[0]
+        key = f"listings/{listing_id}/{folder}/{asset_id}{suffix}"
+        cur.execute("UPDATE listing_asset SET storage_key=%s WHERE id=%s", (key, asset_id))
+    return asset_id, key
+
+
+def _asset_payload(asset_id: UUID, kind: str, name: str, content_type: str, size: int) -> dict[str, Any]:
+    return {"id": str(asset_id), "kind": kind, "name": name, "content_type": content_type, "byte_size": size}
+
+
+@router.post("/listings/{listing_id}/photos", status_code=201)
+async def upload_photo(listing_id: str, request: Request, principal: Owner) -> Response:
+    """One photograph, re-encoded to WebP with every metadatum stripped (D15).
+
+    Stripping is the point, not tidiness: a phone photograph carries GPS EXIF, and a listing whose
+    location is undisclosed must not ship its coordinates inside a picture (A10.2, "Sellers control
+    what buyers can see")."""
+    hit(sync_redis(), "listing:upload", str(principal.account_id), *LISTING_UPLOAD)
+    try:
+        store = store_for_request()
+        name, content_type, data = await _upload_bytes(request, MAX_PHOTO_BYTES)
+        if content_type not in PHOTO_TYPES:
+            raise Refusal("UNSUPPORTED_TYPE", f"A photograph must be one of {', '.join(PHOTO_TYPES)}.", 415)
+        with closing(sync_conn()) as conn, conn:
+            row = locked_row(conn, listing_id, principal)
+            _writable(row)
+            photos = photo_list(row["photos"])
+            # John's ruling, restated in D18: "Keep the existing 4-photo seller-upload cap." The
+            # seed pipeline's MAX_PHOTOS is the API's cap too, enforced server-side with the row
+            # locked, and the fifth upload is surfaced through the wizard's single error slot
+            # (logic.js:1197). Checked BEFORE the insert, so the client gets this envelope rather
+            # than a constraint violation.
+            if len(photos) >= MAX_PHOTOS:
+                raise Refusal("PHOTO_LIMIT", f"A listing may carry {MAX_PHOTOS} photographs.", 409)
+            encoded = encode_webp(data)
+            if encoded is None:
+                raise Refusal("BAD_IMAGE", "That file could not be read as a photograph.", 422)
+            webp, digest = encoded
+            asset_id, key = _insert_asset(conn, row["id"], "photo", name, "image/webp", webp, digest, ".webp")
+            store.put(key, webp, "image/webp")
+            with conn.cursor() as cur:
+                cur.execute("UPDATE listing SET photos = %s::jsonb, updated_at = now()"
+                            " WHERE id = %s AND seller_id = %s",
+                            (json.dumps([*photos, str(asset_id)]), row["id"], principal.account_id))
+            payload = _asset_payload(asset_id, "photo", name, "image/webp", len(webp))
+    except Refusal as exc:
+        return _refused(exc)
+    drop_list_cache(sync_redis())
+    return JSONResponse(payload, status_code=201)
+
+
+@router.patch("/listings/{listing_id}/photos")
+async def reorder_photos(listing_id: str, request: Request, principal: Owner) -> Response:
+    """The full ordered id list, and nothing else moves.
+
+    `listing.photos` is the single home of photo order (D15 reason 3), so a reorder is one UPDATE
+    of that array — no `listing_asset` row carries a position to disagree with it. The list must be
+    a permutation of what is already there: a partial list would silently DELETE photographs from
+    the gallery, which is not what dragging a tile means."""
+    try:
+        body = await _json_body(request)
+        ids = body.get("ids")
+        if not isinstance(ids, list) or not all(isinstance(item, str) for item in ids):
+            raise Refusal("BAD_REQUEST", "ids must be the listing's photograph ids, in the new order.", 400)
+        with closing(sync_conn()) as conn, conn:
+            row = locked_row(conn, listing_id, principal)
+            _writable(row)
+            photos = photo_list(row["photos"])
+            if sorted(ids) != sorted(photos):
+                raise Refusal("BAD_REQUEST",
+                              "ids must be exactly this listing's photographs, in the new order.", 400)
+            with conn.cursor() as cur:
+                cur.execute("UPDATE listing SET photos = %s::jsonb, updated_at = now()"
+                            " WHERE id = %s AND seller_id = %s",
+                            (json.dumps(ids), row["id"], principal.account_id))
+            payload = serialise_draft(locked_row(conn, listing_id, principal), assets_of(conn, row["id"]))
+    except Refusal as exc:
+        return _refused(exc)
+    drop_list_cache(sync_redis())
+    return JSONResponse(payload)
+
+
+@router.delete("/listings/{listing_id}/assets/{asset_id}", status_code=204)
+async def delete_asset(listing_id: str, asset_id: str, principal: Owner) -> Response:
+    """One asset, gone: the row, its entry in `listing.photos`, then the object.
+
+    The row is what decides whether the asset EXISTED — `app/storage.py`'s `delete()` answers
+    nothing, and an S3 delete of an absent key succeeds anyway, so a store answer could not tell a
+    second delete from a first. The DELETE is scoped by `listing_id` as well as by asset id, so
+    another listing's asset is a 404 rather than a deletion, and the listing row is locked for the
+    whole transaction so two concurrent deletes of the same photograph serialise.
+
+    The object goes AFTER the commit, the opposite order from the upload and for the same reason:
+    an object left behind is a few kilobytes nothing reads, while a row deleted for an object that
+    survived would be a listing pointing at a photograph it can no longer name."""
+    try:
+        store = store_for_request()
+        parsed = _asset_uuid(asset_id)
+        with closing(sync_conn()) as conn, conn:
+            row = locked_row(conn, listing_id, principal)
+            _writable(row)
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM listing_asset WHERE id = %s AND listing_id = %s"
+                            " RETURNING storage_key, kind", (parsed, row["id"]))
+                found = cur.fetchone()
+            if found is None:
+                raise Refusal("NOT_FOUND", "No such asset.", 404)
+            key, kind = found
+            if kind == "photo":
+                remaining = [entry for entry in photo_list(row["photos"]) if entry != str(parsed)]
+                with conn.cursor() as cur:
+                    cur.execute("UPDATE listing SET photos = %s::jsonb, updated_at = now()"
+                                " WHERE id = %s AND seller_id = %s",
+                                (json.dumps(remaining), row["id"], principal.account_id))
+    except Refusal as exc:
+        return _refused(exc)
+    store.delete(key)
+    drop_list_cache(sync_redis())
+    return Response(status_code=204)
+
+
+@router.post("/listings/{listing_id}/documents", status_code=201)
+async def upload_document(listing_id: str, request: Request, principal: Owner) -> Response:
+    """One document, stored exactly as uploaded.
+
+    Not re-encoded: a financial statement is the seller's own artefact and re-writing it would
+    change what a buyer is shown. What is checked is the TYPE (D18/Q3's three), the BYTES behind
+    the declared type, the size, and the count."""
+    hit(sync_redis(), "listing:upload", str(principal.account_id), *LISTING_UPLOAD)
+    try:
+        store = store_for_request()
+        name, content_type, data = await _upload_bytes(request, MAX_DOCUMENT_BYTES)
+        # The approved step 6 has no kind picker (D18), so the wizard sends nothing and the row
+        # reads `other`; a blank field CLEARS to the same default rather than being refused, so an
+        # adapter that always sends the field behaves like one that omits it.
+        kind = str((await request.form()).get("kind") or "other")
+        if kind not in DOCUMENT_KINDS:
+            raise Refusal("BAD_REQUEST", f"kind must be one of {', '.join(DOCUMENT_KINDS)}.", 400)
+        if content_type not in DOCUMENT_TYPES:
+            raise Refusal("UNSUPPORTED_TYPE",
+                          f"A document must be one of {', '.join(sorted(DOCUMENT_TYPES))}.", 415)
+        if not _sniffed(content_type, data):
+            raise Refusal("BAD_DOCUMENT", "That file's contents do not match the type it was sent as.", 422)
+        with closing(sync_conn()) as conn, conn:
+            row = locked_row(conn, listing_id, principal)
+            _writable(row)
+            with conn.cursor() as cur:
+                cur.execute("SELECT count(*) FROM listing_asset WHERE listing_id = %s AND kind <> 'photo'",
+                            (row["id"],))
+                held = cast("tuple[int]", cur.fetchone())[0]
+            if held >= MAX_DOCUMENTS:
+                raise Refusal("DOCUMENT_LIMIT", f"A listing may carry {MAX_DOCUMENTS} documents.", 409)
+            asset_id, key = _insert_asset(conn, row["id"], kind, name, content_type, data,
+                                          sha256_hex(data), DOCUMENT_TYPES[content_type])
+            store.put(key, data, content_type)
+            payload = _asset_payload(asset_id, kind, name, content_type, len(data))
+    except Refusal as exc:
+        return _refused(exc)
+    drop_list_cache(sync_redis())
+    return JSONResponse(payload, status_code=201)
+
+
+@router.get("/listings/{listing_id}/documents/{asset_id}")
+async def read_document(listing_id: str, asset_id: str, principal: Reader) -> Response:
+    """A document, to its owner and to staff and to nobody else.
+
+    That is the design's "Locked — seller approval" exactly as it is drawn (`logic.js:1288-1290`),
+    with no new approval workflow — John's ruling, D19. The buyer-with-an-accepted-request arm
+    belongs to the requests sub-project and is the arm that will be added here when a `request`
+    table exists; inventing it now would be inventing a workflow nobody approved.
+
+    Guarded by `listing.read` so every member reaches the handler, and the handler is what refuses:
+    the alternative — `listing.manage_own` — would answer staff a 403 from the matrix and could
+    never answer them the document."""
+    try:
+        parsed_asset = _asset_uuid(asset_id, "document")
+        parsed_listing = _asset_uuid(listing_id, "document")
+        with closing(sync_conn()) as conn, conn, conn.cursor() as cur:
+            cur.execute("SELECT a.content_type, a.storage_key, l.seller_id FROM listing_asset a"
+                        " JOIN listing l ON l.id = a.listing_id"
+                        " WHERE a.id = %s AND a.listing_id = %s AND a.kind <> 'photo'",
+                        (parsed_asset, parsed_listing))
+            found = cur.fetchone()
+        if found is None:
+            raise Refusal("NOT_FOUND", "No such document.", 404)
+        content_type, key, seller_id = found
+        # Staff by the MATRIX, not by a hard-coded role tuple: `listing.review` is the staff/admin
+        # capability the reviewer already holds, so a later role change moves both together.
+        if seller_id != principal.account_id and not P.allowed("listing.review", principal):
+            raise Refusal("LOCKED", "This document is locked until the seller approves access.", 403)
+        store = store_for_request()
+        content = store.get(key)
+        if content is None:
+            raise Refusal("NOT_FOUND", "No such document.", 404)
+    except Refusal as exc:
+        return _refused(exc)
+    return Response(content=content, media_type=content_type, headers=DOCUMENT_HEADERS)
