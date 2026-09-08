@@ -1043,9 +1043,56 @@ const A12_7: Amendment = {
   count: 1
 };
 
+/** A12.8 / A12.9 — the detail names the listing's OWN state, not Texas (final review C1).
+ *  The design's twenty-one fixtures are all in the Austin metro — `logic.js:26` normalises the
+ *  nine that carry no market of their own — so the hard-coded `", TX"` was right for every one of
+ *  them. The eighteen seeded hospitals span seven states, and thirteen of them would have told a
+ *  stakeholder, on the detail screen of a release whose stated purpose is real addresses, that a
+ *  New York or Denver or Los Angeles practice is in Texas. `stateOf(market)` is the design's own
+ *  helper for exactly this, called as `this.stateOf(...)` by the Browse card (V3 script) and the
+ *  docked panel; these two sites now call it the same way. Pixel-safe: every approved `detail` and
+ *  `mobile-detail` state captures an Austin fixture, and `stateOf("Austin, TX")` is `"TX"`. */
+const A12_8: Amendment = {
+  id: 'A12.8', ...L6,
+  find: 'subtitle: p.area + ", TX · Established " + p.est,',
+  replace: 'subtitle: p.area + ", " + this.stateOf(p.market) + " · Established " + p.est,',
+  count: 1
+};
+
+/** A12.9 — the Overview section's "General location" row, the same literal a second time. The
+ *  seller wizard's own `{ k: "General location", v: (w.city || "—") + (w.city ? ", TX" : "") }` is
+ *  a different string and is fixture-driven; `count: 1` proves this does not reach it. */
+const A12_9: Amendment = {
+  id: 'A12.9', ...L6,
+  find: '{ k: "General location", v: p.area + ", TX" },',
+  replace: '{ k: "General location", v: p.area + ", " + this.stateOf(p.market) },',
+  count: 1
+};
+
+/** A12.10 / A12.11 — Community Context reaches the design's OWN empty state when the figures are
+ *  absent (final review I1). D4 leaves `pop`, `growth`, `income` and `hh` null for every seeded
+ *  listing until the Census plan lands, and `p.id === "p8"` can only ever be true of a design
+ *  fixture — so a seeded listing rendered the POPULATED four-tile grid with every value blank,
+ *  directly under "Source: U.S. Census Bureau…", which reads as attributing an empty panel to the
+ *  Bureau. The design already ships the honest alternative: the dashed "Community data unavailable
+ *  for this location" card. A12.6/A12.7 stopped the TypeError; these two reach the state.
+ *  Pixel-safe: `p8` keeps `noDemo` because its id still matches, and every other design fixture
+ *  carries a non-null `pop`, so no approved state moves. */
+const A12_10: Amendment = {
+  id: 'A12.10', ...L6,
+  find: 'hasDemo: p.id !== "p8",',
+  replace: 'hasDemo: p.id !== "p8" && p.pop != null,', count: 1
+};
+
+const A12_11: Amendment = {
+  id: 'A12.11', ...L6,
+  find: 'noDemo: p.id === "p8",',
+  replace: 'noDemo: p.id === "p8" || p.pop == null,', count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
     A7_3, A7_4, A8_1a, A8_1b, A8_1c, A8_2, A8_3a, A8_3b, A8_4a, A8_4b, A8_5, A8_6, A8_7, A8_8a, A8_8b,
-    A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5, A12_6, A12_7];
+    A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5, A12_6, A12_7, A12_8, A12_9, A12_10, A12_11];
 }

@@ -2897,7 +2897,7 @@ class Component extends DCLogic {
       "; border: 1px solid " + (open ? "#339dde" : "var(--border-subtle)") + ";";
     return {
       title: p.type + " practice — " + p.area,
-      subtitle: p.area + ", TX · Established " + p.est,
+      subtitle: p.area + ", " + this.stateOf(p.market) + " · Established " + p.est,
       listed: p.listed,
       statusLabel: "Accepting inquiries",
       priceLabel: this.money(p.price),
@@ -2912,8 +2912,8 @@ class Component extends DCLogic {
       sentNote: unlocked ? "Financial packet and floor plans are now open to you." : req && req.status === "declined" ? "The seller is not engaging further on this listing." : "Sellers usually respond within a week.",
       disclosure: "This seller is still operating the practice. Street address, practice name and staff names stay hidden until they approve your request. " +
         (unlocked ? "You have been granted access to the full financial packet." : "Documents marked locked open only with seller approval."),
-      hasDemo: p.id !== "p8",
-      noDemo: p.id === "p8",
+      hasDemo: p.id !== "p8" && p.pop != null,
+      noDemo: p.id === "p8" || p.pop == null,
       demo: [
         { k: "Population", v: p.pop, sub: "Community, 2023" },
         { k: "Growth", v: (p.growth || "").replace(" since 2015", ""), sub: "Since 2015" },
@@ -2938,7 +2938,7 @@ class Component extends DCLogic {
           title: "Overview", hasProse: true, prose: p.note, hasNote: false, note: "",
           rows: [
             { k: "Practice type", v: p.type },
-            { k: "General location", v: p.area + ", TX" },
+            { k: "General location", v: p.area + ", " + this.stateOf(p.market) },
             { k: "Established", v: String(p.est) },
             { k: "Ownership structure", v: p.ownership }
           ]

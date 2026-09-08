@@ -1258,9 +1258,9 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
         c2.setState({ ...patch, detailId: 'seed-1' });
         expect(() => c2.renderVals(), JSON.stringify(patch)).not.toThrow();
       }
-      // …and the Community Context card is the design's own EMPTY state: the labels and the
-      // sub-lines stay, the four values are blank. Vue renders `null` as the empty string, so
-      // `pop` and `income` needed no guard; the two that called `.replace` did.
+      // …and the four figures compute without throwing, which is all A12.6/A12.7 promised: the
+      // populated grid is NOT the design's empty state, and this assertion used to say it was
+      // (final review I1). What the member must actually SEE is the case below.
       const c3: any = new Component({});
       c3.setState({ auth: true, screen: 'detail', detailId: 'seed-1' });
       expect(c3.renderVals().d.demo.map((f: any) => [f.k, f.v, f.sub])).toEqual([
@@ -1269,6 +1269,53 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
         ['Median income', null, 'Household, 2023'],
         ['Households', '', 'In the community']
       ]);
+    });
+
+    // A12.10 / A12.11 (final review I1): the design HAS an empty state — the dashed
+    // "Community data unavailable for this location" card — and `p.id === "p8"` could only ever
+    // reach it for one design fixture. A seeded listing rendered the populated four-tile grid
+    // with every value blank, under the Census attribution, which reads as attributing an empty
+    // panel to the Bureau.
+    it('a listing with no community figures reaches the design’s own empty state (A12.10/A12.11)', () => {
+      const c5: any = new Component({});
+      c5.setState({ auth: true, screen: 'detail', detailId: 'seed-1' });
+      const d = c5.renderVals().d;
+      expect(d.noDemo, 'the dashed "Community data unavailable" card must render').toBe(true);
+      expect(d.hasDemo, 'the populated four-tile grid must not').toBe(false);
+    });
+
+    /** The Overview section's "General location" row — the design's second printing of the state. */
+    const generalLocation = (d: any) =>
+      d.sections.find((sec: any) => sec.title === 'Overview').rows.find((r: any) => r.k === 'General location').v;
+
+    // A12.8 / A12.9 (final review C1): the detail's subtitle and its Overview "General location"
+    // row printed a hard-coded ", TX". Every design fixture is in the Austin metro, so the
+    // literal was right for all twenty-one of them; the eighteen seeded hospitals span seven
+    // states, and thirteen of them would have told a stakeholder they are in Texas. The design's
+    // own `stateOf(market)` helper is what the Browse card and the docked panel already call.
+    it('the detail names the listing’s OWN state, not Texas (A12.8/A12.9)', () => {
+      const denver = { ...NULL_FIGURES, id: 'seed-2', area: 'Denver', market: 'Denver, CO' };
+      (P as unknown as unknown[]).push(denver);
+      try {
+        const c6: any = new Component({});
+        // `s.market` stays the design's default: the detail names the LISTING's state
+        // (`p.market`), not the metro the member happens to be browsing.
+        c6.setState({ auth: true, screen: 'detail', detailId: 'seed-2' });
+        const d = c6.renderVals().d;
+        expect(d.subtitle).toBe('Denver, CO · Established 1987');
+        expect(generalLocation(d)).toBe('Denver, CO');
+      } finally {
+        const arr = P as unknown as Array<{ id: string }>;
+        arr.splice(arr.findIndex((x) => x.id === 'seed-2'), 1);
+      }
+    });
+
+    it('an Austin fixture still reads ", TX" — which is why no approved state moves (A12.8/A12.9)', () => {
+      const c7: any = new Component({});
+      c7.setState({ auth: true, screen: 'detail', detailId: 'p1' });
+      const d = c7.renderVals().d;
+      expect(d.subtitle).toBe('Cedar Park, TX · Established 1998');
+      expect(generalLocation(d)).toBe('Cedar Park, TX');
     });
 
     it('a design fixture practice still renders its community figures exactly as before (A12.6/A12.7)', () => {

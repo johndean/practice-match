@@ -99,11 +99,15 @@ describe('local design amendments (spec D15)', () => {
     // figures D4 leaves null — `renderVals()` computes `detail()` on every render, so an
     // unguarded null was a blank app, not a blank card.
     'A12.6', 'A12.7',
+    // A12.8–A12.11 (final review C1/I1, ruled A-L8): the detail names the listing's own state
+    // through the design's `stateOf` helper, and Community Context reaches the design's own
+    // "Community data unavailable" card when D4 leaves the four figures null.
+    'A12.8', 'A12.9', 'A12.10', 'A12.11',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(78);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(82);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

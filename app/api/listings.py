@@ -193,8 +193,11 @@ def serialise(row: Mapping[str, Any], now: datetime) -> dict[str, Any]:
         "listed": relative_listed(row["listed_at"], now),
         "listed_at": row["listed_at"].isoformat(),
         "status": row["status"],
-        # D4: the community figures stay null until the Census plan supplies them; the UI
-        # shows its existing empty state for them.
+        # D4: the community figures stay null until the Census plan supplies them. The UI then
+        # renders the design's own empty state for them — the dashed "Community data unavailable
+        # for this location" card — which is what amendments A12.10/A12.11 reach (final review I1;
+        # before them a null `pop` rendered the populated four-tile grid with every value blank,
+        # under the Census attribution). A12.6/A12.7 are why a null `growth`/`hh` does not throw.
         "pop": None, "growth": None, "income": None, "hh": None,
         "note": row["note"], "staff": row["staff"], "services": row["services"],
         "facility": row["facility"], "ownership": row["ownership"],
