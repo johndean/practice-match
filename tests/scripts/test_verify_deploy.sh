@@ -332,6 +332,11 @@ if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash script
   stop_server; fail "/api/admin/users answering 200 in coming-soon mode must fail the script; it exited 0 with: $out"
 fi
 [[ "$out" == *"/api/admin/users answered 200 in coming-soon mode"* ]] || { stop_server; fail "the admin-surface failure must name itself; got: $out"; }
+# L6 (I5d.3 review): Task I5d mounts /api/admin/signups unconditionally (D-I5d-5), so the old
+# wording ("the admin surface must not be mounted before launch") now overstates what this probe
+# proves — only /api/admin/users is asserted absent here. The message must say so precisely.
+[[ "$out" == *"/api/admin/users must not be mounted before launch"* && "$out" == *"D-I5d-5"* ]] \
+  || { stop_server; fail "the admin-surface failure must not overstate what it proves (L6, D-I5d-5); got: $out"; }
 stop_server
 
 start_server coming_applications_live production

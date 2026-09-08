@@ -188,7 +188,7 @@ if [[ "$mode" == "coming_soon" ]]; then
   # /api/auth/signup alone could not detect the applications or admin routers being un-gated on
   # their own (Identity plan Task I5, fix round 1, N2).
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/admin/users")
-  [[ "$code" == "404" ]] || { echo "FAIL: /api/admin/users answered $code in coming-soon mode (expected 404 - the admin surface must not be mounted before launch)" >&2; exit 1; }
+  [[ "$code" == "404" ]] || { echo "FAIL: /api/admin/users answered $code in coming-soon mode (expected 404 - /api/admin/users must not be mounted before launch; the sign-ups routes deliberately are, per D-I5d-5)" >&2; exit 1; }
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H 'Content-Type: application/json' -d '{"kind":"buyer","fields":{}}' "$BASE/api/applications")
   [[ "$code" == "404" ]] || { echo "FAIL: /api/applications answered $code in coming-soon mode (expected 404 - the applications surface must not be mounted before launch)" >&2; exit 1; }
   # ...and the listing reads (Seed Listings Task L5, amendment A-L5.1). They are member endpoints
