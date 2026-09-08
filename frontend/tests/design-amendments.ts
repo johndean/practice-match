@@ -34,6 +34,7 @@ function styledElements(html: string): Styled[] {
   return out;
 }
 const decl = (style: string, prop: string) => { const m = new RegExp(`(?:^|;)\\s*${prop}:\\s*([^;]+)`).exec(style); return m ? m[1].trim() : null; };
+
 /** Set, replace or remove ONE declaration in place — never reorders the others (a reorder is a byte change with no rendered effect, and would be a spurious amendment). */
 function setDecl(style: string, prop: string, value: string | null): string {
   const present = new RegExp(`(^|;)(\\s*)${prop}:\\s*[^;]+(;?)`);
@@ -1669,6 +1670,7 @@ const A14_6: Amendment = {
   ].join('\n'),
   count: 1
 };
+
 /** A14.7 — Tab out of the open menu closes it (review round 1, m2 — ruled). John's ruling named
  *  Escape and outside-click; Tab is the third way out of a menu the keyboard can now enter, and
  *  without it the panel stayed open behind the focus ring — the same "a dropdown a keyboard cannot
@@ -1678,8 +1680,9 @@ const A14_6: Amendment = {
  *  Modelled on A13.4's own two closures and registered and torn down beside them, so
  *  `trackMenuDismiss` keeps having exactly one shape. `relatedTarget` is where focus is GOING:
  *  anywhere inside the wrapper (the trigger, another row) is a move within the control, and `null`
- *  is the browser leaving the document — a window blur, which must not close anything. The metro
- *  menu is untouched: this closure reads `giveMenu` and nothing else. */
+ *  is the browser leaving the document — a window blur, which must not close anything. When this
+ *  closure was written it read `giveMenu` and nothing else; A13.8 (applied last) later gave the metro
+ *  listbox the same dismissal inside it. */
 const A14_7: Amendment = {
   id: 'A14.7', ...A14,
   find: [
@@ -1722,7 +1725,6 @@ const A14_7: Amendment = {
   ].join('\n'),
   count: 1
 };
-
 
 /** A14.8 — the last leg of the "opening me closes you" invariant (final review m7 — ruled).
  *  `toggleGiveMenu` and the arrow-open already cleared `navMenu` and `userMenu`, and A14.2 and
