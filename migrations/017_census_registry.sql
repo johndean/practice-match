@@ -55,7 +55,7 @@ INSERT INTO market_state (state_fips, name, reason) VALUES
   ('12','Florida','design market Orlando–Kissimmee–Sanford (36740)'),
   ('13','Georgia','design market Atlanta–Sandy Springs–Roswell (12060)'),
   ('36','New York','A-C0 ¶10 / A-C1 ¶5 — seeds/hospitals.json demo markets (New York)'),
-  ('08','Colorado','A-C0 ¶10 / A-C1 ¶5 — seeds/hospitals.json demo markets (Denver, South Lake Tahoe)');
+  ('08','Colorado','A-C0 ¶10 / A-C1 ¶5 — seeds/hospitals.json demo market (Denver)');
 
 -- §2 dataset register, verbatim. Rows marked unresolved/blocked must not ship (§2, §12).
 INSERT INTO dataset_registry

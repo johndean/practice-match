@@ -50,6 +50,11 @@ def test_market_state_seeds_all_six_demo_states(conn):
     with conn.cursor() as cur:
         cur.execute("SELECT state_fips FROM market_state")
         assert {r[0] for r in cur.fetchall()} == {"06", "08", "12", "13", "36", "48"}
+        # South Lake Tahoe is a California market (seeds/hospitals.json "state": "CA") — Colorado's
+        # only demo market is Denver, so the reason must not credit Colorado with it.
+        cur.execute("SELECT reason FROM market_state WHERE state_fips = '08'")
+        (reason,) = cur.fetchone()
+        assert "South Lake Tahoe" not in reason
 
 
 def test_osm_tiles_note_records_johns_carto_decision_not_pending(conn):
