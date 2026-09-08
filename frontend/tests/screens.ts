@@ -131,9 +131,10 @@ export const SCREENS: Screen[] = [
   // and the six-row bar chart. Picking the metric that already shades the map would reset the
   // comparison (no self-compare), so pick the second option — the menu's first row is
   // "Choose a metric…" (logic.js `compareOptions`). The option lookup is scoped to the
-  // compare menu's own listbox: Browse's native <select>s (market, filters, sort) own the
-  // `option` role too and come first in the DOM, so an unscoped getByRole('option') resolves
-  // to a collapsed <select>'s hidden child on BOTH targets and never clicks.
+  // compare menu's own listbox: Browse's native <select>s (filters, sort) own the `option` role
+  // too and come first in the DOM — as would A13's metro listbox, were it open — so an unscoped
+  // getByRole('option') resolves to a collapsed <select>'s hidden child on BOTH targets and never
+  // clicks. (The metro control is no longer one of them: A13 replaced that <select>.)
   { name: 'browse-compare-open', steps: async (p) => { await browse(p); await click(p, 'Compare'); await layerTrigger(p).nth(1).click(); await p.getByRole('listbox', { name: 'Comparison layer' }).getByRole('option').nth(1).click(); await p.waitForTimeout(400); } },
   // C8: the merged legend/insight card is dismissible.
   { name: 'browse-legend-collapsed', steps: async (p) => { await browse(p); await p.getByRole('button', { name: 'Dismiss interpretation' }).click(); await p.getByRole('button', { name: 'Dismiss interpretation' }).waitFor({ state: 'detached' }); await p.waitForTimeout(400); } },
