@@ -25,7 +25,7 @@ Railway project **Practice Match** (id `d20ecd90-2855-4b7d-957d-96a882b3a95d`) �
 | `RESEND_API_KEY` | | ✓ | **worker only** — the Resend API key. John holds it; never in git, chat, or CI, same rule as `CENSUS_API_KEY`. `railway variable set RESEND_API_KEY=… --service worker --environment <env>`. A worker without it raises on every `mail.send` beat rather than leaving mail silently queued (Identity plan Task I6) |
 | `RESEND_WEBHOOK_SECRET` | ✓ | | **api only** — the `whsec_…` signing secret Resend shows when the endpoint `https://<host>/api/webhooks/resend` is created. Same handling rule. Unset, the route answers `401` to every call rather than trusting one (Identity plan Task I6) |
 | `CENSUS_API_KEY` | | ✓ | Sub-project 3; John holds it — never in git, chat, or CI. `railway variable set CENSUS_API_KEY=… --service worker --environment <env>` |
-| `PERSONA_PASSWORD` | | | **Not a service variable.** Read from the shell by `scripts/seed_persona.py` only, and only outside production: `PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py`. Unset it and the script uses its documented default (`.env.example`). Never set it in Railway — nothing in the api or worker reads it (Identity plan Task I5) |
+| `PERSONA_PASSWORD` | | | **Not read by any service.** `scripts/seed_persona.py` reads it from the shell, and only outside production: `PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py`. Unset it and the script falls back to its own documented default (`scripts/seed_persona.py`'s `DEFAULT_PASSWORD`); stored on the QA `api` service in Railway as the operator's secret store; read by no service; passed to the seed and the harness through the shell; never on production (A-S6.1) (Identity plan Task I5) |
 
 ## DNS (verbatim as Railway printed them — Task 8, 2026-09-06)
 
@@ -118,9 +118,11 @@ rather than through the app, so they belong on this page:
   Every run writes an audit row. **The link is a credential**: send it the way you would a password
   reset, never into a shared log.
 * **QA persona accounts** — `PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py`
-  seeds the six `.test` accounts the visual suite and a QA click-through use. Idempotent, and it
+  seeds the ten `.test` accounts the visual suite and a QA click-through use. Idempotent, and it
   **refuses on production with no override flag** (exit 2). `PERSONA_PASSWORD` is read from the
-  shell only — never a Railway variable.
+  shell by the script itself; stored on the QA `api` service in Railway as the operator's secret
+  store; read by no service; passed to the seed and the harness through the shell; never on
+  production (A-S6.1).
 
 ## Automation tokens
 

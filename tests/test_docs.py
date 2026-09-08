@@ -661,18 +661,26 @@ def test_claude_md_does_not_claim_v2_byte_identity_after_the_launch_removal():
     assert "remains the **pre-V3 oracle**" in text
 
 
-def test_claude_md_counts_the_five_prototype_props_and_says_which_are_read():
+def test_claude_md_counts_the_seven_prototype_props_and_says_which_are_read():
     """Review round 1, M5. The launch-removal section said "the four prototype props" after A5.7
     added a fifth, and described `prototypeBar` as one of the reference's ways into a state — but
     A6.4b removed the only expression that ever read it, so it is declared for the parity check in
-    `app-generated.test.ts` and for nothing else."""
+    `app-generated.test.ts` and for nothing else.
+
+    Final-review I2 (S6 round 2): the account screens (Task S4/S5) added two more the same way —
+    `startNotice` and `startAnswerNote` — so `frontend/src/app.setup.js` declares SEVEN, not five;
+    the count was left at "five" after the enumeration in the same paragraph was widened to name
+    both, so a green pin was actively blocking the correction. The name loop below now iterates all
+    seven, not five, so a future prototype prop added to the design without a matching name here
+    fails this pin rather than passing it silently (I2's own secondary finding)."""
     text = (ROOT / "CLAUDE.md").read_text()
-    assert "All five prototype props stay **declared**" in text
+    assert "All seven prototype props stay **declared**" in text
+    assert "All five prototype props" not in text
     assert "the four prototype props" not in text
     assert "`prototypeBar` is declared for that parity check alone" in text
-    # The five, by name, in the section that lists them.
+    # The seven, by name, in the section that lists them.
     section = text.split("## Launch-removal list")[1]
-    for prop in ("prototypeBar", "startScreen", "startViewport", "startGate", "me"):
+    for prop in ("prototypeBar", "startScreen", "startViewport", "startGate", "me", "startNotice", "startAnswerNote"):
         assert f"`{prop}`" in section, prop
 
 
@@ -1104,3 +1112,113 @@ def test_runbook_qa_parity_sign_in_budget_matches_the_harness_trace():
         f"docs/RUNBOOK-identity.md says {runbook_match.group(1)!r} of thirty sign-ins; "
         f"frontend/tests/harness.ts's traced budget says {harness_match.group(1)!r} — they must agree"
     )
+
+
+# --- S6 fix round 2: every stale statement the final review and its docs-drift sweep found ---------
+
+
+def _collapse_whitespace(text: str) -> str:
+    """Markdown soft-wraps one prose sentence differently in different documents (a table row on
+    one line in `DEPLOY.md`, wrapped across several in `docs/RUNBOOK-identity.md`), so a literal
+    substring search across documents has to look past line breaks to compare the same words."""
+    return re.sub(r"\s+", " ", text)
+
+
+PERSONA_PASSWORD_RAILWAY_NOTE = (
+    "stored on the QA `api` service in Railway as the operator's secret store; read by no service; "
+    "passed to the seed and the harness through the shell; never on production"
+)
+
+
+def test_persona_password_railway_storage_is_one_fact_in_every_document():
+    """Controller ruling A-S6.1 (2026-09-08, final-review I3). `docs/RUNBOOK-identity.md`'s QA
+    parity run (§12) reads `PERSONA_PASSWORD` out of Railway, which `DEPLOY.md`, `.env.example` and
+    this runbook's own §11 all said, before this ruling, could never happen ("never a Railway
+    variable" / "Never set it in Railway"). A-S6.1 settles it — `PERSONA_PASSWORD` IS stored on QA
+    as an operator secret nobody's code reads — so all four sites state ONE fact, in these words.
+    Whitespace is collapsed before comparing (see `_collapse_whitespace`), because the same sentence
+    wraps differently in each document."""
+    deploy = _collapse_whitespace((ROOT / "DEPLOY.md").read_text())
+    example = _collapse_whitespace((ROOT / ".env.example").read_text())
+    runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    section_11 = _collapse_whitespace(runbook.split("## 11. Test and QA accounts")[1].split("## 12.")[0])
+    section_12 = _collapse_whitespace(runbook.split("## 12. QA parity run")[1])
+
+    for name, text in (
+        ("DEPLOY.md", deploy),
+        (".env.example", example),
+        ("docs/RUNBOOK-identity.md §11", section_11),
+        ("docs/RUNBOOK-identity.md §12", section_12),
+    ):
+        assert PERSONA_PASSWORD_RAILWAY_NOTE in text, f"{name} does not carry A-S6.1's sentence verbatim"
+
+
+def test_runbook_qa_parity_command_pins_the_playwright_config_flag():
+    """Final-review docs-drift sweep, item 3. `frontend/tests/playwright.config.ts` is the only
+    Playwright config in the repo, and `frontend/package.json`'s `test:e2e` script already runs
+    `playwright test --config=tests/playwright.config.ts --project=app` from `frontend/`. The QA
+    parity command in the runbook has to match that shape — a bare `npx playwright test
+    --project=app` run from the repo root (no `cd frontend`, no `--config=`) cannot find the config
+    at all."""
+    scripts = json.loads((ROOT / "frontend" / "package.json").read_text())["scripts"]
+    assert "--config=tests/playwright.config.ts --project=app" in scripts["test:e2e"], scripts["test:e2e"]
+    config_files = list((ROOT / "frontend").rglob("playwright.config.ts"))
+    assert [p.relative_to(ROOT / "frontend") for p in config_files] == [Path("tests/playwright.config.ts")], (
+        f"expected exactly one config at frontend/tests/playwright.config.ts, found {config_files}"
+    )
+
+    runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    section_12 = runbook.split("## 12. QA parity run")[1]
+    assert "--config=tests/playwright.config.ts --project=app" in section_12, (
+        "docs/RUNBOOK-identity.md §12's QA parity command does not pass --config=tests/playwright.config.ts"
+    )
+    assert "cd frontend" in section_12, "docs/RUNBOOK-identity.md §12's command no longer cds into frontend/ first"
+
+
+def test_deploy_md_says_ten_test_accounts():
+    """Final-review docs-drift sweep, item 11. `DEPLOY.md`'s QA persona accounts bullet said "the
+    six `.test` accounts" — stale since Task S3/S7 grew the seed to ten (three members, three
+    applicants, four identity-screen accounts)."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "seeds the ten `.test` accounts" in text, "DEPLOY.md does not say the seed produces ten accounts"
+    assert "the six `.test` accounts" not in text
+
+
+def test_spec_names_verify_me_as_the_verify_token_owner():
+    """Final-review docs-drift sweep, item 8. A-S5.2 (S-1) moved the `verify` fixture tokens off
+    `unverified@` and onto a tenth account, `verify-me@`, created solely to own them — consuming one
+    during a test must never confirm the account the check-email/resend states need to stay
+    `unverified`. The design spec's own fixture paragraph still named `unverified@` as the token
+    owner; this pins it against `scripts/seed_persona.py`'s own mapping, which is the fact of
+    record (`tests/test_docs.py::test_the_harness_fixture_tokens_match_the_seed_scripts_pattern_and_the_three_new_state_emails`
+    pins the same mapping on the harness side)."""
+    from scripts import seed_persona
+
+    verify_email, _pattern = seed_persona.FIXTURE_TOKENS["verify"]
+    assert verify_email == "verify-me@practice-match.test"
+
+    spec = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-07-account-screens-design.md").read_text()
+    assert "twelve each of `verify` (for `verify-me@`" in spec, (
+        "the spec's fixtures paragraph no longer names verify-me@ as the verify token owner"
+    )
+    assert "twelve each of `verify` (for `unverified@`" not in spec
+
+
+def test_runbook_uses_the_singular_railway_variable_list_spelling():
+    """Final-review M7 / docs-drift sweep item 7. `CLAUDE.md`'s "Common operations" pins `railway
+    variable list --service api --environment QA --json` (the singular, subcommand form the
+    installed CLI, 5.26.0, documents); the runbook's QA parity command used the plural
+    `railway variables --service api --environment QA --json` instead, which M7 could not rule out
+    as simply wrong for the installed CLI. Pinned so the two spellings of the SAME listing
+    invocation cannot drift apart again — this checks the exact command CLAUDE.md pins, not merely
+    that the word "variable" appears somewhere."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    command_match = re.search(r"railway variable list --service api --environment QA --json", claude)
+    assert command_match, "CLAUDE.md no longer pins the railway variable list command this test compares against"
+
+    runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    assert command_match.group(0) in runbook, (
+        "docs/RUNBOOK-identity.md's QA parity command does not use CLAUDE.md's pinned "
+        "'railway variable list' spelling"
+    )
+    assert "railway variables --service api --environment QA --json" not in runbook

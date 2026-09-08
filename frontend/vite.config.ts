@@ -18,7 +18,7 @@ export default defineConfig({
       provider: 'v8',
       // MEASURED: every hand-written file under `src/` except the exclusions below, plus
       // `tests/design-amendments.ts` — the engine that edits the approved design derives 24 of
-      // the 31 amendments and is held to the same 100 % as `src/` (re-review M7). The set is
+      // the 71 amendments and is held to the same 100 % as `src/` (re-review M7). The set is
       // whatever `src/**` holds, so it grows with the code and no count here stays true for
       // long: it was 14 files when F1 landed on main (2026-09-07), the two most recent
       // additions being `src/dc-logic.js` and `src/lib/leaflet.js`, which moved out of the

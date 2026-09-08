@@ -184,7 +184,9 @@ For reproducing a report, and for the paths the account screens call:
   `application_received` is queued again. Only from `needs_review`, only the caller's own row (a
   row that is neither is one indistinguishable `404`).
 * `GET /api/applications/me` — `current` (the one open row, or the newest row when nothing is open)
-  and `history` behind it, with `info_request`, `decision`, `decision_note` and `decided_at`.
+  and `history` behind it, with `info_request`, `decision`, `decision_note`, `decided_at` and
+  `fields` (the applicant's own last answers — `_mine_row` in `app/api/applications.py` — which is
+  what pre-fills the re-apply form after a decline).
 * `GET /api/config` — public, no credential: `{"market_data_public": false}`. The browser reads it
   before `/api/me` on every page load, and `scripts/verify-deploy.sh` probes it. On production the
   boolean must be `false`.
@@ -307,12 +309,14 @@ While it is mismatched the webhook answers `401`, so bounces are not recorded �
 `scripts/seed_persona.py` seeds the ten accounts the visual suite and a QA click-through need — three
 members (`buyer@`, `seller@`, `design@practice-match.test`, all "Dr. Rachel Mendes of the StartUp
 Club", differing only in grants), three applicants (`pending@`, `needs-review@`,
-`declined@practice-match.test`, one per gate state, each with a real application row) and four
-identity-screen accounts (`unverified@`, `verify-me@`, `verified@`, `invited@practice-match.test`) —
-one per state the sign-up/verify/forgot/reset/accept-invite screens start from. `verify-me@` exists
-solely to own the twelve `verify` fixture tokens, so consuming one during a test never confirms the
-`unverified@` account the check-email/resend states need to stay unverified. Idempotent; run it as
-often as you like.
+`declined@practice-match.test`, one per gate state — only `needs-review@` and `declined@` carry a
+real application row; `pending@` has none) and four identity-screen accounts (`unverified@`,
+`verify-me@`, `verified@`, `invited@practice-match.test`) covering the two states the
+sign-up/verify/forgot/reset/accept-invite screens start from (`unverified@` and `verify-me@` are
+both `unverified`; `verified@` and `invited@` are both `verified`). `verify-me@` exists solely to own
+the twelve `verify` fixture tokens, so consuming one during a test never confirms the `unverified@`
+account the check-email/resend states need to stay unverified. Idempotent; run it as often as you
+like.
 
 ```bash
 PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py
@@ -320,9 +324,12 @@ PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py
 
 * It **refuses on production, with no override flag** (exit 2). A fixture account holding `admin` on
   the stakeholders' real data is not something a `--yes` should be able to buy.
-* `PERSONA_PASSWORD` is read from the shell only — never a Railway variable, nothing in the api or
-  worker reads it. Unset, the script uses its documented default (`.env.example`), which is also the
-  Playwright harness's default and is pinned equal to it by
+* `PERSONA_PASSWORD` is stored on the QA `api` service in Railway as the operator's secret store;
+  read by no service; passed to the seed and the harness through the shell; never on production
+  (A-S6.1) — `scripts/seed_persona.py` and the Playwright harness read it from the shell they are
+  given, never Railway directly. Unset, the script falls back to its own documented default
+  (`scripts/seed_persona.py`'s `DEFAULT_PASSWORD`), which is also the Playwright harness's default
+  and is pinned equal to it by
   `tests/test_docs.py::test_the_playwright_persona_password_default_matches_seed_persona`.
 * The addresses are all `.test` (RFC 6761): never deliverable, by design. They are also why the QA
   `EMAIL_ALLOWLIST` can stay empty.
@@ -337,20 +344,31 @@ whichever project — reseeds QA's fixtures automatically, before the first test
 step and cannot leave QA's fixtures mutated for whoever opens it next.
 
 ```bash
-railway status                                                                  # must print: Project: Practice Match
-railway variables --service api --environment QA --json > /tmp/pm-qa-vars.json  # names AND values — never cat this file
+railway status                                                                       # must print: Project: Practice Match
+railway variable list --service api --environment QA --json > /tmp/pm-qa-vars.json   # names AND values — never cat this file
+cd frontend
 env $(python3 -c 'import json; d = json.load(open("/tmp/pm-qa-vars.json")); print(" ".join(f"{k}={d[k]}" for k in ("DATABASE_URL","PERSONA_PASSWORD","API_SECRET_KEY","ENVIRONMENT","REDIS_URL")))') \
-    PW_APP_URL=https://qa.foundation.vin npx playwright test --project=app
+    PW_APP_URL=https://qa.foundation.vin npx playwright test --config=tests/playwright.config.ts --project=app
 rm -f /tmp/pm-qa-vars.json
 ```
+
+`npm run test:e2e` is the same command (`frontend/package.json`'s script already carries
+`--config=tests/playwright.config.ts --project=app`; `frontend/tests/playwright.config.ts` is the
+only config in the repo), with `PW_APP_URL` and the five variables set ahead of it instead.
 
 * The reseed needs exactly five variables — `DATABASE_URL`, `PERSONA_PASSWORD`, `API_SECRET_KEY`,
   `ENVIRONMENT`, `REDIS_URL` — pulled from Railway in the one JSON read above and handed straight
   into the subprocess environment; a refusal names whichever of the five is missing. Never print
-  the file, and delete it when you are done.
-* It refuses any host outside `qa.foundation.vin`, `localhost` or `127.0.0.1`, and refuses
-  `ENVIRONMENT=production` outright — the run does not start rather than reseeding the wrong
-  database. What it prints instead is the target database name and host, never the DSN.
+  the file, and delete it when you are done. `PERSONA_PASSWORD` is stored on the QA `api` service in
+  Railway as the operator's secret store; read by no service; passed to the seed and the harness
+  through the shell; never on production (A-S6.1) — the other four are real `Settings` fields the
+  api and worker also read.
+* On a refusal — a host outside `qa.foundation.vin`/`localhost`/`127.0.0.1`, or
+  `ENVIRONMENT=production` — the planner prints `remote reseed refuses this target:
+  <host>/<ENVIRONMENT> — only QA and local test hosts may be reseeded`
+  (`frontend/tests/global-setup.ts`) and the run never starts. When it DOES run, the seed itself
+  prints the target database name and host, never the DSN (`[seed_persona] target database <db> on
+  <host>`, `scripts/seed_persona.py`).
 * QA's real sign-in rate limit stays real: fourteen of `SIGNIN_IP`'s thirty sign-ins per FIXED
   fifteen-minute window are enough for one full parity run (`frontend/tests/harness.ts`'s traced
   budget: 7 + 2 + 3 + 1 + 1), so budget **one run per window**. A `429` mid-run means wait for the
