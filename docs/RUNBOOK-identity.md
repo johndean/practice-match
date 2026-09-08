@@ -324,9 +324,11 @@ PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py
 
 * It **refuses on production, with no override flag** (exit 2). A fixture account holding `admin` on
   the stakeholders' real data is not something a `--yes` should be able to buy.
-* `PERSONA_PASSWORD` is stored on the QA `api` service in Railway as the operator's secret store;
-  read by no service; passed to the seed and the harness through the shell; never on production
-  (A-S6.1) — `scripts/seed_persona.py` and the Playwright harness read it from the shell they are
+* `PERSONA_PASSWORD` is held in the operator's macOS Keychain (service `practice-match-qa`, account
+  `PERSONA_PASSWORD`; read with `security find-generic-password -a PERSONA_PASSWORD -s
+  practice-match-qa -w` into a subprocess environment, never printed); read by no service; passed to
+  the seed and the harness through the shell; never on production (A-S6.2, superseding A-S6.1) —
+  `scripts/seed_persona.py` and the Playwright harness read it from the shell they are
   given, never Railway directly. Unset, the script falls back to its own documented default
   (`scripts/seed_persona.py`'s `DEFAULT_PASSWORD`), which is also the Playwright harness's default
   and is pinned equal to it by
@@ -356,7 +358,8 @@ can still mean something remotely.
 railway status                                                                       # must print: Project: Practice Match
 railway variable list --service api --environment QA --json > /tmp/pm-qa-vars.json   # names AND values — never cat this file
 cd frontend
-env $(python3 -c 'import json; d = json.load(open("/tmp/pm-qa-vars.json")); print(" ".join(f"{k}={d[k]}" for k in ("DATABASE_URL","PERSONA_PASSWORD","API_SECRET_KEY","ENVIRONMENT","REDIS_URL")))') \
+env $(python3 -c 'import json; d = json.load(open("/tmp/pm-qa-vars.json")); print(" ".join(f"{k}={d[k]}" for k in ("DATABASE_URL","API_SECRET_KEY","ENVIRONMENT","REDIS_URL")))') \
+    PERSONA_PASSWORD="$(security find-generic-password -a PERSONA_PASSWORD -s practice-match-qa -w)" \
     PW_APP_URL=https://qa.foundation.vin npx playwright test --config=tests/playwright.config.ts --project=app
 rm -f /tmp/pm-qa-vars.json
 ```
@@ -366,12 +369,14 @@ rm -f /tmp/pm-qa-vars.json
 only config in the repo), with `PW_APP_URL` and the five variables set ahead of it instead.
 
 * The reseed needs exactly five variables — `DATABASE_URL`, `PERSONA_PASSWORD`, `API_SECRET_KEY`,
-  `ENVIRONMENT`, `REDIS_URL` — pulled from Railway in the one JSON read above and handed straight
-  into the subprocess environment; a refusal names whichever of the five is missing. Never print
-  the file, and delete it when you are done. `PERSONA_PASSWORD` is stored on the QA `api` service in
-  Railway as the operator's secret store; read by no service; passed to the seed and the harness
-  through the shell; never on production (A-S6.1) — the other four are real `Settings` fields the
-  api and worker also read.
+  `ENVIRONMENT`, `REDIS_URL`; a refusal names whichever of the five is missing. Four are pulled from
+  Railway in the one JSON read above and handed straight into the subprocess environment; never
+  print that file, and delete it when you are done. `PERSONA_PASSWORD` is held in the operator's
+  macOS Keychain (service `practice-match-qa`, account `PERSONA_PASSWORD`; read with
+  `security find-generic-password -a PERSONA_PASSWORD -s practice-match-qa -w` into a subprocess
+  environment, never printed); read by no service; passed to the seed and the harness through the
+  shell; never on production (A-S6.2, superseding A-S6.1) — the other four are real `Settings`
+  fields the api and worker also read.
 * On a refusal — a host outside `qa.foundation.vin`/`localhost`/`127.0.0.1`, or
   `ENVIRONMENT=production` — the planner prints `remote reseed refuses this target:
   <host>/<ENVIRONMENT> — only QA and local test hosts may be reseeded`
