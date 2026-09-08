@@ -130,11 +130,14 @@ def test_main_requires_a_subcommand(capsys):
     assert exc.value.code == 2
 
 
-def test_cmd_tiger_exits_three_naming_the_missing_contact_email(monkeypatch, capsys):
+def test_cmd_tiger_exits_two_naming_the_missing_contact_email(monkeypatch, capsys):
+    """A-C4 ¶2 / M-1 (A3 and A4 reviews): a missing CENSUS_CONTACT_EMAIL is "refused before
+    anything was opened" -- exit 2, not 3, which the shared scheme reserves for "database
+    unreachable" so the two failures cannot collide on one code."""
     monkeypatch.delenv("CENSUS_CONTACT_EMAIL", raising=False)
     with pytest.raises(SystemExit) as exc:
         census_load.main(["tiger"])
-    assert exc.value.code == 3
+    assert exc.value.code == 2
     assert "CENSUS_CONTACT_EMAIL" in capsys.readouterr().err
 
 
@@ -146,15 +149,15 @@ def test_cmd_tiger_returns_two_without_a_database_url(monkeypatch, capsys):
     assert "DATABASE_URL" in capsys.readouterr().err
 
 
-def test_cmd_tiger_returns_four_when_the_database_is_unreachable(monkeypatch, capsys):
+def test_cmd_tiger_returns_three_when_the_database_is_unreachable(monkeypatch, capsys):
     monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
-    assert census_load.main(["tiger"]) == 4
+    assert census_load.main(["tiger"]) == 3
     assert "database unreachable" in capsys.readouterr().err
 
 
-def test_cmd_tiger_returns_five_when_the_boundary_download_fails(scratch_dsn, monkeypatch, capsys):
+def test_cmd_tiger_returns_four_when_the_boundary_download_fails(scratch_dsn, monkeypatch, capsys):
     from app.census.client import CensusHTTPError
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
@@ -165,7 +168,7 @@ def test_cmd_tiger_returns_five_when_the_boundary_download_fails(scratch_dsn, mo
 
     monkeypatch.setattr(census_tiger, "load_boundaries", fake)
 
-    assert census_load.main(["tiger"]) == 5
+    assert census_load.main(["tiger"]) == 4
     assert "boundary download failed" in capsys.readouterr().err
 
 

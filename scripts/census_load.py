@@ -7,11 +7,13 @@ docker-compose. Every subcommand is idempotent.
 (`app/census/tiger.py`) for every state `market_state` names, into `geo_area`. Later tasks
 (A5-A9) add `--acs`, `--cbp`, `--qwi`, `--activate`, … to the same subparser tree.
 
-Exit codes: 0 done; 2 refused before anything is opened (no subcommand -- argparse's own exit --
-or `DATABASE_URL` unset); 3 a required Census setting is missing (`require_key`/`require_contact`
-in `app/census/client.py`, A-C3: `SystemExit(3)`, naming the variable); 4 the database is
-unreachable (retryable); 5 the boundary download itself failed (`CensusHTTPError`, its message
-already redacted -- A-C3 (3)).
+Exit codes follow the shared scheme every `census_load.py` subcommand uses (A-C4 ¶2, aligned
+with `scripts/seed_listings.py`): 0 done; 2 refused before anything is opened (no subcommand --
+argparse's own exit -- `DATABASE_URL` unset, or a required Census setting missing --
+`require_key`/`require_contact` in `app/census/client.py` now raise `SystemExit(2)`, superseding
+A-C3 ¶2's `SystemExit(3)`); 3 the database is unreachable (retryable); 4 a download or API fetch
+failed (`CensusHTTPError`, its message already redacted -- A-C3 (3)); 5 reserved for validation
+failures (missing variables, malformed body, bounds) once a subcommand that can hit them lands.
 
 The `app.*` imports are inside each `cmd_*` function for the reason `scripts/bootstrap_admin.py`
 and `scripts/reset_rate_limits.py` record: `python scripts/census_load.py` puts `scripts/` on
@@ -66,7 +68,7 @@ def cmd_tiger(args: argparse.Namespace) -> int:
         conn = _conn(dsn)
     except psycopg2.OperationalError as exc:
         print(f"[census_load] database unreachable: {type(exc).__name__}", file=sys.stderr)
-        return 4
+        return 3
     with conn.cursor() as cur:
         cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
         states = [r[0] for r in cur.fetchall()]
@@ -83,7 +85,7 @@ def cmd_tiger(args: argparse.Namespace) -> int:
         except CensusHTTPError as exc:
             # CensusHTTPError's own message is already redacted (A-C3 (3)).
             print(f"[census_load] boundary download failed: {exc}", file=sys.stderr)
-            return 5
+            return 4
     for k, n in counts.items():
         print(f"  {k}: {n} rows")
     return 0
