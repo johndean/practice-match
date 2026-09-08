@@ -19,6 +19,25 @@ import { MANIFEST_PATH, SNAPSHOT_DIR, UNCHANGED_SCREENS, hashBaselines } from '.
 // as well by the DOM oracle (node-for-node identical to the amended V3 reference) plus the
 // zero-tolerance pixel gate. A moved hash means a CODE change moved a screen the design did
 // not: stop and diff, never re-write the manifest.
+//
+// Amendment A14 (John, 2026-09-08: "the Give button must be identical to the
+// https://vinfoundation.org/ where the button is an actual drop down (match button design
+// pixel-by-pixel)", and on the font: "Self-host Montserrat 600 under the SIL Open Font Licence,
+// scoped exclusively to the Give button and its menu. Keep the rest of the design typography
+// unchanged.") re-based the manifest a third time. The Give control is ONE unconditional
+// <button> at V3:104, outside both the signedIn and the signedOut blocks, so it is in the header
+// of every desktop screen; A14 changes its face, size, weight, padding and radius and gives it a
+// chevron, which reflows the header's flex row everywhere it appears. Ruled design change,
+// applied through the D15 engine, so the design and the app moved together — the DOM oracle
+// stayed node-for-node identical and the pixel gate stayed at maxDiffPixels: 0 throughout.
+//
+// ELEVEN of the thirteen moved, not thirteen: `mobile-list` and `mobile-detail` are captured
+// inside the prototype's 390x800 phone frame, which renders its own mobile header and never the
+// desktop one, so the Give control is not on those two screenshots at all. Their hashes are
+// UNCHANGED across A14 — which is the tidiest available proof that this amendment reached
+// nothing but the desktop header, since a font or token leak would have moved them too.
+//
+// From here a moved hash means a CODE change moved a screen the design did not.
 const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as { platform: string; screens: Record<string, string> };
 
 // The manifest is a within-worktree leak detector (spec D13 / Global Constraint (l2)), not a

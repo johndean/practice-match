@@ -271,5 +271,21 @@ export const SCREENS: Screen[] = [
   // state, but the panel the ruling is ABOUT would never be photographed or serialised. Reached
   // the same way `browse-layer-menu` is: click, then wait for the thing the state exists to show,
   // then the 400 ms settle every Browse state was taken with.
-  { name: 'browse-metro-menu', steps: async (p) => { await browse(p); await p.getByRole('button', { name: 'Metro area' }).click(); await p.getByRole('listbox', { name: 'Metro area' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } }
+  { name: 'browse-metro-menu', steps: async (p) => { await browse(p); await p.getByRole('button', { name: 'Metro area' }).click(); await p.getByRole('listbox', { name: 'Metro area' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
+  // A14: the Give dropdown, open — the 45th approved state, APPENDED for the same reason A13's
+  // was (`cross-plan-deltas.test.ts`'s `SCREENS.slice(0, 28)` pins the 28 Browse V3 states to
+  // their positions; a new state goes on the end, never in the middle).
+  //
+  // The Give trigger is in the header of EVERY screen — one unconditional <button> at V3:104 — so
+  // its closed state is already photographed 44 times over. The OPEN panel, which is what John's
+  // ruling is about, would otherwise never be photographed or serialised at all. `browse` is the
+  // screen a member actually meets it on. Both targets reach it identically: there is no
+  // prototype prop for it and none is needed, because it is a plain click on markup the design
+  // and the app both render. Waited on the LAST of the four links, so the panel is fully painted.
+  { name: 'header-give-menu', steps: async (p) => {
+    await browse(p);
+    await p.getByRole('button', { name: 'Give' }).click();
+    await p.getByRole('menuitem', { name: 'Dr. Sophia Yin Memorial Fund' }).waitFor({ state: 'visible' });
+    await p.waitForTimeout(400);
+  } }
 ];
