@@ -298,6 +298,13 @@ describe('local design amendments (spec D15)', () => {
     // button that says what it opens, and the four markets are options in a labelled listbox.
     expect(amended).toContain('aria-label="Metro area" aria-haspopup="listbox"');
     expect(amended).toContain('<div role="listbox" aria-label="Metro area"');
+    // A13 round 3: `aria-activedescendant` belongs on the element that HOLDS FOCUS. Focus stays
+    // on the trigger button — the role="listbox" div is not focusable and never receives it — so
+    // on the panel the attribute is inert and no screen reader reads it.
+    expect(amended, 'aria-activedescendant must sit on the focused trigger')
+      .toContain('aria-expanded="{{ marketMenuOpen }}" aria-activedescendant="{{ marketActiveId }}"');
+    expect(amended, 'and not on the panel, which never holds focus')
+      .not.toContain('<div role="listbox" aria-label="Metro area" aria-activedescendant=');
     expect(amended).not.toContain('onChange="{{ setMarket }}"');
     // The five filter selects, the sort select and the wizard's stay native (scope, Q1).
     expect((amended.match(/<select /g) ?? []).length, 'A13 changed a select outside its scope').toBe(4);

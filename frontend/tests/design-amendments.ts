@@ -1191,7 +1191,9 @@ const A13_2: Amendment = {
     '      // system\'s popup: the same trigger + role="listbox" panel the Market data card uses.',
     '      marketMenuOpen: !!s.marketMenu,',
     '      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")) }),',
-    '      marketActiveId: "market-opt-" + s.marketMenuAt,',
+    '      // On the TRIGGER, which is always rendered: a shut menu has no active descendant, and',
+    '      // null is what both renderers omit the attribute for (a string would spell a dead id).',
+    '      marketActiveId: s.marketMenu ? "market-opt-" + s.marketMenuAt : null,',
     '      marketTriggerLabel: (s.market || "Austin, TX") + " metro",',
     '      marketFieldStyle: "position: relative; display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 8px 0 15px; min-width: 300px; background: var(--vf-neutral); border: 1px solid " +',
     '        (s.marketMenu ? "var(--vf-accent)" : "var(--border-subtle)") + "; border-radius: 6px;",',
@@ -1243,7 +1245,9 @@ const A13_2: Amendment = {
  *  `position: relative` so the panel can anchor to it, exactly as the "More filters" wrapper does
  *  (V3:379); the search glyph is untouched; the `<select>` becomes the layer menu's trigger
  *  (V3:431–434) and its panel (V3:523–534) with the chip swatch left out — markets have no colour
- *  ramp, and absent beats faked. */
+ *  ramp, and absent beats faked. Each row carries an `id` and the TRIGGER carries
+ *  `aria-activedescendant` — the focused element is the only place a screen reader reads it, and
+ *  focus stays on the trigger throughout (round 3 ruling; it sat on the panel, inert, in round 2). */
 const A13_3: Amendment = {
   id: 'A13.3', ...A13,
   find: [
@@ -1259,12 +1263,12 @@ const A13_3: Amendment = {
   replace: [
     '          <div ref="{{ marketMenuRef }}" style="{{ marketFieldStyle }}">',
     '            <img src="assets/icons/sub-search.svg" alt="" width="14" height="14" style="opacity: .45;">',
-    '            <button onClick="{{ toggleMarketMenu }}" onKeyDown="{{ marketMenuKeys }}" aria-label="Metro area" aria-haspopup="listbox" aria-expanded="{{ marketMenuOpen }}" style="{{ marketSelectStyle }}">',
+    '            <button onClick="{{ toggleMarketMenu }}" onKeyDown="{{ marketMenuKeys }}" aria-label="Metro area" aria-haspopup="listbox" aria-expanded="{{ marketMenuOpen }}" aria-activedescendant="{{ marketActiveId }}" style="{{ marketSelectStyle }}">',
     '              <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ marketTriggerLabel }}</span>',
     '              <img src="assets/icons/sub-chevron.svg" alt="" width="14" height="14" style="{{ marketCaretStyle }}">',
     '            </button>',
     '            <sc-if value="{{ marketMenuOpen }}" hint-placeholder-val="{{ false }}">',
-    '              <div role="listbox" aria-label="Metro area" aria-activedescendant="{{ marketActiveId }}" style="position: absolute; left: 0; top: 46px; z-index: 700; width: 300px; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;" class="rf-scroll">',
+    '              <div role="listbox" aria-label="Metro area" style="position: absolute; left: 0; top: 46px; z-index: 700; width: 300px; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;" class="rf-scroll">',
     '                <sc-for list="{{ marketOptions }}" as="m" hint-placeholder-count="4">',
     '                  <button onClick="{{ m.go }}" id="{{ m.optId }}" role="option" aria-selected="{{ m.selected }}" style="{{ m.rowStyle }}" style-hover="background: var(--vf-neutral);">',
     '                    <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ m.label }}</span>',

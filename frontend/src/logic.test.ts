@@ -1515,6 +1515,10 @@ describe('A13 — the metro dropdown', () => {
   // the highlighted one, and moving the highlight scrolls that row into view.
   it('aria-activedescendant follows the arrow-key highlight', () => {
     const key = (k: string) => { c.renderVals().marketMenuKeys({ key: k, preventDefault: vi.fn() }); };
+    // Round 3: the attribute moved to the TRIGGER, which is rendered on every Browse screen — so
+    // while the menu is shut it must name nothing at all, rather than the "market-opt--1" that a
+    // closed `marketMenuAt` of -1 would spell. Null, so React and Vue both omit the attribute.
+    expect(c.renderVals().marketActiveId, 'a closed menu has no active descendant').toBeNull();
     c.renderVals().toggleMarketMenu();
     expect(c.renderVals().marketOptions.map((o: any) => o.optId))
       .toEqual(['market-opt-0', 'market-opt-1', 'market-opt-2', 'market-opt-3']);

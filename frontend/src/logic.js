@@ -1567,7 +1567,9 @@ class Component extends DCLogic {
       // system's popup: the same trigger + role="listbox" panel the Market data card uses.
       marketMenuOpen: !!s.marketMenu,
       toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")) }),
-      marketActiveId: "market-opt-" + s.marketMenuAt,
+      // On the TRIGGER, which is always rendered: a shut menu has no active descendant, and
+      // null is what both renderers omit the attribute for (a string would spell a dead id).
+      marketActiveId: s.marketMenu ? "market-opt-" + s.marketMenuAt : null,
       marketTriggerLabel: (s.market || "Austin, TX") + " metro",
       marketFieldStyle: "position: relative; display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 8px 0 15px; min-width: 300px; background: var(--vf-neutral); border: 1px solid " +
         (s.marketMenu ? "var(--vf-accent)" : "var(--border-subtle)") + "; border-radius: 6px;",
