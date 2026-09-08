@@ -35,7 +35,7 @@ import { MEMO_FILE, isStaleMemoFile, runId } from './harness';
  *  the local `api` web server for the same three scripts. `import.meta.url` rather than
  *  `__dirname`: this module is ESM under both Playwright's loader and vitest, and `harness.ts`
  *  resolves the design bundle the same way. */
-export const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
+const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
 /**
  * Every variable a remote reseed needs, in the order the refusal names them (fix round 1, ruling
@@ -55,6 +55,38 @@ export const REMOTE_RESEED_REQUIRED = ['DATABASE_URL', 'PERSONA_PASSWORD', 'API_
  *  silently skipped the reseed would photograph whatever the LAST run left behind. */
 export function remoteReseedError(missing: readonly string[]): string {
   return `a remote run must reseed the target's fixtures first; missing: ${missing.join(', ')}`;
+}
+
+/**
+ * The only hosts a remote reseed may be pointed at (fix round 2, I1 — review of efef060..11ad3f1).
+ *
+ * An ALLOW-list, deliberately, not a deny-list of `foundation.vin`: a new production host, a
+ * preview deployment or a typo is then refused by default rather than reseeded because nobody
+ * thought to add it. `qa.foundation.vin` is the QA deployment; `localhost` and `127.0.0.1` are a
+ * developer pointing `PW_APP_URL` at their own stack, which is a test host by construction.
+ *
+ * The reason this check exists at all: `reseedRemoteFixtures` spawns the seed with the INHERITED
+ * environment, so the database it rewrites is whatever `DATABASE_URL` holds in the shell —
+ * unrelated to the `PW_APP_URL` the tests then photograph. Before S7, running the seed was a
+ * deliberate act; now it is a side effect of `playwright test`, and `ENVIRONMENT` (the seed's own
+ * production refusal, `scripts/seed_persona.py`) is pulled from that same ambient shell. This
+ * refuses the whole run before anything is spawned. It is a refusal, not a skip flag: the run does
+ * not continue unreseeded, it does not start.
+ */
+export const RESEEDABLE_HOSTS = ['qa.foundation.vin', 'localhost', '127.0.0.1'] as const;
+
+/** The target as the refusal names it: `<host>/<ENVIRONMENT>`. The raw `PW_APP_URL` is never
+ *  echoed — a URL may carry credentials — so an unparseable one is reported as its shape only. */
+function describeTarget(env: NodeJS.ProcessEnv): { host: string; refusable: boolean; label: string } {
+  let host: string;
+  try {
+    host = new URL(env.PW_APP_URL ?? '').hostname;
+  } catch {
+    host = '(unparseable)';
+  }
+  const environment = env.ENVIRONMENT ?? '';
+  const refusable = !(RESEEDABLE_HOSTS as readonly string[]).includes(host) || environment.toLowerCase() === 'production';
+  return { host, refusable, label: `${host}/${environment || '(unset)'}` };
 }
 
 export interface RemoteReseedPlan {
@@ -85,6 +117,12 @@ export interface RemoteReseedPlan {
  */
 export function remoteReseedPlan(env: NodeJS.ProcessEnv): RemoteReseedPlan {
   if (!env.PW_APP_URL) return { run: false };
+  // The TARGET is judged first (fix round 2, I1): telling an operator who has aimed a reseed at
+  // production to "set DATABASE_URL" would be advice to make the accident possible.
+  const target = describeTarget(env);
+  if (target.refusable) {
+    return { run: false, error: `remote reseed refuses this target: ${target.label} — only QA and local test hosts may be reseeded` };
+  }
   const missing = REMOTE_RESEED_REQUIRED.filter((name) => !env[name]);
   if (missing.length > 0) return { run: false, error: remoteReseedError(missing) };
   return { run: true };

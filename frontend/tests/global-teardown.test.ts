@@ -1,5 +1,17 @@
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { teardownReseed } from './global-teardown';
+
+/** The default export's body, comment lines stripped so a commented-out call cannot satisfy a
+ *  pin — the same source-text idiom `playwright-config.test.ts` uses on the config's own keys. */
+function defaultExportOf(file: string): string {
+  const source = readFileSync(fileURLToPath(new URL(`./${file}`, import.meta.url)), 'utf8')
+    .replace(/^\s*(\/\/|\*|\/\*).*$/gm, '');
+  const at = source.indexOf('export default function');
+  expect(at, `${file} has a default export`).toBeGreaterThan(-1);
+  return source.slice(at);
+}
 
 // ---------------------------------------------------------------------------------------
 // Fix round 1, ruling 1 (2026-09-08). John's sentence has two halves and `globalSetup` only met
@@ -39,6 +51,11 @@ describe('global teardown (S7 fix round 1)', () => {
   it('reports a failed reseed rather than swallowing it', () => {
     expect(() => teardownReseed(REMOTE, () => { throw new Error('Command failed: poetry run python scripts/seed_persona.py'); }))
       .toThrow('Command failed: poetry run python scripts/seed_persona.py');
+  });
+
+  // Fix round 2, I2: the default export is what Playwright calls, and nothing imported it.
+  it('is what the default export does — the line the whole "after" half hangs on', () => {
+    expect(defaultExportOf('global-teardown.ts')).toContain('teardownReseed(process.env);');
   });
 
   it('refuses, through the same planner, a remote run that cannot reseed', () => {

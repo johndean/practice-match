@@ -78,6 +78,7 @@ from contextlib import closing
 from datetime import timedelta
 from pathlib import Path
 from typing import cast
+from urllib.parse import urlsplit
 from uuid import UUID
 
 # Unconditionally, before the `app.*` imports inside `main()`: `python scripts/<this>.py` puts
@@ -217,6 +218,19 @@ FIXTURE_EMAILS: tuple[str, ...] = (
 SEED_LOCK_KEY = 0x5EEDF00D
 
 
+def target_of(dsn: str) -> str:
+    """`<database name> on <host>`, parsed out of the DSN — never the DSN, never a credential.
+
+    Fix round 2, I1 (review of efef060..11ad3f1): since Task S7 the seed runs as a SIDE EFFECT of a
+    remote `playwright test` invocation, against whatever `DATABASE_URL` the shell holds, so the
+    run log has to say which database it rewrote or a wrong target is invisible. `urlsplit` gives
+    the host and the path without the userinfo; a libpq keyword DSN parses to neither, and reports
+    itself honestly as `?`, which is still not a credential.
+    """
+    parts = urlsplit(dsn)
+    return f"{parts.path.lstrip('/') or '?'} on {parts.hostname or '?'}"
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     from app.auth import audit
     from app.auth import passwords as P
@@ -229,6 +243,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if settings.environment.lower() == "production":
         print("[seed_persona] refusing to run against production — this is a fixture account", file=sys.stderr)
         return 2
+
+    # The first line of stdout, and after the production refusal above — whose contract is an
+    # EMPTY stdout (`tests/scripts/test_bootstrap_admin.sh`). See `target_of`.
+    print(f"[seed_persona] target database {target_of(settings.database_url)}")
 
     # Hashed before the connection is opened: Argon2id is ~97 ms and nothing should hold a Postgres
     # backend idle-in-transaction across it (I4 fix round 1, Important 5).
@@ -389,6 +407,12 @@ def main(argv: Sequence[str] | None = None) -> int:
         # no foreign key to `account`.
         cur.execute("DELETE FROM email_outbox WHERE to_email ~ %s", (THROWAWAY_EMAIL_PATTERN,))
         cur.execute("DELETE FROM email_suppression WHERE email ~ %s", (THROWAWAY_EMAIL_PATTERN,))
+        # The three references to `account(id)` that do NOT cascade are `application.decided_by`,
+        # `role_grant.granted_by` (migrations/011) and `api_token.created_by` (migrations/012). A
+        # throwaway holds none of them by construction — it is an `unverified` account created by a
+        # sign-up and never signed into, so it decides nothing, grants nothing and mints nothing —
+        # but if a later task ever gives one any of the three, THIS statement is what dies on the
+        # foreign key, and every remote run fails until somebody cleans up by hand (fix round 2, M5).
         cur.execute("DELETE FROM account WHERE email ~ %s", (THROWAWAY_EMAIL_PATTERN,))
     print(f"[seed_persona] {PERSONA_EMAIL} is ready on {settings.environment} — roles: {', '.join(PERSONA_ROLES)}")
     oracles = ", ".join(f"{email} ({'+'.join(roles)})" for email, roles in ORACLE_PERSONAS)

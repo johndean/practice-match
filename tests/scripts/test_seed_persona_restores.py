@@ -48,6 +48,7 @@ from __future__ import annotations
 import contextlib
 import io
 import json
+import re
 from typing import Any
 
 from app.auth import passwords as P
@@ -86,13 +87,14 @@ def _fixture_emails() -> tuple[str, ...]:
     return seed_persona.FIXTURE_EMAILS
 
 
-def _run_seed() -> None:
+def _run_seed() -> str:
     """`main([])` in THIS process so pytest-cov sees the script's own lines (the pattern
-    `tests/api/test_admin_users.py::_run_cli` uses); stdout is swallowed, never asserted on here."""
+    `tests/api/test_admin_users.py::_run_cli` uses). Returns stdout, which one test below reads."""
     out = io.StringIO()
     with contextlib.redirect_stdout(out):
         code = seed_persona.main([])
     assert code == 0, out.getvalue()
+    return out.getvalue()
 
 
 def _token_labels() -> dict[str, str]:
@@ -345,3 +347,29 @@ def test_the_seed_removes_the_run_s_throwaway_sign_ups_and_not_a_lookalike(conn,
         cur.execute("SELECT to_email FROM email_outbox WHERE to_email = ANY(%s)",
                     ([THROWAWAY_EMAIL, LOOKALIKE_EMAIL],))
         assert [row[0] for row in cur.fetchall()] == [LOOKALIKE_EMAIL], "and so does its queued mail"
+
+
+def test_the_seed_names_the_database_it_is_about_to_rewrite_and_no_credential(conn, capsys, monkeypatch):
+    """Fix round 2, I1 (review of efef060..11ad3f1). The reseed now happens as a SIDE EFFECT of
+    `playwright test`, against whatever `DATABASE_URL` the shell holds — so the run log has to say
+    which database was rewritten, or a wrong target is invisible until someone notices the data.
+
+    The line names the host and the database NAME only, parsed out of the DSN. Never the DSN, never
+    a credential: `tests/scripts/test_bootstrap_admin.sh` greps this file for a printed password and
+    `app/config.py`'s own failure path prints variable names only, for the same reason.
+    """
+    monkeypatch.setenv("PERSONA_PASSWORD", PERSONA_PW)
+    printed = _run_seed()
+
+    from app.config import settings
+    dsn = settings.database_url
+    first = printed.splitlines()[0]
+    assert re.fullmatch(r"\[seed_persona\] target database pm_test_[0-9a-f]{8} on localhost", first), first
+
+    assert dsn not in printed, "the DSN itself is never printed"
+    assert "://" not in printed, "nor any fragment shaped like one"
+    for secret in ("pm_dev_pw", PERSONA_PW, seed_persona.DEFAULT_PASSWORD):
+        assert secret not in printed, secret
+    # …and it really is the FIRST line, so a wrong target is at the top of the run log rather than
+    # under ten addresses.
+    assert printed.index(first) == 0

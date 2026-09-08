@@ -1,7 +1,8 @@
-import { existsSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
-import { REMOTE_RESEED_REQUIRED, remoteReseedError, remoteReseedPlan, reseedRemoteFixtures } from './global-setup';
+import { RESEEDABLE_HOSTS, REMOTE_RESEED_REQUIRED, remoteReseedError, remoteReseedPlan, reseedRemoteFixtures } from './global-setup';
 
 // ---------------------------------------------------------------------------------------
 // Task S7 (John's ruling, 2026-09-08): "Before Task I10, add a deterministic test-fixture
@@ -67,6 +68,64 @@ describe('remoteReseedPlan (S7)', () => {
     );
   });
 
+  // ---------------------------------------------------------------------------------------
+  // Fix round 2, I1 (review of efef060..11ad3f1). The seed is spawned with the INHERITED
+  // environment, so the database it rewrites is whatever `DATABASE_URL` happens to be in the
+  // shell — unrelated to the `PW_APP_URL` the tests photograph. Before S7, running the seed was a
+  // deliberate act; now it is a side effect of `playwright test`, and the only thing between it
+  // and the stakeholders' data was `ENVIRONMENT`, pulled from the same ambient shell.
+  //
+  // So the planner refuses the target itself, before anything is spawned. An ALLOW-list, not a
+  // deny-list: a new production host, a preview deployment or a typo is refused by default rather
+  // than reseeded because nobody thought to add it.
+  // ---------------------------------------------------------------------------------------
+  describe('the target allow-list (fix round 2, I1)', () => {
+    const refusal = (target: string) =>
+      `remote reseed refuses this target: ${target} — only QA and local test hosts may be reseeded`;
+
+    it('allows QA and local test hosts, and nothing else', () => {
+      expect(RESEEDABLE_HOSTS).toEqual(['qa.foundation.vin', 'localhost', '127.0.0.1']);
+    });
+
+    it('refuses production by host, whatever ENVIRONMENT says', () => {
+      expect(remoteReseedPlan({ ...REMOTE, PW_APP_URL: 'https://foundation.vin' }))
+        .toStrictEqual({ run: false, error: refusal('foundation.vin/qa') });
+    });
+
+    it('refuses ENVIRONMENT=production even on the QA host', () => {
+      expect(remoteReseedPlan({ ...REMOTE, ENVIRONMENT: 'Production' }))
+        .toStrictEqual({ run: false, error: refusal('qa.foundation.vin/Production') });
+    });
+
+    it('refuses a host nobody allow-listed', () => {
+      for (const url of ['https://example.com', 'https://qa.foundation.vin.evil.test', 'https://preview-7.up.railway.app'])
+        expect(remoteReseedPlan({ ...REMOTE, PW_APP_URL: url }).error, url).toMatch(/^remote reseed refuses this target: /);
+    });
+
+    it('refuses a PW_APP_URL it cannot parse, without echoing it', () => {
+      const plan = remoteReseedPlan({ ...REMOTE, PW_APP_URL: 'not a url' });
+      expect(plan).toStrictEqual({ run: false, error: refusal('(unparseable)/qa') });
+      expect(plan.error).not.toContain('not a url');
+    });
+
+    it('names ENVIRONMENT as (unset) rather than pretending it was given', () => {
+      const { ENVIRONMENT: _drop, ...noEnvironment } = { ...REMOTE, PW_APP_URL: 'https://foundation.vin' };
+      expect(remoteReseedPlan(noEnvironment).error).toBe(refusal('foundation.vin/(unset)'));
+    });
+
+    it('reseeds a local test host', () => {
+      for (const url of ['http://localhost:5173', 'http://127.0.0.1:8017'])
+        expect(remoteReseedPlan({ ...REMOTE, PW_APP_URL: url, ENVIRONMENT: 'test' }), url).toStrictEqual({ run: true });
+    });
+
+    // The target is judged BEFORE the variables: telling an operator who has aimed at production
+    // to "set DATABASE_URL" would be advice to make the accident possible.
+    it('refuses the target before it asks for the missing variables', () => {
+      expect(remoteReseedPlan({ PW_APP_URL: 'https://foundation.vin' }).error)
+        .toBe(refusal('foundation.vin/(unset)'));
+    });
+  });
+
   it('builds that line from the same helper the plan uses', () => {
     expect(remoteReseedError(['REDIS_URL']))
       .toBe("a remote run must reseed the target's fixtures first; missing: REDIS_URL");
@@ -126,5 +185,33 @@ describe('reseedRemoteFixtures (S7)', () => {
     expect(() => reseedRemoteFixtures({ PW_APP_URL: 'https://qa.foundation.vin', DATABASE_URL: 'x' }, exec))
       .toThrow("a remote run must reseed the target's fixtures first; missing: PERSONA_PASSWORD, API_SECRET_KEY, ENVIRONMENT, REDIS_URL");
     expect(calls, 'nothing is executed when the plan refuses').toEqual([]);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Fix round 2, I2 (review of efef060..11ad3f1). The one line that makes the whole feature happen
+// lives in a default export nothing imports: delete it and every vitest, the config pin and the
+// entire Playwright suite stay green while remote runs silently stop reseeding — the exact
+// regression S7 exists to prevent. Pinned as source text, the same idiom
+// `playwright-config.test.ts` uses on the config's own keys, with comment lines stripped so a
+// commented-out call cannot satisfy it.
+// ---------------------------------------------------------------------------------------
+/** The default export's body, comment lines stripped so a commented-out call cannot satisfy a
+ *  pin — the same source-text idiom `playwright-config.test.ts` uses on the config's own keys. */
+function defaultExportOf(file: string): string {
+  const source = readFileSync(fileURLToPath(new URL(`./${file}`, import.meta.url)), 'utf8')
+    .replace(/^\s*(\/\/|\*|\/\*).*$/gm, '');
+  const at = source.indexOf('export default function');
+  expect(at, `${file} has a default export`).toBeGreaterThan(-1);
+  return source.slice(at);
+}
+
+describe('the hooks Playwright actually calls (fix round 2, I2)', () => {
+  it('globalSetup reseeds — and still mints the run id and clears a foreign memo file', () => {
+    const body = defaultExportOf('global-setup.ts');
+    expect(body).toContain('reseedRemoteFixtures(process.env);');
+    expect(body, 'the two lines S7 inherited must not have been displaced by the third')
+      .toContain('process.env.PW_RUN_ID = process.env.PW_RUN_ID ?? randomUUID();');
+    expect(body).toContain('rmSync(MEMO_FILE, { force: true })');
   });
 });

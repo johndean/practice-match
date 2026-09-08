@@ -736,6 +736,12 @@ describe('fixture tokens — twelve per purpose, single use, spent in order (A-S
     expect(throwawayEmail('forgot', 'refs/heads/feat#3', 2)).toBe('e2e-refs-heads-feat-3-forgot-2@example.org');
     // The default shape is already safe and must survive untouched.
     expect(throwawayEmail('signup', '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0', 1)).toBe('e2e-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0-signup-1@example.org');
+    // Fix round 2, M4: `purpose` is sanitised by the same class. Both call sites pass a literal
+    // today, but a caller with a space or a slash would mint an address the seed's restoration
+    // pattern does NOT match — and the account would then stay on QA for ever, which is the exact
+    // leak round 1 was ruled to close.
+    expect(throwawayEmail('sign up', 'run-A', 1)).toBe('e2e-run-A-sign-up-1@example.org');
+    expect(throwawayEmail('forgot/again', 'run-A', 2)).toBe('e2e-run-A-forgot-again-2@example.org');
     for (const address of [throwawayEmail('signup', 'a/b:c d', 1), throwawayEmail('forgot', '', 3)]) {
       expect(address.split('@')[0], 'every local part is RFC-safe').toMatch(/^[A-Za-z0-9._-]+$/);
     }
@@ -750,7 +756,8 @@ describe('fixture tokens — twelve per purpose, single use, spent in order (A-S
     for (const address of [
       throwawayEmail('signup', '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0', 1),
       throwawayEmail('forgot', 'a/b:c d', 12),
-      throwawayEmail('signup', '', 3)
+      throwawayEmail('signup', '', 3),
+      throwawayEmail('sign up', 'run-A', 1)                    // M4: an unsanitised purpose would escape it
     ]) expect(address, address).toMatch(shape);
     for (const other of [
       'e2e-run-signup-1@example.org.uk',

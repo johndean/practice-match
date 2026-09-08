@@ -305,9 +305,16 @@ export const THROWAWAY_EMAIL_PATTERN = '^e2e-[A-Za-z0-9._-]+@example\\.org$';
  *  The run id is SANITISED into the local part (review round 1, M14). `global-setup.ts` mints
  *  `randomUUID()`, which is hex and hyphens and already safe — but `PW_RUN_ID` is deliberately
  *  overridable by an outer harness (CI sharding, a wrapper script), and a value carrying `/`, `:`
- *  or a space would make the live sign-up 422 with nothing in the failure pointing at the cause. */
+ *  or a space would make the live sign-up 422 with nothing in the failure pointing at the cause.
+ *
+ *  `purpose` goes through the SAME class (fix round 2, M4). Both call sites pass a literal today,
+ *  so nothing is wrong — but an unsanitised character would mint an address that
+ *  `THROWAWAY_EMAIL_PATTERN` does not match, and the account behind it would then survive every
+ *  restoration and sit on QA for ever, which is the exact leak fix round 1 was ruled to close. */
+const emailSafe = (part: string): string => part.replace(/[^A-Za-z0-9._-]/g, '-');
+
 export function throwawayEmail(purpose: string, run: string, n: number): string {
-  return `e2e-${run.replace(/[^A-Za-z0-9._-]/g, '-') || 'local'}-${purpose}-${n}@example.org`;
+  return `e2e-${emailSafe(run) || 'local'}-${emailSafe(purpose)}-${n}@example.org`;
 }
 
 /**
