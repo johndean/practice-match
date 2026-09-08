@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     mail_from: str = "VIN Foundation — Practice Match <no-reply@foundation.vin>"  # spec §2: foundation.vin is the SENDER domain
     mail_reply_to: str = "practicematch@vin.com"  # placeholder until the VIN Foundation names the mailbox (spec §10 open item)
     db_pool_max: int = 10  # size of the psycopg2 REUSE pool per DSN (app/db.py); past it a caller gets an un-pooled connection, so this does not cap the connection count
+    # A-I5d.4 (John, 2026-09-08, on the launch email's CAN-SPAM footer): "include the VIN
+    # Foundation's official postal address if required for the communication type. Do not invent
+    # the address." Optional at boot — read by both the api (the launch-mail endpoint's gate) and
+    # the worker (the footer, rendered at send time) — because `POST /api/admin/signups/launch-mail`
+    # refuses a real send with 409 LAUNCH_MAIL_NOT_CONFIGURED while it is empty, rather than ever
+    # sending a footer with a blank address line.
+    vin_foundation_postal_address: str | None = None
 
     @field_validator("site_mode")
     @classmethod

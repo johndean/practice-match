@@ -6,14 +6,20 @@ what `check_origin_and_csrf` compares against. `member(roles=..., state=...)` re
 `Cookie` header (httpx 0.28 deprecates per-request `cookies=`, and `-W error` makes that a failure).
 """
 import csv
+import inspect
 import io
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.auth import sessions as S
+from app.auth import tokens as T
+from app.config import settings
+from app.mail import templates as TP
 from tests.api.conftest import auth_headers
 
 SIGNUPS = "/api/admin/signups"
+LAUNCH = "/api/admin/signups/launch-mail"
 
 
 def seed(conn, n, *, prefix="S", source="coming-soon", consent="coming-soon-v1", mailed=False):
@@ -188,3 +194,230 @@ async def test_the_export_needs_signups_export_and_leaves_exactly_one_audit_row(
         rows = cur.fetchall()
     assert len(rows) == 1
     assert rows[0][1] == "interest_signup" and rows[0][2] == {"source": "coming-soon", "consent_version": None}
+
+
+# --- the launch mail --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def admin_headers(member, conn, redis):
+    """An admin whose session confirmed its password a moment ago — `signups.notify` is in REAUTH.
+
+    The cache drop is not optional: `sessions.Principal` carries `reauth_at` and is cached for 60 s,
+    so a bare UPDATE would leave `deps.require` reading the pre-update principal and answering
+    `403 REAUTH_REQUIRED` to a session the test has just freshened."""
+    account_id, cookies, headers = member(roles=("admin",))
+    with conn.cursor() as cur:
+        cur.execute("UPDATE session SET reauth_at = now() WHERE account_id = %s", (account_id,))
+    S.invalidate_account(redis, account_id)
+    return auth_headers(cookies, headers)
+
+
+@pytest.fixture
+def admin_token_headers(member, conn):
+    """A bearer credential carrying `admin` — the containment case for D-I5d-2. Minted through
+    `app.auth.tokens.issue_api_token` exactly as `tests/api/test_admin_users.py`'s token cases do;
+    there is no shared fixture for it, so this is its own."""
+    account_id, _cookies, _headers = member(roles=("admin",))
+    issued = T.issue_api_token(conn, name="i5d-test", role="admin", created_by=account_id, ttl=timedelta(days=1))
+    return {"Authorization": f"Bearer {issued.raw}"}
+
+
+@pytest.fixture
+def launch_mail_approved(monkeypatch):
+    """Controller amendment A-I5d.4: the real production defaults are `TP.LAUNCH_COPY_APPROVED =
+    False` and an unset `VIN_FOUNDATION_POSTAL_ADDRESS` — either one alone refuses a REAL send
+    with its own 409 before the handler does anything else (a dry run is exempt from both, the same
+    way it is exempt from `NOT_LAUNCHED` — D-I5d-5's "the count is readable, the message is not
+    sendable"). These tests exercise the queuing/stamping/audit behaviour with both of John's
+    approvals given; `test_the_launch_mail_refuses_a_real_send_while_*` below prove the refusal on
+    the untouched defaults."""
+    monkeypatch.setattr(TP, "LAUNCH_COPY_APPROVED", True)
+    monkeypatch.setattr(settings, "vin_foundation_postal_address", "123 Main St, Sacramento, CA 95814")
+
+
+async def test_a_dry_run_counts_without_queuing_or_stamping_anything(client, conn, admin_headers):
+    seed(conn, 4)
+    r = await client.post(LAUNCH, json={"dry_run": True}, headers=admin_headers)
+    assert r.status_code == 200
+    assert r.json() == {"dry_run": True, "selected": 4, "queued": 0, "already_mailed": 0,
+                        "not_mailed": 4, "remaining": 4}
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM email_outbox")
+        assert cur.fetchone()[0] == 0
+        cur.execute("SELECT count(*) FROM interest_signup WHERE launch_mailed_at IS NOT NULL")
+        assert cur.fetchone()[0] == 0
+
+
+async def test_dry_run_is_the_default_so_a_bodyless_call_sends_nothing(client, conn, admin_headers):
+    seed(conn, 2)
+    r = await client.post(LAUNCH, json={}, headers=admin_headers)
+    assert r.status_code == 200 and r.json()["dry_run"] is True and r.json()["queued"] == 0
+
+
+async def test_a_real_send_queues_one_row_per_signup_and_stamps_each_one(client, conn, admin_headers, launch_mail_approved):
+    seed(conn, 3)
+    r = await client.post(LAUNCH, json={"dry_run": False}, headers=admin_headers)
+    assert r.json() == {"dry_run": False, "selected": 3, "queued": 3, "already_mailed": 0,
+                        "not_mailed": 3, "remaining": 0}
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_email, template, params, idempotency_key FROM email_outbox ORDER BY id")
+        rows = cur.fetchall()
+        cur.execute("SELECT count(*) FROM interest_signup WHERE launch_mailed_at IS NULL")
+        assert cur.fetchone()[0] == 0
+    assert {r[1] for r in rows} == {"launch_announcement"}
+    assert sorted(r[0] for r in rows) == ["S0@x.test", "S1@x.test", "S2@x.test"]
+    # A-I5d.4: the CAN-SPAM address travels in the enqueued params, alongside the link — read at
+    # send time from whatever `email_outbox.params` actually holds, not re-read from `settings` by
+    # the worker, so a row already queued keeps the address that was configured when it was queued.
+    assert all(r[2] == {"link": settings.link_base_url, "postal_address": settings.vin_foundation_postal_address}
+              for r in rows)
+    assert all(r[3].endswith(":launch_announcement:1") for r in rows)
+
+
+async def test_sending_twice_mails_nobody_twice(client, conn, admin_headers, launch_mail_approved):
+    """The whole point of `launch_mailed_at` (D-I5d-4). The outbox's own unique key cannot carry
+    this: `purge_outbox` deletes delivered rows 24 hours after they are sent, so the second call
+    would find no conflict."""
+    seed(conn, 3)
+    await client.post(LAUNCH, json={"dry_run": False}, headers=admin_headers)
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM email_outbox")            # the day after: purge_outbox has run
+    second = await client.post(LAUNCH, json={"dry_run": False}, headers=admin_headers)
+    assert second.json() == {"dry_run": False, "selected": 0, "queued": 0, "already_mailed": 3,
+                             "not_mailed": 0, "remaining": 0}
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM email_outbox")
+        assert cur.fetchone()[0] == 0
+
+
+async def test_a_signup_added_after_the_send_still_gets_the_message(client, conn, admin_headers, launch_mail_approved):
+    seed(conn, 2)
+    await client.post(LAUNCH, json={"dry_run": False}, headers=admin_headers)
+    seed(conn, 1, prefix="L")                              # someone signs up an hour after launch
+    r = await client.post(LAUNCH, json={"dry_run": False}, headers=admin_headers)
+    assert r.json()["queued"] == 1 and r.json()["already_mailed"] == 2
+
+
+async def test_the_batch_is_capped_and_remaining_says_how_many_are_left(client, conn, admin_headers, monkeypatch, launch_mail_approved):
+    from app.api import admin_signups as AS
+
+    monkeypatch.setattr(AS, "MAX_LAUNCH_BATCH", 2)
+    seed(conn, 5)
+    r = await client.post(LAUNCH, json={"dry_run": False}, headers=admin_headers)
+    assert r.json()["selected"] == 2 and r.json()["queued"] == 2 and r.json()["remaining"] == 3
+
+
+async def test_the_launch_mail_is_refused_while_the_site_is_still_coming_soon(client, conn, admin_headers, monkeypatch, launch_mail_approved):
+    monkeypatch.setattr(settings, "site_mode", "coming_soon")
+    seed(conn, 2)
+    r = await client.post(LAUNCH, json={"dry_run": False}, headers=admin_headers)
+    assert r.status_code == 409 and r.json()["error"]["code"] == "NOT_LAUNCHED"
+    # ...and the dry run still answers, which is the point of D-I5d-5: the count is readable on
+    # production before the flip, the message is not sendable.
+    dry = await client.post(LAUNCH, json={"dry_run": True}, headers=admin_headers)
+    assert dry.status_code == 200 and dry.json()["not_mailed"] == 2
+
+
+async def test_the_launch_mail_needs_signups_notify_and_a_fresh_password(client, conn, member, staff_headers):
+    seed(conn, 1)
+    assert (await client.post(LAUNCH, json={"dry_run": True}, headers=staff_headers)).status_code == 403
+    _, cookies, headers = member(roles=("admin",))                 # never re-authenticated
+    r = await client.post(LAUNCH, json={"dry_run": True}, headers=auth_headers(cookies, headers))
+    assert r.status_code == 403 and r.json()["error"]["code"] == "REAUTH_REQUIRED"
+
+
+async def test_no_api_token_can_ever_send_the_launch_mail(client, conn, admin_token_headers):
+    """D-I5d-2. A leaked `admin` api token must not be able to mail the whole launch list. It has
+    no password to confirm, so the re-auth gate is permanent, and the refusal says which of the two
+    it is rather than the generic 403."""
+    seed(conn, 1)
+    r = await client.post(LAUNCH, json={"dry_run": False}, headers=admin_token_headers)
+    assert r.status_code == 403 and r.json()["error"]["code"] == "REAUTH_TOKEN"
+
+
+async def test_the_send_writes_one_audit_row_naming_the_counts(client, conn, admin_headers, launch_mail_approved):
+    seed(conn, 2)
+    await client.post(LAUNCH, json={"dry_run": False}, headers=admin_headers)
+    with conn.cursor() as cur:
+        cur.execute("SELECT action, target_type, after, reason FROM audit_log WHERE action = 'signups.notify'")
+        rows = cur.fetchall()
+    assert len(rows) == 1
+    assert rows[0][0] == "signups.notify" and rows[0][1] == "interest_signup"
+    assert rows[0][2] == {"selected": 2, "queued": 2, "already_mailed": 0, "not_mailed": 2}
+    assert rows[0][3] == "send"
+
+
+async def test_a_dry_run_is_audited_too_and_says_so(client, conn, admin_headers):
+    seed(conn, 2)
+    await client.post(LAUNCH, json={"dry_run": True}, headers=admin_headers)
+    with conn.cursor() as cur:
+        cur.execute("SELECT reason, after FROM audit_log WHERE action = 'signups.notify'")
+        reason, after = cur.fetchone()
+    assert reason == "dry_run" and after["queued"] == 0
+
+
+async def test_nothing_here_talks_to_resend(client, conn, admin_headers, launch_mail_approved):
+    """Spec §5: never a network call on the request path. The endpoint writes an outbox row and
+    returns; the Celery `mail.send` task is the only thing in the codebase that opens an HTTP
+    client. Asserted on the module's SOURCE — it must import neither the Resend client nor httpx —
+    and on the row it leaves, which is `queued` with no provider id."""
+    import app.api.admin_signups as AS
+
+    source = inspect.getsource(AS)
+    assert "resend_client" not in source and "import httpx" not in source
+    seed(conn, 1)
+    await client.post(LAUNCH, json={"dry_run": False}, headers=admin_headers)
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, provider_id FROM email_outbox")
+        assert cur.fetchone() == ("queued", None)
+
+
+async def test_a_row_already_in_the_outbox_is_stamped_but_not_queued_twice(client, conn, admin_headers, launch_mail_approved):
+    """The crash-recovery case the handler's own docstring names: a prior attempt got as far as
+    writing this signup's outbox row but crashed before the `launch_mailed_at` UPDATE landed in
+    the SAME transaction. `enqueue`'s `ON CONFLICT DO NOTHING` is what keeps THIS call from writing
+    a second outbox row for it — `queued` does not count a row it did not create — while the stamp
+    still lands, because `launch_mailed_at` is set for the whole batch regardless of which rows in
+    it were newly enqueued. There is no state in which the row stays half-mailed."""
+    [signup_id] = seed(conn, 1)
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO email_outbox (to_email, template, params, idempotency_key) VALUES (%s,%s,%s,%s)",
+                    ("S0@x.test", "launch_announcement", "{}", f"{signup_id}:launch_announcement:1"))
+    r = await client.post(LAUNCH, json={"dry_run": False}, headers=admin_headers)
+    assert r.json() == {"dry_run": False, "selected": 1, "queued": 0, "already_mailed": 0,
+                        "not_mailed": 1, "remaining": 0}
+    with conn.cursor() as cur:
+        cur.execute("SELECT launch_mailed_at IS NOT NULL FROM interest_signup WHERE id = %s", (signup_id,))
+        assert cur.fetchone()[0] is True
+        cur.execute("SELECT count(*) FROM email_outbox WHERE idempotency_key = %s", (f"{signup_id}:launch_announcement:1",))
+        assert cur.fetchone()[0] == 1
+
+
+async def test_the_launch_mail_refuses_a_real_send_while_the_copy_is_not_approved(client, conn, admin_headers):
+    """Controller amendment A-I5d.4: John's ruling was "COPY NOT YET APPROVED. Do not send." —
+    checked BEFORE the postal-address setting and before `SITE_MODE`, so this fires even though
+    neither of those is configured either. The dry run answers regardless (D-I5d-5's "the count is
+    readable, the message is not sendable")."""
+    seed(conn, 2)
+    r = await client.post(LAUNCH, json={"dry_run": False}, headers=admin_headers)
+    assert r.status_code == 409 and r.json()["error"]["code"] == "LAUNCH_COPY_NOT_APPROVED"
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM email_outbox")
+        assert cur.fetchone()[0] == 0
+    dry = await client.post(LAUNCH, json={"dry_run": True}, headers=admin_headers)
+    assert dry.status_code == 200 and dry.json()["not_mailed"] == 2
+
+
+async def test_the_launch_mail_refuses_a_real_send_while_the_postal_address_is_unset(client, conn, admin_headers, monkeypatch):
+    """The second of A-I5d.4's two gates: the copy is approved but nobody has set
+    `VIN_FOUNDATION_POSTAL_ADDRESS`, so the CAN-SPAM footer would have nothing to print. Refused by
+    name rather than sent with a blank line — John's ruling: "Do not invent the address." """
+    monkeypatch.setattr(TP, "LAUNCH_COPY_APPROVED", True)
+    seed(conn, 2)
+    r = await client.post(LAUNCH, json={"dry_run": False}, headers=admin_headers)
+    assert r.status_code == 409 and r.json()["error"]["code"] == "LAUNCH_MAIL_NOT_CONFIGURED"
+    assert "VIN_FOUNDATION_POSTAL_ADDRESS" in r.json()["error"]["message"]
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM email_outbox")
+        assert cur.fetchone()[0] == 0

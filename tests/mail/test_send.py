@@ -264,3 +264,18 @@ def test_a_re_submitted_application_is_a_second_send_not_a_deduplicated_one(conn
 
     assert MT.send_due() == {"sent": 2, "suppressed": 0, "failed": 0, "retried": 0}
     assert keys == [first, second]
+
+
+def test_a_launch_announcement_row_is_suppressed_outside_production_unless_allowlisted(conn, monkeypatch):
+    """`EMAIL_ALLOWLIST` is a fail-CLOSED gate and Task I5d changes nothing about it: on QA an
+    empty allowlist sends to nobody, and a refused row is recorded `suppressed` with the reason
+    that says it was the environment and not the address."""
+    monkeypatch.setattr(settings, "environment", "qa")
+    monkeypatch.setattr(settings, "email_allowlist", "")
+    monkeypatch.setattr(settings, "resend_api_key", "re_test")
+    OB.enqueue(conn, to="someone@x.test", template="launch_announcement",
+               params={"link": "https://qa.foundation.vin"}, idempotency_key="k:launch_announcement:1")
+    assert MT.send_due() == {"sent": 0, "suppressed": 1, "failed": 0, "retried": 0}
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, last_error FROM email_outbox WHERE idempotency_key = 'k:launch_announcement:1'")
+        assert cur.fetchone() == ("suppressed", MT.REASON_NOT_ALLOWLISTED)

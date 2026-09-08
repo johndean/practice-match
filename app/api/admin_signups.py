@@ -33,12 +33,16 @@ from typing import Annotated, Any, cast
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from app.api.admin_users import _cursor, _iso, _keyset
 from app.auth import audit
 from app.auth import sessions as S
 from app.auth.deps import AuthError, require
+from app.config import settings
 from app.db import sync_conn
+from app.mail import templates as TP
+from app.mail.outbox import enqueue
 
 router = APIRouter(prefix="/api/admin")
 
@@ -220,3 +224,129 @@ def export_signups(request: Request, principal: Exporter,
         media_type="text/csv; charset=utf-8",
         headers={"Content-Disposition": f'attachment; filename="practice-match-signups-{stamp}.csv"'},
     )
+
+
+# --- the launch mail ----------------------------------------------------------------------------
+
+
+class LaunchCopyNotApproved(AuthError):
+    """Controller amendment A-I5d.4 (John, 2026-09-08, verbatim): "Launch email — COPY NOT YET
+    APPROVED. Do not send." Checked first, before the postal-address setting and before
+    `SITE_MODE` — a 409 about the WORLD, not about the caller, so an admin who did everything right
+    still cannot make an unapproved message sendable. `app.mail.templates.LAUNCH_COPY_APPROVED` is
+    the single flag this reads; flipping it is John's decision, not this endpoint's."""
+
+    status = 409
+    code = "LAUNCH_COPY_NOT_APPROVED"
+    message = "The launch email copy has not been approved yet."
+
+
+class LaunchMailNotConfigured(AuthError):
+    """A-I5d.4's second gate: the CAN-SPAM footer has no postal address to print.
+    `settings.vin_foundation_postal_address` is never defaulted to a placeholder (John's ruling:
+    "Do not invent the address"), so an empty setting refuses the send by naming the variable
+    rather than shipping a footer with a blank line."""
+
+    status = 409
+    code = "LAUNCH_MAIL_NOT_CONFIGURED"
+    message = "VIN_FOUNDATION_POSTAL_ADDRESS is not set; the launch email cannot be sent."
+
+
+class SiteNotLaunched(AuthError):
+    """The launch mail, attempted while the site is still serving the Coming Soon page (D-I5d-5).
+
+    Not a permission problem — the caller may well be an admin — so it is a 409 about the world,
+    not a 403 about them. The message the mail carries says Practice Match is open; sending it
+    before `SITE_MODE=app` would make the VIN Foundation's one promised message a false one."""
+
+    status = 409
+    code = "NOT_LAUNCHED"
+    message = "The launch email cannot be sent while the site is in coming-soon mode."
+
+
+LAUNCH_TEMPLATE = "launch_announcement"
+# One call acts on at most this many rows (D-I5d-9): the handler holds one pooled connection for
+# the length of its transaction, and an unbounded call would write tens of thousands of outbox rows
+# under it. `remaining` in the response is how the caller knows to call again.
+MAX_LAUNCH_BATCH = 500
+
+LAUNCH_COUNTS_SQL = """
+SELECT count(*) FILTER (WHERE launch_mailed_at IS NOT NULL),
+       count(*) FILTER (WHERE launch_mailed_at IS NULL)
+  FROM interest_signup
+"""
+# `FOR UPDATE`, not `SKIP LOCKED`: two admins clicking Send at the same moment must not each mail
+# half the list. The second caller blocks on the first's rows, and READ COMMITTED re-evaluates the
+# WHERE after the lock is granted — so once the first transaction commits, those rows have a
+# `launch_mailed_at` and drop out of the second caller's result entirely.
+UNMAILED_SQL = "SELECT id, email FROM interest_signup WHERE launch_mailed_at IS NULL ORDER BY id LIMIT %s FOR UPDATE"
+
+
+class LaunchMailIn(BaseModel):
+    # Defaults to a dry run (D-I5d-10): the caller has to say `false` out loud to send something
+    # that cannot be unsent.
+    dry_run: bool = True
+
+
+@router.post("/signups/launch-mail")
+async def launch_mail(body: LaunchMailIn, request: Request, principal: Notifier) -> dict[str, Any]:
+    """Queues the launch announcement for every sign-up that has not had it — at most
+    `MAX_LAUNCH_BATCH` per call — or, on a dry run, counts them and writes nothing.
+
+    Exactly once, and it survives a crash: the `enqueue` and the `launch_mailed_at` stamp commit in
+    the SAME transaction, so there is no state in which a row is marked mailed without its outbox
+    row, or has two. The outbox's own idempotency key is a second belt but not the braces
+    (D-I5d-4): `purge_outbox` deletes delivered rows a day later, so the key is gone by the time a
+    careless second call could do damage.
+
+    `signups.notify` is in REAUTH, so the caller has confirmed their password within ten minutes
+    and no api token can reach this at all (`deps.TokenCannotReauth`) — which is the containment
+    that keeps a leaked automation credential away from the VIN Foundation's whole launch list.
+
+    A REAL send is gated three ways, each a 409 about the world rather than the caller, checked in
+    this order (A-I5d.4 adds the first two to D-I5d-5's `SiteNotLaunched`): the copy must be
+    approved, the CAN-SPAM postal address must be configured, and the site must actually be open.
+    A DRY RUN is exempt from all three — D-I5d-5's "the count is readable, the message is not
+    sendable" — because it writes nothing and talks to nobody.
+
+    Nothing here talks to Resend. The Celery `mail.send` task drains the outbox, applies
+    `EMAIL_ALLOWLIST` outside production and refuses suppressed addresses, all unchanged."""
+    if not body.dry_run:
+        if not TP.LAUNCH_COPY_APPROVED:
+            raise LaunchCopyNotApproved
+        if not settings.vin_foundation_postal_address:
+            raise LaunchMailNotConfigured
+        if settings.site_mode != "app":
+            raise SiteNotLaunched
+    queued = 0
+    with closing(sync_conn()) as conn, conn:
+        with conn.cursor() as cur:
+            cur.execute(LAUNCH_COUNTS_SQL)
+            already, pending = cast("tuple[int, int]", cur.fetchone())
+            batch: list[tuple[Any, str]] = []
+            if not body.dry_run:
+                cur.execute(UNMAILED_SQL, (MAX_LAUNCH_BATCH,))
+                batch = cast("list[tuple[Any, str]]", cur.fetchall())
+        for signup_id, email in batch:
+            # `enqueue` returns False when the key is already there — count what was really
+            # written, so the response cannot claim a row it did not create. `postal_address`
+            # travels in the enqueued params (A-I5d.4), alongside `link`, so a row already queued
+            # keeps the address that was configured when it was queued.
+            if enqueue(conn, to=email, template=LAUNCH_TEMPLATE,
+                       params={"link": settings.link_base_url, "postal_address": settings.vin_foundation_postal_address},
+                       idempotency_key=f"{signup_id}:{LAUNCH_TEMPLATE}:1"):
+                queued += 1
+        if batch:
+            with conn.cursor() as cur:
+                cur.execute("UPDATE interest_signup SET launch_mailed_at = now() WHERE id = ANY(%s)",
+                            ([signup_id for signup_id, _email in batch],))
+        selected = len(batch) if not body.dry_run else min(pending, MAX_LAUNCH_BATCH)
+        # In this handler's own body, never through a helper: the audit drift test reads
+        # `inspect.getsource(route.endpoint)`. A dry run is audited too — rehearsing a mass mail is
+        # worth a line — and `reason` is what tells the two apart.
+        audit.write(conn, actor=principal, action="signups.notify", target_type="interest_signup",
+                    after={"selected": selected, "queued": queued, "already_mailed": already, "not_mailed": pending},
+                    reason="dry_run" if body.dry_run else "send", request=request)
+    return {"dry_run": body.dry_run, "selected": selected, "queued": queued,
+            "already_mailed": already, "not_mailed": pending,
+            "remaining": pending - len(batch)}

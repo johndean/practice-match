@@ -388,3 +388,55 @@ only config in the repo), with `PW_APP_URL` and the five variables set ahead of 
 * The smoke suite's first-map-paint gate budgets 3 s against a remote target (1.5 s locally,
   `frontend/tests/harness.ts`'s `firstMapPaintBudgetMs`) — a run from far from the target region
   carries real network round trips and tile fetches the local budget never measured.
+
+## 13. The launch email
+
+The Coming Soon page collects one thing: an address, and a promise — *"One message, when it
+launches. Nothing else, and never shared."* This is how that message is sent, once.
+
+**Before the flip.** `GET /api/admin/signups` reads the list (staff or admin) and
+`GET /api/admin/signups.csv` downloads it. `POST /api/admin/signups/launch-mail` with
+`{"dry_run": true}` answers with the counts and writes nothing; on production, while the site is
+still in coming-soon mode, that is all it will do — a real send is refused with `409 NOT_LAUNCHED`,
+because the message says Practice Match is open.
+
+**Two more gates, ahead of that one (controller amendment A-I5d.4, John, 2026-09-08).** A real send
+is refused, in this order, before `SITE_MODE` is even checked:
+
+1. `409 LAUNCH_COPY_NOT_APPROVED` while `app.mail.templates.LAUNCH_COPY_APPROVED` is `False`. John's
+   ruling: *"Launch email — COPY NOT YET APPROVED. Do not send."* The proposed subject and body sit
+   in that module, marked `>>> COPY FOR JOHN'S APPROVAL <<<`, for him to read and edit; flipping the
+   constant is his call, not an operator's, and is made in the same commit that pins the approved
+   text verbatim.
+2. `409 LAUNCH_MAIL_NOT_CONFIGURED` while `VIN_FOUNDATION_POSTAL_ADDRESS` is unset. The mail's
+   CAN-SPAM footer prints `VIN Foundation · {address}`, and John's ruling was explicit — *"Do not
+   invent the address"* — so an unset setting refuses the send by name rather than shipping a
+   footer with a blank line. Set it in Railway (api **and** worker) once the VIN Foundation's
+   official postal address is known.
+
+A dry run is exempt from all three refusals — reading the counts is always safe, whatever state the
+copy or the address is in; only an actual send is gated.
+
+**The order at launch.**
+1. Set production `SITE_MODE=app` in Railway (after `railway status` prints **Project: Practice
+   Match**) and `scripts/deploy.sh production`; `scripts/verify-deploy.sh production` must report
+   `site_mode: "app"`.
+2. Sign in as an admin and confirm your password (`POST /api/auth/reauth`) — `signups.notify` is a
+   re-authenticated action and no api token can ever satisfy it.
+3. `POST /api/admin/signups/launch-mail` with `{"dry_run": true}`. Read `not_mailed`. That is how
+   many people are about to hear from the VIN Foundation.
+4. `POST /api/admin/signups/launch-mail` with `{"dry_run": false}`. It queues at most 500 per call
+   and answers with `remaining`; repeat until `remaining` is 0.
+5. Watch the outbox drain. The worker's `mail.send` runs every minute and takes 25 rows a batch, so
+   a list of 1,500 takes about an hour. Nothing is lost if the worker restarts: a claimed row's
+   lease expires and it is picked up again, and the provider's idempotency key stops that becoming
+   a second delivery.
+
+**Sending it twice is safe.** Each sign-up carries `launch_mailed_at`; a row that has it is never
+selected again. A person who signs up after the send is picked up by the next call and gets the
+same message — which is right: they were promised it too.
+
+**On QA nothing leaves.** `EMAIL_ALLOWLIST` is fail-closed outside production: an address that is
+not on it is recorded `suppressed` with the reason, and an empty allowlist sends to nobody. A QA
+rehearsal therefore still stamps `launch_mailed_at`, so rehearse on QA data, never against a copy
+of the production list.

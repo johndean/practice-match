@@ -23,6 +23,10 @@ TEMPLATES = frozenset({
     "application_info_requested", "seller_application_received", "seller_application_approved",
     "seller_application_declined", "password_reset", "password_changed", "signin_new_device",
     "account_suspended", "account_revoked",
+    # The fifteenth (Task I5d): the ONE message the Coming Soon page promised its sign-ups. Not
+    # transactional — nobody did anything to cause it — which is why it is sent from an admin
+    # action, once per address, and never again (`interest_signup.launch_mailed_at`).
+    "launch_announcement",
 })
 
 INSERT = """INSERT INTO email_outbox (to_email, template, params, idempotency_key) VALUES (%s,%s,%s,%s)

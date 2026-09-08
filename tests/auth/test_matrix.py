@@ -180,7 +180,6 @@ REAUTH_OUTSIDE_THE_SWEEP = {
     # will pick them up on the commit that adds them.
     "licence.decide": "no route yet",
     "engine.activate": "no route yet",
-    "signups.notify": "no route yet (I5d.4 mounts POST /api/admin/signups/launch-mail)",
 }
 
 
