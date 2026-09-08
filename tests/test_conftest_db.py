@@ -17,9 +17,12 @@ import os
 import subprocess
 import sys
 import uuid
+import warnings
 from pathlib import Path
 
 import psycopg2
+import psycopg2.errorcodes
+import psycopg2.errors
 import pytest
 
 from app.config import settings
@@ -167,6 +170,42 @@ def test_a_template_in_use_falls_back_to_create_then_migrate(request, template_d
         assert _ledger(dsn) == _all_migration_names()
     finally:
         holder.close()
+
+
+def test_an_unexpected_postgres_error_on_the_clone_propagates_unchanged():
+    """`_clone_database` survives exactly ONE refusal — the template being in use. Every other
+    error from `CREATE DATABASE ... TEMPLATE` is a real failure and has to reach the caller as
+    itself, or a broken maintenance connection, a permissions problem or a typo'd template would
+    be silently answered with a quietly-slower empty database.
+
+    Provoked with a template name no database has: Postgres answers SQLSTATE 3D000
+    (`InvalidCatalogName`), a different code from the 55006 the fallback keys on, so the arm is
+    exercised by a real error rather than by a stub of one. Nothing may fall back — no warning,
+    and no database of that name, because the fallback's own `CREATE DATABASE` would have made
+    one. The maintenance connection must also still work afterwards, which is why the arm can
+    re-raise without a rollback: it is in autocommit and never opened a transaction to poison."""
+    name = f"pm_test_{uuid.uuid4().hex[:8]}"
+    absent = f"pm_tmpl_absent_{uuid.uuid4().hex[:8]}"
+    admin = psycopg2.connect(_maintenance(migrate, settings.database_url))
+    admin.autocommit = True
+    try:
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always")
+            with pytest.raises(psycopg2.errors.InvalidCatalogName) as excinfo:
+                _clone_database(admin, name, absent)
+
+        assert excinfo.value.pgcode == psycopg2.errorcodes.INVALID_CATALOG_NAME
+        assert absent in str(excinfo.value)
+        assert "being accessed by other users" not in str(excinfo.value)
+        assert [str(w.message) for w in caught] == [], "the unexpected error fell back instead of propagating"
+
+        with admin.cursor() as cur:
+            cur.execute("SELECT 1 FROM pg_database WHERE datname = %s", (name,))
+            assert cur.fetchall() == [], f"{name} was created by an arm that must create nothing"
+    finally:
+        with admin.cursor() as cur:
+            cur.execute(f'DROP DATABASE IF EXISTS "{name}" WITH (FORCE)')
+        admin.close()
 
 
 def test_the_session_that_built_the_template_drops_it(tmp_path):
