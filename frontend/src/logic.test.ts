@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { Component } from './logic.js';
+import { Component, P } from './logic.js';
 
 let c: any;
 beforeEach(() => { c = new Component({}); });
@@ -1155,7 +1155,11 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
 
   it('a listing that carries photographs fills the hero, the thumbnail and the photo slots (A12.2–A12.5)', () => {
     expect(c.heroSrc(SEEDED)).toBe('/api/listings/a1/photos/1');
-    expect(c.thumbSrc(SEEDED)).toBe('/api/listings/a1/photos/1');
+    // A12.5, revised on the L6 ruling: the design's own `thumbSrc` is a SECOND VIEW of the
+    // practice (the parking photograph, which reads at small sizes where the wide street view
+    // does not), so a seeded listing takes its second photograph where it has one.
+    expect(c.thumbSrc(SEEDED)).toBe('/api/listings/a1/photos/2');
+    expect(c.thumbSrc({ ...SEEDED, photos: ['/api/listings/a1/photos/1'] })).toBe('/api/listings/a1/photos/1');
     const slots = c.photoSet(SEEDED);
     expect(slots.map((s: any) => s.src)).toEqual(['/api/listings/a1/photos/1', '/api/listings/a1/photos/2', '', '', '', '']);
     expect(slots.map((s: any) => s.hasSrc)).toEqual([true, true, false, false, false, false]);
@@ -1194,5 +1198,65 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
     ]);
     expect(c.photoSet(p2).map((s: any) => s.hasSrc)).toEqual([true, true, true, false, false, false]);
     expect(c.photoSet(p2).map((s: any) => s.noSrc)).toEqual([false, false, false, true, true, true]);
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // A12.6 / A12.7 — the detail tolerates the community figures the API does not have yet
+  // (L6 ruling, 2026-09-08). D4 leaves `pop`, `growth`, `income` and `hh` null for every seeded
+  // listing until the Census plan supplies them, and `renderVals()` computes `detail()` on EVERY
+  // render — so an unguarded `p.growth.replace(...)` is not a blank card, it is a blank APP.
+  // -----------------------------------------------------------------------------------------
+  const NULL_FIGURES = {
+    id: 'seed-1', area: 'Plano', type: 'Small animal', market: 'Austin, TX', price: 465000,
+    rev: 700000, docs: 1, rooms: 3, sqft: 2400, bldg: 'Leased', lat: 33.0, lng: -96.7, est: 1987,
+    listed: '3 days ago', status: 'published', pop: null, growth: null, income: null, hh: null,
+    note: 'Demo listing seeded by the VIN Foundation.', staff: '1 DVM', hours: 'Mon–Fri 8–6',
+    services: 'Wellness', facility: 'Suite', ownership: 'Sole proprietor',
+    name: 'ABC Animal Hospital', photos: ['/api/listings/seed-1/photos/1', '/api/listings/seed-1/photos/2']
+  };
+
+  it('every screen renders for a listing whose four community figures are null (A12.6/A12.7)', () => {
+    (P as unknown as unknown[]).push(NULL_FIGURES);
+    try {
+      const screens: Array<Record<string, unknown>> = [
+        { auth: false, screen: 'gate', gate: 'signin' },
+        { auth: true, screen: 'browse' },
+        { auth: true, screen: 'browse', viewport: 'mobile', mobileTab: 'list' },
+        { auth: true, screen: 'browse', viewport: 'mobile', mobileTab: 'map' },
+        { auth: true, screen: 'requests' },
+        { auth: true, screen: 'seller' },
+        { auth: true, screen: 'admin' },
+        { auth: true, screen: 'detail' }
+      ];
+      for (const patch of screens) {
+        const c2: any = new Component({});
+        c2.setState({ ...patch, detailId: 'seed-1' });
+        expect(() => c2.renderVals(), JSON.stringify(patch)).not.toThrow();
+      }
+      // …and the Community Context card is the design's own EMPTY state: the labels and the
+      // sub-lines stay, the four values are blank. Vue renders `null` as the empty string, so
+      // `pop` and `income` needed no guard; the two that called `.replace` did.
+      const c3: any = new Component({});
+      c3.setState({ auth: true, screen: 'detail', detailId: 'seed-1' });
+      expect(c3.renderVals().d.demo.map((f: any) => [f.k, f.v, f.sub])).toEqual([
+        ['Population', null, 'Community, 2023'],
+        ['Growth', '', 'Since 2015'],
+        ['Median income', null, 'Household, 2023'],
+        ['Households', '', 'In the community']
+      ]);
+    } finally {
+      (P as unknown as unknown[]).pop();
+    }
+  });
+
+  it('a design fixture practice still renders its community figures exactly as before (A12.6/A12.7)', () => {
+    const c4: any = new Component({});
+    c4.setState({ auth: true, screen: 'detail', detailId: 'p1' });
+    expect(c4.renderVals().d.demo.map((f: any) => [f.k, f.v])).toEqual([
+      ['Population', '81,900'],
+      ['Growth', '+14.2%'],
+      ['Median income', '$118,400'],
+      ['Households', '27,600']
+    ]);
   });
 });

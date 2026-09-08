@@ -95,11 +95,15 @@ describe('local design amendments (spec D15)', () => {
     // reads a listing's own name and photographs; the fixtures carry neither key, so every
     // approved state keeps its pixels.
     'A12.1', 'A12.2', 'A12.3', 'A12.4', 'A12.5',
+    // A12.6/A12.7 (L6 ruling, 2026-09-08): the two member accesses on the four community
+    // figures D4 leaves null — `renderVals()` computes `detail()` on every render, so an
+    // unguarded null was a blank app, not a blank card.
+    'A12.6', 'A12.7',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(76);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(78);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

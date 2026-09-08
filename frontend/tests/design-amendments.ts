@@ -1004,13 +1004,42 @@ const A12_4: Amendment = {
   count: 1
 };
 
-/** A12.5 — the thumbnail-safe variant (the results card). The design's own `p2` expression is the
- *  PARKING photograph, which reads at small sizes where the wide street view does not; a seeded
- *  listing has no such curated pick, so it takes its first photograph as the hero does. */
+/** A12.5 — the thumbnail-safe variant (the results card). The design's own `p2` expression is a
+ *  SECOND VIEW — the parking photograph, which reads at small sizes where the wide street view
+ *  `heroSrc` returns does not — so a seeded listing takes its SECOND photograph where it has one
+ *  and its first otherwise, rather than repeating the hero (L6 ruling, 2026-09-08). */
 const A12_5: Amendment = {
   id: 'A12.5', ...L6,
   find: 'return p.id === "p2" ? "assets/photos/round-rock-exterior-parking.jpeg" : "";',
-  replace: 'return (p.photos && p.photos[0]) || (p.id === "p2" ? "assets/photos/round-rock-exterior-parking.jpeg" : "");',
+  replace: 'return (p.photos && (p.photos[1] || p.photos[0])) || (p.id === "p2" ? "assets/photos/round-rock-exterior-parking.jpeg" : "");',
+  count: 1
+};
+
+/** A12.6 / A12.7 — the detail tolerates the community figures the API does not have yet (L6
+ *  ruling, 2026-09-08, on the implementer's blocking finding).
+ *
+ *  Spec D4 leaves `pop`, `growth`, `income` and `hh` null for every seeded listing until the
+ *  Census plan supplies them, and `app/api/listings.py` serves all four as null with the comment
+ *  "the UI shows its existing empty state for them". It did not have one: `detail()` called
+ *  `.replace` on two of the four, and `renderVals()` computes `detail()` on EVERY render — so an
+ *  unguarded null was not a blank card but a blank APP, on every screen including the signed-out
+ *  gate (measured against the real eighteen).
+ *
+ *  `pop` and `income` need no guard: they are interpolated, and Vue renders `null` as the empty
+ *  string. These two are the only member accesses on the four figures anywhere in the design.
+ *  Pixel-safe: every design fixture carries a non-empty string, so `||` never fires for them and
+ *  all 43 approved states keep their hashes. */
+const A12_6: Amendment = {
+  id: 'A12.6', ...L6,
+  find: '{ k: "Growth", v: p.growth.replace(" since 2015", ""), sub: "Since 2015" },',
+  replace: '{ k: "Growth", v: (p.growth || "").replace(" since 2015", ""), sub: "Since 2015" },',
+  count: 1
+};
+
+const A12_7: Amendment = {
+  id: 'A12.7', ...L6,
+  find: '{ k: "Households", v: p.hh.replace(" households", ""), sub: "In the community" }',
+  replace: '{ k: "Households", v: (p.hh || "").replace(" households", ""), sub: "In the community" }',
   count: 1
 };
 
@@ -1018,5 +1047,5 @@ export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
     A7_3, A7_4, A8_1a, A8_1b, A8_1c, A8_2, A8_3a, A8_3b, A8_4a, A8_4b, A8_5, A8_6, A8_7, A8_8a, A8_8b,
-    A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5];
+    A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5, A12_6, A12_7];
 }
