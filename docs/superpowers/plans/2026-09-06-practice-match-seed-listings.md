@@ -3233,6 +3233,10 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
+**Controller amendment A-L5.1 (2026-09-08; rulings on the L5 implementer's concerns).** (1) `slug` is `null` in every response for a listing whose `name_disclosed` is false — the slug is the name in another spelling; the frontend (L6) keys off `id` only. (2) `phone` follows `location_disclosed`: `null` when the exact location is undisclosed (a phone number identifies the practice as surely as a street); `hours` remains. (3) The listings router mounts only when `SITE_MODE == "app"`, like the other member routers, so production in Coming Soon answers 404; `scripts/verify-deploy.sh` probes `/api/listings` (absent on production, 401 anonymous on QA). (4) No list-cache invalidation in this plan (60 s TTL); `DEPLOY.md` says a re-seed shows within a minute. (5) L5's corrections to the brief's own tests (the `walk_routes`-based guard test; the base64 cursor error arms; the `isinstance` arm in `photo_list`) accepted as strengthening. Landed: `bc6e578` (L5) + `b05f942` (round 1). Queued for John's vet: (2).
+
+---
+
 ### Task L6: The frontend reads listings from the API, keeping every field name
 
 **Files:**
