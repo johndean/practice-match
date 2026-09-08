@@ -45,6 +45,22 @@ def test_license_status_is_constrained(conn):
                        license_status, attribution_text) VALUES ('x','x','x','x','x','maybe','x')""")
 
 
+def test_market_state_seeds_all_six_demo_states(conn):
+    # A-C0 ¶10 / A-C1 ¶5: CA, TX, FL, GA, NY, CO — seeds/hospitals.json has demo hospitals in all six.
+    with conn.cursor() as cur:
+        cur.execute("SELECT state_fips FROM market_state")
+        assert {r[0] for r in cur.fetchall()} == {"06", "08", "12", "13", "36", "48"}
+
+
+def test_osm_tiles_note_records_johns_carto_decision_not_pending(conn):
+    # Basemap licence — one decision record: John ruled CARTO for the Census analytical layer.
+    with conn.cursor() as cur:
+        cur.execute("SELECT notes FROM dataset_registry WHERE dataset_key = 'osm_tiles'")
+        (notes,) = cur.fetchone()
+        assert "CARTO" in notes
+        assert "pending" not in notes
+
+
 from contextlib import contextmanager
 
 import pytest

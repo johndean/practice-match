@@ -53,7 +53,9 @@ INSERT INTO market_state (state_fips, name, reason) VALUES
   ('48','Texas','design market Austin–Round Rock–San Marcos (12420)'),
   ('06','California','design market Sacramento–Roseville–Folsom (40900)'),
   ('12','Florida','design market Orlando–Kissimmee–Sanford (36740)'),
-  ('13','Georgia','design market Atlanta–Sandy Springs–Roswell (12060)');
+  ('13','Georgia','design market Atlanta–Sandy Springs–Roswell (12060)'),
+  ('36','New York','A-C0 ¶10 / A-C1 ¶5 — seeds/hospitals.json demo markets (New York)'),
+  ('08','Colorado','A-C0 ¶10 / A-C1 ¶5 — seeds/hospitals.json demo markets (Denver, South Lake Tahoe)');
 
 -- §2 dataset register, verbatim. Rows marked unresolved/blocked must not ship (§2, §12).
 INSERT INTO dataset_registry
@@ -68,7 +70,7 @@ INSERT INTO dataset_registry
   ('geocoder','Census Geocoder (geographies)',NULL,'https://geocoding.geo.census.gov/geocoder','Current_Current',NULL,'On write','cleared','Public domain','https://geocoding.geo.census.gov/geocoder/Geocoding_Services_API.html','Geocoding: U.S. Census Bureau Geocoder',NULL),
   ('tiger_cb','TIGER Cartographic Boundary files','TIGER2023/cb_2023_*','https://www2.census.gov/geo/tiger/GENZ2023/shp','2023',NULL,'Annual','cleared','Public domain','https://www.census.gov/programs-surveys/geography/technical-documentation/naming-convention/cartographic-boundary-file.html','Boundaries: U.S. Census Bureau, TIGER/Line Cartographic Boundary Files 2023',NULL),
   ('aies','Annual Integrated Economic Survey',NULL,'https://api.census.gov/data','TBD',NULL,'Annual','unresolved','Verify ID',NULL,'Source: U.S. Census Bureau, Annual Integrated Economic Survey','Confirm dataset identifier and geography availability before any revenue-benchmark layer is promised (§15)'),
-  ('osm_tiles','Street basemap tiles (CARTO, OSM data)',NULL,'https://basemaps.cartocdn.com/light_all','live',NULL,'live','cleared','ODbL 1.0','https://www.openstreetmap.org/copyright','© OpenStreetMap contributors © CARTO','Registered by the spec; the approved design ships Esri tiles — VIN Foundation decision pending; see this plan''s "Basemap licence — one decision record"'),
+  ('osm_tiles','Street basemap tiles (CARTO, OSM data)',NULL,'https://basemaps.cartocdn.com/light_all','live',NULL,'live','cleared','ODbL 1.0','https://www.openstreetmap.org/copyright','© OpenStreetMap contributors © CARTO','John''s ruling (A-C1, this plan''s "Basemap licence — one decision record"): CARTO is the basemap for the Census analytical / market-data map layer; the approved visual design keeps Esri tiles ("Tiles © Esri") where the design requires it, but Census analytical rendering must not depend on an Esri-only implementation'),
   ('imagery','Satellite basemap',NULL,'vendor TBD','live',NULL,'live','unresolved',NULL,NULL,'Imagery attribution pending licence','Satellite toggle stays behind a feature flag until a written licence names commercial web display'),
   ('pet_ownership','Pet ownership incidence (commercial)',NULL,'licensed feed','n/a',NULL,'n/a','blocked',NULL,NULL,'Pet-ownership incidence (licensed) — not in use','Ship only the ACS-derived estimate (rate 0.57) until a licence is signed'),
   ('practice_locations','Third-party practice location data',NULL,'n/a','n/a',NULL,'n/a','blocked',NULL,NULL,'Practice locations (third party) — not in use','Spec §12: purchased or scraped veterinary location lists are out of scope for V1 (undocumented provenance). Includes the 2017 Google Places export Report_Hospital_Competitor_All_US_ZipCode_FULL.csv (D15): Google Maps Platform Terms §3.2.3 and SST §14 forbid storing or rendering its content. Competition counts come from Census establishment totals only.'),
