@@ -373,6 +373,10 @@ git push origin HEAD && git push production HEAD
 
 ---
 
+**Controller amendment A-I5d.2 (2026-09-08; ruling on I5d.2's NEEDS_CONTEXT).** The brief's Interfaces line named `tests/conftest.py`'s `scratch_db`/`conn` as "a scratch database with every migration applied"; `conftest.py` has `scratch_dsn` and `conn`, and `tests/test_migrate.py`'s local `scratch_db` is a bare, unmigrated database. The three new tests therefore call `migrate.run(scratch_db)` first, exactly as `test_002_creates_interest_signup_with_a_unique_normalised_email` does; RED is the missing column and the two missing indexes. No other change.
+
+---
+
 ### Task I5d.3: `GET /api/admin/signups` and `GET /api/admin/signups.csv`
 
 *Standard-tier implementer. The read half: paged list with counts and filters, and the streamed CSV export.*
@@ -920,6 +924,10 @@ EOF
 )"
 git push origin HEAD && git push production HEAD
 ```
+
+---
+
+**Controller amendment A-I5d.4 (2026-09-08; John: "Launch email — COPY NOT YET APPROVED. Do not send. Provide the exact proposed subject and body for approval. For the CAN-SPAM footer, include the VIN Foundation's official postal address if required for the communication type. Do not invent the address.").** (1) Task I5d.4 builds the template and the endpoint, but the endpoint refuses to send until two gates pass: the copy is marked approved in the plan (this amendment records John's approval when it comes, with the approved text verbatim) and the setting `VIN_FOUNDATION_POSTAL_ADDRESS` is non-empty — the footer renders it; an empty value is a refusal with decision A5's envelope (`code: "LAUNCH_MAIL_NOT_CONFIGURED"`), never a mail without the address and never a placeholder. The setting is optional at boot (`None`), documented in `.env.example` and DEPLOY.md (worker + api), supplied by John in Railway. (2) The launch mail is a one-time announcement to people who asked to be told; the plan's open item 5 (no unsubscribe link because there is no list) stands, and the footer states that in one sentence beside the postal address. (3) The proposed subject and body are handed to John as a file for approval; I5d.4's tests pin the approved text once approved.
 
 ---
 
