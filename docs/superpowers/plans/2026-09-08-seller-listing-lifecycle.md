@@ -608,6 +608,14 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 ---
 
+**Controller amendment A-SL9 (2026-09-09; ruling on SL1's NEEDS_CONTEXT).** `listing_submittable_ck` (D12) rejected the seed-listings test helper `_plant()`, which had been inserting a `published` row without `zip`/`est`/`price` since the Seed Listings sub-project. The check stands; the helper plants a complete row (test-only change, in SL1's scope because SL1's migration is what invalidates it); `scripts/seed_listings.py` stays SL6's. The brief's three stray `020`/`021` comment references are `030`/`031` (A-SL5).
+
+---
+
+**Controller amendment A-SL10 (2026-09-09; Task SL2 under the Census branch's A2 and A-C2).** The Census branch has already built the shared storage layer (commit 9c9c819: `app/storage.py` with `put/get/delete/exists/list` and `from_settings`, `tests/test_storage.py`, the four optional `S3_*` settings with their `.env.example`/DEPLOY.md rows, `boto3` main + `moto[s3]`/`boto3-stubs[s3]` dev, `poetry.lock`). Rather than a twin, the controller cherry-picks 9c9c819 onto `feat/seller-lifecycle` at the SL2 boundary (identical content merges cleanly when both branches land; conflicts, if any, in the docs rows are resolved keeping both sides). SL2 therefore: does NOT recreate `app/storage.py`, `tests/test_storage.py`, the settings, or the boto3/moto deps; builds `app/media/encode.py` (+ tests) and points `scripts/prepare_photos.py` at it; moves `pillow` to the main group (A-SL6); and calls the archive through `exists(key)` then `put(key, data, content_type)` — there is no `put_immutable`. The brief's mentions of `app/census/storage.py` and `put_immutable` are superseded by this paragraph.
+
+---
+
 ### Task SL2: `app/storage.py` and `app/media/encode.py` — **1.5 days**
 
 **Files:**
