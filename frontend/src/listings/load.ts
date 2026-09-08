@@ -16,9 +16,15 @@ export const LOAD_TIMEOUT_MS = 5000;
 // The geographic centre of the contiguous United States: the only sane place to point a map
 // for a market whose every listing has withheld its location.
 export const US_CENTER: [number, number] = [39.8283, -98.5795];
-// 200 is the endpoint's own MAX_LIMIT (`app/api/listings.py`), and the whole demo catalogue is
-// eighteen rows — one page, no cursor to follow.
+// 200 is the endpoint's own MAX_LIMIT (`app/api/listings.py`). The demo catalogue is eighteen
+// rows, so today it is one page — but `next_cursor` is followed until null (review M2), because
+// a catalogue that outgrew one page would otherwise truncate in silence.
 const LIST_URL = '/api/listings?limit=200';
+// …and the loop is bounded. `AbortSignal.timeout` bounds each REQUEST, not the sequence, and
+// `main.ts` awaits the whole read before it mounts — so a server that returns the same cursor
+// for ever would hang the boot on a blank page, which is exactly what this module exists to
+// prevent. Twenty pages is 4,000 listings, far past anything this product will hold.
+export const MAX_PAGES = 20;
 
 export interface ApiListing {
   id: string;
@@ -146,7 +152,10 @@ export function toPractice(row: ApiListing): Practice {
 /** The mean position of `market`'s located practices, or the centre of the US if it has none. */
 export function centroid(practices: Practice[], market: string): [number, number] {
   const located = practices.filter((p) => p.market === market && p.lat !== null && p.lng !== null);
-  if (located.length === 0) return US_CENTER;
+  // A COPY (review M3): returning the exported constant would hand one shared array to every
+  // unlocatable market, so a single in-place normalisation would corrupt all of them and the
+  // constant itself.
+  if (located.length === 0) return [...US_CENTER];
   const lat = located.reduce((sum, p) => sum + (p.lat as number), 0) / located.length;
   const lng = located.reduce((sum, p) => sum + (p.lng as number), 0) / located.length;
   return [lat, lng];
@@ -174,15 +183,30 @@ export function applyListings(rows: ApiListing[], practices: Practice[], markets
   }
 }
 
+/** `base` with a `cursor` query parameter added, whichever query it already carries. */
+function withCursor(base: string, cursor: string): string {
+  return `${base}${base.includes('?') ? '&' : '?'}cursor=${encodeURIComponent(cursor)}`;
+}
+
 /**
- * Fetch the published listings and install them. Returns whether it did.
+ * Fetch every published listing and install them. Returns whether it did.
  *
  * A refusal (the anonymous 401 the identity design intends), an unreachable API, a request
  * that outlives `LOAD_TIMEOUT_MS` and an unparseable body all leave the design's fixtures in
  * place and return false — the screen must never go blank because a read failed, and the abort
- * surfaces as a rejected promise, which the `catch` below already handles. A 200 always wins,
- * empty list included: at that point the API is the source of truth and the design's own
- * "no results" state is the honest thing to show.
+ * surfaces as a rejected promise, which the `catch` below already handles.
+ *
+ * AN EMPTY OR MALFORMED 200 DOES THE SAME (A-L6.2 (1), review C1/I2). The brief's earlier "a 200
+ * always wins, empty list included" is withdrawn: the design has no empty-catalogue state at
+ * this level — `detail()` reads `P[0]` and `renderVals()` reads
+ * `MARKETS[s.market || "Austin, TX"].center`, both on every render — so emptying the prototype's
+ * arrays is a blank APP, not an empty Browse. Between Task L7's deploy and its seed, and in any
+ * environment that has not been seeded, the member therefore sees the design's fixtures, which
+ * is the pre-L6 behaviour.
+ *
+ * `applyListings` maps every row BEFORE it clears anything, so even a malformed row inside an
+ * otherwise well-formed page leaves the fixtures standing; `main.ts` catches that throw so the
+ * app still mounts.
  */
 export async function loadListings(
   fetchFn: typeof fetch,
@@ -190,18 +214,25 @@ export async function loadListings(
   markets: Markets,
   url: string = LIST_URL
 ): Promise<boolean> {
-  let page: ListingsPage;
+  const rows: ApiListing[] = [];
   try {
-    const response = await fetchFn(url, {
-      credentials: 'same-origin',
-      headers: { Accept: 'application/json' },
-      signal: AbortSignal.timeout(LOAD_TIMEOUT_MS)
-    });
-    if (!response.ok) return false;
-    page = (await response.json()) as ListingsPage;
+    let next: string | null = url;
+    for (let page = 0; next !== null && page < MAX_PAGES; page++) {
+      const response = await fetchFn(next, {
+        credentials: 'same-origin',
+        headers: { Accept: 'application/json' },
+        signal: AbortSignal.timeout(LOAD_TIMEOUT_MS)
+      });
+      if (!response.ok) return false;
+      const body = (await response.json()) as ListingsPage;
+      if (!Array.isArray(body.items)) return false;
+      rows.push(...body.items);
+      next = body.next_cursor ? withCursor(url, body.next_cursor) : null;
+    }
   } catch {
     return false;
   }
-  applyListings(page.items, practices, markets);
+  if (rows.length === 0) return false;
+  applyListings(rows, practices, markets);
   return true;
 }

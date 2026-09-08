@@ -23,13 +23,20 @@ import { MARKETS, P } from './logic.js';
 //
 // Seed Listings D6: the listings are read in the same breath, and installed into the prototype's
 // own `P`/`MARKETS` arrays before the first paint — a member sees the seeded eighteen rather than
-// the design's fixtures being swapped underneath them. `loadListings` never rejects: a refusal
-// (the anonymous 401 at the gate), an outage or a deadline leaves the design's fixtures in place
-// and the app mounts on them.
+// the design's fixtures being swapped underneath them. A refusal (the anonymous 401 at the gate),
+// an outage, a deadline and an empty or malformed catalogue all leave the design's fixtures in
+// place and the app mounts on them (A-L6.2 (1)).
+//
+// The listings arm is CAUGHT like the account arm, for the same reason and against the same
+// outcome: `applyListings` sits outside `loadListings`' own try, so a malformed row inside an
+// otherwise well-formed 200 still throws out of it — and an uncaught rejection here means
+// `bootstrap()` never runs and the member gets a blank page instead of the screen they belong on
+// (review I2). The fixtures survive that throw too: `applyListings` maps every row before it
+// clears anything.
 //
 // `.then`, not top-level await: Vite's default build target is `modules` (es2020), where esbuild
 // refuses top-level await outright.
 void Promise.all([
   useMe().load().catch(() => null),
-  loadListings(globalThis.fetch.bind(globalThis), P as unknown as Practice[], MARKETS as unknown as Markets)
+  loadListings(globalThis.fetch.bind(globalThis), P as unknown as Practice[], MARKETS as unknown as Markets).catch(() => null)
 ]).then(() => bootstrap(router, '#app'));

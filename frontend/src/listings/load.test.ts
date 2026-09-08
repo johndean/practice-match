@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { applyListings, centroid, LOAD_TIMEOUT_MS, loadListings, MARKET_ZOOM, toPractice, US_CENTER } from './load';
+import { applyListings, centroid, LOAD_TIMEOUT_MS, loadListings, MAX_PAGES, MARKET_ZOOM, toPractice, US_CENTER } from './load';
 import type { ApiListing, Markets, Practice } from './load';
 
 function row(over: Partial<ApiListing> = {}): ApiListing {
@@ -119,6 +119,19 @@ describe('centroid', () => {
   it('falls back to the centre of the United States when nothing in the market is located', () => {
     const practices = [toPractice(row({ id: 'a', market: 'M', location_disclosed: false, lat: null, lng: null }))];
     expect(centroid(practices, 'M')).toEqual(US_CENTER);
+  });
+
+  // M3 (review round 1): the fallback must be a COPY. Returning the exported constant would put
+  // one shared array on every unlocatable market's `center`, so a map engine normalising a
+  // LatLng in place would corrupt US_CENTER itself and every other market that borrowed it.
+  it('returns a copy of US_CENTER, never the exported constant itself', () => {
+    const practices = [toPractice(row({ id: 'a', market: 'M', location_disclosed: false, lat: null, lng: null }))];
+    const a = centroid(practices, 'M');
+    const b = centroid(practices, 'M');
+    expect(a).not.toBe(US_CENTER);
+    expect(a).not.toBe(b);
+    a[0] = 0;
+    expect(US_CENTER).toEqual([39.8283, -98.5795]);
   });
 });
 
@@ -241,6 +254,100 @@ describe('loadListings', () => {
     } finally {
       timeoutSpy.mockRestore();
     }
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // C1 / I2 (review round 1, ruled A-L6.2 (1)): an empty or malformed 200 NEVER installs.
+  //
+  // The design cannot render an empty catalogue: `detail()` reads `P[0]` and `renderVals()`
+  // reads `MARKETS[s.market || "Austin, TX"].center`, both on every render — so emptying the
+  // prototype's arrays is a blank APP, not an empty Browse. The brief's "a 200 always wins,
+  // empty list included" is withdrawn. Between deploy and seed, and in any unseeded
+  // environment, the member sees the design's fixtures: the pre-L6 behaviour.
+  // ---------------------------------------------------------------------------------------
+  it('an empty catalogue leaves the fixtures in place and reports false', async () => {
+    const practices: Practice[] = [toPractice(row({ id: 'fixture' }))];
+    const markets: Markets = { 'Austin, TX': { center: [30.31, -97.75], zoom: 10 } };
+    await expect(loadListings(ok([]), practices, markets)).resolves.toBe(false);
+    expect(practices.map((p) => p.id)).toEqual(['fixture']);
+    expect(Object.keys(markets)).toEqual(['Austin, TX']);
+  });
+
+  it.each([
+    ['an envelope with no items at all', '{}'],
+    ['a null items field', '{"items":null}'],
+    ['an items field that is not an array', '{"items":{"0":{}}}']
+  ])('leaves the fixtures in place when a 200 carries %s', async (_label, body) => {
+    const practices: Practice[] = [toPractice(row({ id: 'fixture' }))];
+    const markets: Markets = { 'Austin, TX': { center: [30.31, -97.75], zoom: 10 } };
+    const odd = vi.fn(async () => new Response(body, { status: 200, headers: { 'content-type': 'application/json' } })) as unknown as typeof fetch;
+    await expect(loadListings(odd, practices, markets)).resolves.toBe(false);
+    expect(practices.map((p) => p.id)).toEqual(['fixture']);
+    expect(Object.keys(markets)).toEqual(['Austin, TX']);
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // M2 (review round 1): `next_cursor` is followed until it is null. `?limit=200` is the
+  // endpoint's own MAX_LIMIT, so a catalogue of 201 would otherwise truncate in silence.
+  // ---------------------------------------------------------------------------------------
+  const paged = (pages: Array<{ items: ApiListing[]; next_cursor: string | null }>) => {
+    let i = 0;
+    return vi.fn(async () => new Response(JSON.stringify(pages[i++]), {
+      status: 200, headers: { 'content-type': 'application/json' }
+    })) as unknown as typeof fetch;
+  };
+
+  it('asks for one page only when next_cursor is null', async () => {
+    const spy = ok([row({ id: 'only' })]);
+    await expect(loadListings(spy, [], {})).resolves.toBe(true);
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it('follows next_cursor until it is null and installs every page in order', async () => {
+    const practices: Practice[] = [];
+    const fetchFn = paged([
+      { items: [row({ id: 'a' }), row({ id: 'b' })], next_cursor: 'cur sor/1' },
+      { items: [row({ id: 'c' })], next_cursor: null }
+    ]);
+    await expect(loadListings(fetchFn, practices, {})).resolves.toBe(true);
+    expect(practices.map((p) => p.id)).toEqual(['a', 'b', 'c']);
+    expect(fetchFn).toHaveBeenCalledTimes(2);
+    expect(fetchFn).toHaveBeenNthCalledWith(1, '/api/listings?limit=200', expect.anything());
+    expect(fetchFn).toHaveBeenNthCalledWith(2, '/api/listings?limit=200&cursor=cur%20sor%2F1', expect.anything());
+  });
+
+  it('adds the cursor with a `?` when the caller’s URL carries no query of its own', async () => {
+    const fetchFn = paged([
+      { items: [row({ id: 'a' })], next_cursor: 'c1' },
+      { items: [row({ id: 'b' })], next_cursor: null }
+    ]);
+    await loadListings(fetchFn, [], {}, '/api/listings');
+    expect(fetchFn).toHaveBeenNthCalledWith(2, '/api/listings?cursor=c1', expect.anything());
+  });
+
+  // A `while` that trusts the server to stop is a boot that a server can hang for ever:
+  // `AbortSignal.timeout` bounds each REQUEST, not the loop, and `main.ts` awaits the loop
+  // before it mounts. MAX_PAGES × 200 is far past any catalogue this product will hold.
+  it('gives up after MAX_PAGES rather than following a cursor for ever', async () => {
+    const practices: Practice[] = [toPractice(row({ id: 'fixture' }))];
+    const forever = vi.fn(async () => new Response(JSON.stringify({ items: [row({ id: 'x' })], next_cursor: 'again' }), {
+      status: 200, headers: { 'content-type': 'application/json' }
+    })) as unknown as typeof fetch;
+    await expect(loadListings(forever, practices, {})).resolves.toBe(true);
+    expect(forever).toHaveBeenCalledTimes(MAX_PAGES);
+    expect(practices).toHaveLength(MAX_PAGES);
+  });
+
+  // I2: a malformed ROW still throws out of `loadListings` (nothing can validate every field
+  // cheaply) — but `applyListings` maps before it clears, so the fixtures survive that too, and
+  // `main.ts` catches so the app still mounts.
+  it('leaves the fixtures in place when a row inside the page is malformed', async () => {
+    const practices: Practice[] = [toPractice(row({ id: 'fixture' }))];
+    const junkRow = vi.fn(async () => new Response('{"items":[null],"next_cursor":null}', {
+      status: 200, headers: { 'content-type': 'application/json' }
+    })) as unknown as typeof fetch;
+    await expect(loadListings(junkRow, practices, {})).rejects.toThrow();
+    expect(practices.map((p) => p.id)).toEqual(['fixture']);
   });
 });
 
