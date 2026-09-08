@@ -1159,20 +1159,27 @@ def _collapse_whitespace(text: str) -> str:
     return re.sub(r"\s+", " ", text)
 
 
-PERSONA_PASSWORD_RAILWAY_NOTE = (
-    "stored on the QA `api` service in Railway as the operator's secret store; read by no service; "
+PERSONA_PASSWORD_KEYCHAIN_NOTE = (
+    "held in the operator's macOS Keychain (service `practice-match-qa`, account "
+    "`PERSONA_PASSWORD`; read with `security find-generic-password -a PERSONA_PASSWORD -s "
+    "practice-match-qa -w` into a subprocess environment, never printed); read by no service; "
     "passed to the seed and the harness through the shell; never on production"
 )
 
+PERSONA_PASSWORD_OLD_RAILWAY_PHRASE = "stored on the QA `api` service in Railway as the operator's secret store"
 
-def test_persona_password_railway_storage_is_one_fact_in_every_document():
-    """Controller ruling A-S6.1 (2026-09-08, final-review I3). `docs/RUNBOOK-identity.md`'s QA
-    parity run (§12) reads `PERSONA_PASSWORD` out of Railway, which `DEPLOY.md`, `.env.example` and
-    this runbook's own §11 all said, before this ruling, could never happen ("never a Railway
-    variable" / "Never set it in Railway"). A-S6.1 settles it — `PERSONA_PASSWORD` IS stored on QA
-    as an operator secret nobody's code reads — so all four sites state ONE fact, in these words.
-    Whitespace is collapsed before comparing (see `_collapse_whitespace`), because the same sentence
-    wraps differently in each document."""
+
+def test_persona_password_keychain_storage_is_one_fact_in_every_document():
+    """Controller amendment A-S6.2 (2026-09-08; John's ruling on default #5) supersedes A-S6.1's
+    storage sentence: `PERSONA_PASSWORD` was removed from the QA `api` service on 2026-09-08 (no
+    service ever read it) and now lives only in the operator's macOS Keychain (service
+    `practice-match-qa`, account `PERSONA_PASSWORD`). `DEPLOY.md`, `.env.example` and both halves of
+    `docs/RUNBOOK-identity.md`'s test/QA-account documentation (§11 and §12) all quoted A-S6.1's
+    Railway sentence verbatim; each now has to state the SAME new fact, in these words, and none of
+    them may still claim the password sits in Railway (A-S6.1's own paragraph is the one place that
+    keeps the old wording, as history, so this test does not scan it). Whitespace is collapsed
+    before comparing (see `_collapse_whitespace`), because the same sentence wraps differently in
+    each document."""
     deploy = _collapse_whitespace((ROOT / "DEPLOY.md").read_text())
     example = _collapse_whitespace((ROOT / ".env.example").read_text())
     runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
@@ -1185,7 +1192,11 @@ def test_persona_password_railway_storage_is_one_fact_in_every_document():
         ("docs/RUNBOOK-identity.md §11", section_11),
         ("docs/RUNBOOK-identity.md §12", section_12),
     ):
-        assert PERSONA_PASSWORD_RAILWAY_NOTE in text, f"{name} does not carry A-S6.1's sentence verbatim"
+        assert PERSONA_PASSWORD_KEYCHAIN_NOTE in text, f"{name} does not carry A-S6.2's Keychain sentence verbatim"
+        assert PERSONA_PASSWORD_OLD_RAILWAY_PHRASE not in text, (
+            f"{name} still claims PERSONA_PASSWORD is stored on the QA `api` service in Railway "
+            "(A-S6.1, superseded by A-S6.2)"
+        )
 
 
 def test_runbook_qa_parity_command_pins_the_playwright_config_flag():
@@ -1332,3 +1343,70 @@ def test_deploy_md_exit_codes_match_seed_listings_returns():
     section = deploy.split("## Seeding the demo hospitals (QA)", 1)[1].split("\n## ", 1)[0]
     for code in codes:
         assert f"`{code}`" in section, f"DEPLOY.md's seeding section does not document exit code {code}"
+
+
+# --- Task S8: A-S6.2 — PERSONA_PASSWORD leaves Railway for the operator's Keychain; QA DB_POOL_MAX --
+
+
+def test_deploy_md_records_qa_db_pool_max_values_and_sizing_rule():
+    """A-S6.2 (2026-09-08) has the controller's `DB_POOL_MAX` change on QA — `api` set to `10`,
+    `worker` to `4` — recorded in `DEPLOY.md`'s variables table, along with the sizing rule: uvicorn
+    serves the api as a single process and celery runs `--concurrency=2` (`scripts/start.sh`) plus
+    beat, so the two reuse pools together hold at most 14 idle connections against PostGIS's
+    `max_connections` of 100. Checked against the actual code, not just asserted as prose, so the
+    two cannot drift apart silently."""
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    row = next(line for line in deploy.splitlines() if line.startswith("| `DB_POOL_MAX`"))
+    assert "`10`" in row, f"DEPLOY.md's DB_POOL_MAX row does not name QA api's value of 10: {row!r}"
+    assert "`4`" in row, f"DEPLOY.md's DB_POOL_MAX row does not name QA worker's value of 4: {row!r}"
+    assert "api" in row and "worker" in row, "DEPLOY.md's DB_POOL_MAX row does not name which service gets which value"
+    assert "14" in row, "DEPLOY.md's DB_POOL_MAX row does not state the combined idle-connection ceiling (14)"
+    assert "100" in row, "DEPLOY.md's DB_POOL_MAX row does not name PostGIS's max_connections (100)"
+
+    # ...and that really is what the code does: a single uvicorn process, celery at concurrency 2.
+    start_sh = (ROOT / "scripts" / "start.sh").read_text()
+    assert '--concurrency="${CELERY_CONCURRENCY:-2}"' in start_sh, (
+        "scripts/start.sh's celery concurrency default moved off 2 — DEPLOY.md's 14-connection sizing rule assumes it"
+    )
+    assert "--workers" not in start_sh, "scripts/start.sh now runs uvicorn with multiple workers — the sizing rule assumes a single process"
+
+
+def test_a_s6_1_is_marked_superseded_by_a_s6_2_without_being_deleted():
+    """Task S8 (docs-vs-code sweep). A-S6.1's storage ruling is now wrong — the password left
+    Railway — but it stays in the plan as history (it records a real decision that held for a real
+    period), with one added clause pointing at what replaced it. This pins that the clause was
+    added and that the original ruling sentence is still there, verbatim, rather than rewritten or
+    deleted."""
+    plan = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-08-account-screens.md").read_text()
+    a_s6_1 = next(line for line in plan.splitlines() if line.startswith("**A-S6.1"))
+    assert "superseded by A-S6.2" in a_s6_1, "A-S6.1's paragraph does not carry the added 'superseded by A-S6.2' clause"
+    assert (
+        "`PERSONA_PASSWORD` IS stored as a Railway variable on the QA `api` service — as the "
+        "operator's secret store only"
+    ) in a_s6_1, "A-S6.1's original ruling sentence was rewritten or removed rather than kept as history"
+
+
+PLAN_FILES_WITH_PERSONA_PASSWORD_HISTORY = (
+    "docs/superpowers/plans/2026-09-05-practice-match-identity-access-email.md",
+    "docs/superpowers/plans/2026-09-08-account-screens.md",
+)
+
+
+def test_persona_password_railway_set_instructions_are_marked_superseded():
+    """S8 Round 2 (review Medium finding 1). `docs/superpowers/plans/2026-09-05-practice-match-
+    identity-access-email.md`'s Step 1 (the original `railway variables --set PERSONA_PASSWORD=…`
+    instruction) and its R8 risk-register row (`rotate with railway variables --set`) are live,
+    unmarked instructions that would recreate exactly the Railway storage A-S6.2 ruled against —
+    Task S8's file list didn't cover this plan, but a stale, actionable instruction left in ANY
+    plan is the same defect the Keychain sweep exists to catch. Rather than special-case those two
+    lines, this pins the general rule for both identity-era plans: any line that mentions
+    `PERSONA_PASSWORD` and `railway variables --set` in the same breath must also say "superseded"
+    on that same line, so a future edit that adds another such instruction fails here too."""
+    for relpath in PLAN_FILES_WITH_PERSONA_PASSWORD_HISTORY:
+        text = (ROOT / relpath).read_text()
+        for line in text.splitlines():
+            if "PERSONA_PASSWORD" in line and "railway variables --set" in line:
+                assert "superseded" in line, (
+                    f"{relpath}: line mentions PERSONA_PASSWORD and `railway variables --set` "
+                    f"but is not marked superseded: {line!r}"
+                )

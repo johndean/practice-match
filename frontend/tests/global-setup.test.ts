@@ -132,7 +132,7 @@ describe('remoteReseedPlan (S7)', () => {
   });
 
   // An empty string is not a database, a password, a secret or a URL: `PERSONA_PASSWORD=` in a
-  // shell whose Railway lookup failed would otherwise seed every fixture account with a hash of
+  // shell whose Keychain read failed would otherwise seed every fixture account with a hash of
   // the empty string.
   it('treats an empty value as missing', () => {
     for (const name of REMOTE_RESEED_REQUIRED) {

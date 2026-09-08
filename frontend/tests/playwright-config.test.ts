@@ -197,7 +197,8 @@ const USE_TRACE = /^test\.use\(\{ trace: process\.env\.PW_APP_URL \? 'off' : 're
 //
 // In every local and CI run that password is the documented test-only default, so a trace
 // discloses nothing. The one run where it is a real secret is a LIVE one: `PW_APP_URL` set, which
-// is the QA hand-back, with `PERSONA_PASSWORD` from Railway. So the trace is off exactly there and
+// is the QA hand-back, with `PERSONA_PASSWORD` from the operator's environment (populated from the
+// macOS Keychain, never Railway, A-S6.2). So the trace is off exactly there and
 // the project default (`retain-on-failure`) is untouched everywhere else — the tests themselves
 // keep running on a live run, because the form is precisely what Task I10 has to prove on QA.
 //
@@ -215,8 +216,9 @@ describe('the form sign-in tests turn their trace off on a live run (round 3, ru
   //
   // Why it matters at all: in every local and CI run the password is the documented test-only
   // default, so a trace discloses nothing. The one run where it is a real secret is a live one —
-  // `PW_APP_URL` set, the QA hand-back, with `PERSONA_PASSWORD` from Railway — and CI publishes
-  // `frontend/test-results`. The tests still RUN there: the form is what Task I10 must prove on QA.
+  // `PW_APP_URL` set, the QA hand-back, with `PERSONA_PASSWORD` from the operator's Keychain, never
+  // Railway (A-S6.2) — and CI publishes `frontend/test-results`. The tests still RUN there: the
+  // form is what Task I10 must prove on QA.
   it('carries the PW_APP_URL-conditional trace at the top level of signin-form.spec.ts', () => {
     const spec = withoutComments(readFileSync(SIGNIN_FORM, 'utf8'));
     expect(spec, 'the live-run trace override is gone').toMatch(USE_TRACE);
