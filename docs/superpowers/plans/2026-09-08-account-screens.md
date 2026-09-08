@@ -288,6 +288,8 @@
 
 ---
 
+**A-S5 record additions (2026-09-08; the S5 review's record-only findings, so the amendment text and the code agree).** (M9) `referencePersona` withholds the account for a THIRD case besides `answer` and `unavailable`: the re-apply state (`gate: apply` reached as the `declined` persona) — a `declined` account would map the gate back to its own card on the reference (round-1 measurement C2); unit-tested. (M11) `smoke.spec.ts` needed no change in S5: the five account routes and `/reset?token=abc` were already in `ROUTES` from S2, each asserted to render with zero console errors — recorded so the brief's bullet is not read as unproven. (M12) A-S5 (4) says the armed API error "MUST have been observed by the time the card is visible"; the implementation (`settleExpectedApiFailures`) polls for up to five seconds AFTER the card appears because Chromium delivers console events asynchronously — the guarantee that matters (an unused allowance fails) is intact; the literal wording is relaxed by that window. S5 review rounds: round 1 `f7d61d9` (I1 budget docstring at 14 of 30, M1–M8, M10, M13, M14), round 2 `31b500b` (the reset script in CI's strict-mypy step, pinned).
+
 **A-S5.3 (2026-09-08; John confirmed A-S5.2 S-1 and S-2 as ruled — "GO with preferred fix (a)" for both — and added: the reviewer-API fixture restoration is approved because it exercises the real staff workflow (§8); before Task I10 a deterministic reset/reseed is required → Task S7 below; no product behaviour or approved visual design changes for harness issues.)**
 
 ---
