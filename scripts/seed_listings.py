@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
 """Seed (or re-seed) the eighteen demo hospitals into a Practice Match database.
 
-Idempotent: an upsert keyed on `slug`, so a second run changes nothing but `updated_at`, and the
-surviving rows keep their ids — photo URLs and deep links stay valid across a re-seed.
+Idempotent: an upsert keyed on `slug`, so a second run changes nothing but `updated_at` and
+`listed_at` — the latter is recomputed from `listed_days_ago` on every import by design, so the
+seeds never read as a year old; every row shifts by the same amount, so their relative order (what
+`listing_page_idx` pages on) is preserved. Surviving rows keep their ids, so photo URLs and deep
+links stay valid across a re-seed.
 
 Every import also REMOVES the seed rows the file no longer carries (amendment A-L4, John
 2026-09-08: "must remove the old seeded data when importing the new data"): in the same
@@ -25,9 +28,11 @@ Production takes `--production`, the way scripts/bootstrap_admin.py takes it: wi
 on its first line which environment it is writing to — never on production without John's go
 (spec 2026-09-06 D7).
 
-Exit codes mirror scripts/migrate.py: 0 done, 2 refused (production without --production, or
-DATABASE_URL unset), 3 database unreachable (retryable), 4 the seed data is missing or malformed,
-5 a non-seed listing owns a seed slug (nothing was written). Only 3 is retryable.
+Exit codes mirror scripts/migrate.py: 0 done, 2 refused before anything is opened (ENVIRONMENT
+unset, production without --production, or DATABASE_URL unset), 3 database unreachable
+(retryable), 4 the seed data is missing or malformed OR the database refused the import (an
+unmigrated database is the usual cause), 5 a non-seed listing owns a seed slug (nothing was
+written). Only 3 is retryable.
 """
 from __future__ import annotations
 
@@ -131,17 +136,24 @@ def load_seed(path: Path) -> list[dict[str, Any]]:
 
 
 def load_photo_index(path: Path) -> dict[str, Any]:
+    """The same hardening as `load_seed`: a malformed inventory is exit 4, never a traceback."""
     try:
         loaded = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError) as exc:
+        hospitals = loaded["hospitals"]
+    except (OSError, ValueError, KeyError, TypeError) as exc:
         raise SeedDataError(f"{path}: {type(exc).__name__}") from None
+    if not isinstance(hospitals, dict):
+        raise SeedDataError(f"{path}: hospitals is not an object keyed by slug")
     return dict(loaded)
 
 
 def photo_paths(slug: str, index: dict[str, Any]) -> list[str]:
     """Relative paths under seeds/hospitals/photos/, in inventory order."""
     entries = index.get("hospitals", {}).get(slug, [])
-    return [f"{slug}/{entry['file']}" for entry in entries]
+    try:
+        return [f"{slug}/{entry['file']}" for entry in entries]
+    except (KeyError, TypeError) as exc:
+        raise SeedDataError(f"{slug}: photo inventory entry is unusable ({type(exc).__name__})") from None
 
 
 def row_params(hospital: dict[str, Any], photos: list[str]) -> dict[str, Any]:
@@ -208,7 +220,14 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--reset", action="store_true", help="delete every source='seed' row first")
     parser.add_argument("--production", action="store_true", help="required to run against ENVIRONMENT=production")
     args = parser.parse_args(argv)
-    environment = os.environ.get("ENVIRONMENT", "")
+    environment = os.environ.get("ENVIRONMENT")
+    if environment is None:
+        # Fail CLOSED, the way scripts/bootstrap_admin.py does through `settings.environment`
+        # (app/config.py declares it with no default, so a missing variable stops that script at
+        # import). Keying on `.get(..., "")` here would let production's DATABASE_URL and a
+        # forgotten ENVIRONMENT put eighteen demo hospitals in the stakeholders' database.
+        print("[seed] ENVIRONMENT is not set — refusing to guess which database this is", file=sys.stderr)
+        return 2
     if environment.lower() == "production":
         # The same "say it out loud" shape as scripts/bootstrap_admin.py and scripts/deploy.sh's
         # Railway-project guard, for the same reason: this machine speaks to more than one
@@ -232,6 +251,14 @@ def main(argv: list[str] | None = None) -> int:
     except SlugCollision as exc:
         print(f"[seed] refusing: {exc} — nothing was written", file=sys.stderr)
         return 5
+    except psycopg2.Error as exc:
+        # Anything the database itself refused. The realistic one is an UNMIGRATED database:
+        # `listing` does not exist and psycopg2 raises UndefinedTable, which is a
+        # ProgrammingError, not an OperationalError — it used to escape as a traceback and exit 1.
+        # Not retryable, so it joins 4 rather than 3. Only the class and the SQLSTATE are printed:
+        # a psycopg2 message can carry the statement, and the statement carries the data.
+        print(f"[seed] database refused the import: {type(exc).__name__} ({getattr(exc, 'pgcode', '?')})", file=sys.stderr)
+        return 4
     print(f"[seed] done - {count} listings")
     return 0
 

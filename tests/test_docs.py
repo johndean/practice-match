@@ -867,4 +867,18 @@ def test_deploy_md_documents_how_to_seed_qa():
     # L4 review round 1: the two operator-facing outcomes the runbook must not leave out — the
     # flag that buys a production run, and the exit code that says a seller owns a seed slug.
     assert "scripts/seed_listings.py --production" in deploy
-    assert "`5`" in deploy and "non-seed listing" in deploy
+    # M8: the phrase, not a bare backtick-5 that any digit in a 190-line runbook would satisfy.
+    assert "`5` — a **non-seed listing** already owns one of the seed slugs" in deploy
+    # I1: an undeclared ENVIRONMENT is a refusal, and the runbook says which code it is.
+    assert "`ENVIRONMENT` unset" in deploy
+    # M4: the realistic exit-4 that is not the file's fault.
+    assert "unmigrated database" in deploy
+    # M11: listed_at moves on every import — the one claim a reader reasoning about the listing
+    # page's ordering would rely on.
+    assert "recomputed from `listed_days_ago`" in deploy
+    # M3: the headline command is the plain import; `--reset` (fresh ids, and it buys nothing the
+    # plain import does not since A-L4) is demoted beneath it.
+    section = deploy.split("## Seeding the demo hospitals (QA)", 1)[1].split("\n## ", 1)[0]
+    plain = section.find("python scripts/seed_listings.py  ")
+    reset = section.find("python scripts/seed_listings.py --reset")
+    assert 0 <= plain < reset, "the runbook's headline command must be the plain import (M3)"

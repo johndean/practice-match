@@ -153,39 +153,53 @@ for i in 1 2 3 4 5 6; do curl -sS -o /dev/null -w "%{http_code} " -X POST -H 'Co
 ## Seeding the demo hospitals (QA)
 
 The eighteen demo hospitals (`seeds/hospitals.json`, spec 2026-09-06 D7) are loaded by
-`scripts/seed_listings.py`, which ships in the image together with `seeds/`. It is idempotent
-(an upsert by `slug`, so the rows keep their ids and their photo URLs stay valid), and **every**
-run also deletes the `source='seed'` rows the file no longer carries, in the same transaction as
-the upsert (amendment A-L4). `--reset` is the bigger hammer: it deletes every `source='seed'`
-row first, reaching the same end state with fresh ids. A `source='seller'` row is never touched
-by either path, and a slug some other listing already owns stops the whole import (below). It
-is a hand operation, and it is never on production without John's go — against
-`ENVIRONMENT=production` the script refuses (exit 2) unless the operator says it out loud with
-`--production`, exactly as `scripts/bootstrap_admin.py` does; with the flag, the run's first line
-of output names the environment it is writing to.
+`scripts/seed_listings.py`, which ships in the image together with `seeds/`. It is idempotent —
+an upsert by `slug`, so the rows keep their ids and their photo URLs stay valid; the only columns
+a re-run moves are `updated_at` and `listed_at`, the latter being
+recomputed from `listed_days_ago` on every import by design (the seeds never read as a year old, and every row
+shifts equally, so their relative order is preserved). **Every** run also deletes the
+`source='seed'` rows the file no longer carries, in the same transaction as the upsert (amendment
+A-L4). A `source='seller'` row is never touched, and a slug some other listing already owns stops
+the whole import (exit 5 below). It is a hand operation, and it is
+never on production without John's go — against `ENVIRONMENT=production` the script refuses
+unless the operator says it out loud with `--production`, exactly as `scripts/bootstrap_admin.py`
+does; with the flag, the run's first line of output names the environment it is writing to.
 
 ```bash
 railway status                                   # MUST print Project: Practice Match
 railway ssh --service api --environment QA       # John's ed25519 key; the CLI needs a key on file
-python scripts/seed_listings.py --reset          # inside the container
-# first --reset run: "[seed] inserted 18, updated 0, removed 0" then "[seed] done - 18 listings"
-# a second --reset run: "inserted 18, updated 0, removed 18" (fresh ids); without --reset:
-# "inserted 0, updated 18, removed N", N being the seed rows the file no longer carries
-#
-# On production, with John's go and only then:
-#   ENVIRONMENT is already production in the container, so add the flag and nothing else:
-#   python scripts/seed_listings.py --production
+python scripts/seed_listings.py                  # inside the container — this is the operation
+# first run:  "[seed] inserted 18, updated 0, removed 0" then "[seed] done - 18 listings"
+# a re-run:   "inserted 0, updated 18, removed N" — N being the seed rows the file no longer
+#             carries, which every import deletes; the eighteen keep their ids.
 ```
 
-Exit codes: `0` done · `2` refused (`ENVIRONMENT=production` without `--production`, or
-`DATABASE_URL` unset) · `3` database unreachable (retry) · `4` the seed data is missing or
-malformed (fix the file, redeploy) · `5` a **non-seed listing** — a seller's own — already owns
-one of the seed slugs; the message names them and **nothing was written**, so decide with the
-seller (rename the seed slug, or withdraw their listing) and run it again. Anything else — in
-particular a traceback — means the image is wrong, not the data.
+Only when fresh ids are actually wanted — it invalidates deep links and photo URLs, and since
+A-L4 it buys nothing the plain import does not:
+
+```bash
+python scripts/seed_listings.py --reset          # "inserted 18, updated 0, removed 18"
+```
+
+And on production, with John's go and only then (`ENVIRONMENT` is already `production` inside
+that container, so the flag is the whole difference):
+
+```bash
+python scripts/seed_listings.py --production
+```
+
+Exit codes: `0` — done · `2` — refused before anything was opened (`ENVIRONMENT` unset, or
+`ENVIRONMENT=production` without `--production`, or `DATABASE_URL` unset) · `3` — database
+unreachable, retry · `4` — the seed data is missing or malformed (fix the file, redeploy), or the
+database refused the import: an **unmigrated database** is the usual cause, because the `seed`
+role — unlike `api` — does not run `scripts/migrate.py` first, so run that and try again ·
+`5` — a **non-seed listing** already owns one of the seed slugs; the message names them and
+nothing was written, so decide with the seller (rename the seed slug, or withdraw their listing)
+and run it again. A traceback is none of these: the data is safe either way — the whole import is
+one transaction and rolls back — but the image is wrong.
+
 The same run is available as a container role: `bash scripts/start.sh seed --reset`, for a
-one-off Railway service command. `python -m scripts.seed_listings --reset` works too, from
-`/app`.
+one-off Railway service command. `python -m scripts.seed_listings` works too, from `/app`.
 
 ## Rollback
 

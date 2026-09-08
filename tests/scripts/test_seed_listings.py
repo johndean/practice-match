@@ -80,9 +80,13 @@ def test_every_row_carries_the_seed_files_own_values(scratch_dsn: str) -> None:
         )
         for row in cur.fetchall():
             h = hospitals[row[0]]
+            # M9: `status` and `location_disclosed` come from the FILE, not from a literal —
+            # otherwise the day a row is authored `location_disclosed: false` this passes while
+            # the seeder is what decides. `source` stays a literal: the script hard-codes 'seed'
+            # and deliberately ignores the file's own value.
             assert row[1:14] == (
                 h["name"], h["street"], h["city"], h["state"], h["zip"], h["phone"], h["hours"],
-                h["area"], h["market"], h["type"], "published", "seed", True,
+                h["area"], h["market"], h["type"], h["status"], "seed", h["location_disclosed"],
             ), h["slug"]
             assert row[14:] == (
                 h["price"], h["rev"], h["docs"], h["rooms"], h["sqft"], h["bldg"], h["est"],
@@ -137,6 +141,22 @@ def test_main_returns_two_without_a_database_url(monkeypatch: pytest.MonkeyPatch
 def test_main_returns_three_when_the_database_is_unreachable(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
     assert SL.main([]) == 3
+
+
+def test_main_returns_four_when_the_database_refuses_the_import(
+    scratch_dsn: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """L4 review M4: every psycopg2.Error that is not an OperationalError used to escape as a
+    traceback and exit 1. The realistic one is an UNMIGRATED database — `railway ssh` into a
+    container whose migrations failed, or a one-off `start.sh seed`, which (unlike the `api`
+    role) does not run scripts/migrate.py first: `listing` does not exist and psycopg2 raises
+    UndefinedTable, a ProgrammingError. Simulated by pointing the first statement at a table
+    that is not there, which is exactly what an unmigrated database looks like."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setattr(SL, "COLLISION_CHECK", "SELECT slug FROM no_such_table WHERE slug = ANY(%s)")
+    assert SL.main([]) == 4
+    err = capsys.readouterr().err
+    assert "UndefinedTable" in err and "42P01" in err, err
 
 
 def test_main_returns_four_when_the_seed_file_is_malformed(
@@ -244,6 +264,37 @@ def test_main_returns_four_when_the_photo_inventory_is_absent(
     assert SL.main([]) == 4
 
 
+def test_main_returns_four_when_the_photo_inventory_is_the_wrong_shape(
+    scratch_dsn: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """L4 review M5: `hospitals` must be an object keyed by slug. A list there used to reach
+    `.get(slug)` on a list and raise AttributeError — a traceback, not exit 4."""
+    wrong = tmp_path / "index.json"
+    wrong.write_text('{"version": 1, "hospitals": [{"file": "1.webp"}]}', encoding="utf-8")
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setattr(SL, "PHOTO_INDEX", wrong)
+    assert SL.main([]) == 4
+
+
+def test_main_returns_four_when_a_photo_entry_has_no_file(
+    scratch_dsn: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """L4 review M5, the other half: an inventory entry missing `file` used to raise KeyError out
+    of photo_paths. It is malformed seed data, so it is exit 4 and it names the slug."""
+    slug = str(SL.load_seed(SL.SEEDS_FILE)[0]["slug"])
+    broken = tmp_path / "index.json"
+    broken.write_text(json.dumps({"version": 1, "hospitals": {slug: [{"caption": "no file key"}]}}), encoding="utf-8")
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setattr(SL, "PHOTO_INDEX", broken)
+    assert SL.main([]) == 4
+
+
+def test_photo_paths_names_the_slug_whose_entry_is_unusable() -> None:
+    with pytest.raises(SL.SeedDataError) as exc:
+        SL.photo_paths("abc_animal_hospital", {"hospitals": {"abc_animal_hospital": [{"caption": "x"}]}})
+    assert "abc_animal_hospital" in str(exc.value)
+
+
 def test_row_params_names_the_missing_field() -> None:
     """row_params' `except KeyError` arm (pre-flight C2)."""
     with pytest.raises(SL.SeedDataError) as exc:
@@ -306,6 +357,26 @@ def test_the_summary_line_reports_inserted_updated_and_removed(
     assert "[seed] inserted 0, updated 18, removed 0" in capsys.readouterr().out
     SL.seed(scratch_dsn, reset=True)
     assert "[seed] inserted 18, updated 0, removed 18" in capsys.readouterr().out
+
+
+def test_main_refuses_when_the_environment_is_not_declared(
+    scratch_dsn: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """L4 review I1: `ENVIRONMENT` unset must FAIL CLOSED. scripts/bootstrap_admin.py reads
+    `settings.environment`, which app/config.py declares with no default, so a missing variable
+    stops it at import; keying on `os.environ.get(..., "")` here would let the same operator —
+    production's DATABASE_URL exported on a laptop, ENVIRONMENT forgotten — seed the
+    stakeholders' database with demo hospitals."""
+    monkeypatch.delenv("ENVIRONMENT", raising=False)
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    assert SL.main([]) == 2
+    captured = capsys.readouterr()
+    assert "ENVIRONMENT" in captured.err
+    assert captured.out == "", "a refusal says nothing on stdout"
+    assert _count(scratch_dsn) == 0, "the refusal must happen before anything is opened"
+    # ...and before the connection, as the production refusal does: an unreachable DSN still 2.
+    monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
+    assert SL.main([]) == 2
 
 
 def test_main_refuses_to_run_against_production(

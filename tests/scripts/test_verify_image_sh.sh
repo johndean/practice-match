@@ -140,3 +140,33 @@ out3=$(cat "$WORKDIR/out3")
 [[ "$out3" == *"FAIL: seeds/hospitals.json missing from the image"* ]] || fail "the missing-seeds failure must name the file; got: $out3"
 
 echo "verify-image.sh seed-data negative case OK (I8)"
+
+# --- M6: the JSON files present but the PHOTOGRAPHS gone must fail too ---
+# A `*.webp` line in .dockerignore, or a build-context change that drops the binaries, leaves the
+# two JSON checks green and L5's photo endpoint serving 404s from inside the container.
+write_healthy_curl
+cat > "$FAKE_BIN/docker" <<'DOCKEREOF4'
+#!/usr/bin/env bash
+echo "docker $*" >> "$FAKE_LOG"
+case "$1" in
+  build) exit 0 ;;
+  run) echo fake0000container ;;
+  rm) exit 0 ;;
+  exec) if [[ "$*" == *.webp ]]; then exit 1; fi; echo 10001 ;;
+  logs) echo "fake celery@fakehost ready." ;;
+  *) exit 0 ;;
+esac
+DOCKEREOF4
+chmod +x "$FAKE_BIN/docker"
+: > "$FAKE_LOG"
+
+set +e
+PATH="$FAKE_BIN:$PATH" bash scripts/verify-image.sh > "$WORKDIR/out4" 2>&1
+code4=$?
+set -e
+
+[[ $code4 -ne 0 ]] || { cat "$WORKDIR/out4"; fail "verify-image.sh must fail when the photographs are missing from the image; it exited 0"; }
+out4=$(cat "$WORKDIR/out4")
+[[ "$out4" == *"FAIL: seeds/hospitals/photos/123_route66/1.webp missing from the image"* ]] || fail "the missing-photograph failure must name the file; got: $out4"
+
+echo "verify-image.sh missing-photograph case OK (M6)"
