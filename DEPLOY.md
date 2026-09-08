@@ -168,16 +168,35 @@ never on production without John's go — against `ENVIRONMENT=production` the s
 unless the operator says it out loud with `--production`, exactly as `scripts/bootstrap_admin.py`
 does; with the flag, the run's first line of output names the environment it is writing to.
 
-**The photographs (A-L9, 2026-09-09).** Each hospital carries **six**, one for every photo slot the
-design's detail page renders — `photoSet(p)` in `Practice Match V3.dc.html` gives an exterior plus
-five subjects chosen by practice type, and nothing beyond six can be displayed. They are selected
-from John's curated source folders by what the filename says the photograph shows, so the design's
-fixed caption is true of the picture under it; `scripts/prepare_photos.py` writes
-`seeds/hospitals/photos/<slug>/1.webp … 6.webp` and the `index.json` beside them, and both are
-committed to the repository and baked into the image. The seeder uploads no bytes — it records the
-relative paths, and the `api` service serves the files off disk at `/api/listings/{id}/photos/{n}`.
-Re-run `poetry run python scripts/prepare_photos.py` only when the source folders change; it needs
-Pillow (a dev dependency) and is never part of a deploy.
+**The photographs (A-L9, revised by A-L10 on 2026-09-09).** Each hospital carries **six slots**, one
+for every photo slot the design's detail page renders — `photoSet(p)` in `Practice Match V3.dc.html`
+gives an exterior plus five subjects chosen by practice type, and nothing beyond six can be
+displayed. The caption under each photograph is the DESIGN's, fixed per slot and never stored, so
+the only thing that can make a caption true is the photograph at that position showing that subject.
+
+**`seeds/hospitals/photos/curation.json` is the source of truth for which photograph fills which
+slot.** It was written by looking at every source image, because John's filenames do not reliably
+describe their contents (one folder's `06_interior_reception.png` is a photograph of an exterior
+sign) and several files are sliced fragments of a collage sheet. For every slug it names it is
+authoritative; a slot whose value is `null` has **no truthful photograph in that folder and stays
+empty**, where the design renders its own placeholder — absent beats faked. 73 of the 108 slots are
+filled today; the other 35 are placeholders, and four hospitals (`1111_pet_hospital`,
+`ghi_veterinary_hospital`, `pqr_veterinary_hospital`, `stu_veterinary_specialist_center`) have
+nothing but an exterior until John supplies clean interiors.
+
+`scripts/prepare_photos.py` writes `seeds/hospitals/photos/<slug>/<k>.webp` — **the number is the
+slot's position**, so an empty slot leaves a gap (`…/4.webp` then `…/6.webp`) and `p.photos[i]`
+still fills the design's slot `i` — plus the `index.json` beside them, which carries one entry per
+slot with nulls where the slot is empty. Both files and the curation are committed to the
+repository and baked into the image. The seeder uploads no bytes — it records the relative paths
+positionally, with a JSON `null` for an empty slot, and the `api` service serves the files off disk
+at `/api/listings/{id}/photos/{n}` (an empty slot is a 404 there, and the API sends `null` rather
+than a URL for it, so nothing requests it). Re-run
+`poetry run python scripts/prepare_photos.py` only when the source folders or the curation change;
+it needs Pillow (a dev dependency), prints `N files, M empty slots`, and is never part of a deploy.
+A curation entry that names a hospital the seed file does not, lists slots that are not the
+practice type's list in order, names a file the folder does not hold, or uses one file for two
+slots stops the run with exit 2 before anything is written.
 
 **How it is actually run (A-L7 (3)):** locally, against the QA PostGIS service's public URL, with
 `ENVIRONMENT=qa` and that URL handed to the process in its environment and never printed (the
