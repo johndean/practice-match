@@ -48,7 +48,7 @@ echo "non-root OK"
 # seeds/hospitals/photos/*.webp off disk, so the Dockerfile's COPY has to have actually
 # landed. Grepping the Dockerfile proves nothing about the built image.
 # One of the WebP files is in the list on purpose: the two JSON files can land while a `*.webp`
-# line in .dockerignore, or a build-context change, drops the 72 binaries the photo endpoint
+# line in .dockerignore, or a build-context change, drops the 108 binaries the photo endpoint
 # serves — and that failure is invisible until a listing's photographs 404 on QA.
 for seed_file in seeds/hospitals.json seeds/hospitals/photos/index.json seeds/hospitals/photos/123_route66/1.webp; do
   docker exec pm-api test -f "$seed_file" || { echo "FAIL: $seed_file missing from the image" >&2; exit 1; }
