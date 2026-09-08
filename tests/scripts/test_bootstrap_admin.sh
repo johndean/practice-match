@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
-# The two admin CLIs' shell-facing contract (Task I5): the guards that must hold BEFORE either
-# script opens a database connection — a missing --email, and running against production.
+# The seed/admin CLIs' shell-facing contract (Task I5; scripts/seed_listings.py joined in L4
+# round 1b): the guards that must hold BEFORE any of these scripts opens a database connection —
+# a missing --email, and running against production.
 #
 # Deliberately hermetic: DATABASE_URL points at a port nothing listens on, so any run that reaches
 # psycopg2 fails loudly instead of quietly writing an admin grant into whatever database happened
@@ -53,8 +54,26 @@ grep -qi "production" <<<"$ERR" || { echo "FAIL: seed_persona refusal does not s
 refute_touched_the_database "seed_persona.py (production)"
 [[ -z "$OUT" ]] || { echo "FAIL: seed_persona.py printed on stdout while refusing; got: $OUT"; exit 1; }
 
-# 4. Neither script prints a password: nothing about a password or a token is ever logged.
-for script in bootstrap_admin.py seed_persona.py; do
+# 4. seed_listings refuses on production unless the operator says so out loud (L4 round 1b).
+#    Same shape as bootstrap_admin's --production, and D7's "never on production without John's
+#    go" is what it enforces: these are demo hospitals, not the stakeholders' listings.
+run seed_listings.py production
+[[ $RC -eq 2 ]] || { echo "FAIL: expected exit 2 from seed_listings.py on production, got $RC ($ERR)"; exit 1; }
+grep -qi "production" <<<"$ERR" || { echo "FAIL: seed_listings refusal does not say why; got: $ERR"; exit 1; }
+grep -q -- "--production" <<<"$ERR" || { echo "FAIL: the refusal does not name the flag that lifts it; got: $ERR"; exit 1; }
+refute_touched_the_database "seed_listings.py (production)"
+[[ -z "$OUT" ]] || { echo "FAIL: seed_listings.py printed on stdout while refusing; got: $OUT"; exit 1; }
+
+# 5. ...and WITH the flag it gets past the guard: the only thing that stops it here is the
+#    unreachable DSN (exit 3), which is also the proof that the refusal above was the guard and
+#    not a connection failure wearing its clothes.
+run seed_listings.py production --production
+[[ $RC -eq 3 ]] || { echo "FAIL: --production should reach the database and fail on it (exit 3), got $RC ($ERR)"; exit 1; }
+grep -qiE "operationalerror|unreachable" <<<"$ERR" || { echo "FAIL: expected a database-unreachable message; got: $ERR"; exit 1; }
+grep -qi "production" <<<"$OUT" || { echo "FAIL: a production run must announce itself on its first line of stdout; got: $OUT"; exit 1; }
+
+# 6. None of the three scripts prints a password: nothing about a password or a token is ever logged.
+for script in bootstrap_admin.py seed_persona.py seed_listings.py; do
   if grep -nE 'print\(.*(password|PERSONA_PASSWORD)' "scripts/$script"; then
     echo "FAIL: scripts/$script prints a password"; exit 1
   fi
