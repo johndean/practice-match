@@ -12,6 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
+from app.api.admin_signups import MAX_LIST
 from app.auth import sessions as S
 from app.auth import tokens as T
 from app.config import settings
@@ -118,16 +119,89 @@ async def test_a_malformed_cursor_is_a_422_not_a_500(client, conn, staff_headers
     assert r.status_code == 422 and r.json()["error"]["code"] == "BAD_CURSOR"
 
 
+async def test_a_malformed_cursor_is_rejected_before_any_connection_is_opened(client, conn, staff_headers, monkeypatch):
+    """L4 (I5d.3 review): `_keyset(cursor)` must run before `sync_conn()` opens anything, so a
+    malformed cursor's 422 costs no query. The spy still calls through to the real connection —
+    it only counts — so it cannot itself break a code path that legitimately needs one."""
+    import app.api.admin_signups as AS
+
+    calls = []
+    real_sync_conn = AS.sync_conn
+
+    def spy():
+        calls.append(1)
+        return real_sync_conn()
+
+    monkeypatch.setattr(AS, "sync_conn", spy)
+    r = await client.get(f"{SIGNUPS}?cursor=nonsense", headers=staff_headers)
+    assert r.status_code == 422 and r.json()["error"]["code"] == "BAD_CURSOR"
+    assert calls == []
+
+
 async def test_limit_is_capped(client, conn, staff_headers):
-    seed(conn, 3)
+    """M2 (I5d.3 review): seeding only 3 rows and asserting 3 come back proves nothing about the
+    cap — that assertion holds whether `MAX_LIST` is 200, a different number, or does not exist.
+    Seeding past the cap is what pins it, and `next_cursor` proves the 201st row is still
+    reachable rather than dropped."""
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO interest_signup (email, email_normalised, consent_version) "
+                    "SELECT 'L'||i||'@x.test', 'l'||i||'@x.test', 'coming-soon-v1' FROM generate_series(1, %s) i",
+                    (MAX_LIST + 1,))
     r = await client.get(f"{SIGNUPS}?limit=100000", headers=staff_headers)
-    assert r.status_code == 200 and len(r.json()["items"]) == 3
+    assert r.status_code == 200
+    assert len(r.json()["items"]) == MAX_LIST          # 200, not 201 and not 100000
+    assert r.json()["next_cursor"] is not None          # …and the 201st row is still reachable
+
+
+async def test_the_export_is_not_capped_at_max_list(client, conn, staff_headers):
+    """L1 (I5d.3 review): `_csv_rows` must pass `MAX_EXPORT`, not `MAX_LIST`, as `LIST_SQL`'s
+    LIMIT — a regression that swapped them would silently truncate the launch list at 200 rows
+    under a 200 OK, which nothing else here would catch (every other CSV test exports at most
+    three rows)."""
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO interest_signup (email, email_normalised, consent_version) "
+                    "SELECT 'X'||i||'@x.test', 'x'||i||'@x.test', 'coming-soon-v1' FROM generate_series(1, %s) i",
+                    (MAX_LIST + 1,))
+    body = (await client.get("/api/admin/signups.csv", headers=staff_headers)).content.decode("utf-8")
+    assert len(list(csv.reader(io.StringIO(body)))) == MAX_LIST + 2   # header + MAX_LIST+1 rows
+
+
+async def test_a_filter_against_an_empty_table_names_the_special_message(client, conn, staff_headers):
+    """L2 (I5d.3 review): the `(no sign-ups yet)` arm of `BadFilter`'s message — every other
+    filter test seeds at least one row first, so `', '.join(known) or '(no sign-ups yet)'`'s
+    `or` branch never ran. Coverage.py does not treat that `or` as a line-arc branch, which is
+    why the module's 100% branch figure did not already prove this arm was exercised."""
+    r = await client.get(f"{SIGNUPS}?source=anything", headers=staff_headers)
+    assert r.status_code == 422
+    assert r.json()["error"]["message"] == "source must be one of (no sign-ups yet)"
 
 
 async def test_the_list_needs_signups_read(client, conn, buyer_headers):
     seed(conn, 1)
     assert (await client.get(SIGNUPS, headers=buyer_headers)).status_code == 403
     assert (await client.get(SIGNUPS)).status_code == 401
+
+
+async def test_the_list_is_reachable_before_launch_per_d_i5d_5(dist, redis, monkeypatch):
+    """M1 (I5d.3 review): D-I5d-5's unconditional mount had no test — nothing would fail if the
+    `app.include_router(admin_signups_router)` line were later moved inside the `site_mode ==
+    "app"` block. `401`, not `404`, is the proof: the route exists and only refuses for lack of a
+    credential — `require(...)` runs at all, which it could not if `not_found_router`'s catch-all
+    had already answered. Contrasted with `/api/admin/users`, which stays absent in coming-soon
+    mode, so the mount really is selective rather than everything having quietly become reachable."""
+    import httpx
+    from httpx import ASGITransport
+
+    from app.config import settings
+    from app.main import create_app
+    from tests.api.conftest import ORIGIN
+
+    monkeypatch.setattr(settings, "site_mode", "coming_soon")
+    async with httpx.AsyncClient(transport=ASGITransport(app=create_app(dist=dist)), base_url=ORIGIN) as c:
+        signups = await c.get(SIGNUPS)
+        users = await c.get("/api/admin/users")
+    assert signups.status_code == 401
+    assert users.status_code == 404
 
 
 async def test_reading_the_list_writes_no_audit_row(client, conn, staff_headers):

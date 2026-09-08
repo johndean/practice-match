@@ -30,6 +30,7 @@ from collections.abc import Iterator
 from contextlib import closing
 from datetime import UTC, datetime
 from typing import Annotated, Any, cast
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import StreamingResponse
@@ -139,8 +140,8 @@ def _check_filters(counts: Counts, source: str | None, consent_version: str | No
         raise BadFilter("consent_version", sorted(counts.by_consent))
 
 
-def _params(source: str | None, consent_version: str | None, cursor: str | None, limit: int) -> dict[str, Any]:
-    keyset_at, keyset_id = _keyset(cursor)
+def _params(source: str | None, consent_version: str | None, keyset: tuple[str | None, UUID | None], limit: int) -> dict[str, Any]:
+    keyset_at, keyset_id = keyset
     return {"source": source, "consent_version": consent_version,
             "cursor_at": keyset_at, "cursor_id": keyset_id, "limit": limit}
 
@@ -152,12 +153,18 @@ async def list_signups(source: str | None = None, consent_version: str | None = 
 
     NOT audited (`signups.read` is not in `AUDITED`): this is the read a screen polls, and one row
     per poll would fill an append-only table with reads of the list. The bulk export beside it is
-    audited, because that is the act that takes the addresses somewhere else."""
+    audited, because that is the act that takes the addresses somewhere else.
+
+    L4 (I5d.3 review): `cursor` is parsed and validated FIRST, before any connection is opened —
+    matching `admin_users.list_users`'s own first line — so a malformed cursor's 422 costs no
+    query. Passing a `cursor=` string straight into `_params` (which used to call `_keyset` itself)
+    would parse it only after `_counts` had already run."""
+    keyset = _keyset(cursor)
     capped = min(max(limit, 1), MAX_LIST)
     with closing(sync_conn()) as conn, conn, conn.cursor() as cur:
         counts = _counts(cur)
         _check_filters(counts, source, consent_version)
-        cur.execute(LIST_SQL, _params(source, consent_version, cursor, capped + 1))
+        cur.execute(LIST_SQL, _params(source, consent_version, keyset, capped + 1))
         rows = cur.fetchall()
     items = [{"id": str(r[0]), "email": r[1], "source": r[2], "consent_version": r[3],
               "created_at": r[4].isoformat(), "launch_mailed_at": _iso(r[5])}
@@ -197,7 +204,7 @@ def _csv_rows(source: str | None, consent_version: str | None) -> Iterator[str]:
     writer.writerow(CSV_COLUMNS)
     yield flush()
     with closing(sync_conn()) as conn, conn, conn.cursor() as cur:
-        cur.execute(LIST_SQL, _params(source, consent_version, None, MAX_EXPORT))
+        cur.execute(LIST_SQL, _params(source, consent_version, (None, None), MAX_EXPORT))
         for row in cur:
             writer.writerow([_safe(str(row[0])), _safe(row[1]), _safe(row[2]), _safe(row[3]),
                              row[4].isoformat(), _iso(row[5]) or ""])

@@ -26,6 +26,7 @@ from typing import Any
 
 import pytest
 
+from app.api.admin_signups import COUNTS_SQL as SIGNUPS_COUNTS_SQL
 from app.api.admin_signups import LIST_SQL as SIGNUPS_LIST_SQL
 from app.api.admin_signups import MAX_LIST as SIGNUPS_MAX_LIST
 from app.api.admin_users import LIST_SQL, MAX_LIST
@@ -54,6 +55,18 @@ PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
     "signups_list": (
         "EXPLAIN (FORMAT JSON) " + SIGNUPS_LIST_SQL,
         {"source": None, "consent_version": None, "cursor_at": None, "cursor_id": None, "limit": SIGNUPS_MAX_LIST + 1},
+    ),
+    # L5 (I5d.3 review): the OTHER query `GET /api/admin/signups` runs on every call — the grouped
+    # count that answers the tab's counts, the current filter and (D-I5d-6) which filter values
+    # exist. No `INDEXES` claim below: it is a full, ungated `GROUP BY` over the whole table, so it
+    # is CORRECTLY a `HashAggregate` over a `Seq Scan` no matter what indexes exist — there is no
+    # covering index on `(source, consent_version, launch_mailed_at)` to choose, and adding one
+    # would be a real schema change, not what this entry is for. It is here so the query's SHAPE
+    # (row estimate, node types) is pinned and visible, the same reason `active_engine` is
+    # exempted from the Seq-Scan assertion below: a small/full-table scan can be the CORRECT plan.
+    "signups_counts": (
+        "EXPLAIN (FORMAT JSON) " + SIGNUPS_COUNTS_SQL,
+        (),
     ),
 }
 
@@ -101,7 +114,7 @@ def _seed_signups(conn: Any) -> None:
         cur.execute("ANALYZE interest_signup")
 
 
-SEEDS: dict[str, Any] = {"users_queue": _seed_admin_queue, "signups_list": _seed_signups}
+SEEDS: dict[str, Any] = {"users_queue": _seed_admin_queue, "signups_list": _seed_signups, "signups_counts": _seed_signups}
 
 
 def _node_types(plan: dict[str, Any]) -> list[str]:
@@ -134,5 +147,9 @@ def test_hot_query_uses_an_index(conn, name):
     # assertions below would give (both fire too, for the same cause).
     missing = [i for i in INDEXES.get(name, ()) if i not in indexes]
     assert missing == [], f"{name}: {missing} not used; the plan uses {indexes} — nodes {types}"
-    assert any("Index" in t for t in types), types
-    assert "Seq Scan" not in types or name == "active_engine", types   # the registry is ~20 rows; a seq scan there is fine
+    # L5 (I5d.3 review): `signups_counts` joins `active_engine`'s exemption from both policy
+    # assertions below — a full, ungated `GROUP BY` over the whole table has no index to use BY
+    # DESIGN (there is no covering index on `(source, consent_version, launch_mailed_at)`), so a
+    # `HashAggregate` over a `Seq Scan` is the correct plan, not a regression to catch.
+    assert any("Index" in t for t in types) or name == "signups_counts", types
+    assert "Seq Scan" not in types or name in ("active_engine", "signups_counts"), types   # the registry is ~20 rows; a seq scan there is fine
