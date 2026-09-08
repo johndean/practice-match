@@ -47,9 +47,14 @@ consumed, `verify-me@` confirmed, `verified@`'s password rotated, `invited@` giv
 `needs-review@`'s application answered, a second row on `declined@`, and a live verify link the
 resend endpoint minted for `unverified@` — it puts every one of them back exactly as a fresh seed
 leaves them, so a remote run can begin from a known baseline and be repeated without any manual
-step. `tests/scripts/test_seed_persona_restores.py` proves it end to end and says what is
-deliberately NOT restored (sessions, the audit log, the API's own `email_outbox` rows) and why.
-`frontend/tests/global-setup.ts` is what runs this against the target before a `PW_APP_URL` run.
+step. Fix round 1 widened the restoration to the two things it first left: the fixtures' queued
+`email_outbox` and `email_suppression` rows (undeliverable `.test` mail a real QA worker would
+retry for ever) and the throwaway `e2e-…@example.org` accounts the live sign-up flow creates.
+`tests/scripts/test_seed_persona_restores.py` proves it end to end and says what is still
+deliberately NOT restored — sessions and the append-only audit log — and why.
+`frontend/tests/global-setup.ts` runs this against the target before a `PW_APP_URL` run, and
+`frontend/tests/global-teardown.ts` again after it, so a live QA run neither starts from nor leaves
+a mutated fixture.
 
 It **refuses on production, with no override flag** (exit 2). A fixture account with `admin` on the
 stakeholders' real data is not something a `--yes` should be able to buy.
@@ -177,6 +182,30 @@ FIXTURE_TOKENS: dict[str, tuple[str, str]] = {
     "invite": (INVITED_EMAIL, "fixture-invite-{n:02d}"),
 }
 FIXTURE_TTL = {"verify": timedelta(hours=24), "reset": timedelta(hours=1), "invite": timedelta(days=7)}
+
+# Task S7 fix round 1 (John's ruling, 2026-09-08). The live sign-up and forgot flows of
+# `frontend/tests/account-flows.spec.ts` and the `gate-signin-reset-sent` state use a throwaway
+# address per run and per take — `frontend/tests/harness.ts`'s `throwawayEmail` — and a sign-up
+# creates a REAL account behind it. Nothing owned them, so on QA they accumulated one per run for
+# ever. They are this script's to remove: the domain is RFC 2606 `example.org`, reserved and never
+# a real user, and the local part is the harness's own `e2e-` prefix.
+#
+# Anchored at both ends, with a literal `@example.org`: a SQL `LIKE 'e2e-%@example.org'` would also
+# match `e2e-x@evil.example.org`, which is somebody else's account at somebody else's domain. The
+# harness holds the same string as `THROWAWAY_EMAIL_PATTERN` and `tests/test_docs.py` pins the two
+# equal, so the shape the flows produce and the shape this deletes by cannot drift apart.
+THROWAWAY_EMAIL_PATTERN = r"^e2e-[A-Za-z0-9._-]+@example\.org$"
+
+# The ten addresses this script owns, in one place: the scope of the mail-row deletes below, and
+# what `tests/scripts/test_seed_persona_restores.py` snapshots. Built from the same constants that
+# seed them, so an eleventh fixture account cannot be owned by the upserts and not by the sweep.
+FIXTURE_EMAILS: tuple[str, ...] = (
+    PERSONA_EMAIL,
+    *(email for email, _roles in ORACLE_PERSONAS),
+    *(email for email, _state, _name in STATE_PERSONAS),
+    *(email for email, _state, _name in IDENTITY_STATE_PERSONAS),
+    INVITED_EMAIL,
+)
 
 # Review round 1, Minor 2: the delete-then-insert of application rows and fixture tokens below is
 # idempotent SEQUENTIALLY, but not race-proof against two concurrent `seed_persona.py` runs — one
@@ -336,6 +365,31 @@ def main(argv: Sequence[str] | None = None) -> int:
                 cur.execute("""INSERT INTO email_token (account_id, purpose, token_hash, expires_at)
                                VALUES (%s,%s,%s, now() + %s::interval)""",
                             (target_id, purpose, raw_hash, FIXTURE_TTL[purpose]))
+
+        # Task S7 fix round 1 (John's ruling, 2026-09-08), which overturns S7's first decision to
+        # leave both of these alone.
+        #
+        # (a) MAIL. Every `email_outbox` row addressed to a fixture account, and every
+        # `email_suppression` row against one. They are queued to `@practice-match.test` — RFC
+        # 6761, which no mail server can accept — so they are test artefacts and not product
+        # output, and on QA a real worker retries them for ever and can end up suppressing the
+        # fixture addresses outright. Scoped by EXACT address (`= ANY(FIXTURE_EMAILS)`), never by a
+        # pattern: nobody else's queued mail is in range, whatever it looks like.
+        cur.execute("DELETE FROM email_outbox WHERE to_email = ANY(%s)", (list(FIXTURE_EMAILS),))
+        cur.execute("DELETE FROM email_suppression WHERE email = ANY(%s)", (list(FIXTURE_EMAILS),))
+
+        # (b) THROWAWAY SIGN-UPS. `POST /api/auth/signup` in the live flow creates a real account
+        # at `e2e-<run>-<purpose>-<n>@example.org` on every run, and until now nothing owned it —
+        # on QA they accumulated one per run, for ever. `THROWAWAY_EMAIL_PATTERN` is anchored at
+        # both ends with a literal `@example.org`, so `e2e-x@evil.example.org` — which a SQL
+        # `LIKE 'e2e-%@example.org'` would have taken — is out of range; a test plants exactly that
+        # lookalike and requires it to survive. The account's `session`, `email_token`,
+        # `application` and `role_grant` rows go with it through the schema's own ON DELETE
+        # CASCADE; its `audit_log` rows stay, because that table is append-only by design and has
+        # no foreign key to `account`.
+        cur.execute("DELETE FROM email_outbox WHERE to_email ~ %s", (THROWAWAY_EMAIL_PATTERN,))
+        cur.execute("DELETE FROM email_suppression WHERE email ~ %s", (THROWAWAY_EMAIL_PATTERN,))
+        cur.execute("DELETE FROM account WHERE email ~ %s", (THROWAWAY_EMAIL_PATTERN,))
     print(f"[seed_persona] {PERSONA_EMAIL} is ready on {settings.environment} — roles: {', '.join(PERSONA_ROLES)}")
     oracles = ", ".join(f"{email} ({'+'.join(roles)})" for email, roles in ORACLE_PERSONAS)
     print(f"[seed_persona] oracle personas: {oracles}")

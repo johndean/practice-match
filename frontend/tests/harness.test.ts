@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, throwawayEmail } from './harness';
+import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
 import type { Page } from '@playwright/test';
 import { resolveTargets } from './targets';
 
@@ -739,6 +739,26 @@ describe('fixture tokens — twelve per purpose, single use, spent in order (A-S
     for (const address of [throwawayEmail('signup', 'a/b:c d', 1), throwawayEmail('forgot', '', 3)]) {
       expect(address.split('@')[0], 'every local part is RFC-safe').toMatch(/^[A-Za-z0-9._-]+$/);
     }
+  });
+
+  // Fix round 1, ruling 4 (2026-09-08): the seed now DELETES these accounts on every restoration,
+  // so the shape they are recognised by has to be one string, shared — `scripts/seed_persona.py`
+  // mirrors `THROWAWAY_EMAIL_PATTERN` and `tests/test_docs.py` pins the two equal. A pattern that
+  // drifted wider than the addresses this function makes would delete somebody else's account.
+  it('every address it makes matches the one pattern the seed deletes by, and nothing else does', () => {
+    const shape = new RegExp(THROWAWAY_EMAIL_PATTERN);
+    for (const address of [
+      throwawayEmail('signup', '0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0', 1),
+      throwawayEmail('forgot', 'a/b:c d', 12),
+      throwawayEmail('signup', '', 3)
+    ]) expect(address, address).toMatch(shape);
+    for (const other of [
+      'e2e-run-signup-1@example.org.uk',
+      'e2e-run-signup-1@evil.example.org',
+      'not-e2e-run-signup-1@example.org',
+      'buyer@practice-match.test',
+      'someone@example.org'
+    ]) expect(other, other).not.toMatch(shape);
   });
 
   it('a throwaway address is distinct per take, so FORGOT_EMAIL is never the binding limit', () => {

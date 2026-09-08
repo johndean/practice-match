@@ -286,6 +286,18 @@ export function expiredFixtureToken(kind: FixtureTokenKind): string {
   return `${FIXTURE_TOKENS[kind]}expired`;
 }
 
+/**
+ * The one shape every throwaway address has, mirrored by `scripts/seed_persona.py`'s
+ * `THROWAWAY_EMAIL_PATTERN` and pinned equal to it by `tests/test_docs.py` (S7 fix round 1, John's
+ * ruling of 2026-09-08).
+ *
+ * It is not decoration: the seed's restoration DELETES the accounts the live sign-up flow creates,
+ * and this is the shape it recognises them by. Anchored at both ends and with a literal
+ * `@example.org` — a wider pattern (`e2e-%@example.org` as a SQL LIKE, say) would also match
+ * `e2e-x@evil.example.org`, i.e. somebody else's account at somebody else's domain.
+ */
+export const THROWAWAY_EMAIL_PATTERN = '^e2e-[A-Za-z0-9._-]+@example\\.org$';
+
 /** A throwaway address for the live sign-up and forgot flows — RFC 2606 `example.org`, never
  *  deliverable, distinct per run AND per take so `FORGOT_EMAIL` (3/h/address) and `SIGNUP_EMAIL`
  *  (3/day/address) are never the binding limit. Pure; `nextThrowawayEmail` takes the counter.

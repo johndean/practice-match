@@ -37,10 +37,25 @@ import { MEMO_FILE, isStaleMemoFile, runId } from './harness';
  *  resolves the design bundle the same way. */
 export const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url));
 
-/** One line, naming both variables and why they are wanted — thrown, not warned: a remote run
- *  that silently skipped the reseed would photograph whatever the LAST run left behind. */
-export const REMOTE_RESEED_ERROR =
-  "a remote run must reseed the target's fixtures first; set DATABASE_URL (the target's database) and PERSONA_PASSWORD";
+/**
+ * Every variable a remote reseed needs, in the order the refusal names them (fix round 1, ruling
+ * 3, 2026-09-08 — this SUPERSEDES the brief's fixed error text).
+ *
+ * The first two are `scripts/seed_persona.py`'s own: `DATABASE_URL` is the target's database and
+ * `PERSONA_PASSWORD` is the credential it writes into every fixture account. The other three are
+ * `app.config.Settings`' remaining no-default fields — the seed imports `app.config.settings`, and
+ * `load_settings()` prints `[config] missing or invalid environment variables: …` and exits 1 if
+ * any of them is absent. The seed never opens Redis and never reads the secret; the settings
+ * object simply will not construct without them, so a run that omits one dies inside Python with a
+ * message about configuration rather than here with a message about the reseed.
+ */
+export const REMOTE_RESEED_REQUIRED = ['DATABASE_URL', 'PERSONA_PASSWORD', 'API_SECRET_KEY', 'ENVIRONMENT', 'REDIS_URL'] as const;
+
+/** One line, naming the variables that are MISSING — thrown, not warned: a remote run that
+ *  silently skipped the reseed would photograph whatever the LAST run left behind. */
+export function remoteReseedError(missing: readonly string[]): string {
+  return `a remote run must reseed the target's fixtures first; missing: ${missing.join(', ')}`;
+}
 
 export interface RemoteReseedPlan {
   run: boolean;
@@ -70,7 +85,8 @@ export interface RemoteReseedPlan {
  */
 export function remoteReseedPlan(env: NodeJS.ProcessEnv): RemoteReseedPlan {
   if (!env.PW_APP_URL) return { run: false };
-  if (!env.DATABASE_URL || !env.PERSONA_PASSWORD) return { run: false, error: REMOTE_RESEED_ERROR };
+  const missing = REMOTE_RESEED_REQUIRED.filter((name) => !env[name]);
+  if (missing.length > 0) return { run: false, error: remoteReseedError(missing) };
   return { run: true };
 }
 
@@ -80,10 +96,9 @@ export function remoteReseedPlan(env: NodeJS.ProcessEnv): RemoteReseedPlan {
  *  string this file could log. `scripts/seed_persona.py` prints ten addresses and no secret
  *  (`tests/api/test_admin_users.py` asserts that), and nothing here prints anything at all.
  *  `execFileSync` throws on a non-zero exit, which fails the run before its first test. */
-export function reseedRemoteFixtures(
-  env: NodeJS.ProcessEnv,
-  exec: (file: string, args: readonly string[], options: { cwd: string; stdio: 'inherit' }) => void = execFileSync
-): boolean {
+export type SeedExec = (file: string, args: readonly string[], options: { cwd: string; stdio: 'inherit' }) => void;
+
+export function reseedRemoteFixtures(env: NodeJS.ProcessEnv, exec: SeedExec = execFileSync): boolean {
   const plan = remoteReseedPlan(env);
   if (plan.error) throw new Error(plan.error);
   if (!plan.run) return false;

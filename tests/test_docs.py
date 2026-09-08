@@ -592,6 +592,31 @@ def test_the_harness_fixture_tokens_match_the_seed_scripts_pattern_and_the_three
             assert pattern.format(n=n) == f"{presented_prefixes[purpose]}{n:02d}", (purpose, n)
 
 
+def test_the_throwaway_address_shape_is_one_string_the_harness_and_the_seed_both_hold():
+    """Task S7 fix round 1, ruling 4 (2026-09-08). The live sign-up and forgot flows create a real
+    account per run at `e2e-<run>-<purpose>-<n>@example.org`, and `scripts/seed_persona.py`'s
+    restoration now DELETES those accounts — so the shape it deletes by and the shape
+    `frontend/tests/harness.ts`'s `throwawayEmail` produces must be one string, not two that look
+    alike. A pattern that drifted wider than the addresses the harness makes would remove an
+    account nobody meant it to; one that drifted narrower would silently stop cleaning up.
+
+    Same shape as the fixture-token pin above: the seed owns the value, the harness mirrors it, and
+    this is what keeps them equal."""
+    from scripts import seed_persona
+
+    harness = (ROOT / "frontend" / "tests" / "harness.ts").read_text()
+    presented = re.search(r"^export const THROWAWAY_EMAIL_PATTERN = '([^']+)';$", harness, re.MULTILINE)
+    assert presented, "frontend/tests/harness.ts does not define THROWAWAY_EMAIL_PATTERN (S7 fix round 1)"
+    # The TS source escapes the backslash; the pattern itself is what both sides compile.
+    assert presented.group(1).replace("\\\\", "\\") == seed_persona.THROWAWAY_EMAIL_PATTERN
+
+    # …and it really is the shape the harness's own builder produces.
+    builder = re.search(r"return `e2e-\$\{[^`]*\}@example\.org`;", harness)
+    assert builder, "frontend/tests/harness.ts's throwawayEmail no longer builds e2e-…@example.org"
+    assert re.match(seed_persona.THROWAWAY_EMAIL_PATTERN, "e2e-run-A-signup-1@example.org")
+    assert not re.match(seed_persona.THROWAWAY_EMAIL_PATTERN, "e2e-run-A-signup-1@evil.example.org")
+
+
 def test_the_harness_carries_the_seeded_application_data_the_oracle_renders():
     """A-S5 ruling 2, the same pin one level deeper. Two of the fifteen approved states RENDER
     seeded application data: the applicant-answer card shows `needs-review@`'s `info_request`

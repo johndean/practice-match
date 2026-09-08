@@ -1,7 +1,7 @@
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { REMOTE_RESEED_ERROR, remoteReseedPlan, reseedRemoteFixtures } from './global-setup';
+import { REMOTE_RESEED_REQUIRED, remoteReseedError, remoteReseedPlan, reseedRemoteFixtures } from './global-setup';
 
 // ---------------------------------------------------------------------------------------
 // Task S7 (John's ruling, 2026-09-08): "Before Task I10, add a deterministic test-fixture
@@ -20,42 +20,66 @@ import { REMOTE_RESEED_ERROR, remoteReseedPlan, reseedRemoteFixtures } from './g
 // Pure, so the decision is testable without a database, a deployment or a subprocess.
 // ---------------------------------------------------------------------------------------
 describe('remoteReseedPlan (S7)', () => {
+  // Fix round 1, ruling 3 (2026-09-08). The brief's fixed error text is SUPERSEDED: the planner
+  // requires every variable the seed truly needs, and the line names the missing ones.
+  //
+  // `scripts/seed_persona.py` needs two of its own — `DATABASE_URL` (the target's database) and
+  // `PERSONA_PASSWORD` (the credential it writes) — and it imports `app.config.settings`, whose
+  // `Settings` declares `database_url`, `redis_url`, `environment` and `api_secret_key` with NO
+  // default: `load_settings()` prints `[config] missing or invalid environment variables: …` and
+  // `SystemExit(1)`s if any is absent. The seed never opens Redis and never reads the secret — the
+  // settings object simply refuses to construct without them — so they are required here for the
+  // same reason: without them the reseed dies inside Python instead of on this line.
+  const REMOTE = {
+    PW_APP_URL: 'https://qa.foundation.vin',
+    DATABASE_URL: 'postgresql://user:pw@host:5432/railway',
+    PERSONA_PASSWORD: 'not-the-default',
+    API_SECRET_KEY: 'not-the-default-either',
+    ENVIRONMENT: 'qa',
+    REDIS_URL: 'redis://user:pw@host:6379/0'
+  };
+  const without = (...names: string[]): NodeJS.ProcessEnv =>
+    Object.fromEntries(Object.entries(REMOTE).filter(([k]) => !names.includes(k)));
+
   it('does not reseed a local run — the api web server already did', () => {
     expect(remoteReseedPlan({})).toStrictEqual({ run: false });
   });
 
-  it('reseeds a remote run that was given the target database and the persona password', () => {
-    expect(remoteReseedPlan({
-      PW_APP_URL: 'https://qa.foundation.vin',
-      DATABASE_URL: 'postgresql://user:pw@host:5432/railway',
-      PERSONA_PASSWORD: 'not-the-default'
-    })).toStrictEqual({ run: true });
+  it('requires the seed\'s own two variables and the three app.config.Settings has no default for', () => {
+    expect(REMOTE_RESEED_REQUIRED)
+      .toEqual(['DATABASE_URL', 'PERSONA_PASSWORD', 'API_SECRET_KEY', 'ENVIRONMENT', 'REDIS_URL']);
   });
 
-  it('refuses a remote run with no target database', () => {
-    expect(remoteReseedPlan({ PW_APP_URL: 'https://qa.foundation.vin', PERSONA_PASSWORD: 'not-the-default' }))
-      .toStrictEqual({ run: false, error: REMOTE_RESEED_ERROR });
+  it('reseeds a remote run that was given every one of them', () => {
+    expect(remoteReseedPlan(REMOTE)).toStrictEqual({ run: true });
   });
 
-  it('refuses a remote run with no persona password', () => {
-    expect(remoteReseedPlan({ PW_APP_URL: 'https://qa.foundation.vin', DATABASE_URL: 'postgresql://user:pw@host:5432/railway' }))
-      .toStrictEqual({ run: false, error: REMOTE_RESEED_ERROR });
-  });
-
-  it('names both variables, and the reason, in one line', () => {
-    expect(REMOTE_RESEED_ERROR).toBe(
-      "a remote run must reseed the target's fixtures first; set DATABASE_URL (the target's database) and PERSONA_PASSWORD"
+  it('names the MISSING variables, in the declared order, and only those', () => {
+    expect(remoteReseedPlan(without('API_SECRET_KEY', 'REDIS_URL'))).toStrictEqual({
+      run: false,
+      error: "a remote run must reseed the target's fixtures first; missing: API_SECRET_KEY, REDIS_URL"
+    });
+    expect(remoteReseedPlan(without('PERSONA_PASSWORD')).error)
+      .toBe("a remote run must reseed the target's fixtures first; missing: PERSONA_PASSWORD");
+    expect(remoteReseedPlan({ PW_APP_URL: REMOTE.PW_APP_URL }).error).toBe(
+      "a remote run must reseed the target's fixtures first; " +
+      'missing: DATABASE_URL, PERSONA_PASSWORD, API_SECRET_KEY, ENVIRONMENT, REDIS_URL'
     );
   });
 
-  // An empty string is not a database and not a password: `PERSONA_PASSWORD=` in a shell that
-  // failed to read the value from Railway would otherwise seed every fixture account with a
-  // hash of "" and hand the run a sign-in it cannot make.
+  it('builds that line from the same helper the plan uses', () => {
+    expect(remoteReseedError(['REDIS_URL']))
+      .toBe("a remote run must reseed the target's fixtures first; missing: REDIS_URL");
+  });
+
+  // An empty string is not a database, a password, a secret or a URL: `PERSONA_PASSWORD=` in a
+  // shell whose Railway lookup failed would otherwise seed every fixture account with a hash of
+  // the empty string.
   it('treats an empty value as missing', () => {
-    expect(remoteReseedPlan({ PW_APP_URL: 'https://qa.foundation.vin', DATABASE_URL: '', PERSONA_PASSWORD: 'x' }))
-      .toStrictEqual({ run: false, error: REMOTE_RESEED_ERROR });
-    expect(remoteReseedPlan({ PW_APP_URL: 'https://qa.foundation.vin', DATABASE_URL: 'postgresql://x/y', PERSONA_PASSWORD: '' }))
-      .toStrictEqual({ run: false, error: REMOTE_RESEED_ERROR });
+    for (const name of REMOTE_RESEED_REQUIRED) {
+      expect(remoteReseedPlan({ ...REMOTE, [name]: '' }), name)
+        .toStrictEqual({ run: false, error: `a remote run must reseed the target's fixtures first; missing: ${name}` });
+    }
   });
 });
 
@@ -76,7 +100,10 @@ describe('reseedRemoteFixtures (S7)', () => {
     const ran = reseedRemoteFixtures({
       PW_APP_URL: 'https://qa.foundation.vin',
       DATABASE_URL: 'postgresql://user:pw@host:5432/railway',
-      PERSONA_PASSWORD: 'not-the-default'
+      PERSONA_PASSWORD: 'not-the-default',
+      API_SECRET_KEY: 'not-the-default-either',
+      ENVIRONMENT: 'qa',
+      REDIS_URL: 'redis://user:pw@host:6379/0'
     }, exec);
     expect(ran).toBe(true);
     expect(calls).toHaveLength(1);
@@ -94,10 +121,10 @@ describe('reseedRemoteFixtures (S7)', () => {
 
   it('throws the plan\'s own line rather than running a run that would mutate the target unreproducibly', () => {
     calls.length = 0;
-    // The literal, not the constant: `toThrow(undefined)` matches ANY throw, so a test written
-    // against the constant alone would have passed before the constant existed.
-    expect(() => reseedRemoteFixtures({ PW_APP_URL: 'https://qa.foundation.vin' }, exec))
-      .toThrow("a remote run must reseed the target's fixtures first; set DATABASE_URL (the target's database) and PERSONA_PASSWORD");
+    // The literal, not a constant: `toThrow(undefined)` matches ANY throw, so a test written
+    // against a constant that does not exist yet passes for the wrong reason.
+    expect(() => reseedRemoteFixtures({ PW_APP_URL: 'https://qa.foundation.vin', DATABASE_URL: 'x' }, exec))
+      .toThrow("a remote run must reseed the target's fixtures first; missing: PERSONA_PASSWORD, API_SECRET_KEY, ENVIRONMENT, REDIS_URL");
     expect(calls, 'nothing is executed when the plan refuses').toEqual([]);
   });
 });

@@ -25,6 +25,10 @@ export default defineConfig({
   // left behind — see tests/global-setup.ts for why the environment is the only channel that can
   // carry it (round 3, ruling 2).
   globalSetup: './global-setup.ts',
+  // ...and reseeds a REMOTE run's target again once the last worker is done, so a live QA run does
+  // not END with QA's fixtures however the eight account flows left them (S7 fix round 1, John's
+  // ruling of 2026-09-08). Same planner, same script; a local run is a no-op here.
+  globalTeardown: './global-teardown.ts',
   // Baselines are produced from the reference by the `reference` project and
   // named <state>-<platform>.png. The app must never overwrite them.
   snapshotPathTemplate: '{testDir}/visual.spec.ts-snapshots/{arg}-{platform}{ext}',

@@ -21,18 +21,26 @@ WHAT IS SNAPSHOTTED, and why those things
     tokens         every `email_token` row on a fixture account, as (purpose, which documented
                    fixture token this is — or `not-a-fixture-token` — and whether it is used).
                    Twelve unused rows per purpose is the baseline the visual oracle spends.
-    outbox         the rows the seed owns, which is NONE: it enqueues nothing. Asserted directly
-                   rather than folded into the snapshot, because the rows a RUN creates are the
-                   API's own product output (a verification email really was queued), and this
-                   script does not delete what it did not write. See `test_the_seed_leaves_the_api_s
-                   _own_outbox_rows_alone` for the decision and its reasoning.
+    mail           every `email_outbox` row addressed to a fixture account, and every
+                   `email_suppression` row against one. Fix round 1 (John's ruling, 2026-09-08)
+                   OVERTURNS S7's first decision to leave them: they are queued to `.test`
+                   addresses no mail server can accept, so they are test artefacts, not product
+                   output — and on QA a real worker retries them for ever and can suppress the
+                   fixture addresses. Scoped by exact address, never by pattern.
+    throwaways     the accounts the live sign-up flow creates at
+                   `e2e-<run>-<purpose>-<n>@example.org`. Also fix round 1: RFC 2606 reserved,
+                   never a real user, one more per run for ever until the seed removed them.
+                   Matched by the anchored `seed_persona.THROWAWAY_EMAIL_PATTERN`, which
+                   `frontend/tests/harness.ts` mirrors and `tests/test_docs.py` pins equal.
 
 DELIBERATELY OUT OF THE SNAPSHOT
     `session`      not a fixture: every run mints its own and the memo file is `PW_RUN_ID`-scoped
                    (`frontend/tests/global-setup.ts`), so a stale or revoked session cannot make a
                    later run non-deterministic. Deleting them would also sign a human reviewer's
                    live QA browser out in the middle of their click-through.
-    `audit_log`    append-only by design; the seed writes ten of its own rows every run.
+    `audit_log`    append-only by design (a DELETE trigger refuses); the seed writes ten of its
+                   own rows every run, and a throwaway account's rows outlive the account — there
+                   is no foreign key from `audit_log.actor_id`, deliberately.
     `last_sign_in_at`  a fact about the account's history that no screen, oracle or flow reads.
 """
 from __future__ import annotations
@@ -56,6 +64,11 @@ PERSONA_PW = "quiet-lantern-orbit-58"
 RESET_FLOW_PW = "quiet-orbit-lantern-71"
 INVITE_FLOW_PW = "quiet-orbit-lantern-72"
 ANSWER = "I am an associate at Hill Country Veterinary Clinic and see small animals four days a week."
+# The shape `frontend/tests/harness.ts`'s `throwawayEmail` produces, spelled out — RFC 2606
+# `example.org`, never deliverable. `LOOKALIKE_EMAIL` is the trap: same local part, somebody else's
+# domain, and the seed must leave it exactly where it is.
+THROWAWAY_EMAIL = "e2e-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0-signup-1@example.org"
+LOOKALIKE_EMAIL = "e2e-0f1e2d3c-4b5a-6978-8796-a5b4c3d2e1f0-signup-1@evil.example.org"
 
 # One Argon2id verify is ~100 ms (64 MiB, t=3), so the snapshot tries only the passwords that could
 # plausibly open each account rather than all three against all ten.
@@ -66,15 +79,11 @@ EXTRA_CANDIDATES = {
 
 
 def _fixture_emails() -> tuple[str, ...]:
-    """Every account `scripts/seed_persona.py` owns, read off the script's own constants so a new
-    fixture account cannot quietly escape the snapshot — the count is pinned below."""
-    return (
-        seed_persona.PERSONA_EMAIL,
-        *(email for email, _roles in seed_persona.ORACLE_PERSONAS),
-        *(email for email, _state, _name in seed_persona.STATE_PERSONAS),
-        *(email for email, _state, _name in seed_persona.IDENTITY_STATE_PERSONAS),
-        seed_persona.INVITED_EMAIL,
-    )
+    """Every account `scripts/seed_persona.py` owns — the script's OWN list (fix round 1: it is
+    also the scope of the mail-row deletes, so the snapshot and the delete cannot disagree), built
+    there from the same constants that seed them. The count is pinned below, so a new fixture
+    account joins this snapshot deliberately rather than escaping it."""
+    return seed_persona.FIXTURE_EMAILS
 
 
 def _run_seed() -> None:
@@ -131,10 +140,20 @@ def _snapshot(conn: Any) -> dict[str, Any]:
         for email, purpose, token_hash, used in cur.fetchall():
             tokens[email].append((purpose, labels.get(token_hash, "not-a-fixture-token"), used))
 
+        cur.execute("SELECT to_email, template, status FROM email_outbox WHERE to_email = ANY(%s)", (emails,))
+        outbox = sorted(cur.fetchall())
+        cur.execute("SELECT email, reason FROM email_suppression WHERE email = ANY(%s)", (emails,))
+        suppressions = sorted(cur.fetchall())
+        cur.execute("SELECT email FROM account WHERE email ~ %s", (seed_persona.THROWAWAY_EMAIL_PATTERN,))
+        throwaways = sorted(row[0] for row in cur.fetchall())
+
     return {
         "accounts": accounts,
         "applications": {email: sorted(rows) for email, rows in applications.items()},
         "tokens": {email: sorted(rows) for email, rows in tokens.items()},
+        "outbox": outbox,
+        "suppressions": suppressions,
+        "throwaways": throwaways,
     }
 
 
@@ -163,6 +182,11 @@ async def _mutate_as_a_live_run_does(client, conn, redis) -> None:  # noqa: F811
     the fixtures on one live run — through the real endpoints, in the order a run makes them, and
     WITHOUT the reviewer-API restoration those specs perform (`decideAs`). S7 is the safety net
     beneath that restoration, so it has to be proved with the net alone."""
+    # 0. A stranger signs up with the run's throwaway address (the live flow of
+    #    `account-flows.spec.ts` §1): a real account, a verify token and an outbox row behind it.
+    signup = await client.post("/api/auth/signup", json={"email": THROWAWAY_EMAIL, "password": PERSONA_PW})
+    assert signup.status_code == 202, signup.text
+
     # 1. A verification link is consumed: `verify-me@` is confirmed for good, one verify token used.
     verify_token = seed_persona.FIXTURE_TOKENS["verify"][1].format(n=1)
     assert (await client.post("/api/auth/verify", json={"token": verify_token})).status_code == 200
@@ -232,7 +256,8 @@ async def test_the_seed_restores_every_fixture_a_live_run_mutates(client, conn, 
     for purpose, (owner, _pattern) in seed_persona.FIXTURE_TOKENS.items():
         assert baseline["tokens"][owner].count((purpose, f"{purpose}-01", False)) == 1, purpose
         assert sum(1 for p, _label, used in baseline["tokens"][owner] if p == purpose and not used) == 12, purpose
-    assert _outbox_count(conn) == 0, "the seed enqueues nothing — it owns no outbox row"
+    assert baseline["outbox"] == [] and baseline["suppressions"] == [], "the seed enqueues nothing"
+    assert baseline["throwaways"] == [], "and a fresh seed leaves no throwaway sign-up behind"
 
     await _mutate_as_a_live_run_does(client, conn, redis)
     mutated = _snapshot(conn)
@@ -245,28 +270,78 @@ async def test_the_seed_restores_every_fixture_a_live_run_mutates(client, conn, 
     assert restored["accounts"] == baseline["accounts"], "accounts: state, roles, and which password opens them"
     assert restored["applications"] == baseline["applications"], "applications: no stray row, every field back"
     assert restored["tokens"] == baseline["tokens"], "tokens: consumed ones replaced, and no extra one left behind"
+    assert restored["outbox"] == [] and restored["suppressions"] == [], "mail: the fixtures' queued rows are gone"
+    assert restored["throwaways"] == [], "the run's throwaway sign-up account is gone"
     assert restored == baseline
 
 
-async def test_the_seed_leaves_the_api_s_own_outbox_rows_alone(client, conn, redis, monkeypatch):  # noqa: F811
-    """The one thing a live run leaves behind that the re-seed deliberately does NOT remove.
+async def test_the_seed_removes_the_fixtures_mail_rows_and_nobody_else_s(client, conn, redis, monkeypatch):  # noqa: F811
+    """Fix round 1, ruling 2 (2026-09-08), which OVERTURNS S7's first decision to leave these rows.
 
-    `email_outbox` rows are the API's product output, not fixtures: the run really did ask for a
-    verification link and a password-changed notice, and `scripts/seed_persona.py` owns only what it
-    inserts — it inserts no outbox row, so it deletes none. Nothing about them can make a later run
-    non-deterministic (`enqueue`'s `idempotency_key` is unique per call, and no screen, oracle or
-    flow reads the table), which is why the line is drawn here.
-
-    Recorded as an assertion rather than a comment so the decision cannot drift silently: if a later
-    task decides the seed should drain the outbox for its own addresses, this test is what it edits.
+    They are addressed to `@practice-match.test` — RFC 6761, never deliverable — so they are test
+    artefacts, not product output, and on QA a real worker retries them for ever and can end up
+    writing `email_suppression` rows against the fixture addresses. The delete is by EXACT address,
+    never by pattern: a row for anyone else must be untouched, whatever it looks like.
     """
     monkeypatch.setenv("PERSONA_PASSWORD", PERSONA_PW)
     _run_seed()
-    assert _outbox_count(conn) == 0
 
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO email_outbox (to_email, template, idempotency_key) VALUES
+                       (%s,'verify_email','fix1-fixture'), (%s,'verify_email','fix1-stranger')""",
+                    ("unverified@practice-match.test", "someone@example.org"))
+        cur.execute("""INSERT INTO email_suppression (email, reason) VALUES (%s,'bounce'), (%s,'bounce')""",
+                    ("unverified@practice-match.test", "someone@example.org"))
     await _mutate_as_a_live_run_does(client, conn, redis)
-    queued = _outbox_count(conn)
-    assert queued > 0, "the flows really do queue mail to the fixture addresses"
+    assert _outbox_count(conn) > 1, "the flows really do queue mail to the fixture addresses"
 
     _run_seed()
-    assert _outbox_count(conn) == queued, "the re-seed neither drains nor adds to the API's own outbox"
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT to_email FROM email_outbox ORDER BY to_email")
+        remaining = [row[0] for row in cur.fetchall()]
+        assert "unverified@practice-match.test" not in remaining, "the fixture's queued mail must be gone"
+        assert remaining.count("someone@example.org") == 1, "and the stranger's row must survive untouched"
+        assert not [e for e in remaining if e.endswith("@practice-match.test")], "no fixture address is left queued"
+        cur.execute("SELECT email FROM email_suppression ORDER BY email")
+        assert [row[0] for row in cur.fetchall()] == ["someone@example.org"]
+
+
+def test_the_seed_removes_the_run_s_throwaway_sign_ups_and_not_a_lookalike(conn, monkeypatch):
+    """Fix round 1, ruling 4 (2026-09-08). `POST /api/auth/signup` in the live flow creates a REAL
+    account at `e2e-<run>-<purpose>-<n>@example.org` every run, and nothing owned it — on QA they
+    accumulated one per run for ever.
+
+    The pattern is anchored at both ends with a literal `@example.org`, so the trap here is a
+    lookalike with the SAME local part at a domain the seed has no business touching: a SQL
+    `LIKE 'e2e-%@example.org'` would delete it, and this test is what refuses that shortcut. The
+    account's dependent rows go with it through the schema's own `ON DELETE CASCADE`.
+    """
+    monkeypatch.setenv("PERSONA_PASSWORD", PERSONA_PW)
+    _run_seed()
+
+    with conn.cursor() as cur:
+        for email in (THROWAWAY_EMAIL, LOOKALIKE_EMAIL):
+            cur.execute("""INSERT INTO account (email, password_hash, state) VALUES (%s,'!x','unverified')
+                           RETURNING id""", (email,))
+            account_id = cur.fetchone()[0]
+            cur.execute("""INSERT INTO email_token (account_id, purpose, token_hash, expires_at)
+                           VALUES (%s,'verify',%s, now() + interval '24 hours')""", (account_id, f"hash-of-{email}"))
+        cur.execute("""INSERT INTO email_outbox (to_email, template, idempotency_key) VALUES
+                       (%s,'verify_email','fix4-throwaway'), (%s,'verify_email','fix4-lookalike')""",
+                    (THROWAWAY_EMAIL, LOOKALIKE_EMAIL))
+
+    _run_seed()
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT email FROM account WHERE email = ANY(%s) ORDER BY email",
+                    ([THROWAWAY_EMAIL, LOOKALIKE_EMAIL],))
+        assert [row[0] for row in cur.fetchall()] == [LOOKALIKE_EMAIL], \
+            "the throwaway goes; the lookalike at another domain stays"
+        cur.execute("SELECT count(*) FROM email_token WHERE token_hash = %s", (f"hash-of-{THROWAWAY_EMAIL}",))
+        assert cur.fetchone()[0] == 0, "its dependent rows go with it (ON DELETE CASCADE)"
+        cur.execute("SELECT count(*) FROM email_token WHERE token_hash = %s", (f"hash-of-{LOOKALIKE_EMAIL}",))
+        assert cur.fetchone()[0] == 1
+        cur.execute("SELECT to_email FROM email_outbox WHERE to_email = ANY(%s)",
+                    ([THROWAWAY_EMAIL, LOOKALIKE_EMAIL],))
+        assert [row[0] for row in cur.fetchall()] == [LOOKALIKE_EMAIL], "and so does its queued mail"

@@ -312,6 +312,19 @@ describe('playwright.config.ts mints one run id per run (round 3, ruling 2)', ()
     ).toMatch(/globalSetup\s*:\s*['"]\.\/global-setup(\.ts)?['"]/);
   });
 
+  // Fix round 1, ruling 1 (2026-09-08): John's ruling has an "after" half — "shared QA fixtures
+  // must not be left in a mutated state after a live QA run" — and only a `globalTeardown` can
+  // meet it. It is registered here, beside globalSetup, and reseeds a REMOTE run's target through
+  // the same planner (`tests/global-teardown.ts`); a local run is unaffected.
+  it('registers tests/global-teardown.ts', () => {
+    expect(
+      withoutComments(readFileSync(CONFIG, 'utf8')),
+      'without globalTeardown a live QA run ends with QA\'s fixtures however the eight account ' +
+      'flows left them — a consumed verify token, a rotated password, an answered application — ' +
+      'until some later run happens to reseed them (S7 fix round 1)'
+    ).toMatch(/globalTeardown\s*:\s*['"]\.\/global-teardown(\.ts)?['"]/);
+  });
+
   it('leaves the reference project and the raster flag untouched by that addition', () => {
     // Round 3 is the first time this config is legitimately in the task's file list, so the two
     // things it is otherwise pinned for are asserted here as well, side by side with the change.
