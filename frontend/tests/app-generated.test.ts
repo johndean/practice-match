@@ -42,7 +42,13 @@ describe('logic.js is the design script block, ported verbatim', () => {
   const HEADER = "// Ported verbatim from the approved prototype 'Practice Match V3.dc.html'.\n"
     + '// Do not restyle or restructure: every value here is design-approved.\n'
     + "import { DCLogic } from './dc-logic.js';\n";
-  const FOOTER = '\nexport { Component };\n';
+  // The trailing export names the two fixture ARRAYS as well as the class (Seed Listings L6,
+  // spec D6): `src/listings/load.ts` replaces `P` and `MARKETS` in place at start-up, which is
+  // the one way to hand the API's listings to a script that is ported verbatim and never
+  // restructured. It is still the same single accepted edit point — the last line — and the
+  // ported body above it stays byte-identical. Listed in the Browse V3 spec §3 with the other
+  // three normalisations.
+  const FOOTER = '\nexport { Component, MARKETS, P };\n';
 
   function designScript(html: string): string {
     const open = /<script type="text\/x-dc" data-dc-script[^>]*>/.exec(html)!;

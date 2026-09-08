@@ -410,4 +410,11 @@ describe('the logic.js port lists every normalisation it performs', () => {
   it('the Browse V3 spec \u00a73 names the trailing-newline normalisation as well (M8)', () => {
     expect(readSpec(BROWSE_V3_SPEC)).toContain('trailing-newline');
   });
+  // Seed Listings L6 (spec 2026-09-06 D6): the trailing export now names the two fixture arrays
+  // as well, so `src/listings/load.ts` can replace `P` and `MARKETS` in place. Same rule as M8's
+  // — a port edit the \u00a73 list does not spell out is an undocumented hand edit, whatever the
+  // drift test says.
+  it('the Browse V3 spec \u00a73 spells out the export the listings loader needs (Seed Listings L6)', () => {
+    expect(readSpec(BROWSE_V3_SPEC)).toContain('export { Component, MARKETS, P };');
+  });
 });

@@ -2,6 +2,7 @@ import { request as apiRequest, type BrowserContext, type Page } from '@playwrig
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { designListingsBody } from './design-listings.mjs';
 
 // Deterministic rendering on both targets: no basemap tiles (markers still draw
 // over the blank canvas), fonts loaded, pointer parked, animations settled.
@@ -97,6 +98,31 @@ export async function prepare(page: Page): Promise<void> {
         : { status: 200, contentType: 'image/gif', body: BLANK_GIF }
     );
   });
+  // ---------------------------------------------------------------------------------------
+  // D6 (spec 2026-09-06, John's ruling) — THE ONE SANCTIONED STUB IN THIS SUITE.
+  //
+  // `src/main.ts` reads `GET /api/listings` before it mounts and replaces the prototype's `P`
+  // and `MARKETS` in place. The gates must keep comparing the app against the DESIGN, so here
+  // the endpoint returns the design's own fixture practices in API shape — derived from
+  // `logic.js`'s arrays, never hand-copied — and `load.ts` reconstructs field for field exactly
+  // what `logic.js` already held. `src/listings/load.test.ts` proves that round trip is the
+  // identity on all twenty-one fixtures and on the market table; QA runs against the seeded
+  // eighteen instead, which is the whole point of the seam.
+  //
+  // Scoped to the APP ORIGIN's collection endpoint: the reference is a static prototype with no
+  // API and no `/api/listings` call to intercept, and `/api/listings/{id}/photos/{n}` is left to
+  // the real server (the design's fixtures carry no photographs, so nothing requests one).
+  //
+  // NEVER against a remote target. With `PW_APP_URL` set — the QA parity run — the real, seeded
+  // API answers: stubbing it there would hide the very thing that run exists to check.
+  // ---------------------------------------------------------------------------------------
+  if (!process.env.PW_APP_URL) {
+    const listings = new URL('/api/listings', appOrigin()).href;
+    await page.route(
+      (url) => url.href === listings || url.href.startsWith(`${listings}?`),
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: designListingsBody() })
+    );
+  }
 }
 
 /**
