@@ -980,6 +980,10 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin fea
 
 ---
 
+**Controller amendment A-C3b (2026-09-09; rulings on the A3 review — 1 Critical, 3 Major, 6 Minor, 5 Info; all Critical/Major/Minor closed at source in a fix round after A4 lands, single writer).** C1 — every message that is raised or logged and could carry a URL passes through `redact()` (the `ValueError` at the malformed-response arm included); a test asserts the exception text for a fake key contains no `key=` value. M1 — archive keys carry the `census/` prefix A-C2 ¶1 rules: `census/raw/<dataset_key>/<vintage>/<sha256-of-url>.json` (documented; append-only). M2 — only a 2xx response is a success; the body is parsed and `validate_variables` passes BEFORE anything is archived; `follow_redirects=False` is set explicitly on the client; a 3xx is an error with a redacted message. M3 — `contact` is required: the constructor refuses `None`/empty (`ValueError`, no key in the message) and the ingest entry point supplies it from `require_contact()`; a test pins the exact `User-Agent`. m1 — `zip(header, row, strict=True)`; a short row is an error naming the row index. m2 — a response-size bound (`MAX_RESPONSE_BYTES`, a module constant, 64 MiB) checked from `Content-Length` when present and on the streamed body otherwise, exceeding it is an error. m3 — the client owns its `httpx.Client` through `__enter__`/`__exit__`/`close()`; callers use it as a context manager. m4 — the concurrency limit is enforced with a bounded semaphore the retry ladder halves, not bookkeeping alone; tested with two overlapping calls on a mock transport. m5 — `build_url` becomes private; nothing public or logged carries the keyed URL. m6 — transport errors (`httpx.TransportError`) join the retry ladder (bounded) and `Retry-After` is honoured up to a cap. Info items accepted as recorded; the three declared deviations of A3 (no boot-time key check; the corrected plan line; the 17-test suite and `while True` loop) are accepted. **Addendum:** `ObjectStore.delete(key) -> bool` (True when an object was removed, False when it did not exist), tested both arms — the seller-lifecycle spec's A-SL1 interface; the fix is cherry-picked to `feat/seller-lifecycle`.
+
+---
+
 ### Task A4: Geographies — TIGER cartographic boundary files into `geo_area`
 
 **Files:**
@@ -1257,6 +1261,10 @@ git add -A && git commit -m "feat(census): TIGER boundary ingest into geo_area (
 
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/census-data-layer && git push production feat/census-data-layer
 ```
+
+---
+
+**Controller amendment A-C4 (2026-09-09; Task A4 accepted with three recorded additions).** (1) `load_boundaries(…, archive=…)` takes the object store so TIGER downloads are archived under `census/tiger/<vintage>/…` only after validation, with `follow_redirects=False` and redacted errors — the mid-task ruling A3's review forced, now the written rule for every downloader. (2) **Exit codes for `scripts/census_load.py`, one scheme for every subcommand, aligned with `scripts/seed_listings.py`:** `0` done · `2` refused before anything was opened (missing `CENSUS_API_KEY`/`CENSUS_CONTACT_EMAIL`, bad arguments, production without its flag) · `3` database unreachable · `4` a download or API fetch failed · `5` validation failed (missing variables, malformed body, bounds). A4's `4`/`5` (database / download) move to `3`/`4` in A3's fix round; A5+ use the scheme. (3) No committed binary fixtures: `httpx.MockTransport` with inline synthetic payloads, as A3 does.
 
 ---
 
