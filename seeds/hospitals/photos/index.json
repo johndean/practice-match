@@ -1,0 +1,764 @@
+{
+  "hospitals": {
+    "1111_pet_hospital": [
+      {
+        "bytes": 31264,
+        "caption": "Exterior \u2014 front view",
+        "file": "1.webp",
+        "height": 393,
+        "quality": 82,
+        "sha256": "281135b1837120211ef7f3bae4e6675abed4d1834ce579959f6b2db28d87da81",
+        "source": "01_exterior_front_view.png",
+        "width": 1000
+      },
+      {
+        "bytes": 27154,
+        "caption": "Exterior \u2014 entrance view",
+        "file": "2.webp",
+        "height": 393,
+        "quality": 82,
+        "sha256": "dbd64b95845d1eabc75a291e8f4b727f78eadaa9f279d63afd0ae9265f9cf500",
+        "source": "02_exterior_entrance_view.png",
+        "width": 1024
+      },
+      {
+        "bytes": 37368,
+        "caption": "Exterior \u2014 monument sign",
+        "file": "3.webp",
+        "height": 336,
+        "quality": 82,
+        "sha256": "68fa1917c1b755074a8a798681c1802956cac906e98ff8b2f8bffecef4ee1a80",
+        "source": "03_exterior_monument_sign.png",
+        "width": 658
+      },
+      {
+        "bytes": 34324,
+        "caption": "Exterior \u2014 street corner view",
+        "file": "4.webp",
+        "height": 336,
+        "quality": 82,
+        "sha256": "24950453fe68cd0ab31a157cb1f1fb185f4b06f0410b05daca0325925dfcaff6",
+        "source": "04_exterior_street_corner_view.png",
+        "width": 676
+      }
+    ],
+    "123_route66": [
+      {
+        "bytes": 62776,
+        "caption": "Exterior \u2014 street view",
+        "file": "1.webp",
+        "height": 647,
+        "quality": 82,
+        "sha256": "8bc0feb667290fb426917fbc0e5570c20dba86c3099355c7503b21b3fd0b29fe",
+        "source": "01_exterior_street_view.jpg",
+        "width": 622
+      },
+      {
+        "bytes": 16166,
+        "caption": "Exterior \u2014 corner view",
+        "file": "2.webp",
+        "height": 322,
+        "quality": 82,
+        "sha256": "5e5ba9cafe3fd006cf4d533da12e4a589306705ed2a2c54d99919e40edabac1b",
+        "source": "02_exterior_corner_view.jpg",
+        "width": 308
+      },
+      {
+        "bytes": 21478,
+        "caption": "Exterior \u2014 entrance view",
+        "file": "3.webp",
+        "height": 322,
+        "quality": 82,
+        "sha256": "bd94063ac76bbbf95f84c1cbac0cc4e44475cee00ed47dcc8cc4633fdc0b1a87",
+        "source": "03_exterior_entrance_view.jpg",
+        "width": 342
+      },
+      {
+        "bytes": 13750,
+        "caption": "Exterior \u2014 side view parking",
+        "file": "4.webp",
+        "height": 321,
+        "quality": 82,
+        "sha256": "5f7ab0bf3085263806342fb3ede356e2af55e28df168d2c969caef5169c75564",
+        "source": "04_exterior_side_view_parking.jpg",
+        "width": 308
+      }
+    ],
+    "2222_pet_hospital": [
+      {
+        "bytes": 64152,
+        "caption": "Exterior \u2014 front view",
+        "file": "1.webp",
+        "height": 498,
+        "quality": 82,
+        "sha256": "7db987ced33e637bb775690b848707e4e7eb68d0a230a37e25941d72834d6d2e",
+        "source": "01_exterior_front_view.png",
+        "width": 770
+      },
+      {
+        "bytes": 32470,
+        "caption": "Exterior \u2014 monument sign",
+        "file": "2.webp",
+        "height": 278,
+        "quality": 82,
+        "sha256": "cf57b1c7263667ce4ddae6a25935e81992f4f9db28b05ea5ccab5ed3da658cfa",
+        "source": "02_exterior_monument_sign.png",
+        "width": 502
+      },
+      {
+        "bytes": 28722,
+        "caption": "Exterior \u2014 dog relief yard",
+        "file": "3.webp",
+        "height": 263,
+        "quality": 82,
+        "sha256": "aab0ed08ce08c397a57522d466be8b47259d3484b03c292c12e802331e1b0878",
+        "source": "03_exterior_dog_relief_yard.png",
+        "width": 502
+      },
+      {
+        "bytes": 27266,
+        "caption": "Exterior \u2014 side view",
+        "file": "4.webp",
+        "height": 268,
+        "quality": 82,
+        "sha256": "7f78cff4d4e3402b86df05ebf78444c9a2388117e8485a580722250fc73a3a14",
+        "source": "04_exterior_side_view.png",
+        "width": 392
+      }
+    ],
+    "3333_santa_barbara_veterinary_specialist_hospital": [
+      {
+        "bytes": 47734,
+        "caption": "Exterior \u2014 front entrance",
+        "file": "1.webp",
+        "height": 411,
+        "quality": 82,
+        "sha256": "7924e6752ce8e907d960b740dc059c131cde24f7589cdfcb09c3654f66d7803e",
+        "source": "01_exterior_front_entrance.png",
+        "width": 620
+      },
+      {
+        "bytes": 64216,
+        "caption": "Exterior \u2014 street side view",
+        "file": "2.webp",
+        "height": 411,
+        "quality": 82,
+        "sha256": "00967b09d07bfa345d5f8322cf0cece0fb8e6dabf1e5238bade28da3cd82f80c",
+        "source": "02_exterior_street_side_view.png",
+        "width": 653
+      },
+      {
+        "bytes": 20268,
+        "caption": "Exterior \u2014 side facade",
+        "file": "3.webp",
+        "height": 285,
+        "quality": 82,
+        "sha256": "04bc810aeb5cbed2005f8c9eba3f12692d11cb776401e4e82b794a8506978aba",
+        "source": "03_exterior_side_facade.png",
+        "width": 410
+      },
+      {
+        "bytes": 21168,
+        "caption": "Exterior \u2014 driveway view",
+        "file": "4.webp",
+        "height": 285,
+        "quality": 82,
+        "sha256": "5dced49985a2dbf67c826f23c3fa039c9f22de755d4933f4b39a4bb10c355782",
+        "source": "04_exterior_driveway_view.png",
+        "width": 411
+      }
+    ],
+    "4444_denver_veterinary_specialist_hospital": [
+      {
+        "bytes": 56388,
+        "caption": "Exterior \u2014 front entrance",
+        "file": "1.webp",
+        "height": 443,
+        "quality": 82,
+        "sha256": "75f54f20e6c3d64975461afed068a3e57fad26401242fa993ee7e0177f5b7362",
+        "source": "01_exterior_front_entrance.png",
+        "width": 838
+      },
+      {
+        "bytes": 47380,
+        "caption": "Exterior \u2014 monument sign",
+        "file": "2.webp",
+        "height": 443,
+        "quality": 82,
+        "sha256": "2b5c2a3ade14ca073b114f15e990b369b307438c61be0a3b7d3035f89763b49d",
+        "source": "02_exterior_monument_sign.png",
+        "width": 436
+      },
+      {
+        "bytes": 25670,
+        "caption": "Exterior \u2014 mountain mural",
+        "file": "3.webp",
+        "height": 298,
+        "quality": 82,
+        "sha256": "261fda32ca5eb3a9a0d42aed7c9271494930731d45baf0c5def3d3cb4737a7be",
+        "source": "03_exterior_mountain_mural.png",
+        "width": 390
+      },
+      {
+        "bytes": 16022,
+        "caption": "Exterior \u2014 emergency entrance",
+        "file": "4.webp",
+        "height": 298,
+        "quality": 82,
+        "sha256": "1cf3528d7fa1c9d88c499ac83a0b8f6ed9f9b9980f7bca1f78373cc542971175",
+        "source": "04_exterior_emergency_entrance.png",
+        "width": 433
+      }
+    ],
+    "456_pet_er": [
+      {
+        "bytes": 67262,
+        "caption": "Exterior \u2014 main front",
+        "file": "1.webp",
+        "height": 417,
+        "quality": 82,
+        "sha256": "89ede699a442c3bc93092e8a5455b19307eaba6e722dc231e66872dcc19237b1",
+        "source": "01_exterior_main_front.jpg",
+        "width": 807
+      },
+      {
+        "bytes": 39446,
+        "caption": "Exterior \u2014 entrance right",
+        "file": "2.webp",
+        "height": 417,
+        "quality": 82,
+        "sha256": "ec053184b0909bc30435951e126a8fcb57ece75e3ec8576a8795d11b520544b5",
+        "source": "02_exterior_entrance_right.jpg",
+        "width": 470
+      },
+      {
+        "bytes": 16916,
+        "caption": "Exterior \u2014 side emergency",
+        "file": "3.webp",
+        "height": 296,
+        "quality": 82,
+        "sha256": "6f5b1b6ca4bb821ffdc9c228d856130dc10c22afa8a264d6280504d3c079c9c4",
+        "source": "03_exterior_side_emergency.jpg",
+        "width": 405
+      },
+      {
+        "bytes": 30270,
+        "caption": "Exterior \u2014 main entrance",
+        "file": "4.webp",
+        "height": 296,
+        "quality": 82,
+        "sha256": "1ecfdd02e9abe138fcf0b7034665118e15c66cc7e54c9a14ef32532deb2d1148",
+        "source": "04_exterior_main_entrance.jpg",
+        "width": 399
+      }
+    ],
+    "5555_new_york_veterinary_specialist_hospital": [
+      {
+        "bytes": 61764,
+        "caption": "Exterior \u2014 front entrance",
+        "file": "1.webp",
+        "height": 624,
+        "quality": 82,
+        "sha256": "096892e641ad7c6241cd002d36cbbb4be09d9748d70a0059722beabfefc3561d",
+        "source": "01_exterior_front_entrance.png",
+        "width": 581
+      },
+      {
+        "bytes": 20426,
+        "caption": "Exterior \u2014 front facade",
+        "file": "2.webp",
+        "height": 329,
+        "quality": 82,
+        "sha256": "a507c53aa917f318bf9bbd2cf9ef66ecfd6828bddaed6849bab1922563131287",
+        "source": "02_exterior_front_facade.png",
+        "width": 393
+      },
+      {
+        "bytes": 18776,
+        "caption": "Exterior \u2014 sign",
+        "file": "3.webp",
+        "height": 329,
+        "quality": 82,
+        "sha256": "083fb14bd74e9c5f2913697b8e990f0f7f232152d22996fc3aed7caa98d2c59b",
+        "source": "03_exterior_sign.png",
+        "width": 296
+      },
+      {
+        "bytes": 15010,
+        "caption": "Exterior \u2014 rear city view",
+        "file": "4.webp",
+        "height": 289,
+        "quality": 82,
+        "sha256": "9cf5d22463a21cf8f8ca7418f2cc02895377717bb51597875492cf38abd48078",
+        "source": "04_exterior_rear_city_view.png",
+        "width": 330
+      }
+    ],
+    "6666_dallas_veterinary_specialist_hospital": [
+      {
+        "bytes": 50324,
+        "caption": "Exterior \u2014 front entrance",
+        "file": "1.webp",
+        "height": 430,
+        "quality": 82,
+        "sha256": "4460e6675b3634f50e5040d0ff23b2e5b53ad4a2914f5dd0f376d75bb7277a09",
+        "source": "01_exterior_front_entrance.png",
+        "width": 669
+      },
+      {
+        "bytes": 37192,
+        "caption": "Exterior \u2014 city view",
+        "file": "2.webp",
+        "height": 430,
+        "quality": 82,
+        "sha256": "7161f669a037d1a08ddfa47edf47ab712be1781485301f2c7bb8d07e3044dd63",
+        "source": "02_exterior_city_view.png",
+        "width": 606
+      },
+      {
+        "bytes": 36254,
+        "caption": "Exterior \u2014 side view",
+        "file": "3.webp",
+        "height": 381,
+        "quality": 82,
+        "sha256": "09650b10afccc7f48822a2fef7f64b51f4ecd8ffc78f9c4694e6cf701a97047b",
+        "source": "03_exterior_side_view.png",
+        "width": 378
+      },
+      {
+        "bytes": 29394,
+        "caption": "Exterior \u2014 main drive entrance",
+        "file": "4.webp",
+        "height": 381,
+        "quality": 82,
+        "sha256": "fa62306ad7ea7ffc8f7a82ddc8c68c0b5ecc0e361a32cbc0d010c5de4973512d",
+        "source": "04_exterior_main_drive_entrance.png",
+        "width": 423
+      }
+    ],
+    "789_lake_tahoe_pet_hospital": [
+      {
+        "bytes": 42566,
+        "caption": "Exterior \u2014 front lake view",
+        "file": "1.webp",
+        "height": 411,
+        "quality": 82,
+        "sha256": "ca4d0e192f201b9fcf5d62151c063635bb4416075094793fc8cb00c3f124c4a7",
+        "source": "01_exterior_front_lake_view.png",
+        "width": 620
+      },
+      {
+        "bytes": 63490,
+        "caption": "Exterior \u2014 lakeside right view",
+        "file": "2.webp",
+        "height": 411,
+        "quality": 82,
+        "sha256": "bc5f98a692103cef3bc7466072e0ff5788986da9fc7cd0c4108945418ca73c5a",
+        "source": "02_exterior_lakeside_right_view.png",
+        "width": 653
+      },
+      {
+        "bytes": 46244,
+        "caption": "Exterior \u2014 garage view",
+        "file": "3.webp",
+        "height": 399,
+        "quality": 82,
+        "sha256": "aa51641968cae4f49a2ecfe62e08617ef8a42af601fedbc29816847d92b85800",
+        "source": "03_exterior_garage_view.png",
+        "width": 412
+      },
+      {
+        "bytes": 44870,
+        "caption": "Exterior \u2014 monument sign",
+        "file": "4.webp",
+        "height": 399,
+        "quality": 82,
+        "sha256": "77ef448aee28ee7a414ff61893a5614175a02dcf4f9512493afa9807498dfa09",
+        "source": "04_exterior_monument_sign.png",
+        "width": 408
+      }
+    ],
+    "abc_animal_hospital": [
+      {
+        "bytes": 91938,
+        "caption": "Exterior \u2014 front",
+        "file": "1.webp",
+        "height": 596,
+        "quality": 82,
+        "sha256": "f1e67f377eadc1ce41395cdc9d914f009931cda6cfa333dc72e1ed0b24510b3a",
+        "source": "01_exterior_front.jpg",
+        "width": 896
+      },
+      {
+        "bytes": 44716,
+        "caption": "Interior \u2014 exam room",
+        "file": "2.webp",
+        "height": 596,
+        "quality": 82,
+        "sha256": "9ada7f4997a433d4732b3e7002c8da9d9edfc0cca21eb6795fd43554df246f7a",
+        "source": "02_interior_exam_room.jpg",
+        "width": 896
+      },
+      {
+        "bytes": 19308,
+        "caption": "Exterior \u2014 rear side",
+        "file": "3.webp",
+        "height": 295,
+        "quality": 82,
+        "sha256": "67ad0e5efb9dccd891c887a22d679b8a24d1d977e819d6b427ab93f83c797dd2",
+        "source": "03_exterior_rear_side.jpg",
+        "width": 444
+      },
+      {
+        "bytes": 20536,
+        "caption": "Exterior \u2014 front entrance",
+        "file": "4.webp",
+        "height": 295,
+        "quality": 82,
+        "sha256": "fd7fea4b7a0bd8e80467d0f200c7a80a553f5d4d315c33f615ec5c188bc383e2",
+        "source": "04_exterior_front_entrance.jpg",
+        "width": 444
+      }
+    ],
+    "def_veterinary_hospital": [
+      {
+        "bytes": 132358,
+        "caption": "Exterior \u2014 front view",
+        "file": "1.webp",
+        "height": 1054,
+        "quality": 82,
+        "sha256": "96fd685a59871946611391ac061af55de9db884dbd08274816888e5157cd5040",
+        "source": "01_exterior_front_view.png",
+        "width": 1020
+      },
+      {
+        "bytes": 144242,
+        "caption": "Exterior \u2014 right view",
+        "file": "2.webp",
+        "height": 1054,
+        "quality": 82,
+        "sha256": "d6c906f0a2648293cdcc1d66520b785c0848a6b344cef5778472fe8f0deea67e",
+        "source": "02_exterior_right_view.png",
+        "width": 1020
+      },
+      {
+        "bytes": 187742,
+        "caption": "Exterior \u2014 left view",
+        "file": "3.webp",
+        "height": 986,
+        "quality": 82,
+        "sha256": "921ede07d525d05767074590ccfa82fb4a370c6d9983b4221bfde5c7d929b9ec",
+        "source": "03_exterior_left_view.png",
+        "width": 1020
+      },
+      {
+        "bytes": 169038,
+        "caption": "Exterior \u2014 rear view",
+        "file": "4.webp",
+        "height": 986,
+        "quality": 82,
+        "sha256": "91587bfde0e2021066e15d1969ac1768deb3c4036e05a94e4d47274d41f4bfb8",
+        "source": "04_exterior_rear_view.png",
+        "width": 1020
+      }
+    ],
+    "ghi_veterinary_hospital": [
+      {
+        "bytes": 40704,
+        "caption": "Exterior \u2014 street view dusk",
+        "file": "1.webp",
+        "height": 386,
+        "quality": 82,
+        "sha256": "5c9ae37057d0eb9297c779438887eed317dea115bbbae3379ece87228d7ba20b",
+        "source": "01_exterior_street_view_dusk.png",
+        "width": 622
+      },
+      {
+        "bytes": 44158,
+        "caption": "Exterior \u2014 front entrance",
+        "file": "2.webp",
+        "height": 386,
+        "quality": 82,
+        "sha256": "bfa6ca8a67504574551ddc07654308a30d597bb68b5620a63096b51088cca681",
+        "source": "02_exterior_front_entrance.png",
+        "width": 653
+      },
+      {
+        "bytes": 28040,
+        "caption": "Exterior \u2014 side facade",
+        "file": "3.webp",
+        "height": 317,
+        "quality": 82,
+        "sha256": "353971bec04c22d66edd199ea15740a917ab4a6c5d07a23f85050ee812e26ea7",
+        "source": "03_exterior_side_facade.png",
+        "width": 400
+      },
+      {
+        "bytes": 40222,
+        "caption": "Exterior \u2014 front parking",
+        "file": "4.webp",
+        "height": 317,
+        "quality": 82,
+        "sha256": "a20034e900b0bfd36b0c1c86a419ab9c0351b1bfe8c328bc0d273d09fcc89950",
+        "source": "04_exterior_front_parking.png",
+        "width": 435
+      }
+    ],
+    "jkl_animal_hospital": [
+      {
+        "bytes": 122486,
+        "caption": "Exterior \u2014 main front dusk",
+        "file": "1.webp",
+        "height": 900,
+        "quality": 82,
+        "sha256": "281e94ce4cfce83294a6074b154bbc227bac98035fd5dc1c75df4e526f806fee",
+        "source": "01_exterior_main_front_dusk.png",
+        "width": 1088
+      },
+      {
+        "bytes": 34156,
+        "caption": "Exterior \u2014 monument sign",
+        "file": "2.webp",
+        "height": 305,
+        "quality": 82,
+        "sha256": "2b641a70d69be5b2d8ef48869cd6f41a6126f5d1af02a763a95f784422beab06",
+        "source": "02_exterior_monument_sign.png",
+        "width": 953
+      },
+      {
+        "bytes": 36204,
+        "caption": "Exterior \u2014 emergency entrance",
+        "file": "3.webp",
+        "height": 288,
+        "quality": 82,
+        "sha256": "c8907d2465f1d542613673671532fbcdce0edbcbc86c4819ed30e653439a818a",
+        "source": "03_exterior_emergency_entrance.png",
+        "width": 953
+      },
+      {
+        "bytes": 71884,
+        "caption": "Exterior \u2014 rear patio",
+        "file": "4.webp",
+        "height": 518,
+        "quality": 82,
+        "sha256": "2d2002f673b9c38355c3524735a6fc85f2b8e940cf80f211e6c05cbac7c3895b",
+        "source": "04_exterior_rear_patio.png",
+        "width": 1088
+      }
+    ],
+    "mno_pet_hospital": [
+      {
+        "bytes": 142174,
+        "caption": "Exterior \u2014 front view",
+        "file": "1.webp",
+        "height": 664,
+        "quality": 82,
+        "sha256": "691f4ac4cd280e01c4ffa62082d93c01758936ddd2d71296967322c863cff31f",
+        "source": "01_exterior_front_view.png",
+        "width": 1017
+      },
+      {
+        "bytes": 100960,
+        "caption": "Exterior \u2014 right view",
+        "file": "2.webp",
+        "height": 664,
+        "quality": 82,
+        "sha256": "2e8a5a7a7159d8b1a7e9c007527f66dedf71d6bf560080264b2d637d3b56c004",
+        "source": "02_exterior_right_view.png",
+        "width": 1023
+      },
+      {
+        "bytes": 87456,
+        "caption": "Exterior \u2014 left side view",
+        "file": "3.webp",
+        "height": 496,
+        "quality": 82,
+        "sha256": "07ba2bff0c1d1e84173f8cecc144bca3b0092a69410d0eb62d16adfe0dbd56ce",
+        "source": "03_exterior_left_side_view.png",
+        "width": 658
+      },
+      {
+        "bytes": 68802,
+        "caption": "Exterior \u2014 entrance view",
+        "file": "4.webp",
+        "height": 496,
+        "quality": 82,
+        "sha256": "c83c022dc6c2e49956231ec3582fdd798fe6d31510afe9c9411681cb1bd03ea6",
+        "source": "04_exterior_entrance_view.png",
+        "width": 690
+      }
+    ],
+    "pqr_veterinary_hospital": [
+      {
+        "bytes": 90686,
+        "caption": "Exterior \u2014 front view",
+        "file": "1.webp",
+        "height": 612,
+        "quality": 82,
+        "sha256": "afca5790e1718e5a7ffa6edb3c002888555721d999cad7f4b080a3ae2bbb623b",
+        "source": "01_exterior_front_view.png",
+        "width": 1215
+      },
+      {
+        "bytes": 41072,
+        "caption": "Exterior \u2014 right entrance view",
+        "file": "2.webp",
+        "height": 310,
+        "quality": 82,
+        "sha256": "ca5b10fc03df498d90650f79ed85729500a076b411115884e52fa2c629f9b9a3",
+        "source": "02_exterior_right_entrance_view.png",
+        "width": 815
+      },
+      {
+        "bytes": 43908,
+        "caption": "Exterior \u2014 right sign view",
+        "file": "3.webp",
+        "height": 295,
+        "quality": 82,
+        "sha256": "7da1245ed23a2b86b88d39e22bfa644b541dbd8b13e2862a940f5982a8a888c4",
+        "source": "03_exterior_right_sign_view.png",
+        "width": 815
+      },
+      {
+        "bytes": 70020,
+        "caption": "Interior \u2014 reception",
+        "file": "4.webp",
+        "height": 309,
+        "quality": 82,
+        "sha256": "7d7b8d10beb7268ea6348d7a18086931dd50d42463cd42ce3dc660f8698ee69d",
+        "source": "04_interior_reception.png",
+        "width": 1003
+      }
+    ],
+    "stu_veterinary_specialist_center": [
+      {
+        "bytes": 56648,
+        "caption": "Exterior \u2014 main front waterfront",
+        "file": "1.webp",
+        "height": 450,
+        "quality": 82,
+        "sha256": "5dd1b07d76d477efc4e449a372bfd2b8b3a05c66928689fe78d2c7993f90f6b9",
+        "source": "01_exterior_main_front_waterfront.png",
+        "width": 1010
+      },
+      {
+        "bytes": 18420,
+        "caption": "Exterior \u2014 side view",
+        "file": "2.webp",
+        "height": 217,
+        "quality": 82,
+        "sha256": "986523a9ddfe2a3039a270311cfe874be25f2917c08b8d1e5418303dc51d9739",
+        "source": "02_exterior_side_view.png",
+        "width": 300
+      },
+      {
+        "bytes": 17394,
+        "caption": "Exterior \u2014 entrance view",
+        "file": "3.webp",
+        "height": 217,
+        "quality": 82,
+        "sha256": "53631547611febcc4e4370df28472e1d27af736e5b2c20bb75829a392a61457e",
+        "source": "03_exterior_entrance_view.png",
+        "width": 316
+      },
+      {
+        "bytes": 12556,
+        "caption": "Exterior \u2014 courtyard view",
+        "file": "4.webp",
+        "height": 217,
+        "quality": 82,
+        "sha256": "e8ad96ed0b1cf608cccca2924d4bfe046d7e05b6d81faacded50b4842b614199",
+        "source": "04_exterior_courtyard_view.png",
+        "width": 309
+      }
+    ],
+    "vwx_veterinary_hospital": [
+      {
+        "bytes": 85914,
+        "caption": "Exterior \u2014 front entrance",
+        "file": "1.webp",
+        "height": 502,
+        "quality": 82,
+        "sha256": "dff97b73c5c948605b72606797ff6fdb1465b2067cc3394923342ef3bdfd00ed",
+        "source": "01_exterior_front_entrance.png",
+        "width": 980
+      },
+      {
+        "bytes": 96206,
+        "caption": "Exterior \u2014 street view",
+        "file": "2.webp",
+        "height": 502,
+        "quality": 82,
+        "sha256": "ac910dfdb90b694db9a3bfcf724f7d8d74519a34b6ad75749edac4487069e385",
+        "source": "02_exterior_street_view.png",
+        "width": 1010
+      },
+      {
+        "bytes": 60662,
+        "caption": "Exterior \u2014 side entrance parking",
+        "file": "3.webp",
+        "height": 442,
+        "quality": 82,
+        "sha256": "061e3147c13dc5cdc1fcfe2ddc4a53d75022df606521dbcbc0b4a6bdbd5a03c8",
+        "source": "03_exterior_side_entrance_parking.png",
+        "width": 662
+      },
+      {
+        "bytes": 76428,
+        "caption": "Exterior \u2014 pet relief yard",
+        "file": "4.webp",
+        "height": 442,
+        "quality": 82,
+        "sha256": "71ea4021dd57d1bfa94ede289433da59b571afe0fdba5382df6191df4bc0eb09",
+        "source": "04_exterior_pet_relief_yard.png",
+        "width": 655
+      }
+    ],
+    "yz_rural_animal_hospital": [
+      {
+        "bytes": 41430,
+        "caption": "Exterior \u2014 front view",
+        "file": "1.webp",
+        "height": 414,
+        "quality": 82,
+        "sha256": "4ae0dc47e7a5584198bce83128d30bb90e96b692b7d5ad5480c9fbee224b4e10",
+        "source": "01_exterior_front_view.png",
+        "width": 809
+      },
+      {
+        "bytes": 31496,
+        "caption": "Exterior \u2014 monument sign",
+        "file": "2.webp",
+        "height": 414,
+        "quality": 82,
+        "sha256": "30a52a6b2a99885fb6f6ed94e7e2e4e132b4b86c8103f503cdbf1a7f94168c24",
+        "source": "02_exterior_monument_sign.png",
+        "width": 463
+      },
+      {
+        "bytes": 28848,
+        "caption": "Exterior \u2014 street view",
+        "file": "3.webp",
+        "height": 284,
+        "quality": 82,
+        "sha256": "53090e97c8f8954f6cfe4cb8e54a92ad309009b5aa0c39be3eaac0dccc13458c",
+        "source": "03_exterior_street_view.png",
+        "width": 446
+      },
+      {
+        "bytes": 15430,
+        "caption": "Exterior \u2014 side entrance",
+        "file": "4.webp",
+        "height": 284,
+        "quality": 82,
+        "sha256": "84d353bc7667020d7276f69490220f3be5e12fbe95fa91ea0c7eee2327759077",
+        "source": "04_exterior_side_entrance.png",
+        "width": 355
+      }
+    ]
+  },
+  "max_bytes": 256000,
+  "max_edge_px": 1600,
+  "max_photos": 4,
+  "version": 1
+}

@@ -34,6 +34,10 @@ pytest-cov = "7.1.0"
 diff-cover = "10.5.1"
 fakeredis = {extras = ["aioredis"], version = "^2.37.1"}
 types-zxcvbn = "^4.5.0.20260518"
+# The seed photograph pipeline only (scripts/prepare_photos.py, run once by hand). The API
+# serves already-encoded WebP bytes off disk and never opens an image, so this must NOT move
+# to the main group — the runtime image is built with `poetry install --only main`.
+pillow = ">=11.0"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
