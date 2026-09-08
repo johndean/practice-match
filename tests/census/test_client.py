@@ -330,6 +330,41 @@ def test_transport_errors_exhaust_the_bounded_ladder_and_raise():
     assert len(calls) == 4 and len(sleeps) == 3
 
 
+def test_transport_error_backoff_does_not_hold_the_concurrency_gate():
+    """Fix-round re-review: the backoff sleep after a `httpx.TransportError` must happen AFTER
+    the per-dataset concurrency gate (`self._gate`) is released -- a flapping connection must
+    not stall every other caller for the whole backoff window. Proven with concurrency=1: while
+    the main call is "sleeping" off its one transport error, a second real thread must be able
+    to acquire the same gate immediately."""
+    gate_acquired = threading.Event()
+    entered_sleep = threading.Event()
+    calls = []
+
+    def handler(r):
+        calls.append(1)
+        if len(calls) == 1:
+            raise httpx.ConnectError("boom", request=r)
+        return httpx.Response(200, json=TABLE)
+
+    def fake_sleep(seconds):
+        entered_sleep.set()
+        assert gate_acquired.wait(1.0), "a second caller could not acquire the gate during backoff"
+
+    c = CensusClient("KEY123", ACS, transport=httpx.MockTransport(handler), sleep=fake_sleep,
+                      version="0.1.0", contact="contact@vinfoundation.org", concurrency=1)
+
+    def other_caller():
+        entered_sleep.wait(1.0)
+        with c._gate:
+            gate_acquired.set()
+
+    t = threading.Thread(target=other_caller)
+    t.start()
+    rows = c.fetch_table(["NAME"], "us:1", [])
+    t.join(2)
+    assert len(rows) == 2
+
+
 def test_429_honours_a_small_retry_after_verbatim():
     calls = []
 
@@ -382,6 +417,37 @@ def test_429_with_a_non_numeric_retry_after_falls_back_to_the_backoff_ladder():
     c = make(handler, sleeps=sleeps)
     c.fetch_table(["NAME"], "us:1", [])
     assert 1.0 <= sleeps[0] < 1.5
+
+
+def test_429_clamps_a_negative_retry_after_to_zero_never_a_negative_sleep():
+    """Fix-round re-review: a hostile or buggy negative `Retry-After` must not reach `sleep` --
+    `float("-5")` parses without raising, so the old bare `min(float(retry_after), CAP)` passed
+    -5.0 straight through."""
+    calls = []
+
+    def handler(r):
+        calls.append(1)
+        return httpx.Response(429, headers={"Retry-After": "-5"}) if len(calls) == 1 else httpx.Response(200, json=TABLE)
+
+    sleeps = []
+    c = make(handler, sleeps=sleeps)
+    c.fetch_table(["NAME"], "us:1", [])
+    assert sleeps == [0.0]
+
+
+def test_429_clamps_a_nan_retry_after_to_zero():
+    """`float("nan")` also parses without raising, and `min(nan, CAP)` returns `nan` (NaN
+    comparisons are always false) -- `sleep(nan)` must never happen."""
+    calls = []
+
+    def handler(r):
+        calls.append(1)
+        return httpx.Response(429, headers={"Retry-After": "nan"}) if len(calls) == 1 else httpx.Response(200, json=TABLE)
+
+    sleeps = []
+    c = make(handler, sleeps=sleeps)
+    c.fetch_table(["NAME"], "us:1", [])
+    assert sleeps == [0.0]
 
 
 # --- concurrency: real enforcement, not bookkeeping (m4) -------------------------------------

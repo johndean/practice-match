@@ -199,6 +199,7 @@ class CensusClient:
     def _get(self, url: str) -> bytes:
         attempt = 0
         while True:
+            transport_delay: float | None = None
             with self._gate:
                 with self._lock:
                     self.request_count += 1
@@ -211,9 +212,14 @@ class CensusClient:
                 except httpx.TransportError:   # m6: joins the same bounded retry ladder as a 5xx
                     if attempt == MAX_RETRIES:
                         raise
-                    self._sleep((2**attempt) + random.uniform(0, 0.5))
-                    attempt += 1
-                    continue
+                    # The backoff sleep itself happens AFTER this `with self._gate:` block exits
+                    # (below) -- a flapping connection must not hold a concurrency slot for the
+                    # whole backoff window (fix-round re-review).
+                    transport_delay = (2**attempt) + random.uniform(0, 0.5)
+            if transport_delay is not None:
+                self._sleep(transport_delay)
+                attempt += 1
+                continue
             if status == 429:
                 with self._lock:
                     self.concurrency = max(1, self.concurrency // 2)
@@ -223,7 +229,9 @@ class CensusClient:
             delay = (2**attempt) + random.uniform(0, 0.5)
             if status == 429 and retry_after:   # m6: honour Retry-After, capped, else the ladder
                 try:
-                    delay = min(float(retry_after), RETRY_AFTER_CAP)
+                    # max(0.0, …) first: a negative or NaN Retry-After must never reach `sleep`
+                    # (a bare `float(retry_after)` parses both without raising).
+                    delay = min(max(0.0, float(retry_after)), RETRY_AFTER_CAP)
                 except ValueError:
                     pass
             self._sleep(delay)
