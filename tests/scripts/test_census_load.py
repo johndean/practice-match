@@ -628,6 +628,23 @@ def test_cmd_zbp_returns_five_when_validation_fails(scratch_dsn, monkeypatch, ca
     assert "zbp failed validation" in err and "ESTAB" in err
 
 
+def test_cmd_zbp_returns_two_when_geo_area_has_no_zctas_yet(scratch_dsn, monkeypatch, capsys):
+    """A-C6: `zbp` cannot run before A4's TIGER load has bounded the market states' ZCTAs --
+    `zbp.MissingBoundaries` is a refusal (exit 2), naming the prerequisite, like a licence gate."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+
+    def fake_load(conn, client_factory, states):
+        raise census_zbp.MissingBoundaries("zbp needs the market states' ZCTAs in geo_area — run 'census_load.py tiger' first")
+
+    monkeypatch.setattr(census_zbp, "load", fake_load)
+
+    assert census_load.main(["zbp"]) == 2
+    err = capsys.readouterr().err
+    assert "zbp refused" in err and "census_load.py tiger" in err
+
+
 def test_cmd_bds_requires_a_year_and_prints_row_count(scratch_dsn, monkeypatch, capsys):
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
     monkeypatch.setenv("CENSUS_API_KEY", "the-key")
@@ -858,6 +875,43 @@ def test_cmd_qwi_returns_four_when_resolving_the_latest_quarter_fails(scratch_ds
     assert census_load.main(["qwi"]) == 4
     err = capsys.readouterr().err
     assert "qwi download failed" in err and "SECRET" not in err
+
+
+def test_cmd_qwi_returns_five_when_resolving_the_latest_quarter_fails_validation(scratch_dsn, monkeypatch, capsys):
+    """Mi1 (A6 review): `latest_available` raises `VariableMissing` (not `CensusHTTPError`) when
+    a 200 response is missing the `Emp` column -- a narrow but real schema-drift case that must
+    map to exit 5, not propagate as an uncaught exception."""
+    from app.census.client import VariableMissing
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+
+    def fake_latest_available(client, state, *, today):
+        raise VariableMissing(["Emp"])
+
+    monkeypatch.setattr(census_qwi, "latest_available", fake_latest_available)
+
+    assert census_load.main(["qwi"]) == 5
+    err = capsys.readouterr().err
+    assert "qwi validation failed" in err and "Emp" in err
+
+
+def test_cmd_qwi_returns_two_when_the_load_itself_is_licence_gated(scratch_dsn, monkeypatch, capsys):
+    """I1 (A6 review): defense-in-depth for a live TOCTOU window -- an admin flips
+    `license_status` mid-run via a separate connection while a long, six-state QWI load is in
+    flight -- `qwi.load`'s own `PermissionError` must map to exit 2 here too, not propagate."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+
+    def fake_load(conn, client_factory, states, *, year, quarter):
+        raise PermissionError("qwi is blocked; loads are refused (spec §1 licensing gate)")
+
+    monkeypatch.setattr(census_qwi, "load", fake_load)
+
+    assert census_load.main(["qwi", "--year", "2024", "--quarter", "4"]) == 2
+    assert "qwi refused" in capsys.readouterr().err
 
 
 def test_cmd_qwi_returns_four_when_the_load_itself_fails(scratch_dsn, monkeypatch, capsys):

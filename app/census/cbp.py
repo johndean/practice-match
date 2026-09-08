@@ -21,7 +21,9 @@ from app.census.registry import load as load_registry
 
 NAICS = ["541940", "812910", "459910"]
 NAICS_ALIASES = {("NAICS2017", "459910"): "453910"}
-VARS = ["ESTAB", "EMP", "PAYANN", "EMP_F", "PAYANN_F"]
+# A-C6: `2022/cbp` has no `EMP_F`/`PAYANN_F` -- CBP's disclosure-avoidance is noise infusion, not
+# withheld cells, and its noise-range variables are `EMP_N`/`PAYANN_N` ("Noise range for ...").
+VARS = ["ESTAB", "EMP", "PAYANN", "EMP_N", "PAYANN_N"]
 EXPECTED = ["ESTAB", "EMP", "PAYANN"]
 
 UPSERT = """
@@ -37,7 +39,7 @@ def _int(v: str | None) -> int | None:
 
 
 def _flags(row: dict[str, str | None]) -> str | None:
-    parts = [f"{k}={row[k]}" for k in ("EMP_F", "PAYANN_F") if row.get(k)]
+    parts = [f"{k}={row[k]}" for k in ("EMP_N", "PAYANN_N") if row.get(k)]
     return ";".join(parts) or None
 
 
@@ -61,9 +63,11 @@ def load(conn: psycopg2.extensions.connection, client_factory: Callable[[Dataset
                 payload = []
                 for r in rows:
                     flags = _flags(r)
-                    # Census suppression flag 'D' means the cell was withheld → NULL, never 0 (spec §14).
-                    emp = None if r.get("EMP_F") == "D" else _int(r.get("EMP"))
-                    pay = None if r.get("PAYANN_F") == "D" else _int(r.get("PAYANN"))
+                    # A-C6: no suppression flag to branch on -- an absent/sentinel cell is
+                    # already None through normalise()/_int, never 0 (spec §14 kept); a present
+                    # EMP_N/PAYANN_N noise-range value does not itself null anything.
+                    emp = _int(r.get("EMP"))
+                    pay = _int(r.get("PAYANN"))
                     payload.append((_county_geo_id(r), ds.vintage, code, _int(r.get("ESTAB")), emp, pay, flags, run.id))
                 with conn.cursor() as cur:
                     cur.executemany(UPSERT, payload)

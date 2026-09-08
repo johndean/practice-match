@@ -14,7 +14,7 @@ def test_seed_matches_the_spec_dataset_register(conn):
     assert reg["imagery"].license_status == "unresolved"
     assert reg["pet_ownership"].license_status == "blocked"
     assert reg["aies"].license_status == "unresolved"  # "Verify ID" in the spec → not cleared until confirmed
-    assert reg["zbp"].api_dataset_id == "2022/zbp" and reg["zbp"].naics_param == "NAICS2017" and reg["zbp"].license_status == "cleared"
+    assert reg["zbp"].api_dataset_id == "2022/cbp" and reg["zbp"].naics_param == "NAICS2017" and reg["zbp"].license_status == "cleared"
     assert reg["practice_locations"].license_status == "blocked"  # spec §12: third-party practice-location data is out of scope for V1
     for k in ("google_places_aggregate", "overture_places", "fsq_os_places"):
         assert reg[k].license_status == "unresolved"  # D16/D17: candidates only; the gate keeps them out of every table and payload

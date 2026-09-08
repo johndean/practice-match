@@ -58,7 +58,7 @@ import time
 from collections.abc import Callable, Mapping
 from types import TracebackType
 from typing import Self
-from urllib.parse import urlencode
+from urllib.parse import quote, urlencode
 
 import httpx
 
@@ -185,8 +185,10 @@ class CensusClient:
         for k, v in (extra or {}).items():
             params.append((k, v))
         params.append(("key", self.api_key))
-        # Census expects ':' '*' '+' and ',' unescaped in these parameters.
-        query = urlencode(params, safe=":*+,")
+        # Census expects ':' '*' '+' and ',' unescaped in these parameters; `quote_via=quote`
+        # (rather than urlencode's default `quote_plus`) so a literal space -- CBP's `zip code`
+        # geography label (A-C6) -- reaches the wire as `%20`, never `+`.
+        query = urlencode(params, safe=":*+,", quote_via=quote)
         return f"{self.dataset.base_url}/{self.dataset.api_dataset_id}?{query}"
 
     def _archive_key(self, url: str) -> str:

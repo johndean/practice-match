@@ -6,7 +6,6 @@ CREATE TABLE zbp_industry (
   vintage text NOT NULL,
   naics_code text NOT NULL,        -- '541940' | '812910' | '459910'
   establishments integer,
-  flag text,
   ingest_run_id bigint NOT NULL REFERENCES ingest_run(id),
   PRIMARY KEY (geo_id, summary_level, vintage, naics_code)
 );

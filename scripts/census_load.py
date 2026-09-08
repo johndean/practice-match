@@ -26,7 +26,9 @@ argparse's own exit -- `DATABASE_URL` unset, a required Census setting missing -
 A-C3 ¶2's `SystemExit(3)` -- or a dataset that is licence-gated: every loader's `PermissionError`
 for an `unresolved`/`blocked` `dataset_registry` row, spec §1, is a refusal too -- `qwi` checks
 this itself, before `latest_available`'s probe, rather than through `qwi.load`'s own identical
-check, so a blocked QWI dataset is never even queried); 3 the database
+check, so a blocked QWI dataset is never even queried -- or `zbp`'s `geo_area` holding no ZCTA
+(`860`) rows yet (`zbp.MissingBoundaries`, controller amendment A-C6): naming the prerequisite
+(`census_load.py tiger` first) is a refusal of the same kind); 3 the database
 is unreachable (retryable); 4 a download or API fetch
 failed (`CensusHTTPError`, its message already redacted -- A-C3 (3)); 5 validation failed -- every
 loader raises this when a response is missing an expected variable (`VariableMissing`; spec
@@ -242,6 +244,12 @@ def cmd_zbp(args: argparse.Namespace) -> int:
     except PermissionError as exc:
         print(f"[census_load] zbp refused: {exc}", file=sys.stderr)
         return 2
+    except zbp.MissingBoundaries as exc:
+        # A-C6: `geo_area` holds no ZCTA (`860`) rows yet -- naming the prerequisite is a
+        # refusal, exit 2, the same as a licence gate (A-C4 ¶2's "refused before anything is
+        # opened").
+        print(f"[census_load] zbp refused: {exc}", file=sys.stderr)
+        return 2
     except CensusHTTPError as exc:
         print(f"[census_load] zbp download failed: {exc}", file=sys.stderr)
         return 4
@@ -341,9 +349,22 @@ def cmd_qwi(args: argparse.Namespace) -> int:
             except CensusHTTPError as exc:
                 print(f"[census_load] qwi download failed: {exc}", file=sys.stderr)
                 return 4
+            except VariableMissing as exc:
+                # Mi1 (A6 review): a 200 response missing the `Emp` column (a schema drift, a
+                # malformed 200) is "validation failed", not an uncaught exception -- every other
+                # exception arm in this file already maps `VariableMissing` to exit 5.
+                print(f"[census_load] qwi validation failed: {exc}", file=sys.stderr)
+                return 5
 
     try:
         n = qwi.load(conn, factory, states, year=year, quarter=quarter)
+    except PermissionError as exc:
+        # I1 (A6 review): defense-in-depth for a live TOCTOU window -- the upfront registry
+        # check above uses the same connection with no intervening commit, so this arm is
+        # unreachable in practice today, but keeps `cmd_qwi`'s shape visually identical to the
+        # other three subcommands', all of which catch `qwi.load`'s own licence gate.
+        print(f"[census_load] qwi refused: {exc}", file=sys.stderr)
+        return 2
     except CensusHTTPError as exc:
         print(f"[census_load] qwi download failed: {exc}", file=sys.stderr)
         return 4

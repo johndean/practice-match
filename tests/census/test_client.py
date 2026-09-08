@@ -170,6 +170,16 @@ def test_build_url_supports_extra_params():
     assert "NAICS2017=541940" in url and url.endswith("&key=KEY123")
 
 
+def test_build_url_encodes_a_literal_space_in_for_as_percent20():
+    """A-C6: ZBP's ZIP-level request uses the CBP endpoint's own `zip code` geography label,
+    which has a literal space -- `urlencode`'s default `quote_via` (`quote_plus`) would turn
+    that into `zip+code:*` on the wire, not the `%20` Census's own geography.json spells it
+    with."""
+    c = make(lambda r: httpx.Response(200, json=TABLE))
+    url = c._build_url(["ZIPCODE", "ESTAB"], "zip code:*")
+    assert "for=zip%20code:*" in url and "in=" not in url
+
+
 def test_fetch_normalises_a_literal_json_null_to_none():
     """Spec §3 sentinels: `-666666666`, `-999999999`, `null` -- the third arrives as a literal
     JSON null in the raw body, not a string, which is a separate branch from the string
