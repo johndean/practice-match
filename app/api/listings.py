@@ -52,6 +52,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 from collections.abc import Mapping
 from contextlib import closing
 from datetime import UTC, datetime
@@ -59,6 +60,7 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 
@@ -68,6 +70,7 @@ from app.config import settings
 from app.db import sync_conn
 from app.storage import ObjectStore
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
 # Hoisted to a module-level constant, never wrapped (Global Constraint (g)).
@@ -390,7 +393,16 @@ def _asset_bytes(conn: Any, listing_id: str, entry: str) -> bytes | None:
     if found is None:
         return None
     store = ObjectStore.from_settings(settings)
-    return store.get(found[0]) if store is not None else None
+    if store is None:
+        return None
+    try:
+        return store.get(found[0])
+    except (BotoCoreError, ClientError):
+        # A bucket outage is a photograph that cannot be served, which is what a 404 says here —
+        # `_error`'s envelope, never an unhandled exception (A-SL16 M2). The refusal that a
+        # seller's WRITE gets is a 503, because a write can be retried into a different outcome.
+        log.warning("[listings] object store unavailable reading %s", found[0])
+        return None
 
 
 @router.get("/listings/{listing_id}/photos/{n}", dependencies=[Depends(REQUIRE_LISTING_READ)])

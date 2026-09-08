@@ -34,12 +34,15 @@ purpose rather than leaving it to be noticed.
 from __future__ import annotations
 
 import json
+import re
+from collections.abc import AsyncGenerator
 from contextlib import closing
 from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Annotated, Any, cast
-from uuid import UUID
+from uuid import UUID, uuid4
 
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 from python_multipart.exceptions import FormParserError
@@ -47,7 +50,7 @@ from python_multipart.exceptions import FormParserError
 # Starlette's own UploadFile, not FastAPI's subclass of it: the form parser produces the base
 # class, so `isinstance(field, fastapi.UploadFile)` is False for every real upload.
 from starlette.datastructures import UploadFile
-from starlette.formparsers import MultiPartException
+from starlette.formparsers import MultiPartException, MultiPartParser
 
 from app.api.listings import PHOTOS_ROOT, REQUIRE_LISTING_READ, _error, drop_list_cache, photo_list
 from app.auth import audit
@@ -590,43 +593,71 @@ def _sniffed(content_type: str, data: bytes) -> bool:
     return True
 
 
-async def _upload_bytes(request: Request, limit: int) -> tuple[str, str, bytes]:
-    """(filename, content_type, bytes) from a one-file multipart body, refusing an oversized one.
+def _too_large(limit: int) -> str:
+    return f"The file is larger than {limit // (1024 * 1024)} MB."
 
-    The ceiling is applied to the DECLARED length first, before a byte of the body is read, so a
-    40 MB "photograph" is never spooled to disk and never handed to Pillow; then to what actually
-    arrived, because `Content-Length` is the client's claim about itself."""
-    declared = request.headers.get("content-length", "")
-    if declared.isdecimal() and int(declared) > limit + MULTIPART_OVERHEAD:
-        raise Refusal("TOO_LARGE", f"The file is larger than {limit // (1024 * 1024)} MB.", 413)
+
+async def _bounded_stream(request: Request, limit: int) -> AsyncGenerator[bytes, None]:
+    """The request body chunk by chunk, refusing the moment the running total passes the ceiling.
+
+    A-SL16 H1, and the reason the parser is driven by hand rather than through `request.form()`:
+    `Content-Length` is a claim, a `Transfer-Encoding: chunked` request makes none at all, and
+    Starlette puts NO ceiling on a file part — `max_part_size` guards data parts only
+    (`starlette/formparsers.py`), while a file part streams into a `SpooledTemporaryFile` whose
+    `spool_max_size` is the memory→disk threshold rather than a limit. So one authenticated request
+    with no declared length could stream without bound onto the container's disk and then be read
+    whole into memory. Bounding the stream is what makes the ceiling real: the refusal is raised
+    while the body is still arriving, and at most `limit + MULTIPART_OVERHEAD` bytes are ever
+    buffered anywhere."""
+    total = 0
+    async for chunk in request.stream():
+        total += len(chunk)
+        if total > limit + MULTIPART_OVERHEAD:
+            raise Refusal("TOO_LARGE", _too_large(limit), 413)
+        yield chunk
+
+
+async def _upload_bytes(request: Request, limit: int) -> tuple[str, str, bytes, dict[str, str]]:
+    """(filename, content type, bytes, the other form fields) from a one-file multipart body.
+
+    The text fields come back as a plain dict because the `FormData` itself does not outlive this
+    function: Starlette spools a file part to a `SpooledTemporaryFile` that rolls over to disk past
+    1 MB, and only FastAPI's own parameter machinery closes it — a route that parses the form owns
+    the handle (A-SL15 (2)). Left open, every upload leaks a temporary file and, under `-W error`,
+    a ResourceWarning that fails the suite."""
+    if not request.headers.get("content-type", "").startswith("multipart/form-data"):
+        # Starlette answers a non-form content type with an empty `FormData`; said here, because
+        # the parser below is handed the stream directly and would call it a malformed form.
+        raise Refusal("BAD_REQUEST", "A single `file` part is required.", 400)
     try:
-        form = await request.form()
+        form = await MultiPartParser(request.headers, _bounded_stream(request, limit)).parse()
     except (MultiPartException, FormParserError) as exc:
         # Two libraries, two exceptions, one refusal: Starlette raises its own for the limits it
         # enforces (too many parts, an oversized non-file part) and lets python-multipart's own
         # parse error through untouched. A body that is not the multipart form it claims to be is
         # the caller's 400, never an unhandled 500.
         raise Refusal("BAD_REQUEST", "The upload could not be read as a multipart form.", 400) from exc
-    # `form.close()` on every path, including the refusals: Starlette spools a file part to a
-    # `SpooledTemporaryFile` that rolls over to disk past 1 MB, and only FastAPI's own parameter
-    # machinery closes it — a route that calls `request.form()` itself owns the handle. Left open,
-    # every upload leaks one temporary file (and, under `-W error`, a ResourceWarning that fails
-    # the suite). The string parts survive the close, so `kind` is still readable after it.
     try:
         # `isinstance`, not two `hasattr`s: it is what narrows the `UploadFile | str | None` a form
-        # field really is, so this reads without a `# type: ignore` (Global Constraint (c)). A JSON
-        # body parses to an empty form and a misnamed part leaves `None` — both are this refusal.
+        # field really is, so this reads without a `# type: ignore` (Global Constraint (c)).
         field = form.get("file")
         if not isinstance(field, UploadFile):
             raise Refusal("BAD_REQUEST", "A single `file` part is required.", 400)
         data = await field.read()
+        # Belt to the stream's braces: the bound above counts the whole envelope, this counts the
+        # file, so a part one byte over is refused even though the request as a whole fitted.
         if len(data) > limit:
-            raise Refusal("TOO_LARGE", f"The file is larger than {limit // (1024 * 1024)} MB.", 413)
+            raise Refusal("TOO_LARGE", _too_large(limit), 413)
         # The filename is DISPLAY only — the object key is derived from the listing id and a
-        # server-generated uuid, never from anything the uploader typed. `rsplit` drops a smuggled
-        # path so the wizard's tile cannot render one.
-        name = (field.filename or "file").rsplit("/", 1)[-1][:MAX_FILENAME]
-        return name, field.content_type or "", data
+        # server-generated uuid, never from anything the uploader typed. Both separators are cut
+        # (A-SL16 L4): a Windows client sends `C:\\Users\\jane\\accounts.pdf`, and a local path has no
+        # business in the row or in the payload.
+        name = re.split(r"[\\/]", field.filename or "file")[-1][:MAX_FILENAME] or "file"
+        # `text/csv; charset=utf-8` is the same type as `text/csv` (A-SL16 L2); some clients send
+        # the parameter and an exact comparison called them unsupported.
+        content_type = (field.content_type or "").split(";", 1)[0].strip().lower()
+        fields = {key: value for key, value in form.multi_items() if isinstance(value, str)}
+        return name, content_type, data, fields
     finally:
         await form.close()
 
@@ -644,21 +675,50 @@ async def _json_body(request: Request) -> dict[str, Any]:
 
 def _insert_asset(conn: Any, listing_id: UUID, kind: str, name: str, content_type: str,
                   data: bytes, digest: str, suffix: str) -> tuple[UUID, str]:
-    """The row, then the object, then the row's key — the (asset id, storage key) pair.
+    """One row, written once, with its final key — the (asset id, storage key) pair.
 
-    The object is written BEFORE the transaction commits: a committed row pointing at an object
-    that was never written is a broken listing, while an object with no row is a few kilobytes
-    nothing reads. Fail in the direction that leaves the database honest."""
-    folder = "photos" if kind == "photo" else "documents"
+    The id is minted HERE rather than by the table's default (A-SL16 M1): a placeholder
+    `storage_key` would hold an entry in a table-wide UNIQUE index for the length of the whole
+    transaction, and that transaction contains a bucket PUT, so two sellers uploading to two
+    DIFFERENT listings would block on each other for a network round trip.
+
+    The caller writes the object BEFORE the transaction commits: a committed row pointing at an
+    object that was never written is a broken listing, while an object with no row is a few
+    kilobytes nothing reads. Fail in the direction that leaves the database honest."""
+    asset_id = uuid4()
+    key = f"listings/{listing_id}/{'photos' if kind == 'photo' else 'documents'}/{asset_id}{suffix}"
     with conn.cursor() as cur:
-        cur.execute("INSERT INTO listing_asset (listing_id, kind, name, content_type, byte_size, sha256, storage_key)"
-                    " VALUES (%s,%s,%s,%s,%s,%s,'') RETURNING id",
-                    (listing_id, kind, name, content_type, len(data), digest))
-        # RETURNING id on a just-inserted row always yields exactly one row (`applications.py:220`).
-        asset_id = cast("tuple[UUID]", cur.fetchone())[0]
-        key = f"listings/{listing_id}/{folder}/{asset_id}{suffix}"
-        cur.execute("UPDATE listing_asset SET storage_key=%s WHERE id=%s", (key, asset_id))
+        cur.execute("INSERT INTO listing_asset (id, listing_id, kind, name, content_type, byte_size,"
+                    " sha256, storage_key) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
+                    (asset_id, listing_id, kind, name, content_type, len(data), digest, key))
     return asset_id, key
+
+
+def _put(store: ObjectStore, key: str, data: bytes, content_type: str) -> None:
+    """`store.put`, with a bucket outage as a refusal rather than a 500 (A-SL16 M2).
+
+    `app/storage.py` re-raises every `ClientError` that is not a 404, so a rejected credential, a
+    throttle or an outage used to leave an unhandled exception and FastAPI's
+    `{"detail": "Internal Server Error"}` — not decision A5's envelope, and not the
+    `STORAGE_UNAVAILABLE` code that describes exactly this."""
+    try:
+        store.put(key, data, content_type)
+    except (BotoCoreError, ClientError) as exc:
+        raise Refusal("STORAGE_UNAVAILABLE", "Object storage is unavailable; try again.", 503) from exc
+
+
+def _drop_object(store: ObjectStore, key: str) -> None:
+    try:
+        store.delete(key)
+    except (BotoCoreError, ClientError) as exc:
+        raise Refusal("STORAGE_UNAVAILABLE", "Object storage is unavailable; try again.", 503) from exc
+
+
+def _fetch(store: ObjectStore, key: str) -> bytes | None:
+    try:
+        return store.get(key)
+    except (BotoCoreError, ClientError) as exc:
+        raise Refusal("STORAGE_UNAVAILABLE", "Object storage is unavailable; try again.", 503) from exc
 
 
 def _asset_payload(asset_id: UUID, kind: str, name: str, content_type: str, size: int) -> dict[str, Any]:
@@ -675,7 +735,7 @@ async def upload_photo(listing_id: str, request: Request, principal: Owner) -> R
     hit(sync_redis(), "listing:upload", str(principal.account_id), *LISTING_UPLOAD)
     try:
         store = store_for_request()
-        name, content_type, data = await _upload_bytes(request, MAX_PHOTO_BYTES)
+        name, content_type, data, _fields = await _upload_bytes(request, MAX_PHOTO_BYTES)
         if content_type not in PHOTO_TYPES:
             raise Refusal("UNSUPPORTED_TYPE", f"A photograph must be one of {', '.join(PHOTO_TYPES)}.", 415)
         with closing(sync_conn()) as conn, conn:
@@ -694,7 +754,7 @@ async def upload_photo(listing_id: str, request: Request, principal: Owner) -> R
                 raise Refusal("BAD_IMAGE", "That file could not be read as a photograph.", 422)
             webp, digest = encoded
             asset_id, key = _insert_asset(conn, row["id"], "photo", name, "image/webp", webp, digest, ".webp")
-            store.put(key, webp, "image/webp")
+            _put(store, key, webp, "image/webp")
             with conn.cursor() as cur:
                 cur.execute("UPDATE listing SET photos = %s::jsonb, updated_at = now()"
                             " WHERE id = %s AND seller_id = %s",
@@ -741,17 +801,18 @@ async def reorder_photos(listing_id: str, request: Request, principal: Owner) ->
 
 @router.delete("/listings/{listing_id}/assets/{asset_id}", status_code=204)
 async def delete_asset(listing_id: str, asset_id: str, request: Request, principal: Owner) -> Response:
-    """One asset, gone: the row, its entry in `listing.photos`, then the object.
+    """One asset, gone: the object, then the row, then its entry in `listing.photos`.
 
-    The row is what decides whether the asset EXISTED — `app/storage.py`'s `delete()` answers
-    nothing, and an S3 delete of an absent key succeeds anyway, so a store answer could not tell a
-    second delete from a first. The DELETE is scoped by `listing_id` as well as by asset id, so
-    another listing's asset is a 404 rather than a deletion, and the listing row is locked for the
-    whole transaction so two concurrent deletes of the same photograph serialise.
+    The ROW is what decides whether the asset existed. `app/storage.py`'s `delete()` does report
+    whether the key was there (A-SL1, `159f526`), but an S3 delete of an absent key succeeds
+    anyway, so the store cannot tell a second delete from a first and nothing here branches on its
+    answer. The SELECT and the DELETE are scoped by `listing_id` as well as by asset id, so another
+    listing's asset is a 404 rather than a deletion, and the listing row is locked for the whole
+    transaction so two concurrent deletes of the same photograph serialise.
 
-    The object goes AFTER the commit, the opposite order from the upload and for the same reason:
-    an object left behind is a few kilobytes nothing reads, while a row deleted for an object that
-    survived would be a listing pointing at a photograph it can no longer name."""
+    The object goes FIRST, inside the transaction (A-SL16 M2): a delete that cannot remove the
+    object refuses and leaves the row exactly where it was, which is recoverable. The other order
+    answers 500 for work that was already done and 404 on the retry."""
     try:
         store = store_for_request()
         parsed = _asset_uuid(asset_id)
@@ -759,12 +820,15 @@ async def delete_asset(listing_id: str, asset_id: str, request: Request, princip
             row = locked_row(conn, listing_id, principal)
             _writable(row)
             with conn.cursor() as cur:
-                cur.execute("DELETE FROM listing_asset WHERE id = %s AND listing_id = %s"
-                            " RETURNING storage_key, kind", (parsed, row["id"]))
+                cur.execute("SELECT storage_key, kind FROM listing_asset WHERE id = %s AND listing_id = %s"
+                            " FOR UPDATE", (parsed, row["id"]))
                 found = cur.fetchone()
             if found is None:
                 raise Refusal("NOT_FOUND", "No such asset.", 404)
             key, kind = found
+            _drop_object(store, key)
+            with conn.cursor() as cur:
+                cur.execute("DELETE FROM listing_asset WHERE id = %s AND listing_id = %s", (parsed, row["id"]))
             if kind == "photo":
                 remaining = [entry for entry in photo_list(row["photos"]) if entry != str(parsed)]
                 with conn.cursor() as cur:
@@ -774,7 +838,6 @@ async def delete_asset(listing_id: str, asset_id: str, request: Request, princip
             take_off_market(conn, row, principal, request)
     except Refusal as exc:
         return _refused(exc)
-    store.delete(key)
     drop_list_cache(sync_redis())
     return Response(status_code=204)
 
@@ -789,11 +852,11 @@ async def upload_document(listing_id: str, request: Request, principal: Owner) -
     hit(sync_redis(), "listing:upload", str(principal.account_id), *LISTING_UPLOAD)
     try:
         store = store_for_request()
-        name, content_type, data = await _upload_bytes(request, MAX_DOCUMENT_BYTES)
+        name, content_type, data, fields = await _upload_bytes(request, MAX_DOCUMENT_BYTES)
         # The approved step 6 has no kind picker (D18), so the wizard sends nothing and the row
         # reads `other`; a blank field CLEARS to the same default rather than being refused, so an
         # adapter that always sends the field behaves like one that omits it.
-        kind = str((await request.form()).get("kind") or "other")
+        kind = fields.get("kind") or "other"
         if kind not in DOCUMENT_KINDS:
             raise Refusal("BAD_REQUEST", f"kind must be one of {', '.join(DOCUMENT_KINDS)}.", 400)
         if content_type not in DOCUMENT_TYPES:
@@ -812,7 +875,7 @@ async def upload_document(listing_id: str, request: Request, principal: Owner) -
                 raise Refusal("DOCUMENT_LIMIT", f"A listing may carry {MAX_DOCUMENTS} documents.", 409)
             asset_id, key = _insert_asset(conn, row["id"], kind, name, content_type, data,
                                           sha256_hex(data), DOCUMENT_TYPES[content_type])
-            store.put(key, data, content_type)
+            _put(store, key, data, content_type)
             take_off_market(conn, row, principal, request)
             payload = _asset_payload(asset_id, kind, name, content_type, len(data))
     except Refusal as exc:
@@ -850,7 +913,7 @@ async def read_document(listing_id: str, asset_id: str, principal: Reader) -> Re
         if seller_id != principal.account_id and not P.allowed("listing.review", principal):
             raise Refusal("LOCKED", "This document is locked until the seller approves access.", 403)
         store = store_for_request()
-        content = store.get(key)
+        content = _fetch(store, key)
         if content is None:
             raise Refusal("NOT_FOUND", "No such document.", 404)
     except Refusal as exc:

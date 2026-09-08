@@ -22,6 +22,7 @@ from uuid import uuid4
 
 import boto3
 import pytest
+from botocore.exceptions import ClientError
 from moto import mock_aws
 from PIL import Image
 
@@ -874,3 +875,217 @@ async def test_an_asset_write_on_a_draft_leaves_the_lifecycle_alone(
 
     assert _status(conn, listing_id) == ("draft", None)
     assert _audit(conn, listing_id) == []
+
+
+BOUNDARY = "----pmtest-boundary"
+
+
+def _multipart(data: bytes, *, filename: str = "front.jpg", content_type: str = "image/jpeg") -> bytes:
+    """One file part, built by hand so the test can hand it to httpx as a STREAM — which is the
+    only way to get a request with no `Content-Length` (A-SL16 H1)."""
+    head = (f"--{BOUNDARY}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"{filename}\"\r\n"
+            f"Content-Type: {content_type}\r\n\r\n").encode()
+    return head + data + f"\r\n--{BOUNDARY}--\r\n".encode()
+
+
+CHUNK = 64 * 1024
+
+
+async def _chunked(body: bytes, sent: list[int] | None = None) -> Any:
+    """`body` as a stream, counting what the SERVER actually pulled: httpx sends an async iterator
+    with `Transfer-Encoding: chunked` and no `Content-Length`, and its ASGI transport pulls lazily,
+    so a route that stops reading stops this generator."""
+    for start in range(0, len(body), CHUNK):
+        chunk = body[start:start + CHUNK]
+        if sent is not None:
+            sent.append(len(chunk))
+        yield chunk
+
+
+@pytest.mark.parametrize(("path", "limit_name", "content_type"), [
+    ("photos", "MAX_PHOTO_BYTES", "image/jpeg"),
+    ("documents", "MAX_DOCUMENT_BYTES", "application/pdf"),
+])
+async def test_the_size_ceiling_holds_on_a_body_that_declares_no_length(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any, monkeypatch: Any,
+    path: str, limit_name: str, content_type: str
+) -> None:
+    """A-SL16 H1. `Transfer-Encoding: chunked` carries no `Content-Length`, and Starlette caps a
+    FILE part at nothing — `max_part_size` guards data parts only (formparsers.py:181-187) — so a
+    ceiling read off the header alone was no ceiling at all: one authenticated request could stream
+    without bound onto the container's disk and then be read whole into memory.
+
+    The parser is fed a bounded stream now, so the refusal arrives while the body is still coming."""
+    from app.api import seller_listings as SL
+
+    def _never(_data: bytes) -> None:
+        raise AssertionError("nothing may be decoded from a body that is already too large")
+
+    monkeypatch.setattr(SL, "encode_webp", _never)
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    limit = getattr(SL, limit_name)
+    body = _multipart(b"\x00" * (limit + 4 * 1024 * 1024), content_type=content_type)
+    sent: list[int] = []
+
+    response = await client.post(
+        f"/api/seller/listings/{listing_id}/{path}", content=_chunked(body, sent),
+        headers={**auth_headers(cookies, headers), "Content-Type": f"multipart/form-data; boundary={BOUNDARY}"},
+    )
+    assert response.status_code == 413, response.text
+    assert response.json()["error"]["code"] == "TOO_LARGE"
+    # The refusal is the easy half. THIS is the defect: the route must stop pulling the moment the
+    # running total passes the ceiling, rather than spooling four more megabytes to disk first.
+    assert sum(sent) < len(body)
+    assert sum(sent) <= limit + SL.MULTIPART_OVERHEAD + CHUNK
+    assert _asset_rows(conn, listing_id) == []
+    assert store.list(f"listings/{listing_id}/") == []
+
+
+async def test_a_streamed_upload_within_the_ceiling_is_accepted(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any
+) -> None:
+    """The other arm of the bound: a chunked body that fits is a perfectly good upload."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    response = await client.post(
+        f"/api/seller/listings/{listing_id}/photos", content=_chunked(_multipart(_jpeg())),
+        headers={**auth_headers(cookies, headers), "Content-Type": f"multipart/form-data; boundary={BOUNDARY}"},
+    )
+    assert response.status_code == 201, response.text
+    assert response.json()["name"] == "front.jpg"
+
+
+def test_an_asset_row_is_written_once_with_its_final_storage_key() -> None:
+    """A-SL16 M1, as a drift guard. A placeholder `storage_key` holds an entry in a table-wide
+    UNIQUE index for the length of the whole transaction — and that transaction contains a bucket
+    PUT — so two sellers uploading to two DIFFERENT listings would block on each other for the
+    duration of a network round trip."""
+    from pathlib import Path
+
+    from app.api import seller_listings as SL
+
+    source = Path(SL.__file__).read_text()
+    assert "UPDATE listing_asset SET storage_key" not in source
+    assert "storage_key)\n" not in source or "VALUES" in source
+
+
+async def test_a_storage_failure_on_upload_is_a_503_in_the_envelope_and_writes_no_row(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any, monkeypatch: Any
+) -> None:
+    """A-SL16 M2. `app/storage.py` re-raises every ClientError that is not a 404, so a bucket
+    outage, a rejected credential or a throttle used to leave an unhandled exception and FastAPI's
+    `{"detail": "Internal Server Error"}` — not decision A5's envelope, and not the
+    STORAGE_UNAVAILABLE code that describes exactly this."""
+    def _boom(*_args: Any, **_kwargs: Any) -> None:
+        raise ClientError({"Error": {"Code": "ServiceUnavailable", "Message": "no"}}, "PutObject")
+
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    signed = auth_headers(cookies, headers)
+    monkeypatch.setattr(ObjectStore, "put", _boom)
+
+    for refused in (await _upload_photo(client, listing_id, signed),
+                    await _upload_document(client, listing_id, signed)):
+        assert refused.status_code == 503, refused.text
+        assert refused.json()["error"]["code"] == "STORAGE_UNAVAILABLE"
+    assert _asset_rows(conn, listing_id) == []
+
+
+async def test_a_storage_failure_on_delete_keeps_the_row_and_refuses(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any, monkeypatch: Any
+) -> None:
+    """A-SL16 M2's sharp end: the object goes FIRST, inside the transaction, so a delete that could
+    not remove the object leaves the row exactly where it was. The alternative — the row gone and
+    the object still there — answers 500 for work that was done and 404 on the retry."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    signed = auth_headers(cookies, headers)
+    asset_id = (await _upload_photo(client, listing_id, signed)).json()["id"]
+
+    def _boom(*_args: Any, **_kwargs: Any) -> None:
+        raise ClientError({"Error": {"Code": "ServiceUnavailable", "Message": "no"}}, "DeleteObject")
+
+    monkeypatch.setattr(ObjectStore, "delete", _boom)
+    refused = await client.delete(f"/api/seller/listings/{listing_id}/assets/{asset_id}", headers=signed)
+    assert refused.status_code == 503, refused.text
+    assert refused.json()["error"]["code"] == "STORAGE_UNAVAILABLE"
+    assert [str(row[0]) for row in _asset_rows(conn, listing_id)] == [asset_id]
+    assert _photos(conn, listing_id) == [asset_id]
+
+
+async def test_a_storage_failure_on_a_document_read_is_a_503_in_the_envelope(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any, monkeypatch: Any
+) -> None:
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    signed = auth_headers(cookies, headers)
+    asset_id = (await _upload_document(client, listing_id, signed)).json()["id"]
+
+    def _boom(*_args: Any, **_kwargs: Any) -> None:
+        raise ClientError({"Error": {"Code": "ServiceUnavailable", "Message": "no"}}, "GetObject")
+
+    monkeypatch.setattr(ObjectStore, "get", _boom)
+    refused = await client.get(f"/api/seller/listings/{listing_id}/documents/{asset_id}", headers=signed)
+    assert refused.status_code == 503, refused.text
+    assert refused.json()["error"]["code"] == "STORAGE_UNAVAILABLE"
+
+
+async def test_a_storage_failure_on_the_buyer_photo_route_is_a_404_not_a_500(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any, monkeypatch: Any
+) -> None:
+    """`_asset_bytes`'s own docstring promises "every 'no' is the same None … never a 500"."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    await _upload_photo(client, listing_id, auth_headers(cookies, headers))
+    _publish(conn, listing_id)
+    _, buyer_cookies, buyer_headers = member(roles=("buyer",), email="sl4-buyer@example.org")
+
+    def _boom(*_args: Any, **_kwargs: Any) -> None:
+        raise ClientError({"Error": {"Code": "ServiceUnavailable", "Message": "no"}}, "GetObject")
+
+    monkeypatch.setattr(ObjectStore, "get", _boom)
+    response = await client.get(f"/api/listings/{listing_id}/photos/1",
+                                headers=auth_headers(buyer_cookies, buyer_headers))
+    assert response.status_code == 404, response.text
+    assert response.json() == {"error": {"code": "NOT_FOUND", "message": "No such photograph."}}
+
+
+async def test_a_content_type_with_a_charset_parameter_is_accepted(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any
+) -> None:
+    """A-SL16 L2: some clients send `text/csv; charset=utf-8`, and an exact comparison called it
+    unsupported."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    response = await _upload_document(client, listing_id, auth_headers(cookies, headers), CSV,
+                                      filename="revenue.csv", content_type="text/csv; charset=utf-8")
+    assert response.status_code == 201, response.text
+    assert response.json()["content_type"] == "text/csv"
+    assert _asset_rows(conn, listing_id)[0][6].endswith(".csv")
+
+
+async def test_a_windows_path_is_stripped_from_the_display_name(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any
+) -> None:
+    """A-SL16 L4: display-only, but a local path has no business in the row or the payload."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    response = await _upload_document(client, listing_id, auth_headers(cookies, headers),
+                                      filename=r"C:\Users\jane\Documents\accounts.pdf")
+    assert response.status_code == 201, response.text
+    assert response.json()["name"] == "accounts.pdf"
+
+
+async def test_a_spreadsheet_whose_bytes_are_not_a_zip_is_refused(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any
+) -> None:
+    """A-SL16 L6: the XLSX arm of `_sniffed` had no negative case — not a coverage hole (one
+    statement, no branch), which is exactly why the gate could not catch it."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    refused = await _upload_document(
+        client, listing_id, auth_headers(cookies, headers), b"month,revenue\n", filename="equipment.xlsx",
+        content_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    assert refused.status_code == 422
+    assert refused.json()["error"]["code"] == "BAD_DOCUMENT"
