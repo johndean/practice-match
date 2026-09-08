@@ -311,6 +311,10 @@
 
 ---
 
+**Controller amendment A-S7 (2026-09-08; rulings on the S7 implementer's five concerns).** (1) The remote reseed runs BEFORE the run (`globalSetup`) AND AFTER it (`globalTeardown`, remote runs only) — John's two sentences ("every run begins from a known baseline"; "not left in a mutated state after a live QA run") each get their hook; a teardown reseed failure is reported, never swallowed. (2) The seed's restoration also deletes `email_outbox` and `email_suppression` rows addressed to the TEN fixture addresses (exact addresses, never a pattern): the live flows create them on the fixtures' behalf, to `.test` addresses that can never be delivered. (3) `remoteReseedPlan` requires every variable `scripts/seed_persona.py` truly needs to construct `app.config.settings` — `DATABASE_URL`, `PERSONA_PASSWORD`, `API_SECRET_KEY`, `ENVIRONMENT`, `REDIS_URL` — and its refusal names the MISSING ones; the brief's fixed error text is superseded. The seed never opens Redis or reads the secret; the settings object simply will not construct without them. Step 5's Railway pull therefore hands five variables to the subprocess environment, never printed. (4) The suite's throwaway sign-ups (`e2e-<PW_RUN_ID>-…@example.org`, a reserved domain) are removed by the restoration under one shared `THROWAWAY_EMAIL_PATTERN` (harness, seed, `test_docs` pin), anchored so a lookalike at another domain survives. (5) A one-off 52 % coverage reading for `seed_persona.py` under machine contention, not reproduced in three later runs, is recorded as an artefact. What the restoration deliberately does not touch: sessions (revoked by the flows themselves) and the append-only audit log. Landed: `e24cce0` (S7) + `11ad3f1` (round 1).
+
+---
+
 ### Task S6: Docs and drift
 
 > S6 runs AFTER S7 and documents it: the runbook's "QA parity run" step (reseed is automatic; both env vars required; real limits → one run per fifteen-minute window), CLAUDE.md's counts (43 states; ten seeded test accounts; nine amendment families on main + A8/A9 here), the seed docstring (ten accounts).
