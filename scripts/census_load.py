@@ -16,8 +16,11 @@ NAICS-2017 alias for 459910), `zbp` (`app/census/zbp.py`, ZIP-level competition,
 reads -- never automatic, never run from a Celery task. It first runs a QA diff (`vintage.qa`)
 against whatever vintage is currently active for that dataset and refuses (exit 5) unless the
 candidate vintage's latest `ingest_run` succeeded and, when a prior vintage exists, the row-count
-ratio falls inside `[0.8, 1.25]`; `--force` overrides the ratio check only, and the printed
-`Report` is the record of why. Later tasks (A8-A9) add more subcommands to the same tree.
+ratio falls inside `[0.8, 1.25]`; `--force` overrides the ratio check only. `--note` (A-C7 concern
+1) is persisted in `active_vintage.note`, REQUIRED with `--force` (argparse refuses its absence,
+exit 2) and optional otherwise; the printed `Report` carries it back too, so a forced override's
+"why" lives in the database, not only in a CLI's stdout at the moment it ran. Later tasks (A8-A9)
+add more subcommands to the same tree.
 
 Exit codes follow the shared scheme every `census_load.py` subcommand uses (A-C4 ¶2, aligned
 with `scripts/seed_listings.py`): 0 done; 2 refused before anything is opened (no subcommand --
@@ -29,7 +32,10 @@ this itself, before `latest_available`'s probe, rather than through `qwi.load`'s
 check, so a blocked QWI dataset is never even queried -- or `zbp`'s `geo_area` holding no ZCTA
 (`860`) rows yet (`zbp.MissingBoundaries`, controller amendment A-C6): naming the prerequisite
 (`census_load.py tiger` first) is a refusal of the same kind); 3 the database
-is unreachable (retryable); 4 a download or API fetch
+is unreachable (retryable) OR a `psycopg2.Error` raised after connect, e.g. `UndefinedTable` on an
+unmigrated database (A-C7 (7) / I12: every `cmd_*` closes its connection in `try`/`finally` and
+prints only the exception's type name here, never its text, which can carry the statement or the
+DSN); 4 a download or API fetch
 failed (`CensusHTTPError`, its message already redacted -- A-C3 (3)); 5 validation failed -- every
 loader raises this when a response is missing an expected variable (`VariableMissing`; spec
 §4/¶12, a partial vintage that must never go active) -- reserved more broadly for malformed
@@ -90,26 +96,35 @@ def cmd_tiger(args: argparse.Namespace) -> int:
     except psycopg2.OperationalError as exc:
         print(f"[census_load] database unreachable: {type(exc).__name__}", file=sys.stderr)
         return 3
-    with conn.cursor() as cur:
-        cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
-        states = [r[0] for r in cur.fetchall()]
-    # `None` when the bucket is not configured (A-C2 P2) -- the boundary load still runs,
-    # simply without archiving the raw zips.
-    archive = ObjectStore.from_settings(settings)
-    ua = f"PracticeMatch/{VERSION} ({contact})"
-    # `follow_redirects=False` (controller correction, 2026-09-09): a 3xx from
-    # www2.census.gov must never be transparently followed into a body that gets parsed and
-    # archived without this script ever seeing the redirect.
-    with httpx.Client(headers={"User-Agent": ua}, follow_redirects=False) as http:
-        try:
-            counts = load_boundaries(conn, http, states, args.vintage, archive)
-        except CensusHTTPError as exc:
-            # CensusHTTPError's own message is already redacted (A-C3 (3)).
-            print(f"[census_load] boundary download failed: {exc}", file=sys.stderr)
-            return 4
-    for k, n in counts.items():
-        print(f"  {k}: {n} rows")
-    return 0
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
+            states = [r[0] for r in cur.fetchall()]
+        # `None` when the bucket is not configured (A-C2 P2) -- the boundary load still runs,
+        # simply without archiving the raw zips.
+        archive = ObjectStore.from_settings(settings)
+        ua = f"PracticeMatch/{VERSION} ({contact})"
+        # `follow_redirects=False` (controller correction, 2026-09-09): a 3xx from
+        # www2.census.gov must never be transparently followed into a body that gets parsed and
+        # archived without this script ever seeing the redirect.
+        with httpx.Client(headers={"User-Agent": ua}, follow_redirects=False) as http:
+            try:
+                counts = load_boundaries(conn, http, states, args.vintage, archive)
+            except CensusHTTPError as exc:
+                # CensusHTTPError's own message is already redacted (A-C3 (3)).
+                print(f"[census_load] boundary download failed: {exc}", file=sys.stderr)
+                return 4
+        for k, n in counts.items():
+            print(f"  {k}: {n} rows")
+        return 0
+    except psycopg2.Error as exc:
+        # A-C7 (7) / I12: a database error raised AFTER connect (e.g. UndefinedTable on an
+        # unmigrated database) used to escape as a bare traceback (exit 1) -- only the
+        # exception's TYPE is printed, never its text, which can carry the statement or DSN.
+        print(f"[census_load] database error: {type(exc).__name__}", file=sys.stderr)
+        return 3
+    finally:
+        conn.close()
 
 
 def cmd_acs(args: argparse.Namespace) -> int:
@@ -138,36 +153,42 @@ def cmd_acs(args: argparse.Namespace) -> int:
     except psycopg2.OperationalError as exc:
         print(f"[census_load] database unreachable: {type(exc).__name__}", file=sys.stderr)
         return 3
-    with conn.cursor() as cur:
-        cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
-        states = [r[0] for r in cur.fetchall()]
-    # `None` when the bucket is not configured (A-C2 P2) -- the load still runs, simply
-    # without archiving the raw responses.
-    archive = ObjectStore.from_settings(settings)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
+            states = [r[0] for r in cur.fetchall()]
+        # `None` when the bucket is not configured (A-C2 P2) -- the load still runs, simply
+        # without archiving the raw responses.
+        archive = ObjectStore.from_settings(settings)
 
-    def factory(ds: Dataset) -> CensusClient:
-        return CensusClient(key, ds, archive, version=VERSION, contact=contact)
+        def factory(ds: Dataset) -> CensusClient:
+            return CensusClient(key, ds, archive, version=VERSION, contact=contact)
 
-    for ds_key in args.dataset:
-        try:
-            n = acs.load(conn, factory, ds_key, states)
-        except PermissionError as exc:
-            # A licence-gated dataset (spec §1: `unresolved`/`blocked` never ingested) is a
-            # refusal, not a download failure -- exit 2, "refused before anything is opened"
-            # (A-C4 ¶2), never an uncaught exception out of `main()` (A5's review of itself).
-            print(f"[census_load] {ds_key} refused: {exc}", file=sys.stderr)
-            return 2
-        except CensusHTTPError as exc:
-            # CensusHTTPError's own message is already redacted (A-C3 (3)).
-            print(f"[census_load] {ds_key} download failed: {exc}", file=sys.stderr)
-            return 4
-        except VariableMissing as exc:
-            # A partial load never activates a vintage (global constraint ¶12) -- `acs.load`'s
-            # `ingest.run()` has already rolled back and recorded the run as 'aborted'.
-            print(f"[census_load] {ds_key} failed validation: {exc}", file=sys.stderr)
-            return 5
-        print(f"  {ds_key}: {n} measures")
-    return 0
+        for ds_key in args.dataset:
+            try:
+                n = acs.load(conn, factory, ds_key, states)
+            except PermissionError as exc:
+                # A licence-gated dataset (spec §1: `unresolved`/`blocked` never ingested) is a
+                # refusal, not a download failure -- exit 2, "refused before anything is opened"
+                # (A-C4 ¶2), never an uncaught exception out of `main()` (A5's review of itself).
+                print(f"[census_load] {ds_key} refused: {exc}", file=sys.stderr)
+                return 2
+            except CensusHTTPError as exc:
+                # CensusHTTPError's own message is already redacted (A-C3 (3)).
+                print(f"[census_load] {ds_key} download failed: {exc}", file=sys.stderr)
+                return 4
+            except VariableMissing as exc:
+                # A partial load never activates a vintage (global constraint ¶12) -- `acs.load`'s
+                # `ingest.run()` has already rolled back and recorded the run as 'aborted'.
+                print(f"[census_load] {ds_key} failed validation: {exc}", file=sys.stderr)
+                return 5
+            print(f"  {ds_key}: {n} measures")
+        return 0
+    except psycopg2.Error as exc:
+        print(f"[census_load] database error: {type(exc).__name__}", file=sys.stderr)
+        return 3
+    finally:
+        conn.close()
 
 
 def cmd_cbp(args: argparse.Namespace) -> int:
@@ -189,27 +210,33 @@ def cmd_cbp(args: argparse.Namespace) -> int:
     except psycopg2.OperationalError as exc:
         print(f"[census_load] database unreachable: {type(exc).__name__}", file=sys.stderr)
         return 3
-    with conn.cursor() as cur:
-        cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
-        states = [r[0] for r in cur.fetchall()]
-    archive = ObjectStore.from_settings(settings)
-
-    def factory(ds: Dataset) -> CensusClient:
-        return CensusClient(key, ds, archive, version=VERSION, contact=contact)
-
     try:
-        n = cbp.load(conn, factory, states)
-    except PermissionError as exc:
-        print(f"[census_load] cbp refused: {exc}", file=sys.stderr)
-        return 2
-    except CensusHTTPError as exc:
-        print(f"[census_load] cbp download failed: {exc}", file=sys.stderr)
-        return 4
-    except VariableMissing as exc:
-        print(f"[census_load] cbp failed validation: {exc}", file=sys.stderr)
-        return 5
-    print(f"  cbp: {n} rows")
-    return 0
+        with conn.cursor() as cur:
+            cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
+            states = [r[0] for r in cur.fetchall()]
+        archive = ObjectStore.from_settings(settings)
+
+        def factory(ds: Dataset) -> CensusClient:
+            return CensusClient(key, ds, archive, version=VERSION, contact=contact)
+
+        try:
+            n = cbp.load(conn, factory, states)
+        except PermissionError as exc:
+            print(f"[census_load] cbp refused: {exc}", file=sys.stderr)
+            return 2
+        except CensusHTTPError as exc:
+            print(f"[census_load] cbp download failed: {exc}", file=sys.stderr)
+            return 4
+        except VariableMissing as exc:
+            print(f"[census_load] cbp failed validation: {exc}", file=sys.stderr)
+            return 5
+        print(f"  cbp: {n} rows")
+        return 0
+    except psycopg2.Error as exc:
+        print(f"[census_load] database error: {type(exc).__name__}", file=sys.stderr)
+        return 3
+    finally:
+        conn.close()
 
 
 def cmd_zbp(args: argparse.Namespace) -> int:
@@ -231,33 +258,39 @@ def cmd_zbp(args: argparse.Namespace) -> int:
     except psycopg2.OperationalError as exc:
         print(f"[census_load] database unreachable: {type(exc).__name__}", file=sys.stderr)
         return 3
-    with conn.cursor() as cur:
-        cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
-        states = [r[0] for r in cur.fetchall()]
-    archive = ObjectStore.from_settings(settings)
-
-    def factory(ds: Dataset) -> CensusClient:
-        return CensusClient(key, ds, archive, version=VERSION, contact=contact)
-
     try:
-        n = zbp.load(conn, factory, states)
-    except PermissionError as exc:
-        print(f"[census_load] zbp refused: {exc}", file=sys.stderr)
-        return 2
-    except zbp.MissingBoundaries as exc:
-        # A-C6: `geo_area` holds no ZCTA (`860`) rows yet -- naming the prerequisite is a
-        # refusal, exit 2, the same as a licence gate (A-C4 ¶2's "refused before anything is
-        # opened").
-        print(f"[census_load] zbp refused: {exc}", file=sys.stderr)
-        return 2
-    except CensusHTTPError as exc:
-        print(f"[census_load] zbp download failed: {exc}", file=sys.stderr)
-        return 4
-    except VariableMissing as exc:
-        print(f"[census_load] zbp failed validation: {exc}", file=sys.stderr)
-        return 5
-    print(f"  zbp: {n} rows")
-    return 0
+        with conn.cursor() as cur:
+            cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
+            states = [r[0] for r in cur.fetchall()]
+        archive = ObjectStore.from_settings(settings)
+
+        def factory(ds: Dataset) -> CensusClient:
+            return CensusClient(key, ds, archive, version=VERSION, contact=contact)
+
+        try:
+            n = zbp.load(conn, factory, states)
+        except PermissionError as exc:
+            print(f"[census_load] zbp refused: {exc}", file=sys.stderr)
+            return 2
+        except zbp.MissingBoundaries as exc:
+            # A-C6: `geo_area` holds no ZCTA (`860`) rows yet -- naming the prerequisite is a
+            # refusal, exit 2, the same as a licence gate (A-C4 ¶2's "refused before anything is
+            # opened").
+            print(f"[census_load] zbp refused: {exc}", file=sys.stderr)
+            return 2
+        except CensusHTTPError as exc:
+            print(f"[census_load] zbp download failed: {exc}", file=sys.stderr)
+            return 4
+        except VariableMissing as exc:
+            print(f"[census_load] zbp failed validation: {exc}", file=sys.stderr)
+            return 5
+        print(f"  zbp: {n} rows")
+        return 0
+    except psycopg2.Error as exc:
+        print(f"[census_load] database error: {type(exc).__name__}", file=sys.stderr)
+        return 3
+    finally:
+        conn.close()
 
 
 def cmd_bds(args: argparse.Namespace) -> int:
@@ -279,27 +312,33 @@ def cmd_bds(args: argparse.Namespace) -> int:
     except psycopg2.OperationalError as exc:
         print(f"[census_load] database unreachable: {type(exc).__name__}", file=sys.stderr)
         return 3
-    with conn.cursor() as cur:
-        cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
-        states = [r[0] for r in cur.fetchall()]
-    archive = ObjectStore.from_settings(settings)
-
-    def factory(ds: Dataset) -> CensusClient:
-        return CensusClient(key, ds, archive, version=VERSION, contact=contact)
-
     try:
-        n = bds.load(conn, factory, states, year=args.year)
-    except PermissionError as exc:
-        print(f"[census_load] bds refused: {exc}", file=sys.stderr)
-        return 2
-    except CensusHTTPError as exc:
-        print(f"[census_load] bds download failed: {exc}", file=sys.stderr)
-        return 4
-    except VariableMissing as exc:
-        print(f"[census_load] bds failed validation: {exc}", file=sys.stderr)
-        return 5
-    print(f"  bds {args.year}: {n} rows")
-    return 0
+        with conn.cursor() as cur:
+            cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
+            states = [r[0] for r in cur.fetchall()]
+        archive = ObjectStore.from_settings(settings)
+
+        def factory(ds: Dataset) -> CensusClient:
+            return CensusClient(key, ds, archive, version=VERSION, contact=contact)
+
+        try:
+            n = bds.load(conn, factory, states, year=args.year)
+        except PermissionError as exc:
+            print(f"[census_load] bds refused: {exc}", file=sys.stderr)
+            return 2
+        except CensusHTTPError as exc:
+            print(f"[census_load] bds download failed: {exc}", file=sys.stderr)
+            return 4
+        except VariableMissing as exc:
+            print(f"[census_load] bds failed validation: {exc}", file=sys.stderr)
+            return 5
+        print(f"  bds {args.year}: {n} rows")
+        return 0
+    except psycopg2.Error as exc:
+        print(f"[census_load] database error: {type(exc).__name__}", file=sys.stderr)
+        return 3
+    finally:
+        conn.close()
 
 
 def cmd_qwi(args: argparse.Namespace) -> int:
@@ -324,56 +363,62 @@ def cmd_qwi(args: argparse.Namespace) -> int:
     except psycopg2.OperationalError as exc:
         print(f"[census_load] database unreachable: {type(exc).__name__}", file=sys.stderr)
         return 3
-    with conn.cursor() as cur:
-        cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
-        states = [r[0] for r in cur.fetchall()]
-    archive = ObjectStore.from_settings(settings)
-
-    def factory(ds: Dataset) -> CensusClient:
-        return CensusClient(key, ds, archive, version=VERSION, contact=contact)
-
-    # The licence gate is checked here, before any network call -- `qwi.load`'s own `ds.cleared`
-    # check (identical to every other loader's) would otherwise run only AFTER
-    # `latest_available`'s probe already reached a blocked dataset's endpoint below.
-    ds = load_registry(conn)["qwi"]
-    if not ds.cleared:
-        print(f"[census_load] qwi refused: qwi is {ds.license_status}; loads are refused (spec §1 licensing gate)", file=sys.stderr)
-        return 2
-
-    year, quarter = args.year, args.quarter
-    if year is None or quarter is None:
-        now = datetime.now(UTC)
-        with factory(ds) as client:
-            try:
-                year, quarter = qwi.latest_available(client, states[0], today=(now.year, (now.month - 1) // 3 + 1))
-            except CensusHTTPError as exc:
-                print(f"[census_load] qwi download failed: {exc}", file=sys.stderr)
-                return 4
-            except VariableMissing as exc:
-                # Mi1 (A6 review): a 200 response missing the `Emp` column (a schema drift, a
-                # malformed 200) is "validation failed", not an uncaught exception -- every other
-                # exception arm in this file already maps `VariableMissing` to exit 5.
-                print(f"[census_load] qwi validation failed: {exc}", file=sys.stderr)
-                return 5
-
     try:
-        n = qwi.load(conn, factory, states, year=year, quarter=quarter)
-    except PermissionError as exc:
-        # I1 (A6 review): defense-in-depth for a live TOCTOU window -- the upfront registry
-        # check above uses the same connection with no intervening commit, so this arm is
-        # unreachable in practice today, but keeps `cmd_qwi`'s shape visually identical to the
-        # other three subcommands', all of which catch `qwi.load`'s own licence gate.
-        print(f"[census_load] qwi refused: {exc}", file=sys.stderr)
-        return 2
-    except CensusHTTPError as exc:
-        print(f"[census_load] qwi download failed: {exc}", file=sys.stderr)
-        return 4
-    except VariableMissing as exc:
-        print(f"[census_load] qwi failed validation: {exc}", file=sys.stderr)
-        return 5
-    trimmed = qwi.trim(conn)
-    print(f"  qwi {year}Q{quarter}: {n} rows ({trimmed} trimmed)")
-    return 0
+        with conn.cursor() as cur:
+            cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
+            states = [r[0] for r in cur.fetchall()]
+        archive = ObjectStore.from_settings(settings)
+
+        def factory(ds: Dataset) -> CensusClient:
+            return CensusClient(key, ds, archive, version=VERSION, contact=contact)
+
+        # The licence gate is checked here, before any network call -- `qwi.load`'s own
+        # `ds.cleared` check (identical to every other loader's) would otherwise run only AFTER
+        # `latest_available`'s probe already reached a blocked dataset's endpoint below.
+        ds = load_registry(conn)["qwi"]
+        if not ds.cleared:
+            print(f"[census_load] qwi refused: qwi is {ds.license_status}; loads are refused (spec §1 licensing gate)", file=sys.stderr)
+            return 2
+
+        year, quarter = args.year, args.quarter
+        if year is None or quarter is None:
+            now = datetime.now(UTC)
+            with factory(ds) as client:
+                try:
+                    year, quarter = qwi.latest_available(client, states[0], today=(now.year, (now.month - 1) // 3 + 1))
+                except CensusHTTPError as exc:
+                    print(f"[census_load] qwi download failed: {exc}", file=sys.stderr)
+                    return 4
+                except VariableMissing as exc:
+                    # Mi1 (A6 review): a 200 response missing the `Emp` column (a schema drift, a
+                    # malformed 200) is "validation failed", not an uncaught exception -- every
+                    # other exception arm in this file already maps `VariableMissing` to exit 5.
+                    print(f"[census_load] qwi validation failed: {exc}", file=sys.stderr)
+                    return 5
+
+        try:
+            n = qwi.load(conn, factory, states, year=year, quarter=quarter)
+        except PermissionError as exc:
+            # I1 (A6 review): defense-in-depth for a live TOCTOU window -- the upfront registry
+            # check above uses the same connection with no intervening commit, so this arm is
+            # unreachable in practice today, but keeps `cmd_qwi`'s shape visually identical to
+            # the other three subcommands', all of which catch `qwi.load`'s own licence gate.
+            print(f"[census_load] qwi refused: {exc}", file=sys.stderr)
+            return 2
+        except CensusHTTPError as exc:
+            print(f"[census_load] qwi download failed: {exc}", file=sys.stderr)
+            return 4
+        except VariableMissing as exc:
+            print(f"[census_load] qwi failed validation: {exc}", file=sys.stderr)
+            return 5
+        trimmed = qwi.trim(conn)
+        print(f"  qwi {year}Q{quarter}: {n} rows ({trimmed} trimmed)")
+        return 0
+    except psycopg2.Error as exc:
+        print(f"[census_load] database error: {type(exc).__name__}", file=sys.stderr)
+        return 3
+    finally:
+        conn.close()
 
 
 def cmd_activate(args: argparse.Namespace) -> int:
@@ -381,7 +426,8 @@ def cmd_activate(args: argparse.Namespace) -> int:
 
     # Unlike every load subcommand above, `activate` never touches the Census API: no key, no
     # contact, no `market_state` query, no HTTP client -- it only reads/writes the database, so
-    # it shares just the DATABASE_URL/unreachable arms with them.
+    # it shares just the DATABASE_URL/unreachable/post-connect-database-error arms with them
+    # (A-C7 (7)).
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:
         print("[census_load] DATABASE_URL is not set", file=sys.stderr)
@@ -392,15 +438,25 @@ def cmd_activate(args: argparse.Namespace) -> int:
         print(f"[census_load] database unreachable: {type(exc).__name__}", file=sys.stderr)
         return 3
     try:
-        rep = vintage.activate(conn, args.dataset_key, args.vintage, args.by, force=args.force)
-    except vintage.ActivationRefused as exc:
-        # A refused diff or a non-succeeded ingest_run is "validation failed" (A-C4 ¶2's exit 5)
-        # -- `active_vintage` is untouched, exactly as a bad ratio without `--force` leaves it.
-        print(f"[census_load] activation refused: {exc}", file=sys.stderr)
-        return 5
-    print(rep)
-    print(f"[census_load] {rep.dataset_key} is now active at vintage {rep.vintage!r} (by {args.by})")
-    return 0
+        try:
+            rep = vintage.activate(conn, args.dataset_key, args.vintage, args.by, force=args.force, note=args.note)
+        except vintage.ActivationRefused as exc:
+            # A refused diff or a non-succeeded ingest_run is "validation failed" (A-C4 ¶2's exit
+            # 5) -- `active_vintage` is untouched, exactly as a bad ratio without `--force` leaves
+            # it.
+            print(f"[census_load] activation refused: {exc}", file=sys.stderr)
+            return 5
+        print(rep)
+        # m2 (A7 review Minor 2): a forced activation says so on the confirmation line itself,
+        # not only inside the `Report` repr printed above it.
+        forced = " (forced)" if args.force else ""
+        print(f"[census_load] {rep.dataset_key} is now active at vintage {rep.vintage!r} (by {args.by}){forced}")
+        return 0
+    except psycopg2.Error as exc:
+        print(f"[census_load] database error: {type(exc).__name__}", file=sys.stderr)
+        return 3
+    finally:
+        conn.close()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -436,8 +492,15 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("vintage", help="vintage string to activate, exactly as ingested (e.g. '2019\u20132023')")
     v.add_argument("--by", required=True, help="operator name recorded in active_vintage.activated_by")
     v.add_argument("--force", action="store_true", help="activate despite a row-count ratio outside [0.8, 1.25] (reviewed override)")
+    v.add_argument("--note", default=None, help="reason for this activation, persisted in active_vintage.note; REQUIRED with --force, optional otherwise")
     v.set_defaults(fn=cmd_activate)
     args = p.parse_args(argv)
+    if args.cmd == "activate" and args.force and not args.note:
+        # A-C7 concern 1: a forced override -- the one case this ledger most needs a persisted
+        # reason for -- must not go through without one. Checked here, not inside `cmd_activate`,
+        # so it is argparse's own refusal (exit 2, "refused before anything is opened") like
+        # every other bad-arguments case in this file.
+        v.error("--note is required when --force is given")
     result: int = args.fn(args)
     return result
 

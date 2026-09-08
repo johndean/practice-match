@@ -21,6 +21,7 @@ import pytest
 import shapefile  # pyshp
 from moto import mock_aws
 
+from app.census import vintage
 from app.census.client import CensusHTTPError
 from app.census.tiger import BOUNDARY_FILES, BoundarySpec, load_boundaries, parse_shapefile, upsert_geo
 from app.storage import ObjectStore
@@ -234,6 +235,31 @@ def test_load_boundaries_upserts_every_level_and_filters_zctas_by_state_containm
         assert cur.fetchone() == ("48453000101", "48453")
 
 
+def test_load_boundaries_records_a_succeeded_ingest_run(conn):
+    """A-C7 M1: `load_boundaries` used to write no `ingest_run` row at all, so `vintage.qa()`
+    always reported `last_run_status=None` for `tiger_cb` and `activate()` could never succeed
+    for it (task-A7-review Major 1). `rows` is every boundary row upserted across every file;
+    `requests` is the count of files fetched (one BoundarySpec each, even the ZCTA level whose
+    404 triggers a second, fallback HTTP call for that same one file)."""
+    http = httpx.Client(transport=_handler())
+    counts = load_boundaries(conn, http, ["48"], "2023")
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, rows_written, request_count FROM ingest_run WHERE dataset_key = 'tiger_cb' AND vintage = '2023'")
+        row = cur.fetchone()
+    assert row == ("succeeded", sum(counts.values()), len(counts))
+
+
+def test_load_boundaries_can_be_activated_end_to_end(conn):
+    """A-C7 M1: the Phase A exit sequence's `activate tiger_cb` must actually work now that a
+    `tiger_cb` ingest_run row exists -- this is the end-to-end proof the review demanded, not a
+    hand-inserted ledger row."""
+    http = httpx.Client(transport=_handler())
+    load_boundaries(conn, http, ["48"], "2023")
+    rep = vintage.activate(conn, "tiger_cb", "2023", by="john")
+    assert rep.last_run_status == "succeeded" and rep.rows_new > 0
+    assert vintage.active(conn)["tiger_cb"] == "2023"
+
+
 def test_load_boundaries_archives_every_raw_body_under_the_census_prefix(conn, store):
     http = httpx.Client(transport=_handler())
     load_boundaries(conn, http, ["48"], "2023", archive=store)
@@ -301,6 +327,11 @@ def test_a_persistent_5xx_raises_a_redacted_census_http_error(conn):
         load_boundaries(conn, http, ["48"], "2023")
     assert exc.value.status == 500
     assert "key=" not in str(exc.value)
+    # A-C7 M1: now that the whole load runs inside `ingest.run`, a failure this early -- before
+    # any geo_area row is upserted -- still leaves a 'failed' ledger row, never 'running' forever.
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, rows_written FROM ingest_run WHERE dataset_key = 'tiger_cb' AND vintage = '2023'")
+        assert cur.fetchone() == ("failed", 0)
 
 
 def test_the_zcta_fallback_also_failing_raises(conn):

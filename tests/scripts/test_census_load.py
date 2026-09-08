@@ -13,20 +13,25 @@ throughout so this suite never needs a real shapefile or a live Census API respo
 
 Every subcommand's exit codes (A-C4 ¶2, as `tiger`'s already do): 0 done; 2 refused before
 anything is opened (no `CENSUS_API_KEY`/`CENSUS_CONTACT_EMAIL`, no `DATABASE_URL`, or a
-licence-gated dataset -- `PermissionError`, spec §1); 3 database unreachable; 4 a download/fetch
+licence-gated dataset -- `PermissionError`, spec §1); 3 database unreachable, OR (A-C7 (7) / I12)
+a `psycopg2.Error` raised AFTER connect -- every `cmd_*` closes its connection in `try`/`finally`
+and prints only the exception's type name, never its text; 4 a download/fetch
 failed (`CensusHTTPError`); 5 validation failed (`VariableMissing` -- a response missing an
 expected variable, spec §4/¶12). `cbp`/`zbp`/`bds` skip dedicated "missing key"/"missing contact"
 tests below -- `require_key`/`require_contact` are the same functions `tiger`'s and `acs`'s tests
 already exercise at 100 % branch in `app/census/client.py`, and there is no additional
 conditional in THIS file for a missing key/contact to reach (the call sites are plain statements,
 not branches) -- the six arms that ARE new per subcommand (dsn-missing, db-unreachable, success,
-and the three `except` arms) are what each subcommand's tests below cover."""
+and the three `except` arms) are what each subcommand's tests below cover; the post-connect
+database-error arm and the connection close are covered once, for every subcommand, by the single
+parametrised test near the end of this file."""
 from __future__ import annotations
 
 import runpy
 import sys
 from pathlib import Path
 
+import psycopg2
 import pytest
 
 from app.census import acs as census_acs
@@ -602,7 +607,7 @@ def test_cmd_zbp_returns_four_when_the_download_fails(scratch_dsn, monkeypatch, 
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
     def fake_load(conn, client_factory, states):
-        raise CensusHTTPError(500, "https://api.census.gov/data/2022/zbp?key=SECRET")
+        raise CensusHTTPError(500, "https://api.census.gov/data/2022/cbp?key=SECRET")
 
     monkeypatch.setattr(census_zbp, "load", fake_load)
 
@@ -990,35 +995,98 @@ def test_cmd_activate_calls_vintage_activate_and_prints_the_report(scratch_dsn, 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
     captured: dict = {}
 
-    def fake_activate(conn, dataset_key, vint, by, *, force=False):
+    def fake_activate(conn, dataset_key, vint, by, *, force=False, note=None):
         captured["dataset_key"] = dataset_key
         captured["vint"] = vint
         captured["by"] = by
         captured["force"] = force
-        return census_vintage.Report(dataset_key, vint, None, 10, 0, None, "succeeded")
+        captured["note"] = note
+        return census_vintage.Report(dataset_key, vint, None, 10, 0, None, "succeeded", note)
 
     monkeypatch.setattr(census_vintage, "activate", fake_activate)
 
     assert census_load.main(["activate", "acs5", "2019\u20132023", "--by", "john"]) == 0
 
-    assert captured == {"dataset_key": "acs5", "vint": "2019\u20132023", "by": "john", "force": False}
+    assert captured == {"dataset_key": "acs5", "vint": "2019\u20132023", "by": "john", "force": False, "note": None}
     out = capsys.readouterr().out
     assert "acs5" in out and "2019\u20132023" in out and "now active" in out
 
 
-def test_cmd_activate_passes_the_force_flag_through(scratch_dsn, monkeypatch):
+def test_cmd_activate_passes_a_given_note_through_without_force(scratch_dsn, monkeypatch):
+    """`--note` is optional without `--force` (A-C7 concern 1) -- an operator can still record a
+    routine activation's reason even when nothing forced it."""
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
     captured: dict = {}
 
-    def fake_activate(conn, dataset_key, vint, by, *, force=False):
-        captured["force"] = force
-        return census_vintage.Report(dataset_key, vint, "2018\u20132022", 40, 100, 0.4, "succeeded")
+    def fake_activate(conn, dataset_key, vint, by, *, force=False, note=None):
+        captured["note"] = note
+        return census_vintage.Report(dataset_key, vint, None, 10, 0, None, "succeeded", note)
 
     monkeypatch.setattr(census_vintage, "activate", fake_activate)
 
-    assert census_load.main(["activate", "acs5", "2019\u20132023", "--by", "john", "--force"]) == 0
+    assert census_load.main(["activate", "acs5", "2019\u20132023", "--by", "john", "--note", "routine refresh"]) == 0
+
+    assert captured["note"] == "routine refresh"
+
+
+def test_cmd_activate_passes_the_force_flag_and_required_note_through(scratch_dsn, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    captured: dict = {}
+
+    def fake_activate(conn, dataset_key, vint, by, *, force=False, note=None):
+        captured["force"] = force
+        captured["note"] = note
+        return census_vintage.Report(dataset_key, vint, "2018\u20132022", 40, 100, 0.4, "succeeded", note)
+
+    monkeypatch.setattr(census_vintage, "activate", fake_activate)
+
+    assert census_load.main(
+        ["activate", "acs5", "2019\u20132023", "--by", "john", "--force", "--note", "reviewed override"]
+    ) == 0
 
     assert captured["force"] is True
+    assert captured["note"] == "reviewed override"
+
+
+def test_cmd_activate_requires_note_when_forced(capsys):
+    """A-C7 concern 1: `--note` is REQUIRED when `--force` is given -- argparse's own error
+    (exit 2), before the database or `vintage.activate` is ever touched."""
+    with pytest.raises(SystemExit) as exc:
+        census_load.main(["activate", "acs5", "2019\u20132023", "--by", "john", "--force"])
+    assert exc.value.code == 2
+    assert "--note" in capsys.readouterr().err
+
+
+def test_cmd_activate_marks_a_forced_activation_in_the_confirmation_line(scratch_dsn, monkeypatch, capsys):
+    """m2 (A7 review Minor 2): the confirmation line itself must say a forced override happened,
+    not just the dataclass repr printed above it."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+
+    def fake_activate(conn, dataset_key, vint, by, *, force=False, note=None):
+        return census_vintage.Report(dataset_key, vint, "2018\u20132022", 40, 100, 0.4, "succeeded", note)
+
+    monkeypatch.setattr(census_vintage, "activate", fake_activate)
+
+    assert census_load.main(
+        ["activate", "acs5", "2019\u20132023", "--by", "john", "--force", "--note", "reviewed override"]
+    ) == 0
+
+    out = capsys.readouterr().out
+    assert "(forced)" in out
+
+
+def test_cmd_activate_does_not_mark_an_unforced_activation(scratch_dsn, monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+
+    def fake_activate(conn, dataset_key, vint, by, *, force=False, note=None):
+        return census_vintage.Report(dataset_key, vint, None, 10, 0, None, "succeeded", note)
+
+    monkeypatch.setattr(census_vintage, "activate", fake_activate)
+
+    assert census_load.main(["activate", "acs5", "2019\u20132023", "--by", "john"]) == 0
+
+    out = capsys.readouterr().out
+    assert "(forced)" not in out
 
 
 def test_cmd_activate_returns_two_without_a_database_url(monkeypatch, capsys):
@@ -1036,7 +1104,7 @@ def test_cmd_activate_returns_three_when_the_database_is_unreachable(monkeypatch
 
 
 def test_cmd_activate_returns_five_when_refused(scratch_dsn, monkeypatch, capsys):
-    def fake_activate(conn, dataset_key, vint, by, *, force=False):
+    def fake_activate(conn, dataset_key, vint, by, *, force=False, note=None):
         raise census_vintage.ActivationRefused(
             "row count ratio 0.40 vs active vintage 2018\u20132022 is outside [0.8, 1.25]; pass force=True after review"
         )
@@ -1063,3 +1131,62 @@ def test_cmd_activate_requires_by(capsys):
     with pytest.raises(SystemExit) as exc:
         census_load.main(["activate", "acs5", "2019\u20132023"])
     assert exc.value.code == 2
+
+
+# --- every cmd_* closes its connection and maps a post-connect database error (A-C7 (7)) --------
+# I12 / an A-C4 addendum: a `psycopg2.Error` raised AFTER `_conn()` succeeds (the realistic case
+# is `UndefinedTable`, an unmigrated database) used to escape as an uncaught traceback (exit 1)
+# and never closed the connection. `app.census.vintage.activate` (exercised at 100% branch by
+# `tests/census/test_vintage.py` against a real database) is the only subcommand whose OWN body
+# never issues a `conn.cursor()` call directly -- it delegates to `vintage.qa`/`vintage.activate`,
+# which do -- so monkeypatching `census_load._conn` to hand back a connection whose cursor always
+# raises reaches every subcommand's first database statement uniformly, real or delegated.
+
+class _RaisingCursor:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc_info):
+        return False
+
+    def execute(self, *a, **k):
+        raise psycopg2.errors.UndefinedTable('relation "market_state" does not exist\n')
+
+
+class _RaisingConn:
+    def __init__(self):
+        self.close_calls = 0
+
+    def cursor(self):
+        return _RaisingCursor()
+
+    def close(self):
+        self.close_calls += 1
+
+
+@pytest.mark.parametrize(
+    "argv, env",
+    [
+        (["tiger"], {"CENSUS_CONTACT_EMAIL": "tech@vinfoundation.example.org"}),
+        (["acs"], {"CENSUS_API_KEY": "the-key", "CENSUS_CONTACT_EMAIL": "tech@vinfoundation.example.org"}),
+        (["cbp"], {"CENSUS_API_KEY": "the-key", "CENSUS_CONTACT_EMAIL": "tech@vinfoundation.example.org"}),
+        (["zbp"], {"CENSUS_API_KEY": "the-key", "CENSUS_CONTACT_EMAIL": "tech@vinfoundation.example.org"}),
+        (["bds", "--year", "2022"], {"CENSUS_API_KEY": "the-key", "CENSUS_CONTACT_EMAIL": "tech@vinfoundation.example.org"}),
+        (["qwi", "--year", "2024", "--quarter", "4"], {"CENSUS_API_KEY": "the-key", "CENSUS_CONTACT_EMAIL": "tech@vinfoundation.example.org"}),
+        (["activate", "acs5", "2019\u20132023", "--by", "john"], {}),
+    ],
+    ids=["tiger", "acs", "cbp", "zbp", "bds", "qwi", "activate"],
+)
+def test_every_subcommand_closes_its_connection_and_returns_three_on_a_post_connect_database_error(argv, env, monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://placeholder/placeholder")
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    fake_conn = _RaisingConn()
+    monkeypatch.setattr(census_load, "_conn", lambda dsn: fake_conn)
+
+    assert census_load.main(argv) == 3
+
+    err = capsys.readouterr().err
+    assert "UndefinedTable" in err
+    assert "market_state" not in err, "only the exception's TYPE may be printed, never its text (it can carry a DSN)"
+    assert fake_conn.close_calls == 1

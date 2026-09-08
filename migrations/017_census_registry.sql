@@ -39,7 +39,8 @@ CREATE TABLE active_vintage (
   dataset_key text PRIMARY KEY REFERENCES dataset_registry(dataset_key),
   vintage text NOT NULL,
   activated_at timestamptz NOT NULL,
-  activated_by text NOT NULL
+  activated_by text NOT NULL,
+  note text -- the operator's own review note; REQUIRED by the CLI when --force overrides the ratio guard (A-C7 concern 1)
 );
 
 -- States whose geographies and ACS rows we load (plan decision D4; auto-extended by geocoding).

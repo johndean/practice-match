@@ -37,7 +37,7 @@ CREATE TABLE qwi_measure (
   PRIMARY KEY (geo_id, summary_level, naics_code, year, quarter)
 );
 
--- BDS is not in the spec's DDL but is in its dataset register and variable map (FIRM, ESTAB_ENTRY).
+-- BDS is not in the spec's DDL but is in its dataset register and variable map (FIRM, ESTABS_ENTRY).
 CREATE TABLE bds_measure (
   geo_id text NOT NULL,
   summary_level char(3) NOT NULL,

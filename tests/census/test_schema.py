@@ -10,7 +10,7 @@ def test_registry_and_ledger_tables_match_spec_13(conn):
         assert _cols(cur, "dataset_registry") == ["dataset_key", "display_name", "api_dataset_id", "base_url", "vintage",
                                                   "naics_param", "refresh_cadence", "license_status", "license_name",
                                                   "license_url", "attribution_text", "last_verified_at", "notes"]
-        assert _cols(cur, "active_vintage") == ["dataset_key", "vintage", "activated_at", "activated_by"]
+        assert _cols(cur, "active_vintage") == ["dataset_key", "vintage", "activated_at", "activated_by", "note"]
         cur.execute("SELECT conname FROM pg_constraint WHERE conname = 'ingest_run_dataset_fk'")
         assert cur.fetchone(), "spec §13 adds the ingest_run → dataset_registry FK after the registry exists"
 

@@ -20,6 +20,12 @@ is uniform across the module. The `httpx.Client` this module is handed is expect
 with `follow_redirects=False` (the caller's concern -- `scripts/census_load.py`, and later the
 `census.load_tiger` Celery task -- construct it), so a 3xx is never silently followed into an
 unarchived, unparsed body.
+
+`load_boundaries` runs inside `ingest.run(conn, "tiger_cb", vintage)` (controller amendment A-C7
+M1) exactly as every other loader in this package already does: without it `tiger_cb` never had a
+`succeeded` `ingest_run` row, so `vintage.activate("tiger_cb", ...)` could never succeed
+(task-A7-review Major 1). One transaction; any exception rolls every upsert in the run back and
+records the run 'failed'.
 """
 from __future__ import annotations
 
@@ -36,6 +42,7 @@ from shapely.geometry import MultiPolygon, Polygon, shape
 from shapely.geometry.base import BaseGeometry
 from shapely.ops import unary_union
 
+from app.census import ingest
 from app.census.client import CensusHTTPError
 from app.storage import ObjectStore
 
@@ -168,21 +175,33 @@ def load_boundaries(
     archive: ObjectStore | None = None,
 ) -> dict[str, int]:
     """Downloads and upserts every boundary file. ZCTAs (national file) are kept only
-    when their centroid falls inside a market state, to bound table size."""
+    when their centroid falls inside a market state, to bound table size.
+
+    Runs inside `ingest.run(conn, "tiger_cb", vintage)` (controller amendment A-C7 M1), the same
+    ledger wrapping every other loader in this package already uses: without it, `tiger_cb` never
+    had a `succeeded` `ingest_run` row, so `vintage.qa()`/`activate()` could never activate it
+    (task-A7-review Major 1) -- one transaction, rolled back and recorded 'failed' on any
+    exception, exactly like every sibling loader. `run.rows` is every boundary row upserted
+    across every file; `run.requests` is the count of files fetched -- one per `BoundarySpec`,
+    even the ZCTA level, whose 404 triggers a second, fallback HTTP call for that same one file."""
     counts: dict[str, int] = {}
     state_geoms: list[BaseGeometry] | None = None
-    for spec in BOUNDARY_FILES(int(vintage), states):
-        resp = _get_with_fallback(http, spec, vintage)
-        body = resp.content
-        rows = parse_shapefile(body, spec)  # never archived unless this line does not raise
-        if archive is not None:
-            key = _archive_key(vintage, str(resp.url))
-            if not archive.exists(key):  # append-only by convention (A-C3 (1)): never re-write an archived key
-                archive.put(key, body, "application/zip")
-        if spec.summary_level == "040":
-            state_geoms = [wkb.loads(r.wkb) for r in rows if r.geo_id in states]
-        if spec.summary_level == "860" and state_geoms:
-            market = unary_union(state_geoms)
-            rows = [r for r in rows if market.contains(wkb.loads(r.wkb).centroid)]
-        counts[f"{spec.summary_level}:{str(resp.url).rsplit('/', 1)[1]}"] = upsert_geo(conn, rows, vintage)
+    with ingest.run(conn, "tiger_cb", vintage) as run:
+        for spec in BOUNDARY_FILES(int(vintage), states):
+            resp = _get_with_fallback(http, spec, vintage)
+            body = resp.content
+            rows = parse_shapefile(body, spec)  # never archived unless this line does not raise
+            if archive is not None:
+                key = _archive_key(vintage, str(resp.url))
+                if not archive.exists(key):  # append-only by convention (A-C3 (1)): never re-write an archived key
+                    archive.put(key, body, "application/zip")
+            if spec.summary_level == "040":
+                state_geoms = [wkb.loads(r.wkb) for r in rows if r.geo_id in states]
+            if spec.summary_level == "860" and state_geoms:
+                market = unary_union(state_geoms)
+                rows = [r for r in rows if market.contains(wkb.loads(r.wkb).centroid)]
+            n = upsert_geo(conn, rows, vintage)
+            counts[f"{spec.summary_level}:{str(resp.url).rsplit('/', 1)[1]}"] = n
+            run.rows += n
+        run.requests = len(counts)
     return counts
