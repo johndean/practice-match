@@ -1200,68 +1200,86 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
     expect(c.photoSet(p2).map((s: any) => s.noSrc)).toEqual([false, false, false, true, true, true]);
   });
 
-  // -----------------------------------------------------------------------------------------
-  // A12.6 / A12.7 — the detail tolerates the community figures the API does not have yet
-  // (L6 ruling, 2026-09-08). D4 leaves `pop`, `growth`, `income` and `hh` null for every seeded
-  // listing until the Census plan supplies them, and `renderVals()` computes `detail()` on EVERY
-  // render — so an unguarded `p.growth.replace(...)` is not a blank card, it is a blank APP.
-  // -----------------------------------------------------------------------------------------
-  const NULL_FIGURES = {
-    id: 'seed-1', area: 'Plano', type: 'Small animal', market: 'Austin, TX', price: 465000,
-    rev: 700000, docs: 1, rooms: 3, sqft: 2400, bldg: 'Leased', lat: 33.0, lng: -96.7, est: 1987,
-    listed: '3 days ago', status: 'published', pop: null, growth: null, income: null, hh: null,
-    note: 'Demo listing seeded by the VIN Foundation.', staff: '1 DVM', hours: 'Mon–Fri 8–6',
-    services: 'Wellness', facility: 'Suite', ownership: 'Sole proprietor',
-    name: 'ABC Animal Hospital', photos: ['/api/listings/seed-1/photos/1', '/api/listings/seed-1/photos/2']
-  };
-
-  // M4 (review round 1): the push and the pop are STRUCTURAL, so the shared module-level `P` is
-  // restored even if an assertion throws — a `finally` inside one case leaves the suite
-  // order-sensitive the moment anything moves outside its `try`.
-  beforeEach(() => { (P as unknown as unknown[]).push(NULL_FIGURES); });
-  afterEach(() => {
-    const p = P as unknown as Array<{ id: string }>;
-    const at = p.findIndex((x) => x.id === 'seed-1');
-    if (at > -1) p.splice(at, 1);
+  // N1 (re-review): the A12.6/A12.7 block below pushes a practice into the SHARED module-level
+  // `P` from a hook, so those hooks belong to a nested `describe` of their own. This case is the
+  // guard, and it sits in the OUTER block where nothing may have touched `P`: it fails the moment
+  // a hook leaks out of its block again. 21 is the design's own fixture count — the nine Austin
+  // practices of `logic.js`'s `P` literal plus the twelve its `.forEach` pushes for the other
+  // three markets.
+  it('the shared fixture array is untouched in this block — no test hook leaks out of its own (N1)', () => {
+    const fixtures = P as unknown as Array<{ id: string }>;
+    expect(fixtures).toHaveLength(21);
+    expect(fixtures.map((x) => x.id)).not.toContain('seed-1');
   });
 
-  it('every screen renders for a listing whose four community figures are null (A12.6/A12.7)', () => {
-    const screens: Array<Record<string, unknown>> = [
-      { auth: false, screen: 'gate', gate: 'signin' },
-      { auth: true, screen: 'browse' },
-      { auth: true, screen: 'browse', viewport: 'mobile', mobileTab: 'list' },
-      { auth: true, screen: 'browse', viewport: 'mobile', mobileTab: 'map' },
-      { auth: true, screen: 'requests' },
-      { auth: true, screen: 'seller' },
-      { auth: true, screen: 'admin' },
-      { auth: true, screen: 'detail' }
-    ];
-    for (const patch of screens) {
-      const c2: any = new Component({});
-      c2.setState({ ...patch, detailId: 'seed-1' });
-      expect(() => c2.renderVals(), JSON.stringify(patch)).not.toThrow();
-    }
-    // …and the Community Context card is the design's own EMPTY state: the labels and the
-    // sub-lines stay, the four values are blank. Vue renders `null` as the empty string, so
-    // `pop` and `income` needed no guard; the two that called `.replace` did.
-    const c3: any = new Component({});
-    c3.setState({ auth: true, screen: 'detail', detailId: 'seed-1' });
-    expect(c3.renderVals().d.demo.map((f: any) => [f.k, f.v, f.sub])).toEqual([
-      ['Population', null, 'Community, 2023'],
-      ['Growth', '', 'Since 2015'],
-      ['Median income', null, 'Household, 2023'],
-      ['Households', '', 'In the community']
-    ]);
-  });
+  // N1 (re-review): NESTED, so the hooks below reach only the two cases that need them. Held in
+  // the outer block they pushed an extra practice into the shared `P` for all of its tests — the
+  // very order-sensitivity M4's structural push/pop was meant to remove. The guard above proves
+  // they stay in.
+  describe('A12.6 / A12.7 — a listing with no community figures', () => {
+    // -----------------------------------------------------------------------------------------
+    // A12.6 / A12.7 — the detail tolerates the community figures the API does not have yet
+    // (L6 ruling, 2026-09-08). D4 leaves `pop`, `growth`, `income` and `hh` null for every seeded
+    // listing until the Census plan supplies them, and `renderVals()` computes `detail()` on EVERY
+    // render — so an unguarded `p.growth.replace(...)` is not a blank card, it is a blank APP.
+    // -----------------------------------------------------------------------------------------
+    const NULL_FIGURES = {
+      id: 'seed-1', area: 'Plano', type: 'Small animal', market: 'Austin, TX', price: 465000,
+      rev: 700000, docs: 1, rooms: 3, sqft: 2400, bldg: 'Leased', lat: 33.0, lng: -96.7, est: 1987,
+      listed: '3 days ago', status: 'published', pop: null, growth: null, income: null, hh: null,
+      note: 'Demo listing seeded by the VIN Foundation.', staff: '1 DVM', hours: 'Mon–Fri 8–6',
+      services: 'Wellness', facility: 'Suite', ownership: 'Sole proprietor',
+      name: 'ABC Animal Hospital', photos: ['/api/listings/seed-1/photos/1', '/api/listings/seed-1/photos/2']
+    };
 
-  it('a design fixture practice still renders its community figures exactly as before (A12.6/A12.7)', () => {
-    const c4: any = new Component({});
-    c4.setState({ auth: true, screen: 'detail', detailId: 'p1' });
-    expect(c4.renderVals().d.demo.map((f: any) => [f.k, f.v])).toEqual([
-      ['Population', '81,900'],
-      ['Growth', '+14.2%'],
-      ['Median income', '$118,400'],
-      ['Households', '27,600']
-    ]);
+    // M4 (review round 1): the push and the pop are STRUCTURAL, so the shared module-level `P` is
+    // restored even if an assertion throws — a `finally` inside one case leaves the suite
+    // order-sensitive the moment anything moves outside its `try`.
+    beforeEach(() => { (P as unknown as unknown[]).push(NULL_FIGURES); });
+    afterEach(() => {
+      const p = P as unknown as Array<{ id: string }>;
+      const at = p.findIndex((x) => x.id === 'seed-1');
+      if (at > -1) p.splice(at, 1);
+    });
+
+    it('every screen renders for a listing whose four community figures are null (A12.6/A12.7)', () => {
+      const screens: Array<Record<string, unknown>> = [
+        { auth: false, screen: 'gate', gate: 'signin' },
+        { auth: true, screen: 'browse' },
+        { auth: true, screen: 'browse', viewport: 'mobile', mobileTab: 'list' },
+        { auth: true, screen: 'browse', viewport: 'mobile', mobileTab: 'map' },
+        { auth: true, screen: 'requests' },
+        { auth: true, screen: 'seller' },
+        { auth: true, screen: 'admin' },
+        { auth: true, screen: 'detail' }
+      ];
+      for (const patch of screens) {
+        const c2: any = new Component({});
+        c2.setState({ ...patch, detailId: 'seed-1' });
+        expect(() => c2.renderVals(), JSON.stringify(patch)).not.toThrow();
+      }
+      // …and the Community Context card is the design's own EMPTY state: the labels and the
+      // sub-lines stay, the four values are blank. Vue renders `null` as the empty string, so
+      // `pop` and `income` needed no guard; the two that called `.replace` did.
+      const c3: any = new Component({});
+      c3.setState({ auth: true, screen: 'detail', detailId: 'seed-1' });
+      expect(c3.renderVals().d.demo.map((f: any) => [f.k, f.v, f.sub])).toEqual([
+        ['Population', null, 'Community, 2023'],
+        ['Growth', '', 'Since 2015'],
+        ['Median income', null, 'Household, 2023'],
+        ['Households', '', 'In the community']
+      ]);
+    });
+
+    it('a design fixture practice still renders its community figures exactly as before (A12.6/A12.7)', () => {
+      const c4: any = new Component({});
+      c4.setState({ auth: true, screen: 'detail', detailId: 'p1' });
+      expect(c4.renderVals().d.demo.map((f: any) => [f.k, f.v])).toEqual([
+        ['Population', '81,900'],
+        ['Growth', '+14.2%'],
+        ['Median income', '$118,400'],
+        ['Households', '27,600']
+      ]);
+    });
   });
 });
