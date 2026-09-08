@@ -9,6 +9,7 @@ import csv
 import inspect
 import io
 from datetime import UTC, datetime, timedelta
+from typing import Any
 
 import pytest
 
@@ -558,15 +559,15 @@ async def test_a_mid_batch_failure_rolls_back_the_inserts_and_the_stamp_together
     correctness defect (a row silently mailed twice after a crash) worth stopping to report rather
     than papering over with a passing assertion."""
     import app.api.admin_signups as AS
+    from app.mail.outbox import enqueue as real_enqueue
 
-    real_enqueue = AS.enqueue
     calls = {"n": 0}
 
-    def flaky_enqueue(*args: object, **kwargs: object) -> bool:
+    def flaky_enqueue(conn: Any, *, to: str, template: str, params: dict[str, Any], idempotency_key: str) -> bool:
         calls["n"] += 1
         if calls["n"] == 2:
             raise RuntimeError("boom-mid-batch")
-        return real_enqueue(*args, **kwargs)  # type: ignore[no-any-return]
+        return real_enqueue(conn, to=to, template=template, params=params, idempotency_key=idempotency_key)
 
     monkeypatch.setattr(AS, "enqueue", flaky_enqueue)
     ids = seed(conn, 2)
