@@ -25,6 +25,11 @@ SIGNIN_EMAIL, SIGNIN_IP, SIGNUP_IP, SIGNUP_EMAIL, FORGOT_EMAIL = (10, 900), (30,
 # the risk; the connection is, which is why these are additions to the spec's per-address limits
 # rather than replacements for them.
 FORGOT_IP, TOKEN_IP = (10, 3600), (30, 3600)
+# Seller listing lifecycle (spec 2026-09-08 D17), all keyed on the ACCOUNT id: generous enough that
+# a seller working through eight steps and four photographs never meets one, tight enough that a
+# script cannot fill a bucket. `LISTING_PATCH` is the autosave — the design's own "Saved
+# automatically" fires once per step, not per keystroke, so 240/hour is four hours of continuous work.
+LISTING_PATCH, LISTING_UPLOAD, LISTING_SUBMIT = (240, 3600), (40, 3600), (20, 3600)
 
 
 def check(r: Any, scope: str, subject: str, limit: int, window_s: int) -> None:

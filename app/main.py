@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
+from app.api.admin_listings import router as admin_listings_router
 from app.api.admin_users import router as admin_users_router
 from app.api.applications import router as applications_router
 from app.api.auth import router as auth_router
@@ -14,6 +15,7 @@ from app.api.health import not_found_router
 from app.api.health import router as health_router
 from app.api.interest import router as interest_router
 from app.api.listings import router as listings_router
+from app.api.seller_listings import router as seller_listings_router
 from app.api.webhooks import router as webhooks_router
 from app.auth import deps
 from app.config import settings
@@ -85,6 +87,14 @@ def create_app(dist: Path | None = None) -> FastAPI:
         # absent rather than merely guarded, and `scripts/verify-deploy.sh production` probes
         # that alongside the auth, applications and admin surfaces.
         app.include_router(listings_router)
+        # Same gate again (spec 2026-09-08 D9): the seller wizard's surface and the reviewer's read
+        # of a draft are MEMBER surfaces — `listing.manage_own` is the seller role's, `listing.review`
+        # is staff's — so behind the Coming Soon page they are absent rather than merely guarded, and
+        # `scripts/verify-deploy.sh production` probes for their 404 beside the other four. The
+        # prefixes are `/api/seller` and `/api/admin`, both disjoint from `/api/listings`, so nothing
+        # here can shadow the buyer's `/api/listings/{listing_id}` whatever the order.
+        app.include_router(seller_listings_router)
+        app.include_router(admin_listings_router)
     app.include_router(interest_router)
     # Resend's delivery events (Task I6). NOT gated on `site_mode`, unlike the auth surface: the
     # provider posts to whichever host sent the mail, and a bounce that arrives after a launch
