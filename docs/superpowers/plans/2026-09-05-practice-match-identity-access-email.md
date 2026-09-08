@@ -2780,6 +2780,30 @@ Run: `poetry run pytest tests/test_docs.py tests/perf -q` → **FAIL**.
 
 ---
 
+### Task I11: zxcvbn `user_inputs` — John's ruling, 2026-09-08 ("ADD user_inputs — Password strength validation should also penalize passwords derived from the member's own email address or name")
+
+**Files:** Modify the password-strength module under `app/auth/` (where zxcvbn is called), its callers in `app/api/auth.py` (sign-up, `password/reset`, `accept-invite`) and `app/api/*` wherever a password is set; tests beside each. Never: the floor values, the messages' wording (spec §3), the frontend.
+
+**Rule:** `user_inputs` = the account's email (as typed and normalised), its local part, the local part split on `.`, `_`, `-`, `+`, each domain label, and — where the account or application row is known (reset, accept-invite, answer/re-apply) — every whitespace-separated token of the person's name of three or more characters. Sign-up knows only the email.
+
+- [ ] **Step 1: RED.** For each seam: a password that is the local part (`buyer` for `buyer@…`), the local part plus digits, the domain, and a name token, each otherwise above the floor, is REFUSED with the existing weak-password response; the same strings for a different account are ACCEPTED. Run → FAIL.
+- [ ] **Step 2: GREEN.** A pure `user_inputs_for(email, name=None) -> list[str]` (unit-tested, deterministic order, de-duplicated, lower-cased) passed to zxcvbn at every seam. Backend gate 100 %; ruff; CI's two mypy commands.
+- [ ] **Step 3: Commit** — `feat(auth): zxcvbn user_inputs — a password built from the member's own email or name is weak (I11)` with the trailer.
+
+---
+
+### Task I12: Fail-closed permission-table regeneration and test hygiene — John's rulings, 2026-09-08
+
+**Ruling (#5, verbatim):** "The permission-table regeneration command must fail closed/refuse to run when any of the four required test-environment settings are missing. It must never silently generate an empty permission file."
+
+**Files:** Modify `frontend/package.json` (`gen:permissions`), the test that pins that script string (find it — `frontend/tests/*.test.ts` greps `gen:permissions`), `app/auth/permissions.py` (`--ts` emitter), `tests/auth/test_permissions.py`, `frontend/tests/harness.test.ts` (housekeeping below).
+
+- [ ] **Step 1: RED.** (a) The package.json pin asserts the script uses `${VAR:?…}` for `DATABASE_URL`, `REDIS_URL`, `ENVIRONMENT`, `API_SECRET_KEY` and carries NO `:-` default → FAIL. (b) `python -m app.auth.permissions --ts` with an empty matrix (monkeypatched) exits non-zero and writes NOTHING to stdout → FAIL. (c) Housekeeping found by the controller gate run: `harness.test.ts` "driverFor … defaults to the app project's own origin" hard-codes `http://localhost:5173` while `harness.ts` derives the app origin from `PW_APP_PORT`; the test must derive its fixture URL the same way (RED: run it with `PW_APP_PORT=5273` — it fails today).
+- [ ] **Step 2: GREEN.** `gen:permissions` uses `${DATABASE_URL:?set DATABASE_URL (test database) — gen:permissions refuses to guess}` etc. (bash `:?` aborts on unset/empty), keeps the `> permissions.ts.new && mv` so a failure never touches `permissions.ts`; the emitter refuses an empty matrix with one stderr line; the harness test derives the URL. Frontend 100 %, backend gate 100 %, the six shell suites (any test_*.sh that greps package.json).
+- [ ] **Step 3: Commit** — `fix(permissions): gen:permissions fails closed on missing settings and an empty matrix; harness test derives the app origin (I12)` with the trailer.
+
+---
+
 ### Task I10: QA end-to-end verification and hand-back
 
 **Executable gates for this task (its RED/GREEN):** `scripts/verify-deploy.sh QA` (itself tested by `tests/scripts/test_verify_deploy.sh`), the persona-driven Playwright suite against `PW_APP_URL`, `perf.yml`, and `tests/test_docs.py::test_identity_variables_are_documented`. Any defect found in Step 4 is first reproduced as a failing test in the responsible task (I4–I8), fixed, and redeployed — never patched on QA by hand.
@@ -2792,6 +2816,13 @@ Run: `poetry run pytest tests/test_docs.py tests/perf -q` → **FAIL**.
 - [ ] **Step 6: Production** — `scripts/deploy.sh production`, `verify-deploy.sh production`, `bootstrap_admin.py` on production with John's address, no persona, `EMAIL_ALLOWLIST` unset (production sends to anyone), confirm one real sign-up end to end with a VIN Foundation mailbox, then `git tag v0.3.0` and finish the branch.
 
 ---
+
+## Rulings recorded 2026-09-08 (John)
+
+- **Task I5d** (launch sign-ups: admin read, CSV export, launch mail; Admin tab gated on Rev 3) is planned in its own file, `docs/superpowers/plans/2026-09-08-launch-signups-admin.md` (GO, 2026-09-08); the Rev 3 request is `docs/design-reference/requests/2026-09-08-rev3-admin-launch-signups-tab.md`, which also carries the Permissions table's plain-language "Meaning" values John's #6 ruling requires from Rev 3 (six-column table kept; Meaning temporarily empty; not complete until Rev 3 supplies them).
+- **Sender confirmed:** "Use `no-reply@foundation.vin` as the sender, with display name VIN Foundation — Practice Match" — already `app/config.py`'s `mail_from` default; spec §2's open item closes. `MAIL_REPLY_TO`'s mailbox is still John's.
+- **I8 approach confirmed** (item 6): byte-identical ported script, one generated `App.vue`, pixel parity, the real-API branch in sign-in/apply/sign-out with fixture behaviour kept on the design preview, jump bar/shortcuts/demo credentials removed from the design (A6), prototype props declared but unused by the app (D-I8-2), the oracle through the design server's query-string switch. John wrote "only the three seeded QA/test accounts (pending, declined, needs-review)"; the oracle in fact uses TEN seeded TEST accounts — those three, plus `design`/`buyer`/`seller` (A-I7, A-I8, A-I8.2) and `unverified`/`verified`/`invited`/`verify-me` (account-screens spec §6 approved 2026-09-08; A-S5.2). Test and QA databases only; production is never seeded. Flagged on the artifact for his vet; unchanged until he rules.
+- **I11 and I12** above record his "ADD user_inputs" and "#5 CHANGE" rulings.
 
 ## Red-team review (2026-09-05) — findings and dispositions
 

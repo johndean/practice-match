@@ -288,7 +288,30 @@
 
 ---
 
+**A-S5.3 (2026-09-08; John confirmed A-S5.2 S-1 and S-2 as ruled — "GO with preferred fix (a)" for both — and added: the reviewer-API fixture restoration is approved because it exercises the real staff workflow (§8); before Task I10 a deterministic reset/reseed is required → Task S7 below; no product behaviour or approved visual design changes for harness issues.)**
+
+---
+
+### Task S7: Deterministic fixture reseed for remote (QA) runs — John's ruling, 2026-09-08
+
+**Ruling (verbatim):** "Before Task I10, add a deterministic test-fixture reset/reseed mechanism so every DOM/visual run begins from a known baseline and can be repeated without manual intervention." · "shared QA fixtures must not be left in a mutated state after a live QA run." · "No product behavior or approved visual design should be changed to accommodate these test-harness issues."
+
+**Files:** Modify `frontend/tests/global-setup.ts`, `frontend/tests/global-setup.test.ts` (create if absent), `scripts/seed_persona.py` (only what restoration needs), `tests/scripts/test_seed_persona_restores.py` (create), `frontend/tests/harness.ts` (docstring: budgets per run; a remote run reseeds first). Never: any design file, `logic.js`, `App.vue`, `screens.ts` states, `app/` product code.
+
+**What already exists.** Local runs reseed: the Playwright `api` web server runs `migrate` → `reset_rate_limits` → `seed_persona` before serving (A-I7, A-S5.1). S7 closes the REMOTE gap.
+
+- [ ] **Step 1: RED — the planner.** `global-setup.test.ts`: `remoteReseedPlan(env)` — `{}` (no `PW_APP_URL`) → `{ run: false }`; `PW_APP_URL` + `DATABASE_URL` + `PERSONA_PASSWORD` → `{ run: true }`; `PW_APP_URL` with either missing → `{ run: false, error: "a remote run must reseed the target's fixtures first; set DATABASE_URL (the target's database) and PERSONA_PASSWORD" }`. Run → FAIL (function missing).
+- [ ] **Step 2: GREEN — the planner and the hook.** `global-setup.ts` exports `remoteReseedPlan` and, in the default export, when the plan says `run`, executes `poetry run python scripts/seed_persona.py` from the repo root with the INHERITED environment (`execFileSync`, `stdio: "inherit"` — the seed prints no secrets; the hook prints none) and throws the plan's `error` otherwise — no skip flag, values never logged. A local run (no `PW_APP_URL`) is unchanged.
+- [ ] **Step 3: RED — the seed restores.** `tests/scripts/test_seed_persona_restores.py`: seed a fresh database; snapshot the fixtures (every persona account's state/roles/password hash, every application row per persona, the twelve unused tokens per purpose, the outbox rows the seed owns); then mutate exactly as a full run does — `verify-me@` → `verified` and its verify tokens consumed; `verified@` password rotated and sessions revoked; `needs-review@` answered (row `pending`, `info_request` cleared); `declined@` re-applied (a second application row); `invited@` password set and invite tokens consumed; reset tokens consumed — then run the seed again and assert the snapshot is EQUAL to a fresh seed's (including that stray application rows are gone and consumed tokens are replaced). Watch it FAIL on whatever the seed does not restore today.
+- [ ] **Step 4: GREEN — fix the seed, not the test.** Whatever Step 3 exposes is fixed in `scripts/seed_persona.py` (S3's file — widened here by ruling), every DELETE still scoped to the fixture accounts by email; nothing about the seed's behaviour on a fresh database changes. Backend gate 100 % + the six shell suites.
+- [ ] **Step 5: Real proof on QA (controller step, after the QA deploy).** With `PW_APP_URL=https://qa.foundation.vin`, `DATABASE_URL` = QA's public database URL and `PERSONA_PASSWORD` (both pulled from Railway into the subprocess environment, never printed): run the `app` project twice, fifteen minutes apart (the real `SIGNIN_IP` window — A-S5.1 keeps QA's limits real), with no manual step between; both green. Record both run ids in the ledger.
+- [ ] **Step 6: Commit** — `test(e2e): a remote run reseeds the target's fixtures first, and the seed provably restores them (S7)` with the trailer; explicit pathspecs; never push.
+
+---
+
 ### Task S6: Docs and drift
+
+> S6 runs AFTER S7 and documents it: the runbook's "QA parity run" step (reseed is automatic; both env vars required; real limits → one run per fifteen-minute window), CLAUDE.md's counts (43 states; ten seeded test accounts; nine amendment families on main + A8/A9 here), the seed docstring (ten accounts).
 
 **Files:**
 - Modify: `CLAUDE.md` (the approved-state counts: 28 → 43 in "Layout" and "Source of truth"), `docs/RUNBOOK-identity.md` (§8 re-send: the check-email card's "Send it again"; the reset and invite pages the emails now open), `docs/superpowers/plans/2026-09-05-practice-match-identity-access-email.md` (Task I8's I8b/I8c paragraphs point here and are marked done when this plan completes), `tests/test_docs.py` (pins: the counts in CLAUDE.md match `SCREENS.length`; the runbook names `/signup`, `/forgot`, `/verify`, `/reset`, `/accept-invite`)
