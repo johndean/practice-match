@@ -168,17 +168,17 @@ unless the operator says it out loud with `--production`, exactly as `scripts/bo
 does; with the flag, the run's first line of output names the environment it is writing to.
 
 **How it is actually run (A-L7 (3)):** locally, against the QA PostGIS service's public URL, with
-the `api` service's `ENVIRONMENT`, `REDIS_URL` and `API_SECRET_KEY` handed to the subprocess in its
-environment and never printed. `railway ssh` needs an SSH key this machine does not hold, so the
+`ENVIRONMENT=qa` and that URL handed to the process in its environment and never printed (the
+script reads only `DATABASE_URL` and `ENVIRONMENT`; the `api` service's `DATABASE_URL` is the
+`.railway.internal` private URL, unreachable off-platform — the PostGIS service's own variable is
+the public one). `railway ssh` needs an SSH key this machine does not hold, so the
 in-container route below is for when a key is on file; the script, its idempotency and its output
 lines are identical either way.
 
 ```bash
 railway status                                   # MUST print Project: Practice Match
-railway variable list --service api --environment QA --json > /tmp/pm-qa-vars.json   # never cat this file
-env $(python3 -c 'import json; d = json.load(open("/tmp/pm-qa-vars.json")); print(" ".join(f"{k}={d[k]}" for k in ("DATABASE_URL","ENVIRONMENT","REDIS_URL","API_SECRET_KEY")))') \
-    poetry run python scripts/seed_listings.py   # DATABASE_URL is the QA PostGIS service's PUBLIC url
-rm -f /tmp/pm-qa-vars.json
+DATABASE_URL="$(railway variable list --service PostGIS --environment QA --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["DATABASE_URL"])')" \
+ENVIRONMENT=qa poetry run python scripts/seed_listings.py   # the PostGIS service's DATABASE_URL is its PUBLIC url; a VAR=… prefix keeps it out of argv
 # first run:  "[seed] inserted 18, updated 0, removed 0" then "[seed] done - 18 listings"
 # a re-run:   "inserted 0, updated 18, removed N" — N being the seed rows the file no longer
 #             carries, which every import deletes; the eighteen keep their ids.

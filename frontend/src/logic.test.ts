@@ -1306,7 +1306,8 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
         expect(generalLocation(d)).toBe('Denver, CO');
       } finally {
         const arr = P as unknown as Array<{ id: string }>;
-        arr.splice(arr.findIndex((x) => x.id === 'seed-2'), 1);
+        const at = arr.findIndex((x) => x.id === 'seed-2');
+        if (at > -1) arr.splice(at, 1);
       }
     });
 
