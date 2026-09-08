@@ -11,13 +11,23 @@ transaction as the upsert, every `source='seed'` row whose slug is absent from
 `source='seed'` row first, reaching the same end state with fresh ids. A seller's own listing
 (`source='seller'`) is never touched by either path; that is the whole point of the column.
 
+A listing this seeder does not own is never rewritten: if a row with any other `source` already
+holds one of the seed slugs, the import REFUSES (exit 5) and nothing commits — the operator is
+told which slugs, and decides. Belt and braces, the upsert itself is scoped
+`ON CONFLICT (slug) DO UPDATE ... WHERE listing.source = 'seed'`, so even a row inserted between
+the check and the upsert cannot be overwritten; the zero-row update that leaves is refused too,
+rather than skipping a listing in silence.
+
 Runs inside the api container: `railway ssh --service api --environment QA` then
 `python scripts/seed_listings.py --reset`, or as the `seed` role of scripts/start.sh.
-It refuses outright on `ENVIRONMENT=production`, exactly as scripts/seed_persona.py refuses —
-never on production without John's go (spec 2026-09-06 D7).
+Production takes `--production`, the way scripts/bootstrap_admin.py takes it: without the flag
+`ENVIRONMENT=production` is refused (exit 2) before anything is opened, and with it the run says
+on its first line which environment it is writing to — never on production without John's go
+(spec 2026-09-06 D7).
 
-Exit codes mirror scripts/migrate.py: 0 done, 2 refused (production, or DATABASE_URL unset),
-3 database unreachable (retryable), 4 the seed data is missing or malformed (not retryable).
+Exit codes mirror scripts/migrate.py: 0 done, 2 refused (production without --production, or
+DATABASE_URL unset), 3 database unreachable (retryable), 4 the seed data is missing or malformed,
+5 a non-seed listing owns a seed slug (nothing was written). Only 3 is retryable.
 """
 from __future__ import annotations
 
@@ -80,7 +90,14 @@ ON CONFLICT (slug) DO UPDATE SET
   est = EXCLUDED.est, listed_at = EXCLUDED.listed_at, note = EXCLUDED.note,
   staff = EXCLUDED.staff, services = EXCLUDED.services, facility = EXCLUDED.facility,
   ownership = EXCLUDED.ownership, photos = EXCLUDED.photos, updated_at = now()
+WHERE listing.source = 'seed'
 """
+
+# The pre-flight the refusal is built on: one SELECT naming every seed slug some other `source`
+# already owns, run before anything is written, so the operator gets the whole list at once
+# instead of discovering them one failed import at a time. (A module constant so the backstop
+# arm below can be reached by a test without a real race.)
+COLLISION_CHECK = "SELECT slug FROM listing WHERE source <> 'seed' AND slug = ANY(%s) ORDER BY slug"
 
 # A-L4: everything the file no longer carries, in the same transaction as the upsert. `--reset`
 # drops the slug filter and takes the lot.
@@ -90,6 +107,16 @@ DELETE_ALL_SEED = "DELETE FROM listing WHERE source = 'seed'"
 
 class SeedDataError(Exception):
     """The seed file or the photo inventory is missing or does not carry what it must."""
+
+
+class SlugCollision(Exception):
+    """A listing with another `source` already owns one of the seed slugs.
+
+    Not something to resolve automatically: the row belongs to a seller, and overwriting it with
+    a demo hospital would be the loudest version of exactly what `source` exists to prevent."""
+
+    def __init__(self, slugs: list[str]) -> None:
+        super().__init__(f"a non-seed listing already owns {', '.join(slugs)}")
 
 
 def load_seed(path: Path) -> list[dict[str, Any]]:
@@ -143,6 +170,13 @@ def seed(dsn: str, *, reset: bool = False) -> int:
             # One transaction, one writer: the removal and the upsert are never observed apart,
             # and two operators seeding at once serialise instead of interleaving.
             cur.execute("SELECT pg_advisory_xact_lock(%s)", (LOCK_KEY,))
+            # Before anything is written: refuse the whole import if a listing this seeder does
+            # not own holds one of these slugs. Raising here rolls the transaction back, so a
+            # refused run leaves the database exactly as it found it.
+            cur.execute(COLLISION_CHECK, (slugs,))
+            collisions = [str(row[0]) for row in cur.fetchall()]
+            if collisions:
+                raise SlugCollision(collisions)
             if reset:
                 cur.execute(DELETE_ALL_SEED)
             else:
@@ -150,15 +184,19 @@ def seed(dsn: str, *, reset: bool = False) -> int:
             removed = cur.rowcount
             # The seed rows that survived the delete are, by construction, exactly the slugs the
             # file carries — so this is the update count, and the rest are inserts. Counted from
-            # the table rather than from `xmax`, which is an implementation detail. (A row of
-            # another `source` holding one of these slugs would be updated in place and counted
-            # here as an insert; nothing in this plan creates one, and the alternative — the
-            # seeder silently rewriting a seller's row — is the thing to notice, not the count.)
+            # the table rather than from `xmax`, which is an implementation detail. Exact now
+            # that the check above has refused every slug another `source` owns: nothing but a
+            # seed row can be on the receiving end of one of these upserts.
             cur.execute("SELECT count(*) FROM listing WHERE source = 'seed'")
             # `SELECT count(*)` always returns exactly one row.
             updated = int(cast("tuple[int]", cur.fetchone())[0])
             for params in rows:
                 cur.execute(UPSERT, params)
+                if cur.rowcount != 1:
+                    # The scoped ON CONFLICT matched no row to update: another transaction
+                    # inserted a non-seed listing on this slug after the check above. Refusing
+                    # beats skipping it quietly.
+                    raise SlugCollision([str(params["slug"])])
     finally:
         conn.close()
     print(f"[seed] inserted {len(rows) - updated}, updated {updated}, removed {removed}")
@@ -168,10 +206,17 @@ def seed(dsn: str, *, reset: bool = False) -> int:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Seed the demo hospitals (spec 2026-09-06 D7).")
     parser.add_argument("--reset", action="store_true", help="delete every source='seed' row first")
+    parser.add_argument("--production", action="store_true", help="required to run against ENVIRONMENT=production")
     args = parser.parse_args(argv)
-    if os.environ.get("ENVIRONMENT", "").lower() == "production":
-        print("[seed] refusing to run against production — these are demo listings (D7: never on production without John's go)", file=sys.stderr)
-        return 2
+    environment = os.environ.get("ENVIRONMENT", "")
+    if environment.lower() == "production":
+        # The same "say it out loud" shape as scripts/bootstrap_admin.py and scripts/deploy.sh's
+        # Railway-project guard, for the same reason: this machine speaks to more than one
+        # environment, and these are demo listings.
+        if not args.production:
+            print("[seed] refusing to run against production without --production", file=sys.stderr)
+            return 2
+        print("[seed] running against PRODUCTION, as --production says")
     dsn = os.environ.get("DATABASE_URL")
     if not dsn:
         print("[seed] DATABASE_URL is not set", file=sys.stderr)
@@ -184,6 +229,9 @@ def main(argv: list[str] | None = None) -> int:
     except psycopg2.OperationalError as exc:
         print(f"[seed] database unreachable: {type(exc).__name__}", file=sys.stderr)
         return 3
+    except SlugCollision as exc:
+        print(f"[seed] refusing: {exc} — nothing was written", file=sys.stderr)
+        return 5
     print(f"[seed] done - {count} listings")
     return 0
 

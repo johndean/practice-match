@@ -864,3 +864,7 @@ def test_deploy_md_documents_how_to_seed_qa():
     assert "## Seeding the demo hospitals (QA)" in deploy
     assert "python scripts/seed_listings.py --reset" in deploy
     assert "never on production without John's go" in deploy
+    # L4 review round 1: the two operator-facing outcomes the runbook must not leave out — the
+    # flag that buys a production run, and the exit code that says a seller owns a seed slug.
+    assert "scripts/seed_listings.py --production" in deploy
+    assert "`5`" in deploy and "non-seed listing" in deploy

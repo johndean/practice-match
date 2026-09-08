@@ -158,8 +158,11 @@ The eighteen demo hospitals (`seeds/hospitals.json`, spec 2026-09-06 D7) are loa
 run also deletes the `source='seed'` rows the file no longer carries, in the same transaction as
 the upsert (amendment A-L4). `--reset` is the bigger hammer: it deletes every `source='seed'`
 row first, reaching the same end state with fresh ids. A `source='seller'` row is never touched
-by either path. It is a hand operation, and it is never on production without John's go — the
-script refuses `ENVIRONMENT=production` outright (exit 2).
+by either path, and a slug some other listing already owns stops the whole import (below). It
+is a hand operation, and it is never on production without John's go — against
+`ENVIRONMENT=production` the script refuses (exit 2) unless the operator says it out loud with
+`--production`, exactly as `scripts/bootstrap_admin.py` does; with the flag, the run's first line
+of output names the environment it is writing to.
 
 ```bash
 railway status                                   # MUST print Project: Practice Match
@@ -168,11 +171,18 @@ python scripts/seed_listings.py --reset          # inside the container
 # first --reset run: "[seed] inserted 18, updated 0, removed 0" then "[seed] done - 18 listings"
 # a second --reset run: "inserted 18, updated 0, removed 18" (fresh ids); without --reset:
 # "inserted 0, updated 18, removed N", N being the seed rows the file no longer carries
+#
+# On production, with John's go and only then:
+#   ENVIRONMENT is already production in the container, so add the flag and nothing else:
+#   python scripts/seed_listings.py --production
 ```
 
-Exit codes: `0` done · `2` refused (`ENVIRONMENT=production`, or `DATABASE_URL` unset) · `3`
-database unreachable (retry) · `4` the seed data is missing or malformed (fix the file,
-redeploy). Anything else — in particular a traceback — means the image is wrong, not the data.
+Exit codes: `0` done · `2` refused (`ENVIRONMENT=production` without `--production`, or
+`DATABASE_URL` unset) · `3` database unreachable (retry) · `4` the seed data is missing or
+malformed (fix the file, redeploy) · `5` a **non-seed listing** — a seller's own — already owns
+one of the seed slugs; the message names them and **nothing was written**, so decide with the
+seller (rename the seed slug, or withdraw their listing) and run it again. Anything else — in
+particular a traceback — means the image is wrong, not the data.
 The same run is available as a container role: `bash scripts/start.sh seed --reset`, for a
 one-off Railway service command. `python -m scripts.seed_listings --reset` works too, from
 `/app`.

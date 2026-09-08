@@ -87,7 +87,8 @@ HTTPServer(('0.0.0.0', port), H).serve_forever()
   seed)
     # One-shot: load the eighteen demo hospitals (spec 2026-09-06 D7). Run by hand inside the
     # api container (`railway ssh`) or as a one-off service command; never on production
-    # without John's go — the seeder refuses ENVIRONMENT=production outright. Arguments after
+    # without John's go — the seeder refuses ENVIRONMENT=production unless it is passed
+    # --production, the way scripts/bootstrap_admin.py does. Arguments after
     # the role are passed through, so `start.sh seed --reset` sweeps the existing seed rows
     # first (every run removes the seed rows the file no longer carries — amendment A-L4).
     shift || true

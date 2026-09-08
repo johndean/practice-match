@@ -308,10 +308,80 @@ def test_the_summary_line_reports_inserted_updated_and_removed(
     assert "[seed] inserted 18, updated 0, removed 18" in capsys.readouterr().out
 
 
-def test_main_refuses_to_run_against_production(scratch_dsn: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    """"Never on production without John's go" (D7), enforced the way scripts/seed_persona.py
-    enforces its own: exit 2, on stderr, before anything is opened."""
+def test_main_refuses_to_run_against_production(
+    scratch_dsn: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """"Never on production without John's go" (D7), enforced the way scripts/bootstrap_admin.py
+    enforces its own: exit 2, on stderr, naming the flag, before anything is opened."""
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
     assert SL.main([]) == 2
+    captured = capsys.readouterr()
+    assert "--production" in captured.err and "production" in captured.err
+    assert captured.out == "", "a refusal says nothing on stdout"
     assert _count(scratch_dsn) == 0, "the production refusal must happen before any write"
+    # ...and before the CONNECTION: an unreachable database still gets 2, never 3.
+    monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
+    assert SL.main([]) == 2
+
+
+def test_production_runs_when_the_operator_says_it_out_loud(
+    scratch_dsn: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """John's go, spelled the way scripts/bootstrap_admin.py spells it (`--production`): the run
+    proceeds, and says on its FIRST line of stdout which environment it is writing to."""
+    monkeypatch.setenv("ENVIRONMENT", "production")
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    assert SL.main(["--production"]) == 0
+    assert _count(scratch_dsn, "source = 'seed'") == 18
+    assert "production" in capsys.readouterr().out.splitlines()[0].lower()
+
+
+def test_the_production_flag_is_harmless_anywhere_else(
+    scratch_dsn: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Passing it on QA is not an error and does not announce a production run."""
+    monkeypatch.setenv("ENVIRONMENT", "qa")
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    assert SL.main(["--production", "--reset"]) == 0
+    assert _count(scratch_dsn, "source = 'seed'") == 18
+    assert "production" not in capsys.readouterr().out.lower()
+
+
+def test_a_non_seed_listing_on_a_seed_slug_stops_the_import(
+    scratch_dsn: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """L4 review round 1: the seeder must never rewrite a listing it does not own. The check runs
+    BEFORE the upsert (one SELECT of the colliding slugs), so the refusal names every offender at
+    once and nothing in the transaction commits."""
+    taken = str(SL.load_seed(SL.SEEDS_FILE)[0]["slug"])
+    _plant(scratch_dsn, taken, "seller")
+    _plant(scratch_dsn, "withdrawn-last-week", "seed")   # a successful import would delete this
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    assert SL.main([]) == 5
+    err = capsys.readouterr().err
+    assert taken in err, err
+    assert "non-seed" in err, err
+    # All-or-nothing: the seller row is untouched, the stale seed row was NOT deleted, and not
+    # one of the eighteen was written.
+    assert _count(scratch_dsn) == 2
+    assert _count(scratch_dsn, "source = 'seller'") == 1
+    assert _count(scratch_dsn, "slug = 'withdrawn-last-week'") == 1
+
+
+def test_the_scoped_upsert_is_the_backstop_when_the_precheck_sees_nothing(
+    scratch_dsn: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`ON CONFLICT (slug) DO UPDATE … WHERE listing.source = 'seed'` is the second line of
+    defence — for a row inserted by another transaction after the pre-check has run. The scoped
+    UPDATE matches nothing there, and a zero-row upsert must FAIL LOUDLY rather than skip a
+    listing in silence. Simulated by blinding the pre-check, which is the only way to reach the
+    arm without a real race."""
+    taken = str(SL.load_seed(SL.SEEDS_FILE)[0]["slug"])
+    _plant(scratch_dsn, taken, "seller")
+    monkeypatch.setattr(SL, "COLLISION_CHECK", "SELECT slug FROM listing WHERE false AND slug = ANY(%s)")
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    assert SL.main([]) == 5
+    assert taken in capsys.readouterr().err
+    assert _count(scratch_dsn) == 1, "the whole transaction rolls back"
+    assert _count(scratch_dsn, "source = 'seller'") == 1
