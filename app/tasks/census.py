@@ -1,15 +1,17 @@
-"""Celery entry points for the market-data layer (Task A8). Phase B adds `census.geocode_listing`,
-`census.materialize_metrics` and `census.backfill_listing`.
+"""Celery entry points for the market-data layer (Task A8; `census.load_zbp` added in the A8 fix
+round, A-C8 (8)/i1). Phase B adds `census.geocode_listing`, `census.materialize_metrics` and
+`census.backfill_listing`.
 
 Each task opens its own psycopg2 connection through `_conn()`, the same shape
-`scripts/census_load.py`'s own `_conn(dsn)` uses (reading `settings.database_url` here since a
-Celery task takes no CLI arguments) -- Census loads are occasional and heavy (annual/quarterly),
-not the mail pipeline's per-minute drain `app.db.sync_conn()`'s pool exists for, so a plain
-connection per invocation is the right shape here too. Every task calls the SAME loader and
-activation functions the CLI calls (`app.census.acs/cbp/bds/qwi/tiger`) -- never a second
-implementation -- and NOTHING here ever calls `app.census.vintage.activate`: flipping
-`active_vintage` stays operator-initiated, through `scripts/census_load.py activate`, never a
-scheduled task (A-C7 (8)).
+`scripts/census_load.py`'s own `_conn(dsn)` uses (reading `settings.database_url`, via the
+canonical `app.db.sync_dsn()` helper -- A-C8 (6)/m5 -- since a Celery task takes no CLI arguments)
+-- Census loads are occasional and heavy (annual/quarterly), not the mail pipeline's per-minute
+drain `app.db.sync_conn()`'s pool exists for, so a plain connection per invocation is the right
+shape here too. Every task calls the SAME loader and activation functions the CLI calls
+(`app.census.acs/cbp/bds/qwi/tiger/zbp`) -- never a second implementation -- and NOTHING here ever
+calls `app.census.vintage.activate`: flipping `active_vintage` stays operator-initiated, through
+`scripts/census_load.py activate`, never a scheduled task (A-C7 (8), enforced by an AST scan over
+this package in `tests/test_tasks_never_activates_vintage.py`, A-C8 (2)/m1).
 
 Registered by CALLING `celery_app.task(...)` rather than by decorating, exactly as
 `app/mail/tasks.py` already does (and explains at the bottom of that module): celery ships no
@@ -24,22 +26,32 @@ instead, naming only the missing variable (never a value -- there being none to 
 task below catches `_NotReady` in turn, records a failed `ingest_run` itself (the loader's OWN
 `ingest.run()` never even opens without a client to hand it -- there is nothing else that would
 record the attempt) and returns a summary dict instead of letting the worker go down with it
-(tested)."""
+(tested).
+
+The licence gate (spec §1: a `dataset_registry` row that is `unresolved`/`blocked` is never
+ingested) is checked TWICE for `load_tiger` and `load_qwi` specifically (A-C8 (1) M1 and (9) i2):
+`tiger.load_boundaries` has no internal `cleared` check at all, and `qwi.latest_available` probes
+Census -- and `CensusClient.fetch_table` archives every successful body -- BEFORE `qwi.load`'s own
+`cleared` check would ever run. `acs`/`cbp`/`bds`/`zbp`'s own `load()` functions already gate
+before their first request, so no second check is needed in their tasks (harmless there, but
+redundant)."""
 from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 import httpx
 import psycopg2
 import psycopg2.extensions
 
-from app.census import acs, bds, cbp, ingest, license, qwi, tiger
+from app.census import acs, bds, cbp, ingest, license, qwi, tiger, zbp
 from app.census.client import CensusClient, require_contact, require_key
 from app.census.registry import Dataset
 from app.census.registry import load as load_registry
 from app.config import settings
+from app.db import sync_dsn
 from app.storage import ObjectStore
 from app.tasks.celery_app import celery_app
 from app.version import VERSION
@@ -55,7 +67,11 @@ class _NotReady(Exception):
 
 
 def _conn() -> psycopg2.extensions.connection:
-    c = psycopg2.connect(settings.database_url.replace("postgresql+asyncpg://", "postgresql://", 1))
+    """`app.db.sync_dsn()` (A-C8 (6)/m5): the same DSN normalisation `app.db.sync_conn()` and
+    `scripts/census_load.py::normalize_dsn` already own -- this used to inline its own
+    `.replace("postgresql+asyncpg://", "postgresql://", 1)`, byte-for-byte the same rule
+    duplicated a third place."""
+    c = psycopg2.connect(sync_dsn())
     c.autocommit = True
     return c
 
@@ -77,7 +93,7 @@ def _resolve_contact() -> str:
 
 
 def _resolve_key_and_contact() -> tuple[str, str]:
-    """Both settings, for the four tasks that build a `CensusClient`. Two plain `str` results
+    """Both settings, for the five tasks that build a `CensusClient`. Two plain `str` results
     (never `str | None`) is the point: a boolean-flagged `_resolve(need_key=...)` returning
     `tuple[str | None, str]` forced every caller that passes `need_key=True` to convince mypy
     --strict the key it just got can never be `None` -- an `assert` repeated at every call site
@@ -89,6 +105,14 @@ def _resolve_key_and_contact() -> tuple[str, str]:
     except SystemExit:
         raise _NotReady("CENSUS_API_KEY is not set; refused before any Census request") from None
     return key, contact
+
+
+def _factory(key: str, contact: str, archive: ObjectStore | None) -> Callable[[Dataset], CensusClient]:
+    """One client factory, shared by every load task (A-C8 (7)/m6) -- the first cut of this
+    module wrote the same three-line closure four times over."""
+    def factory(d: Dataset) -> CensusClient:
+        return CensusClient(key, d, archive, version=VERSION, contact=contact)
+    return factory
 
 
 def _refuse(conn: psycopg2.extensions.connection, dataset_key: str, vintage: str, reason: str) -> dict[str, object]:
@@ -103,6 +127,11 @@ def _refuse(conn: psycopg2.extensions.connection, dataset_key: str, vintage: str
 def load_tiger(vintage: str = "2023") -> dict[str, object]:
     conn = _conn()
     try:
+        ds = load_registry(conn)["tiger_cb"]
+        if not ds.cleared:
+            # A-C8 (9)/i2: tiger.load_boundaries has no internal cleared check at all (unlike
+            # every other loader in this package) -- the task adds one, like its siblings.
+            return _refuse(conn, "tiger_cb", vintage, f"tiger_cb is {ds.license_status}; loads are refused (spec §1 licensing gate)")
         try:
             contact = _resolve_contact()
         except _NotReady as exc:
@@ -126,11 +155,7 @@ def load_acs(dataset_key: str = "acs5") -> dict[str, object]:
             key, contact = _resolve_key_and_contact()
         except _NotReady as exc:
             return _refuse(conn, dataset_key, ds.vintage, str(exc))
-        archive = ObjectStore.from_settings(settings)
-
-        def factory(d: Dataset) -> CensusClient:
-            return CensusClient(key, d, archive, version=VERSION, contact=contact)
-
+        factory = _factory(key, contact, ObjectStore.from_settings(settings))
         return {"dataset": dataset_key, "rows": acs.load(conn, factory, dataset_key, _states(conn))}
     finally:
         conn.close()
@@ -144,12 +169,25 @@ def load_cbp() -> dict[str, object]:
             key, contact = _resolve_key_and_contact()
         except _NotReady as exc:
             return _refuse(conn, "cbp", ds.vintage, str(exc))
-        archive = ObjectStore.from_settings(settings)
-
-        def factory(d: Dataset) -> CensusClient:
-            return CensusClient(key, d, archive, version=VERSION, contact=contact)
-
+        factory = _factory(key, contact, ObjectStore.from_settings(settings))
         return {"rows": cbp.load(conn, factory, _states(conn))}
+    finally:
+        conn.close()
+
+
+def load_zbp() -> dict[str, object]:
+    """A-C8 (8)/i1: parity with `cbp`/`bds` -- manual trigger only, no beat entry (ZBP is annual
+    and John-approved per load, `A-C8 (8)`); `zbp.load` gates on `cleared` internally, before its
+    first request, exactly as `cbp.load`/`bds.load`/`acs.load` already do."""
+    conn = _conn()
+    try:
+        ds = load_registry(conn)["zbp"]
+        try:
+            key, contact = _resolve_key_and_contact()
+        except _NotReady as exc:
+            return _refuse(conn, "zbp", ds.vintage, str(exc))
+        factory = _factory(key, contact, ObjectStore.from_settings(settings))
+        return {"rows": zbp.load(conn, factory, _states(conn))}
     finally:
         conn.close()
 
@@ -158,15 +196,19 @@ def load_qwi(year: int | None = None, quarter: int | None = None) -> dict[str, o
     conn = _conn()
     try:
         ds = load_registry(conn)["qwi"]
+        if not ds.cleared:
+            # A-C8 (1)/M1: `qwi.load`'s own `cleared` check runs only AFTER `latest_available`
+            # has already probed Census (up to twelve requests) and archived every successful
+            # body -- exactly the hazard `scripts/census_load.py::cmd_qwi` already guards against.
+            # Checked here, before the resolve branch, so a blocked dataset makes no request at
+            # all -- reached precisely when `year`/`quarter` are omitted, which is exactly the
+            # shape the `qwi-quarterly` beat entry publishes.
+            return _refuse(conn, "qwi", ds.vintage, f"qwi is {ds.license_status}; loads are refused (spec §1 licensing gate)")
         try:
             key, contact = _resolve_key_and_contact()
         except _NotReady as exc:
             return _refuse(conn, "qwi", ds.vintage, str(exc))
-        archive = ObjectStore.from_settings(settings)
-
-        def factory(d: Dataset) -> CensusClient:
-            return CensusClient(key, d, archive, version=VERSION, contact=contact)
-
+        factory = _factory(key, contact, ObjectStore.from_settings(settings))
         states = _states(conn)
         if year is None or quarter is None:
             now = datetime.now(UTC)
@@ -186,11 +228,7 @@ def load_bds(year: int) -> dict[str, object]:
             key, contact = _resolve_key_and_contact()
         except _NotReady as exc:
             return _refuse(conn, "bds", str(year), str(exc))
-        archive = ObjectStore.from_settings(settings)
-
-        def factory(d: Dataset) -> CensusClient:
-            return CensusClient(key, d, archive, version=VERSION, contact=contact)
-
+        factory = _factory(key, contact, ObjectStore.from_settings(settings))
         return {"year": year, "rows": bds.load(conn, factory, _states(conn), year=year)}
     finally:
         conn.close()
@@ -221,6 +259,7 @@ def license_audit() -> dict[str, object]:
 load_tiger_task = celery_app.task(name="census.load_tiger")(load_tiger)
 load_acs_task = celery_app.task(name="census.load_acs")(load_acs)
 load_cbp_task = celery_app.task(name="census.load_cbp")(load_cbp)
+load_zbp_task = celery_app.task(name="census.load_zbp")(load_zbp)
 load_qwi_task = celery_app.task(name="census.load_qwi")(load_qwi)
 load_bds_task = celery_app.task(name="census.load_bds")(load_bds)
 license_audit_task = celery_app.task(name="census.license_audit")(license_audit)

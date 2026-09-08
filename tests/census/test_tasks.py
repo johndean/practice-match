@@ -16,6 +16,7 @@ the `Celery(...)` constructor only makes `celery worker`/`celery beat` import it
 from __future__ import annotations
 
 import httpx
+import psycopg2
 import pytest
 
 from app.census import acs as census_acs
@@ -24,6 +25,7 @@ from app.census import cbp as census_cbp
 from app.census import license as census_license
 from app.census import qwi as census_qwi
 from app.census import tiger as census_tiger
+from app.census import zbp as census_zbp
 from app.census.registry import load as load_registry
 from app.tasks import census as CT
 from app.tasks.celery_app import celery_app
@@ -32,16 +34,17 @@ CONTACT = "tech@vinfoundation.example.org"
 
 
 def test_census_tasks_are_registered():
-    for name in ["census.load_tiger", "census.load_acs", "census.load_cbp", "census.load_qwi", "census.load_bds", "census.license_audit"]:
+    for name in ["census.load_tiger", "census.load_acs", "census.load_cbp", "census.load_zbp",
+                 "census.load_qwi", "census.load_bds", "census.license_audit"]:
         assert name in celery_app.tasks, name
 
 
 def test_census_task_functions_are_registered_under_their_stable_names():
     assert (
-        CT.load_tiger_task.name, CT.load_acs_task.name, CT.load_cbp_task.name,
+        CT.load_tiger_task.name, CT.load_acs_task.name, CT.load_cbp_task.name, CT.load_zbp_task.name,
         CT.load_qwi_task.name, CT.load_bds_task.name, CT.license_audit_task.name,
     ) == (
-        "census.load_tiger", "census.load_acs", "census.load_cbp",
+        "census.load_tiger", "census.load_acs", "census.load_cbp", "census.load_zbp",
         "census.load_qwi", "census.load_bds", "census.license_audit",
     )
 
@@ -51,7 +54,12 @@ def test_beat_schedules_only_the_automatic_cadences():
     assert beat["qwi-quarterly"]["task"] == "census.load_qwi"
     assert beat["license-audit-quarterly"]["task"] == "census.license_audit"
     scheduled_tasks = {v["task"] for v in beat.values()}
-    assert "census.load_acs" not in scheduled_tasks and "census.load_cbp" not in scheduled_tasks  # manual approval (spec §9)
+    # manual approval (spec §9); census.load_zbp is a manual-trigger-only task too (A-C8 (8) / i1:
+    # ZBP is annual and John-approved per load, exactly like acs/cbp/bds -- no beat entry is due).
+    assert "census.load_acs" not in scheduled_tasks
+    assert "census.load_cbp" not in scheduled_tasks
+    assert "census.load_zbp" not in scheduled_tasks
+    assert "census.load_bds" not in scheduled_tasks
 
 
 def test_beat_merged_the_mail_pipelines_own_entries_survive():
@@ -131,6 +139,24 @@ def test_load_tiger_without_a_contact_records_a_failed_ingest_run_and_does_not_r
         cur.execute("SELECT status, vintage, error_detail FROM ingest_run WHERE dataset_key = 'tiger_cb' ORDER BY id DESC LIMIT 1")
         status, vintage, error = cur.fetchone()
     assert status == "failed" and vintage == "2023" and "CENSUS_CONTACT_EMAIL" in error
+
+
+def test_load_tiger_refuses_a_dataset_that_is_not_cleared(conn, monkeypatch):
+    """A-C8 (9) / i2: unlike acs/cbp/bds/qwi/zbp's own `load()` functions, `tiger.load_boundaries`
+    has no internal `cleared` check at all, so the task adds one -- exactly like its siblings."""
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET license_status = 'blocked' WHERE dataset_key = 'tiger_cb'")
+    monkeypatch.setattr(census_tiger, "load_boundaries", lambda *a, **kw: pytest.fail("tiger.load_boundaries must not run for a blocked dataset"))
+
+    result = CT.load_tiger()
+
+    assert result["dataset"] == "tiger_cb"
+    assert "blocked" in result["error"]
+    with conn.cursor() as cur:
+        cur.execute("SELECT status FROM ingest_run WHERE dataset_key = 'tiger_cb' ORDER BY id DESC LIMIT 1")
+        (status,) = cur.fetchone()
+    assert status == "failed"
 
 
 # ---- load_acs -----------------------------------------------------------------------------------
@@ -346,6 +372,68 @@ def test_load_qwi_without_a_key_records_a_failed_ingest_run_at_the_registrys_vin
     assert status == "failed" and vintage == "latest quarter"  # 017_census_registry.sql's seeded qwi vintage
 
 
+def test_load_qwi_refuses_a_blocked_dataset_before_probing_the_latest_quarter(conn, monkeypatch):
+    """A-C8 (1) / M1: `qwi.load`'s own `cleared` check runs only AFTER `latest_available` has
+    already probed Census up to twelve times and `CensusClient.fetch_table` has already archived
+    each successful body -- exactly `scripts/census_load.py::cmd_qwi`'s own documented hazard.
+    Called with year/quarter omitted (precisely the shape `qwi-quarterly`'s beat entry publishes)
+    so the resolve branch would otherwise run; `latest_available` and `load` both `pytest.fail` if
+    reached, proving neither a request nor an archive write happens."""
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET license_status = 'blocked' WHERE dataset_key = 'qwi'")
+    monkeypatch.setattr(census_qwi, "latest_available", lambda *a, **kw: pytest.fail("must not probe Census for a blocked dataset"))
+    monkeypatch.setattr(census_qwi, "load", lambda *a, **kw: pytest.fail("qwi.load must not run for a blocked dataset"))
+
+    result = CT.load_qwi()
+
+    assert result["dataset"] == "qwi"
+    assert "blocked" in result["error"]
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, vintage FROM ingest_run WHERE dataset_key = 'qwi' ORDER BY id DESC LIMIT 1")
+        status, vintage = cur.fetchone()
+    assert status == "failed" and vintage == "latest quarter"
+
+
+# ---- load_zbp -----------------------------------------------------------------------------------
+
+def test_load_zbp_builds_a_keyed_client_and_delegates_to_zbp_load(conn, monkeypatch):
+    """A-C8 (8) / i1: `census.load_zbp` exists for parity with its siblings -- manual trigger
+    only (`test_beat_schedules_only_the_automatic_cadences` pins that no beat entry names it)."""
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+    captured: dict = {}
+
+    def fake(conn, factory, states):
+        captured["states"] = list(states)
+        ds = load_registry(conn)["zbp"]
+        client = factory(ds)
+        captured["client"] = (client.api_key, client.contact)
+        client.close()
+        return 12
+    monkeypatch.setattr(census_zbp, "load", fake)
+
+    result = CT.load_zbp()
+
+    assert result == {"rows": 12}
+    assert captured["client"] == ("the-key", CONTACT)
+
+
+def test_load_zbp_without_a_key_records_a_failed_ingest_run(conn, monkeypatch):
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+    monkeypatch.delenv("CENSUS_API_KEY", raising=False)
+    monkeypatch.setattr(census_zbp, "load", lambda *a, **kw: pytest.fail("zbp.load must not run without a key"))
+
+    result = CT.load_zbp()
+
+    assert result["dataset"] == "zbp" and "CENSUS_API_KEY" in result["error"]
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, vintage FROM ingest_run WHERE dataset_key = 'zbp' ORDER BY id DESC LIMIT 1")
+        status, vintage = cur.fetchone()
+    assert status == "failed" and vintage == "2022"
+
+
 # ---- license_audit ------------------------------------------------------------------------------
 
 def test_license_audit_builds_a_client_and_delegates_to_license_audit(conn, monkeypatch):
@@ -384,3 +472,26 @@ def test_license_audit_without_a_contact_does_not_crash_and_never_calls_audit(co
 
     assert result["checked"] == 0 and result["drift"] == []
     assert "CENSUS_CONTACT_EMAIL" in result["error"]
+
+
+# ---- _conn (A-C8 m5) ------------------------------------------------------------------------------
+
+def test_conn_uses_the_canonical_dsn_helper_not_a_reimplementation(monkeypatch):
+    """A-C8 (6) / m5: `_conn()` used to inline `.replace("postgresql+asyncpg://",
+    "postgresql://", 1)` -- byte-for-byte what `app.db.sync_dsn()` already is. Proven here by
+    patching the name `census.py` actually calls (`from app.db import sync_dsn` binds it into
+    this module's own namespace, so the fake must go there, not onto `app.db` itself) and
+    watching `_conn()` call through it (a deliberately bad, fast-failing DSN -- a closed local
+    port -- so this stays a unit test, not a network probe)."""
+    calls: list = []
+
+    def fake_sync_dsn(*args, **kwargs):
+        calls.append((args, kwargs))
+        return "postgresql://127.0.0.1:1/nonexistent"
+
+    monkeypatch.setattr(CT, "sync_dsn", fake_sync_dsn)
+
+    with pytest.raises(psycopg2.OperationalError):
+        CT._conn()
+
+    assert calls == [((), {})]
