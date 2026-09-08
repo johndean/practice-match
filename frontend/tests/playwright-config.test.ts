@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 const CONFIG = join(fileURLToPath(new URL('.', import.meta.url)), 'playwright.config.ts');
 const SIGNIN_FORM = join(fileURLToPath(new URL('.', import.meta.url)), 'signin-form.spec.ts');
+const SMOKE = join(fileURLToPath(new URL('.', import.meta.url)), 'smoke.spec.ts');
 const FLAG = '--disable-partial-raster';
 
 // ---------------------------------------------------------------------------------------
@@ -330,5 +331,55 @@ describe('playwright.config.ts mints one run id per run (round 3, ruling 2)', ()
     // things it is otherwise pinned for are asserted here as well, side by side with the change.
     expect(project('reference')).toContain('capture-determinism');
     expect(withoutComments(readFileSync(CONFIG, 'utf8'))).toContain(FLAG);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Controller ruling, 2026-09-08. `smoke.spec.ts`'s "first map paint within budget" test hard-coded
+// `toBeLessThanOrEqual(1500)` — a LOCAL budget — and asserted it against a remote target too: the
+// suite ran twice against QA (PW_APP_URL=https://qa.foundation.vin, from Indonesia to a US region)
+// and this one test failed both times at 1842ms while every other test passed. The literal is
+// replaced by `firstMapPaintBudgetMs(process.env)` (harness.ts), which returns 1500 locally and
+// 3000 against a remote target. Pinned here, in this file's source-text-pin style, because a later
+// "simplify this" edit could reintroduce the bare literal with nothing else failing.
+// ---------------------------------------------------------------------------------------
+/**
+ * The source of exactly one top-level `test(...)` block in `smoke.spec.ts` — from its own
+ * `test('<name>'` up to (but not including) the next top-level test, which the file indents at
+ * exactly two spaces (`\n  test(`). Scoped rather than whole-file: `smoke.spec.ts` has a SECOND,
+ * unrelated `toBeLessThanOrEqual(1500)` ("a second pin tap repaints the map within budget", an
+ * in-browser redraw budget the 2026-09-08 ruling never measured or touched), so a whole-file
+ * search for the literal would force that unrelated test to change too.
+ */
+function testBlock(spec: string, name: string): string {
+  const needle = `test('${name}'`;
+  const start = spec.indexOf(needle);
+  if (start === -1) throw new Error(`no test named '${name}' found in smoke.spec.ts`);
+  const nextTestAt = spec.indexOf('\n  test(', start + needle.length);
+  return spec.slice(start, nextTestAt === -1 ? spec.length : nextTestAt);
+}
+
+describe('smoke.spec.ts measures the first map paint against firstMapPaintBudgetMs, not a bare literal (controller ruling 2026-09-08)', () => {
+  const FIRST_PAINT_TEST = 'first map paint within budget';
+
+  it('no longer hard-codes the local-only 1500ms budget on that one test', () => {
+    const block = testBlock(withoutComments(readFileSync(SMOKE, 'utf8')), FIRST_PAINT_TEST);
+    expect(
+      block,
+      `smoke.spec.ts's '${FIRST_PAINT_TEST}' test still asserts toBeLessThanOrEqual(1500) ` +
+      'directly — that budget only holds locally; against a remote target (PW_APP_URL set) the ' +
+      'network alone measured 1842ms from Bali to a US region on 2026-09-08, so the bare literal ' +
+      'fails a passing remote run.'
+    ).not.toContain('toBeLessThanOrEqual(1500)');
+  });
+
+  it('calls firstMapPaintBudgetMs( on that test, to pick the budget for whichever target is under test', () => {
+    const block = testBlock(withoutComments(readFileSync(SMOKE, 'utf8')), FIRST_PAINT_TEST);
+    expect(
+      block,
+      `smoke.spec.ts's '${FIRST_PAINT_TEST}' test no longer calls firstMapPaintBudgetMs( — it ` +
+      'must use the exported helper (harness.ts) so the budget is 1500ms locally and 3000ms ' +
+      'against a remote target, instead of a single hard-coded number.'
+    ).toContain('firstMapPaintBudgetMs(');
   });
 });

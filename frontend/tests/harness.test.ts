@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
+import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
 import type { Page } from '@playwright/test';
 import { resolveTargets } from './targets';
 
@@ -225,6 +225,28 @@ describe('appOrigin (A-I7.2)', () => {
   it('honours PW_APP_PORT, exactly as playwright.config.ts does', () => {
     expect(appOrigin({ PW_APP_PORT: '4999' })).toBe('http://localhost:4999');
     expect(appOrigin({ PW_APP_PORT: 'not-a-port' })).toBe('http://localhost:5173');
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Controller ruling, 2026-09-08. `smoke.spec.ts`'s "first map paint within budget" test hard-coded
+// 1500ms — a LOCAL budget (the app served from localhost) — and asserted it against a REMOTE
+// target too. The suite ran twice against QA (PW_APP_URL=https://qa.foundation.vin, from Indonesia
+// to a US region) on 2026-09-08 and this one test failed both times at 1842ms while every other
+// test passed: the number was measuring the network, not the app. The ruling is to keep measuring
+// against remote targets with an honest, documented remote budget rather than skip the test —
+// `firstMapPaintBudgetMs` is that budget, selected by whether `PW_APP_URL` is set.
+describe('firstMapPaintBudgetMs (controller ruling 2026-09-08 — the QA proof measured the network, not the app)', () => {
+  it('is 1500ms locally, when PW_APP_URL is unset', () => {
+    expect(firstMapPaintBudgetMs({})).toBe(1500);
+  });
+
+  it('is 3000ms against a remote target, when PW_APP_URL is set', () => {
+    expect(firstMapPaintBudgetMs({ PW_APP_URL: 'https://qa.foundation.vin' })).toBe(3000);
+  });
+
+  it('treats an empty PW_APP_URL as unset — the local budget applies', () => {
+    expect(firstMapPaintBudgetMs({ PW_APP_URL: '' })).toBe(1500);
   });
 });
 

@@ -1,5 +1,5 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
-import { appOrigin, booted, click, personaCredentials, personaSignIn, personaSignOut, prepare, reach, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
+import { appOrigin, booted, click, firstMapPaintBudgetMs, personaCredentials, personaSignIn, personaSignOut, prepare, reach, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
 import { SCREENS } from './screens';
 
 // `/reset?token=abc` (review fix round 1, Minor 8): the bare five paths above prove the routes
@@ -144,6 +144,11 @@ test.describe('smoke', () => {
   // arrives with a cookie. The `?tab=market` is a legacy no-op kept here deliberately: V3's
   // Browse always shows market data. `[data-map]` is set by LeafletMapEngine.mount() once the
   // map is on the page.
+  //
+  // Controller ruling 2026-09-08: `firstMapPaintBudgetMs` (harness.ts) is 1500ms against a local
+  // target and 3000ms against a remote one (`PW_APP_URL` set) — a bare 1500ms hard-coded here
+  // measures the network on a remote run, not the app: the same test failed twice against QA at
+  // 1842ms (Indonesia to a US region) while everything else passed.
   test('first map paint within budget', async ({ page }) => {
     await prepare(page);
     await signInAs(page, 'design');                     // the cookie only; the clock starts below
@@ -151,7 +156,9 @@ test.describe('smoke', () => {
     await page.goto('/browse?tab=market');
     await page.locator('[data-map]').waitFor();
     const elapsed = Date.now() - started;
-    expect(elapsed, `first map paint took ${elapsed}ms`).toBeLessThanOrEqual(1500);
+    const budget = firstMapPaintBudgetMs();
+    const target = process.env.PW_APP_URL ? 'remote' : 'local';
+    expect(elapsed, `first map paint took ${elapsed}ms, over the ${target} budget of ${budget}ms`).toBeLessThanOrEqual(budget);
   });
 
   // A4 (spec D21, John: "if user clicks + Compare that action closes the 'What this means'

@@ -376,3 +376,6 @@ only config in the repo), with `PW_APP_URL` and the five variables set ahead of 
 * Only **one remote run at a time**: the fixture restoration is unconditional and the throwaway
   `e2e-…@example.org` sweep is global, so a second run started before the first finishes races the
   same fixtures and addresses.
+* The smoke suite's first-map-paint gate budgets 3 s against a remote target (1.5 s locally,
+  `frontend/tests/harness.ts`'s `firstMapPaintBudgetMs`) — a run from far from the target region
+  carries real network round trips and tile fetches the local budget never measured.
