@@ -299,6 +299,51 @@ describe('account-flows.spec.ts — the live account flows (Task S5)', () => {
 });
 
 // ---------------------------------------------------------------------------------------
+// A-L6.2 (2) — the two oracles are the OPPOSITE case, and for the opposite reason.
+//
+// `visual.spec.ts` and `dom.spec.ts` compare the app against baselines generated from the
+// design file, and since Task L6 the app reads its practices from `/api/listings`. Locally the
+// D6 stub answers with the design's own fixtures, so the comparison still means what it always
+// meant; against a remote target the stub is disarmed by design (`listingsStubUrl`) and QA is
+// seeded with eighteen different hospitals, so every Browse, detail, mobile and market state
+// differs BY CONSTRUCTION. Left running, the operator following RUNBOOK-identity §12 gets a wall
+// of red with no way to tell a regression from the expected data change.
+// ---------------------------------------------------------------------------------------
+describe('the oracles skip a remote target (A-L6.2 (2))', () => {
+  const REASON = "the oracles compare against the design's fixtures; a seeded target differs by construction — A-L6.2";
+  const ORACLES = ['visual.spec.ts', 'dom.spec.ts'];
+
+  for (const name of ORACLES) {
+    it(`${name} skips itself when PW_APP_URL is set, with the recorded reason`, () => {
+      const spec = withoutComments(readFileSync(join(fileURLToPath(new URL('.', import.meta.url)), name), 'utf8'));
+      expect(spec, `${name} has no PW_APP_URL skip`).toMatch(/test\.skip\([^)]*PW_APP_URL/);
+      expect(spec, `${name}'s skip does not carry the ruled reason`).toContain(REASON);
+      // At the top level, not inside one `test()`: it has to take the whole file out, and it has
+      // to be evaluated once rather than per state.
+      const firstDescribe = spec.indexOf('test.describe(');
+      expect(spec.search(/test\.skip\([^)]*PW_APP_URL/)).toBeLessThan(firstDescribe === -1 ? spec.length : firstDescribe);
+    });
+  }
+
+  // The other half of the same rule: these two are what the remote run IS, so nothing may take
+  // the whole FILE out. An individual case may still skip itself — smoke.spec.ts:563 does, for
+  // the one assertion that proves Vite's /api proxy, which a live deployment does not have.
+  it('smoke.spec.ts and signin-form.spec.ts are never skipped whole on a remote run', () => {
+    for (const name of ['smoke.spec.ts', 'signin-form.spec.ts']) {
+      const spec = withoutComments(readFileSync(join(fileURLToPath(new URL('.', import.meta.url)), name), 'utf8'));
+      const at = spec.search(/test\.skip\([^)]*PW_APP_URL/);
+      const firstDescribe = spec.indexOf('test.describe(');
+      expect(at === -1 || at > firstDescribe, `${name} skips the WHOLE file on a remote run; only an individual case may`).toBe(true);
+    }
+  });
+
+  it('the runbook says the remote run is smoke, sign-in and account flows from here', () => {
+    const runbook = readFileSync(join(fileURLToPath(new URL('.', import.meta.url)), '..', '..', 'docs', 'RUNBOOK-identity.md'), 'utf8');
+    expect(runbook, 'RUNBOOK-identity.md does not record the A-L6.2 scope of the remote parity run').toContain('A-L6.2');
+  });
+});
+
+// ---------------------------------------------------------------------------------------
 // Round 3, ruling 2: the run id comes from the RUNNER, so a restarted worker can still read the
 // memo file the run wrote. `globalSetup` is the only place a value can be minted once per run and
 // inherited by every worker; `tests/global-setup.ts` mints it and clears a foreign run's file.

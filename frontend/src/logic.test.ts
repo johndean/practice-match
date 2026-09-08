@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Component, P } from './logic.js';
 
 let c: any;
@@ -1215,38 +1215,43 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
     name: 'ABC Animal Hospital', photos: ['/api/listings/seed-1/photos/1', '/api/listings/seed-1/photos/2']
   };
 
+  // M4 (review round 1): the push and the pop are STRUCTURAL, so the shared module-level `P` is
+  // restored even if an assertion throws — a `finally` inside one case leaves the suite
+  // order-sensitive the moment anything moves outside its `try`.
+  beforeEach(() => { (P as unknown as unknown[]).push(NULL_FIGURES); });
+  afterEach(() => {
+    const p = P as unknown as Array<{ id: string }>;
+    const at = p.findIndex((x) => x.id === 'seed-1');
+    if (at > -1) p.splice(at, 1);
+  });
+
   it('every screen renders for a listing whose four community figures are null (A12.6/A12.7)', () => {
-    (P as unknown as unknown[]).push(NULL_FIGURES);
-    try {
-      const screens: Array<Record<string, unknown>> = [
-        { auth: false, screen: 'gate', gate: 'signin' },
-        { auth: true, screen: 'browse' },
-        { auth: true, screen: 'browse', viewport: 'mobile', mobileTab: 'list' },
-        { auth: true, screen: 'browse', viewport: 'mobile', mobileTab: 'map' },
-        { auth: true, screen: 'requests' },
-        { auth: true, screen: 'seller' },
-        { auth: true, screen: 'admin' },
-        { auth: true, screen: 'detail' }
-      ];
-      for (const patch of screens) {
-        const c2: any = new Component({});
-        c2.setState({ ...patch, detailId: 'seed-1' });
-        expect(() => c2.renderVals(), JSON.stringify(patch)).not.toThrow();
-      }
-      // …and the Community Context card is the design's own EMPTY state: the labels and the
-      // sub-lines stay, the four values are blank. Vue renders `null` as the empty string, so
-      // `pop` and `income` needed no guard; the two that called `.replace` did.
-      const c3: any = new Component({});
-      c3.setState({ auth: true, screen: 'detail', detailId: 'seed-1' });
-      expect(c3.renderVals().d.demo.map((f: any) => [f.k, f.v, f.sub])).toEqual([
-        ['Population', null, 'Community, 2023'],
-        ['Growth', '', 'Since 2015'],
-        ['Median income', null, 'Household, 2023'],
-        ['Households', '', 'In the community']
-      ]);
-    } finally {
-      (P as unknown as unknown[]).pop();
+    const screens: Array<Record<string, unknown>> = [
+      { auth: false, screen: 'gate', gate: 'signin' },
+      { auth: true, screen: 'browse' },
+      { auth: true, screen: 'browse', viewport: 'mobile', mobileTab: 'list' },
+      { auth: true, screen: 'browse', viewport: 'mobile', mobileTab: 'map' },
+      { auth: true, screen: 'requests' },
+      { auth: true, screen: 'seller' },
+      { auth: true, screen: 'admin' },
+      { auth: true, screen: 'detail' }
+    ];
+    for (const patch of screens) {
+      const c2: any = new Component({});
+      c2.setState({ ...patch, detailId: 'seed-1' });
+      expect(() => c2.renderVals(), JSON.stringify(patch)).not.toThrow();
     }
+    // …and the Community Context card is the design's own EMPTY state: the labels and the
+    // sub-lines stay, the four values are blank. Vue renders `null` as the empty string, so
+    // `pop` and `income` needed no guard; the two that called `.replace` did.
+    const c3: any = new Component({});
+    c3.setState({ auth: true, screen: 'detail', detailId: 'seed-1' });
+    expect(c3.renderVals().d.demo.map((f: any) => [f.k, f.v, f.sub])).toEqual([
+      ['Population', null, 'Community, 2023'],
+      ['Growth', '', 'Since 2015'],
+      ['Median income', null, 'Household, 2023'],
+      ['Households', '', 'In the community']
+    ]);
   });
 
   it('a design fixture practice still renders its community figures exactly as before (A12.6/A12.7)', () => {

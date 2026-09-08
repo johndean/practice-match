@@ -338,10 +338,19 @@ PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py
 
 ## 12. QA parity run
 
-Any Playwright invocation pointed at a live `PW_APP_URL` — visual, DOM, smoke, the account flows,
+Any Playwright invocation pointed at a live `PW_APP_URL` — smoke, sign-in, the account flows,
 whichever project — reseeds QA's fixtures automatically, before the first test AND after the last
 (`frontend/tests/global-setup.ts` / `global-teardown.ts`, Task S7): the run needs no manual seed
 step and cannot leave QA's fixtures mutated for whoever opens it next.
+
+**The remote run is smoke, sign-in and the account flows from here (A-L6.2).** `visual.spec.ts`
+and `dom.spec.ts` skip themselves whenever `PW_APP_URL` is set, because they compare the app
+against baselines generated from the design file and QA now serves its practices from the seeded
+`listing` table — eighteen real hospitals where the design has twenty-one fixtures — so every
+Browse, detail, mobile and market state would differ by construction rather than by regression.
+Those two oracles are proved locally instead, where `prepare()` answers `/api/listings` with the
+design's own fixtures (spec D6); the command below is unchanged and simply runs the specs that
+can still mean something remotely.
 
 ```bash
 railway status                                                                       # must print: Project: Practice Match

@@ -16,7 +16,7 @@
 // "the design has no name for this practice", and it is the only value that keeps the gates
 // comparing like with like. `photos: []` is the same statement about the photo slots — and there
 // it IS exactly what the server sends for a listing with no photographs.
-import { MARKETS, P } from '../src/logic.js';
+import { P } from '../src/logic.js';
 
 /**
  * One design fixture in the shape `GET /api/listings` returns.
@@ -38,7 +38,7 @@ export function toApiShape(p, i) {
     area: p.area,
     type: p.type,
     city: p.area,
-    state: p.market.split(', ')[1],
+    state: (p.market || ', TX').split(', ')[1],
     street: null,
     zip: null,
     phone: null,
@@ -73,8 +73,3 @@ export function toApiShape(p, i) {
 export function designListingsBody() {
   return JSON.stringify({ items: P.map(toApiShape), next_cursor: null });
 }
-
-// `MARKETS` is imported for the round-trip's sake: `load.test.ts` reads it from `../logic.js`
-// directly, and nothing imports it from here — but the design's market table is half of what
-// this module is asserting the app reconstructs, and importing it keeps that visible.
-export const DESIGN_MARKETS = MARKETS;

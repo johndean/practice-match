@@ -1,5 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
+import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
+import { designListingsBody } from './design-listings.mjs';
+import { P } from '../src/logic.js';
 import type { Page } from '@playwright/test';
 import { resolveTargets } from './targets';
 
@@ -214,6 +216,46 @@ describe('forgetPersonaSession (A-I7.2, extended by A-I8.2)', () => {
 // `resolveTargets` for the `app` project's baseURL, and pinning the two together both ways is
 // what keeps the standalone request context (which has no project `use.baseURL`) pointed at the
 // server the browser is looking at.
+// ---------------------------------------------------------------------------------------
+// I4 (review round 1) — the one sanctioned stub in this suite, and its remote disarm.
+//
+// Spec D6 lets `prepare()` answer `/api/listings` with the DESIGN's own fixtures so the pixel
+// and DOM oracles keep comparing the app against the design. Two things a global constraint
+// rests on were previously enforced by an untested `if` and a comment: that the stub is NEVER
+// armed against a remote target, and that it answers the collection endpoint on the APP origin
+// and nothing else — not the photo route, not the reference server.
+// ---------------------------------------------------------------------------------------
+describe('the design-fixture listings stub (spec D6, review I4)', () => {
+  it('is disarmed for a remote target — there the real, seeded API answers', () => {
+    expect(listingsStubUrl({ PW_APP_URL: 'https://qa.foundation.vin' } as NodeJS.ProcessEnv)).toBeNull();
+    expect(listingsStubUrl({ PW_APP_URL: 'https://qa.foundation.vin', PW_APP_PORT: '5473' } as NodeJS.ProcessEnv)).toBeNull();
+  });
+
+  it('is the local app origin\'s collection endpoint otherwise, on the port the run uses', () => {
+    expect(listingsStubUrl({ PW_APP_PORT: '5473' } as NodeJS.ProcessEnv)).toBe('http://localhost:5473/api/listings');
+    expect(listingsStubUrl({} as NodeJS.ProcessEnv)).toBe('http://localhost:5173/api/listings');
+  });
+
+  it('matches the collection endpoint and its query, and nothing else', () => {
+    const base = 'http://localhost:5473/api/listings';
+    expect(matchesListings(base, base)).toBe(true);
+    expect(matchesListings(`${base}?limit=200`, base)).toBe(true);
+    expect(matchesListings(`${base}?limit=200&cursor=abc`, base)).toBe(true);
+    // The photo route is the real server's — an anonymised or unpublished listing's photographs
+    // are exactly what its guard exists for, and the design's fixtures request none.
+    expect(matchesListings(`${base}/abc/photos/1`, base)).toBe(false);
+    expect(matchesListings(`${base}x`, base)).toBe(false);
+    // The reference is a static prototype with no API at all; it keeps its fixture path.
+    expect(matchesListings('http://localhost:5474/api/listings', base)).toBe(false);
+  });
+
+  it('serves every design fixture as one complete page', () => {
+    const body = JSON.parse(designListingsBody()) as { items: unknown[]; next_cursor: string | null };
+    expect(body.items).toHaveLength((P as unknown as unknown[]).length);
+    expect(body.next_cursor, 'the stub is one page — a cursor would send load.ts round again').toBeNull();
+  });
+});
+
 describe('appOrigin (A-I7.2)', () => {
   const ports = { app: 5173, ref: 4174, cs: 4175, api: 8017 };
   it('is the app project\'s own baseURL, locally and against a live deployment', () => {

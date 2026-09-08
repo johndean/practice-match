@@ -116,13 +116,36 @@ export async function prepare(page: Page): Promise<void> {
   // NEVER against a remote target. With `PW_APP_URL` set — the QA parity run — the real, seeded
   // API answers: stubbing it there would hide the very thing that run exists to check.
   // ---------------------------------------------------------------------------------------
-  if (!process.env.PW_APP_URL) {
-    const listings = new URL('/api/listings', appOrigin()).href;
+  const listings = listingsStubUrl();
+  if (listings !== null) {
     await page.route(
-      (url) => url.href === listings || url.href.startsWith(`${listings}?`),
+      (url) => matchesListings(url.href, listings),
       (route) => route.fulfill({ status: 200, contentType: 'application/json', body: designListingsBody() })
     );
   }
+}
+
+/**
+ * Where the D6 stub answers, or `null` when it must not be armed at all.
+ *
+ * `null` for a REMOTE target (`PW_APP_URL`): there the real, seeded API answers, and stubbing it
+ * would hide the very thing that run exists to check. Otherwise the local app origin's
+ * collection endpoint — the same origin `appOrigin()` computes for every other decision here.
+ * Pinned in harness.test.ts (review I4): an untested `if` is all that stood between the stub and
+ * a QA parity run.
+ */
+export function listingsStubUrl(env: NodeJS.ProcessEnv = process.env): string | null {
+  return env.PW_APP_URL ? null : new URL('/api/listings', appOrigin(env)).href;
+}
+
+/**
+ * Whether `href` is the listings COLLECTION endpoint at `base` — the bare path or the same path
+ * with a query. Deliberately not a prefix match: `/api/listings/{id}/photos/{n}` is the real
+ * server's route (its guard is what keeps an unpublished listing's photographs private) and the
+ * design's fixtures request none.
+ */
+export function matchesListings(href: string, base: string): boolean {
+  return href === base || href.startsWith(`${base}?`);
 }
 
 /**
