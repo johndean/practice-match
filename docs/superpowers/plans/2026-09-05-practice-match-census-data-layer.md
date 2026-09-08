@@ -1616,6 +1616,10 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin fea
 
 ---
 
+**Controller amendment A-C5 (2026-09-09; after the fix round's re-review — ALL ADDRESSED, 2 new Minor, 1 process Major).** The committed `app/census/client.py` interface wins over every brief's illustrative code from A5 onward: `CensusClient(...)` requires `contact=` (from `require_contact()`, exit 2 at entry points); `build_url` is private; callers use the client as a context manager; archive writes go through the client (exists-then-put under `census/raw/…`). The two minors — `Retry-After` clamped to `[0, cap]`; the transport-error backoff sleeps outside the concurrency gate — land as A5's first commit. The full-gate line in the fix round's report shows one unrelated auth-timing flake under load (standalone green); the platform ledger carries the hardening item. **A5 record:** commits 3e048d4 (the two client minors) and ec06d29; the licensing-gate `PermissionError` in `acs.load` maps to exit 2 in `cmd_acs` (A6's first commit); the brief's estimate-variable count was seven, not eight — pinned.
+
+---
+
 ### Task A6: Industry loads — CBP (541940 + adjacent), ZBP (ZIP-level competition, D11), QWI (5419, 20 quarters), BDS (54)
 
 **Files:**
