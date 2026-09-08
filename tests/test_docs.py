@@ -1257,3 +1257,78 @@ def test_runbook_uses_the_singular_railway_variable_list_spelling():
         "'railway variable list' spelling"
     )
     assert "railway variables --service api --environment QA --json" not in runbook
+
+
+# --- Task L7: the seed-listings docs sweep (A-L7 item 6) -------------------------------------------
+
+
+def test_claude_md_launch_removal_records_the_listings_boot_swap():
+    """A-L7 docs sweep item 6. The launch-removal section's fixture-data sentence said the
+    fixtures stay "until the listings API replaces it (Seed Listings plan, D6)" while D6 was still
+    future work; Task L6 landed the swap (`frontend/src/main.ts` reads the eighteen seeded
+    listings through `frontend/src/listings/load.ts` before first paint and installs them into the
+    prototype's own `P`/`MARKETS` arrays), so the sentence has to say what actually happens now —
+    the API replaces `P` and `MARKETS` at boot, and the fixture arrays stay in `logic.js` only as
+    the D6 stub's source for the pixel/DOM gates."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    section = claude.split("## Launch-removal list")[1]
+    assert "until the listings API replaces it (Seed Listings plan, D6)" not in section, (
+        "CLAUDE.md still states the pre-L6 future tense for the listings API swap"
+    )
+    assert "the API replaces `P` and `MARKETS` at boot" in section
+    assert "`frontend/src/main.ts`" in section and "`frontend/src/listings/load.ts`" in section
+    assert "the D6 stub's source for the gates" in section
+    # ...and the files really do that, so the sentence is not merely plausible prose.
+    main_ts = (ROOT / "frontend" / "src" / "main.ts").read_text()
+    assert "loadListings" in main_ts and "./listings/load" in main_ts
+
+
+def test_claude_md_layout_line_names_the_seed_assets_and_scripts():
+    """A-L7 docs sweep item 6. The Seed Listings sub-project added `seeds/` (the demo hospital
+    data and photographs) and two scripts the Layout line never mentioned, and `scripts/start.sh`
+    grew a fourth role (`seed`, Task L4) the line still called three roles."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    layout = next((line for line in claude.splitlines() if line.startswith("`frontend/` Vue app")), None)
+    assert layout is not None, "CLAUDE.md's Layout line is missing or no longer starts with `frontend/` Vue app"
+    assert "`seeds/`" in layout, "CLAUDE.md's Layout line does not name seeds/"
+    assert "`seed_listings.py`" in layout
+    assert "`prepare_photos.py`" in layout
+    assert "roles api|worker|migrate|seed" in layout, (
+        "CLAUDE.md's Layout line still calls start.sh's roles api|worker|migrate"
+    )
+    # ...and that really is what start.sh accepts, not merely what the doc claims.
+    start_sh = (ROOT / "scripts" / "start.sh").read_text()
+    assert "expected api | worker | migrate | seed" in start_sh
+
+
+def test_claude_md_common_operations_includes_the_seed_command():
+    """A-L7 docs sweep item 6. CLAUDE.md's "Common operations" is the block an operator copies for
+    a day's work, and it never named the seeder Task L4 added. It gains the one seed command
+    DEPLOY.md documents as the headline (the plain import, not `--reset` — DEPLOY.md's M3
+    ruling), with a pointer to the DEPLOY.md section that has the rest."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    ops = claude.split("## Common operations")[1]
+    assert re.search(r"^python scripts/seed_listings\.py\b", ops, re.MULTILINE), (
+        "CLAUDE.md's Common operations block does not carry the plain `python scripts/seed_listings.py` line"
+    )
+    assert "seed_listings.py --reset" not in ops, (
+        "CLAUDE.md's Common operations should name the plain headline import, not --reset (DEPLOY.md's M3 ruling)"
+    )
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    assert "## Seeding the demo hospitals (QA)" in deploy
+    assert "Seeding the demo hospitals (QA)" in ops, "CLAUDE.md's seed line should point at DEPLOY.md's section"
+
+
+def test_deploy_md_exit_codes_match_seed_listings_returns():
+    """A-L7 docs sweep item 6. DEPLOY.md's exit-code list is prose, hand-transcribed from
+    `scripts/seed_listings.py`'s actual `return` statements; if a future edit added or removed a
+    code there without updating the runbook, an operator would diagnose a container by the wrong
+    document. Extracted from the script rather than hard-coded, so the two cannot drift apart
+    silently."""
+    seed = (ROOT / "scripts" / "seed_listings.py").read_text()
+    codes = sorted({int(n) for n in re.findall(r"^\s*return (\d+)\b", seed, re.MULTILINE)})
+    assert codes == [0, 2, 3, 4, 5], f"scripts/seed_listings.py's return codes moved: {codes}"
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    section = deploy.split("## Seeding the demo hospitals (QA)", 1)[1].split("\n## ", 1)[0]
+    for code in codes:
+        assert f"`{code}`" in section, f"DEPLOY.md's seeding section does not document exit code {code}"
