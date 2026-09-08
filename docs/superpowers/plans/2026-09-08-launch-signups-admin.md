@@ -869,7 +869,7 @@ def export_signups(request: Request, principal: Exporter,
     )
 ```
 
-In `app/main.py`, add the import beside the others and one `include_router` line **outside** the `site_mode == "app"` block, immediately before `app.include_router(interest_router)`:
+In `app/main.py`, add the import beside the others and one `include_router` line **outside** the `site_mode == "app"` block (superseded 2026-09-09 by A-I5d.5 — the line now sits inside that block), immediately before `app.include_router(interest_router)`:
 
 ```python
 from app.api.admin_signups import router as admin_signups_router

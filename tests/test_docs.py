@@ -1455,29 +1455,36 @@ def test_d_i5d_5_is_marked_superseded_by_a_i5d_5_without_being_deleted():
 
 
 def test_every_plan_line_describing_the_pre_a_i5d_5_mount_carries_the_superseded_marker():
-    """Review round 1, M-2: A-I5d.5's first pass marked only the D-I5d-5 table row (`:52`) — four
-    more lines still described the superseded mount as CURRENT fact: the file map (`:70`), Task
-    I5d.3's own Modify list (`:386`), Open Questions §2 (`:1574`) and the Self-review (`:1587`).
-    Task I5d.5's Admin tab is still unbuilt, so this plan is still live, and the file map/Modify
-    list are exactly what a later implementer reads to learn the shape of `app/main.py` — the
-    review's own failure scenario (a later task re-derives the include from one of these and puts
-    it back outside the block).
+    """Review round 1, M-2, then the coordinator's ruling on that round's concerns (zero gaps):
+    A-I5d.5's first pass marked only the D-I5d-5 table row (`:52`) — five more lines still
+    described the superseded mount as CURRENT fact: the file map (`:70`), Task I5d.3's own Modify
+    list (`:386`), Open Questions §2 (`:1574`), the Self-review (`:1587`), and the historical Step
+    3 code-instruction line (`:872`, "one `include_router` line **outside** the `site_mode ==
+    \"app\"` block"). Task I5d.5's Admin tab is still unbuilt, so this plan is still live, and the
+    file map/Modify list are exactly what a later implementer reads to learn the shape of
+    `app/main.py` — the review's own failure scenario (a later task re-derives the include from one
+    of these and puts it back outside the block).
 
     Generic sweep, same shape as `test_persona_password_railway_set_instructions_are_marked_
     superseded`: every line pairing the pre-ruling wording ("outside the `site_mode` block" /
     "mounts the router in both site modes") with a description of the mount must carry the
-    superseded marker on that same line — so a fifth such line added later fails here too, instead
-    of silently reproducing the stale claim. `count == 4` pins that the sweep is finding exactly
-    the four the review named, not zero (a typo in the pattern) and not more (the pattern
-    over-matching, e.g. the historical Step 3 code-instruction line at `:872`, "one `include_router`
-    line **outside** the `site_mode == \"app\"` block" — its bold `**outside**` is why the plain
-    "outside the `site_mode" substring correctly does not match it; that line is a frozen record of
-    what Task I5d.3 already did, not a fact a later task would re-derive from, and the review did
-    not name it)."""
+    superseded marker on that same line — so a sixth such line added later fails here too, instead
+    of silently reproducing the stale claim. The match is markdown-INSENSITIVE (matched against the
+    line with every `*` stripped first) per the coordinator's ruling: round 1's sweep matched plain
+    text only, so `:872`'s bold `**outside**` was exempt purely by formatting, which is exactly the
+    kind of gap a future reformat (or a fresh stale line typed with emphasis) could reproduce. With
+    `*` stripped, `:872` reads "...one `include_router` line outside the `site_mode == \"app\"`
+    block..." and matches like every other site. `count == 5` is now the TRUE count (round 1's `4`
+    undercounted by exactly the one line the markdown-sensitivity was hiding) — pinning it catches
+    both a broken pattern matching zero and any further over- or under-matching, without leaving a
+    formatting-shaped exemption for anything to hide behind."""
+    def _stripped(line: str) -> str:
+        return line.replace("*", "")
+
     plan = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-08-launch-signups-admin.md").read_text()
     matches = [line for line in plan.splitlines()
-               if "outside the `site_mode" in line or "mounts the router in both site modes" in line]
-    assert len(matches) == 4, f"expected exactly 4 matching lines, found {len(matches)}: {matches}"
+               if "outside the `site_mode" in _stripped(line) or "mounts the router in both site modes" in _stripped(line)]
+    assert len(matches) == 5, f"expected exactly 5 matching lines, found {len(matches)}: {matches}"
     for line in matches:
         assert "(superseded 2026-09-09 by A-I5d.5" in line, (
             f"line describes the pre-A-I5d.5 mount as current, without the superseded marker: {line!r}"

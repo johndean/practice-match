@@ -334,9 +334,10 @@ def launch_mail_approved(monkeypatch):
     False` and an unset `VIN_FOUNDATION_POSTAL_ADDRESS` — either one alone refuses a REAL send
     with its own 409 before the handler does anything else (a dry run is exempt from both, the same
     way it is exempt from `NOT_LAUNCHED` — D-I5d-5's "the count is readable, the message is not
-    sendable"). These tests exercise the queuing/stamping/audit behaviour with both of John's
-    approvals given; `test_the_launch_mail_refuses_a_real_send_while_*` below prove the refusal on
-    the untouched defaults.
+    sendable" — D-I5d-5, superseded by A-I5d.5: the dry run is exempt from the in-handler 409, but
+    the whole router is absent before the flip). These tests exercise the queuing/stamping/audit
+    behaviour with both of John's approvals given; `test_the_launch_mail_refuses_a_real_send_while_*`
+    below prove the refusal on the untouched defaults.
 
     A-I5d.4b, L6: the fixture value is unmistakably fake — the first string anyone would otherwise
     copy into the real Railway variable is not a plausible real address."""
