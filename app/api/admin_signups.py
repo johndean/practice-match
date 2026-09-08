@@ -252,7 +252,9 @@ class LaunchMailNotConfigured(AuthError):
     """A-I5d.4's second gate: the CAN-SPAM footer has no postal address to print.
     `settings.vin_foundation_postal_address` is never defaulted to a placeholder (John's ruling:
     "Do not invent the address"), so an empty setting refuses the send by naming the variable
-    rather than shipping a footer with a blank line."""
+    rather than shipping a footer with a blank line. A-I5d.4b, L2: whitespace-only counts as empty
+    too — `VIN_FOUNDATION_POSTAL_ADDRESS=" "` is truthy in Python, and without stripping it the
+    footer would render "VIN Foundation ·  ", the exact blank line this gate exists to prevent."""
 
     status = 409
     code = "LAUNCH_MAIL_NOT_CONFIGURED"
@@ -296,9 +298,14 @@ class LaunchMailIn(BaseModel):
 
 
 @router.post("/signups/launch-mail")
-async def launch_mail(body: LaunchMailIn, request: Request, principal: Notifier) -> dict[str, Any]:
+def launch_mail(body: LaunchMailIn, request: Request, principal: Notifier) -> dict[str, Any]:
     """Queues the launch announcement for every sign-up that has not had it — at most
-    `MAX_LAUNCH_BATCH` per call — or, on a dry run, counts them and writes nothing.
+    `MAX_LAUNCH_BATCH` per call — or, on a dry run, queues nothing and stamps nothing.
+
+    A plain `def` (A-I5d.4b, L4), so FastAPI runs it in the anyio threadpool like `export_signups`
+    beside it: up to 500 blocking inserts plus one `SELECT … FOR UPDATE` and one audit write is the
+    largest single-request body of work in the codebase, and an `async def` would run all of it on
+    the event loop, stalling every other request for as long as it takes.
 
     Exactly once, and it survives a crash: the `enqueue` and the `launch_mailed_at` stamp commit in
     the SAME transaction, so there is no state in which a row is marked mailed without its outbox
@@ -314,14 +321,15 @@ async def launch_mail(body: LaunchMailIn, request: Request, principal: Notifier)
     this order (A-I5d.4 adds the first two to D-I5d-5's `SiteNotLaunched`): the copy must be
     approved, the CAN-SPAM postal address must be configured, and the site must actually be open.
     A DRY RUN is exempt from all three — D-I5d-5's "the count is readable, the message is not
-    sendable" — because it writes nothing and talks to nobody.
+    sendable" — because it queues nothing, stamps nothing, and talks to nobody. It still writes one
+    audit row, `reason: dry_run`, the way rehearsing a mass mail deserves a trace.
 
     Nothing here talks to Resend. The Celery `mail.send` task drains the outbox, applies
     `EMAIL_ALLOWLIST` outside production and refuses suppressed addresses, all unchanged."""
     if not body.dry_run:
         if not TP.LAUNCH_COPY_APPROVED:
             raise LaunchCopyNotApproved
-        if not settings.vin_foundation_postal_address:
+        if not (settings.vin_foundation_postal_address or "").strip():
             raise LaunchMailNotConfigured
         if settings.site_mode != "app":
             raise SiteNotLaunched

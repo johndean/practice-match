@@ -242,6 +242,12 @@ TEMPLATES: dict[str, Template] = {
     # string in this module (`test_the_address_is_never_hard_coded_in_the_template` pins that) —
     # supplied by the caller from `settings.vin_foundation_postal_address`, which
     # `app.api.admin_signups` refuses to leave empty on a real send.
+    #
+    # A-I5d.4b, L3 (review, ruled): "on the Coming Soon page at foundation.vin" is a LITERAL
+    # hostname, unlike `{link}` (which is `settings.link_base_url` and so reads `qa.foundation.vin`
+    # on a QA rehearsal). Left as the literal by ruling — the sign-up this message answers really
+    # did happen on foundation.vin, in production, regardless of which host renders the mail that
+    # says so — queued for John to confirm alongside the rest of the copy.
     "launch_announcement": Template(
         subject="Practice Match is open",
         text="Practice Match is open.\n\n"

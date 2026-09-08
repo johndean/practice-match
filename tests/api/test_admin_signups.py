@@ -305,9 +305,12 @@ def launch_mail_approved(monkeypatch):
     way it is exempt from `NOT_LAUNCHED` — D-I5d-5's "the count is readable, the message is not
     sendable"). These tests exercise the queuing/stamping/audit behaviour with both of John's
     approvals given; `test_the_launch_mail_refuses_a_real_send_while_*` below prove the refusal on
-    the untouched defaults."""
+    the untouched defaults.
+
+    A-I5d.4b, L6: the fixture value is unmistakably fake — the first string anyone would otherwise
+    copy into the real Railway variable is not a plausible real address."""
     monkeypatch.setattr(TP, "LAUNCH_COPY_APPROVED", True)
-    monkeypatch.setattr(settings, "vin_foundation_postal_address", "123 Main St, Sacramento, CA 95814")
+    monkeypatch.setattr(settings, "vin_foundation_postal_address", "1 Test Street, Nowhere, XX 00000 (not a real address)")
 
 
 async def test_a_dry_run_counts_without_queuing_or_stamping_anything(client, conn, admin_headers):
@@ -473,11 +476,14 @@ async def test_the_launch_mail_refuses_a_real_send_while_the_copy_is_not_approve
     checked BEFORE the postal-address setting and before `SITE_MODE`, so this fires even though
     neither of those is configured either. The dry run answers regardless (D-I5d-5's "the count is
     readable, the message is not sendable")."""
-    seed(conn, 2)
+    ids = seed(conn, 2)
     r = await client.post(LAUNCH, json={"dry_run": False}, headers=admin_headers)
     assert r.status_code == 409 and r.json()["error"]["code"] == "LAUNCH_COPY_NOT_APPROVED"
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM email_outbox")
+        assert cur.fetchone()[0] == 0
+        # A-I5d.4b, L5(b): the refusal must leave the sign-ups exactly as unmailed as it found them.
+        cur.execute("SELECT count(*) FROM interest_signup WHERE id = ANY(%s) AND launch_mailed_at IS NOT NULL", (ids,))
         assert cur.fetchone()[0] == 0
     dry = await client.post(LAUNCH, json={"dry_run": True}, headers=admin_headers)
     assert dry.status_code == 200 and dry.json()["not_mailed"] == 2
@@ -486,12 +492,89 @@ async def test_the_launch_mail_refuses_a_real_send_while_the_copy_is_not_approve
 async def test_the_launch_mail_refuses_a_real_send_while_the_postal_address_is_unset(client, conn, admin_headers, monkeypatch):
     """The second of A-I5d.4's two gates: the copy is approved but nobody has set
     `VIN_FOUNDATION_POSTAL_ADDRESS`, so the CAN-SPAM footer would have nothing to print. Refused by
-    name rather than sent with a blank line — John's ruling: "Do not invent the address." """
+    name rather than sent with a blank line — John's ruling: "Do not invent the address."
+
+    A-I5d.4b, L5(a): `SITE_MODE` is ALSO coming-soon here, so a `409 NOT_LAUNCHED` would be just as
+    plausible a bug as the right answer — the address gate has to win to prove the ruled order
+    (copy, then address, then site mode) end to end, not just that copy comes before address."""
     monkeypatch.setattr(TP, "LAUNCH_COPY_APPROVED", True)
-    seed(conn, 2)
+    monkeypatch.setattr(settings, "site_mode", "coming_soon")
+    ids = seed(conn, 2)
     r = await client.post(LAUNCH, json={"dry_run": False}, headers=admin_headers)
     assert r.status_code == 409 and r.json()["error"]["code"] == "LAUNCH_MAIL_NOT_CONFIGURED"
     assert "VIN_FOUNDATION_POSTAL_ADDRESS" in r.json()["error"]["message"]
     with conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM email_outbox")
         assert cur.fetchone()[0] == 0
+        # A-I5d.4b, L5(b).
+        cur.execute("SELECT count(*) FROM interest_signup WHERE id = ANY(%s) AND launch_mailed_at IS NOT NULL", (ids,))
+        assert cur.fetchone()[0] == 0
+
+
+async def test_a_whitespace_only_postal_address_is_treated_as_unset(client, conn, admin_headers, monkeypatch):
+    """A-I5d.4b, L2. `VIN_FOUNDATION_POSTAL_ADDRESS=" "` is truthy in Python, so the naive
+    `if not settings.vin_foundation_postal_address:` check would let a real send through with a
+    footer reading "VIN Foundation ·  " — a blank address line, exactly what the gate exists to
+    prevent."""
+    monkeypatch.setattr(TP, "LAUNCH_COPY_APPROVED", True)
+    monkeypatch.setattr(settings, "vin_foundation_postal_address", "   ")
+    seed(conn, 1)
+    r = await client.post(LAUNCH, json={"dry_run": False}, headers=admin_headers)
+    assert r.status_code == 409 and r.json()["error"]["code"] == "LAUNCH_MAIL_NOT_CONFIGURED"
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM email_outbox")
+        assert cur.fetchone()[0] == 0
+
+
+def test_launch_mail_is_a_plain_def_so_fastapi_threadpools_it():
+    """A-I5d.4b, L4. The handler does up to 500 blocking psycopg2 inserts plus one `SELECT … FOR
+    UPDATE` and one audit write — the largest single-request body of work in the codebase — and an
+    `async def` runs all of it on the event loop, stalling every other request for the duration.
+    `export_signups` beside it is already a plain `def` for exactly this reason
+    (`tests/auth/test_deps.py::test_current_principal_is_a_plain_def_so_fastapi_threadpools_it`
+    pins the same property for `deps.current_principal`)."""
+    from app.api.admin_signups import launch_mail
+
+    assert inspect.iscoroutinefunction(launch_mail) is False
+
+
+async def test_a_mid_batch_failure_rolls_back_the_inserts_and_the_stamp_together(client, conn, admin_headers, launch_mail_approved, monkeypatch):
+    """Settles the review's ⚠️2. `app/db.py`'s `sync_conn()` sets `autocommit = True`, and two
+    plan artefacts disagree about what that means for `with conn:`: `app/api/auth.py`'s module
+    docstring says psycopg2 2.9 opens a real transaction there regardless, while D-I5d-8 says
+    `with conn:` "does not open one when `autocommit` is True" (true of a NAMED/server-side
+    cursor's own check, which is D-I5d-8's actual subject — not of this).
+
+    Verified directly first: opening a real connection with `autocommit = True` and executing two
+    inserts inside `with conn:` puts `conn.get_transaction_status()` at `TRANSACTION_STATUS_INTRANS`
+    after the FIRST insert, a second connection sees neither row while the block is still open, and
+    both rows vanish from BOTH connections the moment an exception exits the block. `with conn:`
+    genuinely opens and rolls back a transaction under autocommit; this test pins that at the
+    endpoint, not the driver, layer.
+
+    The failure is injected after the FIRST of two `enqueue` calls has already run for real (so a
+    row genuinely exists, uncommitted, before the second one raises) — the partial-progress case,
+    not just an all-or-nothing one. If the outbox row or the stamp survived this, that would be a
+    correctness defect (a row silently mailed twice after a crash) worth stopping to report rather
+    than papering over with a passing assertion."""
+    import app.api.admin_signups as AS
+
+    real_enqueue = AS.enqueue
+    calls = {"n": 0}
+
+    def flaky_enqueue(*args: object, **kwargs: object) -> bool:
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise RuntimeError("boom-mid-batch")
+        return real_enqueue(*args, **kwargs)  # type: ignore[no-any-return]
+
+    monkeypatch.setattr(AS, "enqueue", flaky_enqueue)
+    ids = seed(conn, 2)
+    with pytest.raises(RuntimeError, match="boom-mid-batch"):
+        await client.post(LAUNCH, json={"dry_run": False}, headers=admin_headers)
+    assert calls["n"] == 2, "the failure must land after the first row's real INSERT, not before it"
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM email_outbox")
+        assert cur.fetchone()[0] == 0, "the first successful enqueue must roll back with the rest"
+        cur.execute("SELECT count(*) FROM interest_signup WHERE id = ANY(%s) AND launch_mailed_at IS NOT NULL", (ids,))
+        assert cur.fetchone()[0] == 0, "the stamp must never survive without its outbox rows"

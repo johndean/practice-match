@@ -395,10 +395,13 @@ The Coming Soon page collects one thing: an address, and a promise — *"One mes
 launches. Nothing else, and never shared."* This is how that message is sent, once.
 
 **Before the flip.** `GET /api/admin/signups` reads the list (staff or admin) and
-`GET /api/admin/signups.csv` downloads it. `POST /api/admin/signups/launch-mail` with
-`{"dry_run": true}` answers with the counts and writes nothing; on production, while the site is
-still in coming-soon mode, that is all it will do — a real send is refused with `409 NOT_LAUNCHED`,
-because the message says Practice Match is open.
+`GET /api/admin/signups.csv` downloads it — capped at `MAX_EXPORT = 100 000` rows
+(`app/api/admin_signups.py`); above that it truncates silently, so check the row count against
+`not_mailed` from the dry run below before treating a download as the whole list.
+`POST /api/admin/signups/launch-mail` with `{"dry_run": true}` answers with the counts and queues
+nothing — it writes one audit row, `reason: dry_run`, and nothing else; on production, while the
+site is still in coming-soon mode, that is all it will do — a real send is refused with
+`409 NOT_LAUNCHED`, because the message says Practice Match is open.
 
 **Two more gates, ahead of that one (controller amendment A-I5d.4, John, 2026-09-08).** A real send
 is refused, in this order, before `SITE_MODE` is even checked:
@@ -422,7 +425,9 @@ copy or the address is in; only an actual send is gated.
    Match**) and `scripts/deploy.sh production`; `scripts/verify-deploy.sh production` must report
    `site_mode: "app"`.
 2. Sign in as an admin and confirm your password (`POST /api/auth/reauth`) — `signups.notify` is a
-   re-authenticated action and no api token can ever satisfy it.
+   re-authenticated action and no api token can ever satisfy it (the legacy `API_SECRET_KEY`
+   operator bearer is the one exemption to the re-auth gate, until Task I9 removes it — the copy
+   and address gates above still bind it, so it cannot skip either refusal).
 3. `POST /api/admin/signups/launch-mail` with `{"dry_run": true}`. Read `not_mailed`. That is how
    many people are about to hear from the VIN Foundation.
 4. `POST /api/admin/signups/launch-mail` with `{"dry_run": false}`. It queues at most 500 per call
