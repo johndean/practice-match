@@ -4197,6 +4197,8 @@ Then use `superpowers:finishing-a-development-branch` to decide how the branch i
 
 ---
 
+**Record (2026-09-08, controller): Task L7 Steps 3–8 and 10 executed; plan complete.** main fast-forwarded to 7db3d10 and pushed to both remotes; QA deployed as 0.1.3 (`verify-deploy.sh QA`: healthz, deep, config, SPA fallback, listings guarded — all OK); seeded locally against the QA PostGIS service's public URL (`inserted 18, updated 0, removed 0`); click-through at 21:05 WITA: signed-out `/browse` shows the sign-in card; signed in, `GET /api/listings` returns 18 items across 11 markets with `next_cursor` null and every name disclosed; no design fixture area on Browse; metro selector lists exactly the eleven seeded markets; pins per market Austin 2, Sacramento 3, Orlando 2, Atlanta 1, Houston 2, New York 1, Los Angeles 3, Dallas 1, Denver 1, Santa Barbara 1, South Lake Tahoe 1 = 18; "Tiles © Esri" visible on desktop and the mobile Map tab; detail photographs answer `200 image/webp` (anonymous 401); the Denver detail reads "Denver, CO · Established 2011" and shows the "Community data unavailable for this location" card (A12.8–A12.11 verified live); production untouched (0.1.1, `coming_soon`, `/api/listings` 404). Accepted addendum to A-L6.2: `MAX_PAGES = 20` bounds the cursor loop (a repeating cursor must not hang the boot). Screenshots and the forwardable hand-back are in the SDD workspace (`task-L7-handback.md`). Open for John: photo captions (Rev 3), address/phone not displayed, a denser Browse default (A-L8 M5).
+
 ## Self-Review
 
 Run against the spec with fresh eyes, per the writing-plans skill.
