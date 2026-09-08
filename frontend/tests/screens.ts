@@ -31,11 +31,18 @@ const mobile = async (p: Page) => { await reach(p, { screen: 'browse', viewport:
 const MODAL = 'div[style*="z-index: 900"]';
 // The prototype's own 390×800 phone frame (App.vue:1242) and the market-data sheet inside it.
 // `z-index: 700` is not unique in App.vue on its own — the desktop "More filters" popover
-// carries it too — so the sheet is always addressed through the frame. `atTop` takes a plain
-// CSS selector (it runs document.querySelector in the page), and the popover is not in the DOM
-// while the mobile frame is showing, so the bare selector is unambiguous there.
+// carries it, and A13's metro dropdown panel is a third — so the sheet is always addressed
+// through the frame. `atTop` takes a plain CSS selector (it runs document.querySelector in the
+// page), and neither desktop popover is in the DOM while the mobile frame is showing, so the
+// bare selector is unambiguous there.
 const PHONE = 'div[style*="width: 390px"][style*="height: 800px"]';
 const SHEET = 'div[style*="z-index: 700"]';
+// The two Market data listbox triggers, addressed by exclusion rather than by page index. A13
+// added a third `aria-haspopup="listbox"` button — the metro selector in the toolbar, which
+// comes FIRST in the DOM and would otherwise be what `.first()` clicked. It is the only one of
+// the three with an `aria-label` (V3: `aria-label="Metro area"`), so `:not([aria-label])` leaves
+// exactly the layer select and, once Compare is open, its identical control — in that order.
+const layerTrigger = (p: Page) => p.locator('button[aria-haspopup="listbox"]:not([aria-label])');
 
 // ---------------------------------------------------------------------------------------
 // The fifteen account-screen states (spec §6, controller amendment A-S5). Three helpers, and
@@ -108,9 +115,15 @@ export const SCREENS: Screen[] = [
   { name: 'gate-pending', steps: async (p) => { await reach(p, { gate: 'pending', persona: 'pending' }); } },
   { name: 'gate-declined', steps: async (p) => { await reach(p, { gate: 'rejected', persona: 'declined' }); } },
   { name: 'browse', steps: browse },
+  // A13: the metro dropdown, open. The ruled change has no oracle state otherwise — the closed
+  // trigger is covered by every Browse state, but the panel the ruling is ABOUT would never be
+  // photographed or serialised. Reached the same way `browse-layer-menu` is: click, then wait for
+  // the thing the state exists to show, then the 400 ms settle every Browse state was taken with.
+  { name: 'browse-metro-menu', steps: async (p) => { await browse(p); await p.getByRole('button', { name: 'Metro area' }).click(); await p.getByRole('listbox', { name: 'Metro area' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
   // The Market data card's layer select (V3's `md.toggleLayerMenu` trigger). It is the first
-  // aria-haspopup="listbox" on the screen; Compare's identical control is the second, and
-  // only exists once Compare is open.
+  // UNLABELLED aria-haspopup="listbox" on the screen — A13's metro selector carries an
+  // `aria-label` and comes first in the DOM, which is what `layerTrigger` excludes; Compare's
+  // identical control is the second unlabelled one, and only exists once Compare is open.
   //
   // This state and the three below it (`browse-legend-collapsed`, `browse-layers-open`,
   // `browse-market-panel`) each wait for the thing the state exists to SHOW before the settle
@@ -118,7 +131,7 @@ export const SCREENS: Screen[] = [
   // click no-opped on both targets", which is exactly how the old `mobile-detail` step passed
   // while capturing the wrong screen (V9). The 400 ms settle stays after it: it is what the
   // committed baselines were taken through, and every one of them must stay byte-identical.
-  { name: 'browse-layer-menu', steps: async (p) => { await browse(p); await p.locator('button[aria-haspopup="listbox"]').first().click(); await p.getByRole('listbox', { name: 'Active market layer' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
+  { name: 'browse-layer-menu', steps: async (p) => { await browse(p); await layerTrigger(p).first().click(); await p.getByRole('listbox', { name: 'Active market layer' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
   // C4: Compare is collapsed by default; opening it reveals the shared layer-select control
   // and the six-row bar chart. Picking the metric that already shades the map would reset the
   // comparison (no self-compare), so pick the second option — the menu's first row is
@@ -126,7 +139,7 @@ export const SCREENS: Screen[] = [
   // compare menu's own listbox: Browse's native <select>s (market, filters, sort) own the
   // `option` role too and come first in the DOM, so an unscoped getByRole('option') resolves
   // to a collapsed <select>'s hidden child on BOTH targets and never clicks.
-  { name: 'browse-compare-open', steps: async (p) => { await browse(p); await click(p, 'Compare'); await p.locator('button[aria-haspopup="listbox"]').nth(1).click(); await p.getByRole('listbox', { name: 'Comparison layer' }).getByRole('option').nth(1).click(); await p.waitForTimeout(400); } },
+  { name: 'browse-compare-open', steps: async (p) => { await browse(p); await click(p, 'Compare'); await layerTrigger(p).nth(1).click(); await p.getByRole('listbox', { name: 'Comparison layer' }).getByRole('option').nth(1).click(); await p.waitForTimeout(400); } },
   // C8: the merged legend/insight card is dismissible.
   { name: 'browse-legend-collapsed', steps: async (p) => { await browse(p); await p.getByRole('button', { name: 'Dismiss interpretation' }).click(); await p.getByRole('button', { name: 'Dismiss interpretation' }).waitFor({ state: 'detached' }); await p.waitForTimeout(400); } },
   // C9: V3's drawer button reads "Layers" with a count pill, where V2's read "Data Layers".
