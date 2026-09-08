@@ -2,8 +2,8 @@
 .sch1:hover{color: var(--color-blue) !important}
 .sch2:hover{background: var(--color-navy) !important}
 .sch3:hover{background: #003a70 !important}
-.sch4:hover{background: var(--vf-navy) !important}
-.sch5:hover{background: var(--vf-neutral) !important}
+.sch4:hover{background: var(--vf-neutral) !important}
+.sch5:hover{background: var(--vf-navy) !important}
 .sch6:hover{opacity: 1 !important}
 .sch7:hover{border-color: var(--vf-accent) !important}
 .sch8:hover{color: var(--vf-navy) !important}

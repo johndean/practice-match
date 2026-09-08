@@ -1090,9 +1090,244 @@ const A12_11: Amendment = {
   replace: 'noDemo: p.id === "p8" || p.pop == null,', count: 1
 };
 
+/** A13 — the metro selector is a DROPDOWN LIST in the design's own popover style, not the
+ *  operating system's popup (John, 2026-09-08).
+ *
+ *  `<select>` on macOS opens the OS popup menu — a large dark panel drawn over the page by the
+ *  window server, which no page style reaches. The design already ships the alternative twice
+ *  over: the Market data card's layer select (V3:431 trigger, V3:523 panel, script V3:2091–2122)
+ *  and Compare's identical control (V3:477/482). A13 composes the metro picker from those
+ *  elements — trigger + `aria-haspopup="listbox"` + rotating `sub-chevron.svg`, a
+ *  `role="listbox"` panel of `role="option"` buttons with the tick glyph — reusing every inline
+ *  style verbatim and taking the panel's anchoring (`top: 46px; z-index: 700`, the offset for a
+ *  40 px control) from the "More filters" popover in the same toolbar row (V3:382).
+ *
+ *  `setMarket`'s state transition is unchanged, so filters, pins, the rail, `mapCenter`,
+ *  `marketLabel`, `emptyNote` and the 320 ms loading skeleton behave exactly as before; it moves
+ *  to a class property beside `setF` (V3:1906) so the option rows can call it, and takes `setF`'s
+ *  own "an event OR a bare value" line (V3:1907) so the old contract still holds. Its orphaned
+ *  `renderVals()` key goes with the `<select>` that was its only reader, under the same dead-code
+ *  rule A2.3/A2.5 applied to the `browseSel` helpers.
+ *
+ *  Two behaviours the design has NEVER had are added, because a dropdown a keyboard cannot drive
+ *  and a click cannot dismiss is not "a normal dropdown": Arrow/Home/End/Enter on the trigger
+ *  (A13.2's `marketMenuKeys`) and Escape + outside-click on `document` (A13.4's
+ *  `trackMenuDismiss`, modelled line for line on `trackWidth`, V3:1864–1869, and torn down in the
+ *  same `componentWillUnmount`). They live in the DESIGN's script, so the reference and the app
+ *  get them together and the oracles stay comparable. Scope is the metro selector: the five
+ *  filter selects, the sort select and the wizard's field selects stay native.
+ */
+const A13 = {
+  date: '2026-09-08',
+  ruling: 'must fix this drop-down to be an acutal drop-down vs the popup following the same design logic of a normal dropdown'
+};
+
+/** A13.1 — `setMarket` becomes a class property beside `setF`, so the option rows can call it and
+ *  there is exactly one implementation of the transition. The first line is `setF`'s own
+ *  event-or-value idiom (V3:1907), verbatim; the `setState` body is the old `setMarket`'s
+ *  (V3:3173–3176), verbatim, plus the two keys that close the menu on a choice. */
+const A13_1: Amendment = {
+  id: 'A13.1', ...A13,
+  find: [
+    '  setF = (key) => (e) => {',
+    '    const v = e && e.target ? e.target.value : e;',
+    '    this.setState((s) => ({ f: Object.assign({}, s.f, { [key]: v }), loading: true }));',
+    '    clearTimeout(this._t);',
+    '    this._t = setTimeout(() => this.setState({ loading: false }), 320);',
+    '  };',
+    ''
+  ].join('\n'),
+  replace: [
+    '  setF = (key) => (e) => {',
+    '    const v = e && e.target ? e.target.value : e;',
+    '    this.setState((s) => ({ f: Object.assign({}, s.f, { [key]: v }), loading: true }));',
+    '    clearTimeout(this._t);',
+    '    this._t = setTimeout(() => this.setState({ loading: false }), 320);',
+    '  };',
+    '',
+    '  // The metro choice. One implementation, called by the dropdown rows and still accepting a',
+    '  // change event the way setF does, so the transition below is the one the <select> had.',
+    '  setMarket = (e) => {',
+    '    const v = e && e.target ? e.target.value : e;',
+    '    this.setState({ market: v, activeId: null, hoverId: null, loading: true, marketMenu: false, marketMenuAt: -1 }, () => {',
+    '      clearTimeout(this._t);',
+    '      this._t = setTimeout(() => this.setState({ loading: false }), 320);',
+    '    });',
+    '  };',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A13.2 — `renderVals()`: the menu's open state, its trigger and caret styles, its keyboard
+ *  handler, its callback ref, and the option rows. Modelled key for key on the layer menu
+ *  (V3:2091–2122): `marketMenuOpen` ↔ `layerMenuOpen`, `toggleMarketMenu` ↔ `toggleLayerMenu`,
+ *  `marketCaretStyle` ↔ `layerMenuCaretStyle`, `marketTriggerLabel` ↔ `compareTriggerLabel`
+ *  (V3:2135), `marketMenuRef` ↔ `compareMenuRef` (V3:2137), `rowStyle`/`tickStyle` verbatim from
+ *  V3:2112–2120 with the highlight taking the row's own hover grey (V3:525). The orphaned
+ *  `setMarket:` key is dropped — the `<select>` was its only reader (A2.3/A2.5's dead-code rule);
+ *  the class property A13.1 added is what the rows call. */
+const A13_2: Amendment = {
+  id: 'A13.2', ...A13,
+  find: [
+    '      marketOptions: Object.keys(MARKETS).map((m) => ({ v: m, label: m + " metro" })),',
+    '      setMarket: (e) => this.setState({ market: e.target.value, activeId: null, hoverId: null, loading: true }, () => {',
+    '        clearTimeout(this._t);',
+    '        this._t = setTimeout(() => this.setState({ loading: false }), 320);',
+    '      }),',
+    ''
+  ].join('\n'),
+  replace: [
+    '      // The metro SELECT is a dropdown list in this design\'s own style, not the operating',
+    '      // system\'s popup: the same trigger + role="listbox" panel the Market data card uses.',
+    '      marketMenuOpen: !!s.marketMenu,',
+    '      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Object.keys(MARKETS).indexOf(s.market || "Austin, TX") }),',
+    '      marketTriggerLabel: (s.market || "Austin, TX") + " metro",',
+    '      marketFieldStyle: "position: relative; display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 8px 0 15px; min-width: 300px; background: var(--vf-neutral); border: 1px solid " +',
+    '        (s.marketMenu ? "var(--vf-accent)" : "var(--border-subtle)") + "; border-radius: 6px;",',
+    '      marketSelectStyle: "display: flex; align-items: center; gap: 8px; flex: 1; height: 36px; padding: 0; border: 0; outline: none; background: none; font-size: 14px; font-weight: 500; color: var(--vf-navy); cursor: pointer;",',
+    '      marketCaretStyle: "flex: none; display: block; transition: transform 150ms var(--easing-out); transform: rotate(" +',
+    '        (s.marketMenu ? "180deg" : "0deg") + ");",',
+    '      marketMenuRef: (el) => { this._marketMenuEl = el || null; },',
+    '      marketMenuKeys: (e) => {',
+    '        const keys = Object.keys(MARKETS);',
+    '        const cur = keys.indexOf(s.market || "Austin, TX");',
+    '        const at = s.marketMenuAt == null || s.marketMenuAt < 0 ? cur : s.marketMenuAt;',
+    '        if (e.key === "ArrowDown" || e.key === "ArrowUp") {',
+    '          e.preventDefault();',
+    '          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur });',
+    '          return this.setState({ marketMenuAt: (at + (e.key === "ArrowDown" ? 1 : keys.length - 1)) % keys.length });',
+    '        }',
+    '        if (!s.marketMenu) return;',
+    '        if (e.key === "Home" || e.key === "End") {',
+    '          e.preventDefault();',
+    '          return this.setState({ marketMenuAt: e.key === "Home" ? 0 : keys.length - 1 });',
+    '        }',
+    '        if (e.key === "Enter" || e.key === " ") {',
+    '          e.preventDefault();',
+    '          return this.setMarket(keys[at]);',
+    '        }',
+    '      },',
+    '      marketOptions: Object.keys(MARKETS).map((m, i) => {',
+    '        const on = (s.market || "Austin, TX") === m;',
+    '        const hi = s.marketMenuAt === i;',
+    '        return {',
+    '          v: m, label: m + " metro", selected: on,',
+    '          go: () => this.setMarket(m),',
+    '          rowStyle: "display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 8px; font-family: var(--rf-display); font-size: 13px; font-weight: " +',
+    '            (on ? "800" : "500") + "; color: var(--vf-navy); background: " +',
+    '            (on ? "var(--vf-accent-bg)" : hi ? "var(--vf-neutral)" : "none") + "; border: 0; border-radius: 6px; cursor: pointer;",',
+    '          tickStyle: "flex: none; display: block; filter: brightness(0) saturate(100%) invert(23%) sepia(89%) saturate(1352%) hue-rotate(184deg) brightness(94%) contrast(101%); opacity: " +',
+    '            (on ? "1" : "0") + ";"',
+    '        };',
+    '      }),',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A13.3 — the markup. The field wrapper keeps its own declarations (V3:363) and gains
+ *  `position: relative` so the panel can anchor to it, exactly as the "More filters" wrapper does
+ *  (V3:379); the search glyph is untouched; the `<select>` becomes the layer menu's trigger
+ *  (V3:431–434) and its panel (V3:523–534) with the chip swatch left out — markets have no colour
+ *  ramp, and absent beats faked. */
+const A13_3: Amendment = {
+  id: 'A13.3', ...A13,
+  find: [
+    '          <div style="display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 8px 0 15px; min-width: 300px; background: var(--vf-neutral); border: 1px solid var(--border-subtle); border-radius: 6px;">',
+    '            <img src="assets/icons/sub-search.svg" alt="" width="14" height="14" style="opacity: .45;">',
+    '            <select value="{{ market }}" onChange="{{ setMarket }}" style="flex: 1; height: 36px; border: 0; outline: none; background: none; font-size: 14px; font-weight: 500; color: var(--vf-navy); cursor: pointer;">',
+    '              <sc-for list="{{ marketOptions }}" as="m" hint-placeholder-count="4">',
+    '                <option value="{{ m.v }}">{{ m.label }}</option>',
+    '              </sc-for>',
+    '            </select>',
+    ''
+  ].join('\n'),
+  replace: [
+    '          <div ref="{{ marketMenuRef }}" style="{{ marketFieldStyle }}">',
+    '            <img src="assets/icons/sub-search.svg" alt="" width="14" height="14" style="opacity: .45;">',
+    '            <button onClick="{{ toggleMarketMenu }}" onKeyDown="{{ marketMenuKeys }}" aria-label="Metro area" aria-haspopup="listbox" aria-expanded="{{ marketMenuOpen }}" style="{{ marketSelectStyle }}">',
+    '              <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ marketTriggerLabel }}</span>',
+    '              <img src="assets/icons/sub-chevron.svg" alt="" width="14" height="14" style="{{ marketCaretStyle }}">',
+    '            </button>',
+    '            <sc-if value="{{ marketMenuOpen }}" hint-placeholder-val="{{ false }}">',
+    '              <div role="listbox" aria-label="Metro area" style="position: absolute; left: 0; top: 46px; z-index: 700; width: 300px; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;" class="rf-scroll">',
+    '                <sc-for list="{{ marketOptions }}" as="m" hint-placeholder-count="4">',
+    '                  <button onClick="{{ m.go }}" role="option" aria-selected="{{ m.selected }}" style="{{ m.rowStyle }}" style-hover="background: var(--vf-neutral);">',
+    '                    <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ m.label }}</span>',
+    '                    <img src="assets/icons/sub-check-filled.svg" alt="" width="11" height="11" style="{{ m.tickStyle }}">',
+    '                  </button>',
+    '                </sc-for>',
+    '              </div>',
+    '            </sc-if>',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A13.4 — `trackMenuDismiss()`, and the two removals that pair with it. Modelled line for line
+ *  on `trackWidth` (V3:1864–1869) / `componentWillUnmount` (V3:1871–1873), which is the design's
+ *  only global listener and its only teardown. Escape and outside-click are the two dismissals a
+ *  normal dropdown has and this design has never had; they live here, once, for the one menu the
+ *  ruling names. */
+const A13_4: Amendment = {
+  id: 'A13.4', ...A13,
+  find: [
+    '  componentWillUnmount() {',
+    '    if (this._onResize) window.removeEventListener("resize", this._onResize);',
+    '  }',
+    ''
+  ].join('\n'),
+  replace: [
+    '  trackMenuDismiss() {',
+    '    const down = (e) => {',
+    '      if (!this.state.marketMenu) return;',
+    '      const host = this._marketMenuEl;',
+    '      if (host && e.target && host.contains(e.target)) return;',
+    '      this.setState({ marketMenu: false, marketMenuAt: -1 });',
+    '    };',
+    '    const key = (e) => {',
+    '      if (!this.state.marketMenu || e.key !== "Escape") return;',
+    '      this.setState({ marketMenu: false, marketMenuAt: -1 });',
+    '    };',
+    '    this._onDocDown = down;',
+    '    this._onDocKey = key;',
+    '    document.addEventListener("pointerdown", down, true);',
+    '    document.addEventListener("keydown", key, true);',
+    '  }',
+    '',
+    '  componentWillUnmount() {',
+    '    if (this._onResize) window.removeEventListener("resize", this._onResize);',
+    '    if (this._onDocDown) document.removeEventListener("pointerdown", this._onDocDown, true);',
+    '    if (this._onDocKey) document.removeEventListener("keydown", this._onDocKey, true);',
+    '  }',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A13.5 — `componentDidMount` arms them, immediately after `trackWidth()`, which is the line it
+ *  mirrors. */
+const A13_5: Amendment = {
+  id: 'A13.5', ...A13,
+  find: [
+    '  componentDidMount() {',
+    '    this.trackWidth();',
+    ''
+  ].join('\n'),
+  replace: [
+    '  componentDidMount() {',
+    '    this.trackWidth();',
+    '    this.trackMenuDismiss();',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
     A7_3, A7_4, A8_1a, A8_1b, A8_1c, A8_2, A8_3a, A8_3b, A8_4a, A8_4b, A8_5, A8_6, A8_7, A8_8a, A8_8b,
-    A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5, A12_6, A12_7, A12_8, A12_9, A12_10, A12_11];
+    A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5, A12_6, A12_7, A12_8, A12_9, A12_10, A12_11,
+    A13_1, A13_2, A13_3, A13_4, A13_5];
 }

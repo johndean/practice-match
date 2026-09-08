@@ -1331,3 +1331,149 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A13 — the metro selector is a dropdown list in the design's own popover style, not the
+// operating system's popup (John, 2026-09-08). The state machine, characterised: the design's
+// own listbox has no keyboard and no dismissal, so every branch below is new and every branch
+// below is covered.
+// ---------------------------------------------------------------------------------------
+describe('A13 — the metro dropdown', () => {
+  const MARKET_KEYS = ['Austin, TX', 'Sacramento, CA', 'Orlando, FL', 'Atlanta, GA'];
+
+  it('starts closed, with the four markets and Austin selected', () => {
+    const v = c.renderVals();
+    expect(v.marketMenuOpen).toBe(false);
+    expect(v.marketTriggerLabel).toBe('Austin, TX metro');
+    expect(v.marketOptions.map((o: any) => o.label)).toEqual(MARKET_KEYS.map((m) => `${m} metro`));
+    expect(v.marketOptions.map((o: any) => o.selected)).toEqual([true, false, false, false]);
+    expect(v.marketCaretStyle).toContain('rotate(0deg)');
+    expect(v.marketFieldStyle).toContain('border: 1px solid var(--border-subtle)');
+  });
+
+  it('the trigger opens the menu and seeds the highlight on the current market', () => {
+    c.renderVals().toggleMarketMenu();
+    expect(c.state.marketMenu).toBe(true);
+    expect(c.state.marketMenuAt).toBe(0);
+    const v = c.renderVals();
+    expect(v.marketMenuOpen).toBe(true);
+    expect(v.marketCaretStyle).toContain('rotate(180deg)');
+    expect(v.marketFieldStyle).toContain('border: 1px solid var(--vf-accent)');
+  });
+
+  it('the trigger closes the menu again (the design\'s own toggle contract)', () => {
+    c.renderVals().toggleMarketMenu();
+    c.renderVals().toggleMarketMenu();
+    expect(c.state.marketMenu).toBe(false);
+  });
+
+  it('ArrowDown opens a closed menu, then walks and wraps; ArrowUp wraps the other way', () => {
+    const key = (k: string) => { const e = { key: k, preventDefault: vi.fn() }; c.renderVals().marketMenuKeys(e); return e; };
+    expect(key('ArrowDown').preventDefault).toHaveBeenCalled();
+    expect(c.state).toMatchObject({ marketMenu: true, marketMenuAt: 0 });
+    key('ArrowDown'); expect(c.state.marketMenuAt).toBe(1);
+    key('ArrowDown'); key('ArrowDown'); key('ArrowDown'); expect(c.state.marketMenuAt).toBe(0);
+    key('ArrowUp'); expect(c.state.marketMenuAt).toBe(3);
+  });
+
+  it('Home and End jump to the ends, and do nothing while the menu is closed', () => {
+    const key = (k: string) => { const e = { key: k, preventDefault: vi.fn() }; c.renderVals().marketMenuKeys(e); return e; };
+    expect(key('End').preventDefault).not.toHaveBeenCalled();
+    expect(c.state.marketMenu).toBeFalsy();
+    c.renderVals().toggleMarketMenu();
+    key('End'); expect(c.state.marketMenuAt).toBe(3);
+    key('Home'); expect(c.state.marketMenuAt).toBe(0);
+  });
+
+  it('Enter chooses the highlighted market and leaves Space to the button while closed', () => {
+    const key = (k: string) => { const e = { key: k, preventDefault: vi.fn() }; c.renderVals().marketMenuKeys(e); return e; };
+    expect(key('Enter').preventDefault).not.toHaveBeenCalled();   // closed: the native click opens it
+    expect(key('Tab').preventDefault).not.toHaveBeenCalled();     // an unhandled key is left alone
+    c.renderVals().toggleMarketMenu();
+    key('ArrowDown');
+    expect(key(' ').preventDefault).toHaveBeenCalled();
+    expect(c.state.market).toBe('Sacramento, CA');
+  });
+
+  it('choosing an option calls setMarket with the SAME payload the <select> produced', () => {
+    vi.useFakeTimers();
+    c.renderVals().toggleMarketMenu();
+    c.renderVals().marketOptions[2].go();
+    expect(c.state).toMatchObject({
+      market: 'Orlando, FL', activeId: null, hoverId: null, loading: true,
+      marketMenu: false, marketMenuAt: -1
+    });
+    vi.advanceTimersByTime(320);
+    expect(c.state.loading).toBe(false);
+    vi.useRealTimers();
+    // the map, the rail and the pins all read `market` — the contract the <select> had
+    expect(c.renderVals().mapCenter).toEqual([28.52, -81.36]);
+    expect(c.renderVals().marketLabel).toBe('Orlando, FL metro · within 40 miles');
+  });
+
+  it('setMarket still accepts a change EVENT, the way setF does (V3:1907)', () => {
+    c.setMarket({ target: { value: 'Atlanta, GA' } });
+    expect(c.state.market).toBe('Atlanta, GA');
+  });
+
+  it('the selected row is accented, the highlighted row takes the design\'s hover grey, the rest are plain', () => {
+    c.renderVals().toggleMarketMenu();
+    c.setState({ marketMenuAt: 2 });
+    const rows = c.renderVals().marketOptions;
+    expect(rows[0].rowStyle).toContain('background: var(--vf-accent-bg)');
+    expect(rows[0].rowStyle).toContain('font-weight: 800');
+    expect(rows[2].rowStyle).toContain('background: var(--vf-neutral)');
+    expect(rows[1].rowStyle).toContain('background: none');
+    expect(rows[0].tickStyle).toContain('opacity: 1');
+    expect(rows[1].tickStyle).toContain('opacity: 0');
+  });
+
+  it('Escape closes the menu; a keydown that is not Escape, and a keydown while closed, do not', () => {
+    c.componentDidMount();
+    c.renderVals().toggleMarketMenu();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }));
+    expect(c.state.marketMenu).toBe(true);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(c.state).toMatchObject({ marketMenu: false, marketMenuAt: -1 });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));  // no-op, and no throw
+    expect(c.state.marketMenu).toBe(false);
+    c.componentWillUnmount();
+  });
+
+  it('a pointerdown outside closes the menu; one inside the field does not', () => {
+    const host = document.createElement('div');
+    const inside = document.createElement('button');
+    host.appendChild(inside);
+    document.body.appendChild(host);
+    c.componentDidMount();
+    c.renderVals().marketMenuRef(host);
+    c.renderVals().toggleMarketMenu();
+    inside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    expect(c.state.marketMenu).toBe(true);
+    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    expect(c.state).toMatchObject({ marketMenu: false, marketMenuAt: -1 });
+    // …and with no node recorded yet, an outside click still closes rather than throwing
+    c.renderVals().marketMenuRef(null);
+    c.renderVals().toggleMarketMenu();
+    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    expect(c.state.marketMenu).toBe(false);
+    c.componentWillUnmount();
+    host.remove();
+  });
+
+  it('componentWillUnmount removes both document listeners it added', () => {
+    const add = vi.spyOn(document, 'addEventListener');
+    const remove = vi.spyOn(document, 'removeEventListener');
+    c.componentDidMount();
+    c.componentWillUnmount();
+    expect(add.mock.calls.filter(([t]) => t === 'pointerdown' || t === 'keydown')).toHaveLength(2);
+    expect(remove.mock.calls.filter(([t]) => t === 'pointerdown' || t === 'keydown')).toHaveLength(2);
+    add.mockRestore();
+    remove.mockRestore();
+  });
+
+  it('the orphaned setMarket render key is gone (the dead-code rule, A2.3/A2.5)', () => {
+    expect(c.renderVals().setMarket, 'nothing in the template reads it once the <select> goes').toBeUndefined();
+    expect(typeof c.setMarket, 'it lives on the class now, beside setF').toBe('function');
+  });
+});

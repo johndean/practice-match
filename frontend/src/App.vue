@@ -297,13 +297,22 @@
       <div style="height: calc(100vh - 103px); min-height: 640px; display: flex; flex-direction: column; background: var(--vf-white);">
 
         <div style="display: flex; align-items: center; gap: 8px; padding: 13px 22px; background: var(--vf-white); border-bottom: 1px solid #e6e6e6; flex: none; flex-wrap: wrap;">
-          <div style="display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 8px 0 15px; min-width: 300px; background: var(--vf-neutral); border: 1px solid var(--border-subtle); border-radius: 6px;">
+          <div :ref="v.marketMenuRef" :style="v.marketFieldStyle">
             <img src="/assets/icons/sub-search.svg" alt width="14" height="14" style="opacity: .45;">
-            <select :value="(v.market) ?? ''" @change="v.setMarket" style="flex: 1; height: 36px; border: 0; outline: none; background: none; font-size: 14px; font-weight: 500; color: var(--vf-navy); cursor: pointer;">
-              <template v-for="(m, $index) in __arr(v.marketOptions)" :key="$index">
-                <option :value="(m?.v) ?? ''"><span v-if="__s(m?.label) !== null" class="sc-interp">{{ __s(m?.label) }}</span></option>
-              </template>
-            </select>
+            <button @click="v.toggleMarketMenu" @keydown="v.marketMenuKeys" aria-label="Metro area" aria-haspopup="listbox" :aria-expanded="v.marketMenuOpen" :style="v.marketSelectStyle">
+              <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><span v-if="__s(v.marketTriggerLabel) !== null" class="sc-interp">{{ __s(v.marketTriggerLabel) }}</span></span>
+              <img src="/assets/icons/sub-chevron.svg" alt width="14" height="14" :style="v.marketCaretStyle">
+            </button>
+            <template v-if="v.marketMenuOpen">
+              <div class="rf-scroll" role="listbox" aria-label="Metro area" style="position: absolute; left: 0; top: 46px; z-index: 700; width: 300px; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;">
+                <template v-for="(m, $index) in __arr(v.marketOptions)" :key="$index">
+                  <button class="sch4" @click="m?.go" role="option" :aria-selected="m?.selected" :style="m?.rowStyle">
+                    <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><span v-if="__s(m?.label) !== null" class="sc-interp">{{ __s(m?.label) }}</span></span>
+                    <img src="/assets/icons/sub-check-filled.svg" alt width="11" height="11" :style="m?.tickStyle">
+                  </button>
+                </template>
+              </div>
+            </template>
           </div>
           <div style="flex: 1; min-width: 12px;"></div>
           <template v-for="(fl, $index) in __arr(v.filters)" :key="$index">
@@ -335,11 +344,11 @@
                     </label>
                   </template>
                 </div>
-                <button class="sch4" @click="v.toggleMore" style="width: 100%; height: 40px; margin-top: 14px; font-family: var(--rf-display); font-size: 13px; font-weight: 500; color: var(--vf-white); background: var(--vf-accent); border: 0; border-radius: 6px; cursor: pointer;">Done</button>
+                <button class="sch5" @click="v.toggleMore" style="width: 100%; height: 40px; margin-top: 14px; font-family: var(--rf-display); font-size: 13px; font-weight: 500; color: var(--vf-white); background: var(--vf-accent); border: 0; border-radius: 6px; cursor: pointer;">Done</button>
               </div>
             </template>
           </div>
-          <button class="sch5" @click="v.clearFilters" :style="v.clearStyle">Clear all</button>
+          <button class="sch4" @click="v.clearFilters" :style="v.clearStyle">Clear all</button>
         </div>
 
         <div style="flex: 1; display: flex; min-height: 300px; border-bottom: 1px solid #e6e6e6; overflow-x: auto;">
@@ -415,7 +424,7 @@
                       <template v-if="v.md?.compareMenuOpen">
                         <div role="listbox" aria-label="Comparison layer" :ref="v.md?.compareMenuRef" style="margin-top: 6px; padding: 4px; max-height: 232px; overflow-y: auto; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 4px 14px rgba(0,58,112,.14);">
                           <template v-for="(o, $index) in __arr(v.md?.compareOptions)" :key="$index">
-                            <button class="sch5" @click="o?.go" role="option" :aria-selected="o?.selected" :style="o?.rowStyle">
+                            <button class="sch4" @click="o?.go" role="option" :aria-selected="o?.selected" :style="o?.rowStyle">
                               <span :style="o?.chipStyle">
                                 <template v-for="(ch, $index) in __arr(o?.chips)" :key="$index">
                                   <span :style="ch?.style"></span>
@@ -456,7 +465,7 @@
             <template v-if="v.md?.layerMenuOpen">
               <div class="rf-scroll" role="listbox" aria-label="Active market layer" style="position: absolute; left: 16px; top: 118px; width: 300px; z-index: 620; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 8px 24px rgba(0,58,112,.2); max-height: calc(100% - 134px); overflow-y: auto;">
                 <template v-for="(o, $index) in __arr(v.md?.layerOptions)" :key="$index">
-                  <button class="sch5" @click="o?.go" role="option" :aria-selected="o?.selected" :style="o?.rowStyle">
+                  <button class="sch4" @click="o?.go" role="option" :aria-selected="o?.selected" :style="o?.rowStyle">
                     <span :style="o?.chipStyle">
                       <template v-for="(ch, $index) in __arr(o?.chips)" :key="$index">
                         <span :style="ch?.style"></span>
@@ -501,10 +510,10 @@
             
             <div style="position: absolute; right: 16px; bottom: 22px; z-index: 610; display: flex; align-items: flex-end; justify-content: flex-end; gap: 12px;">
               <div style="display: flex; align-items: center; gap: 8px; padding-bottom: 2px;">
-                <button class="sch5" @click="v.md?.resetView" style="display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; font-family: var(--rf-display); font-size: 12.5px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,58,112,.14); white-space: nowrap;">
+                <button class="sch4" @click="v.md?.resetView" style="display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; font-family: var(--rf-display); font-size: 12.5px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,58,112,.14); white-space: nowrap;">
                   <img src="/assets/icons/sub-reset-view.svg" alt width="14" height="14" style="flex: none; opacity: .75;">Reset view
                 </button>
-                <button class="sch5" @click="v.md?.toggleLegend" :style="v.md?.legendBtnStyle">
+                <button class="sch4" @click="v.md?.toggleLegend" :style="v.md?.legendBtnStyle">
                   <img src="/assets/icons/sub-legend-list.svg" alt width="14" height="14" style="flex: none; opacity: .75;">Legend
                 </button>
               </div>
@@ -520,7 +529,7 @@
                   </div>
                   <div class="rf-scroll" style="max-height: 264px; overflow-y: auto; padding: 0 6px 8px;">
                     <template v-for="(lc, $index) in __arr(v.md?.layerChoices)" :key="$index">
-                      <button class="sch5" @click="lc?.go" :style="lc?.rowStyle">
+                      <button class="sch4" @click="lc?.go" :style="lc?.rowStyle">
                         <span :style="lc?.swatchStyle">
                           <template v-for="(ch, $index) in __arr(lc?.chips)" :key="$index">
                             <span :style="ch?.style"></span>
@@ -722,7 +731,7 @@
                     </div>
                   </div>
 
-                  <button class="sch4" @click="v.md?.panel?.openListing" style="display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%; height: 44px; margin-top: 16px; font-family: var(--rf-display); font-size: 13.5px; font-weight: 500; color: var(--vf-white); background: var(--vf-accent); border: 0; border-radius: 6px; cursor: pointer;">
+                  <button class="sch5" @click="v.md?.panel?.openListing" style="display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%; height: 44px; margin-top: 16px; font-family: var(--rf-display); font-size: 13.5px; font-weight: 500; color: var(--vf-white); background: var(--vf-accent); border: 0; border-radius: 6px; cursor: pointer;">
                     View full listing<img src="/assets/icons/navigate-arrow.svg" alt width="12" height="12" style="filter: brightness(0) invert(1);">
                   </button>
                   <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">Drive-time figures are approximated from a straight-line catchment around the practice. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>

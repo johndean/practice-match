@@ -103,11 +103,16 @@ describe('local design amendments (spec D15)', () => {
     // through the design's `stateOf` helper, and Community Context reaches the design's own
     // "Community data unavailable" card when D4 leaves the four figures null.
     'A12.8', 'A12.9', 'A12.10', 'A12.11',
+    // A13 — the metro selector becomes the design's own listbox (John, 2026-09-08). Five literal
+    // edits: the `setMarket` class property beside `setF`, the render values that drive the menu,
+    // the trigger-and-listbox markup, and the two lifecycle hooks that add and remove the Escape
+    // and outside-click listeners the design has never had.
+    'A13.1', 'A13.2', 'A13.3', 'A13.4', 'A13.5',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(82);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(87);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -263,6 +268,34 @@ describe('local design amendments (spec D15)', () => {
     const declared = JSON.parse(attr[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) as Record<string, unknown>;
     expect(declared.startNotice).toEqual({ editor: 'text', default: '', tsType: 'string', section: 'Prototype', label: 'Sign-in notice on load' });
     expect(pristine, 'startNotice exists only as a local amendment').not.toContain('startNotice');
+  });
+
+  // A13 composes the metro dropdown from the design's OWN listbox: every style value it
+  // introduces already appears on the pristine bundle's layer/compare menu or on the metro
+  // field the amendment replaces. The one exception is asserted as an exception: the panel's
+  // `top: 46px`/`z-index: 700` anchoring comes from the "More filters" popover in the SAME
+  // toolbar row, which is a different element of the same design.
+  it('A13 introduces no new styling — every value is the design\'s own', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    for (const decl of [
+      'font-family: var(--rf-display); font-size: 13px; font-weight: ',   // rowStyle, V3:2112
+      'background: var(--vf-accent-bg)',                                   // selected row, V3:2113
+      'background: var(--vf-neutral)',                                     // hover / highlight, V3:525
+      'transition: transform 150ms var(--easing-out); transform: rotate(', // caret, V3:2096
+      'box-shadow: 0 6px 20px rgba(0,58,112,.16)',                         // More filters panel, V3:382
+      'top: 46px; z-index: 700',                                           // More filters anchoring, V3:382
+      'max-height: 232px; overflow-y: auto',                               // compare menu, V3:482
+      'flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;'
+    ]) {
+      expect(pristine, `${decl} is not the design's own`).toContain(decl);
+    }
+    // …and the operating system's popup is gone from the toolbar: the metro control is now a
+    // button that says what it opens, and the four markets are options in a labelled listbox.
+    expect(amended).toContain('aria-label="Metro area" aria-haspopup="listbox"');
+    expect(amended).toContain('<div role="listbox" aria-label="Metro area"');
+    expect(amended).not.toContain('onChange="{{ setMarket }}"');
+    // The five filter selects, the sort select and the wizard's stay native (scope, Q1).
+    expect((amended.match(/<select /g) ?? []).length, 'A13 changed a select outside its scope').toBe(4);
   });
 
   it('the amended reference is the pristine Rev 2 file plus exactly the ruled edits', () => {

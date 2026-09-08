@@ -224,12 +224,32 @@ class Component extends DCLogic {
     window.addEventListener("resize", set);
   }
 
+  trackMenuDismiss() {
+    const down = (e) => {
+      if (!this.state.marketMenu) return;
+      const host = this._marketMenuEl;
+      if (host && e.target && host.contains(e.target)) return;
+      this.setState({ marketMenu: false, marketMenuAt: -1 });
+    };
+    const key = (e) => {
+      if (!this.state.marketMenu || e.key !== "Escape") return;
+      this.setState({ marketMenu: false, marketMenuAt: -1 });
+    };
+    this._onDocDown = down;
+    this._onDocKey = key;
+    document.addEventListener("pointerdown", down, true);
+    document.addEventListener("keydown", key, true);
+  }
+
   componentWillUnmount() {
     if (this._onResize) window.removeEventListener("resize", this._onResize);
+    if (this._onDocDown) document.removeEventListener("pointerdown", this._onDocDown, true);
+    if (this._onDocKey) document.removeEventListener("keydown", this._onDocKey, true);
   }
 
   componentDidMount() {
     this.trackWidth();
+    this.trackMenuDismiss();
     const start = this.props.startScreen;
     if (start && start !== "gate") this.setState({ screen: start, auth: true });
     if (this.props.startViewport === "mobile") this.setState({ viewport: "mobile" });
@@ -264,6 +284,16 @@ class Component extends DCLogic {
     this.setState((s) => ({ f: Object.assign({}, s.f, { [key]: v }), loading: true }));
     clearTimeout(this._t);
     this._t = setTimeout(() => this.setState({ loading: false }), 320);
+  };
+
+  // The metro choice. One implementation, called by the dropdown rows and still accepting a
+  // change event the way setF does, so the transition below is the one the <select> had.
+  setMarket = (e) => {
+    const v = e && e.target ? e.target.value : e;
+    this.setState({ market: v, activeId: null, hoverId: null, loading: true, marketMenu: false, marketMenuAt: -1 }, () => {
+      clearTimeout(this._t);
+      this._t = setTimeout(() => this.setState({ loading: false }), 320);
+    });
   };
 
   // ---- Browse Practices: map, market layers, results -------------------------------------------------
@@ -1525,10 +1555,48 @@ class Component extends DCLogic {
 
       isBrowse: false,
       market: s.market || "Austin, TX",
-      marketOptions: Object.keys(MARKETS).map((m) => ({ v: m, label: m + " metro" })),
-      setMarket: (e) => this.setState({ market: e.target.value, activeId: null, hoverId: null, loading: true }, () => {
-        clearTimeout(this._t);
-        this._t = setTimeout(() => this.setState({ loading: false }), 320);
+      // The metro SELECT is a dropdown list in this design's own style, not the operating
+      // system's popup: the same trigger + role="listbox" panel the Market data card uses.
+      marketMenuOpen: !!s.marketMenu,
+      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Object.keys(MARKETS).indexOf(s.market || "Austin, TX") }),
+      marketTriggerLabel: (s.market || "Austin, TX") + " metro",
+      marketFieldStyle: "position: relative; display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 8px 0 15px; min-width: 300px; background: var(--vf-neutral); border: 1px solid " +
+        (s.marketMenu ? "var(--vf-accent)" : "var(--border-subtle)") + "; border-radius: 6px;",
+      marketSelectStyle: "display: flex; align-items: center; gap: 8px; flex: 1; height: 36px; padding: 0; border: 0; outline: none; background: none; font-size: 14px; font-weight: 500; color: var(--vf-navy); cursor: pointer;",
+      marketCaretStyle: "flex: none; display: block; transition: transform 150ms var(--easing-out); transform: rotate(" +
+        (s.marketMenu ? "180deg" : "0deg") + ");",
+      marketMenuRef: (el) => { this._marketMenuEl = el || null; },
+      marketMenuKeys: (e) => {
+        const keys = Object.keys(MARKETS);
+        const cur = keys.indexOf(s.market || "Austin, TX");
+        const at = s.marketMenuAt == null || s.marketMenuAt < 0 ? cur : s.marketMenuAt;
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur });
+          return this.setState({ marketMenuAt: (at + (e.key === "ArrowDown" ? 1 : keys.length - 1)) % keys.length });
+        }
+        if (!s.marketMenu) return;
+        if (e.key === "Home" || e.key === "End") {
+          e.preventDefault();
+          return this.setState({ marketMenuAt: e.key === "Home" ? 0 : keys.length - 1 });
+        }
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          return this.setMarket(keys[at]);
+        }
+      },
+      marketOptions: Object.keys(MARKETS).map((m, i) => {
+        const on = (s.market || "Austin, TX") === m;
+        const hi = s.marketMenuAt === i;
+        return {
+          v: m, label: m + " metro", selected: on,
+          go: () => this.setMarket(m),
+          rowStyle: "display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 8px; font-family: var(--rf-display); font-size: 13px; font-weight: " +
+            (on ? "800" : "500") + "; color: var(--vf-navy); background: " +
+            (on ? "var(--vf-accent-bg)" : hi ? "var(--vf-neutral)" : "none") + "; border: 0; border-radius: 6px; cursor: pointer;",
+          tickStyle: "flex: none; display: block; filter: brightness(0) saturate(100%) invert(23%) sepia(89%) saturate(1352%) hue-rotate(184deg) brightness(94%) contrast(101%); opacity: " +
+            (on ? "1" : "0") + ";"
+        };
       }),
       marketLabel: (s.market || "Austin, TX") + " metro · within 40 miles",
       emptyNote: this.marketTotal() + " practices are listed in the " + (s.market || "Austin, TX") + " metro. Widening the price or revenue range usually brings results back.",
