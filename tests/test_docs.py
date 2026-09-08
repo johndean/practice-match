@@ -1432,3 +1432,63 @@ def test_persona_password_railway_set_instructions_are_marked_superseded():
                     f"{relpath}: line mentions PERSONA_PASSWORD and `railway variables --set` "
                     f"but is not marked superseded: {line!r}"
                 )
+
+
+# --- Controller amendment A-I5d.5 (2026-09-09): the admin sign-ups router gates on SITE_MODE=app --
+
+
+def test_d_i5d_5_is_marked_superseded_by_a_i5d_5_without_being_deleted():
+    """John's ruling (2026-09-09, verbatim, quoted in the dispatch): "Gate the entire Admin Launch
+    Sign-ups router behind SITE_MODE=app. Do not expose the sign-up list or CSV export on
+    production while Coming Soon, even to an API_SECRET_KEY bearer." reverses D-I5d-5's
+    unconditional mount. D-I5d-5's table row stays in the plan as history — it recorded a real
+    decision that held for a real period — with a leading clause pointing at what replaced it, the
+    same pattern S8 used for A-S6.1 (test_a_s6_1_is_marked_superseded_by_a_s6_2_without_being_deleted)."""
+    plan = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-08-launch-signups-admin.md").read_text()
+    row = next(line for line in plan.splitlines() if line.startswith("| **D-I5d-5**"))
+    assert "Superseded 2026-09-09 by John's ruling (A-I5d.5)" in row, (
+        "D-I5d-5's row does not carry the added 'Superseded ... (A-I5d.5)' clause"
+    )
+    assert "The router is mounted in **both** site modes" in row, (
+        "D-I5d-5's original ruling text was rewritten or removed rather than kept as history"
+    )
+
+
+def test_a_i5d_5_amendment_is_recorded_in_the_plan():
+    """The plan gains a dated record of John's ruling, verbatim, and the operational consequence it
+    has for production (which runs coming_soon until launch, so the sign-ups router is unreachable
+    there until the flip) — not just a change to the code."""
+    plan = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-08-launch-signups-admin.md").read_text()
+    assert "**Controller amendment A-I5d.5" in plan, "the plan does not record controller amendment A-I5d.5"
+    amendment = plan.split("**Controller amendment A-I5d.5", 1)[1]
+    assert "SITE_MODE=app" in amendment
+    assert "API_SECRET_KEY" in amendment
+    assert "SELECT email, created_at FROM interest_signup ORDER BY created_at" in amendment, (
+        "the amendment does not give the operator the read-only SQL fallback"
+    )
+
+
+def test_runbook_says_the_signups_router_is_app_mode_only():
+    """§13's "Before the flip" paragraph used to say the list and export were reachable on
+    production before launch (D-I5d-5). A-I5d.5 reverses that: the whole router 404s until
+    `SITE_MODE=app`, and an operator reads the sign-ups with SQL instead — this is the new pin for
+    that wording (there was no prior pin naming the old "reachable before launch"/"both site
+    modes" phrasing to update)."""
+    runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    section = runbook.split("## 13. The launch email", 1)[1]
+    assert "SITE_MODE=app" in section
+    assert "404" in section
+    assert "API_SECRET_KEY" in section
+    assert "SELECT email, created_at FROM interest_signup ORDER BY created_at" in section, (
+        "§13 does not give the read-only SQL an operator uses before the launch flip"
+    )
+    assert "A-I5d.5" in section
+
+
+def test_deploy_md_names_admin_signups_among_app_mode_only_surfaces():
+    """DEPLOY.md's Site mode section must say the admin sign-ups router is app-mode-only now,
+    alongside auth/applications/admin-users/listings, per A-I5d.5."""
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    section = deploy.split("## Site mode (Coming Soon on production)", 1)[1].split("\n## ", 1)[0]
+    assert "/api/admin/signups" in section
+    assert "A-I5d.5" in section

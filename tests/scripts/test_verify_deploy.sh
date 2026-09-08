@@ -46,7 +46,7 @@ railway_calls() { wc -l < "$FAKE_RAILWAY_LOG" | tr -d ' '; }
 
 # start_server <mode> [environment]. Modes: ok | spa_missing | deep_503 | no_postgis | no_site_mode |
 #   coming_ok | coming_wrong_shell | coming_interest_500 | coming_leak | coming_auth_live | coming_admin_live |
-#   coming_applications_live | coming_listings_live | coming_signups_gone | listings_open | missing_keys |
+#   coming_applications_live | coming_listings_live | coming_signups_live | listings_open | missing_keys |
 #   db_null | not_json | deep_json | wrong_version | no_config | config_not_bool | config_public
 # [environment] overrides the fake body's `environment` field (default qa) — M1's production-mode
 # cases reuse the same MODE bodies (coming_ok, ok) with environment: production instead of duplicating
@@ -72,7 +72,7 @@ if MODE == "no_postgis":
 if MODE == "no_site_mode":
     del BODY["site_mode"]
 if MODE in ("coming_ok", "coming_wrong_shell", "coming_interest_500", "coming_leak", "coming_auth_live",
-            "coming_admin_live", "coming_applications_live", "coming_listings_live", "coming_signups_gone"):
+            "coming_admin_live", "coming_applications_live", "coming_listings_live", "coming_signups_live"):
     BODY["site_mode"] = "coming_soon"
 if MODE == "missing_keys":
     BODY = {"status": "ok"}  # malformed: every other required key absent (fix round 2)
@@ -112,12 +112,15 @@ class H(BaseHTTPRequestHandler):
             # The Admin surface mounted behind the Coming Soon page (Task I5, fix round 1, N2).
             self._send(200, "application/json", b'{"items":[],"next_cursor":null}')
         elif self.path.startswith("/api/admin/signups"):
-            # D-I5d-5: mounted and GUARDED in every mode, including before launch — the sign-ups
-            # rows only exist on production, so the router must be reachable there (final review
-            # L2). A healthy deployment answers 401 to an anonymous caller; coming_signups_gone
-            # simulates the regression that moves the router back inside the site_mode == "app"
-            # include, which would 404 exactly like /api/admin/users.
-            if MODE == "coming_signups_gone":
+            # A-I5d.5 (2026-09-09, John's ruling; supersedes D-I5d-5, which had this mounted and
+            # GUARDED in every mode). The whole router now sits in the same `site_mode == "app"`
+            # include as /api/admin/users: a healthy deployment answers 404 in coming-soon mode and
+            # 401 (guarded) to an anonymous caller once SITE_MODE=app. coming_signups_live simulates
+            # the regression that leaves D-I5d-5's pre-ruling unconditional include in place — still
+            # reachable (401, not 404) behind the Coming Soon page.
+            if MODE == "coming_signups_live":
+                self._send(401, "application/json", b'{"error":{"code":"UNAUTHORIZED","message":"Sign in to continue."}}')
+            elif BODY["site_mode"] == "coming_soon":
                 self._send(404, "application/json", b'{"error":{"code":"NOT_FOUND"}}')
             else:
                 self._send(401, "application/json", b'{"error":{"code":"UNAUTHORIZED","message":"Sign in to continue."}}')
@@ -157,7 +160,7 @@ class H(BaseHTTPRequestHandler):
             elif MODE == "coming_leak":
                 self._send(200, "text/html", LEAK_SHELL)
             elif MODE in ("coming_ok", "coming_interest_500", "coming_auth_live", "coming_admin_live",
-                          "coming_applications_live", "coming_listings_live", "coming_signups_gone"):
+                          "coming_applications_live", "coming_listings_live", "coming_signups_live"):
                 self._send(200, "text/html", COMING_SHELL)
             else:
                 self._send(200, "text/html", SHELL_BAD if MODE == "spa_missing" else SHELL_OK)
@@ -201,7 +204,7 @@ PY
 start_server ok
 : > "$FAKE_RAILWAY_LOG"
 out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA) || fail "a healthy target must verify; output: $out"
-for line in "healthz OK" "deep healthz OK" "config OK" "SPA fallback OK" "listings guarded OK"; do [[ "$out" == *"$line"* ]] || fail "missing '$line' in: $out"; done
+for line in "healthz OK" "deep healthz OK" "config OK" "SPA fallback OK" "listings guarded OK" "signups guarded OK"; do [[ "$out" == *"$line"* ]] || fail "missing '$line' in: $out"; done
 [[ "$out" == *"3.5.2"* ]] || fail "the postgis version must be printed; got: $out"
 
 # An explicit target is an ad hoc probe: the Railway CLI must not be invoked at all,
@@ -247,7 +250,7 @@ stop_server
 # is production's normal shape now — the coming-soon page never goes to QA) -----
 start_server coming_ok production
 out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh production 2>&1) || fail "coming-soon mode must verify; output: $out"
-for line in "site_mode coming_soon" "config OK  market_data_public False" "coming-soon shell OK" "interest endpoint OK" "auth endpoints absent OK" "signups surface reachable OK" "member endpoints absent OK"; do [[ "$out" == *"$line"* ]] || fail "missing '$line' in: $out"; done
+for line in "site_mode coming_soon" "config OK  market_data_public False" "coming-soon shell OK" "interest endpoint OK" "auth endpoints absent OK" "signups surface absent OK" "member endpoints absent OK"; do [[ "$out" == *"$line"* ]] || fail "missing '$line' in: $out"; done
 # I7: market_data_public false on production is the required shape, and it verifies.
 stop_server
 
@@ -342,22 +345,26 @@ if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash script
   stop_server; fail "/api/admin/users answering 200 in coming-soon mode must fail the script; it exited 0 with: $out"
 fi
 [[ "$out" == *"/api/admin/users answered 200 in coming-soon mode"* ]] || { stop_server; fail "the admin-surface failure must name itself; got: $out"; }
-# L6 (I5d.3 review): Task I5d mounts /api/admin/signups unconditionally (D-I5d-5), so the old
-# wording ("the admin surface must not be mounted before launch") now overstates what this probe
-# proves — only /api/admin/users is asserted absent here. The message must say so precisely.
-[[ "$out" == *"/api/admin/users must not be mounted before launch"* && "$out" == *"D-I5d-5"* ]] \
-  || { stop_server; fail "the admin-surface failure must not overstate what it proves (L6, D-I5d-5); got: $out"; }
+# A-I5d.5 (2026-09-09) resolves L6 (I5d.3 review) the other way: that finding said the old wording
+# ("the admin surface must not be mounted before launch") overstated what this probe proved,
+# because D-I5d-5 mounted /api/admin/signups unconditionally so it alone was NOT asserted absent.
+# John's ruling puts signups back inside the same gate as /api/admin/users, so the plain wording is
+# accurate again and no exception needs naming here.
+[[ "$out" == *"/api/admin/users must not be mounted before launch"* ]] \
+  || { stop_server; fail "the admin-surface failure message changed; got: $out"; }
 stop_server
 
-# --- 11c2. Final review L2: the positive half of D-I5d-5's claim. /api/admin/users being ABSENT
-# does not prove /api/admin/signups is PRESENT — this is the one probe of production's real mount
-# table for that, and a regression that moved the router back inside the site_mode == "app"
-# include would 404 here exactly like /api/admin/users. -----------------------------------------
-start_server coming_signups_gone production
+# --- 11c2. A-I5d.5 (2026-09-09; supersedes final review L2's D-I5d-5 positive-mount probe): the
+# whole point of that probe was that /api/admin/users being ABSENT did not prove /api/admin/signups
+# was PRESENT, when D-I5d-5 meant the two were expected to differ. Now they are expected to agree —
+# this is the regression case for a fix that only re-gates /api/admin/users and leaves the old
+# unconditional signups include in place, still reachable (401, not 404) behind the Coming Soon
+# page. --------------------------------------------------------------------------------------
+start_server coming_signups_live production
 if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh production 2>&1); then
-  stop_server; fail "/api/admin/signups answering 404 in coming-soon mode must fail the script; it exited 0 with: $out"
+  stop_server; fail "/api/admin/signups answering 401 in coming-soon mode must fail the script; it exited 0 with: $out"
 fi
-[[ "$out" == *"/api/admin/signups answered 404 in coming-soon mode"* ]] || { stop_server; fail "the signups-surface failure must name itself; got: $out"; }
+[[ "$out" == *"/api/admin/signups answered 401 in coming-soon mode"* ]] || { stop_server; fail "the signups-surface failure must name itself; got: $out"; }
 stop_server
 
 start_server coming_applications_live production

@@ -86,13 +86,19 @@ def create_app(dist: Path | None = None) -> FastAPI:
         # absent rather than merely guarded, and `scripts/verify-deploy.sh production` probes
         # that alongside the auth, applications and admin surfaces.
         app.include_router(listings_router)
-    # UNCONDITIONALLY, unlike `admin_users_router` above (Task I5d, D-I5d-5): `interest_signup` is
-    # filled by the Coming Soon page, so the rows this reads only exist on PRODUCTION, which runs
-    # `coming_soon` until launch. Gating it the same way would make the capability unreachable
-    # exactly where the data is. Every route on it is `require(...)`-guarded, and the one action
-    # that could do harm — the mail whose copy says the site is open — refuses with 409
-    # NOT_LAUNCHED until `SITE_MODE=app`.
-    app.include_router(admin_signups_router)
+        # Superseded 2026-09-09 by John's ruling (A-I5d.5) — this used to be UNCONDITIONAL (Task
+        # I5d, D-I5d-5): `interest_signup` is filled by the Coming Soon page, so the rows this
+        # reads only exist on PRODUCTION, which runs `coming_soon` until launch, and gating the
+        # router the way `admin_users_router` is gated would have made the capability unreachable
+        # exactly where the data is. John overrode that: "Gate the entire Admin Launch Sign-ups
+        # router behind SITE_MODE=app. Do not expose the sign-up list or CSV export on production
+        # while Coming Soon, even to an API_SECRET_KEY bearer." So it now sits in the same
+        # `site_mode == "app"` block as `admin_users_router` above, and every route on it —
+        # including the ones that were already `require(...)`-guarded and the SEND, which was
+        # already refused with 409 NOT_LAUNCHED until `SITE_MODE=app` — is a 404 before then. An
+        # operator reads the list before the flip with the read-only SQL in RUNBOOK-identity.md
+        # §13 instead.
+        app.include_router(admin_signups_router)
     app.include_router(interest_router)
     # Resend's delivery events (Task I6). NOT gated on `site_mode`, unlike the auth surface: the
     # provider posts to whichever host sent the mail, and a bounce that arrives after a launch

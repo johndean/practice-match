@@ -188,16 +188,15 @@ if [[ "$mode" == "coming_soon" ]]; then
   # /api/auth/signup alone could not detect the applications or admin routers being un-gated on
   # their own (Identity plan Task I5, fix round 1, N2).
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/admin/users")
-  [[ "$code" == "404" ]] || { echo "FAIL: /api/admin/users answered $code in coming-soon mode (expected 404 - /api/admin/users must not be mounted before launch; the sign-ups routes deliberately are, per D-I5d-5)" >&2; exit 1; }
-  # D-I5d-5's own justification is that the launch sign-ups ARE reachable before launch, because
-  # that is where the rows are — /api/admin/users being absent does not prove this, so this is the
-  # one positive probe of production's real mount table for the claim (final review L2). A
-  # regression that moved the router back inside the `site_mode == "app"` include would 404 here
-  # exactly like /api/admin/users, and CI's own
-  # test_the_list_is_reachable_before_launch_per_d_i5d_5 would not catch it on the deployed host.
+  [[ "$code" == "404" ]] || { echo "FAIL: /api/admin/users answered $code in coming-soon mode (expected 404 - /api/admin/users must not be mounted before launch)" >&2; exit 1; }
+  # Superseded 2026-09-09 by John's ruling (A-I5d.5): D-I5d-5 used to mount this router
+  # UNCONDITIONALLY, so the launch sign-ups stayed reachable (401, guarded) before launch, and this
+  # probe checked for exactly that. John overrode it — "Gate the entire Admin Launch Sign-ups
+  # router behind SITE_MODE=app... even to an API_SECRET_KEY bearer" — so it now sits inside the
+  # same `site_mode == "app"` include as /api/admin/users above and gets the identical 404 here.
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/admin/signups")
-  [[ "$code" == "401" ]] || { echo "FAIL: /api/admin/signups answered $code in coming-soon mode (expected 401 - it is mounted before launch by D-I5d-5, and guarded)" >&2; exit 1; }
-  echo "signups surface reachable OK"
+  [[ "$code" == "404" ]] || { echo "FAIL: /api/admin/signups answered $code in coming-soon mode (expected 404 - A-I5d.5: the sign-ups router must not be mounted before launch)" >&2; exit 1; }
+  echo "signups surface absent OK"
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H 'Content-Type: application/json' -d '{"kind":"buyer","fields":{}}' "$BASE/api/applications")
   [[ "$code" == "404" ]] || { echo "FAIL: /api/applications answered $code in coming-soon mode (expected 404 - the applications surface must not be mounted before launch)" >&2; exit 1; }
   # ...and the listing reads (Seed Listings Task L5, amendment A-L5.1). They are member endpoints
@@ -217,6 +216,13 @@ else
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/listings")
   [[ "$code" == "401" ]] || { echo "FAIL: /api/listings answered $code to an anonymous caller (expected 401 - the listings surface must be guarded by listing.read)" >&2; exit 1; }
   echo "listings guarded OK"
+  # A-I5d.5 (2026-09-09): the Admin Launch Sign-ups router is mounted only in app mode now, exactly
+  # like /api/admin/users and /api/listings beside it, so this is the one probe of production's
+  # real mount table for the positive half of that claim once SITE_MODE=app. An anonymous caller
+  # gets the generic 401 `signups.read` requires, never the list.
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/admin/signups")
+  [[ "$code" == "401" ]] || { echo "FAIL: /api/admin/signups answered $code to an anonymous caller (expected 401 - A-I5d.5: the sign-ups surface must be mounted and guarded once SITE_MODE=app)" >&2; exit 1; }
+  echo "signups guarded OK"
 fi
 # `railway logs` streams by default in CLI 5.26 and would hang a script; --lines
 # fetches history and exits. Best-effort only: never fail a good deploy on logs --

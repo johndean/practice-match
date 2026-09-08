@@ -183,13 +183,19 @@ async def test_the_list_needs_signups_read(client, conn, buyer_headers):
     assert (await client.get(SIGNUPS)).status_code == 401
 
 
-async def test_the_list_is_reachable_before_launch_per_d_i5d_5(dist, redis, monkeypatch):
-    """M1 (I5d.3 review): D-I5d-5's unconditional mount had no test — nothing would fail if the
-    `app.include_router(admin_signups_router)` line were later moved inside the `site_mode ==
-    "app"` block. `401`, not `404`, is the proof: the route exists and only refuses for lack of a
-    credential — `require(...)` runs at all, which it could not if `not_found_router`'s catch-all
-    had already answered. Contrasted with `/api/admin/users`, which stays absent in coming-soon
-    mode, so the mount really is selective rather than everything having quietly become reachable."""
+async def test_the_admin_signups_router_is_absent_in_coming_soon_mode_per_a_i5d_5(dist, redis, member, monkeypatch):
+    """Controller amendment A-I5d.5 (John's ruling, 2026-09-09, verbatim): "Gate the entire Admin
+    Launch Sign-ups router behind SITE_MODE=app. Do not expose the sign-up list or CSV export on
+    production while Coming Soon, even to an API_SECRET_KEY bearer." This SUPERSEDES D-I5d-5 (the
+    router used to mount unconditionally, precisely so the list stayed readable on production
+    before launch) — the test that pinned that ruling asserted `401` here, meaning `require(...)`
+    still ran; that assertion is now backwards on purpose. `404` is the proof the router itself is
+    gone: `not_found_router`'s catch-all is what answers.
+
+    Checked for a real admin session AND for the legacy `API_SECRET_KEY` bearer, and for the list,
+    the CSV export and the launch-mail send/dry-run alike — John's ruling named the bearer
+    specifically, and a session-only check would not catch a fix that re-gated only one route or
+    only one credential."""
     import httpx
     from httpx import ASGITransport
 
@@ -197,12 +203,21 @@ async def test_the_list_is_reachable_before_launch_per_d_i5d_5(dist, redis, monk
     from app.main import create_app
     from tests.api.conftest import ORIGIN
 
+    _, cookies, headers = member(roles=("admin",))
+    admin = auth_headers(cookies, headers)
+    bearer = {"Authorization": f"Bearer {settings.api_secret_key}"}
+
     monkeypatch.setattr(settings, "site_mode", "coming_soon")
     async with httpx.AsyncClient(transport=ASGITransport(app=create_app(dist=dist)), base_url=ORIGIN) as c:
-        signups = await c.get(SIGNUPS)
-        users = await c.get("/api/admin/users")
-    assert signups.status_code == 401
-    assert users.status_code == 404
+        for creds in (admin, bearer, {}):
+            assert (await c.get(SIGNUPS, headers=creds)).status_code == 404
+            assert (await c.get("/api/admin/signups.csv", headers=creds)).status_code == 404
+            assert (await c.post(LAUNCH, json={"dry_run": True}, headers=creds)).status_code == 404
+            assert (await c.post(LAUNCH, json={"dry_run": False}, headers=creds)).status_code == 404
+        # Parity with `/api/admin/users`, which D-I5d-5 had contrasted this router with (mounted
+        # unconditionally, "unlike admin_users_router"); A-I5d.5 puts the two in the same gate, so
+        # the same credential now gets the same 404 from both.
+        assert (await c.get("/api/admin/users", headers=admin)).status_code == 404
 
 
 async def test_reading_the_list_writes_no_audit_row(client, conn, staff_headers):

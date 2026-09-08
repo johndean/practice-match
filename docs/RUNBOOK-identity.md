@@ -399,14 +399,27 @@ only config in the repo), with `PW_APP_URL` and the five variables set ahead of 
 The Coming Soon page collects one thing: an address, and a promise — *"One message, when it
 launches. Nothing else, and never shared."* This is how that message is sent, once.
 
-**Before the flip.** `GET /api/admin/signups` reads the list (staff or admin) and
+**Before the flip.** Production runs `SITE_MODE=coming_soon` until launch, and controller amendment
+A-I5d.5 (John's ruling, 2026-09-09) gates the WHOLE Admin Launch Sign-ups router behind
+`SITE_MODE=app` — `GET /api/admin/signups`, `GET /api/admin/signups.csv` and
+`POST /api/admin/signups/launch-mail` alike answer `404` before the flip, even to the legacy
+`API_SECRET_KEY` operator bearer (this supersedes D-I5d-5, which had mounted the router
+unconditionally so the list stayed readable before launch). To read the sign-ups before then, query
+the database directly:
+
+```sql
+SELECT email, created_at FROM interest_signup ORDER BY created_at;
+```
+
+**Once `SITE_MODE=app`.** `GET /api/admin/signups` reads the list (staff or admin) and
 `GET /api/admin/signups.csv` downloads it — capped at `MAX_EXPORT = 100 000` rows
 (`app/api/admin_signups.py`); above that it truncates silently, so check the row count against
 `not_mailed` from the dry run below before treating a download as the whole list.
 `POST /api/admin/signups/launch-mail` with `{"dry_run": true}` answers with the counts and queues
-nothing — it writes one audit row, `reason: dry_run`, and nothing else; on production, while the
-site is still in coming-soon mode, that is all it will do — a real send is refused with
-`409 NOT_LAUNCHED`, because the message says Practice Match is open.
+nothing — it writes one audit row, `reason: dry_run`, and nothing else. A real send is additionally
+refused with `409 NOT_LAUNCHED` if `SITE_MODE` somehow still reads `coming_soon` at that point — a
+defence-in-depth check inside the handler itself, kept even though the router is absent before
+then, because the message the mail carries says Practice Match is open.
 
 **Two more gates, ahead of that one (controller amendment A-I5d.4, John, 2026-09-08).** A real send
 is refused, in this order, before `SITE_MODE` is even checked:
