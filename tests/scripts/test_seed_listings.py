@@ -22,11 +22,16 @@ def _count(dsn: str, where: str = "TRUE") -> int:
 def _plant(dsn: str, slug: str, source: str) -> None:
     """One extra row, the way A-L4's matrix needs it. `source` is constrained by
     migrations/016_listing.sql to 'seed' | 'seller', so 'seller' IS the "any other source" row
-    A-L4 asks for — a 'member' row cannot exist in this table at all."""
+    A-L4 asks for — a 'member' row cannot exist in this table at all.
+
+    Carries a realistic `zip`, `est` and `price` (controller amendment A-SL9): a 'published' row
+    with none of the three is exactly what migrations/030_listing_owner_and_status.sql's
+    `listing_submittable_ck` (spec D12) exists to forbid, and the CHECK rejecting this fixture is
+    the CHECK working, not a bug to route around — so the fixture, not the CHECK, gets fixed."""
     with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO listing (slug, name, city, state, area, type, market, source, status)"
-            " VALUES (%s,'Planted listing','Austin','TX','Austin','Small animal','Austin, TX',%s,'published')",
+            "INSERT INTO listing (slug, name, city, state, zip, area, type, market, source, status, est, price)"
+            " VALUES (%s,'Planted listing','Austin','TX','78701','Austin','Small animal','Austin, TX',%s,'published',2015,750000)",
             (slug, source),
         )
 
@@ -59,10 +64,12 @@ def test_seed_is_idempotent(scratch_dsn: str) -> None:
 
 def test_reset_removes_seed_rows_but_never_seller_rows(scratch_dsn: str) -> None:
     SL.seed(scratch_dsn)
+    # Same realistic zip/est/price as _plant() (A-SL9) — a 'published' row needs them to satisfy
+    # `listing_submittable_ck`.
     with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO listing (slug, name, city, state, area, type, market, source, status)"
-            " VALUES ('sellers-own','Seller listing','Austin','TX','Austin','Small animal','Austin, TX','seller','published')"
+            "INSERT INTO listing (slug, name, city, state, zip, area, type, market, source, status, est, price)"
+            " VALUES ('sellers-own','Seller listing','Austin','TX','78701','Austin','Small animal','Austin, TX','seller','published',2015,750000)"
         )
     assert SL.seed(scratch_dsn, reset=True) == 18
     assert _count(scratch_dsn, "source = 'seed'") == 18
