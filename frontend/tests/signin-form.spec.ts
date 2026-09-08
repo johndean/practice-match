@@ -10,8 +10,7 @@ import { PERSONAS, isExpectedSignInFailure401, personaCredentials, prepare } fro
 // real secret is a live one (`PW_APP_URL` set — the QA hand-back, with `PERSONA_PASSWORD` from the
 // operator's Keychain, never Railway, A-S6.2). When `PW_APP_URL` is unset this resolves to the
 // project's own `retain-on-failure`, so nothing changes locally or in CI, and the TESTS are never
-// skipped: the form is precisely what
-// Task I10 has to prove on QA.
+// skipped: the form is precisely what Task I10 has to prove on QA.
 //
 // This is why they live in a FILE of their own rather than a describe inside smoke.spec.ts:
 // Playwright refuses `use({ trace })` inside a describe group — "because it forces a new worker" —
