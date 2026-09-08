@@ -1384,3 +1384,29 @@ def test_a_s6_1_is_marked_superseded_by_a_s6_2_without_being_deleted():
         "`PERSONA_PASSWORD` IS stored as a Railway variable on the QA `api` service — as the "
         "operator's secret store only"
     ) in a_s6_1, "A-S6.1's original ruling sentence was rewritten or removed rather than kept as history"
+
+
+PLAN_FILES_WITH_PERSONA_PASSWORD_HISTORY = (
+    "docs/superpowers/plans/2026-09-05-practice-match-identity-access-email.md",
+    "docs/superpowers/plans/2026-09-08-account-screens.md",
+)
+
+
+def test_persona_password_railway_set_instructions_are_marked_superseded():
+    """S8 Round 2 (review Medium finding 1). `docs/superpowers/plans/2026-09-05-practice-match-
+    identity-access-email.md`'s Step 1 (the original `railway variables --set PERSONA_PASSWORD=…`
+    instruction) and its R8 risk-register row (`rotate with railway variables --set`) are live,
+    unmarked instructions that would recreate exactly the Railway storage A-S6.2 ruled against —
+    Task S8's file list didn't cover this plan, but a stale, actionable instruction left in ANY
+    plan is the same defect the Keychain sweep exists to catch. Rather than special-case those two
+    lines, this pins the general rule for both identity-era plans: any line that mentions
+    `PERSONA_PASSWORD` and `railway variables --set` in the same breath must also say "superseded"
+    on that same line, so a future edit that adds another such instruction fails here too."""
+    for relpath in PLAN_FILES_WITH_PERSONA_PASSWORD_HISTORY:
+        text = (ROOT / relpath).read_text()
+        for line in text.splitlines():
+            if "PERSONA_PASSWORD" in line and "railway variables --set" in line:
+                assert "superseded" in line, (
+                    f"{relpath}: line mentions PERSONA_PASSWORD and `railway variables --set` "
+                    f"but is not marked superseded: {line!r}"
+                )
