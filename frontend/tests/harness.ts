@@ -683,6 +683,24 @@ export function appOrigin(env: NodeJS.ProcessEnv = process.env): string {
 }
 
 /**
+ * The first-map-paint budget (ms) `smoke.spec.ts`'s "first map paint within budget" test measures
+ * against — 1500 locally, 3000 against a remote target (`PW_APP_URL` set, per `appOrigin` above).
+ *
+ * Controller ruling 2026-09-08. The clock in that test starts on navigation and covers the app's
+ * own boot, `/api/config` + `/api/me`, and Leaflet's first paint — that is what 1500ms bounds when
+ * the app is served from localhost. Run twice against QA (`PW_APP_URL=https://qa.foundation.vin`,
+ * from Indonesia to a US region) the same test failed BOTH times at 1842ms while every other test
+ * in the suite passed: against a remote target the same clock also carries the network round trips
+ * and tile fetches from wherever the operator sits, so 1500ms was measuring the network, not the
+ * app. Rather than skip the test on a live run, the budget against a remote target is 3000ms — the
+ * same app-side work, plus headroom for the network, still tight enough that a regression to
+ * seconds (a broken deep link, a stalled tile layer, a slow `/api/me`) still fails it.
+ */
+export function firstMapPaintBudgetMs(env: NodeJS.ProcessEnv = process.env): number {
+  return env.PW_APP_URL ? 3000 : 1500;
+}
+
+/**
  * One sign-in, in a standalone request context, and the cookies it produced.
  *
  * Standalone — `request.newContext()`, not `page.request` — because it is deliberately OUTSIDE
