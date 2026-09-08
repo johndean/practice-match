@@ -457,13 +457,14 @@ const A7_4: Amendment = {
   find: '>Use your VIN credentials.</div>', replace: '>Use the email and password you registered with.</div>', count: 1
 };
 
-/** A8.1a — the notice slot (spec §3, "The notice slot"). Four outcomes — a verified address, a
- *  reset link requested, a password updated, an invitation accepted — have signing in as their
- *  only next step, and the status card's fixed secondary button is already "Sign in", so a
- *  status card for them would have shown two identical buttons. They speak through the SIGN-IN
- *  card's existing message box instead: a second state field (`formNotice`) feeds the same
- *  template slot, so the card's markup is untouched and the box still appears only when there
- *  is something to say. A refusal wins over a notice — `formError` is checked first. */
+/** A8.1a — the notice slot (spec §3, "The notice slot"). Five outcomes — a verified address, a
+ *  reset link requested, a password updated, an invitation accepted, an invitation link that has
+ *  expired — have signing in as their only next step, and the status card's fixed secondary
+ *  button is already "Sign in", so a status card for them would have shown two identical
+ *  buttons. They speak through the SIGN-IN card's existing message box instead: a second state
+ *  field (`formNotice`) feeds the same template slot, so the card's markup is untouched and the
+ *  box still appears only when there is something to say. A refusal wins over a notice —
+ *  `formError` is checked first. */
 const A8_1a: Amendment = {
   id: 'A8.1a', ...S4,
   find: '      form: { email: s.email, pw: s.pw, error: !!s.formError, errorText: s.formError },',
