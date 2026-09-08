@@ -931,6 +931,10 @@ git push origin HEAD && git push production HEAD
 
 ---
 
+**Controller amendment A-I5d.3 (2026-09-08; ruling on I5d.3's NEEDS_CONTEXT).** The brief's verbatim test-file header carried two module-level imports nothing used (`import inspect`, `from app.config import settings` — residue from `tests/api/test_admin_users.py`, which imports both inside the functions that use them); ruff F401 refused them and Global Constraint (c) forbids `noqa`, so they are deleted. I5d.2's review Low (the three `003` tests appended at file end) is closed in the same round by relocating them beside `test_002`. D-I5d-5 (the sign-ups router mounts in both site modes so the list and export are reachable on production before launch, by the `API_SECRET_KEY` bearer; the send is refused until `SITE_MODE=app`) is applied as the plan's default and queued for John's vet.
+
+---
+
 ### Task I5d.4: The launch mail — template, `POST /api/admin/signups/launch-mail`, runbook
 
 *Standard-tier implementer. The write half: one message per sign-up, exactly once, through the existing outbox → Resend worker.*
