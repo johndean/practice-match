@@ -27,6 +27,12 @@ dependencies = [
   # is why this is a MAIN dependency now and no longer dev-only (`scripts/prepare_photos.py`
   # imports the same module). Controller ruling A-SL6, Task SL2.
   "pillow>=11.0",
+  # Multipart form parsing, for the seller's photograph and document uploads (spec 2026-09-08 D15,
+  # D18). Starlette's `Request.form()` asserts this library is installed before it will read a
+  # `multipart/form-data` body, and `app/api/seller_listings.py`'s five asset routes are the first
+  # in this codebase to take one. FastAPI ships it only inside the `standard` extra, which this
+  # project does not install, so it is named here as the runtime dependency it now is.
+  "python-multipart>=0.0.20",
 ]
 
 [tool.poetry]
