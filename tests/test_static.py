@@ -92,3 +92,14 @@ def test_mount_spa_mounts_nothing_when_the_built_site_is_missing(tmp_path):
     before = len(app.routes)
     mount_spa(app, tmp_path / "no-such-dist")
     assert len(app.routes) == before  # nothing served, nothing crashes; the health probe still answers
+
+
+async def test_head_answers_like_get_without_a_body(client):
+    """Uptime monitors and link checkers send HEAD; it must mirror GET (status and headers), body empty (Task 13a)."""
+    for path in ("/", "/browse", "/_app/index-abc123.js", "/assets/icons/pad-lock.svg", "/robots.txt"):
+        get = await client.get(path)
+        head = await client.head(path)
+        assert head.status_code == get.status_code == 200, path
+        assert head.headers.get("cache-control") == get.headers.get("cache-control"), path
+        assert head.headers.get("content-type") == get.headers.get("content-type"), path
+        assert head.content == b"", path

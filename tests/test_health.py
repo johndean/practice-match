@@ -102,6 +102,18 @@ async def test_unknown_api_route_is_json_404_not_index(client):
     assert r.json()["error"]["code"] == "NOT_FOUND"
 
 
+async def test_head_on_health_endpoints_is_200_with_no_body(client):
+    for path in ("/api/healthz", "/api/healthz/deep"):
+        head = await client.head(path)
+        assert head.status_code in (200, 503), path  # deep may be 503 when a component is down; never 405
+        assert head.content == b"", path
+
+
+async def test_head_on_an_unknown_api_route_is_the_json_404_status(client):
+    head = await client.head("/api/does-not-exist")
+    assert head.status_code == 404 and head.content == b""
+
+
 import re
 
 
