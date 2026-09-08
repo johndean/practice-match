@@ -46,7 +46,7 @@ railway_calls() { wc -l < "$FAKE_RAILWAY_LOG" | tr -d ' '; }
 
 # start_server <mode> [environment]. Modes: ok | spa_missing | deep_503 | no_postgis | no_site_mode |
 #   coming_ok | coming_wrong_shell | coming_interest_500 | coming_leak | coming_auth_live | coming_admin_live |
-#   coming_applications_live | missing_keys | db_null |
+#   coming_applications_live | coming_listings_live | listings_open | missing_keys | db_null |
 #   not_json | deep_json | wrong_version | no_config | config_not_bool | config_public
 # [environment] overrides the fake body's `environment` field (default qa) — M1's production-mode
 # cases reuse the same MODE bodies (coming_ok, ok) with environment: production instead of duplicating
@@ -72,7 +72,7 @@ if MODE == "no_postgis":
 if MODE == "no_site_mode":
     del BODY["site_mode"]
 if MODE in ("coming_ok", "coming_wrong_shell", "coming_interest_500", "coming_leak", "coming_auth_live",
-            "coming_admin_live", "coming_applications_live"):
+            "coming_admin_live", "coming_applications_live", "coming_listings_live"):
     BODY["site_mode"] = "coming_soon"
 if MODE == "missing_keys":
     BODY = {"status": "ok"}  # malformed: every other required key absent (fix round 2)
@@ -111,6 +111,17 @@ class H(BaseHTTPRequestHandler):
         if self.path.startswith("/api/admin/users") and MODE == "coming_admin_live":
             # The Admin surface mounted behind the Coming Soon page (Task I5, fix round 1, N2).
             self._send(200, "application/json", b'{"items":[],"next_cursor":null}')
+        elif self.path.startswith("/api/listings"):
+            # Task L5, A-L5.1. A healthy deployment answers 401 to an anonymous caller in app
+            # mode and 404 in coming-soon mode (the router is not mounted there at all); the two
+            # failure modes are a listings surface LIVE behind the Coming Soon page, and an
+            # UNGUARDED one on QA.
+            if MODE == "coming_listings_live" or (MODE == "listings_open" and BODY["site_mode"] == "app"):
+                self._send(200, "application/json", b'{"items":[],"next_cursor":null}')
+            elif BODY["site_mode"] == "coming_soon":
+                self._send(404, "application/json", b'{"ok":false,"error":{"code":"NOT_FOUND"}}')
+            else:
+                self._send(401, "application/json", b'{"error":{"code":"UNAUTHORIZED","message":"Sign in to continue."}}')
         elif self.path.startswith("/api/config"):
             if MODE == "no_config":
                 self._send(404, "application/json", b'{"error":{"code":"NOT_FOUND"}}')
@@ -135,7 +146,8 @@ class H(BaseHTTPRequestHandler):
                 self._send(200, "text/html", SHELL_OK)  # marketplace shell, no coming-soon title
             elif MODE == "coming_leak":
                 self._send(200, "text/html", LEAK_SHELL)
-            elif MODE in ("coming_ok", "coming_interest_500", "coming_auth_live", "coming_admin_live", "coming_applications_live"):
+            elif MODE in ("coming_ok", "coming_interest_500", "coming_auth_live", "coming_admin_live",
+                          "coming_applications_live", "coming_listings_live"):
                 self._send(200, "text/html", COMING_SHELL)
             else:
                 self._send(200, "text/html", SHELL_BAD if MODE == "spa_missing" else SHELL_OK)
@@ -179,7 +191,7 @@ PY
 start_server ok
 : > "$FAKE_RAILWAY_LOG"
 out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA) || fail "a healthy target must verify; output: $out"
-for line in "healthz OK" "deep healthz OK" "config OK" "SPA fallback OK"; do [[ "$out" == *"$line"* ]] || fail "missing '$line' in: $out"; done
+for line in "healthz OK" "deep healthz OK" "config OK" "SPA fallback OK" "listings guarded OK"; do [[ "$out" == *"$line"* ]] || fail "missing '$line' in: $out"; done
 [[ "$out" == *"3.5.2"* ]] || fail "the postgis version must be printed; got: $out"
 
 # An explicit target is an ad hoc probe: the Railway CLI must not be invoked at all,
@@ -327,6 +339,26 @@ if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash script
   stop_server; fail "/api/applications answering 202 in coming-soon mode must fail the script; it exited 0 with: $out"
 fi
 [[ "$out" == *"/api/applications answered 202 in coming-soon mode"* ]] || { stop_server; fail "the applications-surface failure must name itself; got: $out"; }
+stop_server
+
+# --- 11d. L5 A-L5.1: the listings surface behind the Coming Soon page fails the deploy. The three
+# listing routes are MEMBER endpoints and sit inside the same `site_mode == "app"` include, so the
+# "member endpoints absent" claim has to be probed for them too. ------------------------------
+start_server coming_listings_live production
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh production 2>&1); then
+  stop_server; fail "/api/listings answering 200 in coming-soon mode must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"/api/listings answered 200 in coming-soon mode"* ]] || { stop_server; fail "the listings-surface failure must name itself; got: $out"; }
+stop_server
+
+# --- 11e. L5 A-L5.1: on QA (app mode) the listings surface must be GUARDED — an anonymous 200 is
+# every published listing, its address and its photographs, handed to the public. ---------------
+start_server listings_open
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
+  fail "an unguarded /api/listings must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"/api/listings answered 200 to an anonymous caller"* ]] || fail "the unguarded-listings failure must name itself; got: $out"
+[[ "$out" != *"listings guarded OK"* ]] || fail "must not claim listings guarded OK when it is not; got: $out"
 stop_server
 
 # --- 12. malformed healthz body (required keys absent) fails, no traceback -----

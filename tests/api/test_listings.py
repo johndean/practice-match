@@ -140,6 +140,35 @@ async def test_an_undisclosed_listing_returns_no_address_and_no_point(
     assert item["location_disclosed"] is False
 
 
+async def test_an_undisclosed_location_hides_the_phone_number(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """A-L5.1: a phone number identifies the practice as surely as its street, so it follows
+    `location_disclosed`. `hours` is not identifying and stays."""
+    stored = "(512) 555-0187"
+    listing_id = _insert(conn, disclosed=False, phone=stored)
+    _, cookies, headers = member()
+    auth = auth_headers(cookies, headers)
+    item = (await client.get(f"/api/listings/{listing_id}", headers=auth)).json()
+    assert item["phone"] is None
+    assert item["hours"] == "24/7", "hours is not identifying and stays"
+    for path in ("/api/listings", f"/api/listings/{listing_id}"):
+        text = (await client.get(path, headers=auth)).text
+        assert _squashed(stored) not in _squashed(text), path
+
+
+async def test_a_disclosed_location_returns_the_phone_number(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """The other half of A-L5.1 — every seeded hospital is this row."""
+    stored = "(512) 555-0187"
+    listing_id = _insert(conn, disclosed=True, phone=stored)
+    _, cookies, headers = member()
+    auth = auth_headers(cookies, headers)
+    assert (await client.get(f"/api/listings/{listing_id}", headers=auth)).json()["phone"] == stored
+    assert (await client.get("/api/listings", headers=auth)).json()["items"][0]["phone"] == stored
+
+
 async def test_a_disclosed_name_is_returned_verbatim_on_both_endpoints(
     client: Any, conn: Any, redis: Any, member: Any
 ) -> None:
@@ -326,7 +355,9 @@ def test_serialise_omits_a_point_a_disclosed_listing_never_had() -> None:
 def test_serialise_blanks_the_address_of_an_undisclosed_listing() -> None:
     body = serialise(_row(location_disclosed=False), datetime(2026, 9, 6, tzinfo=UTC))
     assert (body["street"], body["zip"], body["lat"], body["lng"]) == (None, None, None, None)
+    assert body["phone"] is None, "A-L5.1: the phone number follows the location"
     assert (body["city"], body["state"], body["area"]) == ("Austin", "TX", "Austin")
+    assert body["hours"] == "24/7"
 
 
 def test_serialise_hides_a_name_the_seller_has_not_disclosed() -> None:
@@ -447,3 +478,41 @@ async def test_a_photograph_of_a_seeded_hospital_is_really_served(
     first = items[0]
     photo = await client.get(first["photos"][0], headers=auth)
     assert photo.status_code == 200 and photo.content[:4] == b"RIFF"
+
+
+async def test_the_listings_routes_exist_only_in_app_mode(dist: Any, redis: Any, monkeypatch: Any) -> None:
+    """A-L5.1: the three routes are MEMBER endpoints, so they follow the auth, applications and
+    admin routers into `create_app()`'s `site_mode == "app"` block rather than being mounted
+    unconditionally — `scripts/verify-deploy.sh production` asserts "member endpoints absent" and
+    that claim has to be true of these too.
+
+    In `coming_soon` nothing is registered and `not_found_router`'s catch-all answers the same JSON
+    404 it gives any unknown /api path; in `app` the three are registered and guarded."""
+    import httpx
+    from httpx import ASGITransport
+
+    from app.config import settings
+    from app.main import create_app
+    from tests.api.conftest import ORIGIN
+    from tests.conftest import walk_routes
+
+    monkeypatch.setattr(settings, "site_mode", "coming_soon")
+    coming = create_app(dist=dist)
+    assert [p for _, p, _ in walk_routes(coming.routes) if p.startswith("/api/listings")] == []
+    async with httpx.AsyncClient(transport=ASGITransport(app=coming), base_url=ORIGIN) as c:
+        for path in ("/api/listings", f"/api/listings/{uuid4()}", f"/api/listings/{uuid4()}/photos/1"):
+            r = await c.get(path)
+            assert r.status_code == 404, path
+            assert r.json()["error"]["code"] == "NOT_FOUND"
+            assert r.json()["ok"] is False, "the catch-all's body, not this module's"
+
+    monkeypatch.setattr(settings, "site_mode", "app")
+    live = create_app(dist=dist)
+    assert sorted(p for _, p, _ in walk_routes(live.routes) if p.startswith("/api/listings")) == [
+        "/api/listings", "/api/listings/{listing_id}", "/api/listings/{listing_id}/photos/{n}",
+    ]
+    async with httpx.AsyncClient(transport=ASGITransport(app=live), base_url=ORIGIN) as c:
+        for path in ("/api/listings", f"/api/listings/{uuid4()}", f"/api/listings/{uuid4()}/photos/1"):
+            r = await c.get(path)
+            assert r.status_code == 401, path
+            assert r.json() == {"error": {"code": "UNAUTHORIZED", "message": "Sign in to continue."}}

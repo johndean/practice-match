@@ -201,6 +201,10 @@ one transaction and rolls back — but the image is wrong.
 The same run is available as a container role: `bash scripts/start.sh seed --reset`, for a
 one-off Railway service command. `python -m scripts.seed_listings` works too, from `/app`.
 
+`GET /api/listings` caches each page in Redis for 60 s and the seeder does not invalidate it, so
+after a re-seed the list refreshes within a minute (Task L5, A-L5.1) — a browse that still shows
+the previous eighteen straight after a seed is that cache, not a failed import.
+
 ## Rollback
 
 Redeploy the previous image/deployment for the service — Railway dashboard → the service → **Deployments** → pick the last good one → **Redeploy** — then re-run `scripts/verify-deploy.sh <env>` to confirm.

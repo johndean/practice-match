@@ -27,16 +27,25 @@ documents are flags of one kind — "Sellers control what buyers can see" — an
 never reach a buyer's browser, so `serialise` is the only place a row becomes a payload and it
 blanks what the flags hide:
 
-* `location_disclosed = false` -> `street`, `zip`, `lat` and `lng` are null; `city`, `state` and
-  `area` remain, because the design's anonymised card shows the area (D8).
+* `location_disclosed = false` -> `street`, `zip`, `phone`, `lat` and `lng` are null; `city`,
+  `state`, `area` and `hours` remain, because the design's anonymised card shows the area and an
+  opening time identifies nobody (D8; `phone` joined the list in A-L5.1, ruled 2026-09-08 — a
+  telephone number identifies the practice as surely as its street does).
 * `name_disclosed = false` -> `name` is the design's own anonymised label, `<area> Veterinary`
   (`practiceName`'s fallback in `frontend/src/logic.js`), and `slug` is null WITH it: every slug in
   this codebase is its listing's name in slug form (`seeds/hospitals.json`:
   `6666_dallas_veterinary_specialist_hospital` <- "6666 Dallas Veterinary Specialist Hospital"), so
   returning it would hand back the hidden name in another spelling. Same posture as the address
-  above: the flag nulls what it hides. Every seed sets both flags true (D8, A-L5), so nothing John
-  sees on QA changes; Wave 2b's sellers default to false, which is why the branch has to be right
-  now rather than later.
+  above: the flag nulls what it hides. **Task L6 therefore keys off `id`, never `slug`** (A-L5.1).
+
+Every seed sets both flags true (D8, A-L5), so nothing John sees on QA changes; Wave 2b's sellers
+default to false, which is why both branches have to be right now rather than later.
+
+**All three routes are mounted only in `site_mode == "app"`** (A-L5.1), beside the auth,
+applications and admin routers: they are member endpoints, and
+`scripts/verify-deploy.sh production` asserts "member endpoints absent" behind the Coming Soon
+page — a claim that has to be true of these too. It probes all four surfaces, and probes this one
+for a 401 on QA.
 """
 from __future__ import annotations
 
@@ -163,8 +172,8 @@ def photo_file(photos: list[str], n: int) -> Path | None:
 
 def serialise(row: Mapping[str, Any], now: datetime) -> dict[str, Any]:
     """One database row as the JSON contract Task L6 maps, with both disclosure flags applied —
-    see the module docstring: an undisclosed address loses its street, postcode and point, an
-    undisclosed name loses the name and the slug that spells it."""
+    see the module docstring: an undisclosed address loses its street, postcode, telephone number
+    and point, an undisclosed name loses the name and the slug that spells it."""
     disclosed = bool(row["location_disclosed"])
     named = bool(row["name_disclosed"])
     listing_id = str(row["id"])
@@ -178,7 +187,8 @@ def serialise(row: Mapping[str, Any], now: datetime) -> dict[str, Any]:
         "city": row["city"], "state": row["state"],
         "street": row["street"] if disclosed else None,
         "zip": row["zip"] if disclosed else None,
-        "phone": row["phone"], "hours": row["hours"],
+        "phone": row["phone"] if disclosed else None,
+        "hours": row["hours"],
         "price": row["price"], "rev": row["rev"], "docs": row["docs"], "rooms": row["rooms"],
         "sqft": row["sqft"], "bldg": row["bldg"], "est": row["est"],
         "listed": relative_listed(row["listed_at"], now),

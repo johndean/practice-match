@@ -191,11 +191,23 @@ if [[ "$mode" == "coming_soon" ]]; then
   [[ "$code" == "404" ]] || { echo "FAIL: /api/admin/users answered $code in coming-soon mode (expected 404 - the admin surface must not be mounted before launch)" >&2; exit 1; }
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H 'Content-Type: application/json' -d '{"kind":"buyer","fields":{}}' "$BASE/api/applications")
   [[ "$code" == "404" ]] || { echo "FAIL: /api/applications answered $code in coming-soon mode (expected 404 - the applications surface must not be mounted before launch)" >&2; exit 1; }
+  # ...and the listing reads (Seed Listings Task L5, amendment A-L5.1). They are member endpoints
+  # behind `listing.read` and sit inside the same site_mode include, so a 200 or a 401 here means
+  # the router is mounted before launch - the eighteen demo hospitals, their addresses and their
+  # photographs, reachable on the public launch host.
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/listings")
+  [[ "$code" == "404" ]] || { echo "FAIL: /api/listings answered $code in coming-soon mode (expected 404 - the listings surface must not be mounted before launch)" >&2; exit 1; }
   echo "member endpoints absent OK"
 else
   body=$(curl -fsS --max-time 20 "$BASE/browse")
   [[ "$body" == *'id="app"'* ]] || { echo "FAIL: SPA fallback missing at $BASE/browse" >&2; exit 1; }
   echo "SPA fallback OK"
+  # In app mode the same surface must be present and GUARDED: an anonymous caller gets the generic
+  # 401 the identity design specifies, never a listing. A 200 here would be every published
+  # listing, its address and its photographs, served to the public (Task L5, A-L5.1).
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/listings")
+  [[ "$code" == "401" ]] || { echo "FAIL: /api/listings answered $code to an anonymous caller (expected 401 - the listings surface must be guarded by listing.read)" >&2; exit 1; }
+  echo "listings guarded OK"
 fi
 # `railway logs` streams by default in CLI 5.26 and would hang a script; --lines
 # fetches history and exits. Best-effort only: never fail a good deploy on logs --

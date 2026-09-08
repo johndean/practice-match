@@ -80,12 +80,12 @@ def create_app(dist: Path | None = None) -> FastAPI:
         # and /api/admin/* path falls through to `not_found_router`'s JSON 404.
         app.include_router(applications_router)
         app.include_router(admin_users_router)
+        # Same gate again (Seed Listings A-L5.1): the three listing reads are MEMBER endpoints
+        # — `listing.read` is buyer/seller/staff/admin — so behind the Coming Soon page they are
+        # absent rather than merely guarded, and `scripts/verify-deploy.sh production` probes
+        # that alongside the auth, applications and admin surfaces.
+        app.include_router(listings_router)
     app.include_router(interest_router)
-    # The listing read surface (Seed Listings D8). Not gated on `site_mode`: all three routes
-    # are guarded by `listing.read`, so in `coming_soon` an anonymous caller gets the same
-    # generic 401 they get in `app` mode rather than a 404 that would say the surface exists
-    # somewhere else.
-    app.include_router(listings_router)
     # Resend's delivery events (Task I6). NOT gated on `site_mode`, unlike the auth surface: the
     # provider posts to whichever host sent the mail, and a bounce that arrives after a launch
     # flip must still reach the suppression list. It is public by necessity and verified by
