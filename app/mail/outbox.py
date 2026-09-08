@@ -17,12 +17,15 @@ import psycopg2.extensions
 # a typo would otherwise sit in the outbox forever, undeliverable and invisible until the sender
 # reached it. `account_exists` is the fourteenth, added in I4 fix round 1 so that a sign-up for an
 # ALREADY REGISTERED address does the same commit-level work as one for a new address (Critical 1)
-# — and so that the address's owner learns somebody tried to sign up as them.
+# — and so that the address's owner learns somebody tried to sign up as them. Seventeen since Task
+# SL5 (spec 2026-09-08 D4): a seller is told when their listing enters review, when it is published
+# and when it is declined, which is the same "who changed what and when" the audit row records.
 TEMPLATES = frozenset({
     "verify_email", "account_exists", "application_received", "application_approved", "application_declined",
     "application_info_requested", "seller_application_received", "seller_application_approved",
     "seller_application_declined", "password_reset", "password_changed", "signin_new_device",
     "account_suspended", "account_revoked",
+    "listing_submitted", "listing_published", "listing_declined",
 })
 
 INSERT = """INSERT INTO email_outbox (to_email, template, params, idempotency_key) VALUES (%s,%s,%s,%s)

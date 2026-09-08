@@ -62,12 +62,14 @@ from app.auth.limits import (
     LISTING_DELETE,
     LISTING_PATCH,
     LISTING_REORDER,
+    LISTING_SUBMIT,
     LISTING_UPLOAD,
     hit,
 )
 from app.cache import sync_redis
 from app.config import settings
 from app.db import sync_conn
+from app.mail.outbox import enqueue
 from app.media.encode import MAX_PHOTOS, encode_webp, sha256_hex
 from app.storage import ObjectStore
 
@@ -999,3 +1001,132 @@ async def read_document(listing_id: str, asset_id: str, principal: Reader) -> Re
     except Refusal as exc:
         return _refused(exc)
     return Response(content=content, media_type=content_type, headers=DOCUMENT_HEADERS)
+
+
+# --- The seller's own transitions (D2, D4) -------------------------------------------------------
+#
+# Submit, and the dashboard's own three buttons. Every one writes an audit row (D4) under an action
+# that names NO permission by design, exactly as `EDIT_ACTION` above does and for the same reason:
+# `listing.manage_own` is not in `permissions.AUDITED`, so the drift test never sees these routes
+# and there is no list to add them to. One namespace, so an auditor greps `listing.` once.
+SUBMIT_ACTION, PAUSE_ACTION, REPUBLISH_ACTION, WITHDRAW_ACTION = (
+    "listing.submit", "listing.pause", "listing.republish", "listing.withdraw")
+SUBMITTABLE_FROM = ("draft", "declined", "in_review")
+# The dashboard's own three (logic.js:958), each with the states the lifecycle table allows and the
+# state it reaches.
+TRANSITIONS: dict[str, tuple[tuple[str, ...], str, str]] = {
+    "pause": (("published",), "paused", PAUSE_ACTION),
+    # No re-review: the design's admin footnote calls unpublishing "immediate and reversible"
+    # (logic.js:1061), and a pause the seller can undo is not a new listing.
+    "republish": (("paused",), "published", REPUBLISH_ACTION),
+    # Terminal, from anywhere but itself: "withdrawn listings keep their history for reporting but
+    # no longer appear in search" (logic.js:1061).
+    "withdraw": (("draft", "in_review", "published", "paused", "declined"), "withdrawn", WITHDRAW_ACTION),
+}
+# The design's own client-side validation (logic.js:1215-1217), re-validated on the server because
+# a client check is a courtesy and this one guards a CHECK constraint. `type` is here and not in
+# the design's list for the reason A-SL13 M2 gives: `listing_submittable_ck` demands it, the
+# per-step PATCH takes step 1's fields one at a time, and a CHECK met by a request is a 500.
+REQUIRED_TO_SUBMIT = (("name", "A practice name"), ("est", "A year established"),
+                      ("type", "A practice type"), ("city", "A city"), ("zip", "A ZIP code"),
+                      ("price", "An asking price"))
+INCOMPLETE_TAIL = "is needed before this listing can be submitted."
+
+
+def _complete_enough(row: dict[str, Any]) -> None:
+    """The three rules the design enforces before it will show step 8, said server-side.
+
+    The compound third one is spelled out separately because it is a rule about a PAIR: "an asking
+    price and either an exact revenue figure or the range option" (logic.js:1217). `revBand` on
+    means `rev_disclosed` false, so "the range option is chosen" reads here as the flag being off.
+    """
+    for column, label in REQUIRED_TO_SUBMIT:
+        if row[column] is None:
+            raise Refusal("INCOMPLETE", f"{label} {INCOMPLETE_TAIL}", 422)
+    if row["rev"] is None and row["rev_disclosed"]:
+        raise Refusal("INCOMPLETE", f"An exact revenue figure — or the range option — {INCOMPLETE_TAIL}", 422)
+
+
+def owner_email(conn: Any, principal: S.Principal) -> str:
+    """The signed-in seller's own address. Read rather than carried on the principal: a session
+    resolves to an account id, and the mail goes to whatever that account's address is NOW."""
+    with conn.cursor() as cur:
+        cur.execute("SELECT email FROM account WHERE id = %s", (principal.account_id,))
+        # An authenticated principal's account exists by construction — `sessions._load` joins it.
+        return cast("tuple[str]", cur.fetchone())[0]
+
+
+@router.post("/listings/{listing_id}/submit")
+async def submit_listing(listing_id: str, request: Request, principal: Owner) -> Response:
+    """The wizard's *Submit for review* (logic.js:1236), persisted.
+
+    Legal from `draft`, `declined` and `in_review` and from nothing else: a published or paused
+    listing is already through review, and a withdrawn one is terminal. A second press within one
+    review cycle does NOT re-stamp `submitted_at`, which is what makes the outbox key stable and
+    the second email not exist — the seller "may keep editing while it waits" (the submitted card),
+    so pressing Submit again is an ordinary thing to do rather than a mistake to refuse."""
+    hit(sync_redis(), "listing:submit", str(principal.account_id), *LISTING_SUBMIT)
+    try:
+        with closing(sync_conn()) as conn, conn:
+            row = locked_row(conn, listing_id, principal)
+            before = row["status"]
+            if before not in SUBMITTABLE_FROM:
+                raise Refusal("STATE", f"cannot submit a listing in state {before}", 409)
+            _complete_enough(row)
+            with conn.cursor() as cur:
+                # `AND submitted_at IS NOT NULL`: an in-review listing always carries a stamp
+                # through this API (both roads into `in_review` write one), and the key below is
+                # built from it — so a row that somehow has none starts its review cycle here
+                # rather than reaching `.isoformat()` as a null.
+                cur.execute("UPDATE listing SET status = 'in_review', updated_at = now(),"
+                            " submitted_at = CASE WHEN %(keep)s AND submitted_at IS NOT NULL"
+                            "                     THEN submitted_at ELSE now() END"
+                            " WHERE id = %(id)s AND seller_id = %(seller)s RETURNING submitted_at",
+                            {"keep": before == "in_review", "id": row["id"], "seller": principal.account_id})
+                stamped = cast("tuple[datetime]", cur.fetchone())[0]
+            enqueue(conn, to=owner_email(conn, principal), template="listing_submitted", params={},
+                    idempotency_key=f"{row['id']}:listing_submitted:{stamped.isoformat()}")
+            audit.write(conn, actor=principal, action=SUBMIT_ACTION, target_type="listing",
+                        target_id=row["id"], before={"status": before}, after={"status": "in_review"},
+                        request=request)
+            payload = serialise_draft(locked_row(conn, listing_id, principal), assets_of(conn, row["id"]))
+    except Refusal as exc:
+        return _refused(exc)
+    drop_list_cache(sync_redis())
+    return JSONResponse(payload)
+
+
+@router.post("/listings/{listing_id}/status")
+async def set_status(listing_id: str, request: Request, principal: Owner) -> Response:
+    """Pause, republish or withdraw — the dashboard's own three (logic.js:958).
+
+    One route rather than three, because they are one decision table: the action names the states
+    it is legal from and the state it reaches, and everything else about the three is identical.
+    Rate-limited on its own bucket, so a seller who pauses a listing has not spent their
+    submissions."""
+    hit(sync_redis(), "listing:status", str(principal.account_id), *LISTING_SUBMIT)
+    try:
+        body = await _json_body(request)
+        action = body.get("action")
+        if not isinstance(action, str) or action not in TRANSITIONS:
+            raise Refusal("BAD_REQUEST", f"action must be one of {', '.join(TRANSITIONS)}.", 400)
+        allowed_from, after, recorded = TRANSITIONS[action]
+        with closing(sync_conn()) as conn, conn:
+            row = locked_row(conn, listing_id, principal)
+            before = row["status"]
+            if before not in allowed_from:
+                raise Refusal("STATE", f"cannot {action} a listing in state {before}", 409)
+            with conn.cursor() as cur:
+                cur.execute("UPDATE listing SET status = %s, updated_at = now()"
+                            " WHERE id = %s AND seller_id = %s", (after, row["id"], principal.account_id))
+            audit.write(conn, actor=principal, action=recorded, target_type="listing", target_id=row["id"],
+                        before={"status": before}, after={"status": after}, request=request)
+            payload = serialise_draft(locked_row(conn, listing_id, principal), assets_of(conn, row["id"]))
+    except Refusal as exc:
+        return _refused(exc)
+    # AFTER the commit (D16), and unconditionally — unlike `patch_step`, whose autosave arm is
+    # conditional because it fires 240 times an hour (A-SL13 L6). A transition is a deliberate act
+    # bounded by `LISTING_SUBMIT`, three of the four move a row onto or off the market, and a SCAN
+    # that matches nothing costs one round trip.
+    drop_list_cache(sync_redis())
+    return JSONResponse(payload)

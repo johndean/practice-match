@@ -811,3 +811,316 @@ async def test_the_create_rate_limit_is_per_account(client: Any, conn: Any, redi
 
     refused = await client.post("/api/seller/listings", headers=signed)
     assert refused.status_code == 429 and refused.json()["error"]["code"] == "RATE_LIMITED"
+
+
+# --- Task SL5: submit, and the dashboard's own three transitions (spec 2026-09-08 D2/D4) -------
+
+
+async def _submittable(client: Any, signed: dict[str, str], listing_id: str) -> None:
+    """The three steps the design's own client-side validation guards (logic.js:1215-1217), filled
+    in — the least a listing can carry and still be submitted."""
+    await client.patch(f"/api/seller/listings/{listing_id}?step=1",
+                       json={"name": "Hill Country Animal Hospital", "type": "Small animal", "est": "1998"},
+                       headers=signed)
+    await client.patch(f"/api/seller/listings/{listing_id}?step=2", json={"city": "Cedar Park", "zip": "78613"},
+                       headers=signed)
+    await client.patch(f"/api/seller/listings/{listing_id}?step=3", json={"price": "1,450,000"}, headers=signed)
+
+
+async def _ready(client: Any, member: Any) -> tuple[str, dict[str, str]]:
+    _, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id = await _create(client, cookies, headers)
+    await _submittable(client, signed, listing_id)
+    return listing_id, signed
+
+
+def _status(conn: Any, listing_id: str) -> tuple[Any, ...]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, submitted_at FROM listing WHERE id=%s", (listing_id,))
+        row: tuple[Any, ...] = cur.fetchone()
+    return row
+
+
+def _actions(conn: Any, listing_id: str) -> list[tuple[Any, ...]]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT action, before, after FROM audit_log WHERE target_type='listing' AND target_id=%s"
+                    " ORDER BY id", (str(listing_id),))
+        rows: list[tuple[Any, ...]] = cur.fetchall()
+    return rows
+
+
+def _outbox(conn: Any) -> list[tuple[Any, ...]]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT template, to_email, idempotency_key FROM email_outbox ORDER BY id")
+        rows: list[tuple[Any, ...]] = cur.fetchall()
+    return rows
+
+
+async def test_submit_moves_a_draft_into_review_and_stamps_it(client: Any, conn: Any, member: Any) -> None:
+    """The wizard's Submit (logic.js:1236), persisted: `in_review`, stamped, audited, and the
+    seller told — the design's submitted card is the mail's own copy."""
+    listing_id, signed = await _ready(client, member)
+    response = await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "in_review"
+    status, stamped = _status(conn, listing_id)
+    assert status == "in_review" and stamped is not None
+    assert _actions(conn, listing_id) == [("listing.submit", {"status": "draft"}, {"status": "in_review"})]
+    assert [(template, to) for template, to, _key in _outbox(conn)] == [
+        ("listing_submitted", "sl-seller@example.org")]
+
+
+async def test_submit_re_validates_the_three_rules_the_design_enforces_client_side(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """logic.js:1215-1217, server-side. A client check is a courtesy, and this one guards
+    `listing_submittable_ck` — an unvalidated submit meets the CHECK as a 500."""
+    _, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id = await _create(client, cookies, headers)
+
+    async def _refusal() -> tuple[int, str, str]:
+        r = await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)
+        return r.status_code, r.json()["error"]["code"], r.json()["error"]["message"]
+
+    assert await _refusal() == (422, "INCOMPLETE", "A practice name is needed before this listing can be submitted.")
+    await client.patch(f"/api/seller/listings/{listing_id}?step=1", json={"name": "Hill Country"}, headers=signed)
+    assert await _refusal() == (422, "INCOMPLETE", "A year established is needed before this listing can be submitted.")
+    await client.patch(f"/api/seller/listings/{listing_id}?step=1", json={"est": "1998", "type": "Small animal"}, headers=signed)
+    assert await _refusal() == (422, "INCOMPLETE", "A city is needed before this listing can be submitted.")
+    await client.patch(f"/api/seller/listings/{listing_id}?step=2", json={"city": "Cedar Park"}, headers=signed)
+    assert await _refusal() == (422, "INCOMPLETE", "A ZIP code is needed before this listing can be submitted.")
+    await client.patch(f"/api/seller/listings/{listing_id}?step=2", json={"zip": "78613"}, headers=signed)
+    assert await _refusal() == (422, "INCOMPLETE", "An asking price is needed before this listing can be submitted.")
+    await client.patch(f"/api/seller/listings/{listing_id}?step=3", json={"price": "1450000", "revBand": False}, headers=signed)
+    # The design's third rule is the compound one: an asking price AND either a revenue figure or
+    # the range option. `revBand` off means `rev_disclosed` true, so a blank `rev` is the state the
+    # wizard refuses to advance from.
+    assert await _refusal() == (
+        422, "INCOMPLETE",
+        "An exact revenue figure — or the range option — is needed before this listing can be submitted.")
+    await client.patch(f"/api/seller/listings/{listing_id}?step=3", json={"rev": "2100000"}, headers=signed)
+    assert (await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)).status_code == 200
+
+
+async def test_a_listing_with_no_type_is_refused_rather_than_meeting_the_check(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """A-SL13 M2's rule applied to submit: `listing_submittable_ck` demands `type` too, and the
+    per-step PATCH takes step 1's fields one at a time — so a listing can reach Submit with a name,
+    a year, a city, a ZIP and a price and no type at all. The design's select always has a value,
+    so no wizard user meets this; an adapter sending one field at a time does."""
+    _, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id = await _create(client, cookies, headers)
+    await client.patch(f"/api/seller/listings/{listing_id}?step=1", json={"name": "Hill Country", "est": "1998"}, headers=signed)
+    await client.patch(f"/api/seller/listings/{listing_id}?step=2", json={"city": "Cedar Park", "zip": "78613"}, headers=signed)
+    await client.patch(f"/api/seller/listings/{listing_id}?step=3", json={"price": "1450000"}, headers=signed)
+    response = await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)
+    assert response.status_code == 422
+    assert response.json()["error"] == {
+        "code": "INCOMPLETE", "message": "A practice type is needed before this listing can be submitted."}
+    assert _status(conn, listing_id) == ("draft", None)
+
+
+@pytest.mark.parametrize("status", ["paused", "published", "withdrawn"])
+async def test_submit_is_legal_from_draft_declined_and_in_review_and_from_nothing_else(
+    client: Any, conn: Any, member: Any, status: str
+) -> None:
+    """The lifecycle table (D2). A paused or published listing is already through review, and a
+    withdrawn one is terminal."""
+    listing_id, signed = await _ready(client, member)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status=%s, state='TX', market='Austin, TX', area='Cedar Park'"
+                    " WHERE id=%s", (status, listing_id))
+    response = await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)
+    assert response.status_code == 409 and response.json()["error"]["code"] == "STATE"
+    assert _status(conn, listing_id)[0] == status
+
+
+@pytest.mark.parametrize("status", ["draft", "declined", "in_review"])
+async def test_submit_is_legal_from_each_of_the_three_states_that_allow_it(
+    client: Any, conn: Any, member: Any, status: str
+) -> None:
+    listing_id, signed = await _ready(client, member)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status=%s WHERE id=%s", (status, listing_id))
+    assert (await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)).status_code == 200
+    assert _status(conn, listing_id)[0] == "in_review"
+
+
+async def test_submit_is_idempotent_within_one_review_cycle(client: Any, conn: Any, member: Any) -> None:
+    """The seller "may keep editing while it waits" (the submitted card), so pressing Submit twice
+    is an ordinary thing to do. The stamp is what the outbox key is built from, so not re-stamping
+    is what makes the second press write no second email."""
+    listing_id, signed = await _ready(client, member)
+    assert (await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)).status_code == 200
+    first = _status(conn, listing_id)
+    assert (await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)).status_code == 200
+    assert _status(conn, listing_id) == first
+    assert [template for template, _to, _key in _outbox(conn)] == ["listing_submitted"]
+    assert _outbox(conn)[0][2] == f"{listing_id}:listing_submitted:{first[1].isoformat()}"
+
+
+async def test_pause_republish_and_withdraw_are_the_dashboards_own_three(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """logic.js:958's `setListingStatus`, persisted. Republish needs no re-review — the design's
+    admin footnote calls unpublishing "immediate and reversible" — so it goes straight back to
+    `published` rather than into the queue."""
+    listing_id, signed = await _ready(client, member)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status='published', state='TX', market='Austin, TX',"
+                    " area='Cedar Park' WHERE id=%s", (listing_id,))
+    for action, after in (("pause", "paused"), ("republish", "published"), ("withdraw", "withdrawn")):
+        response = await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": action},
+                                     headers=signed)
+        assert response.status_code == 200, response.text
+        assert response.json()["status"] == after
+        assert _status(conn, listing_id)[0] == after
+    assert _actions(conn, listing_id) == [
+        ("listing.pause", {"status": "published"}, {"status": "paused"}),
+        ("listing.republish", {"status": "paused"}, {"status": "published"}),
+        ("listing.withdraw", {"status": "published"}, {"status": "withdrawn"}),
+    ]
+
+
+async def test_a_transition_from_an_illegal_state_is_409_and_changes_nothing(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """A draft is not on the market to pause, a published listing is not paused to republish, and
+    a withdrawn one accepts nothing at all."""
+    listing_id, signed = await _ready(client, member)
+    refused = await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": "pause"}, headers=signed)
+    assert refused.status_code == 409 and refused.json()["error"]["code"] == "STATE"
+    assert _status(conn, listing_id)[0] == "draft"
+
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status='published', state='TX', market='Austin, TX',"
+                    " area='Cedar Park' WHERE id=%s", (listing_id,))
+    refused = await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": "republish"}, headers=signed)
+    assert refused.status_code == 409 and refused.json()["error"]["code"] == "STATE"
+    assert _status(conn, listing_id)[0] == "published"
+
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status='withdrawn' WHERE id=%s", (listing_id,))
+    for action in ("pause", "republish", "withdraw"):
+        refused = await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": action}, headers=signed)
+        assert refused.status_code == 409 and refused.json()["error"]["code"] == "STATE", action
+    assert _actions(conn, listing_id) == []
+
+
+async def test_an_action_the_dashboard_does_not_offer_is_refused_in_the_envelope(
+    client: Any, conn: Any, member: Any
+) -> None:
+    listing_id, signed = await _ready(client, member)
+    for body in ({"action": "publish"}, {"action": ""}, {"action": 3}, {}):
+        response = await client.post(f"/api/seller/listings/{listing_id}/status", json=body, headers=signed)
+        assert response.status_code == 400, body
+        assert response.json()["error"]["code"] == "BAD_REQUEST"
+        assert "pause" in response.json()["error"]["message"]
+
+
+async def test_withdraw_is_terminal(client: Any, conn: Any, member: Any) -> None:
+    """"Withdrawn listings keep their history for reporting but no longer appear in search"
+    (logic.js:1061): the row SURVIVES, and every write refuses."""
+    listing_id, signed = await _ready(client, member)
+    assert (await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": "withdraw"},
+                              headers=signed)).status_code == 200
+    for response in (
+        await client.patch(f"/api/seller/listings/{listing_id}?step=1", json={"name": "Renamed"}, headers=signed),
+        await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed),
+        await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": "republish"}, headers=signed),
+        await client.patch(f"/api/seller/listings/{listing_id}/photos", json={"ids": []}, headers=signed),
+    ):
+        assert response.status_code == 409 and response.json()["error"]["code"] == "STATE", response.text
+    assert (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).status_code == 200
+    assert _status(conn, listing_id)[0] == "withdrawn"
+
+
+async def test_the_seller_transition_actions_name_no_permission_and_are_not_watched(
+    client: Any, conn: Any, dist: Any
+) -> None:
+    """D8. The four actions name no permission BY DESIGN — exactly like `applications.submit` —
+    because `listing.manage_own` is not in `AUDITED` and the wizard's autosave rides on it. The
+    drift test therefore never sees these routes, and there is no list to add them to; this says so
+    on purpose. "Not watched", not "not there": the route IS mounted and IS guarded."""
+    from app.api import seller_listings as SL
+    from app.auth import permissions as PM
+    from app.main import create_app
+    from tests.auth.test_permissions import _permissions_of
+    from tests.conftest import walk_routes
+
+    four = (SL.SUBMIT_ACTION, SL.PAUSE_ACTION, SL.REPUBLISH_ACTION, SL.WITHDRAW_ACTION)
+    assert four == ("listing.submit", "listing.pause", "listing.republish", "listing.withdraw")
+    assert not set(four) & set(PM.MATRIX)
+    assert "listing.manage_own" not in PM.AUDITED
+    routes = list(walk_routes(create_app(dist=dist).routes))
+    watched = {(method, path) for method, path, route in routes
+               if any(perm in PM.AUDITED for perm in _permissions_of(route))}
+    guarded = {(method, path) for method, path, route in routes
+               if "listing.manage_own" in _permissions_of(route)}
+    for route in (("POST", "/api/seller/listings/{listing_id}/submit"),
+                  ("POST", "/api/seller/listings/{listing_id}/status")):
+        assert route not in watched, route
+        assert route in guarded, route
+
+
+async def test_every_transition_drops_the_listings_cache_after_the_commit(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """D16. Unlike the autosave (A-SL13 L6), unconditionally: a transition is a deliberate act
+    bounded by `LISTING_SUBMIT`, three of the four move a row onto or off the market, and a SCAN
+    that finds nothing costs nothing."""
+    listing_id, signed = await _ready(client, member)
+
+    async def _drops(call: Any) -> bool:
+        redis.set("listings:v1:::50", b'{"items": []}')
+        redis.set("session:keep-me", b"x")
+        assert (await call).status_code == 200
+        assert redis.get("session:keep-me") == b"x"
+        return redis.get("listings:v1:::50") is None
+
+    assert await _drops(client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed))
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status='published', state='TX', market='Austin, TX',"
+                    " area='Cedar Park' WHERE id=%s", (listing_id,))
+    for action in ("pause", "republish", "withdraw"):
+        assert await _drops(
+            client.post(f"/api/seller/listings/{listing_id}/status", json={"action": action}, headers=signed)), action
+
+
+async def test_a_non_owner_cannot_submit_or_transition_another_sellers_listing(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """D7, on the two new routes: 404, never 403."""
+    listing_id, _signed = await _ready(client, member)
+    _, thief_cookies, thief_headers = member(roles=("buyer", "seller"), email="sl-thief@example.org")
+    stolen = auth_headers(thief_cookies, thief_headers)
+    for response in (
+        await client.post(f"/api/seller/listings/{listing_id}/submit", headers=stolen),
+        await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": "withdraw"}, headers=stolen),
+        await client.post("/api/seller/listings/not-a-uuid/submit", headers=stolen),
+    ):
+        assert response.status_code == 404 and response.json()["error"]["code"] == "NOT_FOUND"
+
+
+async def test_the_transition_rate_limit_is_per_account(
+    client: Any, conn: Any, redis: Any, member: Any, monkeypatch: Any
+) -> None:
+    """D17/A-SL16 M3: every write is rate-limited, the two transitions included."""
+    from app.api import seller_listings as SL
+
+    monkeypatch.setattr(SL, "LISTING_SUBMIT", (1, 3600))
+    listing_id, signed = await _ready(client, member)
+    assert (await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)).status_code == 200
+    refused = await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)
+    assert refused.status_code == 429 and refused.json()["error"]["code"] == "RATE_LIMITED"
+    # A separate bucket from `submit`, so a seller who pauses a listing has not spent their
+    # submissions — the first `status` call still lands.
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status='published', state='TX', market='Austin, TX',"
+                    " area='Cedar Park' WHERE id=%s", (listing_id,))
+    assert (await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": "pause"},
+                              headers=signed)).status_code == 200
