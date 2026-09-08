@@ -136,8 +136,8 @@ const A2_5: Amendment = {
 /** A3 — the Insights-tab primary button of the docked panel (spec D18, John: "update across the
  *  application 'view full market report' to 'View full listing'"). A literal template edit (a
  *  text node, V3:705): one occurrence in the pristine file. The other tabs' "Open full listing"
- *  (V3:717) is not part of John's instruction and is left as designed — flagged to John in the
- *  V15 report for possible unification. */
+ *  (V3:717) was not part of John's instruction and was left as designed, flagged to him in the
+ *  V15 report for possible unification — A11, below, is that unification. */
 const A3: Amendment = {
   id: 'A3', date: '2026-09-07', ruling: 'update across the application "view full market report" to "View full listing"',
   find: 'View full market report', replace: 'View full listing', count: 1
@@ -433,7 +433,18 @@ const A10: Amendment = {
   count: 1
 };
 
+/** A11 — the docked panel's other tabs take the Insights tab's wording (John, 2026-09-08: unify).
+ *  A template text node, V3:717 — the only "Open full listing" in the pristine file. Same wiring
+ *  as A3's button (`md.panel.openListing`); only the label changes. */
+const A11: Amendment = {
+  id: 'A11', date: '2026-09-08',
+  ruling: 'UNIFY — Change all Browse V3 docked-panel CTAs to "View full listing", including the Insights tab.',
+  find: 'border-radius: 6px; cursor: pointer;">Open full listing</button>',
+  replace: 'border-radius: 6px; cursor: pointer;">View full listing</button>',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
-    A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2, A10];
+    A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2, A10, A11];
 }
