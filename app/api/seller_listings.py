@@ -507,6 +507,28 @@ def _writable(row: dict[str, Any]) -> None:
         raise Refusal("STATE", "A withdrawn listing can no longer be edited.", 409)
 
 
+def take_off_market(conn: Any, row: dict[str, Any], principal: S.Principal, request: Request) -> bool:
+    """D3 for an ASSET write, in the write's own transaction (controller amendment A-SL15 (1)).
+
+    John's ruling — "editing a published listing re-enters review and removes it from the market
+    until approved again" — covers adding, reordering and deleting a photograph or a document: a
+    photograph IS the listing to a buyer scrolling Browse, so a seller who swaps one on a live
+    listing has changed what the market sees and the reviewer has to see it too. Same transition,
+    same stamp and same audit row as `patch_step`'s own arm, which is why `EDIT_ACTION` is shared
+    rather than a second name for one act.
+
+    Returns whether the listing WAS on the market, which is also the question "must the Browse
+    cache be dropped?" (D16, review L6): a draft's assets are in no published payload."""
+    if row["status"] != "published":
+        return False
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status = 'in_review', submitted_at = now(), updated_at = now()"
+                    " WHERE id = %s AND seller_id = %s", (row["id"], principal.account_id))
+    audit.write(conn, actor=principal, action=EDIT_ACTION, target_type="listing", target_id=row["id"],
+                before={"status": "published"}, after={"status": "in_review"}, request=request)
+    return True
+
+
 def _asset_uuid(asset_id: str, noun: str = "asset") -> UUID:
     """A path segment as a uuid, or the 404 that segment names. Never FastAPI's 422 on a `UUID`
     path parameter, which would answer `{"detail": [...]}` instead of the envelope."""
@@ -642,6 +664,7 @@ async def upload_photo(listing_id: str, request: Request, principal: Owner) -> R
                 cur.execute("UPDATE listing SET photos = %s::jsonb, updated_at = now()"
                             " WHERE id = %s AND seller_id = %s",
                             (json.dumps([*photos, str(asset_id)]), row["id"], principal.account_id))
+            take_off_market(conn, row, principal, request)
             payload = _asset_payload(asset_id, "photo", name, "image/webp", len(webp))
     except Refusal as exc:
         return _refused(exc)
@@ -673,6 +696,7 @@ async def reorder_photos(listing_id: str, request: Request, principal: Owner) ->
                 cur.execute("UPDATE listing SET photos = %s::jsonb, updated_at = now()"
                             " WHERE id = %s AND seller_id = %s",
                             (json.dumps(ids), row["id"], principal.account_id))
+            take_off_market(conn, row, principal, request)
             payload = serialise_draft(locked_row(conn, listing_id, principal), assets_of(conn, row["id"]))
     except Refusal as exc:
         return _refused(exc)
@@ -681,7 +705,7 @@ async def reorder_photos(listing_id: str, request: Request, principal: Owner) ->
 
 
 @router.delete("/listings/{listing_id}/assets/{asset_id}", status_code=204)
-async def delete_asset(listing_id: str, asset_id: str, principal: Owner) -> Response:
+async def delete_asset(listing_id: str, asset_id: str, request: Request, principal: Owner) -> Response:
     """One asset, gone: the row, its entry in `listing.photos`, then the object.
 
     The row is what decides whether the asset EXISTED — `app/storage.py`'s `delete()` answers
@@ -712,6 +736,7 @@ async def delete_asset(listing_id: str, asset_id: str, principal: Owner) -> Resp
                     cur.execute("UPDATE listing SET photos = %s::jsonb, updated_at = now()"
                                 " WHERE id = %s AND seller_id = %s",
                                 (json.dumps(remaining), row["id"], principal.account_id))
+            take_off_market(conn, row, principal, request)
     except Refusal as exc:
         return _refused(exc)
     store.delete(key)
@@ -753,6 +778,7 @@ async def upload_document(listing_id: str, request: Request, principal: Owner) -
             asset_id, key = _insert_asset(conn, row["id"], kind, name, content_type, data,
                                           sha256_hex(data), DOCUMENT_TYPES[content_type])
             store.put(key, data, content_type)
+            take_off_market(conn, row, principal, request)
             payload = _asset_payload(asset_id, kind, name, content_type, len(data))
     except Refusal as exc:
         return _refused(exc)

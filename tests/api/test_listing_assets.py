@@ -804,3 +804,73 @@ async def test_a_listing_id_that_is_not_a_uuid_is_a_404_on_every_asset_write(
     ):
         assert response.status_code == 404, response.text
         assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+def _republish(conn: Any, listing_id: str) -> None:
+    """Back on the market, and its review stamp cleared, so the next write's transition is visible."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status='published', submitted_at=NULL WHERE id=%s", (listing_id,))
+
+
+def _status(conn: Any, listing_id: str) -> tuple[Any, Any]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, submitted_at FROM listing WHERE id=%s", (listing_id,))
+        return tuple(cur.fetchone())
+
+
+def _audit(conn: Any, listing_id: str) -> list[tuple[Any, ...]]:
+    with conn.cursor() as cur:
+        cur.execute("SELECT action, before, after FROM audit_log WHERE target_type='listing' AND target_id=%s",
+                    (str(listing_id),))
+        return list(cur.fetchall())
+
+
+async def test_every_asset_write_on_a_published_listing_re_enters_review(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any
+) -> None:
+    """A-SL15 (1): assets are edits. John's ruling — "editing a published listing re-enters review
+    and removes it from the market until approved again" — covers adding, reordering and deleting a
+    photograph or a document, so each of the four writes applies D3 exactly as `patch_step` does,
+    in the same transaction, and writes the same audit row."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    signed = auth_headers(cookies, headers)
+    _publish(conn, listing_id)
+
+    photo = (await _upload_photo(client, listing_id, signed)).json()["id"]
+    status, submitted_at = _status(conn, listing_id)
+    assert (status, submitted_at is not None) == ("in_review", True)
+
+    _republish(conn, listing_id)
+    assert (await _upload_document(client, listing_id, signed)).status_code == 201
+    assert _status(conn, listing_id)[0] == "in_review"
+
+    _republish(conn, listing_id)
+    assert (await client.patch(f"/api/seller/listings/{listing_id}/photos", json={"ids": [photo]},
+                               headers=signed)).status_code == 200
+    assert _status(conn, listing_id)[0] == "in_review"
+
+    _republish(conn, listing_id)
+    assert (await client.delete(f"/api/seller/listings/{listing_id}/assets/{photo}", headers=signed)).status_code == 204
+    assert _status(conn, listing_id)[0] == "in_review"
+
+    assert _audit(conn, listing_id) == [("listing.edit", {"status": "published"}, {"status": "in_review"})] * 4
+
+
+async def test_an_asset_write_on_a_draft_leaves_the_lifecycle_alone(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any
+) -> None:
+    """The other arm of A-SL15 (1): a draft is not on the market, so there is nothing to take off
+    it — no transition, no `submitted_at`, no audit row for a review that never happened."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    signed = auth_headers(cookies, headers)
+
+    photo = (await _upload_photo(client, listing_id, signed)).json()["id"]
+    assert (await _upload_document(client, listing_id, signed)).status_code == 201
+    assert (await client.patch(f"/api/seller/listings/{listing_id}/photos", json={"ids": [photo]},
+                               headers=signed)).status_code == 200
+    assert (await client.delete(f"/api/seller/listings/{listing_id}/assets/{photo}", headers=signed)).status_code == 204
+
+    assert _status(conn, listing_id) == ("draft", None)
+    assert _audit(conn, listing_id) == []
