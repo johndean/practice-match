@@ -7,7 +7,7 @@ SPEC_KEYS = {"acs5", "acs5_subject", "acs5_prior", "cbp", "zbp", "qwi", "bds", "
 def test_seed_matches_the_spec_dataset_register(conn):
     reg = load(conn)
     assert set(reg) == SPEC_KEYS
-    assert reg["acs5"].api_dataset_id == "2023/acs/acs5" and reg["acs5"].vintage == "2019–2023"  # noqa: RUF001 — en dash, spec §2's own vintage spelling
+    assert reg["acs5"].api_dataset_id == "2023/acs/acs5" and reg["acs5"].vintage == "2019\u20132023"
     assert reg["acs5_prior"].api_dataset_id == "2018/acs/acs5"
     assert reg["cbp"].api_dataset_id == "2022/cbp" and reg["cbp"].naics_param == "NAICS2017"
     assert reg["qwi"].api_dataset_id == "timeseries/qwi/sa"
@@ -27,7 +27,7 @@ def test_is_cleared_and_attribution(conn):
     assert is_cleared(conn, "pet_ownership") is False
     assert is_cleared(conn, "nope") is False
     assert attribution(conn, ["acs5", "cbp"]) == [
-        "Source: U.S. Census Bureau, American Community Survey 5-Year Estimates, 2019–2023",  # noqa: RUF001 — en dash, spec §2's own vintage spelling
+        "Source: U.S. Census Bureau, American Community Survey 5-Year Estimates, 2019\u20132023",
         "Source: U.S. Census Bureau, County Business Patterns, 2022",
     ]
 
@@ -35,7 +35,7 @@ def test_is_cleared_and_attribution(conn):
 def test_attribution_skips_unknown_keys_and_empty_list_short_circuits(conn):
     # docstring: "unknown keys are skipped, not invented" — exercise both arms of that filter.
     assert attribution(conn, ["acs5", "nope"]) == [
-        "Source: U.S. Census Bureau, American Community Survey 5-Year Estimates, 2019–2023",  # noqa: RUF001 — en dash, spec §2's own vintage spelling
+        "Source: U.S. Census Bureau, American Community Survey 5-Year Estimates, 2019\u20132023",
     ]
     assert attribution(conn, []) == []
 
