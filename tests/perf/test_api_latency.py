@@ -340,3 +340,45 @@ async def test_no_connection_is_held_across_the_argon2id_hop(client, db_ready, m
                           headers={"x-forwarded-for": _fresh_ip()})
     assert r.status_code == 401
     assert checked_out == [0], f"a connection was checked out across the Argon2id hop: {checked_out}"
+
+
+# --- Task L5 budgets ----------------------------------------------------------------------------
+# Listings budgets (policy §3; spec 2026-09-06 D9). They live here as their own test rather than in
+# BUDGET_MS because they need a signed-in member and a SEEDED database — exactly as the interest
+# POST budget above needs its own setup. The list is Redis-cached for 60 s, so what is measured is
+# the warm path, which is the path a member actually experiences; `gate_p95` (Task 15) is what
+# asserts each one, so a stalled shared runner is re-measured before it can fail the build.
+LISTINGS_BUDGET_MS = {"list": 100, "one": 100, "photo": 150}
+
+
+async def test_listings_p95_within_budget(origin_client, conn, redis, member):
+    """The three listing reads against the real eighteen — the seeder, the endpoint, the committed
+    photographs. `conn` points `settings.database_url` at a scratch database, so this neither reads
+    nor writes the shared dev one."""
+    from scripts import seed_listings as SL
+    from tests.api.conftest import auth_headers
+
+    SL.seed(settings.database_url, reset=True)
+    _, cookies, headers = member()
+    auth = auth_headers(cookies, headers)
+
+    listed = await origin_client.get("/api/listings?limit=200", headers=auth)
+    assert listed.status_code == 200, listed.text
+    first = listed.json()["items"][0]
+
+    async def measure(path: str) -> list[float]:
+        await origin_client.get(path, headers=auth)   # warm-up, so a re-measurement is warm too
+        samples = []
+        for _ in range(50):
+            t0 = time.perf_counter()
+            r = await origin_client.get(path, headers=auth)
+            samples.append((time.perf_counter() - t0) * 1000)
+            assert r.status_code == 200, path
+        return samples
+
+    for label, path in (
+        ("list", "/api/listings?limit=200"),
+        ("one", f"/api/listings/{first['id']}"),
+        ("photo", f"/api/listings/{first['id']}/photos/1"),
+    ):
+        await gate_p95(lambda p=path: measure(p), LISTINGS_BUDGET_MS[label], label=path)
