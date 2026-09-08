@@ -1,18 +1,25 @@
-"""`scripts/census_load.py` -- the operator CLI (Task A4's `--tiger`; task A5 adds `acs`).
+"""`scripts/census_load.py` -- the operator CLI (Task A4's `--tiger`; task A5 adds `acs`; task A6
+adds `cbp`/`zbp`/`qwi`/`bds`).
 
 Runs inside the worker image (`railway run --service worker -- python scripts/census_load.py
 tiger`) or locally against docker-compose; every subcommand is idempotent. This file tests the
 CLI's OWN wiring -- argument parsing, the `market_state` query, the fail-closed key/contact
 gates, the User-Agent/redirect settings the HTTP client is built with, and every error arm -- not
-`app.census.tiger.load_boundaries`'s or `app.census.acs.load`'s own behaviour, which
-`tests/census/test_tiger.py` and `tests/census/test_acs.py` already cover at 100 % branch.
-Both are monkeypatched throughout so this suite never needs a real shapefile or a live Census
-API response.
+`app.census.tiger.load_boundaries`'s, `app.census.acs.load`'s or the industry loaders' own
+behaviour, which `tests/census/test_tiger.py`, `tests/census/test_acs.py` and
+`tests/census/test_industry.py` already cover at 100 % branch. Every loader is monkeypatched
+throughout so this suite never needs a real shapefile or a live Census API response.
 
-`acs`'s exit codes (A-C4 ¶2, as `tiger`'s already do): 0 done; 2 refused before anything is
-opened (no `CENSUS_API_KEY`/`CENSUS_CONTACT_EMAIL`, or no `DATABASE_URL`); 3 database
-unreachable; 4 a download/fetch failed (`CensusHTTPError`); 5 validation failed
-(`VariableMissing` -- a response missing an expected variable, spec §4/¶12)."""
+Every subcommand's exit codes (A-C4 ¶2, as `tiger`'s already do): 0 done; 2 refused before
+anything is opened (no `CENSUS_API_KEY`/`CENSUS_CONTACT_EMAIL`, no `DATABASE_URL`, or a
+licence-gated dataset -- `PermissionError`, spec §1); 3 database unreachable; 4 a download/fetch
+failed (`CensusHTTPError`); 5 validation failed (`VariableMissing` -- a response missing an
+expected variable, spec §4/¶12). `cbp`/`zbp`/`bds` skip dedicated "missing key"/"missing contact"
+tests below -- `require_key`/`require_contact` are the same functions `tiger`'s and `acs`'s tests
+already exercise at 100 % branch in `app/census/client.py`, and there is no additional
+conditional in THIS file for a missing key/contact to reach (the call sites are plain statements,
+not branches) -- the six arms that ARE new per subcommand (dsn-missing, db-unreachable, success,
+and the three `except` arms) are what each subcommand's tests below cover."""
 from __future__ import annotations
 
 import runpy
@@ -22,7 +29,11 @@ from pathlib import Path
 import pytest
 
 from app.census import acs as census_acs
+from app.census import bds as census_bds
+from app.census import cbp as census_cbp
+from app.census import qwi as census_qwi
 from app.census import tiger as census_tiger
+from app.census import zbp as census_zbp
 from scripts import census_load
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -397,6 +408,488 @@ def test_cmd_acs_returns_two_when_a_dataset_is_licence_gated(scratch_dsn, monkey
     assert census_load.main(["acs", "--dataset", "acs5"]) == 2
     err = capsys.readouterr().err
     assert "acs5" in err and "refused" in err
+
+
+# --- cbp/zbp/bds subcommands (Task A6) --------------------------------------------------------
+# The three plain industry loaders share one shape with `acs`'s single-dataset call (no
+# `--dataset` list): success, `DATABASE_URL` missing, the database unreachable, and the loader's
+# three exception arms (`PermissionError` -> 2, `CensusHTTPError` -> 4, `VariableMissing` -> 5).
+
+def test_cmd_cbp_queries_market_state_and_prints_row_count(scratch_dsn, monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    captured: dict = {}
+
+    def fake_load(conn, client_factory, states):
+        captured["states"] = list(states)
+        return 42
+
+    monkeypatch.setattr(census_cbp, "load", fake_load)
+
+    assert census_load.main(["cbp"]) == 0
+
+    # market_state seeds six states (017_census_registry.sql; A-C0 P10 / A-C1 (5)).
+    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert "cbp: 42 rows" in capsys.readouterr().out
+
+
+def test_cmd_cbp_returns_two_without_a_database_url(monkeypatch, capsys):
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    assert census_load.main(["cbp"]) == 2
+    assert "DATABASE_URL" in capsys.readouterr().err
+
+
+def test_cmd_cbp_returns_three_when_the_database_is_unreachable(monkeypatch, capsys):
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
+
+    assert census_load.main(["cbp"]) == 3
+    assert "database unreachable" in capsys.readouterr().err
+
+
+def test_cmd_cbp_builds_the_client_factory_from_the_required_key_and_contact(scratch_dsn, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "distinctive-key-123")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "distinctive-contact@vinfoundation.example.org")
+    captured: dict = {}
+
+    def fake_load(conn, client_factory, states):
+        client = client_factory(object())  # CensusClient's constructor never inspects `ds`
+        captured["api_key"] = client.api_key
+        captured["contact"] = client.contact
+        client.close()
+        return 0
+
+    monkeypatch.setattr(census_cbp, "load", fake_load)
+
+    assert census_load.main(["cbp"]) == 0
+
+    assert captured["api_key"] == "distinctive-key-123"
+    assert captured["contact"] == "distinctive-contact@vinfoundation.example.org"
+
+
+def test_cmd_cbp_returns_two_when_licence_gated(scratch_dsn, monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+
+    def fake_load(conn, client_factory, states):
+        raise PermissionError("cbp is blocked; loads are refused (spec §1 licensing gate)")
+
+    monkeypatch.setattr(census_cbp, "load", fake_load)
+
+    assert census_load.main(["cbp"]) == 2
+    assert "cbp refused" in capsys.readouterr().err
+
+
+def test_cmd_cbp_returns_four_when_the_download_fails(scratch_dsn, monkeypatch, capsys):
+    from app.census.client import CensusHTTPError
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+
+    def fake_load(conn, client_factory, states):
+        raise CensusHTTPError(500, "https://api.census.gov/data/2022/cbp?key=SECRET")
+
+    monkeypatch.setattr(census_cbp, "load", fake_load)
+
+    assert census_load.main(["cbp"]) == 4
+    err = capsys.readouterr().err
+    assert "cbp download failed" in err and "SECRET" not in err
+
+
+def test_cmd_cbp_returns_five_when_validation_fails(scratch_dsn, monkeypatch, capsys):
+    from app.census.client import VariableMissing
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+
+    def fake_load(conn, client_factory, states):
+        raise VariableMissing(["ESTAB"])
+
+    monkeypatch.setattr(census_cbp, "load", fake_load)
+
+    assert census_load.main(["cbp"]) == 5
+    err = capsys.readouterr().err
+    assert "cbp failed validation" in err and "ESTAB" in err
+
+
+def test_cmd_zbp_queries_market_state_and_prints_row_count(scratch_dsn, monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    captured: dict = {}
+
+    def fake_load(conn, client_factory, states):
+        captured["states"] = list(states)
+        return 18
+
+    monkeypatch.setattr(census_zbp, "load", fake_load)
+
+    assert census_load.main(["zbp"]) == 0
+
+    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert "zbp: 18 rows" in capsys.readouterr().out
+
+
+def test_cmd_zbp_returns_two_without_a_database_url(monkeypatch, capsys):
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    assert census_load.main(["zbp"]) == 2
+    assert "DATABASE_URL" in capsys.readouterr().err
+
+
+def test_cmd_zbp_returns_three_when_the_database_is_unreachable(monkeypatch, capsys):
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
+
+    assert census_load.main(["zbp"]) == 3
+    assert "database unreachable" in capsys.readouterr().err
+
+
+def test_cmd_zbp_builds_the_client_factory_from_the_required_key_and_contact(scratch_dsn, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "distinctive-key-123")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "distinctive-contact@vinfoundation.example.org")
+    captured: dict = {}
+
+    def fake_load(conn, client_factory, states):
+        client = client_factory(object())
+        captured["api_key"] = client.api_key
+        captured["contact"] = client.contact
+        client.close()
+        return 0
+
+    monkeypatch.setattr(census_zbp, "load", fake_load)
+
+    assert census_load.main(["zbp"]) == 0
+
+    assert captured["api_key"] == "distinctive-key-123"
+    assert captured["contact"] == "distinctive-contact@vinfoundation.example.org"
+
+
+def test_cmd_zbp_returns_two_when_licence_gated(scratch_dsn, monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+
+    def fake_load(conn, client_factory, states):
+        raise PermissionError("zbp is blocked; loads are refused (spec §1 licensing gate)")
+
+    monkeypatch.setattr(census_zbp, "load", fake_load)
+
+    assert census_load.main(["zbp"]) == 2
+    assert "zbp refused" in capsys.readouterr().err
+
+
+def test_cmd_zbp_returns_four_when_the_download_fails(scratch_dsn, monkeypatch, capsys):
+    from app.census.client import CensusHTTPError
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+
+    def fake_load(conn, client_factory, states):
+        raise CensusHTTPError(500, "https://api.census.gov/data/2022/zbp?key=SECRET")
+
+    monkeypatch.setattr(census_zbp, "load", fake_load)
+
+    assert census_load.main(["zbp"]) == 4
+    err = capsys.readouterr().err
+    assert "zbp download failed" in err and "SECRET" not in err
+
+
+def test_cmd_zbp_returns_five_when_validation_fails(scratch_dsn, monkeypatch, capsys):
+    from app.census.client import VariableMissing
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+
+    def fake_load(conn, client_factory, states):
+        raise VariableMissing(["ESTAB"])
+
+    monkeypatch.setattr(census_zbp, "load", fake_load)
+
+    assert census_load.main(["zbp"]) == 5
+    err = capsys.readouterr().err
+    assert "zbp failed validation" in err and "ESTAB" in err
+
+
+def test_cmd_bds_requires_a_year_and_prints_row_count(scratch_dsn, monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    captured: dict = {}
+
+    def fake_load(conn, client_factory, states, *, year):
+        captured["states"] = list(states)
+        captured["year"] = year
+        return 6
+
+    monkeypatch.setattr(census_bds, "load", fake_load)
+
+    assert census_load.main(["bds", "--year", "2022"]) == 0
+
+    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["year"] == 2022
+    assert "bds 2022: 6 rows" in capsys.readouterr().out
+
+
+def test_cmd_bds_returns_two_without_a_database_url(monkeypatch, capsys):
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    assert census_load.main(["bds", "--year", "2022"]) == 2
+    assert "DATABASE_URL" in capsys.readouterr().err
+
+
+def test_cmd_bds_returns_three_when_the_database_is_unreachable(monkeypatch, capsys):
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
+
+    assert census_load.main(["bds", "--year", "2022"]) == 3
+    assert "database unreachable" in capsys.readouterr().err
+
+
+def test_cmd_bds_builds_the_client_factory_from_the_required_key_and_contact(scratch_dsn, monkeypatch):
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "distinctive-key-123")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "distinctive-contact@vinfoundation.example.org")
+    captured: dict = {}
+
+    def fake_load(conn, client_factory, states, *, year):
+        client = client_factory(object())
+        captured["api_key"] = client.api_key
+        captured["contact"] = client.contact
+        client.close()
+        return 0
+
+    monkeypatch.setattr(census_bds, "load", fake_load)
+
+    assert census_load.main(["bds", "--year", "2022"]) == 0
+
+    assert captured["api_key"] == "distinctive-key-123"
+    assert captured["contact"] == "distinctive-contact@vinfoundation.example.org"
+
+
+def test_cmd_bds_returns_two_when_licence_gated(scratch_dsn, monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+
+    def fake_load(conn, client_factory, states, *, year):
+        raise PermissionError("bds is blocked; loads are refused (spec §1 licensing gate)")
+
+    monkeypatch.setattr(census_bds, "load", fake_load)
+
+    assert census_load.main(["bds", "--year", "2022"]) == 2
+    assert "bds refused" in capsys.readouterr().err
+
+
+def test_cmd_bds_returns_four_when_the_download_fails(scratch_dsn, monkeypatch, capsys):
+    from app.census.client import CensusHTTPError
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+
+    def fake_load(conn, client_factory, states, *, year):
+        raise CensusHTTPError(500, "https://api.census.gov/data/timeseries/bds?key=SECRET")
+
+    monkeypatch.setattr(census_bds, "load", fake_load)
+
+    assert census_load.main(["bds", "--year", "2022"]) == 4
+    err = capsys.readouterr().err
+    assert "bds download failed" in err and "SECRET" not in err
+
+
+def test_cmd_bds_returns_five_when_validation_fails(scratch_dsn, monkeypatch, capsys):
+    from app.census.client import VariableMissing
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+
+    def fake_load(conn, client_factory, states, *, year):
+        raise VariableMissing(["FIRM"])
+
+    monkeypatch.setattr(census_bds, "load", fake_load)
+
+    assert census_load.main(["bds", "--year", "2022"]) == 5
+    err = capsys.readouterr().err
+    assert "bds failed validation" in err and "FIRM" in err
+
+
+# --- qwi subcommand (Task A6) -------------------------------------------------------------------
+# qwi differs from the other three: `--year`/`--quarter` are optional and, when either is
+# omitted, resolved through `qwi.latest_available` before `qwi.load` runs; the licence gate is
+# checked directly against the registry (not through `qwi.load`'s own identical check) so a
+# blocked dataset is refused before `latest_available`'s probe, not after; and a successful load
+# always calls `qwi.trim`.
+
+def test_cmd_qwi_loads_a_given_quarter_without_resolving_latest(scratch_dsn, monkeypatch, capsys):
+    captured: dict = {}
+
+    def fake_load(conn, client_factory, states, *, year, quarter):
+        captured["states"] = list(states)
+        captured["year"], captured["quarter"] = year, quarter
+        return 6
+
+    def fake_trim(conn, keep=20):
+        captured["trimmed_keep_default"] = keep
+        return 3
+
+    def fake_latest_available(client, state, *, today):
+        raise AssertionError("latest_available must not run when --year/--quarter are both given")
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    monkeypatch.setattr(census_qwi, "load", fake_load)
+    monkeypatch.setattr(census_qwi, "trim", fake_trim)
+    monkeypatch.setattr(census_qwi, "latest_available", fake_latest_available)
+
+    assert census_load.main(["qwi", "--year", "2024", "--quarter", "4"]) == 0
+
+    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["year"] == 2024 and captured["quarter"] == 4
+    assert captured["trimmed_keep_default"] == 20
+    out = capsys.readouterr().out
+    assert "qwi 2024Q4: 6 rows (3 trimmed)" in out
+
+
+def test_cmd_qwi_resolves_the_latest_available_quarter_when_omitted(scratch_dsn, monkeypatch, capsys):
+    captured: dict = {}
+
+    def fake_latest_available(client, state, *, today):
+        captured["state"] = state
+        captured["today"] = today
+        return (2024, 4)
+
+    def fake_load(conn, client_factory, states, *, year, quarter):
+        captured["year"], captured["quarter"] = year, quarter
+        return 6
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    monkeypatch.setattr(census_qwi, "latest_available", fake_latest_available)
+    monkeypatch.setattr(census_qwi, "load", fake_load)
+    monkeypatch.setattr(census_qwi, "trim", lambda conn, keep=20: 0)
+
+    assert census_load.main(["qwi"]) == 0
+
+    assert captured["state"] == "06"  # states[0], market_state's first row
+    assert captured["year"] == 2024 and captured["quarter"] == 4
+    assert "qwi 2024Q4: 6 rows (0 trimmed)" in capsys.readouterr().out
+
+
+def test_cmd_qwi_returns_two_without_a_database_url(monkeypatch, capsys):
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    assert census_load.main(["qwi", "--year", "2024", "--quarter", "4"]) == 2
+    assert "DATABASE_URL" in capsys.readouterr().err
+
+
+def test_cmd_qwi_returns_three_when_the_database_is_unreachable(monkeypatch, capsys):
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
+
+    assert census_load.main(["qwi", "--year", "2024", "--quarter", "4"]) == 3
+    assert "database unreachable" in capsys.readouterr().err
+
+
+def test_cmd_qwi_returns_two_when_licence_gated_before_any_probe(scratch_dsn, monkeypatch, capsys):
+    """The gate is checked directly, before `latest_available` -- neither it nor `load` may run
+    for a blocked dataset (spec §1), including on the auto-resolve path (`--year`/`--quarter`
+    both omitted here)."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+
+    conn = census_load._conn(scratch_dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE dataset_registry SET license_status = 'blocked' WHERE dataset_key = 'qwi'")
+    finally:
+        conn.close()
+
+    def fail(*a, **k):
+        raise AssertionError("a blocked dataset must never be probed or loaded")
+
+    monkeypatch.setattr(census_qwi, "latest_available", fail)
+    monkeypatch.setattr(census_qwi, "load", fail)
+
+    assert census_load.main(["qwi"]) == 2
+    err = capsys.readouterr().err
+    assert "qwi refused" in err and "blocked" in err
+
+
+def test_cmd_qwi_returns_four_when_resolving_the_latest_quarter_fails(scratch_dsn, monkeypatch, capsys):
+    from app.census.client import CensusHTTPError
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+
+    def fake_latest_available(client, state, *, today):
+        raise CensusHTTPError(500, "https://api.census.gov/data/timeseries/qwi/sa?key=SECRET")
+
+    monkeypatch.setattr(census_qwi, "latest_available", fake_latest_available)
+
+    assert census_load.main(["qwi"]) == 4
+    err = capsys.readouterr().err
+    assert "qwi download failed" in err and "SECRET" not in err
+
+
+def test_cmd_qwi_returns_four_when_the_load_itself_fails(scratch_dsn, monkeypatch, capsys):
+    from app.census.client import CensusHTTPError
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+
+    def fake_load(conn, client_factory, states, *, year, quarter):
+        raise CensusHTTPError(500, "https://api.census.gov/data/timeseries/qwi/sa?key=SECRET")
+
+    monkeypatch.setattr(census_qwi, "load", fake_load)
+
+    assert census_load.main(["qwi", "--year", "2024", "--quarter", "4"]) == 4
+    err = capsys.readouterr().err
+    assert "qwi download failed" in err and "SECRET" not in err
+
+
+def test_cmd_qwi_returns_five_when_validation_fails(scratch_dsn, monkeypatch, capsys):
+    from app.census.client import VariableMissing
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+
+    def fake_load(conn, client_factory, states, *, year, quarter):
+        raise VariableMissing(["Emp"])
+
+    monkeypatch.setattr(census_qwi, "load", fake_load)
+
+    assert census_load.main(["qwi", "--year", "2024", "--quarter", "4"]) == 5
+    err = capsys.readouterr().err
+    assert "qwi failed validation" in err and "Emp" in err
 
 
 def test_normalize_dsn_handles_the_legacy_postgres_scheme_and_asyncpg():

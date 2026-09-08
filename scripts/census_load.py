@@ -6,20 +6,27 @@ docker-compose. Every subcommand is idempotent.
 `tiger` (Task A4) is the first subcommand: it loads TIGER cartographic boundary files
 (`app/census/tiger.py`) for every state `market_state` names, into `geo_area`. `acs` (Task A5)
 loads ACS detailed/subject/prior-vintage tables (`app/census/acs.py`) into `acs_measure` through
-`CensusClient`, one `ingest_run` row per dataset. Later tasks (A6-A9) add `cbp`, `qwi`,
-`activate`, … to the same subparser tree.
+`CensusClient`, one `ingest_run` row per dataset. Task A6 adds the industry loads: `cbp`
+(`app/census/cbp.py`, county-level competition benchmark, NAICS 541940/812910/459910 with the
+NAICS-2017 alias for 459910), `zbp` (`app/census/zbp.py`, ZIP-level competition, plan D11), `qwi`
+(`app/census/qwi.py`, resolving the latest published quarter via `qwi.latest_available` when
+`--year`/`--quarter` are omitted, then trimming to the newest 20 quarters), and `bds`
+(`app/census/bds.py`, `--year` required -- BDS has no "latest" auto-resolution). Later tasks
+(A7-A9) add `activate`, … to the same subparser tree.
 
 Exit codes follow the shared scheme every `census_load.py` subcommand uses (A-C4 ¶2, aligned
 with `scripts/seed_listings.py`): 0 done; 2 refused before anything is opened (no subcommand --
 argparse's own exit -- `DATABASE_URL` unset, a required Census setting missing --
 `require_key`/`require_contact` in `app/census/client.py` now raise `SystemExit(2)`, superseding
-A-C3 ¶2's `SystemExit(3)` -- or a dataset that is licence-gated: `acs.load`'s `PermissionError`
-for an `unresolved`/`blocked` `dataset_registry` row, spec §1, is a refusal too); 3 the database
+A-C3 ¶2's `SystemExit(3)` -- or a dataset that is licence-gated: every loader's `PermissionError`
+for an `unresolved`/`blocked` `dataset_registry` row, spec §1, is a refusal too -- `qwi` checks
+this itself, before `latest_available`'s probe, rather than through `qwi.load`'s own identical
+check, so a blocked QWI dataset is never even queried); 3 the database
 is unreachable (retryable); 4 a download or API fetch
-failed (`CensusHTTPError`, its message already redacted -- A-C3 (3)); 5 validation failed -- `acs`
-raises this when a response is missing an expected variable (`VariableMissing`; spec §4/¶12, a
-partial vintage that must never go active) -- reserved more broadly for malformed bodies or
-bounds once a subcommand that can hit those lands.
+failed (`CensusHTTPError`, its message already redacted -- A-C3 (3)); 5 validation failed -- every
+loader raises this when a response is missing an expected variable (`VariableMissing`; spec
+§4/¶12, a partial vintage that must never go active) -- reserved more broadly for malformed
+bodies or bounds once a subcommand that can hit those lands.
 
 The `app.*` imports are inside each `cmd_*` function for the reason `scripts/bootstrap_admin.py`
 and `scripts/reset_rate_limits.py` record: `python scripts/census_load.py` puts `scripts/` on
@@ -155,6 +162,193 @@ def cmd_acs(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_cbp(args: argparse.Namespace) -> int:
+    from app.census import cbp
+    from app.census.client import CensusClient, CensusHTTPError, VariableMissing, require_contact, require_key
+    from app.census.registry import Dataset
+    from app.config import settings
+    from app.storage import ObjectStore
+    from app.version import VERSION
+
+    key = require_key()
+    contact = require_contact()
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        print("[census_load] DATABASE_URL is not set", file=sys.stderr)
+        return 2
+    try:
+        conn = _conn(dsn)
+    except psycopg2.OperationalError as exc:
+        print(f"[census_load] database unreachable: {type(exc).__name__}", file=sys.stderr)
+        return 3
+    with conn.cursor() as cur:
+        cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
+        states = [r[0] for r in cur.fetchall()]
+    archive = ObjectStore.from_settings(settings)
+
+    def factory(ds: Dataset) -> CensusClient:
+        return CensusClient(key, ds, archive, version=VERSION, contact=contact)
+
+    try:
+        n = cbp.load(conn, factory, states)
+    except PermissionError as exc:
+        print(f"[census_load] cbp refused: {exc}", file=sys.stderr)
+        return 2
+    except CensusHTTPError as exc:
+        print(f"[census_load] cbp download failed: {exc}", file=sys.stderr)
+        return 4
+    except VariableMissing as exc:
+        print(f"[census_load] cbp failed validation: {exc}", file=sys.stderr)
+        return 5
+    print(f"  cbp: {n} rows")
+    return 0
+
+
+def cmd_zbp(args: argparse.Namespace) -> int:
+    from app.census import zbp
+    from app.census.client import CensusClient, CensusHTTPError, VariableMissing, require_contact, require_key
+    from app.census.registry import Dataset
+    from app.config import settings
+    from app.storage import ObjectStore
+    from app.version import VERSION
+
+    key = require_key()
+    contact = require_contact()
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        print("[census_load] DATABASE_URL is not set", file=sys.stderr)
+        return 2
+    try:
+        conn = _conn(dsn)
+    except psycopg2.OperationalError as exc:
+        print(f"[census_load] database unreachable: {type(exc).__name__}", file=sys.stderr)
+        return 3
+    with conn.cursor() as cur:
+        cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
+        states = [r[0] for r in cur.fetchall()]
+    archive = ObjectStore.from_settings(settings)
+
+    def factory(ds: Dataset) -> CensusClient:
+        return CensusClient(key, ds, archive, version=VERSION, contact=contact)
+
+    try:
+        n = zbp.load(conn, factory, states)
+    except PermissionError as exc:
+        print(f"[census_load] zbp refused: {exc}", file=sys.stderr)
+        return 2
+    except CensusHTTPError as exc:
+        print(f"[census_load] zbp download failed: {exc}", file=sys.stderr)
+        return 4
+    except VariableMissing as exc:
+        print(f"[census_load] zbp failed validation: {exc}", file=sys.stderr)
+        return 5
+    print(f"  zbp: {n} rows")
+    return 0
+
+
+def cmd_bds(args: argparse.Namespace) -> int:
+    from app.census import bds
+    from app.census.client import CensusClient, CensusHTTPError, VariableMissing, require_contact, require_key
+    from app.census.registry import Dataset
+    from app.config import settings
+    from app.storage import ObjectStore
+    from app.version import VERSION
+
+    key = require_key()
+    contact = require_contact()
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        print("[census_load] DATABASE_URL is not set", file=sys.stderr)
+        return 2
+    try:
+        conn = _conn(dsn)
+    except psycopg2.OperationalError as exc:
+        print(f"[census_load] database unreachable: {type(exc).__name__}", file=sys.stderr)
+        return 3
+    with conn.cursor() as cur:
+        cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
+        states = [r[0] for r in cur.fetchall()]
+    archive = ObjectStore.from_settings(settings)
+
+    def factory(ds: Dataset) -> CensusClient:
+        return CensusClient(key, ds, archive, version=VERSION, contact=contact)
+
+    try:
+        n = bds.load(conn, factory, states, year=args.year)
+    except PermissionError as exc:
+        print(f"[census_load] bds refused: {exc}", file=sys.stderr)
+        return 2
+    except CensusHTTPError as exc:
+        print(f"[census_load] bds download failed: {exc}", file=sys.stderr)
+        return 4
+    except VariableMissing as exc:
+        print(f"[census_load] bds failed validation: {exc}", file=sys.stderr)
+        return 5
+    print(f"  bds {args.year}: {n} rows")
+    return 0
+
+
+def cmd_qwi(args: argparse.Namespace) -> int:
+    from datetime import UTC, datetime
+
+    from app.census import qwi
+    from app.census.client import CensusClient, CensusHTTPError, VariableMissing, require_contact, require_key
+    from app.census.registry import Dataset
+    from app.census.registry import load as load_registry
+    from app.config import settings
+    from app.storage import ObjectStore
+    from app.version import VERSION
+
+    key = require_key()
+    contact = require_contact()
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        print("[census_load] DATABASE_URL is not set", file=sys.stderr)
+        return 2
+    try:
+        conn = _conn(dsn)
+    except psycopg2.OperationalError as exc:
+        print(f"[census_load] database unreachable: {type(exc).__name__}", file=sys.stderr)
+        return 3
+    with conn.cursor() as cur:
+        cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
+        states = [r[0] for r in cur.fetchall()]
+    archive = ObjectStore.from_settings(settings)
+
+    def factory(ds: Dataset) -> CensusClient:
+        return CensusClient(key, ds, archive, version=VERSION, contact=contact)
+
+    # The licence gate is checked here, before any network call -- `qwi.load`'s own `ds.cleared`
+    # check (identical to every other loader's) would otherwise run only AFTER
+    # `latest_available`'s probe already reached a blocked dataset's endpoint below.
+    ds = load_registry(conn)["qwi"]
+    if not ds.cleared:
+        print(f"[census_load] qwi refused: qwi is {ds.license_status}; loads are refused (spec §1 licensing gate)", file=sys.stderr)
+        return 2
+
+    year, quarter = args.year, args.quarter
+    if year is None or quarter is None:
+        now = datetime.now(UTC)
+        with factory(ds) as client:
+            try:
+                year, quarter = qwi.latest_available(client, states[0], today=(now.year, (now.month - 1) // 3 + 1))
+            except CensusHTTPError as exc:
+                print(f"[census_load] qwi download failed: {exc}", file=sys.stderr)
+                return 4
+
+    try:
+        n = qwi.load(conn, factory, states, year=year, quarter=quarter)
+    except CensusHTTPError as exc:
+        print(f"[census_load] qwi download failed: {exc}", file=sys.stderr)
+        return 4
+    except VariableMissing as exc:
+        print(f"[census_load] qwi failed validation: {exc}", file=sys.stderr)
+        return 5
+    trimmed = qwi.trim(conn)
+    print(f"  qwi {year}Q{quarter}: {n} rows ({trimmed} trimmed)")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     # Imported here, not inside `cmd_acs` alone (A5's review of itself): `--dataset`'s `choices`
     # must be built while the parser itself is under construction, before `parse_args` runs --
@@ -171,6 +365,17 @@ def main(argv: list[str] | None = None) -> int:
     a.add_argument("--dataset", nargs="+", default=["acs5", "acs5_subject", "acs5_prior"], choices=sorted(acs.VARIABLES),
                     help="dataset_registry keys to load (default: all three ACS datasets)")
     a.set_defaults(fn=cmd_acs)
+    c = sub.add_parser("cbp", help="load County Business Patterns (county-level competition benchmark) for every market_state state")
+    c.set_defaults(fn=cmd_cbp)
+    z = sub.add_parser("zbp", help="load ZIP Code Business Patterns (community-level competition, plan D11) for every market_state state")
+    z.set_defaults(fn=cmd_zbp)
+    q = sub.add_parser("qwi", help="load Quarterly Workforce Indicators for every market_state state, then trim to the newest 20 quarters")
+    q.add_argument("--year", type=int, default=None, help="QWI year (default: resolved via the latest published quarter)")
+    q.add_argument("--quarter", type=int, default=None, help="QWI quarter, 1-4 (default: resolved via the latest published quarter)")
+    q.set_defaults(fn=cmd_qwi)
+    b = sub.add_parser("bds", help="load Business Dynamics Statistics for every market_state state")
+    b.add_argument("--year", type=int, required=True, help="BDS data year, e.g. 2022")
+    b.set_defaults(fn=cmd_bds)
     args = p.parse_args(argv)
     result: int = args.fn(args)
     return result
