@@ -136,8 +136,8 @@ const A2_5: Amendment = {
 /** A3 — the Insights-tab primary button of the docked panel (spec D18, John: "update across the
  *  application 'view full market report' to 'View full listing'"). A literal template edit (a
  *  text node, V3:705): one occurrence in the pristine file. The other tabs' "Open full listing"
- *  (V3:717) is not part of John's instruction and is left as designed — flagged to John in the
- *  V15 report for possible unification. */
+ *  (V3:717) was not part of John's instruction and was left as designed, flagged to him in the
+ *  V15 report for possible unification — A11, below, is that unification. */
 const A3: Amendment = {
   id: 'A3', date: '2026-09-07', ruling: 'update across the application "view full market report" to "View full listing"',
   find: 'View full market report', replace: 'View full listing', count: 1
@@ -907,9 +907,44 @@ const A9_1b: Amendment = {
   count: 1
 };
 
+/** A10 — the sign-in card's second gate point (John, 2026-09-08). A literal script edit, like A3:
+ *  the `gatePoints[1]` object in the sign-in view. Ids A8 and A9 were RESERVED by the account-screens
+ *  branch (feat/identity: A8 = the account screens, A9 = the answer-note prototype prop) while this
+ *  family was ruled on `main`; both are above now, so the ordering here is history, not a gap.
+ *  Revised the same day by A10.2, below. */
+const A10: Amendment = {
+  id: 'A10', date: '2026-09-08',
+  ruling: 'update the text on login page for #2 Sellers control disclosure to "Sellers control location & disclosure Properties are mapped using precise coordinates, while the exact location details, financial packets, and floor plans are only revealed when the seller authorizes access."',
+  find: '{ n: "2", title: "Sellers control disclosure", body: "General location by default. Financial packets and floor plans open only when the seller says yes." }',
+  replace: '{ n: "2", title: "Sellers control location & disclosure", body: "Properties are mapped using precise coordinates, while the exact location details, financial packets, and floor plans are only revealed when the seller authorizes access." }',
+  count: 1
+};
+
+/** A11 — the docked panel's other tabs take the Insights tab's wording (John, 2026-09-08: unify).
+ *  A template text node, V3:717 — the only "Open full listing" in the pristine file. Same wiring
+ *  as A3's button (`md.panel.openListing`); only the label changes. */
+const A11: Amendment = {
+  id: 'A11', date: '2026-09-08',
+  ruling: 'UNIFY — Change all Browse V3 docked-panel CTAs to "View full listing", including the Insights tab.',
+  find: 'border-radius: 6px; cursor: pointer;">Open full listing</button>',
+  replace: 'border-radius: 6px; cursor: pointer;">View full listing</button>',
+  count: 1
+};
+
+/** A10.2 — John revised A10's wording later the same day; A10 stays as the record of the first
+ *  ruling and A10.2 applies after it (its `find` is A10's output). Verbatim copy: the comma after
+ *  "information" and the U+2019 apostrophe in "seller’s" are his. */
+const A10_2: Amendment = {
+  id: 'A10.2', date: '2026-09-08',
+  ruling: 'the text for #2 Sellers and control disclouse must be updated to the following text: Sellers control what buyers can see The property is accurately mapped, but financial information, and floor plans are only shared with the seller’s approval.',
+  find: '{ n: "2", title: "Sellers control location & disclosure", body: "Properties are mapped using precise coordinates, while the exact location details, financial packets, and floor plans are only revealed when the seller authorizes access." }',
+  replace: '{ n: "2", title: "Sellers control what buyers can see", body: "The property is accurately mapped, but financial information, and floor plans are only shared with the seller’s approval." }',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
     A7_3, A7_4, A8_1a, A8_1b, A8_1c, A8_2, A8_3a, A8_3b, A8_4a, A8_4b, A8_5, A8_6, A8_7, A8_8a, A8_8b,
-    A9_1a, A9_1b];
+    A9_1a, A9_1b, A10, A11, A10_2];
 }

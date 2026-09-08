@@ -82,11 +82,20 @@ describe('local design amendments (spec D15)', () => {
     // applicant-answer card's note, which only `applicationsMe()` fed and the reference never
     // calls. One more declared prototype prop, exactly as A8.8b did for the sign-in notices.
     'A9.1a', 'A9.1b',
+    // A10 — the sign-in card's second gate point (John, 2026-09-08). Ruled on `main` while A8/A9
+    // were reserved by this branch; the merge puts all three families in one list, A10 last
+    // because A10.2's `find` is A10's output.
+    'A10',
+    // A11 — unifies the docked panel's other-tabs CTA with the Insights tab's (John, 2026-09-08).
+    'A11',
+    // A10.2 — John revised A10's wording later the same day; A10 stays as the record of the
+    // first ruling and A10.2 applies after it.
+    'A10.2',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(68);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(71);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -249,11 +258,20 @@ describe('local design amendments (spec D15)', () => {
   });
   // D18 (John, 2026-09-07: "update across the application"). One occurrence in the pristine
   // file — the Insights-tab primary button of the docked panel (V3:705) opens the listing;
-  // its label was wrong. The other tabs' "Open full listing" (V3:717) is untouched.
+  // its label was wrong. The other tabs' "Open full listing" (V3:717) is unified by A11
+  // (John, 2026-09-08), below.
   it('A3 replaces the Insights tab\'s "View full market report" with "View full listing" (spec D18), exactly once', () => {
     expect(pristine.split('View full market report').length - 1).toBe(1);
     expect(readFileSync(AMENDED, 'utf8')).not.toContain('View full market report');
     expect(readFileSync(AMENDED, 'utf8')).toContain('View full listing');
+  });
+  // A11 (John, 2026-09-08: "UNIFY — Change all Browse V3 docked-panel CTAs to 'View full
+  // listing', including the Insights tab"). The other tabs' primary button (V3:717,
+  // `md.panel.openListing`) took A3's wording, so every docked-panel CTA now reads the same.
+  it('A11 unifies the docked panel\'s other-tabs CTA with the Insights tab\'s "View full listing"', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    expect(amended).not.toContain('Open full listing');
+    expect(amended.split('View full listing').length - 1).toBe(2);
   });
   it('after A1 every display-size heading in the template is uppercase with V2 tracking (19–22 px → .02em, ≥ 24 px → .005em)', () => {
     const amended = readFileSync(AMENDED, 'utf8');

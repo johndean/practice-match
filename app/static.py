@@ -42,11 +42,11 @@ def mount_spa(app: FastAPI, dist: Path = DIST) -> None:
     root = dist.resolve()
     app.mount("/_app", ImmutableStaticFiles(directory=root / "_app"), name="app-bundle")
 
-    @app.get("/", include_in_schema=False)
+    @app.api_route("/", methods=["GET", "HEAD"], include_in_schema=False)
     async def index() -> FileResponse:
         return FileResponse(root / "index.html", headers=INDEX_HEADERS)
 
-    @app.get("/{path:path}", include_in_schema=False)
+    @app.api_route("/{path:path}", methods=["GET", "HEAD"], include_in_schema=False)
     async def spa(path: str) -> FileResponse:
         candidate = (root / path).resolve()
         if candidate.is_relative_to(root) and candidate.is_file():

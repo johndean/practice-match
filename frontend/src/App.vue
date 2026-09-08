@@ -735,7 +735,7 @@
                     <div style="font-family: var(--rf-display); font-size: 15px; font-weight: 800; color: var(--vf-navy);"><span v-if="__s(v.md?.panel?.otherTitle) !== null" class="sc-interp">{{ __s(v.md?.panel?.otherTitle) }}</span></div>
                     <p style="font-size: 13px; line-height: 1.65; color: var(--vf-text); margin: 7px 0 0;">This tab reuses the listing detail sections already built on the Browse Practices screen. Open the full listing to see it, or switch back to Market Insights.</p>
                     <div style="display: flex; gap: 8px; margin-top: 14px;">
-                      <button @click="v.md?.panel?.openListing" style="font-family: var(--rf-display); height: 40px; padding: 0 16px; font-size: 13px; font-weight: 500; color: var(--vf-white); background: var(--vf-accent); border: 0; border-radius: 6px; cursor: pointer;">Open full listing</button>
+                      <button @click="v.md?.panel?.openListing" style="font-family: var(--rf-display); height: 40px; padding: 0 16px; font-size: 13px; font-weight: 500; color: var(--vf-white); background: var(--vf-accent); border: 0; border-radius: 6px; cursor: pointer;">View full listing</button>
                       <button @click="v.md?.panel?.goInsights" style="font-family: var(--rf-display); height: 40px; padding: 0 16px; font-size: 13px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">Market Insights</button>
                     </div>
                   </div>

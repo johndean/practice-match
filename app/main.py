@@ -39,7 +39,7 @@ def create_app(dist: Path | None = None) -> FastAPI:
             response.headers["X-Robots-Tag"] = "noindex, nofollow"
         return response
 
-    @app.get("/robots.txt", include_in_schema=False)
+    @app.api_route("/robots.txt", methods=["GET", "HEAD"], include_in_schema=False)
     async def robots() -> PlainTextResponse:
         return PlainTextResponse("User-agent: *\nAllow: /\n" if settings.public_indexing else "User-agent: *\nDisallow: /\n")
 

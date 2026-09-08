@@ -382,6 +382,17 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     c.renderVals().md.toggleCompare();
     expect(c.renderVals().md.insightOpen).toBe(false);
   });
+
+  // A10 (John, 2026-09-08): the sign-in card's second gate point gets new copy. A literal
+  // script edit, like A3 — `gatePoints[1]` in renderVals()'s return. Points 1 and 3 are
+  // untouched. A10's text was superseded the same day by A10.2, which this now asserts.
+  it("the sign-in card's second gate point reads John's revised wording (A10 → A10.2, 2026-09-08)", () => {
+    const points = c.renderVals().gatePoints;
+    expect(points[0].title).toBe('Approved members only');
+    expect(points[1].title).toBe('Sellers control what buyers can see');
+    expect(points[1].body).toBe('The property is accurately mapped, but financial information, and floor plans are only shared with the seller’s approval.');
+    expect(points[2].title).toBe('One clear next step');
+  });
 });
 
 // ===========================================================================================
