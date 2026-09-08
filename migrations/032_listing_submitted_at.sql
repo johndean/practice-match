@@ -1,0 +1,20 @@
+-- Seller listing lifecycle (spec 2026-09-08, D3; controller amendment A-SL11, 2026-09-09).
+--
+-- When the listing entered review. The spec has always asked for it — D3: "The first `PATCH` that
+-- changes any field of a `published` listing moves it to `in_review`, STAMPS `submitted_at` …" —
+-- and SL5's submit stamps the same column and keys its outbox idempotency on it
+-- (`{id}:listing_submitted:{submitted_at}`). No migration in this plan produced it: 030 adds
+-- seller_id, facility_type and the two disclosure flags, 031 adds listing_asset, and 016 never had
+-- one. Found by SL3 before its first RED run and ruled by A-SL11.
+--
+-- Its OWN file rather than a line in 030, because 030 is applied and an applied migration is
+-- immutable: the ledger records each file's sha256 and `scripts/migrate.py::refuse_changed_files`
+-- stops the run with exit 4 when the bytes no longer match (MEMORY "Local DB migration hazard";
+-- tests/test_docs.py::test_deploy_md_says_an_applied_migration_is_immutable). 032 is the next free
+-- number in both trees — 017-019 are the Census branch's Task A1 and it reserves 020/023/060/061.
+--
+-- Nullable, with no backfill and no default: a draft has never been submitted, and the eighteen
+-- seeded hospitals were published by the seeder rather than reviewed, so there is no honest
+-- timestamp to invent for them. `serialise_draft` renders a null as null and the dashboard says
+-- nothing about a review that never happened.
+ALTER TABLE listing ADD COLUMN submitted_at timestamptz;

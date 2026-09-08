@@ -51,6 +51,10 @@ EXPECTED_COLUMNS: dict[str, tuple[str, bool]] = {
     "facility_type": ("text", True),
     "rev_disclosed": ("boolean", False),
     "documents_disclosed": ("boolean", False),
+    # 032 (A-SL11). When the listing entered review: stamped by the first PATCH that takes a
+    # published listing off the market (D3) and by SL5's submit, and read back as SL5's outbox
+    # idempotency key. Nullable — a draft has never been submitted.
+    "submitted_at": ("timestamp with time zone", True),
 }
 
 
