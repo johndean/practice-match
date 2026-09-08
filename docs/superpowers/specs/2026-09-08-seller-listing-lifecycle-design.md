@@ -408,3 +408,5 @@ One release, one spec → plan → implementer → review-rounds → four-part g
 ---
 
 **Controller notes (2026-09-08, before John's review).** Open question 5 is settled: the bucket is `practice-match-data` in every environment (John's ruling 7; Railway buckets are environment-scoped, so no `-qa`/`-prod` suffix — the Census plan's Task A2 step 4 is corrected to this spelling; QA's bucket already exists under that name). Defaults proposed for the other four, pending John: Q1 "Declined" with the `bad` tone; Q2 the reviewer supplies `state` and `market` at publish (the eighteen already carry them); Q3 PDF, CSV and XLSX with the extension badge; Q4 no confirm dialog (the design has none). This spec awaits John's review before the plan is written (brainstorming gate).
+
+**Approved by John, 2026-09-08 ~23:20 WITA (verbatim intent): "SPEC APPROVED. Cut the implementation plan with the four stated defaults: Declined dashboard pill; reviewer supplies state + metro at publish; documents limited to PDF/CSV/XLSX; and no confirmation dialog before an edit takes a published listing off-market."**
