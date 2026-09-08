@@ -11,9 +11,11 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 PHOTOS = ROOT / "seeds" / "hospitals" / "photos"
 INDEX = PHOTOS / "index.json"
-TOTAL_CEILING_BYTES = 18 * 1024 * 1024  # 72 files x 250 KB = 17.6 MB; D3 estimates ~15 MB
+# Deliberately BELOW what the per-file ceiling would allow (108 x 250 KB is 26 MB): the committed
+# set is 4.0 MB, so 18 MB stays a real guard against a runaway rather than a restatement of MAX_BYTES.
+TOTAL_CEILING_BYTES = 18 * 1024 * 1024
 MAX_BYTES = 250 * 1024
-MAX_PHOTOS = 4
+MAX_PHOTOS = 6   # the design renders six photo slots per practice (A-L9); more can never be shown
 
 
 def inventory() -> dict[str, list[dict[str, object]]]:
@@ -29,6 +31,19 @@ def test_every_seeded_hospital_has_photographs() -> None:
     inv = inventory()
     for slug in seed_slugs():
         assert slug in inv and 1 <= len(inv[slug]) <= MAX_PHOTOS, slug
+
+
+def test_every_seeded_hospital_fills_all_six_of_the_designs_photo_slots() -> None:
+    """A-L9 (John, 2026-09-09: "the seed phase failed to upload ALL the images"). The detail page
+    renders six captioned slots per practice and every source folder holds at least eight
+    photographs, so a hospital carrying fewer than six means the pipeline dropped some again —
+    which is exactly what `[:4]` did, leaving 70 exteriors and 2 interiors across the eighteen."""
+    inv = inventory()
+    for slug in seed_slugs():
+        assert len(inv[slug]) == MAX_PHOTOS, (slug, len(inv[slug]))
+        slots = [e["slot"] for e in inv[slug]]
+        assert slots[0] == "exterior", (slug, slots)
+        assert len(set(slots)) == MAX_PHOTOS, (slug, slots)
 
 
 def test_the_inventory_names_no_hospital_that_is_not_seeded() -> None:
@@ -52,12 +67,14 @@ def test_the_tree_holds_nothing_the_inventory_does_not_name() -> None:
 
 
 def test_every_committed_photograph_has_a_caption_and_a_source() -> None:
-    """What each file actually shows, recorded at pipeline time (pre-flight I2). The display
-    mapping is John's call (Task L6 Step 0); the data is here either way."""
+    """What each file actually shows and which of the design's six photo slots it was selected
+    for (pre-flight I2; the slot since A-L9). The caption the buyer reads is the design's own,
+    fixed per slot — `slot` is what makes it true of the photograph underneath it."""
     for slug, entries in inventory().items():
         for entry in entries:
             assert isinstance(entry["caption"], str) and entry["caption"], (slug, entry["file"])
             assert isinstance(entry["source"], str) and entry["source"], (slug, entry["file"])
+            assert isinstance(entry["slot"], str) and entry["slot"], (slug, entry["file"])
 
 
 def test_files_are_numbered_from_one_without_gaps() -> None:

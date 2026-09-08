@@ -19,8 +19,10 @@ import io
 
 from PIL import Image, ImageOps, UnidentifiedImageError
 
-# The seed pipeline's own values (scripts/prepare_photos.py). Four per listing is John's ruling,
-# restated for the API in D18; 1600 px and 250 KB are what keep the buyer gallery quick on a phone.
+# The ceilings below are the seed pipeline's own (scripts/prepare_photos.py), shared with it:
+# 1600 px and 250 KB are what keep the buyer gallery quick on a phone. MAX_PHOTOS is NOT shared —
+# four per listing is John's seller-UPLOAD ruling, restated for the API in D18, while the seed set
+# carries the six the design's photo slots render (A-L9) and keeps its own count in that script.
 MAX_PHOTOS = 4
 MAX_EDGE_PX = 1600
 MAX_BYTES = 250 * 1024
