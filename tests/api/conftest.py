@@ -3,8 +3,9 @@
 which is what `app.auth.deps.check_origin_and_csrf` compares an `Origin` header against.
 
 It deliberately does NOT depend on `conn`: `tests/api/test_interest.py` asks for `client` in 58 of its
-60 tests, and `conn` (via `scratch_dsn`) creates, migrates and drops a database per test — ~2 s each,
-so shadowing with a `conn`-bound fixture would add ~2 minutes to a 3.5 s file for no benefit. Tests
+60 tests, and `conn` (via `scratch_dsn`) clones, checks and drops a database per test (P-TDB — it
+created and fully migrated one, at ~2 s each, until the session template landed), so shadowing with
+a `conn`-bound fixture would still add a database per test to a 3.5 s file for no benefit. Tests
 that need a scratch database ask for `conn` (or `member`, which does) themselves.
 """
 import sys
