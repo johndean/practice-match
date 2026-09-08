@@ -253,6 +253,32 @@ async def test_accept_invite_refuses_a_password_built_from_the_account_s_own_ema
         assert accepted.status_code == 200, password
 
 
+def _seeded_member(conn, redis, *, email, display_name=None):
+    """`_seeded_account` plus a real session — `password/change` is session-authenticated, unlike
+    the three token seams above. `effective_roles` folds "applicant" into every active account
+    regardless of `role_grant` rows, so this passes `account.self` with none."""
+    aid = _seeded_account(conn, email=email, display_name=display_name)
+    raw = S.create(conn, redis, aid, "203.0.113.5", "pytest")
+    return aid, {"pm_session": raw, "pm_csrf": "csrf-1"}, {"X-CSRF-Token": "csrf-1", "Origin": ORIGIN}
+
+
+async def test_password_change_refuses_a_password_built_from_the_account_s_own_email_or_name(client, conn, redis):
+    """I11 review round 1: `password/change` is a seam too — the session already names the
+    account row (no token to consume), so the same per-member check applies here as at reset and
+    accept-invite. `current` is always `PW`, so a refusal below can only be the new password's own
+    weakness, never the re-authentication check."""
+    for n, (password, owner_email, name) in enumerate(I11_CASES):
+        _owner, cookies, hdr = _seeded_member(conn, redis, email=owner_email, display_name=name)
+        refused = await client.post("/api/auth/password/change", headers=auth_headers(cookies, hdr),
+                                     json={"current": PW, "new": password})
+        assert refused.status_code == 422 and "stronger" in refused.json()["error"]["message"], password
+
+        _stranger, s_cookies, s_hdr = _seeded_member(conn, redis, email=f"stranger-change{n}@example.org", display_name="Someone Else")
+        accepted = await client.post("/api/auth/password/change", headers=auth_headers(s_cookies, s_hdr),
+                                      json={"current": PW, "new": password})
+        assert accepted.status_code == 200, password
+
+
 async def test_a_new_account_can_verify_sign_in_and_read_its_own_profile(client, conn):
     """Sign-up leaves `display_name` and `affiliation_label` unset until the application is filled
     in, so `/api/me` answers with the design's fallbacks — an empty name, "?" initials, "Applicant"."""

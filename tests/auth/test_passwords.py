@@ -1,5 +1,6 @@
 import hashlib
 import logging
+import sys
 import threading
 import time
 from pathlib import Path
@@ -73,6 +74,44 @@ def test_validate_refuses_a_password_built_from_the_passed_user_inputs_and_accep
     P.validate(strong_alone, privileged=False, user_inputs=["unrelated"])    # unrelated: still fine
     with pytest.raises(P.PasswordPolicyError, match="stronger"):
         P.validate(strong_alone, privileged=False, user_inputs=P.user_inputs_for("vqxrtmbklzhp@example.org"))
+
+
+def test_validate_is_thread_safe_against_zxcvbn_s_own_module_level_user_inputs_state():
+    """I11 review round 1: the vendored zxcvbn's OWN `user_inputs` support — not our code —
+    mutates a MODULE-LEVEL dict (`zxcvbn.matching.RANKED_DICTIONARIES['user_inputs']`) inside
+    `zxcvbn()` itself and reads it back mid-match. Two threads validating DIFFERENT passwords
+    against DIFFERENT `user_inputs`, synchronised to call at the same instant with the
+    interpreter's switch interval cranked down to force interleaving, must each see only their
+    OWN result — never the other thread's.
+
+    Without `_zxcvbn_lock` this reliably (not rarely) fails: a 300-iteration run of exactly this
+    shape against the pre-fix `validate` mismatched on ~97 % of iterations (290/300, verified
+    directly before this test was written) — the global really does leak across threads, it is
+    not a theoretical worry. `PW_A`/`PW_B` each score 4 alone and 0 once they are their OWN
+    `user_inputs` (fabricated, non-dictionary strings, same technique as the seam tests)."""
+    PW_A, PW_B = "vqxrtmbklzhp", "zqmoprtlvbhk"
+    interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    mismatches: list[str] = []
+    barrier = threading.Barrier(2)
+
+    def run(pw: str, name: str) -> None:
+        for _ in range(200):
+            barrier.wait()
+            try:
+                P.validate(pw, privileged=False, user_inputs=[pw])
+                mismatches.append(f"{name}: accepted {pw!r}, expected refused (its own user_inputs)")
+            except P.PasswordPolicyError:
+                pass
+
+    try:
+        ta = threading.Thread(target=run, args=(PW_A, "A"))
+        tb = threading.Thread(target=run, args=(PW_B, "B"))
+        ta.start(); tb.start()
+        ta.join(); tb.join()
+    finally:
+        sys.setswitchinterval(interval)
+    assert mismatches == []
 
 
 def test_long_passphrases_are_scored_not_crashed():

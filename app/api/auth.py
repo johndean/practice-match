@@ -630,12 +630,21 @@ async def change(body: ChangeIn, request: Request, response: Response, principal
     r = sync_redis()
     with closing(sync_conn()) as lookup, lookup:
         current = _password_hash_of(lookup, principal.account_id)
+        # I11 review round 1: `password/change` is the one other seam that sets a password, and
+        # the account row is already known from the session (no token to consume first, unlike
+        # reset/accept-invite) — read alongside the hash, in the SAME connection, so `_floor`'s
+        # `user_inputs` has the member's own email/name to screen this new password against.
+        with lookup.cursor() as cur:
+            cur.execute("SELECT email, display_name FROM account WHERE id=%s", (principal.account_id,))
+            identity = cur.fetchone()
     # Released before both Argon2id hops and the breach screen (Important 5). `principal.roles` is
     # already known, so the privileged floor needs no database either.
     if current is None or not await P.verify_async(body.current, current):
         raise InvalidCredentials
-    _floor(body.new, privileged=bool(principal.roles & {"staff", "admin"}))
-    await _screen(body.new)
+    email, display_name = cast("tuple[str, str | None]", identity)
+    user_inputs = P.user_inputs_for(email, display_name)
+    _floor(body.new, privileged=bool(principal.roles & {"staff", "admin"}), user_inputs=user_inputs)
+    await _screen(body.new, user_inputs)
     hashed = await P.hash_async(body.new)
     with closing(sync_conn()) as conn, conn:
         with conn.cursor() as cur:
