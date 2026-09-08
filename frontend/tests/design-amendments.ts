@@ -1154,6 +1154,15 @@ const A13_1: Amendment = {
     '      this._t = setTimeout(() => this.setState({ loading: false }), 320);',
     '    });',
     '  };',
+    '',
+    '  // Moving the keyboard highlight. The rows are all in the DOM while the menu is open, so the',
+    '  // one being highlighted is scrolled into view here rather than after a re-render: the panel',
+    '  // scrolls at its max-height as soon as the market list is longer than the design\'s four.',
+    '  moveMarketHighlight = (i) => {',
+    '    this.setState({ marketMenuAt: i });',
+    '    const row = document.getElementById("market-opt-" + i);',
+    '    if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });',
+    '  };',
     ''
   ].join('\n'),
   count: 1
@@ -1181,7 +1190,8 @@ const A13_2: Amendment = {
     '      // The metro SELECT is a dropdown list in this design\'s own style, not the operating',
     '      // system\'s popup: the same trigger + role="listbox" panel the Market data card uses.',
     '      marketMenuOpen: !!s.marketMenu,',
-    '      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Object.keys(MARKETS).indexOf(s.market || "Austin, TX") }),',
+    '      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")) }),',
+    '      marketActiveId: "market-opt-" + s.marketMenuAt,',
     '      marketTriggerLabel: (s.market || "Austin, TX") + " metro",',
     '      marketFieldStyle: "position: relative; display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 8px 0 15px; min-width: 300px; background: var(--vf-neutral); border: 1px solid " +',
     '        (s.marketMenu ? "var(--vf-accent)" : "var(--border-subtle)") + "; border-radius: 6px;",',
@@ -1191,17 +1201,19 @@ const A13_2: Amendment = {
     '      marketMenuRef: (el) => { this._marketMenuEl = el || null; },',
     '      marketMenuKeys: (e) => {',
     '        const keys = Object.keys(MARKETS);',
-    '        const cur = keys.indexOf(s.market || "Austin, TX");',
+    '        // Math.max: a market MARKETS no longer holds (Seed Listings drops a metro with no',
+    '        // listings left) gives indexOf -1, and keys[-1] would reach setMarket as undefined.',
+    '        const cur = Math.max(0, keys.indexOf(s.market || "Austin, TX"));',
     '        const at = s.marketMenuAt == null || s.marketMenuAt < 0 ? cur : s.marketMenuAt;',
     '        if (e.key === "ArrowDown" || e.key === "ArrowUp") {',
     '          e.preventDefault();',
     '          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur });',
-    '          return this.setState({ marketMenuAt: (at + (e.key === "ArrowDown" ? 1 : keys.length - 1)) % keys.length });',
+    '          return this.moveMarketHighlight((at + (e.key === "ArrowDown" ? 1 : keys.length - 1)) % keys.length);',
     '        }',
     '        if (!s.marketMenu) return;',
     '        if (e.key === "Home" || e.key === "End") {',
     '          e.preventDefault();',
-    '          return this.setState({ marketMenuAt: e.key === "Home" ? 0 : keys.length - 1 });',
+    '          return this.moveMarketHighlight(e.key === "Home" ? 0 : keys.length - 1);',
     '        }',
     '        if (e.key === "Enter" || e.key === " ") {',
     '          e.preventDefault();',
@@ -1214,6 +1226,7 @@ const A13_2: Amendment = {
     '        return {',
     '          v: m, label: m + " metro", selected: on,',
     '          go: () => this.setMarket(m),',
+    '          optId: "market-opt-" + i,',
     '          rowStyle: "display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 8px; font-family: var(--rf-display); font-size: 13px; font-weight: " +',
     '            (on ? "800" : "500") + "; color: var(--vf-navy); background: " +',
     '            (on ? "var(--vf-accent-bg)" : hi ? "var(--vf-neutral)" : "none") + "; border: 0; border-radius: 6px; cursor: pointer;",',
@@ -1251,9 +1264,9 @@ const A13_3: Amendment = {
     '              <img src="assets/icons/sub-chevron.svg" alt="" width="14" height="14" style="{{ marketCaretStyle }}">',
     '            </button>',
     '            <sc-if value="{{ marketMenuOpen }}" hint-placeholder-val="{{ false }}">',
-    '              <div role="listbox" aria-label="Metro area" style="position: absolute; left: 0; top: 46px; z-index: 700; width: 300px; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;" class="rf-scroll">',
+    '              <div role="listbox" aria-label="Metro area" aria-activedescendant="{{ marketActiveId }}" style="position: absolute; left: 0; top: 46px; z-index: 700; width: 300px; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;" class="rf-scroll">',
     '                <sc-for list="{{ marketOptions }}" as="m" hint-placeholder-count="4">',
-    '                  <button onClick="{{ m.go }}" role="option" aria-selected="{{ m.selected }}" style="{{ m.rowStyle }}" style-hover="background: var(--vf-neutral);">',
+    '                  <button onClick="{{ m.go }}" id="{{ m.optId }}" role="option" aria-selected="{{ m.selected }}" style="{{ m.rowStyle }}" style-hover="background: var(--vf-neutral);">',
     '                    <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ m.label }}</span>',
     '                    <img src="assets/icons/sub-check-filled.svg" alt="" width="11" height="11" style="{{ m.tickStyle }}">',
     '                  </button>',
@@ -1324,10 +1337,34 @@ const A13_5: Amendment = {
   count: 1
 };
 
+/** A13.6 — the first of the two render-value orphans the `<select>` left behind, deleted under the
+ *  bundle's own dead-code rule, exactly as A2.2–A2.5 deleted the `browseSel` orphans C13 left.
+ *  `market:` fed `<select value="{{ market }}">` and nothing else: after A13.3 the template holds
+ *  no `{{ market }}` at all, and no module under `frontend/src` reads `v.market`. The trigger's
+ *  own label comes from `marketTriggerLabel`, and every reader of the CHOICE goes through
+ *  `s.market` in the script (review round 1, I2). */
+const A13_6: Amendment = {
+  id: 'A13.6', ...A13,
+  find: '      market: s.market || "Austin, TX",\n',
+  replace: '',
+  count: 1
+};
+
+/** A13.7 — the second orphan, on the option rows A13.2 builds: `v: m` was the `<option value>` the
+ *  listbox row does not have. The rows read `label`, `selected`, `go`, `rowStyle`, `tickStyle` and
+ *  `optId`; `go` closes over `m` itself, so nothing needs the value on the object. Same rule, same
+ *  ruling (review round 1, I2). */
+const A13_7: Amendment = {
+  id: 'A13.7', ...A13,
+  find: '          v: m, label: m + " metro", selected: on,\n',
+  replace: '          label: m + " metro", selected: on,\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
     A7_3, A7_4, A8_1a, A8_1b, A8_1c, A8_2, A8_3a, A8_3b, A8_4a, A8_4b, A8_5, A8_6, A8_7, A8_8a, A8_8b,
     A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5, A12_6, A12_7, A12_8, A12_9, A12_10, A12_11,
-    A13_1, A13_2, A13_3, A13_4, A13_5];
+    A13_1, A13_2, A13_3, A13_4, A13_5, A13_6, A13_7];
 }

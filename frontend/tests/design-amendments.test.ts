@@ -108,11 +108,16 @@ describe('local design amendments (spec D15)', () => {
     // the trigger-and-listbox markup, and the two lifecycle hooks that add and remove the Escape
     // and outside-click listeners the design has never had.
     'A13.1', 'A13.2', 'A13.3', 'A13.4', 'A13.5',
+    // A13.6/A13.7 (review round 1, I2 — ruled): the two render-value orphans the <select> left,
+    // deleted under the bundle's own dead-code rule exactly as A2.2–A2.5 deleted the browseSel
+    // ones — `market:` (whose only reader was `<select value="{{ market }}">`) and the option
+    // rows' `v: m` (the `<option value>` a role="option" button does not have).
+    'A13.6', 'A13.7',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(87);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(89);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

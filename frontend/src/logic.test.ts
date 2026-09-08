@@ -1340,6 +1340,11 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
 // ---------------------------------------------------------------------------------------
 describe('A13 — the metro dropdown', () => {
   const MARKET_KEYS = ['Austin, TX', 'Sacramento, CA', 'Orlando, FL', 'Atlanta, GA'];
+  // M4 (review, round 1): three cases below arm real `document` listeners through
+  // `componentDidMount`. Unmounting only on the happy path leaves a listener bound to a dead
+  // component for the rest of the FILE the moment an assertion fails, so the teardown is
+  // unconditional here. `componentWillUnmount` is a no-op on a component that never mounted.
+  afterEach(() => { c.componentWillUnmount(); });
 
   it('starts closed, with the four markets and Austin selected', () => {
     const v = c.renderVals();
@@ -1391,6 +1396,16 @@ describe('A13 — the metro dropdown', () => {
     expect(key('Tab').preventDefault).not.toHaveBeenCalled();     // an unhandled key is left alone
     c.renderVals().toggleMarketMenu();
     key('ArrowDown');
+    // I1 (review, round 1): the Enter branch itself, on an OPEN menu — the path the ruling's
+    // "normal dropdown" most obviously implies. Before this line `e.key === "Enter"` was only
+    // ever evaluated false, because the two Enter presses above happen while the menu is closed.
+    expect(key('Enter').preventDefault).toHaveBeenCalled();
+    expect(c.state.market).toBe('Sacramento, CA');
+    // Reopening seeds the highlight on the market just chosen, so Space takes that one — the same
+    // branch, the other key. (The review's suggested second `ArrowDown` here would have walked on
+    // to Orlando: `toggleMarketMenu` seeds from the CURRENT market, not from the top.)
+    c.renderVals().toggleMarketMenu();
+    expect(c.state.marketMenuAt).toBe(1);
     expect(key(' ').preventDefault).toHaveBeenCalled();
     expect(c.state.market).toBe('Sacramento, CA');
   });
@@ -1445,20 +1460,26 @@ describe('A13 — the metro dropdown', () => {
     const inside = document.createElement('button');
     host.appendChild(inside);
     document.body.appendChild(host);
-    c.componentDidMount();
-    c.renderVals().marketMenuRef(host);
-    c.renderVals().toggleMarketMenu();
-    inside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
-    expect(c.state.marketMenu).toBe(true);
-    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
-    expect(c.state).toMatchObject({ marketMenu: false, marketMenuAt: -1 });
-    // …and with no node recorded yet, an outside click still closes rather than throwing
-    c.renderVals().marketMenuRef(null);
-    c.renderVals().toggleMarketMenu();
-    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
-    expect(c.state.marketMenu).toBe(false);
-    c.componentWillUnmount();
-    host.remove();
+    try {
+      c.componentDidMount();
+      c.renderVals().marketMenuRef(host);
+      // M3 (review, round 1): a pointerdown while the menu is CLOSED takes the handler's own
+      // early exit — the branch nothing reached before.
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.marketMenu).toBeFalsy();
+      c.renderVals().toggleMarketMenu();
+      inside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.marketMenu).toBe(true);
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state).toMatchObject({ marketMenu: false, marketMenuAt: -1 });
+      // …and with no node recorded yet, an outside click still closes rather than throwing
+      c.renderVals().marketMenuRef(null);
+      c.renderVals().toggleMarketMenu();
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.marketMenu).toBe(false);
+    } finally {
+      host.remove();
+    }
   });
 
   it('componentWillUnmount removes both document listeners it added', () => {
@@ -1475,5 +1496,92 @@ describe('A13 — the metro dropdown', () => {
   it('the orphaned setMarket render key is gone (the dead-code rule, A2.3/A2.5)', () => {
     expect(c.renderVals().setMarket, 'nothing in the template reads it once the <select> goes').toBeUndefined();
     expect(typeof c.setMarket, 'it lives on the class now, beside setF').toBe('function');
+  });
+
+  // I2 (review, round 1; ruled A13.6/A13.7): the two render-value orphans the <select> left
+  // behind, deleted under the same dead-code rule A2.2–A2.5 applied to the `browseSel` helpers.
+  it('the orphaned `market` render key and the option rows\' orphaned `v` are gone (A13.6/A13.7)', () => {
+    const v = c.renderVals();
+    expect(v.market, '`{{ market }}` left the template with the <select>').toBeUndefined();
+    for (const o of v.marketOptions) {
+      expect(o.v, 'the rows read label/selected/go/rowStyle/tickStyle/optId, never v').toBeUndefined();
+    }
+    // …and what the rows DO read is all still there.
+    expect(Object.keys(v.marketOptions[0]).sort()).toEqual(['go', 'label', 'optId', 'rowStyle', 'selected', 'tickStyle']);
+  });
+
+  // I3 (review, round 1, ruled): the highlight has to be announceable and visible once the
+  // seeded metro list is longer than the panel (Q5). Every row carries an id, the listbox names
+  // the highlighted one, and moving the highlight scrolls that row into view.
+  it('aria-activedescendant follows the arrow-key highlight', () => {
+    const key = (k: string) => { c.renderVals().marketMenuKeys({ key: k, preventDefault: vi.fn() }); };
+    c.renderVals().toggleMarketMenu();
+    expect(c.renderVals().marketOptions.map((o: any) => o.optId))
+      .toEqual(['market-opt-0', 'market-opt-1', 'market-opt-2', 'market-opt-3']);
+    expect(c.renderVals().marketActiveId).toBe('market-opt-0');
+    key('ArrowDown');
+    expect(c.renderVals().marketActiveId).toBe('market-opt-1');
+    key('End');
+    expect(c.renderVals().marketActiveId).toBe('market-opt-3');
+    key('Home');
+    expect(c.renderVals().marketActiveId).toBe('market-opt-0');
+  });
+
+  it('moving the highlight scrolls the highlighted row into view, and copes when it is not in the DOM', () => {
+    const rows = MARKET_KEYS.map((_, i) => {
+      const b = document.createElement('button');
+      b.id = `market-opt-${i}`;
+      (b as any).scrollIntoView = vi.fn();       // jsdom implements no scrollIntoView of its own
+      document.body.appendChild(b);
+      return b;
+    });
+    try {
+      const key = (k: string) => { c.renderVals().marketMenuKeys({ key: k, preventDefault: vi.fn() }); };
+      c.renderVals().toggleMarketMenu();
+      key('ArrowDown');
+      expect((rows[1] as any).scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+      key('End');
+      expect((rows[3] as any).scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+      // a row that cannot scroll is left alone rather than thrown at…
+      delete (rows[0] as any).scrollIntoView;
+      key('Home');
+      expect(c.state.marketMenuAt).toBe(0);
+    } finally {
+      rows.forEach((b) => b.remove());
+    }
+    // …and so is a highlight whose row is not in the document at all (the app before first paint)
+    const c2: any = new Component({});
+    c2.renderVals().toggleMarketMenu();
+    c2.renderVals().marketMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() });
+    expect(c2.state.marketMenuAt).toBe(1);
+  });
+
+  // M2 (review, round 1, ruled): `Object.keys(MARKETS).indexOf(s.market)` is -1 whenever the
+  // current market is not one MARKETS holds — the shape Seed Listings can produce, since
+  // `applyListings` DELETES a market with no listings left (`listings/load.ts`). Unclamped,
+  // opening the menu seeded `marketMenuAt: -1` and Enter/Space then called `setMarket(keys[-1])`,
+  // i.e. `setMarket(undefined)`.
+  //
+  // The handlers are taken from a render made while the market was still valid, and the market is
+  // moved afterwards: that is the real sequence (the fixtures render, then the API's rows replace
+  // MARKETS in place), and it is also the only way to reach the branch — `renderVals()` reads
+  // `MARKETS[s.market || "Austin, TX"].center` on every render, so a re-render with an unknown
+  // market throws there long before the highlight is computed. See the report's Q5 note.
+  it('a market MARKETS no longer holds clamps the highlight to the first row', () => {
+    const v = c.renderVals();
+    c.setState({ market: 'Nowhere, ZZ' });
+    v.toggleMarketMenu();
+    expect(c.state.marketMenuAt, 'indexOf returned -1 and was not clamped').toBe(0);
+    v.marketMenuKeys({ key: 'Enter', preventDefault: vi.fn() });
+    expect(c.state.market, 'setMarket(keys[-1]) === setMarket(undefined)').toBe('Austin, TX');
+  });
+
+  it('ArrowUp with a market MARKETS no longer holds starts from the first row too', () => {
+    const v = c.renderVals();
+    c.setState({ market: 'Nowhere, ZZ' });
+    v.marketMenuKeys({ key: 'ArrowUp', preventDefault: vi.fn() });   // opens, seeds the highlight
+    expect(c.state).toMatchObject({ marketMenu: true, marketMenuAt: 0 });
+    v.marketMenuKeys({ key: 'ArrowUp', preventDefault: vi.fn() });   // …then wraps to the end
+    expect(c.state.marketMenuAt).toBe(3);
   });
 });

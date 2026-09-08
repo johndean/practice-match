@@ -304,9 +304,9 @@
               <img src="/assets/icons/sub-chevron.svg" alt width="14" height="14" :style="v.marketCaretStyle">
             </button>
             <template v-if="v.marketMenuOpen">
-              <div class="rf-scroll" role="listbox" aria-label="Metro area" style="position: absolute; left: 0; top: 46px; z-index: 700; width: 300px; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;">
+              <div class="rf-scroll" role="listbox" aria-label="Metro area" :aria-activedescendant="v.marketActiveId" style="position: absolute; left: 0; top: 46px; z-index: 700; width: 300px; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;">
                 <template v-for="(m, $index) in __arr(v.marketOptions)" :key="$index">
-                  <button class="sch4" @click="m?.go" role="option" :aria-selected="m?.selected" :style="m?.rowStyle">
+                  <button class="sch4" @click="m?.go" :id="m?.optId" role="option" :aria-selected="m?.selected" :style="m?.rowStyle">
                     <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><span v-if="__s(m?.label) !== null" class="sc-interp">{{ __s(m?.label) }}</span></span>
                     <img src="/assets/icons/sub-check-filled.svg" alt width="11" height="11" :style="m?.tickStyle">
                   </button>

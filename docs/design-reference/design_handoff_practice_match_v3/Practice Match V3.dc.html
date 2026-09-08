@@ -367,9 +367,9 @@
               <img src="assets/icons/sub-chevron.svg" alt="" width="14" height="14" style="{{ marketCaretStyle }}">
             </button>
             <sc-if value="{{ marketMenuOpen }}" hint-placeholder-val="{{ false }}">
-              <div role="listbox" aria-label="Metro area" style="position: absolute; left: 0; top: 46px; z-index: 700; width: 300px; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;" class="rf-scroll">
+              <div role="listbox" aria-label="Metro area" aria-activedescendant="{{ marketActiveId }}" style="position: absolute; left: 0; top: 46px; z-index: 700; width: 300px; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;" class="rf-scroll">
                 <sc-for list="{{ marketOptions }}" as="m" hint-placeholder-count="4">
-                  <button onClick="{{ m.go }}" role="option" aria-selected="{{ m.selected }}" style="{{ m.rowStyle }}" style-hover="background: var(--vf-neutral);">
+                  <button onClick="{{ m.go }}" id="{{ m.optId }}" role="option" aria-selected="{{ m.selected }}" style="{{ m.rowStyle }}" style-hover="background: var(--vf-neutral);">
                     <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ m.label }}</span>
                     <img src="assets/icons/sub-check-filled.svg" alt="" width="11" height="11" style="{{ m.tickStyle }}">
                   </button>
@@ -1949,6 +1949,15 @@ class Component extends DCLogic {
     });
   };
 
+  // Moving the keyboard highlight. The rows are all in the DOM while the menu is open, so the
+  // one being highlighted is scrolled into view here rather than after a re-render: the panel
+  // scrolls at its max-height as soon as the market list is longer than the design's four.
+  moveMarketHighlight = (i) => {
+    this.setState({ marketMenuAt: i });
+    const row = document.getElementById("market-opt-" + i);
+    if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+  };
+
   // ---- Browse Practices: map, market layers, results -------------------------------------------------
 
   communities() {
@@ -3207,11 +3216,11 @@ class Component extends DCLogic {
       resultCount: list.length,
 
       isBrowse: false,
-      market: s.market || "Austin, TX",
       // The metro SELECT is a dropdown list in this design's own style, not the operating
       // system's popup: the same trigger + role="listbox" panel the Market data card uses.
       marketMenuOpen: !!s.marketMenu,
-      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Object.keys(MARKETS).indexOf(s.market || "Austin, TX") }),
+      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")) }),
+      marketActiveId: "market-opt-" + s.marketMenuAt,
       marketTriggerLabel: (s.market || "Austin, TX") + " metro",
       marketFieldStyle: "position: relative; display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 8px 0 15px; min-width: 300px; background: var(--vf-neutral); border: 1px solid " +
         (s.marketMenu ? "var(--vf-accent)" : "var(--border-subtle)") + "; border-radius: 6px;",
@@ -3221,17 +3230,19 @@ class Component extends DCLogic {
       marketMenuRef: (el) => { this._marketMenuEl = el || null; },
       marketMenuKeys: (e) => {
         const keys = Object.keys(MARKETS);
-        const cur = keys.indexOf(s.market || "Austin, TX");
+        // Math.max: a market MARKETS no longer holds (Seed Listings drops a metro with no
+        // listings left) gives indexOf -1, and keys[-1] would reach setMarket as undefined.
+        const cur = Math.max(0, keys.indexOf(s.market || "Austin, TX"));
         const at = s.marketMenuAt == null || s.marketMenuAt < 0 ? cur : s.marketMenuAt;
         if (e.key === "ArrowDown" || e.key === "ArrowUp") {
           e.preventDefault();
           if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur });
-          return this.setState({ marketMenuAt: (at + (e.key === "ArrowDown" ? 1 : keys.length - 1)) % keys.length });
+          return this.moveMarketHighlight((at + (e.key === "ArrowDown" ? 1 : keys.length - 1)) % keys.length);
         }
         if (!s.marketMenu) return;
         if (e.key === "Home" || e.key === "End") {
           e.preventDefault();
-          return this.setState({ marketMenuAt: e.key === "Home" ? 0 : keys.length - 1 });
+          return this.moveMarketHighlight(e.key === "Home" ? 0 : keys.length - 1);
         }
         if (e.key === "Enter" || e.key === " ") {
           e.preventDefault();
@@ -3242,8 +3253,9 @@ class Component extends DCLogic {
         const on = (s.market || "Austin, TX") === m;
         const hi = s.marketMenuAt === i;
         return {
-          v: m, label: m + " metro", selected: on,
+          label: m + " metro", selected: on,
           go: () => this.setMarket(m),
+          optId: "market-opt-" + i,
           rowStyle: "display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 8px; font-family: var(--rf-display); font-size: 13px; font-weight: " +
             (on ? "800" : "500") + "; color: var(--vf-navy); background: " +
             (on ? "var(--vf-accent-bg)" : hi ? "var(--vf-neutral)" : "none") + "; border: 0; border-radius: 6px; cursor: pointer;",
