@@ -144,13 +144,21 @@ def validate_curation(curation: dict[str, dict[str, str | None]], types: dict[st
     The slot keys are read POSITIONALLY — slot `k` becomes `<k>.webp` and fills the design's slot
     `k` — so a map whose keys are not exactly the practice type's slot list IN ORDER would put a
     photograph under someone else's caption, which is the whole defect A-L10 exists to fix. A slug
-    the seed file does not name is a typo that would silently curate nothing."""
+    the seed file does not name is a typo that would silently curate nothing. And one photograph
+    curated for two slots means two captions of which at least one is false — checked here, over
+    the whole map, rather than per slug (review i2), so a hand re-run of one hospital still
+    refuses a duplicate introduced for another. Only the missing-file check is left to
+    `slot_choices`, because it is the one that needs the source folders."""
     for slug, slots in curation.items():
         if slug not in types:
             raise SeedDataError(f"{slug} is curated but seeds/hospitals.json does not name it")
         expected = list(slots_for(types[slug]))
         if list(slots) != expected:
             raise SeedDataError(f"{slug}: curated slots {list(slots)} are not {expected}")
+        named = [name for name in slots.values() if name is not None]
+        repeated = sorted({name for name in named if named.count(name) > 1})
+        if repeated:
+            raise SeedDataError(f"{slug}: {', '.join(repeated)} curated for more than one slot")
 
 
 def slot_choices(
@@ -171,16 +179,14 @@ def slot_choices(
     if curated is not None:
         by_name = {src.name: src for src in files}
         picked: list[tuple[str, Path | None]] = []
-        used: set[str] = set()
         for slot, name in curated.items():
             if name is None:
                 picked.append((slot, None))
                 continue
+            # The only check left here: it needs the folder, so it cannot be whole-map the way
+            # `validate_curation`'s three are (review i2).
             if name not in by_name:
                 raise SeedDataError(f"{slot} names {name}, which the source folder does not hold")
-            if name in used:
-                raise SeedDataError(f"{name} is curated for more than one slot")
-            used.add(name)
             picked.append((slot, by_name[name]))
         return picked
     keyed: list[tuple[str, Path | None]] = list(keyword_choices(files, slots))

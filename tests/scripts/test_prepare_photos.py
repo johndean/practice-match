@@ -645,16 +645,28 @@ def test_a_curated_file_the_folder_does_not_hold_is_refused(tmp_path: Path) -> N
     assert "99_absent.png" in str(exc.value) and "cur" in str(exc.value)
 
 
+TWICE: dict[str, str | None] = {
+    "exterior": "01_exterior_front.png", "lobby": None, "exam": "03_interior_exam.png",
+    "treatment": "03_interior_exam.png", "surgery": None, "kennel": None,
+}
+
+
 def test_a_file_that_fills_two_slots_is_refused(tmp_path: Path) -> None:
     """Two slots, one photograph, two captions: one of them is false by construction."""
     root = tmp_path / "src"
     _folder(root, "cur", ["01_exterior_front.png", "03_interior_exam.png"])
-    twice: dict[str, str | None] = {
-        "exterior": "01_exterior_front.png", "lobby": None, "exam": "03_interior_exam.png",
-        "treatment": "03_interior_exam.png", "surgery": None, "kennel": None,
-    }
     with pytest.raises(PP.SeedDataError) as exc:
-        PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"}, {"cur": twice})
+        PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"}, {"cur": TWICE})
+    assert "03_interior_exam.png" in str(exc.value) and "cur" in str(exc.value)
+
+
+def test_a_duplicate_is_refused_even_in_a_slug_this_run_is_not_processing(tmp_path: Path) -> None:
+    """Review i2. The duplicate check belongs with the slug/slot-order checks, over the WHOLE map
+    and before a single byte is written: a hand re-run of one hospital (`--slugs X`) must still
+    refuse a duplicate someone introduced for hospital Y, because the file being committed is the
+    map, not the run. Only the missing-file arm has to stay per-slug — it needs the folders."""
+    with pytest.raises(PP.SeedDataError) as exc:
+        PP.prepare(tmp_path / "src", tmp_path / "out", [], {"cur": "Small animal"}, {"cur": TWICE})
     assert "03_interior_exam.png" in str(exc.value) and "cur" in str(exc.value)
 
 

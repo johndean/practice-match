@@ -500,7 +500,10 @@ async def test_a_seeded_database_serves_all_eighteen(client: Any, conn: Any, red
     r = await client.get("/api/listings?limit=200", headers=auth_headers(cookies, headers))
     items = r.json()["items"]
     assert len(items) == 18
-    assert all(item["photos"] for item in items)
+    # Review m1: a list of six `null`s is TRUTHY, so `all(item["photos"] …)` stopped meaning
+    # "every hospital has a photograph" the moment A-L10 made the slots nullable. Every seeded
+    # listing must carry at least one real photograph — a card with none shows nothing at all.
+    assert all(any(p for p in item["photos"]) for item in items)
     assert all(item["lat"] is not None and item["lng"] is not None for item in items)
     assert {item["market"] for item in items} >= {"Dallas, TX", "Austin, TX", "Atlanta, GA"}
     # A-L5: John's demo hospitals show their names on QA.
@@ -519,7 +522,12 @@ async def test_a_photograph_of_a_seeded_hospital_is_really_served(
     auth = auth_headers(cookies, headers)
     items = (await client.get("/api/listings?limit=200", headers=auth)).json()["items"]
     first = items[0]
-    photo = await client.get(first["photos"][0], headers=auth)
+    # Review m2: position 1 is not guaranteed to be filled — it is only the exterior slot, which
+    # every hospital happens to have TODAY. Take the first slot that is actually filled, and say
+    # so with an assertion rather than letting a `null` reach the client as a URL.
+    url = next((p for p in first["photos"] if p is not None), None)
+    assert isinstance(url, str), f"{first['name']} has no photograph to serve: {first['photos']}"
+    photo = await client.get(url, headers=auth)
     assert photo.status_code == 200 and photo.content[:4] == b"RIFF"
 
 

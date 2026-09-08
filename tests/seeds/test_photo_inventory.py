@@ -38,9 +38,12 @@ def seed_slugs() -> list[str]:
 
 
 def test_every_seeded_hospital_has_photographs() -> None:
+    """Review i4: since A-L10 an ENTRY is not a photograph — six nulls would satisfy a count. Every
+    seeded hospital must carry at least one real one, or its card and its detail page are empty."""
     inv = inventory()
     for slug in seed_slugs():
         assert slug in inv and 1 <= len(inv[slug]) <= MAX_PHOTOS, slug
+        assert any(e["file"] is not None for e in inv[slug]), f"{slug} carries no photograph at all"
 
 
 def test_every_seeded_hospital_carries_all_six_of_the_designs_photo_slots() -> None:
@@ -139,10 +142,17 @@ def test_every_committed_photograph_has_a_caption_and_a_source() -> None:
 
 def test_files_are_numbered_by_the_slot_they_fill() -> None:
     """Not "from one without gaps" any more (A-L10): the number IS the design's slot position, so
-    a hospital whose surgery slot is empty jumps from `4.webp` to `6.webp`."""
+    a hospital whose surgery slot is empty jumps from `4.webp` to `6.webp`.
+
+    Review i4: the expectation is derived from `source`, not from `file`. Deriving it from `file`
+    made the null arm say "null where it is null", which is true of any list; from `source` it
+    says "a file wherever a photograph was chosen, and nowhere else", which is the invariant. The
+    whole slug is compared in one statement, so a shift shows up as the shifted LIST rather than
+    one entry at a time the way `test_a_curated_photograph_sits_at_its_slots_own_position`
+    reports it."""
     for slug, entries in inventory().items():
         assert [e["file"] for e in entries] == [
-            None if e["file"] is None else f"{n}.webp" for n, e in enumerate(entries, start=1)
+            None if e["source"] is None else f"{n}.webp" for n, e in enumerate(entries, start=1)
         ], slug
 
 
