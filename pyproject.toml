@@ -19,6 +19,8 @@ dependencies = [
   "argon2-cffi (>=25.1.0,<26.0.0)",
   "zxcvbn (>=4.5.0,<5.0.0)",
   "boto3 (>=1.43.89,<2.0.0)",
+  "pyshp (>=3.1.6,<4.0.0)",
+  "shapely (>=2.1.2,<3.0.0)",
 ]
 
 [tool.poetry]
@@ -41,6 +43,7 @@ types-zxcvbn = "^4.5.0.20260518"
 pillow = ">=11.0"
 moto = {extras = ["s3"], version = "^5.2.3"}
 boto3-stubs = {extras = ["s3"], version = "^1.43.89"}
+types-shapely = "^2.1.0.20260728"
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

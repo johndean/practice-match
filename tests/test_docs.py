@@ -27,7 +27,10 @@ REQUIRED_CI_COMMANDS = (
     # `test_ci_strict_mypy_covers_every_python_script` below is the rule that says WHICH scripts.
     # M2 (2026-09-08): the seed-listings scripts join the same line — the merged workflow runs the
     # union of both branches' scripts, and this pin is that union verbatim.
-    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py --strict",
+    # A4 (2026-09-09): scripts/census_load.py joins the same line the moment it exists
+    # (A-C0 P8) — `test_ci_strict_mypy_covers_every_python_script` derives the requirement from
+    # the scripts/ directory itself, but this substring is a literal pin and has to move by hand.
+    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py --strict",
     "poetry run pytest -q -W error",
     # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
     # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
