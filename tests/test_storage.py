@@ -46,11 +46,17 @@ def test_exists_false_before_put_true_after(store):
     assert store.exists("k") is True
 
 
-def test_delete_removes_the_object(store):
+def test_delete_removes_the_object_and_reports_true(store):
+    """A-SL1 (seller-lifecycle): `delete` reports whether an object was actually removed, so a
+    caller can tell a real deletion from a no-op on a key that was never there."""
     store.put("k", b"v", "text/plain")
-    store.delete("k")
+    assert store.delete("k") is True
     assert store.exists("k") is False
     assert store.get("k") is None
+
+
+def test_delete_reports_false_for_a_key_that_never_existed(store):
+    assert store.delete("nope") is False
 
 
 def test_list_returns_keys_under_a_prefix_only(store):
