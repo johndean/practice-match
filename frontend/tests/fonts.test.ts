@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { createHash } from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
@@ -37,6 +38,23 @@ describe('the Give control\'s self-hosted Montserrat (A14.6)', () => {
       expect(readFileSync(join(PUBLIC_FONTS, f)).equals(readFileSync(join(BUNDLE_FONTS, f))),
         `${f} differs between the bundle and the app — the two targets would render different pixels`).toBe(true);
     }
+  });
+
+  // I1 (review round 1, ruled). The `wOF2` signature and the byte-identity of the two copies do
+  // NOT prove the file is Montserrat SemiBold: the `@font-face` DECLARES `font-weight: 600`, so a
+  // browser handed the wrong face in that file would use it for 600 without synthesising, and
+  // because both targets load the same bytes the wrong face renders identically on both and the
+  // zero-tolerance pixel gate stays green. So the file itself is pinned, by hash, to the exact
+  // release it was taken from: `Montserrat-SemiBold.woff2` from the Montserrat project's own
+  // repository, JulietaUla/Montserrat (the copyright holder named in the `OFL.txt` shipped beside
+  // it — "Copyright 2024 The Montserrat.Git Project Authors
+  // (https://github.com/JulietaUla/Montserrat.git)"), 128,544 bytes. Swapping the file for another
+  // weight, another cut or another family fails here, which is the one place it can fail.
+  it('is the official Montserrat SemiBold 600 release file, by hash', () => {
+    const bytes = readFileSync(join(BUNDLE_FONTS, 'Montserrat-SemiBold.woff2'));
+    expect(bytes).toHaveLength(128544);
+    expect(createHash('sha256').update(bytes).digest('hex'))
+      .toBe('fc9002b9d04f81904c82d001b364eab985d00e4b29257fc7f4fdf8686d6692e6');
   });
 
   it('is a real WOFF2, and the licence it ships under travels with it', () => {

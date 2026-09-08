@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import { DECLINED_FIELDS, NEEDS_REVIEW_INFO_REQUEST, atTop, btn, click, expectApiStatus, reach, settleExpectedApiFailures, waitMap } from './harness';
 
 export interface Screen {
@@ -286,6 +286,33 @@ export const SCREENS: Screen[] = [
     await browse(p);
     await p.getByRole('button', { name: 'Give' }).click();
     await p.getByRole('menuitem', { name: 'Dr. Sophia Yin Memorial Fund' }).waitFor({ state: 'visible' });
+    await expectMontserratApplied(p);
     await p.waitForTimeout(400);
   } }
 ];
+
+/**
+ * I1 (A14 review round 1, ruled). A14.6 self-hosts Montserrat 600 for this control and nothing
+ * else, and BOTH targets load the same bytes from their own copy — which is exactly why the pixel
+ * gate cannot see the failure that matters here: a 404, a wrong path or an unusable file blinds
+ * the design and the app together, they both fall back to ProximaNova, and all 45 states still
+ * compare equal at maxDiffPixels: 0. (`frontend/tests/fonts.test.ts` pins the file's SHA-256 to
+ * the official release; this proves the browser actually got it and actually used it.)
+ *
+ * It lives in the state's own steps, so it runs on the reference and on the app, and under the
+ * visual spec and the DOM spec alike — `expectApiStatus` is in these steps for the same reason.
+ * Before the capture, and it changes nothing about it: `fonts.load` resolves against a face the
+ * harness's own `document.fonts.ready` await has already fetched.
+ */
+async function expectMontserratApplied(p: Page): Promise<void> {
+  const seen = await p.evaluate(async () => {
+    await (document as Document & { fonts: FontFaceSet }).fonts.load('600 18px Montserrat');
+    const trigger = document.querySelector('button[aria-haspopup="menu"]')!;
+    return {
+      loaded: (document as Document & { fonts: FontFaceSet }).fonts.check('600 18px Montserrat'),
+      family: getComputedStyle(trigger).fontFamily.replace(/^["']/, '')
+    };
+  });
+  expect(seen.loaded, 'the Give control\'s Montserrat 600 face did not load — both targets would silently fall back to ProximaNova and the pixel gate would stay green').toBe(true);
+  expect(seen.family, 'the Give trigger is not set in Montserrat').toMatch(/^Montserrat\b/);
+}
