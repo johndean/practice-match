@@ -992,8 +992,13 @@ describe('appPlan for the fifteen account states — real routes, real tokens (A
 // an allowance nobody used means the state stopped provoking the failure it exists to show.
 // ---------------------------------------------------------------------------------------
 describe('expectApiStatus — a per-page, per-status allowance, never a blanket exemption (A-S5)', () => {
-  const appPage = () => ({ url: () => `${appOrigin({})}/` }) as unknown as Page;
-  const referencePage = () => ({ url: () => `${referenceOrigin({})}/` }) as unknown as Page;
+  // `appOrigin()`/`referenceOrigin()` with NO argument (I12 review round 1): `expectApiStatus` and
+  // `consumeExpectedApiFailure` call `driverFor(page.url())` with no second argument either, so
+  // `driverFor`'s own default (`appUrl = appOrigin()`) reads the REAL environment. Freezing this
+  // mock page's URL to the `{}` default (`localhost:5173`) while `driverFor` compares it against
+  // whatever `PW_APP_PORT` actually holds is the same drift the `driverFor` describe above fixed.
+  const appPage = () => ({ url: () => `${appOrigin()}/` }) as unknown as Page;
+  const referencePage = () => ({ url: () => `${referenceOrigin()}/` }) as unknown as Page;
   const line = (status: number) => `Failed to load resource: the server responded with a status of ${status} (Bad Request)`;
 
   it('consumes exactly one matching console error per arming', () => {
