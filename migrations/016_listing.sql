@@ -21,6 +21,8 @@ CREATE TABLE listing (
   -- false hides street/zip and the geocoded point from every reader (L5). Seeds set true (D8);
   -- sellers' listings in Wave 2b default to false, which is why the default here is false.
   location_disclosed boolean     NOT NULL DEFAULT false,
+  -- A-L5: seller-set, admin-overridable; the API returns the anonymised label when false
+  name_disclosed     boolean     NOT NULL DEFAULT false,
   geom               geography(Point,4326),
   area               text        NOT NULL,
   type               text        NOT NULL

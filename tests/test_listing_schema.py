@@ -22,6 +22,7 @@ EXPECTED_COLUMNS: dict[str, tuple[str, bool]] = {
     "hours": ("text", True),
     "status": ("text", False),
     "location_disclosed": ("boolean", False),
+    "name_disclosed": ("boolean", False),
     "geom": ("USER-DEFINED", True),
     "area": ("text", False),
     "type": ("text", False),
