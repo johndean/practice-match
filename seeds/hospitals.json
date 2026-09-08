@@ -318,7 +318,7 @@
       "lat": 29.860228, "lng": -95.38453,
       "geocode": {"tier": "exact", "matched_address": "6730 AIRLINE DR, HOUSTON, TX, 77076", "benchmark": "Public_AR_Current"},
       "demo": true,
-      "price": 640000, "rev": 950000, "docs": 1, "rooms": 3, "sqft": 2400, "bldg": "Separate",
+      "price": 465000, "rev": 950000, "docs": 1, "rooms": 3, "sqft": 2400, "bldg": "Separate",
       "est": 1987, "listed_days_ago": 26,
       "note": "Demo listing seeded by the VIN Foundation.",
       "staff": "1 DVM, 2 technicians, 3 support staff",

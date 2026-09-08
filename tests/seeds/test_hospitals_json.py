@@ -2,6 +2,7 @@
 the design needs that his table does not carry (D4) and the coordinates the implementer
 geocoded once (D2). This file is the contract every later task reads."""
 import json
+import re
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -114,8 +115,12 @@ def test_every_row_discloses_its_name() -> None:
 
 
 def test_the_demo_business_fields_are_present_and_plausible() -> None:
+    """A-L2.1: the floor was 500,000, which contradicted the design's own "Under $500K" band —
+    the plan invented that number, the band is the design's, so the floor gives way. It is
+    400,000 here and `abc_animal_hospital` (1 DVM, 2,400 sq ft, est. 1987) is priced at 465,000,
+    which is what covers `price`/`u500` in the A-L2 test below."""
     for h in load():
-        assert isinstance(h["price"], int) and 500_000 <= int(h["price"]) <= 4_000_000, h["slug"]
+        assert isinstance(h["price"], int) and 400_000 <= int(h["price"]) <= 4_000_000, h["slug"]
         assert isinstance(h["rev"], int) and int(h["rev"]) > int(h["price"]) * 0.5, h["slug"]
         assert 1 <= int(h["docs"]) <= 12 and 1 <= int(h["rooms"]) <= 12, h["slug"]
         assert 2_000 <= int(h["sqft"]) <= 12_000, h["slug"]
@@ -216,3 +221,134 @@ def test_community_figures_are_absent_until_the_census_plan_supplies_them() -> N
     for h in load():
         for field in ("pop", "growth", "income", "hh"):
             assert field not in h, (h["slug"], field)
+
+
+# --------------------------------------------------------------------------------------
+# Controller amendment A-L2 (John: "I have provided the hospital seed data & only need to
+# generate fake data for all missing fields to cover all filters in the BROWSE PRACTICES").
+#
+# The demo values are DISTRIBUTED, not merely plausible: every non-"Any" option of every
+# Browse filter matches at least one of the eighteen, and every "Any" matches all eighteen.
+# The option lists are READ from the design (frontend/src/logic.js) rather than retyped, so
+# a design change is noticed here; "matches" is the design's own predicate, arm for arm.
+# --------------------------------------------------------------------------------------
+
+LOGIC_JS = ROOT / "frontend" / "src" / "logic.js"
+
+# A-L2.2 (John, 2026-09-08, asked whether any of the eighteen is a Mixed or a Large-animal
+# practice): "they are all Small Animal". None of his hospitals is either, so these two options
+# are excluded from the coverage requirement BY NAME and the demo set returns no results for
+# them on QA. D4's name-based derivation is unchanged for the rest. The exclusion is pinned in
+# both directions below — a hospital that ever DID match one of these would fail
+# test_johns_ruling_still_holds_no_hospital_is_mixed_or_large_animal, which is the signal to
+# take the question back to John rather than to quietly widen the list.
+JOHNS_RULING = "they are all Small Animal"
+EXCLUDED_OPTIONS: frozenset[tuple[str, str]] = frozenset({("type", "Mixed"), ("type", "Large animal")})
+
+# The design's two filter blocks, pinned. `filters:` is the bar (five selects); `moreFilters:`
+# is the "More filters" drawer (three). Each row is `{ key: "…", …, options: [["v", "label"], …] }`
+# on one line. If either block is restructured these patterns stop matching and the test fails
+# loudly rather than silently testing nothing.
+_BAR_BLOCK = re.compile(r"^      filters: \[\n((?:        \{ key: \"\w+\", options: \[.*\] \},?\n)+)      \]", re.MULTILINE)
+_MORE_BLOCK = re.compile(r"^      moreFilters: \[\n((?:        \{ key: \"\w+\", label: \".*\", options: \[.*\] \},?\n)+)      \]", re.MULTILINE)
+_ROW = re.compile(r"\{ key: \"(\w+)\",.*?options: \[(.*?)\] \}")
+_OPTION = re.compile(r"\[\"([^\"]+)\", \"[^\"]*\"\]")
+
+# What those patterns are expected to find. Retyped here on purpose: the regex catches a
+# RESTRUCTURED design, this catches an option quietly added to or dropped from one.
+EXPECTED_OPTIONS: dict[str, tuple[str, ...]] = {
+    "type": ("Any", "Small animal", "Mixed", "Large animal", "Emergency", "Specialty"),
+    "price": ("Any", "u500", "500-1000", "1000-2000", "o2000"),
+    "revenue": ("Any", "u1000", "1000-2500", "o2500"),
+    "doctors": ("Any", "1", "2", "4"),
+    "building": ("Any", "Included", "Separate", "Leased"),
+    "est": ("Any", "pre1995", "1995-2010", "post2010"),
+    "ownership": ("Any", "Sole", "Multi"),
+    "sqft": ("Any", "u3000", "3000-5000", "o5000"),
+}
+
+
+def design_filter_options() -> dict[str, tuple[str, ...]]:
+    """The eight filters and their option values, read out of the design file."""
+    src = LOGIC_JS.read_text(encoding="utf-8")
+    found: dict[str, tuple[str, ...]] = {}
+    for block in (_BAR_BLOCK, _MORE_BLOCK):
+        match = block.search(src)
+        assert match is not None, f"the design's filter block no longer matches {block.pattern!r}"
+        for key, options in _ROW.findall(match.group(1)):
+            found[key] = tuple(_OPTION.findall(options))
+    return found
+
+
+def design_matches(hospital: dict[str, object], key: str, value: str) -> bool:
+    """One arm of `Component.filtered()` in frontend/src/logic.js, with the design's own band
+    boundaries: price and revenue are divided by 1000; `u…` is strictly below; the middle bands
+    are inclusive at both ends; `o…` is `>=`; doctors is "N or more"; ownership tests the
+    ownership string for "Sole proprietor"; `post2010` is strictly after 2010."""
+    if value == "Any":
+        return True
+    if key == "type":
+        return hospital["type"] == value
+    if key == "doctors":
+        return not int(str(hospital["docs"])) < int(value)
+    if key == "building":
+        return hospital["bldg"] == value
+    if key == "price":
+        price = int(str(hospital["price"])) / 1000
+        return {"u500": price < 500, "500-1000": 500 <= price <= 1000,
+                "1000-2000": 1000 <= price <= 2000, "o2000": price >= 2000}[value]
+    if key == "revenue":
+        rev = int(str(hospital["rev"])) / 1000
+        return {"u1000": rev < 1000, "1000-2500": 1000 <= rev <= 2500, "o2500": rev >= 2500}[value]
+    if key == "est":
+        est = int(str(hospital["est"]))
+        return {"pre1995": est < 1995, "1995-2010": 1995 <= est <= 2010, "post2010": est > 2010}[value]
+    if key == "ownership":
+        solo = "Sole proprietor" in str(hospital["ownership"])
+        return solo if value == "Sole" else not solo
+    if key == "sqft":
+        sqft = int(str(hospital["sqft"]))
+        return {"u3000": sqft < 3000, "3000-5000": 3000 <= sqft <= 5000, "o5000": sqft >= 5000}[value]
+    raise AssertionError(f"the design grew a filter this test does not implement: {key}")
+
+
+def matching_slugs(key: str, value: str) -> list[str]:
+    return [str(h["slug"]) for h in load() if design_matches(h, key, value)]
+
+
+def test_the_design_still_declares_the_filters_this_test_covers() -> None:
+    """The regex found the blocks, and the blocks hold exactly the options pinned above."""
+    assert design_filter_options() == EXPECTED_OPTIONS
+
+
+def test_every_non_any_filter_option_matches_at_least_one_hospital() -> None:
+    """A-L2, the requirement itself — with the two options John excluded left out by name."""
+    uncovered = [
+        (key, value)
+        for key, values in design_filter_options().items()
+        for value in values
+        if value != "Any" and (key, value) not in EXCLUDED_OPTIONS and not matching_slugs(key, value)
+    ]
+    assert uncovered == [], f"no seeded hospital matches {uncovered} — distribute the demo values"
+
+
+def test_any_matches_all_eighteen_on_every_filter() -> None:
+    for key, values in design_filter_options().items():
+        assert "Any" in values, key
+        assert len(matching_slugs(key, "Any")) == 18, key
+
+
+def test_johns_ruling_still_holds_no_hospital_is_mixed_or_large_animal() -> None:
+    """A-L2.2, pinned the other way round: John's answer was "they are all Small Animal", so the
+    two excluded options must genuinely return nothing. If one of them ever matches, the
+    exclusion has gone stale and the question goes back to John — it is not widened here."""
+    assert JOHNS_RULING == "they are all Small Animal"
+    for key, value in sorted(EXCLUDED_OPTIONS):
+        assert matching_slugs(key, value) == [], (key, value, "John ruled the eighteen carry no such practice")
+
+
+def test_the_excluded_options_are_exactly_the_two_john_named() -> None:
+    """Pinned both ways so a future gap cannot be silenced by adding to the exclusion list."""
+    assert EXCLUDED_OPTIONS == {("type", "Mixed"), ("type", "Large animal")}
+    for key, value in EXCLUDED_OPTIONS:
+        assert value in design_filter_options()[key], (key, value, "excluded an option the design no longer offers")
