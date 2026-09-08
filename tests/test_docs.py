@@ -523,24 +523,23 @@ def test_the_playwright_persona_password_default_matches_seed_persona():
     assert presented.group(1) == seeded.group(1)
 
 
-@pytest.mark.xfail(strict=True, reason="Task S5 adds FIXTURE_TOKEN_PREFIX and the three state emails to "
-                                        "frontend/tests/harness.ts; remove this marker there")
 def test_the_harness_fixture_tokens_match_the_seed_scripts_pattern_and_the_three_new_state_emails():
     """Task S3/S5, same shape as the password pin above: `scripts/seed_persona.py`'s
     `FIXTURE_TOKENS` names the account and the `fixture-<purpose>-{n:02d}` pattern the visual
     harness (Task S5) mirrors as test-only constants, so the two never drift out of the one
     documented `fixture-<purpose>-NN` shape a raw token is ever allowed to look like.
 
-    S3 ships only the seed side; the harness half (`FIXTURE_TOKEN_PREFIX` and the three new
-    `*@practice-match.test` emails in `frontend/tests/harness.ts`) is Task S5's to add — so THIS
-    half of the pin is expected to fail until then (`xfail(strict=True)`: passes as an expected
-    failure today, and turns into a hard failure — XPASS — the moment S5 adds the constants,
-    which is exactly S5's RED; S5's GREEN is removing this marker). Every commit stays green on
-    its own this way, per the controller's residual on the S3 report."""
+    S3 shipped only the seed side and landed this as `xfail(strict=True)` so the branch stayed
+    green; Task S5 added `FIXTURE_TOKEN_PREFIX`, `FIXTURE_TOKENS` and the three
+    `*@practice-match.test` emails to `frontend/tests/harness.ts`, which turned the marker into an
+    XPASS — S5's RED — and removing it is the GREEN."""
     from scripts import seed_persona
 
     assert seed_persona.FIXTURE_TOKENS == {
-        "verify": ("unverified@practice-match.test", "fixture-verify-{n:02d}"),
+        # A-S5.2 (S-1): the verify tokens belong to `verify-me@`, the tenth account, because
+        # consuming one confirms its account for good and the oracle needs `unverified@` to stay
+        # unverified at every capture.
+        "verify": ("verify-me@practice-match.test", "fixture-verify-{n:02d}"),
         "reset": ("verified@practice-match.test", "fixture-reset-{n:02d}"),
         "invite": ("invited@practice-match.test", "fixture-invite-{n:02d}"),
     }
@@ -552,6 +551,38 @@ def test_the_harness_fixture_tokens_match_the_seed_scripts_pattern_and_the_three
     assert presented.group(1) == seed_persona.FIXTURE_TOKEN_PREFIX
     for email, _pattern in seed_persona.FIXTURE_TOKENS.values():
         assert email in harness, f"frontend/tests/harness.ts does not yet name {email} (Task S5)"
+
+    # The harness builds each raw token from its own prefix table, so the two spellings of the
+    # SAME twelve values are pinned equal rather than merely similar-looking.
+    prefixes = re.search(r"^export const FIXTURE_TOKENS = \{ (.+) \} as const;$", harness, re.MULTILINE)
+    assert prefixes, "frontend/tests/harness.ts no longer writes FIXTURE_TOKENS as one line"
+    presented_prefixes = dict(re.findall(r"(\w+): '([^']+)'", prefixes.group(1)))
+    count = re.search(r"^export const FIXTURE_TOKEN_COUNT = (\d+);$", harness, re.MULTILINE)
+    assert count and int(count.group(1)) == seed_persona.FIXTURE_TOKEN_COUNT
+    for purpose, (_email, pattern) in seed_persona.FIXTURE_TOKENS.items():
+        for n in range(1, seed_persona.FIXTURE_TOKEN_COUNT + 1):
+            assert pattern.format(n=n) == f"{presented_prefixes[purpose]}{n:02d}", (purpose, n)
+
+
+def test_the_harness_carries_the_seeded_application_data_the_oracle_renders():
+    """A-S5 ruling 2, the same pin one level deeper. Two of the fifteen approved states RENDER
+    seeded application data: the applicant-answer card shows `needs-review@`'s `info_request`
+    (the reference gets it through A9.1's `startAnswerNote`), and the re-apply form is filled with
+    `declined@`'s `fields` on both targets. If the seed and the harness ever disagreed, the two
+    targets would render different words and fifteen baselines would be wrong — so they are one
+    fact in two languages, like the password and the token pattern above."""
+    from scripts import seed_persona
+
+    harness = (ROOT / "frontend" / "tests" / "harness.ts").read_text()
+    note = re.search(r"^export const NEEDS_REVIEW_INFO_REQUEST = '([^']+)';$", harness, re.MULTILINE)
+    assert note, "frontend/tests/harness.ts no longer defines NEEDS_REVIEW_INFO_REQUEST"
+    assert note.group(1) == seed_persona.NEEDS_REVIEW_INFO_REQUEST
+
+    block = re.search(r"^export const DECLINED_FIELDS = \{\n(.*?)^\} as const;$", harness, re.MULTILINE | re.DOTALL)
+    assert block, "frontend/tests/harness.ts no longer defines DECLINED_FIELDS as a literal object"
+    presented = dict(re.findall(r"^\s*(\w+): '(.*)',?$", block.group(1), re.MULTILINE))
+    presented["affirm"] = bool(re.search(r"^\s*affirm: true,?$", block.group(1), re.MULTILINE))
+    assert presented == seed_persona.DECLINED_FIELDS, (presented, seed_persona.DECLINED_FIELDS)
 
 
 def test_claude_md_does_not_claim_v2_byte_identity_after_the_launch_removal():
@@ -606,7 +637,7 @@ def _harness_personas() -> dict[str, dict[str, object]]:
         key, email, name, role, initials, state, roles = m.groups()
         found[key] = {"email": email, "name": name, "role": role, "initials": initials, "state": state,
                       "roles": tuple(r.strip().strip("'") for r in roles.split(",") if r.strip())}
-    assert len(found) == 7, f"expected the seven harness personas as one line each, read {sorted(found)}"
+    assert len(found) == 10, f"expected the ten harness personas as one line each, read {sorted(found)}"
     return found
 
 
@@ -626,7 +657,15 @@ def test_the_harness_personas_are_the_accounts_seed_persona_seeds_with_the_label
     # `STATE_PERSONAS` — the harness names `verified@` since Task S4, because it is the account the
     # app reaches `gate-apply` as. Both tuples have the same (email, state, display name) shape and
     # neither carries a role grant, so they merge into one map here.
-    state_personas = (*seed_persona.STATE_PERSONAS, *seed_persona.IDENTITY_STATE_PERSONAS)
+    #
+    # A-S5 (Task S5): `invited@` joins them. It is seeded from its own `INVITED_*` constants rather
+    # than a tuple, because it is the one account with no usable password — but it is an applicant
+    # like the rest, so the same three facts describe it and it is spelled as a triple here.
+    state_personas = (
+        *seed_persona.STATE_PERSONAS,
+        *seed_persona.IDENTITY_STATE_PERSONAS,
+        (seed_persona.INVITED_EMAIL, seed_persona.INVITED_STATE, seed_persona.INVITED_NAME),
+    )
     seeded_roles: dict[str, tuple[str, ...]] = {
         seed_persona.PERSONA_EMAIL: seed_persona.PERSONA_ROLES,
         **{email: roles for email, roles in seed_persona.ORACLE_PERSONAS},
