@@ -1332,3 +1332,25 @@ def test_deploy_md_exit_codes_match_seed_listings_returns():
     section = deploy.split("## Seeding the demo hospitals (QA)", 1)[1].split("\n## ", 1)[0]
     for code in codes:
         assert f"`{code}`" in section, f"DEPLOY.md's seeding section does not document exit code {code}"
+
+
+def test_runbook_documents_recovering_from_a_wrong_frozen_postal_address():
+    """Final review M2 (blocking): controller amendment A-I5d.4b ratified, verbatim, that
+    "`postal_address` is frozen into each outbox row at enqueue (the runbook says so and tells the
+    operator that correcting a wrong address after a batch is queued means deleting the queued
+    rows, not just fixing the variable)" — but §13 never said so. `app/api/admin_signups.py`
+    freezes the address into `email_outbox.params` at enqueue time and the worker renders that
+    stored value, never the live `VIN_FOUNDATION_POSTAL_ADDRESS` setting, so a Railway variable fix
+    after a batch is already queued does nothing for those rows. Pinned on the operator-facing
+    mechanics named in the ruling — the outbox table and the `template = 'launch_announcement'`
+    filter an operator would actually run — not merely on the word "frozen" appearing somewhere."""
+    runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    section = runbook.split("## 13. The launch email", 1)[1]
+    assert "frozen" in section, "§13 never says the postal address is frozen into the queued rows"
+    assert "email_outbox" in section, "§13 does not name the table the wrong-address rows live in"
+    assert "template = 'launch_announcement'" in section, (
+        "§13 does not give the filter an operator would use to find/delete the wrong-address rows"
+    )
+    assert "queued" in section and re.search(r"\bdelet\w*\b", section, re.IGNORECASE), (
+        "§13 does not tell the operator to delete the already-queued rows rather than just fixing the variable"
+    )

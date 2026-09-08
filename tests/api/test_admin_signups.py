@@ -527,16 +527,21 @@ async def test_a_whitespace_only_postal_address_is_treated_as_unset(client, conn
         assert cur.fetchone()[0] == 0
 
 
-def test_launch_mail_is_a_plain_def_so_fastapi_threadpools_it():
-    """A-I5d.4b, L4. The handler does up to 500 blocking psycopg2 inserts plus one `SELECT … FOR
-    UPDATE` and one audit write — the largest single-request body of work in the codebase — and an
-    `async def` runs all of it on the event loop, stalling every other request for the duration.
-    `export_signups` beside it is already a plain `def` for exactly this reason
+def test_every_admin_signups_handler_that_blocks_is_a_plain_def():
+    """A-I5d.4b L4 pinned this for `launch_mail`; the final review's M1 extends it to
+    `list_signups`, which was `async def` while its own body calls blocking `sync_conn()` psycopg2
+    reads (`COUNTS_SQL` is an ungated `GROUP BY`, budgeted at 150 ms by
+    `tests/perf/test_api_latency.py`) — an `async def` runs all of that on the event loop, stalling
+    every other request for the duration, on an endpoint the module's own docstring says is
+    *polled by a screen*. `export_signups` was already a plain `def` for exactly this reason
     (`tests/auth/test_deps.py::test_current_principal_is_a_plain_def_so_fastapi_threadpools_it`
-    pins the same property for `deps.current_principal`)."""
-    from app.api.admin_signups import launch_mail
+    pins the same property for `deps.current_principal`). All three handlers in this module do
+    blocking psycopg2 work in their own body, so all three belong in the threadpool, not on the
+    loop."""
+    from app.api.admin_signups import export_signups, launch_mail, list_signups
 
-    assert inspect.iscoroutinefunction(launch_mail) is False
+    for handler in (list_signups, export_signups, launch_mail):
+        assert inspect.iscoroutinefunction(handler) is False, handler.__name__
 
 
 async def test_a_mid_batch_failure_rolls_back_the_inserts_and_the_stamp_together(client, conn, admin_headers, launch_mail_approved, monkeypatch):

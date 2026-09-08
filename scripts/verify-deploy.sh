@@ -189,6 +189,15 @@ if [[ "$mode" == "coming_soon" ]]; then
   # their own (Identity plan Task I5, fix round 1, N2).
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/admin/users")
   [[ "$code" == "404" ]] || { echo "FAIL: /api/admin/users answered $code in coming-soon mode (expected 404 - /api/admin/users must not be mounted before launch; the sign-ups routes deliberately are, per D-I5d-5)" >&2; exit 1; }
+  # D-I5d-5's own justification is that the launch sign-ups ARE reachable before launch, because
+  # that is where the rows are — /api/admin/users being absent does not prove this, so this is the
+  # one positive probe of production's real mount table for the claim (final review L2). A
+  # regression that moved the router back inside the `site_mode == "app"` include would 404 here
+  # exactly like /api/admin/users, and CI's own
+  # test_the_list_is_reachable_before_launch_per_d_i5d_5 would not catch it on the deployed host.
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/admin/signups")
+  [[ "$code" == "401" ]] || { echo "FAIL: /api/admin/signups answered $code in coming-soon mode (expected 401 - it is mounted before launch by D-I5d-5, and guarded)" >&2; exit 1; }
+  echo "signups surface reachable OK"
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 -X POST -H 'Content-Type: application/json' -d '{"kind":"buyer","fields":{}}' "$BASE/api/applications")
   [[ "$code" == "404" ]] || { echo "FAIL: /api/applications answered $code in coming-soon mode (expected 404 - the applications surface must not be mounted before launch)" >&2; exit 1; }
   # ...and the listing reads (Seed Listings Task L5, amendment A-L5.1). They are member endpoints

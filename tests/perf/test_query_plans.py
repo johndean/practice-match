@@ -28,6 +28,7 @@ import pytest
 
 from app.api.admin_signups import COUNTS_SQL as SIGNUPS_COUNTS_SQL
 from app.api.admin_signups import LIST_SQL as SIGNUPS_LIST_SQL
+from app.api.admin_signups import MAX_LAUNCH_BATCH, UNMAILED_SQL
 from app.api.admin_signups import MAX_LIST as SIGNUPS_MAX_LIST
 from app.api.admin_users import LIST_SQL, MAX_LIST
 
@@ -68,6 +69,15 @@ PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
         "EXPLAIN (FORMAT JSON) " + SIGNUPS_COUNTS_SQL,
         (),
     ),
+    # L3 (final review): the launch mail's own scan (`app.api.admin_signups.launch_mail`), which
+    # `test_migrate.py` proves the index exists for but never proves is USED — a later change to
+    # the `ORDER BY` or a dropped `FOR UPDATE` could silently fall back to a full scan under a
+    # row lock on a launch-day batch of thousands. `FOR UPDATE` is stripped: EXPLAIN cannot plan it
+    # in every form, and the row-lock clause has no bearing on which scan the planner picks anyway.
+    "signups_unmailed": (
+        "EXPLAIN (FORMAT JSON) " + UNMAILED_SQL.replace(" FOR UPDATE", ""),
+        (MAX_LAUNCH_BATCH,),
+    ),
 }
 
 # The index each plan must be using, by name. Absent for an entry whose only claim is its shape.
@@ -80,6 +90,7 @@ INDEXES: dict[str, tuple[str, ...]] = {
     "users_queue": ("account_listing_idx", "application_account_idx"),
     "session_lookup": ("session_pkey",),
     "signups_list": ("interest_signup_listing_idx",),
+    "signups_unmailed": ("interest_signup_unmailed_idx",),
 }
 
 
@@ -114,7 +125,8 @@ def _seed_signups(conn: Any) -> None:
         cur.execute("ANALYZE interest_signup")
 
 
-SEEDS: dict[str, Any] = {"users_queue": _seed_admin_queue, "signups_list": _seed_signups, "signups_counts": _seed_signups}
+SEEDS: dict[str, Any] = {"users_queue": _seed_admin_queue, "signups_list": _seed_signups, "signups_counts": _seed_signups,
+                        "signups_unmailed": _seed_signups}
 
 
 def _node_types(plan: dict[str, Any]) -> list[str]:

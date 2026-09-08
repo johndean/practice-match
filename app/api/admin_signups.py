@@ -147,9 +147,15 @@ def _params(source: str | None, consent_version: str | None, keyset: tuple[str |
 
 
 @router.get("/signups", dependencies=[Depends(REQUIRE_SIGNUPS_READ)])
-async def list_signups(source: str | None = None, consent_version: str | None = None,
-                       cursor: str | None = None, limit: int = 50) -> dict[str, Any]:
+def list_signups(source: str | None = None, consent_version: str | None = None,
+                 cursor: str | None = None, limit: int = 50) -> dict[str, Any]:
     """Every launch-notification sign-up, newest first, with the counts the tab shows.
+
+    A plain `def` (final review M1), so FastAPI runs it in the anyio threadpool like
+    `export_signups` and `launch_mail` beside it: `COUNTS_SQL` is an ungated `GROUP BY` over the
+    whole table, budgeted at 150 ms by `tests/perf/test_api_latency.py`, and this endpoint's own
+    docstring says it is polled by a screen — an `async def` would run all of that blocking
+    psycopg2 work on the event loop, stalling every other request for the duration, every poll.
 
     NOT audited (`signups.read` is not in `AUDITED`): this is the read a screen polls, and one row
     per poll would fill an append-only table with reads of the list. The bulk export beside it is

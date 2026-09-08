@@ -13,6 +13,8 @@ from typing import Any
 
 import psycopg2.extensions
 
+from app.mail import templates as TP
+
 # The keys `app/mail/templates.py` will render (Task I6), and the only values this function accepts:
 # a typo would otherwise sit in the outbox forever, undeliverable and invisible until the sender
 # reached it. `account_exists` is the fourteenth, added in I4 fix round 1 so that a sign-up for an
@@ -34,9 +36,22 @@ INSERT = """INSERT INTO email_outbox (to_email, template, params, idempotency_ke
 
 
 def enqueue(conn: psycopg2.extensions.connection, *, to: str, template: str, params: dict[str, Any], idempotency_key: str) -> bool:
-    """Writes the outbox row; returns False when the key already exists (idempotent)."""
+    """Writes the outbox row; returns False when the key already exists (idempotent).
+
+    Final review L1 (defence in depth): `app.api.admin_signups.launch_mail` is the only production
+    caller of `template="launch_announcement"` and it is gated on both `LAUNCH_COPY_APPROVED` and a
+    non-empty `postal_address` (A-I5d.4) — but this function is the one place every launch row
+    passes regardless of caller, so the two gates are re-checked here too, not just at that one
+    HTTP boundary. `render()` deliberately turns a missing/blank `postal_address` into an empty
+    string (a worker draining the outbox must never fail on a row it can still deliver), which is
+    exactly why a row must never reach the outbox without one in the first place."""
     if template not in TEMPLATES:
         raise KeyError(f"unknown email template {template!r}")
+    if template == "launch_announcement":
+        if not TP.LAUNCH_COPY_APPROVED:
+            raise ValueError("launch_announcement cannot be queued: LAUNCH_COPY_APPROVED is False (A-I5d.4)")
+        if not str(params.get("postal_address") or "").strip():
+            raise ValueError("launch_announcement cannot be queued: params['postal_address'] is empty (A-I5d.4)")
     with conn.cursor() as cur:
         cur.execute(INSERT, (to, template, json.dumps(params), idempotency_key))
         return cur.fetchone() is not None
