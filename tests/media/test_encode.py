@@ -15,10 +15,23 @@ tuple order (`.png` first). Neither changes behaviour; both are the pipeline's o
 from __future__ import annotations
 
 import io
+import struct
 
+import pytest
 from PIL import Image
 
 from app.media import encode
+
+
+def _bomb(width: int, height: int) -> bytes:
+    """A ~54-byte BMP whose header declares `width` x `height` pixels and carries no pixel data at
+    all. Pillow's decompression-bomb check reads only the header — `Image.open()` calls
+    `_decompression_bomb_check(im.size)` immediately after the plugin's `_open()` returns, before
+    any pixel is decoded — so the file that trips it does not need to be anywhere near that size."""
+    offset = 14 + 40
+    header = b"BM" + struct.pack("<IHHI", offset, 0, 0, offset)
+    dib = struct.pack("<IiiHHIIiiII", 40, width, height, 1, 24, 0, 0, 0, 0, 0, 0)
+    return header + dib
 
 
 def _jpeg(width: int, height: int, *, exif: bool = False) -> bytes:
@@ -86,21 +99,26 @@ def test_transparency_is_flattened_onto_white() -> None:
     assert Image.open(io.BytesIO(out[0])).convert("RGBA").getpixel((0, 0)) == (255, 255, 255, 255)
 
 
-def test_the_ladder_gives_up_rather_than_writing_an_oversized_file(monkeypatch: object) -> None:
+def test_the_ladder_gives_up_rather_than_writing_an_oversized_file(monkeypatch: pytest.MonkeyPatch) -> None:
     """The arm no real photograph reaches, and the one 100 % branch coverage needs a named test
     for: with the ceiling at a byte, every quality and the fallback edge still overshoot and the
     encoder returns None. SL4 turns that into a 422, never a stored file that breaks the budget."""
-    import pytest
-
-    monkeypatch.setattr(encode, "MAX_BYTES", 1)   # type: ignore[attr-defined]
+    monkeypatch.setattr(encode, "MAX_BYTES", 1)
     assert encode.encode_webp(_jpeg(1200, 900)) is None
-    del pytest
 
 
 def test_bytes_that_are_not_an_image_are_refused_rather_than_raised() -> None:
     """SL4's sniffing runs first, but the encoder is the last line: a `.jpg` that is a zip file
     must be a refusal the route can render, not a `PIL.UnidentifiedImageError` 500."""
     assert encode.encode_webp(b"PK\x03\x04not an image at all") is None
+
+
+def test_a_decompression_bomb_is_refused_rather_than_raised() -> None:
+    """SL2 review, Medium-1. A small file whose header lies about its dimensions must not crash
+    the request path with an uncaught `PIL.Image.DecompressionBombError` — the encoder's whole
+    contract is `None`, never an exception, for anything that will not decode within a sane
+    budget, exactly as it already is for bytes that are not an image at all (the test above)."""
+    assert encode.encode_webp(_bomb(20_000, 20_000)) is None
 
 
 def test_an_extremely_thin_image_is_not_resized_to_a_zero_dimension() -> None:

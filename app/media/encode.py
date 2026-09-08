@@ -31,6 +31,15 @@ QUALITY_LADDER = (82, 72, 62, 52, 44, 20)
 FALLBACK_EDGE_PX = 1100
 IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
 
+# An explicit bound, set here rather than left to Pillow's own ambient default (global mutable
+# state some other import in the same process could change first): 100 megapixels is far beyond
+# any legitimate phone or camera photograph — nowhere near MAX_EDGE_PX's needs — but comfortably
+# below Pillow's own ~179 megapixel default, so a small file whose header LIES about its
+# dimensions (a "decompression bomb": kilobytes on disk, gigabytes once decoded) is refused before
+# a single pixel is decoded, at `Image.open()` time (SL2 review, Medium-1).
+MAX_IMAGE_PIXELS = 100_000_000
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+
 
 def sha256_hex(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
@@ -64,7 +73,7 @@ def encode_webp(data: bytes) -> tuple[bytes, str] | None:
     try:
         opened = Image.open(io.BytesIO(data))
         flattened = _flattened(opened)
-    except (UnidentifiedImageError, OSError, ValueError):
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
         return None
     for edge in (MAX_EDGE_PX, FALLBACK_EDGE_PX):
         candidate = _within(flattened, edge)
