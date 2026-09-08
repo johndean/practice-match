@@ -11,7 +11,9 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent.parent
 PHOTOS = ROOT / "seeds" / "hospitals" / "photos"
 INDEX = PHOTOS / "index.json"
-TOTAL_CEILING_BYTES = 18 * 1024 * 1024  # 108 files x 250 KB is 26 MB worst case; the real set is a fifth of that
+# Deliberately BELOW what the per-file ceiling would allow (108 x 250 KB is 26 MB): the committed
+# set is 4.0 MB, so 18 MB stays a real guard against a runaway rather than a restatement of MAX_BYTES.
+TOTAL_CEILING_BYTES = 18 * 1024 * 1024
 MAX_BYTES = 250 * 1024
 MAX_PHOTOS = 6   # the design renders six photo slots per practice (A-L9); more can never be shown
 
