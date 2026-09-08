@@ -984,3 +984,96 @@ def test_the_identity_spec_states_the_unverified_re_issue_rule():
         "the amended default must still name both halves: `account_exists` from verified onward, re-issue while unverified"
     )
     assert "amended 2026-09-07" in default, "the amendment is undated"
+
+
+# --- Task S6: docs and drift, once the account screens (S1-S5), the reseed (S7) and main (M1) are
+# in ------------------------------------------------------------------------------------------
+# Every count below is a fact stated by hand in prose somewhere (CLAUDE.md, LOCAL_AMENDMENTS.md,
+# the runbook) that a generated or hand-maintained SOURCE also carries — the same drift class as
+# the backend-gate and coverage-exclusion pins above, applied to the numbers this merge changed.
+
+
+def test_claude_md_approved_screen_count_matches_screens_ts():
+    """`frontend/tests/screens.ts`'s `SCREENS` grew from 28 (Browse V3) to 43 once Wave 2a's
+    fifteen account-screen states (spec §6, controller amendment A-S5) were appended, and
+    CLAUDE.md's "Layout" line names the count by hand. Counted the same way
+    `frontend/tests/cross-plan-deltas.test.ts` counts it on the TypeScript side (`SCREENS.length`);
+    here it is a regex over the array literal, since nothing in this suite runs a TS parser."""
+    screens_ts = (ROOT / "frontend" / "tests" / "screens.ts").read_text()
+    # Anchored to the START of a line: several steps also call `getByRole(..., { name: '...' })`,
+    # which is the SAME four characters but not a new `Screen` entry — the naive substring count
+    # read 48 here, not 43, until this anchored it (measured while writing this pin).
+    count = len(re.findall(r"^\s*\{ name: '", screens_ts, re.MULTILINE))
+    assert count > 28, "frontend/tests/screens.ts lost states, or the `{ name: '...` marker changed"
+
+    claude = (ROOT / "CLAUDE.md").read_text()
+    layout = next((line for line in claude.splitlines() if line.startswith("`frontend/` Vue app")), None)
+    assert layout is not None, "CLAUDE.md's Layout line is missing or no longer starts with `frontend/` Vue app"
+    assert f"the {count} approved states" in layout, (
+        f"CLAUDE.md's Layout line does not name {count}, frontend/tests/screens.ts's real SCREENS.length: {layout!r}"
+    )
+
+
+def test_runbook_names_the_five_account_routes():
+    """Task S6. Five routed pages joined the app with the account screens
+    (`frontend/src/router/routes.ts`): `/signup`, `/forgot` (no token) and `/verify`, `/reset`,
+    `/accept-invite` (each reads a `?token=` once). An operator reading a bug report about one of
+    them needs the runbook to name it — the same "a path here is a path the server serves" contract
+    `test_identity_runbook_endpoints_exist` holds the API paths to, extended to the frontend
+    routes the verify/reset/invite links and a bare sign-up/forgot visit actually open."""
+    text = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    missing = [r for r in ("/signup", "/forgot", "/verify", "/reset", "/accept-invite") if f"`{r}`" not in text]
+    assert missing == [], f"docs/RUNBOOK-identity.md does not name these account routes: {missing}"
+
+
+def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
+    """The merge of this branch's account-screen amendments (A8, A9) with `main`'s A10/A11 grew
+    both the family count and the entry count `CLAUDE.md`'s "Source of truth" paragraph states by
+    hand — it read "Nine families, 54 entries … 30 literals" before this task and named A10/A11
+    but not A8/A9, the same drift class the pre-merge count went stale by.
+
+    Families: a literal amendment's id (`A2`, `A2.2`, `A5.3a`, `A10.2`, …) always starts `A` then a
+    number, so its family is that number; A1 itself never appears as a literal id — it is DERIVED
+    (`deriveTypographyB`, driven by V2 vs the pristine bundle) — so it is added by hand as the one
+    family the regex cannot see. Entries: the literal count plus A1's own derived count, read from
+    `design-amendments.test.ts`'s own `Array.from({ length: N }, ...)` rather than duplicated here,
+    so the two files cannot drift against each other silently."""
+    ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
+    literal_families = re.findall(r"id: 'A(\d+)", ts)
+    assert literal_families, "frontend/tests/design-amendments.ts: no literal amendment ids found (id: 'A<n>...)"
+    family_count = len({int(n) for n in literal_families}) + 1  # +1 for A1, derived not literal
+    literal_count = len(literal_families)
+
+    test_ts = (ROOT / "frontend" / "tests" / "design-amendments.test.ts").read_text()
+    a1_match = re.search(r"Array\.from\(\{ length: (\d+) \}, \(_, i\) => `A1\.\$\{i \+ 1\}`\)", test_ts)
+    assert a1_match, "design-amendments.test.ts no longer derives A1's ids from Array.from({ length: N }, ...)"
+    a1_count = int(a1_match.group(1))
+    entry_count = literal_count + a1_count
+
+    number_words = {n: w for n, w in enumerate(
+        ("Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+         "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen"))}
+    assert family_count in number_words, f"no spelled-out word on hand for {family_count} families"
+
+    claude = (ROOT / "CLAUDE.md").read_text()
+    assert f"{number_words[family_count]} families, {entry_count} entries" in claude, (
+        f"CLAUDE.md's family/entry count sentence does not match design-amendments.ts: "
+        f"{family_count} families, {entry_count} entries ({a1_count} derived + {literal_count} literals)"
+    )
+    assert f"A1's {a1_count} derived edits plus {literal_count} literals" in claude
+
+
+def test_local_amendments_row_count_matches_design_amendments():
+    """`LOCAL_AMENDMENTS.md` carries one table row per amendment id, with A1's derived edits
+    collapsed to a single row (`frontend/tests/design-amendments.test.ts` proves the collapse and
+    the ordering on the TypeScript side); here the row count is cross-checked against the same
+    literal-id count the family/entry test above reads, so a row silently added or dropped on
+    either side fails here rather than only in the frontend suite."""
+    ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
+    literal_count = len(re.findall(r"id: 'A(\d+)", ts))
+    md = (ROOT / "docs" / "design-reference" / "design_handoff_practice_match_v3" / "LOCAL_AMENDMENTS.md").read_text()
+    rows = re.findall(r"^\|\s*(A[\w.]+)\s*\|", md, re.MULTILINE)
+    assert len(rows) == literal_count + 1, (
+        f"LOCAL_AMENDMENTS.md has {len(rows)} rows; expected {literal_count + 1} "
+        f"({literal_count} literal amendments + one collapsed A1 row)"
+    )

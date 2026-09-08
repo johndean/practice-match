@@ -248,8 +248,13 @@ request path talks to Resend, so a missing email is one of five things — check
    `provider_id`, and check `RESEND_WEBHOOK_SECRET` is set on the api — unset, the webhook answers
    `401` to every call rather than trusting one.
 
-The links inside verify and reset mail point at `LINK_BASE_URL`. A wrong value sends people to the
-other environment, which looks exactly like "the link doesn't work".
+The app serves five account routes: `/signup` and `/forgot` (no token) and `/verify`, `/reset`,
+`/accept-invite` (each reads a `?token=` from the query string once and never writes one back into
+the address bar). The links inside verify and reset mail, and the invite link
+`scripts/bootstrap_admin.py` prints (§1 — it is handed over directly, never queued as mail), all
+point at `LINK_BASE_URL` plus one of those three: `/verify?token=…`, `/reset?token=…`,
+`/accept-invite?token=…`. A wrong `LINK_BASE_URL` value sends people to the other environment,
+which looks exactly like "the link doesn't work".
 
 ## 9. A locked-out member
 
@@ -299,10 +304,15 @@ While it is mismatched the webhook answers `401`, so bounces are not recorded �
 
 ## 11. Test and QA accounts
 
-`scripts/seed_persona.py` seeds the six accounts the visual suite and a QA click-through need — three
+`scripts/seed_persona.py` seeds the ten accounts the visual suite and a QA click-through need — three
 members (`buyer@`, `seller@`, `design@practice-match.test`, all "Dr. Rachel Mendes of the StartUp
-Club", differing only in grants) and three applicants (`pending@`, `needs-review@`,
-`declined@practice-match.test`), one per gate state. Idempotent; run it as often as you like.
+Club", differing only in grants), three applicants (`pending@`, `needs-review@`,
+`declined@practice-match.test`, one per gate state, each with a real application row) and four
+identity-screen accounts (`unverified@`, `verify-me@`, `verified@`, `invited@practice-match.test`) —
+one per state the sign-up/verify/forgot/reset/accept-invite screens start from. `verify-me@` exists
+solely to own the twelve `verify` fixture tokens, so consuming one during a test never confirms the
+`unverified@` account the check-email/resend states need to stay unverified. Idempotent; run it as
+often as you like.
 
 ```bash
 PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py
@@ -318,3 +328,33 @@ PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py
   `EMAIL_ALLOWLIST` can stay empty.
 * These are not a way in for a real reviewer. Real people get `scripts/bootstrap_admin.py` (§1) and
   a grant (§4).
+
+## 12. QA parity run
+
+Any Playwright invocation pointed at a live `PW_APP_URL` — visual, DOM, smoke, the account flows,
+whichever project — reseeds QA's fixtures automatically, before the first test AND after the last
+(`frontend/tests/global-setup.ts` / `global-teardown.ts`, Task S7): the run needs no manual seed
+step and cannot leave QA's fixtures mutated for whoever opens it next.
+
+```bash
+railway status                                                                  # must print: Project: Practice Match
+railway variables --service api --environment QA --json > /tmp/pm-qa-vars.json  # names AND values — never cat this file
+env $(python3 -c 'import json; d = json.load(open("/tmp/pm-qa-vars.json")); print(" ".join(f"{k}={d[k]}" for k in ("DATABASE_URL","PERSONA_PASSWORD","API_SECRET_KEY","ENVIRONMENT","REDIS_URL")))') \
+    PW_APP_URL=https://qa.foundation.vin npx playwright test --project=app
+rm -f /tmp/pm-qa-vars.json
+```
+
+* The reseed needs exactly five variables — `DATABASE_URL`, `PERSONA_PASSWORD`, `API_SECRET_KEY`,
+  `ENVIRONMENT`, `REDIS_URL` — pulled from Railway in the one JSON read above and handed straight
+  into the subprocess environment; a refusal names whichever of the five is missing. Never print
+  the file, and delete it when you are done.
+* It refuses any host outside `qa.foundation.vin`, `localhost` or `127.0.0.1`, and refuses
+  `ENVIRONMENT=production` outright — the run does not start rather than reseeding the wrong
+  database. What it prints instead is the target database name and host, never the DSN.
+* QA's real sign-in rate limit stays real: sixteen of `SIGNIN_IP`'s thirty sign-ins per FIXED
+  fifteen-minute window are enough for one full parity run, so budget **one run per window**. A
+  `429` mid-run means wait for the quarter-hour boundary and re-run — never loosen the limit to
+  make it pass.
+* Only **one remote run at a time**: the fixture restoration is unconditional and the throwaway
+  `e2e-…@example.org` sweep is global, so a second run started before the first finishes races the
+  same fixtures and addresses.
