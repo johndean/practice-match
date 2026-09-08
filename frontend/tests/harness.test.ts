@@ -561,8 +561,13 @@ describe('driverFor — which target the page is on (A-I8)', () => {
   });
 
   it('defaults to the app project\'s own origin, which is what reach() relies on', () => {
-    expect(driverFor(`${appOrigin({})}/browse`)).toBe('app');
-    expect(driverFor(`${referenceOrigin({})}/`)).toBe('reference');
+    // `appOrigin()`/`referenceOrigin()` with NO argument — the same environment lookup
+    // `driverFor`'s own default parameter uses (`appUrl = appOrigin()`, harness.ts). `appOrigin({})`
+    // pins the constant `http://localhost:5173` regardless of the real environment, so under
+    // `PW_APP_PORT` this URL and driverFor's internal default disagreed and the test failed for a
+    // reason unrelated to what it is meant to pin (I12, housekeeping).
+    expect(driverFor(`${appOrigin()}/browse`)).toBe('app');
+    expect(driverFor(`${referenceOrigin()}/`)).toBe('reference');
   });
 
   it('refuses a page that has not navigated, rather than guessing the reference', () => {
