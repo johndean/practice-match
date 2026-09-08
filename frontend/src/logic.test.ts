@@ -1340,7 +1340,7 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
 // ---------------------------------------------------------------------------------------
 describe('A13 — the metro dropdown', () => {
   const MARKET_KEYS = ['Austin, TX', 'Sacramento, CA', 'Orlando, FL', 'Atlanta, GA'];
-  // M4 (review, round 1): three cases below arm real `document` listeners through
+  // M4 (review, round 1): the cases below that arm real `document` listeners through
   // `componentDidMount`. Unmounting only on the happy path leaves a listener bound to a dead
   // component for the rest of the FILE the moment an assertion fails, so the teardown is
   // unconditional here. `componentWillUnmount` is a no-op on a component that never mounted.
