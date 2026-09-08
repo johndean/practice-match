@@ -707,6 +707,10 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin fea
 
 ---
 
+**Controller amendment A-C3 (2026-09-08; Task A3 under A-C1 ¶4/¶8 and A-C2).** (1) `ObjectStore` has no `put_immutable`: the archive writes through the generic interface — `exists(key)` then `put(key, data, content_type)`, skipping a key that already exists (the archive is append-only by convention, tested). The plan's "Type consistency" note is corrected accordingly. (2) `require_contact(env) -> str` sits beside `require_key(env) -> str`: both `SystemExit(3)` at the ingest and CLI entry points only, naming the missing variable; the `User-Agent` is `PracticeMatch/<version> (<contact>)` with the contact taken from `CENSUS_CONTACT_EMAIL` — never a default address, never a developer's own (A-C1 ¶4). (3) `CensusClient` never logs, prints or embeds the key anywhere but the query string it sends; `redact()` strips `key=` from every logged or raised URL (tested with a fake key). (4) No live call in tests: `httpx.MockTransport` throughout; the QA worker now carries real `CENSUS_API_KEY`/`CENSUS_CONTACT_EMAIL` values (set by John), but nothing loads live until A5–A7 and the validation gates exist.
+
+---
+
 ### Task A3: Census Data API client — key, timeouts, retry policy, concurrency, archive, sentinels, variable validation
 
 **Files:**
