@@ -19,13 +19,13 @@ Railway project **Practice Match** (id `d20ecd90-2855-4b7d-957d-96a882b3a95d`) �
 | `CONSOLIDATOR_KEYWORDS` | ✓ | | comma-separated employer-domain keywords, VIN Foundation-supplied; an application-review hint only, never a decision — default empty |
 | `LINK_BASE_URL` | ✓ | ✓ | `https://qa.foundation.vin` / `https://foundation.vin` — the origin the verify and password-reset links in transactional email point at; a wrong value sends people to the other environment (Identity plan Task I4) |
 | `EMAIL_ALLOWLIST` | ✓ | ✓ | comma-separated **whole addresses** (not domains) transactional email may be delivered to on any non-production environment. Fail-closed: outside production an **empty** list delivers to **nobody** — every row is recorded `suppressed` — so QA test sign-ups cannot email real people. Ignored on production, which delivers to everyone (Identity plan Task I6) |
-| `DB_POOL_MAX` | ✓ | ✓ | `10` — the size of the psycopg2 **reuse pool** per DSN (`app/db.py`), which is what removes the per-request connect. It does **not** cap how many connections exist: past the pool a caller gets an un-pooled connection rather than an error, so the ceiling on backends is request concurrency, not this number. Bounding that overflow is Sub-project 2's concurrency work (Identity plan Task I9); raise this only if the pool is measured to be the bottleneck (Identity plan Task I4) |
+| `DB_POOL_MAX` | ✓ | ✓ | QA (set 2026-09-08): `10` on api, `4` on worker — the size of the psycopg2 **reuse pool** per DSN (`app/db.py`), which is what removes the per-request connect. uvicorn runs the api as a single process and celery runs `--concurrency=2` (`scripts/start.sh`) plus beat, so the two reuse pools together hold at most 14 idle connections against PostGIS's `max_connections` of 100. It does **not** cap how many connections exist: past the pool a caller gets an un-pooled connection rather than an error — that overflow is per call and closes on return, so the ceiling on backends is request concurrency, not this number. Bounding that overflow is Sub-project 2's concurrency work (Identity plan Task I9); raise this only if the pool is measured to be the bottleneck (Identity plan Task I4) |
 | `MAIL_FROM` | | ✓ | `VIN Foundation — Practice Match <no-reply@foundation.vin>` — the Resend sender. `foundation.vin` is the sender domain only (spec §2); changing it needs the matching Resend DNS records (Identity plan Task I6) |
 | `MAIL_REPLY_TO` | | ✓ | `practicematch@vin.com` — **placeholder**. The mailbox replies to transactional email reach is an open item for the VIN Foundation (spec §10); set the real one before launch (Identity plan Task I6) |
 | `RESEND_API_KEY` | | ✓ | **worker only** — the Resend API key. John holds it; never in git, chat, or CI, same rule as `CENSUS_API_KEY`. `railway variable set RESEND_API_KEY=… --service worker --environment <env>`. A worker without it raises on every `mail.send` beat rather than leaving mail silently queued (Identity plan Task I6) |
 | `RESEND_WEBHOOK_SECRET` | ✓ | | **api only** — the `whsec_…` signing secret Resend shows when the endpoint `https://<host>/api/webhooks/resend` is created. Same handling rule. Unset, the route answers `401` to every call rather than trusting one (Identity plan Task I6) |
 | `CENSUS_API_KEY` | | ✓ | Sub-project 3; John holds it — never in git, chat, or CI. `railway variable set CENSUS_API_KEY=… --service worker --environment <env>` |
-| `PERSONA_PASSWORD` | | | **Not read by any service.** `scripts/seed_persona.py` reads it from the shell, and only outside production: `PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py`. Unset it and the script falls back to its own documented default (`scripts/seed_persona.py`'s `DEFAULT_PASSWORD`); stored on the QA `api` service in Railway as the operator's secret store; read by no service; passed to the seed and the harness through the shell; never on production (A-S6.1) (Identity plan Task I5) |
+| `PERSONA_PASSWORD` | | | **Not read by any service.** `scripts/seed_persona.py` reads it from the shell, and only outside production: `PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py`. Unset it and the script falls back to its own documented default (`scripts/seed_persona.py`'s `DEFAULT_PASSWORD`); held in the operator's macOS Keychain (service `practice-match-qa`, account `PERSONA_PASSWORD`; read with `security find-generic-password -a PERSONA_PASSWORD -s practice-match-qa -w` into a subprocess environment, never printed); read by no service; passed to the seed and the harness through the shell; never on production (A-S6.2, superseding A-S6.1) (Identity plan Task I5) |
 
 ## DNS (verbatim as Railway printed them — Task 8, 2026-09-06)
 
@@ -120,9 +120,10 @@ rather than through the app, so they belong on this page:
 * **QA persona accounts** — `PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py`
   seeds the ten `.test` accounts the visual suite and a QA click-through use. Idempotent, and it
   **refuses on production with no override flag** (exit 2). `PERSONA_PASSWORD` is read from the
-  shell by the script itself; stored on the QA `api` service in Railway as the operator's secret
-  store; read by no service; passed to the seed and the harness through the shell; never on
-  production (A-S6.1).
+  shell by the script itself; held in the operator's macOS Keychain (service `practice-match-qa`,
+  account `PERSONA_PASSWORD`; read with `security find-generic-password -a PERSONA_PASSWORD -s
+  practice-match-qa -w` into a subprocess environment, never printed); read by no service; passed
+  to the seed and the harness through the shell; never on production (A-S6.2, superseding A-S6.1).
 
 ## Automation tokens
 

@@ -418,7 +418,8 @@ export type PersonaKey = keyof typeof PERSONAS;
  * already rotated that account's password (A-S5 ruling 3) — so harness.test.ts can pin both arms
  * without a filesystem.
  *
- * `PERSONA_PASSWORD` (the live QA run's real secret, from Railway) overrides the documented
+ * `PERSONA_PASSWORD` (the live QA run's real secret, from the operator's environment — populated
+ * from the operator's macOS Keychain, never from Railway, A-S6.2) overrides the documented
  * default and cannot override the ROTATED value: after a reset the account has the password the
  * reset set, whatever the environment holds.
  */
