@@ -37,6 +37,17 @@ def auth_headers(cookies, headers=None):
     return {**(headers or {}), "Cookie": "; ".join(f"{k}={v}" for k, v in cookies.items())}
 
 
+def padded_json(total: int, minimal: bytes) -> bytes:
+    """`minimal` (a JSON object literal ending in `}`) padded with spaces before the closing brace
+    to reach exactly `total` bytes. JSON tolerates whitespace between tokens, so the padding never
+    changes what `json.loads` sees — only the byte count a bounded reader counts on the wire
+    (A-SL18 (3), the exact `MAX_JSON_BYTES` boundary)."""
+    assert minimal.endswith(b"}"), minimal
+    pad = total - len(minimal)
+    assert pad >= 0, f"{minimal!r} is already {len(minimal)} bytes, more than {total}"
+    return minimal[:-1] + b" " * pad + b"}"
+
+
 @pytest.fixture(autouse=True)
 def _no_database_without_the_conn_fixture(request, monkeypatch):
     """A test that takes `client` but not `conn` must never open a synchronous connection: without

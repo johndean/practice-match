@@ -29,7 +29,7 @@ from PIL import Image
 
 from app.config import settings
 from app.storage import ObjectStore
-from tests.api.conftest import auth_headers
+from tests.api.conftest import auth_headers, padded_json
 
 BUCKET = "pm-test"
 ENDPOINT = "https://s3.amazonaws.com"
@@ -791,6 +791,37 @@ async def test_a_malformed_json_body_on_reorder_is_a_400_in_the_envelope(client:
     assert response.json() == {"error": {"code": "BAD_JSON", "message": "Body must be JSON."}}
 
 
+async def test_a_reorder_body_at_exactly_the_json_limit_is_accepted(client: Any, conn: Any, redis: Any, member: Any, store: Any) -> None:
+    """A-SL18 (3), Minor-2, the reorder route's own boundary: a fresh listing has no photographs,
+    so `{"ids": []}` is a valid reorder of nothing, padded with spaces to exactly `MAX_JSON_BYTES`."""
+    from app.api import seller_listings as SL
+
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    body = padded_json(SL.MAX_JSON_BYTES, b'{"ids": []}')
+    assert len(body) == SL.MAX_JSON_BYTES
+    response = await client.patch(
+        f"/api/seller/listings/{listing_id}/photos", content=body,
+        headers={**auth_headers(cookies, headers), "Content-Type": "application/json"},
+    )
+    assert response.status_code == 200, response.text
+
+
+async def test_a_reorder_body_one_byte_over_the_json_limit_is_refused(client: Any, conn: Any, redis: Any, member: Any, store: Any) -> None:
+    from app.api import seller_listings as SL
+
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    body = padded_json(SL.MAX_JSON_BYTES + 1, b'{"ids": []}')
+    assert len(body) == SL.MAX_JSON_BYTES + 1
+    response = await client.patch(
+        f"/api/seller/listings/{listing_id}/photos", content=body,
+        headers={**auth_headers(cookies, headers), "Content-Type": "application/json"},
+    )
+    assert response.status_code == 413, response.text
+    assert response.json() == {"error": {"code": "TOO_LARGE", "message": "Body must be no larger than 64 KB."}}
+
+
 async def test_the_draft_read_carries_its_photographs_in_order_and_its_documents(
     client: Any, conn: Any, redis: Any, member: Any, store: Any
 ) -> None:
@@ -1031,7 +1062,13 @@ def test_an_asset_row_is_written_once_with_its_final_storage_key() -> None:
 
     source = Path(SL.__file__).read_text()
     assert "UPDATE listing_asset SET storage_key" not in source
-    assert "storage_key)\n" not in source or "VALUES" in source
+    # Info-1 (A-SL18 (5)): the second half of this guard used to be
+    # `"storage_key)\n" not in source or "VALUES" in source` — the right operand is true of any
+    # version of this module (it has other `VALUES` clauses), so the `or` made the whole assertion
+    # a tautology that could never fail. This one actually names the shape M1 requires: the column
+    # is closed and its `VALUES` clause opens on the SAME line, which is only true of a single
+    # INSERT that carries the final key inline.
+    assert "storage_key) VALUES" in source
 
 
 async def test_a_storage_failure_on_upload_is_a_503_in_the_envelope_and_writes_no_row(
@@ -1166,19 +1203,38 @@ def test_the_store_fixture_only_ever_talks_to_a_host_moto_intercepts() -> None:
         _intercepted_by_moto("https://bucket.up.railway.app")
 
 
-@pytest.mark.parametrize(("disclosed", "status", "expected"), [
-    (True, "published", 200), (False, "published", 403), (True, "draft", 403),
-])
-async def test_a_member_reads_a_document_only_while_the_seller_discloses_it(
-    client: Any, conn: Any, redis: Any, member: Any, store: Any, disclosed: bool, status: str, expected: int
-) -> None:
-    """A-SL16 L1, and D22's own sentence: `documents_disclosed` "is enforced only on the document
-    read route (D19)". The seller's step-7 switch is what says whether a document is locked, and a
-    listing that is not on the market discloses nothing to anybody — the module's comment already
-    promises that "a document stops being readable the moment the listing is unpublished".
+def test_no_test_in_the_suite_can_reach_a_real_non_local_host() -> None:
+    """A-SL18 (5), review Info-4: `_intercepted_by_moto` above guards the `store` fixture's OWN
+    endpoint alone — a test that repointed `settings.s3_*` after `store` yields, or built an
+    `ObjectStore` directly, was unguarded. `tests/conftest.py::_no_stray_network` is session-scoped
+    and autouse, so it is already active for every test in the suite without being asked for by
+    name; this proves it actually bites, the same way the test above proves `_intercepted_by_moto`
+    does."""
+    import socket
 
-    The owner and staff arms are untouched: they read either way, which is what makes this the
-    attachment point for the requests sub-project's buyer-with-an-accepted-request arm."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock, pytest.raises(AssertionError):
+        sock.connect(("example.com", 80))
+
+
+@pytest.mark.parametrize(("disclosed", "status"), [
+    (True, "published"), (False, "published"), (True, "draft"), (False, "draft"),
+])
+async def test_a_non_owner_member_cannot_read_a_document_however_disclosure_and_status_are_set(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any, disclosed: bool, status: str
+) -> None:
+    """Major-1, A-SL18 (1). The round this pins replaces served `documents_disclosed` and
+    `status = 'published'` as SUFFICIENT on their own — any signed-in member could then download a
+    seller's financial packet the moment the seller turned off "Keep floor plans and financial
+    packet locked" on a published listing, with no request and no accept. Spec D19 and §5's route
+    table allow only the owner and staff (`listing.review`) until the requests sub-project adds the
+    buyer-with-an-accepted-request arm, so a non-owner, non-staff member is refused exactly as it
+    was refused before that branch existed — the same 403 `LOCKED` body
+    `test_a_document_reads_to_its_owner_and_to_staff_and_to_nobody_else` pins for its own
+    (undisclosed, draft) case, now proved across every combination of the two flags.
+
+    `documents_disclosed` and `status` are still read off the row in `read_document` (as `_disclosed`
+    and `_status`) so the requests sub-project's buyer arm has somewhere to AND them in — neither
+    unlocks the document on its own."""
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
     signed = auth_headers(cookies, headers)
@@ -1191,7 +1247,8 @@ async def test_a_member_reads_a_document_only_while_the_seller_discloses_it(
 
     response = await client.get(f"/api/seller/listings/{listing_id}/documents/{asset_id}",
                                 headers=auth_headers(buyer_cookies, buyer_headers))
-    assert response.status_code == expected, response.text
+    assert response.status_code == 403, response.text
+    assert response.json() == {"error": {"code": "LOCKED", "message": "This document is locked until the seller approves access."}}
     assert (await client.get(f"/api/seller/listings/{listing_id}/documents/{asset_id}",
                              headers=signed)).status_code == 200
 

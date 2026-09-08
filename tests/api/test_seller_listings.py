@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-from tests.api.conftest import auth_headers
+from tests.api.conftest import auth_headers, padded_json
 
 
 def _seller(member: Any) -> tuple[Any, dict[str, str], dict[str, str]]:
@@ -573,6 +573,44 @@ async def test_a_required_numeric_field_still_refuses_a_blank(client: Any, conn:
     assert response.json() == {"error": {"code": "BAD_REQUEST", "message": f"{field} must be a number."}}
 
 
+@pytest.mark.parametrize(("step", "field"), [(1, "est"), (3, "price")])
+async def test_a_required_numeric_field_still_refuses_a_json_null(
+    client: Any, conn: Any, member: Any, step: int, field: str
+) -> None:
+    """The `null` counterpart of `test_a_required_numeric_field_still_refuses_a_blank` (A-SL18 (5),
+    Info-2): only an OPTIONAL numeric treats a JSON `null` as a clear."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    response = await client.patch(f"/api/seller/listings/{listing_id}?step={step}", json={field: None},
+                                  headers=auth_headers(cookies, headers))
+    assert response.status_code == 400
+    assert response.json() == {"error": {"code": "BAD_REQUEST", "message": f"{field} must be a number."}}
+
+
+@pytest.mark.parametrize(("step", "fields", "column"), [
+    (4, {"docs": None}, "docs"), (4, {"rooms": None}, "rooms"), (4, {"sqft": None}, "sqft"),
+    (3, {"rev": None}, "rev"),
+])
+async def test_an_optional_numeric_field_is_cleared_by_a_json_null(
+    client: Any, conn: Any, member: Any, step: int, fields: dict[str, Any], column: str
+) -> None:
+    """A-SL18 (5), Info-2: the SL3 fix round answered only ONE of the two clearing idioms an
+    adapter might send. `{"rev": ""}` cleared the column; `{"rev": null}` was a 400. Null and blank
+    are the same seller intent — `state.w`'s `""` and a `JSON.stringify` of an adapter field an
+    autosave never populated are both "nothing to save here", and the wizard's PATCH must treat them
+    alike."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    signed = auth_headers(cookies, headers)
+    await client.patch(f"/api/seller/listings/{listing_id}?step={step}", json={column: "7"}, headers=signed)
+
+    response = await client.patch(f"/api/seller/listings/{listing_id}?step={step}", json=fields, headers=signed)
+    assert response.status_code == 200, response.text
+    with conn.cursor() as cur:
+        cur.execute(f"SELECT {column} FROM listing WHERE id=%s", (listing_id,))
+        assert cur.fetchone() == (None,)
+
+
 @pytest.mark.parametrize("status", ["in_review", "paused", "declined", "published"])
 async def test_blanking_a_required_field_on_a_submitted_listing_is_refused_not_a_500(
     client: Any, conn: Any, member: Any, status: str
@@ -621,6 +659,48 @@ async def test_a_body_that_is_not_json_at_all_is_refused_in_the_envelope(client:
     )
     assert response.status_code == 400, response.text
     assert response.json() == {"error": {"code": "BAD_JSON", "message": "Body must be JSON."}}
+
+
+async def test_a_patch_body_at_exactly_the_json_limit_is_accepted(client: Any, conn: Any, member: Any) -> None:
+    """A-SL18 (3), Minor-2: H1 bounded every upload's body; a chunked, length-less JSON body on this
+    same authenticated PATCH surface was still read whole into memory by `request.body()` — the
+    identical failure mode, on the identical threat model. `MAX_JSON_BYTES` is 64 KB and the
+    boundary is EXACT (no `MULTIPART_OVERHEAD` slack, unlike the upload routes): the padding here
+    is spaces before the closing brace, which `json.loads` ignores, so the body is genuinely valid
+    and the PATCH genuinely applies."""
+    from app.api import seller_listings as SL
+
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    body = padded_json(SL.MAX_JSON_BYTES, b'{"docs": "7"}')
+    assert len(body) == SL.MAX_JSON_BYTES
+    response = await client.patch(
+        f"/api/seller/listings/{listing_id}?step=4", content=body,
+        headers={**auth_headers(cookies, headers), "Content-Type": "application/json"},
+    )
+    assert response.status_code == 200, response.text
+    with conn.cursor() as cur:
+        cur.execute("SELECT docs FROM listing WHERE id=%s", (listing_id,))
+        assert cur.fetchone() == (7,)
+
+
+async def test_a_patch_body_one_byte_over_the_json_limit_is_refused(client: Any, conn: Any, member: Any) -> None:
+    """The other half of the boundary: one byte past `MAX_JSON_BYTES` is a 413, not a 200."""
+    from app.api import seller_listings as SL
+
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    body = padded_json(SL.MAX_JSON_BYTES + 1, b'{"docs": "7"}')
+    assert len(body) == SL.MAX_JSON_BYTES + 1
+    response = await client.patch(
+        f"/api/seller/listings/{listing_id}?step=4", content=body,
+        headers={**auth_headers(cookies, headers), "Content-Type": "application/json"},
+    )
+    assert response.status_code == 413, response.text
+    assert response.json() == {"error": {"code": "TOO_LARGE", "message": "Body must be no larger than 64 KB."}}
+    with conn.cursor() as cur:
+        cur.execute("SELECT docs FROM listing WHERE id=%s", (listing_id,))
+        assert cur.fetchone() == (None,)
 
 
 @pytest.mark.parametrize(("step", "field", "value"), [

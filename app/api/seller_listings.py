@@ -85,6 +85,11 @@ Reader = Annotated[S.Principal, Depends(REQUIRE_LISTING_READ)]
 MAX_LIST = 200
 DEFAULT_LIMIT = 50
 MAX_TEXT = 4_000
+# A-SL18 (3), Minor-2. H1 bounded every upload's body; a chunked, length-less JSON body on the two
+# PATCH routes below (`patch_step`, `reorder_photos`) was still read whole into memory by
+# `request.body()` — the same unbounded-body exposure, from the same authenticated seller, on the
+# same surface. 64 KB is generous for a single wizard step's whitelisted fields or a photo id list.
+MAX_JSON_BYTES = 64 * 1024
 # The transitions the SELLER's own routes write. They name no permission by design — `account.self`
 # does the same for `applications.submit`/`answer`/`reapply` — so the AST drift test never sees
 # them and there is no list to add them to. One namespace, so an auditor greps `listing.` once.
@@ -150,8 +155,11 @@ def _number(field: str, raw: object) -> int | None:
     D10's last paragraph: strip `,`, `$` and spaces, refuse anything else. Not `int(float(x))` — a
     seller typing "1.45m" must be told, not silently given a practice worth one dollar.
 
-    An empty string CLEARS an optional field (A-SL13 M1) and still refuses a required one, and a
-    number the column cannot hold is a 422 rather than a 500 (review L3)."""
+    An empty string OR a JSON `null` CLEARS an optional field (A-SL13 M1; the `null` half is
+    A-SL18 (5), Info-2 — the two clearing idioms are the same seller intent) and both still refuse
+    a required one, and a number the column cannot hold is a 422 rather than a 500 (review L3)."""
+    if raw is None and field in OPTIONAL_NUMERIC:
+        return None
     if isinstance(raw, int) and not isinstance(raw, bool):
         cleaned = str(raw)
     elif isinstance(raw, str):
@@ -533,8 +541,11 @@ MAX_DOCUMENTS = 6
 DOCUMENT_HEADERS = {"Content-Disposition": "attachment", "X-Content-Type-Options": "nosniff",
                     "Cache-Control": "private, no-store"}
 # What a multipart envelope costs on top of the file itself: two boundaries, the part headers and
-# the `kind` field. The declared `Content-Length` is checked against `limit + this` BEFORE the body
-# is read, and what actually arrived is checked against `limit` exactly.
+# the `kind` field. There is no `Content-Length` pre-check any more — `_bounded_stream` bounds the
+# STREAMED total at `limit + this` as the body arrives, and `_upload_bytes` then checks what
+# actually arrived against `limit` exactly. Charged against the whole envelope rather than measured
+# per file, so a legitimate file at exactly `limit` bytes with an unusually long filename or extra
+# form fields is a spurious 413 — accepted as a conservative bound (review Info-3).
 MULTIPART_OVERHEAD = 4096
 MAX_FILENAME = 200
 
@@ -634,23 +645,31 @@ def _too_large(limit: int) -> str:
     return f"The file is larger than {limit // (1024 * 1024)} MB."
 
 
-async def _bounded_stream(request: Request, limit: int) -> AsyncGenerator[bytes, None]:
+async def _bounded_stream(
+    request: Request, limit: int, *, overhead: int = MULTIPART_OVERHEAD, message: str | None = None
+) -> AsyncGenerator[bytes, None]:
     """The request body chunk by chunk, refusing the moment the running total passes the ceiling.
 
-    A-SL16 H1, and the reason the parser is driven by hand rather than through `request.form()`:
-    `Content-Length` is a claim, a `Transfer-Encoding: chunked` request makes none at all, and
-    Starlette puts NO ceiling on a file part — `max_part_size` guards data parts only
+    A-SL16 H1, and the reason the multipart parser is driven by hand rather than through
+    `request.form()`: `Content-Length` is a claim, a `Transfer-Encoding: chunked` request makes none
+    at all, and Starlette puts NO ceiling on a file part — `max_part_size` guards data parts only
     (`starlette/formparsers.py`), while a file part streams into a `SpooledTemporaryFile` whose
     `spool_max_size` is the memory→disk threshold rather than a limit. So one authenticated request
     with no declared length could stream without bound onto the container's disk and then be read
     whole into memory. Bounding the stream is what makes the ceiling real: the refusal is raised
-    while the body is still arriving, and at most `limit + MULTIPART_OVERHEAD` bytes are ever
-    buffered anywhere."""
+    while the body is still arriving, and at most `limit + overhead` bytes are ever buffered
+    anywhere.
+
+    `_json_body` reuses this same generator with `overhead=0` (A-SL18 (3), Minor-2): the JSON PATCH
+    routes have no multipart envelope to allow for, so their boundary is `limit` exactly rather than
+    `limit + MULTIPART_OVERHEAD` — a body of exactly `limit` bytes is accepted, one byte more is
+    not. `message` overrides `_too_large`'s "file" wording for a caller that is bounding something
+    else."""
     total = 0
     async for chunk in request.stream():
         total += len(chunk)
-        if total > limit + MULTIPART_OVERHEAD:
-            raise Refusal("TOO_LARGE", _too_large(limit), 413)
+        if total > limit + overhead:
+            raise Refusal("TOO_LARGE", message or _too_large(limit), 413)
         yield chunk
 
 
@@ -700,9 +719,16 @@ async def _upload_bytes(request: Request, limit: int) -> tuple[str, str, bytes, 
 
 
 async def _json_body(request: Request) -> dict[str, Any]:
-    """The request's JSON object, or a `Refusal` — never a raw `JSONDecodeError` (SL3 review)."""
+    """The request's JSON object, or a `Refusal` — never a raw `JSONDecodeError` (SL3 review).
+
+    Read through `_bounded_stream` at `MAX_JSON_BYTES` with no multipart overhead (A-SL18 (3),
+    Minor-2): both PATCH routes used to read the whole body through `request.body()`, which has no
+    ceiling at all — the same unbounded-body exposure H1 closed on the upload routes, left standing
+    here on the same authenticated surface."""
+    raw = b"".join([chunk async for chunk in
+                     _bounded_stream(request, MAX_JSON_BYTES, overhead=0, message="Body must be no larger than 64 KB.")])
     try:
-        body = await request.json() if await request.body() else {}
+        body = json.loads(raw) if raw else {}
     except ValueError as exc:
         raise Refusal("BAD_JSON", "Body must be JSON.", 400) from exc
     if not isinstance(body, dict):
@@ -950,20 +976,20 @@ async def read_document(listing_id: str, asset_id: str, principal: Reader) -> Re
             found = cur.fetchone()
         if found is None:
             raise Refusal("NOT_FOUND", "No such document.", 404)
-        content_type, key, seller_id, disclosed, status = found
-        # Three ways in, and the third is the one the design draws. The owner and staff read a
-        # document whatever its flags say; everybody else reads it only while the seller's step-7
-        # switch discloses it AND the listing is on the market — D22's "enforced only on the
-        # document read route", and this module's own promise that a document stops being readable
-        # the moment the listing is unpublished (review L1).
+        content_type, key, seller_id, _disclosed, _status = found
+        # Owner or staff, and NOTHING else (Major-1, A-SL18 (1)): spec D19 and §5's route table
+        # allow only those two until the requests sub-project adds a buyer-with-an-accepted-request
+        # arm, and `documents_disclosed`/`status` alone are not that arm — a round of this module
+        # once let disclosure and "published" stand in for it, which let ANY signed-in member
+        # download a document the moment a seller flipped one switch, with no request and no
+        # accept. `_disclosed`/`_status` stay read off the row, unused, as the exact two values that
+        # future arm will AND in beside this boolean (`… or (has_accepted_request and _disclosed and
+        # _status == "published")`) — not inferred from the query, so the query needs no change
+        # when that arm lands.
         #
         # Staff by the MATRIX, not by a hard-coded role tuple: `listing.review` is the staff/admin
-        # capability the reviewer already holds, so a later role change moves both together. The
-        # buyer-with-an-accepted-request arm the requests sub-project adds attaches HERE, beside
-        # `disclosed`, and needs no other change.
-        allowed = (seller_id == principal.account_id
-                   or P.allowed("listing.review", principal)
-                   or (disclosed and status == "published"))
+        # capability the reviewer already holds, so a later role change moves both together.
+        allowed = seller_id == principal.account_id or P.allowed("listing.review", principal)
         if not allowed:
             raise Refusal("LOCKED", "This document is locked until the seller approves access.", 403)
         store = store_for_request()

@@ -21,6 +21,44 @@ from httpx import ASGITransport
 import app.db
 
 
+@pytest.fixture(scope="session", autouse=True)
+def _no_stray_network():
+    """No test in the whole suite may open a real socket to anything but this machine (A-SL18 (5),
+    review Info-4).
+
+    `tests/api/test_listing_assets.py::_intercepted_by_moto` guards the `store` fixture's OWN
+    endpoint alone — it says nothing about a test that repoints `settings.s3_*` after `store`
+    yields, or builds an `ObjectStore` directly, so it stays (it also asserts something this guard
+    cannot: that the CONFIGURED endpoint string looks like an AWS host, independent of whether any
+    request is ever made). This fixture is the suite-wide backstop the review's Info-4 asked for:
+    session-scoped and autouse, so every test is covered without asking for it by name.
+
+    Patching `socket.socket.connect` is safe to do UNCONDITIONALLY rather than only while a `store`
+    fixture is active, because nothing in this suite needs a real non-local connection: moto mocks
+    botocore's own `before-send` event (`moto.core.botocore_stubber.BotocoreStubber`), which answers
+    the request before botocore ever asks urllib3 for a socket — proved by the `store` fixture's own
+    tests passing under this guard — Postgres goes through libpq's C sockets, never Python's
+    `socket` module, and every test that touches Redis for real reaches it at `localhost`/
+    `127.0.0.1`, while the rate-limit and cache tests that care about the DISTINCTION between a
+    local and a non-local Redis URL (`tests/test_reset_rate_limits.py`) test a pure string parser,
+    never an actual connection. Loopback stays open for exactly those real, local connections."""
+    import socket
+
+    allowed_hosts = {"127.0.0.1", "::1", "localhost"}
+    original_connect = socket.socket.connect
+
+    def guarded_connect(self: socket.socket, address: object) -> object:
+        host = address[0] if isinstance(address, tuple) else address
+        if host not in allowed_hosts:
+            raise AssertionError(f"test suite attempted a real network connection to {address!r}")
+        return original_connect(self, address)
+
+    patch = pytest.MonkeyPatch()
+    patch.setattr(socket.socket, "connect", guarded_connect)
+    yield
+    patch.undo()
+
+
 @pytest.fixture
 def dist(tmp_path: Path) -> Path:
     d = tmp_path / "dist"
