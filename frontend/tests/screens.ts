@@ -271,7 +271,10 @@ export const SCREENS: Screen[] = [
   // state, but the panel the ruling is ABOUT would never be photographed or serialised. Reached
   // the same way `browse-layer-menu` is: click, then wait for the thing the state exists to show,
   // then the 400 ms settle every Browse state was taken with.
-  { name: 'browse-metro-menu', steps: async (p) => { await browse(p); await p.getByRole('button', { name: 'Metro area' }).click(); await p.getByRole('listbox', { name: 'Metro area' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
+  // The trigger is addressed as a COMBOBOX, not a button: the final whole-branch review's I1
+  // (ruled, A13.3) gave it `role="combobox"`, the role ARIA 1.2 supports `aria-activedescendant`
+  // on, so `getByRole('button', …)` no longer reaches it.
+  { name: 'browse-metro-menu', steps: async (p) => { await browse(p); await p.getByRole('combobox', { name: 'Metro area' }).click(); await p.getByRole('listbox', { name: 'Metro area' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
   // A14: the Give dropdown, open — the 45th approved state, APPENDED for the same reason A13's
   // was (`cross-plan-deltas.test.ts`'s `SCREENS.slice(0, 28)` pins the 28 Browse V3 states to
   // their positions; a new state goes on the end, never in the middle).

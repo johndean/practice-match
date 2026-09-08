@@ -1163,9 +1163,12 @@ const A13_1: Amendment = {
     '',
     '  // Bringing a row into view. The panel scrolls at its max-height as soon as the market list',
     '  // is longer than the design\'s four, so both the arrow keys and the panel\'s own mount need',
-    '  // this: one while the rows are already there, one at the moment they arrive.',
+    '  // this: one while the rows are already there, one at the moment they arrive. The row is',
+    '  // resolved through the field this component recorded, not across the document: the id is',
+    '  // one this component mints, and setMarket\'s own trigger lookup is scoped the same way.',
     '  scrollMarketOption = (i) => {',
-    '    const row = document.getElementById("market-opt-" + i);',
+    '    const host = this._marketMenuEl;',
+    '    const row = host && host.querySelector("#market-opt-" + i);',
     '    if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });',
     '  };',
     '',
@@ -1202,7 +1205,11 @@ const A13_2: Amendment = {
     '      // The metro SELECT is a dropdown list in this design\'s own style, not the operating',
     '      // system\'s popup: the same trigger + role="listbox" panel the Market data card uses.',
     '      marketMenuOpen: !!s.marketMenu,',
-    '      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")) }),',
+    '      // `giveMenu: false`: opening one menu closes the others, in every direction (final',
+    '      // review m7). The global pointerdown and focusout listeners covered a pointer and a',
+    '      // Tab; a pure-keyboard user could hold this listbox and the header\'s Give menu open',
+    '      // at once, and then shut both with one Escape.',
+    '      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false }),',
     '      // On the TRIGGER, which is always rendered: a shut menu has no active descendant, and',
     '      // null is what both renderers omit the attribute for (a string would spell a dead id).',
     '      marketActiveId: s.marketMenu ? "market-opt-" + s.marketMenuAt : null,',
@@ -1264,7 +1271,19 @@ const A13_2: Amendment = {
  *  (V3:431–434) and its panel (V3:523–534) with the chip swatch left out — markets have no colour
  *  ramp, and absent beats faked. Each row carries an `id` and the TRIGGER carries
  *  `aria-activedescendant` — the focused element is the only place a screen reader reads it, and
- *  focus stays on the trigger throughout (round 3 ruling; it sat on the panel, inert, in round 2). */
+ *  focus stays on the trigger throughout (round 3 ruling; it sat on the panel, inert, in round 2).
+ *
+ *  Widened by the final whole-branch review's I1 (ruled): the trigger is `role="combobox"`, and
+ *  the option rows carry `tabindex="-1"`. ARIA 1.2 supports `aria-activedescendant` on
+ *  `application`, `combobox`, `group`, `textbox` and the composite widget roles — NOT on
+ *  `button` — so the whole attribute chain above hung off a role that does not carry it and was
+ *  liable to be dropped on the way to the accessibility tree. This markup is the APG Select-Only
+ *  Combobox in every other respect; saying so is one attribute. `tabindex="-1"` is the other half
+ *  of the same pattern: a listbox driven by `aria-activedescendant` keeps focus on the element
+ *  that holds it, and without it Tab from the trigger walked INTO the options, where
+ *  `marketMenuKeys` is not bound and the arrow keys did nothing. Both are DOM-only; no pixel
+ *  moves, and React 18 passes a lowercase `tabindex` through as a plain attribute, exactly as
+ *  Vue does, so the two targets stay byte-identical to the DOM oracle. */
 const A13_3: Amendment = {
   id: 'A13.3', ...A13,
   find: [
@@ -1280,14 +1299,14 @@ const A13_3: Amendment = {
   replace: [
     '          <div ref="{{ marketMenuRef }}" style="{{ marketFieldStyle }}">',
     '            <img src="assets/icons/sub-search.svg" alt="" width="14" height="14" style="opacity: .45;">',
-    '            <button onClick="{{ toggleMarketMenu }}" onKeyDown="{{ marketMenuKeys }}" aria-label="Metro area" aria-haspopup="listbox" aria-controls="metro-listbox" aria-expanded="{{ marketMenuOpen }}" aria-activedescendant="{{ marketActiveId }}" style="{{ marketSelectStyle }}">',
+    '            <button onClick="{{ toggleMarketMenu }}" onKeyDown="{{ marketMenuKeys }}" role="combobox" aria-label="Metro area" aria-haspopup="listbox" aria-controls="metro-listbox" aria-expanded="{{ marketMenuOpen }}" aria-activedescendant="{{ marketActiveId }}" style="{{ marketSelectStyle }}">',
     '              <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ marketTriggerLabel }}</span>',
     '              <img src="assets/icons/sub-chevron.svg" alt="" width="14" height="14" style="{{ marketCaretStyle }}">',
     '            </button>',
     '            <sc-if value="{{ marketMenuOpen }}" hint-placeholder-val="{{ false }}">',
     '              <div role="listbox" aria-label="Metro area" id="metro-listbox" ref="{{ marketPanelRef }}" style="position: absolute; left: 0; top: 46px; z-index: 700; width: 300px; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;" class="rf-scroll">',
     '                <sc-for list="{{ marketOptions }}" as="m" hint-placeholder-count="4">',
-    '                  <button onClick="{{ m.go }}" id="{{ m.optId }}" role="option" aria-selected="{{ m.selected }}" style="{{ m.rowStyle }}" style-hover="background: var(--vf-neutral);">',
+    '                  <button onClick="{{ m.go }}" id="{{ m.optId }}" role="option" tabindex="-1" aria-selected="{{ m.selected }}" style="{{ m.rowStyle }}" style-hover="background: var(--vf-neutral);">',
     '                    <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ m.label }}</span>',
     '                    <img src="assets/icons/sub-check-filled.svg" alt="" width="11" height="11" style="{{ m.tickStyle }}">',
     '                  </button>',
@@ -1451,12 +1470,19 @@ const A14_1: Amendment = {
  *  and the trigger's own key handler. Anchored after `toggleUserMenu` (one occurrence), which is
  *  the header block's last key, so the Give keys sit with the header's other two menus. The two
  *  `'Montserrat'` declarations are the ONLY two in the design: A14.6's face reaches this control
- *  and its menu and nothing else, which is the scope John's ruling names. */
+ *  and its menu and nothing else, which is the scope John's ruling names.
+ *
+ *  Two widenings from the final whole-branch review, both ruled. m6: `giveMenuKeys` takes Home
+ *  and End while the menu is open, which the per-row `keys` already had and the trigger — the one
+ *  element a keyboard user starts from — did not; the guard is `marketMenuKeys`'s, so the two
+ *  triggers answer the same keys in the same states. m7: the anchor line `toggleUserMenu` and both
+ *  of Give's own open paths now clear the OTHER menus as well, so "opening me closes you" holds in
+ *  every direction rather than only outward from Give. */
 const A14_2: Amendment = {
   id: 'A14.2', ...A14,
   find: '      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu }),\n',
   replace: [
-    '      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu }),',
+    '      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false }),',
     '      // The Give control, measured on vinfoundation.org (John, 2026-09-08). The literals are',
     '      // the live site\'s, not this design\'s tokens: #339dde is the idle pill, #07386f the',
     '      // hover/open pill and the panel border and the row text, 10px the pill radius, 4.34px',
@@ -1464,7 +1490,9 @@ const A14_2: Amendment = {
     '      giveMenuOpen: !!s.giveMenu,',
     '      // `giveMenuAt: null` on every pointer open: the pending index below belongs to the',
     '      // KEYBOARD, and a stale one would drag a mouse user into the list on the next open.',
-    '      toggleGiveMenu: () => this.setState({ giveMenu: !s.giveMenu, giveMenuAt: null, navMenu: false, userMenu: false }),',
+    '      // `marketMenu` too (final review m7): the invariant is that opening one menu closes',
+    '      // the others, and Browse renders this control and the metro listbox on one screen.',
+    '      toggleGiveMenu: () => this.setState({ giveMenu: !s.giveMenu, giveMenuAt: null, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 }),',
     '      giveMenuRef: (el) => { this._giveMenuEl = el || null; },',
     '      giveButtonRef: (el) => { this._giveButtonEl = el || null; },',
     '      // The panel\'s own mount is the first moment its links exist, so it is where an arrow',
@@ -1501,6 +1529,13 @@ const A14_2: Amendment = {
     '        pick: () => this.setState({ giveMenu: false })',
     '      })),',
     '      giveMenuKeys: (e) => {',
+    '        // Home and End, on the TRIGGER as well as inside the menu, and only while the menu',
+    '        // is open — exactly where marketMenuKeys has them (final review m6). With the menu',
+    '        // shut there is no list for an end to be an end of.',
+    '        if (s.giveMenu && (e.key === "Home" || e.key === "End")) {',
+    '          e.preventDefault();',
+    '          return this.giveFocus(e.key === "Home" ? 0 : -1);',
+    '        }',
     '        if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;',
     '        e.preventDefault();',
     '        const at = e.key === "ArrowDown" ? 0 : -1;',
@@ -1508,7 +1543,7 @@ const A14_2: Amendment = {
     '        // Already-open: the panel is mounted, so focus moves here and now. Opening CANNOT do',
     '        // that — the app\'s setState runs its callback synchronously (dc-logic.js) and Vue',
     '        // has not rendered the panel yet, so the index is seeded and givePanelRef spends it.',
-    '        this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false });',
+    '        this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 });',
     '      },',
     ''
   ].join('\n'),
@@ -1597,6 +1632,43 @@ const A14_5: Amendment = {
   count: 1
 };
 
+/** A14.6 — the face itself (John, 2026-09-08, ruling A14 GO: "Self-host Montserrat 600 under the
+ *  SIL Open Font Licence, scoped exclusively to the Give button and its menu. Keep the rest of the
+ *  design typography unchanged."). One `@font-face` in the helmet's own <style> block, beside the
+ *  `:root` tokens — the design's only stylesheet of its own — pointing at the official Montserrat
+ *  SemiBold woff2 the bundle now ships in `assets/fonts/`, with `OFL.txt` beside it.
+ *
+ *  It reaches the two targets by the two paths every other bundle asset does: the reference server
+ *  serves the bundle root, so `assets/fonts/…` resolves there; the app carries the same rule in
+ *  `frontend/src/styles/global.css` — the helmet's port, where the four Leaflet tooltip rules
+ *  already live — under the platform spec's §3 rule-1 rewrite (`assets/` → `/assets/`), against a
+ *  byte-identical copy in `frontend/public/assets/fonts/`. `frontend/tests/fonts.test.ts` derives
+ *  the app's rule FROM this one and proves the two copies of the file are identical, so the pixel
+ *  gate can never be comparing two different typefaces.
+ *
+ *  Nothing else changes face: `--rf-display` and `--rf-serif` are untouched, and the only two
+ *  declarations naming the family in the whole design are A14.2's trigger and row styles
+ *  (asserted both ways in `design-amendments.test.ts`). A1's ruling — "keep the V2 header and do
+ *  not restyle header or fonts" — is why the scope is stated as a rule and machine-checked rather
+ *  than left to review. */
+const A14_6: Amendment = {
+  id: 'A14.6', ...A14,
+  find: '<style>\n  :root {\n',
+  replace: [
+    '<style>',
+    '  /* Montserrat 600 — the face vinfoundation.org sets the Give button in, self-hosted under',
+    '     the SIL Open Font Licence 1.1 (assets/fonts/OFL.txt, shipped beside the file). Scoped to',
+    '     the Give control and its menu by A14.2; no other element names it. */',
+    '  @font-face {',
+    '    font-family: \'Montserrat\';',
+    '    src: url(\'assets/fonts/Montserrat-SemiBold.woff2\') format(\'woff2\');',
+    '    font-weight: 600; font-style: normal; font-display: swap;',
+    '  }',
+    '  :root {',
+    ''
+  ].join('\n'),
+  count: 1
+};
 /** A14.7 — Tab out of the open menu closes it (review round 1, m2 — ruled). John's ruling named
  *  Escape and outside-click; Tab is the third way out of a menu the keyboard can now enter, and
  *  without it the panel stayed open behind the focus ring — the same "a dropdown a keyboard cannot
@@ -1651,39 +1723,58 @@ const A14_7: Amendment = {
   count: 1
 };
 
-/** A14.6 — the face itself (John, 2026-09-08, ruling A14 GO: "Self-host Montserrat 600 under the
- *  SIL Open Font Licence, scoped exclusively to the Give button and its menu. Keep the rest of the
- *  design typography unchanged."). One `@font-face` in the helmet's own <style> block, beside the
- *  `:root` tokens — the design's only stylesheet of its own — pointing at the official Montserrat
- *  SemiBold woff2 the bundle now ships in `assets/fonts/`, with `OFL.txt` beside it.
+
+/** A14.8 — the last leg of the "opening me closes you" invariant (final review m7 — ruled).
+ *  `toggleGiveMenu` and the arrow-open already cleared `navMenu` and `userMenu`, and A14.2 and
+ *  A13.2 close Give from `toggleUserMenu` and `toggleMarketMenu`; `toggleNavMenu` is the one
+ *  toggle no other amendment touches, so it gets its own literal. The design's own line already
+ *  clears `userMenu`, which is the idiom this follows exactly. Nothing else about it changes. */
+const A14_8: Amendment = {
+  id: 'A14.8', ...A14,
+  find: '      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false }),\n',
+  replace: '      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false }),\n',
+  count: 1
+};
+
+/** A13.8 — Tab out of the metro listbox closes it (final review m4 — ruled), on exactly the
+ *  reasoning A14.7 was accepted on two commits earlier: Escape and outside-click were the two
+ *  dismissals A13.4 gave the control, and Tab is the third way out of a dropdown the keyboard can
+ *  now enter. Two dropdowns shipping in one branch with different dismissal sets is the
+ *  inconsistency the whole-branch review exists to catch, and A13.3's `tabindex="-1"` makes Tab
+ *  from the trigger leave the control outright, which is precisely when the panel would otherwise
+ *  be left open behind the focus ring.
  *
- *  It reaches the two targets by the two paths every other bundle asset does: the reference server
- *  serves the bundle root, so `assets/fonts/…` resolves there; the app carries the same rule in
- *  `frontend/src/styles/global.css` — the helmet's port, where the four Leaflet tooltip rules
- *  already live — under the platform spec's §3 rule-1 rewrite (`assets/` → `/assets/`), against a
- *  byte-identical copy in `frontend/public/assets/fonts/`. `frontend/tests/fonts.test.ts` derives
- *  the app's rule FROM this one and proves the two copies of the file are identical, so the pixel
- *  gate can never be comparing two different typefaces.
- *
- *  Nothing else changes face: `--rf-display` and `--rf-serif` are untouched, and the only two
- *  declarations naming the family in the whole design are A14.2's trigger and row styles
- *  (asserted both ways in `design-amendments.test.ts`). A1's ruling — "keep the V2 header and do
- *  not restyle header or fonts" — is why the scope is stated as a rule and machine-checked rather
- *  than left to review. */
-const A14_6: Amendment = {
-  id: 'A14.6', ...A14,
-  find: '<style>\n  :root {\n',
+ *  It applies LAST, after A14.7 — the `out` closure it edits is A14.7's own, and A13.4 cannot
+ *  reach forward to a closure that does not exist when it runs. The shape is A14.4's: the shared
+ *  guard first, then the Give branch, then the metro one, so the Give behaviour is bit-identical
+ *  (a null `relatedTarget` returned before, and returns before, on both branches). */
+const A13_8: Amendment = {
+  id: 'A13.8', ...A13,
+  find: [
+    '    const out = (e) => {',
+    '      if (!this.state.giveMenu) return;',
+    '      const give = this._giveMenuEl;',
+    '      const to = e.relatedTarget;',
+    '      if (!to || (give && give.contains(to))) return;',
+    '      this.setState({ giveMenu: false });',
+    '    };',
+    ''
+  ].join('\n'),
   replace: [
-    '<style>',
-    '  /* Montserrat 600 — the face vinfoundation.org sets the Give button in, self-hosted under',
-    '     the SIL Open Font Licence 1.1 (assets/fonts/OFL.txt, shipped beside the file). Scoped to',
-    '     the Give control and its menu by A14.2; no other element names it. */',
-    '  @font-face {',
-    '    font-family: \'Montserrat\';',
-    '    src: url(\'assets/fonts/Montserrat-SemiBold.woff2\') format(\'woff2\');',
-    '    font-weight: 600; font-style: normal; font-display: swap;',
-    '  }',
-    '  :root {',
+    '    const out = (e) => {',
+    '      // `relatedTarget` is where focus is GOING, and a null one is the browser leaving the',
+    '      // document altogether — a window blur, which dismisses neither menu.',
+    '      const to = e.relatedTarget;',
+    '      if (!to) return;',
+    '      if (this.state.giveMenu) {',
+    '        const give = this._giveMenuEl;',
+    '        if (!(give && give.contains(to))) this.setState({ giveMenu: false });',
+    '      }',
+    '      if (!this.state.marketMenu) return;',
+    '      const host = this._marketMenuEl;',
+    '      if (host && host.contains(to)) return;',
+    '      this.setState({ marketMenu: false, marketMenuAt: -1 });',
+    '    };',
     ''
   ].join('\n'),
   count: 1
@@ -1695,5 +1786,8 @@ export function amendments(): Amendment[] {
     A7_3, A7_4, A8_1a, A8_1b, A8_1c, A8_2, A8_3a, A8_3b, A8_4a, A8_4b, A8_5, A8_6, A8_7, A8_8a, A8_8b,
     A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5, A12_6, A12_7, A12_8, A12_9, A12_10, A12_11,
     A13_1, A13_2, A13_3, A13_4, A13_5, A13_6, A13_7,
-    A14_1, A14_2, A14_3, A14_4, A14_5, A14_6, A14_7];
+    A14_1, A14_2, A14_3, A14_4, A14_5, A14_6, A14_7, A14_8,
+    // A13.8 edits the `out` closure A14.7 introduces, so it is the one A13 entry that has to run
+    // after A14's (final review m4). Definition order in this file matches this list (m8).
+    A13_8];
 }

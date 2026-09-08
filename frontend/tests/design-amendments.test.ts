@@ -106,7 +106,7 @@ describe('local design amendments (spec D15)', () => {
     // A13 — the metro selector becomes the design's own listbox (John, 2026-09-08). Five literal
     // edits: the `setMarket` class property beside `setF`, the render values that drive the menu,
     // the trigger-and-listbox markup, and the two lifecycle hooks that add and remove the Escape
-    // and outside-click listeners the design has never had.
+    // and outside-click listeners the design has never had. (A13.6–A13.8 follow, below and last.)
     'A13.1', 'A13.2', 'A13.3', 'A13.4', 'A13.5',
     // A13.6/A13.7 (review round 1, I2 — ruled): the two render-value orphans the <select> left,
     // deleted under the bundle's own dead-code rule exactly as A2.2–A2.5 deleted the browseSel
@@ -115,19 +115,28 @@ describe('local design amendments (spec D15)', () => {
     'A13.6', 'A13.7',
     // A14 — the header's Give button IS vinfoundation.org's Give dropdown (John, 2026-09-08),
     // measured on the live site rather than composed from this design's tokens. Six literal
-    // edits: the focus helper, the renderVals keys, the markup, the two Give branches inside
+    // edits here: the focus helper, the renderVals keys, the markup, the two Give branches inside
     // A13's shared `trackMenuDismiss` closures, and the `@font-face` that self-hosts the live
-    // site's Montserrat 600 — scoped to this control alone, which is John's ruling.
+    // site's Montserrat 600 — scoped to this control alone, which is John's ruling. (A14.7 and
+    // A14.8 follow.)
     'A14.1', 'A14.2', 'A14.3', 'A14.4', 'A14.5', 'A14.6',
     // A14.7 (review round 1, m2 — ruled): Tab out of the open menu closes it, the third
     // dismissal beside A14.4's outside-click and A14.5's Escape, registered and torn down
     // in A13.4's own `trackMenuDismiss`.
     'A14.7',
+    // A14.8 (final whole-branch review, m7 — ruled): the last toggle no other amendment touches,
+    // so "opening me closes you" holds in every direction between the three header menus and the
+    // metro listbox rather than only outward from Give.
+    'A14.8',
+    // A13.8 (final whole-branch review, m4 — ruled): Tab out of the metro listbox closes it, on
+    // the reasoning A14.7 was accepted on. LAST in the list, and the one A13 entry that applies
+    // after A14's: the `out` closure it edits is A14.7's own.
+    'A13.8',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(96);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(98);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -322,6 +331,17 @@ describe('local design amendments (spec D15)', () => {
       .toContain('aria-haspopup="listbox" aria-controls="metro-listbox" aria-expanded="{{ marketMenuOpen }}"');
     expect(amended, 'and the panel must carry that id')
       .toContain('<div role="listbox" aria-label="Metro area" id="metro-listbox"');
+    // Final review I1 (ruled, a widening of A13.3): ARIA 1.2 lists `aria-activedescendant` as
+    // supported on `application`, `combobox`, `group`, `textbox` and the composite widget roles —
+    // `button` is not among them, so a user agent need not expose it and the whole chain rounds 3
+    // to 5 built was liable to be dropped on the way to the accessibility tree. The trigger is the
+    // APG Select-Only Combobox in every other respect; it now says so. And a listbox driven by
+    // `aria-activedescendant` keeps focus on the one element that holds it, so the option rows
+    // leave the tab order rather than being Tab-able into a panel whose keys are not bound.
+    expect(amended, 'the trigger must carry a role that supports aria-activedescendant')
+      .toContain('role="combobox" aria-label="Metro area" aria-haspopup="listbox"');
+    expect(amended, 'the options leave the tab order — focus stays on the combobox')
+      .toContain('role="option" tabindex="-1"');
     expect(amended).not.toContain('onChange="{{ setMarket }}"');
     // The five filter selects, the sort select and the wizard's stay native (scope, Q1).
     expect((amended.match(/<select /g) ?? []).length, 'A13 changed a select outside its scope').toBe(4);
@@ -354,19 +374,37 @@ describe('local design amendments (spec D15)', () => {
     // index, so its presence in the DESIGN is what makes the keyboard work on BOTH targets.
     expect(amended, 'the arrow keys must not focus inside a setState callback — the app has not rendered yet')
       .not.toContain('}, () => this.giveFocus(');
-    expect(amended).toContain('this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false });');
+    expect(amended).toContain('this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 });');
+    // m7 (final review, ruled): the invariant runs in every direction now — Give's two open paths
+    // close the other three menus, and each of the other three closes Give.
+    expect(amended, 'the nav toggle must close Give (A14.8)')
+      .toContain('toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false }),');
+    expect(amended, 'the account toggle must close Give (A14.2)')
+      .toContain('toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false }),');
+    expect(amended, 'the metro listbox must close Give (A13.2)')
+      .toContain('Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false }),');
+    // m6 (final review, ruled): Home and End on the TRIGGER, guarded on the menu being open, the
+    // way `marketMenuKeys` has them — the per-row handler already had them.
+    expect(amended, 'Home and End must reach the Give trigger')
+      .toContain('if (s.giveMenu && (e.key === "Home" || e.key === "End")) {');
   });
 
-  // A14.7 (m2): the third dismissal, and the proof it left A13's two exactly as they were.
-  it('A14.7 adds a focusout dismissal to trackMenuDismiss without touching the metro branches', () => {
+  // A14.7 (m2) and A13.8 (final review m4): the third dismissal, shared by both menus, and the
+  // proof it left A13's other two — and A14's Give behaviour — exactly as they were.
+  it('the focusout dismissal in trackMenuDismiss covers both menus and touches neither of the other two closures', () => {
     const amended = readFileSync(AMENDED, 'utf8');
     expect(amended).toContain('document.addEventListener("focusout", out, true);');
     expect(amended).toContain('if (this._onDocOut) document.removeEventListener("focusout", this._onDocOut, true);');
-    // Window blur (relatedTarget null) and a move inside the control are both non-dismissals.
-    expect(amended).toContain('if (!to || (give && give.contains(to))) return;');
-    // A13's own two closures, byte for byte, after all three A14 edits to the function.
+    // Window blur (relatedTarget null) is the shared non-dismissal, and a move inside either
+    // control is a move within that control: A13.8 kept A14.7's Give semantics exactly.
+    expect(amended).toContain('      const to = e.relatedTarget;\n      if (!to) return;\n      if (this.state.giveMenu) {\n        const give = this._giveMenuEl;\n        if (!(give && give.contains(to))) this.setState({ giveMenu: false });\n      }');
+    // …and the metro branch is A14.4's own shape, one closure over (m4).
+    expect(amended, 'Tab out of the metro listbox must close it too').toContain('      if (!this.state.marketMenu) return;\n      const host = this._marketMenuEl;\n      if (host && host.contains(to)) return;\n      this.setState({ marketMenu: false, marketMenuAt: -1 });');
+    // A13's own pointerdown closure, byte for byte, after every A14 edit to the function.
     expect(amended, 'A14 changed the metro menu\'s outside-click').toContain('      if (!this.state.marketMenu) return;\n      const host = this._marketMenuEl;\n      if (host && e.target && host.contains(e.target)) return;\n      this.setState({ marketMenu: false, marketMenuAt: -1 });');
-    expect((amended.match(/marketMenu: false, marketMenuAt: -1/g) ?? []).length, 'A13 had exactly these three metro dismissal sites and still does').toBe(3);
+    // Six metro dismissal sites: A13.4's pointerdown and keydown, A13.8's focusout, A13.1's
+    // setMarket, and m7's two — Give's pointer open and its arrow open (A14.2).
+    expect((amended.match(/marketMenu: false, marketMenuAt: -1/g) ?? []).length, 'the metro menu is shut in exactly these six places').toBe(6);
   });
 
   // A14.6 + the ruling: "Self-host Montserrat 600 under the SIL Open Font Licence, scoped

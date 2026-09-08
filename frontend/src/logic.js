@@ -245,11 +245,18 @@ class Component extends DCLogic {
       this.setState({ marketMenu: false, marketMenuAt: -1 });
     };
     const out = (e) => {
-      if (!this.state.giveMenu) return;
-      const give = this._giveMenuEl;
+      // `relatedTarget` is where focus is GOING, and a null one is the browser leaving the
+      // document altogether — a window blur, which dismisses neither menu.
       const to = e.relatedTarget;
-      if (!to || (give && give.contains(to))) return;
-      this.setState({ giveMenu: false });
+      if (!to) return;
+      if (this.state.giveMenu) {
+        const give = this._giveMenuEl;
+        if (!(give && give.contains(to))) this.setState({ giveMenu: false });
+      }
+      if (!this.state.marketMenu) return;
+      const host = this._marketMenuEl;
+      if (host && host.contains(to)) return;
+      this.setState({ marketMenu: false, marketMenuAt: -1 });
     };
     this._onDocDown = down;
     this._onDocKey = key;
@@ -330,9 +337,12 @@ class Component extends DCLogic {
 
   // Bringing a row into view. The panel scrolls at its max-height as soon as the market list
   // is longer than the design's four, so both the arrow keys and the panel's own mount need
-  // this: one while the rows are already there, one at the moment they arrive.
+  // this: one while the rows are already there, one at the moment they arrive. The row is
+  // resolved through the field this component recorded, not across the document: the id is
+  // one this component mints, and setMarket's own trigger lookup is scoped the same way.
   scrollMarketOption = (i) => {
-    const row = document.getElementById("market-opt-" + i);
+    const host = this._marketMenuEl;
+    const row = host && host.querySelector("#market-opt-" + i);
     if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
   };
 
@@ -1480,14 +1490,14 @@ class Component extends DCLogic {
       navExpanded: !!s.auth && vw >= 1050,
       navCollapsed: !!s.auth && vw < 1050,
       navMenuOpen: !!s.navMenu,
-      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false }),
+      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false }),
       subBrandStyle: "width: 1px; height: 30px; background: var(--rf-line); display: " + (vw < 1050 ? "none" : "block") + ";",
       subBrandTextStyle: "font-family: var(--rf-display); font-size: 15px; font-weight: 800; letter-spacing: -.005em; color: var(--color-blue); white-space: nowrap; display: " +
         (vw < 1050 ? "none" : "block") + ";",
       identityStyle: "line-height: 1.25; display: " + (vw < 1180 ? "none" : "block") + ";",
       me: Object.assign({ email: s.email }, s.me),
       userMenuOpen: !!s.userMenu,
-      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu }),
+      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false }),
       // The Give control, measured on vinfoundation.org (John, 2026-09-08). The literals are
       // the live site's, not this design's tokens: #339dde is the idle pill, #07386f the
       // hover/open pill and the panel border and the row text, 10px the pill radius, 4.34px
@@ -1495,7 +1505,9 @@ class Component extends DCLogic {
       giveMenuOpen: !!s.giveMenu,
       // `giveMenuAt: null` on every pointer open: the pending index below belongs to the
       // KEYBOARD, and a stale one would drag a mouse user into the list on the next open.
-      toggleGiveMenu: () => this.setState({ giveMenu: !s.giveMenu, giveMenuAt: null, navMenu: false, userMenu: false }),
+      // `marketMenu` too (final review m7): the invariant is that opening one menu closes
+      // the others, and Browse renders this control and the metro listbox on one screen.
+      toggleGiveMenu: () => this.setState({ giveMenu: !s.giveMenu, giveMenuAt: null, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 }),
       giveMenuRef: (el) => { this._giveMenuEl = el || null; },
       giveButtonRef: (el) => { this._giveButtonEl = el || null; },
       // The panel's own mount is the first moment its links exist, so it is where an arrow
@@ -1532,6 +1544,13 @@ class Component extends DCLogic {
         pick: () => this.setState({ giveMenu: false })
       })),
       giveMenuKeys: (e) => {
+        // Home and End, on the TRIGGER as well as inside the menu, and only while the menu
+        // is open — exactly where marketMenuKeys has them (final review m6). With the menu
+        // shut there is no list for an end to be an end of.
+        if (s.giveMenu && (e.key === "Home" || e.key === "End")) {
+          e.preventDefault();
+          return this.giveFocus(e.key === "Home" ? 0 : -1);
+        }
         if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
         e.preventDefault();
         const at = e.key === "ArrowDown" ? 0 : -1;
@@ -1539,7 +1558,7 @@ class Component extends DCLogic {
         // Already-open: the panel is mounted, so focus moves here and now. Opening CANNOT do
         // that — the app's setState runs its callback synchronously (dc-logic.js) and Vue
         // has not rendered the panel yet, so the index is seeded and givePanelRef spends it.
-        this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false });
+        this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 });
       },
       signOut: () => (this.props.auth ? this.props.auth.signOut().catch(() => {}) : Promise.resolve()).then(() => this.setState({
         userMenu: false, auth: false, screen: "gate", gate: "signin", pw: "",
@@ -1657,7 +1676,11 @@ class Component extends DCLogic {
       // The metro SELECT is a dropdown list in this design's own style, not the operating
       // system's popup: the same trigger + role="listbox" panel the Market data card uses.
       marketMenuOpen: !!s.marketMenu,
-      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")) }),
+      // `giveMenu: false`: opening one menu closes the others, in every direction (final
+      // review m7). The global pointerdown and focusout listeners covered a pointer and a
+      // Tab; a pure-keyboard user could hold this listbox and the header's Give menu open
+      // at once, and then shut both with one Escape.
+      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false }),
       // On the TRIGGER, which is always rendered: a shut menu has no active descendant, and
       // null is what both renderers omit the attribute for (a string would spell a dead id).
       marketActiveId: s.marketMenu ? "market-opt-" + s.marketMenuAt : null,

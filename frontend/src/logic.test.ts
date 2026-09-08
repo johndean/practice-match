@@ -1532,15 +1532,20 @@ describe('A13 — the metro dropdown', () => {
   });
 
   it('moving the highlight scrolls the highlighted row into view, and copes when it is not in the DOM', () => {
+    // m5 (final review, ruled): the rows are resolved through the field the component recorded,
+    // so they have to hang off it here rather than off the document.
+    const host = document.createElement('div');
+    document.body.appendChild(host);
     const rows = MARKET_KEYS.map((_, i) => {
       const b = document.createElement('button');
       b.id = `market-opt-${i}`;
       (b as any).scrollIntoView = vi.fn();       // jsdom implements no scrollIntoView of its own
-      document.body.appendChild(b);
+      host.appendChild(b);
       return b;
     });
     try {
       const key = (k: string) => { c.renderVals().marketMenuKeys({ key: k, preventDefault: vi.fn() }); };
+      c.renderVals().marketMenuRef(host);
       c.renderVals().toggleMarketMenu();
       key('ArrowDown');
       expect((rows[1] as any).scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
@@ -1552,6 +1557,7 @@ describe('A13 — the metro dropdown', () => {
       expect(c.state.marketMenuAt).toBe(0);
     } finally {
       rows.forEach((b) => b.remove());
+      host.remove();
     }
     // …and so is a highlight whose row is not in the document at all (the app before first paint)
     const c2: any = new Component({});
@@ -1567,16 +1573,19 @@ describe('A13 — the metro dropdown', () => {
   // moment the rows exist. Without it, a seeded market list longer than the panel opens scrolled
   // to the top with the active row off-screen, which is the Q5 case I3 exists for.
   it('opening the menu scrolls the highlighted row into view', () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
     const rows = MARKET_KEYS.map((_, i) => {
       const b = document.createElement('button');
       b.id = `market-opt-${i}`;
       (b as any).scrollIntoView = vi.fn();
-      document.body.appendChild(b);
+      host.appendChild(b);
       return b;
     });
     const panel = document.createElement('div');
-    document.body.appendChild(panel);
+    host.appendChild(panel);
     try {
+      c.renderVals().marketMenuRef(host);
       c.setState({ market: 'Orlando, FL' });              // index 2 — a non-zero highlight
       c.renderVals().toggleMarketMenu();
       expect(c.state.marketMenuAt).toBe(2);
@@ -1589,6 +1598,68 @@ describe('A13 — the metro dropdown', () => {
     } finally {
       rows.forEach((b) => b.remove());
       panel.remove();
+      host.remove();
+    }
+  });
+
+  // m5 (final review, ruled): `market-opt-N` is an id this component mints, and it is looked up
+  // inside the field the component recorded — not across the whole document. There is one Browse
+  // toolbar today, so `document.getElementById` was right today; the neighbouring code
+  // (`this._marketMenuEl`, `this._giveMenuEl`, `setMarket`'s own `host.querySelector`) is scoped,
+  // and a second instance or a panel caught mid-transition is the case that made it wrong.
+  it('the scroll is scoped to the metro field: a row of the same id elsewhere is left alone', () => {
+    const host = document.createElement('div');
+    const stray = document.createElement('button');
+    stray.id = 'market-opt-1';
+    (stray as any).scrollIntoView = vi.fn();
+    document.body.append(host, stray);
+    try {
+      c.renderVals().marketMenuRef(host);
+      c.renderVals().toggleMarketMenu();
+      c.renderVals().marketMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() });
+      expect(c.state.marketMenuAt, 'the highlight still moves').toBe(1);
+      expect((stray as any).scrollIntoView,
+        'a row outside the field the component recorded is not this menu\'s row').not.toHaveBeenCalled();
+    } finally {
+      host.remove();
+      stray.remove();
+    }
+  });
+
+  // m4 (final review, ruled): Tab is the third way out of a dropdown the keyboard can now enter,
+  // and A14.7 gave the Give menu exactly this on exactly this reasoning — two dropdowns shipping
+  // in one branch with different dismissal sets is the inconsistency the whole-branch review
+  // exists to catch. `relatedTarget` is where focus is GOING: anywhere inside the field (the
+  // trigger, another row) is a move within the control, and `null` is the browser leaving the
+  // document altogether — a window blur, which must close nothing.
+  it('Tab out of the menu closes it; moving focus within the field, or out of the document, does not', () => {
+    const host = document.createElement('div');
+    const trigger = document.createElement('button');
+    const row = document.createElement('button');
+    host.append(trigger, row);
+    const outside = document.createElement('button');
+    document.body.append(host, outside);
+    try {
+      c.componentDidMount();
+      c.renderVals().marketMenuRef(host);
+      // Closed: the handler's own early exit.
+      row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: outside }));
+      expect(c.state.marketMenu).toBeFalsy();
+      c.renderVals().toggleMarketMenu();
+      row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: trigger }));
+      expect(c.state.marketMenu, 'a move within the control is not a dismissal').toBe(true);
+      row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
+      expect(c.state.marketMenu, 'the window losing focus must not close the menu').toBe(true);
+      row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: outside }));
+      expect(c.state).toMatchObject({ marketMenu: false, marketMenuAt: -1 });
+      // …and with no field recorded, a focusout out of the control still closes rather than throwing.
+      c.renderVals().marketMenuRef(null);
+      c.renderVals().toggleMarketMenu();
+      row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: outside }));
+      expect(c.state.marketMenu).toBe(false);
+    } finally {
+      host.remove();
+      outside.remove();
     }
   });
 
@@ -1998,6 +2069,51 @@ describe('A14 — the Give dropdown', () => {
     expect(kinds(remove.mock.calls)).toEqual(['focusout', 'keydown', 'pointerdown']);
     add.mockRestore();
     remove.mockRestore();
+  });
+
+  // m6 (final review, ruled): Home and End moved the highlight on the metro trigger and inside
+  // the Give menu, but not on the Give TRIGGER — the one element a keyboard user starts from.
+  // They behave as they do on the metro trigger: only while the menu is open, because with it
+  // shut there is no list for an end to be an end of.
+  it('Home and End work on the Give trigger, as they do on the metro trigger, and only while open', () => {
+    const els = rowEls();
+    try {
+      c.renderVals().giveMenuKeys({ key: 'Home', preventDefault: prevent });
+      expect(c.state.giveMenu, 'a shut menu is not opened by Home').toBeFalsy();
+      expect(document.activeElement, 'and focus has not moved into it').not.toBe(els[0]);
+      c.setState({ giveMenu: true });
+      c.renderVals().giveMenuKeys({ key: 'End', preventDefault: prevent });
+      expect(document.activeElement, 'End on the trigger goes to the last link').toBe(els[3]);
+      c.renderVals().giveMenuKeys({ key: 'Home', preventDefault: prevent });
+      expect(document.activeElement, 'Home on the trigger goes back to the first').toBe(els[0]);
+    } finally {
+      els.forEach((e) => e.remove());
+    }
+  });
+
+  // m7 (final review, ruled): "opening me closes you" was one-directional. `toggleGiveMenu` and
+  // the arrow-open cleared the other two header menus; nothing cleared Give, and neither Give nor
+  // the metro listbox cleared the other. The global `pointerdown` and `focusout` listeners covered
+  // a pointer and a Tab, but a pure-keyboard user could hold two menus open at once and then shut
+  // both with one Escape. The toggles enforce the invariant themselves now, in both directions.
+  it('opening any other menu closes Give, and opening Give closes the metro listbox too', () => {
+    c.setState({ auth: true, screen: 'browse', giveMenu: true });
+    c.renderVals().toggleNavMenu();
+    expect(c.state.giveMenu, 'the nav menu closes Give').toBe(false);
+    c.setState({ giveMenu: true, navMenu: false });
+    c.renderVals().toggleUserMenu();
+    expect(c.state.giveMenu, 'the account menu closes Give').toBe(false);
+    c.setState({ giveMenu: true, userMenu: false });
+    c.renderVals().toggleMarketMenu();
+    expect(c.state.giveMenu, 'the metro listbox closes Give').toBe(false);
+    // …and the other way: Give closes the metro listbox as well as the two header menus, by the
+    // pointer path and by the arrow-key path, which are the two ways into it.
+    c.setState({ marketMenu: true, marketMenuAt: 2, navMenu: true, userMenu: true, giveMenu: false });
+    c.renderVals().toggleGiveMenu();
+    expect(c.state).toMatchObject({ giveMenu: true, marketMenu: false, marketMenuAt: -1, navMenu: false, userMenu: false });
+    c.setState({ giveMenu: false, marketMenu: true, marketMenuAt: 2, navMenu: true, userMenu: true });
+    c.renderVals().giveMenuKeys({ key: 'ArrowDown', preventDefault: prevent });
+    expect(c.state).toMatchObject({ giveMenu: true, marketMenu: false, marketMenuAt: -1, navMenu: false, userMenu: false });
   });
 
   it('A13\'s metro dismissals are unchanged by A14\'s branches', () => {
