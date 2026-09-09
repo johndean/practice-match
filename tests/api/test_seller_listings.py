@@ -7,11 +7,15 @@ every migration applied and `settings.database_url` pointed at it.
 """
 from __future__ import annotations
 
+import asyncio
 import json
+import time
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+import httpx
+import psycopg2
 import pytest
 
 from tests.api.conftest import auth_headers, padded_json
@@ -1336,6 +1340,43 @@ async def test_claiming_is_idempotent_and_never_reaches_another_sellers_row(
     assert _source(conn, theirs) == "seed", "another seller's seeded listing is untouched"
 
 
+def test_the_source_predicate_is_what_makes_claiming_a_no_op(conn: Any, member: Any) -> None:
+    """SL9 hardening (A-SL34 (2); SL6 re-review's own ⚠️): every test above proves a SECOND write to
+    a seed-sourced row changes nothing, but that is idempotency, not the predicate — they would
+    pass identically if `claim_from_seed`'s UPDATE read `WHERE id = %s AND seller_id = %s` with no
+    `source` guard at all, because by the second call `source` is already `'seller'`. This isolates
+    `AND source = 'seed'` directly, on a row that was NEVER seeded (`source='seller'` from its own
+    `create()`, the ordinary case): Postgres writes a fresh tuple version — and so a fresh `xmin` —
+    for every UPDATE statement that MATCHES a row, even one that sets a column to the value it
+    already holds. An unchanged `xmin` after the call is proof the predicate excluded the row from
+    the statement entirely; a genuinely seeded sibling, called the same way, changes it."""
+    from app.api.seller_listings import claim_from_seed
+    from app.auth import sessions as S
+
+    account_id, _cookies, _headers = _seller(member)
+    principal = S.Principal(account_id, "active", frozenset({"seller"}), None, "session", "h")
+
+    def _xmin(listing_id: Any) -> str:
+        with conn.cursor() as cur:
+            cur.execute("SELECT xmin::text FROM listing WHERE id = %s", (listing_id,))
+            return str(cur.fetchone()[0])
+
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO listing (slug, source, status, seller_id) VALUES (%s, 'seller', 'draft', %s)"
+                    " RETURNING id", (f"listing-{uuid4().hex[:8]}", account_id))
+        never_seeded = cur.fetchone()[0]
+
+    before = _xmin(never_seeded)
+    claim_from_seed(conn, {"id": never_seeded}, principal)
+    assert _source(conn, str(never_seeded)) == "seller"
+    assert _xmin(never_seeded) == before, "a row whose source was never 'seed' must not be touched by the UPDATE"
+
+    seeded = _seed_listing(conn, account_id)
+    seeded_before = _xmin(seeded)
+    claim_from_seed(conn, {"id": seeded}, principal)
+    assert _xmin(seeded) != seeded_before, "the same call, in the same shape, DOES touch a genuinely seeded row"
+
+
 # --- A-SL25 (10) / SL7b: click-to-caption for an EXISTING photograph, seeded ones included --------
 # `PATCH /api/seller/listings/{id}/photos/{n}` — POSITIONAL, `n` 1-based (the buyer's own
 # `GET .../photos/{n}` and `photo_file`'s convention) — writes `listing.photo_captions[n]` for a
@@ -1911,3 +1952,92 @@ def test_columns_for_skips_the_vocabulary_check_for_an_unchanged_bldg_through_it
     # A word that is not one of the three at all is still refused.
     with pytest.raises(Refusal, match="bldg must be one of"):
         columns_for(5, {"bldg": "Owned outright"}, row)
+
+
+# --- SL9 hardening (A-SL34 (2); SL5 re-review (a)): `patch_step` takes the lock its own -----------
+# precondition read needs, exactly as `locked_row` does.
+
+
+async def _wait_for_a_backend_queued_on_a_lock(conn: Any, timeout: float = 10.0) -> None:
+    """Block until some backend on this database is waiting on a lock, so the race below is a race
+    and not a sleep — `tests/census/test_admin_api.py`'s own helper, the established shape for
+    proving a `SELECT` actually took a row lock rather than merely reading past it."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await asyncio.sleep(0.02)
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'")
+            if cur.fetchone()[0]:
+                return
+    raise AssertionError("no backend ever queued on the listing row lock")
+
+
+async def test_a_concurrent_patch_cannot_slip_between_the_precondition_read_and_the_write(
+    conn: Any, dist: Any, member: Any
+) -> None:
+    """SL5 re-review (a): `patch_step` read its precondition row through `owned_row` — the one
+    write route in this module with no `FOR UPDATE` — while every asset write and every transition
+    (`upload_photo`, `reorder_photos`, `submit_listing`, `set_status`, ...) reads through
+    `locked_row` first. Raced the way `tests/census/test_admin_api.py::
+    test_two_racing_decisions_cannot_both_record_the_same_before` proves the Census admin API's own
+    read is serialised: a holder takes `FOR UPDATE` on the row first. The PATCH request can only
+    queue behind it (visible in `pg_stat_activity` as a backend waiting on a lock) if `patch_step`'s
+    own precondition read takes a lock of the same kind — a plain `SELECT` never appears there. The
+    holder then WITHDRAWS the listing, a TERMINAL state (`patch_step`'s own guard, one line below
+    the read this fixes), and commits.
+
+    A precondition read that is not serialised has already read `status='draft'` — before the
+    holder's write — and goes on, once the holder's commit releases the row, to write
+    `status='in_review'` (or whatever the step's own fields ask for) over a listing that is, by
+    then, withdrawn: `WHERE id = %(id)s AND seller_id = %(seller)s` names no status, so nothing
+    stops it. A read that IS serialised sees the holder's committed `withdrawn` the moment it can
+    read at all, and refuses with the same `409 STATE` every other route in this module answers for
+    a withdrawn listing — leaving the row exactly as the holder left it.
+
+    `patch_step` is `async def` and, unlike the Census admin routes (plain `def`, dispatched to
+    Starlette's own threadpool), runs its blocking psycopg2 calls directly on its caller's event
+    loop — so driving the request through the SAME loop as the holder (`asyncio.create_task` against
+    the shared in-process `client` fixture) never yields the loop back to the polling helper above
+    and the test deadlocks against itself, fixed or not. A REAL OS thread, with its own event loop
+    and its own `httpx.AsyncClient` against a fresh `create_app`, is what makes this an actual race
+    between two backends rather than one coroutine blocking another on the same thread."""
+    from httpx import ASGITransport
+
+    from app.db import sync_dsn
+    from app.main import create_app
+    from tests.api.conftest import ORIGIN
+
+    account_id, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO listing (slug, source, status, seller_id) VALUES (%s, 'seller', 'draft', %s)"
+                    " RETURNING id", (f"listing-{uuid4().hex[:8]}", account_id))
+        listing_id = str(cur.fetchone()[0])
+
+    def _send_patch_from_its_own_thread() -> Any:
+        async def _once() -> Any:
+            async with httpx.AsyncClient(transport=ASGITransport(app=create_app(dist=dist)), base_url=ORIGIN) as c:
+                return await c.patch(f"/api/seller/listings/{listing_id}?step=1",
+                                     json={"name": "Raced", "type": "Small animal", "est": "1998"},
+                                     headers=signed)
+        return asyncio.run(_once())
+
+    holder = psycopg2.connect(sync_dsn())
+    try:
+        with holder.cursor() as cur:
+            cur.execute("SELECT status FROM listing WHERE id = %s FOR UPDATE", (listing_id,))
+            assert cur.fetchone()[0] == "draft"
+        future = asyncio.get_running_loop().run_in_executor(None, _send_patch_from_its_own_thread)
+        await _wait_for_a_backend_queued_on_a_lock(conn)
+        with holder.cursor() as cur:
+            cur.execute("UPDATE listing SET status = 'withdrawn' WHERE id = %s", (listing_id,))
+        holder.commit()
+    finally:
+        holder.close()
+
+    response = await future
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "STATE"
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, name FROM listing WHERE id = %s", (listing_id,))
+        assert cur.fetchone() == ("withdrawn", None), "a race must not resurrect a withdrawn listing"

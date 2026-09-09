@@ -585,7 +585,14 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
         body = await _json_body(request)
         step = int(raw_step) if raw_step.isdecimal() else -1
         with closing(sync_conn()) as conn, conn:
-            row = owned_row(conn, listing_id, principal)
+            # SL9 hardening (A-SL34 (2); SL5 re-review (a)): this was the one write route in the
+            # module reading its precondition row through `owned_row` (no lock) instead of
+            # `locked_row` (`FOR UPDATE`) — every other transition and asset write serialises this
+            # read against a concurrent writer of the SAME row; this one did not, and a write could
+            # slip in between the read and this route's own UPDATE (`test_a_concurrent_patch_
+            # cannot_slip_between_the_precondition_read_and_the_write` demonstrates a withdrawn
+            # listing resurrected by exactly that race).
+            row = locked_row(conn, listing_id, principal)
             if row["status"] == "withdrawn":
                 raise Refusal("STATE", "A withdrawn listing can no longer be edited.", 409)
             # A-SL31/A-SL32 (2): the row is the "did the seller actually change this" oracle, so it
@@ -621,10 +628,11 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
                 audit.write(conn, actor=principal, action=EDIT_ACTION, target_type="listing",
                             target_id=row["id"], before={"status": row["status"]}, after={"status": "in_review"},
                             request=request)
-            # Re-read through `owned_row` rather than a nullable `_row`: the row was just updated
-            # inside this transaction, so its absence is not a state a request can reach, and a
-            # ternary for it would be an arm no test could cover.
-            payload = serialise_draft(owned_row(conn, listing_id, principal), assets_of(conn, row["id"]))
+            # Re-read through `locked_row` (SL9 hardening, matching `submit_listing`/`set_status`)
+            # rather than a nullable `_row`: the row was just updated inside this transaction, so
+            # its absence is not a state a request can reach, and a ternary for it would be an arm
+            # no test could cover.
+            payload = serialise_draft(locked_row(conn, listing_id, principal), assets_of(conn, row["id"]))
     except Refusal as exc:
         return _refused(exc)
     # AFTER the commit (D16, and I5c fix round 1's ordering): a disclosure flag turned OFF must stop
