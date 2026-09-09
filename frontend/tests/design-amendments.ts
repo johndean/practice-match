@@ -2213,7 +2213,15 @@ const A19_8: Amendment = {
  *  find is A14.5's OUTPUT (0 in the pristine file), so this applies after it. With the lightbox
  *  closed the block is skipped and A13's and A14's Escape semantics are byte-identical; open, it
  *  owns the three keys and returns — every menu is already shut (A19.2), and none can reopen
- *  under a modal scrim. `preventDefault` so an arrow does not also scroll the page behind. */
+ *  under a modal scrim. `preventDefault` so an arrow does not also scroll the page behind.
+ *
+ *  A-LB3 (2026-09-09, ruling on fix round 1's NEEDS_CONTEXT): Tab is handled HERE too, not by a
+ *  `focusout` trap (A19.10, below — removed). `box.querySelectorAll("button")` reads the dialog's
+ *  own controls in DOM order — Close photo, then Previous/Next when `multiple` — the container
+ *  itself is `tabindex="-1"` and is never one of them. On the last, Tab wraps to the first; on
+ *  the first, or on the container (where the mount-ref idiom leaves focus right after opening),
+ *  Shift+Tab wraps to the last. One code path, no timer, no `relatedTarget`: the browser's own
+ *  Tab motion is prevented only at the two wrap points, and left alone everywhere in between. */
 const A19_9: Amendment = {
   id: 'A19.9', ...A19,
   find: '    const key = (e) => {\n      if (e.key !== "Escape") return;\n',
@@ -2222,6 +2230,15 @@ const A19_9: Amendment = {
     '      if (this.state.lightbox) {',
     '        if (e.key === "Escape") { e.preventDefault(); this.closeLightbox(); }',
     '        else if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); this.stepLightbox(e.key === "ArrowLeft" ? -1 : 1); }',
+    '        else if (e.key === "Tab") {',
+    '          const box = this._lightboxEl;',
+    '          const controls = box ? Array.from(box.querySelectorAll("button")) : [];',
+    '          if (controls.length) {',
+    '            const at = controls.indexOf(document.activeElement);',
+    '            if (e.shiftKey) { if (at <= 0) { e.preventDefault(); controls[controls.length - 1].focus(); } }',
+    '            else if (at === controls.length - 1) { e.preventDefault(); controls[0].focus(); }',
+    '          }',
+    '        }',
     '        return;',
     '      }',
     '      if (e.key !== "Escape") return;',
@@ -2230,34 +2247,30 @@ const A19_9: Amendment = {
   count: 1
 };
 
-/** A19.10 — the focus trap, at the TOP of the shared `focusout` closure. The find is the closure
- *  head A14.7 introduced and A13.8 rewrote (0 in the pristine file), so this applies after A13.8;
- *  and it goes above the `const to` line rather than after `if (!to) return;` because
- *  design-amendments.test.ts pins A13.8's Give text as one contiguous substring starting at that
- *  `const to`. `aria-modal="true"` tells assistive tech the page behind is inert; this is what
- *  makes Tab honour it. A null `relatedTarget` (window blur, or a click on the non-focusable
- *  photograph or scrim) is left alone — nothing fights the backdrop click.
- *
- *  Step 10 finding (live Chromium, both targets, 2026-09-09): the plan itself named this risk —
- *  "a synchronous `focus()` inside the capture-phase `focusout` on either target" — and it is
- *  live: Chromium drops the call. The fallback the plan named is applied verbatim: the design's
- *  own `setTimeout(…, 0)` idiom, deferring `box.focus()` one macrotask. Confirmed on the app
- *  (Tab now cycles X → Previous photo → Next photo → the dialog → X, never reaching the page
- *  behind) and on the reference. */
+/** A19.10 — A-LB3 (2026-09-09, ruling on fix round 1's NEEDS_CONTEXT — the focus trap does not
+ *  hold, and the implementer was right to stop). The `focusout` trap this amendment ORIGINALLY
+ *  inserted here — deferring `box.focus()` via `setTimeout` whenever a non-null `relatedTarget`
+ *  left the dialog — was tried live in Chromium (Step 10, fix round 1) and found not to hold,
+ *  reproducibly: forward Tab off the last control lands on real page content for a keypress
+ *  before self-correcting, and Shift+Tab from the first control never reaches the last at all.
+ *  Root cause is structural, not a tuning error: a null `relatedTarget` means both "the window
+ *  blurred" (must be ignored) and "focus left the dialog's own tabbable set" (must not), and the
+ *  arm cannot tell its two cases apart. The mechanism is REMOVED — Tab is instead handled
+ *  deterministically in the shared `keydown` closure, A19.9, above — so this closure carries no
+ *  lightbox branch at all; the find is still the closure head A14.7 introduced and A13.8 rewrote
+ *  (0 in the pristine file, so this still applies after A13.8), and the replace is that same head
+ *  plus a comment recording why nothing else stands here, so a reader who finds this closure
+ *  otherwise untouched by A19 knows a trap was tried and retracted rather than never attempted. */
 const A19_10: Amendment = {
   id: 'A19.10', ...A19,
   find: '    const out = (e) => {\n',
   replace: [
     '    const out = (e) => {',
-    '      // A19: while the lightbox is open, focus that is leaving the dialog for anywhere else in the',
-    '      // document is pulled back to it — `aria-modal` says the page behind is inert, and Tab honours',
-    '      // that only if something makes it. A null `relatedTarget` (a window blur, or a click on the',
-    '      // photograph or the scrim, neither of which is focusable) is left alone, as it is below.',
-    '      if (this.state.lightbox) {',
-    '        const box = this._lightboxEl;',
-    '        if (e.relatedTarget && box && !box.contains(e.relatedTarget)) setTimeout(() => box.focus(), 0);',
-    '        return;',
-    '      }',
+    '      // A19 (A-LB3, 2026-09-09): a focusout-based trap was tried here — deferring focus back',
+    '      // into the dialog whenever it left for a non-null relatedTarget outside it — and found',
+    '      // not to hold in real Chromium: a null relatedTarget also occurs at the edges of the',
+    '      // dialog\'s own tabbable set, which the arm cannot tell apart from a window blur. Tab is',
+    '      // instead handled deterministically in the shared keydown closure above (A19.9).',
     ''
   ].join('\n'),
   count: 1

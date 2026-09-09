@@ -2376,8 +2376,11 @@ describe('A19 — the photo lightbox', () => {
     // Live-browser finding (Step 10): Chromium silently drops a focus() call made synchronously
     // while a just-mounted node has not yet had layout/style committed — the JSDOM unit
     // environment has no such restriction, so only a real Chromium run surfaces it. Deferred one
-    // macrotask, the design's own setTimeout idiom (2 pristine uses), exactly as A19.10's trap
-    // needs for the identical reason.
+    // macrotask, the design's own setTimeout idiom (2 pristine uses). This deferral is the
+    // mount-ref's own (A19.2, a just-mounted node) and is unaffected by A-LB3, which removed the
+    // DIFFERENT setTimeout A19.10 once carried — deferring focus back INTO an already-mounted
+    // dialog from a focusout, which does not hold in real Chromium for the reason characterised
+    // below.
     vi.useFakeTimers();
     const box = document.createElement('div'); box.tabIndex = -1; document.body.appendChild(box);
     try {
@@ -2428,7 +2431,86 @@ describe('A19 — the photo lightbox', () => {
     } finally { btn.remove(); }
   });
 
-  it('with the lightbox closed, A13\'s and A14\'s dismissals are unchanged by A19\'s branches (A19.9/A19.10)', () => {
+  it('Tab from the last control wraps to the first; Shift+Tab from the first, or from the container itself, wraps to the last (A-LB3, A19.9)', () => {
+    // A-LB3: the focusout-based trap (A19.10) did not hold in real Chromium — a null
+    // relatedTarget cannot tell "the window blurred" from "focus left the dialog's own tabbable
+    // set". Tab is handled here instead, deterministically, by DOM position: no timer, no
+    // relatedTarget, one code path for both directions.
+    const box = document.createElement('div'); box.tabIndex = -1;
+    const closeBtn = document.createElement('button'); closeBtn.setAttribute('aria-label', 'Close photo');
+    const prevBtn = document.createElement('button'); prevBtn.setAttribute('aria-label', 'Previous photo');
+    const nextBtn = document.createElement('button'); nextBtn.setAttribute('aria-label', 'Next photo');
+    box.append(closeBtn, prevBtn, nextBtn);
+    document.body.appendChild(box);
+    const press = (shiftKey = false) => { const e = new KeyboardEvent('keydown', { key: 'Tab', shiftKey, cancelable: true }); document.dispatchEvent(e); return e.defaultPrevented; };
+    try {
+      c.componentDidMount();
+      c.setState({ lightbox: P2 });
+      c._lightboxEl = box;
+
+      // The container case: right after opening, focus is on the dialog itself (the mount-ref
+      // idiom) — Shift+Tab from there must reach the LAST control directly.
+      box.focus();
+      expect(press(true)).toBe(true);
+      expect(document.activeElement).toBe(nextBtn);
+
+      // Forward: last control wraps to the first.
+      nextBtn.focus();
+      expect(press()).toBe(true);
+      expect(document.activeElement).toBe(closeBtn);
+
+      // Backward: first control wraps to the last.
+      closeBtn.focus();
+      expect(press(true)).toBe(true);
+      expect(document.activeElement).toBe(nextBtn);
+
+      // A move in the middle of the cycle is not intercepted — no preventDefault, no forced
+      // focus — so the browser's own default Tab action is left alone.
+      prevBtn.focus();
+      expect(press()).toBe(false);
+      expect(press(true)).toBe(false);
+
+      c.componentWillUnmount();
+    } finally { box.remove(); }
+  });
+
+  it('with one photograph, Tab and Shift+Tab both keep focus on the sole control (Close) (A-LB3, A19.9)', () => {
+    const one = { id: 'lb-one', area: 'Elgin', type: 'Small animal', photos: ['/api/listings/lb/photos/1'] };
+    (P as unknown as Array<{ id: string }>).push(one);
+    const box = document.createElement('div'); box.tabIndex = -1;
+    const closeBtn = document.createElement('button'); closeBtn.setAttribute('aria-label', 'Close photo');
+    box.appendChild(closeBtn);
+    document.body.appendChild(box);
+    const press = (shiftKey = false) => { const e = new KeyboardEvent('keydown', { key: 'Tab', shiftKey, cancelable: true }); document.dispatchEvent(e); return e.defaultPrevented; };
+    try {
+      c.componentDidMount();
+      c.setState({ lightbox: { pid: 'lb-one', at: 'ph-lb-one-exterior' } });
+      c._lightboxEl = box;
+      closeBtn.focus();
+      expect(press()).toBe(true);
+      expect(document.activeElement).toBe(closeBtn);
+      expect(press(true)).toBe(true);
+      expect(document.activeElement).toBe(closeBtn);
+      c.componentWillUnmount();
+    } finally {
+      box.remove();
+      const fixtures = P as unknown as Array<{ id: string }>;
+      fixtures.splice(fixtures.findIndex((x) => x.id === 'lb-one'), 1);   // structural restore (N1)
+    }
+  });
+
+  it('Tab does nothing while the lightbox is closed, and nothing if no dialog element is mounted yet (A-LB3, A19.9)', () => {
+    const press = (shiftKey = false) => { const e = new KeyboardEvent('keydown', { key: 'Tab', shiftKey, cancelable: true }); document.dispatchEvent(e); return e.defaultPrevented; };
+    c.componentDidMount();
+    expect(c.state.lightbox).toBeNull();
+    expect(press()).toBe(false);
+    c.setState({ lightbox: P2 });
+    expect(c._lightboxEl).toBeFalsy();   // no ref has run yet
+    expect(press()).toBe(false);
+    c.componentWillUnmount();
+  });
+
+  it('with the lightbox closed, A13\'s and A14\'s dismissals are unchanged by A19\'s branches (A19.9)', () => {
     c.componentDidMount();
     c.setState({ marketMenu: true, marketMenuAt: 2, giveMenu: true, lightbox: null });
     document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
@@ -2446,12 +2528,14 @@ describe('A19 — the photo lightbox', () => {
     c.componentWillUnmount();
   });
 
-  it('Tab out of the open dialog is pulled back, one macrotask deferred; a move inside it, a window blur and an unmounted dialog are left alone (A19.10)', () => {
-    // Live-browser finding (Step 10): a synchronous focus() call made from inside the capture-
-    // phase focusout handler is silently dropped by Chromium — confirmed on the app AND the
-    // reference, both real Chromium; JSDOM has no such restriction. Deferred one macrotask, the
-    // same setTimeout idiom A19.2's mount ref needs for the identical reason.
-    vi.useFakeTimers();
+  it('the focusout closure no longer treats an open lightbox specially — A19.10\'s trap is removed (A-LB3)', () => {
+    // A-LB3 (2026-09-09, ruling on fix round 1's NEEDS_CONTEXT): the focusout-based trap this
+    // test used to characterise (deferring `box.focus()` one macrotask whenever a non-null
+    // `relatedTarget` left the dialog) was found not to hold in real Chromium and is removed
+    // entirely — a null `relatedTarget` cannot distinguish "the window blurred" from "focus left
+    // the dialog's own tabbable set", and no threshold fixes that. Tab is instead handled
+    // deterministically in the keydown closure (A19.9, characterised above). This closure is now
+    // A13.8's own output, unchanged, whether the lightbox is open or not.
     const box = document.createElement('div'); box.tabIndex = -1;
     const inside = document.createElement('button'); box.appendChild(inside);
     const away = document.createElement('button');
@@ -2459,24 +2543,25 @@ describe('A19 — the photo lightbox', () => {
     try {
       c.componentDidMount();
       c.setState({ lightbox: P2 });
-      // No dialog mounted yet (its ref has not run): nothing to pull focus to, and no throw.
-      inside.dispatchEvent(new FocusEvent('focusout', { relatedTarget: away, bubbles: true }));
-      vi.advanceTimersByTime(0);
       c.renderVals().lightbox.ref(box);
-      away.focus();
-      inside.dispatchEvent(new FocusEvent('focusout', { relatedTarget: away, bubbles: true }));
-      expect(document.activeElement, 'not yet — the pull-back is queued, not run').not.toBe(box);
-      vi.advanceTimersByTime(0);
-      expect(document.activeElement, 'focus leaving the dialog is returned to it').toBe(box);
       inside.focus();
-      inside.dispatchEvent(new FocusEvent('focusout', { relatedTarget: box, bubbles: true }));
-      vi.advanceTimersByTime(0);
-      expect(document.activeElement, 'a move inside the dialog is not interfered with').toBe(inside);
-      inside.dispatchEvent(new FocusEvent('focusout', { relatedTarget: null, bubbles: true }));
-      vi.advanceTimersByTime(0);
-      expect(document.activeElement, 'a window blur is left alone, as A14.7 leaves it').toBe(inside);
+      inside.dispatchEvent(new FocusEvent('focusout', { relatedTarget: away, bubbles: true }));
+      // No pull-back, deferred or otherwise: the removed trap must not intervene.
+      expect(document.activeElement, 'the removed focusout trap must not pull focus back into the dialog').not.toBe(box);
+      expect(c.state.lightbox, 'a focusout must not close the lightbox either — only Escape/backdrop/X do that').toEqual(P2);
+      // The give/market dismissal logic A13.8/A14.7 own is untouched by A19 either way, and now
+      // runs unconditionally on every focusout — lightbox open or not — exactly as it did before
+      // A19 ever existed: no early return gates it on `this.state.lightbox` any more.
+      c.setState({ giveMenu: true });
+      const give = document.createElement('div');
+      document.body.appendChild(give);
+      try {
+        c.renderVals().giveMenuRef(give);
+        inside.dispatchEvent(new FocusEvent('focusout', { relatedTarget: away, bubbles: true }));
+        expect(c.state.giveMenu, 'the Give dismissal runs even with the lightbox open now — A13.8\'s own behaviour, restored').toBe(false);
+      } finally { give.remove(); }
       c.componentWillUnmount();
-    } finally { box.remove(); away.remove(); vi.useRealTimers(); }
+    } finally { box.remove(); away.remove(); }
   });
 
   it('go() and signOut clear it — a screen change closes the lightbox (A19.11/A19.12)', async () => {

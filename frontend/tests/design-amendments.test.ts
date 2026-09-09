@@ -147,10 +147,11 @@ describe('local design amendments (spec D15)', () => {
     'A18.1', 'A18.2',
     // A19 — the photo lightbox (John, 2026-09-09). Twelve literal edits: the state keys, the
     // five class members, the render key, the two openers (detail tiles and the docked panel's
-    // photograph), the two hit-targets, the overlay block at the root, the Escape/Arrow branch
-    // in A14.5's shared `key` closure and the focus trap in A13.8's `out` closure, and the two
-    // screen changes the design owns (`go()`, `signOut`) clearing it. A19.9 and A19.10 read
-    // A14.5's and A13.8's output, so the whole family is appended last.
+    // photograph), the two hit-targets, the overlay block at the root, the Escape/Arrow/Tab
+    // branch in A14.5's shared `key` closure and a comment (A-LB3: a focus trap was tried and
+    // retracted here) in A13.8's `out` closure, and the two screen changes the design owns
+    // (`go()`, `signOut`) clearing it. A19.9 and A19.10 read A14.5's and A13.8's output, so the
+    // whole family is appended last.
     'A19.1', 'A19.2', 'A19.3', 'A19.4', 'A19.5', 'A19.6', 'A19.7', 'A19.8', 'A19.9', 'A19.10', 'A19.11', 'A19.12',
   ];
 
@@ -545,6 +546,36 @@ describe('local design amendments (spec D15)', () => {
     expect(amended.split('document.addEventListener(').length - 1).toBe(3);
     expect(pristine).not.toContain('lightbox');
     expect(pristine, 'e.currentTarget is NEW to the design with A19 — parity rests on both runtimes, not on precedent').not.toContain('e.currentTarget');
+  });
+
+  // A-LB3 (2026-09-09, ruling on fix round 1's NEEDS_CONTEXT — the focusout trap does not hold
+  // in real Chromium): the trap is removed at the byte level, and Tab is instead handled
+  // deterministically in the shared `keydown` closure. Both are asserted directly against the
+  // amended file, independent of the row prose and of logic.test.ts's characterisation.
+  it('A-LB3 removes the focusout trap and moves Tab into the shared keydown closure', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    // The removed trap: no deferred focus() call into the dialog from a focusout, anywhere.
+    expect(amended).not.toContain('setTimeout(() => box.focus()');
+    // The `out` closure carries no lightbox branch at all — A13.8's own output, verbatim, right
+    // after the closure head (the comment recording the retraction, `document.addEventListener`
+    // count elsewhere already pins that no listener was added or removed by this).
+    expect(amended).toContain(
+      '    const out = (e) => {\n'
+      + '      // A19 (A-LB3, 2026-09-09): a focusout-based trap was tried here — deferring focus back\n'
+      + '      // into the dialog whenever it left for a non-null relatedTarget outside it — and found\n'
+      + '      // not to hold in real Chromium: a null relatedTarget also occurs at the edges of the\n'
+      + '      // dialog\'s own tabbable set, which the arm cannot tell apart from a window blur. Tab is\n'
+      + '      // instead handled deterministically in the shared keydown closure above (A19.9).\n'
+      + '      // `relatedTarget` is where focus is GOING'
+    );
+    expect(pristine).not.toContain('A-LB3');
+    // Tab, deterministically, by DOM position: read once, in the keydown closure, one code path
+    // for both directions, no `relatedTarget` anywhere in it.
+    expect(amended.split('else if (e.key === "Tab") {').length - 1).toBe(1);
+    expect(amended).toContain('const controls = box ? Array.from(box.querySelectorAll("button")) : [];');
+    expect(amended).toContain('if (e.shiftKey) { if (at <= 0) { e.preventDefault(); controls[controls.length - 1].focus(); } }');
+    expect(amended).toContain('else if (at === controls.length - 1) { e.preventDefault(); controls[0].focus(); }');
+    expect(pristine, 'Array.from(...querySelectorAll("button")) is new to the design with A-LB3').not.toContain('querySelectorAll');
   });
 
   it('the amended reference is the pristine Rev 2 file plus exactly the ruled edits', () => {

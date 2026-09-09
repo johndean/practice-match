@@ -559,6 +559,72 @@ test.describe('harness: atTop pins the docked panel\'s own scroll', () => {
 });
 
 // ---------------------------------------------------------------------------------------
+// Fix round 2 (A-LB3), item 4: the Tab-cycling confirmation Step 10 asked for, and fix round 1
+// refused to write against the broken `focusout` trap, is now the gate the ruling requires.
+//
+// A-LB3 replaced the trap with deterministic handling in the shared `keydown` closure (A19.9):
+// on Tab with the dialog open, read the dialog's controls in DOM order (Close photo, Previous
+// photo, Next photo — the container is `tabindex="-1"` and never in the cycle itself); on the
+// last, wrap to the first; on Shift+Tab on the first (or on the container, which is where the
+// mount-ref idiom leaves focus right after opening), wrap to the last. One `keydown` handler,
+// synchronous, no `setTimeout`, no `relatedTarget` ambiguity.
+//
+// Reached through Round Rock (3 photographs, so Previous/Next both render) via the same click
+// sequence `detail-lightbox` uses. Every assertion below is a single `Tab`/`Shift+Tab` keypress
+// checked immediately after — no retry, no wait beyond Playwright's own actionability — because
+// the fix is synchronous: nothing here is deferred to a macrotask the way the old trap was.
+// ---------------------------------------------------------------------------------------
+test.describe('A19 — the photo lightbox: the Tab trap holds (fix round 2, A-LB3)', () => {
+  test('Tab from the last control returns to the first, Shift+Tab from the first returns to the last, and a full cycle in both directions never leaves the dialog', async ({ page }) => {
+    await prepare(page);
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await page.getByText('Round Rock').first().click();
+    await click(page, 'View full listing');
+    await page.getByRole('button', { name: 'Expand photo: Exterior — street view' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Photograph 1 of 3' });
+    await dialog.waitFor({ state: 'visible' });
+
+    const closeBtn = page.getByRole('button', { name: 'Close photo' });
+    const prevBtn = page.getByRole('button', { name: 'Previous photo' });
+    const nextBtn = page.getByRole('button', { name: 'Next photo' });
+
+    // Opening focuses the dialog itself (the mount-ref idiom, A19.2) — the container case Shift+Tab
+    // must also wrap from.
+    await expect(dialog).toBeFocused();
+
+    // A full forward cycle: dialog -> Close -> Previous -> Next -> (wrap) -> Close, asserted at
+    // every step so a mid-cycle escape (the old defect) cannot hide behind a later correction.
+    await page.keyboard.press('Tab');
+    await expect(closeBtn, 'Tab from the dialog must reach the first control').toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(prevBtn).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(nextBtn).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(closeBtn, 'Tab from the last control (Next) must return to the first (Close), on this one keypress').toBeFocused();
+
+    // A full backward cycle from there: Close -> (wrap) -> Next -> Previous -> Close.
+    await page.keyboard.press('Shift+Tab');
+    await expect(nextBtn, 'Shift+Tab from the first control (Close) must return to the last (Next), on this one keypress').toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(prevBtn).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(closeBtn).toBeFocused();
+
+    // The container case: reopen (closing and reopening returns focus to the dialog itself, not
+    // to a control), then Shift+Tab immediately — must wrap to the last control directly, not
+    // bounce on the container the way the removed trap did.
+    await closeBtn.click();
+    await page.getByRole('button', { name: 'Expand photo: Exterior — street view' }).click();
+    await dialog.waitFor({ state: 'visible' });
+    await expect(dialog).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(nextBtn, 'Shift+Tab from the container itself must reach the last control').toBeFocused();
+  });
+});
+
+// ---------------------------------------------------------------------------------------
 // Amendment A-I7 — the proof that the harness sign-in reaches the REAL API. No stub and no
 // mock: `tests/targets.ts`'s `api` web server migrated the local Postgres, seeded the design
 // persona and is serving `app.main:app`, and Vite proxies `/api` to it with the Host header

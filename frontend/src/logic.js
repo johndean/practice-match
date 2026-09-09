@@ -240,6 +240,15 @@ class Component extends DCLogic {
       if (this.state.lightbox) {
         if (e.key === "Escape") { e.preventDefault(); this.closeLightbox(); }
         else if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); this.stepLightbox(e.key === "ArrowLeft" ? -1 : 1); }
+        else if (e.key === "Tab") {
+          const box = this._lightboxEl;
+          const controls = box ? Array.from(box.querySelectorAll("button")) : [];
+          if (controls.length) {
+            const at = controls.indexOf(document.activeElement);
+            if (e.shiftKey) { if (at <= 0) { e.preventDefault(); controls[controls.length - 1].focus(); } }
+            else if (at === controls.length - 1) { e.preventDefault(); controls[0].focus(); }
+          }
+        }
         return;
       }
       if (e.key !== "Escape") return;
@@ -251,15 +260,11 @@ class Component extends DCLogic {
       this.setState({ marketMenu: false, marketMenuAt: -1 });
     };
     const out = (e) => {
-      // A19: while the lightbox is open, focus that is leaving the dialog for anywhere else in the
-      // document is pulled back to it — `aria-modal` says the page behind is inert, and Tab honours
-      // that only if something makes it. A null `relatedTarget` (a window blur, or a click on the
-      // photograph or the scrim, neither of which is focusable) is left alone, as it is below.
-      if (this.state.lightbox) {
-        const box = this._lightboxEl;
-        if (e.relatedTarget && box && !box.contains(e.relatedTarget)) setTimeout(() => box.focus(), 0);
-        return;
-      }
+      // A19 (A-LB3, 2026-09-09): a focusout-based trap was tried here — deferring focus back
+      // into the dialog whenever it left for a non-null relatedTarget outside it — and found
+      // not to hold in real Chromium: a null relatedTarget also occurs at the edges of the
+      // dialog's own tabbable set, which the arm cannot tell apart from a window blur. Tab is
+      // instead handled deterministically in the shared keydown closure above (A19.9).
       // `relatedTarget` is where focus is GOING, and a null one is the browser leaving the
       // document altogether — a window blur, which dismisses neither menu.
       const to = e.relatedTarget;
