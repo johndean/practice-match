@@ -13,5 +13,17 @@ query string into a database name. It also loads `scripts/migrate.py` as an ordi
 Pytest fixtures defined in a parent directory's `conftest.py` are visible to tests in this
 directory without re-declaring them, so `tests/census/test_schema.py` and
 `tests/census/test_registry.py` ask for `conn` directly. This file carries only what is
-census-specific — nothing yet.
+census-specific — and, since Task A9, the one Wave 2a fixture that is NOT visible here because it
+lives in a sibling directory's conftest (`member`, re-exported below).
 """
+
+from tests.api import conftest as api_fixtures
+
+# `member` — a real `account` row with the roles asked for, a live session and the matching CSRF
+# header (Wave 2a, Task I9a). Re-exported rather than re-declared: `tests/census/test_admin_api.py`
+# drives the admin Data Sources API over HTTP exactly as `tests/api/test_admin_users.py` drives the
+# Users one, and a second definition of "a real signed-in account" is a second thing to keep in
+# step with `app.auth.sessions`. A plain assignment (not a `from ... import member`, which ruff
+# reads as an unused import) — pytest collects any conftest attribute that IS a fixture, under the
+# name it is bound to.
+member = api_fixtures.member
