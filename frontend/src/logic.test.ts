@@ -1868,6 +1868,63 @@ describe('logic.js — what Continue actually sends (A-SL26)', () => {
       }
     });
 
+    // --- MAJOR-F (round-4 re-review), A-SL29 (1): Back is the rail's twin --------------------
+    it('Back saves the step it leaves before it moves (MAJOR-F, A16.19)', async () => {
+      // Round 3 said the rail was "the ONE navigation control that silently discards work"; it was
+      // wrong by one control. Type on step 5 → Back → step 4 → Save and exit lost step 5, under the
+      // same "Saved automatically" chrome. Same shape as A16.18: partial mode, Continue's own arm.
+      const c2 = onStep(5);
+      c2.setW('facility')('Two surgical suites');
+      const sent = record(draft({ photos: [{ id: 'as-1', name: 'Reception' }] }));
+      await c2.wizardVals().back();
+      expect(sent.map((r) => r.method)).toEqual(['PATCH']);
+      expect(sent[0].url).toBe('/api/seller/listings/a3f1?step=5');
+      expect(sent[0].body).toEqual({ bldg: 'Included', facilityType: 'Standalone', facility: 'Two surgical suites' });
+      expect(c2.state.step).toBe(4);
+      expect(c2.state.wizErr).toBe('');
+      expect(c2.state.wizAssets).toEqual([{ kind: 'Photo', name: 'Reception', id: 'as-1' }]);
+    });
+
+    it('Back saves in partial mode, and on step 1 it saves and stays (MAJOR-F)', async () => {
+      const { c2, sent } = await created();
+      c2.setW('name')('ABC Animal Hospital');
+      await c2.wizardVals().back();
+      const patch = sent.filter((r) => r.method === 'PATCH');
+      expect(patch).toHaveLength(1);
+      expect(patch[0].url).toBe('/api/seller/listings/new-1?step=1');
+      expect(patch[0].body, 'the blank year is left out').toEqual({ name: 'ABC Animal Hospital', type: 'Small animal', ownership: 'Sole proprietor' });
+      expect(c2.state.step, 'the design\'s own Math.max(1, step - 1)').toBe(1);
+    });
+
+    it('a refused Back save keeps the seller on the step they were typing on, with the message (MAJOR-F)', async () => {
+      const c2 = onStep(4);
+      record({ error: { code: 'BAD_REQUEST', message: 'sqft must be a number.' } }, 400);
+      await c2.wizardVals().back();
+      expect(c2.state.step).toBe(4);
+      expect(c2.state.wizErr).toBe('sqft must be a number.');
+    });
+
+    it('Back off step 6 or step 8 re-reads and moves — no PATCH, since neither step has a field (MAJOR-F)', async () => {
+      for (const from of [6, 8]) {
+        const c2 = onStep(from);
+        const sent = record(draft());
+        await c2.wizardVals().back();
+        expect(sent.map((r) => [r.method, r.url]), `from step ${from}`).toEqual([['GET', '/api/seller/listings/a3f1']]);
+        expect(c2.state.step, `from step ${from}`).toBe(from - 1);
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('without an adapter Back is the design\'s own move, and spends no request (MAJOR-F)', () => {
+      const plain: any = new Component({});
+      plain.setState({ auth: true, screen: 'seller', sellerView: 'wizard', step: 5, wizErr: 'x' });
+      const sent = record(draft());
+      plain.wizardVals().back();
+      expect(plain.state.step).toBe(4);
+      expect(plain.state.wizErr).toBe('');
+      expect(sent).toEqual([]);
+    });
+
     it('without an adapter the rail is the design\'s own move, and spends no request (MAJOR-E)', () => {
       const plain: any = new Component({});
       plain.setState({ auth: true, screen: 'seller', sellerView: 'wizard', step: 2, wizErr: 'x' });

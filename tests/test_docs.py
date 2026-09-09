@@ -31,7 +31,7 @@ REQUIRED_CI_COMMANDS = (
     # A4 (2026-09-09): scripts/census_load.py joins the same line the moment it exists
     # (A-C0 P8) — `test_ci_strict_mypy_covers_every_python_script` derives the requirement from
     # the scripts/ directory itself, but this substring is a literal pin and has to move by hand.
-    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py --strict",
+    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py tests/e2e/api_under_test.py --strict",
     "poetry run pytest -q -W error",
     # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
     # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
@@ -175,6 +175,53 @@ def test_ci_strict_mypy_covers_every_python_script():
     assert missing == [], (
         f"{missing} are measured by CI's `--cov=scripts` but are not in its strict mypy step "
         f"({step.strip()}) — add them there, beside the others"
+    )
+
+
+def test_the_e2e_launcher_is_in_both_gates_a_module_of_its_shape_lives_in():
+    """A-SL29 (2), on the round-4 re-review's MINOR-2. `tests/e2e/api_under_test.py` starts the api
+    that every Playwright `app`-project run depends on: production-shaped code that was measured by
+    neither gate a module of its shape lives in — not by `--cov=app --cov=scripts`, and not by CI's
+    strict mypy step (the pairing rule `test_ci_strict_mypy_covers_every_python_script` states for
+    `scripts/`). So every non-test module under `tests/e2e/` is named in the strict mypy line, and
+    `--cov=tests/e2e` is in the backend gate wherever the gate is spelled as a rule — CI, CLAUDE.md's
+    Common operations, and the seller lifecycle plan's policy line and gate tables. Derived from the
+    directory, not from a list, for the reason the `scripts/` pin gives."""
+    modules = sorted(p.name for p in (ROOT / "tests" / "e2e").glob("*.py")
+                     if p.name != "__init__.py" and not p.name.startswith("test_"))
+    assert modules, "tests/e2e/ carries no launcher module to gate"
+    workflow = (ROOT / ".github" / "workflows" / "quality.yml").read_text()
+    mypy_step = next(line for line in workflow.splitlines() if "mypy" in line and "--strict" in line and "scripts/" in line)
+    missing = [name for name in modules if f"tests/e2e/{name}" not in mypy_step]
+    assert missing == [], f"{missing} are the Playwright api under test but not in CI's strict mypy step ({mypy_step.strip()})"
+    pytest_step = next(line for line in workflow.splitlines() if "pytest" in line and "--cov=app" in line)
+    assert "--cov=tests/e2e" in pytest_step, f"CI's backend gate does not measure tests/e2e: {pytest_step.strip()}"
+    claude_gate = next(line for line in (ROOT / "CLAUDE.md").read_text().splitlines() if "--cov=app" in line)
+    assert "--cov=tests/e2e" in claude_gate, "CLAUDE.md's backend gate line does not measure tests/e2e"
+    plan = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-08-seller-listing-lifecycle.md").read_text()
+    gate = "--cov=app --cov=scripts --cov-branch --cov=tests/e2e --cov-fail-under=100"
+    policy_line = next(line for line in plan.splitlines() if line.startswith("- **(a) 100 % lines AND branches, backend.**"))
+    assert gate in policy_line, "the seller plan's policy line (a) does not measure tests/e2e"
+    table_rows = [line for line in plan.splitlines() if line.startswith("|") and "100 % backend" in line]
+    assert table_rows, "the seller plan's gate tables no longer carry a '100 % backend' row"
+    assert all(gate in row for row in table_rows), [row[:80] for row in table_rows if gate not in row]
+
+
+def test_claude_md_a16_clause_counts_the_family_s_literal_edits():
+    """A-SL29 (3), on MINOR-3: CLAUDE.md's A16 sentence opened "eighteen literal script edits" while
+    the family had nineteen entries. The GLOBAL counts are derived (the test above this file's
+    amendment section); the per-family word was not. The number written is the one the id list
+    derives — A16.11a and A16.11b are two entries, as `design-amendments.test.ts` counts them."""
+    ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
+    entries = len(set(re.findall(r"id: 'A16\.[^']+'", ts)))
+    assert entries, "frontend/tests/design-amendments.ts declares no A16 entries"
+    words = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
+             "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "twenty-one",
+             "twenty-two", "twenty-three", "twenty-four", "twenty-five")
+    assert entries < len(words), f"no spelled-out word on hand for {entries} A16 entries"
+    claude = (ROOT / "CLAUDE.md").read_text()
+    assert f"; {words[entries]} literal script edits — A16.1" in claude, (
+        f"CLAUDE.md's A16 clause must read '{words[entries]} literal script edits' — the family has {entries} entries"
     )
 
 

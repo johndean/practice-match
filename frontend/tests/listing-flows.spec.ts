@@ -196,18 +196,26 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
     expect(row).toMatchObject({ docs: 2, rooms: 4, sqft: 3000, hours: 'Mon-Fri 8-6', desc: 'Wellness, dentistry, soft-tissue surgery' });
     await onStep(page, 5);
 
-    // 9. Step 5 — the other two enum selects (CRITICAL-C's second half), one of them changed.
+    // 9. Step 5 — the other two enum selects (CRITICAL-C's second half), one of them changed — left
+    //    by the wizard's own BACK button (MAJOR-F, A16.19): Back saves the step it leaves exactly as
+    //    the rail does, so the typed step 5 is on the API before step 4 shows.
     await expect(field(page, 'Building status')).toHaveValue('Included');
     await expect(field(page, 'Facility type')).toHaveValue('Standalone');
     await field(page, 'Building status').selectOption('Leased');
     await field(page, 'Facility description').fill('Freestanding building on a corner lot.');
-    row = await saved(page, id, 5, () => button(page, 'Continue').click());
+    row = await saved(page, id, 5, () => button(page, 'Back').click());
     expect(row).toMatchObject({ bldg: 'Leased', facilityType: 'Standalone', facility: 'Freestanding building on a corner lot.' });
+    await onStep(page, 4);
+    // …and forward again through Continue, the typed values still in the form.
+    await saved(page, id, 4, () => button(page, 'Continue').click());
+    await onStep(page, 5);
+    await expect(field(page, 'Building status')).toHaveValue('Leased');
+    row = await saved(page, id, 5, () => button(page, 'Continue').click());
+    expect(row).toMatchObject({ bldg: 'Leased', facility: 'Freestanding building on a corner lot.' });
     await onStep(page, 6);
 
     // 10. Step 6 without a photograph — the photograph is the next test's, where the API has a
     //     store to put it in. Its Continue writes nothing (there is no field to save) and advances.
-    // Step 6's Continue writes nothing — its photograph is already stored — and advances.
     const nothingPatched: string[] = [];
     const watch = (r: import('@playwright/test').Request) => { if (r.method() === 'PATCH') nothingPatched.push(r.url()); };
     page.on('request', watch);

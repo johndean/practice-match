@@ -47,10 +47,16 @@ def server(monkeypatch: Any) -> list[dict[str, Any]]:
     return calls
 
 
+LOOPBACK = {
+    "DATABASE_URL": "postgresql://pm:pm_dev_pw@localhost:5433/practice_match",
+    "REDIS_URL": "redis://127.0.0.1:6380/0",
+}
+
+
 @pytest.fixture
 def test_env(monkeypatch: Any) -> None:
     monkeypatch.setenv("ENVIRONMENT", "test")
-    for name, value in FOUR.items():
+    for name, value in {**FOUR, **LOOPBACK}.items():
         monkeypatch.setenv(name, value)
 
 
@@ -107,6 +113,57 @@ def test_it_refuses_an_endpoint_moto_would_not_intercept(server: Any, test_env: 
     assert api_under_test.main(["--port", "8099"]) != 0
     assert server == []
     assert "amazonaws.com" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(("name", "url"), [
+    ("DATABASE_URL", "postgresql://pm:pw@postgres.railway.internal:5432/railway"),
+    ("DATABASE_URL", "postgresql://pm:pw@localhost.evil.example:5433/practice_match"),
+    ("REDIS_URL", "redis://default:pw@redis.railway.internal:6379"),
+    ("REDIS_URL", "redis://[::1"),
+    ("REDIS_URL", "redis:///0"),
+])
+def test_it_refuses_a_database_or_redis_that_is_not_on_this_machine(server: Any, test_env: None, monkeypatch: Any, capsys: Any, name: str, url: str) -> None:
+    """A-SL29 (2), Info-8: `ENVIRONMENT=test` beside a real `DATABASE_URL` would serve production
+    data with a mock bucket. The same two loopback rules `scripts/reset_rate_limits.py` applies to
+    Redis apply here to both URLs — an unparseable URL and one with no host are refused too, as
+    hosts this cannot show to be local."""
+    monkeypatch.setenv(name, url)
+    assert api_under_test.main(["--port", "8099"]) != 0
+    assert server == [], "a refusal must never start the server"
+    err = capsys.readouterr().err
+    assert err.count("\n") == 1 and name in err and url not in err, "one line, naming the variable and never its value"
+
+
+@pytest.mark.parametrize("host", ["localhost", "127.0.0.1", "[::1]"])
+def test_loopback_in_its_documented_spellings_is_accepted_for_both(server: Any, test_env: None, monkeypatch: Any, host: str) -> None:
+    monkeypatch.setenv("DATABASE_URL", f"postgresql://pm:pw@{host}:5433/practice_match")
+    monkeypatch.setenv("REDIS_URL", f"redis://{host}:6380/3")
+    assert api_under_test.main(["--port", "8099"]) == 0
+    assert len(server) == 1
+
+
+@pytest.mark.parametrize("url", [
+    "redis://localhost:6380/0", "postgresql://pm:pw@127.0.0.1:5433/x", "redis://[::1]:6380", "redis://user:pw@localhost/1",
+    "redis://localhost.evil.example", "redis://:pw@host", "postgresql://pm@db.railway.internal/x",
+    "", "redis:///0", "redis://[::1", "not a url at all",
+])
+def test_the_loopback_rule_is_reset_rate_limits_own(url: str) -> None:
+    """The same rule as `scripts/reset_rate_limits.py::is_local_redis`, answer for answer, on every
+    shape that script's own tests name — loopback in its three spellings, a credential, a look-alike
+    host, no host, and a URL `urlsplit` cannot parse. Not imported from the script: mypy would then
+    see `scripts/reset_rate_limits.py` under two module names in CI's strict step (it is checked as
+    a bare file), so the rule is restated in the launcher and held equal here."""
+    from scripts import reset_rate_limits
+
+    assert api_under_test.is_local(url) == reset_rate_limits.is_local_redis(url)
+
+
+def test_a_missing_database_or_redis_url_is_refused(server: Any, test_env: None, monkeypatch: Any) -> None:
+    for name in ("DATABASE_URL", "REDIS_URL"):
+        monkeypatch.delenv(name)
+        assert api_under_test.main(["--port", "8099"]) != 0
+        monkeypatch.setenv(name, LOOPBACK[name])
+    assert server == []
 
 
 def test_the_port_is_required(server: Any, test_env: None) -> None:

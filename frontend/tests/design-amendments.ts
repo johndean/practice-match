@@ -1697,11 +1697,42 @@ const A16_18: Amendment = {
   count: 1
 };
 
+/** A16.19 — the wizard's BACK button saves the step it leaves before it moves (A-SL29 (1), on the
+ *  round-4 re-review's MAJOR-F).
+ *
+ *  A16.18's defect on the other navigation control. Round 3 wrote that the rail was "the ONE
+ *  navigation control in the wizard that silently discards work", and A-SL27 (3) was ruled from
+ *  that sentence — which was wrong by one control. `back` was the design's own pure state move,
+ *  `this.setState({ step: Math.max(1, step - 1), wizErr: "" })`, so: type on step 5 → Back → step 4
+ *  → Save and exit wrote step 4 and step 5's typing was gone, under the same "Saved automatically"
+ *  chrome, two clicks from the seller's hand.
+ *
+ *  Mechanically identical to A16.18: with an adapter and a listing the current step is PATCHed
+ *  first, in the adapter's partial mode (the step may be half-filled, and Back has no guard),
+ *  through Continue's own single rejection arm — a refusal keeps the seller on the step they were
+ *  typing on with the message in `wizErr`; steps 6 and 8 have no fields, so the adapter re-reads
+ *  and issues no PATCH; `wizAssets` is re-set from the answer — and only then the design's own
+ *  `Math.max(1, step - 1)` move, which on step 1 saves and stays.
+ *
+ *  Pixel-free: no approved capture presses Back (`screens.ts` presses the rail, `/^7/` and `/^8/`),
+ *  and with no adapter the design's one-liner runs untouched, so the reference is unmoved. On the
+ *  app a Back press is answered by the `…/{id}?step=N` route A16.18 already gave `prepare()`. */
+const A16_19: Amendment = {
+  id: 'A16.19', ...SL,
+  find: '      back: () => this.setState({ step: Math.max(1, step - 1), wizErr: "" }),',
+  replace: '      back: () => (!this.props.listings || !s.editingId\n'
+    + '        ? this.setState({ step: Math.max(1, step - 1), wizErr: "" })\n'
+    + '        : this.props.listings.patch(s.editingId, step, w, true).then(\n'
+    + '            (d) => this.setState({ step: Math.max(1, step - 1), wizErr: "", wizAssets: d.assets }),\n'
+    + '            (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." }))),',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
     A7_3, A7_4, A8_1a, A8_1b, A8_1c, A8_2, A8_3a, A8_3b, A8_4a, A8_4b, A8_5, A8_6, A8_7, A8_8a, A8_8b,
     A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5, A12_6, A12_7, A12_8, A12_9, A12_10, A12_11,
     A15_1, A15_2, A15_3a, A15_3b, A15_3c, A15_3d,
-    A16_1, A16_2, A16_3, A16_4, A16_5, A16_6, A16_7, A16_8, A16_9, A16_10, A16_11a, A16_11b, A16_12, A16_13, A16_14, A16_15, A16_16, A16_17, A16_18];
+    A16_1, A16_2, A16_3, A16_4, A16_5, A16_6, A16_7, A16_8, A16_9, A16_10, A16_11a, A16_11b, A16_12, A16_13, A16_14, A16_15, A16_16, A16_17, A16_18, A16_19];
 }

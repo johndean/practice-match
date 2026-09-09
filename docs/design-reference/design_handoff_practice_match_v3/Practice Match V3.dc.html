@@ -2905,7 +2905,11 @@ class Component extends DCLogic {
       saveNote: "Saved automatically",
       nextLabel: step === 7 ? "Preview listing" : "Continue",
       backStyle: "font-family: var(--rf-display); height: 48px; padding: 0 20px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: " + (step === 1 ? "var(--border-subtle)" : "var(--color-navy)") + "; background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: " + (step === 1 ? "default" : "pointer") + ";",
-      back: () => this.setState({ step: Math.max(1, step - 1), wizErr: "" }),
+      back: () => (!this.props.listings || !s.editingId
+        ? this.setState({ step: Math.max(1, step - 1), wizErr: "" })
+        : this.props.listings.patch(s.editingId, step, w, true).then(
+            (d) => this.setState({ step: Math.max(1, step - 1), wizErr: "", wizAssets: d.assets }),
+            (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." }))),
       next: () => {
         if (step === 1 && (!w.name || !w.est)) return this.setState({ wizErr: "Practice name and year established are needed before you continue." });
         if (step === 2 && (!w.city || !w.zip)) return this.setState({ wizErr: "A city and ZIP code are needed to place your practice on the map." });

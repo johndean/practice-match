@@ -8,7 +8,8 @@ every migration applied and `settings.database_url` pointed at it.
 from __future__ import annotations
 
 import json
-import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -1371,15 +1372,20 @@ def design_initial_w() -> dict[str, Any]:
     """The design's own initial `state.w` (logic.js:204) — the values a bare draft's wizard holds
     once `toWizardState` has left every null column alone (A-SL27 (1)).
 
-    Read out of the generated `logic.js` rather than typed here: the literal is the design's, held
-    byte-for-byte by `frontend/tests/app-generated.test.ts`, so this is the one copy that cannot
-    drift from it. Every value is a JSON scalar, which is why `json.loads` can read each one."""
-    source = (ROOT / "frontend" / "src" / "logic.js").read_text(encoding="utf-8")
-    line = re.search(r"^\s*w: \{ (.*) \},\s*$", source, re.MULTILINE)
-    assert line, "logic.js no longer declares the wizard's `w: { … },` literal on one line"
-    pairs = re.findall(r'(\w+): ("[^"]*"|true|false|\d+)', line.group(1))
-    assert pairs, "the wizard's `w` literal holds no `key: value` pairs this parser knows"
-    return {key: json.loads(raw) for key, raw in pairs}
+    Read the way every vitest pin reads it — `new Component({}).state.w`, evaluated by Node from
+    `frontend/src/logic.js`, which exports `Component` — and not by a regex over the byte-locked
+    literal (A-SL29 (5), on the round-4 re-review's Info-7: the addendum removed one regex over
+    source and the same commit had added this one). Node is on every machine that runs this suite
+    for the same reason Python is on every machine that runs the frontend's: each gate starts the
+    other side's server."""
+    node = shutil.which("node")
+    assert node, "Node is needed to evaluate the design's own Component for this pin"
+    script = "import('./src/logic.js').then((m) => process.stdout.write(JSON.stringify(new m.Component({}).state.w)))"
+    result = subprocess.run([node, "--input-type=module", "-e", script], cwd=ROOT / "frontend",
+                            capture_output=True, text=True, check=True)
+    w: dict[str, Any] = json.loads(result.stdout)
+    assert w and isinstance(w, dict), "the design's wizard literal evaluated to no object"
+    return w
 
 
 def test_the_adapter_and_the_api_agree_on_every_step_s_fields() -> None:

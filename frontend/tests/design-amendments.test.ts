@@ -139,11 +139,15 @@ describe('local design amendments (spec D15)', () => {
     // the one navigation control that silently discarded typed work under "Saved automatically"
     // no longer does. A16.15 was revised in the same round to save in that partial mode (MAJOR-D).
     'A16.18',
+    // A16.19 (A-SL29 (1), the round-4 re-review's MAJOR-F): the wizard's Back button saves the step
+    // it leaves before it moves — A16.18's own shape on the other navigation control, which round
+    // 3's "the ONE navigation control that silently discards work" missed by one.
+    'A16.19',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(107);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(108);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
