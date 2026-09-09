@@ -50,9 +50,31 @@ def test_weighted_count_sums_with_weights_and_combines_moe_in_quadrature() -> No
     assert est == 200 and moe == pytest.approx(math.sqrt(10**2 + 10**2)) and excluded == 1
 
 
-def test_weighted_count_treats_a_missing_moe_as_zero_variance() -> None:
+def test_weighted_count_returns_an_unknown_moe_when_no_part_reports_one() -> None:
+    """B4b fix round 1 (A-C21 (1)), correcting A-C17 (1): the earlier shape of this test asserted
+    `moe == 0.0` here, which is exactly the information-loss bug the reviewer traced by hand --
+    when every CONTRIBUTING part has an estimate but no margin at all, the combined margin must
+    come back `None` (unmeasured), not `0.0` (measured with perfect precision). A `0.0` combined
+    margin now means at least one part genuinely REPORTED a zero margin (see the next test), never
+    "nobody said.\""""
     est, moe, excluded = m.weighted_count([(300, None, 2.0)])
+    assert est == 600 and moe is None and excluded == 0
+
+
+def test_weighted_count_treats_a_genuinely_reported_zero_moe_as_zero_variance() -> None:
+    """The other side of the same fix: a part that reports an ACTUAL zero margin (not a missing
+    one) still contributes zero variance, exactly as before -- the distinction is "no part said
+    anything" (None) versus "a part said zero" (0.0), not whether zero appears in the arithmetic."""
+    est, moe, excluded = m.weighted_count([(300, 0.0, 2.0)])
     assert est == 600 and moe == 0.0 and excluded == 0
+
+
+def test_weighted_count_combines_a_mix_of_reported_and_missing_moe() -> None:
+    """When AT LEAST ONE contributing part reports a real margin, the combined margin is still
+    computable -- a part with no margin contributes zero variance to that sum (skipped from the
+    quadrature sum, not from the estimate), rather than poisoning the whole result to `None`."""
+    est, moe, excluded = m.weighted_count([(100, 10, 1.0), (200, None, 1.0)])
+    assert est == 300 and moe == pytest.approx(10.0) and excluded == 0
 
 
 def test_weighted_count_with_no_usable_estimate_returns_none_est_and_moe() -> None:

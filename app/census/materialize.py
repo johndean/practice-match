@@ -215,56 +215,78 @@ def materialize_listing(conn: psycopg2.extensions.connection, redis: redis_sync.
     currently active vintages. Deletes a band's own rows before rewriting it (A-C19). Bumps the
     listing's Redis cache-version key on every call, even one that writes zero rows -- a caller
     that just changed the licence gate or the active vintage still needs stale panels to expire.
-    Returns the number of rows written."""
+    Returns the number of rows written.
+
+    A-C21 (2): the whole rewrite is one transaction, the same guard `app.census.catchment.build`
+    already uses for the same reason -- production connections come from `app.db`'s pool with
+    `autocommit=True` (each statement commits the instant it runs), so a failure between one
+    band's DELETE and the final INSERT would otherwise leave a listing with only part of its
+    figures. `conn.autocommit` is toggled off for the duration and restored afterwards, so this
+    is safe to call regardless of the caller's own autocommit state."""
     ctx = _Ctx(conn, listing_id)
     rows: list[_MetricRow] = []
-    with conn.cursor() as cur:
-        for band in BANDS:
-            got = _band_inputs(cur, ctx, listing_id, band)
-            if got is None:
-                continue
-            cur.execute(_DELETE_BAND, (listing_id, band))
-            pop_e, pop_m, hh_e, hh_m, inc_e, inc_m, inc_approx, zw = got
-            geo_level = "place" if band == "place" else "catchment"
-            pop_sup, pop_reason = _suppression(pop_e, pop_m)
-            hh_sup, hh_reason = _suppression(hh_e, hh_m)
-            inc_sup, inc_reason = (False, None) if inc_approx else _suppression(inc_e, inc_m)
-            base: dict[str, object] = {"acs5": ctx.acs_v, "geo_level": geo_level}
-            rows.append(_row(listing_id, band, "population", ctx.acs_v, pop_e, "count", moe=pop_m, suppressed=pop_sup, reason=pop_reason, inputs=base))
-            rows.append(_row(listing_id, band, "households", ctx.acs_v, hh_e, "count", moe=hh_m, suppressed=hh_sup, reason=hh_reason, inputs=base))
-            rows.append(_row(
-                listing_id, band, "median_hh_income", ctx.acs_v, inc_e, "usd", derived=inc_approx, moe=inc_m,
-                suppressed=inc_sup, reason=inc_reason,
-                inputs={**base, "note": "household-weighted average of tract medians"} if inc_approx else base,
-            ))
-            rows.append(_row(
-                listing_id, band, "pet_households_est", ctx.acs_v, M.pet_households_est(hh_e), "count", derived=True,
-                suppressed=hh_sup, reason="input_suppressed" if hh_sup else None, inputs={**base, "pet_incidence_rate": M.PET_RATE},
-            ))
-            rows.append(_row(listing_id, band, "income_index_vs_us", ctx.acs_v, M.income_index_vs_us(inc_e, ctx.us_income), "pct", derived=True, inputs=base))
-            if ctx.growth is not None and ctx.growth_inputs is not None:
-                rows.append(_row(listing_id, band, "population_growth_pct", ctx.acs_v, ctx.growth, "pct", derived=True, inputs=ctx.growth_inputs))
-            comp = _competition(cur, ctx, zw, hh_e)
-            if comp is not None:
-                est, source, derived, comp_vintage, comp_inputs = comp
-                per10k = M.vets_per_10k(est, hh_e)
-                rows.append(_row(listing_id, band, "establishments", comp_vintage, est, "count", derived=derived, source=source, inputs=comp_inputs))
+    previous_autocommit = conn.autocommit
+    conn.autocommit = False
+    try:
+        with conn.cursor() as cur:
+            for band in BANDS:
+                got = _band_inputs(cur, ctx, listing_id, band)
+                if got is None:
+                    continue
+                cur.execute(_DELETE_BAND, (listing_id, band))
+                pop_e, pop_m, hh_e, hh_m, inc_e, inc_m, inc_approx, zw = got
+                geo_level = "place" if band == "place" else "catchment"
+                pop_sup, pop_reason = _suppression(pop_e, pop_m)
+                hh_sup, hh_reason = _suppression(hh_e, hh_m)
+                inc_sup, inc_reason = (False, None) if inc_approx else _suppression(inc_e, inc_m)
+                base: dict[str, object] = {"acs5": ctx.acs_v, "geo_level": geo_level}
+                rows.append(_row(listing_id, band, "population", ctx.acs_v, pop_e, "count", moe=pop_m, suppressed=pop_sup, reason=pop_reason, inputs=base))
+                rows.append(_row(listing_id, band, "households", ctx.acs_v, hh_e, "count", moe=hh_m, suppressed=hh_sup, reason=hh_reason, inputs=base))
                 rows.append(_row(
-                    listing_id, band, "vets_per_10k_households", ctx.acs_v, per10k, "ratio", derived=True, source=source,
-                    suppressed=hh_sup, reason="input_suppressed" if hh_sup else None, inputs={**comp_inputs, "acs5": ctx.acs_v},
+                    listing_id, band, "median_hh_income", ctx.acs_v, inc_e, "usd", derived=inc_approx, moe=inc_m,
+                    suppressed=inc_sup, reason=inc_reason,
+                    inputs={**base, "note": "household-weighted average of tract medians"} if inc_approx else base,
                 ))
-                if ctx.cbp and ctx.cbp_v:
+                rows.append(_row(
+                    listing_id, band, "pet_households_est", ctx.acs_v, M.pet_households_est(hh_e), "count", derived=True,
+                    suppressed=hh_sup, reason="input_suppressed" if hh_sup else None, inputs={**base, "pet_incidence_rate": M.PET_RATE},
+                ))
+                rows.append(_row(listing_id, band, "income_index_vs_us", ctx.acs_v, M.income_index_vs_us(inc_e, ctx.us_income), "pct", derived=True, inputs=base))
+                if ctx.growth is not None and ctx.growth_inputs is not None:
+                    rows.append(_row(listing_id, band, "population_growth_pct", ctx.acs_v, ctx.growth, "pct", derived=True, inputs=ctx.growth_inputs))
+                comp = _competition(cur, ctx, zw, hh_e)
+                if comp is not None:
+                    est, source, derived, comp_vintage, comp_inputs = comp
+                    per10k = M.vets_per_10k(est, hh_e)
+                    rows.append(_row(listing_id, band, "establishments", comp_vintage, est, "count", derived=derived, source=source, inputs=comp_inputs))
                     rows.append(_row(
-                        listing_id, band, "revenue_per_establishment", ctx.cbp_v, M.revenue_per_establishment(ctx.cbp[1], ctx.cbp[0]), "usd",
-                        derived=True, source="cbp", inputs={"cbp": ctx.cbp_v, "geo_level": "county", "note": "payroll per establishment, not revenue"},
+                        listing_id, band, "vets_per_10k_households", ctx.acs_v, per10k, "ratio", derived=True, source=source,
+                        suppressed=hh_sup, reason="input_suppressed" if hh_sup else None, inputs={**comp_inputs, "acs5": ctx.acs_v},
                     ))
-                score = M.opportunity_score(inc_e, ctx.growth, per10k)
-                if score is not None:
-                    rows.append(_row(
-                        listing_id, band, "opportunity_score", ctx.acs_v, float(score), "score", derived=True, source="acs5",
-                        inputs={**comp_inputs, "acs5": ctx.acs_v, "acs5_prior": ctx.prior_v, "components": {"income": inc_e, "growth": ctx.growth, "vets_per_10k": per10k}},
-                    ))
-        cur.executemany(_UPSERT, rows)
+                    if ctx.cbp and ctx.cbp_v:
+                        rows.append(_row(
+                            listing_id, band, "revenue_per_establishment", ctx.cbp_v, M.revenue_per_establishment(ctx.cbp[1], ctx.cbp[0]), "usd",
+                            derived=True, source="cbp", inputs={"cbp": ctx.cbp_v, "geo_level": "county", "note": "payroll per establishment, not revenue"},
+                        ))
+                    score = M.opportunity_score(inc_e, ctx.growth, per10k)
+                    if score is not None:
+                        # A-C21 (1): the score is built from income and per10k (itself
+                        # households-driven) -- if either of those inputs is unmeasured, the
+                        # composite built on top of them is too, not a confident-looking number
+                        # with nothing to show it.
+                        score_sup = hh_sup or inc_sup
+                        rows.append(_row(
+                            listing_id, band, "opportunity_score", ctx.acs_v, float(score), "score", derived=True, source="acs5",
+                            suppressed=score_sup, reason="input_suppressed" if score_sup else None,
+                            inputs={**comp_inputs, "acs5": ctx.acs_v, "acs5_prior": ctx.prior_v, "components": {"income": inc_e, "growth": ctx.growth, "vets_per_10k": per10k}},
+                        ))
+            cur.executemany(_UPSERT, rows)
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.autocommit = previous_autocommit
     # A-C19: nanosecond resolution -- `int(time.time())` truncates to whole seconds, and two
     # materialisations of the same listing inside one second would otherwise stamp the same
     # version and leave a client's cache reading stale figures.

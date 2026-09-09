@@ -11,6 +11,8 @@ nanosecond-version-stamp tests below (pre-flight corrections, A-C19)."""
 from __future__ import annotations
 
 import fakeredis
+import psycopg2
+import psycopg2.extensions
 import pytest
 
 from app.census import catchment, materialize
@@ -19,10 +21,11 @@ from tests.census.listing_fixtures import make_listing
 PLACE = "POLYGON((-97.90 30.50,-97.70 30.50,-97.70 30.60,-97.90 30.60,-97.90 30.50))"  # covers both tracts and both ZCTAs
 
 
-@pytest.fixture
-def world(conn):
+def _seed_world(conn):
     """Two tracts, two ZCTAs, a place, a county, the nation; both ACS vintages; CBP; ZBP; active
-    vintages; one geocoded listing."""
+    vintages; one geocoded listing (catchments NOT built -- callers that need them call
+    `catchment.build` themselves, since the atomicity test below needs a SECOND connection to the
+    same seeded data)."""
     lid = make_listing(conn)
     with conn.cursor() as cur:
         for i, gid in enumerate(["48491000001", "48491000002"]):
@@ -76,6 +79,12 @@ def world(conn):
             "VALUES (%s,'h', ST_SetSRID(ST_Point(-97.85,30.55),4269), '48491000001','48491','4813552','rooftop',now(),'Current_Current')",
             (lid,),
         )
+    return lid
+
+
+@pytest.fixture
+def world(conn):
+    lid = _seed_world(conn)
     catchment.build(conn, lid, "2023")
     return lid
 
@@ -138,6 +147,27 @@ def test_catchment_bands_aggregate_tracts_and_zctas_coherently(conn, world):
     assert _metric(conn, world, "opportunity_score")[9]["components"].keys() == {"income", "growth", "vets_per_10k"}
 
 
+def test_drive_10_and_drive_20_bands_are_materialised_independently(conn, world):
+    """A-C21 (4) Minor: every catchment-band test above reads `band="drive_10"` (`_metric`'s own
+    default) -- nothing proved `drive_20` is populated at all, still less that the two bands hold
+    genuinely independent figures rather than one aliasing or silently overwriting the other.
+    `drive_10`'s 8 km buffer and `drive_20`'s 16 km buffer produce different overlap fractions
+    over the same two tracts, so a correct materialisation gives each band its OWN weighted sum,
+    verified against that band's OWN `practice_catchment` weights."""
+    materialize.materialize_listing(conn, fakeredis.FakeRedis(), world)
+    values: dict[str, float] = {}
+    for band in ("drive_10", "drive_20"):
+        wt = _weights(conn, world, band, "140")
+        exp_pop = 4000 * wt["48491000001"] + 3000 * wt["48491000002"]
+        pop = _metric(conn, world, "population", band)
+        assert pop is not None and pop[8] == "2019\u20132023", band
+        assert pop[0] == pytest.approx(exp_pop, rel=1e-6), band
+        values[band] = pop[0]
+    # The two bands' own buffers genuinely differ, so their weighted sums must too -- this is what
+    # distinguishes "each band computed independently" from "one band's row was copied to both."
+    assert values["drive_10"] != pytest.approx(values["drive_20"], rel=1e-9)
+
+
 def test_high_moe_suppresses_the_value_and_its_derivatives(conn, world):
     with conn.cursor() as cur:
         cur.execute("UPDATE acs_measure SET moe = 900 WHERE variable='B11001_001E' AND summary_level='140'")  # CV ~ 0.36 on catchment households
@@ -186,6 +216,75 @@ def test_estimates_without_a_margin_of_error_are_suppressed_as_unmeasured(conn, 
     assert pets[5] is True and pets[6] == "input_suppressed"  # cascades, same as high_moe already does
     pop = _metric(conn, world, "population", "place")
     assert pop[5] is False  # population's own MOE is untouched
+
+
+# ---- fix round 1 (A-C21 (2)): the rewrite must be one transaction -----------------------------
+
+
+class _RaisingOnDriveTenDelete(psycopg2.extensions.cursor):
+    """Raises when `materialize_listing` deletes the `drive_10` band's rows -- AFTER the `place`
+    band's own delete has already run (uncommitted) -- so a test can prove the whole rewrite
+    rolls back together, rather than leaving `place` deleted while `drive_10`/`drive_20` are
+    untouched (A-C21 (2): `catchment.build` fixed exactly this risk already; the materialisation
+    had not reused the guard -- production connections are pooled with `autocommit=True`, so
+    each statement commits as it runs unless the rewrite manages its own transaction)."""
+
+    def execute(self, query, vars=None):  # matches psycopg2's own cursor.execute signature
+        if isinstance(query, str) and query == materialize._DELETE_BAND and vars is not None and vars[1] == "drive_10":
+            raise psycopg2.Error("forced failure (RED/behavioural test): partial materialisation")
+        return super().execute(query, vars)
+
+
+def test_materialize_listing_rolls_back_atomically_on_a_failure_partway(scratch_dsn):
+    conn = psycopg2.connect(scratch_dsn)
+    conn.autocommit = True  # the production shape: pooled connections default to autocommit
+    lid = _seed_world(conn)
+    catchment.build(conn, lid, "2023")
+    baseline = materialize.materialize_listing(conn, fakeredis.FakeRedis(), lid)  # first rewrite succeeds
+
+    raising_conn = psycopg2.connect(scratch_dsn, cursor_factory=_RaisingOnDriveTenDelete)
+    raising_conn.autocommit = True
+    try:
+        with pytest.raises(psycopg2.Error):
+            materialize.materialize_listing(raising_conn, fakeredis.FakeRedis(), lid)
+    finally:
+        raising_conn.close()
+
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM market_metric WHERE listing_id=%s", (lid,))
+        assert cur.fetchone()[0] == baseline  # the DELETEs that would have cleared these rolled back too
+    conn.close()
+
+
+# ---- fix round 1 (A-C21 (1)): the missing-margin guard, fixed where the information is lost ---
+
+
+def test_missing_tract_margins_suppress_every_catchment_derived_figure(conn, world):
+    """A-C21 (1), correcting A-C17 (1): with EVERY tract's households margin null, the OLD
+    `weighted_count` fabricated a combined margin of 0.0 -- "measured with perfect precision" --
+    at every catchment band, so `_suppression` downstream never saw a missing margin: the
+    information was already destroyed before this module ever looked at it. The guard was
+    therefore only ever effective at the place band (a single ACS row's own margin, never
+    combined). Fixed at the point of loss (`app.census.metrics.weighted_count` now returns an
+    unknown combined margin when no contributing part reported one): the flag now reaches BOTH
+    catchment bands and every figure derived from households -- the pet estimate, the density
+    (vets_per_10k_households) and the composite score, none of which carried a suppression flag
+    for this reason before this fix."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE acs_measure SET moe = NULL WHERE variable='B11001_001E' AND summary_level='140'")
+    materialize.materialize_listing(conn, fakeredis.FakeRedis(), world)
+    for band in ("drive_10", "drive_20"):
+        hh = _metric(conn, world, "households", band)
+        assert hh[0] is not None and hh[4] is None and hh[5] is True and hh[6] == "no_moe", band
+        pets = _metric(conn, world, "pet_households_est", band)
+        assert pets[5] is True and pets[6] == "input_suppressed", band
+        density = _metric(conn, world, "vets_per_10k_households", band)
+        assert density[5] is True and density[6] == "input_suppressed", band
+        score = _metric(conn, world, "opportunity_score", band)
+        assert score[0] is not None and score[5] is True and score[6] == "input_suppressed", band
+    # The place band is unaffected -- its households row has a real ACS-reported margin, never
+    # combined across tracts, so it is untouched by this fix.
+    assert _metric(conn, world, "households", "place")[5] is False
 
 
 # ---- pre-flight corrections (A-C19): delete-before-upsert, nanosecond version stamp -----------
@@ -269,6 +368,41 @@ def test_growth_stays_none_when_no_geography_yields_a_prior_population(conn):
     materialize.materialize_listing(conn, fakeredis.FakeRedis(), lid)
     assert _metric(conn, lid, "population", "place")[0] == 50000
     assert _metric(conn, lid, "population_growth_pct", "place") is None
+
+
+def test_growth_falls_back_to_the_county_level_when_the_place_has_none(conn):
+    """A-C21 (3): the test above proves growth STAYS `None` when NEITHER geography yields a
+    figure -- it cannot tell a working fallback from a broken (or deleted) one, because removing
+    the county rung entirely would produce the exact same observable `None` in that scenario.
+    This one proves the fallback ITSELF works: a listing with a county but no place at all can
+    only get growth from the `("050", county)` rung, so if it were broken -- wrong level string,
+    wrong column, or the rung removed outright -- `ctx.growth` would stay `None` here too, which
+    THIS test would catch and the other could not. Reaches `_Ctx` directly (as
+    `test_active_geo_vintage_*` and `app.tasks.census`'s own tests reach `CT._conn`): there is no
+    location for a band to attach to, so nothing would ever be written for the public
+    `materialize_listing` API to observe."""
+    lid = make_listing(conn)
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO ingest_run (dataset_key, vintage, started_at, status) VALUES "
+            "('acs5','2019\u20132023',now(),'succeeded'),('acs5_prior','2014\u20132018',now(),'succeeded')"
+        )
+        cur.execute("SELECT id FROM ingest_run ORDER BY id")
+        r1, r2 = [x[0] for x in cur.fetchall()]
+        cur.execute("INSERT INTO acs_measure VALUES ('48491','050','2019\u20132023','B01003_001E',260000,2000,%s)", (r1,))
+        cur.execute("INSERT INTO acs_measure VALUES ('48491','050','2014\u20132018','B01003_001E',230000,1800,%s)", (r2,))
+        cur.executemany(
+            "INSERT INTO active_vintage VALUES (%s,%s,now(),'test')",
+            [("acs5", "2019\u20132023"), ("acs5_prior", "2014\u20132018"), ("tiger_cb", "2023")],
+        )
+        cur.execute(
+            "INSERT INTO practice_location (listing_id, address_hash, point, county_geoid, geo_precision, geocoded_at, geocoder_vintage) "
+            "VALUES (%s,'h', ST_SetSRID(ST_Point(-97.85,30.55),4269), '48491','rooftop',now(),'Current_Current')",
+            (lid,),
+        )
+    ctx = materialize._Ctx(conn, lid)
+    assert ctx.growth == pytest.approx((260000 - 230000) / 230000 * 100)
+    assert ctx.growth_inputs == {"acs5": "2019\u20132023", "acs5_prior": "2014\u20132018", "geo_level": "county"}
 
 
 def test_zbp_returning_no_usable_estimate_falls_back_to_county_apportionment(conn, world):

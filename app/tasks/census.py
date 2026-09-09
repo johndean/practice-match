@@ -404,6 +404,6 @@ license_audit_task = celery_app.task(name="census.license_audit")(license_audit)
 # Phase B, B2: geocode_listing_task registers here.
 geocode_listing_task = celery_app.task(name="census.geocode_listing")(geocode_listing)
 
-# Phase B, B4: backfill_listing_task and materialize_all_task register here.
+# Phase B, B4: backfill_listing_task and materialize_metrics_task register here.
 materialize_metrics_task = celery_app.task(name="census.materialize_metrics")(materialize_metrics)
 backfill_listing_task = celery_app.task(name="census.backfill_listing")(backfill_listing)
