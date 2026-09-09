@@ -60,6 +60,10 @@ EXPECTED_COLUMNS: dict[str, tuple[str, bool]] = {
     # published listing off the market (D3) and by SL5's submit, and read back as SL5's outbox
     # idempotency key. Nullable — a draft has never been submitted.
     "submitted_at": ("timestamp with time zone", True),
+    # 040 (image identifiability protection, A-IDP-1). The listing's authoritative privacy state:
+    # whether buyers may see content that identifies the hospital/practice. Default NOT_SHOW, the
+    # safest state. Directive 7 & Spec C.7. Written by the seller's step-7 PATCH alone.
+    "identifiable_content_visibility": ("text", False),
 }
 
 
