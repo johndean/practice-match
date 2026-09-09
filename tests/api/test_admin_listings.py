@@ -222,6 +222,9 @@ async def test_publish_needs_state_and_market_on_the_first_publish_and_not_after
                                   json={"action": "publish", "state": "TX", "market": "Austin, TX"},
                                   headers=staff)
     assert published.status_code == 200 and published.json()["status"] == "published"
+    # A-SL19 (9), Info-4: the full draft, so an admin tab can link to what it just published
+    # without a re-read.
+    assert published.json()["slug"] == f"hill-country-animal-hospital-{listing_id[:8]}"
     status, state, market, _slug = _row(conn, listing_id)
     assert (status, state, market) == ("published", "TX", "Austin, TX")
     with conn.cursor() as cur:
@@ -289,8 +292,10 @@ async def test_an_action_the_listings_tab_does_not_offer_is_refused_in_the_envel
 ) -> None:
     listing_id, _signed = await _submitted(client, member)
     staff = await _staff(client, member)
+    # A-SL19 (5): `422 BAD_ACTION`, the code `/api/admin/users` already answers for the same
+    # mistake on the same tab family (`admin_users.py`'s `BadAction`).
     refused = await client.post(f"/api/admin/listings/{listing_id}/decide", json={"action": "withdraw"}, headers=staff)
-    assert refused.status_code == 400 and refused.json()["error"]["code"] == "BAD_REQUEST"
+    assert refused.status_code == 422 and refused.json()["error"]["code"] == "BAD_ACTION"
     assert "publish" in refused.json()["error"]["message"]
 
 
@@ -431,3 +436,161 @@ async def test_the_buyer_surface_shows_a_listing_only_while_it_is_published(
     assert not await _on_the_market()
     await client.post(f"/api/admin/listings/{listing_id}/decide", json={"action": "publish"}, headers=staff)
     assert await _on_the_market()
+
+
+# --- Fix round 1 (A-SL19) ------------------------------------------------------------------------
+
+
+async def test_the_reviewers_state_and_market_are_validated_before_any_write(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """A-SL19 (2), Major-2. D12 makes these two the reviewer's ONLY input, and the approved design
+    reads the state back out of the market string — `stateOf(market)` is
+    `(market || "Austin, TX").split(", ")[1] || "TX"` (logic.js:805), which the buyer detail's
+    subtitle and its "General location" row render (A12.8/A12.9). So an unvalidated "Phoenix"
+    publishes a Phoenix practice the detail labels "Phoenix, TX", and a malformed `market` also
+    makes the listing unfilterable, because Browse pages on it."""
+    listing_id, _signed = await _submitted(client, member)
+    staff = await _staff(client, member)
+    for body in (
+        {"action": "publish", "state": "XX", "market": "Phoenix, XX"},   # no such USPS state
+        {"action": "publish", "state": "tx", "market": "Austin, tx"},    # lower case is not a code
+        {"action": "publish", "state": "AZ", "market": "Phoenix"},       # no ", ST" suffix at all
+        {"action": "publish", "state": "AZ", "market": "P, AZ"},         # a one-character city
+        {"action": "publish", "state": "TX", "market": "Phoenix, AZ"},   # the suffix disagrees
+    ):
+        refused = await client.post(f"/api/admin/listings/{listing_id}/decide", json=body, headers=staff)
+        assert refused.status_code == 422, body
+        assert refused.json()["error"]["code"] == "BAD_FIELD", body
+    # ...before any write: the row is untouched by all five.
+    assert _row(conn, listing_id) == ("in_review", None, None, f"listing-{listing_id}")
+
+    # The review's own case, the right way round: a Phoenix practice in Arizona.
+    ok = await client.post(f"/api/admin/listings/{listing_id}/decide",
+                           json={"action": "publish", "state": "AZ", "market": "Phoenix, AZ"}, headers=staff)
+    assert ok.status_code == 200
+    assert _row(conn, listing_id)[1:3] == ("AZ", "Phoenix, AZ")
+
+
+def test_the_state_codes_are_the_fifty_plus_dc() -> None:
+    """A-SL19 (2): a module constant, not a regex — `^[A-Z]{2}$` accepts `XX`, and the reviewer's
+    two characters end up in the buyer detail's own state label."""
+    from app.api.admin_listings import USPS_STATES
+
+    assert len(USPS_STATES) == 51
+    assert {"TX", "AZ", "DC", "CA", "NY", "WY"} <= USPS_STATES
+    assert "XX" not in USPS_STATES and "PR" not in USPS_STATES
+
+
+async def test_the_first_publish_stamps_listed_at_and_a_republish_does_not(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """A-SL19 (3), Major-3. `listed_at` is Browse's SORT KEY and keyset cursor (`ORDER BY listed_at
+    DESC, id DESC`, `listing_page_idx`), not only the "listed 3 days ago" label — so a draft
+    created in March and published today would otherwise land mid-list, where no buyer paging
+    "newest first" would ever meet it as new. Stamped on the FIRST publish only: a republish after
+    review keeps the date buyers have already seen."""
+    listing_id, _signed = await _submitted(client, member)
+    staff = await _staff(client, member)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET listed_at = now() - interval '180 days' WHERE id=%s", (listing_id,))
+
+    def _listed_at() -> Any:
+        with conn.cursor() as cur:
+            cur.execute("SELECT listed_at FROM listing WHERE id=%s", (listing_id,))
+            return cur.fetchone()[0]
+
+    stale = _listed_at()
+    await client.post(f"/api/admin/listings/{listing_id}/decide",
+                      json={"action": "publish", "state": "TX", "market": "Austin, TX"}, headers=staff)
+    fresh = _listed_at()
+    assert fresh > stale, "the first publish is when a listing is listed"
+
+    await client.post(f"/api/admin/listings/{listing_id}/decide", json={"action": "unpublish"}, headers=staff)
+    await client.post(f"/api/admin/listings/{listing_id}/decide", json={"action": "publish"}, headers=staff)
+    assert _listed_at() == fresh, "a republish is not a new listing"
+
+
+async def test_a_publish_enqueues_no_reason(client: Any, conn: Any, member: Any) -> None:
+    """A-SL19 (6), Minor-3. `listing_published` declares no params, so a `reason` passed with it was
+    a reviewer's free text persisted in `email_outbox.params` for a mail that can never show it."""
+    listing_id, _signed = await _submitted(client, member)
+    staff = await _staff(client, member)
+    await client.post(f"/api/admin/listings/{listing_id}/decide",
+                      json={"action": "publish", "state": "TX", "market": "Austin, TX",
+                            "reason": "Looks good to me."}, headers=staff)
+    rows = {row[0]: row[2] for row in _outbox(conn)}
+    assert rows["listing_published"] == {}
+
+
+async def test_decide_returns_the_full_draft_of_the_decided_listing(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """A-SL19 (9), Info-4. The seller routes return the whole `serialise_draft`; this one returned
+    `{"id", "status"}`, so an admin tab could not link to the listing it had just published without
+    a second read — and the slug it needs for that link is written by this very request."""
+    listing_id, _signed = await _submitted(client, member)
+    staff = await _staff(client, member)
+    body = (await client.post(f"/api/admin/listings/{listing_id}/decide",
+                              json={"action": "publish", "state": "TX", "market": "Austin, TX"},
+                              headers=staff)).json()
+    assert body["id"] == listing_id and body["status"] == "published"
+    assert body["slug"] == f"hill-country-animal-hospital-{listing_id[:8]}"
+    assert body["state"] == "TX" and body["market"] == "Austin, TX"
+    assert body["name"] == "Hill Country Animal Hospital" and body["assets"] == []
+
+
+async def test_the_draft_carries_the_latest_decline_reason(client: Any, conn: Any, member: Any) -> None:
+    """A-SL19 (9), Info-3. The seller had no in-app way to read why a listing was declined — the
+    reason reached them by email only, and the Declined pill explained nothing. `serialise_draft`
+    now carries the latest decline's own words (and null when there has been no decline), which is
+    what SL7 feeds the design's per-listing note with."""
+    listing_id, signed = await _submitted(client, member)
+    staff = await _staff(client, member)
+    assert (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()["decline_reason"] is None
+
+    await client.post(f"/api/admin/listings/{listing_id}/decide",
+                      json={"action": "decline", "reason": "Revenue figures need a source."}, headers=staff)
+    body = (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()
+    assert body["status"] == "declined"
+    # The reviewer's own words, without the audit row's `<action>: ` prefix.
+    assert body["decline_reason"] == "Revenue figures need a source."
+
+    # ...and the LATEST of them, when a listing has been round the loop twice.
+    await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)
+    await client.post(f"/api/admin/listings/{listing_id}/decide",
+                      json={"action": "decline", "reason": "Still no source."}, headers=staff)
+    assert (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()["decline_reason"] == "Still no source."
+    # The reviewer reads the same field on the same draft (one serialiser, one contract).
+    assert (await client.get(f"/api/admin/listings/{listing_id}", headers=staff)).json()["decline_reason"] == "Still no source."
+
+
+async def test_a_body_pydantic_refuses_is_the_a5_envelope_on_both_decide_routes(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """A-SL19 (10), Concern 5 / Info-6. A body FastAPI itself refuses — a field of the wrong type, a
+    string past its `max_length`, an unknown field — must answer decision A5's envelope, never
+    FastAPI's `{"detail": [...]}`, on the admin surface as everywhere else.
+
+    NOTE for the controller: the app-wide `RequestValidationError` handler A-SL19 (10) asks for
+    ALREADY EXISTS — `app/auth/deps.py:158-167`, installed by `deps.install(app)` since Task I4 fix
+    round 1 (Minor 1) — and its code is `INVALID_REQUEST`, which `app/api/webhooks.py:90` and six
+    assertions across `tests/api/test_auth.py` and `tests/api/test_applications.py` already pin for
+    signup, sign-in, the applications surface and the Resend webhook. Renaming it to `BAD_BODY`
+    would change the refusal code of every route in the app from inside an SL5 fix round, so this
+    test pins the ENVELOPE (which is what the ruling is for) and the existing code. See the report."""
+    listing_id, _signed = await _submitted(client, member)
+    account_id, cookies, headers = member(roles=("admin",), email="al-admin@example.org")
+    admin = auth_headers(cookies, headers)
+    for path, body in (
+        (f"/api/admin/listings/{listing_id}/decide", {"action": 3}),
+        (f"/api/admin/listings/{listing_id}/decide", {"action": "publish", "state": "TEXAS"}),
+        # A-SL19 (10): `Decision` forbids unknown fields, so a typo is refused rather than ignored.
+        (f"/api/admin/listings/{listing_id}/decide", {"action": "publish", "reasons": "typo"}),
+        (f"/api/admin/users/{account_id}/decide", {"action": ["approve"]}),
+    ):
+        response = await client.post(path, json=body, headers=admin)
+        assert response.status_code == 422, (path, body)
+        assert set(response.json()) == {"error"}, (path, body)
+        assert set(response.json()["error"]) == {"code", "message"}, (path, body)
+        assert response.json()["error"]["code"] == "INVALID_REQUEST", (path, body)

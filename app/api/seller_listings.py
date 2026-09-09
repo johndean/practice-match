@@ -96,6 +96,13 @@ MAX_JSON_BYTES = 64 * 1024
 # does the same for `applications.submit`/`answer`/`reapply` — so the AST drift test never sees
 # them and there is no list to add them to. One namespace, so an auditor greps `listing.` once.
 EDIT_ACTION = "listing.edit"
+# The two states an edit re-enters review from (D3, widened by A-SL19 (1) on the SL5 review's
+# Major-1). `paused` is published-but-hidden: it has been through review, the seller can put it
+# back on the market with one click, and the arm used to fire on `published` alone — so pause →
+# edit → republish returned CHANGED content to buyers that no reviewer had ever seen, with no
+# audit row to say it had changed. An untouched pause/republish is still "immediate and
+# reversible" (the design's admin footnote), which is all that footnote promises.
+EDIT_REENTERS_REVIEW = ("published", "paused")
 
 # --- D10: the per-step whitelist, and the four mappings the approved design forces ---------------
 #
@@ -140,7 +147,17 @@ SUBMITTABLE_EXEMPT = ("draft", "withdrawn")
 _COLUMNS = """id, slug, name, city, zip, state, area, market, type, est, ownership, price, rev,
               docs, rooms, sqft, hours, services, bldg, facility_type, facility, status,
               location_disclosed, name_disclosed, rev_disclosed, documents_disclosed,
-              photos, seller_id, submitted_at, created_at, updated_at"""
+              photos, seller_id, submitted_at, created_at, updated_at,
+              (SELECT a.reason FROM audit_log a
+                WHERE a.target_type = 'listing' AND a.target_id = listing.id::text
+                  AND a.after ->> 'status' = 'declined'
+                ORDER BY a.id DESC LIMIT 1) AS decline_reason"""
+# A-SL19 (9), Info-3. `audit_log` is where a decision's words already live (D4), so the reason
+# rides along with the row rather than in a column the decide handler would have to keep in step
+# with the audit trail. `audit_log_target_idx` is `(target_type, target_id, at DESC)`, which is the
+# subquery's own predicate. The recorded string is `"<action>: <the reviewer's words>"`
+# (`admin_listings.decide_listing`); the seller is owed the words, not the vocabulary.
+DECLINE_PREFIX = "decline: "
 
 
 class Refusal(Exception):
@@ -303,7 +320,10 @@ def serialise_draft(row: dict[str, Any], assets: list[dict[str, Any]]) -> dict[s
     this straight to `setW`, so `services` comes back as `desc`, `facility_type` as `facilityType`
     and `bldg` in the design's own wording."""
     return {
-        "id": str(row["id"]), "status": row["status"],
+        # `slug` is the owner's own row (D11 unblanks everything; the BUYER's `serialise` is what
+        # hides it when the name is undisclosed). A-SL19 (9), Info-4: `/decide` answers this whole
+        # payload, and the slug it writes at the first publish is what an admin tab links to.
+        "id": str(row["id"]), "slug": row["slug"], "status": row["status"],
         "name": row["name"], "type": row["type"], "est": row["est"], "ownership": row["ownership"],
         "city": row["city"], "zip": row["zip"],
         "price": row["price"], "rev": row["rev"],
@@ -316,6 +336,10 @@ def serialise_draft(row: dict[str, Any], assets: list[dict[str, Any]]) -> dict[s
         "revBand": not row["rev_disclosed"],
         "docsLocked": not row["documents_disclosed"],
         "state": row["state"], "market": row["market"], "area": row["area"],
+        # Info-3: the seller had no in-app way to read WHY a listing was declined — the reason
+        # reached them by email and the Declined pill explained nothing. The latest decline's, and
+        # null when there has never been one; SL7 renders it under that pill.
+        "decline_reason": row["decline_reason"].removeprefix(DECLINE_PREFIX) if row["decline_reason"] else None,
         "submitted_at": row["submitted_at"].isoformat() if row["submitted_at"] else None,
         "updated_at": row["updated_at"].isoformat(),
         "assets": assets,
@@ -396,7 +420,10 @@ async def list_mine(request: Request) -> Response:
     principal = request.state.principal
     raw_limit = request.query_params.get("limit")
     if raw_limit is not None and not raw_limit.isdecimal():
-        return _error("BAD_REQUEST", "Invalid limit.", 400)
+        # A-SL19 (7): `422 BAD_FILTER`/`BAD_CURSOR`, the codes `/api/admin/listings` and
+        # `/api/admin/users` answer for the same mistake — this route was the only one on the
+        # listing surface refusing a bad list parameter differently from its neighbours.
+        return _error("BAD_FILTER", "limit must be a number.", 422)
     limit = min(max(int(raw_limit or DEFAULT_LIMIT), 1), MAX_LIST)
     cursor = request.query_params.get("cursor")
     keyset: tuple[str, UUID] | None = None
@@ -408,7 +435,8 @@ async def list_mine(request: Request) -> Response:
             datetime.fromisoformat(at)
             keyset = (at, UUID(raw_id))
         except ValueError:
-            return _error("BAD_REQUEST", "Invalid cursor.", 400)
+            return _error("BAD_CURSOR", "cursor must be a `<timestamp>|<id>` value from a previous"
+                                        " page's next_cursor.", 422)
     where = "seller_id = %s" + (" AND (updated_at, id) < (%s::timestamptz, %s::uuid)" if keyset else "")
     params: list[Any] = [principal.account_id, *(keyset or ())]
     with closing(sync_conn()) as conn, conn:
@@ -490,18 +518,21 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
             if cleared and row["status"] not in SUBMITTABLE_EXEMPT:
                 raise Refusal("NOT_SUBMITTABLE",
                               f"A submitted listing cannot have {', '.join(cleared)} cleared.", 409)
+            re_entering = row["status"] in EDIT_REENTERS_REVIEW
+            # ...but only a PUBLISHED listing sits in a cached Browse payload, so the cache drop
+            # stays keyed on that alone (A-SL13 L6's rule, unchanged by A-SL19 (1)).
             leaving_market = row["status"] == "published"
             assignments = ", ".join(f"{name} = %({name})s" for name in columns)
             sets = f"{assignments}, " if assignments else ""
-            if leaving_market:
+            if re_entering:
                 sets += "status = 'in_review', submitted_at = now(), "
             with conn.cursor() as cur:
                 cur.execute(f"UPDATE listing SET {sets}updated_at = now()"
                             " WHERE id = %(id)s AND seller_id = %(seller)s",
                             {**columns, "id": row["id"], "seller": principal.account_id})
-            if leaving_market:
+            if re_entering:
                 audit.write(conn, actor=principal, action=EDIT_ACTION, target_type="listing",
-                            target_id=row["id"], before={"status": "published"}, after={"status": "in_review"},
+                            target_id=row["id"], before={"status": row["status"]}, after={"status": "in_review"},
                             request=request)
             # Re-read through `owned_row` rather than a nullable `_row`: the row was just updated
             # inside this transaction, so its absence is not a state a request can reach, and a
@@ -596,7 +627,7 @@ def _writable(row: dict[str, Any]) -> None:
 
 
 def take_off_market(conn: Any, row: dict[str, Any], principal: S.Principal, request: Request) -> bool:
-    """D3 for an ASSET write, in the write's own transaction (controller amendment A-SL15 (1)).
+    """D3 for an ASSET write, in the write's own transaction (A-SL15 (1); A-SL19 (1)).
 
     John's ruling — "editing a published listing re-enters review and removes it from the market
     until approved again" — covers adding, reordering and deleting a photograph or a document: a
@@ -605,16 +636,22 @@ def take_off_market(conn: Any, row: dict[str, Any], principal: S.Principal, requ
     same stamp and same audit row as `patch_step`'s own arm, which is why `EDIT_ACTION` is shared
     rather than a second name for one act.
 
+    A PAUSED listing's assets are edits too (A-SL19 (1)): it is published-but-hidden and one click
+    from the market, so swapping a photograph on one has to be reviewed exactly as swapping it on a
+    live one is.
+
     Returns whether the listing WAS on the market, which is also the question "must the Browse
-    cache be dropped?" (D16, review L6): a draft's assets are in no published payload."""
-    if row["status"] != "published":
+    cache be dropped?" (D16, review L6) — a paused listing's assets are in no published payload,
+    and neither are a draft's."""
+    was = str(row["status"])
+    if was not in EDIT_REENTERS_REVIEW:
         return False
     with conn.cursor() as cur:
         cur.execute("UPDATE listing SET status = 'in_review', submitted_at = now(), updated_at = now()"
                     " WHERE id = %s AND seller_id = %s", (row["id"], principal.account_id))
     audit.write(conn, actor=principal, action=EDIT_ACTION, target_type="listing", target_id=row["id"],
-                before={"status": "published"}, after={"status": "in_review"}, request=request)
-    return True
+                before={"status": was}, after={"status": "in_review"}, request=request)
+    return was == "published"
 
 
 def _asset_uuid(asset_id: str, noun: str = "asset") -> UUID:

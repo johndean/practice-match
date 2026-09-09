@@ -29,7 +29,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.api.listings import _error, drop_list_cache
 from app.api.seller_listings import _COLUMNS, _row, _rows, assets_for, assets_of, serialise_draft
@@ -73,15 +73,51 @@ NOTE_REQUIRED = ("decline",)
 # the seller reads it on their own dashboard.
 MAIL = {"publish": "listing_published", "decline": "listing_declined"}
 MAX_SLUG_BASE = 80
+# A-SL19 (2), Major-2. D12 makes `state` and `market` the reviewer's ONLY input, and the approved
+# design reads the state back OUT of the market string — `stateOf(market)` is
+# `(market || "Austin, TX").split(", ")[1] || "TX"` (logic.js:805), rendered by the buyer detail's
+# subtitle and its "General location" row (A12.8/A12.9). So an unchecked "Phoenix" would publish a
+# Phoenix practice the detail labels "Phoenix, TX", and `market` is also what Browse pages and
+# filters on, so a malformed one quietly makes the listing unfindable. A CONSTANT rather than
+# `^[A-Z]{2}$`, because `XX` matches that and is not a state.
+USPS_STATES = frozenset({
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI", "ID", "IL", "IN", "IA",
+    "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM",
+    "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA",
+    "WV", "WI", "WY",
+})
+# The shape every seeded market already has ("Austin, TX", "Lake Tahoe, CA"): a city of 2-60
+# characters carrying no comma of its own, then the two-letter code.
+MARKET_RE = re.compile(r"^[^,]{2,60}, [A-Z]{2}$")
 
 
 class Decision(BaseModel):
+    # A-SL19 (10), Info-6: a typo in a field name is refused rather than silently ignored, as the
+    # seller PATCH refuses a stray field (`columns_for`). FastAPI renders the refusal through the
+    # app-wide `RequestValidationError` handler (`app/auth/deps.py`), in decision A5's envelope.
+    model_config = ConfigDict(extra="forbid")
+
     action: str = Field(max_length=32)
     reason: str = Field(default="", max_length=2_000)
     # D12: supplied by the reviewer at the FIRST publish, because the approved step 2 collects a
     # city and a ZIP and inventing a wizard field is forbidden (John's ruled default, spec Q2).
     state: str = Field(default="", max_length=2)
     market: str = Field(default="", max_length=64)
+
+
+def bad_field(state: str, market: str) -> str | None:
+    """Why the reviewer's two fields cannot be written, or None (A-SL19 (2)).
+
+    Checked BEFORE the UPDATE, so a malformed metro is refused in the envelope rather than stored
+    and then read back by the design as a Texas one — A-SL13 M2's rule ("validate before the
+    statement") applied to the one input D12 leaves to a human."""
+    if state not in USPS_STATES:
+        return "state must be a two-letter US state or DC code."
+    if MARKET_RE.match(market) is None:
+        return 'market must read "<City>, <ST>" — the metro the design shows beside the practice.'
+    if market[-2:] != state:
+        return f"market must be in {state}, the state this listing is being published in."
+    return None
 
 
 def slug_for(name: str, listing_id: Any) -> str:
@@ -171,7 +207,9 @@ async def decide_listing(listing_id: str, body: Decision, request: Request, prin
     on all three branches is what satisfies `test_every_audited_action_is_named_after_a_permission`
     with nothing added to `MULTI_ACTION_PERMISSIONS` or `CASCADED_ACTIONS`."""
     if body.action not in DECISIONS:
-        return _error("BAD_REQUEST", f"action must be one of {', '.join(DECISIONS)}.", 400)
+        # A-SL19 (5): `422 BAD_ACTION`, the code `/api/admin/users` answers for the same mistake on
+        # the same tab family (`admin_users.BadAction`).
+        return _error("BAD_ACTION", f"action must be one of {', '.join(DECISIONS)}", 422)
     if body.action in NOTE_REQUIRED and not body.reason.strip():
         return _error("NOTE_REQUIRED", "A reason is required to decline a listing.", 422)
     allowed_from, after = DECISIONS[body.action]
@@ -194,12 +232,20 @@ async def decide_listing(listing_id: str, body: Decision, request: Request, prin
                 # reviewer is told which two fields, in the envelope, instead of meeting a 500.
                 return _error("FIELDS_REQUIRED",
                               "state and market are required to publish this listing for the first time.", 422)
+            problem = bad_field(body.state.strip(), body.market.strip()) if first_publish else None
+            if problem is not None:
+                return _error("BAD_FIELD", problem, 422)
             sets = "status = %(status)s, updated_at = now()"
             params: dict[str, Any] = {"status": after, "id": parsed}
             if first_publish:
                 # D13's rewrite happens ONCE, here: a republished listing keeps the slug buyers may
                 # have bookmarked.
-                sets += ", state = %(state)s, market = %(market)s, slug = %(slug)s"
+                # A-SL19 (3), Major-3: Browse SORTS and pages on `listed_at`
+                # (`ORDER BY listed_at DESC, id DESC`, `listing_page_idx`), so a draft created in
+                # March and published today would otherwise land mid-list where no buyer paging
+                # "newest first" would ever meet it. Stamped here and never again: a republish
+                # after review is not a new listing and keeps the date buyers have seen.
+                sets += ", state = %(state)s, market = %(market)s, slug = %(slug)s, listed_at = now()"
                 params |= {"state": body.state.strip(), "market": body.market.strip(),
                            "slug": slug_for(name, parsed)}
             cur.execute(f"UPDATE listing SET {sets} WHERE id = %(id)s", params)
@@ -207,7 +253,11 @@ async def decide_listing(listing_id: str, body: Decision, request: Request, prin
             owner = cur.fetchone()
         template = MAIL.get(body.action)
         if template is not None and owner is not None:
-            enqueue(conn, to=cast("tuple[str]", owner)[0], template=template, params={"reason": body.reason},
+            # A-SL19 (6): only `listing_declined` declares a `reason`, so passing one with a
+            # publish persisted a reviewer's free text in `email_outbox.params` for a mail that can
+            # never render it.
+            enqueue(conn, to=cast("tuple[str]", owner)[0], template=template,
+                    params={"reason": body.reason} if template == MAIL["decline"] else {},
                     idempotency_key=f"{parsed}:{template}:{before}->{after}")
         audit.write(conn, actor=principal, action="listing.publish", target_type="listing",
                     target_id=parsed, before={"status": before}, after={"status": after},
@@ -216,10 +266,15 @@ async def decide_listing(listing_id: str, body: Decision, request: Request, prin
                     # `audit.write`; `reason` is not, so nothing but the decision and the note goes in.
                     reason=body.action if not body.reason.strip() else f"{body.action}: {body.reason}",
                     request=request)
+        # A-SL19 (9), Info-4: the whole draft, like every seller route, so the tab can link to the
+        # listing it has just published — the slug it needs for that link is written above, by this
+        # request. Read after the audit row so `decline_reason` carries the decision just made.
+        decided = _rows(conn, f"SELECT {_COLUMNS} FROM listing WHERE id = %s", (parsed,))[0]
+        payload = serialise_draft(decided, assets_of(conn, parsed))
     # AFTER the commit (D16): a publish must reach Browse at once and an unpublish must leave it at
     # once, and dropping the key while the write was uncommitted would re-cache the old payload.
     drop_list_cache(sync_redis())
-    return JSONResponse({"id": str(parsed), "status": after})
+    return JSONResponse(payload)
 
 
 @router.get("/listings/{listing_id}", dependencies=[Depends(REQUIRE_REVIEW)])

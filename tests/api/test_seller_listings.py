@@ -399,10 +399,13 @@ async def test_a_limit_below_one_is_clamped_rather_than_refused(client: Any, con
 
 
 async def test_a_limit_that_is_not_a_number_is_refused_in_the_envelope(client: Any, conn: Any, member: Any) -> None:
+    """A-SL19 (7): the same code the admin queue and `/api/admin/users` use for the same mistake.
+    It was `400 BAD_REQUEST` until the SL5 review (Minor-4) made this the only list route on the
+    listing surface answering a bad parameter differently from its neighbours."""
     _, cookies, headers = _seller(member)
     response = await client.get("/api/seller/listings?limit=lots", headers=auth_headers(cookies, headers))
-    assert response.status_code == 400
-    assert response.json() == {"error": {"code": "BAD_REQUEST", "message": "Invalid limit."}}
+    assert response.status_code == 422
+    assert response.json() == {"error": {"code": "BAD_FILTER", "message": "limit must be a number."}}
 
 
 @pytest.mark.parametrize("cursor", ["no-separator", "notadate|11111111-1111-1111-1111-111111111111",
@@ -412,8 +415,9 @@ async def test_a_cursor_that_is_not_one_is_refused_in_the_envelope(client: Any, 
     that is not a uuid. All three are the same refusal — a cursor is opaque to its holder."""
     _, cookies, headers = _seller(member)
     response = await client.get(f"/api/seller/listings?cursor={cursor}", headers=auth_headers(cookies, headers))
-    assert response.status_code == 400
-    assert response.json() == {"error": {"code": "BAD_REQUEST", "message": "Invalid cursor."}}
+    assert response.status_code == 422
+    assert response.json() == {"error": {"code": "BAD_CURSOR", "message": "cursor must be a `<timestamp>|<id>`"
+                                                                          " value from a previous page's next_cursor."}}
 
 
 async def test_a_patch_with_no_body_at_all_touches_the_row_and_changes_nothing(client: Any, conn: Any, member: Any) -> None:
@@ -1124,3 +1128,64 @@ async def test_the_transition_rate_limit_is_per_account(
                     " area='Cedar Park' WHERE id=%s", (listing_id,))
     assert (await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": "pause"},
                               headers=signed)).status_code == 200
+
+
+# --- Fix round 1 (A-SL19): paused is published-but-hidden ---------------------------------------
+
+
+async def test_an_edit_to_a_paused_listing_re_enters_review_and_republish_is_then_refused(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """A-SL19 (1), Major-1. Pause → edit → republish put unreviewed content back on the market: the
+    D3 arm fired on `published` only, so an edit to a paused listing changed the row, wrote NO
+    audit trail, and `republish` returned it to `published` without a reviewer ever seeing it.
+
+    A paused listing is published-but-hidden, so an edit to one re-enters review exactly as an edit
+    to a published one does — and `republish` is then refused, because the row is no longer paused.
+    An untouched pause/republish stays "immediate and reversible", which is all the design's
+    footnote promises."""
+    listing_id, signed = await _ready(client, member)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status='published', state='TX', market='Austin, TX',"
+                    " area='Cedar Park' WHERE id=%s", (listing_id,))
+    assert (await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": "pause"},
+                              headers=signed)).status_code == 200
+
+    assert (await client.patch(f"/api/seller/listings/{listing_id}?step=1", json={"name": "Renamed"},
+                               headers=signed)).status_code == 200
+    assert _status(conn, listing_id)[0] == "in_review"
+    assert _actions(conn, listing_id)[-1] == ("listing.edit", {"status": "paused"}, {"status": "in_review"})
+
+    refused = await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": "republish"},
+                                headers=signed)
+    assert refused.status_code == 409 and refused.json()["error"]["code"] == "STATE"
+    assert _status(conn, listing_id)[0] == "in_review"
+
+
+async def test_an_asset_write_to_a_paused_listing_re_enters_review(client: Any, conn: Any, member: Any) -> None:
+    """A-SL19 (1) on the asset arm — A-SL15 (1)'s "assets are edits" reaches `paused` too. The
+    reorder route needs no object store, so it is the cheapest of the four asset writes to prove
+    `take_off_market`'s widened guard with."""
+    listing_id, signed = await _ready(client, member)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status='paused', state='TX', market='Austin, TX',"
+                    " area='Cedar Park' WHERE id=%s", (listing_id,))
+    assert (await client.patch(f"/api/seller/listings/{listing_id}/photos", json={"ids": []},
+                               headers=signed)).status_code == 200
+    assert _status(conn, listing_id)[0] == "in_review"
+    assert _actions(conn, listing_id) == [("listing.edit", {"status": "paused"}, {"status": "in_review"})]
+
+
+async def test_an_edit_to_a_paused_listing_leaves_the_browse_cache_alone(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """A paused listing is in no published payload, so there is nothing to invalidate — the cache
+    drop stays keyed on `published` (A-SL19 (1); A-SL13 L6's rule, unchanged)."""
+    listing_id, signed = await _ready(client, member)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status='paused', state='TX', market='Austin, TX',"
+                    " area='Cedar Park' WHERE id=%s", (listing_id,))
+    redis.set("listings:v1:::50", b'{"items": []}')
+    assert (await client.patch(f"/api/seller/listings/{listing_id}?step=1", json={"name": "Renamed"},
+                               headers=signed)).status_code == 200
+    assert redis.get("listings:v1:::50") == b'{"items": []}'
