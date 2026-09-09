@@ -179,6 +179,18 @@ exist yet the import still succeeds with `seller_id` NULL and says so on stdout.
 overrides the default and `--no-owner` seeds unowned; on production the default is not applied at
 all unless `--owner` is passed.
 
+**A listing the seller has edited is never re-seeded (A-SL21, 2026-09-09).** The eighteen belong to
+`seller@practice-match.test`, so they open in the seller's own wizard — and the first seller write of
+any kind (a wizard step saved, a photograph added, reordered or deleted, a document uploaded, submit,
+pause, republish or withdraw) flips that row's `source` from `seed` to `seller`, in the same
+transaction as the write. Every part of this importer is scoped `source = 'seed'`, so from that
+moment the row is the seller's: it is not rewritten, its status is never reset to `published` behind
+the reviewer's back, and `--reset` neither deletes it nor cascades away the photographs and documents
+they uploaded onto it. Each run says how many it left alone — `skipped N seller-owned` on the summary
+line, with the slugs named beneath it — and the untouched hospitals refresh as usual. A seed slug held
+by a listing that belongs to NOBODY is a different thing and still stops the whole import (exit 5
+below).
+
 **The photographs (A-L9, 2026-09-09).** Each hospital carries **six**, one for every photo slot the
 design's detail page renders — `photoSet(p)` in `Practice Match V3.dc.html` gives an exterior plus
 five subjects chosen by practice type, and nothing beyond six can be displayed. They are selected
@@ -202,8 +214,8 @@ lines are identical either way.
 railway status                                   # MUST print Project: Practice Match
 DATABASE_URL="$(railway variable list --service PostGIS --environment QA --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["DATABASE_URL"])')" \
 ENVIRONMENT=qa poetry run python scripts/seed_listings.py   # the PostGIS service's DATABASE_URL is its PUBLIC url; a VAR=… prefix keeps it out of argv
-# first run:  "[seed] inserted 18, updated 0, removed 0" then "[seed] done - 18 listings"
-# a re-run:   "inserted 0, updated 18, removed N" — N being the seed rows the file no longer
+# first run:  "[seed] inserted 18, updated 0, removed 0, skipped 0 seller-owned" then "[seed] done - 18 listings"
+# a re-run:   "inserted 0, updated 18, removed N, skipped S" — N being the seed rows the file no longer
 #             carries, which every import deletes; the eighteen keep their ids.
 ```
 
@@ -219,7 +231,7 @@ Only when fresh ids are actually wanted — it invalidates deep links and photo 
 A-L4 it buys nothing the plain import does not:
 
 ```bash
-python scripts/seed_listings.py --reset          # "inserted 18, updated 0, removed 18"
+python scripts/seed_listings.py --reset          # "inserted 18, updated 0, removed 18, skipped 0 seller-owned"
 ```
 
 And on production, with John's go and only then (`ENVIRONMENT` is already `production` inside

@@ -21,6 +21,12 @@ seeds them unowned, an account that does not exist here leaves `seller_id` NULL 
 stdout (production has no persona accounts and must still be seedable), and on a --production run
 the default is not applied at all unless `--owner` is passed.
 
+...and a hospital its seller has EDITED is never re-seeded (amendment A-SL21): the first seller write
+of any kind flips the row's `source` to 'seller' in the API's own transaction, every statement here is
+scoped `source = 'seed'`, so the row is skipped — counted and named on the way out — while its
+untouched siblings refresh. A seed slug held by a listing that belongs to nobody is unexplained and
+still stops the whole import (exit 5).
+
 A listing this seeder does not own is never rewritten: if a row with any other `source` already
 holds one of the seed slugs, the import REFUSES (exit 5) and nothing commits — the operator is
 told which slugs, and decides. Belt and braces, the upsert itself is scoped
@@ -92,14 +98,16 @@ def resolve_owner(conn: Any, email: str | None) -> UUID | None:
     **Absent is not a refusal.** Production has no persona accounts — `PERSONA_PASSWORD` is never
     set there and seed_persona.py refuses production outright (A-S6.1/A-S6.2) — and production
     must still be seedable. So a missing account leaves `seller_id` NULL and the run SAYS SO on
-    stdout, which is a line an operator can act on rather than an exit code that stops a deploy."""
+    stdout, which is a line an operator can act on rather than an exit code that stops a deploy.
+
+    It says so from `seed()`, AFTER the commit, not from here (SL6 review, Minor-1): this runs
+    inside the transaction, and the per-row backstop below can still roll that transaction back."""
     if email is None:
         return None
     with conn.cursor() as cur:
         cur.execute("SELECT id FROM account WHERE email = %s", (email,))
         found = cur.fetchone()
     if found is None:
-        print(f"[seed] {email} does not exist here — seeding the listings unowned (seller_id NULL)")
         return None
     return cast("UUID", found[0])
 
@@ -137,11 +145,18 @@ ON CONFLICT (slug) DO UPDATE SET
 WHERE listing.source = 'seed'
 """
 
-# The pre-flight the refusal is built on: one SELECT naming every seed slug some other `source`
+# The pre-flight both outcomes are built on: one SELECT naming every seed slug some other `source`
 # already owns, run before anything is written, so the operator gets the whole list at once
 # instead of discovering them one failed import at a time. (A module constant so the backstop
 # arm below can be reached by a test without a real race.)
-COLLISION_CHECK = "SELECT slug FROM listing WHERE source <> 'seed' AND slug = ANY(%s) ORDER BY slug"
+#
+# `seller_id` comes back with the slug because the two cases are different (A-SL21). A row that
+# BELONGS to someone is a seeded hospital its seller has edited — the wizard flipped `source` on
+# their first write, precisely so this importer would leave it alone — and it is SKIPPED, counted
+# and named. A row that belongs to nobody is unexplained (no seller can have claimed it), so it
+# still stops the whole import at exit 5, which is what that code has always meant.
+COLLISION_CHECK = ("SELECT slug, seller_id FROM listing"
+                   " WHERE source <> 'seed' AND slug = ANY(%s) ORDER BY slug")
 
 # A-L4: everything the file no longer carries, in the same transaction as the upsert. `--reset`
 # drops the slug filter and takes the lot.
@@ -222,14 +237,16 @@ def seed(dsn: str, *, reset: bool = False, owner: str | None = SEED_OWNER_EMAIL)
             # One transaction, one writer: the removal and the upsert are never observed apart,
             # and two operators seeding at once serialise instead of interleaving.
             cur.execute("SELECT pg_advisory_xact_lock(%s)", (LOCK_KEY,))
-            # Before anything is written: refuse the whole import if a listing this seeder does
-            # not own holds one of these slugs. Raising here rolls the transaction back, so a
-            # refused run leaves the database exactly as it found it.
+            # Before anything is written: split the seed slugs some other `source` already holds
+            # into the seller's own, which are skipped (A-SL21), and the unexplained, which refuse
+            # the whole import. Raising here rolls the transaction back, so a refused run leaves
+            # the database exactly as it found it.
             cur.execute(COLLISION_CHECK, (slugs,))
-            collisions = [str(row[0]) for row in cur.fetchall()]
+            held = cur.fetchall()
+            claimed = sorted(str(row[0]) for row in held if row[1] is not None)
+            collisions = [str(row[0]) for row in held if row[1] is None]
             if collisions:
                 raise SlugCollision(collisions)
-            # After the refusal, so a run that writes nothing says nothing about ownership.
             seller_id = resolve_owner(conn, owner)
             if reset:
                 cur.execute(DELETE_ALL_SEED)
@@ -245,6 +262,10 @@ def seed(dsn: str, *, reset: bool = False, owner: str | None = SEED_OWNER_EMAIL)
             # `SELECT count(*)` always returns exactly one row.
             updated = int(cast("tuple[int]", cur.fetchone())[0])
             for params in rows:
+                if params["slug"] in claimed:
+                    # A-SL21: the seller's own since their first edit. Not upserted, not deleted
+                    # (both are scoped `source = 'seed'`), and not counted as an insert below.
+                    continue
                 cur.execute(UPSERT, {**params, "seller_id": seller_id})
                 if cur.rowcount != 1:
                     # The scoped ON CONFLICT matched no row to update: another transaction
@@ -253,7 +274,15 @@ def seed(dsn: str, *, reset: bool = False, owner: str | None = SEED_OWNER_EMAIL)
                     raise SlugCollision([str(params["slug"])])
     finally:
         conn.close()
-    print(f"[seed] inserted {len(rows) - updated}, updated {updated}, removed {removed}")
+    # Everything below runs only when the transaction COMMITTED (SL6 review, Minor-1): a run that
+    # wrote nothing — the pre-flight refusal, or the per-row backstop rolling back a race — says
+    # nothing at all, rather than telling an operator how their listings were seeded when none was.
+    if owner is not None and seller_id is None:
+        print(f"[seed] {owner} does not exist here — seeding the listings unowned (seller_id NULL)")
+    print(f"[seed] inserted {len(rows) - len(claimed) - updated}, updated {updated},"
+          f" removed {removed}, skipped {len(claimed)} seller-owned")
+    if claimed:
+        print(f"[seed] left alone, the seller's own since their first edit: {', '.join(claimed)}")
     return len(rows)
 
 

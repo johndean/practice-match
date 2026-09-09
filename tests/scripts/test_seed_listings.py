@@ -3,6 +3,7 @@ import json
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import psycopg2
 import pytest
@@ -461,10 +462,16 @@ def test_the_scoped_upsert_is_the_backstop_when_the_precheck_sees_nothing(
     arm without a real race."""
     taken = str(SL.load_seed(SL.SEEDS_FILE)[0]["slug"])
     _plant(scratch_dsn, taken, "seller")
-    monkeypatch.setattr(SL, "COLLISION_CHECK", "SELECT slug FROM listing WHERE false AND slug = ANY(%s)")
+    monkeypatch.setattr(SL, "COLLISION_CHECK",
+                        "SELECT slug, seller_id FROM listing WHERE false AND slug = ANY(%s)")
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
     assert SL.main([]) == 5
-    assert taken in capsys.readouterr().err
+    captured = capsys.readouterr()
+    assert taken in captured.err
+    # SL6 review, Minor-1: a run that writes NOTHING must say nothing about ownership either. The
+    # note used to print from inside the transaction this backstop then rolls back, so the operator
+    # was told the eighteen had been seeded unowned when not one of them had been seeded at all.
+    assert captured.out == "", captured.out
     assert _count(scratch_dsn) == 1, "the whole transaction rolls back"
     assert _count(scratch_dsn, "source = 'seller'") == 1
 
@@ -586,3 +593,108 @@ def test_the_disclosure_backfill_holds_for_a_freshly_seeded_row(scratch_dsn: str
         cur.execute("UPDATE listing SET rev_disclosed = false, documents_disclosed = false")
     assert SL.seed(scratch_dsn) == 18
     assert _count(scratch_dsn, f"source = 'seed' AND {all_four}") == 18
+
+
+# --- Controller amendment A-SL21 (2026-09-09; the ruling on SL6's NEEDS_CONTEXT) -----------------
+# "A seeded listing becomes the seller's own the moment the seller writes to it: the first seller
+# write of any kind ... flips `listing.source` from 'seed' to 'seller' in the same transaction, so
+# the seeder's existing `WHERE source = 'seed'` scope never overwrites a seller-edited row, `status`
+# can never be reset to `published` without review, and `--reset` never deletes it (nor cascades its
+# assets). Untouched seeds remain refreshable. The seeder prints how many rows it skipped as
+# seller-owned."
+#
+# The flip itself is `app/api/seller_listings.py::claim_from_seed`, proved there; these tests are
+# the seeder's own half of the contract.
+
+
+def _row_of(dsn: str, slug: str) -> tuple[Any, ...] | None:
+    with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT * FROM listing WHERE slug = %s", (slug,))
+        found = cur.fetchone()
+    return None if found is None else tuple(found)
+
+
+def _edit_as_a_seller(dsn: str, slug: str) -> None:
+    """What `claim_from_seed` plus one wizard PATCH leave behind: the row is the seller's own now,
+    it carries their edit, and their edit took it off the market into review (D3)."""
+    with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
+        cur.execute("UPDATE listing SET source = 'seller', name = 'The seller''s own name',"
+                    " price = 999000, status = 'in_review', submitted_at = now(), updated_at = now()"
+                    " WHERE slug = %s", (slug,))
+
+
+def _seeded_with_an_owner(dsn: str) -> tuple[str, str, str]:
+    """The QA state this amendment is about: the eighteen imported and owned by the persona.
+    Returns the owner id and two slugs — one the seller will edit, one they will not."""
+    owner = _plant_account(dsn, SL.SEED_OWNER_EMAIL)
+    assert SL.seed(dsn) == 18
+    slugs = sorted(str(h["slug"]) for h in SL.load_seed(SL.SEEDS_FILE))
+    return owner, slugs[0], slugs[1]
+
+
+def test_a_seller_edited_seed_listing_is_left_exactly_as_the_seller_left_it(scratch_dsn: str) -> None:
+    """The whole point of A-SL21: a re-import does not touch the row, so the seller's name, their
+    price and — the one that matters most — their `in_review` status all survive. Compared row by
+    row across every column, `updated_at` included, so a rewrite that happened to restore the same
+    values would still fail this."""
+    _owner, edited, untouched = _seeded_with_an_owner(scratch_dsn)
+    _edit_as_a_seller(scratch_dsn, edited)
+    before, sibling_before = _row_of(scratch_dsn, edited), _row_of(scratch_dsn, untouched)
+
+    assert SL.seed(scratch_dsn) == 18
+
+    assert _row_of(scratch_dsn, edited) == before, "the seeder rewrote a listing the seller owns"
+    assert _row_of(scratch_dsn, untouched) != sibling_before, "an untouched seed must still refresh"
+    assert _count(scratch_dsn, f"slug = '{untouched}' AND source = 'seed'") == 1
+
+
+def test_a_re_seed_says_how_many_rows_it_skipped_as_seller_owned(
+    scratch_dsn: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Never silent: the count is on the summary line and the slugs are named, so an operator who
+    expected eighteen refreshed hospitals and got seventeen can see why on the run's own output."""
+    _owner, edited, _untouched = _seeded_with_an_owner(scratch_dsn)
+    _edit_as_a_seller(scratch_dsn, edited)
+    capsys.readouterr()
+
+    SL.seed(scratch_dsn)
+
+    out = capsys.readouterr().out
+    assert "skipped 1 seller-owned" in out, out
+    assert edited in out, out
+
+
+def test_reset_keeps_a_seller_edited_seed_listing_and_its_assets(scratch_dsn: str) -> None:
+    """`--reset` deletes every `source='seed'` row, and `listing_asset` cascades — so before A-SL21
+    it would have destroyed the photographs and documents a seller had uploaded onto one of the
+    eighteen. It is the seller's row now, so neither the delete nor the cascade reaches it."""
+    _owner, edited, _untouched = _seeded_with_an_owner(scratch_dsn)
+    _edit_as_a_seller(scratch_dsn, edited)
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO listing_asset (listing_id, kind, name, content_type, byte_size,"
+                    " sha256, storage_key) SELECT id, 'photo', 'front.jpg', 'image/webp', 4096,"
+                    " 'deadbeef', 'listings/' || id || '/photos/one.webp' FROM listing WHERE slug = %s",
+                    (edited,))
+    before = _row_of(scratch_dsn, edited)
+
+    assert SL.seed(scratch_dsn, reset=True) == 18
+
+    assert _row_of(scratch_dsn, edited) == before
+    assert _count(scratch_dsn, "source = 'seed'") == 17
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM listing_asset")
+        assert cur.fetchone()[0] == 1, "the seller's upload was cascaded away by --reset"
+
+
+def test_an_unowned_listing_on_a_seed_slug_is_still_the_exit_5_refusal(
+    scratch_dsn: str, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """A-SL21 skips a listing that BELONGS to someone; it does not weaken the refusal for one that
+    belongs to nobody. A `source='seller'` row with a NULL `seller_id` is unexplained — no seller
+    can have claimed it — so it still stops the whole import and names itself."""
+    taken = str(SL.load_seed(SL.SEEDS_FILE)[0]["slug"])
+    _plant(scratch_dsn, taken, "seller")
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    assert SL.main([]) == 5
+    assert taken in capsys.readouterr().err
+    assert _count(scratch_dsn, "source = 'seed'") == 0, "nothing was written"

@@ -335,6 +335,11 @@ PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py
   `tests/test_docs.py::test_the_playwright_persona_password_default_matches_seed_persona`.
 * The addresses are all `.test` (RFC 6761): never deliverable, by design. They are also why the QA
   `EMAIL_ALLOWLIST` can stay empty.
+* `seller@practice-match.test` also OWNS the eighteen demo hospitals on QA (spec 2026-09-08 D25), so
+  run this script BEFORE `scripts/seed_listings.py`: the owner is looked up by address at seed time,
+  and if the account is missing the hospitals are simply seeded unowned. A hospital the seller then
+  edits becomes their own for good (amendment A-SL21) and later imports skip it. DEPLOY.md's
+  "Seeding the demo hospitals (QA)" has the rest.
 * These are not a way in for a real reviewer. Real people get `scripts/bootstrap_admin.py` (§1) and
   a grant (§4).
 

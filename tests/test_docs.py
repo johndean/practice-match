@@ -1359,6 +1359,54 @@ def test_deploy_md_exit_codes_match_seed_listings_returns():
         assert f"`{code}`" in section, f"DEPLOY.md's seeding section does not document exit code {code}"
 
 
+# --- Task SL6: seed ownership (D25) and A-SL21 (a seeded listing becomes the seller's) ----------
+
+
+def test_deploy_md_documents_seed_ownership_against_the_seeders_own_flags():
+    """SL6 review, Info-1. The ownership paragraph is prose about flags and an address the script
+    owns; the exit-code pin above already keeps one half of that section honest, and this keeps the
+    other. Both the flags and `SEED_OWNER_EMAIL` are read out of `scripts/seed_listings.py` rather
+    than retyped, so renaming `--no-owner` or moving the default address to another persona fails
+    here instead of leaving an operator following a runbook that no longer matches the script."""
+    seed = (ROOT / "scripts" / "seed_listings.py").read_text()
+    flags = sorted(set(re.findall(r'add_argument\("(--[a-z-]+)"', seed)))
+    assert flags == ["--no-owner", "--owner", "--production", "--reset"], flags
+    owner = re.search(r'^SEED_OWNER_EMAIL = "([^"]+)"', seed, re.MULTILINE)
+    assert owner, "scripts/seed_listings.py no longer defines SEED_OWNER_EMAIL"
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    section = deploy.split("## Seeding the demo hospitals (QA)", 1)[1].split("\n## ", 1)[0]
+    for flag in flags:
+        # A plain substring: `--reset` appears in the section's command blocks rather than in
+        # backticks, and "--owner" is not a substring of "--no-owner" (the characters before
+        # `owner` there are `-no-`), so each flag is matched by itself and by nothing else.
+        assert flag in section, f"DEPLOY.md's seeding section does not document {flag}"
+    assert owner.group(1) in section, "the runbook does not name the account the seeder assigns by default"
+
+
+def test_the_docs_record_that_a_seller_edited_seed_listing_is_never_re_seeded():
+    """Controller amendment A-SL21. The rule is enforced in two files at once — the API flips
+    `listing.source` on the seller's first write, the seeder then skips the row — so neither half
+    may be documented without the other, and neither may quietly go away: a reader who trusts the
+    runbook is being told that their edits to one of the eighteen are safe from the next import."""
+    api = (ROOT / "app" / "api" / "seller_listings.py").read_text()
+    assert "def claim_from_seed(" in api, (
+        "no write path claims a seeded listing any more (A-SL21) — a re-seed would overwrite a seller's edits"
+    )
+    seed = (ROOT / "scripts" / "seed_listings.py").read_text()
+    assert "seller-owned" in seed, "the seeder no longer reports how many rows it skipped as seller-owned"
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    section = deploy.split("## Seeding the demo hospitals (QA)", 1)[1].split("\n## ", 1)[0]
+    for phrase in ("A-SL21", "`source`", "skipped", "seller-owned"):
+        assert phrase in section, f"DEPLOY.md's seeding section does not state the A-SL21 rule ({phrase})"
+    runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    assert "eighteen demo hospitals" in runbook, (
+        "docs/RUNBOOK-identity.md §11 does not say what seller@practice-match.test owns"
+    )
+    assert "Seeding the demo hospitals (QA)" in runbook, (
+        "docs/RUNBOOK-identity.md should point at DEPLOY.md's seeding section for the rest"
+    )
+
+
 # --- Task S8: A-S6.2 — PERSONA_PASSWORD leaves Railway for the operator's Keychain; QA DB_POOL_MAX --
 
 

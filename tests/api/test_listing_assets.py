@@ -1318,3 +1318,60 @@ async def test_the_reorder_and_delete_rate_limits_are_per_account(
     refused = await _call(second)
     assert refused.status_code == 429, refused.text
     assert refused.json()["error"]["code"] == "RATE_LIMITED"
+
+
+# --- Controller amendment A-SL21: an asset write claims a seeded listing too ---------------------
+
+
+def _owned_seed_listing(conn: Any, seller_id: Any, photos: list[str]) -> str:
+    listing_id = _seed_listing(conn, photos)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET seller_id=%s WHERE id=%s", (seller_id, listing_id))
+    return listing_id
+
+
+def _reseed_source(conn: Any, listing_id: str) -> None:
+    """Put the row back to `source='seed'` after a set-up write has claimed it, so the write under
+    test is the FIRST one — the only way to prove that `delete_asset` claims the row itself rather
+    than inheriting the claim its own fixture made."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET source='seed' WHERE id=%s", (listing_id,))
+
+
+def _listing_source(conn: Any, listing_id: str) -> str:
+    with conn.cursor() as cur:
+        cur.execute("SELECT source FROM listing WHERE id=%s", (listing_id,))
+        return str(cur.fetchone()[0])
+
+
+@pytest.mark.parametrize("write", ["photo", "document", "reorder", "delete"])
+async def test_an_asset_write_claims_a_seeded_listing_as_the_sellers_own(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any, write: str
+) -> None:
+    """A-SL21 for the four asset writes. A-SL15 (1) already made these edits; this is the other half
+    of being an edit — the row stops being the seeder's the moment the seller changes a photograph
+    or a document on it, so the next `scripts/seed_listings.py` run leaves it alone."""
+    account_id, cookies, headers = _seller(member)
+    photos = ["abc_animal_hospital/1.webp", "abc_animal_hospital/2.webp"]
+    listing_id = _owned_seed_listing(conn, account_id, photos)
+    signed = auth_headers(cookies, headers)
+
+    if write == "photo":
+        response = await _upload_photo(client, listing_id, signed)
+        assert response.status_code == 201, response.text
+    elif write == "document":
+        response = await _upload_document(client, listing_id, signed)
+        assert response.status_code == 201, response.text
+    elif write == "reorder":
+        response = await client.patch(f"/api/seller/listings/{listing_id}/photos",
+                                      json={"ids": list(reversed(photos))}, headers=signed)
+        assert response.status_code == 200, response.text
+    else:
+        uploaded = await _upload_photo(client, listing_id, signed)
+        assert uploaded.status_code == 201, uploaded.text
+        _reseed_source(conn, listing_id)
+        assert _listing_source(conn, listing_id) == "seed"
+        response = await client.delete(
+            f"/api/seller/listings/{listing_id}/assets/{uploaded.json()['id']}", headers=signed)
+        assert response.status_code == 204, response.text
+    assert _listing_source(conn, listing_id) == "seller"

@@ -8,6 +8,7 @@ every migration applied and `settings.database_url` pointed at it.
 from __future__ import annotations
 
 from typing import Any
+from uuid import uuid4
 
 import pytest
 
@@ -1189,3 +1190,95 @@ async def test_an_edit_to_a_paused_listing_leaves_the_browse_cache_alone(
     assert (await client.patch(f"/api/seller/listings/{listing_id}?step=1", json={"name": "Renamed"},
                                headers=signed)).status_code == 200
     assert redis.get("listings:v1:::50") == b'{"items": []}'
+
+
+# --- Controller amendment A-SL21 (2026-09-09; ruling on SL6's NEEDS_CONTEXT) ---------------------
+# "A seeded listing becomes the seller's own the moment the seller writes to it: the first seller
+# write of any kind ... flips `listing.source` from 'seed' to 'seller' in the same transaction, so
+# the seeder's existing `WHERE source = 'seed'` scope never overwrites a seller-edited row, `status`
+# can never be reset to `published` without review, and `--reset` never deletes it."
+
+_SEED_INSERT = """
+INSERT INTO listing (slug, name, street, city, state, zip, hours, status, location_disclosed,
+                     name_disclosed, area, type, market, est, price, source, seller_id)
+VALUES (%(slug)s, 'Demo Hospital', '1 Main St', 'Austin', 'TX', '78701', '24/7', %(status)s,
+        true, true, 'Austin', 'Small animal', 'Austin, TX', 1998, 1450000, 'seed', %(seller)s)
+RETURNING id
+"""
+
+
+def _seed_listing(conn: Any, seller_id: Any, status: str = "published") -> str:
+    """One of the eighteen as `scripts/seed_listings.py` writes them and as D25 now owns them:
+    `source='seed'` with a real `seller_id`. The same row shape as
+    `tests/api/test_listing_assets.py::_SEED_INSERT`, with the owner and the status as arguments."""
+    with conn.cursor() as cur:
+        cur.execute(_SEED_INSERT, {"slug": f"seed-{uuid4().hex[:8]}", "status": status, "seller": seller_id})
+        return str(cur.fetchone()[0])
+
+
+def _source(conn: Any, listing_id: str) -> str:
+    with conn.cursor() as cur:
+        cur.execute("SELECT source FROM listing WHERE id=%s", (listing_id,))
+        return str(cur.fetchone()[0])
+
+
+@pytest.mark.parametrize(("write", "status"), [
+    ("patch", "published"),
+    ("submit", "draft"),
+    ("pause", "published"),
+    ("republish", "paused"),
+    ("withdraw", "published"),
+])
+async def test_a_seller_write_claims_a_seeded_listing_as_their_own(
+    client: Any, conn: Any, redis: Any, member: Any, write: str, status: str
+) -> None:
+    """A-SL21, the wizard and the three transitions. Parametrised over the write KINDS rather than
+    written once for the PATCH, because the seeder's guarantee is only as good as the write path
+    that forgot to claim the row."""
+    account_id, cookies, headers = _seller(member)
+    listing_id = _seed_listing(conn, account_id, status=status)
+    signed = auth_headers(cookies, headers)
+    assert _source(conn, listing_id) == "seed"
+
+    if write == "patch":
+        response = await client.patch(f"/api/seller/listings/{listing_id}?step=1",
+                                      json={"name": "Renamed by its seller"}, headers=signed)
+    elif write == "submit":
+        response = await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)
+    else:
+        response = await client.post(f"/api/seller/listings/{listing_id}/status",
+                                     json={"action": write}, headers=signed)
+    assert response.status_code == 200, response.text
+    assert _source(conn, listing_id) == "seller"
+
+
+async def test_a_refused_write_leaves_a_seeded_listing_a_seed(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """The claim is in the write's own transaction, so a write that refuses claims nothing: a
+    `pause` of a listing that is not published rolls back with the row exactly as it was."""
+    account_id, cookies, headers = _seller(member)
+    listing_id = _seed_listing(conn, account_id, status="paused")
+    response = await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": "pause"},
+                                 headers=auth_headers(cookies, headers))
+    assert response.status_code == 409, response.text
+    assert _source(conn, listing_id) == "seed"
+
+
+async def test_claiming_is_idempotent_and_never_reaches_another_sellers_row(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """Twice is once: the second write finds `source='seller'` already and changes nothing. And the
+    claim carries the owner predicate every other write in this module carries, so it can only ever
+    touch the row the request already proved is the caller's."""
+    account_id, cookies, headers = _seller(member)
+    other, _other_cookies, _other_headers = member(roles=("buyer", "seller"), email="sl-a-sl21-other@example.org")
+    mine = _seed_listing(conn, account_id)
+    theirs = _seed_listing(conn, other)
+    signed = auth_headers(cookies, headers)
+
+    for name in ("First edit", "Second edit"):
+        response = await client.patch(f"/api/seller/listings/{mine}?step=1", json={"name": name}, headers=signed)
+        assert response.status_code == 200, response.text
+    assert _source(conn, mine) == "seller"
+    assert _source(conn, theirs) == "seed", "another seller's seeded listing is untouched"

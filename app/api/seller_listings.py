@@ -384,6 +384,27 @@ def owned_row(conn: Any, listing_id: str, principal: S.Principal) -> dict[str, A
     return row
 
 
+def claim_from_seed(conn: Any, row: dict[str, Any], principal: S.Principal) -> None:
+    """A-SL21: the first seller write of any kind makes a SEEDED listing the seller's own.
+
+    D25 gave the eighteen demo hospitals a real `seller_id`, which is what puts them in the demo
+    seller's wizard — and `scripts/seed_listings.py` rewrites every `source='seed'` row from
+    `seeds/hospitals.json` on every import, deleting and re-inserting them under `--reset`. Without
+    this, a re-seed would silently overwrite a seller's edits, put a listing the seller's edit had
+    just taken to `in_review` back on the market with no review (`status` comes from the file), and
+    cascade away the photographs and documents they had uploaded onto it
+    (`listing_asset ... ON DELETE CASCADE`).
+
+    So the row stops being the seeder's the moment the seller touches it, in the SAME transaction as
+    the write: the seeder's own `WHERE source = 'seed'` scope then leaves it alone for ever, and an
+    untouched sibling is still refreshable. Scoped by owner like every other write here (A-SL13 L1),
+    and by `source = 'seed'` so a second write is a no-op rather than a second claim."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET source = 'seller'"
+                    " WHERE id = %s AND seller_id = %s AND source = 'seed'",
+                    (row["id"], principal.account_id))
+
+
 def assets_for(conn: Any, listing_ids: list[Any]) -> dict[Any, list[dict[str, Any]]]:
     """Every listing's assets, in ONE round trip (review L5).
 
@@ -530,6 +551,7 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
                 cur.execute(f"UPDATE listing SET {sets}updated_at = now()"
                             " WHERE id = %(id)s AND seller_id = %(seller)s",
                             {**columns, "id": row["id"], "seller": principal.account_id})
+            claim_from_seed(conn, row, principal)
             if re_entering:
                 audit.write(conn, actor=principal, action=EDIT_ACTION, target_type="listing",
                             target_id=row["id"], before={"status": row["status"]}, after={"status": "in_review"},
@@ -861,6 +883,7 @@ async def upload_photo(listing_id: str, request: Request, principal: Owner) -> R
                 cur.execute("UPDATE listing SET photos = %s::jsonb, updated_at = now()"
                             " WHERE id = %s AND seller_id = %s",
                             (json.dumps([*photos, str(asset_id)]), row["id"], principal.account_id))
+            claim_from_seed(conn, row, principal)
             on_market = take_off_market(conn, row, principal, request)
             payload = _asset_payload(asset_id, "photo", name, "image/webp", len(webp))
     except Refusal as exc:
@@ -895,6 +918,7 @@ async def reorder_photos(listing_id: str, request: Request, principal: Owner) ->
                 cur.execute("UPDATE listing SET photos = %s::jsonb, updated_at = now()"
                             " WHERE id = %s AND seller_id = %s",
                             (json.dumps(ids), row["id"], principal.account_id))
+            claim_from_seed(conn, row, principal)
             on_market = take_off_market(conn, row, principal, request)
             payload = serialise_draft(locked_row(conn, listing_id, principal), assets_of(conn, row["id"]))
     except Refusal as exc:
@@ -941,6 +965,7 @@ async def delete_asset(listing_id: str, asset_id: str, request: Request, princip
                     cur.execute("UPDATE listing SET photos = %s::jsonb, updated_at = now()"
                                 " WHERE id = %s AND seller_id = %s",
                                 (json.dumps(remaining), row["id"], principal.account_id))
+            claim_from_seed(conn, row, principal)
             on_market = take_off_market(conn, row, principal, request)
     except Refusal as exc:
         return _refused(exc)
@@ -983,6 +1008,7 @@ async def upload_document(listing_id: str, request: Request, principal: Owner) -
             asset_id, key = _insert_asset(conn, row["id"], kind, name, content_type, data,
                                           sha256_hex(data), DOCUMENT_TYPES[content_type])
             _put(store, key, data, content_type)
+            claim_from_seed(conn, row, principal)
             on_market = take_off_market(conn, row, principal, request)
             payload = _asset_payload(asset_id, kind, name, content_type, len(data))
     except Refusal as exc:
@@ -1123,6 +1149,7 @@ async def submit_listing(listing_id: str, request: Request, principal: Owner) ->
                 stamped = cast("tuple[datetime]", cur.fetchone())[0]
             enqueue(conn, to=owner_email(conn, principal), template="listing_submitted", params={},
                     idempotency_key=f"{row['id']}:listing_submitted:{stamped.isoformat()}")
+            claim_from_seed(conn, row, principal)
             audit.write(conn, actor=principal, action=SUBMIT_ACTION, target_type="listing",
                         target_id=row["id"], before={"status": before}, after={"status": "in_review"},
                         request=request)
@@ -1156,6 +1183,7 @@ async def set_status(listing_id: str, request: Request, principal: Owner) -> Res
             with conn.cursor() as cur:
                 cur.execute("UPDATE listing SET status = %s, updated_at = now()"
                             " WHERE id = %s AND seller_id = %s", (after, row["id"], principal.account_id))
+            claim_from_seed(conn, row, principal)
             audit.write(conn, actor=principal, action=recorded, target_type="listing", target_id=row["id"],
                         before={"status": before}, after={"status": after}, request=request)
             payload = serialise_draft(locked_row(conn, listing_id, principal), assets_of(conn, row["id"]))
