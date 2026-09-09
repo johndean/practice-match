@@ -35,7 +35,8 @@ CONTACT = "tech@vinfoundation.example.org"
 
 def test_census_tasks_are_registered():
     for name in ["census.load_tiger", "census.load_acs", "census.load_cbp", "census.load_zbp",
-                 "census.load_qwi", "census.load_bds", "census.license_audit"]:
+                 "census.load_qwi", "census.load_bds", "census.license_audit",
+                 "census.materialize_metrics", "census.backfill_listing"]:
         assert name in celery_app.tasks, name
 
 
@@ -43,9 +44,11 @@ def test_census_task_functions_are_registered_under_their_stable_names():
     assert (
         CT.load_tiger_task.name, CT.load_acs_task.name, CT.load_cbp_task.name, CT.load_zbp_task.name,
         CT.load_qwi_task.name, CT.load_bds_task.name, CT.license_audit_task.name,
+        CT.materialize_metrics_task.name, CT.backfill_listing_task.name,
     ) == (
         "census.load_tiger", "census.load_acs", "census.load_cbp", "census.load_zbp",
         "census.load_qwi", "census.load_bds", "census.license_audit",
+        "census.materialize_metrics", "census.backfill_listing",
     )
 
 
@@ -53,6 +56,7 @@ def test_beat_schedules_only_the_automatic_cadences():
     beat = celery_app.conf.beat_schedule
     assert beat["qwi-quarterly"]["task"] == "census.load_qwi"
     assert beat["license-audit-quarterly"]["task"] == "census.license_audit"
+    assert beat["materialize-nightly"]["task"] == "census.materialize_metrics"
     scheduled_tasks = {v["task"] for v in beat.values()}
     # manual approval (spec §9); census.load_zbp is a manual-trigger-only task too (A-C8 (8) / i1:
     # ZBP is annual and John-approved per load, exactly like acs/cbp/bds -- no beat entry is due).
@@ -60,6 +64,14 @@ def test_beat_schedules_only_the_automatic_cadences():
     assert "census.load_cbp" not in scheduled_tasks
     assert "census.load_zbp" not in scheduled_tasks
     assert "census.load_bds" not in scheduled_tasks
+    # census.backfill_listing runs once, on demand, right after a listing is geocoded -- never on
+    # a schedule (Task B4b).
+    assert "census.backfill_listing" not in scheduled_tasks
+
+
+def test_materialize_nightly_runs_at_0300_utc():
+    sched = celery_app.conf.beat_schedule["materialize-nightly"]["schedule"]
+    assert sched.hour == {3} and sched.minute == {0}
 
 
 def test_beat_merged_the_mail_pipelines_own_entries_survive():
@@ -617,6 +629,71 @@ def test_license_audit_without_a_contact_does_not_crash_and_never_calls_audit(co
 
     assert result["checked"] == 0 and result["drift"] == []
     assert "CENSUS_CONTACT_EMAIL" in result["error"]
+
+
+# ---- materialize_metrics -------------------------------------------------------------------------
+
+def test_materialize_metrics_delegates_to_materialize_all_and_reports_the_listing_count(conn, monkeypatch):
+    from app.census import materialize as census_materialize
+
+    captured: dict = {}
+
+    def fake_materialize_all(c, r):
+        captured["conn"] = c
+        captured["redis"] = r
+        return {"a": 3, "b": 5}
+
+    monkeypatch.setattr(census_materialize, "materialize_all", fake_materialize_all)
+
+    result = CT.materialize_metrics()
+
+    assert result == {"listings": 2}
+    assert captured["conn"] is not None and captured["redis"] is not None
+
+
+# ---- backfill_listing -------------------------------------------------------------------------
+
+def test_backfill_listing_builds_catchments_then_materialises(conn, monkeypatch):
+    from app.census import catchment as census_catchment
+    from app.census import materialize as census_materialize
+
+    captured: dict = {}
+    monkeypatch.setattr(census_materialize, "active_geo_vintage", lambda c: "2023")
+
+    def fake_build(c, listing_id, geo_vintage):
+        captured["build"] = (listing_id, geo_vintage)
+        return {"drive_10": {"140": 2, "860": 1}, "drive_20": {"140": 3, "860": 1}}
+
+    monkeypatch.setattr(census_catchment, "build", fake_build)
+
+    def fake_materialize_listing(c, r, listing_id):
+        captured["materialize"] = listing_id
+        return 18
+
+    monkeypatch.setattr(census_materialize, "materialize_listing", fake_materialize_listing)
+
+    result = CT.backfill_listing("some-listing-id")
+
+    assert result == {
+        "listing_id": "some-listing-id",
+        "catchment": {"drive_10": {"140": 2, "860": 1}, "drive_20": {"140": 3, "860": 1}},
+        "rows": 18,
+    }
+    assert captured["build"] == ("some-listing-id", "2023")
+    assert captured["materialize"] == "some-listing-id"
+
+
+def test_backfill_listing_propagates_a_runtime_error_without_an_active_geo_vintage(conn, monkeypatch):
+    """A missing `tiger_cb` active vintage is a real configuration error (nothing has ever been
+    activated to backfill against), not an optional prerequisite like a missing
+    `CENSUS_API_KEY` -- it is left to raise and fail the task visibly rather than being folded
+    into a success-shaped result."""
+    from app.census import catchment as census_catchment
+
+    monkeypatch.setattr(census_catchment, "build", lambda *a, **kw: pytest.fail("must not build catchments without an active geo vintage"))
+
+    with pytest.raises(RuntimeError):
+        CT.backfill_listing("some-listing-id")
 
 
 # ---- _conn (A-C8 m5) ------------------------------------------------------------------------------

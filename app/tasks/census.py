@@ -298,6 +298,46 @@ def license_audit() -> dict[str, object]:
         conn.close()
 
 
+def materialize_metrics() -> dict[str, object]:
+    """Nightly job (spec §9, Task B4b): rebuilds every geocoded listing's `market_metric` rows
+    across all three bands from whatever vintages are currently active. Unlike every loader
+    above, this does no Census I/O at all -- only local aggregation over `geo_area`,
+    `acs_measure`, `cbp_industry` and `zbp_industry` -- so it needs no `CENSUS_API_KEY`/
+    `CENSUS_CONTACT_EMAIL` gate and no `_NotReady` handling: a missing active vintage
+    (`app.census.materialize._Ctx`) is a real configuration error, not an optional
+    prerequisite, so it is left to raise and fail the task visibly rather than being folded into
+    a success-shaped result (A-C18 (3): silence that looks like success is the failure mode this
+    programme keeps getting bitten by)."""
+    from app.cache import sync_redis
+    from app.census import materialize
+
+    conn = _conn()
+    try:
+        return {"listings": len(materialize.materialize_all(conn, sync_redis()))}
+    finally:
+        conn.close()
+
+
+def backfill_listing(listing_id: str) -> dict[str, object]:
+    """Runs once for a single listing right after it is geocoded (spec §7): rebuilds its
+    catchments at the active `tiger_cb` vintage, then materialises its `market_metric` rows.
+    Reaches that vintage through `materialize.active_geo_vintage`, never `app.census.vintage`
+    directly -- the module docstring above explains why, and
+    `tests/test_tasks_never_activates_vintage.py` enforces it at the AST level for every module
+    under `app/tasks/`."""
+    from app.cache import sync_redis
+    from app.census import catchment, materialize
+
+    conn = _conn()
+    try:
+        geo_vintage = materialize.active_geo_vintage(conn)
+        bands = catchment.build(conn, listing_id, geo_vintage)
+        rows = materialize.materialize_listing(conn, sync_redis(), listing_id)
+        return {"listing_id": listing_id, "catchment": bands, "rows": rows}
+    finally:
+        conn.close()
+
+
 # Registered by CALLING `celery_app.task(...)` rather than by decorating (see the module
 # docstring): the functions above stay ordinary, fully typed and directly callable.
 load_tiger_task = celery_app.task(name="census.load_tiger")(load_tiger)
@@ -311,3 +351,5 @@ license_audit_task = celery_app.task(name="census.license_audit")(license_audit)
 # Phase B, B2: geocode_listing_task registers here.
 
 # Phase B, B4: backfill_listing_task and materialize_all_task register here.
+materialize_metrics_task = celery_app.task(name="census.materialize_metrics")(materialize_metrics)
+backfill_listing_task = celery_app.task(name="census.backfill_listing")(backfill_listing)

@@ -40,8 +40,13 @@ def test_the_mail_pipeline_tasks_are_registered_and_scheduled():
     assert schedule["mail-send-minutely"] == {"task": "mail.send", "schedule": 60.0}
     assert schedule["qwi-quarterly"]["task"] == "census.load_qwi"
     assert schedule["license-audit-quarterly"]["task"] == "census.license_audit"
+    assert schedule["materialize-nightly"]["task"] == "census.materialize_metrics"
+    # Task B4b widens this set (never replaces it) the same way Task A8 originally did: a future
+    # accidental wipe of any sub-project's entries -- Census's own materialisation beat included
+    # -- still goes red here.
     assert {entry["task"] for entry in schedule.values()} == {
         "mail.send", "mail.purge_sessions", "mail.purge_outbox", "census.load_qwi", "census.license_audit",
+        "census.materialize_metrics",
     }
     for name in ("sessions-purge-nightly", "outbox-purge-nightly"):
         assert schedule[name]["schedule"].hour == {4}, name
