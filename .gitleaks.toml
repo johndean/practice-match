@@ -16,4 +16,7 @@ regexes = [
   '''test_only_secret_change_me''',
   '''ci_only_secret_change_me''',
   '''local_only''',
+  '''"CENSUS_API_KEY", "the-key"''',
+  '''"CENSUS_API_KEY", "distinctive-key-123"''',
+  '''postgresql://nobody@127\.0\.0\.1:1/none''',
 ]
