@@ -307,3 +307,7 @@ load_zbp_task = celery_app.task(name="census.load_zbp")(load_zbp)
 load_qwi_task = celery_app.task(name="census.load_qwi")(load_qwi)
 load_bds_task = celery_app.task(name="census.load_bds")(load_bds)
 license_audit_task = celery_app.task(name="census.license_audit")(license_audit)
+
+# Phase B, B2: geocode_listing_task registers here.
+
+# Phase B, B4: backfill_listing_task and materialize_all_task register here.
