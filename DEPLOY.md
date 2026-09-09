@@ -101,6 +101,16 @@ Expected `verify-deploy.sh` output on QA (app mode): `healthz OK  version X.Y.Z 
 
 ## Migrations
 
+**Numbering is reserved by plan, and a new file must take a free range.** `001`–`002` are the
+original platform migrations · `010`–`015` Sub-project 2 (identity) · `016` the Seed Listings plan
+· **`017`–`059` the Census plan's Sub-project 3 Phase A** and **`060`+ its Phase B** (that plan's
+D14) · `080`–`089` the map engines · **`090`–`099` platform and hotfix migrations on `main`**
+(A-L12, 2026-09-09 — `090_listing_photo_captions.sql` is the first). `003`–`009` are unassigned and
+may only be taken by a platform migration that depends on nothing later.
+`scripts/migrate.py` applies files in FILENAME order, so a file may only be numbered above
+everything it depends on; the test suite applies the whole ladder into a fresh database on every
+run, which is where a mis-numbered dependency fails.
+
 **An applied migration is immutable.** From `f3b7d41` the ledger records each file's SHA-256 alongside its name, and a file whose bytes have changed since it was applied stops the container before uvicorn with exit 4 (`[migrate] <file> changed after it was applied — drop and recreate the database or restore the file`) — so amend a numbered file in place only while no persistent database has yet run it, which today means only files added after `b9d01ad`: QA and production predate Wave 2a and neither is affected. Enforcement begins with the files applied from `f3b7d41` onward and is not retroactive: ledger rows written before it carry no checksum and are not checked, so `001_init.sql` and `002_interest_signup.sql` — already applied on QA and production — stay unchecked and must simply be left alone.
 
 ## Identity operations (Wave 2a)
@@ -179,7 +189,7 @@ that wins where there is one.
 
 **Where a description comes from.** Today it is the **supplier's own filename** —
 `06_interior_reception_lobby.png` becomes "Interior — reception lobby" — recorded per photograph in
-`index.json` by `scripts/prepare_photos.py`, stored in `listing.photo_captions` (migrations/024) by
+`index.json` by `scripts/prepare_photos.py`, stored in `listing.photo_captions` (migrations/090) by
 the seeder, and served beside `photos` by the API. Wave 2b's sellers write their own, in the same
 column. A photograph with none falls back to the design's fixed slot caption, and past the sixth
 slot — where the design has no caption to lend — to "Photo N".

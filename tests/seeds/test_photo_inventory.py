@@ -164,7 +164,11 @@ def test_every_committed_photograph_has_a_caption_and_a_source() -> None:
     reads (A-L11, amendment A15.3)."""
     for slug, entries in inventory().items():
         for entry in entries:
-            assert entry["slot"] is None or entry["slot"], (slug, entry["file"])
+            # A-L11 review (m5): `is None or entry["slot"]` was truthiness alone, so any
+            # non-empty value — an int, a list — satisfied it. A slot is a NAME or nothing.
+            assert entry["slot"] is None or (isinstance(entry["slot"], str) and entry["slot"]), (
+                slug, entry["file"]
+            )
             if entry["file"] is None:
                 # An empty slot is a statement, not a photograph (A-L10): no bytes, no caption,
                 # no source, and no measured field claiming otherwise.

@@ -1096,27 +1096,29 @@ const A12_11: Amendment = {
  *  the DESIGN's, fixed by practice type; the API sent no caption at all. So a photograph could
  *  only ever sit under a TRUE caption by being the one that shows that slot's subject — a ceiling
  *  of six per hospital that hotfix 2 (A-L10) turned into a floor of nothing: it left a slot empty
- *  wherever no image matched by eye, and 117 of the 190 photographs John supplied stopped being
- *  rendered at all (`def_veterinary_hospital`: nine down to three).
+ *  wherever no image matched by eye, so of the 195 photographs in John's eighteen folders only 73
+ *  were rendered (`def_veterinary_hospital`: nine down to three).
  *
- *  The rule is now the opposite, and these four literal script edits are it:
+ *  The rule is now the opposite, and these six literal script edits are it:
  *
  *    - a photograph carries its OWN description — `p.photoCaptions[i]`, the API's new
  *      `photo_captions` (migrations/024), the supplier's words today and the seller's in Wave 2b
  *      — and the design's fixed slot caption is the FALLBACK where there is none (A15.1, A15.2);
  *    - every photograph past the sixth gets a tile of its own, appended after the six slots, with
  *      "Photo N" as the last-resort caption because the design has no seventh caption to lend
- *      (A15.3a, A15.3b).
+ *      (A15.3a-A15.3d: the head and the tail of the generic branch's `return`, then the head and
+ *      the tail of the `p2` branch's, four edits because the two ends of each are far apart).
  *
  *  No template edit is needed: the detail grid (`<sc-for list="{{ d.photos }}">`) and the docked
  *  panel's carousel (`withPhoto`, `counter`, `dots`) already iterate whatever `photoSet` returns,
  *  so eleven tiles wrap into more rows and the carousel counts 1/11 on their own.
  *
  *  PIXEL-SAFE by construction, and for the same reason A12 was: the design's fixtures carry no
- *  `photoCaptions` (so `p.photoCaptions &&` is falsey and every caption is the design's own) and
- *  no more than three photographs (so `p.photos.length > views.length` is false and no tile is
- *  appended). `src/listings/load.ts` adds `photoCaptions` only when the API actually sent one,
- *  which the D6 design-fixture stub never does. Proved twice over — `src/logic.test.ts`
+ *  `photos` and no `photoCaptions` AT ALL — `p2`'s three photographs are the `SRC` map, keyed by
+ *  slot id, not `p.photos` — so `p.photoCaptions &&` is falsey and every caption is the design's
+ *  own, and `p.photos &&` is falsey so the extra arm is `[]` and no tile is appended anywhere.
+ *  `src/listings/load.ts` adds `photoCaptions` only when the API actually sent one, which the D6
+ *  design-fixture stub never does. Proved twice over — `src/logic.test.ts`
  *  characterises both halves, and the 43 approved states keep their baseline hashes.
  */
 const L11 = {
@@ -1157,8 +1159,8 @@ const A15_3a: Amendment = {
 
 /** A15.3b — the tail of the same expression: the extras themselves, and the concatenation that
  *  returns them. Split from A15.3a only because the two ends of one `return` are far apart in the
- *  file; the `find` is anchored on `const equine`, the line that follows the `p2` branch, so it
- *  cannot reach any other `}));`. */
+ *  file; the `find` carries the generic branch's whole `src:`/`hasSrc`/`noSrc` line and
+ *  `photoSet`'s own closing brace with it, so it cannot reach any other `}));`. */
 const A15_3b: Amendment = {
   id: 'A15.3b', ...L11,
   find: '      src: (p.photos && p.photos[i]) || "", hasSrc: !!(p.photos && p.photos[i]), noSrc: !(p.photos && p.photos[i])\n    }));\n  }',
@@ -1173,9 +1175,11 @@ const A15_3b: Amendment = {
 };
 
 /** A15.3c / A15.3d — the same append in the `p2` branch, whose six slots are an inline array
- *  rather than `views`, so its slot count is `tiles.length`. `p2` is a design fixture and will
- *  never carry a seventh photograph, but a branch that behaves differently from the one beside it
- *  is the kind of divergence the next reader pays for. */
+ *  rather than `views`, so its slot count is `tiles.length`. A15.3d's `find` is anchored on the
+ *  `const equine` line that follows the branch, which is what keeps it off the generic branch's
+ *  own `});`. `p2` is a design fixture and will never carry a seventh photograph, but a branch
+ *  that behaves differently from the one beside it is the kind of divergence the next reader
+ *  pays for. */
 const A15_3c: Amendment = {
   id: 'A15.3c', ...L11,
   find: '    if (p.id === "p2") {\n      const name = this.practiceName(p);\n      return [',

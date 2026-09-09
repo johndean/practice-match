@@ -1,6 +1,13 @@
 -- A-L11 (John, 2026-09-09: "surface all images uploaded and have the user articulate what it is
 -- and render ALL images"). One description per photograph, parallel to `listing.photos`.
 --
+-- Numbered 090, not 024: `017`-`059` is the Census plan's Sub-project 3 Phase A (its D14) and
+-- `060`+ is Phase B, so a hotfix that took 024 would collide with a plan on another branch.
+-- `090`-`099` is the range reserved for PLATFORM AND HOTFIX migrations on `main` (A-L12; `080`-
+-- `089` are the map engines). This one depends on `016_listing.sql` and on nothing after it, so
+-- filename order — which is all `scripts/migrate.py` uses — is satisfied wherever the reserved
+-- ranges in between are eventually filled.
+--
 -- Why a column and not the design's captions: `photoSet(p)` renders SIX fixed captions chosen by
 -- practice type, so a photograph could only ever be captioned truthfully by being placed in the
 -- slot whose caption describes it — which is why hotfix 2 (A-L10) dropped 117 of the 190 images

@@ -276,22 +276,52 @@ def select_for_slots(files: list[Path], slots: list[str]) -> list[Path]:
     return [src for _slot, src in keyword_choices(files, slots)]
 
 
+# The acronyms John's filenames spell in lower case, as a buyer writes them (A-L11 review, m6).
+# Whole TOKENS only — `reception` and `recovery` contain `ce`/`re`, not `ct` or `er`, and the
+# filenames are split on `_` before this is consulted, so a substring can never match.
+ACRONYMS = {"ct": "CT", "icu": "ICU", "mri": "MRI", "er": "ER", "dvm": "DVM"}
+
+
+def spelled(words: list[str]) -> list[str]:
+    """`words` with the acronyms above spelled the way they are read. `x_ray` arrives as two
+    tokens and `xray` as one; both become "X-ray", which is why this is a scan and not a
+    dict lookup per word."""
+    out: list[str] = []
+    index = 0
+    while index < len(words):
+        word = words[index]
+        if word == "x" and index + 1 < len(words) and words[index + 1] == "ray":
+            out.append("X-ray")
+            index += 2
+            continue
+        out.append("X-ray" if word == "xray" else ACRONYMS.get(word, word))
+        index += 1
+    return out
+
+
 def caption_of(source_name: str) -> str:
     """A caption from the curated filename: `06_interior_reception_lobby.png` becomes
-    "Interior — reception lobby" (pre-flight I2).
+    "Interior — reception lobby" (pre-flight I2), and `10_interior_ct_scanner.png` becomes
+    "Interior — CT scanner" (A-L11 review, m6: the words are read by a buyer).
 
-    The design's own photo slots carry six fixed captions chosen by practice type, and those
-    captions are what a buyer reads; since A-L9 the selection above fills each slot with the
-    photograph its caption describes. This caption records what the FILE says it shows, which
-    is how a slot that had to fall back is visible in the inventory rather than only on screen.
+    The design's own photo slots carry six fixed captions chosen by practice type; in one of
+    those six slots that caption is what a buyer reads unless this one exists, and past the
+    sixth (A-L11) this one is ALL there is — the design has no seventh caption to lend. It is
+    the only description we hold until a seller writes their own, so it is stored per photograph
+    (`index.json` → `listing.photo_captions` → `p.photoCaptions[i]`, amendment A15).
 
     A name that does not follow the `NN_area_description.ext` convention falls back to its
     stem with underscores as spaces, capitalised."""
     stem = Path(source_name).stem
     parts = stem.split("_")
     if len(parts) >= 3 and parts[0].isdecimal():
-        return f"{parts[1].capitalize()} — {' '.join(parts[2:])}"
-    return stem.replace("_", " ").capitalize()
+        return f"{parts[1].capitalize()} — {' '.join(spelled(parts[2:]))}"
+    # Split on the underscore AND on whitespace: a name outside the convention may be spelled
+    # either way (`x_ray.png`, `ct suite.png`), and both are read a word at a time.
+    plain = " ".join(spelled(stem.lower().replace("_", " ").split()))
+    # `.capitalize()` would lower-case an acronym the line above just spelled, so only the first
+    # character is touched — which is what `.capitalize()` did for every other name anyway.
+    return plain[:1].upper() + plain[1:]
 
 
 def _flattened(src: Path, max_edge: int) -> Image.Image:

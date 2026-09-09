@@ -1206,11 +1206,11 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
   //
   // The design renders six FIXED captions per practice, so a photograph could only ever be
   // captioned truthfully by being placed in the slot whose caption describes it — which is why
-  // A-L10 dropped 117 of the 190 images John supplied. A15 makes a photograph carry its own
-  // description (`p.photoCaptions[i]`, the API's `photo_captions`) with the design's fixed slot
-  // caption as the FALLBACK, and appends a tile for every photograph past the sixth. The design's
-  // fixtures carry neither key and at most three photographs, so every approved state is
-  // untouched — the `p.photoCaptions &&` guard is the whole reason.
+  // A-L10 rendered only 73 of the 195 images in John's folders. A15 makes a photograph carry its
+  // own description (`p.photoCaptions[i]`, the API's `photo_captions`) with the design's fixed
+  // slot caption as the FALLBACK, and appends a tile for every photograph past the sixth. The
+  // design's fixtures carry NEITHER key — `p2`'s three photographs are the `SRC` map, keyed by
+  // slot id, not `p.photos` — so both guards are falsey and every approved state is untouched.
   // -----------------------------------------------------------------------------------------
   const ELEVEN = Array.from({ length: 11 }, (_, n) => `/api/listings/a1/photos/${n + 1}`);
   const DEFAULT_CAPTIONS = [

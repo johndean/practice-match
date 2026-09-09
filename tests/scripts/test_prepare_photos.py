@@ -209,6 +209,29 @@ def test_caption_of_reads_the_curated_filename(name: str, expected: str) -> None
     assert PP.caption_of(name) == expected
 
 
+@pytest.mark.parametrize(
+    "name, expected",
+    [("08_interior_ct_scanner.png", "Interior — CT scanner"),
+     ("09_interior_icu.png", "Interior — ICU"),
+     ("09_interior_mri_ct_room.png", "Interior — MRI CT room"),
+     ("10_interior_xray_room.png", "Interior — X-ray room"),
+     ("10_interior_x_ray_room.png", "Interior — X-ray room"),
+     ("03_interior_er_bay.png", "Interior — ER bay"),
+     ("04_interior_dvm_office.png", "Interior — DVM office"),
+     # The fallback arm spells them too — a caption is read by a buyer whichever arm made it.
+     ("ct suite.png", "CT suite"),
+     ("x_ray.png", "X-ray"),
+     # …and a word that merely CONTAINS an acronym is left alone: whole tokens only.
+     ("05_interior_reception_counter.png", "Interior — reception counter"),
+     ("06_interior_recovery_ward.png", "Interior — recovery ward")],
+)
+def test_caption_of_spells_the_acronyms_john_writes_in_lower_case(name: str, expected: str) -> None:
+    """A-L11 review (m6). The filenames spell `ct`, `icu`, `mri`, `er`, `xray`/`x_ray` and `dvm`
+    in lower case; a buyer reads the caption, so it says CT, ICU, MRI, ER, X-ray and DVM. Whole
+    tokens only — `reception` and `recovery` contain none of them."""
+    assert PP.caption_of(name) == expected
+
+
 def test_the_inventory_records_a_caption_per_photograph(source: Path, tmp_path: Path) -> None:
     index = PP.prepare(source, tmp_path / "photos", ["demo_hospital"], {})
     assert [e["caption"] for e in index["demo_hospital"]] == [

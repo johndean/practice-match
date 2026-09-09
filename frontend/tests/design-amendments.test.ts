@@ -107,8 +107,8 @@ describe('local design amendments (spec D15)', () => {
     // A13/A14 are reserved by the design-dropdowns branch. Six literal script edits: a
     // photograph's own `photoCaptions[i]` wins over the design's fixed slot caption (A15.1/A15.2)
     // and every photograph past the sixth gets a tile of its own (A15.3a–A15.3d, the two ends of
-    // each branch's `return`). The fixtures carry no `photoCaptions` and at most three
-    // photographs, so no approved state moves.
+    // each branch's `return`). The fixtures carry no `photos` and no `photoCaptions` at all, so
+    // both guards are falsey and no approved state moves.
     'A15.1', 'A15.2', 'A15.3a', 'A15.3b', 'A15.3c', 'A15.3d',
   ];
 

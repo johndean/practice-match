@@ -1480,11 +1480,21 @@ def test_the_seed_plan_records_a_l11_and_deploy_md_says_every_image_renders():
     record = plan.split("**Controller amendment A-L11")[-1]
     assert "render ALL images" in record, "the record does not quote John's ruling"
     # The root cause, in the terms that make it a design fact and not a bug report.
-    assert "photoSet(p)" in record and "117" in record and "190" in record
-    assert "195" in record, "the record does not state the measured outcome"
+    assert "photoSet(p)" in record
+    # A-L11 review (m4): the TRUE counts. The brief's "117 of 190 dropped" was arithmetic
+    # (73 kept + 117 = 190) and the folders actually hold 195 — A-L10 rendered 73 of them and
+    # A-L11 renders all 195. A record that states a count nobody can reproduce is worse than one
+    # that states none, so the superseded numbers may not come back.
+    assert "195" in record and "73" in record, "the record does not state what was rendered"
+    for superseded in ("117", "190"):
+        assert superseded not in record, f"the A-L10 arithmetic {superseded} is back in the record"
     # What now carries the description, and what renders it.
     assert "A15" in record and "photo_captions" in record
-    assert "024_listing_photo_captions.sql" in record
+    # A-L11 review (M1): 024 sat inside the Census plan's reserved 017-059 (that plan's D14).
+    # Platform and hotfix migrations on `main` take 090-099, and the record is where the next
+    # implementer reads that.
+    assert "090_listing_photo_captions.sql" in record
+    assert "090" in record and "099" in record, "the record does not state the reserved range"
     assert "Supersedes A-L10" in record, "the record does not retire A-L10's empty-slot rule"
     # The one thing this hotfix deliberately did NOT change, so the next reader does not "fix" it.
     assert "Six views per practice" in record, "the queued design-copy question is not recorded"
@@ -1499,3 +1509,13 @@ def test_the_seed_plan_records_a_l11_and_deploy_md_says_every_image_renders():
     # en dash in a source literal.
     assert "positions 1-6" in section, "the runbook does not say which positions the design's slots are"
     assert "supplier" in section, "the runbook does not say where a photograph's description comes from"
+
+    # M1 again: the range belongs where an operator adding a migration will look for it, which is
+    # DEPLOY.md's own Migrations section and not the seeding runbook.
+    migrations = deploy.split("## Migrations", 1)[1].split("\n## ", 1)[0]
+    assert "090" in migrations and "099" in migrations, (
+        "DEPLOY.md's Migrations section does not record the platform/hotfix range"
+    )
+    assert "017" in migrations and "059" in migrations, (
+        "DEPLOY.md's Migrations section does not say which range is the Census plan's"
+    )
