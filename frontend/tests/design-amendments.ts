@@ -2009,8 +2009,9 @@ const A19_1: Amendment = {
  *  no-op; a manual `.focus()` on the identical element moments later succeeds. JSDOM has no such
  *  restriction, so the plain characterisation this amendment shipped with never caught it. Fixed
  *  by the design's own `setTimeout(…, 0)` idiom (2 pristine uses, `logic.js`'s `_t` debounce),
- *  deferring the call one macrotask — the same fix A19.10's trap needs for the identical reason,
- *  and the one the plan itself named for that closure (Step 10). `lightboxFocus` is still spent
+ *  deferring the call one macrotask — the same fix A19.10's original `focusout` trap needed for
+ *  the identical reason, before A-LB3 removed that trap and moved Tab handling into the shared
+ *  `keydown` closure instead. `lightboxFocus` is still spent
  *  synchronously; only the `focus()` call is deferred, so a second render before the timer fires
  *  cannot re-arm it. */
 const A19_2: Amendment = {
