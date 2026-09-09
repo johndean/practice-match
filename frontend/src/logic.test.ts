@@ -2248,3 +2248,254 @@ describe('A14 — the Give dropdown', () => {
     expect(c.state).toMatchObject({ marketMenu: false, marketMenuAt: -1 });
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A19 — the photo lightbox (John, 2026-09-09: "the images/photos should be clickable and they
+// expand and have < > to view all images larger with simple X to close"). The design shows a
+// photograph at 168 px in the detail grid and at 232 px in the Browse docked panel and enlarges
+// neither. The lightbox is composed from the interest modal's scrim, the panel's own prev/next
+// arrows, its close button and its two pills; every branch of the state machine is new and
+// every branch is covered here. `p2` (Round Rock) is the design's own three-photograph fixture.
+// ---------------------------------------------------------------------------------------
+describe('A19 — the photo lightbox', () => {
+  afterEach(() => { c.componentWillUnmount(); });
+
+  const P2 = { pid: 'p2', at: 'ph-p2-exterior' };
+  /** A mounted, focusable stand-in for a tile's hit-target — what `closeLightbox` hands focus back to. */
+  const opener = () => { const b = document.createElement('button'); document.body.appendChild(b); return b; };
+  /** Round Rock's tiles, through the detail's own render values. */
+  const p2Photos = () => { c.setState({ detailId: 'p2' }); return c.renderVals().d.photos; };
+
+  it('starts closed and exposes nothing the template would render (A19.1/A19.3)', () => {
+    expect(c.state).toMatchObject({ lightbox: null, lightboxFocus: false });
+    const lb = c.renderVals().lightbox;
+    expect(lb).toMatchObject({ open: false, src: '', caption: '', counter: '', label: '', multiple: false });
+    // No orphan keys (the A2.3/A13.6 dead-code rule): every key has a reader in A19.8's block.
+    expect(Object.keys(lb).sort()).toEqual(['backdrop', 'caption', 'close', 'counter', 'label', 'multiple', 'next', 'open', 'prev', 'ref', 'src']);
+  });
+
+  it('a filled tile carries an opener and its own label; an empty tile carries neither (A19.4)', () => {
+    const photos = p2Photos();
+    expect(photos.map((ph: any) => typeof ph.open)).toEqual(['function', 'function', 'function', 'undefined', 'undefined', 'undefined']);
+    expect(photos[0].openLabel).toBe('Expand photo: Exterior — street view');
+    expect(photos[1].openLabel).toBe('Expand photo: Exterior — side elevation');
+    // The empty tile is the design's own object, untouched.
+    expect(Object.keys(photos[3]).sort()).toEqual(['caption', 'hasSrc', 'id', 'index', 'noSrc', 'placeholder', 'src']);
+    // Cedar Park (p1), the `detail` state's listing, has no photograph and therefore no hit-target —
+    // which is why that frozen baseline cannot move.
+    c.setState({ detailId: 'p1' });
+    expect(c.renderVals().d.photos.every((ph: any) => ph.open === undefined && ph.openLabel === undefined)).toBe(true);
+  });
+
+  it('opening records the opener, names the photograph and closes the three header menus — not the metro one (A19.2)', () => {
+    const btn = opener();
+    try {
+      c.setState({ navMenu: true, userMenu: true, giveMenu: true, marketMenu: true, marketMenuAt: 1 });
+      p2Photos()[1].open({ currentTarget: btn });
+      expect(c.state).toMatchObject({ lightbox: { pid: 'p2', at: 'ph-p2-exterior2' }, lightboxFocus: true, navMenu: false, userMenu: false, giveMenu: false });
+      // The metro listbox is shut by its own pointerdown/focusout closures before a tile click can
+      // land, so `openLightbox` does not name it — which is what keeps design-amendments.test.ts's
+      // "exactly six sites" pin on `marketMenu: false, marketMenuAt: -1` true.
+      expect(c.state).toMatchObject({ marketMenu: true, marketMenuAt: 1 });
+      expect(c._lightboxOpener).toBe(btn);
+      expect(c.renderVals().lightbox).toMatchObject({
+        open: true, src: '/assets/photos/round-rock-exterior-side.webp', caption: 'Exterior — side elevation',
+        counter: '2/3', label: 'Photograph 2 of 3', multiple: true
+      });
+    } finally { btn.remove(); }
+  });
+
+  it('the docked panel opens the photograph its carousel is showing, so "N of M" equals its counter (A19.5)', () => {
+    c.setState({ screen: 'browse', mdSel: 'p2', mdPhoto: 2 });
+    const photos = c.renderVals().md.panel.photos;
+    expect(photos.counter).toBe('3/3');
+    expect(photos.openLabel).toBe('Expand photo: Exterior — parking and signage');
+    photos.open(undefined);
+    expect(c.state.lightbox).toEqual({ pid: 'p2', at: 'ph-p2-exterior3' });
+    expect(c.renderVals().lightbox.label).toBe('Photograph 3 of 3');
+    // Cedar Park has no photograph: `hasAny` is false, so the template mounts no hit-target there.
+    c.setState({ mdSel: 'p1', mdPhoto: 0 });
+    expect(c.renderVals().md.panel.photos.hasAny).toBe(false);
+  });
+
+  it('stepping wraps at both ends; a slot id the set no longer carries reads as the first (A19.2)', () => {
+    c.setState({ lightbox: P2 });
+    const step = (d: number) => { c.stepLightbox(d); return c.state.lightbox.at; };
+    expect(step(1)).toBe('ph-p2-exterior2');
+    expect(step(1)).toBe('ph-p2-exterior3');
+    expect(step(1), 'past the last photograph, wraps to the first').toBe('ph-p2-exterior');
+    expect(step(-1), 'before the first, wraps to the last').toBe('ph-p2-exterior3');
+    c.setState({ lightbox: { pid: 'p2', at: 'ph-p2-gone' } });
+    expect(c.renderVals().lightbox.label).toBe('Photograph 1 of 3');
+    expect(step(1)).toBe('ph-p2-exterior2');
+  });
+
+  it('one photograph never steps and hides the arrows; nothing open never steps (A19.2)', () => {
+    const one = { id: 'lb-one', area: 'Elgin', type: 'Small animal', photos: ['/api/listings/lb/photos/1'] };
+    (P as unknown as Array<{ id: string }>).push(one);
+    try {
+      c.setState({ lightbox: { pid: 'lb-one', at: 'ph-lb-one-exterior' } });
+      expect(c.renderVals().lightbox).toMatchObject({ open: true, multiple: false, counter: '1/1', label: 'Photograph 1 of 1' });
+      c.stepLightbox(1);
+      expect(c.state.lightbox.at).toBe('ph-lb-one-exterior');
+      c.setState({ lightbox: null });
+      c.stepLightbox(1);
+      expect(c.state.lightbox).toBeNull();
+    } finally {
+      const fixtures = P as unknown as Array<{ id: string }>;
+      fixtures.splice(fixtures.findIndex((x) => x.id === 'lb-one'), 1);   // structural restore (N1)
+    }
+  });
+
+  it('a lightbox that names a listing with no photograph, or no listing, renders nothing (A19.2)', () => {
+    c.setState({ lightbox: { pid: 'p1', at: 'ph-p1-exterior' } });
+    expect(c.renderVals().lightbox.open).toBe(false);
+    expect(c.lightboxPhotos()).toEqual([]);
+    c.setState({ lightbox: { pid: 'no-such-listing', at: 'x' } });
+    expect(c.lightboxPhotos()).toEqual([]);
+  });
+
+  it('closing clears the state and returns focus to the opener; with no opener recorded it just closes (A19.2)', () => {
+    const btn = opener();
+    try {
+      p2Photos()[0].open({ currentTarget: btn });
+      c.renderVals().lightbox.close();
+      expect(c.state).toMatchObject({ lightbox: null, lightboxFocus: false });
+      expect(document.activeElement).toBe(btn);
+      expect(c._lightboxOpener).toBeNull();
+      btn.blur();
+      p2Photos()[0].open(undefined);          // no event, no opener
+      expect(c._lightboxOpener).toBeNull();
+      c.closeLightbox();                       // no throw; focus is left where it was
+      expect(c.state.lightbox).toBeNull();
+      expect(document.activeElement).not.toBe(btn);
+    } finally { btn.remove(); }
+  });
+
+  it('the mount ref spends lightboxFocus exactly once, one macrotask deferred, and a Next or Prev re-render must not re-steal focus (A19.2)', () => {
+    // Live-browser finding (Step 10): Chromium silently drops a focus() call made synchronously
+    // while a just-mounted node has not yet had layout/style committed — the JSDOM unit
+    // environment has no such restriction, so only a real Chromium run surfaces it. Deferred one
+    // macrotask, the design's own setTimeout idiom (2 pristine uses), exactly as A19.10's trap
+    // needs for the identical reason.
+    vi.useFakeTimers();
+    const box = document.createElement('div'); box.tabIndex = -1; document.body.appendChild(box);
+    try {
+      p2Photos()[0].open(undefined);
+      c.renderVals().lightbox.ref(box);
+      expect(c.state.lightboxFocus, 'the flag is spent synchronously; only the focus() call is deferred').toBe(false);
+      expect(c._lightboxEl).toBe(box);
+      expect(document.activeElement, 'not yet — the focus() call is queued, not run').not.toBe(box);
+      vi.advanceTimersByTime(0);
+      expect(document.activeElement).toBe(box);
+      box.blur();
+      // Both runtimes call the OLD ref with null and the NEW one with the element on every render
+      // (renderVals mints a new function each pass): the handle follows, the focus does not.
+      c.renderVals().lightbox.ref(null);
+      expect(c._lightboxEl).toBeNull();
+      c.renderVals().lightbox.ref(box);
+      expect(c._lightboxEl).toBe(box);
+      vi.advanceTimersByTime(0);
+      expect(document.activeElement).not.toBe(box);
+    } finally { box.remove(); vi.useRealTimers(); }
+  });
+
+  it('the backdrop closes only when the click lands on the scrim itself (A19.2)', () => {
+    const scrim = document.createElement('div'); const inner = document.createElement('img');
+    c.setState({ lightbox: P2 });
+    c.renderVals().lightbox.backdrop({ target: inner, currentTarget: scrim });
+    expect(c.state.lightbox, 'a click on the photograph or inside the dialog must not close it').toEqual(P2);
+    c.renderVals().lightbox.backdrop({ target: scrim, currentTarget: scrim });
+    expect(c.state.lightbox).toBeNull();
+  });
+
+  it('Escape closes and ArrowLeft/ArrowRight step through the armed document listener; other keys are not swallowed (A19.9)', () => {
+    const btn = opener();
+    try {
+      c.componentDidMount();
+      p2Photos()[0].open({ currentTarget: btn });
+      const press = (key: string) => { const e = new KeyboardEvent('keydown', { key, cancelable: true }); document.dispatchEvent(e); return e.defaultPrevented; };
+      expect(press('ArrowRight')).toBe(true);
+      expect(c.state.lightbox.at).toBe('ph-p2-exterior2');
+      expect(press('ArrowLeft')).toBe(true);
+      expect(c.state.lightbox.at).toBe('ph-p2-exterior');
+      expect(press('a')).toBe(false);
+      expect(c.state.lightbox).toEqual(P2);
+      expect(press('Escape')).toBe(true);
+      expect(c.state.lightbox).toBeNull();
+      expect(document.activeElement).toBe(btn);
+      c.componentWillUnmount();
+    } finally { btn.remove(); }
+  });
+
+  it('with the lightbox closed, A13\'s and A14\'s dismissals are unchanged by A19\'s branches (A19.9/A19.10)', () => {
+    c.componentDidMount();
+    c.setState({ marketMenu: true, marketMenuAt: 2, giveMenu: true, lightbox: null });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+    expect(c.state).toMatchObject({ marketMenu: true, marketMenuAt: 2, giveMenu: true });   // arrows mean nothing while closed
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(c.state).toMatchObject({ marketMenu: false, marketMenuAt: -1, giveMenu: false });
+    const give = document.createElement('div'); const away = document.createElement('button');
+    document.body.append(give, away);
+    try {
+      c.renderVals().giveMenuRef(give);
+      c.setState({ giveMenu: true });
+      give.dispatchEvent(new FocusEvent('focusout', { relatedTarget: away, bubbles: true }));
+      expect(c.state.giveMenu, 'Tab out of the Give menu still closes it').toBe(false);
+    } finally { give.remove(); away.remove(); }
+    c.componentWillUnmount();
+  });
+
+  it('Tab out of the open dialog is pulled back, one macrotask deferred; a move inside it, a window blur and an unmounted dialog are left alone (A19.10)', () => {
+    // Live-browser finding (Step 10): a synchronous focus() call made from inside the capture-
+    // phase focusout handler is silently dropped by Chromium — confirmed on the app AND the
+    // reference, both real Chromium; JSDOM has no such restriction. Deferred one macrotask, the
+    // same setTimeout idiom A19.2's mount ref needs for the identical reason.
+    vi.useFakeTimers();
+    const box = document.createElement('div'); box.tabIndex = -1;
+    const inside = document.createElement('button'); box.appendChild(inside);
+    const away = document.createElement('button');
+    document.body.append(box, away);
+    try {
+      c.componentDidMount();
+      c.setState({ lightbox: P2 });
+      // No dialog mounted yet (its ref has not run): nothing to pull focus to, and no throw.
+      inside.dispatchEvent(new FocusEvent('focusout', { relatedTarget: away, bubbles: true }));
+      vi.advanceTimersByTime(0);
+      c.renderVals().lightbox.ref(box);
+      away.focus();
+      inside.dispatchEvent(new FocusEvent('focusout', { relatedTarget: away, bubbles: true }));
+      expect(document.activeElement, 'not yet — the pull-back is queued, not run').not.toBe(box);
+      vi.advanceTimersByTime(0);
+      expect(document.activeElement, 'focus leaving the dialog is returned to it').toBe(box);
+      inside.focus();
+      inside.dispatchEvent(new FocusEvent('focusout', { relatedTarget: box, bubbles: true }));
+      vi.advanceTimersByTime(0);
+      expect(document.activeElement, 'a move inside the dialog is not interfered with').toBe(inside);
+      inside.dispatchEvent(new FocusEvent('focusout', { relatedTarget: null, bubbles: true }));
+      vi.advanceTimersByTime(0);
+      expect(document.activeElement, 'a window blur is left alone, as A14.7 leaves it').toBe(inside);
+      c.componentWillUnmount();
+    } finally { box.remove(); away.remove(); vi.useRealTimers(); }
+  });
+
+  it('go() and signOut clear it — a screen change closes the lightbox (A19.11/A19.12)', async () => {
+    c.setState({ auth: true, lightbox: P2, lightboxFocus: true });
+    c.go('browse')();
+    expect(c.state).toMatchObject({ screen: 'browse', lightbox: null, lightboxFocus: false });
+    c.setState({ lightbox: P2, lightboxFocus: true });
+    await c.renderVals().signOut();
+    expect(c.state).toMatchObject({ screen: 'gate', auth: false, lightbox: null, lightboxFocus: false });
+  });
+
+  it('componentWillUnmount still removes the three document listeners — A19 added none', () => {
+    const add = vi.spyOn(document, 'addEventListener');
+    const remove = vi.spyOn(document, 'removeEventListener');
+    c.componentDidMount();
+    c.componentWillUnmount();
+    const ours = (calls: unknown[][]) => calls.filter(([t]) => t === 'pointerdown' || t === 'keydown' || t === 'focusout');
+    expect(ours(add.mock.calls)).toHaveLength(3);
+    expect(ours(remove.mock.calls)).toHaveLength(3);
+    add.mockRestore(); remove.mockRestore();
+  });
+});

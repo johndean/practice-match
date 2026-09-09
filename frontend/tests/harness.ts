@@ -189,9 +189,10 @@ export function btn(page: Page, name: RegExp) {
 // ---------------------------------------------------------------------------------------
 // The one state whose capture a page scroll can move.
 //
-// App.vue has exactly ONE `position: fixed` element — the interest modal's overlay
-// (`position: fixed; inset: 0; z-index: 900; … place-items: center`). Everything else on all
-// 28 approved states is in normal flow, and a fullPage screenshot captures flow content
+// App.vue has exactly TWO `position: fixed` elements — the interest modal's overlay
+// (`position: fixed; inset: 0; z-index: 900; … place-items: center`) and, since A19, the photo
+// lightbox's scrim (`z-index: 1100`, addressed by `[role="dialog"]`), never mounted in the same
+// state. Everything else on all 28 approved states is in normal flow, and a fullPage screenshot captures flow content
 // whole regardless of where the page happens to be scrolled. A fixed element is different:
 // it is composited at the offset it PAINTS at, so a page scrolled by N pixels puts the whole
 // overlay — backdrop and the dialog centred inside it — N pixels down the screenshot while

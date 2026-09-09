@@ -145,11 +145,18 @@ describe('local design amendments (spec D15)', () => {
     // turns left. Both finds are unique in the pristine file (A18.1 anchors on the bare <img>,
     // never on A3's label — the citation chase); the family is appended last, as every family is.
     'A18.1', 'A18.2',
+    // A19 — the photo lightbox (John, 2026-09-09). Twelve literal edits: the state keys, the
+    // five class members, the render key, the two openers (detail tiles and the docked panel's
+    // photograph), the two hit-targets, the overlay block at the root, the Escape/Arrow branch
+    // in A14.5's shared `key` closure and the focus trap in A13.8's `out` closure, and the two
+    // screen changes the design owns (`go()`, `signOut`) clearing it. A19.9 and A19.10 read
+    // A14.5's and A13.8's output, so the whole family is appended last.
+    'A19.1', 'A19.2', 'A19.3', 'A19.4', 'A19.5', 'A19.6', 'A19.7', 'A19.8', 'A19.9', 'A19.10', 'A19.11', 'A19.12',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(106);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(118);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -475,6 +482,69 @@ describe('local design amendments (spec D15)', () => {
       expect(pristine, `${kept} is not the pristine site this case thinks it is`).toContain(kept);
       expect(amended.split(kept).length - 1, `A18 changed a site outside its ruling: ${kept}`).toBe(pristine.split(kept).length - 1);
     }
+  });
+
+  // A19 (John, 2026-09-09: "the images/photos should be clickable and they expand and have < >
+  // to view all images larger with simple X to close"). Composed from the design's own elements —
+  // the interest modal's scrim (V3:1048), the detail tile's frame (V3:914), the docked panel's
+  // prev/next arrows (V3:720–725), its close button (V3:707–709) and its two pills (V3:729–731).
+  // Line numbers here name the file A19 is applied to — the design as A18 left it, the numbering
+  // its finds were measured against; the rows in LOCAL_AMENDMENTS.md carry the post-A19 ones.
+  const A19_PREV = '<button onClick="{{ lightbox.prev }}" aria-label="Previous photo" style="position: absolute; left: 10px; top: 50%; margin-top: -17px; width: 34px; height: 34px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; opacity: .92; transition: opacity 150ms var(--easing-out);" style-hover="opacity: 1;">';
+  const HIT_TARGET = 'style="position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: pointer;"></button>';
+  it('A19 introduces no styling beyond four named compositions, and every sc-if carries the design\'s hint', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    for (const decl of [
+      'position: fixed; inset: 0;',                                                            // scrim, V3:1048
+      'background: rgba(0,58,112,.55); display: grid; place-items: center; padding: 24px;',     // scrim, V3:1048
+      'border-radius: 10px; overflow: hidden; background: var(--rf-band);',                    // tile frame, V3:914
+      'box-shadow: var(--shadow-xl);',                                                         // modal box, V3:1049
+      'animation: rf-fade-up 300ms var(--easing-out) both;',                                   // modal box, V3:1049
+      'outline: none;',                                                                        // the design's inputs
+      'width: 38px; height: 38px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center;', // Close panel, V3:707
+      'opacity: .92; transition: opacity 150ms var(--easing-out);',                            // arrows, V3:720
+      'position: absolute; inset: 0',                                                          // the mobile sheet
+      'width: 100%; height: 100%',
+      'padding: 0; border: 0; background: none; cursor: pointer;',                             // the icon-button reset
+      'filter: brightness(0) invert(1)',                                                       // whitening, V3:819
+      'drop-shadow(0 1px 3px rgba(0,58,112,.4))',                                              // the arrows' shadow, V3:721
+      'aria-label="Previous photo" style="position: absolute; left: 10px; top: 50%; margin-top: -17px; width: 34px; height: 34px;',
+      'aria-label="Next photo" style="position: absolute; right: 10px; top: 50%; margin-top: -17px; width: 34px; height: 34px;',
+      'position: absolute; right: 12px; bottom: 12px; font-size: 12px; font-weight: 500; color: var(--vf-navy); background: rgba(255,255,255,.92); border-radius: 4px; padding: 3px 9px;',
+      'position: absolute; left: 12px; bottom: 12px; max-width: 55%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; font-weight: 500; color: var(--vf-navy); background: rgba(255,255,255,.92); border-radius: 4px; padding: 3px 9px;'
+    ]) expect(pristine, `${decl} is not the design's own`).toContain(decl);
+    // The four compositions — each once, and none in the pristine file.
+    for (const [decl, why] of [
+      ['z-index: 1100;', 'above Leaflet\'s .leaflet-top/.leaflet-bottom at 1000 — the Esri attribution and controls sit in the root stacking context on Browse'],
+      ['max-width: calc(100vw - 48px); max-height: calc(100vh - 48px);', 'the viewport minus the scrim\'s 24px padding; natural size otherwise'],
+      ['right: 10px; top: 10px;', 'the arrows\' 10px inset, applied to the top corner for the X'],
+      ['filter: brightness(0) invert(1) drop-shadow(0 1px 3px rgba(0,58,112,.4));', 'the whitening and the arrows\' shadow on one glyph']
+    ] as const) {
+      expect(amended.split(decl).length - 1, `${decl} — ${why} — must appear exactly once`).toBe(1);
+      expect(pristine, `${decl} is a composition, not the design's`).not.toContain(decl);
+    }
+    // One overlay at the root; the dialog, its accessible name, its image and its controls.
+    expect(amended.split('<sc-if value="{{ lightbox.open }}" hint-placeholder-val="{{ false }}">').length - 1).toBe(1);
+    expect(amended).toContain('<div role="dialog" aria-modal="true" aria-label="{{ lightbox.label }}" tabindex="-1" ref="{{ lightbox.ref }}"');
+    expect(amended).toContain('<img src="{{ lightbox.src }}" alt="{{ lightbox.caption }}"');
+    expect(amended.split('aria-label="Close photo"').length - 1).toBe(1);
+    expect(amended.split(A19_PREV).length - 1).toBe(1);
+    expect(amended.split('aria-label="Previous photo"').length - 1, 'the panel\'s pair and the lightbox\'s').toBe(2);
+    expect(amended.split('aria-label="Next photo"').length - 1).toBe(2);
+    // Two hit-targets, on the hasSrc/hasAny branches ONLY — never on an empty slot, whose click on
+    // the reference opens the design tool's file chooser (image-slot.js:571).
+    expect(amended.split(HIT_TARGET).length - 1).toBe(2);
+    expect(amended).toContain('<sc-if value="{{ ph.hasSrc }}" hint-placeholder-val="{{ false }}">\n                        <button onClick="{{ ph.open }}" aria-label="{{ ph.openLabel }}"');
+    expect(amended).toContain('<sc-if value="{{ md.panel.photos.hasAny }}" hint-placeholder-val="{{ false }}">\n                  <button onClick="{{ md.panel.photos.open }}" aria-label="{{ md.panel.photos.openLabel }}"');
+    // The pristine file has zero hint-less sc-ifs — a 100 % convention, kept.
+    expect(amended.match(/<sc-if value="\{\{ [^"]* \}\}">/g)).toBeNull();
+    // Focus moves through the mount ref, never a setState callback (A14 review C1); no new
+    // document listener; nothing of this exists in the pristine file.
+    expect(amended).not.toContain('}, () => this.closeLightbox(');
+    expect(amended).not.toContain('}, () => el.focus(');
+    expect(amended.split('document.addEventListener(').length - 1).toBe(3);
+    expect(pristine).not.toContain('lightbox');
+    expect(pristine, 'e.currentTarget is NEW to the design with A19 — parity rests on both runtimes, not on precedent').not.toContain('e.currentTarget');
   });
 
   it('the amended reference is the pristine Rev 2 file plus exactly the ruled edits', () => {

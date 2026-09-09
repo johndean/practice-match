@@ -29,6 +29,20 @@ const mobile = async (p: Page) => { await reach(p, { screen: 'browse', viewport:
 // App.vue's single position:fixed element — the interest modal's backdrop (see harness.ts's
 // `atTop`, which explains why this one state has to be pinned to the top of the page).
 const MODAL = 'div[style*="z-index: 900"]';
+// A19: the photo lightbox. Addressed by ROLE, not by a z-index string: the overlay is App.vue's
+// SECOND `position: fixed` element (the interest modal's scrim is the first — see harness.ts's
+// `atTop`), and the two are never mounted in the same state, so `MODAL`'s `.first()` sites still
+// resolve to the modal in theirs. `atTop` runs `document.querySelector`, and this is a plain
+// selector.
+const LIGHTBOX = '[role="dialog"][aria-modal="true"]';
+// The enlarged photograph starts loading only when the dialog mounts, and `settle()`'s 600 ms is
+// not a proof that a 680 px WebP has decoded: wait for the image element itself.
+const photoLoaded = async (p: Page) => {
+  await p.waitForFunction((sel) => {
+    const i = document.querySelector(`${sel} img`) as HTMLImageElement | null;
+    return !!i && i.complete && i.naturalWidth > 0;
+  }, LIGHTBOX);
+};
 // The prototype's own 390×800 phone frame (App.vue:1242) and the market-data sheet inside it.
 // `z-index: 700` is not unique in App.vue on its own — the desktop "More filters" popover
 // carries it, and A13's metro dropdown panel is a third — so the sheet is always addressed
@@ -291,6 +305,54 @@ export const SCREENS: Screen[] = [
     await p.getByRole('menuitem', { name: 'Dr. Sophia Yin Memorial Fund' }).waitFor({ state: 'visible' });
     await expectMontserratApplied(p);
     await p.waitForTimeout(400);
+  } },
+  // A19: the photo lightbox — the 46th, 47th and 48th approved states, APPENDED for the reason
+  // A13's and A14's were. Only Round Rock (p2) carries photographs on BOTH targets — the design's
+  // own `SRC` map, byte-identical in the bundle and in frontend/public — and the D6 stub sends
+  // `photos: []`, so both targets take the same branch; Cedar Park (`detail`'s p1) has six empty
+  // slots. So each state reaches p2 the way `interest-modal` does, clicks the FIRST tile's
+  // hit-target by its own label, waits for the dialog by its accessible name and for the image to
+  // decode, and — because the overlay is `position: fixed` — ends pinned at the top exactly as
+  // `interest-modal` is. There is no prototype prop for any of this and none is needed: it is a
+  // click on markup both targets render.
+  { name: 'detail-lightbox', steps: async (p) => {
+    await browse(p);
+    await p.getByText('Round Rock').first().click();
+    await click(p, 'View full listing');
+    await p.getByRole('button', { name: 'Expand photo: Exterior — street view' }).click();
+    await p.getByRole('dialog', { name: 'Photograph 1 of 3' }).waitFor({ state: 'visible' });
+    await photoLoaded(p);
+    await atTop(p, LIGHTBOX);
+  } },
+  // The Browse docked panel's photograph. `select` sets `mdPhoto: 0`, so the panel shows
+  // `withPhoto[0]` — the street view — and its hit-target is the only "Expand photo: Exterior —
+  // street view" button on the Browse screen (the detail grid is not mounted). Over the Leaflet
+  // map: this is the state that proves the scrim sits ABOVE the attribution (z-index 1100 > 1000).
+  { name: 'browse-panel-lightbox', steps: async (p) => {
+    await browse(p);
+    await p.getByText('Round Rock').first().click();
+    await p.getByText('View full listing').first().waitFor({ state: 'visible' });
+    await p.getByRole('button', { name: 'Expand photo: Exterior — street view' }).click();
+    await p.getByRole('dialog', { name: 'Photograph 1 of 3' }).waitFor({ state: 'visible' });
+    await photoLoaded(p);
+    await atTop(p, LIGHTBOX);
+  } },
+  // One Next: the second photograph (side elevation, 680 x 510) and the counter at 2/3, on both
+  // runtimes. "Next photo" is unique on the detail screen (the docked panel is not mounted). The
+  // button's hover cannot leak into the capture: `settle()` parks the mouse at (0,0) and the
+  // 150 ms opacity transition ends inside its 600 ms. The wrap-around and the keyboard paths are
+  // characterised in logic.test.ts, not photographed.
+  { name: 'detail-lightbox-next', steps: async (p) => {
+    await browse(p);
+    await p.getByText('Round Rock').first().click();
+    await click(p, 'View full listing');
+    await p.getByRole('button', { name: 'Expand photo: Exterior — street view' }).click();
+    await p.getByRole('dialog', { name: 'Photograph 1 of 3' }).waitFor({ state: 'visible' });
+    await photoLoaded(p);
+    await p.getByRole('button', { name: 'Next photo' }).click();
+    await p.getByRole('dialog', { name: 'Photograph 2 of 3' }).waitFor({ state: 'visible' });
+    await photoLoaded(p);
+    await atTop(p, LIGHTBOX);
   } }
 ];
 
