@@ -173,6 +173,12 @@ never on production without John's go — against `ENVIRONMENT=production` the s
 unless the operator says it out loud with `--production`, exactly as `scripts/bootstrap_admin.py`
 does; with the flag, the run's first line of output names the environment it is writing to.
 
+Run `scripts/seed_persona.py` **first**: the eighteen are assigned to
+`seller@practice-match.test` at seed time (spec 2026-09-08 D25), and if that account does not
+exist yet the import still succeeds with `seller_id` NULL and says so on stdout. `--owner <email>`
+overrides the default and `--no-owner` seeds unowned; on production the default is not applied at
+all unless `--owner` is passed.
+
 **The photographs (A-L9, 2026-09-09).** Each hospital carries **six**, one for every photo slot the
 design's detail page renders — `photoSet(p)` in `Practice Match V3.dc.html` gives an exterior plus
 five subjects chosen by practice type, and nothing beyond six can be displayed. They are selected

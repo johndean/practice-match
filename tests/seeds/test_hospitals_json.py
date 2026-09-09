@@ -36,7 +36,8 @@ JOHNS_TABLE: tuple[tuple[str, str, str, str, str, str, str], ...] = (
 
 REQUIRED_KEYS = {
     "slug", "name", "street", "city", "state", "zip", "phone", "hours", "area", "market", "type",
-    "status", "source", "location_disclosed", "name_disclosed", "lat", "lng", "geocode", "demo",
+    "status", "source", "location_disclosed", "name_disclosed", "rev_disclosed",
+    "documents_disclosed", "lat", "lng", "geocode", "demo",
     "price", "rev", "docs", "rooms", "sqft", "bldg", "est", "listed_days_ago",
     "note", "staff", "services", "facility", "ownership",
 }
@@ -112,6 +113,20 @@ def test_every_row_discloses_its_name() -> None:
     for h in load():
         assert isinstance(h["name_disclosed"], bool), (h["slug"], type(h["name_disclosed"]).__name__)
         assert h["name_disclosed"] is True, h["slug"]
+
+
+def test_every_row_discloses_its_revenue_and_its_documents() -> None:
+    """Task SL6, spec 2026-09-08 D22: "every seed sets all four disclosure flags true", so the
+    buyer detail keeps showing the eighteen hospitals' revenue and their document count.
+
+    `rev_disclosed` and `documents_disclosed` are added by migration 030 with a default of
+    `false` — sellers hide by default — and backfilled there for the rows that already exist.
+    A row INSERTED by a later seed run takes the default instead, so the value has to live in
+    this file, and the two must not disagree."""
+    for h in load():
+        for flag in ("rev_disclosed", "documents_disclosed"):
+            assert isinstance(h[flag], bool), (h["slug"], flag, type(h[flag]).__name__)
+            assert h[flag] is True, (h["slug"], flag)
 
 
 def test_the_demo_business_fields_are_present_and_plausible() -> None:
