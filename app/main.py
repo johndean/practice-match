@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
 from app.api.admin_data_sources import router as admin_data_sources_router
+from app.api.admin_signups import router as admin_signups_router
 from app.api.admin_users import router as admin_users_router
 from app.api.applications import router as applications_router
 from app.api.auth import router as auth_router
@@ -90,6 +91,19 @@ def create_app(dist: Path | None = None) -> FastAPI:
         # absent rather than merely guarded, and `scripts/verify-deploy.sh production` probes
         # that alongside the auth, applications and admin surfaces.
         app.include_router(listings_router)
+        # Superseded 2026-09-09 by John's ruling (A-I5d.5) — this used to be UNCONDITIONAL (Task
+        # I5d, D-I5d-5): `interest_signup` is filled by the Coming Soon page, so the rows this
+        # reads only exist on PRODUCTION, which runs `coming_soon` until launch, and gating the
+        # router the way `admin_users_router` is gated would have made the capability unreachable
+        # exactly where the data is. John overrode that: "Gate the entire Admin Launch Sign-ups
+        # router behind SITE_MODE=app. Do not expose the sign-up list or CSV export on production
+        # while Coming Soon, even to an API_SECRET_KEY bearer." So it now sits in the same
+        # `site_mode == "app"` block as `admin_users_router` above, and every route on it —
+        # including the ones that were already `require(...)`-guarded and the SEND, which was
+        # already refused with 409 NOT_LAUNCHED until `SITE_MODE=app` — is a 404 before then. An
+        # operator reads the list before the flip with the read-only SQL in RUNBOOK-identity.md
+        # §13 instead.
+        app.include_router(admin_signups_router)
     app.include_router(interest_router)
     # Resend's delivery events (Task I6). NOT gated on `site_mode`, unlike the auth surface: the
     # provider posts to whichever host sent the mail, and a bounce that arrives after a launch

@@ -8,6 +8,7 @@ from app.config import settings
 from app.mail import outbox as OB
 from app.mail import resend_client as RC
 from app.mail import tasks as MT
+from app.mail import templates as TP
 
 
 def _queue(conn, to="a@example.org", key="k1"):
@@ -264,3 +265,51 @@ def test_a_re_submitted_application_is_a_second_send_not_a_deduplicated_one(conn
 
     assert MT.send_due() == {"sent": 2, "suppressed": 0, "failed": 0, "retried": 0}
     assert keys == [first, second]
+
+
+def test_a_launch_announcement_row_is_suppressed_outside_production_unless_allowlisted(conn, monkeypatch):
+    """`EMAIL_ALLOWLIST` is a fail-CLOSED gate and Task I5d changes nothing about it: on QA an
+    empty allowlist sends to nobody, and a refused row is recorded `suppressed` with the reason
+    that says it was the environment and not the address."""
+    monkeypatch.setattr(settings, "environment", "qa")
+    monkeypatch.setattr(settings, "email_allowlist", "")
+    monkeypatch.setattr(settings, "resend_api_key", "re_test")
+    monkeypatch.setattr(TP, "LAUNCH_COPY_APPROVED", True)  # final review L1's gate, not this test's subject
+    OB.enqueue(conn, to="someone@x.test", template="launch_announcement",
+               params={"link": "https://qa.foundation.vin", "postal_address": "1 Test Street, Nowhere, XX 00000"},
+               idempotency_key="k:launch_announcement:1")
+    assert MT.send_due() == {"sent": 0, "suppressed": 1, "failed": 0, "retried": 0}
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, last_error FROM email_outbox WHERE idempotency_key = 'k:launch_announcement:1'")
+        assert cur.fetchone() == ("suppressed", MT.REASON_NOT_ALLOWLISTED)
+
+
+def test_enqueue_refuses_a_launch_announcement_while_the_copy_is_not_approved(conn):
+    """Final review L1 (defence in depth). `launch_mail` is the only production caller and it is
+    gated (A-I5d.4), but `enqueue()` itself accepts `launch_announcement` from ANY caller with no
+    reference to `LAUNCH_COPY_APPROVED` — this is the one place every launch row passes, so it is
+    where the two gates belong a second time, not just at the one HTTP boundary above it."""
+    assert TP.LAUNCH_COPY_APPROVED is False, "this test exercises the real, unapproved default"
+    with pytest.raises(ValueError, match="LAUNCH_COPY_APPROVED"):
+        OB.enqueue(conn, to="someone@x.test", template="launch_announcement",
+                   params={"link": "https://qa.foundation.vin", "postal_address": "1 Test Street, Nowhere, XX 00000"},
+                   idempotency_key="k:launch_announcement:copy-gate")
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM email_outbox WHERE idempotency_key = 'k:launch_announcement:copy-gate'")
+        assert cur.fetchone()[0] == 0
+
+
+def test_enqueue_refuses_a_launch_announcement_with_no_postal_address(conn, monkeypatch):
+    """The second half of L1. `render()` turns a missing or blank `postal_address` into an empty
+    string rather than failing (a worker draining the outbox must never fail on a row it can still
+    deliver) — so the footer would render `VIN Foundation ·  `, the exact blank line the endpoint
+    gate exists to prevent, unless something at the write boundary refuses it too. Both a missing
+    key and a whitespace-only one are refused, matching the endpoint's own `.strip()` (A-I5d.4b L2)."""
+    monkeypatch.setattr(TP, "LAUNCH_COPY_APPROVED", True)
+    for params in ({"link": "https://qa.foundation.vin"}, {"link": "https://qa.foundation.vin", "postal_address": "   "}):
+        with pytest.raises(ValueError, match="postal_address"):
+            OB.enqueue(conn, to="someone@x.test", template="launch_announcement",
+                       params=params, idempotency_key="k:launch_announcement:address-gate")
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM email_outbox WHERE idempotency_key = 'k:launch_announcement:address-gate'")
+        assert cur.fetchone()[0] == 0

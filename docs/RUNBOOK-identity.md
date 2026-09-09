@@ -393,3 +393,112 @@ only config in the repo), with `PW_APP_URL` and the five variables set ahead of 
 * The smoke suite's first-map-paint gate budgets 3 s against a remote target (1.5 s locally,
   `frontend/tests/harness.ts`'s `firstMapPaintBudgetMs`) — a run from far from the target region
   carries real network round trips and tile fetches the local budget never measured.
+
+## 13. The launch email
+
+The Coming Soon page collects one thing: an address, and a promise — *"One message, when it
+launches. Nothing else, and never shared."* This is how that message is sent, once.
+
+**Before the flip.** Production runs `SITE_MODE=coming_soon` until launch, and controller amendment
+A-I5d.5 (John's ruling, 2026-09-09) gates the WHOLE Admin Launch Sign-ups router behind
+`SITE_MODE=app` — `GET /api/admin/signups`, `GET /api/admin/signups.csv` and
+`POST /api/admin/signups/launch-mail` alike answer `404` before the flip, even to the legacy
+`API_SECRET_KEY` operator bearer (this supersedes D-I5d-5, which had mounted the router
+unconditionally so the list stayed readable before launch). To read the sign-ups before then, query
+the database directly — the same `DATABASE_URL`-from-Railway pattern as §12's QA parity run and
+`DEPLOY.md`'s seeding recipe: pull the PostGIS service's `DATABASE_URL` into an env prefix so it
+never appears in argv and is never echoed, and run a python one-liner (reading it from its own
+process environment, never a command-line argument) that answers the row listing and the same count
+the dry run would have:
+
+```bash
+railway status                                                                                     # MUST print Project: Practice Match
+DATABASE_URL="$(railway variable list --service PostGIS --environment production --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["DATABASE_URL"])')" \
+  poetry run python3 -c '
+import os
+import psycopg2
+conn = psycopg2.connect(os.environ["DATABASE_URL"])
+with conn, conn.cursor() as cur:
+    cur.execute("SELECT email, created_at FROM interest_signup ORDER BY created_at")
+    for row in cur.fetchall():
+        print(row)
+    cur.execute("SELECT count(*) FILTER (WHERE launch_mailed_at IS NULL) AS not_mailed, count(*) FROM interest_signup")
+    print(cur.fetchone())
+'
+```
+
+**Once `SITE_MODE=app`.** `GET /api/admin/signups` reads the list (staff or admin) and
+`GET /api/admin/signups.csv` downloads it — capped at `MAX_EXPORT = 100 000` rows
+(`app/api/admin_signups.py`); above that it truncates silently, so check the row count against
+`not_mailed` from the dry run below before treating a download as the whole list.
+`POST /api/admin/signups/launch-mail` with `{"dry_run": true}` answers with the counts and queues
+nothing — it writes one audit row, `reason: dry_run`, and nothing else. A real send is additionally
+refused with `409 NOT_LAUNCHED` if `SITE_MODE` somehow still reads `coming_soon` at that point — a
+defence-in-depth check inside the handler itself, kept even though the router is absent before
+then, because the message the mail carries says Practice Match is open.
+
+**Two more gates, ahead of that one (controller amendment A-I5d.4, John, 2026-09-08).** A real send
+is refused, in this order, before `SITE_MODE` is even checked:
+
+1. `409 LAUNCH_COPY_NOT_APPROVED` while `app.mail.templates.LAUNCH_COPY_APPROVED` is `False`. John's
+   ruling: *"Launch email — COPY NOT YET APPROVED. Do not send."* The proposed subject and body sit
+   in that module, marked `>>> COPY FOR JOHN'S APPROVAL <<<`, for him to read and edit; flipping the
+   constant is his call, not an operator's, and is made in the same commit that pins the approved
+   text verbatim.
+2. `409 LAUNCH_MAIL_NOT_CONFIGURED` while `VIN_FOUNDATION_POSTAL_ADDRESS` is unset. The mail's
+   CAN-SPAM footer prints `VIN Foundation · {address}`, and John's ruling was explicit — *"Do not
+   invent the address"* — so an unset setting refuses the send by name rather than shipping a
+   footer with a blank line. Set it in Railway (api **and** worker) once the VIN Foundation's
+   official postal address is known.
+
+A dry run is exempt from all three refusals — reading the counts is always safe, whatever state the
+copy or the address is in; only an actual send is gated.
+
+**The order at launch.**
+1. Set production `SITE_MODE=app` in Railway (after `railway status` prints **Project: Practice
+   Match**) and `scripts/deploy.sh production`; `scripts/verify-deploy.sh production` must report
+   `site_mode: "app"`.
+2. Sign in as an admin and confirm your password (`POST /api/auth/reauth`) — `signups.notify` is a
+   re-authenticated action and no api token can ever satisfy it (the legacy `API_SECRET_KEY`
+   operator bearer is the one exemption to the re-auth gate, until Task I9 removes it — the copy
+   and address gates above still bind it, so it cannot skip either refusal).
+3. `POST /api/admin/signups/launch-mail` with `{"dry_run": true}`. Read `not_mailed`. That is how
+   many people are about to hear from the VIN Foundation.
+4. `POST /api/admin/signups/launch-mail` with `{"dry_run": false}`. It queues at most 500 per call
+   and answers with `remaining`; repeat until `remaining` is 0.
+5. Watch the outbox drain. The worker's `mail.send` runs every minute and takes 25 rows a batch, so
+   a list of 1,500 takes about an hour. Nothing is lost if the worker restarts: a claimed row's
+   lease expires and it is picked up again, and the provider's idempotency key stops that becoming
+   a second delivery.
+
+**The address is frozen at queue time.** Each `email_outbox` row carries the `postal_address` that
+was configured when it was queued — the worker renders `email_outbox.params`, never the current
+`VIN_FOUNDATION_POSTAL_ADDRESS` setting. Fixing the Railway variable after a batch has already been
+queued does **not** fix those rows. To correct a wrong address caught before the worker has sent
+the batch (`status = 'queued'`; a `sent` row cannot be recalled). **Stop the mail worker first** (scale the
+`worker` service to zero or pause `mail.send`): a row the worker has already claimed still reads `status = 'queued'`
+until `mark()` runs, so deleting while the worker drains can double-mail up to one batch — the three statements below
+also carry `AND next_attempt_at <= now()` so an in-flight claim is never touched:
+
+```sql
+-- 1. See which sign-ups this batch would affect (the idempotency key is "<signup id>:launch_announcement:1").
+SELECT id, to_email, split_part(idempotency_key, ':', 1) AS signup_id
+  FROM email_outbox WHERE template = 'launch_announcement' AND status = 'queued' AND next_attempt_at <= now();
+-- 2. Clear launch_mailed_at for exactly those sign-ups, so the next real send picks them up again.
+UPDATE interest_signup SET launch_mailed_at = NULL
+ WHERE id::text IN (SELECT split_part(idempotency_key, ':', 1)
+                       FROM email_outbox WHERE template = 'launch_announcement' AND status = 'queued' AND next_attempt_at <= now());
+-- 3. Delete the wrong-address rows — the worker has not sent them, so nothing already went out.
+DELETE FROM email_outbox WHERE template = 'launch_announcement' AND status = 'queued' AND next_attempt_at <= now();
+```
+
+Then correct `VIN_FOUNDATION_POSTAL_ADDRESS` in Railway and repeat step 4 of the order above.
+
+**Sending it twice is safe.** Each sign-up carries `launch_mailed_at`; a row that has it is never
+selected again. A person who signs up after the send is picked up by the next call and gets the
+same message — which is right: they were promised it too.
+
+**On QA nothing leaves.** `EMAIL_ALLOWLIST` is fail-closed outside production: an address that is
+not on it is recorded `suppressed` with the reason, and an empty allowlist sends to nobody. A QA
+rehearsal therefore still stamps `launch_mailed_at`, so rehearse on QA data, never against a copy
+of the production list.

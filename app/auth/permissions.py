@@ -38,15 +38,26 @@ MATRIX: dict[str, frozenset[str]] = {
     "listing.review": _STAFF, "listing.publish": _STAFF, "request.oversee": _STAFF,
     "abuse.investigate": _ADMIN,
     "data_sources.read": _STAFF,
+    # The Coming Soon launch-notification list (Task I5d, John 2026-09-08). `interest_signup` is
+    # filled by the public page on production; these three are what staff and admins may do with
+    # it. Split three ways rather than one `signups.manage` because the three acts have genuinely
+    # different blast radii: reading a page of the list is a screen refreshing, exporting every
+    # address is a file leaving the building, and sending the mail cannot be undone.
+    "signups.read": _STAFF, "signups.export": _STAFF,
+    "signups.notify": _ADMIN,
     "licence.decide": _ADMIN, "engine.activate": _ADMIN, "roles.grant": _ADMIN, "tokens.manage": _ADMIN,
     "audit.read": _STAFF, "permissions.read": _STAFF,
 }
-REAUTH = frozenset({"licence.decide", "engine.activate", "roles.grant", "tokens.manage", "users.revoke"})
+REAUTH = frozenset({"licence.decide", "engine.activate", "roles.grant", "tokens.manage", "users.revoke", "signups.notify"})
 # "users.revoke" joins the list in I3 fix round 1's follow-up (John, 2026-09-06): it is a staff
 # decision exactly like "users.decide", which is audited, and I5's decide endpoint writes the audit
 # row for its revoke branch. `tests/auth/test_permissions.py` pins both that membership and
 # `AUDITED <= set(MATRIX)`, so a name here can no longer drift away from a real permission.
-AUDITED = frozenset({"users.view_detail", "users.decide", "users.revoke", "roles.grant", "tokens.manage", "licence.decide", "engine.activate", "abuse.investigate"})
+# "signups.notify" joins the list in Task I5d (John, 2026-09-08): the launch mail is one
+# irreversible message to every address the Coming Soon page ever collected, which is at least as
+# consequential as a revocation — and re-auth is also what keeps every api token out of it
+# (`deps.TokenCannotReauth`), so no automation credential can ever send it.
+AUDITED = frozenset({"users.view_detail", "users.decide", "users.revoke", "roles.grant", "tokens.manage", "licence.decide", "engine.activate", "abuse.investigate", "signups.export", "signups.notify"})
 # A token principal's permission set is its ROLE's set minus these (spec §Automation tokens,
 # amended 2026-09-07; Task I5b). Automation may now carry `staff` and `admin`, so the containment
 # that used to come from "no privileged tokens exist" has to be written down: a leaked admin token

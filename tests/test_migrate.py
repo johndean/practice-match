@@ -74,6 +74,52 @@ def test_002_creates_interest_signup_with_a_unique_normalised_email(scratch_db):
             cur.execute("INSERT INTO interest_signup (email, email_normalised, consent_version) VALUES ('a@X.com', 'a@x.com', 'coming-soon-v1')")
 
 
+def test_003_adds_launch_mailed_at_and_its_two_indexes(scratch_db):
+    """Task I5d. `launch_mailed_at` is the whole of the launch mail's exactly-once guarantee
+    (D-I5d-4): the outbox cannot be the ledger, because `purge_outbox` deletes delivered rows 24
+    hours after they are sent, so a second call the next day would find no idempotency conflict.
+
+    A NEW file rather than an edit to `002`: `002` is applied on production and the runner records
+    its sha256, so editing it would stop the next deploy with exit 4. `003` is inside the range the
+    Census plan's D14 reserves for Platform-level migrations with no dependency on later tables,
+    which is exactly what an ALTER of a `002` table is."""
+    applied = migrate.run(scratch_db)
+    assert applied == _all_migration_names()
+    with psycopg2.connect(scratch_db) as conn, conn.cursor() as cur:
+        cur.execute("""SELECT data_type, is_nullable FROM information_schema.columns
+                        WHERE table_name = 'interest_signup' AND column_name = 'launch_mailed_at'""")
+        assert cur.fetchone() == ("timestamp with time zone", "YES")
+        cur.execute("SELECT indexname FROM pg_indexes WHERE tablename = 'interest_signup'")
+        names = {r[0] for r in cur.fetchall()}
+        assert {"interest_signup_listing_idx", "interest_signup_unmailed_idx"} <= names
+
+
+def test_003_defaults_launch_mailed_at_to_null_so_every_existing_row_is_unmailed(scratch_db):
+    """The production table already holds rows. They must all read as "not yet mailed" — a DEFAULT
+    now() would have marked every one of them as already told, and the promised message would never
+    have been sent to a single person who signed up before this migration."""
+    applied = migrate.run(scratch_db)
+    assert applied == _all_migration_names()
+    with psycopg2.connect(scratch_db) as conn, conn.cursor() as cur:
+        cur.execute("INSERT INTO interest_signup (email, email_normalised, consent_version) "
+                    "VALUES ('a@x.com', 'a@x.com', 'coming-soon-v1') RETURNING launch_mailed_at")
+        assert cur.fetchone()[0] is None
+
+
+def test_003_contains_no_transaction_control_and_no_concurrent_index():
+    """`scripts/migrate.py` wraps each file and its ledger row in ONE transaction, so a file that
+    opens its own is a runner error; and the runner does not support statements that cannot run in
+    a transaction at all. Both rules are in the runner's docstring; this is what holds this file
+    to them.
+
+    Comments are stripped before the scan — the file's own header explains why it contains no
+    `CREATE INDEX CONCURRENTLY`, and a naive substring search would trip over that explanation."""
+    path = Path(__file__).resolve().parent.parent / "migrations" / "003_launch_signups.sql"
+    statements = "\n".join(line.split("--", 1)[0] for line in path.read_text().splitlines()).upper()
+    for forbidden in ("BEGIN", "COMMIT", "ROLLBACK", "CONCURRENTLY"):
+        assert forbidden not in statements, forbidden
+
+
 def test_failing_file_raises_and_is_not_recorded(scratch_db, tmp_path):
     (tmp_path / "001_bad.sql").write_text("SELECT 1 FROM table_that_does_not_exist;")
     with pytest.raises(psycopg2.Error):

@@ -26,6 +26,10 @@ from typing import Any
 
 import pytest
 
+from app.api.admin_signups import COUNTS_SQL as SIGNUPS_COUNTS_SQL
+from app.api.admin_signups import LIST_SQL as SIGNUPS_LIST_SQL
+from app.api.admin_signups import MAX_LAUNCH_BATCH, UNMAILED_SQL
+from app.api.admin_signups import MAX_LIST as SIGNUPS_MAX_LIST
 from app.api.admin_users import LIST_SQL, MAX_LIST
 
 # Task I9a fix round 1, Important 2. `users_queue` is `GET /api/admin/users?state=pending` — the
@@ -49,6 +53,31 @@ PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
         "EXPLAIN (FORMAT JSON) SELECT account_id FROM session WHERE id_hash=%s",
         ("x",),
     ),
+    "signups_list": (
+        "EXPLAIN (FORMAT JSON) " + SIGNUPS_LIST_SQL,
+        {"source": None, "consent_version": None, "cursor_at": None, "cursor_id": None, "limit": SIGNUPS_MAX_LIST + 1},
+    ),
+    # L5 (I5d.3 review): the OTHER query `GET /api/admin/signups` runs on every call — the grouped
+    # count that answers the tab's counts, the current filter and (D-I5d-6) which filter values
+    # exist. No `INDEXES` claim below: it is a full, ungated `GROUP BY` over the whole table, so it
+    # is CORRECTLY a `HashAggregate` over a `Seq Scan` no matter what indexes exist — there is no
+    # covering index on `(source, consent_version, launch_mailed_at)` to choose, and adding one
+    # would be a real schema change, not what this entry is for. It is here so the query's SHAPE
+    # (row estimate, node types) is pinned and visible, the same reason `active_engine` is
+    # exempted from the Seq-Scan assertion below: a small/full-table scan can be the CORRECT plan.
+    "signups_counts": (
+        "EXPLAIN (FORMAT JSON) " + SIGNUPS_COUNTS_SQL,
+        (),
+    ),
+    # L3 (final review): the launch mail's own scan (`app.api.admin_signups.launch_mail`), which
+    # `test_migrate.py` proves the index exists for but never proves is USED — a later change to
+    # the `ORDER BY` or a dropped `FOR UPDATE` could silently fall back to a full scan under a
+    # row lock on a launch-day batch of thousands. `FOR UPDATE` is stripped: EXPLAIN cannot plan it
+    # in every form, and the row-lock clause has no bearing on which scan the planner picks anyway.
+    "signups_unmailed": (
+        "EXPLAIN (FORMAT JSON) " + UNMAILED_SQL.replace(" FOR UPDATE", ""),
+        (MAX_LAUNCH_BATCH,),
+    ),
 }
 
 # The index each plan must be using, by name. Absent for an entry whose only claim is its shape.
@@ -60,6 +89,8 @@ INDEXES: dict[str, tuple[str, ...]] = {
     # per account row.
     "users_queue": ("account_listing_idx", "application_account_idx"),
     "session_lookup": ("session_pkey",),
+    "signups_list": ("interest_signup_listing_idx",),
+    "signups_unmailed": ("interest_signup_unmailed_idx",),
 }
 
 
@@ -83,7 +114,19 @@ def _seed_admin_queue(conn: Any) -> None:
         cur.execute("ANALYZE role_grant")
 
 
-SEEDS: dict[str, Any] = {"users_queue": _seed_admin_queue}
+def _seed_signups(conn: Any) -> None:
+    """2,000 sign-ups a minute apart, then ANALYZE — without rows and statistics the planner sorts
+    a 10-page estimate and the index assertion is a coin toss."""
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO interest_signup (email, email_normalised, consent_version, source, created_at)
+                       SELECT 'plan-'||i||'@x.test', 'plan-'||i||'@x.test', 'coming-soon-v1', 'coming-soon',
+                              now() - (i || ' minutes')::interval
+                         FROM generate_series(1, 2000) i""")
+        cur.execute("ANALYZE interest_signup")
+
+
+SEEDS: dict[str, Any] = {"users_queue": _seed_admin_queue, "signups_list": _seed_signups, "signups_counts": _seed_signups,
+                        "signups_unmailed": _seed_signups}
 
 
 def _node_types(plan: dict[str, Any]) -> list[str]:
@@ -116,5 +159,9 @@ def test_hot_query_uses_an_index(conn, name):
     # assertions below would give (both fire too, for the same cause).
     missing = [i for i in INDEXES.get(name, ()) if i not in indexes]
     assert missing == [], f"{name}: {missing} not used; the plan uses {indexes} — nodes {types}"
-    assert any("Index" in t for t in types), types
-    assert "Seq Scan" not in types or name == "active_engine", types   # the registry is ~20 rows; a seq scan there is fine
+    # L5 (I5d.3 review): `signups_counts` joins `active_engine`'s exemption from both policy
+    # assertions below — a full, ungated `GROUP BY` over the whole table has no index to use BY
+    # DESIGN (there is no covering index on `(source, consent_version, launch_mailed_at)`), so a
+    # `HashAggregate` over a `Seq Scan` is the correct plan, not a regression to catch.
+    assert any("Index" in t for t in types) or name == "signups_counts", types
+    assert "Seq Scan" not in types or name in ("active_engine", "signups_counts"), types   # the registry is ~20 rows; a seq scan there is fine

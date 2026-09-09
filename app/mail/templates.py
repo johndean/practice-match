@@ -1,4 +1,5 @@
-"""The fourteen transactional templates (spec §5), text and HTML.
+"""The fifteen email templates (spec §5): fourteen transactional, plus the one-off
+`launch_announcement` the Coming Soon page promised (Task I5d).
 
 Three properties the spec asks for are structural here rather than a habit:
 
@@ -221,7 +222,64 @@ TEMPLATES: dict[str, Template] = {
              + _p("Why:") + _p("{note}", NOTE_BOX),
         params=("note",),
     ),
+    # Task I5d (John, 2026-09-08). The Coming Soon page's own promise is the specification:
+    # "One message, when it launches. Nothing else, and never shared." and "Leave your email and
+    # we'll write to you once — the day it opens." (`coming-soon/src/App.vue`). So the mail says it
+    # is that message, and says the address was not shared — anything less would not be the promise
+    # being kept. There is no list to leave, so there is no unsubscribe link: this is the only
+    # message that will ever be sent to it.
+    #
+    # >>> COPY FOR JOHN'S APPROVAL <<< The page deliberately never says WHAT is coming (its "It's
+    # for" line is redacted by design), so the second paragraph — the one sentence that introduces
+    # Practice Match — has no source in any approved artefact and is written here to be replaced by
+    # the VIN Foundation's own words. Everything else is the page's promise, echoed.
+    #
+    # A-I5d.4 (John, 2026-09-08): "Launch email — COPY NOT YET APPROVED. Do not send. Provide the
+    # exact proposed subject and body for approval. For the CAN-SPAM footer, include the VIN
+    # Foundation's official postal address if required for the communication type. Do not invent
+    # the address." So the footer names why the recipient is hearing from the VIN Foundation and
+    # prints its postal address as a substitution point, `{postal_address}` — never a literal
+    # string in this module (`test_the_address_is_never_hard_coded_in_the_template` pins that) —
+    # supplied by the caller from `settings.vin_foundation_postal_address`, which
+    # `app.api.admin_signups` refuses to leave empty on a real send.
+    #
+    # A-I5d.4b, L3 (review, ruled): "on the Coming Soon page at foundation.vin" is a LITERAL
+    # hostname, unlike `{link}` (which is `settings.link_base_url` and so reads `qa.foundation.vin`
+    # on a QA rehearsal). Left as the literal by ruling — the sign-up this message answers really
+    # did happen on foundation.vin, in production, regardless of which host renders the mail that
+    # says so — queued for John to confirm alongside the rest of the copy.
+    "launch_announcement": Template(
+        subject="Practice Match is open",
+        text="Practice Match is open.\n\n"
+             "You asked the VIN Foundation to write to you the day it opened. This is the one message you asked for.\n\n"
+             "Practice Match is where veterinarians can look at practices for sale, see what a community's numbers "
+             "actually say about them, and talk to the owners directly. It is built and run by the VIN Foundation.\n\n"
+             "{link}\n\n"
+             "Your address was not shared with anyone, and this is the only message this list will ever send you.\n\n"
+             "You are receiving this because you asked to be notified on the Coming Soon page at foundation.vin. "
+             "There is no list to leave: this is the only message it will ever send.\n\n"
+             "VIN Foundation · {postal_address}",
+        html=_p("Practice Match is open.")
+             + _p("You asked the VIN Foundation to write to you the day it opened. This is the one message you asked for.")
+             + _p("Practice Match is where veterinarians can look at practices for sale, see what a community's numbers "
+                  "actually say about them, and talk to the owners directly. It is built and run by the VIN Foundation.")
+             + _link_block("Open Practice Match")
+             + _p("Your address was not shared with anyone, and this is the only message this list will ever send you.", QUIET)
+             + _p("You are receiving this because you asked to be notified on the Coming Soon page at foundation.vin. "
+                  "There is no list to leave: this is the only message it will ever send.", QUIET)
+             + _p("VIN Foundation · {postal_address}", QUIET),
+        params=("link", "postal_address"),
+    ),
 }
+
+# A-I5d.4 (John, 2026-09-08, verbatim): "Launch email — COPY NOT YET APPROVED. Do not send.
+# Provide the exact proposed subject and body for approval. For the CAN-SPAM footer, include the
+# VIN Foundation's official postal address if required for the communication type. Do not invent
+# the address." `app.api.admin_signups.launch_mail` refuses every real send with
+# 409 LAUNCH_COPY_NOT_APPROVED while this is False — checked before the postal-address setting and
+# before `SITE_MODE`, so approving one of those two cannot make an unapproved message sendable.
+# Flip it, and pin the approved text verbatim, in the same commit John approves the copy above.
+LAUNCH_COPY_APPROVED = False
 
 
 def render(key: str, params: Mapping[str, Any], *, base_url: str) -> Rendered:

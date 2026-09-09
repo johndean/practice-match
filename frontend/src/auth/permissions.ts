@@ -26,6 +26,9 @@ export type Permission =
   "request.read_own" |
   "roles.grant" |
   "seller.apply" |
+  "signups.export" |
+  "signups.notify" |
+  "signups.read" |
   "tokens.manage" |
   "users.decide" |
   "users.review" |
@@ -56,10 +59,13 @@ export const MATRIX: Record<Permission, readonly Role[]> = {
   "request.read_own": ["buyer", "seller"],
   "roles.grant": ["admin"],
   "seller.apply": ["buyer"],
+  "signups.export": ["admin", "staff"],
+  "signups.notify": ["admin"],
+  "signups.read": ["admin", "staff"],
   "tokens.manage": ["admin"],
   "users.decide": ["admin", "staff"],
   "users.review": ["admin", "staff"],
   "users.revoke": ["admin", "staff"],
   "users.view_detail": ["admin", "staff"],
 };
-export const REAUTH: readonly Permission[] = ["engine.activate", "licence.decide", "roles.grant", "tokens.manage", "users.revoke"];
+export const REAUTH: readonly Permission[] = ["engine.activate", "licence.decide", "roles.grant", "signups.notify", "tokens.manage", "users.revoke"];
