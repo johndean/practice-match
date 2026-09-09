@@ -491,6 +491,11 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
     await signInAs(page, 'seller', '/seller');
 
     const ADMIN_NAME = 'Flow Spec Admin Decision Hospital';
+    // A city unique to this RUN, not merely this test: the admin queue is real, shared data on a
+    // local dev database nothing here resets between runs (the documented hazard), and the queue
+    // is searched by its title (type + city) in a SEPARATE session below — a repeated local run
+    // must not find a PRIOR run's own leftover "Kyle" instead of (or alongside) this run's.
+    const CITY = `Kyle${Date.now()}`;
     const created = page.waitForResponse((r) => r.url().endsWith('/api/seller/listings') && r.request().method() === 'POST');
     await button(page, 'Create a listing').click();
     const id = ((await (await created).json()) as { id: string }).id;
@@ -500,16 +505,27 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
     await field(page, 'Year established').fill('1999');
     await saved(page, id, 1, () => button(page, 'Continue').click());
     await onStep(page, 2);
-    await field(page, 'City or community').fill('Kyle');
+    await field(page, 'City or community').fill(CITY);
     await field(page, 'ZIP code').fill('78640');
     await saved(page, id, 2, () => button(page, 'Continue').click());
     await onStep(page, 3);
     await field(page, 'Asking price').fill('700,000');
     await field(page, 'Gross revenue, most recent year').fill('900,000');
-    // `listing_submittable_ck` needs only name/city/zip/type/est/price, all set by now — straight
-    // to the preview, saving step 3 on the way (A16.18).
-    await saved(page, id, 3, () => rail(page, 8).click());
-    await onStep(page, 8);
+    await saved(page, id, 3, () => button(page, 'Continue').click());
+    // Step 4: `listing_submittable_ck` needs only name/city/zip/type/est/price, but this listing
+    // is about to be PUBLISHED for real, onto the real Browse feed the last assertion below reads
+    // — and the approved design's own Browse card computes `p.sqft.toLocaleString()`
+    // unconditionally (logic.js:1714), so a published listing with no square footage crashes
+    // every screen's next render, not merely its own. A seller who has reached the preview has
+    // filled this step in every other flow this spec drives; this one does too.
+    await onStep(page, 4);
+    await field(page, 'Doctors (full-time equivalent)').fill('2');
+    await field(page, 'Exam rooms').fill('4');
+    await field(page, 'Approximate square feet').fill('3,000');
+    await saved(page, id, 4, () => rail(page, 8).click());
+    // Step 8 is the preview — it has no rail blurb of its own (`BLURB` covers steps 1-7 only, the
+    // FIRST test's own convention), so it is found by its own heading instead.
+    await expect(page.getByText('Preview — this is what an approved buyer sees')).toBeVisible();
     const submitted = page.waitForResponse((r) => r.url().endsWith(`/api/seller/listings/${id}/submit`) && r.request().method() === 'POST');
     await button(page, 'Submit for review').click();
     expect((await submitted).status()).toBe(200);
@@ -523,16 +539,29 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
       guard(adminPage);
       await signInAs(adminPage, 'design', '/admin?tab=listings');
 
-      // The real queue (D24): the row this run just submitted, found by its own name — never one
-      // of the design's five literal fixture rows, whichever the API answered.
-      const row = adminPage.locator('div[style*="grid-template-columns: 1.2fr 1.4fr .8fr .9fr"]').filter({ hasText: ADMIN_NAME });
+      // The real queue (D24): the row this run just submitted, found by its own title and price
+      // together — the Admin Listing cell shows the design's own computed title (type + city),
+      // never the seller's staff-only "Practice name" (D9's `serialise_draft` distinction) — never
+      // one of the design's five literal fixture rows, whichever the API answered. `display: grid`
+      // rather than the row's own `grid-template-columns` value: Chromium re-serialises a style
+      // attribute's numbers on the way back out (`.8fr` becomes `0.8fr`), which a substring match
+      // on the source literal would miss.
+      const row = adminPage.locator('div[style*="display: grid"]')
+        .filter({ hasText: `Small animal practice — ${CITY}` }).filter({ hasText: '$700K' });
       await expect(row).toBeVisible();
       await expect(row).toContainText('In review');
 
       // Publish, through the UI: the browser's own two prompts for state and market (D12,
       // `needsFields`), asked because this listing has never been published before.
-      adminPage.once('dialog', (dialog) => { void dialog.accept('TX'); });
-      adminPage.once('dialog', (dialog) => { void dialog.accept('Austin, TX'); });
+      // Chained, not both registered up front: two `.once('dialog', ...)` calls made before
+      // either prompt appears both attach to the FIRST dialog event (Node's EventEmitter has no
+      // notion of "the next one, then the one after"), so the second handler raced the first for
+      // the very same dialog and lost. Registering the second only once the first has fired
+      // targets it at the SECOND prompt, which is the one it is for.
+      adminPage.once('dialog', (dialog) => {
+        void dialog.accept('TX');
+        adminPage.once('dialog', (dialog2) => { void dialog2.accept('Austin, TX'); });
+      });
       const decided = adminPage.waitForResponse((r) =>
         r.url().endsWith(`/api/admin/listings/${id}/decide`) && r.request().method() === 'POST');
       await row.getByRole('button', { name: 'Publish', exact: true }).click();
