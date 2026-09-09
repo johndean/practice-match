@@ -242,7 +242,7 @@ Merge order against `feat/seller-lifecycle` (A16/A17): whichever branch merges s
 
 ---
 
-## Task L1 — A18, the two arrow reversals
+### Task L1: A18, the two arrow reversals
 
 ### Step 0 — the worktree
 
@@ -524,7 +524,7 @@ Files: `frontend/tests/baseline-manifest.json`, `frontend/tests/baseline-manifes
 
 ---
 
-## Task L2 — A19, the photo lightbox
+### Task L2: A19, the photo lightbox
 
 ### Step 1 — RED: `frontend/src/logic.test.ts`
 
@@ -1457,7 +1457,7 @@ Files: `frontend/tests/design-amendments.ts`, `frontend/tests/design-amendments.
 
 ---
 
-## Task L3 — docs, QA click-through, hand-back
+### Task L3: docs, QA click-through, hand-back
 
 ### Step 1 — the documents
 
