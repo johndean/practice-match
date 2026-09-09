@@ -1173,6 +1173,126 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
     expect(slots[0].id).toBe('ph-abc-animal-hospital-exterior');
   });
 
+  // A-L10 (John, 2026-09-09: "match the description"). The caption under each photograph is the
+  // DESIGN's own fixed slot caption, so a slot whose hospital has no truthful photograph must
+  // stay EMPTY rather than borrow the next one — `photos` is positional and the API now sends a
+  // JSON `null` for such a slot. Nothing in the design changes: this is the proof that the
+  // design's own expressions already render a null slot as the placeholder they render an absent
+  // one as, which is why A-L10 needed no amendment.
+  it('a null photo slot renders the design\'s own placeholder and never shifts the others (A-L10)', () => {
+    const url1 = '/api/listings/a1/photos/1';
+    const url3 = '/api/listings/a1/photos/3';
+    const gappy = { ...SEEDED, photos: [url1, null, url3, null, null, null] };
+    const slots = c.photoSet(gappy);
+    expect(slots.map((s: any) => s.src)).toEqual([url1, '', url3, '', '', '']);
+    expect(slots.map((s: any) => s.hasSrc)).toEqual([true, false, true, false, false, false]);
+    expect(slots.map((s: any) => s.noSrc)).toEqual([false, true, false, true, true, true]);
+    // The exam room is still under "Exam room" — the whole point: slot 3 did not slide up to 2.
+    expect(slots.map((s: any) => s.caption)).toEqual([
+      'Exterior — street view', 'Reception and waiting', 'Exam room', 'Treatment area', 'Surgery suite', 'Boarding and runs'
+    ]);
+    expect(slots[1].placeholder).toBe('ABC Animal Hospital — Reception and waiting');
+    expect(c.heroSrc(gappy)).toBe(url1);
+    // A12.5's `p.photos[1] || p.photos[0]`: a null second view falls back to the first, so the
+    // card thumbnail is a photograph rather than a broken image.
+    expect(c.thumbSrc(gappy)).toBe(url1);
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // A15 — every uploaded photograph renders, with its OWN description (A-L11; John, 2026-09-09:
+  // "HAS FAILED and wiped out all the images - if the logic is trying to match and failing then
+  // surface all images uploaded and have the user articulate what it is and render ALL images -
+  // what was 9 images now are only showing 3 after this hotfix!!!").
+  //
+  // The design renders six FIXED captions per practice, so a photograph could only ever be
+  // captioned truthfully by being placed in the slot whose caption describes it — which is why
+  // A-L10 rendered only 73 of the 195 images in John's folders. A15 makes a photograph carry its
+  // own description (`p.photoCaptions[i]`, the API's `photo_captions`) with the design's fixed
+  // slot caption as the FALLBACK, and appends a tile for every photograph past the sixth. The
+  // design's fixtures carry NEITHER key — `p2`'s three photographs are the `SRC` map, keyed by
+  // slot id, not `p.photos` — so both guards are falsey and every approved state is untouched.
+  // -----------------------------------------------------------------------------------------
+  const ELEVEN = Array.from({ length: 11 }, (_, n) => `/api/listings/a1/photos/${n + 1}`);
+  const DEFAULT_CAPTIONS = [
+    'Exterior — street view', 'Reception and waiting', 'Exam room', 'Treatment area',
+    'Surgery suite', 'Boarding and runs'
+  ];
+
+  it('renders one tile per photograph, past the design\'s six slots (A15.3)', () => {
+    const tiles = c.photoSet({ ...SEEDED, photos: ELEVEN });
+    expect(tiles).toHaveLength(11);
+    expect(tiles.map((t: any) => t.index)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+    expect(tiles.map((t: any) => t.src)).toEqual(ELEVEN);
+    expect(tiles.map((t: any) => t.hasSrc)).toEqual(Array(11).fill(true));
+    expect(tiles.map((t: any) => t.noSrc)).toEqual(Array(11).fill(false));
+    // The first six keep the design's own slot ids; the rest are namespaced to the listing too,
+    // so a tile of one hospital can never collide with a tile of another.
+    expect(tiles.slice(0, 6).map((t: any) => t.id)).toEqual([
+      'ph-abc-animal-hospital-exterior', 'ph-abc-animal-hospital-lobby', 'ph-abc-animal-hospital-exam',
+      'ph-abc-animal-hospital-treatment', 'ph-abc-animal-hospital-surgery', 'ph-abc-animal-hospital-kennel'
+    ]);
+    expect(tiles.slice(6).map((t: any) => t.id)).toEqual([
+      'ph-abc-animal-hospital-extra1', 'ph-abc-animal-hospital-extra2', 'ph-abc-animal-hospital-extra3',
+      'ph-abc-animal-hospital-extra4', 'ph-abc-animal-hospital-extra5'
+    ]);
+  });
+
+  it('a photograph past the sixth reads "Photo N" until somebody describes it (A15.3)', () => {
+    const tiles = c.photoSet({ ...SEEDED, photos: ELEVEN });
+    expect(tiles.map((t: any) => t.caption)).toEqual([
+      ...DEFAULT_CAPTIONS, 'Photo 7', 'Photo 8', 'Photo 9', 'Photo 10', 'Photo 11'
+    ]);
+    expect(tiles[6].placeholder).toBe('ABC Animal Hospital — Photo 7');
+    expect(tiles[0].placeholder).toBe('ABC Animal Hospital — Exterior — street view');
+  });
+
+  it('a photograph\'s own description wins over the design\'s fixed slot caption (A15.1/A15.2)', () => {
+    const captions = [
+      'Exterior — front entrance', 'Interior — reception lobby', 'Interior — exam room',
+      'Interior — treatment area', 'Interior — surgery suite', 'Interior — kennels',
+      'Interior — pharmacy counter', 'Interior — laboratory', 'Exterior — parking',
+      'Interior — corridor', 'Exterior — signage'
+    ];
+    const tiles = c.photoSet({ ...SEEDED, photos: ELEVEN, photoCaptions: captions });
+    expect(tiles.map((t: any) => t.caption)).toEqual(captions);
+    expect(tiles.map((t: any) => t.placeholder)).toEqual(captions.map((cap) => `ABC Animal Hospital — ${cap}`));
+  });
+
+  it('a photograph with no description of its own keeps the design\'s caption (A15.1/A15.2)', () => {
+    // `null` at a position, and a list shorter than the photographs: both are "nobody has said
+    // what this shows", and both must land on the design's own caption rather than on nothing.
+    const tiles = c.photoSet({ ...SEEDED, photos: ELEVEN, photoCaptions: [null, 'Interior — reception lobby', ''] });
+    expect(tiles.map((t: any) => t.caption)).toEqual([
+      'Exterior — street view', 'Interior — reception lobby', 'Exam room', 'Treatment area',
+      'Surgery suite', 'Boarding and runs', 'Photo 7', 'Photo 8', 'Photo 9', 'Photo 10', 'Photo 11'
+    ]);
+    expect(tiles[0].placeholder).toBe('ABC Animal Hospital — Exterior — street view');
+  });
+
+  it('the design\'s own p2 practice takes the same two rules (A15.1/A15.3)', () => {
+    const p2 = { id: 'p2', area: 'Round Rock', type: 'Small animal', photos: ELEVEN,
+      photoCaptions: [null, null, null, null, null, null, 'Interior — pharmacy counter'] };
+    const tiles = c.photoSet(p2);
+    expect(tiles).toHaveLength(11);
+    // SRC still wins for the three the design ships, exactly as A12.2 left it.
+    expect(tiles.slice(0, 3).map((t: any) => t.src)).toEqual([
+      '/assets/photos/round-rock-exterior-street.webp',
+      '/assets/photos/round-rock-exterior-side.webp',
+      '/assets/photos/round-rock-exterior-parking.jpeg'
+    ]);
+    expect(tiles[0].caption).toBe('Exterior — street view');
+    expect(tiles[6].caption).toBe('Interior — pharmacy counter');
+    expect(tiles[7].caption).toBe('Photo 8');
+    expect(tiles[6].id).toBe('ph-p2-extra1');
+    expect(tiles.map((t: any) => t.index)).toEqual([1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11]);
+  });
+
+  it('A15 leaves heroSrc and thumbSrc exactly where A12 put them', () => {
+    const many = { ...SEEDED, photos: ELEVEN, photoCaptions: ['a', 'b', 'c'] };
+    expect(c.heroSrc(many)).toBe('/api/listings/a1/photos/1');
+    expect(c.thumbSrc(many)).toBe('/api/listings/a1/photos/2');
+  });
+
   // The other half, and the reason every approved state keeps its pixels: a practice with no
   // `name` and no `photos` — which is every fixture the design ships, and every row the D6 stub
   // returns — renders exactly what it rendered before A12.

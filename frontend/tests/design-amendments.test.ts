@@ -132,11 +132,18 @@ describe('local design amendments (spec D15)', () => {
     // the reasoning A14.7 was accepted on. LAST in the list, and the one A13 entry that applies
     // after A14's: the `out` closure it edits is A14.7's own.
     'A13.8',
+    // A15 — every uploaded photograph renders, with its own description (A-L11, John 2026-09-09).
+    // Six literal script edits: a photograph's own `photoCaptions[i]` wins over the design's
+    // fixed slot caption (A15.1/A15.2) and every photograph past the sixth gets a tile of its
+    // own (A15.3a–A15.3d, the two ends of each branch's `return`). The fixtures carry no
+    // `photos` and no `photoCaptions` at all, so both guards are falsey and A15 moves no
+    // approved state.
+    'A15.1', 'A15.2', 'A15.3a', 'A15.3b', 'A15.3c', 'A15.3d',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(98);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(104);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -544,6 +551,59 @@ describe('local design amendments (spec D15)', () => {
     // A1's 24 derived edits collapse to one row, which is only meaningful because they share one
     // ruling — asserted rather than assumed.
     expect(new Set(amendments().filter((a) => a.id.startsWith('A1.')).map((a) => a.ruling)).size).toBe(1);
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // A-L11 re-review. Most rows cite the line their edit lands on (`V3:2407`), and NOTHING checked
+  // them: A15 inserted twelve lines into `photoSet` and every citation below it silently became a
+  // pointer to the wrong line — A12.6's row said 2450 while its edit had been at 2931 since the
+  // account screens landed. A citation nobody can follow is worse than none, so it is measured.
+  //
+  // The rule: for every `V3:<line>` a row carries, that line of the AMENDED file — or one either
+  // side of it, so a citation may name the anchor a multi-line edit starts from — must contain a
+  // line of what that amendment PUT there.
+  //
+  // Two shapes need care, and neither is skipped:
+  //   * A SUPERSEDED amendment (A10, whose `replace` is A10.2's `find`) has no output left in the
+  //     file. Its row is validated against the text that stands at its site today — which is what
+  //     a reader following the citation will actually see — by following the chain forward.
+  //   * A1's 24 derived edits collapse to ONE row (`| A1 |`), which cites no line at all today;
+  //     were one added, it is validated against the union of those 24 in-place style edits.
+  // A pure REMOVAL amendment (A6's) has no output to point at and must not carry a citation; the
+  // assertion below says so rather than passing vacuously.
+  // ---------------------------------------------------------------------------------------
+  it('every V3:<line> citation in LOCAL_AMENDMENTS.md lands on the line that amendment produced', () => {
+    const md = readFileSync(LOCAL_AMENDMENTS_MD, 'utf8');
+    const fileLines = readFileSync(AMENDED, 'utf8').split('\n');
+    const list = amendments();
+    const trimmed = (text: string) => text.split('\n').map((s) => s.trim()).filter(Boolean);
+    /** What stands at this amendment's site in the amended file: its own `replace`, or — when a
+     *  later amendment's `find` swallowed that `replace` whole — whatever superseded it. */
+    const outputOf = (a: Amendment): string[] => {
+      const later = list.slice(list.indexOf(a) + 1).find((b) => b.find.includes(a.replace));
+      return later ? outputOf(later) : trimmed(a.replace);
+    };
+    let checked = 0;
+    for (const row of md.split('\n')) {
+      const id = /^\|\s*(A[\w.]+)\s*\|/.exec(row)?.[1];
+      if (id === undefined) continue;
+      const cited = [...row.matchAll(/V3:(\d+)/g)].map((c) => Number(c[1]));
+      if (cited.length === 0) continue;
+      const own = id === 'A1' ? list.filter((a) => a.id.startsWith('A1.')) : list.filter((a) => a.id === id);
+      expect(own.length, `${id}: the row cites a V3 line but no amendment carries that id`).toBeGreaterThan(0);
+      const output = own.flatMap(outputOf);
+      expect(output.length, `${id}: a removal amendment puts nothing at a line, so its row may not cite one`).toBeGreaterThan(0);
+      for (const n of cited) {
+        const window = [n - 1, n, n + 1].map((k) => fileLines[k - 1] ?? '');
+        expect(
+          window.some((line) => output.some((piece) => line.includes(piece))),
+          `${id}: V3:${n} is stale — that line of the amended design holds none of this amendment's text`
+        ).toBe(true);
+        checked++;
+      }
+    }
+    // Not a vacuous pass: the parser must actually have found the rows and their citations.
+    expect(checked, 'no V3 citation was checked — the row or citation pattern stopped matching').toBeGreaterThan(20);
   });
 
   it('LOCAL_AMENDMENTS.md carries exactly one table row per amendment id (A1 collapsed to one)', () => {

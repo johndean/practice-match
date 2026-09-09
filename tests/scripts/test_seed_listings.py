@@ -116,13 +116,46 @@ def test_listed_at_is_computed_from_listed_days_ago(scratch_dsn: str) -> None:
 
 
 def test_photos_come_from_the_committed_inventory(scratch_dsn: str) -> None:
+    """A-L10: the list is POSITIONAL — the first six entries are the design's six slots, `null`
+    where the folder was too thin to fill one — so `p.photos[i]` still fills the design's slot `i`
+    (A12.2). A-L11: it is no longer six LONG. Every photograph of the folder is in it, so the
+    committed inventory is the only thing that decides how many a hospital has."""
     SL.seed(scratch_dsn)
     index = json.loads(SL.PHOTO_INDEX.read_text(encoding="utf-8"))["hospitals"]
     with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
         cur.execute("SELECT slug, photos FROM listing")
         for slug, photos in cur.fetchall():
-            assert photos == [f"{slug}/{e['file']}" for e in index[slug]], slug
-            assert len(photos) == 6, slug   # the design's six photo slots (A-L9)
+            assert photos == [
+                None if e["file"] is None else f"{slug}/{e['file']}" for e in index[slug]
+            ], slug
+            assert len(photos) >= 6, slug   # the design's six photo slots (A-L9), and then some
+    # …and A-L11 really did keep everything: 195 photographs, not one empty slot among them.
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM listing, jsonb_array_elements(photos) e WHERE e = 'null'")
+        assert int(cur.fetchone()[0]) == 0, "A-L11 drops no photograph and leaves no slot empty"
+        cur.execute("SELECT sum(jsonb_array_length(photos)) FROM listing")
+        assert int(cur.fetchone()[0]) == 195
+
+
+def test_photo_captions_are_written_in_step_with_the_photographs(scratch_dsn: str) -> None:
+    """A-L11 (John, 2026-09-09: "have the user articulate what it is"). A photograph carries its
+    OWN description; the design's fixed slot caption is only the fallback for a slot with none.
+    The column is parallel to `photos` — same length, same positions — because amendment A15 reads
+    the two by the same index."""
+    SL.seed(scratch_dsn)
+    index = json.loads(SL.PHOTO_INDEX.read_text(encoding="utf-8"))["hospitals"]
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT slug, photos, photo_captions FROM listing")
+        for slug, photos, captions in cur.fetchall():
+            assert captions == [e["caption"] for e in index[slug]], slug
+            assert len(captions) == len(photos), slug
+    # …and the UPSERT's second half writes it too, or a re-seed would leave yesterday's captions.
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("UPDATE listing SET photo_captions = '[]'::jsonb")
+    SL.seed(scratch_dsn)
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM listing WHERE photo_captions = '[]'::jsonb")
+        assert int(cur.fetchone()[0]) == 0, "the ON CONFLICT half does not update photo_captions"
 
 
 def test_main_seeds_from_the_environment(scratch_dsn: str, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -179,6 +212,36 @@ def test_main_returns_four_when_the_seed_file_is_absent(
 
 def test_photo_paths_is_empty_for_an_unknown_slug() -> None:
     assert SL.photo_paths("not-a-hospital", {"hospitals": {}}) == []
+
+
+def test_photo_captions_are_the_inventorys_own_descriptions() -> None:
+    """The unit: one caption per position, `None` where the position holds no photograph — so the
+    two arrays stay index-for-index parallel however thin the folder was."""
+    index = {"hospitals": {"h": [
+        {"slot": "exterior", "file": "1.webp", "caption": "Exterior — front"},
+        {"slot": "lobby", "file": None, "caption": None},
+        {"slot": None, "file": "3.webp", "caption": "Interior — pharmacy"},
+    ]}}
+    assert SL.photo_captions("h", index) == ["Exterior — front", None, "Interior — pharmacy"]
+    assert SL.photo_captions("not-a-hospital", {"hospitals": {}}) == []
+
+
+def test_photo_captions_names_the_slug_whose_entry_is_unusable() -> None:
+    with pytest.raises(SL.SeedDataError) as exc:
+        SL.photo_captions("abc_animal_hospital", {"hospitals": {"abc_animal_hospital": [{"file": "1.webp"}]}})
+    assert "abc_animal_hospital" in str(exc.value)
+
+
+def test_photo_paths_keeps_an_empty_slot_as_a_null_in_place(tmp_path: Path) -> None:
+    """A-L10, the unit: a slot the curation left empty is stored as `null` AT ITS POSITION, never
+    dropped. Dropping it would slide every later photograph up one slot and put it under someone
+    else's caption — the exact mislabelling this hotfix exists to end."""
+    index = {"hospitals": {"h": [
+        {"slot": "exterior", "file": "1.webp"},
+        {"slot": "lobby", "file": None},
+        {"slot": "exam", "file": "3.webp"},
+    ]}}
+    assert SL.photo_paths("h", index) == ["h/1.webp", None, "h/3.webp"]
 
 
 def test_normalize_dsn_agrees_with_the_migration_runner() -> None:
@@ -298,7 +361,7 @@ def test_photo_paths_names_the_slug_whose_entry_is_unusable() -> None:
 def test_row_params_names_the_missing_field() -> None:
     """row_params' `except KeyError` arm (pre-flight C2)."""
     with pytest.raises(SL.SeedDataError) as exc:
-        SL.row_params({"slug": "x"}, [])
+        SL.row_params({"slug": "x"}, [], [])
     assert "x" in str(exc.value) and "name" in str(exc.value)
 
 

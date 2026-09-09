@@ -39,6 +39,19 @@ class Settings(BaseSettings):
     mail_from: str = "VIN Foundation — Practice Match <no-reply@foundation.vin>"  # spec §2: foundation.vin is the SENDER domain
     mail_reply_to: str = "practicematch@vin.com"  # placeholder until the VIN Foundation names the mailbox (spec §10 open item)
     db_pool_max: int = 10  # size of the psycopg2 REUSE pool per DSN (app/db.py); past it a caller gets an un-pooled connection, so this does not cap the connection count
+    # Sub-project 3 -- market-data layer (controller amendment A-C2). All optional so the api
+    # and the worker both boot without them; the ingest worker enforces CENSUS_API_KEY and
+    # CENSUS_CONTACT_EMAIL (the VIN Foundation's designated technical contact, never a
+    # developer's own address, A-C1 (4)) at its own entry points (app/census/client.py's
+    # require_key/require_contact), never here, so a missing key never takes a service down at
+    # boot. The four S3_* settings configure ObjectStore.from_settings (app/storage.py) --
+    # present together or the object store is disabled, logged, never a crash.
+    census_api_key: str | None = None
+    census_contact_email: str | None = None
+    s3_endpoint_url: str | None = None
+    s3_bucket: str | None = None
+    s3_access_key_id: str | None = None
+    s3_secret_access_key: str | None = None
 
     @field_validator("site_mode")
     @classmethod

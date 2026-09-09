@@ -74,14 +74,15 @@ def _flat(path: Path, size: tuple[int, int], *, patch: tuple[int, int] | None = 
 
 @pytest.fixture(scope="module")
 def source(tmp_path_factory: pytest.TempPathFactory) -> Path:
-    """Eight named images — the six the design's default slots select, one spare exterior no
-    slot can take, and one stub — plus a dotfile and a non-image, generated once for the whole
-    module. Only the first is larger than MAX_EDGE_PX — mostly flat colour with a small noise
-    patch, so it still compresses on the first quality rung while genuinely exercising the
-    resize path; the last ("...stub...") is never opened by `source_images()` (filename-only
-    filtering), so it is a stub, not a real image. No slot's keywords name the stub and all six
-    slots match before any fallback could reach it, so a regression to "the first six in folder
-    order" (the A-L9 failure, one rung along) fails loudly here rather than silently."""
+    """Eight named images — the six the design's default slots select plus two no slot's
+    keywords name — and a dotfile and a non-image, generated once for the whole module. Only the
+    first is larger than MAX_EDGE_PX — mostly flat colour with a small noise patch, so it still
+    compresses on the first quality rung while genuinely exercising the resize path. No slot's
+    keywords name `02_exterior_side` or `08_interior_stub` and all six slots match before any
+    fallback could reach them, so a regression to "the first six in folder order" (the A-L9
+    failure, one rung along) fails loudly here rather than silently; since A-L11 the two of them
+    are the folder's positions 7 and 8, so both must be REAL images — every photograph John
+    supplies is now encoded, not only the six the slots select."""
     root = tmp_path_factory.mktemp("photos-source")
     folder = root / "demo_hospital_individual_images"
     folder.mkdir()
@@ -92,7 +93,7 @@ def source(tmp_path_factory: pytest.TempPathFactory) -> Path:
     _flat(folder / "05_interior_treatment.png", (24, 24))
     _flat(folder / "06_interior_surgery.png", (24, 24))
     _flat(folder / "07_interior_kennels.png", (24, 24))
-    (folder / "08_interior_stub.png").write_bytes(b"stub, never opened by source_images()")
+    _flat(folder / "08_interior_stub.png", (24, 24))
     (folder / ".DS_Store").write_bytes(b"\x00\x01junk")
     (folder / "notes.txt").write_text("not an image")
     return root
@@ -132,18 +133,24 @@ def test_prepare_fills_the_designs_six_slots_not_the_first_six_in_folder_order(
     source: Path, tmp_path: Path
 ) -> None:
     """A-L9. The cap was `sorted(folder)[:4]`, and John's folders number the exteriors first, so
-    the seed kept four exteriors and dropped every interior. The set is now the six files the
-    design's own slots name, in SLOT order — `p.photos[i]` fills slot `i` (amendment A12.2)."""
+    the seed kept four exteriors and dropped every interior. Positions 1-6 are the six files the
+    design's own slots name, in SLOT order — `p.photos[i]` fills slot `i` (amendment A12.2).
+
+    A-L11 (John, 2026-09-09: "render ALL images"): the six are no longer a CAP. Every other image
+    of the folder follows them, in folder order, as positions 7, 8, … with no slot of its own —
+    so the second exterior no slot can take is position 7 rather than a dropped photograph."""
     out = tmp_path / "photos"
     index = PP.prepare(source, out, ["demo_hospital"], {})
     entries = index["demo_hospital"]
-    assert [e["file"] for e in entries] == ["1.webp", "2.webp", "3.webp", "4.webp", "5.webp", "6.webp"]
-    assert [e["slot"] for e in entries] == list(PP.DEFAULT_SLOTS)
+    assert [e["file"] for e in entries] == [
+        "1.webp", "2.webp", "3.webp", "4.webp", "5.webp", "6.webp", "7.webp", "8.webp",
+    ]
+    assert [e["slot"] for e in entries] == [*PP.DEFAULT_SLOTS, None, None]
     assert [e["source"] for e in entries] == [
         "01_exterior_front.png", "03_interior_lobby.jpg", "04_interior_exam.png",
         "05_interior_treatment.png", "06_interior_surgery.png", "07_interior_kennels.png",
-    ]
-    assert "02_exterior_side.jpg" not in {e["source"] for e in entries}, "no slot takes a second exterior"
+        "02_exterior_side.jpg", "08_interior_stub.png",
+    ], "the two images no slot names are the folder's last positions, in folder order"
 
 
 def test_every_output_is_webp_within_the_dimension_and_size_ceilings(source: Path, tmp_path: Path) -> None:
@@ -202,11 +209,35 @@ def test_caption_of_reads_the_curated_filename(name: str, expected: str) -> None
     assert PP.caption_of(name) == expected
 
 
+@pytest.mark.parametrize(
+    "name, expected",
+    [("08_interior_ct_scanner.png", "Interior — CT scanner"),
+     ("09_interior_icu.png", "Interior — ICU"),
+     ("09_interior_mri_ct_room.png", "Interior — MRI CT room"),
+     ("10_interior_xray_room.png", "Interior — X-ray room"),
+     ("10_interior_x_ray_room.png", "Interior — X-ray room"),
+     ("03_interior_er_bay.png", "Interior — ER bay"),
+     ("04_interior_dvm_office.png", "Interior — DVM office"),
+     # The fallback arm spells them too — a caption is read by a buyer whichever arm made it.
+     ("ct suite.png", "CT suite"),
+     ("x_ray.png", "X-ray"),
+     # …and a word that merely CONTAINS an acronym is left alone: whole tokens only.
+     ("05_interior_reception_counter.png", "Interior — reception counter"),
+     ("06_interior_recovery_ward.png", "Interior — recovery ward")],
+)
+def test_caption_of_spells_the_acronyms_john_writes_in_lower_case(name: str, expected: str) -> None:
+    """A-L11 review (m6). The filenames spell `ct`, `icu`, `mri`, `er`, `xray`/`x_ray` and `dvm`
+    in lower case; a buyer reads the caption, so it says CT, ICU, MRI, ER, X-ray and DVM. Whole
+    tokens only — `reception` and `recovery` contain none of them."""
+    assert PP.caption_of(name) == expected
+
+
 def test_the_inventory_records_a_caption_per_photograph(source: Path, tmp_path: Path) -> None:
     index = PP.prepare(source, tmp_path / "photos", ["demo_hospital"], {})
     assert [e["caption"] for e in index["demo_hospital"]] == [
         "Exterior — front", "Interior — lobby", "Interior — exam",
         "Interior — treatment", "Interior — surgery", "Interior — kennels",
+        "Exterior — side", "Interior — stub",
     ]
 
 
@@ -239,13 +270,16 @@ def test_main_returns_two_when_an_image_will_not_fit(oversized_source: Path, tmp
 
 
 def test_a_folder_with_fewer_than_six_images_yields_what_it_has(tmp_path: Path) -> None:
+    """A-L11: a slot stays empty ONLY when the folder has fewer images than the design has slots.
+    The six positions are always six — the design renders six captioned slots whatever the folder
+    holds — so the five the one image cannot reach are explicit empties, not a shorter list."""
     root = tmp_path / "src"
     folder = root / "thin_individual_images"
     folder.mkdir(parents=True)
     _flat(folder / "01_only.png", (100, 80))
     index = PP.prepare(root, tmp_path / "out", ["thin"], {})
-    assert [e["file"] for e in index["thin"]] == ["1.webp"]
-    assert [e["slot"] for e in index["thin"]] == ["exterior"]
+    assert [e["file"] for e in index["thin"]] == ["1.webp", None, None, None, None, None]
+    assert [e["slot"] for e in index["thin"]] == list(PP.DEFAULT_SLOTS)
 
 
 def test_a_missing_folder_is_reported_not_skipped_silently(tmp_path: Path) -> None:
@@ -341,13 +375,15 @@ def test_prepare_refuses_a_slug_that_is_not_a_slug(tmp_path: Path) -> None:
 # the design's own captions true of the photographs shown.
 
 
-def test_max_photos_is_the_length_of_every_design_slot_list() -> None:
-    """Six is not a taste: it is how many slots `photoSet(p)` renders. A seventh photograph
-    could never be displayed, and a slot list of five would leave one slot blank."""
-    assert PP.MAX_PHOTOS == 6
+def test_slot_count_is_the_length_of_every_design_slot_list() -> None:
+    """Six is not a taste: it is how many CAPTIONED slots `photoSet(p)` renders. It is no longer
+    a cap on the photographs (A-L11 — amendment A15.3 appends a tile per photograph beyond the
+    sixth); it is the length of every slot list, and a list of five would leave one slot blank."""
+    assert PP.SLOT_COUNT == 6
+    assert not hasattr(PP, "MAX_PHOTOS"), "A-L11 retired MAX_PHOTOS: six slots, no cap"
     for label, slots in [("default", PP.DEFAULT_SLOTS), *PP.SLOTS_BY_TYPE.items()]:
-        assert len(slots) == PP.MAX_PHOTOS, label
-        assert len(set(slots)) == PP.MAX_PHOTOS, f"{label} names a slot twice"
+        assert len(slots) == PP.SLOT_COUNT, label
+        assert len(set(slots)) == PP.SLOT_COUNT, f"{label} names a slot twice"
 
 
 def test_the_slot_lists_are_the_four_the_design_renders() -> None:
@@ -392,6 +428,13 @@ def test_a_small_animal_folder_fills_the_default_slots_though_its_interiors_are_
         ("treatment", "09_interior_treatment_area.png"),
         ("surgery", "10_interior_surgery_room.png"),
         ("kennel", "11_interior_kennel_hallway.png"),
+        # A-L11: the four exteriors and the waiting area no slot took are not dropped — they are
+        # positions 7-11, in folder order, and the design renders a tile for each (A15.3).
+        (None, "02_exterior_entrance_view.png"),
+        (None, "03_exterior_monument_sign.png"),
+        (None, "04_exterior_street_corner_view.png"),
+        (None, "05_exterior_parking_view.png"),
+        (None, "07_interior_waiting_area.png"),
     ]
 
 
@@ -410,6 +453,8 @@ def test_an_emergency_folder_fills_triage_icu_and_imaging(tmp_path: Path) -> Non
         ("icu", "07_interior_icu.png"),
         ("surgery", "08_interior_surgery_room.png"),
         ("imaging", "06_interior_ct_scanner.png"),   # "ct_" — the CT room is the imaging room
+        (None, "02_exterior_monument_sign.png"),     # A-L11: positions 7 and 8, in folder order
+        (None, "03_exterior_emergency_entrance.png"),
     ]
 
 
@@ -428,6 +473,7 @@ def test_a_specialty_folder_fills_consult_imaging_and_recovery(tmp_path: Path) -
         ("surgery", "06_interior_surgery_room.png"),
         ("imaging", "05_interior_mri_ct_room.png"),
         ("recovery", "07_interior_recovery_ward.png"),
+        (None, "02_exterior_street_side_view.png"),  # A-L11: position 7
     ]
 
 
@@ -463,22 +509,28 @@ def test_an_unmatched_slot_takes_the_first_unused_interior_then_any_file(tmp_pat
         ("lobby", "02_interior_corridor.png"),   # first unused interior
         ("exam", "03_interior_hallway.png"),     # second unused interior
         ("treatment", "04_exterior_side.png"),   # no interior left: any unused file
+        ("surgery", None),                       # nothing unused left (A-L11: a thin folder)
+        ("kennel", None),
     ]
-    assert len({e["source"] for e in index["spare"]}) == 4, "a file may fill only one slot"
+    assert len({e["source"] for e in index["spare"]}) == 5, "a file may fill only one slot"
 
 
 def test_a_thin_folder_labels_each_photograph_with_the_slot_it_actually_fills(tmp_path: Path) -> None:
     """Three images, six slots: `kennel` matched by keyword while `exam`, `treatment` and
-    `surgery` found nothing left, so the third file is the KENNEL photograph. Numbering the
-    entries by position would caption a boarding run "Exam room" — the very mislabelling A-L9
-    exists to stop."""
+    `surgery` found nothing left, so the third file is the KENNEL photograph — and it is written
+    at the KENNEL's own position, `6.webp`. Numbering the entries in the order they were chosen
+    would caption a boarding run "Exam room" — the very mislabelling A-L9 exists to stop, and the
+    reason A-L11 keeps the six slot positions fixed for the keyword path too."""
     root = tmp_path / "src"
     _folder(root, "thin3", ["01_exterior_front.png", "02_interior_reception.png", "03_interior_kennels.png"])
     index = PP.prepare(root, tmp_path / "out", ["thin3"], {})
     assert [(e["file"], e["slot"], e["source"]) for e in index["thin3"]] == [
         ("1.webp", "exterior", "01_exterior_front.png"),
         ("2.webp", "lobby", "02_interior_reception.png"),
-        ("3.webp", "kennel", "03_interior_kennels.png"),
+        (None, "exam", None),
+        (None, "treatment", None),
+        (None, "surgery", None),
+        ("6.webp", "kennel", "03_interior_kennels.png"),
     ]
 
 
@@ -511,18 +563,268 @@ def test_select_for_slots_returns_the_chosen_files_in_slot_order(tmp_path: Path)
 def test_main_reads_each_hospitals_type_from_the_seed_file(tmp_path: Path) -> None:
     """Which of the design's four lists a hospital's photographs fill is data, read from
     `seeds/hospitals.json` where the default slugs are read — so a hand re-run of one slug
-    selects exactly the six files the full run would."""
+    selects exactly the six files the full run would.
+
+    Sharper since A-L10: the source folder is the one the committed curation names for this slug,
+    so reading the WRONG slot list is not merely a differently ordered index — `validate_curation`
+    refuses it and `main()` returns 2, because the curated keys would not be the type's list."""
     slug = "6666_dallas_veterinary_specialist_hospital"
     assert PP.seed_types()[slug] == "Specialty"
     assert set(PP.seed_types()) == set(PP.seed_slugs())
+    curated = PP.load_curation(PP.CURATION_FILE)[slug]
     root = tmp_path / "src"
-    _folder(root, slug, ["01_exterior_front_entrance.png", "06_interior_lobby.png", "08_interior_exam_room.png",
-                         "09_interior_treatment_surgery_area.png", "10_interior_ct_scanner.png",
-                         "11_interior_recovery_ward.png"])
+    _folder(root, slug, [name for name in curated.values() if name is not None])
     out = tmp_path / "out"
     assert PP.main(["--source", str(root), "--out", str(out), "--slugs", slug]) == 0
     index = json.loads((out / "index.json").read_text(encoding="utf-8"))
-    assert index["max_photos"] == 6
+    assert index["slot_count"] == 6
+    assert "max_photos" not in index, "A-L11: six slots, and no cap to state"
     assert [e["slot"] for e in index["hospitals"][slug]] == list(PP.SLOTS_BY_TYPE["Specialty"]), (
         "main() fell back to the default slot list instead of reading the seed file's type"
     )
+
+
+# --- A-L10: the content-verified curation map ------------------------------------------------
+# John, 2026-09-09: "explain where the image description is coming from because they don't mirror
+# the file name of the image and the images don" (truncated as received) → "match the
+# description". The caption
+# a buyer reads is the DESIGN's fixed slot caption, so the only way a caption is TRUE is for the
+# photograph at that POSITION to show that subject. A-L9 chose by filename keyword, and many of
+# John's filenames lie (`ghi_veterinary_hospital/06_interior_reception.png` is an exterior sign)
+# while many files are sliced fragments of a collage sheet — no keyword can fix either. The
+# controller viewed every source image and wrote `seeds/hospitals/photos/curation.json`, which is
+# AUTHORITATIVE for every slug it names; a slot no single photograph truthfully fills stays EMPTY,
+# where the design renders its own placeholder (absent beats faked).
+
+# One small-animal folder's worth of map: three photographs, three slots left empty.
+CURATED: dict[str, str | None] = {
+    "exterior": "01_exterior_front.png", "lobby": None, "exam": "03_interior_exam.png",
+    "treatment": None, "surgery": None, "kennel": "05_interior_kennels.png",
+}
+
+
+def test_load_curation_reads_the_map_and_ignores_the_underscore_keys(tmp_path: Path) -> None:
+    """`_comment` is the map's own explanation of itself and is kept in the committed file, so
+    the loader has to skip it rather than read it as a hospital."""
+    path = tmp_path / "curation.json"
+    path.write_text(
+        json.dumps({"_comment": "why this file exists",
+                    "demo": {"exterior": "01_exterior_front.png", "lobby": None}}),
+        encoding="utf-8",
+    )
+    assert PP.load_curation(path) == {"demo": {"exterior": "01_exterior_front.png", "lobby": None}}
+
+
+def test_the_committed_curation_names_every_seeded_hospital_in_its_types_slot_order() -> None:
+    """The map is data the pipeline trusts, so its shape is pinned here: one entry per seeded
+    hospital, whose keys are exactly the slots that hospital's practice type renders, in order.
+    73 of the 108 slots are filled — the other 35 have no truthful photograph in John's folders."""
+    curation = PP.load_curation(PP.CURATION_FILE)
+    types = PP.seed_types()
+    assert set(curation) == set(PP.seed_slugs())
+    for slug, slots in curation.items():
+        assert list(slots) == list(PP.slots_for(types[slug])), slug
+    filled = sum(1 for slots in curation.values() for name in slots.values() if name is not None)
+    assert (filled, sum(len(slots) for slots in curation.values())) == (73, 108), (
+        "A-L10's content-verified count moved; the plan record says 73 of 108"
+    )
+
+
+def test_a_curated_slug_numbers_its_files_by_slot_position(tmp_path: Path) -> None:
+    """The heart of A-L10: `p.photos[i]` fills slot `i` (A12.2), so a file's NUMBER is its slot's
+    position — never its rank among the files that happened to be found. Slot 3 is `3.webp` even
+    though it is the second photograph in the folder."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_exterior_front.png", "03_interior_exam.png", "05_interior_kennels.png"])
+    index = PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"}, {"cur": CURATED})
+    assert [(e["slot"], e["file"], e["source"]) for e in index["cur"]] == [
+        ("exterior", "1.webp", "01_exterior_front.png"),
+        ("lobby", None, None),
+        ("exam", "3.webp", "03_interior_exam.png"),
+        ("treatment", None, None),
+        ("surgery", None, None),
+        ("kennel", "6.webp", "05_interior_kennels.png"),
+    ]
+    assert sorted(p.name for p in (tmp_path / "out" / "cur").iterdir()) == ["1.webp", "3.webp", "6.webp"]
+
+
+def test_an_empty_slot_writes_no_file_and_carries_no_measured_fields(tmp_path: Path) -> None:
+    """An empty slot is a statement, not a photograph: no bytes, no width, no sha256, and a null
+    caption — the design's placeholder is what the buyer sees."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_exterior_front.png", "03_interior_exam.png", "05_interior_kennels.png"])
+    index = PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"}, {"cur": CURATED})
+    assert index["cur"][1] == {"slot": "lobby", "file": None, "source": None, "caption": None}
+
+
+def test_a_slug_absent_from_the_curation_still_takes_the_keyword_path(tmp_path: Path) -> None:
+    """The map is authoritative only for the slugs it names; anything else keeps A-L9's keyword
+    selection, numbered sequentially, so the fallback the map does not cover is unchanged."""
+    root = tmp_path / "src"
+    _folder(root, "kw", ["01_exterior_front.png", "02_interior_reception.png"])
+    index = PP.prepare(root, tmp_path / "out", ["kw"],
+                       {"kw": "Small animal", "cur": "Small animal"}, {"cur": CURATED})
+    assert [(e["slot"], e["file"]) for e in index["kw"]] == [
+        ("exterior", "1.webp"), ("lobby", "2.webp"),
+        ("exam", None), ("treatment", None), ("surgery", None), ("kennel", None),
+    ]
+
+
+def test_a_curated_slug_the_seed_file_does_not_name_is_refused(tmp_path: Path) -> None:
+    """A slug in the map and not in `seeds/hospitals.json` is a typo that would silently curate
+    nothing — the whole point of the map is that it is checked against the seeds."""
+    with pytest.raises(PP.SeedDataError) as exc:
+        PP.prepare(tmp_path / "src", tmp_path / "out", [], {}, {"ghost_hospital": CURATED})
+    assert "ghost_hospital" in str(exc.value)
+
+
+def test_curated_slots_that_are_not_the_types_list_in_order_are_refused(tmp_path: Path) -> None:
+    """Order IS the mapping: the keys are read positionally, so `exam` before `lobby` would put
+    the exam room under "Reception and waiting"."""
+    swapped: dict[str, str | None] = {
+        "exterior": None, "exam": None, "lobby": None, "treatment": None, "surgery": None, "kennel": None,
+    }
+    with pytest.raises(PP.SeedDataError) as exc:
+        PP.prepare(tmp_path / "src", tmp_path / "out", [], {"cur": "Small animal"}, {"cur": swapped})
+    assert "cur" in str(exc.value) and "lobby" in str(exc.value)
+
+
+def test_a_curated_file_the_folder_does_not_hold_is_refused(tmp_path: Path) -> None:
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_exterior_front.png"])
+    absent: dict[str, str | None] = {
+        "exterior": "01_exterior_front.png", "lobby": None, "exam": "99_absent.png",
+        "treatment": None, "surgery": None, "kennel": None,
+    }
+    with pytest.raises(PP.SeedDataError) as exc:
+        PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"}, {"cur": absent})
+    assert "99_absent.png" in str(exc.value) and "cur" in str(exc.value)
+
+
+TWICE: dict[str, str | None] = {
+    "exterior": "01_exterior_front.png", "lobby": None, "exam": "03_interior_exam.png",
+    "treatment": "03_interior_exam.png", "surgery": None, "kennel": None,
+}
+
+
+def test_a_file_that_fills_two_slots_is_refused(tmp_path: Path) -> None:
+    """Two slots, one photograph, two captions: one of them is false by construction."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_exterior_front.png", "03_interior_exam.png"])
+    with pytest.raises(PP.SeedDataError) as exc:
+        PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"}, {"cur": TWICE})
+    assert "03_interior_exam.png" in str(exc.value) and "cur" in str(exc.value)
+
+
+def test_a_duplicate_is_refused_even_in_a_slug_this_run_is_not_processing(tmp_path: Path) -> None:
+    """Review i2. The duplicate check belongs with the slug/slot-order checks, over the WHOLE map
+    and before a single byte is written: a hand re-run of one hospital (`--slugs X`) must still
+    refuse a duplicate someone introduced for hospital Y, because the file being committed is the
+    map, not the run. Only the missing-file arm has to stay per-slug — it needs the folders."""
+    with pytest.raises(PP.SeedDataError) as exc:
+        PP.prepare(tmp_path / "src", tmp_path / "out", [], {"cur": "Small animal"}, {"cur": TWICE})
+    assert "03_interior_exam.png" in str(exc.value) and "cur" in str(exc.value)
+
+
+def test_main_returns_two_when_the_curation_is_unusable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """SeedDataError joins FileNotFoundError and RuntimeError on the script's existing exit-2 path."""
+    bad = tmp_path / "curation.json"
+    bad.write_text(json.dumps({"ghost_hospital": {}}), encoding="utf-8")
+    monkeypatch.setattr(PP, "CURATION_FILE", bad)
+    assert PP.main(["--source", str(tmp_path), "--out", str(tmp_path / "out"), "--slugs", "nope"]) == 2
+
+
+def test_main_reads_the_committed_curation_and_reports_the_empty_slots(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """End to end through `main()`: the committed map decides, not the keywords, and the run says
+    how many slots it left empty — the number the operator has to be able to see."""
+    slug = "123_route66"
+    curated = PP.load_curation(PP.CURATION_FILE)[slug]
+    root = tmp_path / "src"
+    _folder(root, slug, [name for name in curated.values() if name is not None])
+    out = tmp_path / "out"
+    assert PP.main(["--source", str(root), "--out", str(out), "--slugs", slug]) == 0
+    index = json.loads((out / "index.json").read_text(encoding="utf-8"))
+    assert [e["file"] for e in index["hospitals"][slug]] == [
+        "1.webp", "2.webp", "3.webp", "4.webp", None, "6.webp"
+    ], "surgery has no truthful photograph in this folder and must stay empty"
+    assert "5 files, 1 empty slots" in capsys.readouterr().out
+
+
+# --- A-L11: every uploaded photograph renders ---------------------------------------------------
+# John, 2026-09-09: "HAS FAILED and wiped out all the images - if the logic is trying to match and
+# failing then surface all images uploaded and have the user articulate what it is and render ALL
+# images - what was 9 images now are only showing 3 after this hotfix!!!". A-L10's empty-slot rule
+# dropped every photograph that matched none of the design's six fixed captions. The rule is now
+# the opposite: the curation still says WHICH image best fits a slot, every other image of the
+# folder fills a still-empty slot in folder order, and whatever is left becomes positions 7, 8, …
+# — never dropped. A slot is empty only when the folder is thinner than six.
+
+# The same map as CURATED above, against a folder that holds four images it does not name.
+def test_a_curated_slug_fills_its_empty_slots_from_the_rest_of_the_folder(tmp_path: Path) -> None:
+    """A-L11's heart. The curated photographs keep their own slots — `05_interior_kennels.png` is
+    the KENNEL's, at position 6, even though two later-numbered files were placed before it — and
+    the composites and sliced sheets A-L10 discarded fill what is left, in folder order."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_exterior_front.png", "02_collage_sheet.png", "03_interior_exam.png",
+                          "04_sliced_fragment.png", "05_interior_kennels.png", "06_spare.png",
+                          "07_spare.png"])
+    index = PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"}, {"cur": CURATED})
+    assert [(e["file"], e["slot"], e["source"]) for e in index["cur"]] == [
+        ("1.webp", "exterior", "01_exterior_front.png"),
+        ("2.webp", "lobby", "02_collage_sheet.png"),
+        ("3.webp", "exam", "03_interior_exam.png"),
+        ("4.webp", "treatment", "04_sliced_fragment.png"),
+        ("5.webp", "surgery", "06_spare.png"),
+        ("6.webp", "kennel", "05_interior_kennels.png"),
+        ("7.webp", None, "07_spare.png"),
+    ]
+    assert sorted(p.name for p in (tmp_path / "out" / "cur").iterdir()) == [
+        "1.webp", "2.webp", "3.webp", "4.webp", "5.webp", "6.webp", "7.webp",
+    ], "no photograph of the folder is dropped"
+
+
+def test_an_extra_photograph_carries_its_own_description_and_no_slot(tmp_path: Path) -> None:
+    """Positions beyond the design's six have no fixed caption to be true of, so the ONE
+    description we hold — the supplier's own filename — is what they carry (amendment A15.3
+    renders it, falling back to "Photo N" when there is none). `slot` is null: the entry is a
+    photograph, not one of the design's captioned slots."""
+    root = tmp_path / "src"
+    _folder(root, "extra", ["01_exterior_front.png", "02_interior_reception.png",
+                            "03_interior_exam_room.png", "04_interior_treatment_area.png",
+                            "05_interior_surgery_room.png", "06_interior_kennels.png",
+                            "07_interior_pharmacy_counter.png"])
+    entry = PP.prepare(root, tmp_path / "out", ["extra"], {"extra": "Small animal"})["extra"][6]
+    assert entry["slot"] is None
+    assert entry["caption"] == "Interior — pharmacy counter"
+    assert entry["source"] == "07_interior_pharmacy_counter.png"
+    assert entry["file"] == "7.webp" and entry["sha256"] and entry["bytes"] > 0
+
+
+def test_positions_puts_the_slots_first_then_the_rest_in_folder_order(tmp_path: Path) -> None:
+    """The rule on its own, with no encoding: the design's six slots in SLOT order, each holding
+    the photograph chosen for it or the next unused one, then every remaining image in FOLDER
+    order with no slot at all."""
+    folder = _folder(tmp_path / "src", "pos", [
+        "01_exterior_front.png", "02_interior_reception.png", "03_interior_exam_room.png",
+        "04_interior_treatment_area.png", "05_interior_surgery_room.png",
+        "06_interior_kennels.png", "07_zzz.png", "08_zzz.png",
+    ])
+    placed = PP.positions(PP.source_images(folder), list(PP.DEFAULT_SLOTS))
+    assert [(slot, None if src is None else src.name) for slot, src in placed] == [
+        ("exterior", "01_exterior_front.png"), ("lobby", "02_interior_reception.png"),
+        ("exam", "03_interior_exam_room.png"), ("treatment", "04_interior_treatment_area.png"),
+        ("surgery", "05_interior_surgery_room.png"), ("kennel", "06_interior_kennels.png"),
+        (None, "07_zzz.png"), (None, "08_zzz.png"),
+    ]
+
+
+def test_main_reports_the_photographs_beyond_the_designs_six(
+    source: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """The operator has to see that nothing was dropped (A-L11), so the run says how many
+    photographs went past the design's six slots as well as how many slots stayed empty."""
+    assert PP.main(["--source", str(source), "--out", str(tmp_path / "out"),
+                    "--slugs", "demo_hospital"]) == 0
+    assert "8 files, 0 empty slots, 2 beyond the design's six slots" in capsys.readouterr().out

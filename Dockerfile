@@ -51,7 +51,9 @@ COPY migrations/ ./migrations/
 COPY scripts/ ./scripts/
 # The eighteen demo hospitals and their photographs (spec 2026-09-06 D3/D7): the `seed` role
 # reads seeds/hospitals.json in-container, and GET /api/listings/{id}/photos/{n} serves the
-# committed WebP files from seeds/hospitals/photos/. ~4.1 MiB (110 files).
+# committed WebP files from seeds/hospitals/photos/. ~7.5 MiB (198 files, of which 195 are
+# photographs — since A-L11 every image John supplied is rendered, the design's six captioned
+# slots first and the rest as tiles of their own).
 COPY seeds/ ./seeds/
 COPY --from=frontend-build /work/frontend/dist/ ./frontend/dist/
 COPY --from=coming-soon-build /work/coming-soon/dist/ ./coming-soon/dist/
