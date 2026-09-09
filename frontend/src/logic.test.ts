@@ -1451,3 +1451,187 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// The adapter-present paths of amendment family A16 (fix round 2, controller amendment
+// A-SL25). The re-review's ⚠️ was exact: `src/logic.js` is outside the coverage gate, the
+// oracle only ever drove the no-adapter arms, and nothing in the tree executed a wizard or a
+// dashboard handler with `this.props.listings` set — so Critical-A (a newly created listing
+// showing the design's three fixture photographs, and saying "Photos attached 3" on the submit
+// screen) was invisible to all four gates. These are characterisation cases for the arms the
+// oracle cannot reach, in the same shape as the ones above: construct the design's own
+// Component, hand it an adapter, drive the design's own handlers.
+// ---------------------------------------------------------------------------------------
+describe('logic.js — the seller adapter paths (A16, A-SL25)', () => {
+  /** A `WizardDraft` as `src/listings/seller.ts`'s `get`/`patch`/`caption` hand one back. */
+  const DRAFT = {
+    w: { name: 'ABC Animal Hospital', type: 'Mixed', est: '1998', city: 'Bastrop', zip: '78602' },
+    assets: [{ kind: 'Photo', name: 'Reception, looking in', id: 'as-1' }]
+  };
+
+  /** Every method the design's script reaches through `this.props.listings`, each resolving
+   *  unless the test overrides it. `vi.fn()` so a case can assert what was NOT called. */
+  function adapter(over: Record<string, unknown> = {}): any {
+    return {
+      list: vi.fn().mockResolvedValue([]),
+      create: vi.fn().mockResolvedValue('new-1'),
+      get: vi.fn().mockResolvedValue(DRAFT),
+      patch: vi.fn().mockResolvedValue(DRAFT),
+      submit: vi.fn().mockResolvedValue(DRAFT),
+      setStatus: vi.fn().mockResolvedValue(DRAFT),
+      attach: vi.fn().mockResolvedValue(DRAFT),
+      ...over
+    };
+  }
+
+  const ROWS = [{ id: 's1', status: 'published', title: 'T', meta: 'M', note: 'N' }];
+  /** Drains the microtask queue. `setListingStatus` and the wizard's `submit` are the design's
+   *  own handlers and return no promise — the design never had one to return — so a test that
+   *  reads the state after them has to wait for the chain rather than for a value. A macrotask
+   *  turn drains every `.then` behind it, which is precisely what Major-B's unhandled rejection
+   *  would surface in: vitest fails the file on one. */
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  /** The design's own initial wizard state, read from the prototype rather than repeated. */
+  const initialW = () => new Component({}).state.w;
+
+  // --- Critical-A -----------------------------------------------------------------------
+  it('a newly created listing shows NO photographs and says so on the submit screen', async () => {
+    // The defect this round exists to remove: `startWizard` left `wizAssets` unset, A16.4's
+    // ternary took the DESIGN's four-item literal, and the design's step rail jumps straight to
+    // step 6 or step 8 with no patch — so the seller was shown "Exterior.jpg", "Lobby.jpg" and
+    // "Treatment.jpg" on a listing that has no photographs at all, and "Photos attached 3" on
+    // the screen they read immediately before Submit for review.
+    const api = adapter({ get: vi.fn().mockResolvedValue({ w: {}, assets: [] }) });
+    const c2: any = new Component({ listings: api });
+    c2.setState({ auth: true, screen: 'seller' });
+    await c2.renderVals().startWizard();
+    expect(c2.state.editingId).toBe('new-1');
+    expect(c2.wizardVals().uploads, 'the design\'s three fixture photographs must not appear').toEqual([]);
+    c2.setState({ step: 8 });
+    const photos = c2.wizardVals().previewRows.filter((r: any) => r.k === 'Photos attached');
+    expect(photos.map((r: any) => r.v)).toEqual(['0']);
+  });
+
+  it('the tile source keys on the ADAPTER, not on wizAssets — no value of it reaches the design\'s literal', () => {
+    // A-SL25 (1), A16.1's own rule applied to the wizard: with an adapter present the design's
+    // fixture tiles are unreachable whatever the state holds.
+    const c2: any = new Component({ listings: adapter() });
+    c2.setState({ auth: true, screen: 'seller', sellerView: 'wizard', step: 6, wizAssets: undefined });
+    expect(c2.wizardVals().uploads).toEqual([]);
+    // …and with no adapter the design's own path is untouched, which is the reference.
+    expect(new Component({}).wizardVals().uploads).toEqual([
+      { kind: 'Photo', name: 'Exterior.jpg' },
+      { kind: 'Photo', name: 'Lobby.jpg' },
+      { kind: 'Photo', name: 'Treatment.jpg' }
+    ]);
+  });
+
+  // --- A16.14, create -------------------------------------------------------------------
+  it('Create a listing creates, reads the new draft back and opens THAT', async () => {
+    const api = adapter();
+    const c2: any = new Component({ listings: api });
+    c2.setState({ auth: true, screen: 'seller' });
+    await c2.renderVals().startWizard();
+    expect(api.create).toHaveBeenCalledTimes(1);
+    expect(api.get).toHaveBeenCalledWith('new-1');
+    expect(c2.state).toMatchObject({ sellerView: 'wizard', step: 1, editingId: 'new-1', wizErr: '', creating: false });
+    expect(c2.state.wizAssets).toEqual(DRAFT.assets);
+    expect(c2.state.w).toEqual({ ...initialW(), ...DRAFT.w });
+  });
+
+  it('a refused create opens the wizard on nothing at all, with the server\'s message', async () => {
+    const api = adapter({ create: vi.fn().mockRejectedValue(new Error('Too many requests.')) });
+    const c2: any = new Component({ listings: api });
+    c2.setState({ auth: true, screen: 'seller', editingId: 'old-9', wizAssets: [{ kind: 'Photo', name: 'x', id: 'a' }], w: { ...initialW(), city: 'Cedar Park' } });
+    await c2.renderVals().startWizard();
+    expect(c2.state).toMatchObject({ sellerView: 'wizard', step: 1, editingId: null, wizErr: 'Too many requests.', creating: false });
+    expect(c2.state.wizAssets).toEqual([]);
+    expect(c2.state.w).toEqual(initialW());
+  });
+
+  it('a refused READ of the just-created listing lands in the same arm', async () => {
+    const api = adapter({ get: vi.fn().mockRejectedValue(new Error('That listing could not be read.')) });
+    const c2: any = new Component({ listings: api });
+    c2.setState({ auth: true, screen: 'seller' });
+    await c2.renderVals().startWizard();
+    expect(c2.state).toMatchObject({ editingId: null, wizErr: 'That listing could not be read.', creating: false });
+    expect(c2.state.wizAssets).toEqual([]);
+  });
+
+  // --- Minor-B ---------------------------------------------------------------------------
+  it('a second press while the create is in flight creates nothing more', async () => {
+    let release: (id: string) => void = () => {};
+    const api = adapter({ create: vi.fn().mockReturnValue(new Promise<string>((r) => { release = r; })) });
+    const c2: any = new Component({ listings: api });
+    c2.setState({ auth: true, screen: 'seller' });
+    const first = c2.renderVals().startWizard();
+    expect(c2.state.creating).toBe(true);
+    c2.renderVals().startWizard();
+    c2.renderVals().startWizard();
+    expect(api.create).toHaveBeenCalledTimes(1);
+    release('new-1');
+    await first;
+    expect(c2.state.creating).toBe(false);
+    // …and the flag clears, so the next listing can be created.
+    await c2.renderVals().startWizard();
+    expect(api.create).toHaveBeenCalledTimes(2);
+  });
+
+  // --- Major-A ---------------------------------------------------------------------------
+  it('a refused Edit never leaves the previous listing live under the wizard', async () => {
+    const api = adapter({ get: vi.fn().mockRejectedValue(new Error('That listing could not be opened.')) });
+    const c2: any = new Component({ listings: api });
+    c2.setState({
+      auth: true, screen: 'seller', myListings: ROWS,
+      editingId: 'other-9', wizAssets: [{ kind: 'Photo', name: 'x', id: 'a' }], w: { ...initialW(), city: 'Cedar Park' }
+    });
+    const edit = c2.sellerVals().listings[0].actions.filter((a: any) => a.label === 'Edit')[0];
+    await edit.go();
+    expect(c2.state).toMatchObject({ sellerView: 'wizard', step: 1, editingId: null, wizErr: 'That listing could not be opened.' });
+    expect(c2.state.wizAssets, 'the other listing\'s photographs must not survive').toEqual([]);
+    expect(c2.state.w, 'nor its fields').toEqual(initialW());
+  });
+
+  it('Edit opens the row\'s own draft through the same setter Create does', async () => {
+    const api = adapter();
+    const c2: any = new Component({ listings: api });
+    c2.setState({ auth: true, screen: 'seller', myListings: ROWS });
+    await c2.sellerVals().listings[0].actions.filter((a: any) => a.label === 'Edit')[0].go();
+    expect(api.get).toHaveBeenCalledWith('s1');
+    expect(c2.state).toMatchObject({ sellerView: 'wizard', step: 1, editingId: 's1', wizErr: '' });
+    expect(c2.state.wizAssets).toEqual(DRAFT.assets);
+    expect(c2.state.w).toEqual({ ...initialW(), ...DRAFT.w });
+  });
+
+  // --- Major-B ----------------------------------------------------------------------------
+  it('a refused reload after a successful transition rejects nowhere and empties the rows', async () => {
+    const api = adapter({ list: vi.fn().mockRejectedValue(new Error('Too many requests.')) });
+    const c2: any = new Component({ listings: api });
+    c2.setState({ auth: true, screen: 'seller', myListings: ROWS });
+    c2.setListingStatus('s1', 'withdrawn');
+    await flush();
+    expect(api.setStatus).toHaveBeenCalledWith('s1', 'withdraw');
+    expect(c2.state.myListings, 'A16.9\'s own answer to a load that failed').toEqual([]);
+  });
+
+  it('a refused reload after Submit rejects nowhere and empties the rows', async () => {
+    const api = adapter({ list: vi.fn().mockRejectedValue(new Error('Too many requests.')) });
+    const c2: any = new Component({ listings: api });
+    c2.setState({ auth: true, screen: 'seller', sellerView: 'wizard', step: 8, editingId: 'a3f1', myListings: ROWS });
+    c2.wizardVals().submit();
+    await flush();
+    expect(api.submit).toHaveBeenCalledWith('a3f1');
+    expect(c2.state.wizSubmitted, 'the design\'s own Submitted card still appears at once').toBe(true);
+    expect(c2.state.myListings).toEqual([]);
+  });
+
+  // --- Info-B -----------------------------------------------------------------------------
+  it('with an adapter and no listing behind the wizard, Add files does nothing at all', () => {
+    const api = adapter();
+    const c2: any = new Component({ listings: api });
+    c2.setState({ auth: true, screen: 'seller', sellerView: 'wizard', step: 6, editingId: null });
+    c2.wizardVals().addPhoto();
+    expect(api.attach, 'nothing to upload onto').not.toHaveBeenCalled();
+    expect(c2.state.w.photos, 'and the design\'s fake counter is never bumped behind an adapter').toBe(0);
+  });
+});

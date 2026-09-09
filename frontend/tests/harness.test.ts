@@ -1,7 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, collectionStubUrls, collectionStubBody, newListingBody, submitStubUrl, WIZARD_LISTING_ID, sellerPageBody, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
+import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, collectionStubUrls, collectionStubBody, newListingBody, draftStubUrl, submitStubUrl, WIZARD_LISTING_ID, sellerPageBody, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
 import { designListingsBody } from './design-listings.mjs';
 import { designSellerPageBody, designSellerRows } from './design-seller-listings.mjs';
+import { designWizardDraftBody, designWizardTiles } from './design-wizard-draft.mjs';
 import { P } from '../src/logic.js';
 import type { Page } from '@playwright/test';
 import { resolveTargets } from './targets';
@@ -300,8 +301,34 @@ describe('the seller and admin collection stubs (A-SL2, A-SL23 (2))', () => {
 
   it('answers Create a listing with one new id, for the four wizard captures (A-SL23 (1))', () => {
     expect(JSON.parse(newListingBody())).toEqual({ id: WIZARD_LISTING_ID });
+    expect(draftStubUrl({ PW_APP_PORT: '5473' } as NodeJS.ProcessEnv))
+      .toBe(`http://localhost:5473/api/seller/listings/${WIZARD_LISTING_ID}`);
     expect(submitStubUrl({ PW_APP_PORT: '5473' } as NodeJS.ProcessEnv))
       .toBe(`http://localhost:5473/api/seller/listings/${WIZARD_LISTING_ID}/submit`);
+    expect(draftStubUrl({ PW_APP_URL: 'https://qa.foundation.vin' } as NodeJS.ProcessEnv)).toBeNull();
+  });
+
+  it('reads the created listing back as the DESIGN\'s own three photograph tiles (A-SL25 (1))', () => {
+    // A16.14 chains `create → get`, so the wizard renders the draft the API answered and nothing
+    // else — which is why the three frozen wizard captures need a real draft here rather than an
+    // empty one. Its assets are DERIVED from `logic.js`'s own step-6 fallback literal, exactly as
+    // `design-seller-listings.mjs` is derived from `state.sellerListings`, so a hand-copied tile
+    // fails this case; and `newDraftBody`, which had no pin at all (re-review Info-A), is gone.
+    const draft = JSON.parse(designWizardDraftBody(WIZARD_LISTING_ID)) as {
+      id: string; assets: { kind: string; name: string; id: string }[];
+      photos: { id: string; name: string }[]; documents: unknown[];
+    };
+    expect(designWizardTiles()).toEqual([
+      { kind: 'Photo', name: 'Exterior.jpg' },
+      { kind: 'Photo', name: 'Lobby.jpg' },
+      { kind: 'Photo', name: 'Treatment.jpg' }
+    ]);
+    expect(draft.id).toBe(WIZARD_LISTING_ID);
+    expect(draft.assets.map((a) => [a.kind, a.name]))
+      .toEqual(designWizardTiles().map((t) => [t.kind === 'Photo' ? 'photo' : 'other', t.name]));
+    expect(draft.photos.map((ph) => ph.name)).toEqual(designWizardTiles().map((t) => t.name));
+    expect(draft.documents, 'the design\'s fresh wizard has no document tile').toEqual([]);
+    expect(new Set(draft.assets.map((a) => a.id)).size, 'every tile needs its own id').toBe(3);
   });
 
   it('the empty-dashboard body is a REAL page with no rows on it (A-SL17)', () => {

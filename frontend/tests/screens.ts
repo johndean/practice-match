@@ -260,8 +260,8 @@ export const SCREENS: Screen[] = [
   //
   // The design has no empty-table treatment and none is invented: the shell with zero rows IS the
   // state, which is what that ruling says to capture. The reference is handed `[]` through
-  // A16.11's `startMyListings`; the app is answered a real, empty page by `reach`'s own route,
-  // over the no-page stub every other state gets.
+  // A16.11's `startMyListings`; the app is answered a real, EMPTY page by `reach`'s own route,
+  // over the design's own four rows that `prepare()` answers every other state with (A-SL23 (2)).
   // ---------------------------------------------------------------------------------------
   { name: 'seller-dash-empty', steps: async (p) => { await reach(p, { screen: 'seller', myListings: [] }); } }
 ];

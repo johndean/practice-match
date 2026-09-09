@@ -4,6 +4,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { designListingsBody } from './design-listings.mjs';
 import { designSellerPageBody } from './design-seller-listings.mjs';
+import { designWizardDraftBody } from './design-wizard-draft.mjs';
 
 // Deterministic rendering on both targets: no basemap tiles (markers still draw
 // over the blank canvas), fonts loaded, pointer parked, animations settled.
@@ -160,10 +161,13 @@ export async function prepare(page: Page): Promise<void> {
         ? route.fulfill({ status: 201, contentType: 'application/json', body: newListingBody() })
         : route.fulfill({ status: 200, contentType: 'application/json', body: collectionStubBody(href) })));
   }
-  const submit = submitStubUrl();
-  if (submit !== null) {
-    await page.route(submit, (route) => route.fulfill({
-      status: 200, contentType: 'application/json', body: newDraftBody()
+  // The two writes the four `wizard-*` captures make after that POST: the read of the listing it
+  // created (A16.14 chains `create → get`), and `wizard-done`'s Submit for review. Both answer the
+  // DESIGN's own draft, so the captures keep their frozen hashes through the SUCCESS path.
+  for (const href of [draftStubUrl(), submitStubUrl()]) {
+    if (href === null) continue;
+    await page.route(href, (route) => route.fulfill({
+      status: 200, contentType: 'application/json', body: designWizardDraftBody(WIZARD_LISTING_ID)
     }));
   }
 }
@@ -193,25 +197,16 @@ export function newListingBody(): string {
   return JSON.stringify({ id: WIZARD_LISTING_ID });
 }
 
-/** `submit()`'s answer for that listing — `serialise_draft` for a draft nobody has filled in.
- *  Nothing reads it: `logic.js`'s submit handler chains a reload onto it and the design's own
- *  "Submitted" card is drawn synchronously either way. It exists so the write does not 404, which
- *  Chromium logs as a console error and `prepare()`'s gate fails the capture on. */
-export function newDraftBody(): string {
-  return JSON.stringify({
-    id: WIZARD_LISTING_ID, slug: `listing-${WIZARD_LISTING_ID}`, status: 'in_review',
-    name: null, type: null, est: null, ownership: null, city: null, zip: null,
-    price: null, rev: null, docs: null, rooms: null, sqft: null, hours: null, desc: null,
-    bldg: null, facilityType: null, facility: null,
-    anon: true, revBand: false, docsLocked: true,
-    state: null, market: null, area: null,
-    decline_reason: null, submitted_at: null, updated_at: '2026-09-09T00:00:00+00:00',
-    assets: [], photos: [], documents: []
-  });
+/** Where A16.14's read of the created listing lands, or `null` on a remote target — the same rule,
+ *  and the same reason, as every other stub here. Its answer is `design-wizard-draft.mjs`'s, which
+ *  is derived from `logic.js` and pinned in `harness.test.ts` (this replaces `newDraftBody`, whose
+ *  24 hand-written keys were the one new export with no pin at all — re-review Info-A). */
+export function draftStubUrl(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (env.PW_APP_URL) return null;
+  return new URL(`/api/seller/listings/${WIZARD_LISTING_ID}`, appOrigin(env)).href;
 }
 
-/** Where that submit lands, or `null` on a remote target — the same rule, and the same reason, as
- *  every other stub here. */
+/** Where `wizard-done`'s Submit for review lands. Same body, same rule. */
 export function submitStubUrl(env: NodeJS.ProcessEnv = process.env): string | null {
   if (env.PW_APP_URL) return null;
   return new URL(`/api/seller/listings/${WIZARD_LISTING_ID}/submit`, appOrigin(env)).href;
@@ -1017,7 +1012,8 @@ export interface ReachTarget {
   note?: string;
   /** The seller's own listings, loaded. The reference is handed them through A16.11's
    *  `startMyListings`; the app is answered them by `GET /api/seller/listings`, over the
-   *  no-page stub `prepare()` arms. `[]` is the empty dashboard (A-SL17). */
+   *  page of the design's own four rows that `prepare()` arms. `[]` is the empty dashboard
+   *  (A-SL17). */
   myListings?: unknown[];
 }
 
@@ -1195,7 +1191,7 @@ export async function reach(page: Page, target: ReachTarget = {}): Promise<void>
     return mounted(page);
   }
   // Registered BEFORE the navigation, because the load happens in `componentDidMount` — and
-  // registered last, so it wins over `prepare()`'s no-page stub for this one state.
+  // registered last, so it wins over `prepare()`'s design-fixture page for this one state.
   if (target.myListings) {
     const collection = new URL('/api/seller/listings', appOrigin()).href;
     await page.route((url) => url.href === collection || url.href.startsWith(`${collection}?`),

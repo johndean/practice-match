@@ -678,7 +678,11 @@ def test_serialise_carries_a_null_caption_at_its_own_position() -> None:
 
 
 def test_serialise_handles_photo_captions_arriving_as_a_json_string() -> None:
-    body = serialise(_row(photo_captions='["Exterior — front"]'), datetime(2026, 9, 6, tzinfo=UTC))
+    """`photo_list`'s string arm, on the caption column. One photograph beside the one caption
+    since A-SL25 (7): the answer is `len(photos)` long, so a row with no photographs at all can
+    carry no caption and this case would have proved nothing."""
+    body = serialise(_row(photos='["a/1.webp"]', photo_captions='["Exterior — front"]'),
+                     datetime(2026, 9, 6, tzinfo=UTC))
     assert body["photo_captions"] == ["Exterior — front"]
 
 
@@ -769,7 +773,7 @@ async def test_a_seller_photograph_nobody_has_described_carries_no_caption(
                     (json.dumps([undescribed, described]), listing_id))
     _, cookies, headers = member()
     body = (await client.get(f"/api/listings/{listing_id}", headers=auth_headers(cookies, headers))).json()
-    assert body["photo_captions"] == [None, "Reception, looking in"]
+    assert body["photo_captions"] == ["", "Reception, looking in"]
 
 
 async def test_a_document_s_caption_is_never_a_photograph_s(
@@ -778,18 +782,19 @@ async def test_a_document_s_caption_is_never_a_photograph_s(
     """`caption` is photographs-only at the write (`kind = 'photo'`), and the read agrees: no
     document's caption reaches the aggregate at all.
 
-    The SHAPE is the proof. Nothing described this listing's one photograph, so with an empty
-    aggregate the column comes through untouched and the answer is `[]`; had the floor plan's
-    caption been aggregated, the list would have been padded to the photographs and read
-    `[None]`. `[]` is therefore only reachable with `kind = 'photo'` on the subquery."""
+    Both assets are named in `listing.photos` — a shape the seller routes cannot produce, written
+    here by hand precisely so the subquery's `kind = 'photo'` is the only thing that decides the
+    answer. With it, the document's position is an undescribed photograph and reads `""`; without
+    it, "A floor plan" would caption the second tile."""
     listing_id = _insert(conn, photos=json.dumps([]))
     photo = _asset(conn, listing_id, None)
-    _asset(conn, listing_id, "A floor plan", kind="floor_plan")
+    document = _asset(conn, listing_id, "A floor plan", kind="floor_plan")
     with conn.cursor() as cur:
-        cur.execute("UPDATE listing SET photos = %s::jsonb WHERE id = %s", (json.dumps([photo]), listing_id))
+        cur.execute("UPDATE listing SET photos = %s::jsonb WHERE id = %s",
+                    (json.dumps([photo, document]), listing_id))
     _, cookies, headers = member()
     body = (await client.get(f"/api/listings/{listing_id}", headers=auth_headers(cookies, headers))).json()
-    assert body["photo_captions"] == []
+    assert body["photo_captions"] == ["", ""]
 
 
 async def test_a_seeded_listing_keeps_its_positional_captions(
@@ -821,4 +826,39 @@ def test_photo_captions_pads_to_the_photographs_when_only_assets_speak() -> None
     body = serialise(_row(photos=["as-1", "as-2", None], photo_captions=[],
                           asset_captions={"as-2": "The dental suite"}),
                      datetime(2026, 9, 6, tzinfo=UTC))
-    assert body["photo_captions"] == [None, "The dental suite", None]
+    assert body["photo_captions"] == ["", "The dental suite", ""]
+
+
+# A-SL25 (7), on the SL7 re-review's Minor-D. The two lists are read BY INDEX, so "one caption per
+# photograph" has to be true on both paths and not only on the merged one: the seed path used to
+# return the column exactly as stored, which was a promise the merged path did not keep — a seeded
+# listing with more captions than photographs silently lost the surplus the moment one asset
+# caption existed, and one with fewer stayed ragged for ever.
+
+
+def test_photo_captions_truncates_a_column_longer_than_the_photographs() -> None:
+    """Seeds only: no asset has anything to say, and the column still comes back one-per-photo."""
+    body = serialise(_row(photos=["a/1.webp"], photo_captions=["Exterior — front", "Interior — exam"]),
+                     datetime(2026, 9, 6, tzinfo=UTC))
+    assert body["photo_captions"] == ["Exterior — front"]
+
+
+def test_photo_captions_pads_a_column_shorter_than_the_photographs() -> None:
+    body = serialise(_row(photos=["a/1.webp", "a/2.webp", "a/3.webp"], photo_captions=["Exterior — front"]),
+                     datetime(2026, 9, 6, tzinfo=UTC))
+    assert body["photo_captions"] == ["Exterior — front", "", ""]
+
+
+def test_photo_captions_truncates_a_longer_column_once_a_seller_has_spoken_too() -> None:
+    """The merged path, same rule: the surplus goes whether or not an asset caption exists."""
+    body = serialise(_row(photos=["as-1"], photo_captions=["The seeder's guess", "and another"],
+                          asset_captions={"as-1": "Reception, looking in"}),
+                     datetime(2026, 9, 6, tzinfo=UTC))
+    assert body["photo_captions"] == ["Reception, looking in"]
+
+
+def test_photo_captions_pads_a_shorter_column_once_a_seller_has_spoken_too() -> None:
+    body = serialise(_row(photos=["as-1", "as-2"], photo_captions=[],
+                          asset_captions={"as-1": "Reception, looking in"}),
+                     datetime(2026, 9, 6, tzinfo=UTC))
+    assert body["photo_captions"] == ["Reception, looking in", ""]

@@ -128,11 +128,17 @@ describe('local design amendments (spec D15)', () => {
     // carrying the LAST listing's `editingId` into it — and "Save and exit" saves the step it is
     // on before it exits, which is what its own label has always promised.
     'A16.14', 'A16.15',
+    // A16.16/A16.17 (A-SL25 (1), (3) and (5), the re-review's Critical-A, Major-A, Major-B and
+    // Minor-B): `wizAssets` and `creating` declared in the design's own state literal, and the two
+    // helpers every adapter path shares — `openDraft`, the ONE place a draft becomes the wizard's
+    // state, and `reloadListings`, the one loader, which carries the rejection arm its callers
+    // kept forgetting.
+    'A16.16', 'A16.17',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(104);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(106);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

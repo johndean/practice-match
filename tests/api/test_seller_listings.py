@@ -1285,3 +1285,30 @@ async def test_claiming_is_idempotent_and_never_reaches_another_sellers_row(
         assert response.status_code == 200, response.text
     assert _source(conn, mine) == "seller"
     assert _source(conn, theirs) == "seed", "another seller's seeded listing is untouched"
+
+
+async def test_serialise_draft_never_emits_a_presentational_field(client: Any, conn: Any, member: Any) -> None:
+    """A-SL25 (4), on the SL7 re-review's Minor-A.
+
+    `frontend/src/listings/seller.ts`'s `toDashboardRow` has a `DesignRow` arm: a row that already
+    carries `title`, `meta` and `note` is taken as it stands, and every other row has all three
+    DERIVED from the columns (`money()`, the `NOTE` map, `decline_reason` under the Declined pill).
+    That arm exists for the oracle alone — `frontend/tests/design-seller-listings.mjs` serves the
+    design's own four dashboard fixtures, whose prose no column can produce (A-SL2) — and it is
+    inert in production only because this endpoint never sends any of the three.
+
+    Nothing pinned that. The day a `title` column reaches the seller serialiser, every dashboard
+    row would silently switch to the design arm and lose `decline_reason`, the state notes and the
+    money formatting, with no test failing anywhere. This is that test: if you add one of these
+    three to `serialise_draft`, delete the `DesignRow` arm in the same commit."""
+    _, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id = (await client.post("/api/seller/listings", headers=signed)).json()["id"]
+    draft = (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()
+
+    assert {"title", "meta", "note"}.isdisjoint(draft), (
+        "serialise_draft now emits a field toDashboardRow's DesignRow arm branches on; that arm is"
+        " for the oracle's stub only and must go with this change"
+    )
+    # Not vacuous: the payload really is the draft, with the keys the dashboard mapping reads.
+    assert {"id", "status", "city", "type", "price", "docs", "sqft", "decline_reason"} <= set(draft)

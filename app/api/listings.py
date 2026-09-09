@@ -191,25 +191,29 @@ def photo_list(value: object) -> list[str | None]:
 
 
 def photo_captions(photos: list[str | None], stored: list[str | None], owned: Mapping[str, str]) -> list[str | None]:
-    """One description per photograph, whichever of its TWO homes it was written in (A-SL23 (0)).
+    """EXACTLY ONE description per photograph, whichever of its TWO homes it was written in.
 
     A SEED photograph's description is `listing.photo_captions[n]`, written by the seeder from the
     supplier's own filename (A-L11), and positional — position `n` describes position `n`. A
     SELLER's is `listing_asset.caption`, written by the seller in the wizard's photo step (A-SL20,
     John: "have the user articulate what it is"); there `listing.photos[n]` is that asset's UUID
     rather than a path, so the caption is looked up BY THE UUID and the column has nothing in it.
-    `photo_captions` is one contract over both — A-SL22 (2)'s "served as `photo_captions` for
-    published listings", which SL7 could not deliver before `main`'s A-L11 landed.
+    `photo_captions` is one contract over both (A-SL23 (0)) — A-SL22 (2)'s "served as
+    `photo_captions` for published listings", which SL7 could not deliver before A-L11 landed.
 
     The seller's own words win where both homes have something to say: a seeded listing the seller
     has since edited is theirs (A-SL21), and they have looked at the photograph.
 
-    A listing whose photographs are all seeds has an empty `owned` and comes through untouched,
-    which is what keeps the seed contract exactly as A-L11 wrote it — including a `photo_captions`
-    longer or shorter than `photos`, which is that column's own business and not this one's."""
+    The answer is `len(photos)` long on BOTH paths — padded with `""` where the column is short,
+    truncated where it is long (A-SL25 (7), on the SL7 re-review's Minor-D). The two lists are read
+    BY INDEX (`photoSet`'s `p.photoCaptions[i]`), so a ragged pair is a caption sliding onto a
+    photograph it does not describe; returning the column untouched wherever no asset had spoken
+    made that guarantee conditional on a seller having captioned something, which is not a rule
+    anyone could rely on. `""` rather than `None` for the padding: it is a caption slot that exists
+    and holds nothing, which is what `photoSet` renders its own fixed slot caption in place of."""
+    padded: list[str | None] = [*stored, *[""] * (len(photos) - len(stored))]
     if not owned:
-        return stored
-    padded: list[str | None] = [*stored, *[None] * (len(photos) - len(stored))]
+        return padded[:len(photos)]
     return [(owned.get(entry) if entry is not None else None) or padded[n] for n, entry in enumerate(photos)]
 
 

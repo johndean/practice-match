@@ -1844,7 +1844,7 @@ class Component extends DCLogic {
     f: { type: "Any", price: "Any", revenue: "Any", doctors: "Any", building: "Any" },
     loading: false, activeId: null, hoverId: null, detailId: "p1", detailDocs: false,
     interest: "closed", interestMsg: "", sent: [],
-    step: 1, wizErr: "", wizSubmitted: false,
+    step: 1, wizErr: "", wizSubmitted: false, wizAssets: [], creating: false,
     w: { name: "", type: "Small animal", est: "", city: "", zip: "", anon: true, price: "", rev: "", revBand: false, docs: "", rooms: "", sqft: "", bldg: "Included", facility: "", desc: "", photos: 0, ownership: "Sole proprietor", hours: "", facilityType: "Standalone", docsLocked: true },
     adminTab: "users", sellerView: "dash",
     sellerListings: [
@@ -1890,7 +1890,7 @@ class Component extends DCLogic {
     if (this.props.startAnswerNote) this.setState({ answer: Object.assign({}, this.state.answer, { note: this.props.startAnswerNote }) });
     if (this.state.gate === "verify" && !this.state.gateToken) this.setState({ gate: "verify-expired" });
     else if (this.state.gate === "verify" && this.props.auth) this.props.auth.verify(this.state.gateToken).then(() => this.setState({ gate: "signin", gateToken: "", formNotice: "Your address is verified. Sign in to complete your access request." }), () => this.setState({ gate: "verify-expired", gateToken: "" }));
-    if (this.props.listings && me && me.state === "active" && (me.roles || []).indexOf("seller") > -1) this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => this.setState({ myListings: [] }));
+    if (this.props.listings && me && me.state === "active" && (me.roles || []).indexOf("seller") > -1) this.reloadListings();
     if (this.props.startMyListings) this.setState({ myListings: this.props.startMyListings });
   }
 
@@ -2601,6 +2601,14 @@ class Component extends DCLogic {
     });
   }
 
+  openDraft(id, d, err) {
+    this.setState({ sellerView: "wizard", step: 1, wizSubmitted: false, creating: false, wizErr: err || "", editingId: id, wizAssets: (d && d.assets) || [], w: Object.assign({ name: "", type: "Small animal", est: "", city: "", zip: "", anon: true, price: "", rev: "", revBand: false, docs: "", rooms: "", sqft: "", bldg: "Included", facility: "", desc: "", photos: 0, ownership: "Sole proprietor", hours: "", facilityType: "Standalone", docsLocked: true }, (d && d.w) || {}) });
+  }
+
+  reloadListings() {
+    return this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => this.setState({ myListings: [] }));
+  }
+
   statusPill(status) {
     const map = {
       published: ["Published", "#ffffff", "#003a70", "#003a70"],
@@ -2618,7 +2626,7 @@ class Component extends DCLogic {
     if (this.props.listings) {
       const action = status === "paused" ? "pause" : status === "withdrawn" ? "withdraw" : "republish";
       this.props.listings.setStatus(id, action).then(
-        () => this.props.listings.list().then((rows) => this.setState({ myListings: rows })),
+        () => this.reloadListings(),
         (e) => this.setState((st) => ({ myListings: (st.myListings || []).map((l) => (l.id === id ? Object.assign({}, l, { note: (e && e.message) || "That could not be changed." }) : l)) }))
       );
     }
@@ -2796,8 +2804,8 @@ class Component extends DCLogic {
         const openWizard = () => {
           if (!this.props.listings) return this.setState({ sellerView: "wizard", step: 1 });
           return this.props.listings.get(l.id).then(
-            (d) => this.setState((st) => ({ sellerView: "wizard", step: 1, wizErr: "", wizSubmitted: false, editingId: l.id, wizAssets: d.assets, w: Object.assign({}, st.w, d.w) })),
-            (e) => this.setState({ sellerView: "wizard", step: 1, wizErr: (e && e.message) || "That listing could not be opened." })
+            (d) => this.openDraft(l.id, d, ""),
+            (e) => this.openDraft(null, null, (e && e.message) || "That listing could not be opened.")
           );
         };
         if (l.status === "draft") actions.push({ label: "Continue", go: openWizard });
@@ -2859,8 +2867,8 @@ class Component extends DCLogic {
 
     const cfg = byStep[step] || byStep[1];
     const slots = this.photoSet({ id: "wiz", type: w.type, photos: [], name: w.name, area: w.city });
-    const uploads = s.wizAssets
-      ? s.wizAssets.map((a, i) => ({ kind: a.kind, name: a.name || (slots[i] ? slots[i].caption : "Photo " + (i + 1)) }))
+    const uploads = this.props.listings
+      ? (s.wizAssets || []).map((a, i) => ({ kind: a.kind, name: a.name || (slots[i] ? slots[i].caption : "Photo " + (i + 1)) }))
       : [{ kind: "Photo", name: "Exterior.jpg" }, { kind: "Photo", name: "Lobby.jpg" }, { kind: "Photo", name: "Treatment.jpg" }, { kind: "PDF", name: "Floor plan.pdf" }].slice(0, 3 + (w.photos || 0));
 
     return {
@@ -2875,7 +2883,8 @@ class Component extends DCLogic {
       hasUpload: step === 6,
       uploads,
       addPhoto: () => {
-        if (!this.props.listings || !s.editingId) return this.setState((st) => ({ w: Object.assign({}, st.w, { photos: Math.min((st.w.photos || 0) + 1, 1) }) }));
+        if (!this.props.listings) return this.setState((st) => ({ w: Object.assign({}, st.w, { photos: Math.min((st.w.photos || 0) + 1, 1) }) }));
+        if (!s.editingId) return null;
         return this.props.listings.attach(s.editingId).then(
           (d) => (d ? this.setState({ wizAssets: d.assets, wizErr: "" }) : null),
           (e) => this.setState({ wizErr: (e && e.message) || "That file could not be uploaded." })
@@ -2920,7 +2929,7 @@ class Component extends DCLogic {
         ? "Practice name and street address are hidden. Buyers see the community and an approximate map pin until you approve their request."
         : "Practice name and address are visible to every approved buyer. Turn on generalized location in step 7 if you are still operating.",
       submit: () => (this.props.listings && s.editingId
-        ? this.props.listings.submit(s.editingId).then(() => this.props.listings.list().then((rows) => this.setState({ myListings: rows })), (e) => this.setState({ wizErr: (e && e.message) || "That could not be submitted." }))
+        ? this.props.listings.submit(s.editingId).then(() => this.reloadListings(), (e) => this.setState({ wizErr: (e && e.message) || "That could not be submitted." }))
         : Promise.resolve()) && this.setState({ wizSubmitted: true, sellerListings: [{ id: "s" + Date.now(), title: ((w.type || "Small animal") + " practice — " + (w.city || "New listing")), meta: (w.price ? "$" + w.price : "Price to be set") + " · " + (w.docs || "?") + " doctors", status: "in_review", note: "Submitted just now · awaiting VIN Foundation review" }].concat(this.state.sellerListings) })
     };
   }
@@ -3345,18 +3354,17 @@ class Component extends DCLogic {
       isSeller: s.screen === "seller",
       startWizard: () => {
         if (!this.props.listings) return this.setState({ sellerView: "wizard", step: 1, wizSubmitted: false, wizErr: "" });
-        const fresh = { sellerView: "wizard", step: 1, wizSubmitted: false, wizAssets: null, w: { name: "", type: "Small animal", est: "", city: "", zip: "", anon: true, price: "", rev: "", revBand: false, docs: "", rooms: "", sqft: "", bldg: "Included", facility: "", desc: "", photos: 0, ownership: "Sole proprietor", hours: "", facilityType: "Standalone", docsLocked: true } };
-        return this.props.listings.create().then(
-          (id) => this.setState(Object.assign({}, fresh, { editingId: id, wizErr: "" })),
-          (e) => this.setState(Object.assign({}, fresh, { editingId: null, wizErr: (e && e.message) || "A new listing could not be started." }))
-        );
+        if (s.creating) return null;
+        this.setState({ creating: true });
+        return this.props.listings.create()
+          .then((id) => this.props.listings.get(id).then((d) => this.openDraft(id, d, "")))
+          .catch((e) => this.openDraft(null, null, (e && e.message) || "A new listing could not be started."));
       },
       exitWizard: () => {
         if (!this.props.listings || !s.editingId) return this.setState({ sellerView: "dash", wizSubmitted: false });
-        return this.props.listings.patch(s.editingId, s.step, s.w).then(
-          () => this.props.listings.list().then((rows) => this.setState({ sellerView: "dash", wizSubmitted: false, wizErr: "", myListings: rows }), () => this.setState({ sellerView: "dash", wizSubmitted: false, wizErr: "" })),
-          (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })
-        );
+        return this.props.listings.patch(s.editingId, s.step, s.w)
+          .then(() => this.reloadListings())
+          .then(() => this.setState({ sellerView: "dash", wizSubmitted: false, wizErr: "" }), (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." }));
       },
       seller: this.sellerVals(),
       wiz: this.wizardVals(),

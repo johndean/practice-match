@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Component } from '../logic.js';
+import { designWizardDraft, designWizardTiles } from '../../tests/design-wizard-draft.mjs';
 import {
   ListingError,
   MAX_PAGES,
@@ -475,5 +476,32 @@ describe('toDashboardRow on the design\'s own fixture row', () => {
     expect(toDashboardRow(draft({ id: 'x', status: 'draft' }))).toEqual({
       id: 'x', status: 'draft', title: 'Untitled listing', meta: 'Price to be set', note: 'Draft'
     });
+  });
+});
+
+// --- A-SL25 (1): the oracle's created draft is the design's own wizard, field for field ---------
+describe('the design\'s wizard draft (frontend/tests/design-wizard-draft.mjs)', () => {
+  it('changes nothing the design\'s own initial `w` holds', () => {
+    // A16.14 chains `create → get` and A16.17's `openDraft` lays the draft's values over the
+    // DESIGN's initial `w`. `wizard-step-1`, `wizard-preview` and `wizard-done` are frozen
+    // screens, so the draft the oracle answers with has to leave that `w` exactly as it was —
+    // otherwise the app's three captures diverge from the reference, which renders the literal.
+    //
+    // Spelled as a merge rather than a bare `toEqual`: `toWizardState` emits `state`, which the
+    // design's `w` has no key for (the reviewer supplies it at the first publish, spec Q2), and
+    // does not emit `photos`, the design's own fake counter that `openDraft` keeps. So the
+    // assertion is the one that matters — applying the draft moves nothing the design declares.
+    const w = new Component({}).state.w as Record<string, unknown>;
+    const applied = toWizardState(designWizardDraft('wiz-1') as unknown as Draft);
+    expect({ ...w, ...applied }).toEqual({ ...w, state: '' });
+  });
+
+  it('its photograph tiles are the design\'s own three, through toWizardDraft', async () => {
+    // The other half: `get()` maps the draft to what A16.4 renders, so what the app draws on the
+    // app project is what `logic.js`'s own fallback literal draws on the reference.
+    stubFetch({ status: 200, body: designWizardDraft('wiz-1') });
+    expect((await makeListingsAdapter().get('wiz-1')).assets.map((a) => [a.kind, a.name])).toEqual(
+      designWizardTiles().map((t: { kind: string; name: string }) => [t.kind, t.name])
+    );
   });
 });

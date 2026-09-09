@@ -380,7 +380,7 @@ export function makeListingsAdapter(): ListingsAdapter {
      */
     describe: () => window.prompt('What does this photograph show?')?.trim() ?? '',
     /**
-       * The whole of "Add files": choose a file, put it where its type belongs, and hand back the
+     * The whole of "Add files": choose a file, put it where its type belongs, and hand back the
      * draft the tiles are drawn from. ONE promise, so ONE rejection handler covers all four steps
      * (A-SL23 (4), on the SL7 review's Major-3: the caption's rejection used to be a SIBLING of
      * the upload's fulfilment, so a 429 on `LISTING_PATCH` escaped unhandled, `wizErr` stayed
