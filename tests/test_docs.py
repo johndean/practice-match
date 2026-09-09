@@ -28,7 +28,10 @@ REQUIRED_CI_COMMANDS = (
     # `test_ci_strict_mypy_covers_every_python_script` below is the rule that says WHICH scripts.
     # M2 (2026-09-08): the seed-listings scripts join the same line — the merged workflow runs the
     # union of both branches' scripts, and this pin is that union verbatim.
-    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py --strict",
+    # A4 (2026-09-09): scripts/census_load.py joins the same line the moment it exists
+    # (A-C0 P8) — `test_ci_strict_mypy_covers_every_python_script` derives the requirement from
+    # the scripts/ directory itself, but this substring is a literal pin and has to move by hand.
+    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py --strict",
     "poetry run pytest -q -W error",
     # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
     # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
@@ -1574,6 +1577,56 @@ def test_deploy_md_names_admin_signups_among_app_mode_only_surfaces():
     assert "mounted-and-guarded in app mode" not in section, (
         "DEPLOY.md still overstates the app-mode probe as covering all five surfaces (M-1)"
     )
+def _section(text: str, heading: str) -> str:
+    """Returns one `## <heading>` section's body, up to (not including) the next `## ` heading —
+    the same slice `test_deploy_md_documents_the_site_mode_matrix`-style tests would take by hand,
+    factored out so the Census exit-runbook pins below can scope their assertions to just that
+    section rather than the whole file."""
+    lines = text.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith(f"## {heading}"))
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return "\n".join(lines[start:end])
+
+
+def test_deploy_md_has_a_census_phase_a_exit_runbook_that_runs_in_the_worker_over_ssh():
+    """A-C11 (1) Major fix: the Phase A exit sequence must run INSIDE the worker container over
+    `railway ssh`, never `railway run` -- `railway run` executes on the OPERATOR'S machine with
+    the worker's variables injected, which would pull `CENSUS_API_KEY` and the bucket credentials
+    onto a laptop (A-C1 ¶8) and then fail anyway on the worker's `.railway.internal`-only
+    `DATABASE_URL`. Scoped to the new section alone -- the "Seeding the demo hospitals" section
+    above it legitimately names `railway ssh --service api`, a different service, for a different
+    operation, and must not be conflated with this pin."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    section = _section(text, "Census Phase A exit (QA)")
+    assert "railway ssh --service worker" in section
+    assert "railway run --service worker" not in section
+    assert "railway status" in section and "Project: Practice Match" in section
+    assert "--force" in section and "--note" in section
+    assert "only on John's explicit word" in section
+
+
+def test_census_plan_phase_a_exit_step_runs_in_the_worker_over_ssh_not_railway_run():
+    """The same A-C11 (1) rule, pinned against the plan's own Task A9 closing step -- the exact
+    line the final review's Major finding quoted (`docs/superpowers/plans/2026-09-05-practice-
+    match-census-data-layer.md:2539`, pre-fix)."""
+    plan = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-05-practice-match-census-data-layer.md").read_text()
+    exit_line = next(line for line in plan.splitlines() if line.startswith("**Phase A exit"))
+    assert "railway ssh --service worker" in exit_line
+    assert "railway run --service worker" not in exit_line
+    assert "only on John's explicit word" in exit_line
+
+
+def test_census_load_py_docstring_never_gives_railway_run_as_the_invocation():
+    """The CLI's own module docstring repeated the same wrong `railway run` invocation the plan
+    did (final review Major, "`scripts/census_load.py:3` repeats the form in its own module
+    docstring") -- fixed at the same time, same reason. It may still NAME `railway run` as the
+    thing not to do (that is the fix's own explanation); what it must never do again is give
+    `railway run --service worker ...` as an instruction to follow."""
+    text = (ROOT / "scripts" / "census_load.py").read_text()
+    assert "railway run --service worker" not in text
+    assert "railway ssh --service worker" in text
+
+
 # --- A-L10: the seed photographs match the design's captions ---------------------------------
 
 

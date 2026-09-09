@@ -6,6 +6,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 
+from app.api.admin_data_sources import router as admin_data_sources_router
 from app.api.admin_signups import router as admin_signups_router
 from app.api.admin_users import router as admin_users_router
 from app.api.applications import router as applications_router
@@ -81,6 +82,10 @@ def create_app(dist: Path | None = None) -> FastAPI:
         # and /api/admin/* path falls through to `not_found_router`'s JSON 404.
         app.include_router(applications_router)
         app.include_router(admin_users_router)
+        # Same gate, third time (Census A-C0 ¶5): the admin Data Sources console is staff/admin
+        # only and its licence decisions are admin-and-re-authenticated, so behind the Coming Soon
+        # page it is absent rather than merely guarded, like every other /api/admin/* path.
+        app.include_router(admin_data_sources_router)
         # Same gate again (Seed Listings A-L5.1): the three listing reads are MEMBER endpoints
         # — `listing.read` is buyer/seller/staff/admin — so behind the Coming Soon page they are
         # absent rather than merely guarded, and `scripts/verify-deploy.sh production` probes

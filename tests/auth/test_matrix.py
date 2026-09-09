@@ -176,9 +176,10 @@ REAUTH_OUTSIDE_THE_SWEEP = {
     # (app/api/admin_users.py). Driven over HTTP, as a token and as a session, by
     # tests/api/test_admin_users.py::test_an_api_token_never_satisfies_a_reauth_gate.
     "users.revoke": "in-handler guard",
-    # No route mounts these yet — they arrive with the Map-engines sub-project, and the rows above
-    # will pick them up on the commit that adds them.
-    "licence.decide": "no route yet",
+    # No route mounts this yet — it arrives with the Map-engines sub-project, and the rows above
+    # will pick it up on the commit that adds it. (`licence.decide` left this list in Census Task
+    # A9: `POST /api/admin/data-sources/{dataset_key}/license` carries it as a route-level guard,
+    # so the sweep sees it — A-C0 ¶3.)
     "engine.activate": "no route yet",
 }
 

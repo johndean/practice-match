@@ -39,11 +39,14 @@ COLD_ME_BUDGET_MS = 60   # the review's ⚠️: /api/me with the principal cache
 # (2,000 seeded accounts, both index names asserted). The first version of this comment claimed
 # this budget was "about the INDEXES", which nothing here could have shown (I9a fix round 1,
 # Important 2).
+# `GET /api/admin/data-sources` joins the dict in Census Task A9's fix round (A-C9 (7)); its budget is the
+# quality-and-performance policy's own 150 ms row for this path (A9 re-review), not the plan's paraphrase.
 BUDGET_MS = {"/api/healthz": 20, "/": 15, "/api/me": 20, "/api/admin/users?state=pending": 150,
              # Task I5d: the other administrative READ a reviewer waits on, budgeted with the
              # queue it sits beside (spec §8). Same caveat as the line above — this gates the code
              # path, not the plan; `tests/perf/test_query_plans.py::signups_list` gates the plan.
-             "/api/admin/signups": 150}   # Census B5 and Map engines M3/M4 extend this dict
+             "/api/admin/signups": 150,
+             "/api/admin/data-sources": 150}   # Census B5 and Map engines M3/M4 extend this dict
 # Paths BUDGET_MS measures through the SIGNED-IN client rather than the anonymous one (Task I4):
 # `/api/me` answered anonymously is a 401 that never opens a connection, which is not the path the
 # app serves. Everything else here is public and is measured as a visitor sees it.
@@ -51,7 +54,10 @@ SIGNED_IN_PATHS = frozenset({"/api/me"})
 # Task I9a: the same argument one role further up. `GET /api/admin/users` is guarded by
 # `users.review` (staff/admin), so measured as a visitor — or even as the `signed_in` member, who
 # holds no grant — it is a 401/403 decided before any connection is opened.
-STAFF_PATHS = frozenset({"/api/admin/users?state=pending", "/api/admin/signups"})
+# Census A9 (A-C9 (7)): `data_sources.read` is staff/admin too, so the Data Sources console is
+# measured through the same credential. Without this entry the samples would be 401s decided before
+# any connection is opened — a budget that always passes and measures nothing.
+STAFF_PATHS = frozenset({"/api/admin/users?state=pending", "/api/admin/signups", "/api/admin/data-sources"})
 PERF_PW = "orbit-lantern-quiet-42"
 
 
