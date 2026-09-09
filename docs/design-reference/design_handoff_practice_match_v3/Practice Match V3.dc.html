@@ -1304,7 +1304,7 @@
                         </div>
                         <div style="display: flex; gap: 9px; margin-top: 14px; flex-wrap: wrap;">
                           <sc-for list="{{ wiz.uploads }}" as="u" hint-placeholder-count="3">
-                            <div style="width: 92px;">
+                            <div style="width: 92px; cursor: pointer;" title="Change what this photograph shows" onClick="{{ u.describe }}">
                               <div style="height: 68px; border-radius: 8px; background: var(--rf-band); display: grid; place-items: center; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #339dde;">{{ u.kind }}</div>
                               <div style="font-size: 11px; color: var(--color-steel); margin-top: 4px;">{{ u.name }}</div>
                             </div>
@@ -1703,7 +1703,7 @@
 </div>
 
 </x-dc>
-<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:940},&quot;prototypeBar&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Show prototype jump bar&quot;},&quot;startScreen&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;gate&quot;,&quot;browse&quot;,&quot;detail&quot;,&quot;requests&quot;,&quot;seller&quot;,&quot;admin&quot;],&quot;default&quot;:&quot;gate&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Screen on load&quot;},&quot;startViewport&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;desktop&quot;,&quot;mobile&quot;],&quot;default&quot;:&quot;desktop&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Viewport on load&quot;},&quot;startGate&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;signin&quot;,&quot;apply&quot;,&quot;pending&quot;,&quot;rejected&quot;,&quot;signup&quot;,&quot;check-email&quot;,&quot;verify-expired&quot;,&quot;forgot&quot;,&quot;reset&quot;,&quot;reset-expired&quot;,&quot;invite&quot;,&quot;answer&quot;,&quot;unavailable&quot;],&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Start on gate state&quot;},&quot;me&quot;:{&quot;editor&quot;:&quot;json&quot;,&quot;default&quot;:null,&quot;tsType&quot;:&quot;object&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Signed-in account&quot;},&quot;startNotice&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Sign-in notice on load&quot;},&quot;startAnswerNote&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Applicant answer note on load&quot;},&quot;layerPalette&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;distinct&quot;,&quot;cool&quot;,&quot;colorblind&quot;],&quot;default&quot;:&quot;distinct&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Market data&quot;,&quot;label&quot;:&quot;Data layer palette&quot;}}">
+<script type="text/x-dc" data-dc-script data-props="{&quot;$preview&quot;:{&quot;width&quot;:1440,&quot;height&quot;:940},&quot;prototypeBar&quot;:{&quot;editor&quot;:&quot;boolean&quot;,&quot;default&quot;:true,&quot;tsType&quot;:&quot;boolean&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Show prototype jump bar&quot;},&quot;startScreen&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;gate&quot;,&quot;browse&quot;,&quot;detail&quot;,&quot;requests&quot;,&quot;seller&quot;,&quot;admin&quot;],&quot;default&quot;:&quot;gate&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Screen on load&quot;},&quot;startViewport&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;desktop&quot;,&quot;mobile&quot;],&quot;default&quot;:&quot;desktop&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Viewport on load&quot;},&quot;startGate&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;signin&quot;,&quot;apply&quot;,&quot;pending&quot;,&quot;rejected&quot;,&quot;signup&quot;,&quot;check-email&quot;,&quot;verify-expired&quot;,&quot;forgot&quot;,&quot;reset&quot;,&quot;reset-expired&quot;,&quot;invite&quot;,&quot;answer&quot;,&quot;unavailable&quot;],&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Start on gate state&quot;},&quot;me&quot;:{&quot;editor&quot;:&quot;json&quot;,&quot;default&quot;:null,&quot;tsType&quot;:&quot;object&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Signed-in account&quot;},&quot;startNotice&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Sign-in notice on load&quot;},&quot;startAnswerNote&quot;:{&quot;editor&quot;:&quot;text&quot;,&quot;default&quot;:&quot;&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Applicant answer note on load&quot;},&quot;startMyListings&quot;:{&quot;editor&quot;:&quot;json&quot;,&quot;default&quot;:null,&quot;tsType&quot;:&quot;object&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Seller listings on load&quot;},&quot;layerPalette&quot;:{&quot;editor&quot;:&quot;enum&quot;,&quot;options&quot;:[&quot;distinct&quot;,&quot;cool&quot;,&quot;colorblind&quot;],&quot;default&quot;:&quot;distinct&quot;,&quot;tsType&quot;:&quot;string&quot;,&quot;section&quot;:&quot;Market data&quot;,&quot;label&quot;:&quot;Data layer palette&quot;}}">
 const P = [
   { id:"p1", area:"Cedar Park", type:"Small animal", price:1450000, rev:2100000, docs:3, rooms:5, sqft:4200, bldg:"Included", lat:30.5052, lng:-97.8203, est:1998, listed:"3 days ago", status:"published",
     pop:"81,900", growth:"+14.2% since 2015", income:"$118,400", hh:"27,600 households", note:"Owner retiring after 27 years; open to a six-month transition.", staff:"3 DVMs, 4 licensed technicians, 6 support staff", hours:"Mon–Fri 7:30–6, Sat 8–1", services:"Wellness, dentistry, soft-tissue surgery, in-house lab, digital radiography", facility:"Freestanding building on a 0.6-acre corner lot, remodeled 2019.", ownership:"Sole proprietor (S-corp)" },
@@ -1903,7 +1903,7 @@ class Component extends DCLogic {
     loading: false, activeId: null, hoverId: null, detailId: "p1", detailDocs: false,
     interest: "closed", interestMsg: "", sent: [],
     lightbox: null, lightboxFocus: false,
-    step: 1, wizErr: "", wizSubmitted: false,
+    step: 1, wizErr: "", wizSubmitted: false, wizAssets: [], creating: false,
     w: { name: "", type: "Small animal", est: "", city: "", zip: "", anon: true, price: "", rev: "", revBand: false, docs: "", rooms: "", sqft: "", bldg: "Included", facility: "", desc: "", photos: 0, ownership: "Sole proprietor", hours: "", facilityType: "Standalone", docsLocked: true },
     adminTab: "users", sellerView: "dash",
     sellerListings: [
@@ -2014,6 +2014,9 @@ class Component extends DCLogic {
     if (this.props.startAnswerNote) this.setState({ answer: Object.assign({}, this.state.answer, { note: this.props.startAnswerNote }) });
     if (this.state.gate === "verify" && !this.state.gateToken) this.setState({ gate: "verify-expired" });
     else if (this.state.gate === "verify" && this.props.auth) this.props.auth.verify(this.state.gateToken).then(() => this.setState({ gate: "signin", gateToken: "", formNotice: "Your address is verified. Sign in to complete your access request." }), () => this.setState({ gate: "verify-expired", gateToken: "" }));
+    if (this.props.listings && me && me.state === "active" && (me.roles || []).indexOf("seller") > -1) this.reloadListings();
+    if (this.props.startMyListings) this.setState({ myListings: this.props.startMyListings });
+    if (this.props.adminListings && me && me.state === "active" && (me.roles || []).some((r) => r === "staff" || r === "admin")) this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] }));
   }
 
   // Arrow-key movement inside the Give menu. Focus IS the highlight — vinfoundation.org has
@@ -2032,7 +2035,11 @@ class Component extends DCLogic {
 
   go = (screen) => () => {
     if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false });
-    this.setState({ screen, interest: "closed", userMenu: false, lightbox: null, lightboxFocus: false });
+    if (!this.props.listings || this.state.sellerView !== "wizard" || !this.state.editingId) return this.setState({ screen, interest: "closed", userMenu: false, lightbox: null, lightboxFocus: false });
+    return this.props.listings.patch(this.state.editingId, this.state.step, this.state.w, true).then(
+      (d) => this.setState({ screen, interest: "closed", userMenu: false, wizAssets: d.assets, wizErr: "", lightbox: null, lightboxFocus: false }),
+      (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })
+    );
   };
 
   setF = (key) => (e) => {
@@ -2819,19 +2826,35 @@ class Component extends DCLogic {
     });
   }
 
+  openDraft(id, d, err) {
+    this.setState({ sellerView: "wizard", step: 1, wizSubmitted: false, creating: false, wizErr: err || "", editingId: id, wizAssets: (d && d.assets) || [], w: Object.assign({ name: "", type: "Small animal", est: "", city: "", zip: "", anon: true, price: "", rev: "", revBand: false, docs: "", rooms: "", sqft: "", bldg: "Included", facility: "", desc: "", photos: 0, ownership: "Sole proprietor", hours: "", facilityType: "Standalone", docsLocked: true }, (d && d.w) || {}) });
+  }
+
+  reloadListings() {
+    return this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => this.setState({ myListings: [] }));
+  }
+
   statusPill(status) {
     const map = {
       published: ["Published", "#ffffff", "#003a70", "#003a70"],
       in_review: ["In VIN Foundation review", "#003a70", "#deecf7", "#deecf7"],
       draft: ["Draft", "#494949", "#f5f5f5", "#d4dde5"],
       paused: ["Paused", "#003a70", "#ffffff", "#339dde"],
-      withdrawn: ["Withdrawn", "#494949", "#ffffff", "#494949"]
+      withdrawn: ["Withdrawn", "#494949", "#ffffff", "#494949"],
+      declined: ["Declined", "#494949", "#ffffff", "#494949"]
     };
     const m = map[status] || map.draft;
     return { label: m[0], style: "flex: none; font-size: 11.5px; font-weight: 500; padding: 5px 12px; border-radius: 999px; color: " + m[1] + "; background: " + m[2] + "; border: 1px solid " + m[3] + ";" };
   }
 
   setListingStatus(id, status) {
+    if (this.props.listings) {
+      const action = status === "paused" ? "pause" : status === "withdrawn" ? "withdraw" : "republish";
+      this.props.listings.setStatus(id, action).then(
+        () => this.reloadListings(),
+        (e) => this.setState((st) => ({ myListings: (st.myListings || []).map((l) => (l.id === id ? Object.assign({}, l, { note: (e && e.message) || "That could not be changed." }) : l)) }))
+      );
+    }
     this.setState((s) => ({ sellerListings: s.sellerListings.map((l) => (l.id === id ? Object.assign({}, l, { status, note: status === "paused" ? "Paused by you just now · hidden from search" : status === "withdrawn" ? "Withdrawn just now · no longer visible to buyers" : status === "published" ? "Live again · visible in search" : l.note }) : l)) }));
   }
 
@@ -2935,13 +2958,13 @@ class Component extends DCLogic {
         columns: ["Listing", "Seller and figures", "Status", "Action"],
         grid: "1.2fr 1.4fr .8fr .9fr",
         footnote: "Listings stay invisible to buyers until a reviewer publishes them. Unpublishing is immediate and reversible; withdrawn listings keep their history for reporting but no longer appear in search.",
-        rows: [
+        rows: s.adminListingRows !== undefined ? s.adminListingRows : (this.props.adminListings ? [] : [
           [cell("Mixed practice — Bastrop", "Submitted September 1"), cell("Dr. Susan Ortiz", "$860K asking · $1.2M revenue · 2 doctors · building leased"), cell(null, null, "In review", "warn"), cell(null, null, null, null, [A("Publish", "primary"), A("Reject", "danger")])],
           [cell("Specialty practice — Pflugerville", "Submitted August 30"), cell("Dr. Nathan Weiss", "$2.65M asking · $3.8M revenue · 6 doctors · unit available separately"), cell(null, null, "In review", "warn"), cell(null, null, null, null, [A("Publish", "primary"), A("Reject", "danger")])],
           [cell("Small animal practice — Cedar Park", "Published August 24"), cell("Dr. James Whitfield", "$1.45M asking · 34 views · 2 requests"), cell(null, null, "Published", "ok"), cell(null, null, null, null, [A("Unpublish"), A("Edit")])],
           [cell("Small animal practice — Buda", "Paused by seller August 12"), cell("Dr. Helen Park", "$1.1M asking · hidden from search"), cell(null, null, "Paused", "info"), cell(null, null, null, null, [A("Contact seller")])],
           [cell("Small animal practice — Temple", "Flagged by two members"), cell("Unverified seller", "Figures appear copied from a broker listing; contact details in the description."), cell(null, null, "Flagged", "bad"), cell(null, null, null, null, [A("Investigate", "primary"), A("Unpublish", "danger")])]
-        ]
+        ])
       },
       activity: {
         columns: ["Request", "Practice", "Status", "Age"],
@@ -3000,14 +3023,21 @@ class Component extends DCLogic {
       isDash: !isWizard, isWizard: isWizard,
       heading: isWizard ? "Create a Listing" : "My Practice Listings",
       sub: isWizard ? "Eight short steps. Nothing is visible to buyers until you submit and the VIN Foundation approves." : "Publish, pause or withdraw a listing, and answer the buyers who ask about it.",
-      listings: s.sellerListings.map((l) => {
+      listings: (s.myListings !== undefined ? s.myListings : (this.props.listings ? [] : s.sellerListings)).map((l) => {
         const pill = this.statusPill(l.status);
         const actions = [];
-        if (l.status === "draft") actions.push({ label: "Continue", go: () => this.setState({ sellerView: "wizard", step: 1 }) });
-        else actions.push({ label: "Edit", go: () => this.setState({ sellerView: "wizard", step: 1 }) });
+        const openWizard = () => {
+          if (!this.props.listings) return this.setState({ sellerView: "wizard", step: 1 });
+          return this.props.listings.get(l.id).then(
+            (d) => this.openDraft(l.id, d, ""),
+            (e) => this.openDraft(null, null, (e && e.message) || "That listing could not be opened.")
+          );
+        };
+        if (l.status === "draft") actions.push({ label: "Continue", go: openWizard });
+        else actions.push({ label: "Edit", go: openWizard });
         if (l.status === "published") {
           actions.push({ label: "Pause", go: () => this.setListingStatus(l.id, "paused") });
-          actions.push({ label: "View", go: () => this.setState({ screen: "detail", detailId: "p1" }) });
+          actions.push({ label: "View", go: () => this.setState({ screen: "detail", detailId: l.id || "p1" }) });
         }
         if (l.status === "paused") actions.push({ label: "Republish", go: () => this.setListingStatus(l.id, "published") });
         if (l.status !== "withdrawn" && l.status !== "draft") actions.push({ label: "Withdraw", go: () => this.setListingStatus(l.id, "withdrawn") });
@@ -3061,7 +3091,10 @@ class Component extends DCLogic {
     };
 
     const cfg = byStep[step] || byStep[1];
-    const uploads = [{ kind: "Photo", name: "Exterior.jpg" }, { kind: "Photo", name: "Lobby.jpg" }, { kind: "Photo", name: "Treatment.jpg" }, { kind: "PDF", name: "Floor plan.pdf" }].slice(0, 3 + (w.photos || 0));
+    const slots = this.photoSet({ id: "wiz", type: w.type, photos: [], name: w.name, area: w.city });
+    const uploads = this.props.listings
+      ? (s.wizAssets || []).map((a, i) => ({ kind: a.kind, name: a.name || (slots[i] ? slots[i].caption : "Photo " + (i + 1)), describe: a.kind !== "Photo" || !s.editingId ? null : () => (a.source === "asset" ? this.props.listings.caption(s.editingId, a.id, this.props.listings.describe()) : this.props.listings.describe(s.editingId, a.position, this.props.listings.describe())).then((d) => this.setState({ wizAssets: d.assets, wizErr: "" }), (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })) }))
+      : [{ kind: "Photo", name: "Exterior.jpg" }, { kind: "Photo", name: "Lobby.jpg" }, { kind: "Photo", name: "Treatment.jpg" }, { kind: "PDF", name: "Floor plan.pdf" }].slice(0, 3 + (w.photos || 0));
 
     return {
       isForm: !s.wizSubmitted && step <= 7,
@@ -3074,29 +3107,48 @@ class Component extends DCLogic {
       toggles: cfg.toggles.map((t) => ({ label: t.label, help: t.help, on: !!w[t.key], toggle: this.setW(t.key) })),
       hasUpload: step === 6,
       uploads,
-      addPhoto: () => this.setState((st) => ({ w: Object.assign({}, st.w, { photos: Math.min((st.w.photos || 0) + 1, 1) }) })),
+      addPhoto: () => {
+        if (!this.props.listings) return this.setState((st) => ({ w: Object.assign({}, st.w, { photos: Math.min((st.w.photos || 0) + 1, 1) }) }));
+        if (!s.editingId) return null;
+        return this.props.listings.attach(s.editingId).then(
+          (d) => (d ? this.setState({ wizAssets: d.assets, wizErr: "" }) : null),
+          (e) => this.setState({ wizErr: (e && e.message) || "That file could not be uploaded." })
+        );
+      },
       error: !!s.wizErr, errorText: s.wizErr,
       progressLabel: "Step " + step + " of 8",
       barStyle: "height: 100%; width: " + Math.round((step / 8) * 100) + "%; background: var(--color-blue); transition: width 300ms var(--easing-out);",
       steps: names.map((n, i) => ({
-        n: String(i + 1), label: n, go: () => this.setState({ step: i + 1, wizErr: "" }),
+        n: String(i + 1), label: n, go: () => (!this.props.listings || !s.editingId
+          ? this.setState({ step: i + 1, wizErr: "" })
+          : this.props.listings.patch(s.editingId, step, w, true).then(
+              (d) => this.setState({ step: i + 1, wizErr: "", wizAssets: d.assets }),
+              (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." }))),
         style: "display: flex; align-items: center; gap: 11px; padding: 9px 10px; text-align: left; font-family: var(--rf-display); font-size: 13.5px; font-weight: " + (step === i + 1 ? "600" : "400") + "; color: " + (step === i + 1 ? "var(--color-navy)" : "var(--color-steel)") + "; background: " + (step === i + 1 ? "var(--rf-band)" : "transparent") + "; border: 0; border-radius: 6px; cursor: pointer;",
         dotStyle: "flex: none; width: 22px; height: 22px; border-radius: 999px; display: grid; place-items: center; font-size: 11px; font-weight: 700; color: " + (step > i + 1 ? "var(--color-white)" : step === i + 1 ? "var(--color-white)" : "var(--color-steel)") + "; background: " + (step > i + 1 ? "var(--vf-navy)" : step === i + 1 ? "var(--color-blue)" : "var(--color-off-white)") + "; border: 1px solid " + (step >= i + 1 ? "transparent" : "var(--border-subtle)") + ";"
       })),
       saveNote: "Saved automatically",
       nextLabel: step === 7 ? "Preview listing" : "Continue",
       backStyle: "font-family: var(--rf-display); height: 48px; padding: 0 20px; font-size: 14px; font-weight: 500; letter-spacing: .04em; text-transform: uppercase; color: " + (step === 1 ? "var(--border-subtle)" : "var(--color-navy)") + "; background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: " + (step === 1 ? "default" : "pointer") + ";",
-      back: () => this.setState({ step: Math.max(1, step - 1), wizErr: "" }),
+      back: () => (!this.props.listings || !s.editingId
+        ? this.setState({ step: Math.max(1, step - 1), wizErr: "" })
+        : this.props.listings.patch(s.editingId, step, w, true).then(
+            (d) => this.setState({ step: Math.max(1, step - 1), wizErr: "", wizAssets: d.assets }),
+            (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." }))),
       next: () => {
         if (step === 1 && (!w.name || !w.est)) return this.setState({ wizErr: "Practice name and year established are needed before you continue." });
         if (step === 2 && (!w.city || !w.zip)) return this.setState({ wizErr: "A city and ZIP code are needed to place your practice on the map." });
         if (step === 3 && (!w.price || (!w.rev && !w.revBand))) return this.setState({ wizErr: "Enter an asking price and either an exact revenue figure or choose the range option." });
-        this.setState({ step: Math.min(8, step + 1), wizErr: "" });
+        if (!this.props.listings || !s.editingId) return this.setState({ step: Math.min(8, step + 1), wizErr: "" });
+        return this.props.listings.patch(s.editingId, step, w).then(
+          (d) => this.setState({ step: Math.min(8, step + 1), wizErr: "", wizAssets: d.assets }),
+          (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })
+        );
       },
       previewTitle: (w.type || "Small animal") + " practice — " + (w.city || "Your community"),
       previewRows: [
         { k: "Practice type", v: w.type || "Small animal" },
-        { k: "General location", v: (w.city || "\u2014") + (w.city ? ", TX" : "") },
+        { k: "General location", v: (w.city || "\u2014") + (w.city && w.state ? ", " + w.state : "") },
         { k: "Established", v: w.est || "\u2014" },
         { k: "Asking price", v: w.price ? "$" + w.price : "\u2014" },
         { k: "Gross revenue", v: w.rev ? (w.revBand ? "Range shown to buyers" : "$" + w.rev) : "\u2014" },
@@ -3104,12 +3156,14 @@ class Component extends DCLogic {
         { k: "Exam rooms", v: w.rooms || "\u2014" },
         { k: "Square feet", v: w.sqft || "\u2014" },
         { k: "Property", v: w.bldg === "Included" ? "Included in sale" : w.bldg === "Leased" ? "Leased" : "Available separately" },
-        { k: "Photos attached", v: String(uploads.length) }
+        { k: "Photos attached", v: String(uploads.filter((u) => u.kind === "Photo").length) }
       ],
       previewNote: w.anon
         ? "Practice name and street address are hidden. Buyers see the community and an approximate map pin until you approve their request."
         : "Practice name and address are visible to every approved buyer. Turn on generalized location in step 7 if you are still operating.",
-      submit: () => this.setState({ wizSubmitted: true, sellerListings: [{ id: "s" + Date.now(), title: ((w.type || "Small animal") + " practice — " + (w.city || "New listing")), meta: (w.price ? "$" + w.price : "Price to be set") + " · " + (w.docs || "?") + " doctors", status: "in_review", note: "Submitted just now · awaiting VIN Foundation review" }].concat(this.state.sellerListings) })
+      submit: () => (this.props.listings && s.editingId
+        ? this.props.listings.submit(s.editingId).then(() => this.reloadListings(), (e) => this.setState({ wizErr: (e && e.message) || "That could not be submitted." }))
+        : Promise.resolve()) && this.setState({ wizSubmitted: true, sellerListings: [{ id: "s" + Date.now(), title: ((w.type || "Small animal") + " practice — " + (w.city || "New listing")), meta: (w.price ? "$" + w.price : "Price to be set") + " · " + (w.docs || "?") + " doctors", status: "in_review", note: "Submitted just now · awaiting VIN Foundation review" }].concat(this.state.sellerListings) })
     };
   }
 
@@ -3349,7 +3403,10 @@ class Component extends DCLogic {
         // has not rendered the panel yet, so the index is seeded and givePanelRef spends it.
         this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 });
       },
-      signOut: () => (this.props.auth ? this.props.auth.signOut().catch(() => {}) : Promise.resolve()).then(() => this.setState({
+      signOut: () => (this.props.listings && s.sellerView === "wizard" && s.editingId
+          ? this.props.listings.patch(s.editingId, s.step, s.w, true).catch(() => {})
+          : Promise.resolve()
+        ).then(() => (this.props.auth ? this.props.auth.signOut().catch(() => {}) : Promise.resolve())).then(() => this.setState({
         userMenu: false, auth: false, screen: "gate", gate: "signin", pw: "",
         interest: "closed", activeId: null, hoverId: null, sellerView: "dash", wizSubmitted: false, formError: "",
         lightbox: null, lightboxFocus: false
@@ -3647,8 +3704,20 @@ class Component extends DCLogic {
       }),
 
       isSeller: s.screen === "seller",
-      startWizard: () => this.setState({ sellerView: "wizard", step: 1, wizSubmitted: false, wizErr: "" }),
-      exitWizard: () => this.setState({ sellerView: "dash", wizSubmitted: false }),
+      startWizard: () => {
+        if (!this.props.listings) return this.setState({ sellerView: "wizard", step: 1, wizSubmitted: false, wizErr: "" });
+        if (s.creating) return null;
+        this.setState({ creating: true });
+        return this.props.listings.create()
+          .then((id) => this.props.listings.get(id).then((d) => this.openDraft(id, d, "")))
+          .catch((e) => this.openDraft(null, null, (e && e.message) || "A new listing could not be started."));
+      },
+      exitWizard: () => {
+        if (!this.props.listings || !s.editingId) return this.setState({ sellerView: "dash", wizSubmitted: false });
+        return this.props.listings.patch(s.editingId, s.step, s.w, true)
+          .then(() => this.reloadListings())
+          .then(() => this.setState({ sellerView: "dash", wizSubmitted: false, wizErr: "" }), (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." }));
+      },
       seller: this.sellerVals(),
       wiz: this.wizardVals(),
       isAdmin: s.screen === "admin",

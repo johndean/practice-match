@@ -139,6 +139,54 @@ describe('local design amendments (spec D15)', () => {
     // `photos` and no `photoCaptions` at all, so both guards are falsey and A15 moves no
     // approved state.
     'A15.1', 'A15.2', 'A15.3a', 'A15.3b', 'A15.3c', 'A15.3d',
+    // A16 — the seller wizard and dashboard read and write the real API (spec D23, controller
+    // amendments A-SL17/A-SL20/A-SL22). A13 and A14 were the dropdown branch's, reserved while
+    // this branch was built; the family id is derived from the tree at branch time (A-SL4), never
+    // typed from the plan, which is why this one is 16. Merged after A13/A14/A15 at SL9 (A-SL34
+    // (3)): A16/A17 land here, between A15 and A18/A19, in id order.
+    'A16.1', 'A16.2', 'A16.3', 'A16.4', 'A16.5', 'A16.6', 'A16.7', 'A16.8', 'A16.9', 'A16.10',
+    // A16.11a/b — the eighth declared prototype prop, `startMyListings`: A-SL17's empty
+    // dashboard is a state the design's fixtures cannot express, and this is the mechanism
+    // A8.8b and A9.1a established for exactly that.
+    'A16.11a', 'A16.11b',
+    // A16.12/A16.13 — the preview tells the truth about the draft behind it (A-SL22 (4)): the
+    // photograph count stops counting documents, and the location names the listing's own state
+    // rather than Texas (A12.8's ruled edit, in the one place the wizard repeats it).
+    'A16.12', 'A16.13',
+    // A16.14/A16.15 (A-SL23 (1) and (3), the SL7 review's Critical-1/Major-1 and Major-2): the
+    // wizard's two doors. "Create a listing" creates one — and, in the same `setState`, stops
+    // carrying the LAST listing's `editingId` into it — and "Save and exit" saves the step it is
+    // on before it exits, which is what its own label has always promised.
+    'A16.14', 'A16.15',
+    // A16.16/A16.17 (A-SL25 (1), (3) and (5), the re-review's Critical-A, Major-A, Major-B and
+    // Minor-B): `wizAssets` and `creating` declared in the design's own state literal, and the two
+    // helpers every adapter path shares — `openDraft`, the ONE place a draft becomes the wizard's
+    // state, and `reloadListings`, the one loader, which carries the rejection arm its callers
+    // kept forgetting.
+    'A16.16', 'A16.17',
+    // A16.18 (A-SL27 (3), the round-3 re-review's MAJOR-E): the step rail saves the step it leaves
+    // before it moves — in the adapter's partial mode, through Continue's own rejection arm — so
+    // the one navigation control that silently discarded typed work under "Saved automatically"
+    // no longer does. A16.15 was revised in the same round to save in that partial mode (MAJOR-D).
+    'A16.18',
+    // A16.19 (A-SL29 (1), the round-4 re-review's MAJOR-F): the wizard's Back button saves the step
+    // it leaves before it moves — A16.18's own shape on the other navigation control, which round
+    // 3's "the ONE navigation control that silently discards work" missed by one.
+    'A16.19',
+    // A16.20a/A16.20b (A-SL30 (3), on the round-5 re-review's Info-15): the two remaining doors out
+    // of the wizard also save the step it is on — the header nav (`go`), the rail/Back's own shape,
+    // and Sign out, which ATTEMPTS the same save and ends the session regardless of the answer,
+    // because a session end is the seller's own explicit act and must never be held hostage to one.
+    'A16.20a', 'A16.20b',
+    // A16.21/A16.22 (A-SL25 (10), SL7b): the step-6 tile re-describes an EXISTING photograph,
+    // seeded ones included, by clicking it — one script literal (the tile's own `describe`,
+    // photographs only, routed by source through the adapter's overloaded `describe`) and one
+    // template literal (the one `onClick` the script literal needs).
+    'A16.21', 'A16.22',
+    // A17 — Admin › Listings reads the real table (Task SL8; D24 and John's standing rule:
+    // "every Admin tab must show real database data, never dummy rows"). A17.1 is A16.1's own
+    // shape applied to the review queue; A17.2 is A16.9's, one line after A16.11b's.
+    'A17.1', 'A17.2',
     // A18 — the two backwards arrows (John, 2026-09-09: "the arrow icons are backwards on each
     // location, reverse each"). Two template literals using the design's own flip idiom
     // (V3:724): the Insights-tab CTA's arrow turns right, the detail's Back-to-results arrow
@@ -151,13 +199,14 @@ describe('local design amendments (spec D15)', () => {
     // branch in A14.5's shared `key` closure and a comment (A-LB3: a focus trap was tried and
     // retracted here) in A13.8's `out` closure, and the two screen changes the design owns
     // (`go()`, `signOut`) clearing it. A19.9 and A19.10 read A14.5's and A13.8's output, so the
-    // whole family is appended last.
+    // whole family is appended last — after A16/A17 too: A19.11 was adapted at the SL9 merge to
+    // match `go()`'s shape once A16.20a has already split it (see the amendment's own comment).
     'A19.1', 'A19.2', 'A19.3', 'A19.4', 'A19.5', 'A19.6', 'A19.7', 'A19.8', 'A19.9', 'A19.10', 'A19.11', 'A19.12',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(118);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(144);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -192,7 +241,7 @@ describe('local design amendments (spec D15)', () => {
     const amended = readFileSync(AMENDED, 'utf8');
     const attr = /<script type="text\/x-dc" data-dc-script[^>]*data-props="([^"]*)"/.exec(amended)!;
     const declared = JSON.parse(attr[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) as Record<string, unknown>;
-    expect(Object.keys(declared)).toEqual(['$preview', 'prototypeBar', 'startScreen', 'startViewport', 'startGate', 'me', 'startNotice', 'startAnswerNote', 'layerPalette']);
+    expect(Object.keys(declared)).toEqual(['$preview', 'prototypeBar', 'startScreen', 'startViewport', 'startGate', 'me', 'startNotice', 'startAnswerNote', 'startMyListings', 'layerPalette']);
     // A8.8a widened the enum to every gate value the account screens add; the shape is A5.6's.
     expect(declared.startGate).toEqual({
       editor: 'enum',
@@ -210,6 +259,13 @@ describe('local design amendments (spec D15)', () => {
     // what keeps the 28 approved states on their pixels (an empty note renders nothing).
     expect(declared.startAnswerNote).toEqual({
       editor: 'text', default: '', tsType: 'string', section: 'Prototype', label: 'Applicant answer note on load'
+    });
+    // A16.11a (A-SL17/A-SL22 (1)): the seller's own listings, the reference's only way to the
+    // empty dashboard. `me`'s own `json` editor because the value is an array, and `null` —
+    // "nothing was handed over" — because an empty ARRAY is a real answer that empties the table,
+    // which is what keeps every other approved state on its pixels.
+    expect(declared.startMyListings).toEqual({
+      editor: 'json', default: null, tsType: 'object', section: 'Prototype', label: 'Seller listings on load'
     });
     // The pristine bundle declares none of the three — all exist only as local amendments.
     expect(pristine).not.toContain('startGate');

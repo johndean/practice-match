@@ -353,7 +353,25 @@ export const SCREENS: Screen[] = [
     await p.getByRole('dialog', { name: 'Photograph 2 of 3' }).waitFor({ state: 'visible' });
     await photoLoaded(p);
     await atTop(p, LIGHTBOX);
-  } }
+  } },
+  // ---------------------------------------------------------------------------------------
+  // SL9 merge (2026-09-09, A-SL34 (3)): main's A13/A14/A19 states above land BEFORE this
+  // branch's own — "screens.ts keeps main's entries before this branch's" — so the empty
+  // dashboard stays the newest-appended state and nothing above it moves.
+  // ---------------------------------------------------------------------------------------
+  // The empty dashboard (controller amendment A-SL17, John ~05:00 WITA 2026-09-09, verbatim
+  // intent: "A real seller with zero listings should see the dashboard shell with no
+  // invented/sample listings. Add the empty-dashboard state to the approved visual/DOM oracle.").
+  //
+  // APPENDED, never inserted: `screens.ts`'s order is the oracle's order and the manifest is
+  // keyed by name, so a new state at the end is the one shape that moves no existing hash.
+  //
+  // The design has no empty-table treatment and none is invented: the shell with zero rows IS the
+  // state, which is what that ruling says to capture. The reference is handed `[]` through
+  // A16.11's `startMyListings`; the app is answered a real, EMPTY page by `reach`'s own route,
+  // over the design's own four rows that `prepare()` answers every other state with (A-SL23 (2)).
+  // ---------------------------------------------------------------------------------------
+  { name: 'seller-dash-empty', steps: async (p) => { await reach(p, { screen: 'seller', myListings: [] }); } }
 ];
 
 /**

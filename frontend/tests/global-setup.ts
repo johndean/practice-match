@@ -133,7 +133,15 @@ export function remoteReseedPlan(env: NodeJS.ProcessEnv): RemoteReseedPlan {
  *  command line another process can read — and writes straight to the terminal rather than into a
  *  string this file could log. `scripts/seed_persona.py` prints ten addresses and no secret
  *  (`tests/api/test_admin_users.py` asserts that), and nothing here prints anything at all.
- *  `execFileSync` throws on a non-zero exit, which fails the run before its first test. */
+ *  `execFileSync` throws on a non-zero exit, which fails the run before its first test.
+ *
+ *  `scripts/seed_listings.py` runs second, the SAME shape `targets.ts`'s LOCAL `api` web server
+ *  chain runs it in (SL7b, A-SL25 (10)): `listing-flows.spec.ts`'s click-to-caption test re-
+ *  describes one of the eighteen seeded photographs, and a remote run must guarantee that data
+ *  exists before any test runs exactly as it already guarantees the persona does. It defaults to
+ *  owning every hospital by `seller@practice-match.test` — `seed_persona.py`'s own persona — and
+ *  is idempotent (`ON CONFLICT (slug) DO UPDATE ... WHERE listing.source = 'seed'`), so reseeding
+ *  a target that already carries them, or that a seller has since edited, changes nothing. */
 export type SeedExec = (file: string, args: readonly string[], options: { cwd: string; stdio: 'inherit' }) => void;
 
 export function reseedRemoteFixtures(env: NodeJS.ProcessEnv, exec: SeedExec = execFileSync): boolean {
@@ -141,6 +149,7 @@ export function reseedRemoteFixtures(env: NodeJS.ProcessEnv, exec: SeedExec = ex
   if (plan.error) throw new Error(plan.error);
   if (!plan.run) return false;
   exec('poetry', ['run', 'python', 'scripts/seed_persona.py'], { cwd: REPO_ROOT, stdio: 'inherit' });
+  exec('poetry', ['run', 'python', 'scripts/seed_listings.py'], { cwd: REPO_ROOT, stdio: 'inherit' });
   return true;
 }
 

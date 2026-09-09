@@ -31,7 +31,7 @@ REQUIRED_CI_COMMANDS = (
     # A4 (2026-09-09): scripts/census_load.py joins the same line the moment it exists
     # (A-C0 P8) — `test_ci_strict_mypy_covers_every_python_script` derives the requirement from
     # the scripts/ directory itself, but this substring is a literal pin and has to move by hand.
-    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py --strict",
+    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py tests/e2e/api_under_test.py --strict",
     "poetry run pytest -q -W error",
     # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
     # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
@@ -176,6 +176,100 @@ def test_ci_strict_mypy_covers_every_python_script():
         f"{missing} are measured by CI's `--cov=scripts` but are not in its strict mypy step "
         f"({step.strip()}) — add them there, beside the others"
     )
+
+
+def test_the_e2e_launcher_is_in_both_gates_a_module_of_its_shape_lives_in():
+    """A-SL29 (2), on the round-4 re-review's MINOR-2. `tests/e2e/api_under_test.py` starts the api
+    that every Playwright `app`-project run depends on: production-shaped code that was measured by
+    neither gate a module of its shape lives in — not by `--cov=app --cov=scripts`, and not by CI's
+    strict mypy step (the pairing rule `test_ci_strict_mypy_covers_every_python_script` states for
+    `scripts/`). So every non-test module under `tests/e2e/` is named in the strict mypy line, and
+    `--cov=tests/e2e` is in the backend gate wherever the gate is spelled as a rule — CI, CLAUDE.md's
+    Common operations, and the seller lifecycle plan's policy line and gate tables. Derived from the
+    directory, not from a list, for the reason the `scripts/` pin gives."""
+    modules = sorted(p.name for p in (ROOT / "tests" / "e2e").glob("*.py")
+                     if p.name != "__init__.py" and not p.name.startswith("test_"))
+    assert modules, "tests/e2e/ carries no launcher module to gate"
+    workflow = (ROOT / ".github" / "workflows" / "quality.yml").read_text()
+    mypy_step = next(line for line in workflow.splitlines() if "mypy" in line and "--strict" in line and "scripts/" in line)
+    missing = [name for name in modules if f"tests/e2e/{name}" not in mypy_step]
+    assert missing == [], f"{missing} are the Playwright api under test but not in CI's strict mypy step ({mypy_step.strip()})"
+    pytest_step = next(line for line in workflow.splitlines() if "pytest" in line and "--cov=app" in line)
+    assert "--cov=tests/e2e" in pytest_step, f"CI's backend gate does not measure tests/e2e: {pytest_step.strip()}"
+    claude_gate = next(line for line in (ROOT / "CLAUDE.md").read_text().splitlines() if "--cov=app" in line)
+    assert "--cov=tests/e2e" in claude_gate, "CLAUDE.md's backend gate line does not measure tests/e2e"
+    plan = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-08-seller-listing-lifecycle.md").read_text()
+    gate = "--cov=app --cov=scripts --cov-branch --cov=tests/e2e --cov-fail-under=100"
+    policy_line = next(line for line in plan.splitlines() if line.startswith("- **(a) 100 % lines AND branches, backend.**"))
+    assert gate in policy_line, "the seller plan's policy line (a) does not measure tests/e2e"
+    table_rows = [line for line in plan.splitlines() if line.startswith("|") and "100 % backend" in line]
+    assert table_rows, "the seller plan's gate tables no longer carry a '100 % backend' row"
+    assert all(gate in row for row in table_rows), [row[:80] for row in table_rows if gate not in row]
+
+
+def test_no_test_under_tests_spawns_node():
+    """A-SL30 (1), on the round-5 re-review's MINOR-4: the backend gate must stay inside its own
+    runtime. `tests/api/test_seller_listings.py::design_initial_w()` used to shell out to Node
+    (`shutil.which("node")` + `subprocess.run`) to evaluate the design's own `state.w` for a pin —
+    green on every machine that happens to have Node beside Python, but a job that does not
+    declare it, and a coupling this suite does not need: the design ↔ `step-fields.json` proof
+    lives ONLY in vitest (`logic.test.ts`), which already evaluates `new Component({}).state.w`
+    directly, and this module's own `DESIGN_INITIAL_W` is a plain literal beside `DESIGN_W`. No
+    test under `tests/` may spawn a `node` process for any reason.
+
+    This module is exempt from its own scan: this docstring and the regex below both name the
+    string being forbidden everywhere else."""
+    hits = [name for name, text in tracked_text_files()
+            if name.startswith("tests/") and name != "tests/test_docs.py" and re.search(r'''["']node["']''', text)]
+    assert hits == [], f"{hits} name a `node` process — the backend gate must not need a JS runtime"
+
+
+def test_claude_md_literal_edit_clauses_count_each_family_s_own_entries():
+    """A-SL30 (2), on the round-5 re-review's MINOR-5, widening A-SL29 (3)'s A16-only pin: CLAUDE.md's
+    A12 clause reads "seven literal script edits" against its own enumeration, A12.1-A12.11 —
+    eleven ids, a documentation defect pre-existing on `main` and, once A16 alone was pinned, the
+    only per-family word left unguarded (re-review round 5, MINOR-5).
+
+    EVERY family CLAUDE.md gives a spelled-out "<word> literal edits" or "<word> literal script
+    edits" clause to is checked the same way, the word derived from `design-amendments.ts`'s own
+    ids for that family and never hand-typed here (A16.11a and A16.11b are two entries, as
+    `design-amendments.test.ts` counts them) — A8's clause reads "literal edits", A12/A15/A16 read
+    "literal script edits", so the phrase is matched either way.
+
+    Found by BLOCK, not by one pass over the whole file: CLAUDE.md's account-screens paragraph
+    reintroduces A7's bold marker a second time ("widened **A7** with A7.3-A7.4") with no count
+    clause of its own, so a family's block runs from ONE of its `**A<n>**` markers to the very NEXT
+    such marker of ANY family — a phrase found in that span belongs to the family whose marker
+    opened it, never to whatever other family's clause happens to follow it in the file."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
+    words = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
+             "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "twenty-one",
+             "twenty-two", "twenty-three", "twenty-four", "twenty-five")
+    markers = list(re.finditer(r"\*\*A(\d+)\*\*", claude))
+    assert markers, "CLAUDE.md declares no bold amendment family markers (**A<n>**)"
+    # The captured word is one of `words` ITSELF, not any `\w+` — a GROUP descriptor ("three more
+    # families **of literal** edits", "the other three families are literal script or template
+    # edits") reads as a false per-family clause under a bare `\w+`, which is how this first found
+    # A4's block: the next family's own preamble ("... of literal edits: **A5** (...") sits inside
+    # A4's span and `\w+` happily captured "of".
+    number = "|".join(words)
+    checked = []
+    for i, marker in enumerate(markers):
+        family = marker.group(1)
+        end = markers[i + 1].start() if i + 1 < len(markers) else len(claude)
+        clause = re.search(rf"\b({number}) literal (?:script )?edits\b", claude[marker.start():end])
+        if clause is None:
+            continue
+        entries = len(set(re.findall(rf"id: 'A{family}\.[^']+'", ts)))
+        assert entries, f"A{family}'s clause names literal edits but design-amendments.ts declares no A{family} entries"
+        assert entries < len(words), f"no spelled-out word on hand for {entries} A{family} entries"
+        assert clause.group(1) == words[entries], (
+            f"CLAUDE.md's A{family} clause says '{clause.group(1)} literal edits'; the family has "
+            f"{entries} entries ('{words[entries]}')"
+        )
+        checked.append(family)
+    assert len(checked) >= 4, f"only {checked} families carry a literal-count clause — the scan may have broken"
 
 
 def test_ci_workflow_installs_no_ad_hoc_tooling():
@@ -681,7 +775,7 @@ def test_claude_md_does_not_claim_v2_byte_identity_after_the_launch_removal():
     assert "remains the **pre-V3 oracle**" in text
 
 
-def test_claude_md_counts_the_seven_prototype_props_and_says_which_are_read():
+def test_claude_md_counts_the_eight_prototype_props_and_says_which_are_read():
     """Review round 1, M5. The launch-removal section said "the four prototype props" after A5.7
     added a fifth, and described `prototypeBar` as one of the reference's ways into a state — but
     A6.4b removed the only expression that ever read it, so it is declared for the parity check in
@@ -692,15 +786,19 @@ def test_claude_md_counts_the_seven_prototype_props_and_says_which_are_read():
     the count was left at "five" after the enumeration in the same paragraph was widened to name
     both, so a green pin was actively blocking the correction. The name loop below now iterates all
     seven, not five, so a future prototype prop added to the design without a matching name here
-    fails this pin rather than passing it silently (I2's own secondary finding)."""
+    fails this pin rather than passing it silently (I2's own secondary finding) — which is exactly
+    what it did for the EIGHTH, `startMyListings` (A16.11a, controller amendment A-SL22 (1)): the
+    reference's only way to the empty seller dashboard A-SL17 added to the oracle."""
     text = (ROOT / "CLAUDE.md").read_text()
-    assert "All seven prototype props stay **declared**" in text
+    assert "All eight prototype props stay **declared**" in text
+    assert "All seven prototype props" not in text
     assert "All five prototype props" not in text
     assert "the four prototype props" not in text
     assert "`prototypeBar` is declared for that parity check alone" in text
-    # The seven, by name, in the section that lists them.
+    # The eight, by name, in the section that lists them.
     section = text.split("## Launch-removal list")[1]
-    for prop in ("prototypeBar", "startScreen", "startViewport", "startGate", "me", "startNotice", "startAnswerNote"):
+    for prop in ("prototypeBar", "startScreen", "startViewport", "startGate", "me", "startNotice",
+                 "startAnswerNote", "startMyListings"):
         assert f"`{prop}`" in section, prop
 
 
@@ -840,6 +938,49 @@ def test_the_admin_users_tables_match_the_api():
         for action in offered:
             assert action in TRANSITIONS, f"the Admin Users table offers {action!r}, which app/api/admin_users.py has no transition for"
             assert state in TRANSITIONS[action][0], f"the Admin Users table offers {action!r} from {state!r}, which the API refuses"
+
+
+def _listings_ts_literal(name: str) -> object:
+    """One of the three exported JSON literals in `frontend/src/admin/listings.ts` — the same
+    single-line-double-quoted-JSON convention `_users_ts_literal` reads, applied to Task SL8's
+    own table."""
+    source = (ROOT / "frontend" / "src" / "admin" / "listings.ts").read_text()
+    match = re.search(rf"^export const {name}(?:: [^=]+)? = (.+);$", source, re.MULTILINE)
+    assert match, (
+        f"frontend/src/admin/listings.ts: {name} is not a single-line exported literal, so this "
+        f"cross-language pin cannot read it. Each of NOTE_REQUIRED, ACTIONS and PILLS is written "
+        f"as double-quoted JSON on ONE line for exactly that reason; the file says so beside them."
+    )
+    try:
+        return json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        reason = str(exc)
+    pytest.fail(
+        f"frontend/src/admin/listings.ts: {name} is no longer DOUBLE-QUOTED JSON on a single "
+        f"line, so this cross-language pin cannot read it ({reason}). Got: {match.group(1)[:120]}"
+    )
+
+
+def test_the_admin_listings_table_matches_the_api():
+    """Task SL8, the same lesson `test_the_admin_users_tables_match_the_api` records for Users:
+    the Listings table's three decision tables must not silently drift from
+    `app/api/admin_listings.py`. A fifth REJECT-requires-a-reason action added on the server
+    would otherwise leave the UI POSTing a blank reason and taking a 422 at click time; a button
+    offered from a status `DECISIONS` refuses would take a 409 the same way; and a
+    `listing.status` the API can report with no pill would render its raw key.
+
+    The design deliberately offers a legal SUBSET of `DECISIONS` (its Paused row's "Contact
+    seller" is not wired, and the API also allows `publish` from `declined`/`paused`, which the
+    design's own In review row does not offer) and pictures only three of the six real statuses
+    (A-SL24 (4)) — what is pinned is that the subset is legal, not that it is complete."""
+    from app.api.admin_listings import DECISIONS, NOTE_REQUIRED, STATUSES
+
+    assert _listings_ts_literal("NOTE_REQUIRED") == list(NOTE_REQUIRED)
+    assert set(cast("dict[str, object]", _listings_ts_literal("PILLS"))) <= set(STATUSES)
+    for status, offered in cast("dict[str, list[str]]", _listings_ts_literal("ACTIONS")).items():
+        for action in offered:
+            assert action in DECISIONS, f"the Admin Listings table offers {action!r}, which app/api/admin_listings.py has no decision for"
+            assert status in DECISIONS[action][0], f"the Admin Listings table offers {action!r} from {status!r}, which the API refuses"
 
 
 # --- Task I9a: the identity wave's operator documentation -----------------------------------------
@@ -1047,6 +1188,34 @@ def test_deploy_md_documents_how_to_seed_qa():
     assert "not a failed import" in section
 
 
+def test_deploy_md_documents_the_object_storage_layout():
+    """SL9 Step 2's docs sweep: the four `S3_*` rows (SL2) say what the credentials are, not what
+    the bucket holds. An operator diagnosing a photo or a document that failed to load needs the
+    key scheme, read from `upload_photo`'s own key-building expression rather than retyped, so a
+    changed prefix fails this test instead of leaving a stale runbook."""
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    assert "## Object storage" in deploy
+    section = deploy.split("## Object storage", 1)[1].split("\n## ", 1)[0]
+    seller = (ROOT / "app" / "api" / "seller_listings.py").read_text()
+    key_expr = re.search(r'key = f"([^"]+)"', seller)
+    assert key_expr, "app/api/seller_listings.py no longer builds the asset key the way this test reads"
+    variables_section = deploy.split("## Variables", 1)[1].split("\n## ", 1)[0]
+    bucket_row = re.search(r"`S3_BUCKET`.*", variables_section)
+    assert bucket_row, "DEPLOY.md's Variables table no longer has an S3_BUCKET row to cross-check against"
+    bucket_names = sorted(set(re.findall(r"`(practice-match-[a-z-]+)`", bucket_row.group(0))))
+    assert bucket_names, "the S3_BUCKET row does not name a `practice-match-*` bucket"
+    assert any(name in section for name in bucket_names), (
+        f"DEPLOY.md's Object storage section does not name the bucket ({bucket_names})"
+    )
+    assert "listings/" in section, "DEPLOY.md's Object storage section does not name the listings/ prefix"
+    assert "photos" in section and "documents" in section, (
+        "DEPLOY.md's Object storage section does not distinguish the photos/ and documents/ prefixes"
+    )
+    assert "seeds/" in section, (
+        "DEPLOY.md's Object storage section should say the eighteen seed photographs are NOT in the bucket (D26)"
+    )
+
+
 # --- Task S6: docs and drift, once the account screens (S1-S5), the reseed (S7) and main (M1) are
 # in ------------------------------------------------------------------------------------------
 # Every count below is a fact stated by hand in prose somewhere (CLAUDE.md, LOCAL_AMENDMENTS.md,
@@ -1143,6 +1312,32 @@ def test_local_amendments_row_count_matches_design_amendments():
     assert len(rows) == literal_count + 1, (
         f"LOCAL_AMENDMENTS.md has {len(rows)} rows; expected {literal_count + 1} "
         f"({literal_count} literal amendments + one collapsed A1 row)"
+    )
+
+
+def test_claude_md_amendment_paragraph_has_a_prose_section_for_every_family():
+    """This branch's merge of the 0.1.10 release silently dropped the A13 (Browse metro dropdown)
+    and A14 (Give button) prose paragraphs from CLAUDE.md's "Source of truth" amendment sequence,
+    while their `design-amendments.ts` entries, their `LOCAL_AMENDMENTS.md` rows and every derived
+    count remained correct. No existing test caught it: the family/entry-count test above only
+    matches the summary sentence's numbers, and `test_claude_md_literal_edit_clauses_count_each_family_s_own_entries`
+    only walks the `**A<n>**` markers CLAUDE.md actually has — neither notices a family with no
+    marker at all. Later paragraphs (A13.8's Tab dismissal, A14.4/A14.5's shared closures, A14's own
+    header re-basing note) go on citing A13 and A14 by name, so the document was left referring to
+    sections that are not there.
+
+    Family identifiers are read from `design-amendments.ts`'s own literal ids (`id: 'A<n>...'`) —
+    the same source the family/entry-count test above reads — never hand-typed here: for every
+    distinct family number found there, CLAUDE.md must carry that family's own bold marker,
+    `**A<n>**`, opening a prose section."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
+    literal_families = sorted({int(n) for n in re.findall(r"id: 'A(\d+)", ts)})
+    assert literal_families, "frontend/tests/design-amendments.ts: no literal amendment ids found (id: 'A<n>...)"
+    missing = [f"A{n}" for n in literal_families if not re.search(rf"\*\*A{n}\*\*", claude)]
+    assert missing == [], (
+        "CLAUDE.md's amendment paragraph carries no prose section (no **A<n>** marker) for: "
+        f"{', '.join(missing)}"
     )
 
 
@@ -1318,6 +1513,35 @@ def test_claude_md_launch_removal_records_the_listings_boot_swap():
     assert "loadListings" in main_ts and "./listings/load" in main_ts
 
 
+def test_claude_md_launch_removal_records_the_seller_half_of_the_boot_swap():
+    """SL9 Step 2's docs sweep. The P/MARKETS sentence above only ever described the BUYER side of
+    D6's swap; SL7/SL8 landed the seller half (the dashboard's `sellerListings` and the Admin
+    Listings tab's rows), and the launch-removal section still read as if only the buyer surface
+    had ever been replaced. `sellerListings` and the admin rows are STILL in `logic.js` — the D6
+    stub's own source, unchanged field names — but the app now installs the seller's real listings
+    and the real review queue over them at boot, through the SAME `listings`/`adminListings`
+    adapter presence check A16.1/A17.1 read at render time."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    section = claude.split("## Launch-removal list")[1]
+    assert "the D6 stub's source for the gates" in section
+    tail = section.split("the D6 stub's source for the gates", 1)[1]
+    assert "sellerListings" in tail and "admin rows" in tail, (
+        "the launch-removal section does not say what became of sellerListings and the admin rows"
+    )
+    assert "still" in tail, "the seller-half sentence should say the fixtures STILL stay, matching the buyer half's own wording"
+    assert "installs the seller's real listings and the real review queue" in tail, (
+        "the launch-removal section does not say the app installs the real listings/queue at boot"
+    )
+    assert "when" in tail and "adapter" in tail, (
+        "the launch-removal section does not say the swap is conditioned on the adapter being present"
+    )
+    # ...and the files really do that: A16.1's dashboard ternary and A17.1's Listings-tab ternary
+    # both key on adapter presence, in `design-amendments.ts` itself, not merely in prose.
+    ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
+    assert "this.props.listings ?" in ts, "A16.1's dashboard ternary no longer keys on this.props.listings"
+    assert "this.props.adminListings" in ts, "A17.1's Listings-tab ternary no longer reads this.props.adminListings"
+
+
 def test_claude_md_layout_line_names_the_seed_assets_and_scripts():
     """A-L7 docs sweep item 6. The Seed Listings sub-project added `seeds/` (the demo hospital
     data and photographs) and two scripts the Layout line never mentioned, and `scripts/start.sh`
@@ -1367,6 +1591,54 @@ def test_deploy_md_exit_codes_match_seed_listings_returns():
     section = deploy.split("## Seeding the demo hospitals (QA)", 1)[1].split("\n## ", 1)[0]
     for code in codes:
         assert f"`{code}`" in section, f"DEPLOY.md's seeding section does not document exit code {code}"
+
+
+# --- Task SL6: seed ownership (D25) and A-SL21 (a seeded listing becomes the seller's) ----------
+
+
+def test_deploy_md_documents_seed_ownership_against_the_seeders_own_flags():
+    """SL6 review, Info-1. The ownership paragraph is prose about flags and an address the script
+    owns; the exit-code pin above already keeps one half of that section honest, and this keeps the
+    other. Both the flags and `SEED_OWNER_EMAIL` are read out of `scripts/seed_listings.py` rather
+    than retyped, so renaming `--no-owner` or moving the default address to another persona fails
+    here instead of leaving an operator following a runbook that no longer matches the script."""
+    seed = (ROOT / "scripts" / "seed_listings.py").read_text()
+    flags = sorted(set(re.findall(r'add_argument\("(--[a-z-]+)"', seed)))
+    assert flags == ["--no-owner", "--owner", "--production", "--reset"], flags
+    owner = re.search(r'^SEED_OWNER_EMAIL = "([^"]+)"', seed, re.MULTILINE)
+    assert owner, "scripts/seed_listings.py no longer defines SEED_OWNER_EMAIL"
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    section = deploy.split("## Seeding the demo hospitals (QA)", 1)[1].split("\n## ", 1)[0]
+    for flag in flags:
+        # A plain substring: `--reset` appears in the section's command blocks rather than in
+        # backticks, and "--owner" is not a substring of "--no-owner" (the characters before
+        # `owner` there are `-no-`), so each flag is matched by itself and by nothing else.
+        assert flag in section, f"DEPLOY.md's seeding section does not document {flag}"
+    assert owner.group(1) in section, "the runbook does not name the account the seeder assigns by default"
+
+
+def test_the_docs_record_that_a_seller_edited_seed_listing_is_never_re_seeded():
+    """Controller amendment A-SL21. The rule is enforced in two files at once — the API flips
+    `listing.source` on the seller's first write, the seeder then skips the row — so neither half
+    may be documented without the other, and neither may quietly go away: a reader who trusts the
+    runbook is being told that their edits to one of the eighteen are safe from the next import."""
+    api = (ROOT / "app" / "api" / "seller_listings.py").read_text()
+    assert "def claim_from_seed(" in api, (
+        "no write path claims a seeded listing any more (A-SL21) — a re-seed would overwrite a seller's edits"
+    )
+    seed = (ROOT / "scripts" / "seed_listings.py").read_text()
+    assert "seller-owned" in seed, "the seeder no longer reports how many rows it skipped as seller-owned"
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    section = deploy.split("## Seeding the demo hospitals (QA)", 1)[1].split("\n## ", 1)[0]
+    for phrase in ("A-SL21", "`source`", "skipped", "seller-owned"):
+        assert phrase in section, f"DEPLOY.md's seeding section does not state the A-SL21 rule ({phrase})"
+    runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    assert "eighteen demo hospitals" in runbook, (
+        "docs/RUNBOOK-identity.md §11 does not say what seller@practice-match.test owns"
+    )
+    assert "Seeding the demo hospitals (QA)" in runbook, (
+        "docs/RUNBOOK-identity.md should point at DEPLOY.md's seeding section for the rest"
+    )
 
 
 def test_runbook_documents_recovering_from_a_wrong_frozen_postal_address():
@@ -1773,3 +2045,15 @@ def test_no_tracked_text_file_cites_a_retired_number():
             for m in re.finditer(pattern, text)
         ]
         assert hits == [], f"{pattern!r} survives in {hits} — {why}"
+
+
+def test_deploy_md_names_both_homes_of_a_photograph_s_caption():
+    """A-SL23 (6) m6, on the SL7 review's Minor-6. A caption is STORED, in one of two columns:
+    the seeder writes the supplier's filename into `listing.photo_captions` (A-L11), the seller
+    writes their own words into `listing_asset.caption` (A-SL20), and `serialise` serves both as
+    one `photo_captions` contract (A-SL23 (0)). The runbook said the caption was "never stored",
+    which was true of the pipeline it described and false of the system."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "listing.photo_captions" in text, "the seed home of a caption is undocumented"
+    assert "listing_asset.caption" in text, "the seller home of a caption is undocumented"
+    assert "never stored" not in text, "DEPLOY.md still says a caption is never stored"

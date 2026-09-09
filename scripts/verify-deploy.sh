@@ -205,6 +205,13 @@ if [[ "$mode" == "coming_soon" ]]; then
   # photographs, reachable on the public launch host.
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/listings")
   [[ "$code" == "404" ]] || { echo "FAIL: /api/listings answered $code in coming-soon mode (expected 404 - the listings surface must not be mounted before launch)" >&2; exit 1; }
+  # ...and so must the seller wizard's surface and the reviewer's queue (spec 2026-09-08 D9): both
+  # sit inside the same `site_mode == "app"` include, disjoint prefixes from /api/listings, so the
+  # "member endpoints absent" claim has to be probed for them too.
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/seller/listings")
+  [[ "$code" == "404" ]] || { echo "FAIL: /api/seller/listings answered $code in coming-soon mode (expected 404 - the seller surface must not be mounted before launch)" >&2; exit 1; }
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/admin/listings")
+  [[ "$code" == "404" ]] || { echo "FAIL: /api/admin/listings answered $code in coming-soon mode (expected 404 - the review queue must not be mounted before launch)" >&2; exit 1; }
   echo "member endpoints absent OK"
 else
   body=$(curl -fsS --max-time 20 "$BASE/browse")
@@ -216,6 +223,11 @@ else
   code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/listings")
   [[ "$code" == "401" ]] || { echo "FAIL: /api/listings answered $code to an anonymous caller (expected 401 - the listings surface must be guarded by listing.read)" >&2; exit 1; }
   echo "listings guarded OK"
+  # Beside it, the seller wizard's surface (spec 2026-09-08 D9): guarded by listing.manage_own, so
+  # an anonymous caller gets the same generic 401 rather than another seller's drafts.
+  code=$(curl -sS -o /dev/null -w '%{http_code}' --max-time 20 "$BASE/api/seller/listings")
+  [[ "$code" == "401" ]] || { echo "FAIL: /api/seller/listings answered $code to an anonymous caller (expected 401 - the seller surface must be guarded by listing.manage_own)" >&2; exit 1; }
+  echo "seller listings guarded OK"
   # A-I5d.5 (2026-09-09): the Admin Launch Sign-ups router is mounted only in app mode now, exactly
   # like /api/admin/users and /api/listings beside it, so this is the one probe of production's
   # real mount table for the positive half of that claim once SITE_MODE=app. An anonymous caller

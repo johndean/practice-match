@@ -1,4 +1,4 @@
-"""The fifteen email templates (spec §5): fourteen transactional, plus the one-off
+"""The eighteen email templates (spec §5): seventeen transactional, plus the one-off
 `launch_announcement` the Coming Soon page promised (Task I5d).
 
 Three properties the spec asks for are structural here rather than a habit:
@@ -107,6 +107,30 @@ _DECLINED = (
     "VIN Foundation could not confirm. You may reply with additional information and ask for a second review."
 )
 _NOT_YOU_PASSWORD = "If this was not you, reset your password and tell the VIN Foundation."
+# ...and these two are PORTED VERBATIM from the approved V3 design's submitted card
+# (`Practice Match V3.dc.html`, the `wiz.isDone` panel — `frontend/src/App.vue:1258-1262`), spec
+# 2026-09-08 D4's mail. The card is what a seller reads the moment they submit, and an email that
+# promises something the screen does not is a second source of truth about the review; nothing new
+# is written here. `tests/mail/test_templates.py` reads both strings out of the design file.
+_LISTING_SUBMITTED_HEADING = "Your listing is with the VIN Foundation"
+_LISTING_IN_REVIEW = (
+    "A staff reviewer checks each listing before it goes live — usually within two business days. "
+    "You can keep editing while it waits; edits after publication go through the same short review."
+)
+# The design's own words for what a published listing IS ("Live again · visible in search",
+# `logic.js`'s `setListingStatus`) and for what the seller may do next — the dashboard's own three
+# buttons — followed by the submitted card's own sentence about an edit.
+_LISTING_LIVE = "Your listing has been published and is now visible in search to approved buyers."
+_LISTING_NEXT = (
+    "You can pause or withdraw it at any time from your dashboard, and edits after publication go "
+    "through the same short review."
+)
+# A decline is not a deletion: the lifecycle table's `declined` is a state a seller edits and
+# re-submits from (spec D2), which is exactly what the wizard's Submit does next.
+_LISTING_DECLINED = (
+    "Your listing has not been published. Nothing has been deleted — you can edit it and submit it "
+    "again, and a reviewer will look at it afresh."
+)
 
 TEMPLATES: dict[str, Template] = {
     "verify_email": Template(
@@ -213,6 +237,25 @@ TEMPLATES: dict[str, Template] = {
                 "A suspension is reversible — reply with anything that helps and it will be looked at again.")
              + _p("Why:") + _p("{note}", NOTE_BOX),
         params=("note",),
+    ),
+    # --- Task SL5: the listing lifecycle (spec 2026-09-08 D4) ---
+    "listing_submitted": Template(
+        subject=_LISTING_SUBMITTED_HEADING,
+        text=_LISTING_IN_REVIEW,
+        html=design_paragraph(_LISTING_IN_REVIEW),
+    ),
+    "listing_published": Template(
+        subject="Your Practice Match listing is live",
+        text=_LISTING_LIVE + "\n\n" + _LISTING_NEXT,
+        html=_p(_LISTING_LIVE) + _p(_LISTING_NEXT, QUIET),
+    ),
+    "listing_declined": Template(
+        subject="A decision on your Practice Match listing",
+        # `reason`, not `note`: it is what `admin_listings.decide_listing` enqueues, and a decline
+        # is refused without one (`NOTE_REQUIRED`), so this paragraph always has something to say.
+        text=_LISTING_DECLINED + "\n\nWhat the reviewer wrote:\n\n{reason}",
+        html=_p(_LISTING_DECLINED) + _p("What the reviewer wrote:") + _p("{reason}", NOTE_BOX),
+        params=("reason",),
     ),
     "account_revoked": Template(
         subject="Your Practice Match access has been withdrawn",

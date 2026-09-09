@@ -7,6 +7,7 @@ import pytest
 from app.mail import templates as TP
 
 DESIGN = Path(__file__).resolve().parents[2] / "docs" / "design-reference" / "design_handoff_practice_match_v2" / "Practice Match V2.dc.html"
+DESIGN_V3 = Path(__file__).resolve().parents[2] / "docs" / "design-reference" / "design_handoff_practice_match_v3" / "Practice Match V3.dc.html"
 
 
 def design_status_body(key: str) -> str:
@@ -45,14 +46,18 @@ def test_application_received_uses_the_design_copy():
 # --- supplemental (not in the brief's Step 1 — the spec's escaping/no-pixel rules, and branches) ---
 
 
-def test_the_fifteen_keys_are_exactly_the_ones_the_outbox_accepts():
-    """Was `test_the_fourteen_keys_…` until Task I5d added `launch_announcement`. Two lists, one
-    truth: a key in one and not the other is either a row that can never be rendered or a template
-    nothing can reach."""
+def test_the_eighteen_keys_are_exactly_the_ones_the_outbox_accepts():
+    """Was `test_the_seventeen_keys_…` (fourteen, then `test_the_fourteen_keys_…`) until this
+    merge added the seller lifecycle's three (`listing_submitted`/`listing_published`/
+    `listing_declined`) and Task I5d's one-off `launch_announcement` to the same fourteen-template
+    base. `app.mail.outbox.TEMPLATES` is the gate on the REQUEST path (a typo there is refused at
+    enqueue time) and this module is what the WORKER renders. Two lists, one truth: a key added to
+    one and not the other is either a row that can never be rendered or a template nothing can
+    reach, and both would sit undetected until a real person failed to get an email."""
     from app.mail.outbox import TEMPLATES as ACCEPTED
 
     assert set(TP.TEMPLATES) == set(ACCEPTED)
-    assert len(TP.TEMPLATES) == 15
+    assert len(TP.TEMPLATES) == 18
 
 
 def test_the_launch_announcement_keeps_the_pages_promise_and_carries_a_link():
@@ -167,3 +172,50 @@ def test_a_design_body_containing_markup_would_be_escaped_when_embedded():
     pass, because it would find the raw string. Escaping at the point of embedding is what closes
     that; this is what proves the embedding does it."""
     assert TP.design_paragraph("Tom & Jerry <b>") == '<p style="' + TP.PARA + '">Tom &amp; Jerry &lt;b&gt;</p>'
+
+
+# --- Task SL5 (spec 2026-09-08): the listing lifecycle's three ---------------------------------
+
+
+def design_v3_holds(text: str) -> bool:
+    """Whether the APPROVED V3 design carries this sentence verbatim.
+
+    Read out of the design file for the reason `design_status_body` reads V2: CLAUDE.md's first
+    rule is "reference open first, port verbatim", and an email that promises something the screen
+    does not is a second source of truth about the review."""
+    return text in DESIGN_V3.read_text()
+
+
+def test_listing_submitted_is_the_designs_own_submitted_card():
+    """The subject is the submitted card's own heading and the body its own paragraph — both read
+    out of the approved design rather than repeated here, so neither can drift alone."""
+    heading = "Your listing is with the VIN Foundation"
+    body = ("A staff reviewer checks each listing before it goes live \u2014 usually within two business "
+            "days. You can keep editing while it waits; edits after publication go through the same "
+            "short review.")
+    assert design_v3_holds(heading) and design_v3_holds(body)
+    r = TP.render("listing_submitted", {}, base_url="https://qa.foundation.vin")
+    assert r.subject == heading
+    assert body in r.text and html.escape(body) in r.html
+
+
+def test_listing_published_tells_the_seller_what_the_dashboard_can_do_next():
+    """The design's own vocabulary: a published listing is "Live \u00b7 visible in search", the
+    dashboard's own three buttons are pause, republish and withdraw, and the submitted card's
+    "edits after publication go through the same short review" is the sentence that says why an
+    edit is not free."""
+    r = TP.render("listing_published", {}, base_url="https://qa.foundation.vin")
+    assert "visible in search" in r.text
+    assert "edits after publication go through the same short review" in r.text
+    assert design_v3_holds("edits after publication go through the same short review")
+
+
+def test_listing_declined_carries_the_reviewers_reason_and_escapes_it():
+    """A decline requires a reason (`admin_listings.NOTE_REQUIRED`) and the seller is owed it. The
+    param is `reason`, which is what `decide_listing` enqueues \u2014 not `note`."""
+    assert TP.TEMPLATES["listing_declined"].params == ("reason",)
+    r = TP.render("listing_declined", {"reason": '<img src=x onerror="alert(1)">'},
+                  base_url="https://qa.foundation.vin")
+    assert "submit it again" in r.text
+    assert "<img" not in r.html and "&lt;img src=x onerror=&quot;alert(1)&quot;&gt;" in r.html
+    assert '<img src=x onerror="alert(1)">' in r.text

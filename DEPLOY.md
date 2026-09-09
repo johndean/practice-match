@@ -186,6 +186,24 @@ never on production without John's go — against `ENVIRONMENT=production` the s
 unless the operator says it out loud with `--production`, exactly as `scripts/bootstrap_admin.py`
 does; with the flag, the run's first line of output names the environment it is writing to.
 
+Run `scripts/seed_persona.py` **first**: the eighteen are assigned to
+`seller@practice-match.test` at seed time (spec 2026-09-08 D25), and if that account does not
+exist yet the import still succeeds with `seller_id` NULL and says so on stdout. `--owner <email>`
+overrides the default and `--no-owner` seeds unowned; on production the default is not applied at
+all unless `--owner` is passed.
+
+**A listing the seller has edited is never re-seeded (A-SL21, 2026-09-09).** The eighteen belong to
+`seller@practice-match.test`, so they open in the seller's own wizard — and the first seller write of
+any kind (a wizard step saved, a photograph added, reordered or deleted, a document uploaded, submit,
+pause, republish or withdraw) flips that row's `source` from `seed` to `seller`, in the same
+transaction as the write. Every part of this importer is scoped `source = 'seed'`, so from that
+moment the row is the seller's: it is not rewritten, its status is never reset to `published` behind
+the reviewer's back, and `--reset` neither deletes it nor cascades away the photographs and documents
+they uploaded onto it. Each run says how many it left alone — `skipped N seller-owned` on the summary
+line, with the slugs named beneath it — and the untouched hospitals refresh as usual. A seed slug held
+by a listing that belongs to NOBODY is a different thing and still stops the whole import (exit 5
+below).
+
 **The photographs (A-L9, revised by A-L10, and by A-L11 on 2026-09-09).** **Every photograph John
 supplies is rendered — 195 of them today, 8 to 18 per hospital.** Positions **1-6** are the six
 captioned slots the design's detail page renders (`photoSet(p)` in `Practice Match V3.dc.html`: an
@@ -198,9 +216,18 @@ that wins where there is one.
 **Where a description comes from.** Today it is the **supplier's own filename** —
 `06_interior_reception_lobby.png` becomes "Interior — reception lobby" — recorded per photograph in
 `index.json` by `scripts/prepare_photos.py`, stored in `listing.photo_captions` (migrations/090) by
-the seeder, and served beside `photos` by the API. Wave 2b's sellers write their own, in the same
-column. A photograph with none falls back to the design's fixed slot caption, and past the sixth
-slot — where the design has no caption to lend — to "Photo N".
+the seeder, and served beside `photos` by the API. A photograph with none falls back to the
+design's fixed slot caption, and past the sixth slot — where the design has no caption to lend —
+to "Photo N".
+
+**A seller's own words are the other home (A-SL20, A-SL23 (0)).** A photograph the seller uploads
+in the wizard's photo step carries the sentence they write for it in `listing_asset.caption`
+(migrations/033), keyed by the asset — `listing.photos` holds that asset's uuid rather than a
+path, so there is no position for the seeder's column to describe it at. `serialise` reads both
+homes into the one `photo_captions` array a buyer is served, the seller's own words winning where
+both have something to say. A caption is therefore STORED, wherever it was written; the DESIGN's
+own fixed slot caption is a FALLBACK held in the design file, and it is what a photograph nobody
+has described still renders under.
 
 **`seeds/hospitals/photos/curation.json` is the source of truth for which photograph fills which
 slot.** It was written by looking at every source image, because John's filenames do not reliably
@@ -239,8 +266,8 @@ around; the script, its idempotency and its output lines are identical either wa
 railway status                                   # MUST print Project: Practice Match
 DATABASE_URL="$(railway variable list --service PostGIS --environment QA --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["DATABASE_URL"])')" \
 ENVIRONMENT=qa poetry run python scripts/seed_listings.py   # the PostGIS service's DATABASE_URL is its PUBLIC url; a VAR=… prefix keeps it out of argv
-# first run:  "[seed] inserted 18, updated 0, removed 0" then "[seed] done - 18 listings"
-# a re-run:   "inserted 0, updated 18, removed N" — N being the seed rows the file no longer
+# first run:  "[seed] inserted 18, updated 0, removed 0, skipped 0 seller-owned" then "[seed] done - 18 listings"
+# a re-run:   "inserted 0, updated 18, removed N, skipped S" — N being the seed rows the file no longer
 #             carries, which every import deletes; the eighteen keep their ids.
 ```
 
@@ -256,7 +283,7 @@ Only when fresh ids are actually wanted — it invalidates deep links and photo 
 A-L4 it buys nothing the plain import does not:
 
 ```bash
-python scripts/seed_listings.py --reset          # "inserted 18, updated 0, removed 18"
+python scripts/seed_listings.py --reset          # "inserted 18, updated 0, removed 18, skipped 0 seller-owned"
 ```
 
 And on production, with John's go and only then (`ENVIRONMENT` is already `production` inside
@@ -282,6 +309,27 @@ one-off Railway service command. `python -m scripts.seed_listings` works too, fr
 `GET /api/listings` caches each page in Redis for 60 s and the seeder does not invalidate it, so
 after a re-seed the list refreshes within a minute (Task L5, A-L5.1) — a browse that still shows
 the previous eighteen straight after a seed is that cache, not a failed import.
+
+## Object storage
+
+The seller's own photographs and documents — never the eighteen seed hospitals' — live in the
+already-approved bucket `practice-match-data`, one per environment (Railway buckets are
+environment-scoped, no `-qa`/`-prod` suffix; see the four `S3_*` rows above for the credentials).
+`ObjectStore.from_settings` returns `None` until all four are set, and every seller upload is then
+refused with `503 STORAGE_UNAVAILABLE` rather than crashing — a developer's machine or a fresh
+environment still serves every READ (the eighteen seed hospitals' photographs come off disk and
+need none of this) while only the WRITES stop.
+
+Keys are `listings/<listing id>/photos/<asset id>.webp` for a photograph — every upload is
+re-encoded to WebP with its metadata stripped (D15) — and `listings/<listing id>/documents/<asset
+id><suffix>` for a floor plan, a financial packet or any other document, `<suffix>` being the
+uploaded file's own extension. An asset is written once (`put_immutable`'s never-overwrite
+guarantee) and deleted at most once; nothing under `listings/` is ever mutated in place.
+
+The eighteen demo hospitals' own photographs are **not** in this bucket at all (D26): they are
+committed under `seeds/hospitals/photos/`, already in the image, and served straight off disk by
+the same guarded route a seller's own photograph is served by — object storage holds only what a
+seller has uploaded.
 
 ## Census Phase A exit (QA)
 

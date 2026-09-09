@@ -52,6 +52,7 @@ from __future__ import annotations
 import base64
 import binascii
 import json
+import logging
 from collections.abc import Mapping
 from contextlib import closing
 from datetime import UTC, datetime
@@ -59,13 +60,17 @@ from pathlib import Path
 from typing import Any
 from uuid import UUID
 
+from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
 
 from app.auth.deps import require
 from app.cache import sync_redis
+from app.config import settings
 from app.db import sync_conn
+from app.storage import ObjectStore
 
+log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
 
 # Hoisted to a module-level constant, never wrapped (Global Constraint (g)).
@@ -78,18 +83,43 @@ DEFAULT_LIMIT = 50
 MAX_LIMIT = 200
 MAX_MARKET_LEN = 64
 PHOTO_CACHE_CONTROL = "private, max-age=86400"
+LIST_CACHE_PREFIX = "listings:v1:"
 
 _SELECT = """
 SELECT id, slug, name, street, city, state, zip, phone, hours, status, location_disclosed,
-       name_disclosed, ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lng,
+       name_disclosed, rev_disclosed, ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lng,
        area, type, market, price, rev, docs, rooms, sqft, bldg, est, listed_at,
-       note, staff, services, facility, ownership, photos, photo_captions
+       note, staff, services, facility, ownership, photos, photo_captions,
+       coalesce((SELECT jsonb_object_agg(a.id::text, a.caption) FROM listing_asset a
+                  WHERE a.listing_id = listing.id AND a.kind = 'photo' AND a.caption IS NOT NULL),
+                '{}'::jsonb) AS asset_captions
   FROM listing
 """
 
 def _error(code: str, message: str, status: int) -> JSONResponse:
     """Decision A5's body for the refusals this module raises itself."""
     return JSONResponse({"error": {"code": code, "message": message}}, status_code=status)
+
+
+def drop_list_cache(cache: Any) -> int:
+    """Every `listings:v1:*` key, dropped; the number removed.
+
+    Spec 2026-09-08 D16, which is this module's own review-round-2 M4 requirement made real: a
+    disclosure flag turned OFF must stop reaching buyers AT ONCE, not within the 60 s TTL. Every
+    writer in `app/api/seller_listings.py` and `app/api/admin_listings.py` calls this AFTER its
+    transaction commits — the ordering `admin_users.py` learned in I5c fix round 1 — because
+    dropping the key while the write is uncommitted leaves a window in which a concurrent read
+    re-caches the pre-write payload for the full TTL.
+
+    `scan_iter`, not `keys`: the cache is small but a blocking KEYS on a shared Railway Redis is a
+    stall every other consumer pays for. The prefix is the key shape's own, so a v2 key scheme
+    cannot be silently missed — it would not match, and the test that plants two keys would fail.
+    """
+    removed = 0
+    for key in cache.scan_iter(match=f"{LIST_CACHE_PREFIX}*"):
+        cache.delete(key)
+        removed += 1
+    return removed
 
 
 def anonymised_name(area: str) -> str:
@@ -160,6 +190,40 @@ def photo_list(value: object) -> list[str | None]:
     return []   # a NULL `photos` (nothing writes one: the column is NOT NULL DEFAULT '[]')
 
 
+def photo_captions(photos: list[str | None], stored: list[str | None], owned: Mapping[str, str]) -> list[str]:
+    """EXACTLY ONE description per photograph — always a string — whichever of its TWO homes it was
+    written in.
+
+    A SEED photograph's description is `listing.photo_captions[n]`, written by the seeder from the
+    supplier's own filename (A-L11), and positional — position `n` describes position `n`. A
+    SELLER's is `listing_asset.caption`, written by the seller in the wizard's photo step (A-SL20,
+    John: "have the user articulate what it is"); there `listing.photos[n]` is that asset's UUID
+    rather than a path, so the caption is looked up BY THE UUID and the column has nothing in it.
+    `photo_captions` is one contract over both (A-SL23 (0)) — A-SL22 (2)'s "served as
+    `photo_captions` for published listings", which SL7 could not deliver before A-L11 landed.
+
+    The seller's own words win where both homes have something to say: a seeded listing the seller
+    has since edited is theirs (A-SL21), and they have looked at the photograph.
+
+    The answer is `len(photos)` long on BOTH paths — padded where the column is short, truncated
+    where it is long (A-SL25 (7), on the SL7 re-review's Minor-D). The two lists are read BY INDEX
+    (`photoSet`'s `p.photoCaptions[i]`), so a ragged pair is a caption sliding onto a photograph it
+    does not describe; returning the column untouched wherever no asset had spoken made that
+    guarantee conditional on a seller having captioned something, which is not a rule anyone could
+    rely on.
+
+    ONE rule for "nobody has described this one", and it is `""` (A-SL26 (2), the round-2
+    re-review's Minor-E): a position past the end of the column, a JSON `null` inside it, and an
+    asset with no caption are the same fact and now read the same. `photoSet` renders the design's
+    own fixed slot caption in place of any of them — `p.photoCaptions[i] || <slot caption>`, both
+    falsey — so nothing downstream could tell them apart; what differed was this function's promise
+    against its behaviour, and SL7b's positional caption route writes this very column."""
+    padded: list[str | None] = [*stored, *[""] * (len(photos) - len(stored))]
+    if not owned:
+        return [entry or "" for entry in padded[:len(photos)]]
+    return [(owned.get(entry) if entry is not None else None) or padded[n] or "" for n, entry in enumerate(photos)]
+
+
 def photo_file(photos: list[str | None], n: int) -> Path | None:
     """The file behind photo `n` (1-based) of `photos`, or None. The path comes from the
     database, so it is resolved under PHOTOS_ROOT and anything that escapes is refused —
@@ -204,7 +268,8 @@ def serialise(row: Mapping[str, Any], now: datetime) -> dict[str, Any]:
         "zip": row["zip"] if disclosed else None,
         "phone": row["phone"] if disclosed else None,
         "hours": row["hours"],
-        "price": row["price"], "rev": row["rev"], "docs": row["docs"], "rooms": row["rooms"],
+        "price": row["price"], "rev": row["rev"] if row.get("rev_disclosed") else None,
+        "docs": row["docs"], "rooms": row["rooms"],
         "sqft": row["sqft"], "bldg": row["bldg"], "est": row["est"],
         "listed": relative_listed(row["listed_at"], now),
         "listed_at": row["listed_at"].isoformat(),
@@ -231,7 +296,7 @@ def serialise(row: Mapping[str, Any], now: datetime) -> dict[str, Any]:
         # position `n`. The design's `photoSet` reads it as `p.photoCaptions[i]` and falls back to
         # its own fixed slot caption where the entry is null (amendment A15), which is what lets a
         # photograph past the sixth be rendered at all: the design has no seventh caption.
-        "photo_captions": photo_list(row["photo_captions"]),
+        "photo_captions": photo_captions(photos, photo_list(row["photo_captions"]), row["asset_captions"]),
     }
 
 
@@ -290,14 +355,14 @@ async def list_listings(request: Request) -> Response:
     # `listings:v1:<market>:<cursor>:<limit>` shape, so a later task that signs cursors can make
     # them cacheable again without a v2.
     #
-    # Nothing INVALIDATES it, by design: the only writer today is `scripts/seed_listings.py`, run
-    # by hand in the api container, and a 60 s TTL is a shorter wait than the `railway ssh` session
-    # that seeded it. Wave 2b's seller edits are the point at which this needs a real invalidation
-    # (drop the `listings:v1:*` keys on write), and it is theirs to add, not this task's — a hard
-    # requirement there rather than a nice-to-have, because a disclosure flag turned OFF must stop
-    # reaching buyers at once (review round 2, M4).
+    # It IS invalidated now (spec 2026-09-08 D16): every writer in `app/api/seller_listings.py` and
+    # `app/api/admin_listings.py` calls `drop_list_cache` after its transaction commits, which is
+    # what review round 2's M4 asked for — a disclosure flag turned OFF must stop reaching buyers at
+    # once rather than within the TTL. Until Wave 2b there was no writer but `scripts/seed_listings.py`,
+    # run by hand in the api container, for which 60 s was a shorter wait than the `railway ssh`
+    # session that seeded it.
     first_page = raw_cursor is None
-    cache_key = f"listings:v1:{market or ''}::{limit}"
+    cache_key = f"{LIST_CACHE_PREFIX}{market or ''}::{limit}"
     # One binding for both ends of the cache (final review M9): the read below and the write at
     # the end of this function must not be able to reach two different clients.
     cache = sync_redis() if first_page else None
@@ -370,12 +435,58 @@ async def get_listing(listing_id: str) -> Response:
     return JSONResponse(serialise(row, datetime.now(UTC)))
 
 
+def _asset_bytes(conn: Any, listing_id: str, entry: str) -> bytes | None:
+    """A seller-uploaded photograph's bytes, or None.
+
+    The SECOND arm of `listing.photos`'s single `if` (spec 2026-09-08 D15 reason 3): a
+    `source='seed'` entry is a relative path resolved under PHOTOS_ROOT by `photo_file`, and a
+    seller entry is an asset uuid resolved here. Both arms are tested, and the URL the browser asks
+    for is identical — which is why no amendment, no baseline and no `toPractice` field moves.
+
+    Every "no" is the same None, and the route's 404: an entry that is not a uuid, a uuid that
+    names no asset of this listing, an unconfigured bucket, an object that is gone. A photograph
+    that cannot be served is a missing photograph, never a 500."""
+    try:
+        asset_id = UUID(entry)
+    except ValueError:
+        return None
+    with conn.cursor() as cur:
+        cur.execute("SELECT storage_key FROM listing_asset WHERE id=%s AND listing_id=%s AND kind='photo'",
+                    (asset_id, UUID(listing_id)))
+        found = cur.fetchone()
+    if found is None:
+        return None
+    store = ObjectStore.from_settings(settings)
+    if store is None:
+        return None
+    try:
+        return store.get(found[0])
+    except (BotoCoreError, ClientError):
+        # A bucket outage is a photograph that cannot be served, which is what a 404 says here —
+        # `_error`'s envelope, never an unhandled exception (A-SL16 M2). The refusal that a
+        # seller's WRITE gets is a 503, because a write can be retried into a different outcome.
+        log.warning("[listings] object store unavailable reading %s", found[0])
+        return None
+
+
 @router.get("/listings/{listing_id}/photos/{n}", dependencies=[Depends(REQUIRE_LISTING_READ)])
 async def get_listing_photo(listing_id: str, n: int) -> Response:
+    # ONE connection for both arms (A-SL16 L8): this is the hottest read on the buyer surface, and
+    # the seller arm used to close this one and open a second to resolve the asset.
     with closing(sync_conn()) as conn, conn:
         photos = _published_photos(conn, listing_id)
-    if photos is None:
-        return _error("NOT_FOUND", "No such listing.", 404)
+        if photos is None:
+            return _error("NOT_FOUND", "No such listing.", 404)
+        entry = photos[n - 1] if 1 <= n <= len(photos) else None
+        if entry is not None and "/" not in entry:
+            # A seller's photograph: `listing.photos` holds the asset uuid, not a path. A seed
+            # entry always contains a "/" (`<slug>/<n>.webp`), so the two are told apart by the
+            # value itself rather than by a second query for the row's `source`.
+            content = _asset_bytes(conn, listing_id, entry)
+            if content is None:
+                return _error("NOT_FOUND", "No such photograph.", 404)
+            return Response(content=content, media_type="image/webp",
+                            headers={"Cache-Control": PHOTO_CACHE_CONTROL})
     path = photo_file(photos, n)
     if path is None:
         return _error("NOT_FOUND", "No such photograph.", 404)

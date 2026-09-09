@@ -165,7 +165,10 @@ describe('reseedRemoteFixtures (S7)', () => {
       REDIS_URL: 'redis://user:pw@host:6379/0'
     }, exec);
     expect(ran).toBe(true);
-    expect(calls).toHaveLength(1);
+    // SL7b (A-SL25 (10)): `seed_listings.py` joins `seed_persona.py`, the same two-call shape
+    // `targets.ts`'s LOCAL chain runs them in — the click-to-caption flow spec's seeded
+    // photograph must exist on a remote run too, not only a local one.
+    expect(calls).toHaveLength(2);
     expect(calls[0].file).toBe('poetry');
     expect(calls[0].args).toEqual(['run', 'python', 'scripts/seed_persona.py']);
     // `stdio: 'inherit'` and no `env` key: the seed inherits this process's environment (which is
@@ -176,6 +179,10 @@ describe('reseedRemoteFixtures (S7)', () => {
     // The repository root, proved by what is in it — `poetry` and `app.main` resolve there, and
     // `scripts/seed_persona.py` is the path this command hands them, relative to it.
     expect(existsSync(join(calls[0].options.cwd, 'scripts', 'seed_persona.py')), calls[0].options.cwd).toBe(true);
+    expect(calls[1].file).toBe('poetry');
+    expect(calls[1].args).toEqual(['run', 'python', 'scripts/seed_listings.py']);
+    expect(calls[1].options).toEqual({ cwd: expect.any(String), stdio: 'inherit' });
+    expect(existsSync(join(calls[1].options.cwd, 'scripts', 'seed_listings.py')), calls[1].options.cwd).toBe(true);
   });
 
   it('throws the plan\'s own line rather than running a run that would mutate the target unreproducibly', () => {

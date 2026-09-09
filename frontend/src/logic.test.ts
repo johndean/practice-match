@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Component, P } from './logic.js';
+import { STEP_FIELDS, makeListingsAdapter } from './listings/seller';
 
 let c: any;
 beforeEach(() => { c = new Component({}); });
@@ -1453,11 +1454,702 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
 });
 
 // ---------------------------------------------------------------------------------------
-// A13 — the metro selector is a dropdown list in the design's own popover style, not the
-// operating system's popup (John, 2026-09-08). The state machine, characterised: the design's
-// own listbox has no keyboard and no dismissal, so every branch below is new and every branch
-// below is covered.
+// The adapter-present paths of amendment family A16 (fix round 2, controller amendment
+// A-SL25). The re-review's ⚠️ was exact: `src/logic.js` is outside the coverage gate, the
+// oracle only ever drove the no-adapter arms, and nothing in the tree executed a wizard or a
+// dashboard handler with `this.props.listings` set — so Critical-A (a newly created listing
+// showing the design's three fixture photographs, and saying "Photos attached 3" on the submit
+// screen) was invisible to all four gates. These are characterisation cases for the arms the
+// oracle cannot reach, in the same shape as the ones above: construct the design's own
+// Component, hand it an adapter, drive the design's own handlers.
 // ---------------------------------------------------------------------------------------
+describe('logic.js — the seller adapter paths (A16, A-SL25)', () => {
+  /** A `WizardDraft` as `src/listings/seller.ts`'s `get`/`patch`/`caption` hand one back. */
+  const DRAFT = {
+    w: { name: 'ABC Animal Hospital', type: 'Mixed', est: '1998', city: 'Bastrop', zip: '78602' },
+    assets: [{ kind: 'Photo', name: 'Reception, looking in', id: 'as-1' }]
+  };
+
+  /** Every method the design's script reaches through `this.props.listings`, each resolving
+   *  unless the test overrides it. `vi.fn()` so a case can assert what was NOT called. */
+  function adapter(over: Record<string, unknown> = {}): any {
+    return {
+      list: vi.fn().mockResolvedValue([]),
+      create: vi.fn().mockResolvedValue('new-1'),
+      get: vi.fn().mockResolvedValue(DRAFT),
+      patch: vi.fn().mockResolvedValue(DRAFT),
+      submit: vi.fn().mockResolvedValue(DRAFT),
+      setStatus: vi.fn().mockResolvedValue(DRAFT),
+      attach: vi.fn().mockResolvedValue(DRAFT),
+      ...over
+    };
+  }
+
+  const ROWS = [{ id: 's1', status: 'published', title: 'T', meta: 'M', note: 'N' }];
+  /** Drains the microtask queue. `setListingStatus` and the wizard's `submit` are the design's
+   *  own handlers and return no promise — the design never had one to return — so a test that
+   *  reads the state after them has to wait for the chain rather than for a value. A macrotask
+   *  turn drains every `.then` behind it, which is precisely what Major-B's unhandled rejection
+   *  would surface in: vitest fails the file on one. */
+  const flush = () => new Promise((r) => setTimeout(r, 0));
+  /** The design's own initial wizard state, read from the prototype rather than repeated. */
+  const initialW = () => new Component({}).state.w;
+
+  // --- Critical-A -----------------------------------------------------------------------
+  it('a newly created listing shows NO photographs and says so on the submit screen', async () => {
+    // The defect this round exists to remove: `startWizard` left `wizAssets` unset, A16.4's
+    // ternary took the DESIGN's four-item literal, and the design's step rail jumps straight to
+    // step 6 or step 8 with no patch — so the seller was shown "Exterior.jpg", "Lobby.jpg" and
+    // "Treatment.jpg" on a listing that has no photographs at all, and "Photos attached 3" on
+    // the screen they read immediately before Submit for review.
+    const api = adapter({ get: vi.fn().mockResolvedValue({ w: {}, assets: [] }) });
+    const c2: any = new Component({ listings: api });
+    c2.setState({ auth: true, screen: 'seller' });
+    await c2.renderVals().startWizard();
+    expect(c2.state.editingId).toBe('new-1');
+    expect(c2.wizardVals().uploads, 'the design\'s three fixture photographs must not appear').toEqual([]);
+    c2.setState({ step: 8 });
+    const photos = c2.wizardVals().previewRows.filter((r: any) => r.k === 'Photos attached');
+    expect(photos.map((r: any) => r.v)).toEqual(['0']);
+  });
+
+  it('the tile source keys on the ADAPTER, not on wizAssets — no value of it reaches the design\'s literal', () => {
+    // A-SL25 (1), A16.1's own rule applied to the wizard: with an adapter present the design's
+    // fixture tiles are unreachable whatever the state holds.
+    const c2: any = new Component({ listings: adapter() });
+    c2.setState({ auth: true, screen: 'seller', sellerView: 'wizard', step: 6, wizAssets: undefined });
+    expect(c2.wizardVals().uploads).toEqual([]);
+    // …and with no adapter the design's own path is untouched, which is the reference.
+    expect(new Component({}).wizardVals().uploads).toEqual([
+      { kind: 'Photo', name: 'Exterior.jpg' },
+      { kind: 'Photo', name: 'Lobby.jpg' },
+      { kind: 'Photo', name: 'Treatment.jpg' }
+    ]);
+  });
+
+  // --- A16.14, create -------------------------------------------------------------------
+  it('Create a listing creates, reads the new draft back and opens THAT', async () => {
+    const api = adapter();
+    const c2: any = new Component({ listings: api });
+    c2.setState({ auth: true, screen: 'seller' });
+    await c2.renderVals().startWizard();
+    expect(api.create).toHaveBeenCalledTimes(1);
+    expect(api.get).toHaveBeenCalledWith('new-1');
+    expect(c2.state).toMatchObject({ sellerView: 'wizard', step: 1, editingId: 'new-1', wizErr: '', creating: false });
+    expect(c2.state.wizAssets).toEqual(DRAFT.assets);
+    expect(c2.state.w).toEqual({ ...initialW(), ...DRAFT.w });
+  });
+
+  it('a refused create opens the wizard on nothing at all, with the server\'s message', async () => {
+    const api = adapter({ create: vi.fn().mockRejectedValue(new Error('Too many requests.')) });
+    const c2: any = new Component({ listings: api });
+    c2.setState({ auth: true, screen: 'seller', editingId: 'old-9', wizAssets: [{ kind: 'Photo', name: 'x', id: 'a' }], w: { ...initialW(), city: 'Cedar Park' } });
+    await c2.renderVals().startWizard();
+    expect(c2.state).toMatchObject({ sellerView: 'wizard', step: 1, editingId: null, wizErr: 'Too many requests.', creating: false });
+    expect(c2.state.wizAssets).toEqual([]);
+    expect(c2.state.w).toEqual(initialW());
+  });
+
+  it('a refused READ of the just-created listing lands in the same arm', async () => {
+    const api = adapter({ get: vi.fn().mockRejectedValue(new Error('That listing could not be read.')) });
+    const c2: any = new Component({ listings: api });
+    c2.setState({ auth: true, screen: 'seller' });
+    await c2.renderVals().startWizard();
+    expect(c2.state).toMatchObject({ editingId: null, wizErr: 'That listing could not be read.', creating: false });
+    expect(c2.state.wizAssets).toEqual([]);
+  });
+
+  // --- Minor-B ---------------------------------------------------------------------------
+  it('a second press while the create is in flight creates nothing more', async () => {
+    // The guard is stronger than this case can show, and the reason is the seam (round-2
+    // re-review, Info-H): `app.setup.js` wraps the state in Vue's `reactive()` and `renderVals()`
+    // closes over `const s = this.state` — the reactive object itself, not a snapshot — so
+    // `s.creating` reads the LIVE value at click time and the guard holds with no re-render
+    // between two presses. Calling `renderVals()` afresh per press models a re-render, which is
+    // the weaker property; the stronger one belongs to the adapter seam, not to this file.
+    let release: (id: string) => void = () => {};
+    const api = adapter({ create: vi.fn().mockReturnValue(new Promise<string>((r) => { release = r; })) });
+    const c2: any = new Component({ listings: api });
+    c2.setState({ auth: true, screen: 'seller' });
+    const first = c2.renderVals().startWizard();
+    expect(c2.state.creating).toBe(true);
+    c2.renderVals().startWizard();
+    c2.renderVals().startWizard();
+    expect(api.create).toHaveBeenCalledTimes(1);
+    release('new-1');
+    await first;
+    expect(c2.state.creating).toBe(false);
+    // …and the flag clears, so the next listing can be created.
+    await c2.renderVals().startWizard();
+    expect(api.create).toHaveBeenCalledTimes(2);
+  });
+
+  // --- Major-A ---------------------------------------------------------------------------
+  it('a refused Edit never leaves the previous listing live under the wizard', async () => {
+    const api = adapter({ get: vi.fn().mockRejectedValue(new Error('That listing could not be opened.')) });
+    const c2: any = new Component({ listings: api });
+    c2.setState({
+      auth: true, screen: 'seller', myListings: ROWS,
+      editingId: 'other-9', wizAssets: [{ kind: 'Photo', name: 'x', id: 'a' }], w: { ...initialW(), city: 'Cedar Park' }
+    });
+    const edit = c2.sellerVals().listings[0].actions.filter((a: any) => a.label === 'Edit')[0];
+    await edit.go();
+    expect(c2.state).toMatchObject({ sellerView: 'wizard', step: 1, editingId: null, wizErr: 'That listing could not be opened.' });
+    expect(c2.state.wizAssets, 'the other listing\'s photographs must not survive').toEqual([]);
+    expect(c2.state.w, 'nor its fields').toEqual(initialW());
+  });
+
+  it('Edit opens the row\'s own draft through the same setter Create does', async () => {
+    const api = adapter();
+    const c2: any = new Component({ listings: api });
+    c2.setState({ auth: true, screen: 'seller', myListings: ROWS });
+    await c2.sellerVals().listings[0].actions.filter((a: any) => a.label === 'Edit')[0].go();
+    expect(api.get).toHaveBeenCalledWith('s1');
+    expect(c2.state).toMatchObject({ sellerView: 'wizard', step: 1, editingId: 's1', wizErr: '' });
+    expect(c2.state.wizAssets).toEqual(DRAFT.assets);
+    expect(c2.state.w).toEqual({ ...initialW(), ...DRAFT.w });
+  });
+
+  // --- Major-B ----------------------------------------------------------------------------
+  it('a refused reload after a successful transition rejects nowhere and empties the rows', async () => {
+    const api = adapter({ list: vi.fn().mockRejectedValue(new Error('Too many requests.')) });
+    const c2: any = new Component({ listings: api });
+    c2.setState({ auth: true, screen: 'seller', myListings: ROWS });
+    c2.setListingStatus('s1', 'withdrawn');
+    await flush();
+    expect(api.setStatus).toHaveBeenCalledWith('s1', 'withdraw');
+    expect(c2.state.myListings, 'A16.9\'s own answer to a load that failed').toEqual([]);
+  });
+
+  it('a refused reload after Submit rejects nowhere and empties the rows', async () => {
+    const api = adapter({ list: vi.fn().mockRejectedValue(new Error('Too many requests.')) });
+    const c2: any = new Component({ listings: api });
+    c2.setState({ auth: true, screen: 'seller', sellerView: 'wizard', step: 8, editingId: 'a3f1', myListings: ROWS });
+    c2.wizardVals().submit();
+    await flush();
+    expect(api.submit).toHaveBeenCalledWith('a3f1');
+    expect(c2.state.wizSubmitted, 'the design\'s own Submitted card still appears at once').toBe(true);
+    expect(c2.state.myListings).toEqual([]);
+  });
+
+  // --- Info-B -----------------------------------------------------------------------------
+  it('with an adapter and no listing behind the wizard, Add files does nothing at all', () => {
+    const api = adapter();
+    const c2: any = new Component({ listings: api });
+    c2.setState({ auth: true, screen: 'seller', sellerView: 'wizard', step: 6, editingId: null });
+    c2.wizardVals().addPhoto();
+    expect(api.attach, 'nothing to upload onto').not.toHaveBeenCalled();
+    expect(c2.state.w.photos, 'and the design\'s fake counter is never bumped behind an adapter').toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// The design's own Continue and Save-and-exit, driven against the REAL adapter over a stubbed
+// `fetch` (fix round 3, controller amendment A-SL26). The suite above hands `logic.js` a fake
+// adapter, which proves what the handlers do with an answer but not what they ASK FOR — and what
+// they asked for was every one of `w`'s 21 keys on a step that accepts four. `columns_for`'s
+// whitelist is total and one-directional (ruling D10), so the first Continue was
+// `400 step 1 does not accept anon, bldg, city, …` and not one field the seller typed was ever
+// written; Save and exit took the same refusal and its arm deliberately keeps the seller in the
+// wizard, so they were trapped on the step (round-2 re-review, CRITICAL-B). Nothing could see it:
+// `logic.js` is outside the coverage gate, the adapter's own test was handed a pre-filtered body,
+// pytest calls the endpoint with correct bodies, and the four `wizard-*` captures reach steps 7
+// and 8 through the design's step rail, which patches nothing.
+// ---------------------------------------------------------------------------------------
+describe('logic.js — what Continue actually sends (A-SL26)', () => {
+  interface Sent { url: string; method: string; body: unknown }
+
+  /** The network boundary, recording every request; `seller.test.ts`'s own stub, widened. The
+   *  answer may depend on the request (a create answers an id, every read the draft), and a
+   *  `status` outside 2xx makes every answer a refusal in the A5 envelope. */
+  function record(answer: unknown | ((url: string, method: string) => unknown), status = 200): Sent[] {
+    const sent: Sent[] = [];
+    vi.stubGlobal('fetch', (url: string, init: { method: string; body?: string }) => {
+      sent.push({ url, method: init.method, body: init.body === undefined ? undefined : JSON.parse(init.body) });
+      const body = typeof answer === 'function' ? (answer as (u: string, m: string) => unknown)(url, init.method) : answer;
+      return Promise.resolve({ ok: status < 300, status, json: () => Promise.resolve(body) });
+    });
+    return sent;
+  }
+
+  /** A `serialise_draft` payload — every key the adapter's `Draft` declares. */
+  const draft = (over: Record<string, unknown> = {}) => ({
+    id: 'a3f1', slug: 'listing-a3f1', status: 'draft',
+    name: null, type: null, est: null, ownership: null, city: null, zip: null,
+    price: null, rev: null, docs: null, rooms: null, sqft: null, hours: null, desc: null,
+    bldg: null, facilityType: null, facility: null, anon: true, revBand: false, docsLocked: true,
+    state: null, market: null, area: null, decline_reason: null, submitted_at: null,
+    updated_at: '2026-09-09T00:00:00Z', assets: [], photos: [], documents: [], ...over
+  });
+
+  /** A component on the wizard, with the REAL adapter and a listing behind it. */
+  function onStep(step: number): any {
+    const c2: any = new Component({ listings: makeListingsAdapter() });
+    c2.setState({
+      auth: true, screen: 'seller', sellerView: 'wizard', step, editingId: 'a3f1',
+      // Every field the design's own steps validate before they advance, so `next()` reaches the
+      // request rather than stopping at one of the design's three guards (logic.js:1253-1255).
+      w: { ...c2.state.w, name: 'ABC Animal Hospital', est: '1998', city: 'Bastrop', zip: '78602', price: '860000', rev: '700000', state: 'TX' }
+    });
+    return c2;
+  }
+
+  beforeEach(() => { document.cookie = 'pm_csrf=tok'; });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    document.cookie = 'pm_csrf=; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+  });
+
+  it('Continue sends exactly the step\'s own fields, on every step that has any', async () => {
+    for (const [step, keys] of Object.entries(STEP_FIELDS)) {
+      const c2 = onStep(Number(step));
+      const sent = record(draft());
+      await c2.wizardVals().next();
+      expect(sent.map((r) => r.method), `step ${step}`).toEqual(['PATCH']);
+      expect(sent[0].url, `step ${step}`).toBe(`/api/seller/listings/a3f1?step=${step}`);
+      expect(Object.keys(sent[0].body as object).sort(), `step ${step}`).toEqual([...keys].sort());
+      expect(c2.state.wizErr, `step ${step}`).toBe('');
+      expect(c2.state.step, `step ${step}`).toBe(Math.min(8, Number(step) + 1));
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('Continue on step 6 advances without a PATCH — its assets were saved on upload', async () => {
+    const c2 = onStep(6);
+    const sent = record(draft({ photos: [{ id: 'as-1', name: 'Reception' }] }));
+    await c2.wizardVals().next();
+    expect(sent.map((r) => r.method)).toEqual(['GET']);
+    expect(c2.state.step).toBe(7);
+    expect(c2.state.wizErr).toBe('');
+    expect(c2.state.wizAssets).toEqual([{ kind: 'Photo', name: 'Reception', id: 'as-1' }]);
+  });
+
+  it('Save and exit on step 6 leaves the wizard without a PATCH', async () => {
+    const c2 = onStep(6);
+    const sent = record(draft());
+    await c2.renderVals().exitWizard();
+    expect(sent.map((r) => r.method)).toEqual(['GET', 'GET']);   // the re-read, then the reload
+    expect(c2.state.sellerView).toBe('dash');
+    expect(c2.state.wizErr).toBe('');
+  });
+
+  it('Save and exit on a field step saves that step, then leaves', async () => {
+    const c2 = onStep(3);
+    const sent = record(draft());
+    await c2.renderVals().exitWizard();
+    expect(sent[0].method).toBe('PATCH');
+    expect(sent[0].url).toBe('/api/seller/listings/a3f1?step=3');
+    expect(Object.keys(sent[0].body as object).sort()).toEqual(['price', 'rev', 'revBand']);
+    expect(c2.state.sellerView).toBe('dash');
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // A-SL27, the round-3 re-review: the same wire, watched on the paths the three fixtures above
+  // never took — a listing the seller has JUST CREATED (every column null), a save that is not
+  // Continue, and the step rail.
+  // -------------------------------------------------------------------------------------------
+  describe('a created listing, Save and exit, and the step rail (A-SL27)', () => {
+    /** A component on the seller dashboard with the REAL adapter, and a network that answers a
+     *  create with an id and every read with a BARE draft — what `serialise_draft` really sends
+     *  for a row `create` has just inserted: every column null, the three switches at the table's
+     *  defaults. `onStep()` above seeds `w` from the design's literal; this is the one path that
+     *  seeds it from the API. */
+    async function created(): Promise<{ c2: any; sent: Sent[] }> {
+      const c2: any = new Component({ listings: makeListingsAdapter() });
+      c2.setState({ auth: true, screen: 'seller', sellerView: 'dash', myListings: [] });
+      const sent = record((url: string, method: string) => (method === 'POST' && url === '/api/seller/listings'
+        ? { id: 'new-1' }
+        : draft({ id: 'new-1', revBand: true })));
+      await c2.renderVals().startWizard();
+      return { c2, sent };
+    }
+
+    it('a listing the seller just created opens on the design\'s own four defaults, not on blanks (CRITICAL-C)', async () => {
+      const { c2 } = await created();
+      expect(c2.state.editingId).toBe('new-1');
+      expect(c2.state.step).toBe(1);
+      // The API answered null for all four; the design's literal is what the wizard shows.
+      expect(c2.state.w).toMatchObject({ type: 'Small animal', ownership: 'Sole proprietor', bldg: 'Included', facilityType: 'Standalone' });
+      expect(c2.wizardVals().fields.map((f: { value: unknown }) => f.value)).toEqual(['', 'Small animal', '', 'Sole proprietor']);
+      // …and what the API DID answer is taken as it is: the switches, in the table's own polarity.
+      expect(c2.state.w).toMatchObject({ anon: true, revBand: true, docsLocked: true });
+    });
+
+    it('the first Continue of that listing PATCHes the design\'s default enums, on step 1 and on step 5 (CRITICAL-C)', async () => {
+      const { c2, sent } = await created();
+      // The seller types what the design's own step-1 guard requires and presses Continue.
+      c2.setW('name')('ABC Animal Hospital');
+      c2.setW('est')('1998');
+      await c2.wizardVals().next();
+      const first = sent.filter((r) => r.method === 'PATCH');
+      expect(first).toHaveLength(1);
+      expect(first[0].url).toBe('/api/seller/listings/new-1?step=1');
+      expect(first[0].body, 'never "" for an enum').toEqual({ name: 'ABC Animal Hospital', type: 'Small animal', est: '1998', ownership: 'Sole proprietor' });
+      expect(c2.state.step).toBe(2);
+      expect(c2.state.wizErr).toBe('');
+
+      c2.setState({ step: 5 });
+      await c2.wizardVals().next();
+      const fifth = sent.filter((r) => r.method === 'PATCH')[1];
+      expect(fifth.url).toBe('/api/seller/listings/new-1?step=5');
+      expect(fifth.body).toEqual({ bldg: 'Included', facilityType: 'Standalone', facility: '' });
+      expect(c2.state.step).toBe(6);
+    });
+
+    it('Save and exit on step 1 with the year still blank saves without it, and leaves (MAJOR-D)', async () => {
+      const { c2, sent } = await created();
+      c2.setW('name')('ABC Animal Hospital');
+      await c2.renderVals().exitWizard();
+      const patch = sent.filter((r) => r.method === 'PATCH');
+      expect(patch).toHaveLength(1);
+      expect(patch[0].url).toBe('/api/seller/listings/new-1?step=1');
+      expect(patch[0].body, 'the blank required number is left out, not sent as ""').toEqual({ name: 'ABC Animal Hospital', type: 'Small animal', ownership: 'Sole proprietor' });
+      expect(c2.state.sellerView).toBe('dash');
+      expect(c2.state.wizErr).toBe('');
+    });
+
+    it('Save and exit on step 3 with the asking price still blank saves without it, and leaves (MAJOR-D)', async () => {
+      const { c2, sent } = await created();
+      c2.setState({ step: 3 });
+      await c2.renderVals().exitWizard();
+      const patch = sent.filter((r) => r.method === 'PATCH');
+      expect(patch[0].url).toBe('/api/seller/listings/new-1?step=3');
+      expect(patch[0].body).toEqual({ rev: '', revBand: true });
+      expect(c2.state.sellerView).toBe('dash');
+    });
+
+    it('a genuine refusal of Save and exit still keeps the seller in the wizard, with the message (A-SL23 (3))', async () => {
+      const c2 = onStep(2);
+      record({ error: { code: 'BAD_REQUEST', message: 'zip must be text.' } }, 400);
+      await c2.renderVals().exitWizard();
+      expect(c2.state.sellerView).toBe('wizard');
+      expect(c2.state.wizErr).toBe('zip must be text.');
+    });
+
+    it('the step rail saves the step it leaves before it moves (MAJOR-E, A16.18)', async () => {
+      const c2 = onStep(5);
+      c2.setW('facility')('Two surgical suites');
+      const sent = record(draft({ photos: [{ id: 'as-1', name: 'Reception' }] }));
+      await c2.wizardVals().steps[5].go();
+      expect(sent.map((r) => r.method)).toEqual(['PATCH']);
+      expect(sent[0].url).toBe('/api/seller/listings/a3f1?step=5');
+      expect(sent[0].body).toEqual({ bldg: 'Included', facilityType: 'Standalone', facility: 'Two surgical suites' });
+      expect(c2.state.step).toBe(6);
+      expect(c2.state.wizErr).toBe('');
+      expect(c2.state.wizAssets, 'the tiles come from the answer, as Continue\'s do').toEqual([{ kind: 'Photo', name: 'Reception', id: 'as-1' }]);
+    });
+
+    it('the rail saves in partial mode, so leaving a half-filled step 1 by the rail is not a refusal (MAJOR-D/E)', async () => {
+      const { c2, sent } = await created();
+      c2.setW('name')('ABC Animal Hospital');
+      await c2.wizardVals().steps[2].go();
+      const patch = sent.filter((r) => r.method === 'PATCH');
+      expect(patch[0].url).toBe('/api/seller/listings/new-1?step=1');
+      expect(patch[0].body).toEqual({ name: 'ABC Animal Hospital', type: 'Small animal', ownership: 'Sole proprietor' });
+      expect(c2.state.step).toBe(3);
+    });
+
+    it('a refused rail save keeps the seller on the step they were typing on, with the message (MAJOR-E)', async () => {
+      const c2 = onStep(4);
+      record({ error: { code: 'BAD_REQUEST', message: 'sqft is larger than this listing can hold.' } }, 422);
+      await c2.wizardVals().steps[6].go();
+      expect(c2.state.step).toBe(4);
+      expect(c2.state.wizErr).toBe('sqft is larger than this listing can hold.');
+    });
+
+    it('the rail off step 6 or step 8 re-reads and moves — no PATCH, since neither step has a field (MAJOR-E)', async () => {
+      for (const from of [6, 8]) {
+        const c2 = onStep(from);
+        const sent = record(draft());
+        await c2.wizardVals().steps[0].go();
+        expect(sent.map((r) => [r.method, r.url]), `from step ${from}`).toEqual([['GET', '/api/seller/listings/a3f1']]);
+        expect(c2.state.step, `from step ${from}`).toBe(1);
+        vi.unstubAllGlobals();
+      }
+    });
+
+    // --- MAJOR-F (round-4 re-review), A-SL29 (1): Back is the rail's twin --------------------
+    it('Back saves the step it leaves before it moves (MAJOR-F, A16.19)', async () => {
+      // Round 3 said the rail was "the ONE navigation control that silently discards work"; it was
+      // wrong by one control. Type on step 5 → Back → step 4 → Save and exit lost step 5, under the
+      // same "Saved automatically" chrome. Same shape as A16.18: partial mode, Continue's own arm.
+      const c2 = onStep(5);
+      c2.setW('facility')('Two surgical suites');
+      const sent = record(draft({ photos: [{ id: 'as-1', name: 'Reception' }] }));
+      await c2.wizardVals().back();
+      expect(sent.map((r) => r.method)).toEqual(['PATCH']);
+      expect(sent[0].url).toBe('/api/seller/listings/a3f1?step=5');
+      expect(sent[0].body).toEqual({ bldg: 'Included', facilityType: 'Standalone', facility: 'Two surgical suites' });
+      expect(c2.state.step).toBe(4);
+      expect(c2.state.wizErr).toBe('');
+      expect(c2.state.wizAssets).toEqual([{ kind: 'Photo', name: 'Reception', id: 'as-1' }]);
+    });
+
+    it('Back saves in partial mode, and on step 1 it saves and stays (MAJOR-F)', async () => {
+      const { c2, sent } = await created();
+      c2.setW('name')('ABC Animal Hospital');
+      await c2.wizardVals().back();
+      const patch = sent.filter((r) => r.method === 'PATCH');
+      expect(patch).toHaveLength(1);
+      expect(patch[0].url).toBe('/api/seller/listings/new-1?step=1');
+      expect(patch[0].body, 'the blank year is left out').toEqual({ name: 'ABC Animal Hospital', type: 'Small animal', ownership: 'Sole proprietor' });
+      expect(c2.state.step, 'the design\'s own Math.max(1, step - 1)').toBe(1);
+    });
+
+    it('a refused Back save keeps the seller on the step they were typing on, with the message (MAJOR-F)', async () => {
+      const c2 = onStep(4);
+      record({ error: { code: 'BAD_REQUEST', message: 'sqft must be a number.' } }, 400);
+      await c2.wizardVals().back();
+      expect(c2.state.step).toBe(4);
+      expect(c2.state.wizErr).toBe('sqft must be a number.');
+    });
+
+    it('Back off step 6 or step 8 re-reads and moves — no PATCH, since neither step has a field (MAJOR-F)', async () => {
+      for (const from of [6, 8]) {
+        const c2 = onStep(from);
+        const sent = record(draft());
+        await c2.wizardVals().back();
+        expect(sent.map((r) => [r.method, r.url]), `from step ${from}`).toEqual([['GET', '/api/seller/listings/a3f1']]);
+        expect(c2.state.step, `from step ${from}`).toBe(from - 1);
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('without an adapter Back is the design\'s own move, and spends no request (MAJOR-F)', () => {
+      const plain: any = new Component({});
+      plain.setState({ auth: true, screen: 'seller', sellerView: 'wizard', step: 5, wizErr: 'x' });
+      const sent = record(draft());
+      plain.wizardVals().back();
+      expect(plain.state.step).toBe(4);
+      expect(plain.state.wizErr).toBe('');
+      expect(sent).toEqual([]);
+    });
+
+    it('without an adapter the rail is the design\'s own move, and spends no request (MAJOR-E)', () => {
+      const plain: any = new Component({});
+      plain.setState({ auth: true, screen: 'seller', sellerView: 'wizard', step: 2, wizErr: 'x' });
+      const sent = record(draft());
+      plain.wizardVals().steps[6].go();
+      expect(plain.state.step).toBe(7);
+      expect(plain.state.wizErr).toBe('');
+      expect(sent).toEqual([]);
+    });
+
+    it('every field of the design\'s `w` except photos is saved by some step; the two switches step 7 repeats belong to two (INFO-J)', () => {
+      // The pin was one-directional: `photos` and `state` were asserted absent from every step,
+      // but nothing said the other nineteen keys were each PRESENT in one. A twentieth field added
+      // to `w` by a later amendment would have been silently un-saveable, every gate green.
+      const w = Object.keys(new Component({}).state.w).filter((key) => key !== 'photos');
+      const count = (key: string) => Object.values(STEP_FIELDS).filter((keys) => keys.includes(key)).length;
+      for (const key of w) expect(count(key), `${key} is saved by no step`).toBeGreaterThanOrEqual(1);
+      // `anon` and `revBand` are the design's own repeats — step 7's disclosure settings re-offer
+      // step 2's and step 3's switch — so each is saved from exactly two steps; every other key
+      // from exactly one. The ruling's "exactly one" is true of every key the design does not
+      // deliberately repeat; the two it does are pinned by name so a third cannot appear unnoticed.
+      expect(w.filter((key) => count(key) !== 1).sort()).toEqual(['anon', 'revBand']);
+      expect(count('anon')).toBe(2);
+      expect(count('revBand')).toBe(2);
+    });
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // A-SL30 (3), on the round-5 re-review's Info-15: A16.18/A16.19 made the rail and Back save the
+  // step they leave; two doors out of the wizard still did not — the header nav (`go`) and Sign
+  // out, both under the same "Saved automatically" chrome. A16.20a/A16.20b are the rail's shape at
+  // both doors: partial mode, Continue's own single rejection arm, no PATCH on steps 6/8. Sign out
+  // is a genuine exception (A-SL30 (3)'s own ruling): it ATTEMPTS the save and ends the session
+  // regardless of the answer, because a session end is the seller's explicit act and must never be
+  // held hostage to one.
+  // ---------------------------------------------------------------------------------------
+  describe('leaving the wizard by header navigation or signing out also saves the step (A-SL30 (3), Info-15)', () => {
+    it('go() saves the step it leaves before it navigates (A16.20a)', async () => {
+      const c2 = onStep(5);
+      c2.setW('facility')('Two surgical suites');
+      const sent = record(draft({ photos: [{ id: 'as-1', name: 'Reception' }] }));
+      await c2.go('browse')();
+      expect(sent.map((r) => r.method)).toEqual(['PATCH']);
+      expect(sent[0].url).toBe('/api/seller/listings/a3f1?step=5');
+      expect(sent[0].body).toEqual({ bldg: 'Included', facilityType: 'Standalone', facility: 'Two surgical suites' });
+      expect(c2.state.screen).toBe('browse');
+      expect(c2.state.wizErr).toBe('');
+      expect(c2.state.wizAssets).toEqual([{ kind: 'Photo', name: 'Reception', id: 'as-1' }]);
+    });
+
+    it('a refused go() save keeps the seller in the wizard, with the message (A16.20a)', async () => {
+      const c2 = onStep(4);
+      record({ error: { code: 'BAD_REQUEST', message: 'sqft must be a number.' } }, 400);
+      await c2.go('browse')();
+      expect(c2.state.screen).toBe('seller');
+      expect(c2.state.sellerView).toBe('wizard');
+      expect(c2.state.wizErr).toBe('sqft must be a number.');
+    });
+
+    it('go() off step 6 or step 8 re-reads and moves — no PATCH, since neither step has a field (A16.20a)', async () => {
+      for (const from of [6, 8]) {
+        const c2 = onStep(from);
+        const sent = record(draft());
+        await c2.go('browse')();
+        expect(sent.map((r) => [r.method, r.url]), `from step ${from}`).toEqual([['GET', '/api/seller/listings/a3f1']]);
+        expect(c2.state.screen, `from step ${from}`).toBe('browse');
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('go() navigates at once when the wizard is not open, whatever the adapter (A16.20a)', () => {
+      const c2: any = new Component({ listings: makeListingsAdapter() });
+      c2.setState({ auth: true, screen: 'browse', sellerView: 'dash' });
+      const sent = record(draft());
+      c2.go('seller')();
+      expect(c2.state.screen).toBe('seller');
+      expect(sent).toEqual([]);
+    });
+
+    it('go() navigates at once when the wizard is open but nothing is being edited (A16.20a)', () => {
+      const c2: any = new Component({ listings: makeListingsAdapter() });
+      c2.setState({ auth: true, screen: 'seller', sellerView: 'wizard', editingId: null });
+      const sent = record(draft());
+      c2.go('browse')();
+      expect(c2.state.screen).toBe('browse');
+      expect(sent).toEqual([]);
+    });
+
+    it('without an adapter go() is the design\'s own move, and spends no request (A16.20a)', () => {
+      const plain: any = new Component({});
+      plain.setState({ auth: true, screen: 'seller', sellerView: 'wizard', editingId: 'a3f1' });
+      const sent = record(draft());
+      plain.go('browse')();
+      expect(plain.state.screen).toBe('browse');
+      expect(sent).toEqual([]);
+    });
+
+    it('signOut attempts to save the step the wizard is on, then signs out regardless of the answer (A16.20b)', async () => {
+      const c2 = onStep(5);
+      c2.setW('facility')('Two surgical suites');
+      const sent = record(draft());
+      await c2.renderVals().signOut();
+      expect(sent.map((r) => r.method)).toEqual(['PATCH']);
+      expect(sent[0].url).toBe('/api/seller/listings/a3f1?step=5');
+      expect(sent[0].body).toEqual({ bldg: 'Included', facilityType: 'Standalone', facility: 'Two surgical suites' });
+      expect(c2.state.auth).toBe(false);
+      expect(c2.state.screen).toBe('gate');
+      expect(c2.state.sellerView).toBe('dash');
+    });
+
+    it('a refused signOut save still signs out — a session end is never held hostage to a save (A16.20b)', async () => {
+      const c2 = onStep(5);
+      record({ error: { code: 'BAD_REQUEST', message: 'sqft must be a number.' } }, 400);
+      await c2.renderVals().signOut();
+      expect(c2.state.auth).toBe(false);
+      expect(c2.state.screen).toBe('gate');
+      expect(c2.state.sellerView).toBe('dash');
+    });
+
+    it('signOut off step 6 or step 8 re-reads and still signs out — no PATCH (A16.20b)', async () => {
+      for (const from of [6, 8]) {
+        const c2 = onStep(from);
+        const sent = record(draft());
+        await c2.renderVals().signOut();
+        expect(sent.map((r) => [r.method, r.url]), `from step ${from}`).toEqual([['GET', '/api/seller/listings/a3f1']]);
+        expect(c2.state.auth, `from step ${from}`).toBe(false);
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('signOut outside the wizard signs out with no save attempt (A16.20b)', async () => {
+      const c2: any = new Component({ listings: makeListingsAdapter() });
+      c2.setState({ auth: true, screen: 'browse', sellerView: 'dash' });
+      const sent = record(draft());
+      await c2.renderVals().signOut();
+      expect(sent).toEqual([]);
+      expect(c2.state.auth).toBe(false);
+    });
+
+    it('signOut with the wizard open but nothing being edited signs out with no save attempt (A16.20b)', async () => {
+      const c2: any = new Component({ listings: makeListingsAdapter() });
+      c2.setState({ auth: true, screen: 'seller', sellerView: 'wizard', editingId: null });
+      const sent = record(draft());
+      await c2.renderVals().signOut();
+      expect(sent).toEqual([]);
+      expect(c2.state.auth).toBe(false);
+    });
+
+    it('without an adapter signOut is the design\'s own move, and spends no request (A16.20b)', async () => {
+      const plain: any = new Component({});
+      plain.setState({ auth: true, screen: 'seller', sellerView: 'wizard', editingId: 'a3f1' });
+      const sent = record(draft());
+      await plain.renderVals().signOut();
+      expect(sent).toEqual([]);
+      expect(plain.state.auth).toBe(false);
+    });
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // A-SL25 (10) / SL7b: the step-6 tile re-describes an EXISTING photograph, seeded ones
+  // included, by clicking it — the design's own `prompt`-based describe flow SL7 wired for
+  // upload, now wired to the tile too. ONE chained promise, one rejection arm into `wizErr`
+  // (A-SL23 (4)'s `attach` shape), routed by the tile's own `source`: `caption()` for an asset,
+  // the positional route for a seed entry. Photographs only; a document tile has no handler.
+  // ---------------------------------------------------------------------------------------
+  describe('the step-6 tile re-describes an existing photograph on click (A-SL25 (10), A16.21/A16.22)', () => {
+    it('an asset-backed tile\'s describe writes through caption(), and refreshes the tiles (A16.21)', async () => {
+      const c2 = onStep(6);
+      c2.setState({ wizAssets: [{ kind: 'Photo', name: 'Reception', id: 'as-1', source: 'asset' }] });
+      const sent = record(draft({ photos: [{ id: 'as-1', name: 'The lobby', source: 'asset' }] }));
+      vi.stubGlobal('prompt', vi.fn().mockReturnValue('The lobby'));
+      await c2.wizardVals().uploads[0].describe();
+      expect(sent.map((r) => [r.method, r.url])).toEqual([['PATCH', '/api/seller/listings/a3f1/assets/as-1']]);
+      expect(sent[0].body).toEqual({ caption: 'The lobby' });
+      expect(c2.state.wizAssets).toEqual([{ kind: 'Photo', id: 'as-1', name: 'The lobby', source: 'asset' }]);
+      expect(c2.state.wizErr).toBe('');
+      vi.unstubAllGlobals();
+    });
+
+    it('a seed-backed tile\'s describe writes through the positional route, by its own position (A16.21)', async () => {
+      const c2 = onStep(6);
+      c2.setState({ wizAssets: [{ kind: 'Photo', name: 'Exterior — front', id: 'a/3.webp', source: 'seed', position: 3 }] });
+      const sent = record(draft({ photos: [{ id: 'a/3.webp', name: 'The exam room', source: 'seed', position: 3 }] }));
+      vi.stubGlobal('prompt', vi.fn().mockReturnValue('The exam room'));
+      await c2.wizardVals().uploads[0].describe();
+      expect(sent.map((r) => [r.method, r.url])).toEqual([['PATCH', '/api/seller/listings/a3f1/photos/3']]);
+      expect(sent[0].body).toEqual({ caption: 'The exam room' });
+      expect(c2.state.wizAssets).toEqual([{ kind: 'Photo', id: 'a/3.webp', name: 'The exam room', source: 'seed', position: 3 }]);
+      vi.unstubAllGlobals();
+    });
+
+    it('a refused re-caption sets wizErr and leaves the tiles as they were (A16.21)', async () => {
+      const c2 = onStep(6);
+      c2.setState({ wizAssets: [{ kind: 'Photo', name: 'Reception', id: 'as-1', source: 'asset' }] });
+      record({ error: { code: 'BAD_REQUEST', message: 'caption is too long.' } }, 400);
+      vi.stubGlobal('prompt', vi.fn().mockReturnValue('x'));
+      await c2.wizardVals().uploads[0].describe();
+      expect(c2.state.wizErr).toBe('caption is too long.');
+      expect(c2.state.wizAssets).toEqual([{ kind: 'Photo', name: 'Reception', id: 'as-1', source: 'asset' }]);
+      vi.unstubAllGlobals();
+    });
+
+    it('a document tile has no describe handler (photographs only, A16.21)', () => {
+      const c2 = onStep(6);
+      c2.setState({ wizAssets: [{ kind: 'PDF', name: 'Floor plan.pdf', id: 'd1' }] });
+      expect(c2.wizardVals().uploads[0].describe).toBeNull();
+    });
+
+    it('a tile has no describe handler when there is no listing to save it to (A16.21)', () => {
+      const c2: any = new Component({ listings: makeListingsAdapter() });
+      c2.setState({
+        auth: true, screen: 'seller', sellerView: 'wizard', step: 6, editingId: null,
+        wizAssets: [{ kind: 'Photo', name: 'x', id: 'as-1', source: 'asset' }]
+      });
+      expect(c2.wizardVals().uploads[0].describe).toBeNull();
+    });
+
+    it('without an adapter the design\'s own fixture tiles carry no describe handler (A16.21)', () => {
+      const plain: any = new Component({});
+      plain.setState({ auth: true, screen: 'seller', sellerView: 'wizard', step: 6 });
+      expect(plain.wizardVals().uploads[0].describe).toBeUndefined();
+    });
+  });
+});
+
 describe('A13 — the metro dropdown', () => {
   const MARKET_KEYS = ['Austin, TX', 'Sacramento, CA', 'Orlando, FL', 'Atlanta, GA'];
   // M4 (review, round 1): the cases below that arm real `document` listeners through

@@ -1,0 +1,88 @@
+"""Photograph normalisation — `scripts/prepare_photos.py`'s rules, on the request path.
+
+Spec 2026-09-08 D15: "Normalisation is part of the upload, not a nicety." Every rule here was
+already the seed pipeline's; this module is where they now live so that the seeder and the API
+apply exactly the same ones, and `tests/scripts/test_prepare_photos.py` keeps proving them end to
+end against the committed corpus.
+
+METADATA STRIPPING IS THE POINT, not tidiness. A seller's phone photograph carries GPS EXIF, and a
+listing with `location_disclosed = false` whose photograph leaks its coordinates breaks the promise
+John's own words make on the sign-in card (amendment A10.2, "Sellers control what buyers can see").
+Pillow's `save` writes no EXIF, ICC profile or XMP unless asked, and this module never asks — but
+orientation must be APPLIED before it is discarded (`ImageOps.exif_transpose`), or every portrait
+photograph ships on its side.
+"""
+from __future__ import annotations
+
+import hashlib
+import io
+
+from PIL import Image, ImageOps, UnidentifiedImageError
+
+# The ceilings below are the seed pipeline's own (scripts/prepare_photos.py), shared with it:
+# 1600 px and 250 KB are what keep the buyer gallery quick on a phone. There is no count here any
+# more: D18's four-per-listing seller cap was withdrawn by A-SL20 (John, 2026-09-09, "render ALL
+# images"), and the seed set's own six — the design's photo slots (A-L9) — is that script's, not
+# this module's.
+MAX_EDGE_PX = 1600
+MAX_BYTES = 250 * 1024
+# Tried in order; the first that fits under MAX_BYTES wins.
+QUALITY_LADDER = (82, 72, 62, 52, 44, 20)
+# One more step for a photograph that will not fit at any quality at MAX_EDGE_PX: shrink, then walk
+# the ladder again. A visibly smaller photograph beats a refused upload.
+FALLBACK_EDGE_PX = 1100
+IMAGE_SUFFIXES = (".png", ".jpg", ".jpeg", ".webp")
+
+# An explicit bound, set here rather than left to Pillow's own ambient default (global mutable
+# state some other import in the same process could change first): 100 megapixels is far beyond
+# any legitimate phone or camera photograph — nowhere near MAX_EDGE_PX's needs — but comfortably
+# below Pillow's own ~179 megapixel default, so a small file whose header LIES about its
+# dimensions (a "decompression bomb": kilobytes on disk, gigabytes once decoded) is refused before
+# a single pixel is decoded, at `Image.open()` time (SL2 review, Medium-1).
+MAX_IMAGE_PIXELS = 100_000_000
+Image.MAX_IMAGE_PIXELS = MAX_IMAGE_PIXELS
+
+
+def sha256_hex(data: bytes) -> str:
+    return hashlib.sha256(data).hexdigest()
+
+
+def _flattened(image: Image.Image) -> Image.Image:
+    """Orientation applied, alpha composited onto white, mode RGB. Not `convert("RGB")` alone:
+    that drops the alpha channel by discarding it, so a transparent pixel becomes black."""
+    upright = ImageOps.exif_transpose(image)
+    if upright.mode in ("RGBA", "LA", "P"):
+        rgba = upright.convert("RGBA")
+        canvas = Image.new("RGB", rgba.size, (255, 255, 255))
+        canvas.paste(rgba, mask=rgba.split()[-1])
+        return canvas
+    return upright.convert("RGB")
+
+
+def _within(image: Image.Image, edge: int) -> Image.Image:
+    if max(image.size) <= edge:
+        return image
+    scale = edge / max(image.size)
+    return image.resize((max(1, round(image.width * scale)), max(1, round(image.height * scale))), Image.Resampling.LANCZOS)
+
+
+def encode_webp(data: bytes) -> tuple[bytes, str] | None:
+    """`data` as WebP bytes and their SHA-256, or `None` when nothing in the ladder fits.
+
+    `None` rather than an exception for BOTH failure modes — bytes that are not an image, and an
+    image that will not fit — because the caller is an HTTP route and both are the caller's 422,
+    not a 500."""
+    try:
+        opened = Image.open(io.BytesIO(data))
+        flattened = _flattened(opened)
+    except (UnidentifiedImageError, OSError, ValueError, Image.DecompressionBombError):
+        return None
+    for edge in (MAX_EDGE_PX, FALLBACK_EDGE_PX):
+        candidate = _within(flattened, edge)
+        for quality in QUALITY_LADDER:
+            buffer = io.BytesIO()
+            candidate.save(buffer, "WEBP", quality=quality, method=6)
+            out = buffer.getvalue()
+            if len(out) <= MAX_BYTES:
+                return out, sha256_hex(out)
+    return None

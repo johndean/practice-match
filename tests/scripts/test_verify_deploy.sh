@@ -46,7 +46,8 @@ railway_calls() { wc -l < "$FAKE_RAILWAY_LOG" | tr -d ' '; }
 
 # start_server <mode> [environment]. Modes: ok | spa_missing | deep_503 | no_postgis | no_site_mode |
 #   coming_ok | coming_wrong_shell | coming_interest_500 | coming_leak | coming_auth_live | coming_admin_live |
-#   coming_applications_live | coming_listings_live | coming_signups_live | listings_open | signups_open | missing_keys |
+#   coming_applications_live | coming_listings_live | coming_signups_live | coming_seller_listings_live |
+#   coming_admin_listings_live | listings_open | signups_open | seller_listings_open | missing_keys |
 #   db_null | not_json | deep_json | wrong_version | no_config | config_not_bool | config_public
 # [environment] overrides the fake body's `environment` field (default qa) — M1's production-mode
 # cases reuse the same MODE bodies (coming_ok, ok) with environment: production instead of duplicating
@@ -72,7 +73,8 @@ if MODE == "no_postgis":
 if MODE == "no_site_mode":
     del BODY["site_mode"]
 if MODE in ("coming_ok", "coming_wrong_shell", "coming_interest_500", "coming_leak", "coming_auth_live",
-            "coming_admin_live", "coming_applications_live", "coming_listings_live", "coming_signups_live"):
+            "coming_admin_live", "coming_applications_live", "coming_listings_live", "coming_signups_live",
+            "coming_seller_listings_live", "coming_admin_listings_live"):
     BODY["site_mode"] = "coming_soon"
 if MODE == "missing_keys":
     BODY = {"status": "ok"}  # malformed: every other required key absent (fix round 2)
@@ -139,6 +141,27 @@ class H(BaseHTTPRequestHandler):
                 self._send(404, "application/json", b'{"ok":false,"error":{"code":"NOT_FOUND"}}')
             else:
                 self._send(401, "application/json", b'{"error":{"code":"UNAUTHORIZED","message":"Sign in to continue."}}')
+        elif self.path.startswith("/api/seller/listings"):
+            # SL9 (spec 2026-09-08 D9): the seller wizard's surface, disjoint prefix from
+            # /api/listings, same gate. A healthy deployment answers 401 to an anonymous caller in
+            # app mode and 404 in coming-soon mode; the two failure modes mirror /api/listings's.
+            if MODE == "coming_seller_listings_live" or (MODE == "seller_listings_open" and BODY["site_mode"] == "app"):
+                self._send(200, "application/json", b'{"items":[],"next_cursor":null}')
+            elif BODY["site_mode"] == "coming_soon":
+                self._send(404, "application/json", b'{"ok":false,"error":{"code":"NOT_FOUND"}}')
+            else:
+                self._send(401, "application/json", b'{"error":{"code":"UNAUTHORIZED","message":"Sign in to continue."}}')
+        elif self.path.startswith("/api/admin/listings"):
+            # SL9 (spec 2026-09-08 D9): the reviewer's queue. Only its coming-soon absence is
+            # probed by verify-deploy.sh (the app-mode positive check is /api/seller/listings's
+            # alone, per the brief), so this mode answers 404 in coming-soon mode and 401 (staff-
+            # guarded) once SITE_MODE=app — there is no "open" negative for it here.
+            if MODE == "coming_admin_listings_live":
+                self._send(401, "application/json", b'{"error":{"code":"UNAUTHORIZED","message":"Sign in to continue."}}')
+            elif BODY["site_mode"] == "coming_soon":
+                self._send(404, "application/json", b'{"ok":false,"error":{"code":"NOT_FOUND"}}')
+            else:
+                self._send(401, "application/json", b'{"error":{"code":"UNAUTHORIZED","message":"Sign in to continue."}}')
         elif self.path.startswith("/api/config"):
             if MODE == "no_config":
                 self._send(404, "application/json", b'{"error":{"code":"NOT_FOUND"}}')
@@ -164,7 +187,8 @@ class H(BaseHTTPRequestHandler):
             elif MODE == "coming_leak":
                 self._send(200, "text/html", LEAK_SHELL)
             elif MODE in ("coming_ok", "coming_interest_500", "coming_auth_live", "coming_admin_live",
-                          "coming_applications_live", "coming_listings_live", "coming_signups_live"):
+                          "coming_applications_live", "coming_listings_live", "coming_signups_live",
+                          "coming_seller_listings_live", "coming_admin_listings_live"):
                 self._send(200, "text/html", COMING_SHELL)
             else:
                 self._send(200, "text/html", SHELL_BAD if MODE == "spa_missing" else SHELL_OK)
@@ -208,7 +232,7 @@ PY
 start_server ok
 : > "$FAKE_RAILWAY_LOG"
 out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA) || fail "a healthy target must verify; output: $out"
-for line in "healthz OK" "deep healthz OK" "config OK" "SPA fallback OK" "listings guarded OK" "signups guarded OK"; do [[ "$out" == *"$line"* ]] || fail "missing '$line' in: $out"; done
+for line in "healthz OK" "deep healthz OK" "config OK" "SPA fallback OK" "listings guarded OK" "seller listings guarded OK" "signups guarded OK"; do [[ "$out" == *"$line"* ]] || fail "missing '$line' in: $out"; done
 [[ "$out" == *"3.5.2"* ]] || fail "the postgis version must be printed; got: $out"
 
 # An explicit target is an ad hoc probe: the Railway CLI must not be invoked at all,
@@ -409,6 +433,33 @@ if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash script
 fi
 [[ "$out" == *"/api/admin/signups answered 200 to an anonymous caller"* ]] || fail "the unguarded-signups failure must name itself; got: $out"
 [[ "$out" != *"signups guarded OK"* ]] || fail "must not claim signups guarded OK when it is not; got: $out"
+stop_server
+
+# --- 11g. SL9 (spec 2026-09-08 D9): the seller wizard's surface behind the Coming Soon page fails
+# the deploy — same gate as /api/listings, disjoint prefix. -------------------------------------
+start_server coming_seller_listings_live production
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh production 2>&1); then
+  stop_server; fail "/api/seller/listings answering 200 in coming-soon mode must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"/api/seller/listings answered 200 in coming-soon mode"* ]] || { stop_server; fail "the seller-surface failure must name itself; got: $out"; }
+stop_server
+
+# --- 11h. SL9: the review queue behind the Coming Soon page fails the deploy too. -----------------
+start_server coming_admin_listings_live production
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh production 2>&1); then
+  stop_server; fail "/api/admin/listings answering 401 in coming-soon mode must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"/api/admin/listings answered 401 in coming-soon mode"* ]] || { stop_server; fail "the review-queue failure must name itself; got: $out"; }
+stop_server
+
+# --- 11i. SL9: on QA (app mode) the seller wizard's surface must be GUARDED — an anonymous 200 is
+# another seller's drafts, handed to the public. -------------------------------------------------
+start_server seller_listings_open
+if out=$(VERIFY_BASE_URL="http://127.0.0.1:$PORT" EXPECT_SHA=abc1234 bash scripts/verify-deploy.sh QA 2>&1); then
+  fail "an unguarded /api/seller/listings must fail the script; it exited 0 with: $out"
+fi
+[[ "$out" == *"/api/seller/listings answered 200 to an anonymous caller"* ]] || fail "the unguarded-seller-surface failure must name itself; got: $out"
+[[ "$out" != *"seller listings guarded OK"* ]] || fail "must not claim seller listings guarded OK when it is not; got: $out"
 stop_server
 
 # --- 12. malformed healthz body (required keys absent) fails, no traceback -----

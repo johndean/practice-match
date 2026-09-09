@@ -1,0 +1,11 @@
+{
+  "steps": {
+    "1": ["name", "type", "est", "ownership"],
+    "2": ["city", "zip", "anon"],
+    "3": ["price", "rev", "revBand"],
+    "4": ["docs", "rooms", "sqft", "hours", "desc"],
+    "5": ["bldg", "facilityType", "facility"],
+    "7": ["anon", "revBand", "docsLocked"]
+  },
+  "requiredNumeric": ["est", "price"]
+}

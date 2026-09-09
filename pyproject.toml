@@ -19,6 +19,20 @@ dependencies = [
   "argon2-cffi (>=25.1.0,<26.0.0)",
   "zxcvbn (>=4.5.0,<5.0.0)",
   "boto3 (>=1.43.89,<2.0.0)",
+  # The photograph pipeline, on the REQUEST PATH since the seller listing lifecycle (spec
+  # 2026-09-08 D15): `app/media/encode.py` EXIF-transposes, flattens, resizes, strips every
+  # metadatum and re-encodes a seller's upload to WebP before a byte reaches object storage.
+  # Stripping a phone photograph's GPS is what keeps "Sellers control what buyers can see" true
+  # for a listing whose location is undisclosed, so it cannot wait for a hand-run script — which
+  # is why this is a MAIN dependency now and no longer dev-only (`scripts/prepare_photos.py`
+  # imports the same module). Controller ruling A-SL6, Task SL2.
+  "pillow>=11.0",
+  # Multipart form parsing, for the seller's photograph and document uploads (spec 2026-09-08 D15,
+  # D18). Starlette's `Request.form()` asserts this library is installed before it will read a
+  # `multipart/form-data` body, and `app/api/seller_listings.py`'s five asset routes are the first
+  # in this codebase to take one. FastAPI ships it only inside the `standard` extra, which this
+  # project does not install, so it is named here as the runtime dependency it now is.
+  "python-multipart>=0.0.20",
   "pyshp (>=3.1.6,<4.0.0)",
   "shapely (>=2.1.2,<3.0.0)",
 ]
@@ -37,10 +51,6 @@ pytest-cov = "7.1.0"
 diff-cover = "10.5.1"
 fakeredis = {extras = ["aioredis"], version = "^2.37.1"}
 types-zxcvbn = "^4.5.0.20260518"
-# The seed photograph pipeline only (scripts/prepare_photos.py, run once by hand). The API
-# serves already-encoded WebP bytes off disk and never opens an image, so this must NOT move
-# to the main group — the runtime image is built with `poetry install --only main`.
-pillow = ">=11.0"
 moto = {extras = ["s3"], version = "^5.2.3"}
 boto3-stubs = {extras = ["s3"], version = "^1.43.89"}
 types-shapely = "^2.1.0.20260728"

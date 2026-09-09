@@ -77,7 +77,7 @@ export default defineConfig({
     // refuses `use({ trace })` in a describe group ("because it forces a new worker") and allows it
     // at the top level of a file: those three tests type a password into the design's own card, and
     // their trace is turned off on a live run alone (round 3, ruling 1).
-    { name: 'app', testMatch: /(^|\/)(visual|smoke|dom|signin-form|account-flows)\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: VIEWPORT, baseURL } },
+    { name: 'app', testMatch: /(^|\/)(visual|smoke|dom|signin-form|account-flows|listing-flows)\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: VIEWPORT, baseURL } },
     { name: 'reference', testMatch: /(^|\/)(reference-(baselines|dom)|capture-determinism)\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: VIEWPORT, baseURL: `http://localhost:${REF}` } },
     { name: 'coming-soon-reference', testMatch: /(^|\/)coming-soon-reference\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: CS_VIEWPORT, baseURL: `http://localhost:${REF}` } },
     { name: 'coming-soon', testMatch: /(^|\/)coming-soon-visual\.spec\.ts$/, use: { ...devices['Desktop Chrome'], viewport: CS_VIEWPORT, baseURL: csBaseURL } }

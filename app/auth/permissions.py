@@ -57,7 +57,16 @@ REAUTH = frozenset({"licence.decide", "engine.activate", "roles.grant", "tokens.
 # irreversible message to every address the Coming Soon page ever collected, which is at least as
 # consequential as a revocation — and re-auth is also what keeps every api token out of it
 # (`deps.TokenCannotReauth`), so no automation credential can ever send it.
-AUDITED = frozenset({"users.view_detail", "users.decide", "users.revoke", "roles.grant", "tokens.manage", "licence.decide", "engine.activate", "abuse.investigate", "signups.export", "signups.notify"})
+#
+# "listing.publish" joins it in spec 2026-09-08 D8: publishing, declining or unpublishing a
+# listing is a staff decision of exactly the class "users.decide" is, and the seller is entitled
+# to "who changed what and when" (the design's admin footnote). The decide handler writes
+# `action="listing.publish"` on every branch from its own body —
+# `test_audited_permissions_are_written_by_their_handlers` reads the handler's source, so
+# delegating would read as unaudited. `listing.review` stays OUT for the reason `users.review` is
+# out (one row per poll of a tab), and `listing.manage_own` stays out because the wizard's
+# autosave rides on it.
+AUDITED = frozenset({"users.view_detail", "users.decide", "users.revoke", "roles.grant", "tokens.manage", "licence.decide", "engine.activate", "abuse.investigate", "signups.export", "signups.notify", "listing.publish"})
 # A token principal's permission set is its ROLE's set minus these (spec §Automation tokens,
 # amended 2026-09-07; Task I5b). Automation may now carry `staff` and `admin`, so the containment
 # that used to come from "no privileged tokens exist" has to be written down: a leaked admin token

@@ -60,8 +60,8 @@ jobs:
       - run: poetry run python scripts/migrate.py
       - run: poetry run ruff check app tests scripts
       - run: poetry run mypy app --strict
-      - run: poetry run mypy scripts/migrate.py scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py --strict
-      - run: poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov-report=xml --cov-fail-under=100
+      - run: poetry run mypy scripts/migrate.py scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py tests/e2e/api_under_test.py --strict
+      - run: poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e --cov-report=xml --cov-fail-under=100
       - run: bash tests/scripts/test_start_sh.sh
       - run: bash tests/scripts/test_verify_image_sh.sh
       - run: bash tests/scripts/test_deploy_guard.sh

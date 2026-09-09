@@ -56,7 +56,18 @@ const API_ENV_DEFAULTS: Record<string, string> = {
   DATABASE_URL: 'postgresql://pm:pm_dev_pw@localhost:5433/practice_match',
   REDIS_URL: 'redis://localhost:6380/0',
   ENVIRONMENT: 'test',
-  API_SECRET_KEY: 'test_only_secret_change_me'
+  API_SECRET_KEY: 'test_only_secret_change_me',
+  // A-SL28: the four settings `ObjectStore.from_settings` needs before the upload routes will
+  // write, as DUMMIES for the in-process moto bucket `tests/e2e/api_under_test.py` creates — so
+  // `listing-flows.spec.ts`'s photograph reaches a real upload route locally and in CI instead of
+  // `503 STORAGE_UNAVAILABLE`. An AWS-shaped endpoint, because moto intercepts by request URL and a
+  // Railway-shaped host would escape to the network (A-SL16 M4; the launcher refuses any other);
+  // a bucket and credentials that exist nowhere. Same rule as the four above: a run that carries
+  // real values keeps them, and a live target (`PW_APP_URL`) never starts this entry at all.
+  S3_ENDPOINT_URL: 'https://s3.amazonaws.com',
+  S3_BUCKET: 'pm-e2e',
+  S3_ACCESS_KEY_ID: 'test-only-key-id',
+  S3_SECRET_ACCESS_KEY: 'test-only-secret'
 };
 
 export function resolveTargets(env: NodeJS.ProcessEnv, ports: { app: number; ref: number; cs: number; api: number }): Targets {
@@ -95,8 +106,24 @@ export function resolveTargets(env: NodeJS.ProcessEnv, ports: { app: number; ref
   // have met `FORGOT_IP` on its third run of the hour, in the middle of a screenshot. The script
   // refuses unless `ENVIRONMENT` is exactly `test` AND Redis is on loopback, so this line cannot
   // reach QA or production; in CI it runs and deletes nothing.
+  //
+  // A-SL28: the server itself is `tests/e2e/api_under_test.py` — a TEST-ONLY launcher that starts
+  // moto's S3 mock in the api's own process, creates the bucket named by `S3_BUCKET` and then runs
+  // uvicorn exactly as the bare `uvicorn app.main:app --port N` did — so the photograph half of
+  // `listing-flows.spec.ts` reaches a real upload route here and in CI. It refuses to start
+  // anywhere but `ENVIRONMENT=test` (`tests/e2e/test_api_under_test.py` pins that, and the other
+  // two refusals), for the same reason `reset_rate_limits.py` does.
+  //
+  // SL7b (A-SL25 (10)): `seed_listings.py` joins the chain, the same reason `seed_persona.py` is
+  // here — the click-to-caption flow spec re-describes one of the eighteen SEEDED photographs, and
+  // that data must exist before any test runs rather than be a test's own side effect. It defaults
+  // to owning every hospital by `seller@practice-match.test` (`SEED_OWNER_EMAIL`), the very persona
+  // `seed_persona.py` just created, and is idempotent (`ON CONFLICT (slug) DO UPDATE ... WHERE
+  // listing.source = 'seed'`), so a second run of this chain changes nothing a seller has since
+  // edited. `prepare()` stubs `/api/listings` for every pixel and smoke spec (`harness.ts`), so
+  // eighteen real rows in the database change no approved capture's pixels.
   const api: WebServerSpec = {
-    command: `poetry run python scripts/migrate.py && poetry run python scripts/reset_rate_limits.py && poetry run python scripts/seed_persona.py && poetry run uvicorn app.main:app --port ${ports.api}`,
+    command: `poetry run python scripts/migrate.py && poetry run python scripts/reset_rate_limits.py && poetry run python scripts/seed_persona.py && poetry run python scripts/seed_listings.py && poetry run python -m tests.e2e.api_under_test --port ${ports.api}`,
     url: `http://localhost:${ports.api}/api/healthz`,
     cwd: '../..',
     timeout: 90_000,

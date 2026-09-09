@@ -1229,7 +1229,7 @@
                         </div>
                         <div style="display: flex; gap: 9px; margin-top: 14px; flex-wrap: wrap;">
                           <template v-for="(u, $index) in __arr(v.wiz?.uploads)" :key="$index">
-                            <div style="width: 92px;">
+                            <div style="width: 92px; cursor: pointer;" title="Change what this photograph shows" @click="u?.describe">
                               <div style="height: 68px; border-radius: 8px; background: var(--rf-band); display: grid; place-items: center; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #339dde;"><span v-if="__s(u?.kind) !== null" class="sc-interp">{{ __s(u?.kind) }}</span></div>
                               <div style="font-size: 11px; color: var(--color-steel); margin-top: 4px;"><span v-if="__s(u?.name) !== null" class="sc-interp">{{ __s(u?.name) }}</span></div>
                             </div>
@@ -1636,7 +1636,9 @@ import { useRouter } from 'vue-router';
 import { Component } from './logic.js';
 import MarketMapView from './components/MarketMapView.vue';
 import ImageSlot from './components/ImageSlot.vue';
+import { makeAdminListingsAdapter } from './admin/listings';
 import { makeAuthAdapter } from './auth/adapter';
+import { makeListingsAdapter } from './listings/seller';
 import * as api from './auth/api';
 import { useMe } from './auth/me';
 import { useStateRouteSync } from './router/useStateRouteSync';
@@ -1672,6 +1674,14 @@ const props = defineProps({
   // note over the same prop seam `startNotice` uses. The app never passes it — it fetches the
   // real question — which is why the default is empty and renders nothing.
   startAnswerNote: { type: String, default: '' },
+  // A16.11 (A-SL17/A-SL22 (1)): the seller's own listings on load. The design's dashboard renders
+  // four Austin FIXTURES, and a real seller with none of their own must see the shell with no
+  // invented rows — a state the reference has no API to reach, so the oracle hands it the array
+  // directly through the same prop seam `startNotice` and `startAnswerNote` use. `null` is
+  // "nothing was handed over", which leaves `myListings` unset and the design's fixtures in
+  // place; `[]` is a real, empty answer. The app never passes it — it loads the seller's real
+  // listings in `componentDidMount` (A16.9).
+  startMyListings: { type: Array, default: null },
   // V3 C10: three named palettes — `distinct` (default), `cool`, `colorblind`.
   layerPalette: { type: String, default: 'distinct' },
   // A5.1 / A5.3: the real `/api/auth/*` client, as the prototype's `auth` adapter — the seam the
@@ -1688,7 +1698,28 @@ const props = defineProps({
   // `componentDidMount` can put the visitor where the account lifecycle says they belong.
   // `renderVals()` returns its own `me` (the header strings, from state), which wins in `v`
   // below — this prop is read by the prototype's bootstrap, not by the template.
-  me: { type: Object, default: () => useMe().me.value }
+  me: { type: Object, default: () => useMe().me.value },
+  // A16: the real /api/seller client, as the prototype's `listings` adapter — the seam the design's
+  // own Continue, Edit, Add files, Continue-to-next-step, Submit and Pause/Republish/Withdraw
+  // handlers call through. The reference and the Claude Design preview pass nothing and keep the
+  // design's fixture path, which is what keeps the two targets on the same pixels. Nothing in the
+  // template reads `listings`; only `logic.js` does.
+  //
+  // `src/listings/seller.ts`, not an object literal here, for the reason `auth` records: this file
+  // is copied verbatim into App.vue and sits outside the coverage gate, so the logic lives in a
+  // module with unit tests. It needs no `data-props` entry — the parity gate is one-directional.
+  listings: { type: Object, default: () => makeListingsAdapter() },
+  // A17: the real /api/admin client, as the prototype's `adminListings` adapter — the seam
+  // `adminVals()`'s Listings tab reads through (Task SL8, D24: "every Admin tab must show real
+  // database data, never dummy rows"). The reference and the Claude Design preview pass nothing
+  // and keep the design's fixture path, which is what keeps the two targets on the same pixels.
+  // Nothing in the template reads `adminListings`; only `logic.js` does.
+  //
+  // `src/admin/listings.ts`, not an object literal here, for the reason `listings` records: this
+  // file is copied verbatim into App.vue and sits outside the coverage gate, so the logic lives
+  // in a module with unit tests. It needs no `data-props` entry — the parity gate is
+  // one-directional.
+  adminListings: { type: Object, default: () => makeAdminListingsAdapter() }
 });
 
 // The approved prototype logic runs verbatim; `state` is made reactive so that
