@@ -154,6 +154,8 @@ Expected: PASS. This plan's per-task gate adds `--cov=scripts` to the scope Wave
 
 ---
 
+**Controller amendment A-L15 (2026-09-10 ~07:20 WITA; John on D-L14: "Agree. Keep the sign-in card and error message; do not fall back to prototype practices.").** A-L14's ruling is confirmed as built: after a successful sign-in the catalogue is re-read, one retry, and on a second failure the store is cleared and the promise rejects with "Signed in, but the listings could not be loaded. Please try again.", which the design's own sign-in error affordance renders while the member stays on the gate. The prototype practices are never shown to a signed-in member, in any failure mode. This closes D-L14.
+
 ### Task L1: The `listing` table
 
 **Files:**

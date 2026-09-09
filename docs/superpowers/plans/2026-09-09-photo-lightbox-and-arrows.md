@@ -242,6 +242,8 @@ Merge order against `feat/seller-lifecycle` (A16/A17): whichever branch merges s
 
 ---
 
+**Controller amendment A-LB4 (2026-09-10 ~07:20 WITA; John on D-A19: "Agree. Build A19 exactly as specified.").** The lightbox as shipped in 0.1.10 is ratified, including what it deliberately excludes: no swipe or pinch, no mobile variant (the phone design carries no photographs), and no page-scroll lock. The three approved states added with it stand. This closes D-A19.
+
 ### Task L1: A18, the two arrow reversals
 
 ### Step 0 — the worktree
