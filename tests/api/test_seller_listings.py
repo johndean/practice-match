@@ -363,6 +363,9 @@ async def test_serialise_blanks_rev_when_the_flag_is_off_and_keeps_it_when_it_is
         "rooms": None, "sqft": None, "bldg": None, "est": None, "listed_at": datetime.now(UTC),
         "note": None, "staff": None, "services": None, "facility": None, "ownership": None, "photos": [],
         "rev_disclosed": False,
+        # `_SELECT` selects it (A-L11, main): a row "as `_rows()` builds one" carries every column
+        # the query names, and `serialise` reads this one unconditionally.
+        "photo_captions": [],
     }
     assert serialise(row, datetime.now(UTC))["rev"] is None
     assert serialise({**row, "rev_disclosed": True}, datetime.now(UTC))["rev"] == 2_100_000

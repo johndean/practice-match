@@ -44,6 +44,11 @@ EXPECTED_COLUMNS: dict[str, tuple[str, bool]] = {
     "facility": ("text", True),
     "ownership": ("text", True),
     "photos": ("jsonb", False),
+    # A-L11 (`migrations/090_listing_photo_captions.sql`): one description per photograph,
+    # parallel to `photos` — the
+    # supplier's or seller's own words, which the design's six fixed slot captions cannot supply
+    # for a photograph past the sixth.
+    "photo_captions": ("jsonb", False),
     "source": ("text", False),
     "created_at": ("timestamp with time zone", False),
     "updated_at": ("timestamp with time zone", False),

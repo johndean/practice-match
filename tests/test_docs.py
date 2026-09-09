@@ -1,5 +1,6 @@
 import json
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 from typing import cast
@@ -27,7 +28,10 @@ REQUIRED_CI_COMMANDS = (
     # `test_ci_strict_mypy_covers_every_python_script` below is the rule that says WHICH scripts.
     # M2 (2026-09-08): the seed-listings scripts join the same line — the merged workflow runs the
     # union of both branches' scripts, and this pin is that union verbatim.
-    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py --strict",
+    # A4 (2026-09-09): scripts/census_load.py joins the same line the moment it exists
+    # (A-C0 P8) — `test_ci_strict_mypy_covers_every_python_script` derives the requirement from
+    # the scripts/ directory itself, but this substring is a literal pin and has to move by hand.
+    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py --strict",
     "poetry run pytest -q -W error",
     # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
     # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
@@ -1478,6 +1482,56 @@ def test_persona_password_railway_set_instructions_are_marked_superseded():
                 )
 
 
+def _section(text: str, heading: str) -> str:
+    """Returns one `## <heading>` section's body, up to (not including) the next `## ` heading —
+    the same slice `test_deploy_md_documents_the_site_mode_matrix`-style tests would take by hand,
+    factored out so the Census exit-runbook pins below can scope their assertions to just that
+    section rather than the whole file."""
+    lines = text.splitlines()
+    start = next(i for i, line in enumerate(lines) if line.startswith(f"## {heading}"))
+    end = next((i for i in range(start + 1, len(lines)) if lines[i].startswith("## ")), len(lines))
+    return "\n".join(lines[start:end])
+
+
+def test_deploy_md_has_a_census_phase_a_exit_runbook_that_runs_in_the_worker_over_ssh():
+    """A-C11 (1) Major fix: the Phase A exit sequence must run INSIDE the worker container over
+    `railway ssh`, never `railway run` -- `railway run` executes on the OPERATOR'S machine with
+    the worker's variables injected, which would pull `CENSUS_API_KEY` and the bucket credentials
+    onto a laptop (A-C1 ¶8) and then fail anyway on the worker's `.railway.internal`-only
+    `DATABASE_URL`. Scoped to the new section alone -- the "Seeding the demo hospitals" section
+    above it legitimately names `railway ssh --service api`, a different service, for a different
+    operation, and must not be conflated with this pin."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    section = _section(text, "Census Phase A exit (QA)")
+    assert "railway ssh --service worker" in section
+    assert "railway run --service worker" not in section
+    assert "railway status" in section and "Project: Practice Match" in section
+    assert "--force" in section and "--note" in section
+    assert "only on John's explicit word" in section
+
+
+def test_census_plan_phase_a_exit_step_runs_in_the_worker_over_ssh_not_railway_run():
+    """The same A-C11 (1) rule, pinned against the plan's own Task A9 closing step -- the exact
+    line the final review's Major finding quoted (`docs/superpowers/plans/2026-09-05-practice-
+    match-census-data-layer.md:2539`, pre-fix)."""
+    plan = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-05-practice-match-census-data-layer.md").read_text()
+    exit_line = next(line for line in plan.splitlines() if line.startswith("**Phase A exit"))
+    assert "railway ssh --service worker" in exit_line
+    assert "railway run --service worker" not in exit_line
+    assert "only on John's explicit word" in exit_line
+
+
+def test_census_load_py_docstring_never_gives_railway_run_as_the_invocation():
+    """The CLI's own module docstring repeated the same wrong `railway run` invocation the plan
+    did (final review Major, "`scripts/census_load.py:3` repeats the form in its own module
+    docstring") -- fixed at the same time, same reason. It may still NAME `railway run` as the
+    thing not to do (that is the fix's own explanation); what it must never do again is give
+    `railway run --service worker ...` as an instruction to follow."""
+    text = (ROOT / "scripts" / "census_load.py").read_text()
+    assert "railway run --service worker" not in text
+    assert "railway ssh --service worker" in text
+
+
 # --- A-L10: the seed photographs match the design's captions ---------------------------------
 
 
@@ -1515,3 +1569,106 @@ def test_the_seed_plan_records_a_l10_and_deploy_md_names_the_curation_file():
     seeds = {h["slug"] for h in json.loads((ROOT / "seeds" / "hospitals.json").read_text())["hospitals"]}
     assert named == seeds, "curation.json and seeds/hospitals.json name different hospitals"
     assert "_comment" in curation, "curation.json lost the comment that says what it is"
+
+
+# --- A-L11: every uploaded photograph renders, with its own description -----------------------
+
+
+def test_the_seed_plan_records_a_l11_and_deploy_md_says_every_image_renders():
+    """A-L11 (John, 2026-09-09: "HAS FAILED and wiped out all the images … render ALL images").
+    The same two documents of record as A-L10, for the hotfix that reverses its rule: the plan
+    says what went wrong, what the rule is now and what carries the words; DEPLOY.md — where hand
+    operations live — says what an operator will actually see on the detail page. Pinned to the
+    claims, not to prose, so a rewrite that keeps the meaning still passes and a deletion does
+    not."""
+    plan = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-06-practice-match-seed-listings.md").read_text()
+    assert len(plan.split("**Controller amendment A-L11")) == 2, "the A-L11 record is missing or duplicated"
+    record = plan.split("**Controller amendment A-L11")[-1]
+    assert "render ALL images" in record, "the record does not quote John's ruling"
+    # The root cause, in the terms that make it a design fact and not a bug report.
+    assert "photoSet(p)" in record
+    # A-L11 review (m4): the TRUE counts. The brief's "117 of 190 dropped" was arithmetic
+    # (73 kept + 117 = 190) and the folders actually hold 195 — A-L10 rendered 73 of them and
+    # A-L11 renders all 195. A record that states a count nobody can reproduce is worse than one
+    # that states none, so the superseded numbers may not come back.
+    assert "195" in record and "73" in record, "the record does not state what was rendered"
+    for superseded in ("117", "190"):
+        assert superseded not in record, f"the A-L10 arithmetic {superseded} is back in the record"
+    # What now carries the description, and what renders it.
+    assert "A15" in record and "photo_captions" in record
+    # A-L11 review (M1): 024 sat inside the Census plan's reserved 017-059 (that plan's D14).
+    # Platform and hotfix migrations on `main` take 090-099, and the record is where the next
+    # implementer reads that.
+    assert "090_listing_photo_captions.sql" in record
+    assert "090" in record and "099" in record, "the record does not state the reserved range"
+    assert "Supersedes A-L10" in record, "the record does not retire A-L10's empty-slot rule"
+    # The one thing this hotfix deliberately did NOT change, so the next reader does not "fix" it.
+    assert "Six views per practice" in record, "the queued design-copy question is not recorded"
+
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    section = deploy.split("## Seeding the demo hospitals (QA)", 1)[1].split("\n## ", 1)[0]
+    assert "A-L11" in section
+    assert "is rendered" in section and "195 of them today" in section, (
+        "the runbook does not say that every image John supplies is rendered, and how many that is"
+    )
+    # Hyphen-minus, deliberately: the runbook writes the range that way and RUF001 refuses an
+    # en dash in a source literal.
+    assert "positions 1-6" in section, "the runbook does not say which positions the design's slots are"
+    assert "supplier" in section, "the runbook does not say where a photograph's description comes from"
+
+    # M1 again: the range belongs where an operator adding a migration will look for it, which is
+    # DEPLOY.md's own Migrations section and not the seeding runbook.
+    migrations = deploy.split("## Migrations", 1)[1].split("\n## ", 1)[0]
+    assert "090" in migrations and "099" in migrations, (
+        "DEPLOY.md's Migrations section does not record the platform/hotfix range"
+    )
+    assert "017" in migrations and "059" in migrations, (
+        "DEPLOY.md's Migrations section does not say which range is the Census plan's"
+    )
+
+
+# --- A-L11 re-review: a retired number may not survive anywhere in the tree -------------------
+# The renumber 024 -> 090 (A-L12) was made in eight places and missed seven, because the number
+# is written wherever the column is EXPLAINED — prose, code comments, test docstrings — and no
+# per-document pin can see across those. The same is true of the "117 of 190" arithmetic m4
+# struck. So this is the repo-wide one, and it is the fix for the class rather than for the seven.
+
+# pattern -> why it is retired. Regexes, because the same fact is spelled several ways
+# ("117 of 190", "117 of the 190").
+RETIRED_TEXT = {
+    r"migrations/024_listing_photo_captions": "the photo-captions migration was renumbered 024 -> 090 (A-L12): 017-059 is the Census plan's range — the bare number 024 stays free for the Census plan (re-review 2)",
+    r"117 of (?:the )?190": "the A-L10 arithmetic (A-L12, m4): the folders hold 195 and A-L10 rendered 73",
+}
+# This file has to spell the strings it forbids, so it cannot check itself.
+RETIRED_TEXT_EXEMPT = {"tests/test_docs.py"}
+
+
+def tracked_text_files() -> list[tuple[str, str]]:
+    """Every tracked file that decodes as UTF-8, as (path, contents).
+
+    `git ls-files` rather than a directory walk: an untracked build output, a virtualenv or a
+    stray scratch file must not be able to fail this suite, and a file that is not committed is
+    not a document of record. Anything that does not decode is a photograph, an icon or a font."""
+    listed = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True, check=True,
+    ).stdout.split("\0")
+    files: list[tuple[str, str]] = []
+    for name in filter(None, listed):
+        try:
+            files.append((name, (ROOT / name).read_text(encoding="utf-8")))
+        except (UnicodeDecodeError, OSError):
+            continue
+    return files
+
+
+def test_no_tracked_text_file_cites_a_retired_number():
+    """A-L11 re-review (Major, and m4). Every tracked text file, this one excepted."""
+    files = tracked_text_files()
+    assert len(files) > 100, "git ls-files returned almost nothing — this test would pass vacuously"
+    for pattern, why in RETIRED_TEXT.items():
+        hits = [
+            f"{name}:{text[:m.start()].count(chr(10)) + 1}"
+            for name, text in files if name not in RETIRED_TEXT_EXEMPT
+            for m in re.finditer(pattern, text)
+        ]
+        assert hits == [], f"{pattern!r} survives in {hits} — {why}"

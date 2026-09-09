@@ -997,10 +997,15 @@ def test_the_seed_captions_are_read_from_the_committed_index() -> None:
 
     captions = SL.seed_captions()
     assert captions["abc_animal_hospital/1.webp"] == "Exterior — front"
-    # A-L10 leaves a slot with no truthful photograph EMPTY, and an empty slot has no file for a
-    # caption to be keyed by — `1111_pet_hospital` is one of the four that carry an exterior and
-    # nothing else, so five of its six slots are absent here rather than keyed by a null.
-    assert [k for k in captions if k.startswith("1111_pet_hospital/")] == ["1111_pet_hospital/1.webp"]
+    # A-L11 (main, John 2026-09-09: "render ALL images") re-cut the inventory: every photograph is
+    # rendered and every one carries its OWN caption, so there is a key per FILE rather than per
+    # filled slot. `1111_pet_hospital` was the A-L10 curation's starkest case — one exterior and
+    # five empty slots — and now carries ten photographs, each with a caption of its own.
+    index = json.loads(SL.PHOTO_INDEX.read_text(encoding="utf-8"))
+    for slug, photos in index["hospitals"].items():
+        assert [k for k in captions if k.startswith(f"{slug}/")] == [f"{slug}/{photo['file']}" for photo in photos]
+    assert len([k for k in captions if k.startswith("1111_pet_hospital/")]) == 10
+    assert captions["1111_pet_hospital/1.webp"] == "Exterior — entrance view"
     assert SL.seed_captions() is captions, "read once per process, not once per draft"
 
 

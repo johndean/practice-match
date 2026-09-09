@@ -753,7 +753,7 @@ class Component extends DCLogic {
     };
     if (p.id === "p2") {
       const name = this.practiceName(p);
-      return [
+      const tiles = [
         ["exterior", "Exterior — street view"],
         ["exterior2", "Exterior — side elevation"],
         ["exterior3", "Exterior — parking and signage"],
@@ -762,8 +762,14 @@ class Component extends DCLogic {
         ["treatment", "Treatment area"]
       ].map((v, i) => {
         const id = "ph-" + p.id + "-" + v[0];
-        return { id, caption: v[1], index: i + 1, placeholder: name + " — " + v[1], src: SRC[id] || (p.photos && p.photos[i]) || "", hasSrc: !!(SRC[id] || (p.photos && p.photos[i])), noSrc: !(SRC[id] || (p.photos && p.photos[i])) };
+        return { id, caption: (p.photoCaptions && p.photoCaptions[i]) || v[1], index: i + 1, placeholder: name + " — " + ((p.photoCaptions && p.photoCaptions[i]) || v[1]), src: SRC[id] || (p.photos && p.photos[i]) || "", hasSrc: !!(SRC[id] || (p.photos && p.photos[i])), noSrc: !(SRC[id] || (p.photos && p.photos[i])) };
       });
+      const extra = ((p.photos && p.photos.length > tiles.length) ? p.photos.slice(tiles.length) : []).map((src, k) => {
+        const i = tiles.length + k;
+        const cap = (p.photoCaptions && p.photoCaptions[i]) || ("Photo " + (i + 1));
+        return { id: "ph-" + p.id + "-extra" + (k + 1), caption: cap, index: i + 1, placeholder: name + " — " + cap, src: src || "", hasSrc: !!src, noSrc: !src };
+      });
+      return tiles.concat(extra);
     }
     const equine = p.type === "Large animal";
     const views = equine
@@ -774,13 +780,19 @@ class Component extends DCLogic {
           ? [["exterior", "Exterior — building"], ["lobby", "Reception and waiting"], ["consult", "Consult room"], ["surgery", "Surgery suite"], ["imaging", "CT and imaging"], ["recovery", "Recovery ward"]]
           : [["exterior", "Exterior — street view"], ["lobby", "Reception and waiting"], ["exam", "Exam room"], ["treatment", "Treatment area"], ["surgery", "Surgery suite"], ["kennel", "Boarding and runs"]];
     const name = this.practiceName(p);
-    return views.map((v, i) => ({
+    const tiles = views.map((v, i) => ({
       id: "ph-" + p.id + "-" + v[0],
-      caption: v[1],
+      caption: (p.photoCaptions && p.photoCaptions[i]) || v[1],
       index: i + 1,
-      placeholder: name + " — " + v[1],
+      placeholder: name + " — " + ((p.photoCaptions && p.photoCaptions[i]) || v[1]),
       src: (p.photos && p.photos[i]) || "", hasSrc: !!(p.photos && p.photos[i]), noSrc: !(p.photos && p.photos[i])
     }));
+    const extra = ((p.photos && p.photos.length > views.length) ? p.photos.slice(views.length) : []).map((src, k) => {
+      const i = views.length + k;
+      const cap = (p.photoCaptions && p.photoCaptions[i]) || ("Photo " + (i + 1));
+      return { id: "ph-" + p.id + "-extra" + (k + 1), caption: cap, index: i + 1, placeholder: name + " — " + cap, src: src || "", hasSrc: !!src, noSrc: !src };
+    });
+    return tiles.concat(extra);
   }
 
   heroSrc(p) {

@@ -106,6 +106,16 @@ Expected `verify-deploy.sh` output on QA (app mode): `healthz OK  version X.Y.Z 
 
 ## Migrations
 
+**Numbering is reserved by plan, and a new file must take a free range.** `001`–`002` are the
+original platform migrations · `010`–`015` Sub-project 2 (identity) · `016` the Seed Listings plan
+· **`017`–`059` the Census plan's Sub-project 3 Phase A** and **`060`+ its Phase B** (that plan's
+D14) · `080`–`089` the map engines · **`090`–`099` platform and hotfix migrations on `main`**
+(A-L12, 2026-09-09 — `090_listing_photo_captions.sql` is the first). `003`–`009` are unassigned and
+may only be taken by a platform migration that depends on nothing later.
+`scripts/migrate.py` applies files in FILENAME order, so a file may only be numbered above
+everything it depends on; the test suite applies the whole ladder into a fresh database on every
+run, which is where a mis-numbered dependency fails.
+
 **An applied migration is immutable.** From `f3b7d41` the ledger records each file's SHA-256 alongside its name, and a file whose bytes have changed since it was applied stops the container before uvicorn with exit 4 (`[migrate] <file> changed after it was applied — drop and recreate the database or restore the file`) — so amend a numbered file in place only while no persistent database has yet run it, which today means only files added after `b9d01ad`: QA and production predate Wave 2a and neither is affected. Enforcement begins with the files applied from `f3b7d41` onward and is not retroactive: ledger rows written before it carry no checksum and are not checked, so `001_init.sql` and `002_interest_signup.sql` — already applied on QA and production — stay unchecked and must simply be left alone.
 
 ## Identity operations (Wave 2a)
@@ -191,32 +201,42 @@ line, with the slugs named beneath it — and the untouched hospitals refresh as
 by a listing that belongs to NOBODY is a different thing and still stops the whole import (exit 5
 below).
 
-**The photographs (A-L9, revised by A-L10 on 2026-09-09).** Each hospital carries **six slots**, one
-for every photo slot the design's detail page renders — `photoSet(p)` in `Practice Match V3.dc.html`
-gives an exterior plus five subjects chosen by practice type, and nothing beyond six can be
-displayed. The caption under each photograph is the DESIGN's, fixed per slot and never stored, so
-the only thing that can make a caption true is the photograph at that position showing that subject.
+**The photographs (A-L9, revised by A-L10, and by A-L11 on 2026-09-09).** **Every photograph John
+supplies is rendered — 195 of them today, 8 to 18 per hospital.** Positions **1-6** are the six
+captioned slots the design's detail page renders (`photoSet(p)` in `Practice Match V3.dc.html`: an
+exterior plus five subjects chosen by practice type); everything after them is an extra tile,
+appended to the same grid by amendment A15 and counted by the docked panel's carousel. The caption
+under one of the design's six is the DESIGN's own, fixed per slot, so the photograph at that
+position has to show that subject — but a photograph now also carries its OWN description, and
+that wins where there is one.
+
+**Where a description comes from.** Today it is the **supplier's own filename** —
+`06_interior_reception_lobby.png` becomes "Interior — reception lobby" — recorded per photograph in
+`index.json` by `scripts/prepare_photos.py`, stored in `listing.photo_captions` (migrations/090) by
+the seeder, and served beside `photos` by the API. Wave 2b's sellers write their own, in the same
+column. A photograph with none falls back to the design's fixed slot caption, and past the sixth
+slot — where the design has no caption to lend — to "Photo N".
 
 **`seeds/hospitals/photos/curation.json` is the source of truth for which photograph fills which
 slot.** It was written by looking at every source image, because John's filenames do not reliably
 describe their contents (one folder's `06_interior_reception.png` is a photograph of an exterior
 sign) and several files are sliced fragments of a collage sheet. For every slug it names it is
-authoritative; a slot whose value is `null` has **no truthful photograph in that folder and stays
-empty**, where the design renders its own placeholder — absent beats faked. 73 of the 108 slots are
-filled today; the other 35 are placeholders, and four hospitals (`1111_pet_hospital`,
-`ghi_veterinary_hospital`, `pqr_veterinary_hospital`, `stu_veterinary_specialist_center`) have
-nothing but an exterior until John supplies clean interiors.
+authoritative for the slots it fills; a slot whose value is `null` has no truthful photograph in
+that folder, and since A-L11 one of the folder's other images fills it rather than the slot
+standing empty. A slot **stays empty** — where the design renders its own placeholder — only when a
+folder holds fewer images than the design has slots, which no seeded hospital does today.
 
 `scripts/prepare_photos.py` writes `seeds/hospitals/photos/<slug>/<k>.webp` — **the number is the
-slot's position**, so an empty slot leaves a gap (`…/4.webp` then `…/6.webp`) and `p.photos[i]`
-still fills the design's slot `i` — plus the `index.json` beside them, which carries one entry per
-slot with nulls where the slot is empty. Both files and the curation are committed to the
-repository and baked into the image. The seeder uploads no bytes — it records the relative paths
-positionally, with a JSON `null` for an empty slot, and the `api` service serves the files off disk
-at `/api/listings/{id}/photos/{n}` (an empty slot is a 404 there, and the API sends `null` rather
-than a URL for it, so nothing requests it). Re-run
+position**, so positions 1-6 are the design's slots (`p.photos[i]` still fills slot `i`) and 7, 8, …
+are the photographs beyond them — plus the `index.json` beside them, which carries one entry per
+position with its `source`, its `caption` and the `slot` it fills (`null` past the sixth). Both
+files and the curation are committed to the repository and baked into the image. The seeder uploads
+no bytes — it records the relative paths positionally, with a JSON `null` for an empty slot, and the
+`api` service serves the files off disk at `/api/listings/{id}/photos/{n}` (an empty slot is a 404
+there, and the API sends `null` rather than a URL for it, so nothing requests it). Re-run
 `poetry run python scripts/prepare_photos.py` only when the source folders or the curation change;
-it needs Pillow (a dev dependency), prints `N files, M empty slots`, and is never part of a deploy.
+it needs Pillow (a dev dependency), prints `N files, M empty slots, K beyond the design's six
+slots`, and is never part of a deploy.
 A curation entry that names a hospital the seed file does not, lists slots that are not the
 practice type's list in order, names a file the folder does not hold, or uses one file for two
 slots stops the run with exit 2 before anything is written.
@@ -225,9 +245,10 @@ slots stops the run with exit 2 before anything is written.
 `ENVIRONMENT=qa` and that URL handed to the process in its environment and never printed (the
 script reads only `DATABASE_URL` and `ENVIRONMENT`; the `api` service's `DATABASE_URL` is the
 `.railway.internal` private URL, unreachable off-platform — the PostGIS service's own variable is
-the public one). `railway ssh` needs an SSH key this machine does not hold, so the
-in-container route below is for when a key is on file; the script, its idempotency and its output
-lines are identical either way.
+the public one). `railway ssh` needs an SSH key on file for the CLI — the key `practice-match-cli`
+is registered on this machine (A-C11 (1), 2026-09-09; this line previously, and incorrectly, said
+no key was on file), so the in-container route below works directly, with no public URL to hand
+around; the script, its idempotency and its output lines are identical either way.
 
 ```bash
 railway status                                   # MUST print Project: Practice Match
@@ -238,11 +259,11 @@ ENVIRONMENT=qa poetry run python scripts/seed_listings.py   # the PostGIS servic
 #             carries, which every import deletes; the eighteen keep their ids.
 ```
 
-In-container, when an SSH key is on file:
+In-container (the `practice-match-cli` key on file):
 
 ```bash
 railway status                                   # MUST print Project: Practice Match
-railway ssh --service api --environment QA       # John's ed25519 key; the CLI needs a key on file
+railway ssh --service api --environment QA       # practice-match-cli key
 python scripts/seed_listings.py                  # inside the container — the same operation
 ```
 
@@ -276,6 +297,64 @@ one-off Railway service command. `python -m scripts.seed_listings` works too, fr
 `GET /api/listings` caches each page in Redis for 60 s and the seeder does not invalidate it, so
 after a re-seed the list refreshes within a minute (Task L5, A-L5.1) — a browse that still shows
 the previous eighteen straight after a seed is that cache, not a failed import.
+
+## Census Phase A exit (QA)
+
+**Runs in the worker container, never on this machine — `railway ssh --service worker`, never
+`railway run` (controller amendment A-C11 (1), 2026-09-09, superseding the census plan's original
+`railway run` step and `scripts/census_load.py`'s own former docstring).** `railway run --service
+worker --environment QA -- python scripts/census_load.py …` executes **locally**, with the
+worker's variables injected into this machine's process: that would pull `CENSUS_API_KEY`,
+`CENSUS_CONTACT_EMAIL` and all four `S3_*` bucket credentials onto the operator's laptop — directly
+against A-C1 ¶8, which stores the key only as a Railway secret, and against CLAUDE.md's rule
+naming `CENSUS_API_KEY` as the one variable that must never leave Railway — and it would then fail
+anyway on connect, because the worker's own `DATABASE_URL` is the `.railway.internal` private URL
+(see "How it is actually run" above). The key `practice-match-cli` is registered on this machine,
+so the in-container route below is available.
+
+The controller runs this sequence **only on John's explicit word** — never on its own initiative,
+and never as part of a routine deploy. Every subcommand is idempotent, so a failed step can simply
+be re-run once fixed.
+
+```bash
+railway status                                        # MUST print Project: Practice Match
+railway ssh --service worker --environment QA
+```
+
+Inside that shell, the load order matters — TIGER first, because `zbp` refuses without the ZCTA
+boundaries TIGER writes to `geo_area`:
+
+```bash
+python scripts/census_load.py tiger
+python scripts/census_load.py acs                     # all three ACS datasets: acs5, acs5_subject, acs5_prior
+python scripts/census_load.py cbp
+python scripts/census_load.py zbp
+python scripts/census_load.py qwi                      # resolves the latest published quarter, then trims to 20
+python scripts/census_load.py bds --year 2022
+```
+
+Check each exit code against the shared scheme (`0` done · `2` refused before anything opened,
+e.g. a licence gate or a missing prerequisite · `3` database unreachable or failed · `4` a
+download/fetch failed · `5` validation failed) and stop on the first non-zero — nothing later
+depends on a partial load, and every table is an idempotent upsert.
+
+Then activate, one dataset at a time, each with its own reviewed note — `--force` needs both
+`--note` and John's word, never one without the other:
+
+```bash
+python scripts/census_load.py activate tiger_cb      2023        --by john --note "…"
+python scripts/census_load.py activate acs5          "2019–2023" --by john --note "…"
+python scripts/census_load.py activate acs5_subject  "2019–2023" --by john --note "…"
+python scripts/census_load.py activate acs5_prior    "2014–2018" --by john --note "…"
+python scripts/census_load.py activate cbp           2022        --by john --note "…"
+python scripts/census_load.py activate zbp           2022        --by john --note "…"
+```
+
+The vintage string must match what was ingested exactly, en dash included. `bds` and `qwi` have no
+`activate` step in this sequence — `qwi`'s vintage is `<year>Q<quarter>` and `bds`'s is the year;
+activate them only if the controller wants them pinned. Finally, `GET /api/admin/data-sources` on
+qa.foundation.vin shows every dataset with its licence status, last run and active vintage.
+Production stays gated (`MARKET_DATA_PUBLIC` false, A-C1 ¶10; the key gated per A-C1 ¶8).
 
 ## Rollback
 

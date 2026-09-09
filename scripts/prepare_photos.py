@@ -4,13 +4,21 @@
 
 Reads  <source>/<slug>_individual_images/ — non-images and dotfiles skipped — and
        seeds/hospitals/photos/curation.json, the CONTENT-VERIFIED map of which photograph fills
-       which of the design's six slots (A-L10). For a slug the map names, the map decides and a
-       slot it leaves `null` stays empty; only a slug the map does not name falls back to A-L9's
-       filename keywords, because John's filenames do not reliably describe their contents.
-Writes <out>/<slug>/<k>.webp for every FILLED slot `k` (1-based, so the numbers are the design's
-       slot positions and an empty slot leaves a gap), each ≤ 1600 px on the long edge and
-       ≤ 250 KB, with every piece of metadata stripped, plus <out>/index.json carrying one entry
-       per slot — a SHA-256 and the slot it fills, or nulls where the slot is empty.
+       which of the design's six slots (A-L10). For a slug the map names, the map decides WHICH
+       image best fits a slot; only a slug the map does not name falls back to A-L9's filename
+       keywords, because John's filenames do not reliably describe their contents.
+Writes <out>/<slug>/<k>.webp for EVERY photograph of the folder (A-L11), each ≤ 1600 px on the
+       long edge and ≤ 250 KB, with every piece of metadata stripped, plus <out>/index.json
+       carrying one entry per position — a SHA-256, the supplier's own description and the slot
+       it fills, or nulls for a slot the folder is too thin to fill.
+
+**Nothing John supplies is ever dropped (A-L11, 2026-09-09: "render ALL images").** Positions
+1-6 are the design's six captioned slots for the practice type; the curation places what it
+names, every remaining image fills a still-empty slot in FOLDER order — composites and sliced
+sheets included, they are John's material — and whatever is left becomes positions 7, 8, …,
+which amendment A15.3 renders as tiles of their own. A-L10's rule that an unmatched slot stays
+empty is superseded: a slot is empty only when the folder holds fewer images than the design
+has slots.
 
 The source folders are never modified and never copied wholesale. The normalisation rules
 themselves (the size/byte ceilings, the quality ladder, the metadata stripping) live in
@@ -25,6 +33,7 @@ import hashlib
 import json
 import shutil
 import sys
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -63,13 +72,13 @@ class SeedDataError(Exception):
     beside FileNotFoundError and RuntimeError, and so a caller can tell "your map is wrong" from
     "your source folder is missing"."""
 
-# The design's detail page renders exactly six captioned photo slots per practice
-# (`photoSet(p)` in Practice Match V3.dc.html) and `p.photos[i]` fills slot `i` (amendment
-# A12.2), so a seventh photograph could never be displayed and a sixth must not be dropped.
-# The SEED set's count, and this script's own: `app.media.encode.MAX_PHOTOS` is the
-# seller-UPLOAD cap (four, spec 2026-09-08 D18, John's ruling) — a different number for a
-# different surface. Only the normalisation ceilings imported above are shared.
-MAX_PHOTOS = 6
+# The design's detail page renders six CAPTIONED photo slots per practice (`photoSet(p)` in
+# Practice Match V3.dc.html) and `p.photos[i]` fills slot `i` (amendment A12.2). It is the
+# length of every slot list below, and since A-L11 it is no longer a cap on the photographs:
+# amendment A15.3 appends a tile of its own for every photograph beyond the sixth. The
+# normalisation ceilings it used to sit beside now live in `app.media.encode`, imported above
+# and shared with the seller-upload request path (spec 2026-09-08 D15).
+SLOT_COUNT = 6
 
 # The design's four slot lists, verbatim from `photoSet(p)`, keyed by the practice type
 # `seeds/hospitals.json` records. Any other type (and any slug the seed file does not name)
@@ -178,17 +187,21 @@ def validate_curation(curation: dict[str, dict[str, str | None]], types: dict[st
 def slot_choices(
     files: list[Path], slots: list[str], curated: dict[str, str | None] | None = None
 ) -> list[tuple[str, Path | None]]:
-    """Which photograph fills which of the design's slots, in SLOT order.
+    """Which photograph BEST fits which of the design's slots, in SLOT order — one entry per
+    slot, `None` where the selection placed nothing there.
 
     **A curated map wins outright (A-L10).** It was written by looking at every photograph, and a
     filename is not evidence of what an image shows: `06_interior_reception.png` is an exterior
     sign in one of John's folders, and several files are sliced fragments of a collage sheet. So
-    when `curated` is given it is the answer — every slot it names, in its own order, with `None`
-    where no photograph in the folder truthfully fills that slot. Absent beats faked: the design
-    renders its own placeholder for an empty slot, and a placeholder is honest where a boarding
-    run captioned "Exam room" is not.
+    when `curated` is given it is the answer for every slot it names — in its own order, with
+    `None` where no photograph in the folder truthfully shows that slot's subject.
 
-    Without one, `keyword_choices` below still answers (A-L9), for a slug the map does not name.
+    Without one, `keyword_choices` below still answers (A-L9), for a slug the map does not name;
+    a slot it could not reach is `None` here too, so the list is the slot list either way and a
+    position is always its own slot's.
+
+    A `None` is no longer the last word (A-L11): `positions` below fills what is left from the
+    rest of the folder, and only a folder thinner than the design's six slots leaves one empty.
     """
     if curated is not None:
         by_name = {src.name: src for src in files}
@@ -203,8 +216,34 @@ def slot_choices(
                 raise SeedDataError(f"{slot} names {name}, which the source folder does not hold")
             picked.append((slot, by_name[name]))
         return picked
-    keyed: list[tuple[str, Path | None]] = list(keyword_choices(files, slots))
-    return keyed
+    chosen = dict(keyword_choices(files, slots))
+    return [(slot, chosen.get(slot)) for slot in slots]
+
+
+def positions(
+    files: list[Path], slots: list[str], curated: dict[str, str | None] | None = None
+) -> list[tuple[str | None, Path | None]]:
+    """Every photograph of the folder, in the order the API serves it (A-L11).
+
+    Positions 1-6 are the design's captioned slots, in slot order: what `slot_choices` placed
+    there, and otherwise the next image the slots did not take, in FOLDER order. Whatever is
+    still left becomes positions 7, 8, … with NO slot — amendment A15.3 gives each of those a
+    tile of its own, captioned with the supplier's own description.
+
+    Nothing is dropped and nothing is duplicated: the spare queue is the folder minus what the
+    selection already placed, drained left to right. A slot is `None` only when that queue runs
+    out, i.e. when the folder holds fewer images than the design has slots.
+    """
+    placed = slot_choices(files, slots, curated)
+    taken = {src for _slot, src in placed if src is not None}
+    spare = deque(src for src in files if src not in taken)
+    filled: list[tuple[str | None, Path | None]] = []
+    for slot, src in placed:
+        if src is None and spare:
+            src = spare.popleft()
+        filled.append((slot, src))
+    filled.extend((None, src) for src in spare)
+    return filled
 
 
 def keyword_choices(files: list[Path], slots: list[str]) -> list[tuple[str, Path]]:
@@ -250,22 +289,52 @@ def select_for_slots(files: list[Path], slots: list[str]) -> list[Path]:
     return [src for _slot, src in keyword_choices(files, slots)]
 
 
+# The acronyms John's filenames spell in lower case, as a buyer writes them (A-L11 review, m6).
+# Whole TOKENS only — `reception` and `recovery` contain `ce`/`re`, not `ct` or `er`, and the
+# filenames are split on `_` before this is consulted, so a substring can never match.
+ACRONYMS = {"ct": "CT", "icu": "ICU", "mri": "MRI", "er": "ER", "dvm": "DVM"}
+
+
+def spelled(words: list[str]) -> list[str]:
+    """`words` with the acronyms above spelled the way they are read. `x_ray` arrives as two
+    tokens and `xray` as one; both become "X-ray", which is why this is a scan and not a
+    dict lookup per word."""
+    out: list[str] = []
+    index = 0
+    while index < len(words):
+        word = words[index]
+        if word == "x" and index + 1 < len(words) and words[index + 1] == "ray":
+            out.append("X-ray")
+            index += 2
+            continue
+        out.append("X-ray" if word == "xray" else ACRONYMS.get(word, word))
+        index += 1
+    return out
+
+
 def caption_of(source_name: str) -> str:
     """A caption from the curated filename: `06_interior_reception_lobby.png` becomes
-    "Interior — reception lobby" (pre-flight I2).
+    "Interior — reception lobby" (pre-flight I2), and `10_interior_ct_scanner.png` becomes
+    "Interior — CT scanner" (A-L11 review, m6: the words are read by a buyer).
 
-    The design's own photo slots carry six fixed captions chosen by practice type, and those
-    captions are what a buyer reads; since A-L9 the selection above fills each slot with the
-    photograph its caption describes. This caption records what the FILE says it shows, which
-    is how a slot that had to fall back is visible in the inventory rather than only on screen.
+    The design's own photo slots carry six fixed captions chosen by practice type; in one of
+    those six slots that caption is what a buyer reads unless this one exists, and past the
+    sixth (A-L11) this one is ALL there is — the design has no seventh caption to lend. It is
+    the only description we hold until a seller writes their own, so it is stored per photograph
+    (`index.json` → `listing.photo_captions` → `p.photoCaptions[i]`, amendment A15).
 
     A name that does not follow the `NN_area_description.ext` convention falls back to its
     stem with underscores as spaces, capitalised."""
     stem = Path(source_name).stem
     parts = stem.split("_")
     if len(parts) >= 3 and parts[0].isdecimal():
-        return f"{parts[1].capitalize()} — {' '.join(parts[2:])}"
-    return stem.replace("_", " ").capitalize()
+        return f"{parts[1].capitalize()} — {' '.join(spelled(parts[2:]))}"
+    # Split on the underscore AND on whitespace: a name outside the convention may be spelled
+    # either way (`x_ray.png`, `ct suite.png`), and both are read a word at a time.
+    plain = " ".join(spelled(stem.lower().replace("_", " ").split()))
+    # `.capitalize()` would lower-case an acronym the line above just spelled, so only the first
+    # character is touched — which is what `.capitalize()` did for every other name anyway.
+    return plain[:1].upper() + plain[1:]
 
 
 def encode(src: Path, dest: Path) -> dict[str, Any]:
@@ -293,13 +362,14 @@ def prepare(
     source_root: Path, out_root: Path, slugs: list[str], types: dict[str, str],
     curation: dict[str, dict[str, str | None]] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
-    """Encode the photographs the design's slots select for every slug — `types` maps a slug to
-    the practice type that chooses its slot list, `curation` is the content-verified map (A-L10)
-    that decides for every slug it names — and write `out_root/index.json`.
+    """Encode EVERY photograph of every slug's folder (A-L11) — `types` maps a slug to the
+    practice type that chooses its slot list, `curation` is the content-verified map (A-L10) that
+    decides which image best fits each slot — and write `out_root/index.json`.
 
-    A file's NUMBER is its slot's position, not its rank among the files that were found: slot `k`
-    writes `<k>.webp`, so `p.photos[i]` still fills the design's slot `i` (A12.2) when a slot in
-    the middle is empty. An empty slot writes nothing and records nulls."""
+    A file's NUMBER is its POSITION, not its rank among the files that were found: positions 1-6
+    are the design's slots, so `p.photos[i]` still fills the design's slot `i` (A12.2) when a slot
+    in the middle is empty, and positions 7, 8, … are the photographs beyond them. A slot the
+    folder is too thin to fill writes nothing and records nulls."""
     curated_all = curation if curation is not None else {}
     # Before a single byte is written, and over the WHOLE map rather than the slugs asked for: a
     # typo in an entry this run does not touch is still a defect in the file being committed.
@@ -319,7 +389,7 @@ def prepare(
         if destination.exists():
             shutil.rmtree(destination)  # a re-run must not leave a stale Nth file behind
         try:
-            choices = slot_choices(
+            choices = positions(
                 source_images(folder), list(slots_for(types.get(slug, ""))), curated_all.get(slug)
             )
         except SeedDataError as exc:
@@ -334,7 +404,7 @@ def prepare(
     out_root.mkdir(parents=True, exist_ok=True)
     (out_root / "index.json").write_text(
         json.dumps(
-            {"version": 1, "max_photos": MAX_PHOTOS, "max_edge_px": MAX_EDGE_PX,
+            {"version": 1, "slot_count": SLOT_COUNT, "max_edge_px": MAX_EDGE_PX,
              "max_bytes": MAX_BYTES, "hospitals": index},
             indent=2, sort_keys=True,
         ) + "\n",
@@ -371,10 +441,14 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     filled = [e for entries in index.values() for e in entries if e["file"] is not None]
     empty = sum(1 for entries in index.values() for e in entries if e["file"] is None)
+    extra = sum(1 for entries in index.values() for e in entries if e["slot"] is None)
     total = sum(int(e["bytes"]) for e in filled)
-    # The empty count is not a footnote: it is how many of the design's captioned slots this run
-    # deliberately left for the placeholder, and the operator has to see it (A-L10).
-    print(f"[photos] {len(filled)} files, {empty} empty slots, {total / 1024 / 1024:.1f} MB → {args.out}")
+    # Neither count is a footnote. The empty one is how many of the design's captioned slots the
+    # folders were too thin to fill (A-L10, narrowed by A-L11); the extra one is how many
+    # photographs went past those six and are rendered as tiles of their own (A-L11, A15.3) —
+    # the number that proves nothing John supplied was dropped.
+    print(f"[photos] {len(filled)} files, {empty} empty slots, "
+          f"{extra} beyond the design's six slots, {total / 1024 / 1024:.1f} MB → {args.out}")
     return 0
 
 

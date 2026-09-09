@@ -1091,6 +1091,116 @@ const A12_11: Amendment = {
 };
 
 
+/** A15 — every uploaded photograph renders, with its OWN description (A-L11, John 2026-09-09).
+ *
+ *  Root cause. `photoSet(p)` renders exactly SIX captioned slots per practice and the captions are
+ *  the DESIGN's, fixed by practice type; the API sent no caption at all. So a photograph could
+ *  only ever sit under a TRUE caption by being the one that shows that slot's subject — a ceiling
+ *  of six per hospital that hotfix 2 (A-L10) turned into a floor of nothing: it left a slot empty
+ *  wherever no image matched by eye, so of the 195 photographs in John's eighteen folders only 73
+ *  were rendered (`def_veterinary_hospital`: nine down to three).
+ *
+ *  The rule is now the opposite, and these six literal script edits are it:
+ *
+ *    - a photograph carries its OWN description — `p.photoCaptions[i]`, the API's new
+ *      `photo_captions` (`migrations/090_listing_photo_captions.sql`), the supplier's words today
+ *      and the seller's in Wave 2b — and the design's fixed slot caption is the FALLBACK where
+ *      there is none (A15.1, A15.2);
+ *    - every photograph past the sixth gets a tile of its own, appended after the six slots, with
+ *      "Photo N" as the last-resort caption because the design has no seventh caption to lend
+ *      (A15.3a-A15.3d: the head and the tail of the generic branch's `return`, then the head and
+ *      the tail of the `p2` branch's, four edits because the two ends of each are far apart).
+ *
+ *  No template edit is needed: the detail grid (`<sc-for list="{{ d.photos }}">`) and the docked
+ *  panel's carousel (`withPhoto`, `counter`, `dots`) already iterate whatever `photoSet` returns,
+ *  so eleven tiles wrap into more rows and the carousel counts 1/11 on their own.
+ *
+ *  PIXEL-SAFE by construction, and for the same reason A12 was: the design's fixtures carry no
+ *  `photos` and no `photoCaptions` AT ALL — `p2`'s three photographs are the `SRC` map, keyed by
+ *  slot id, not `p.photos` — so `p.photoCaptions &&` is falsey and every caption is the design's
+ *  own, and `p.photos &&` is falsey so the extra arm is `[]` and no tile is appended anywhere.
+ *  `src/listings/load.ts` adds `photoCaptions` only when the API actually sent one, which the D6
+ *  design-fixture stub never does. Proved twice over — `src/logic.test.ts`
+ *  characterises both halves, and the 43 approved states keep their baseline hashes.
+ */
+const L11 = {
+  date: '2026-09-09',
+  ruling: 'HAS FAILED and wiped out all the images - if the logic is trying to match and failing then surface all images uploaded and have the user articulate what it is and render ALL images - what was 9 images now are only showing 3 after this hotfix!!!'
+};
+
+/** A15.1 — `photoSet`'s `p2` branch: the tile's caption and its placeholder both prefer the
+ *  photograph's own description. `SRC` and the three `p.photos` expressions A12.2 wrote are
+ *  untouched — this edit is about the words, not the bytes. */
+const A15_1: Amendment = {
+  id: 'A15.1', ...L11,
+  find: '        return { id, caption: v[1], index: i + 1, placeholder: name + " — " + v[1], src: SRC[id]',
+  replace: '        return { id, caption: (p.photoCaptions && p.photoCaptions[i]) || v[1], index: i + 1, placeholder: name + " — " + ((p.photoCaptions && p.photoCaptions[i]) || v[1]), src: SRC[id]',
+  count: 1
+};
+
+/** A15.2 — the same two substitutions in the generic branch, where they are three separate
+ *  lines. The design's six captions stay exactly where they are: they are what a photograph with
+ *  no description of its own still reads. */
+const A15_2: Amendment = {
+  id: 'A15.2', ...L11,
+  find: '      caption: v[1],\n      index: i + 1,\n      placeholder: name + " — " + v[1],',
+  replace: '      caption: (p.photoCaptions && p.photoCaptions[i]) || v[1],\n      index: i + 1,\n      placeholder: name + " — " + ((p.photoCaptions && p.photoCaptions[i]) || v[1]),',
+  count: 1
+};
+
+/** A15.3a — the generic branch appends one tile per photograph beyond the sixth. `views.length`
+ *  is the design's own slot count, so the six captioned slots keep their ids, their captions and
+ *  their indices, and the extras continue the numbering the carousel counts on. Applied AFTER
+ *  A15.2, whose output it matches. */
+const A15_3a: Amendment = {
+  id: 'A15.3a', ...L11,
+  find: '    return views.map((v, i) => ({\n      id: "ph-" + p.id + "-" + v[0],\n      caption: (p.photoCaptions && p.photoCaptions[i]) || v[1],',
+  replace: '    const tiles = views.map((v, i) => ({\n      id: "ph-" + p.id + "-" + v[0],\n      caption: (p.photoCaptions && p.photoCaptions[i]) || v[1],',
+  count: 1
+};
+
+/** A15.3b — the tail of the same expression: the extras themselves, and the concatenation that
+ *  returns them. Split from A15.3a only because the two ends of one `return` are far apart in the
+ *  file; the `find` carries the generic branch's whole `src:`/`hasSrc`/`noSrc` line and
+ *  `photoSet`'s own closing brace with it, so it cannot reach any other `}));`. */
+const A15_3b: Amendment = {
+  id: 'A15.3b', ...L11,
+  find: '      src: (p.photos && p.photos[i]) || "", hasSrc: !!(p.photos && p.photos[i]), noSrc: !(p.photos && p.photos[i])\n    }));\n  }',
+  replace: '      src: (p.photos && p.photos[i]) || "", hasSrc: !!(p.photos && p.photos[i]), noSrc: !(p.photos && p.photos[i])\n    }));\n'
+    + '    const extra = ((p.photos && p.photos.length > views.length) ? p.photos.slice(views.length) : []).map((src, k) => {\n'
+    + '      const i = views.length + k;\n'
+    + '      const cap = (p.photoCaptions && p.photoCaptions[i]) || ("Photo " + (i + 1));\n'
+    + '      return { id: "ph-" + p.id + "-extra" + (k + 1), caption: cap, index: i + 1, placeholder: name + " — " + cap, src: src || "", hasSrc: !!src, noSrc: !src };\n'
+    + '    });\n'
+    + '    return tiles.concat(extra);\n  }',
+  count: 1
+};
+
+/** A15.3c / A15.3d — the same append in the `p2` branch, whose six slots are an inline array
+ *  rather than `views`, so its slot count is `tiles.length`. A15.3d's `find` is anchored on the
+ *  `const equine` line that follows the branch, which is what keeps it off the generic branch's
+ *  own `});`. `p2` is a design fixture and will never carry a seventh photograph, but a branch
+ *  that behaves differently from the one beside it is the kind of divergence the next reader
+ *  pays for. */
+const A15_3c: Amendment = {
+  id: 'A15.3c', ...L11,
+  find: '    if (p.id === "p2") {\n      const name = this.practiceName(p);\n      return [',
+  replace: '    if (p.id === "p2") {\n      const name = this.practiceName(p);\n      const tiles = [',
+  count: 1
+};
+
+const A15_3d: Amendment = {
+  id: 'A15.3d', ...L11,
+  find: '      });\n    }\n    const equine = p.type === "Large animal";',
+  replace: '      });\n'
+    + '      const extra = ((p.photos && p.photos.length > tiles.length) ? p.photos.slice(tiles.length) : []).map((src, k) => {\n'
+    + '        const i = tiles.length + k;\n'
+    + '        const cap = (p.photoCaptions && p.photoCaptions[i]) || ("Photo " + (i + 1));\n'
+    + '        return { id: "ph-" + p.id + "-extra" + (k + 1), caption: cap, index: i + 1, placeholder: name + " — " + cap, src: src || "", hasSrc: !!src, noSrc: !src };\n'
+    + '      });\n'
+    + '      return tiles.concat(extra);\n    }\n    const equine = p.type === "Large animal";',
+  count: 1
+};
 
 // ---------------------------------------------------------------------------------------
 // A16 — the seller wizard and dashboard read and write the real API (spec 2026-09-08 D23,
@@ -1341,5 +1451,6 @@ export function amendments(): Amendment[] {
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
     A7_3, A7_4, A8_1a, A8_1b, A8_1c, A8_2, A8_3a, A8_3b, A8_4a, A8_4b, A8_5, A8_6, A8_7, A8_8a, A8_8b,
     A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5, A12_6, A12_7, A12_8, A12_9, A12_10, A12_11,
+    A15_1, A15_2, A15_3a, A15_3b, A15_3c, A15_3d,
     A16_1, A16_2, A16_3, A16_4, A16_5, A16_6, A16_7, A16_8, A16_9, A16_10, A16_11a, A16_11b, A16_12, A16_13];
 }
