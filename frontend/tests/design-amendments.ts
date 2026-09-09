@@ -3005,6 +3005,42 @@ const A19_12: Amendment = {
   count: 1
 };
 
+// A21 — market-data layers do not render absence as zero (controller amendment A-C28, 2026-09-10; Task B8 review).
+// Missing figures must be excluded from layers, not bucketed at zero, because a buyer reads zero as "nobody else practises here"
+// when we actually have no data. Absence is not zero.
+
+/** A21.1 — remove the `|| 0` defaults that rendered missing figures as zero; instead omit the entry entirely */
+const A21_1: Amendment = {
+  id: 'A21.1', date: '2026-09-10', ruling: 'a missing figure is omitted, never zeroed (controller amendment A-C28)',
+  find: '        econ: (ECON_K[p.id] || 0) * 1000,\n        vets: VETS[p.id] || 0',
+  replace: '        econ: ECON_K[p.id] != null ? ECON_K[p.id] * 1000 : undefined,\n        vets: VETS[p.id]',
+  count: 1
+};
+
+/** A21.2 — correct the economic layer label: B7 sends revenue per establishment, not payroll */
+const A21_2: Amendment = {
+  id: 'A21.2', date: '2026-09-10', ruling: 'the economic layer says what the number is (controller amendment A-C28)',
+  find: 'econ: { label: "Average Practice Payroll (CBP)", short: "Avg. payroll per practice",',
+  replace: 'econ: { label: "Average Practice Revenue (CBP)", short: "Avg. revenue per practice",',
+  count: 1
+};
+
+/** A21.2b — correct the radio button label: matches the layer label now */
+const A21_2b: Amendment = {
+  id: 'A21.2b', date: '2026-09-10', ruling: 'the economic layer says what the number is (controller amendment A-C28)',
+  find: 'radioRow("econ", "Average Practice Payroll", valueLayer === "econ",',
+  replace: 'radioRow("econ", "Average Practice Revenue", valueLayer === "econ",',
+  count: 1
+};
+
+/** A21.3 — the growth layer stops naming a year it does not use (vintage is data-dependent) */
+const A21_3: Amendment = {
+  id: 'A21.3', date: '2026-09-10', ruling: 'the growth layer stops naming a year it does not use (controller amendment A-C28)',
+  find: 'growth: { label: "Population Growth Since 2015 (ACS)",',
+  replace: 'growth: { label: "Population Growth (ACS)",',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -3028,5 +3064,7 @@ export function amendments(): Amendment[] {
     A18_1, A18_2,
     // A19 — the photo lightbox (2026-09-09). A19.9 reads A14.5's output and A19.10 reads A13.8's,
     // so the family is last. Definition order in this file matches this list (m8).
-    A19_1, A19_2, A19_3, A19_4, A19_5, A19_6, A19_7, A19_8, A19_9, A19_10, A19_11, A19_12];
+    A19_1, A19_2, A19_3, A19_4, A19_5, A19_6, A19_7, A19_8, A19_9, A19_10, A19_11, A19_12,
+    // A21 — market-data layers do not render absence as zero (controller amendment A-C28, 2026-09-10; Task B8 review).
+    A21_1, A21_2, A21_2b, A21_3];
 }

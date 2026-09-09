@@ -74,7 +74,7 @@ describe('logic.js is the design script block, ported verbatim', () => {
     // too. Pinned as a fact, not a defect — it goes when the design reference drops it.
     expect((logic.match(/isBrowse/g) ?? []).length, 'isBrowse should appear exactly once — the reference\'s vestigial `isBrowse: false`').toBe(1);
     expect(logic).toContain('isBrowse: false');
-    for (const present of ['sheetOpen', 'openSheet', 'closeSheet', 'layerLabel', 'datasetRowStyle', 'layerPalette', 'Average Practice Payroll', 'Avg. payroll per practice']) {
+    for (const present of ['sheetOpen', 'openSheet', 'closeSheet', 'layerLabel', 'datasetRowStyle', 'layerPalette', 'Average Practice Revenue', 'Avg. revenue per practice']) {
       expect(logic, `logic.js is missing ${present}`).toContain(present);
     }
   });
