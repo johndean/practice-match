@@ -1,0 +1,21 @@
+-- A-L11 (John, 2026-09-09: "surface all images uploaded and have the user articulate what it is
+-- and render ALL images"). One description per photograph, parallel to `listing.photos`.
+--
+-- Numbered 090, not 024: `017`-`059` is the Census plan's Sub-project 3 Phase A (its D14) and
+-- `060`+ is Phase B, so a hotfix that took 024 would collide with a plan on another branch.
+-- `090`-`099` is the range reserved for PLATFORM AND HOTFIX migrations on `main` (A-L12; `080`-
+-- `089` are the map engines). This one depends on `016_listing.sql` and on nothing after it, so
+-- filename order — which is all `scripts/migrate.py` uses — is satisfied wherever the reserved
+-- ranges in between are eventually filled.
+--
+-- Why a column and not the design's captions: `photoSet(p)` renders SIX fixed captions chosen by
+-- practice type, so a photograph could only ever be captioned truthfully by being placed in the
+-- slot whose caption describes it — which is why hotfix 2 (A-L10) rendered only 73 of the 195
+-- photographs John supplied. A photograph now carries its OWN words (the supplier's filename description
+-- today, a seller's own text once Wave 2b lets them write one) and the design's fixed caption is
+-- the fallback for a slot with none (amendment A15).
+--
+-- Parallel to `photos`, never keyed to it: the two are read by the same index, so position `n` of
+-- this array describes position `n` of that one, and a `null` means "nobody has described this
+-- photograph yet" exactly as a `null` in `photos` means "this slot has no photograph".
+ALTER TABLE listing ADD COLUMN photo_captions jsonb NOT NULL DEFAULT '[]'::jsonb;

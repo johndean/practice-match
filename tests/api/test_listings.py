@@ -23,12 +23,14 @@ from tests.api.conftest import auth_headers
 INSERT = (
     "INSERT INTO listing (slug, name, street, city, state, zip, phone, hours, status,"
     " location_disclosed, name_disclosed, geom, area, type, market, price, rev, docs, rooms, sqft,"
-    " bldg, est, listed_at, note, staff, services, facility, ownership, photos, source)"
+    " bldg, est, listed_at, note, staff, services, facility, ownership, photos, photo_captions,"
+    " source)"
     " VALUES (%(slug)s,%(name)s,%(street)s,%(city)s,%(state)s,%(zip)s,%(phone)s,%(hours)s,"
     " %(status)s,%(disclosed)s,%(name_disclosed)s,"
     " ST_SetSRID(ST_MakePoint(%(lng)s,%(lat)s),4326)::geography,"
     " %(area)s,'Small animal',%(market)s,1000000,1500000,2,4,3000,'Included',2001,"
-    " now() - make_interval(days => %(days)s),'n','s','sv','f','o',%(photos)s::jsonb,'seed')"
+    " now() - make_interval(days => %(days)s),'n','s','sv','f','o',%(photos)s::jsonb,"
+    " %(photo_captions)s::jsonb,'seed')"
     " RETURNING id"
 )
 
@@ -39,7 +41,7 @@ def _insert(conn: Any, **over: Any) -> str:
         "city": "Austin", "state": "TX", "zip": "78701", "phone": "(512) 555-0100",
         "hours": "24/7", "status": "published", "disclosed": True, "name_disclosed": True,
         "lat": 30.2672, "lng": -97.7431, "area": "Austin", "market": "Austin, TX", "days": 3,
-        "photos": json.dumps([]),
+        "photos": json.dumps([]), "photo_captions": json.dumps([]),
     }
     params.update(over)
     with conn.cursor() as cur:
@@ -364,6 +366,7 @@ def _row(**over: Any) -> dict[str, Any]:
         "rev": 2, "docs": 3, "rooms": 4, "sqft": 5, "bldg": "Included", "est": 2001,
         "listed_at": datetime(2026, 9, 3, tzinfo=UTC), "note": "n", "staff": "s",
         "services": "sv", "facility": "f", "ownership": "o", "photos": [],
+        "photo_captions": [],
     }
     base.update(over)
     return base
@@ -500,7 +503,10 @@ async def test_a_seeded_database_serves_all_eighteen(client: Any, conn: Any, red
     r = await client.get("/api/listings?limit=200", headers=auth_headers(cookies, headers))
     items = r.json()["items"]
     assert len(items) == 18
-    assert all(item["photos"] for item in items)
+    # Review m1: a list of six `null`s is TRUTHY, so `all(item["photos"] …)` stopped meaning
+    # "every hospital has a photograph" the moment A-L10 made the slots nullable. Every seeded
+    # listing must carry at least one real photograph — a card with none shows nothing at all.
+    assert all(any(p for p in item["photos"]) for item in items)
     assert all(item["lat"] is not None and item["lng"] is not None for item in items)
     assert {item["market"] for item in items} >= {"Dallas, TX", "Austin, TX", "Atlanta, GA"}
     # A-L5: John's demo hospitals show their names on QA.
@@ -519,7 +525,12 @@ async def test_a_photograph_of_a_seeded_hospital_is_really_served(
     auth = auth_headers(cookies, headers)
     items = (await client.get("/api/listings?limit=200", headers=auth)).json()["items"]
     first = items[0]
-    photo = await client.get(first["photos"][0], headers=auth)
+    # Review m2: position 1 is not guaranteed to be filled — it is only the exterior slot, which
+    # every hospital happens to have TODAY. Take the first slot that is actually filled, and say
+    # so with an assertion rather than letting a `null` reach the client as a URL.
+    url = next((p for p in first["photos"] if p is not None), None)
+    assert isinstance(url, str), f"{first['name']} has no photograph to serve: {first['photos']}"
+    photo = await client.get(url, headers=auth)
     assert photo.status_code == 200 and photo.content[:4] == b"RIFF"
 
 
@@ -559,3 +570,125 @@ async def test_the_listings_routes_exist_only_in_app_mode(dist: Any, redis: Any,
             r = await c.get(path)
             assert r.status_code == 401, path
             assert r.json() == {"error": {"code": "UNAUTHORIZED", "message": "Sign in to continue."}}
+
+
+# --- A-L10: a photo slot with no truthful photograph stays empty -----------------------------
+# John, 2026-09-09: "match the description". The caption under each photograph is the DESIGN's
+# fixed slot caption, so `photos` is POSITIONAL — position `n` is the design's slot `n` — and a
+# slot the curation left empty travels as JSON `null` all the way to `photoSet`, which renders the
+# design's own placeholder for it. Compacting the list here would slide every later photograph up
+# one slot and caption it with a subject it does not show.
+
+EMPTY_SLOTS = ["abc_animal_hospital/1.webp", None, "abc_animal_hospital/2.webp", None, None, None]
+
+
+def test_photo_list_keeps_a_null_slot_in_place() -> None:
+    """Both decode arms — psycopg2's list and the json string — carry the null through."""
+    assert photo_list(["a/1.webp", None]) == ["a/1.webp", None]
+    assert photo_list('["a/1.webp", null]') == ["a/1.webp", None]
+
+
+def test_serialise_emits_null_for_an_empty_photo_slot() -> None:
+    body = serialise(_row(photos=EMPTY_SLOTS), datetime(2026, 9, 6, tzinfo=UTC))
+    listing_id = body["id"]
+    assert body["photos"] == [
+        f"/api/listings/{listing_id}/photos/1", None, f"/api/listings/{listing_id}/photos/3",
+        None, None, None,
+    ]
+
+
+def test_photo_file_treats_an_empty_slot_exactly_like_an_out_of_range_index() -> None:
+    assert photo_file(EMPTY_SLOTS, 2) is None
+    assert photo_file(EMPTY_SLOTS, 3) is not None
+
+
+async def test_an_empty_photo_slot_is_a_404_and_the_slot_after_it_still_serves(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """The route half: slot 2 is empty, slot 3 is a real photograph, and asking for slot 3 must
+    not have been shifted onto slot 2's bytes."""
+    listing_id = _insert(conn, photos=json.dumps(EMPTY_SLOTS))
+    _, cookies, headers = member()
+    auth = auth_headers(cookies, headers)
+    empty = await client.get(f"/api/listings/{listing_id}/photos/2", headers=auth)
+    assert empty.status_code == 404
+    assert empty.json() == {"error": {"code": "NOT_FOUND", "message": "No such photograph."}}
+    filled = await client.get(f"/api/listings/{listing_id}/photos/3", headers=auth)
+    assert filled.status_code == 200
+    assert filled.headers["content-type"] == "image/webp"
+    assert filled.content[:4] == b"RIFF" and filled.content[8:12] == b"WEBP"
+    # …and an empty slot is not a hole in the wall: it is still a member endpoint.
+    assert (await client.get(f"/api/listings/{listing_id}/photos/2")).status_code == 401
+
+
+# --- A-L11: every photograph is served, each with its own description -------------------------
+# John, 2026-09-09: "surface all images uploaded and have the user articulate what it is and render
+# ALL images". `photos` is no longer bounded by the design's six captioned slots, and `listing`
+# carries a `photo_captions` array parallel to it (`migrations/090_listing_photo_captions.sql`)
+# — the supplier's own words
+# today, a seller's own words once Wave 2b lets them write one. Amendment A15 renders a caption
+# where there is one and the design's fixed slot caption where there is not.
+
+ELEVEN = [f"abc_animal_hospital/{n}.webp" for n in range(1, 12)]
+ELEVEN_CAPTIONS = [f"Interior — view {n}" for n in range(1, 12)]
+
+
+def test_serialise_emits_a_caption_for_every_photograph() -> None:
+    body = serialise(_row(photos=ELEVEN, photo_captions=ELEVEN_CAPTIONS), datetime(2026, 9, 6, tzinfo=UTC))
+    listing_id = body["id"]
+    assert body["photos"] == [f"/api/listings/{listing_id}/photos/{n}" for n in range(1, 12)]
+    assert body["photo_captions"] == ELEVEN_CAPTIONS
+    assert len(body["photo_captions"]) == len(body["photos"]), "the two lists are parallel"
+
+
+def test_serialise_carries_a_null_caption_at_its_own_position() -> None:
+    """A photograph nobody has described yet is a `null`, kept AT ITS POSITION for exactly the
+    reason an empty photo slot is: the two lists are read by index."""
+    body = serialise(
+        _row(photos=EMPTY_SLOTS, photo_captions=["Exterior — front", None, "Interior — exam", None, None, None]),
+        datetime(2026, 9, 6, tzinfo=UTC),
+    )
+    assert body["photo_captions"] == ["Exterior — front", None, "Interior — exam", None, None, None]
+
+
+def test_serialise_handles_photo_captions_arriving_as_a_json_string() -> None:
+    body = serialise(_row(photo_captions='["Exterior — front"]'), datetime(2026, 9, 6, tzinfo=UTC))
+    assert body["photo_captions"] == ["Exterior — front"]
+
+
+async def test_a_hospital_with_eleven_photographs_serves_the_eleventh(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """The whole point of A-L11 at the route: position 11 is an ordinary position, not "beyond the
+    design's six". Before it, `photos` never held more than six and `/photos/7` was a 404 by
+    construction."""
+    listing_id = _insert(conn, photos=json.dumps(ELEVEN), photo_captions=json.dumps(ELEVEN_CAPTIONS))
+    _, cookies, headers = member()
+    auth = auth_headers(cookies, headers)
+    body = (await client.get(f"/api/listings/{listing_id}", headers=auth)).json()
+    assert body["photos"][10] == f"/api/listings/{listing_id}/photos/11"
+    assert body["photo_captions"][10] == "Interior — view 11"
+    photo = await client.get(f"/api/listings/{listing_id}/photos/11", headers=auth)
+    assert photo.status_code == 200
+    assert photo.headers["content-type"] == "image/webp"
+    assert photo.content[:4] == b"RIFF" and photo.content[8:12] == b"WEBP"
+
+
+async def test_every_seeded_hospital_serves_every_photograph_with_a_caption(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """End to end against the real eighteen: no listing carries an empty slot any more, the two
+    lists are the same length row for row, and every caption is the supplier's own description."""
+    from app.config import settings
+    from scripts import seed_listings as SL
+
+    SL.seed(settings.database_url, reset=True)
+    _, cookies, headers = member()
+    items = (await client.get("/api/listings?limit=200", headers=auth_headers(cookies, headers))).json()["items"]
+    assert len(items) == 18
+    for item in items:
+        assert len(item["photos"]) >= 6, item["name"]
+        assert len(item["photo_captions"]) == len(item["photos"]), item["name"]
+        assert all(p is not None for p in item["photos"]), item["name"]
+        assert all(isinstance(c, str) and c for c in item["photo_captions"]), item["name"]
+    assert sum(len(item["photos"]) for item in items) == 195, "every photograph John supplied"

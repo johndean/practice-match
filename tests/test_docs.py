@@ -1,5 +1,6 @@
 import json
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 from typing import cast
@@ -1477,3 +1478,145 @@ def test_census_load_py_docstring_never_gives_railway_run_as_the_invocation():
     text = (ROOT / "scripts" / "census_load.py").read_text()
     assert "railway run --service worker" not in text
     assert "railway ssh --service worker" in text
+
+
+# --- A-L10: the seed photographs match the design's captions ---------------------------------
+
+
+def test_the_seed_plan_records_a_l10_and_deploy_md_names_the_curation_file():
+    """A-L10 (John, 2026-09-09: "explain where the image description is coming from…" and "match
+    the description"). Two documents of record have to carry this or the next operator repeats
+    A-L9's mistake: the plan says WHY the captions are the design's and why a filename is not
+    evidence, and DEPLOY.md — where hand operations live — says which file decides and what an
+    empty slot means. Pinned to the claims, not to prose, so a rewrite that keeps the meaning
+    still passes and a deletion does not."""
+    plan = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-06-practice-match-seed-listings.md").read_text()
+    record = plan.split("**Controller amendment A-L10")[-1]
+    assert len(plan.split("**Controller amendment A-L10")) == 2, "the A-L10 record is missing or duplicated"
+    assert '"match the description"' in record, "the record does not quote John's ruling"
+    assert "photoSet(p)" in record and "the DESIGN's own" in record, (
+        "the record must say where the caption comes from — the design's fixed slot captions"
+    )
+    assert "curation.json" in record
+    assert "73" in record and "108" in record and "35" in record, "the record does not state 73 of 108 filled"
+    for slug in ("1111_pet_hospital", "ghi_veterinary_hospital", "pqr_veterinary_hospital",
+                 "stu_veterinary_specialist_center"):
+        assert slug in record, f"the record does not name {slug} as needing clean images from John"
+    assert "Supersedes A-L9's fallback rule" in record
+    assert "placeholder" in record, "the record does not say an empty slot renders the design's placeholder"
+
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    section = deploy.split("## Seeding the demo hospitals (QA)", 1)[1].split("\n## ", 1)[0]
+    assert "A-L10" in section
+    assert "`seeds/hospitals/photos/curation.json` is the source of truth" in section
+    assert "stays\nempty" in section or "stays empty" in section
+    assert "placeholder" in section, "the runbook does not say an empty slot shows the design's placeholder"
+    # …and the file it points at really is there and really covers the seeds.
+    curation = json.loads((ROOT / "seeds" / "hospitals" / "photos" / "curation.json").read_text())
+    named = {slug for slug in curation if not slug.startswith("_")}
+    seeds = {h["slug"] for h in json.loads((ROOT / "seeds" / "hospitals.json").read_text())["hospitals"]}
+    assert named == seeds, "curation.json and seeds/hospitals.json name different hospitals"
+    assert "_comment" in curation, "curation.json lost the comment that says what it is"
+
+
+# --- A-L11: every uploaded photograph renders, with its own description -----------------------
+
+
+def test_the_seed_plan_records_a_l11_and_deploy_md_says_every_image_renders():
+    """A-L11 (John, 2026-09-09: "HAS FAILED and wiped out all the images … render ALL images").
+    The same two documents of record as A-L10, for the hotfix that reverses its rule: the plan
+    says what went wrong, what the rule is now and what carries the words; DEPLOY.md — where hand
+    operations live — says what an operator will actually see on the detail page. Pinned to the
+    claims, not to prose, so a rewrite that keeps the meaning still passes and a deletion does
+    not."""
+    plan = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-06-practice-match-seed-listings.md").read_text()
+    assert len(plan.split("**Controller amendment A-L11")) == 2, "the A-L11 record is missing or duplicated"
+    record = plan.split("**Controller amendment A-L11")[-1]
+    assert "render ALL images" in record, "the record does not quote John's ruling"
+    # The root cause, in the terms that make it a design fact and not a bug report.
+    assert "photoSet(p)" in record
+    # A-L11 review (m4): the TRUE counts. The brief's "117 of 190 dropped" was arithmetic
+    # (73 kept + 117 = 190) and the folders actually hold 195 — A-L10 rendered 73 of them and
+    # A-L11 renders all 195. A record that states a count nobody can reproduce is worse than one
+    # that states none, so the superseded numbers may not come back.
+    assert "195" in record and "73" in record, "the record does not state what was rendered"
+    for superseded in ("117", "190"):
+        assert superseded not in record, f"the A-L10 arithmetic {superseded} is back in the record"
+    # What now carries the description, and what renders it.
+    assert "A15" in record and "photo_captions" in record
+    # A-L11 review (M1): 024 sat inside the Census plan's reserved 017-059 (that plan's D14).
+    # Platform and hotfix migrations on `main` take 090-099, and the record is where the next
+    # implementer reads that.
+    assert "090_listing_photo_captions.sql" in record
+    assert "090" in record and "099" in record, "the record does not state the reserved range"
+    assert "Supersedes A-L10" in record, "the record does not retire A-L10's empty-slot rule"
+    # The one thing this hotfix deliberately did NOT change, so the next reader does not "fix" it.
+    assert "Six views per practice" in record, "the queued design-copy question is not recorded"
+
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    section = deploy.split("## Seeding the demo hospitals (QA)", 1)[1].split("\n## ", 1)[0]
+    assert "A-L11" in section
+    assert "is rendered" in section and "195 of them today" in section, (
+        "the runbook does not say that every image John supplies is rendered, and how many that is"
+    )
+    # Hyphen-minus, deliberately: the runbook writes the range that way and RUF001 refuses an
+    # en dash in a source literal.
+    assert "positions 1-6" in section, "the runbook does not say which positions the design's slots are"
+    assert "supplier" in section, "the runbook does not say where a photograph's description comes from"
+
+    # M1 again: the range belongs where an operator adding a migration will look for it, which is
+    # DEPLOY.md's own Migrations section and not the seeding runbook.
+    migrations = deploy.split("## Migrations", 1)[1].split("\n## ", 1)[0]
+    assert "090" in migrations and "099" in migrations, (
+        "DEPLOY.md's Migrations section does not record the platform/hotfix range"
+    )
+    assert "017" in migrations and "059" in migrations, (
+        "DEPLOY.md's Migrations section does not say which range is the Census plan's"
+    )
+
+
+# --- A-L11 re-review: a retired number may not survive anywhere in the tree -------------------
+# The renumber 024 -> 090 (A-L12) was made in eight places and missed seven, because the number
+# is written wherever the column is EXPLAINED — prose, code comments, test docstrings — and no
+# per-document pin can see across those. The same is true of the "117 of 190" arithmetic m4
+# struck. So this is the repo-wide one, and it is the fix for the class rather than for the seven.
+
+# pattern -> why it is retired. Regexes, because the same fact is spelled several ways
+# ("117 of 190", "117 of the 190").
+RETIRED_TEXT = {
+    r"migrations/024_listing_photo_captions": "the photo-captions migration was renumbered 024 -> 090 (A-L12): 017-059 is the Census plan's range — the bare number 024 stays free for the Census plan (re-review 2)",
+    r"117 of (?:the )?190": "the A-L10 arithmetic (A-L12, m4): the folders hold 195 and A-L10 rendered 73",
+}
+# This file has to spell the strings it forbids, so it cannot check itself.
+RETIRED_TEXT_EXEMPT = {"tests/test_docs.py"}
+
+
+def tracked_text_files() -> list[tuple[str, str]]:
+    """Every tracked file that decodes as UTF-8, as (path, contents).
+
+    `git ls-files` rather than a directory walk: an untracked build output, a virtualenv or a
+    stray scratch file must not be able to fail this suite, and a file that is not committed is
+    not a document of record. Anything that does not decode is a photograph, an icon or a font."""
+    listed = subprocess.run(
+        ["git", "ls-files", "-z"], cwd=ROOT, capture_output=True, text=True, check=True,
+    ).stdout.split("\0")
+    files: list[tuple[str, str]] = []
+    for name in filter(None, listed):
+        try:
+            files.append((name, (ROOT / name).read_text(encoding="utf-8")))
+        except (UnicodeDecodeError, OSError):
+            continue
+    return files
+
+
+def test_no_tracked_text_file_cites_a_retired_number():
+    """A-L11 re-review (Major, and m4). Every tracked text file, this one excepted."""
+    files = tracked_text_files()
+    assert len(files) > 100, "git ls-files returned almost nothing — this test would pass vacuously"
+    for pattern, why in RETIRED_TEXT.items():
+        hits = [
+            f"{name}:{text[:m.start()].count(chr(10)) + 1}"
+            for name, text in files if name not in RETIRED_TEXT_EXEMPT
+            for m in re.finditer(pattern, text)
+        ]
+        assert hits == [], f"{pattern!r} survives in {hits} — {why}"

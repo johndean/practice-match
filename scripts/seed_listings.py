@@ -75,7 +75,7 @@ UPSERT = """
 INSERT INTO listing (
   slug, name, street, city, state, zip, phone, hours, status, location_disclosed, name_disclosed,
   geom, area, type, market, price, rev, docs, rooms, sqft, bldg, est, listed_at,
-  note, staff, services, facility, ownership, photos, source, updated_at
+  note, staff, services, facility, ownership, photos, photo_captions, source, updated_at
 ) VALUES (
   %(slug)s, %(name)s, %(street)s, %(city)s, %(state)s, %(zip)s, %(phone)s, %(hours)s,
   %(status)s, %(location_disclosed)s, %(name_disclosed)s,
@@ -83,7 +83,7 @@ INSERT INTO listing (
   %(area)s, %(type)s, %(market)s, %(price)s, %(rev)s, %(docs)s, %(rooms)s, %(sqft)s,
   %(bldg)s, %(est)s, now() - make_interval(days => %(listed_days_ago)s),
   %(note)s, %(staff)s, %(services)s, %(facility)s, %(ownership)s,
-  %(photos)s::jsonb, 'seed', now()
+  %(photos)s::jsonb, %(photo_captions)s::jsonb, 'seed', now()
 )
 ON CONFLICT (slug) DO UPDATE SET
   name = EXCLUDED.name, street = EXCLUDED.street, city = EXCLUDED.city, state = EXCLUDED.state,
@@ -94,7 +94,8 @@ ON CONFLICT (slug) DO UPDATE SET
   docs = EXCLUDED.docs, rooms = EXCLUDED.rooms, sqft = EXCLUDED.sqft, bldg = EXCLUDED.bldg,
   est = EXCLUDED.est, listed_at = EXCLUDED.listed_at, note = EXCLUDED.note,
   staff = EXCLUDED.staff, services = EXCLUDED.services, facility = EXCLUDED.facility,
-  ownership = EXCLUDED.ownership, photos = EXCLUDED.photos, updated_at = now()
+  ownership = EXCLUDED.ownership, photos = EXCLUDED.photos,
+  photo_captions = EXCLUDED.photo_captions, updated_at = now()
 WHERE listing.source = 'seed'
 """
 
@@ -147,16 +148,40 @@ def load_photo_index(path: Path) -> dict[str, Any]:
     return dict(loaded)
 
 
-def photo_paths(slug: str, index: dict[str, Any]) -> list[str]:
-    """Relative paths under seeds/hospitals/photos/, in inventory order."""
+def photo_paths(slug: str, index: dict[str, Any]) -> list[str | None]:
+    """Relative paths under seeds/hospitals/photos/, in inventory order — which is the design's
+    SLOT order, with `None` for a slot the curation left empty (A-L10).
+
+    Positional, never compacted: `p.photos[i]` fills the design's photo slot `i` (amendment
+    A12.2), so dropping an empty slot would slide every later photograph up one and caption it
+    with the subject it does not show. A `None` reaches the browser as JSON `null`, where the
+    design's own `photoSet` renders its placeholder for that slot."""
     entries = index.get("hospitals", {}).get(slug, [])
     try:
-        return [f"{slug}/{entry['file']}" for entry in entries]
+        return [None if entry["file"] is None else f"{slug}/{entry['file']}" for entry in entries]
     except (KeyError, TypeError) as exc:
         raise SeedDataError(f"{slug}: photo inventory entry is unusable ({type(exc).__name__})") from None
 
 
-def row_params(hospital: dict[str, Any], photos: list[str]) -> dict[str, Any]:
+def photo_captions(slug: str, index: dict[str, Any]) -> list[str | None]:
+    """One description per photograph, in inventory order — PARALLEL to `photo_paths` (A-L11).
+
+    A photograph carries its own words because the design's six captions are fixed per slot and
+    cannot describe a seventh photograph at all: `photoSet` reads `p.photoCaptions[i]` and falls
+    back to the slot's own caption (amendment A15). Today the words are the supplier's filename
+    description, recorded by `scripts/prepare_photos.py::caption_of`; a seller writes their own in
+    Wave 2b. `None` where the position holds no photograph, so the two arrays stay index-for-index
+    parallel however thin the folder was."""
+    entries = index.get("hospitals", {}).get(slug, [])
+    try:
+        return [None if entry["caption"] is None else str(entry["caption"]) for entry in entries]
+    except (KeyError, TypeError) as exc:
+        raise SeedDataError(f"{slug}: photo inventory entry is unusable ({type(exc).__name__})") from None
+
+
+def row_params(
+    hospital: dict[str, Any], photos: list[str | None], captions: list[str | None]
+) -> dict[str, Any]:
     keys = (
         "slug", "name", "street", "city", "state", "zip", "phone", "hours", "status",
         "location_disclosed", "name_disclosed", "lat", "lng", "area", "type", "market",
@@ -168,13 +193,17 @@ def row_params(hospital: dict[str, Any], photos: list[str]) -> dict[str, Any]:
     except KeyError as exc:
         raise SeedDataError(f"{hospital.get('slug', '?')}: missing {exc}") from None
     params["photos"] = json.dumps(photos)
+    params["photo_captions"] = json.dumps(captions)
     return params
 
 
 def seed(dsn: str, *, reset: bool = False) -> int:
     hospitals = load_seed(SEEDS_FILE)
     index = load_photo_index(PHOTO_INDEX)
-    rows = [row_params(h, photo_paths(str(h["slug"]), index)) for h in hospitals]
+    rows = [
+        row_params(h, photo_paths(str(h["slug"]), index), photo_captions(str(h["slug"]), index))
+        for h in hospitals
+    ]
     slugs = [str(params["slug"]) for params in rows]
     conn = psycopg2.connect(normalize_dsn(dsn))
     try:

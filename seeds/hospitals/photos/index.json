@@ -2,68 +2,112 @@
   "hospitals": {
     "1111_pet_hospital": [
       {
-        "bytes": 31264,
-        "caption": "Exterior \u2014 front view",
+        "bytes": 27154,
+        "caption": "Exterior \u2014 entrance view",
         "file": "1.webp",
         "height": 393,
         "quality": 82,
-        "sha256": "281135b1837120211ef7f3bae4e6675abed4d1834ce579959f6b2db28d87da81",
+        "sha256": "dbd64b95845d1eabc75a291e8f4b727f78eadaa9f279d63afd0ae9265f9cf500",
         "slot": "exterior",
+        "source": "02_exterior_entrance_view.png",
+        "width": 1024
+      },
+      {
+        "bytes": 31264,
+        "caption": "Exterior \u2014 front view",
+        "file": "2.webp",
+        "height": 393,
+        "quality": 82,
+        "sha256": "281135b1837120211ef7f3bae4e6675abed4d1834ce579959f6b2db28d87da81",
+        "slot": "lobby",
         "source": "01_exterior_front_view.png",
         "width": 1000
       },
       {
+        "bytes": 37368,
+        "caption": "Exterior \u2014 monument sign",
+        "file": "3.webp",
+        "height": 336,
+        "quality": 82,
+        "sha256": "68fa1917c1b755074a8a798681c1802956cac906e98ff8b2f8bffecef4ee1a80",
+        "slot": "exam",
+        "source": "03_exterior_monument_sign.png",
+        "width": 658
+      },
+      {
+        "bytes": 34324,
+        "caption": "Exterior \u2014 street corner view",
+        "file": "4.webp",
+        "height": 336,
+        "quality": 82,
+        "sha256": "24950453fe68cd0ab31a157cb1f1fb185f4b06f0410b05daca0325925dfcaff6",
+        "slot": "treatment",
+        "source": "04_exterior_street_corner_view.png",
+        "width": 676
+      },
+      {
+        "bytes": 27374,
+        "caption": "Exterior \u2014 parking view",
+        "file": "5.webp",
+        "height": 336,
+        "quality": 82,
+        "sha256": "2b7b8ac0ede2cd851eb4fe08db720a04517b33d281ae73b684df5a6318d8da92",
+        "slot": "surgery",
+        "source": "05_exterior_parking_view.png",
+        "width": 683
+      },
+      {
         "bytes": 56990,
         "caption": "Interior \u2014 reception",
-        "file": "2.webp",
+        "file": "6.webp",
         "height": 1199,
         "quality": 82,
         "sha256": "ba47946c3ee1be2f9157244c0a2afc08a1f3f5405d88f71a785978d998c1aa60",
-        "slot": "lobby",
+        "slot": "kennel",
         "source": "06_interior_reception.png",
         "width": 379
       },
       {
+        "bytes": 81380,
+        "caption": "Interior \u2014 waiting area",
+        "file": "7.webp",
+        "height": 1199,
+        "quality": 82,
+        "sha256": "59746f2fe963e411fee22ccd807c48014e9e2be6c162ff8de57f39d369bc3bae",
+        "slot": null,
+        "source": "07_interior_waiting_area.png",
+        "width": 386
+      },
+      {
         "bytes": 48508,
         "caption": "Interior \u2014 exam room",
-        "file": "3.webp",
+        "file": "8.webp",
         "height": 1199,
         "quality": 82,
         "sha256": "ce4d46c4374d9be7236e2d3663af2fef3a11f883179fe48de69f6a1bec59c7cf",
-        "slot": "exam",
+        "slot": null,
         "source": "08_interior_exam_room.png",
         "width": 396
       },
       {
         "bytes": 64234,
         "caption": "Interior \u2014 treatment area",
-        "file": "4.webp",
+        "file": "9.webp",
         "height": 1199,
         "quality": 82,
         "sha256": "d249e27ece97859b883373d60c4f8946c7cf21981f87649865d6b15239a98ce8",
-        "slot": "treatment",
+        "slot": null,
         "source": "09_interior_treatment_area.png",
         "width": 422
       },
       {
-        "bytes": 81380,
-        "caption": "Interior \u2014 waiting area",
-        "file": "5.webp",
-        "height": 1199,
-        "quality": 82,
-        "sha256": "59746f2fe963e411fee22ccd807c48014e9e2be6c162ff8de57f39d369bc3bae",
-        "slot": "surgery",
-        "source": "07_interior_waiting_area.png",
-        "width": 386
-      },
-      {
         "bytes": 39532,
         "caption": "Interior \u2014 kennel hallway",
-        "file": "6.webp",
+        "file": "10.webp",
         "height": 1199,
         "quality": 82,
         "sha256": "48f8264f382396e0b06a6fa7747cb8217e3e97288d1255be9d5a8a90ace1a07b",
-        "slot": "kennel",
+        "slot": null,
         "source": "10_interior_kennel_hallway.png",
         "width": 419
       }
@@ -114,15 +158,15 @@
         "width": 397
       },
       {
-        "bytes": 26430,
-        "caption": "Interior \u2014 retail pharmacy area",
+        "bytes": 16166,
+        "caption": "Exterior \u2014 corner view",
         "file": "5.webp",
-        "height": 287,
+        "height": 322,
         "quality": 82,
-        "sha256": "bc895dcc54b6f18fcdeea5411f08955429c78a5e7b485eeb8588d68e64924afb",
+        "sha256": "5e5ba9cafe3fd006cf4d533da12e4a589306705ed2a2c54d99919e40edabac1b",
         "slot": "surgery",
-        "source": "10_interior_retail_pharmacy_area.jpg",
-        "width": 397
+        "source": "02_exterior_corner_view.jpg",
+        "width": 308
       },
       {
         "bytes": 17316,
@@ -134,6 +178,50 @@
         "slot": "kennel",
         "source": "09_interior_dog_boarding_suite.jpg",
         "width": 348
+      },
+      {
+        "bytes": 21478,
+        "caption": "Exterior \u2014 entrance view",
+        "file": "7.webp",
+        "height": 322,
+        "quality": 82,
+        "sha256": "bd94063ac76bbbf95f84c1cbac0cc4e44475cee00ed47dcc8cc4633fdc0b1a87",
+        "slot": null,
+        "source": "03_exterior_entrance_view.jpg",
+        "width": 342
+      },
+      {
+        "bytes": 13750,
+        "caption": "Exterior \u2014 side view parking",
+        "file": "8.webp",
+        "height": 321,
+        "quality": 82,
+        "sha256": "5f7ab0bf3085263806342fb3ede356e2af55e28df168d2c969caef5169c75564",
+        "slot": null,
+        "source": "04_exterior_side_view_parking.jpg",
+        "width": 308
+      },
+      {
+        "bytes": 26864,
+        "caption": "Exterior \u2014 rear courtyard",
+        "file": "9.webp",
+        "height": 321,
+        "quality": 82,
+        "sha256": "b9c654c3a36bb744a59e127522d1cfddec39543879db5fef5e9658fa8aaa8c3b",
+        "slot": null,
+        "source": "05_exterior_rear_courtyard.jpg",
+        "width": 342
+      },
+      {
+        "bytes": 26430,
+        "caption": "Interior \u2014 retail pharmacy area",
+        "file": "10.webp",
+        "height": 287,
+        "quality": 82,
+        "sha256": "bc895dcc54b6f18fcdeea5411f08955429c78a5e7b485eeb8588d68e64924afb",
+        "slot": null,
+        "source": "10_interior_retail_pharmacy_area.jpg",
+        "width": 397
       }
     ],
     "2222_pet_hospital": [
@@ -193,15 +281,81 @@
         "width": 392
       },
       {
+        "bytes": 32470,
+        "caption": "Exterior \u2014 monument sign",
+        "file": "6.webp",
+        "height": 278,
+        "quality": 82,
+        "sha256": "cf57b1c7263667ce4ddae6a25935e81992f4f9db28b05ea5ccab5ed3da658cfa",
+        "slot": "imaging",
+        "source": "02_exterior_monument_sign.png",
+        "width": 502
+      },
+      {
+        "bytes": 28722,
+        "caption": "Exterior \u2014 dog relief yard",
+        "file": "7.webp",
+        "height": 263,
+        "quality": 82,
+        "sha256": "aab0ed08ce08c397a57522d466be8b47259d3484b03c292c12e802331e1b0878",
+        "slot": null,
+        "source": "03_exterior_dog_relief_yard.png",
+        "width": 502
+      },
+      {
+        "bytes": 27266,
+        "caption": "Exterior \u2014 side view",
+        "file": "8.webp",
+        "height": 268,
+        "quality": 82,
+        "sha256": "7f78cff4d4e3402b86df05ebf78444c9a2388117e8485a580722250fc73a3a14",
+        "slot": null,
+        "source": "04_exterior_side_view.png",
+        "width": 392
+      },
+      {
+        "bytes": 17314,
+        "caption": "Exterior \u2014 entrance view",
+        "file": "9.webp",
+        "height": 268,
+        "quality": 82,
+        "sha256": "fc5f105eb613862643c388381e9118e59f3669238ef27f032b590ac0c721ecfa",
+        "slot": null,
+        "source": "05_exterior_entrance_view.png",
+        "width": 370
+      },
+      {
         "bytes": 16384,
         "caption": "Interior \u2014 waiting area",
-        "file": "6.webp",
+        "file": "10.webp",
         "height": 230,
         "quality": 82,
         "sha256": "09469f8be9c8cb98a32bac76c5452e30aab7d52b2366faa5f1bf3d962f4312bb",
-        "slot": "imaging",
+        "slot": null,
         "source": "08_interior_waiting_area.png",
         "width": 370
+      },
+      {
+        "bytes": 10260,
+        "caption": "Interior \u2014 exam room 2",
+        "file": "11.webp",
+        "height": 230,
+        "quality": 82,
+        "sha256": "7d10be973b646940fe27a9b1cd8587e741b2c784add087b2604437aa6d6de9ad",
+        "slot": null,
+        "source": "09_interior_exam_room_2.png",
+        "width": 502
+      },
+      {
+        "bytes": 31008,
+        "caption": "Interior \u2014 retail pharmacy",
+        "file": "12.webp",
+        "height": 262,
+        "quality": 82,
+        "sha256": "d5e3672fa82577ba46babbbf63a1f04c5c283a28dafa79a905d788c336c659c1",
+        "slot": null,
+        "source": "12_interior_retail_pharmacy.png",
+        "width": 502
       }
     ],
     "3333_santa_barbara_veterinary_specialist_hospital": [
@@ -228,15 +382,15 @@
         "width": 410
       },
       {
-        "bytes": 17170,
-        "caption": "Interior \u2014 waiting lounge",
+        "bytes": 18688,
+        "caption": "Interior \u2014 treatment room",
         "file": "3.webp",
         "height": 254,
         "quality": 82,
-        "sha256": "9b45fd3f966aca132712418a7113634a30d138df8a1e5a81a66a944480f75b42",
+        "sha256": "31c7f8a2a2da76b10276c87cbaa50ba1a181243c5db4cbeb5229651a7a1a28fe",
         "slot": "consult",
-        "source": "07_interior_waiting_lounge.png",
-        "width": 411
+        "source": "08_interior_treatment_room.png",
+        "width": 445
       },
       {
         "bytes": 23640,
@@ -251,7 +405,7 @@
       },
       {
         "bytes": 15052,
-        "caption": "Interior \u2014 ct scanner room",
+        "caption": "Interior \u2014 CT scanner room",
         "file": "5.webp",
         "height": 309,
         "quality": 82,
@@ -270,6 +424,61 @@
         "slot": "recovery",
         "source": "09_interior_kennels_treatment_area.png",
         "width": 410
+      },
+      {
+        "bytes": 64216,
+        "caption": "Exterior \u2014 street side view",
+        "file": "7.webp",
+        "height": 411,
+        "quality": 82,
+        "sha256": "00967b09d07bfa345d5f8322cf0cece0fb8e6dabf1e5238bade28da3cd82f80c",
+        "slot": null,
+        "source": "02_exterior_street_side_view.png",
+        "width": 653
+      },
+      {
+        "bytes": 20268,
+        "caption": "Exterior \u2014 side facade",
+        "file": "8.webp",
+        "height": 285,
+        "quality": 82,
+        "sha256": "04bc810aeb5cbed2005f8c9eba3f12692d11cb776401e4e82b794a8506978aba",
+        "slot": null,
+        "source": "03_exterior_side_facade.png",
+        "width": 410
+      },
+      {
+        "bytes": 21168,
+        "caption": "Exterior \u2014 driveway view",
+        "file": "9.webp",
+        "height": 285,
+        "quality": 82,
+        "sha256": "5dced49985a2dbf67c826f23c3fa039c9f22de755d4933f4b39a4bb10c355782",
+        "slot": null,
+        "source": "04_exterior_driveway_view.png",
+        "width": 411
+      },
+      {
+        "bytes": 28884,
+        "caption": "Exterior \u2014 front side view",
+        "file": "10.webp",
+        "height": 285,
+        "quality": 82,
+        "sha256": "be311ea1e53ea4eeab87b49f8cbfc0ce372fbbfd8fbd107cfd31741229dbde82",
+        "slot": null,
+        "source": "05_exterior_front_side_view.png",
+        "width": 445
+      },
+      {
+        "bytes": 17170,
+        "caption": "Interior \u2014 waiting lounge",
+        "file": "11.webp",
+        "height": 254,
+        "quality": 82,
+        "sha256": "9b45fd3f966aca132712418a7113634a30d138df8a1e5a81a66a944480f75b42",
+        "slot": null,
+        "source": "07_interior_waiting_lounge.png",
+        "width": 411
       }
     ],
     "4444_denver_veterinary_specialist_hospital": [
@@ -296,15 +505,15 @@
         "width": 390
       },
       {
-        "bytes": 18116,
-        "caption": "Interior \u2014 waiting area",
+        "bytes": 15690,
+        "caption": "Interior \u2014 treatment room",
         "file": "3.webp",
         "height": 232,
         "quality": 82,
-        "sha256": "20d9ed32ef2e97614d2a442d1aa1690270b7aa879e5d8d0fe8ba4ce60a4a365d",
+        "sha256": "c2a81a9759e9f8d0490018e74dfe1b91928004df7c4e4c2e501a88faf12d38b2",
         "slot": "consult",
-        "source": "07_interior_waiting_area.png",
-        "width": 418
+        "source": "08_interior_treatment_room.png",
+        "width": 458
       },
       {
         "bytes": 18954,
@@ -319,7 +528,7 @@
       },
       {
         "bytes": 9620,
-        "caption": "Interior \u2014 ct imaging room",
+        "caption": "Interior \u2014 CT imaging room",
         "file": "5.webp",
         "height": 283,
         "quality": 82,
@@ -338,19 +547,74 @@
         "slot": "recovery",
         "source": "11_interior_kennel_area.png",
         "width": 458
+      },
+      {
+        "bytes": 47380,
+        "caption": "Exterior \u2014 monument sign",
+        "file": "7.webp",
+        "height": 443,
+        "quality": 82,
+        "sha256": "2b5c2a3ade14ca073b114f15e990b369b307438c61be0a3b7d3035f89763b49d",
+        "slot": null,
+        "source": "02_exterior_monument_sign.png",
+        "width": 436
+      },
+      {
+        "bytes": 25670,
+        "caption": "Exterior \u2014 mountain mural",
+        "file": "8.webp",
+        "height": 298,
+        "quality": 82,
+        "sha256": "261fda32ca5eb3a9a0d42aed7c9271494930731d45baf0c5def3d3cb4737a7be",
+        "slot": null,
+        "source": "03_exterior_mountain_mural.png",
+        "width": 390
+      },
+      {
+        "bytes": 16022,
+        "caption": "Exterior \u2014 emergency entrance",
+        "file": "9.webp",
+        "height": 298,
+        "quality": 82,
+        "sha256": "1cf3528d7fa1c9d88c499ac83a0b8f6ed9f9b9980f7bca1f78373cc542971175",
+        "slot": null,
+        "source": "04_exterior_emergency_entrance.png",
+        "width": 433
+      },
+      {
+        "bytes": 34758,
+        "caption": "Exterior \u2014 patio street view",
+        "file": "10.webp",
+        "height": 298,
+        "quality": 82,
+        "sha256": "79210b50e5eda7ffe076ac89000d3ecfe4d8e3f101900a34b9dbce4be7967d01",
+        "slot": null,
+        "source": "05_exterior_patio_street_view.png",
+        "width": 443
+      },
+      {
+        "bytes": 18116,
+        "caption": "Interior \u2014 waiting area",
+        "file": "11.webp",
+        "height": 232,
+        "quality": 82,
+        "sha256": "20d9ed32ef2e97614d2a442d1aa1690270b7aa879e5d8d0fe8ba4ce60a4a365d",
+        "slot": null,
+        "source": "07_interior_waiting_area.png",
+        "width": 418
       }
     ],
     "456_pet_er": [
       {
-        "bytes": 67262,
-        "caption": "Exterior \u2014 main front",
+        "bytes": 30270,
+        "caption": "Exterior \u2014 main entrance",
         "file": "1.webp",
-        "height": 417,
+        "height": 296,
         "quality": 82,
-        "sha256": "89ede699a442c3bc93092e8a5455b19307eaba6e722dc231e66872dcc19237b1",
+        "sha256": "1ecfdd02e9abe138fcf0b7034665118e15c66cc7e54c9a14ef32532deb2d1148",
         "slot": "exterior",
-        "source": "01_exterior_main_front.jpg",
-        "width": 807
+        "source": "04_exterior_main_entrance.jpg",
+        "width": 399
       },
       {
         "bytes": 15638,
@@ -398,7 +662,7 @@
       },
       {
         "bytes": 17604,
-        "caption": "Interior \u2014 ct scanner",
+        "caption": "Interior \u2014 CT scanner",
         "file": "6.webp",
         "height": 264,
         "quality": 82,
@@ -406,41 +670,96 @@
         "slot": "imaging",
         "source": "08_interior_ct_scanner.jpg",
         "width": 470
+      },
+      {
+        "bytes": 67262,
+        "caption": "Exterior \u2014 main front",
+        "file": "7.webp",
+        "height": 417,
+        "quality": 82,
+        "sha256": "89ede699a442c3bc93092e8a5455b19307eaba6e722dc231e66872dcc19237b1",
+        "slot": null,
+        "source": "01_exterior_main_front.jpg",
+        "width": 807
+      },
+      {
+        "bytes": 39446,
+        "caption": "Exterior \u2014 entrance right",
+        "file": "8.webp",
+        "height": 417,
+        "quality": 82,
+        "sha256": "ec053184b0909bc30435951e126a8fcb57ece75e3ec8576a8795d11b520544b5",
+        "slot": null,
+        "source": "02_exterior_entrance_right.jpg",
+        "width": 470
+      },
+      {
+        "bytes": 16916,
+        "caption": "Exterior \u2014 side emergency",
+        "file": "9.webp",
+        "height": 296,
+        "quality": 82,
+        "sha256": "6f5b1b6ca4bb821ffdc9c228d856130dc10c22afa8a264d6280504d3c079c9c4",
+        "slot": null,
+        "source": "03_exterior_side_emergency.jpg",
+        "width": 405
+      },
+      {
+        "bytes": 34380,
+        "caption": "Exterior \u2014 courtyard",
+        "file": "10.webp",
+        "height": 296,
+        "quality": 82,
+        "sha256": "22953f16bca37df4552117714e20643595ec7c3781d9779f1af2a14defb98d06",
+        "slot": null,
+        "source": "05_exterior_courtyard.jpg",
+        "width": 470
+      },
+      {
+        "bytes": 21524,
+        "caption": "Interior \u2014 lounge",
+        "file": "11.webp",
+        "height": 294,
+        "quality": 82,
+        "sha256": "f54f5cb1f3a20fde058080220d208787cf73ba88ea3e43ca6fe5f4b0f5d26bef",
+        "slot": null,
+        "source": "11_interior_lounge.jpg",
+        "width": 470
       }
     ],
     "5555_new_york_veterinary_specialist_hospital": [
       {
-        "bytes": 61764,
-        "caption": "Exterior \u2014 front entrance",
+        "bytes": 20426,
+        "caption": "Exterior \u2014 front facade",
         "file": "1.webp",
-        "height": 624,
+        "height": 329,
         "quality": 82,
-        "sha256": "096892e641ad7c6241cd002d36cbbb4be09d9748d70a0059722beabfefc3561d",
+        "sha256": "a507c53aa917f318bf9bbd2cf9ef66ecfd6828bddaed6849bab1922563131287",
         "slot": "exterior",
-        "source": "01_exterior_front_entrance.png",
-        "width": 581
-      },
-      {
-        "bytes": 28356,
-        "caption": "Interior \u2014 reception",
-        "file": "2.webp",
-        "height": 388,
-        "quality": 82,
-        "sha256": "4356c92cd09227657d51f97a4758fbd806d02b23beb58a848cf4a0d2fb77e2a4",
-        "slot": "lobby",
-        "source": "06_interior_reception.png",
-        "width": 581
+        "source": "02_exterior_front_facade.png",
+        "width": 393
       },
       {
         "bytes": 16416,
         "caption": "Interior \u2014 waiting area",
-        "file": "3.webp",
+        "file": "2.webp",
         "height": 289,
         "quality": 82,
         "sha256": "9f960f3ed0e2e3927243a81f4848381b77b806e6973a082d33b886bb318e8c4e",
-        "slot": "consult",
+        "slot": "lobby",
         "source": "07_interior_waiting_area.png",
         "width": 393
+      },
+      {
+        "bytes": 61764,
+        "caption": "Exterior \u2014 front entrance",
+        "file": "3.webp",
+        "height": 624,
+        "quality": 82,
+        "sha256": "096892e641ad7c6241cd002d36cbbb4be09d9748d70a0059722beabfefc3561d",
+        "slot": "consult",
+        "source": "01_exterior_front_entrance.png",
+        "width": 581
       },
       {
         "bytes": 11858,
@@ -454,19 +773,19 @@
         "width": 284
       },
       {
-        "bytes": 15530,
-        "caption": "Interior \u2014 ct imaging room",
+        "bytes": 9836,
+        "caption": "Interior \u2014 CT scanner close view",
         "file": "5.webp",
-        "height": 257,
+        "height": 355,
         "quality": 82,
-        "sha256": "04d3f52e73d3db5f540dab74462b51972b4eaea24f2709395e9de1685272008b",
+        "sha256": "e1bab94e98c8de176caab26af4ccb3ee74646ab78196f4839fabfa8244398539",
         "slot": "imaging",
-        "source": "10_interior_ct_imaging_room.png",
-        "width": 530
+        "source": "11_interior_ct_scanner_close_view.png",
+        "width": 186
       },
       {
         "bytes": 16562,
-        "caption": "Interior \u2014 icu",
+        "caption": "Interior \u2014 ICU",
         "file": "6.webp",
         "height": 355,
         "quality": 82,
@@ -474,6 +793,72 @@
         "slot": "recovery",
         "source": "12_interior_icu.png",
         "width": 262
+      },
+      {
+        "bytes": 18776,
+        "caption": "Exterior \u2014 sign",
+        "file": "7.webp",
+        "height": 329,
+        "quality": 82,
+        "sha256": "083fb14bd74e9c5f2913697b8e990f0f7f232152d22996fc3aed7caa98d2c59b",
+        "slot": null,
+        "source": "03_exterior_sign.png",
+        "width": 296
+      },
+      {
+        "bytes": 15010,
+        "caption": "Exterior \u2014 rear city view",
+        "file": "8.webp",
+        "height": 289,
+        "quality": 82,
+        "sha256": "9cf5d22463a21cf8f8ca7418f2cc02895377717bb51597875492cf38abd48078",
+        "slot": null,
+        "source": "04_exterior_rear_city_view.png",
+        "width": 330
+      },
+      {
+        "bytes": 16256,
+        "caption": "Exterior \u2014 side entrance",
+        "file": "9.webp",
+        "height": 289,
+        "quality": 82,
+        "sha256": "5346ed2b4c8d318a0b8d03327e3e65724dd579975c4031b775722e31e2cf104d",
+        "slot": null,
+        "source": "05_exterior_side_entrance.png",
+        "width": 359
+      },
+      {
+        "bytes": 28356,
+        "caption": "Interior \u2014 reception",
+        "file": "10.webp",
+        "height": 388,
+        "quality": 82,
+        "sha256": "4356c92cd09227657d51f97a4758fbd806d02b23beb58a848cf4a0d2fb77e2a4",
+        "slot": null,
+        "source": "06_interior_reception.png",
+        "width": 581
+      },
+      {
+        "bytes": 10148,
+        "caption": "Interior \u2014 corridor",
+        "file": "11.webp",
+        "height": 289,
+        "quality": 82,
+        "sha256": "7847e304dd3ad5074201b1454ef2338dd9cfc14d09dc386dbf5492ba380aa9b1",
+        "slot": null,
+        "source": "08_interior_corridor.png",
+        "width": 296
+      },
+      {
+        "bytes": 15530,
+        "caption": "Interior \u2014 CT imaging room",
+        "file": "12.webp",
+        "height": 257,
+        "quality": 82,
+        "sha256": "04d3f52e73d3db5f540dab74462b51972b4eaea24f2709395e9de1685272008b",
+        "slot": null,
+        "source": "10_interior_ct_imaging_room.png",
+        "width": 530
       }
     ],
     "6666_dallas_veterinary_specialist_hospital": [
@@ -522,15 +907,15 @@
         "width": 253
       },
       {
-        "bytes": 12870,
-        "caption": "Interior \u2014 corridor",
+        "bytes": 37192,
+        "caption": "Exterior \u2014 city view",
         "file": "5.webp",
-        "height": 457,
+        "height": 430,
         "quality": 82,
-        "sha256": "6e6188b5590e3365b0adbf3e84f23eeb652c8aa4f3141133afceab833f824dc2",
+        "sha256": "7161f669a037d1a08ddfa47edf47ab712be1781485301f2c7bb8d07e3044dd63",
         "slot": "imaging",
-        "source": "07_interior_corridor.png",
-        "width": 236
+        "source": "02_exterior_city_view.png",
+        "width": 606
       },
       {
         "bytes": 14908,
@@ -542,6 +927,50 @@
         "slot": "recovery",
         "source": "10_interior_rehabilitation_area.png",
         "width": 263
+      },
+      {
+        "bytes": 36254,
+        "caption": "Exterior \u2014 side view",
+        "file": "7.webp",
+        "height": 381,
+        "quality": 82,
+        "sha256": "09650b10afccc7f48822a2fef7f64b51f4ecd8ffc78f9c4694e6cf701a97047b",
+        "slot": null,
+        "source": "03_exterior_side_view.png",
+        "width": 378
+      },
+      {
+        "bytes": 29394,
+        "caption": "Exterior \u2014 main drive entrance",
+        "file": "8.webp",
+        "height": 381,
+        "quality": 82,
+        "sha256": "fa62306ad7ea7ffc8f7a82ddc8c68c0b5ecc0e361a32cbc0d010c5de4973512d",
+        "slot": null,
+        "source": "04_exterior_main_drive_entrance.png",
+        "width": 423
+      },
+      {
+        "bytes": 42116,
+        "caption": "Exterior \u2014 emergency sign",
+        "file": "9.webp",
+        "height": 381,
+        "quality": 82,
+        "sha256": "ac2d3823a9b8d44379e2b472c5f319b8eaece05861d76c7e217e72db977315c1",
+        "slot": null,
+        "source": "05_exterior_emergency_sign.png",
+        "width": 469
+      },
+      {
+        "bytes": 12870,
+        "caption": "Interior \u2014 corridor",
+        "file": "10.webp",
+        "height": 457,
+        "quality": 82,
+        "sha256": "6e6188b5590e3365b0adbf3e84f23eeb652c8aa4f3141133afceab833f824dc2",
+        "slot": null,
+        "source": "07_interior_corridor.png",
+        "width": 236
       }
     ],
     "789_lake_tahoe_pet_hospital": [
@@ -579,35 +1008,79 @@
         "width": 249
       },
       {
+        "bytes": 63490,
+        "caption": "Exterior \u2014 lakeside right view",
+        "file": "4.webp",
+        "height": 411,
+        "quality": 82,
+        "sha256": "bc5f98a692103cef3bc7466072e0ff5788986da9fc7cd0c4108945418ca73c5a",
+        "slot": "treatment",
+        "source": "02_exterior_lakeside_right_view.png",
+        "width": 653
+      },
+      {
         "bytes": 18018,
         "caption": "Interior \u2014 treatment surgery",
-        "file": "4.webp",
+        "file": "5.webp",
         "height": 455,
         "quality": 82,
         "sha256": "ed0c845f356d1497730ec54b29c535cbbffbf75b9f9ab411859e48f5d75e72ec",
-        "slot": "treatment",
+        "slot": "surgery",
         "source": "09_interior_treatment_surgery.png",
         "width": 247
       },
       {
+        "bytes": 46244,
+        "caption": "Exterior \u2014 garage view",
+        "file": "6.webp",
+        "height": 399,
+        "quality": 82,
+        "sha256": "aa51641968cae4f49a2ecfe62e08617ef8a42af601fedbc29816847d92b85800",
+        "slot": "kennel",
+        "source": "03_exterior_garage_view.png",
+        "width": 412
+      },
+      {
+        "bytes": 44870,
+        "caption": "Exterior \u2014 monument sign",
+        "file": "7.webp",
+        "height": 399,
+        "quality": 82,
+        "sha256": "77ef448aee28ee7a414ff61893a5614175a02dcf4f9512493afa9807498dfa09",
+        "slot": null,
+        "source": "04_exterior_monument_sign.png",
+        "width": 408
+      },
+      {
+        "bytes": 40650,
+        "caption": "Exterior \u2014 rear dog run",
+        "file": "8.webp",
+        "height": 399,
+        "quality": 82,
+        "sha256": "4a7841859c5550d6d34107f2344b1c12e0a98a7795754fd6ff06a52b585e5489",
+        "slot": null,
+        "source": "05_exterior_rear_dog_run.png",
+        "width": 445
+      },
+      {
         "bytes": 19718,
         "caption": "Interior \u2014 lounge lake view",
-        "file": "5.webp",
+        "file": "9.webp",
         "height": 455,
         "quality": 82,
         "sha256": "a9d765285d3bd2a9635f03177904dce07973efb866c891084e337a6608dbd7d4",
-        "slot": "surgery",
+        "slot": null,
         "source": "07_interior_lounge_lake_view.png",
         "width": 233
       },
       {
         "bytes": 20654,
         "caption": "Interior \u2014 retail pharmacy",
-        "file": "6.webp",
+        "file": "10.webp",
         "height": 455,
         "quality": 82,
         "sha256": "036da49963c655f0c5f627fe75166c99001f63e55044cc0af7a69fa65b19ba8f",
-        "slot": "kennel",
+        "slot": null,
         "source": "10_interior_retail_pharmacy.png",
         "width": 263
       }
@@ -636,72 +1109,204 @@
         "width": 444
       },
       {
+        "bytes": 11250,
+        "caption": "Interior \u2014 exam room 1",
+        "file": "3.webp",
+        "height": 293,
+        "quality": 82,
+        "sha256": "d2ddfc8ea1d9a1d59200c83c46fff9cf356d8e2ca422ffc1aebdd4e276172cbc",
+        "slot": "exam",
+        "source": "08_interior_exam_room_1.jpg",
+        "width": 444
+      },
+      {
         "bytes": 44716,
         "caption": "Interior \u2014 exam room",
-        "file": "3.webp",
+        "file": "4.webp",
         "height": 596,
         "quality": 82,
         "sha256": "9ada7f4997a433d4732b3e7002c8da9d9edfc0cca21eb6795fd43554df246f7a",
-        "slot": "exam",
+        "slot": "treatment",
         "source": "02_interior_exam_room.jpg",
         "width": 896
       },
       {
+        "bytes": 19308,
+        "caption": "Exterior \u2014 rear side",
+        "file": "5.webp",
+        "height": 295,
+        "quality": 82,
+        "sha256": "67ad0e5efb9dccd891c887a22d679b8a24d1d977e819d6b427ab93f83c797dd2",
+        "slot": "surgery",
+        "source": "03_exterior_rear_side.jpg",
+        "width": 444
+      },
+      {
         "bytes": 13434,
         "caption": "Interior \u2014 boarding left",
-        "file": "4.webp",
+        "file": "6.webp",
         "height": 292,
         "quality": 82,
         "sha256": "b15468c26e7cec8724a7f78773542a75d6f5d8cb1af2d8e422f9ac7ef434efa8",
-        "slot": "treatment",
+        "slot": "kennel",
         "source": "05_interior_boarding_left.jpg",
+        "width": 444
+      },
+      {
+        "bytes": 20536,
+        "caption": "Exterior \u2014 front entrance",
+        "file": "7.webp",
+        "height": 295,
+        "quality": 82,
+        "sha256": "fd7fea4b7a0bd8e80467d0f200c7a80a553f5d4d315c33f615ec5c188bc383e2",
+        "slot": null,
+        "source": "04_exterior_front_entrance.jpg",
         "width": 444
       },
       {
         "bytes": 14400,
         "caption": "Interior \u2014 boarding right",
-        "file": "5.webp",
+        "file": "8.webp",
         "height": 292,
         "quality": 82,
         "sha256": "5a5309e4f11f2155f1502d411c3ed0e4ba411ed68da766c80a218742538d4e6d",
-        "slot": "surgery",
+        "slot": null,
         "source": "06_interior_boarding_right.jpg",
         "width": 444
       },
       {
+        "bytes": 15522,
+        "caption": "Interior \u2014 exam room 2",
+        "file": "9.webp",
+        "height": 295,
+        "quality": 82,
+        "sha256": "d5afd3e7d635e2b17031c068fff171e8d460974a730d22b3f9e7d2af6fff4bd8",
+        "slot": null,
+        "source": "09_interior_exam_room_2.jpg",
+        "width": 444
+      },
+      {
+        "bytes": 18768,
+        "caption": "Interior \u2014 dental room",
+        "file": "10.webp",
+        "height": 295,
+        "quality": 82,
+        "sha256": "29d4fc29b24b57310da6f3e20bbd7b0558c7b650c0ef8246ba08970d57d44e93",
+        "slot": null,
+        "source": "10_interior_dental_room.jpg",
+        "width": 444
+      },
+      {
+        "bytes": 63264,
+        "caption": "Exterior \u2014 side sign",
+        "file": "11.webp",
+        "height": 596,
+        "quality": 82,
+        "sha256": "f65f36821c33121c686c187d462130eb98c98a21216cb9887196b81ffc750550",
+        "slot": null,
+        "source": "11_exterior_side_sign.jpg",
+        "width": 896
+      },
+      {
+        "bytes": 113554,
+        "caption": "Exterior \u2014 boarding entrance",
+        "file": "12.webp",
+        "height": 596,
+        "quality": 82,
+        "sha256": "cac52d9e9213064acec060623bdb22c92c3783e0dc21a441abbf8b8a16280adb",
+        "slot": null,
+        "source": "12_exterior_boarding_entrance.jpg",
+        "width": 896
+      },
+      {
+        "bytes": 35118,
+        "caption": "Exterior \u2014 front",
+        "file": "13.webp",
+        "height": 461,
+        "quality": 82,
+        "sha256": "e148bab128239b7e5c46fa3f1de2fe7e49536fc3e0d1e3d868924dfb9b3c4676",
+        "slot": null,
+        "source": "13_exterior_front.jpg",
+        "width": 526
+      },
+      {
+        "bytes": 58500,
+        "caption": "Exterior \u2014 monument sign",
+        "file": "14.webp",
+        "height": 461,
+        "quality": 82,
+        "sha256": "7b61e109a74109a6dab3c84f39a91c40dd3a87b50657244a14b0738039649bd3",
+        "slot": null,
+        "source": "14_exterior_monument_sign.jpg",
+        "width": 994
+      },
+      {
         "bytes": 34890,
         "caption": "Interior \u2014 kennels",
-        "file": "6.webp",
+        "file": "15.webp",
         "height": 468,
         "quality": 82,
         "sha256": "7de6552b2bbcd87b6399e3b36547d0292963824d15e0f77f53dacbafe283f7b8",
-        "slot": "kennel",
+        "slot": null,
         "source": "15_interior_kennels.jpg",
         "width": 526
+      },
+      {
+        "bytes": 51566,
+        "caption": "Interior \u2014 reception",
+        "file": "16.webp",
+        "height": 468,
+        "quality": 82,
+        "sha256": "d68710a19f9bd2b13a10854cf3b2abba19b1d1bc95b6b6608eac24d7ff05f3cd",
+        "slot": null,
+        "source": "16_interior_reception.jpg",
+        "width": 994
+      },
+      {
+        "bytes": 26842,
+        "caption": "Interior \u2014 exam room",
+        "file": "17.webp",
+        "height": 491,
+        "quality": 82,
+        "sha256": "b691a150e17d712da23f83286bd129ecd8799d391c930982b9ef3bc88d48d71e",
+        "slot": null,
+        "source": "17_interior_exam_room.jpg",
+        "width": 526
+      },
+      {
+        "bytes": 33626,
+        "caption": "Interior \u2014 dental room",
+        "file": "18.webp",
+        "height": 491,
+        "quality": 82,
+        "sha256": "2ddd476aaf5877ccf914799083dd4aa5aedf702ca942abf01444b9f45f806c9a",
+        "slot": null,
+        "source": "18_interior_dental_room.jpg",
+        "width": 994
       }
     ],
     "def_veterinary_hospital": [
       {
-        "bytes": 132358,
-        "caption": "Exterior \u2014 front view",
+        "bytes": 187742,
+        "caption": "Exterior \u2014 left view",
         "file": "1.webp",
-        "height": 1054,
+        "height": 986,
         "quality": 82,
-        "sha256": "96fd685a59871946611391ac061af55de9db884dbd08274816888e5157cd5040",
+        "sha256": "921ede07d525d05767074590ccfa82fb4a370c6d9983b4221bfde5c7d929b9ec",
         "slot": "exterior",
-        "source": "01_exterior_front_view.png",
+        "source": "03_exterior_left_view.png",
         "width": 1020
       },
       {
-        "bytes": 105026,
-        "caption": "Interior \u2014 reception",
+        "bytes": 132358,
+        "caption": "Exterior \u2014 front view",
         "file": "2.webp",
-        "height": 1030,
+        "height": 1054,
         "quality": 82,
-        "sha256": "18bbeacd86535fb9b1cfcb5d9a70d72707a6dbef706df717d2bbf40f92059ed7",
+        "sha256": "96fd685a59871946611391ac061af55de9db884dbd08274816888e5157cd5040",
         "slot": "lobby",
-        "source": "05_interior_reception.png",
-        "width": 1270
+        "source": "01_exterior_front_view.png",
+        "width": 1020
       },
       {
         "bytes": 63272,
@@ -715,26 +1320,26 @@
         "width": 770
       },
       {
-        "bytes": 76464,
-        "caption": "Interior \u2014 pharmacy retail",
+        "bytes": 144242,
+        "caption": "Exterior \u2014 right view",
         "file": "4.webp",
-        "height": 1010,
+        "height": 1054,
         "quality": 82,
-        "sha256": "063192a35fe0e522a7409439a9df96d8fc73d2d0c7267896f0719a80d49b1e55",
+        "sha256": "d6c906f0a2648293cdcc1d66520b785c0848a6b344cef5778472fe8f0deea67e",
         "slot": "treatment",
-        "source": "09_interior_pharmacy_retail.png",
-        "width": 770
+        "source": "02_exterior_right_view.png",
+        "width": 1020
       },
       {
-        "bytes": 58380,
-        "caption": "Interior \u2014 surgery room",
+        "bytes": 169038,
+        "caption": "Exterior \u2014 rear view",
         "file": "5.webp",
-        "height": 602,
+        "height": 986,
         "quality": 82,
-        "sha256": "abd82ba07f000c0fc62741d6a16896eb2543e0cbc937d96f541278ad3d6dffc3",
+        "sha256": "91587bfde0e2021066e15d1969ac1768deb3c4036e05a94e4d47274d41f4bfb8",
         "slot": "surgery",
-        "source": "07_interior_surgery_room.png",
-        "width": 1270
+        "source": "04_exterior_rear_view.png",
+        "width": 1020
       },
       {
         "bytes": 36894,
@@ -746,6 +1351,39 @@
         "slot": "kennel",
         "source": "08_interior_kennels.png",
         "width": 1270
+      },
+      {
+        "bytes": 105026,
+        "caption": "Interior \u2014 reception",
+        "file": "7.webp",
+        "height": 1030,
+        "quality": 82,
+        "sha256": "18bbeacd86535fb9b1cfcb5d9a70d72707a6dbef706df717d2bbf40f92059ed7",
+        "slot": null,
+        "source": "05_interior_reception.png",
+        "width": 1270
+      },
+      {
+        "bytes": 58380,
+        "caption": "Interior \u2014 surgery room",
+        "file": "8.webp",
+        "height": 602,
+        "quality": 82,
+        "sha256": "abd82ba07f000c0fc62741d6a16896eb2543e0cbc937d96f541278ad3d6dffc3",
+        "slot": null,
+        "source": "07_interior_surgery_room.png",
+        "width": 1270
+      },
+      {
+        "bytes": 76464,
+        "caption": "Interior \u2014 pharmacy retail",
+        "file": "9.webp",
+        "height": 1010,
+        "quality": 82,
+        "sha256": "063192a35fe0e522a7409439a9df96d8fc73d2d0c7267896f0719a80d49b1e55",
+        "slot": null,
+        "source": "09_interior_pharmacy_retail.png",
+        "width": 770
       }
     ],
     "ghi_veterinary_hospital": [
@@ -761,59 +1399,114 @@
         "width": 622
       },
       {
+        "bytes": 44158,
+        "caption": "Exterior \u2014 front entrance",
+        "file": "2.webp",
+        "height": 386,
+        "quality": 82,
+        "sha256": "bfa6ca8a67504574551ddc07654308a30d597bb68b5620a63096b51088cca681",
+        "slot": "triage",
+        "source": "02_exterior_front_entrance.png",
+        "width": 653
+      },
+      {
+        "bytes": 28040,
+        "caption": "Exterior \u2014 side facade",
+        "file": "3.webp",
+        "height": 317,
+        "quality": 82,
+        "sha256": "353971bec04c22d66edd199ea15740a917ab4a6c5d07a23f85050ee812e26ea7",
+        "slot": "treatment",
+        "source": "03_exterior_side_facade.png",
+        "width": 400
+      },
+      {
+        "bytes": 40222,
+        "caption": "Exterior \u2014 front parking",
+        "file": "4.webp",
+        "height": 317,
+        "quality": 82,
+        "sha256": "a20034e900b0bfd36b0c1c86a419ab9c0351b1bfe8c328bc0d273d09fcc89950",
+        "slot": "icu",
+        "source": "04_exterior_front_parking.png",
+        "width": 435
+      },
+      {
+        "bytes": 31092,
+        "caption": "Exterior \u2014 monument sign",
+        "file": "5.webp",
+        "height": 317,
+        "quality": 82,
+        "sha256": "c01be2ba3bf381fe08df0b83a6ee21e3c19214543a6d014dfc1e4d8e16204214",
+        "slot": "surgery",
+        "source": "05_exterior_monument_sign.png",
+        "width": 435
+      },
+      {
         "bytes": 16116,
         "caption": "Interior \u2014 reception",
-        "file": "2.webp",
+        "file": "6.webp",
         "height": 255,
         "quality": 82,
         "sha256": "bad61cee0ee767d8d0c2d0a1d719246803f06e692cae76a8805a026dae4b5477",
-        "slot": "triage",
+        "slot": "imaging",
         "source": "06_interior_reception.png",
         "width": 400
       },
       {
         "bytes": 25868,
         "caption": "Interior \u2014 treatment surgery",
-        "file": "3.webp",
+        "file": "7.webp",
         "height": 255,
         "quality": 82,
         "sha256": "13add3ba1f4a2d70e939d86bb03e95b7665b431f1615d92850e9b0063b0f9aee",
-        "slot": "treatment",
+        "slot": null,
         "source": "07_interior_treatment_surgery.png",
-        "width": 435
-      },
-      {
-        "bytes": 16828,
-        "caption": "Interior \u2014 kennels",
-        "file": "4.webp",
-        "height": 307,
-        "quality": 82,
-        "sha256": "9866307049bcc5c690d39223b16a930358ab0430cf754686a28b63a1362d5e7d",
-        "slot": "icu",
-        "source": "10_interior_kennels.png",
         "width": 435
       },
       {
         "bytes": 13664,
         "caption": "Interior \u2014 exam room",
-        "file": "5.webp",
+        "file": "8.webp",
         "height": 255,
         "quality": 82,
         "sha256": "0939590db07fccad77fac1a98cbe1509cd9cb7d07ee66c1a27e911689bf06869",
-        "slot": "surgery",
+        "slot": null,
         "source": "08_interior_exam_room.png",
         "width": 435
       },
       {
         "bytes": 23162,
-        "caption": "Interior \u2014 diagnostic xray",
-        "file": "6.webp",
+        "caption": "Interior \u2014 diagnostic X-ray",
+        "file": "9.webp",
         "height": 307,
         "quality": 82,
         "sha256": "fe56356c495e86b5c0948dc5b4b0b7b54d5028e50e83e058dfd4bd62634d0b38",
-        "slot": "imaging",
+        "slot": null,
         "source": "09_interior_diagnostic_xray.png",
         "width": 400
+      },
+      {
+        "bytes": 16828,
+        "caption": "Interior \u2014 kennels",
+        "file": "10.webp",
+        "height": 307,
+        "quality": 82,
+        "sha256": "9866307049bcc5c690d39223b16a930358ab0430cf754686a28b63a1362d5e7d",
+        "slot": null,
+        "source": "10_interior_kennels.png",
+        "width": 435
+      },
+      {
+        "bytes": 15250,
+        "caption": "Interior \u2014 retail pharmacy",
+        "file": "11.webp",
+        "height": 307,
+        "quality": 82,
+        "sha256": "a3699ae66129142ffd4217a184ccd949930333f993d3acfd0483697e209e2b1f",
+        "slot": null,
+        "source": "11_interior_retail_pharmacy.png",
+        "width": 435
       }
     ],
     "jkl_animal_hospital": [
@@ -852,7 +1545,7 @@
       },
       {
         "bytes": 31844,
-        "caption": "Interior \u2014 icu",
+        "caption": "Interior \u2014 ICU",
         "file": "4.webp",
         "height": 616,
         "quality": 82,
@@ -862,19 +1555,19 @@
         "width": 400
       },
       {
-        "bytes": 25522,
-        "caption": "Interior \u2014 exam room",
+        "bytes": 34156,
+        "caption": "Exterior \u2014 monument sign",
         "file": "5.webp",
-        "height": 616,
+        "height": 305,
         "quality": 82,
-        "sha256": "3fad62e55af5ee1aac4f95818c7aa1dda64d8859cd369259af9a702c7c5081d1",
+        "sha256": "2b641a70d69be5b2d8ef48869cd6f41a6126f5d1af02a763a95f784422beab06",
         "slot": "surgery",
-        "source": "10_interior_exam_room.png",
-        "width": 429
+        "source": "02_exterior_monument_sign.png",
+        "width": 953
       },
       {
         "bytes": 25400,
-        "caption": "Interior \u2014 ct scanner",
+        "caption": "Interior \u2014 CT scanner",
         "file": "6.webp",
         "height": 616,
         "quality": 82,
@@ -882,6 +1575,50 @@
         "slot": "imaging",
         "source": "08_interior_ct_scanner.png",
         "width": 398
+      },
+      {
+        "bytes": 36204,
+        "caption": "Exterior \u2014 emergency entrance",
+        "file": "7.webp",
+        "height": 288,
+        "quality": 82,
+        "sha256": "c8907d2465f1d542613673671532fbcdce0edbcbc86c4819ed30e653439a818a",
+        "slot": null,
+        "source": "03_exterior_emergency_entrance.png",
+        "width": 953
+      },
+      {
+        "bytes": 71884,
+        "caption": "Exterior \u2014 rear patio",
+        "file": "8.webp",
+        "height": 518,
+        "quality": 82,
+        "sha256": "2d2002f673b9c38355c3524735a6fc85f2b8e940cf80f211e6c05cbac7c3895b",
+        "slot": null,
+        "source": "04_exterior_rear_patio.png",
+        "width": 1088
+      },
+      {
+        "bytes": 86760,
+        "caption": "Exterior \u2014 side mural",
+        "file": "9.webp",
+        "height": 818,
+        "quality": 82,
+        "sha256": "9a2770e606a86181044e9f4a9a4a76c8cff8bb609b49271a51bc1f9b85a9a22d",
+        "slot": null,
+        "source": "05_exterior_side_mural.png",
+        "width": 953
+      },
+      {
+        "bytes": 25522,
+        "caption": "Interior \u2014 exam room",
+        "file": "10.webp",
+        "height": 616,
+        "quality": 82,
+        "sha256": "3fad62e55af5ee1aac4f95818c7aa1dda64d8859cd369259af9a702c7c5081d1",
+        "slot": null,
+        "source": "10_interior_exam_room.png",
+        "width": 429
       }
     ],
     "mno_pet_hospital": [
@@ -908,15 +1645,15 @@
         "width": 658
       },
       {
-        "bytes": 27586,
-        "caption": "Interior \u2014 exam hallway",
+        "bytes": 22458,
+        "caption": "Interior \u2014 exam room",
         "file": "3.webp",
-        "height": 406,
+        "height": 452,
         "quality": 82,
-        "sha256": "d48b8a60ed54a06b53a736d9b7b59bcaa87695d406a60d7b3bb5358f91e3a86e",
+        "sha256": "62817613a335f322c2bfcf182be2f5d80829fc82d54d3a6da61828537fea6029",
         "slot": "exam",
-        "source": "08_interior_exam_hallway.png",
-        "width": 684
+        "source": "09_interior_exam_room.png",
+        "width": 658
       },
       {
         "bytes": 42168,
@@ -930,26 +1667,81 @@
         "width": 690
       },
       {
+        "bytes": 100960,
+        "caption": "Exterior \u2014 right view",
+        "file": "5.webp",
+        "height": 664,
+        "quality": 82,
+        "sha256": "2e8a5a7a7159d8b1a7e9c007527f66dedf71d6bf560080264b2d637d3b56c004",
+        "slot": "surgery",
+        "source": "02_exterior_right_view.png",
+        "width": 1023
+      },
+      {
+        "bytes": 87456,
+        "caption": "Exterior \u2014 left side view",
+        "file": "6.webp",
+        "height": 496,
+        "quality": 82,
+        "sha256": "07ba2bff0c1d1e84173f8cecc144bca3b0092a69410d0eb62d16adfe0dbd56ce",
+        "slot": "kennel",
+        "source": "03_exterior_left_side_view.png",
+        "width": 658
+      },
+      {
+        "bytes": 68802,
+        "caption": "Exterior \u2014 entrance view",
+        "file": "7.webp",
+        "height": 496,
+        "quality": 82,
+        "sha256": "c83c022dc6c2e49956231ec3582fdd798fe6d31510afe9c9411681cb1bd03ea6",
+        "slot": null,
+        "source": "04_exterior_entrance_view.png",
+        "width": 690
+      },
+      {
+        "bytes": 81870,
+        "caption": "Exterior \u2014 monument sign",
+        "file": "8.webp",
+        "height": 496,
+        "quality": 82,
+        "sha256": "c1a66c62575a3edb29821ef69d909c6ab480c92f52c1a7846ea087146cfefa2f",
+        "slot": null,
+        "source": "05_exterior_monument_sign.png",
+        "width": 684
+      },
+      {
         "bytes": 41302,
         "caption": "Interior \u2014 lounge",
-        "file": "5.webp",
+        "file": "9.webp",
         "height": 406,
         "quality": 82,
         "sha256": "95705ed6eb9e8950aa1c8092f8d5f4f5160c5abdd2823190e82a1904730bcbcf",
-        "slot": "surgery",
+        "slot": null,
         "source": "07_interior_lounge.png",
         "width": 690
       },
       {
-        "bytes": 22458,
-        "caption": "Interior \u2014 exam room",
-        "file": "6.webp",
+        "bytes": 27586,
+        "caption": "Interior \u2014 exam hallway",
+        "file": "10.webp",
+        "height": 406,
+        "quality": 82,
+        "sha256": "d48b8a60ed54a06b53a736d9b7b59bcaa87695d406a60d7b3bb5358f91e3a86e",
+        "slot": null,
+        "source": "08_interior_exam_hallway.png",
+        "width": 684
+      },
+      {
+        "bytes": 47416,
+        "caption": "Interior \u2014 retail pharmacy",
+        "file": "11.webp",
         "height": 452,
         "quality": 82,
-        "sha256": "62817613a335f322c2bfcf182be2f5d80829fc82d54d3a6da61828537fea6029",
-        "slot": "kennel",
-        "source": "09_interior_exam_room.png",
-        "width": 658
+        "sha256": "bdc5694bfd0969407ccc471a3d0a2d3d3347a65aca8f13f4ce1f04696e9b29e8",
+        "slot": null,
+        "source": "11_interior_retail_pharmacy.png",
+        "width": 684
       }
     ],
     "pqr_veterinary_hospital": [
@@ -965,127 +1757,193 @@
         "width": 1215
       },
       {
+        "bytes": 41072,
+        "caption": "Exterior \u2014 right entrance view",
+        "file": "2.webp",
+        "height": 310,
+        "quality": 82,
+        "sha256": "ca5b10fc03df498d90650f79ed85729500a076b411115884e52fa2c629f9b9a3",
+        "slot": "lobby",
+        "source": "02_exterior_right_entrance_view.png",
+        "width": 815
+      },
+      {
+        "bytes": 43908,
+        "caption": "Exterior \u2014 right sign view",
+        "file": "3.webp",
+        "height": 295,
+        "quality": 82,
+        "sha256": "7da1245ed23a2b86b88d39e22bfa644b541dbd8b13e2862a940f5982a8a888c4",
+        "slot": "exam",
+        "source": "03_exterior_right_sign_view.png",
+        "width": 815
+      },
+      {
         "bytes": 70020,
         "caption": "Interior \u2014 reception",
-        "file": "2.webp",
+        "file": "4.webp",
         "height": 309,
         "quality": 82,
         "sha256": "7d7b8d10beb7268ea6348d7a18086931dd50d42463cd42ce3dc660f8698ee69d",
-        "slot": "lobby",
+        "slot": "treatment",
         "source": "04_interior_reception.png",
         "width": 1003
       },
       {
         "bytes": 43488,
         "caption": "Interior \u2014 exam room",
-        "file": "3.webp",
+        "file": "5.webp",
         "height": 309,
         "quality": 82,
         "sha256": "d349f113b4a2dc5f727745cbbbff1d1d02484d1a1b560394a29be23dd7c18673",
-        "slot": "exam",
+        "slot": "surgery",
         "source": "05_interior_exam_room.png",
         "width": 1026
       },
       {
-        "bytes": 70940,
-        "caption": "Interior \u2014 treatment kennels",
-        "file": "4.webp",
-        "height": 1101,
-        "quality": 82,
-        "sha256": "4e2c69277533e1c19da01c14c7c2541111543ad9f547af0eb806f5c0b43b5093",
-        "slot": "treatment",
-        "source": "08_interior_treatment_kennels.png",
-        "width": 704
-      },
-      {
         "bytes": 77468,
         "caption": "Interior \u2014 waiting area",
-        "file": "5.webp",
+        "file": "6.webp",
         "height": 1101,
         "quality": 82,
         "sha256": "7303d401f9103dbfe6c55bf51484d2b3603f55f28da0da9c80c01976e94d3b8c",
-        "slot": "surgery",
+        "slot": "kennel",
         "source": "06_interior_waiting_area.png",
         "width": 670
       },
       {
         "bytes": 51108,
         "caption": "Interior \u2014 hallway",
-        "file": "6.webp",
+        "file": "7.webp",
         "height": 1101,
         "quality": 82,
         "sha256": "f3fddb3e5425f80aaa5db0d7f416b46016728fd3682359ffa7f3b514b7e92120",
-        "slot": "kennel",
+        "slot": null,
         "source": "07_interior_hallway.png",
         "width": 646
+      },
+      {
+        "bytes": 70940,
+        "caption": "Interior \u2014 treatment kennels",
+        "file": "8.webp",
+        "height": 1101,
+        "quality": 82,
+        "sha256": "4e2c69277533e1c19da01c14c7c2541111543ad9f547af0eb806f5c0b43b5093",
+        "slot": null,
+        "source": "08_interior_treatment_kennels.png",
+        "width": 704
       }
     ],
     "stu_veterinary_specialist_center": [
       {
+        "bytes": 12556,
+        "caption": "Exterior \u2014 courtyard view",
+        "file": "1.webp",
+        "height": 217,
+        "quality": 82,
+        "sha256": "e8ad96ed0b1cf608cccca2924d4bfe046d7e05b6d81faacded50b4842b614199",
+        "slot": "exterior",
+        "source": "04_exterior_courtyard_view.png",
+        "width": 309
+      },
+      {
         "bytes": 56648,
         "caption": "Exterior \u2014 main front waterfront",
-        "file": "1.webp",
+        "file": "2.webp",
         "height": 450,
         "quality": 82,
         "sha256": "5dd1b07d76d477efc4e449a372bfd2b8b3a05c66928689fe78d2c7993f90f6b9",
-        "slot": "exterior",
+        "slot": "lobby",
         "source": "01_exterior_main_front_waterfront.png",
         "width": 1010
       },
       {
+        "bytes": 18420,
+        "caption": "Exterior \u2014 side view",
+        "file": "3.webp",
+        "height": 217,
+        "quality": 82,
+        "sha256": "986523a9ddfe2a3039a270311cfe874be25f2917c08b8d1e5418303dc51d9739",
+        "slot": "consult",
+        "source": "02_exterior_side_view.png",
+        "width": 300
+      },
+      {
+        "bytes": 17394,
+        "caption": "Exterior \u2014 entrance view",
+        "file": "4.webp",
+        "height": 217,
+        "quality": 82,
+        "sha256": "53631547611febcc4e4370df28472e1d27af736e5b2c20bb75829a392a61457e",
+        "slot": "surgery",
+        "source": "03_exterior_entrance_view.png",
+        "width": 316
+      },
+      {
+        "bytes": 38898,
+        "caption": "Exterior \u2014 dusk view",
+        "file": "5.webp",
+        "height": 217,
+        "quality": 82,
+        "sha256": "ea6d488db1966ab49318573f570c185000dfdf1dacefe60d9bccd4c0ad27f813",
+        "slot": "imaging",
+        "source": "05_exterior_dusk_view.png",
+        "width": 1102
+      },
+      {
         "bytes": 52030,
         "caption": "Interior \u2014 reception",
-        "file": "2.webp",
+        "file": "6.webp",
         "height": 284,
         "quality": 82,
         "sha256": "c80a423cd96863fdbcae7d963f0f6f632eb5195ce1bb62257c20ccdbcdc2db58",
-        "slot": "lobby",
+        "slot": "recovery",
         "source": "06_interior_reception.png",
         "width": 1010
       },
       {
         "bytes": 56466,
         "caption": "Interior \u2014 lounge",
-        "file": "3.webp",
+        "file": "7.webp",
         "height": 284,
         "quality": 82,
         "sha256": "307baae1c419a507a5e10131d8f71d713e9275eab04c26e5c5472d4e3555e7ea",
-        "slot": "consult",
+        "slot": null,
         "source": "07_interior_lounge.png",
         "width": 1030
       },
       {
-        "bytes": 231582,
-        "caption": "Interior \u2014 surgery room",
-        "file": "4.webp",
+        "bytes": 70516,
+        "caption": "Interior \u2014 reception secondary",
+        "file": "8.webp",
         "height": 1075,
         "quality": 82,
-        "sha256": "63af2cf33ef3d2855e582b7c0c8b1b5f1deb022044ee1f838c73d660c8badb0f",
-        "slot": "surgery",
-        "source": "10_interior_surgery_room.png",
-        "width": 1223
+        "sha256": "c7600e01b13d96015fe58293b93adea6d725f39be3fdccab9aff3cf0a89be5fd",
+        "slot": null,
+        "source": "08_interior_reception_secondary.png",
+        "width": 405
       },
       {
         "bytes": 68244,
-        "caption": "Interior \u2014 mri ct room",
-        "file": "5.webp",
+        "caption": "Interior \u2014 MRI CT room",
+        "file": "9.webp",
         "height": 1075,
         "quality": 82,
         "sha256": "52f9689cf182cc9ae208ac7bfa9ec0c6b72669e294c45d1d103c1ed3cdb3dead",
-        "slot": "imaging",
+        "slot": null,
         "source": "09_interior_mri_ct_room.png",
         "width": 404
       },
       {
-        "bytes": 70516,
-        "caption": "Interior \u2014 reception secondary",
-        "file": "6.webp",
+        "bytes": 231582,
+        "caption": "Interior \u2014 surgery room",
+        "file": "10.webp",
         "height": 1075,
         "quality": 82,
-        "sha256": "c7600e01b13d96015fe58293b93adea6d725f39be3fdccab9aff3cf0a89be5fd",
-        "slot": "recovery",
-        "source": "08_interior_reception_secondary.png",
-        "width": 405
+        "sha256": "63af2cf33ef3d2855e582b7c0c8b1b5f1deb022044ee1f838c73d660c8badb0f",
+        "slot": null,
+        "source": "10_interior_surgery_room.png",
+        "width": 1223
       }
     ],
     "vwx_veterinary_hospital": [
@@ -1145,13 +2003,57 @@
         "width": 982
       },
       {
+        "bytes": 96206,
+        "caption": "Exterior \u2014 street view",
+        "file": "6.webp",
+        "height": 502,
+        "quality": 82,
+        "sha256": "ac910dfdb90b694db9a3bfcf724f7d8d74519a34b6ad75749edac4487069e385",
+        "slot": "kennel",
+        "source": "02_exterior_street_view.png",
+        "width": 1010
+      },
+      {
+        "bytes": 60662,
+        "caption": "Exterior \u2014 side entrance parking",
+        "file": "7.webp",
+        "height": 442,
+        "quality": 82,
+        "sha256": "061e3147c13dc5cdc1fcfe2ddc4a53d75022df606521dbcbc0b4a6bdbd5a03c8",
+        "slot": null,
+        "source": "03_exterior_side_entrance_parking.png",
+        "width": 662
+      },
+      {
+        "bytes": 76428,
+        "caption": "Exterior \u2014 pet relief yard",
+        "file": "8.webp",
+        "height": 442,
+        "quality": 82,
+        "sha256": "71ea4021dd57d1bfa94ede289433da59b571afe0fdba5382df6191df4bc0eb09",
+        "slot": null,
+        "source": "04_exterior_pet_relief_yard.png",
+        "width": 655
+      },
+      {
+        "bytes": 37238,
+        "caption": "Exterior \u2014 service entrance",
+        "file": "9.webp",
+        "height": 442,
+        "quality": 82,
+        "sha256": "0f821d5157d838be28d08d74900bd223337a6dff1be3ff1de08f46c496bd2a4d",
+        "slot": null,
+        "source": "05_exterior_service_entrance.png",
+        "width": 663
+      },
+      {
         "bytes": 70558,
         "caption": "Interior \u2014 retail pharmacy",
-        "file": "6.webp",
+        "file": "10.webp",
         "height": 407,
         "quality": 82,
         "sha256": "118e7091ead91cae8df500576d6d64d878bd354016ac858c525fab6b6c30f23d",
-        "slot": "kennel",
+        "slot": null,
         "source": "10_interior_retail_pharmacy.png",
         "width": 1008
       }
@@ -1191,15 +2093,15 @@
         "width": 355
       },
       {
-        "bytes": 23406,
-        "caption": "Interior \u2014 retail pharmacy",
+        "bytes": 31496,
+        "caption": "Exterior \u2014 monument sign",
         "file": "4.webp",
-        "height": 317,
+        "height": 414,
         "quality": 82,
-        "sha256": "61801fa532ed866f7934e72a34890cd267dc90966c662c20ac6518d55b364c2f",
+        "sha256": "30a52a6b2a99885fb6f6ed94e7e2e4e132b4b86c8103f503cdbf1a7f94168c24",
         "slot": "treatment",
-        "source": "09_interior_retail_pharmacy.png",
-        "width": 446
+        "source": "02_exterior_monument_sign.png",
+        "width": 463
       },
       {
         "bytes": 24028,
@@ -1222,11 +2124,66 @@
         "slot": "kennel",
         "source": "08_interior_boarding_hallway.png",
         "width": 463
+      },
+      {
+        "bytes": 28848,
+        "caption": "Exterior \u2014 street view",
+        "file": "7.webp",
+        "height": 284,
+        "quality": 82,
+        "sha256": "53090e97c8f8954f6cfe4cb8e54a92ad309009b5aa0c39be3eaac0dccc13458c",
+        "slot": null,
+        "source": "03_exterior_street_view.png",
+        "width": 446
+      },
+      {
+        "bytes": 15430,
+        "caption": "Exterior \u2014 side entrance",
+        "file": "8.webp",
+        "height": 284,
+        "quality": 82,
+        "sha256": "84d353bc7667020d7276f69490220f3be5e12fbe95fa91ea0c7eee2327759077",
+        "slot": null,
+        "source": "04_exterior_side_entrance.png",
+        "width": 355
+      },
+      {
+        "bytes": 31530,
+        "caption": "Exterior \u2014 rear courtyard",
+        "file": "9.webp",
+        "height": 284,
+        "quality": 82,
+        "sha256": "bd7ee5c97cf958e6f020b3c01cbc6e98a248e921d4667a452ca595c546355f35",
+        "slot": null,
+        "source": "05_exterior_rear_courtyard.png",
+        "width": 463
+      },
+      {
+        "bytes": 23406,
+        "caption": "Interior \u2014 retail pharmacy",
+        "file": "10.webp",
+        "height": 317,
+        "quality": 82,
+        "sha256": "61801fa532ed866f7934e72a34890cd267dc90966c662c20ac6518d55b364c2f",
+        "slot": null,
+        "source": "09_interior_retail_pharmacy.png",
+        "width": 446
+      },
+      {
+        "bytes": 12244,
+        "caption": "Interior \u2014 X-ray room",
+        "file": "11.webp",
+        "height": 317,
+        "quality": 82,
+        "sha256": "3e530583b9f0f19e513546e91b7419b9c5d4d567dffa183298a2e7875a4be661",
+        "slot": null,
+        "source": "10_interior_xray_room.png",
+        "width": 355
       }
     ]
   },
   "max_bytes": 256000,
   "max_edge_px": 1600,
-  "max_photos": 6,
+  "slot_count": 6,
   "version": 1
 }
