@@ -1,0 +1,423 @@
+{
+  "result": {
+    "input": {
+      "address": {
+        "zip": "78613",
+        "city": "Cedar Park",
+        "street": "450 Cypress Creek Rd",
+        "state": "TX"
+      },
+      "vintage": {
+        "isDefault": true,
+        "id": "4",
+        "vintageName": "Current_Current",
+        "vintageDescription": "Current Vintage - Current Benchmark"
+      },
+      "benchmark": {
+        "isDefault": true,
+        "benchmarkDescription": "Public Address Ranges - Current Benchmark",
+        "id": "4",
+        "benchmarkName": "Public_AR_Current"
+      }
+    },
+    "addressMatches": [
+      {
+        "tigerLine": {
+          "side": "L",
+          "tigerLineId": "648538950"
+        },
+        "geographies": {
+          "2020 Census Public Use Microdata Areas": [
+            {
+              "GEOID": "4805204",
+              "CENTLAT": "+30.6182605",
+              "AREAWATER": "7712184",
+              "BASENAME": "Capital Area COG--Williamson County (West), Cedar Park & Leander Cities",
+              "STATE": "48",
+              "OID": "217704486393463",
+              "LSADC": "P0",
+              "FUNCSTAT": "S",
+              "INTPTLAT": "+30.6182741",
+              "NAME": "Capital Area COG--Williamson County (West), Cedar Park & Leander Cities PUMA",
+              "OBJECTID": 1237,
+              "CENTLON": "-097.8368189",
+              "AREALAND": "475296073",
+              "INTPTLON": "-097.8372970",
+              "MTFCC": "G6120",
+              "PUMA": "05204"
+            }
+          ],
+          "2020 Census ZIP Code Tabulation Areas": [
+            {
+              "GEOID": "78613",
+              "CENTLAT": "+30.5068241",
+              "AREAWATER": "425440",
+              "BASENAME": "78613",
+              "OID": "221704258477908",
+              "ZCTA5": "78613",
+              "LSADC": "Z5",
+              "FUNCSTAT": "S",
+              "INTPTLAT": "+30.5070795",
+              "NAME": "ZCTA5 78613",
+              "OBJECTID": 33243,
+              "CENTLON": "-097.8193854",
+              "AREALAND": "71730123",
+              "INTPTLON": "-097.8194641",
+              "MTFCC": "G6350",
+              "ZCTA5CC": "B5"
+            }
+          ],
+          "Urban Areas": [
+            {
+              "GEOID": "04384",
+              "CENTLAT": "+30.3774205",
+              "AREAWATER": "12578032",
+              "BASENAME": "Austin, TX",
+              "OID": "27021327918298",
+              "UA": "04384",
+              "LSADC": "67",
+              "FUNCSTAT": "S",
+              "INTPTLAT": "+30.3743936",
+              "NAME": "Austin, TX Urban Area",
+              "OBJECTID": 1798,
+              "CENTLON": "-097.7655066",
+              "AREALAND": "1604777237",
+              "INTPTLON": "-097.7649819",
+              "MTFCC": "G3500"
+            }
+          ],
+          "Incorporated Places": [
+            {
+              "DISP_CLR": 4,
+              "NECTAPCI": "N",
+              "GEOID": "4813552",
+              "CENTLAT": "+30.5108220",
+              "AREAWATER": "515208",
+              "BASENAME": "Cedar Park",
+              "STATE": "48",
+              "OID": "27890378007115",
+              "LSADC": "25",
+              "PLACE": "13552",
+              "FUNCSTAT": "A",
+              "INTPTLAT": "+30.5101769",
+              "NAME": "Cedar Park city",
+              "OBJECTID": 31753,
+              "PLACECC": "C1",
+              "CENTLON": "-097.8194177",
+              "CBSAPCI": "N",
+              "AREALAND": "66234904",
+              "INTPTLON": "-097.8186264",
+              "PLACENS": "02409418",
+              "MTFCC": "G4110"
+            }
+          ],
+          "Counties": [
+            {
+              "GEOID": "48491",
+              "CENTLAT": "+30.6475670",
+              "AREAWATER": "41474365",
+              "STATE": "48",
+              "BASENAME": "Williamson",
+              "OID": "27590491700695",
+              "LSADC": "06",
+              "FUNCSTAT": "A",
+              "INTPTLAT": "+30.6490817",
+              "NAME": "Williamson County",
+              "OBJECTID": 2374,
+              "CENTLON": "-097.6002229",
+              "COUNTYCC": "H1",
+              "COUNTYNS": "01384031",
+              "AREALAND": "2890090365",
+              "INTPTLON": "-097.6050646",
+              "MTFCC": "G4020",
+              "COUNTY": "491"
+            }
+          ],
+          "Unified School Districts": [
+            {
+              "LOGRADE": "PK",
+              "GEOID": "4827030",
+              "CENTLAT": "+30.5182388",
+              "AREAWATER": "13005094",
+              "STATE": "48",
+              "BASENAME": "Leander Independent School District",
+              "OID": "28490378133912",
+              "SDTYP": "",
+              "LSADC": "00",
+              "FUNCSTAT": "E",
+              "INTPTLAT": "+30.5196841",
+              "SDUNI": "27030",
+              "NAME": "Leander Independent School District",
+              "OBJECTID": 8145,
+              "CENTLON": "-097.8860729",
+              "HIGRADE": "12",
+              "AREALAND": "504459859",
+              "INTPTLON": "-097.8859461",
+              "MTFCC": "G5420"
+            }
+          ],
+          "2024 State Legislative Districts - Upper": [
+            {
+              "GEOID": "48024",
+              "CENTLAT": "+30.4432320",
+              "AREAWATER": "325285010",
+              "STATE": "48",
+              "BASENAME": "24",
+              "OID": "2129035951823353",
+              "SLDU": "024",
+              "LSADC": "LU",
+              "FUNCSTAT": "N",
+              "INTPTLAT": "+30.4372404",
+              "NAME": "State Senate District 24",
+              "OBJECTID": 1153,
+              "CENTLON": "-098.9213894",
+              "LSY": "2024",
+              "AREALAND": "31440093849",
+              "INTPTLON": "-098.9136649",
+              "MTFCC": "G5210",
+              "LDTYP": "O"
+            }
+          ],
+          "2024 State Legislative Districts - Lower": [
+            {
+              "GEOID": "48020",
+              "CENTLAT": "+30.7327464",
+              "SLDL": "020",
+              "AREAWATER": "9181843",
+              "STATE": "48",
+              "BASENAME": "20",
+              "OID": "2139035951823729",
+              "LSADC": "LL",
+              "FUNCSTAT": "N",
+              "INTPTLAT": "+30.7336066",
+              "NAME": "State House District 20",
+              "OBJECTID": 2117,
+              "CENTLON": "-097.8036692",
+              "LSY": "2024",
+              "AREALAND": "985715522",
+              "INTPTLON": "-097.8026194",
+              "MTFCC": "G5220",
+              "LDTYP": "O"
+            }
+          ],
+          "2020 Census Blocks": [
+            {
+              "SUFFIX": "",
+              "GEOID": "484910203551000",
+              "CENTLAT": "+30.4958997",
+              "BLOCK": "1000",
+              "AREAWATER": "3444",
+              "STATE": "48",
+              "BASENAME": "1000",
+              "OID": "210701000941509",
+              "LSADC": "BK",
+              "FUNCSTAT": "S",
+              "INTPTLAT": "+30.4961075",
+              "NAME": "Block 1000",
+              "OBJECTID": 4340956,
+              "TRACT": "020355",
+              "CENTLON": "-097.8169390",
+              "BLKGRP": "1",
+              "AREALAND": "625616",
+              "INTPTLON": "-097.8171824",
+              "MTFCC": "G5040",
+              "LWBLKTYP": "B",
+              "UR": "U",
+              "COUNTY": "491"
+            }
+          ],
+          "119th Congressional Districts": [
+            {
+              "GEOID": "4810",
+              "CENTLAT": "+30.2139694",
+              "CDSESSN": "119",
+              "AREAWATER": "341220369",
+              "BASENAME": "10",
+              "STATE": "48",
+              "OID": "2119035951825345",
+              "LSADC": "C2",
+              "FUNCSTAT": "N",
+              "INTPTLAT": "+30.2092119",
+              "NAME": "Congressional District 10",
+              "OBJECTID": 303,
+              "CENTLON": "-096.5621610",
+              "CD119": "10",
+              "AREALAND": "19859822456",
+              "INTPTLON": "-096.5640501",
+              "MTFCC": "G5200"
+            }
+          ],
+          "States": [
+            {
+              "STATENS": "01779801",
+              "GEOID": "48",
+              "CENTLAT": "+31.4276892",
+              "AREAWATER": "19007965764",
+              "STATE": "48",
+              "BASENAME": "Texas",
+              "STUSAB": "TX",
+              "OID": "2749098452115",
+              "LSADC": "00",
+              "FUNCSTAT": "A",
+              "INTPTLAT": "+31.4347032",
+              "DIVISION": "7",
+              "NAME": "Texas",
+              "REGION": "3",
+              "OBJECTID": 45,
+              "CENTLON": "-099.2890539",
+              "AREALAND": "676660355348",
+              "INTPTLON": "-099.2818238",
+              "MTFCC": "G4000"
+            }
+          ],
+          "Census Block Groups": [
+            {
+              "GEOID": "484910203551",
+              "CENTLAT": "+30.4902855",
+              "AREAWATER": "65244",
+              "STATE": "48",
+              "BASENAME": "1",
+              "OID": "2089015780151114",
+              "LSADC": "BG",
+              "FUNCSTAT": "S",
+              "INTPTLAT": "+30.4896817",
+              "NAME": "Block Group 1",
+              "OBJECTID": 21209,
+              "TRACT": "020355",
+              "CENTLON": "-097.8200156",
+              "BLKGRP": "1",
+              "AREALAND": "2615751",
+              "INTPTLON": "-097.8213357",
+              "MTFCC": "G5030",
+              "COUNTY": "491"
+            }
+          ],
+          "County Subdivisions": [
+            {
+              "COUSUB": "90657",
+              "GEOID": "4849190657",
+              "CENTLAT": "+30.5942860",
+              "AREAWATER": "1971736",
+              "STATE": "48",
+              "BASENAME": "Cedar Park-Liberty Hill",
+              "OID": "27690491702985",
+              "LSADC": "22",
+              "FUNCSTAT": "S",
+              "INTPTLAT": "+30.5939683",
+              "NAME": "Cedar Park-Liberty Hill CCD",
+              "OBJECTID": 33383,
+              "CENTLON": "-097.8849126",
+              "COUSUBCC": "Z5",
+              "AREALAND": "305935086",
+              "INTPTLON": "-097.8857161",
+              "MTFCC": "G4040",
+              "COUSUBNS": "01938921",
+              "COUNTY": "491"
+            }
+          ],
+          "Census Divisions": [
+            {
+              "GEOID": "7",
+              "CENTLAT": "+32.4683953",
+              "AREAWATER": "49212383239",
+              "BASENAME": "West South Central",
+              "OID": "2739020719806",
+              "LSADC": "69",
+              "FUNCSTAT": "S",
+              "INTPTLAT": "+32.4680012",
+              "DIVISION": "7",
+              "REGION": "3",
+              "NAME": "West South Central Division",
+              "OBJECTID": 1,
+              "CENTLON": "-097.3217459",
+              "AREALAND": "1100926690083",
+              "INTPTLON": "-097.3301012",
+              "MTFCC": "G1200"
+            }
+          ],
+          "Census Regions": [
+            {
+              "GEOID": "3",
+              "CENTLAT": "+33.5118953",
+              "AREAWATER": "148755729910",
+              "BASENAME": "South",
+              "OID": "2729020719822",
+              "LSADC": "68",
+              "FUNCSTAT": "S",
+              "INTPTLAT": "+33.5144473",
+              "REGION": "3",
+              "NAME": "South Region",
+              "OBJECTID": 1,
+              "CENTLON": "-090.1228227",
+              "AREALAND": "2249830762691",
+              "INTPTLON": "-090.1228714",
+              "MTFCC": "G1100"
+            }
+          ],
+          "Metropolitan Statistical Areas": [
+            {
+              "POP100": "",
+              "GEOID": "12420",
+              "CENTLAT": "+30.2616643",
+              "AREAWATER": "149954655",
+              "BASENAME": "Austin-Round Rock-San Marcos, TX",
+              "OID": "2629034687907092",
+              "LSADC": "M1",
+              "FUNCSTAT": "S",
+              "INTPTLAT": "+30.2498002",
+              "NAME": "Austin-Round Rock-San Marcos, TX Metro Area",
+              "CSA": "",
+              "OBJECTID": 523,
+              "CENTLON": "-097.6543028",
+              "CBSA": "12420",
+              "AREALAND": "10929313859",
+              "INTPTLON": "-097.6496306",
+              "HU100": "",
+              "MTFCC": "G3110"
+            }
+          ],
+          "Census Tracts": [
+            {
+              "GEOID": "48491020355",
+              "CENTLAT": "+30.4902855",
+              "AREAWATER": "65244",
+              "STATE": "48",
+              "BASENAME": "203.55",
+              "OID": "2079015780151115",
+              "LSADC": "CT",
+              "FUNCSTAT": "S",
+              "INTPTLAT": "+30.4896817",
+              "NAME": "Census Tract 203.55",
+              "OBJECTID": 26070,
+              "TRACT": "020355",
+              "CENTLON": "-097.8200156",
+              "AREALAND": "2615751",
+              "INTPTLON": "-097.8213357",
+              "MTFCC": "G5020",
+              "COUNTY": "491"
+            }
+          ]
+        },
+        "coordinates": {
+          "x": -97.820278589313,
+          "y": 30.497509155435
+        },
+        "addressComponents": {
+          "zip": "78613",
+          "streetName": "CYPRESS CREEK",
+          "preType": "",
+          "city": "CEDAR PARK",
+          "preDirection": "",
+          "suffixDirection": "",
+          "fromAddress": "350",
+          "state": "TX",
+          "suffixType": "RD",
+          "toAddress": "900",
+          "suffixQualifier": "",
+          "preQualifier": ""
+        },
+        "matchedAddress": "450 CYPRESS CREEK RD, CEDAR PARK, TX, 78613"
+      }
+    ]
+  }
+}
