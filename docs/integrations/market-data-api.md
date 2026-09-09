@@ -156,6 +156,16 @@ measurement, not a measurement itself (A-C15 (7)).
 }
 ```
 
+**The top-level `vintage` names the ACS vintage, deliberately** — the same field, computed the
+same way (`act.get("acs5")`, the currently active `acs5` vintage) as `GET /api/markets/{cbsa}/
+communities`'s own top-level `vintage`. It is not the vintage of an arbitrary row: `metrics` mixes
+rows from two vintage families (`acs5`'s, and whichever `zbp`/`cbp` vintage produced
+`establishments`/`revenue_per_establishment`), and every individual entry under `metrics` still
+carries its OWN `vintage` and `source_dataset` for the figure it describes. Before A-C24 (1) this
+field was read from the first row an unordered query happened to return — correct only because of
+how two vintage strings happened to sort, and silently wrong the day a future pair sorts the other
+way; it is direct now, not incidental.
+
 **`opportunity_score` never appears — not null, not a flag, absent from `metrics` entirely.** It
 is computed and stored by the materialisation and stays there, unpublished, until the VIN
 Foundation signs off on its weights (A-C1 (9), A-C14 (5)); every serialiser in `app/api/market.py`
@@ -330,7 +340,7 @@ A-C0 paragraph 12) — this document is not that task, and no such change is in 
 ## Where this differs from the plan's original sketch
 
 The plan's illustrative JSON (the "API contract" section written before any of Phase B was built)
-is superseded in three ways the phase settled on while building it, all recorded above and none of
+is superseded in four ways the phase settled on while building it, all recorded above and none of
 them cosmetic:
 
 1. **`enabled: true` (boolean) → `state: "enabled" | "disabled" | "blocked"` (+ `blocked_reason`).**
@@ -340,6 +350,16 @@ them cosmetic:
    A-C14 (5): computed and stored, withheld from every response until the VIN Foundation signs off
    on its weights.
 3. **The cache key gained a `{band}` segment** the sketch never had (A-C23 (3), above).
+4. **The panel's top-level `vintage` is now computed, not read off a row.** The sketch showed a
+   plain `"vintage": "2019–2023"` beside `computed_at` without saying where it came from; the
+   phase-review found the shipped code took it from an unordered query's first row, correct only
+   by accident of how two vintage strings sorted (A-C24 (1), above). It is `act.get("acs5")` now,
+   deliberately, matching `communities()`'s own top-level `vintage`.
+
+**Schema hardening (A-C24 (2)):** `market_metric.band` now carries `CHECK (band IN ('place',
+'drive_10', 'drive_20'))` (migration `063`), matching the constraint its sibling
+`practice_catchment.band` already had. Not an API shape change — no valid caller was ever affected
+— but a table that could previously accept any string in that column now cannot.
 
 ## Verification (QA) — corrected, and not yet run under this task
 

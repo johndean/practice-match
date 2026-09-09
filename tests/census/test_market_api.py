@@ -304,6 +304,26 @@ async def test_place_band_panel_on_request(client, materialized, H):
     assert body["band"] == "place" and body["metrics"]["population"]["value"] == 81900
 
 
+async def test_panel_vintage_names_the_acs_vintage_regardless_of_row_order(client, materialized, conn, H):
+    """A-C24 (1): the top-level `vintage` was read from `rows[0]["vintage"]` off an unordered
+    query whose rows carry two vintage FAMILIES -- `acs5`'s "2019\u20132023" and the `zbp`/`cbp` family's
+    "2022" -- so it named whichever row happened to come back first, correct today only because
+    "2019\u20132023" happens to sort before "2022" (and `market_metric_lookup_idx (listing_id, band,
+    vintage)` is the index Postgres reaches for on exactly this (listing_id, band) lookup, per
+    Task B5's own EXPLAIN). Force a `zbp`/`cbp`-family row to carry a vintage that sorts BEFORE the
+    ACS one and confirm the top-level field is unmoved: it must name the ACS vintage on purpose,
+    never whichever row a scan happens to surface first."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE market_metric SET vintage = '0000' WHERE listing_id=%s AND band='place' "
+            "AND metric_key IN ('establishments', 'revenue_per_establishment')",
+            (materialized,),
+        )
+    sync_redis().incr(f"listing:{materialized}:market:version")
+    body = (await client.get(f"/api/listings/{materialized}/market?band=place", headers=H)).json()
+    assert body["vintage"] == "2019\u20132023"
+
+
 async def test_panel_rejects_an_unknown_band(client, materialized, H):
     r = await client.get(f"/api/listings/{materialized}/market?band=nonsense", headers=H)
     assert r.status_code == 422 and r.json()["error"]["code"] == "BAD_BAND"

@@ -379,6 +379,7 @@ async def listing_market(listing_id: str, band: str | None = Query(None)) -> Res
                 celery_app.send_task("census.backfill_listing", args=[listing_id])
             return _error("NO_MARKET_DATA", "Community data is being prepared for this listing.", 404)
         reg = await _registry(conn)
+        act = await _active(conn)
     metrics: dict[str, dict[str, Any]] = {}
     used = {"acs5"}
     for m in rows:
@@ -393,7 +394,19 @@ async def listing_market(listing_id: str, band: str | None = Query(None)) -> Res
             used.add("acs5_prior")
         metrics[m["metric_key"]] = _panel_entry(m)
     body = {
-        "listing_id": listing_id, "band": b, "geo_precision": rows[0]["geo_precision"], "vintage": rows[0]["vintage"],
+        "listing_id": listing_id, "band": b, "geo_precision": rows[0]["geo_precision"],
+        # A-C24 (1): the ACS vintage, chosen deliberately -- never `rows[0]["vintage"]`. `_PANEL_SQL`
+        # carries no ORDER BY, and its rows are stamped with TWO vintage families (`acs5`'s, and
+        # whichever `zbp`/`cbp` vintage produced `establishments`/`revenue_per_establishment`);
+        # `market_metric_lookup_idx (listing_id, band, vintage)` is the index Postgres reaches for
+        # on exactly this (listing_id, band) lookup (Task B5's own EXPLAIN), which makes "whichever
+        # row comes first" a fact about how those two vintage STRINGS happen to sort, not a fact
+        # this code may rely on -- correct today only because "2019-2023" sorts before "2022", and
+        # silently wrong the day a future vintage pair sorts the other way. `act.get("acs5")` names
+        # the ACS vintage on purpose, the same way `communities()`'s own top-level `vintage` already
+        # does; every individual metric under `metrics` still carries its OWN `vintage` and
+        # `source_dataset` for the figures stamped with a different dataset.
+        "vintage": act.get("acs5"),
         "computed_at": max(m["computed_at"] for m in rows).isoformat(), "metrics": metrics,
         "attribution": [reg[k]["attribution_text"] for k in sorted(used)],
     }
