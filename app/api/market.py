@@ -72,12 +72,12 @@ from fastapi import APIRouter, Depends, Query, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.engine import RowMapping
-from sqlalchemy.ext.asyncio import AsyncConnection
 
 from app.auth.deps import require
 from app.cache import sync_redis
 from app.census import gate
 from app.census import metrics as M
+from app.census.serve import _active, _extra_cleared, _registry
 from app.db import engine
 from app.tasks.celery_app import celery_app
 
@@ -152,16 +152,6 @@ def _is_uuid(value: str) -> bool:
     return True
 
 
-async def _active(conn: AsyncConnection) -> dict[str, str]:
-    rows = (await conn.execute(text("SELECT dataset_key, vintage FROM active_vintage"))).mappings().all()
-    return {r["dataset_key"]: r["vintage"] for r in rows}
-
-
-async def _registry(conn: AsyncConnection) -> dict[str, dict[str, Any]]:
-    rows = (await conn.execute(text("SELECT dataset_key, attribution_text, vintage, license_status, notes FROM dataset_registry"))).mappings().all()
-    return {r["dataset_key"]: dict(r) for r in rows}
-
-
 def _layer_state(reg: dict[str, dict[str, Any]], dataset_key: str | None) -> tuple[str, str | None]:
     """`(state, blocked_reason)` for one layer — correction 2. A layer with no dataset at all
     (`practices`, the two drive-time rings) is always enabled. Every dataset `LAYERS` names (acs5,
@@ -186,27 +176,6 @@ def _cleared(reg: dict[str, dict[str, Any]], dataset_key: str) -> bool:
     not carry — so `reg[dataset_key]` is indexed directly rather than defended against a `KeyError`
     the schema's own foreign key already rules out."""
     return bool(reg[dataset_key]["license_status"] == "cleared")
-
-
-def _extra_cleared(reg: dict[str, dict[str, Any]], metric_key: str, source_dataset: str) -> bool:
-    """A-C23 (1): a row's `source_dataset` is the ONE dataset `market_metric` can stamp it with,
-    but three metrics fold in a SECOND dataset the generic gate above cannot see. Correction 6
-    (module docstring) already covers `population_growth_pct`: stamped `acs5`, it combines two ACS
-    vintages, so it also needs `acs5_prior` cleared. The same licence hole reaches two more
-    figures `app.census.materialize` builds: `vets_per_10k_households` always divides an
-    establishment count by a household estimate (`M.vets_per_10k(est, hh_e)`), so it needs `acs5`
-    cleared regardless of whether its own stamp is `zbp` or the county-apportioned `cbp` fallback;
-    and `establishments` itself needs `acs5` cleared too, but ONLY on that `cbp` fallback path
-    (`_competition`'s county apportionment multiplies by a household ratio) — the primary `zbp`
-    path counts ZIP-code establishments alone and folds in no household data at all, so it must
-    stay visible on `acs5`'s own licence status."""
-    if metric_key == "population_growth_pct":
-        return _cleared(reg, "acs5_prior")
-    if metric_key == "vets_per_10k_households":
-        return _cleared(reg, "acs5")
-    if metric_key == "establishments" and source_dataset == "cbp":
-        return _cleared(reg, "acs5")
-    return True
 
 
 @router.get("/layers", dependencies=[Depends(REQUIRE_MARKET_READ)])

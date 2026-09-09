@@ -56,6 +56,14 @@ _CATCHMENT_LISTING_ID = "00000000-0000-0000-0000-0000000c3a90"
 # own params, same reason as `_CATCHMENT_LISTING_ID` above.
 _PANEL_LISTING_ID = "00000000-0000-0000-0000-0000000ac1e1"
 
+# Census Task B7's target listings — shared between `_seed_community_rows` and the "community_rows"
+# plan, same reason as above. The query fetches multiple listings in one batch.
+_COMMUNITY_ROWS_LISTING_IDS = [
+    "00000000-0000-0000-0000-0000000cb7a0",
+    "00000000-0000-0000-0000-0000000cb7a1",
+    "00000000-0000-0000-0000-0000000cb7a2",
+]
+
 PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
     "users_queue": (
         "EXPLAIN (FORMAT JSON) " + LIST_SQL,
@@ -119,6 +127,15 @@ PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
         + "WHERE mm.listing_id = %(listing_id)s AND mm.band = %(band)s",
         {"listing_id": _PANEL_LISTING_ID, "band": "drive_10"},
     ),
+    # Census Task B7: `GET /api/listings`'s batch fetch for community context data
+    # (`app.census.serve.community_rows`). This is the query that fetches market_metric rows for
+    # a page of listings in one batch, filtering by listing_id array and band. The query should use
+    # `market_metric_lookup_idx (listing_id, band, vintage)` for efficient lookup.
+    "community_rows": (
+        "EXPLAIN (FORMAT JSON) SELECT listing_id, metric_key, value_num, suppressed, source_dataset, vintage "
+        + "FROM market_metric WHERE listing_id = ANY(%s::uuid[]) AND band = %s",
+        (_COMMUNITY_ROWS_LISTING_IDS, "place"),
+    ),
 }
 
 # The index each plan must be using, by name. Absent for an entry whose only claim is its shape.
@@ -139,6 +156,9 @@ INDEXES: dict[str, tuple[str, ...]] = {
     # vintage)` for the metric rows, `practice_location_pkey` (its PRIMARY KEY IS `listing_id`) for
     # the join — measured, not the brief's guessed `market_metric_pkey` (see the PLANS entry above).
     "panel": ("market_metric_lookup_idx", "practice_location_pkey"),
+    # Task B7: `market_metric_lookup_idx (listing_id, band, vintage)` serves the batch query that
+    # filters on listing_id (via ANY clause) and band.
+    "community_rows": ("market_metric_lookup_idx",),
 }
 
 
@@ -250,8 +270,42 @@ def _seed_panel_metrics(conn: Any) -> None:
         cur.execute("ANALYZE market_metric")
 
 
+def _seed_community_rows(conn: Any) -> None:
+    """3,000 listings with market_metric rows for the batch query test. The seed function reuses
+    the same setup as _seed_panel_metrics since the query just needs many metric rows across
+    multiple listings. The `_COMMUNITY_ROWS_LISTING_IDS` constants define specific listing ids that
+    are guaranteed to have data."""
+    with conn.cursor() as cur:
+        # Seed three specific target listings plus noise
+        cur.execute("""INSERT INTO listing (id, slug, name, street, city, state, zip, status, area, type, market, source, sqft, est, price)
+                       SELECT md5(random()::text || i::text)::uuid, 'plan-community-'||i, 'Plan Community '||i, '1 Main St',
+                              'Cedar Park', 'TX', '78613', 'published', 'Cedar Park', 'Small animal', 'Cedar Park, TX', 'seed', 3000, 2005, 1200000
+                         FROM generate_series(1, 3000) i""")
+        # Insert the three target listings
+        for listing_id in _COMMUNITY_ROWS_LISTING_IDS:
+            cur.execute("""INSERT INTO listing (id, slug, name, street, city, state, zip, status, area, type, market, source, sqft, est, price)
+                           VALUES (%s, %s, %s, '1 Main St', 'Cedar Park', 'TX', '78613',
+                                   'published', 'Cedar Park', 'Small animal', 'Cedar Park, TX', 'seed', 3000, 2005, 1200000)""",
+                        (listing_id, f"plan-community-target-{listing_id[:8]}", f"Plan Community Target {listing_id[:8]}"))
+        cur.execute("""INSERT INTO practice_location (listing_id, address_hash, point, geo_precision, geocoded_at, geocoder_vintage)
+                       SELECT id, 'h-'||id, ST_SetSRID(ST_Point(-97.8 + (random() * 0.2), 30.4 + (random() * 0.2)), 4269),
+                              'rooftop', now(), 'Current_Current'
+                         FROM listing WHERE slug LIKE 'plan-community-%'""")
+        # Seed market_metric rows for place band only
+        cur.execute("""INSERT INTO market_metric (listing_id, band, metric_key, vintage, value_num, unit, is_derived,
+                                                   formula_version, moe, suppressed, suppress_reason, source_dataset, computed_at)
+                       SELECT l.id, 'place', m.metric_key, '2019-2023', 100, 'count', false, NULL, 5, false, NULL, 'acs5', now()
+                         FROM listing l,
+                              (VALUES ('population'),('households'),('median_hh_income'),('population_growth_pct'),('establishments')) AS m(metric_key)
+                        WHERE l.slug LIKE 'plan-community-%'""")
+        cur.execute("ANALYZE listing")
+        cur.execute("ANALYZE practice_location")
+        cur.execute("ANALYZE market_metric")
+
+
 SEEDS: dict[str, Any] = {"users_queue": _seed_admin_queue, "signups_list": _seed_signups, "signups_counts": _seed_signups,
-                        "signups_unmailed": _seed_signups, "catchment_tracts": _seed_catchment_geo, "panel": _seed_panel_metrics}
+                        "signups_unmailed": _seed_signups, "catchment_tracts": _seed_catchment_geo, "panel": _seed_panel_metrics,
+                        "community_rows": _seed_community_rows}
 
 
 def _node_types(plan: dict[str, Any]) -> list[str]:

@@ -400,16 +400,13 @@ is still pending:
   needs a change to `logic.js`'s byte-locked footer export, which is queued for John as **D-C14**
   (A-C14 (6)): may Phase B's successor change that export and re-pin `app-generated.test.ts`, or
   does the feed become its own task? Unanswered as of this document — no Phase B task touched it.
-* **`GET /api/listings`'s Community Context strings are still hard-coded null.** John ruled
-  (2026-09-08, Q2 / A-C1 (2)) that `app/api/listings.py::serialise` would format `pop`/`growth`/
-  `income`/`hh` itself from `market_metric` at the `place` band, in the design's existing string
-  spelling (`"81,900"`, `"+14.2% since 2015"`, …) — but no task in Phase B's file list ever
-  implemented it, and the code today still reads `"pop": None, "growth": None, "income": None,
-  "hh": None` unconditionally, with the comment "the community figures stay null until the Census
-  plan supplies them." A-C15 (12) escalated this as the second unassigned scope beside D-C14, and
-  it is unresolved as of this document — the two new market/community endpoints exist and carry
-  real data, but nothing feeds it into the buyer-facing detail page's own Community Context card
-  yet.
+* **Task B7 implements `GET /api/listings`'s Community Context strings.** John ruled (2026-09-08,
+  Q2 / A-C1 (2)) that `app/api/listings.py::serialise` would format `pop`/`growth`/`income`/`hh`
+  from `market_metric` at the `place` band, in the design's existing string spelling (`"81,900"`,
+  `"+14.2% since 2015"`, …), plus two additional numeric fields `vets` and `econ_k` for Browse use.
+  Task B7 implements this: the listing list (`GET /api/listings`) and detail (`GET /api/listings/{id}`)
+  routes now carry all six fields populated when data is available, null when unavailable (dataset
+  not cleared, value suppressed, or no `market_metric` rows for the listing).
 * **`opportunity_score` is computed, stored, and withheld** until the VIN Foundation signs off on
   its weights (A-C1 (9)) — not a defect, a standing decision this document is not the place to
   revisit.
