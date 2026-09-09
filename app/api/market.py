@@ -56,6 +56,11 @@ task brief's own "Corrections to the brief" list); the point is to not rediscove
    a test should watch (as `tests/census/test_geocode.py` already does for the same task), not a
    raw broker length a fake Redis client can never observe (`app.cache.sync_redis()` and celery's own
    kombu broker connection are two entirely different clients).
+8. **The listing-panel cache key carries a `{band}` segment the plan's own illustrative text
+   omits** (`listing:{id}:market:v{n}` there; `listing:{listing_id}:market:{band}:v{n}:g{gate.version()}`
+   here, in `listing_market` below) — `band` is a query parameter this same route answers
+   (`place`/`drive_10`/`drive_20`), and without it in the key a member requesting one band would be
+   served whichever band's panel happened to be cached first (A-C23 (3)).
 """
 from __future__ import annotations
 
@@ -177,10 +182,31 @@ def _layer_state(reg: dict[str, dict[str, Any]], dataset_key: str | None) -> tup
 def _cleared(reg: dict[str, dict[str, Any]], dataset_key: str) -> bool:
     """Whether `dataset_key` is currently licence-cleared. Every caller reads `dataset_key` off a
     `market_metric.source_dataset` column (`NOT NULL REFERENCES dataset_registry`, migration `061`)
-    or passes the literal `"acs5_prior"` — never a value the registry does not carry — so
-    `reg[dataset_key]` is indexed directly rather than defended against a `KeyError` the schema's
-    own foreign key already rules out."""
+    or passes one of the literals `_extra_cleared` below names — never a value the registry does
+    not carry — so `reg[dataset_key]` is indexed directly rather than defended against a `KeyError`
+    the schema's own foreign key already rules out."""
     return bool(reg[dataset_key]["license_status"] == "cleared")
+
+
+def _extra_cleared(reg: dict[str, dict[str, Any]], metric_key: str, source_dataset: str) -> bool:
+    """A-C23 (1): a row's `source_dataset` is the ONE dataset `market_metric` can stamp it with,
+    but three metrics fold in a SECOND dataset the generic gate above cannot see. Correction 6
+    (module docstring) already covers `population_growth_pct`: stamped `acs5`, it combines two ACS
+    vintages, so it also needs `acs5_prior` cleared. The same licence hole reaches two more
+    figures `app.census.materialize` builds: `vets_per_10k_households` always divides an
+    establishment count by a household estimate (`M.vets_per_10k(est, hh_e)`), so it needs `acs5`
+    cleared regardless of whether its own stamp is `zbp` or the county-apportioned `cbp` fallback;
+    and `establishments` itself needs `acs5` cleared too, but ONLY on that `cbp` fallback path
+    (`_competition`'s county apportionment multiplies by a household ratio) — the primary `zbp`
+    path counts ZIP-code establishments alone and folds in no household data at all, so it must
+    stay visible on `acs5`'s own licence status."""
+    if metric_key == "population_growth_pct":
+        return _cleared(reg, "acs5_prior")
+    if metric_key == "vets_per_10k_households":
+        return _cleared(reg, "acs5")
+    if metric_key == "establishments" and source_dataset == "cbp":
+        return _cleared(reg, "acs5")
+    return True
 
 
 @router.get("/layers", dependencies=[Depends(REQUIRE_MARKET_READ)])
@@ -261,9 +287,10 @@ async def communities(cbsa: str, band: str | None = Query(None)) -> Response:
         c = by.setdefault(lid, _new_community(row))
         if not row["metric_key"] or not _cleared(reg, row["source_dataset"]):
             continue
-        # Correction 6: growth's OWN gate is acs5_prior, never seen through `source_dataset`
-        # (always "acs5" on this row — see the module docstring).
-        if row["metric_key"] == "population_growth_pct" and not _cleared(reg, "acs5_prior"):
+        # Correction 6, widened by A-C23 (1): growth, the vets-per-household ratio and the
+        # establishment count's own CBP fallback each fold in a SECOND dataset that
+        # `row["source_dataset"]` alone cannot name.
+        if not _extra_cleared(reg, row["metric_key"], row["source_dataset"]):
             continue
         for field, metric in FIELD_FOR.items():
             if row["metric_key"] == metric:
@@ -334,11 +361,21 @@ async def listing_market(listing_id: str, band: str | None = Query(None)) -> Res
         return JSONResponse(json.loads(cached), headers={"x-cache": "hit"})
     async with engine().connect() as conn:
         exists = (await conn.execute(text("SELECT status FROM listing WHERE id = :id"), {"id": listing_id})).first()
-        if exists is None:
+        # A-C23 (2): a bare "does the id exist" check is not enough -- the panel spec (and
+        # `communities()`'s own `l.status = 'published'` join) only ever promise NO_MARKET_DATA for
+        # an EXISTING PUBLISHED listing with no rows yet; anything else (unknown, or an existing
+        # listing that is not published) reads as NOT_FOUND, checked here BEFORE `rows` is even
+        # queried -- an unpublished listing must never reach a served panel, whether or not it
+        # happens to still carry stale `market_metric` rows from before it was withdrawn.
+        if exists is None or exists[0] != "published":
             return _error("NOT_FOUND", "No such listing.", 404)
         rows = (await conn.execute(text(_PANEL_SQL), {"id": listing_id, "band": b})).mappings().all()
         if not rows:
-            if exists[0] == "published" and r.set(f"backfill:{listing_id}", "1", ex=BACKFILL_DEDUPE_TTL, nx=True):
+            # The cache-dedupe check is its own condition, no longer compounded with the
+            # publication check above (A-C23 (2)): this line is reached only for a listing already
+            # known to be published, so a passing test here can no longer hide a deleted
+            # publication guard.
+            if r.set(f"backfill:{listing_id}", "1", ex=BACKFILL_DEDUPE_TTL, nx=True):
                 celery_app.send_task("census.backfill_listing", args=[listing_id])
             return _error("NO_MARKET_DATA", "Community data is being prepared for this listing.", 404)
         reg = await _registry(conn)
@@ -349,7 +386,7 @@ async def listing_market(listing_id: str, band: str | None = Query(None)) -> Res
             continue
         if not _cleared(reg, m["source_dataset"]):
             continue
-        if m["metric_key"] == "population_growth_pct" and not _cleared(reg, "acs5_prior"):
+        if not _extra_cleared(reg, m["metric_key"], m["source_dataset"]):
             continue
         used.add(m["source_dataset"])
         if m["metric_key"] == "population_growth_pct":

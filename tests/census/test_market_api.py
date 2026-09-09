@@ -216,6 +216,59 @@ async def test_uncleared_acs5_prior_hides_growth_from_communities_but_not_popula
     assert "growth" not in c and c["pop"] == 81900
 
 
+async def test_uncleared_acs5_hides_vets_per_10k_from_communities_but_keeps_the_establishment_count(client, materialized, conn, H):
+    """A-C23 (1): a licence hole of the same shape as growth's. `vets_per_10k_households` always
+    divides the establishment count by a household estimate (`M.vets_per_10k(est, hh_e)` in
+    `app.census.materialize`), yet its own `market_metric.source_dataset` names whichever dataset
+    produced the ESTABLISHMENT half (`zbp` here) -- never `acs5`, the dataset the household half
+    actually came from. Withdrawing `acs5`'s licence must hide this figure exactly as unresolving
+    `acs5_prior` already hides growth, even though `zbp` itself stays cleared throughout. The
+    establishment COUNT on its own primary (ZBP) path folds in no household data at all, so it
+    must stay visible -- proving the fix targets the ratio, not the whole competition object."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET license_status='unresolved' WHERE dataset_key='acs5'")
+    gate.invalidate(sync_redis(), "acs5")
+    c = (await client.get("/api/markets/12420/communities", headers=H)).json()["communities"][0]
+    assert "competition" in c
+    assert "per_10k_households" not in c["competition"] and "level" not in c["competition"]
+    assert c["competition"]["count"] == pytest.approx(7, rel=1e-3)
+
+
+async def test_uncleared_acs5_hides_vets_per_10k_from_the_panel_too(client, materialized, conn, H):
+    """The panel serialiser carries the same extra gate the community one does: `acs5` withdrawn
+    must drop `vets_per_10k_households` from `metrics` even though the row's own `source_dataset`
+    (`zbp`) remains cleared, exactly as it drops `population_growth_pct` when `acs5_prior` alone is
+    withdrawn."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET license_status='unresolved' WHERE dataset_key='acs5'")
+    gate.invalidate(sync_redis(), "acs5")
+    m = (await client.get(f"/api/listings/{materialized}/market?band=place", headers=H)).json()["metrics"]
+    assert "vets_per_10k_households" not in m
+    assert "establishments" in m and m["establishments"]["source_dataset"] == "zbp"
+
+
+async def test_uncleared_acs5_hides_the_cbp_fallback_establishment_count(client, materialized, conn, H):
+    """A-C23 (1)'s second figure: the establishment count's OWN fallback path -- county CBP
+    apportioned by household share (`app.census.materialize._competition`'s
+    `estab * (hh_e / county_hh)`) -- is stamped `source_dataset='cbp'`, which names the
+    establishment half but not the household share folded into the multiplication. Force the
+    fallback by unresolving `zbp` (the primary path), confirm the CBP-sourced count is still shown
+    while `acs5` stays cleared, then confirm it disappears when `acs5` is ALSO withdrawn even
+    though `cbp` itself never moves -- the same shape as growth's own explicit `acs5_prior` gate."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET license_status='unresolved' WHERE dataset_key='zbp'")
+    gate.invalidate(sync_redis(), "zbp")
+    materialize.materialize_listing(conn, sync_redis(), materialized)
+    c = (await client.get("/api/markets/12420/communities", headers=H)).json()["communities"][0]
+    assert c["competition"]["count"] > 0  # the fallback is live: acs5 is still cleared
+
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET license_status='unresolved' WHERE dataset_key='acs5'")
+    gate.invalidate(sync_redis(), "acs5")
+    c2 = (await client.get("/api/markets/12420/communities", headers=H)).json()["communities"][0]
+    assert "vets" not in c2 and "competition" not in c2
+
+
 async def test_listing_panel_is_cached_and_re_gated_on_read(client, materialized, conn, H):
     r = await client.get(f"/api/listings/{materialized}/market", headers=H)
     assert r.status_code == 200 and r.headers["x-cache"] == "miss"
@@ -224,7 +277,10 @@ async def test_listing_panel_is_cached_and_re_gated_on_read(client, materialized
     # A-C1 (9) / A-C14 (5): computed and stored, never published, until the VIN Foundation signs off.
     assert "opportunity_score" not in m
     assert m["revenue_per_establishment"]["label"] == "Avg. payroll per practice"
-    assert (await client.get(f"/api/listings/{materialized}/market", headers=H)).headers["x-cache"] == "hit"
+    r2 = await client.get(f"/api/listings/{materialized}/market", headers=H)
+    # A-C23 (3): a cache hit must be proven to return the SAME payload, not merely the same header
+    # -- the header alone cannot tell a correct cache from one serving stale or wrong bytes.
+    assert r2.headers["x-cache"] == "hit" and r2.json() == r.json()
     with conn.cursor() as cur:
         cur.execute("UPDATE dataset_registry SET license_status='blocked' WHERE dataset_key='zbp'")
     gate.invalidate(sync_redis(), "zbp")
@@ -312,3 +368,37 @@ async def test_missing_metrics_404_and_enqueue_backfill_once_for_real_listings_o
     r3 = await client.get("/api/listings/00000000-0000-0000-0000-000000000000/market", headers=H)
     assert r3.status_code == 404 and r3.json()["error"]["code"] == "NOT_FOUND"
     assert sent == [("census.backfill_listing", [lid])]  # unknown ids never enqueue (red-team C4)
+
+
+async def test_an_unpublished_listing_with_market_data_still_404s_as_not_found(client, conn, H, monkeypatch):
+    """A-C23 (2): the published-listing check was compounded with the cache-dedupe check
+    (`exists[0] == "published" and r.set(...)`) into a SINGLE condition that only ever gated
+    whether to enqueue a backfill -- it never gated whether to SERVE a panel that already had
+    rows. A listing that is no longer published (withdrawn after being materialised, most
+    plausibly) but still carries `market_metric` rows from before would have had its panel served
+    in full under the old code, because `if not rows:` is false and the publication status is
+    never consulted again. Deleting the published half of the old compound condition would have
+    passed every test committed before this one -- none seeded rows for an unpublished listing.
+    The fix gates the WHOLE response on publication, the same posture `communities()`'s own SQL
+    already takes (`JOIN listing l ON ... AND l.status = 'published'`), and separates the
+    cache-dedupe check into its own, no-longer-compounded `if`."""
+    from tests.census.listing_fixtures import make_listing
+
+    sent: list[tuple[str, list[str] | None]] = []
+    monkeypatch.setattr(celery_app, "send_task", lambda name, args=None, **kw: sent.append((name, args)))
+
+    lid = make_listing(conn, status="draft")
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO practice_location (listing_id, address_hash, geo_precision, geocoded_at, geocoder_vintage) "
+            "VALUES (%s, 'h', 'rooftop', now(), 'Current_Current')",
+            (lid,),
+        )
+        cur.execute(
+            "INSERT INTO market_metric (listing_id, band, metric_key, vintage, value_num, unit, source_dataset, computed_at) "
+            "VALUES (%s, 'drive_10', 'population', '2019\u20132023', 44800, 'count', 'acs5', now())",
+            (lid,),
+        )
+    r = await client.get(f"/api/listings/{lid}/market", headers=H)
+    assert r.status_code == 404 and r.json()["error"]["code"] == "NOT_FOUND"
+    assert sent == []
