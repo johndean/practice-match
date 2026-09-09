@@ -8,15 +8,23 @@ this directory by `tests/census/conftest.py`) makes a real `account` row with th
 origin because `deps.check_origin_and_csrf` compares an `Origin` header against it on every
 cookie-authenticated state change.
 """
+import asyncio
+import inspect
+import logging
+import time
 from datetime import datetime
 
 import httpx
+import psycopg2
 import pytest
+import redis as redis_sync
 from httpx import ASGITransport
 
+from app.api import admin_data_sources
 from app.auth import deps
 from app.census import gate, license
 from app.config import settings
+from app.db import sync_dsn
 from app.main import create_app
 from tests.api.conftest import ORIGIN, PW, auth_headers
 from tests.conftest import walk_routes
@@ -309,6 +317,218 @@ async def test_a_decision_is_admin_only_and_needs_a_fresh_password(client, conn,
         assert cur.fetchone()[0] == "cleared", "neither refusal touched the registry"
 
 
+# --- fix round A-C9: the invariants the review found argued but unpinned ------------------------
+
+
+async def _wait_for_a_backend_queued_on_a_lock(conn, timeout=10.0):
+    """Block until some backend on this database is waiting on a lock, so the race below is a race
+    and not a sleep. Polled rather than slept because the handler runs in FastAPI's threadpool: the
+    `await` is what lets its task start at all."""
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        await asyncio.sleep(0.02)
+        with conn.cursor() as cur:
+            cur.execute("SELECT count(*) FROM pg_stat_activity WHERE datname = current_database() AND wait_event_type = 'Lock'")
+            if cur.fetchone()[0]:
+                return
+    raise AssertionError("no backend ever queued on the registry row lock")
+
+
+async def test_a_failed_audit_write_rolls_the_whole_decision_back(client, conn, redis, member, monkeypatch, dist):
+    """A-C9 (1) / review m1 + m2. The registry UPDATE, the `license_audit_log` row and the
+    `audit_log` row are one transaction, and the gate is invalidated only outside it.
+
+    `audit.write` is made to raise from inside the handler, which is the failure that matters:
+    A-C0 ¶3 exists so that a licence decision cannot exist without a named human attached to it, so
+    a half-applied decision — registry blocked, audit trail silent — is precisely the state the
+    rule forbids. Nothing may survive: not the status, not the ledger row, and not the gate
+    invalidation, which would otherwise announce a decision that was rolled back.
+
+    The raising hook also shows WHERE it is called from: it opens a second connection and finds the
+    registry row still locked and uncommitted, so `audit.write` provably runs inside the same
+    transaction as the two writes before it rather than after it. (That the row is locked at this
+    point says nothing about the `SELECT … FOR UPDATE` specifically — the UPDATE a few lines earlier
+    takes the same lock. Serialising the READ is what the concurrency test below pins.)"""
+    _account_id, headers = await _admin(client, member)
+    assert gate.layer_enabled(redis, lambda: conn, "acs5") is True          # warm the gate's cache
+    version_before = gate.version(redis)
+    uncommitted = []
+
+    def explode(*_args, **_kwargs):
+        probe = psycopg2.connect(sync_dsn())
+        probe.autocommit = True
+        try:
+            with probe.cursor() as cur:
+                try:
+                    cur.execute("SELECT 1 FROM dataset_registry WHERE dataset_key = 'acs5' FOR UPDATE NOWAIT")
+                    uncommitted.append(False)
+                except psycopg2.errors.LockNotAvailable:
+                    uncommitted.append(True)
+        finally:
+            probe.close()
+        raise RuntimeError("audit trail unavailable")
+
+    monkeypatch.setattr(admin_data_sources.audit, "write", explode)
+    # `raise_app_exceptions=False`, so what is asserted is what the ADMIN sees — Starlette renders
+    # the 500 and then re-raises for the server's own log, and the module `client` fixture would
+    # hand that exception to pytest instead of the response.
+    async with httpx.AsyncClient(transport=ASGITransport(app=create_app(dist=dist), raise_app_exceptions=False),
+                                 base_url=ORIGIN) as strict:
+        r = await strict.post(f"{PATH}/acs5/license", headers=headers, json={"status": "blocked", "notes": "terms withdrawn"})
+    assert r.status_code == 500
+
+    assert uncommitted == [True], "the audit row was written outside the decision's own transaction"
+    with conn.cursor() as cur:
+        cur.execute("SELECT license_status, drift_flagged, last_verified_at FROM dataset_registry WHERE dataset_key = 'acs5'")
+        assert cur.fetchone() == ("cleared", False, None), "the registry change did not roll back"
+        cur.execute("SELECT count(*) FROM license_audit_log")
+        assert cur.fetchone()[0] == 0, "the licence ledger row did not roll back"
+        cur.execute("SELECT count(*) FROM audit_log WHERE action = 'licence.decide'")
+        assert cur.fetchone()[0] == 0
+    assert gate.version(redis) == version_before, "a decision that never committed invalidated the gate"
+    assert gate.layer_enabled(redis, lambda: conn, "acs5") is True, "the cached answer was dropped anyway"
+
+
+async def test_two_racing_decisions_cannot_both_record_the_same_before(client, conn, member):
+    """A-C9 (1), the `SELECT … FOR UPDATE` half — the one thing the rollback test above cannot show,
+    because by the time its hook runs the UPDATE has taken the same lock anyway.
+
+    Serialising the READ is what makes `audit_log.before` true. Without it, under READ COMMITTED,
+    a decision reads the status, waits for a concurrent decision's lock at its UPDATE, and then
+    records a `before` that names a state it never replaced — an audit trail that is wrong rather
+    than merely incomplete, and no amount of re-reading afterwards can tell you so.
+
+    Raced against a real second connection, deterministically: the holder takes the row, the
+    request queues behind it, the holder then makes a change the request has not seen and commits.
+    A handler whose SELECT is serialised sees `unresolved`; one whose SELECT is not has already
+    read `cleared` and blocks only at its UPDATE."""
+    _account_id, headers = await _admin(client, member)
+    holder = psycopg2.connect(sync_dsn())
+    try:
+        with holder.cursor() as cur:
+            cur.execute("SELECT license_status FROM dataset_registry WHERE dataset_key = 'acs5' FOR UPDATE")
+            assert cur.fetchone()[0] == "cleared"
+        task = asyncio.create_task(client.post(f"{PATH}/acs5/license", headers=headers, json={"status": "blocked"}))
+        await _wait_for_a_backend_queued_on_a_lock(conn)
+        with holder.cursor() as cur:
+            cur.execute("UPDATE dataset_registry SET license_status = 'unresolved' WHERE dataset_key = 'acs5'")
+        holder.commit()
+    finally:
+        holder.close()
+
+    r = await task
+    assert r.status_code == 200
+    with conn.cursor() as cur:
+        cur.execute("SELECT before, after FROM audit_log WHERE action = 'licence.decide'")
+        rows = cur.fetchall()
+    assert len(rows) == 1
+    assert rows[0][0]["license_status"] == "unresolved", "the audit row names a `before` this decision never replaced"
+    assert rows[0][1]["license_status"] == "blocked"
+
+
+async def test_the_gate_is_invalidated_only_once_the_decision_has_committed(client, conn, redis, member, monkeypatch):
+    """A-C9 (1), the other half. The ordering `app/api/admin_users.py` ruled on is asserted from
+    the outside: a spy standing in for `gate.invalidate` opens a SECOND connection and reads the
+    registry. If it can see the new status, the transaction had already committed when the
+    invalidation ran — which is the property, stated without reference to the source's layout."""
+    _account_id, headers = await _admin(client, member)
+    real, seen = admin_data_sources.gate.invalidate, []
+
+    def spy(r, dataset_key):
+        probe = psycopg2.connect(sync_dsn())
+        probe.autocommit = True
+        try:
+            with probe.cursor() as cur:
+                cur.execute("SELECT license_status FROM dataset_registry WHERE dataset_key = %s", (dataset_key,))
+                seen.append(cur.fetchone()[0])
+        finally:
+            probe.close()
+        real(r, dataset_key)
+
+    monkeypatch.setattr(admin_data_sources.gate, "invalidate", spy)
+    r = await client.post(f"{PATH}/acs5/license", headers=headers, json={"status": "blocked"})
+    assert r.status_code == 200
+    assert seen == ["blocked"], "another connection could not yet see the decision — invalidate ran before the commit"
+
+
+async def test_a_redis_failure_after_the_commit_is_logged_and_the_decision_stands(client, conn, member, monkeypatch, caplog):
+    """A-C9 (3) / review m4. The invalidation is a cache drop on a decision that has ALREADY
+    committed, so a Redis outage must not turn it into a 500 an admin will re-try. It is logged and
+    swallowed; the 60-second TTL is the backstop, and the direction is fail-safe either way (a
+    BLOCK is what the registry now says, and the stale cached answer expires within the minute the
+    spec promises).
+
+    Only the exception's TYPE is logged, never its text, which can carry a host and port — the same
+    rule `app/census/license.py` follows for the same reason."""
+    _account_id, headers = await _admin(client, member)
+
+    def unreachable(_r, _dataset_key):
+        raise redis_sync.ConnectionError("Error 61 connecting to cache.internal:6379. Connection refused.")
+
+    monkeypatch.setattr(admin_data_sources.gate, "invalidate", unreachable)
+    with caplog.at_level(logging.ERROR, logger="app.api.admin_data_sources"):
+        r = await client.post(f"{PATH}/acs5/license", headers=headers, json={"status": "blocked"})
+
+    assert r.status_code == 200 and r.json()["license_status"] == "blocked"
+    with conn.cursor() as cur:
+        cur.execute("SELECT license_status FROM dataset_registry WHERE dataset_key = 'acs5'")
+        assert cur.fetchone()[0] == "blocked", "the committed decision stands"
+    assert "acs5" in caplog.text and "ConnectionError" in caplog.text
+    assert "cache.internal" not in caplog.text, "only the exception TYPE is logged, never its text"
+
+
+async def test_a_licence_url_must_use_https(client, conn, member):
+    """A-C9 (5) / review I3. `app/census/license.py` re-fetches every registered `license_url`
+    quarterly and hashes the body, and this console is the only way one is ever edited. Over clear
+    text, anything on the path can rewrite the page the drift check compares — so the refusal is
+    here, at the only door, rather than left to whoever reads the terms."""
+    _account_id, headers = await _admin(client, member)
+    r = await client.post(f"{PATH}/imagery/license", headers=headers,
+                          json={"status": "cleared", "url": "http://example.test/terms"})
+    assert r.status_code == 422
+    assert r.json() == {"error": {"code": "BAD_FIELD", "message": "A licence URL must use https."}}
+    with conn.cursor() as cur:
+        cur.execute("SELECT license_status, license_url FROM dataset_registry WHERE dataset_key = 'imagery'")
+        assert cur.fetchone() == ("unresolved", None), "the refusal changed nothing"
+        cur.execute("SELECT count(*) FROM license_audit_log")
+        assert cur.fetchone()[0] == 0
+
+
+@pytest.mark.parametrize(("posted", "stored"), [
+    ("https://example.test", "https://example.test/"),                  # empty path becomes "/"
+    ("https://EXAMPLE.test/Terms", "https://example.test/Terms"),       # host lower-cased, path is not
+    ("https://example.test:443/terms", "https://example.test/terms"),   # the default port is dropped
+])
+async def test_the_stored_licence_url_is_pydantics_canonical_form(client, conn, member, posted, stored):
+    """A-C9 (2) / review m3 (concern 3, answered). Every transformation `HttpUrl` applies is a
+    canonicalisation — semantically the same page to `license.audit`'s fetch and to a ledger whose
+    job is "which terms page was read". What was missing is a pin: pydantic moved this behaviour
+    once already (2.10), and a bump that moved it again would silently rewrite the stored terms URL
+    of every dataset an admin re-decides, with nothing going red. Both writes are asserted, because
+    both are read later — the registry by the quarterly sweep, the ledger by a human."""
+    _account_id, headers = await _admin(client, member)
+    r = await client.post(f"{PATH}/imagery/license", headers=headers, json={"status": "cleared", "url": posted})
+    assert r.status_code == 200
+    with conn.cursor() as cur:
+        cur.execute("SELECT license_url FROM dataset_registry WHERE dataset_key = 'imagery'")
+        assert cur.fetchone()[0] == stored
+        cur.execute("SELECT url FROM license_audit_log WHERE dataset_key = 'imagery'")
+        assert cur.fetchall() == [(stored,)]
+
+
+@pytest.mark.parametrize(("field", "limit"), [("name", 200), ("notes", 4_000)])
+async def test_the_free_text_bounds_bite_exactly_at_their_limit(client, member, field, limit):
+    """A-C9 (8) / review I7. `notes` reaches `audit_log.reason`, a table whose triggers refuse
+    DELETE, so the bound is not decoration — and a bound nothing exercises is a claim, not a
+    limit. Asserted on both sides of it."""
+    assert {"name": admin_data_sources.MAX_NAME, "notes": admin_data_sources.MAX_NOTES}[field] == limit
+    _account_id, headers = await _admin(client, member)
+    ok = await client.post(f"{PATH}/imagery/license", headers=headers, json={"status": "cleared", field: "x" * limit})
+    assert ok.status_code == 200, ok.text
+    over = await client.post(f"{PATH}/imagery/license", headers=headers, json={"status": "cleared", field: "x" * (limit + 1)})
+    assert over.status_code == 422
+
+
 # --- wiring -------------------------------------------------------------------------------------
 
 
@@ -322,6 +542,12 @@ async def test_the_routes_are_guarded_and_mounted_only_in_app_mode(dist, monkeyp
     assert [deps.permission_of(d.call) for d in mounted[("GET", PATH)].dependant.dependencies] == ["data_sources.read"]
     assert sorted(p for d in mounted[("POST", PATH + "/{dataset_key}/license")].dependant.dependencies
                   if (p := deps.permission_of(d.call))) == ["data_sources.read", "licence.decide"]
+
+    # A-C9 (6) / review I6: both handlers do blocking psycopg2 work, so they are plain `def` and
+    # FastAPI runs them in its threadpool. An `async def` here would park the event loop — and the
+    # whole process with it — for the duration of every query, lock wait and commit.
+    for key, route in sorted(mounted.items()):
+        assert not inspect.iscoroutinefunction(route.endpoint), f"{key} blocks the event loop"
 
     monkeypatch.setattr(settings, "site_mode", "coming_soon")
     coming = create_app(dist=dist)

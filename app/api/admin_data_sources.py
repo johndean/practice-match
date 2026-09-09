@@ -31,10 +31,15 @@ Shapes that are load-bearing, each one already broken somewhere in this codebase
 **`last_verified_at` and `drift_flagged` are independent, and reported as such** (A-C8 (11), from
 the A8 review's i3/i4):
 
-* `last_verified_at` answers "when did a check last SUCCEED". It comes from the registry, where
-  `license.audit` sets it only on a check that actually read a body, so a dataset with no
+* `last_verified_at` answers "when was this licence last VERIFIED", and it has two authors, which a
+  reader has to know before trusting it (A-C9 (4)). The quarterly sweep
+  (`app/census/license.py`) sets it only on a check that actually read a body, so a dataset with no
   `license_audit_log` row — or whose only check failed, or 404ed — reads `null`, "never verified",
-  never the date of the attempt.
+  never the date of the attempt. `decide_license` below is the second author: an admin who has just
+  read the terms is the strongest verification event in this system, so a decision stamps the field
+  too, without fetching anything. The two are told apart after the fact in the LEDGER, where a
+  human decision is the row with no `content_sha256` and no `http_status`. So a non-null value here
+  means "a body was hashed OR an admin decided" — never, on its own, "a body was hashed".
 * `drift_flagged` is its own field and never derived from the time. A later sweep that finds the
   terms unchanged since the drift REFRESHES `last_verified_at` and leaves the flag standing; only
   an admin decision here clears it. A console that inferred "verified" from a recent date would
@@ -46,10 +51,12 @@ change propagates in one UPDATE.
 """
 from __future__ import annotations
 
+import logging
 from contextlib import closing
 from datetime import datetime
 from typing import Annotated, Any, Literal, cast
 
+import redis as redis_sync
 from fastapi import APIRouter, Depends, Request, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field, HttpUrl
@@ -60,6 +67,8 @@ from app.auth.deps import require
 from app.cache import sync_redis
 from app.census import gate
 from app.db import sync_conn
+
+log = logging.getLogger(__name__)
 
 # `data_sources.read` on the router: staff and admin read the console. `/license` carries
 # `licence.decide` of its own, below.
@@ -111,8 +120,13 @@ def _row(r: tuple[Any, ...]) -> dict[str, Any]:
 
 
 @router.get("/data-sources")
-async def list_data_sources() -> list[dict[str, Any]]:
+def list_data_sources() -> list[dict[str, Any]]:
     """Every registered dataset, blocked and unresolved ones included and marked as such.
+
+    A plain `def`, so FastAPI runs it in its threadpool (A-C9 (6), the rule A-I5d's CSV export
+    already follows): everything below it — `sync_conn()`, the query, the commit — is blocking
+    psycopg2, and on the event loop that would park every other request in the process for the
+    duration.
 
     Guarded by `data_sources.read`, which is NOT in `permissions.AUDITED`, so no audit row is
     written here — reading the gate is not a decision, and one row per poll of the Data Sources tab
@@ -133,15 +147,25 @@ class LicenseDecision(BaseModel):
 
 
 @router.post("/data-sources/{dataset_key}/license")
-async def decide_license(dataset_key: str, body: LicenseDecision, request: Request, principal: LicenceDecider) -> Response:
+def decide_license(dataset_key: str, body: LicenseDecision, request: Request, principal: LicenceDecider) -> Response:
     """Record a licence decision, and hide or reveal the layer within the minute.
+
+    A plain `def` for the reason `list_data_sources` gives (A-C9 (6)), and the reason is stronger
+    here: this handler takes a row lock and holds it across three writes, so on the event loop a
+    single contended decision would stall the whole process rather than one worker thread.
 
     `licence.decide` is admin-only and in `permissions.REAUTH`: the caller confirmed their password
     in the last ten minutes, and no `api_token` can ever reach here — a licence decision is a named
     human's, which is exactly what the audit row records.
 
     `drift_flagged` comes down and `last_verified_at` goes to now: the admin has just looked at the
-    terms, which is the only event in this system that counts as a review."""
+    terms, which is the only event in this system besides the sweep that counts as a verification
+    (see the `last_verified_at` paragraph above — this handler is its second author)."""
+    if body.url is not None and body.url.scheme != "https":
+        # A-C9 (5). `app/census/license.py` re-fetches this URL quarterly and hashes what comes
+        # back; over clear text anything on the path can rewrite the page the drift check compares.
+        # `HttpUrl` allows both schemes, so the narrowing is here, at the only door that edits it.
+        return _error("BAD_FIELD", "A licence URL must use https.", 422)
     url = str(body.url) if body.url else None
     with closing(sync_conn()) as conn, conn:
         with conn.cursor() as cur:
@@ -182,5 +206,15 @@ async def decide_license(dataset_key: str, body: LicenseDecision, request: Reque
     # AFTER the commit above: `invalidate` drops the gate's cached answer for this dataset and
     # bumps `market:gate:v`, which keys away every cached panel and community payload assembled
     # under the old decision (red-team C5).
-    gate.invalidate(sync_redis(), dataset_key)
+    try:
+        gate.invalidate(sync_redis(), dataset_key)
+    except redis_sync.RedisError as exc:
+        # A-C9 (3). The decision is already committed and permanent; this is a cache drop. Failing
+        # the request now would show an admin a 500 for a change that HAS been made, and they would
+        # re-try or escalate — so it is logged and swallowed, and the gate's own 60 s TTL is the
+        # backstop that self-heals within the window spec §11 promises. Only the exception's TYPE
+        # is logged, never its text, which can carry a host and port (the rule
+        # `app/census/license.py` follows for the same reason).
+        log.error("[census] licence decision for %s committed but the layer gate was not invalidated: %s",
+                  dataset_key, type(exc).__name__)
     return JSONResponse({"dataset_key": dataset_key, "license_status": status})
