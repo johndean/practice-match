@@ -21,6 +21,21 @@ def _seed(conn, lid):
                        VALUES (%s, 'h', ST_SetSRID(ST_Point(-97.85, 30.55), 4269), 'rooftop', now(), 'Current_Current')""", (lid,))
 
 
+def test_build_with_no_practice_location_writes_nothing(conn):
+    """B3 review carried item (A-C19): a listing that has not been geocoded yet has no
+    `practice_location` row at all. `build()`'s SQL starts `FROM practice_location p ... WHERE
+    p.listing_id = %s AND p.point IS NOT NULL`, so a missing row makes the whole FROM clause
+    empty and every band/level INSERT affects zero rows -- correct by inspection, but unproven
+    until now. Seeds no `geo_area` either, so a bug that somehow matched geographies without a
+    location would still be caught (there is nothing to intersect against)."""
+    lid = make_listing(conn)
+    counts = catchment.build(conn, lid, "2023")
+    assert counts == {"drive_10": {"140": 0, "860": 0}, "drive_20": {"140": 0, "860": 0}}
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM practice_catchment WHERE listing_id=%s", (lid,))
+        assert cur.fetchone()[0] == 0
+
+
 def test_buffers_intersect_tracts_and_zctas_with_overlap_fractions(conn):
     lid = make_listing(conn)
     _seed(conn, lid)

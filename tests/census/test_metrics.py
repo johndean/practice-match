@@ -65,12 +65,31 @@ def test_weighted_count_of_an_empty_iterable_returns_none_est_and_moe() -> None:
     assert est is None and moe is None and excluded == 0
 
 
+def test_weighted_count_treats_a_missing_weight_like_an_excluded_part() -> None:
+    """B4a review (A-C17 (3)): `weighted_count` and `weighted_median` disagreed on whether a
+    weight may be missing -- `weighted_median` already skips a `None` weight (see
+    `test_weighted_median_skips_a_present_value_with_a_missing_weight` below), while
+    `weighted_count` unconditionally did `float(w)`, which raises `TypeError` on `None`. A caller
+    should not have to remember which function tolerates a missing weight, so `weighted_count` now
+    excludes a part with no weight exactly as it already excludes one with no estimate."""
+    est, moe, excluded = m.weighted_count([(100, 10, 1.0), (200, 20, None)])
+    assert est == 100 and moe == 10.0 and excluded == 1
+
+
 def test_weighted_median_is_household_weighted_average() -> None:
     assert m.weighted_median([(100000, 1000), (50000, 3000), (None, 500)]) == 62500
 
 
 def test_weighted_median_skips_zero_weight_as_well_as_missing_value() -> None:
     assert m.weighted_median([(100000, 1000), (999999, 0)]) == 100000
+
+
+def test_weighted_median_skips_a_present_value_with_a_missing_weight() -> None:
+    """B4a review (A-C17 (2)): the compound guard `v is None or w in (None, 0)` had an untested
+    arm -- a present VALUE paired with a MISSING weight -- that branch coverage cannot see through
+    a single compound boolean. Every existing case above pairs a missing value with a present
+    weight, or a present value with a present-but-zero weight; this is the remaining combination."""
+    assert m.weighted_median([(100000, 1000), (999999, None)]) == 100000
 
 
 def test_weighted_median_is_none_with_no_usable_weight() -> None:
@@ -125,6 +144,14 @@ def test_opportunity_score_is_clamped_rounded_and_needs_all_inputs() -> None:
     assert m.opportunity_score(None, 14.2, 2.54) is None
     assert m.opportunity_score(118400, None, 2.54) is None
     assert m.opportunity_score(118400, 14.2, None) is None
+
+
+def test_formula_version_is_pinned() -> None:
+    """B4a review (A-C17 (4)): nothing asserted `FORMULA_VERSION`'s value -- a silent bump would
+    let two generations of a metric (computed under different formulas) coexist in `market_metric`
+    under the same `formula_version` string, since the materialisation stamps every derived row
+    with whatever this constant currently holds."""
+    assert m.FORMULA_VERSION == "v1"
 
 
 def test_competition_level_uses_the_design_thresholds() -> None:

@@ -31,23 +31,26 @@ def high_moe(estimate: float | None, moe: float | None) -> bool:
     return c is not None and c > CV_THRESHOLD
 
 
-def weighted_count(parts: Iterable[tuple[float | None, float | None, float]]) -> tuple[float | None, float | None, int]:
-    """Sum `weight * estimate` over parts that carry an estimate; MOEs combine in quadrature —
-    `sqrt(sum((weight * moe) ** 2))`. A part with a missing MOE contributes zero variance, not a
-    skip. Returns `(estimate, moe, excluded)`, where `excluded` counts parts with no estimate;
-    both `estimate` and `moe` are `None` when every part was excluded (including an empty
+def weighted_count(parts: Iterable[tuple[float | None, float | None, float | None]]) -> tuple[float | None, float | None, int]:
+    """Sum `weight * estimate` over parts that carry both an estimate and a weight; MOEs combine
+    in quadrature — `sqrt(sum((weight * moe) ** 2))`. A part with a missing MOE contributes zero
+    variance, not a skip. A part with a missing WEIGHT is excluded exactly like one with a missing
+    estimate (B4a review, A-C17 (3)): `weighted_median` already treats a missing weight this way,
+    and a caller should not have to remember which of the two weighting functions tolerates one.
+    Returns `(estimate, moe, excluded)`, where `excluded` counts parts with no estimate or no
+    weight; both `estimate` and `moe` are `None` when every part was excluded (including an empty
     iterable)."""
     est = 0.0
     var = 0.0
     excluded = 0
     used = False
     for e, mo, w in parts:
-        if e is None:
+        if e is None or w is None:
             excluded += 1
             continue
         used = True
-        est += float(w) * float(e)
-        var += (float(w) * float(mo or 0)) ** 2
+        est += w * e
+        var += (w * (mo or 0)) ** 2
     return (est if used else None, math.sqrt(var) if used else None, excluded)
 
 

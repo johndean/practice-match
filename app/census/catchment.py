@@ -4,7 +4,7 @@ intersected with tracts (ACS inputs) and ZCTAs (ZBP competition inputs, D11); ov
 intersected area / unit area. Geometry is NAD83 (4269); geography maths is done after
 ST_Transform to 4326 (red-team C6).
 
-Task B3 correction 5: the join predicate keeps `g.geo_area.geom` BARE -- the buffer is what gets
+Task B3 correction 5: the join predicate keeps `g.geom` BARE -- the buffer is what gets
 transformed, into geometry at the SAME srid (4269) as the column -- rather than wrapping `g.geom`
 itself in `ST_Transform(...)::geography`. Wrapping the indexed column in two function calls made
 `geo_area_geom_gix` (a GiST index built on the bare `geom` column) unusable, so the predicate
@@ -22,6 +22,17 @@ autocommitting statements, could leave a listing with half its catchment if a la
 `build()` toggles `autocommit` off for its own duration (the same pattern `scripts/migrate.py`
 uses to commit a migration file and its ledger row as one unit) and restores the connection's
 prior setting afterwards, so it is safe to call regardless of the caller's own autocommit state.
+
+Task B3 correction 7 (B3 review, carried into B4b by A-C19): the `GREATEST(0.00001, ...)` floor
+in `SQL` below is not an arbitrary epsilon -- it is `practice_catchment.overlap_frac`'s own column
+precision, `numeric(6,5)` (`migrations/061_census_listing_tables.sql`), which stores exactly five
+digits after the decimal point and so cannot represent anything smaller than `0.00001` without
+rounding to `0.00000`. That column also carries `CHECK (overlap_frac > 0 AND overlap_frac <= 1)`
+(migration `061`), so a genuinely nonzero intersection too small to survive rounding at that
+precision -- a sliver of a tract just grazing the buffer -- would otherwise round to zero and be
+refused outright by the CHECK constraint at INSERT time. Flooring the computed fraction at the
+column's own smallest representable positive value keeps a real, if negligible, overlap storable
+instead of turning a rounding artefact into a failed write.
 """
 from __future__ import annotations
 
