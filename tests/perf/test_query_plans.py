@@ -191,17 +191,17 @@ def _seed_catchment_geo(conn: Any) -> None:
     makes PostGIS's own geometry statistics visible to the planner at all — without it Postgres
     has no histogram to estimate the spatial predicate's selectivity from."""
     with conn.cursor() as cur:
-        cur.execute("""INSERT INTO listing (id, slug, name, street, city, state, zip, status, area, type, market, source)
+        cur.execute("""INSERT INTO listing (id, slug, name, street, city, state, zip, status, area, type, market, source, sqft, est, price)
                        SELECT md5(random()::text || i::text)::uuid, 'plan-catchment-'||i, 'Plan Catchment '||i, '1 Main St',
-                              'Cedar Park', 'TX', '78613', 'published', 'Cedar Park', 'Small animal', 'Cedar Park, TX', 'seed'
+                              'Cedar Park', 'TX', '78613', 'published', 'Cedar Park', 'Small animal', 'Cedar Park, TX', 'seed', 3000, 2005, 1200000
                          FROM generate_series(1, 2000) i""")
         cur.execute("""INSERT INTO practice_location (listing_id, address_hash, point, geo_precision, geocoded_at, geocoder_vintage)
                        SELECT id, 'h-'||id, ST_SetSRID(ST_Point(-110 + (random() * 10), 25 + (random() * 10)), 4269),
                               'rooftop', now(), 'Current_Current'
                          FROM listing WHERE slug LIKE 'plan-catchment-%'""")
-        cur.execute("""INSERT INTO listing (id, slug, name, street, city, state, zip, status, area, type, market, source)
+        cur.execute("""INSERT INTO listing (id, slug, name, street, city, state, zip, status, area, type, market, source, sqft, est, price)
                        VALUES (%s, 'plan-catchment-target', 'Plan Catchment Target', '1 Main St', 'Cedar Park', 'TX', '78613',
-                               'published', 'Cedar Park', 'Small animal', 'Cedar Park, TX', 'seed')""", (_CATCHMENT_LISTING_ID,))
+                               'published', 'Cedar Park', 'Small animal', 'Cedar Park, TX', 'seed', 3000, 2005, 1200000)""", (_CATCHMENT_LISTING_ID,))
         cur.execute("""INSERT INTO practice_location (listing_id, address_hash, point, geo_precision, geocoded_at, geocoder_vintage)
                        VALUES (%s, 'h-plan-catchment-target', ST_SetSRID(ST_Point(-97.85, 30.55), 4269), 'rooftop', now(), 'Current_Current')""",
                     (_CATCHMENT_LISTING_ID,))
@@ -228,13 +228,13 @@ def _seed_panel_metrics(conn: Any) -> None:
     slug matches the same `LIKE` pattern as the noise rows, so one bulk INSERT gives it the same
     fifteen metric rows every other seeded listing gets — no separate statement needed."""
     with conn.cursor() as cur:
-        cur.execute("""INSERT INTO listing (id, slug, name, street, city, state, zip, status, area, type, market, source)
+        cur.execute("""INSERT INTO listing (id, slug, name, street, city, state, zip, status, area, type, market, source, sqft, est, price)
                        SELECT md5(random()::text || i::text)::uuid, 'plan-panel-'||i, 'Plan Panel '||i, '1 Main St',
-                              'Cedar Park', 'TX', '78613', 'published', 'Cedar Park', 'Small animal', 'Cedar Park, TX', 'seed'
+                              'Cedar Park', 'TX', '78613', 'published', 'Cedar Park', 'Small animal', 'Cedar Park, TX', 'seed', 3000, 2005, 1200000
                          FROM generate_series(1, 3000) i""")
-        cur.execute("""INSERT INTO listing (id, slug, name, street, city, state, zip, status, area, type, market, source)
+        cur.execute("""INSERT INTO listing (id, slug, name, street, city, state, zip, status, area, type, market, source, sqft, est, price)
                        VALUES (%s, 'plan-panel-target', 'Plan Panel Target', '1 Main St', 'Cedar Park', 'TX', '78613',
-                               'published', 'Cedar Park', 'Small animal', 'Cedar Park, TX', 'seed')""", (_PANEL_LISTING_ID,))
+                               'published', 'Cedar Park', 'Small animal', 'Cedar Park, TX', 'seed', 3000, 2005, 1200000)""", (_PANEL_LISTING_ID,))
         cur.execute("""INSERT INTO practice_location (listing_id, address_hash, point, geo_precision, geocoded_at, geocoder_vintage)
                        SELECT id, 'h-'||id, ST_SetSRID(ST_Point(-97.8 + (random() * 0.2), 30.4 + (random() * 0.2)), 4269),
                               'rooftop', now(), 'Current_Current'

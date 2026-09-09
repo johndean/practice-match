@@ -17,8 +17,8 @@ from app.api.health import not_found_router
 from app.api.health import router as health_router
 from app.api.interest import router as interest_router
 from app.api.listings import router as listings_router
-from app.api.seller_listings import router as seller_listings_router
 from app.api.market import router as market_router
+from app.api.seller_listings import router as seller_listings_router
 from app.api.webhooks import router as webhooks_router
 from app.auth import deps
 from app.config import settings
