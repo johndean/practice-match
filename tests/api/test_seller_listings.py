@@ -2058,7 +2058,7 @@ async def test_republish_enqueues_geocode_task_when_listing_has_no_practice_loca
     def fake_send_task(name, args=None, **kw):
         enqueued.append((name, args))
 
-    from app.tasks import celery_app
+    from app.tasks.celery_app import celery_app
     monkeypatch.setattr(celery_app, "send_task", fake_send_task)
 
     # Pause the listing first
@@ -2093,7 +2093,7 @@ async def test_republish_does_not_enqueue_geocode_when_practice_location_exists(
     def fake_send_task(name, args=None, **kw):
         enqueued.append((name, args))
 
-    from app.tasks import celery_app
+    from app.tasks.celery_app import celery_app
     monkeypatch.setattr(celery_app, "send_task", fake_send_task)
 
     # Pause the listing first

@@ -1445,8 +1445,8 @@ def test_cmd_geocode_skips_listing_with_practice_location_row(scratch_dsn, monke
         with conn.cursor() as cur:
             # Add a practice_location row
             cur.execute(
-                "INSERT INTO practice_location (listing_id, address_hash, geo_precision, geocoder_vintage) "
-                "VALUES (%s, %s, %s, %s)",
+                "INSERT INTO practice_location (listing_id, address_hash, geo_precision, geocoder_vintage, geocoded_at) "
+                "VALUES (%s, %s, %s, %s, now())",
                 (lid, "hash1", "rooftop", "Current_Current"),
             )
     finally:
@@ -1486,8 +1486,8 @@ def test_cmd_geocode_force_re_geocodes_existing_listing(scratch_dsn, monkeypatch
             )
             # Add an existing practice_location row
             cur.execute(
-                "INSERT INTO practice_location (listing_id, address_hash, geo_precision, geocoder_vintage) "
-                "VALUES (%s, %s, %s, %s)",
+                "INSERT INTO practice_location (listing_id, address_hash, geo_precision, geocoder_vintage, geocoded_at) "
+                "VALUES (%s, %s, %s, %s, now())",
                 (lid, "old_hash", "rooftop", "Current_Current"),
             )
     finally:
@@ -1545,8 +1545,8 @@ def test_cmd_geocode_nothing_to_geocode_exits_zero(scratch_dsn, monkeypatch, cap
         with conn.cursor() as cur:
             # Add practice_location so there's nothing to geocode
             cur.execute(
-                "INSERT INTO practice_location (listing_id, address_hash, geo_precision, geocoder_vintage) "
-                "VALUES (%s, %s, %s, %s)",
+                "INSERT INTO practice_location (listing_id, address_hash, geo_precision, geocoder_vintage, geocoded_at) "
+                "VALUES (%s, %s, %s, %s, now())",
                 (lid, "hash1", "rooftop", "Current_Current"),
             )
     finally:
