@@ -919,17 +919,22 @@ async def reorder_photos(listing_id: str, request: Request, principal: Owner) ->
             row = locked_row(conn, listing_id, principal)
             _writable(row)
             photos = photo_list(row["photos"])
-            # `or ""` for a null slot (A-L10, merged from `main`): an EMPTY slot cannot be named
-            # in an id list, and `""` is an id nothing sends — so a row that has one is refused
-            # here rather than reordered into a shape that loses it. It also keeps `sorted` off a
-            # `str | None`, which has no ordering at all.
-            if sorted(ids) != sorted(entry or "" for entry in photos):
+            # A-SL23 (6) m2. The list names PHOTOGRAPHS, and an EMPTY slot (A-L10, merged from
+            # `main`) has no id to be named by — so the permutation is checked against the
+            # non-null entries and the empty slots are spliced back at the positions they were
+            # left at. Comparing against `entry or ""` instead refused the whole row (SL7 review,
+            # Minor-2): thirty-five of the seeded slots were null, which said "this hospital's
+            # photographs can never be reordered" rather than "an empty slot cannot be named".
+            filled = [entry for entry in photos if entry is not None]
+            if sorted(ids) != sorted(filled):
                 raise Refusal("BAD_REQUEST",
                               "ids must be exactly this listing's photographs, in the new order.", 400)
+            moved = iter(ids)
+            reordered: list[str | None] = [None if entry is None else next(moved) for entry in photos]
             with conn.cursor() as cur:
                 cur.execute("UPDATE listing SET photos = %s::jsonb, updated_at = now()"
                             " WHERE id = %s AND seller_id = %s",
-                            (json.dumps(ids), row["id"], principal.account_id))
+                            (json.dumps(reordered), row["id"], principal.account_id))
             claim_from_seed(conn, row, principal)
             on_market = take_off_market(conn, row, principal, request)
             payload = serialise_draft(locked_row(conn, listing_id, principal), assets_of(conn, row["id"]))

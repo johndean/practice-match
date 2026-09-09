@@ -971,8 +971,12 @@ async def test_a_seed_slot_the_curation_left_empty_is_no_tile_at_all(
     client: Any, conn: Any, redis: Any, member: Any
 ) -> None:
     """A-L10 (merged from `main`) stores a JSON `null` for a slot no photograph truthfully fills.
-    There is nothing to show for it, so step 6 lists the photographs that exist and no blank tile —
-    and a reorder of such a row is refused, because an empty slot cannot be named in an id list."""
+    There is nothing to show for it, so step 6 lists the photographs that exist and no blank tile.
+
+    A-SL23 (6) m2: such a row REORDERS. The id list names the photographs — an empty slot has no
+    id to be named by — so the comparison is against the non-null entries and the empty slots stay
+    at the positions they were left at. Refusing the whole row instead (SL7 review, Minor-2) said
+    "this hospital's photographs can never be reordered", which is not what an empty slot means."""
     account_id, cookies, headers = _seller(member)
     listing_id = _seed_listing(conn, ["abc_animal_hospital/1.webp", None, "abc_animal_hospital/3.webp"])
     with conn.cursor() as cur:
@@ -985,11 +989,25 @@ async def test_a_seed_slot_the_curation_left_empty_is_no_tile_at_all(
         {"id": "abc_animal_hospital/3.webp", "name": "Interior — exam room 1"},
     ]
 
-    refused = await client.patch(f"/api/seller/listings/{listing_id}/photos",
-                                 json={"ids": ["abc_animal_hospital/3.webp", "abc_animal_hospital/1.webp"]},
-                                 headers=signed)
-    assert refused.status_code == 400
-    assert refused.json()["error"]["message"] == "ids must be exactly this listing's photographs, in the new order."
+    moved = await client.patch(f"/api/seller/listings/{listing_id}/photos",
+                               json={"ids": ["abc_animal_hospital/3.webp", "abc_animal_hospital/1.webp"]},
+                               headers=signed)
+    assert moved.status_code == 200
+    assert [tile["id"] for tile in moved.json()["photos"]] == [
+        "abc_animal_hospital/3.webp", "abc_animal_hospital/1.webp"]
+    with conn.cursor() as cur:
+        cur.execute("SELECT photos FROM listing WHERE id = %s", (listing_id,))
+        assert cur.fetchone()[0] == ["abc_animal_hospital/3.webp", None, "abc_animal_hospital/1.webp"], \
+            "the empty slot stayed where it was; only the photographs moved"
+
+    # A list that is not a permutation of the photographs is still refused — the empty slot is not
+    # a photograph a seller may name, and a partial list would silently delete one.
+    for bad in (["abc_animal_hospital/3.webp"],
+                ["abc_animal_hospital/3.webp", "", "abc_animal_hospital/1.webp"]):
+        refused = await client.patch(f"/api/seller/listings/{listing_id}/photos",
+                                     json={"ids": bad}, headers=signed)
+        assert refused.status_code == 400
+        assert refused.json()["error"]["message"] == "ids must be exactly this listing's photographs, in the new order."
 
 
 def test_the_seed_captions_are_read_from_the_committed_index() -> None:

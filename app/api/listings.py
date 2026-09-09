@@ -89,7 +89,10 @@ _SELECT = """
 SELECT id, slug, name, street, city, state, zip, phone, hours, status, location_disclosed,
        name_disclosed, rev_disclosed, ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lng,
        area, type, market, price, rev, docs, rooms, sqft, bldg, est, listed_at,
-       note, staff, services, facility, ownership, photos, photo_captions
+       note, staff, services, facility, ownership, photos, photo_captions,
+       coalesce((SELECT jsonb_object_agg(a.id::text, a.caption) FROM listing_asset a
+                  WHERE a.listing_id = listing.id AND a.kind = 'photo' AND a.caption IS NOT NULL),
+                '{}'::jsonb) AS asset_captions
   FROM listing
 """
 
@@ -187,6 +190,29 @@ def photo_list(value: object) -> list[str | None]:
     return []   # a NULL `photos` (nothing writes one: the column is NOT NULL DEFAULT '[]')
 
 
+def photo_captions(photos: list[str | None], stored: list[str | None], owned: Mapping[str, str]) -> list[str | None]:
+    """One description per photograph, whichever of its TWO homes it was written in (A-SL23 (0)).
+
+    A SEED photograph's description is `listing.photo_captions[n]`, written by the seeder from the
+    supplier's own filename (A-L11), and positional — position `n` describes position `n`. A
+    SELLER's is `listing_asset.caption`, written by the seller in the wizard's photo step (A-SL20,
+    John: "have the user articulate what it is"); there `listing.photos[n]` is that asset's UUID
+    rather than a path, so the caption is looked up BY THE UUID and the column has nothing in it.
+    `photo_captions` is one contract over both — A-SL22 (2)'s "served as `photo_captions` for
+    published listings", which SL7 could not deliver before `main`'s A-L11 landed.
+
+    The seller's own words win where both homes have something to say: a seeded listing the seller
+    has since edited is theirs (A-SL21), and they have looked at the photograph.
+
+    A listing whose photographs are all seeds has an empty `owned` and comes through untouched,
+    which is what keeps the seed contract exactly as A-L11 wrote it — including a `photo_captions`
+    longer or shorter than `photos`, which is that column's own business and not this one's."""
+    if not owned:
+        return stored
+    padded: list[str | None] = [*stored, *[None] * (len(photos) - len(stored))]
+    return [(owned.get(entry) if entry is not None else None) or padded[n] for n, entry in enumerate(photos)]
+
+
 def photo_file(photos: list[str | None], n: int) -> Path | None:
     """The file behind photo `n` (1-based) of `photos`, or None. The path comes from the
     database, so it is resolved under PHOTOS_ROOT and anything that escapes is refused —
@@ -259,7 +285,7 @@ def serialise(row: Mapping[str, Any], now: datetime) -> dict[str, Any]:
         # position `n`. The design's `photoSet` reads it as `p.photoCaptions[i]` and falls back to
         # its own fixed slot caption where the entry is null (amendment A15), which is what lets a
         # photograph past the sixth be rendered at all: the design has no seventh caption.
-        "photo_captions": photo_list(row["photo_captions"]),
+        "photo_captions": photo_captions(photos, photo_list(row["photo_captions"]), row["asset_captions"]),
     }
 
 

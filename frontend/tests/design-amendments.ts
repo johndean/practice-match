@@ -1228,17 +1228,28 @@ const SL = {
   ruling: 'none of the existing Photes and Documents are being render4ed in the "EDIT" of an existing listing by hospital across all the data seeded on and also none of the actual inputs are appearing in the PREVIEW and SUBMIT, it appears to be stubs and not functional, this gap must be corrected and the UX true'
 };
 
-/** A16.1 — the dashboard's rows come from the seller's OWN listings once they have been loaded,
- *  and the design's four Austin fixtures are what shows when they have not been (A-SL22 (1),
- *  on John's A-SL17 ruling: "a real seller with zero listings should see the dashboard shell with
- *  no invented/sample listings"). `!== undefined`, not `&& length`: a loaded EMPTY array is a real
- *  answer and must empty the table, which is the whole of that ruling. `s.myListings` is written
- *  by A16.9's bootstrap, by A16.8's transitions and by A16.7's submit — and, on the reference
- *  alone, by A16.11b's prototype prop. */
+/** A16.1 — the dashboard's rows come from the seller's OWN listings, and from nowhere else once
+ *  an adapter is present (A-SL22 (1) and A-SL23 (2), on John's A-SL17 ruling: "a real seller with
+ *  zero listings should see the dashboard shell with no invented/sample listings").
+ *
+ *  Three states, not two. `!== undefined`, not `&& length`: a loaded EMPTY array is a real answer
+ *  and must empty the table, which is the whole of A-SL17. And where the array is not there at
+ *  all, WHO IS ASKING decides: the app has a `listings` adapter and gets zero rows, whatever the
+ *  API answered and whether or not it answered — a real seller must never be shown four invented
+ *  Austin listings because their load failed (SL7 review, Critical-2) — while the reference and
+ *  the Claude Design preview pass no adapter and keep the design's own fixtures, which is what
+ *  holds `seller-dash`'s frozen pixels on the reference side.
+ *
+ *  The APP holds the same pixels through the SUCCESS path: `frontend/tests/harness.ts` answers
+ *  `GET /api/seller/listings` with those same four rows (`design-seller-listings.mjs`, derived
+ *  from this very array), so the capture is a state the app can actually reach.
+ *
+ *  `s.myListings` is written by A16.9's bootstrap, by A16.8's transitions, by A16.7's submit and
+ *  by A16.15's save-and-exit — and, on the reference alone, by A16.11b's prototype prop. */
 const A16_1: Amendment = {
   id: 'A16.1', ...SL,
   find: '      listings: s.sellerListings.map((l) => {',
-  replace: '      listings: (s.myListings !== undefined ? s.myListings : s.sellerListings).map((l) => {',
+  replace: '      listings: (s.myListings !== undefined ? s.myListings : (this.props.listings ? [] : s.sellerListings)).map((l) => {',
   count: 1
 };
 
@@ -1289,17 +1300,25 @@ const A16_3: Amendment = {
 const A16_4: Amendment = {
   id: 'A16.4', ...SL,
   find: '    const uploads = [{ kind: "Photo", name: "Exterior.jpg" }, { kind: "Photo", name: "Lobby.jpg" }, { kind: "Photo", name: "Treatment.jpg" }, { kind: "PDF", name: "Floor plan.pdf" }].slice(0, 3 + (w.photos || 0));',
-  replace: '    const slots = this.photoSet({ id: "wiz", type: w.type, photos: [] });\n'
+  replace: '    const slots = this.photoSet({ id: "wiz", type: w.type, photos: [], name: w.name, area: w.city });\n'
     + '    const uploads = s.wizAssets\n'
     + '      ? s.wizAssets.map((a, i) => ({ kind: a.kind, name: a.name || (slots[i] ? slots[i].caption : "Photo " + (i + 1)) }))\n'
     + '      : [{ kind: "Photo", name: "Exterior.jpg" }, { kind: "Photo", name: "Lobby.jpg" }, { kind: "Photo", name: "Treatment.jpg" }, { kind: "PDF", name: "Floor plan.pdf" }].slice(0, 3 + (w.photos || 0));',
   count: 1
 };
 
-/** A16.5 — "Add files" opens a real file picker, uploads what it returns and asks the seller what
- *  it shows. UNCAPPED (A-SL20, John: "surface all images uploaded and have the user articulate
- *  what it is and render ALL images") — there is no `Math.min` on this path and the API's own
- *  four-photograph cap went with the same ruling.
+/** A16.5 — "Add files" opens a real file dialog, puts what it returns where its type belongs and
+ *  asks the seller what a photograph shows. UNCAPPED (A-SL20, John: "surface all images uploaded
+ *  and have the user articulate what it is and render ALL images") — there is no `Math.min` on
+ *  this path and the API's own four-photograph cap went with the same ruling.
+ *
+ *  ONE promise and ONE rejection handler (A-SL23 (4), on the review's Major-3). The four steps —
+ *  choose, upload or store, describe, re-read — are chained inside the adapter's `attach`, so a
+ *  refusal at ANY of them lands in `wizErr` instead of escaping as an unhandled rejection with the
+ *  new photograph missing from the tiles. `null` is the seller dismissing the dialog: nothing was
+ *  added, so nothing is redrawn. A document is routed to the document route by its own type and
+ *  is never asked for a caption (A-SL23 (6) m7) — `Floor plan.pdf` is the design's own vocabulary
+ *  for a document tile.
  *
  *  With no adapter the design's counter runs unchanged, so the reference's step 6 is byte-identical
  *  (it has no baseline either way — spec §14 item 7 asks Rev 3 for one). A refusal lands in
@@ -1309,10 +1328,10 @@ const A16_5: Amendment = {
   find: '      addPhoto: () => this.setState((st) => ({ w: Object.assign({}, st.w, { photos: Math.min((st.w.photos || 0) + 1, 1) }) })),',
   replace: '      addPhoto: () => {\n'
     + '        if (!this.props.listings || !s.editingId) return this.setState((st) => ({ w: Object.assign({}, st.w, { photos: Math.min((st.w.photos || 0) + 1, 1) }) }));\n'
-    + '        return this.props.listings.pick().then((file) => (file ? this.props.listings.upload(s.editingId, file).then(\n'
-    + '          (a) => this.props.listings.caption(s.editingId, a.id, this.props.listings.describe()).then((d) => this.setState({ wizAssets: d.assets, wizErr: "" })),\n'
+    + '        return this.props.listings.attach(s.editingId).then(\n'
+    + '          (d) => (d ? this.setState({ wizAssets: d.assets, wizErr: "" }) : null),\n'
     + '          (e) => this.setState({ wizErr: (e && e.message) || "That file could not be uploaded." })\n'
-    + '        ) : null));\n'
+    + '        );\n'
     + '      },',
   count: 1
 };
@@ -1334,7 +1353,12 @@ const A16_6: Amendment = {
 
 /** A16.7 — Submit posts, then runs the design's own `setState` unchanged, so the "Submitted" card
  *  the design draws appears at once and the dashboard behind it is refreshed with the server's
- *  own rows. */
+ *  own rows.
+ *
+ *  A-SL23 (6) m8: the design's own `setState` also prepends an optimistic row to `sellerListings`,
+ *  and with an adapter present that row is never rendered — A16.1 reads `myListings` there and
+ *  `sellerListings` only where no adapter was passed. It is left in place because it is the
+ *  DESIGN's line and the reference runs it; the reload is what the app shows. */
 const A16_7: Amendment = {
   id: 'A16.7', ...SL,
   find: '      submit: () => this.setState({ wizSubmitted: true,',
@@ -1345,7 +1369,16 @@ const A16_7: Amendment = {
 };
 
 /** A16.8 — Pause, Republish and Withdraw go through the adapter, then reload. The design's own
- *  optimistic `setState` is kept as the no-adapter path and as the immediate feedback. */
+ *  optimistic `setState` is kept as the no-adapter path; with an adapter the server's own rows
+ *  are what the dashboard shows (A16.1), so the reload is the feedback.
+ *
+ *  A REFUSAL goes in the row's own `note` (A-SL23 (5), on the review's Major-4). It used to go in
+ *  `wizErr`, which only `wizardVals` reads — so a seller who pressed Withdraw on a listing the
+ *  server refused (`409 STATE`, `429`) saw nothing at all, and the invisible message then
+ *  surfaced later, out of context, in the wizard. `note` is the design's own field on the row the
+ *  seller pressed, it needs no new markup, and the next successful load overwrites it. The
+ *  dashboard has no error surface of its own; that gap is recorded for John (spec §14) rather
+ *  than papered over with an invented banner. */
 const A16_8: Amendment = {
   id: 'A16.8', ...SL,
   find: '  setListingStatus(id, status) {\n',
@@ -1354,7 +1387,7 @@ const A16_8: Amendment = {
     + '      const action = status === "paused" ? "pause" : status === "withdrawn" ? "withdraw" : "republish";\n'
     + '      this.props.listings.setStatus(id, action).then(\n'
     + '        () => this.props.listings.list().then((rows) => this.setState({ myListings: rows })),\n'
-    + '        (e) => this.setState({ wizErr: (e && e.message) || "That could not be changed." })\n'
+    + '        (e) => this.setState((st) => ({ myListings: (st.myListings || []).map((l) => (l.id === id ? Object.assign({}, l, { note: (e && e.message) || "That could not be changed." }) : l)) }))\n'
     + '      );\n'
     + '    }\n',
   count: 1
@@ -1362,14 +1395,18 @@ const A16_8: Amendment = {
 
 /** A16.9 — the bootstrap loads the seller's own listings, in A5.4's own five-line shape and at the
  *  same seam. Gated on the account actually holding the seller role, so a buyer's session spends no
- *  request on an endpoint it would be refused from. A refusal leaves `myListings` UNSET rather than
- *  empty: "not loaded" and "loaded, and there are none" are different things and A16.1 renders
- *  them differently. */
+ *  request on an endpoint it would be refused from.
+ *
+ *  A refusal renders ZERO rows (A-SL23 (2)): `myListings: []`, never the design's four Austin
+ *  fixtures. SL7 left it unset and A16.1 then fell back to those fixtures, so a seller whose load
+ *  502'd behind Railway was shown four listings that were not theirs, with live Pause and
+ *  Withdraw buttons bound to the fixture ids (review, Critical-2). A16.1's adapter arm answers
+ *  zero rows on its own now; this says so at the point where the failure is actually known. */
 const A16_9: Amendment = {
   id: 'A16.9', ...SL,
   find: '    else if (this.state.gate === "verify" && this.props.auth) this.props.auth.verify(this.state.gateToken).then(() => this.setState({ gate: "signin", gateToken: "", formNotice: "Your address is verified. Sign in to complete your access request." }), () => this.setState({ gate: "verify-expired", gateToken: "" }));\n  }',
   replace: '    else if (this.state.gate === "verify" && this.props.auth) this.props.auth.verify(this.state.gateToken).then(() => this.setState({ gate: "signin", gateToken: "", formNotice: "Your address is verified. Sign in to complete your access request." }), () => this.setState({ gate: "verify-expired", gateToken: "" }));\n'
-    + '    if (this.props.listings && me && me.state === "active" && (me.roles || []).indexOf("seller") > -1) this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => {});\n'
+    + '    if (this.props.listings && me && me.state === "active" && (me.roles || []).indexOf("seller") > -1) this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => this.setState({ myListings: [] }));\n'
     + '  }',
   count: 1
 };
@@ -1410,8 +1447,8 @@ const A16_11a: Amendment = {
  *  — which passes no `startMyListings` — keeps whatever A16.9 loaded. */
 const A16_11b: Amendment = {
   id: 'A16.11b', ...SL,
-  find: '    if (this.props.listings && me && me.state === "active" && (me.roles || []).indexOf("seller") > -1) this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => {});\n  }',
-  replace: '    if (this.props.listings && me && me.state === "active" && (me.roles || []).indexOf("seller") > -1) this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => {});\n'
+  find: '    if (this.props.listings && me && me.state === "active" && (me.roles || []).indexOf("seller") > -1) this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => this.setState({ myListings: [] }));\n  }',
+  replace: '    if (this.props.listings && me && me.state === "active" && (me.roles || []).indexOf("seller") > -1) this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => this.setState({ myListings: [] }));\n'
     + '    if (this.props.startMyListings) this.setState({ myListings: this.props.startMyListings });\n'
     + '  }',
   count: 1
@@ -1446,11 +1483,84 @@ const A16_13: Amendment = {
   count: 1
 };
 
+/** A16.14 — "Create a listing" CREATES one (A-SL23 (1), on the review's Critical-1 and Major-1).
+ *
+ *  Two defects, one line. `create()` was built, tested and never called, so the create path wrote
+ *  nothing at all: with `editingId` unset every other handler took its no-adapter fallback and the
+ *  wizard was a form over nothing — D23's "it appears to be stubs and not functional" surviving in
+ *  the one place John would look first. Worse, the handler reset `step`, `wizSubmitted` and
+ *  `wizErr` and NOTHING ELSE, so a seller who had just edited a listing and pressed Save and exit
+ *  opened "Create a listing" on that listing's own `editingId`, its `w` and its photographs: every
+ *  Continue patched it, every Add files uploaded onto it, Submit submitted it, and a published one
+ *  was taken off the market on the way. They believed they were creating; they were overwriting.
+ *
+ *  So the new listing exists BEFORE the first step renders, and `editingId`, `w` and `wizAssets`
+ *  are all set from scratch in the same `setState`. A refusal opens the wizard with the message in
+ *  `wizErr` — the design's own error slot — and `editingId` null, which is the one state in which
+ *  nothing can be written to the wrong listing.
+ *
+ *  `wizAssets: null`, which is the SL7 review's own recommended literal, not the `[]` A-SL23 (1)
+ *  spells it with. `null` is A16.4's "nothing has been read yet" and `[]` is "read, and there are
+ *  none" — the same distinction A16.1 draws on the dashboard — and a listing this handler has just
+ *  created has not been read. It also keeps the DESIGN: `[]` would empty A16.4's tile list on the
+ *  app while the reference, which has no adapter and never runs this arm, kept the design's own
+ *  three, and `wizard-preview`'s "Photos attached" row would read 0 against the frozen 3 (the DOM
+ *  oracle's `child[0] text "3" ≠ "0"`, 21 pixels). Nothing is lost: the first Continue patches and
+ *  writes `wizAssets` from the server's own answer (A16.6), which is before step 6 on every path
+ *  through the wizard.
+ *
+ *  With no adapter the design's own one-liner runs untouched, which is the reference and the
+ *  Claude Design preview. On the APP the four `wizard-*` captures reach the wizard through here,
+ *  so `prepare()` answers `POST /api/seller/listings` with a fixed id (harness.ts,
+ *  `newListingBody`): the captures stay deterministic and the seller persona gains no throwaway
+ *  drafts. `w` is the DESIGN's own initial literal, copied byte for byte from `state.w`. */
+const A16_14: Amendment = {
+  id: 'A16.14', ...SL,
+  find: '      startWizard: () => this.setState({ sellerView: "wizard", step: 1, wizSubmitted: false, wizErr: "" }),',
+  replace: '      startWizard: () => {\n'
+    + '        if (!this.props.listings) return this.setState({ sellerView: "wizard", step: 1, wizSubmitted: false, wizErr: "" });\n'
+    + '        const fresh = { sellerView: "wizard", step: 1, wizSubmitted: false, wizAssets: null, w: { name: "", type: "Small animal", est: "", city: "", zip: "", anon: true, price: "", rev: "", revBand: false, docs: "", rooms: "", sqft: "", bldg: "Included", facility: "", desc: "", photos: 0, ownership: "Sole proprietor", hours: "", facilityType: "Standalone", docsLocked: true } };\n'
+    + '        return this.props.listings.create().then(\n'
+    + '          (id) => this.setState(Object.assign({}, fresh, { editingId: id, wizErr: "" })),\n'
+    + '          (e) => this.setState(Object.assign({}, fresh, { editingId: null, wizErr: (e && e.message) || "A new listing could not be started." }))\n'
+    + '        );\n'
+    + '      },',
+  count: 1
+};
+
+/** A16.15 — "Save and exit" SAVES (A-SL23 (3), on the review's Major-2).
+ *
+ *  `App.vue:1066` labels the wizard's exit button *Save and exit* and `exitWizard` only flipped
+ *  the view. While the wizard was a prototype that was a harmless fiction; now that Continue
+ *  genuinely `PATCH`es, a seller who filled in step 4 and pressed the button labelled *Save* lost
+ *  the step. It patches the step it is on, with the same `patch(editingId, step, w)` Continue
+ *  uses, and only then switches to the dashboard — reloading it, because the row's own meta line
+ *  is one of the things that just changed.
+ *
+ *  A refusal keeps the seller IN the wizard with the message in `wizErr`: leaving would throw
+ *  away the very fields the server refused to store. A refused RELOAD still exits — the step was
+ *  saved, and the dashboard's own load failure is A16.9's business, not this button's.
+ *
+ *  Pixel-safe: none of the four `wizard-*` captures presses it, and with no adapter the design's
+ *  own one-liner runs untouched. */
+const A16_15: Amendment = {
+  id: 'A16.15', ...SL,
+  find: '      exitWizard: () => this.setState({ sellerView: "dash", wizSubmitted: false }),',
+  replace: '      exitWizard: () => {\n'
+    + '        if (!this.props.listings || !s.editingId) return this.setState({ sellerView: "dash", wizSubmitted: false });\n'
+    + '        return this.props.listings.patch(s.editingId, s.step, s.w).then(\n'
+    + '          () => this.props.listings.list().then((rows) => this.setState({ sellerView: "dash", wizSubmitted: false, wizErr: "", myListings: rows }), () => this.setState({ sellerView: "dash", wizSubmitted: false, wizErr: "" })),\n'
+    + '          (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })\n'
+    + '        );\n'
+    + '      },',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
     A7_3, A7_4, A8_1a, A8_1b, A8_1c, A8_2, A8_3a, A8_3b, A8_4a, A8_4b, A8_5, A8_6, A8_7, A8_8a, A8_8b,
     A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5, A12_6, A12_7, A12_8, A12_9, A12_10, A12_11,
     A15_1, A15_2, A15_3a, A15_3b, A15_3c, A15_3d,
-    A16_1, A16_2, A16_3, A16_4, A16_5, A16_6, A16_7, A16_8, A16_9, A16_10, A16_11a, A16_11b, A16_12, A16_13];
+    A16_1, A16_2, A16_3, A16_4, A16_5, A16_6, A16_7, A16_8, A16_9, A16_10, A16_11a, A16_11b, A16_12, A16_13, A16_14, A16_15];
 }

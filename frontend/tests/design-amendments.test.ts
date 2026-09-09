@@ -123,11 +123,16 @@ describe('local design amendments (spec D15)', () => {
     // photograph count stops counting documents, and the location names the listing's own state
     // rather than Texas (A12.8's ruled edit, in the one place the wizard repeats it).
     'A16.12', 'A16.13',
+    // A16.14/A16.15 (A-SL23 (1) and (3), the SL7 review's Critical-1/Major-1 and Major-2): the
+    // wizard's two doors. "Create a listing" creates one — and, in the same `setState`, stops
+    // carrying the LAST listing's `editingId` into it — and "Save and exit" saves the step it is
+    // on before it exits, which is what its own label has always promised.
+    'A16.14', 'A16.15',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(102);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(104);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

@@ -3,6 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Component } from '../logic.js';
 import {
   ListingError,
+  MAX_PAGES,
   makeListingsAdapter,
   money,
   toDashboardRow,
@@ -113,6 +114,20 @@ describe('toDashboardRow', () => {
     expect(toDashboardRow(draft({ price: 860_000, docs: 2 })).meta).toBe('$860K · 2 doctors');
     expect(toDashboardRow(draft({ sqft: 3000 })).meta).toBe('Price to be set · 3,000 sq ft');
     expect(toDashboardRow(draft({ docs: 1 })).meta).toBe('Price to be set · 1 doctor');
+  });
+
+  it('groups the square feet the same way in every locale (A-SL23 (6) m1)', () => {
+    // `toLocaleString()` with no locale reads the BROWSER's, so a seller on de-DE saw `4.200 sq
+    // ft` and one on fr-FR `4 200 sq ft`, while the design's own fixture — and the pixel oracle —
+    // say `4,200`. Every other value in this mapping is a deterministic port of the design's own
+    // `money()`; this one is now too (SL7 review, Minor-1).
+    const group = vi.spyOn(Number.prototype, 'toLocaleString').mockReturnValue('4.200');
+    expect(toDashboardRow(draft({ sqft: 4200 })).meta).toBe('Price to be set · 4,200 sq ft');
+    expect(group, 'the mapping must not consult the browser locale at all').not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+    expect(toDashboardRow(draft({ sqft: 1_234_567 })).meta).toBe('Price to be set · 1,234,567 sq ft');
+    expect(toDashboardRow(draft({ sqft: 999 })).meta).toBe('Price to be set · 999 sq ft');
+    expect(toDashboardRow(draft({ sqft: 1000 })).meta).toBe('Price to be set · 1,000 sq ft');
   });
 });
 
@@ -320,5 +335,145 @@ describe('the adapter', () => {
   it('is a ListingError with the code every time, so a caller can branch on it', () => {
     expect(new ListingError('STATE', 'no').code).toBe('STATE');
     expect(new ListingError('STATE', 'no').name).toBe('ListingError');
+  });
+
+  // --- A-SL23 (7) I1: one page was one page, and the cursor was dropped -------------------
+  it('list() follows next_cursor to the end', async () => {
+    const calls = stubFetch(
+      { status: 200, body: { items: [draft({ id: 'a' })], next_cursor: 'c1' } },
+      { status: 200, body: { items: [draft({ id: 'b' })], next_cursor: null } }
+    );
+    expect((await api().list()).map((r) => r.id)).toEqual(['a', 'b']);
+    expect(calls.map((c) => c.url)).toEqual([
+      '/api/seller/listings?limit=200',
+      '/api/seller/listings?limit=200&cursor=c1'
+    ]);
+  });
+
+  it('list() stops after MAX_PAGES rather than following a cursor that never ends', async () => {
+    const calls = stubFetch({ status: 200, body: { items: [draft()], next_cursor: 'always' } });
+    expect(await api().list()).toHaveLength(MAX_PAGES);
+    expect(calls).toHaveLength(MAX_PAGES);
+  });
+
+  it('list() percent-encodes the cursor it was handed', async () => {
+    const calls = stubFetch(
+      { status: 200, body: { items: [], next_cursor: 'a b&c' } },
+      { status: 200, body: { items: [], next_cursor: null } }
+    );
+    await api().list();
+    expect(calls[1].url).toBe('/api/seller/listings?limit=200&cursor=a%20b%26c');
+  });
+
+  // --- A-SL23 (6) m7: the "Add files" button's own promise -------------------------------
+  function pickReturns(file: File | null): void {
+    const inputs: HTMLInputElement[] = [];
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+      const el = Object.getPrototypeOf(document).createElement.call(document, tag) as HTMLInputElement;
+      if (tag === 'input') {
+        inputs.push(el);
+        queueMicrotask(() => {
+          if (file) Object.defineProperty(el, 'files', { value: [file] });
+          el.dispatchEvent(new Event(file ? 'change' : 'cancel'));
+        });
+      }
+      return el;
+    }) as typeof document.createElement);
+  }
+
+  it('pick() offers documents as well as photographs (D18\'s three types)', () => {
+    const inputs: HTMLInputElement[] = [];
+    vi.spyOn(document, 'createElement').mockImplementation(((tag: string) => {
+      const el = Object.getPrototypeOf(document).createElement.call(document, tag) as HTMLInputElement;
+      if (tag === 'input') inputs.push(el);
+      return el;
+    }) as typeof document.createElement);
+    void api().pick();
+    expect(inputs[0].accept).toBe(
+      'image/jpeg,image/png,image/webp,application/pdf,text/csv,'
+      + 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    );
+    vi.restoreAllMocks();
+  });
+
+  it('attach() uploads a photograph, asks what it shows and hands back the refreshed draft', async () => {
+    const calls = stubFetch(
+      { status: 201, body: { id: 'as-1', kind: 'photo', name: 'x.jpg', content_type: 'image/webp', byte_size: 9 } },
+      { status: 200, body: draft({ photos: [{ id: 'as-1', name: 'Reception, looking in' }] }) }
+    );
+    pickReturns(new File([new Uint8Array([1])], 'x.jpg', { type: 'image/jpeg' }));
+    vi.stubGlobal('prompt', vi.fn().mockReturnValue('Reception, looking in'));
+    const answer = await api().attach('a3f1');
+    expect(answer?.assets).toEqual([{ kind: 'Photo', name: 'Reception, looking in', id: 'as-1' }]);
+    expect(calls.map((c) => c.url)).toEqual([
+      '/api/seller/listings/a3f1/photos', '/api/seller/listings/a3f1/assets/as-1'
+    ]);
+    vi.restoreAllMocks();
+  });
+
+  it('attach() routes a document to the document route, and never asks it what it shows', async () => {
+    const calls = stubFetch(
+      { status: 201, body: { id: 'as-2', kind: 'other', name: 'Floor plan.pdf', content_type: 'application/pdf', byte_size: 9 } },
+      { status: 200, body: draft({ documents: [{ id: 'as-2', kind: 'other', name: 'Floor plan.pdf', content_type: 'application/pdf', byte_size: 9, url: '/x' }] }) }
+    );
+    const prompt = vi.fn();
+    vi.stubGlobal('prompt', prompt);
+    pickReturns(new File([new Uint8Array([1])], 'Floor plan.pdf', { type: 'application/pdf' }));
+    const answer = await api().attach('a3f1');
+    expect(answer?.assets).toEqual([{ kind: 'PDF', name: 'Floor plan.pdf', id: 'as-2' }]);
+    expect(calls.map((c) => c.url)).toEqual([
+      '/api/seller/listings/a3f1/documents', '/api/seller/listings/a3f1'
+    ]);
+    expect((calls[0].init.body as FormData).get('kind')).toBe('other');
+    expect(prompt, 'a document is not a photograph and has no caption to write').not.toHaveBeenCalled();
+    vi.restoreAllMocks();
+  });
+
+  it('attach() resolves with null when the seller dismisses the dialog, and uploads nothing', async () => {
+    const calls = stubFetch({ status: 200, body: draft() });
+    pickReturns(null);
+    expect(await api().attach('a3f1')).toBeNull();
+    expect(calls).toHaveLength(0);
+    vi.restoreAllMocks();
+  });
+
+  it('attach() rejects with the caption refusal, not just the upload one (SL7 review, Major-3)', async () => {
+    // Nested handlers made the caption's rejection a sibling of the upload's fulfilment, so a 429
+    // on `LISTING_PATCH` escaped as an unhandled rejection and the tile list never refreshed.
+    stubFetch(
+      { status: 201, body: { id: 'as-1', kind: 'photo', name: 'x.jpg', content_type: 'image/webp', byte_size: 9 } },
+      { status: 429, body: { error: { code: 'RATE_LIMITED', message: 'Too many requests.' } } }
+    );
+    pickReturns(new File([new Uint8Array([1])], 'x.jpg', { type: 'image/jpeg' }));
+    vi.stubGlobal('prompt', vi.fn().mockReturnValue('Reception'));
+    await expect(api().attach('a3f1')).rejects.toMatchObject({ code: 'RATE_LIMITED' });
+    vi.restoreAllMocks();
+  });
+});
+
+// --- A-SL23 (2): the oracle's own page, and the row that carries its own words ----------------
+describe('toDashboardRow on the design\'s own fixture row', () => {
+  it('takes the row\'s own words where a row has them', () => {
+    // `frontend/tests/design-seller-listings.mjs` serves the DESIGN's four dashboard fixtures as a
+    // real page of `/api/seller/listings`, so `seller-dash` reaches its frozen pixels through the
+    // SUCCESS path instead of through a rejected load. Their prose is not constructible from any
+    // column (A-SL2), so the row carries it — `design-listings.mjs`'s `name: null` again.
+    expect(toDashboardRow({
+      id: 's1', status: 'published', title: 'Small animal practice — Cedar Park',
+      meta: '$1.45M · 3 doctors · 4,200 sq ft', note: 'Live since August 24 · 34 views, 2 requests'
+    })).toEqual({
+      id: 's1', status: 'published', title: 'Small animal practice — Cedar Park',
+      meta: '$1.45M · 3 doctors · 4,200 sq ft', note: 'Live since August 24 · 34 views, 2 requests'
+    });
+  });
+
+  it('is the identity on every one of the design\'s four rows', () => {
+    for (const row of new Component({}).state.sellerListings) expect(toDashboardRow(row)).toEqual(row);
+  });
+
+  it('derives all three from the columns for a row the real endpoint sent', () => {
+    expect(toDashboardRow(draft({ id: 'x', status: 'draft' }))).toEqual({
+      id: 'x', status: 'draft', title: 'Untitled listing', meta: 'Price to be set', note: 'Draft'
+    });
   });
 });

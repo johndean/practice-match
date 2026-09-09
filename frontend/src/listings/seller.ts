@@ -91,6 +91,27 @@ export interface DashboardRow {
   note: string;
 }
 
+/**
+ * One of the DESIGN's own dashboard fixture rows, as `frontend/tests/design-seller-listings.mjs`
+ * serves them (A-SL2, as re-ruled by A-SL23 (2)).
+ *
+ * `seller-dash` is one of the thirteen frozen screens and its four rows are the design's own
+ * `sellerListings`. Until A-SL23 the app reached them through a FAILURE — the oracle answered the
+ * collection with a body carrying no `items`, `list()` rejected, and the design's fixtures stood
+ * in — which made a frozen capture depend on an answer the real API cannot give, and showed a
+ * REAL seller four invented listings whenever their own load failed (SL7 review, Critical-2). The
+ * app now renders what the API answered and nothing else, so the oracle has to ANSWER with the
+ * design's four rows, through the success path.
+ *
+ * Their prose is not constructible from any column and A-SL2 recorded why: "Live since August 24 ·
+ * 34 views, 2 requests" needs a view count and a request count this slice does not have, and
+ * "Draft started August 30" needs a creation date `serialise_draft` does not carry. So the row
+ * carries the three fields itself, and `toDashboardRow` takes them where a row has them. This is
+ * `design-listings.mjs`'s `name: null` in the other direction — a value the real endpoint never
+ * sends, carried by the stub so that the DESIGN's own words are what the oracle compares.
+ */
+export interface DesignRow { id: string; status: string; title: string; meta: string; note: string }
+
 /** One step-6 tile: the badge the design draws and the name under it. */
 export interface WizardAsset { kind: string; name: string; id: string }
 
@@ -98,6 +119,19 @@ export interface WizardAsset { kind: string; name: string; id: string }
 export interface WizardDraft { w: Record<string, string | boolean>; assets: WizardAsset[] }
 
 export type StatusAction = 'pause' | 'republish' | 'withdraw';
+
+/** One page of the seller's own listings, as `GET /api/seller/listings` answers it. */
+interface ListingsPage { items?: unknown; next_cursor?: string | null }
+
+/** The endpoint's own `MAX_LIST`, and far past what one seller holds. */
+const PAGE_LIMIT = 200;
+
+/**
+ * The same stop `src/listings/load.ts` puts on the same loop, for the same reason: a server that
+ * answers with the cursor it was given would otherwise spin for ever, and this read happens inside
+ * `componentDidMount`. Twenty pages of two hundred is 4 000 listings for one seller.
+ */
+export const MAX_PAGES = 20;
 
 /**
  * `logic.js`'s own `money()` (logic.js:251), ported value for value.
@@ -129,14 +163,29 @@ const NOTE: Record<string, string> = {
   withdrawn: 'Withdrawn'
 };
 
+/** A whole number with the design's own thousands separator.
+ *
+ *  A-SL23 (6) m1, on the SL7 review's Minor-1: `Number.toLocaleString()` with no locale reads the
+ *  BROWSER's, so `4200` rendered `4.200` on a seller set to de-DE and `4 200` on fr-FR while the
+ *  design's own fixture — and the pixel oracle — say `4,200`. Every other value in this mapping is
+ *  a deterministic port of the design's own `money()`; this one is too.
+ */
+function grouped(n: number): string {
+  return String(n).replace(/\B(?=(\d{3})+(?!\d))/g, ',');
+}
+
 /**
  * A draft as the design's dashboard row.
  *
  * A-SL22 (3): `decline_reason` is the note under the DECLINED pill and nowhere else. The reason
  * survives a later publish (A-SL19's addendum), so a published listing that was once declined
  * still reads "Live · visible in search" rather than the old refusal.
+ *
+ * A row that already carries the three presentational fields is taken AS IT STANDS — see
+ * `DesignRow`. That arm is the oracle's; every row the real endpoint sends takes the other one.
  */
-export function toDashboardRow(d: Draft): DashboardRow {
+export function toDashboardRow(d: Draft | DesignRow): DashboardRow {
+  if ('title' in d) return { id: d.id, status: d.status, title: d.title, meta: d.meta, note: d.note };
   // The design's own two shapes: "Small animal practice — Cedar Park" for a listing that has a
   // community, and "Untitled listing" (logic.js:209) for one that does not yet.
   const title = d.city ? `${d.type || 'Small animal'} practice — ${d.city}` : 'Untitled listing';
@@ -145,7 +194,7 @@ export function toDashboardRow(d: Draft): DashboardRow {
   // listing with no asking price (the submit handler, logic.js:1236).
   const parts = [d.price ? money(d.price) : 'Price to be set'];
   if (d.docs) parts.push(`${d.docs} ${d.docs === 1 ? 'doctor' : 'doctors'}`);
-  if (d.sqft) parts.push(`${d.sqft.toLocaleString()} sq ft`);
+  if (d.sqft) parts.push(`${grouped(d.sqft)} sq ft`);
   return {
     id: d.id,
     status: d.status,
@@ -243,6 +292,7 @@ export interface ListingsAdapter {
   upload(id: string, file: File): Promise<ApiAsset>;
   document(id: string, file: File, kind?: string): Promise<ApiAsset>;
   caption(id: string, assetId: string, text: string): Promise<WizardDraft>;
+  attach(id: string): Promise<WizardDraft | null>;
   remove(id: string, assetId: string): Promise<void>;
   reorder(id: string, ids: string[]): Promise<WizardDraft>;
   submit(id: string): Promise<WizardDraft>;
@@ -253,21 +303,41 @@ export interface ListingsAdapter {
 
 const ACTIONS: StatusAction[] = ['pause', 'republish', 'withdraw'];
 
+/** The three types the API takes as a DOCUMENT (`DOCUMENT_TYPES`, spec D18/Q3). Anything the file
+ *  dialog can return that is NOT one of these is a photograph, which is the only other thing the
+ *  design's single "Add files" button can add. */
+const DOCUMENT_TYPES = ['application/pdf', 'text/csv',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'];
+
+/** Everything "Add files" may hand back: the three photograph types the API re-encodes, then the
+ *  three document types it stores as they are. */
+const ACCEPT = ['image/jpeg', 'image/png', 'image/webp', ...DOCUMENT_TYPES].join(',');
+
 export function makeListingsAdapter(): ListingsAdapter {
-  return {
+  const adapter: ListingsAdapter = {
     /**
-     * The dashboard's rows. One page of 200 — the endpoint's own `MAX_LIST`, and far past what
-     * one seller holds — so the dashboard never shows a truncated list without saying so.
+     * The dashboard's rows — every one of them, following `next_cursor` to the end (A-SL23 (7)
+     * I1). One page of `PAGE_LIMIT` is what a seller has today; a seller with 201 listings used to
+     * lose the rest in silence, which is the one failure mode a dashboard must not have.
      *
      * A body that is not a page REJECTS rather than answering `[]`: under A-SL22 (1) a loaded
      * empty array is a real answer that empties the dashboard, so "there was no answer" cannot be
-     * spelled the same way. That is A-L6.2 (1)'s ruled shape — the design's own fixtures stay
-     * whenever `items` is not an array — expressed where the caller can act on it.
+     * spelled the same way. That is A-L6.2 (1)'s ruled shape, as narrowed by A-SL22 (1) — the
+     * design's own fixtures stay whenever `items` is not an array, where A-L6.2 (1) itself said
+     * "not a NON-EMPTY array" — expressed where the caller can act on it.
      */
     list: async () => {
-      const page = await json<{ items?: unknown }>('GET', '/listings?limit=200');
-      if (!Array.isArray(page.items)) throw new ListingError('BAD_ANSWER', 'The listings could not be read.');
-      return (page.items as Draft[]).map(toDashboardRow);
+      const rows: DashboardRow[] = [];
+      let cursor: string | null = null;
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const query = `/listings?limit=${PAGE_LIMIT}${cursor === null ? '' : `&cursor=${encodeURIComponent(cursor)}`}`;
+        const body: ListingsPage = await json<ListingsPage>('GET', query);
+        if (!Array.isArray(body.items)) throw new ListingError('BAD_ANSWER', 'The listings could not be read.');
+        rows.push(...(body.items as (Draft | DesignRow)[]).map(toDashboardRow));
+        cursor = body.next_cursor ?? null;
+        if (cursor === null) break;
+      }
+      return rows;
     },
     create: async () => (await json<{ id: string }>('POST', '/listings')).id,
     get: async (id) => toWizardDraft(await json<Draft>('GET', `/listings/${id}`)),
@@ -288,7 +358,7 @@ export function makeListingsAdapter(): ListingsAdapter {
       return toWizardDraft(await json<Draft>('POST', `/listings/${id}/status`, { action }));
     },
     /**
-     * The design's "Add files" button, wired to a real file dialog.
+     * The file dialog behind "Add files", offering everything the API accepts (A-SL23 (6) m7).
      *
      * The dialog is the browser's, not a design element: the approved step 6 has no file input of
      * its own and inventing one is forbidden (spec §14 item 7 asks Rev 3 for the whole control
@@ -297,7 +367,7 @@ export function makeListingsAdapter(): ListingsAdapter {
     pick: () => new Promise<File | null>((resolve) => {
       const input = document.createElement('input');
       input.type = 'file';
-      input.accept = 'image/jpeg,image/png,image/webp';
+      input.accept = ACCEPT;
       input.addEventListener('change', () => resolve(input.files && input.files[0] ? input.files[0] : null));
       input.addEventListener('cancel', () => resolve(null));
       input.click();
@@ -308,6 +378,35 @@ export function makeListingsAdapter(): ListingsAdapter {
      * step 6 has no caption field and the design is not invented against. An empty answer leaves
      * the photograph undescribed, and the design's own slot name by position is what it reads as.
      */
-    describe: () => window.prompt('What does this photograph show?')?.trim() ?? ''
+    describe: () => window.prompt('What does this photograph show?')?.trim() ?? '',
+    /**
+       * The whole of "Add files": choose a file, put it where its type belongs, and hand back the
+     * draft the tiles are drawn from. ONE promise, so ONE rejection handler covers all four steps
+     * (A-SL23 (4), on the SL7 review's Major-3: the caption's rejection used to be a SIBLING of
+     * the upload's fulfilment, so a 429 on `LISTING_PATCH` escaped unhandled, `wizErr` stayed
+     * empty and the photograph the seller had just uploaded never appeared — they would upload it
+     * again).
+     *
+     * A photograph is uploaded and then DESCRIBED (A-SL20, John: "have the user articulate what
+     * it is"), which answers with the refreshed draft. A document is not: it has no caption in
+     * this schema — `PATCH …/assets/{id}` is `kind = 'photo'` only — and its own filename is the
+     * design's vocabulary for a document tile (`Floor plan.pdf`), so the draft is re-read
+     * instead. `kind` stays the API's default `other`: the approved step 6 has no kind picker and
+     * Rev 3 owns one (spec §14).
+     *
+     * Resolves with `null` when the seller dismisses the dialog — nothing was added, so there is
+     * nothing to redraw.
+     */
+    attach: async (id) => {
+      const file = await adapter.pick();
+      if (file === null) return null;
+      if (DOCUMENT_TYPES.includes(file.type)) {
+        await adapter.document(id, file);
+        return adapter.get(id);
+      }
+      const asset = await adapter.upload(id, file);
+      return adapter.caption(id, asset.id, adapter.describe());
+    }
   };
+  return adapter;
 }

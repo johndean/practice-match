@@ -1890,7 +1890,7 @@ class Component extends DCLogic {
     if (this.props.startAnswerNote) this.setState({ answer: Object.assign({}, this.state.answer, { note: this.props.startAnswerNote }) });
     if (this.state.gate === "verify" && !this.state.gateToken) this.setState({ gate: "verify-expired" });
     else if (this.state.gate === "verify" && this.props.auth) this.props.auth.verify(this.state.gateToken).then(() => this.setState({ gate: "signin", gateToken: "", formNotice: "Your address is verified. Sign in to complete your access request." }), () => this.setState({ gate: "verify-expired", gateToken: "" }));
-    if (this.props.listings && me && me.state === "active" && (me.roles || []).indexOf("seller") > -1) this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => {});
+    if (this.props.listings && me && me.state === "active" && (me.roles || []).indexOf("seller") > -1) this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => this.setState({ myListings: [] }));
     if (this.props.startMyListings) this.setState({ myListings: this.props.startMyListings });
   }
 
@@ -2619,7 +2619,7 @@ class Component extends DCLogic {
       const action = status === "paused" ? "pause" : status === "withdrawn" ? "withdraw" : "republish";
       this.props.listings.setStatus(id, action).then(
         () => this.props.listings.list().then((rows) => this.setState({ myListings: rows })),
-        (e) => this.setState({ wizErr: (e && e.message) || "That could not be changed." })
+        (e) => this.setState((st) => ({ myListings: (st.myListings || []).map((l) => (l.id === id ? Object.assign({}, l, { note: (e && e.message) || "That could not be changed." }) : l)) }))
       );
     }
     this.setState((s) => ({ sellerListings: s.sellerListings.map((l) => (l.id === id ? Object.assign({}, l, { status, note: status === "paused" ? "Paused by you just now · hidden from search" : status === "withdrawn" ? "Withdrawn just now · no longer visible to buyers" : status === "published" ? "Live again · visible in search" : l.note }) : l)) }));
@@ -2790,7 +2790,7 @@ class Component extends DCLogic {
       isDash: !isWizard, isWizard: isWizard,
       heading: isWizard ? "Create a Listing" : "My Practice Listings",
       sub: isWizard ? "Eight short steps. Nothing is visible to buyers until you submit and the VIN Foundation approves." : "Publish, pause or withdraw a listing, and answer the buyers who ask about it.",
-      listings: (s.myListings !== undefined ? s.myListings : s.sellerListings).map((l) => {
+      listings: (s.myListings !== undefined ? s.myListings : (this.props.listings ? [] : s.sellerListings)).map((l) => {
         const pill = this.statusPill(l.status);
         const actions = [];
         const openWizard = () => {
@@ -2858,7 +2858,7 @@ class Component extends DCLogic {
     };
 
     const cfg = byStep[step] || byStep[1];
-    const slots = this.photoSet({ id: "wiz", type: w.type, photos: [] });
+    const slots = this.photoSet({ id: "wiz", type: w.type, photos: [], name: w.name, area: w.city });
     const uploads = s.wizAssets
       ? s.wizAssets.map((a, i) => ({ kind: a.kind, name: a.name || (slots[i] ? slots[i].caption : "Photo " + (i + 1)) }))
       : [{ kind: "Photo", name: "Exterior.jpg" }, { kind: "Photo", name: "Lobby.jpg" }, { kind: "Photo", name: "Treatment.jpg" }, { kind: "PDF", name: "Floor plan.pdf" }].slice(0, 3 + (w.photos || 0));
@@ -2876,10 +2876,10 @@ class Component extends DCLogic {
       uploads,
       addPhoto: () => {
         if (!this.props.listings || !s.editingId) return this.setState((st) => ({ w: Object.assign({}, st.w, { photos: Math.min((st.w.photos || 0) + 1, 1) }) }));
-        return this.props.listings.pick().then((file) => (file ? this.props.listings.upload(s.editingId, file).then(
-          (a) => this.props.listings.caption(s.editingId, a.id, this.props.listings.describe()).then((d) => this.setState({ wizAssets: d.assets, wizErr: "" })),
+        return this.props.listings.attach(s.editingId).then(
+          (d) => (d ? this.setState({ wizAssets: d.assets, wizErr: "" }) : null),
           (e) => this.setState({ wizErr: (e && e.message) || "That file could not be uploaded." })
-        ) : null));
+        );
       },
       error: !!s.wizErr, errorText: s.wizErr,
       progressLabel: "Step " + step + " of 8",
@@ -3343,8 +3343,21 @@ class Component extends DCLogic {
       }),
 
       isSeller: s.screen === "seller",
-      startWizard: () => this.setState({ sellerView: "wizard", step: 1, wizSubmitted: false, wizErr: "" }),
-      exitWizard: () => this.setState({ sellerView: "dash", wizSubmitted: false }),
+      startWizard: () => {
+        if (!this.props.listings) return this.setState({ sellerView: "wizard", step: 1, wizSubmitted: false, wizErr: "" });
+        const fresh = { sellerView: "wizard", step: 1, wizSubmitted: false, wizAssets: null, w: { name: "", type: "Small animal", est: "", city: "", zip: "", anon: true, price: "", rev: "", revBand: false, docs: "", rooms: "", sqft: "", bldg: "Included", facility: "", desc: "", photos: 0, ownership: "Sole proprietor", hours: "", facilityType: "Standalone", docsLocked: true } };
+        return this.props.listings.create().then(
+          (id) => this.setState(Object.assign({}, fresh, { editingId: id, wizErr: "" })),
+          (e) => this.setState(Object.assign({}, fresh, { editingId: null, wizErr: (e && e.message) || "A new listing could not be started." }))
+        );
+      },
+      exitWizard: () => {
+        if (!this.props.listings || !s.editingId) return this.setState({ sellerView: "dash", wizSubmitted: false });
+        return this.props.listings.patch(s.editingId, s.step, s.w).then(
+          () => this.props.listings.list().then((rows) => this.setState({ sellerView: "dash", wizSubmitted: false, wizErr: "", myListings: rows }), () => this.setState({ sellerView: "dash", wizSubmitted: false, wizErr: "" })),
+          (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })
+        );
+      },
       seller: this.sellerVals(),
       wiz: this.wizardVals(),
       isAdmin: s.screen === "admin",

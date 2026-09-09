@@ -373,6 +373,9 @@ def _row(**over: Any) -> dict[str, Any]:
         "listed_at": datetime(2026, 9, 3, tzinfo=UTC), "note": "n", "staff": "s",
         "services": "sv", "facility": "f", "ownership": "o", "photos": [],
         "photo_captions": [],
+        # A-SL23 (0): `_SELECT`'s aggregate of this listing's own `listing_asset.caption`s, keyed
+        # by asset id. Empty for a seed, whose `photos` name no asset row at all.
+        "asset_captions": {},
     }
     base.update(over)
     return base
@@ -715,3 +718,107 @@ async def test_every_seeded_hospital_serves_every_photograph_with_a_caption(
         assert all(p is not None for p in item["photos"]), item["name"]
         assert all(isinstance(c, str) and c for c in item["photo_captions"]), item["name"]
     assert sum(len(item["photos"]) for item in items) == 195, "every photograph John supplied"
+
+
+# --- A-SL23 (0): one caption contract for seeds and sellers ------------------------------------
+# A-SL22 (2) asked for the seller's own words to be "served as `photo_captions` for published
+# listings" and SL7 could not deliver that half: `photo_captions` is `main`'s (A-L11) and had not
+# landed. It has now. A SEED photograph's description lives in `listing.photo_captions`, written by
+# the seeder from the supplier's filename; a SELLER's lives in `listing_asset.caption`, written by
+# the seller in the wizard's photo step (A-SL20, "have the user articulate what it is") — and
+# `listing.photos` holds that asset's uuid rather than a path, so the caption is looked up by the
+# uuid rather than by position. One contract out of the two homes.
+
+ASSET_INSERT = (
+    "INSERT INTO listing_asset (id, listing_id, kind, name, content_type, byte_size, sha256, storage_key, caption)"
+    " VALUES (%(id)s, %(listing)s, %(kind)s, 'x.webp', 'image/webp', 1, 'sha', %(key)s, %(caption)s)"
+)
+
+
+def _asset(conn: Any, listing_id: str, caption: str | None, kind: str = "photo") -> str:
+    asset_id = str(uuid4())
+    with conn.cursor() as cur:
+        cur.execute(ASSET_INSERT, {"id": asset_id, "listing": listing_id, "kind": kind,
+                                   "key": f"listings/{listing_id}/{asset_id}", "caption": caption})
+    return asset_id
+
+
+async def test_a_seller_photograph_is_served_under_the_seller_s_own_caption(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    listing_id = _insert(conn, photos=json.dumps([]))
+    first = _asset(conn, listing_id, "Reception, looking in")
+    second = _asset(conn, listing_id, "The dental suite")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET photos = %s::jsonb WHERE id = %s", (json.dumps([first, second]), listing_id))
+    _, cookies, headers = member()
+    body = (await client.get(f"/api/listings/{listing_id}", headers=auth_headers(cookies, headers))).json()
+    assert body["photo_captions"] == ["Reception, looking in", "The dental suite"]
+
+
+async def test_a_seller_photograph_nobody_has_described_carries_no_caption(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """Null at its own position, exactly as an undescribed seed photograph is: the design's own
+    fixed slot caption is what `photoSet` renders in its place (amendment A15)."""
+    listing_id = _insert(conn, photos=json.dumps([]))
+    described = _asset(conn, listing_id, "Reception, looking in")
+    undescribed = _asset(conn, listing_id, None)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET photos = %s::jsonb WHERE id = %s",
+                    (json.dumps([undescribed, described]), listing_id))
+    _, cookies, headers = member()
+    body = (await client.get(f"/api/listings/{listing_id}", headers=auth_headers(cookies, headers))).json()
+    assert body["photo_captions"] == [None, "Reception, looking in"]
+
+
+async def test_a_document_s_caption_is_never_a_photograph_s(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """`caption` is photographs-only at the write (`kind = 'photo'`), and the read agrees: no
+    document's caption reaches the aggregate at all.
+
+    The SHAPE is the proof. Nothing described this listing's one photograph, so with an empty
+    aggregate the column comes through untouched and the answer is `[]`; had the floor plan's
+    caption been aggregated, the list would have been padded to the photographs and read
+    `[None]`. `[]` is therefore only reachable with `kind = 'photo'` on the subquery."""
+    listing_id = _insert(conn, photos=json.dumps([]))
+    photo = _asset(conn, listing_id, None)
+    _asset(conn, listing_id, "A floor plan", kind="floor_plan")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET photos = %s::jsonb WHERE id = %s", (json.dumps([photo]), listing_id))
+    _, cookies, headers = member()
+    body = (await client.get(f"/api/listings/{listing_id}", headers=auth_headers(cookies, headers))).json()
+    assert body["photo_captions"] == []
+
+
+async def test_a_seeded_listing_keeps_its_positional_captions(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """The other home, untouched: a seed's `photos` are paths that name no asset row at all, so
+    `listing.photo_captions` answers position for position exactly as A-L11 wrote it."""
+    listing_id = _insert(conn, photos=json.dumps(EMPTY_SLOTS),
+                         photo_captions=json.dumps(["Exterior — front", None, "Interior — exam", None, None, None]))
+    _, cookies, headers = member()
+    body = (await client.get(f"/api/listings/{listing_id}", headers=auth_headers(cookies, headers))).json()
+    assert body["photo_captions"] == ["Exterior — front", None, "Interior — exam", None, None, None]
+
+
+def test_photo_captions_prefers_the_asset_s_own_words_over_the_column() -> None:
+    """The one row where both homes have something to say. `listing.photo_captions` is the
+    seeder's; `listing_asset.caption` is the seller's, and the seller has looked at the
+    photograph — so theirs wins, position by position."""
+    body = serialise(_row(photos=["as-1", "as-2"],
+                          photo_captions=["The seeder's guess", "The seeder's other guess"],
+                          asset_captions={"as-1": "Reception, looking in"}),
+                     datetime(2026, 9, 6, tzinfo=UTC))
+    assert body["photo_captions"] == ["Reception, looking in", "The seeder's other guess"]
+
+
+def test_photo_captions_pads_to_the_photographs_when_only_assets_speak() -> None:
+    """A seller's listing has an EMPTY `photo_captions` column, so the two lists must be made
+    parallel here rather than left ragged — `photoSet` reads them by index."""
+    body = serialise(_row(photos=["as-1", "as-2", None], photo_captions=[],
+                          asset_captions={"as-2": "The dental suite"}),
+                     datetime(2026, 9, 6, tzinfo=UTC))
+    assert body["photo_captions"] == [None, "The dental suite", None]

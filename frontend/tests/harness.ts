@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { designListingsBody } from './design-listings.mjs';
+import { designSellerPageBody } from './design-seller-listings.mjs';
 
 // Deterministic rendering on both targets: no basemap tiles (markers still draw
 // over the blank canvas), fonts loaded, pointer parked, animations settled.
@@ -124,42 +125,96 @@ export async function prepare(page: Page): Promise<void> {
     );
   }
   // ---------------------------------------------------------------------------------------
-  // A-SL2 / A-SL22 (1) — the seller and admin COLLECTIONS answer NO PAGE on the oracle.
+  // A-SL2, as re-ruled by A-SL23 (2) — the seller and admin COLLECTIONS answer a REAL page.
   //
   // `seller-dash` and `admin-listings` are two of the thirteen frozen screens and their rows are
   // the design's own fixtures: four Austin listings whose notes carry a view count and a request
   // count no column supplies, and a fifth admin row whose "Flagged" pill names a status
-  // `listing.status` does not have and which D24 refuses to invent. That round trip is not
-  // constructible, so the app must render the DESIGN's rows on those two captures.
+  // `listing.status` does not have and which D24 refuses to invent.
   //
-  // An EMPTY page will not do it any more. Under A-SL22 (1) a loaded `[]` is a real answer and
-  // empties the dashboard — that ruling is the whole of the empty-dashboard state — so the only
-  // thing that leaves the design's fixtures in place is no page at all. This body has no `items`
-  // array, which is exactly A-L6.2 (1)'s ruled shape ("the design's fixtures stay whenever
-  // `items` is not an array"), and `src/listings/seller.ts`'s `list()` rejects on it, so
-  // `myListings` stays UNSET rather than empty.
+  // SL7 reached those rows through a FAILURE: the answer here carried no `items` array, `list()`
+  // rejected on it, and the design's own fixtures stood in. Two things were wrong with that. The
+  // frozen capture depended on a body the real API cannot produce — so `seller-dash` matched no
+  // reachable state of the app — and the same fallback showed a REAL seller four invented
+  // listings whenever their own load genuinely failed (SL7 review, Critical-2). With an adapter
+  // present the app now renders what the API answered and NOTHING else, so the oracle has to
+  // answer, and what it answers is the design's own four rows (`design-seller-listings.mjs`,
+  // derived from `logic.js` exactly as `design-listings.mjs` is derived from `P`).
   //
-  // `seller-dash-empty` is the one state that wants a real page, and it registers its own route
+  // POST is the four `wizard-*` captures' own path (A-SL23 (1)): "Create a listing" now creates
+  // one, and a stub keeps those captures deterministic and costs the seller persona no throwaway
+  // drafts. `submitStubUrl` answers the one write `wizard-done` makes after it.
+  //
+  // `seller-dash-empty` is the one state that wants an EMPTY page, and it registers its own route
   // over this one before it navigates (`reach`, below) — Playwright matches the LAST registered
   // handler first.
   //
-  // The API path is proved elsewhere: pytest for the endpoints, vitest for the two mappings, and
-  // the seeded QA parity run against the real API with no stub armed.
+  // The API path is proved elsewhere: pytest for the endpoints, vitest for the mappings, and the
+  // seeded QA parity run against the real API with no stub armed.
   //
   // NEVER against a remote target, for the same reason the listings stub is not.
   // ---------------------------------------------------------------------------------------
-  for (const href of unloadedCollectionStubUrls()) {
+  for (const href of collectionStubUrls()) {
     await page.route((url) => url.href === href || url.href.startsWith(`${href}?`),
-      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{"next_cursor": null}' }));
+      (route) => (route.request().method() === 'POST'
+        ? route.fulfill({ status: 201, contentType: 'application/json', body: newListingBody() })
+        : route.fulfill({ status: 200, contentType: 'application/json', body: collectionStubBody(href) })));
+  }
+  const submit = submitStubUrl();
+  if (submit !== null) {
+    await page.route(submit, (route) => route.fulfill({
+      status: 200, contentType: 'application/json', body: newDraftBody()
+    }));
   }
 }
 
-/** The two collection endpoints the oracle answers with no page, or `[]` on a remote target
- *  (A-SL2, A-SL22 (1)). Pinned in harness.test.ts (review I4): an untested `if` is all that
+/** The two collection endpoints the oracle answers itself, or `[]` on a remote target
+ *  (A-SL2, A-SL23 (2)). Pinned in harness.test.ts (review I4): an untested `if` is all that
  *  stands between a stub and a QA parity run. */
-export function unloadedCollectionStubUrls(env: NodeJS.ProcessEnv = process.env): string[] {
+export function collectionStubUrls(env: NodeJS.ProcessEnv = process.env): string[] {
   if (env.PW_APP_URL) return [];
   return ['/api/seller/listings', '/api/admin/listings'].map((path) => new URL(path, appOrigin(env)).href);
+}
+
+/** What each of them answers: the design's own four seller rows, and — for the admin collection,
+ *  which nothing fetches until Task SL8 — a page with no rows on it. Never "no page": an
+ *  error-shaped answer is exactly what A-SL23 (2) took out of this harness. */
+export function collectionStubBody(href: string): string {
+  return href.endsWith('/api/seller/listings') ? designSellerPageBody() : sellerPageBody([]);
+}
+
+/** The listing id `POST /api/seller/listings` answers with on the oracle. A fixed v4-shaped uuid
+ *  so the four `wizard-*` captures are identical run to run, and so `submitStubUrl` can name the
+ *  one route `wizard-done` goes on to write to. */
+export const WIZARD_LISTING_ID = '00000000-0000-4000-8000-0000000005e7';
+
+/** `create()`'s answer: the API's own `{"id": …}`, 201 (`app/api/seller_listings.py::create`). */
+export function newListingBody(): string {
+  return JSON.stringify({ id: WIZARD_LISTING_ID });
+}
+
+/** `submit()`'s answer for that listing — `serialise_draft` for a draft nobody has filled in.
+ *  Nothing reads it: `logic.js`'s submit handler chains a reload onto it and the design's own
+ *  "Submitted" card is drawn synchronously either way. It exists so the write does not 404, which
+ *  Chromium logs as a console error and `prepare()`'s gate fails the capture on. */
+export function newDraftBody(): string {
+  return JSON.stringify({
+    id: WIZARD_LISTING_ID, slug: `listing-${WIZARD_LISTING_ID}`, status: 'in_review',
+    name: null, type: null, est: null, ownership: null, city: null, zip: null,
+    price: null, rev: null, docs: null, rooms: null, sqft: null, hours: null, desc: null,
+    bldg: null, facilityType: null, facility: null,
+    anon: true, revBand: false, docsLocked: true,
+    state: null, market: null, area: null,
+    decline_reason: null, submitted_at: null, updated_at: '2026-09-09T00:00:00+00:00',
+    assets: [], photos: [], documents: []
+  });
+}
+
+/** Where that submit lands, or `null` on a remote target — the same rule, and the same reason, as
+ *  every other stub here. */
+export function submitStubUrl(env: NodeJS.ProcessEnv = process.env): string | null {
+  if (env.PW_APP_URL) return null;
+  return new URL(`/api/seller/listings/${WIZARD_LISTING_ID}/submit`, appOrigin(env)).href;
 }
 
 /** The body `seller-dash-empty` puts over the stub above: a REAL page with no listings on it,

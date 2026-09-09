@@ -1672,3 +1672,15 @@ def test_no_tracked_text_file_cites_a_retired_number():
             for m in re.finditer(pattern, text)
         ]
         assert hits == [], f"{pattern!r} survives in {hits} — {why}"
+
+
+def test_deploy_md_names_both_homes_of_a_photograph_s_caption():
+    """A-SL23 (6) m6, on the SL7 review's Minor-6. A caption is STORED, in one of two columns:
+    the seeder writes the supplier's filename into `listing.photo_captions` (A-L11), the seller
+    writes their own words into `listing_asset.caption` (A-SL20), and `serialise` serves both as
+    one `photo_captions` contract (A-SL23 (0)). The runbook said the caption was "never stored",
+    which was true of the pipeline it described and false of the system."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "listing.photo_captions" in text, "the seed home of a caption is undocumented"
+    assert "listing_asset.caption" in text, "the seller home of a caption is undocumented"
+    assert "never stored" not in text, "DEPLOY.md still says a caption is never stored"

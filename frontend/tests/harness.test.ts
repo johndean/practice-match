@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, unloadedCollectionStubUrls, sellerPageBody, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
+import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, collectionStubUrls, collectionStubBody, newListingBody, submitStubUrl, WIZARD_LISTING_ID, sellerPageBody, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
 import { designListingsBody } from './design-listings.mjs';
+import { designSellerPageBody, designSellerRows } from './design-seller-listings.mjs';
 import { P } from '../src/logic.js';
 import type { Page } from '@playwright/test';
 import { resolveTargets } from './targets';
@@ -257,28 +258,53 @@ describe('the design-fixture listings stub (spec D6, review I4)', () => {
 });
 
 // ---------------------------------------------------------------------------------------
-// A-SL2 / A-SL22 (1) — the two collection endpoints the oracle answers with NO page.
+// A-SL2, as re-ruled by A-SL23 (2) — the two collection endpoints the oracle answers ITSELF,
+// and both answers are now REAL pages.
 //
 // Same rule as the D6 stub above and the same reason it is pinned (review I4): the `if` that
 // disarms it against a remote target is all that stands between the oracle's fixtures and a QA
 // parity run, and an untested `if` is how it comes back.
 // ---------------------------------------------------------------------------------------
-describe('the seller and admin collection stubs (A-SL2)', () => {
+describe('the seller and admin collection stubs (A-SL2, A-SL23 (2))', () => {
   it('is disarmed for a remote target — there the real, seeded API answers', () => {
-    expect(unloadedCollectionStubUrls({ PW_APP_URL: 'https://qa.foundation.vin' } as NodeJS.ProcessEnv)).toEqual([]);
-    expect(unloadedCollectionStubUrls({ PW_APP_URL: 'https://qa.foundation.vin', PW_APP_PORT: '5473' } as NodeJS.ProcessEnv)).toEqual([]);
+    expect(collectionStubUrls({ PW_APP_URL: 'https://qa.foundation.vin' } as NodeJS.ProcessEnv)).toEqual([]);
+    expect(collectionStubUrls({ PW_APP_URL: 'https://qa.foundation.vin', PW_APP_PORT: '5473' } as NodeJS.ProcessEnv)).toEqual([]);
+    expect(submitStubUrl({ PW_APP_URL: 'https://qa.foundation.vin' } as NodeJS.ProcessEnv)).toBeNull();
   });
 
   it('names both collections on the local app origin, on the port the run uses', () => {
-    expect(unloadedCollectionStubUrls({ PW_APP_PORT: '5473' } as NodeJS.ProcessEnv))
+    expect(collectionStubUrls({ PW_APP_PORT: '5473' } as NodeJS.ProcessEnv))
       .toEqual(['http://localhost:5473/api/seller/listings', 'http://localhost:5473/api/admin/listings']);
-    expect(unloadedCollectionStubUrls({} as NodeJS.ProcessEnv))
+    expect(collectionStubUrls({} as NodeJS.ProcessEnv))
       .toEqual(['http://localhost:5173/api/seller/listings', 'http://localhost:5173/api/admin/listings']);
   });
 
+  it('serves every design seller fixture as one complete page (A-SL23 (2))', () => {
+    // The frozen `seller-dash` capture used to depend on the app FAILING to read this endpoint —
+    // a body with no `items`, which the real API cannot send. It answers now, and the app renders
+    // what it answered: the design's own four rows, through the success path.
+    const body = JSON.parse(collectionStubBody('http://localhost:5473/api/seller/listings')) as
+      { items: unknown[]; next_cursor: string | null };
+    expect(body.items).toEqual(designSellerRows());
+    expect(body.items).toHaveLength(4);
+    expect(body.next_cursor, 'the stub is one page — a cursor would send list() round again').toBeNull();
+    expect(collectionStubBody('http://localhost:5473/api/seller/listings')).toBe(designSellerPageBody());
+  });
+
+  it('answers the admin collection with an empty page, never with no page at all', () => {
+    // Nothing fetches it yet — it is armed for Task SL8 — but an ERROR-shaped answer is what
+    // A-SL23 (2) took out of this harness, so this one is a page with no rows on it.
+    expect(JSON.parse(collectionStubBody('http://localhost:5473/api/admin/listings')))
+      .toEqual({ items: [], next_cursor: null });
+  });
+
+  it('answers Create a listing with one new id, for the four wizard captures (A-SL23 (1))', () => {
+    expect(JSON.parse(newListingBody())).toEqual({ id: WIZARD_LISTING_ID });
+    expect(submitStubUrl({ PW_APP_PORT: '5473' } as NodeJS.ProcessEnv))
+      .toBe(`http://localhost:5473/api/seller/listings/${WIZARD_LISTING_ID}/submit`);
+  });
+
   it('the empty-dashboard body is a REAL page with no rows on it (A-SL17)', () => {
-    // Not the same thing as the stub's `{"next_cursor": null}`: this one HAS an `items` array, so
-    // `list()` resolves and `myListings` becomes `[]` — which is what empties the table.
     expect(JSON.parse(sellerPageBody([]))).toEqual({ items: [], next_cursor: null });
     expect(JSON.parse(sellerPageBody([{ id: 'x' }]))).toEqual({ items: [{ id: 'x' }], next_cursor: null });
   });

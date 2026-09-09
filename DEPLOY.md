@@ -213,9 +213,18 @@ that wins where there is one.
 **Where a description comes from.** Today it is the **supplier's own filename** —
 `06_interior_reception_lobby.png` becomes "Interior — reception lobby" — recorded per photograph in
 `index.json` by `scripts/prepare_photos.py`, stored in `listing.photo_captions` (migrations/090) by
-the seeder, and served beside `photos` by the API. Wave 2b's sellers write their own, in the same
-column. A photograph with none falls back to the design's fixed slot caption, and past the sixth
-slot — where the design has no caption to lend — to "Photo N".
+the seeder, and served beside `photos` by the API. A photograph with none falls back to the
+design's fixed slot caption, and past the sixth slot — where the design has no caption to lend —
+to "Photo N".
+
+**A seller's own words are the other home (A-SL20, A-SL23 (0)).** A photograph the seller uploads
+in the wizard's photo step carries the sentence they write for it in `listing_asset.caption`
+(migrations/033), keyed by the asset — `listing.photos` holds that asset's uuid rather than a
+path, so there is no position for the seeder's column to describe it at. `serialise` reads both
+homes into the one `photo_captions` array a buyer is served, the seller's own words winning where
+both have something to say. A caption is therefore STORED, wherever it was written; the DESIGN's
+own fixed slot caption is a FALLBACK held in the design file, and it is what a photograph nobody
+has described still renders under.
 
 **`seeds/hospitals/photos/curation.json` is the source of truth for which photograph fills which
 slot.** It was written by looking at every source image, because John's filenames do not reliably
