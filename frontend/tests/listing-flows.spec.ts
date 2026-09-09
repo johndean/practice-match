@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { crc32, deflateSync } from 'node:zlib';
-import { guard, signInAs } from './harness';
+import { appOrigin, guard, signInAs } from './harness';
 
 // ---------------------------------------------------------------------------------------
 // The seller's listing lifecycle, end to end, against the real API — controller amendment
@@ -27,19 +27,6 @@ import { guard, signInAs } from './harness';
 // ---------------------------------------------------------------------------------------
 test.use({ trace: process.env.PW_APP_URL ? 'off' : 'retain-on-failure' });
 
-/**
- * Whether the API this run drives can STORE a photograph. `ObjectStore.from_settings` enables the
- * upload routes only when all four `S3_*` settings are present and answers `503 STORAGE_UNAVAILABLE`
- * otherwise (`app/api/seller_listings.py::store_for_request`); Playwright hands the api web server
- * this same process environment (`tests/targets.ts`), so the same four names decide here. A live
- * target (`PW_APP_URL`) has its own bucket and always qualifies. The lifecycle test below never
- * consults this — every other step is a database write and runs everywhere; only the photograph
- * test does, and it says why when it stands aside (round-4 report, NEEDS_CONTEXT: the local
- * Playwright api has no object store and `moto`'s standalone server is not in the lock).
- */
-const canStorePhotographs = !!process.env.PW_APP_URL
-  || !!(process.env.S3_ENDPOINT_URL && process.env.S3_BUCKET && process.env.S3_ACCESS_KEY_ID && process.env.S3_SECRET_ACCESS_KEY);
-const NO_STORE = 'the api this run drives has no object store (S3_ENDPOINT_URL, S3_BUCKET, S3_ACCESS_KEY_ID, S3_SECRET_ACCESS_KEY unset), so uploads answer 503 STORAGE_UNAVAILABLE — the photograph is proven where a bucket exists';
 
 /** A wizard control by the label the design gives it. Substring, not exact: the design's `<label>`
  *  wraps the caption AND the help line under the field, so the control's accessible name carries
@@ -267,11 +254,13 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
   // The photograph: one upload through the browser's own file dialog, described through the
   // browser's own prompt (A-SL20 — the approved step 6 has neither control), on a second draft
   // this run creates and leaves behind. Two real requests — the upload and the caption — and the
-  // tile that appears is the caption, not a filename; the preview then counts it. Runs wherever
-  // the api can store an object; stands aside, saying why, where it cannot.
+  // tile that appears is the caption, not a filename; the preview then counts it.
+  //
+  // Locally and in CI the api is `tests/e2e/api_under_test.py` (A-SL28), which holds an in-process
+  // moto bucket, so the upload is real and this test never stands aside. A LIVE target may have no
+  // bucket: it is asked, out of band, and the answer is quoted.
   // -------------------------------------------------------------------------------------
   test('a seller adds a photograph with a caption, and the preview counts it', async ({ page }) => {
-    test.skip(!canStorePhotographs, NO_STORE);
     guard(page);
     await signInAs(page, 'seller', '/seller');
 
@@ -279,6 +268,18 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
     await button(page, 'Create a listing').click();
     const id = ((await (await created).json()) as { id: string }).id;
     await onStep(page, 1);
+
+    if (process.env.PW_APP_URL) {
+      // The upload route checks for its store BEFORE it reads the file (`upload_photo`), so a
+      // bodiless POST is answered `503 STORAGE_UNAVAILABLE` by a target with no bucket and with a
+      // 4xx about the missing file by one that has it — nothing is uploaded either way. Out of band
+      // (`page.request`, the context's own cookies) so a 503 never reaches the console gate, with
+      // the double-submit token and Origin the API requires of every write.
+      const csrf = (await page.context().cookies()).find((c) => c.name === 'pm_csrf');
+      const probe = await page.request.post(`/api/seller/listings/${id}/photos`, { headers: { 'X-CSRF-Token': csrf!.value, Origin: appOrigin() } });
+      const answer = await probe.text();
+      test.skip(probe.status() === 503, `the live target answered 503 ${answer} — it has no object store, so the photograph is proven where a bucket exists (A-SL28 (2))`);
+    }
 
     // Straight to step 6 by the rail: the rail saves step 1 first (A16.18, partial mode — the
     // blank year is left out) and that save is a 200 on a draft nobody has typed into.

@@ -40,10 +40,15 @@ describe('resolveTargets', () => {
     // third one meeting `FORGOT_IP` in the middle of a screenshot. The script refuses anywhere but
     // `ENVIRONMENT=test` against a loopback Redis, so this line can never reach QA or production;
     // in CI it runs and deletes nothing (a fresh Redis service per job).
+    // A-SL28 (round-4 NEEDS_CONTEXT): the server itself is `tests/e2e/api_under_test.py`, a
+    // TEST-ONLY launcher that starts moto's in-process S3 mock, creates the bucket and then runs
+    // uvicorn exactly as the bare command did — so `listing-flows.spec.ts`'s photograph reaches a
+    // real upload route locally and in CI instead of `503 STORAGE_UNAVAILABLE`. It refuses to
+    // start anywhere but `ENVIRONMENT=test` (`tests/e2e/test_api_under_test.py` pins that).
     it('resets the local rate limits and seeds the persona before it serves, from the repository root', () => {
       const w = api()!;
       expect(w.command).toBe(
-        'poetry run python scripts/migrate.py && poetry run python scripts/reset_rate_limits.py && poetry run python scripts/seed_persona.py && poetry run uvicorn app.main:app --port 8017'
+        'poetry run python scripts/migrate.py && poetry run python scripts/reset_rate_limits.py && poetry run python scripts/seed_persona.py && poetry run python -m tests.e2e.api_under_test --port 8017'
       );
       expect(w.cwd).toBe('../..');
       expect(w.url).toBe('http://localhost:8017/api/healthz');
@@ -55,23 +60,35 @@ describe('resolveTargets', () => {
       expect(api({ PW_APP_URL: 'https://qa.foundation.vin' })).toBeUndefined();
     });
 
-    it('carries the docker-compose.dev.yml defaults tests/conftest.py already uses', () => {
+    // The four `S3_*` defaults are DUMMIES for the in-process moto bucket (A-SL28): an AWS-shaped
+    // endpoint, because moto intercepts by request URL and a Railway-shaped host would escape to
+    // the network (A-SL16 M4), and a bucket name and credentials that exist nowhere. The same
+    // "process env wins" rule as the first four, so a run that carries real settings is unchanged.
+    it('carries the docker-compose.dev.yml defaults tests/conftest.py already uses, and the moto bucket\'s', () => {
       expect(api()!.env).toEqual({
         DATABASE_URL: 'postgresql://pm:pm_dev_pw@localhost:5433/practice_match',
         REDIS_URL: 'redis://localhost:6380/0',
         ENVIRONMENT: 'test',
-        API_SECRET_KEY: 'test_only_secret_change_me'
+        API_SECRET_KEY: 'test_only_secret_change_me',
+        S3_ENDPOINT_URL: 'https://s3.amazonaws.com',
+        S3_BUCKET: 'pm-e2e',
+        S3_ACCESS_KEY_ID: 'test-only-key-id',
+        S3_SECRET_ACCESS_KEY: 'test-only-secret'
       });
     });
 
     it('lets the process environment override each default, so CI\'s job env wins', () => {
       expect(
-        api({ DATABASE_URL: 'postgresql://pm:pm_dev_pw@localhost:5433/ci', API_SECRET_KEY: 'ci_only_secret_change_me' })!.env
+        api({ DATABASE_URL: 'postgresql://pm:pm_dev_pw@localhost:5433/ci', API_SECRET_KEY: 'ci_only_secret_change_me', S3_BUCKET: 'ci-bucket' })!.env
       ).toEqual({
         DATABASE_URL: 'postgresql://pm:pm_dev_pw@localhost:5433/ci',
         REDIS_URL: 'redis://localhost:6380/0',
         ENVIRONMENT: 'test',
-        API_SECRET_KEY: 'ci_only_secret_change_me'
+        API_SECRET_KEY: 'ci_only_secret_change_me',
+        S3_ENDPOINT_URL: 'https://s3.amazonaws.com',
+        S3_BUCKET: 'ci-bucket',
+        S3_ACCESS_KEY_ID: 'test-only-key-id',
+        S3_SECRET_ACCESS_KEY: 'test-only-secret'
       });
     });
   });

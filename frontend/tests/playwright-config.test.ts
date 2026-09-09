@@ -339,20 +339,21 @@ describe('listing-flows.spec.ts — the live seller lifecycle (A-SL27 (5))', () 
     expect(spec).toMatch(/\bguard\(page\)/);
   });
 
-  it('stands aside on exactly one condition — an api with no object store — and only for the photograph', () => {
-    // The upload routes answer `503 STORAGE_UNAVAILABLE` until all four `S3_*` settings are
-    // present (`app/api/seller_listings.py::store_for_request`), and the local Playwright api has
-    // none of them (round-4 report, NEEDS_CONTEXT). The skip mirrors that four-setting rule, names
-    // the four, never fires on a live target, and gates the photograph test alone: the lifecycle
-    // test — every wizard step against the real API — has no skip at all.
+  it('stands aside on exactly one condition — a LIVE target that answered 503 to the upload route — and only for the photograph', () => {
+    // Locally and in CI the api is `tests/e2e/api_under_test.py`, which holds an in-process moto
+    // bucket, so the photograph test runs for real and has nothing to skip on (A-SL28 (1)). A live
+    // target may have no bucket: the spec asks the upload route itself, out of band, and stands
+    // aside only on its 503 — quoting it (A-SL28 (2)). The lifecycle test — every wizard step
+    // against the real API — has no skip at all.
     const spec = withoutComments(readFileSync(FLOWS, 'utf8'));
     const skips = [...spec.matchAll(/test\.skip\(([^,]+),/g)].map((m) => m[1].trim());
-    expect(skips).toEqual(['!canStorePhotographs']);
+    expect(skips).toEqual(['probe.status() === 503']);
+    expect(spec, 'the probe is made on a live target alone').toMatch(/if \(process\.env\.PW_APP_URL\) \{[\s\S]*?page\.request\.post\(`\/api\/seller\/listings\/\$\{id\}\/photos`/);
+    expect(spec, 'the reason quotes the answer').toContain('the live target answered 503 ${answer}');
+    // No environment-derived gate remains: the four S3 names decide nothing in the spec.
     for (const name of ['S3_ENDPOINT_URL', 'S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY']) {
-      expect(spec, `the store rule names ${name}`).toContain(`process.env.${name}`);
+      expect(spec).not.toContain(`process.env.${name}`);
     }
-    expect(spec).toMatch(/const canStorePhotographs = !!process\.env\.PW_APP_URL\s*\|\|/);
-    expect(spec).toContain('STORAGE_UNAVAILABLE');
     // The lifecycle test is the first `test(` and carries no skip before the second `test(`.
     const first = spec.indexOf("test('a seller creates a listing");
     const second = spec.indexOf("test('a seller adds a photograph");
