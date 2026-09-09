@@ -2149,3 +2149,1130 @@ describe('logic.js — what Continue actually sends (A-SL26)', () => {
     });
   });
 });
+
+describe('A13 — the metro dropdown', () => {
+  const MARKET_KEYS = ['Austin, TX', 'Sacramento, CA', 'Orlando, FL', 'Atlanta, GA'];
+  // M4 (review, round 1): the cases below that arm real `document` listeners through
+  // `componentDidMount`. Unmounting only on the happy path leaves a listener bound to a dead
+  // component for the rest of the FILE the moment an assertion fails, so the teardown is
+  // unconditional here. `componentWillUnmount` is a no-op on a component that never mounted.
+  afterEach(() => { c.componentWillUnmount(); });
+
+  it('starts closed, with the four markets and Austin selected', () => {
+    const v = c.renderVals();
+    expect(v.marketMenuOpen).toBe(false);
+    expect(v.marketTriggerLabel).toBe('Austin, TX metro');
+    expect(v.marketOptions.map((o: any) => o.label)).toEqual(MARKET_KEYS.map((m) => `${m} metro`));
+    expect(v.marketOptions.map((o: any) => o.selected)).toEqual([true, false, false, false]);
+    expect(v.marketCaretStyle).toContain('rotate(0deg)');
+    expect(v.marketFieldStyle).toContain('border: 1px solid var(--border-subtle)');
+  });
+
+  it('the trigger opens the menu and seeds the highlight on the current market', () => {
+    c.renderVals().toggleMarketMenu();
+    expect(c.state.marketMenu).toBe(true);
+    expect(c.state.marketMenuAt).toBe(0);
+    const v = c.renderVals();
+    expect(v.marketMenuOpen).toBe(true);
+    expect(v.marketCaretStyle).toContain('rotate(180deg)');
+    expect(v.marketFieldStyle).toContain('border: 1px solid var(--vf-accent)');
+  });
+
+  it('the trigger closes the menu again (the design\'s own toggle contract)', () => {
+    c.renderVals().toggleMarketMenu();
+    c.renderVals().toggleMarketMenu();
+    expect(c.state.marketMenu).toBe(false);
+  });
+
+  it('ArrowDown opens a closed menu, then walks and wraps; ArrowUp wraps the other way', () => {
+    const key = (k: string) => { const e = { key: k, preventDefault: vi.fn() }; c.renderVals().marketMenuKeys(e); return e; };
+    expect(key('ArrowDown').preventDefault).toHaveBeenCalled();
+    expect(c.state).toMatchObject({ marketMenu: true, marketMenuAt: 0 });
+    key('ArrowDown'); expect(c.state.marketMenuAt).toBe(1);
+    key('ArrowDown'); key('ArrowDown'); key('ArrowDown'); expect(c.state.marketMenuAt).toBe(0);
+    key('ArrowUp'); expect(c.state.marketMenuAt).toBe(3);
+  });
+
+  it('Home and End jump to the ends, and do nothing while the menu is closed', () => {
+    const key = (k: string) => { const e = { key: k, preventDefault: vi.fn() }; c.renderVals().marketMenuKeys(e); return e; };
+    expect(key('End').preventDefault).not.toHaveBeenCalled();
+    expect(c.state.marketMenu).toBeFalsy();
+    c.renderVals().toggleMarketMenu();
+    key('End'); expect(c.state.marketMenuAt).toBe(3);
+    key('Home'); expect(c.state.marketMenuAt).toBe(0);
+  });
+
+  it('Enter chooses the highlighted market and leaves Space to the button while closed', () => {
+    const key = (k: string) => { const e = { key: k, preventDefault: vi.fn() }; c.renderVals().marketMenuKeys(e); return e; };
+    expect(key('Enter').preventDefault).not.toHaveBeenCalled();   // closed: the native click opens it
+    expect(key('Tab').preventDefault).not.toHaveBeenCalled();     // an unhandled key is left alone
+    c.renderVals().toggleMarketMenu();
+    key('ArrowDown');
+    // I1 (review, round 1): the Enter branch itself, on an OPEN menu — the path the ruling's
+    // "normal dropdown" most obviously implies. Before this line `e.key === "Enter"` was only
+    // ever evaluated false, because the two Enter presses above happen while the menu is closed.
+    expect(key('Enter').preventDefault).toHaveBeenCalled();
+    expect(c.state.market).toBe('Sacramento, CA');
+    // Reopening seeds the highlight on the market just chosen, so Space takes that one — the same
+    // branch, the other key. (The review's suggested second `ArrowDown` here would have walked on
+    // to Orlando: `toggleMarketMenu` seeds from the CURRENT market, not from the top.)
+    c.renderVals().toggleMarketMenu();
+    expect(c.state.marketMenuAt).toBe(1);
+    expect(key(' ').preventDefault).toHaveBeenCalled();
+    expect(c.state.market).toBe('Sacramento, CA');
+  });
+
+  it('choosing an option calls setMarket with the SAME payload the <select> produced', () => {
+    vi.useFakeTimers();
+    c.renderVals().toggleMarketMenu();
+    c.renderVals().marketOptions[2].go();
+    expect(c.state).toMatchObject({
+      market: 'Orlando, FL', activeId: null, hoverId: null, loading: true,
+      marketMenu: false, marketMenuAt: -1
+    });
+    vi.advanceTimersByTime(320);
+    expect(c.state.loading).toBe(false);
+    vi.useRealTimers();
+    // the map, the rail and the pins all read `market` — the contract the <select> had
+    expect(c.renderVals().mapCenter).toEqual([28.52, -81.36]);
+    expect(c.renderVals().marketLabel).toBe('Orlando, FL metro · within 40 miles');
+  });
+
+  it('setMarket still accepts a change EVENT, the way setF does (V3:1907)', () => {
+    c.setMarket({ target: { value: 'Atlanta, GA' } });
+    expect(c.state.market).toBe('Atlanta, GA');
+  });
+
+  it('the selected row is accented, the highlighted row takes the design\'s hover grey, the rest are plain', () => {
+    c.renderVals().toggleMarketMenu();
+    c.setState({ marketMenuAt: 2 });
+    const rows = c.renderVals().marketOptions;
+    expect(rows[0].rowStyle).toContain('background: var(--vf-accent-bg)');
+    expect(rows[0].rowStyle).toContain('font-weight: 800');
+    expect(rows[2].rowStyle).toContain('background: var(--vf-neutral)');
+    expect(rows[1].rowStyle).toContain('background: none');
+    expect(rows[0].tickStyle).toContain('opacity: 1');
+    expect(rows[1].tickStyle).toContain('opacity: 0');
+  });
+
+  it('Escape closes the menu; a keydown that is not Escape, and a keydown while closed, do not', () => {
+    c.componentDidMount();
+    c.renderVals().toggleMarketMenu();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }));
+    expect(c.state.marketMenu).toBe(true);
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(c.state).toMatchObject({ marketMenu: false, marketMenuAt: -1 });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));  // no-op, and no throw
+    expect(c.state.marketMenu).toBe(false);
+    c.componentWillUnmount();
+  });
+
+  it('a pointerdown outside closes the menu; one inside the field does not', () => {
+    const host = document.createElement('div');
+    const inside = document.createElement('button');
+    host.appendChild(inside);
+    document.body.appendChild(host);
+    try {
+      c.componentDidMount();
+      c.renderVals().marketMenuRef(host);
+      // M3 (review, round 1): a pointerdown while the menu is CLOSED takes the handler's own
+      // early exit — the branch nothing reached before.
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.marketMenu).toBeFalsy();
+      c.renderVals().toggleMarketMenu();
+      inside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.marketMenu).toBe(true);
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state).toMatchObject({ marketMenu: false, marketMenuAt: -1 });
+      // …and with no node recorded yet, an outside click still closes rather than throwing
+      c.renderVals().marketMenuRef(null);
+      c.renderVals().toggleMarketMenu();
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.marketMenu).toBe(false);
+    } finally {
+      host.remove();
+    }
+  });
+
+  it('componentWillUnmount removes both document listeners it added', () => {
+    const add = vi.spyOn(document, 'addEventListener');
+    const remove = vi.spyOn(document, 'removeEventListener');
+    c.componentDidMount();
+    c.componentWillUnmount();
+    expect(add.mock.calls.filter(([t]) => t === 'pointerdown' || t === 'keydown')).toHaveLength(2);
+    expect(remove.mock.calls.filter(([t]) => t === 'pointerdown' || t === 'keydown')).toHaveLength(2);
+    add.mockRestore();
+    remove.mockRestore();
+  });
+
+  it('the orphaned setMarket render key is gone (the dead-code rule, A2.3/A2.5)', () => {
+    expect(c.renderVals().setMarket, 'nothing in the template reads it once the <select> goes').toBeUndefined();
+    expect(typeof c.setMarket, 'it lives on the class now, beside setF').toBe('function');
+  });
+
+  // I2 (review, round 1; ruled A13.6/A13.7): the two render-value orphans the <select> left
+  // behind, deleted under the same dead-code rule A2.2–A2.5 applied to the `browseSel` helpers.
+  it('the orphaned `market` render key and the option rows\' orphaned `v` are gone (A13.6/A13.7)', () => {
+    const v = c.renderVals();
+    expect(v.market, '`{{ market }}` left the template with the <select>').toBeUndefined();
+    for (const o of v.marketOptions) {
+      expect(o.v, 'the rows read label/selected/go/rowStyle/tickStyle/optId, never v').toBeUndefined();
+    }
+    // …and what the rows DO read is all still there.
+    expect(Object.keys(v.marketOptions[0]).sort()).toEqual(['go', 'label', 'optId', 'rowStyle', 'selected', 'tickStyle']);
+  });
+
+  // I3 (review, round 1, ruled): the highlight has to be announceable and visible once the
+  // seeded metro list is longer than the panel (Q5). Every row carries an id, the listbox names
+  // the highlighted one, and moving the highlight scrolls that row into view.
+  it('aria-activedescendant follows the arrow-key highlight', () => {
+    const key = (k: string) => { c.renderVals().marketMenuKeys({ key: k, preventDefault: vi.fn() }); };
+    // Round 3: the attribute moved to the TRIGGER, which is rendered on every Browse screen — so
+    // while the menu is shut it must name nothing at all, rather than the "market-opt--1" that a
+    // closed `marketMenuAt` of -1 would spell. Null, so React and Vue both omit the attribute.
+    expect(c.renderVals().marketActiveId, 'a closed menu has no active descendant').toBeNull();
+    c.renderVals().toggleMarketMenu();
+    expect(c.renderVals().marketOptions.map((o: any) => o.optId))
+      .toEqual(['market-opt-0', 'market-opt-1', 'market-opt-2', 'market-opt-3']);
+    expect(c.renderVals().marketActiveId).toBe('market-opt-0');
+    key('ArrowDown');
+    expect(c.renderVals().marketActiveId).toBe('market-opt-1');
+    key('End');
+    expect(c.renderVals().marketActiveId).toBe('market-opt-3');
+    key('Home');
+    expect(c.renderVals().marketActiveId).toBe('market-opt-0');
+  });
+
+  it('moving the highlight scrolls the highlighted row into view, and copes when it is not in the DOM', () => {
+    // m5 (final review, ruled): the rows are resolved through the field the component recorded,
+    // so they have to hang off it here rather than off the document.
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const rows = MARKET_KEYS.map((_, i) => {
+      const b = document.createElement('button');
+      b.id = `market-opt-${i}`;
+      (b as any).scrollIntoView = vi.fn();       // jsdom implements no scrollIntoView of its own
+      host.appendChild(b);
+      return b;
+    });
+    try {
+      const key = (k: string) => { c.renderVals().marketMenuKeys({ key: k, preventDefault: vi.fn() }); };
+      c.renderVals().marketMenuRef(host);
+      c.renderVals().toggleMarketMenu();
+      key('ArrowDown');
+      expect((rows[1] as any).scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+      key('End');
+      expect((rows[3] as any).scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+      // a row that cannot scroll is left alone rather than thrown at…
+      delete (rows[0] as any).scrollIntoView;
+      key('Home');
+      expect(c.state.marketMenuAt).toBe(0);
+    } finally {
+      rows.forEach((b) => b.remove());
+      host.remove();
+    }
+    // …and so is a highlight whose row is not in the document at all (the app before first paint)
+    const c2: any = new Component({});
+    c2.renderVals().toggleMarketMenu();
+    c2.renderVals().marketMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() });
+    expect(c2.state.marketMenuAt).toBe(1);
+  });
+
+  // N3 (re-review, ruled): OPENING has to scroll too. `toggleMarketMenu` and the
+  // Arrow-on-a-closed-menu branch seed the highlight while the panel is still unrendered, so
+  // there is no row to scroll to yet; the scroll therefore hangs off the panel's own mount —
+  // the design's own callback-ref idiom (`md.compareMenuRef`) — and runs on both targets at the
+  // moment the rows exist. Without it, a seeded market list longer than the panel opens scrolled
+  // to the top with the active row off-screen, which is the Q5 case I3 exists for.
+  it('opening the menu scrolls the highlighted row into view', () => {
+    const host = document.createElement('div');
+    document.body.appendChild(host);
+    const rows = MARKET_KEYS.map((_, i) => {
+      const b = document.createElement('button');
+      b.id = `market-opt-${i}`;
+      (b as any).scrollIntoView = vi.fn();
+      host.appendChild(b);
+      return b;
+    });
+    const panel = document.createElement('div');
+    host.appendChild(panel);
+    try {
+      c.renderVals().marketMenuRef(host);
+      c.setState({ market: 'Orlando, FL' });              // index 2 — a non-zero highlight
+      c.renderVals().toggleMarketMenu();
+      expect(c.state.marketMenuAt).toBe(2);
+      c.renderVals().marketPanelRef(panel);               // the panel mounts, and the rows exist
+      expect((rows[2] as any).scrollIntoView).toHaveBeenCalledWith({ block: 'nearest' });
+      expect((rows[0] as any).scrollIntoView).not.toHaveBeenCalled();
+      // unmount hands the ref null, which must not scroll anything or throw
+      c.renderVals().marketPanelRef(null);
+      expect((rows[2] as any).scrollIntoView).toHaveBeenCalledTimes(1);
+    } finally {
+      rows.forEach((b) => b.remove());
+      panel.remove();
+      host.remove();
+    }
+  });
+
+  // m5 (final review, ruled): `market-opt-N` is an id this component mints, and it is looked up
+  // inside the field the component recorded — not across the whole document. There is one Browse
+  // toolbar today, so `document.getElementById` was right today; the neighbouring code
+  // (`this._marketMenuEl`, `this._giveMenuEl`, `setMarket`'s own `host.querySelector`) is scoped,
+  // and a second instance or a panel caught mid-transition is the case that made it wrong.
+  it('the scroll is scoped to the metro field: a row of the same id elsewhere is left alone', () => {
+    const host = document.createElement('div');
+    const stray = document.createElement('button');
+    stray.id = 'market-opt-1';
+    (stray as any).scrollIntoView = vi.fn();
+    document.body.append(host, stray);
+    try {
+      c.renderVals().marketMenuRef(host);
+      c.renderVals().toggleMarketMenu();
+      c.renderVals().marketMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() });
+      expect(c.state.marketMenuAt, 'the highlight still moves').toBe(1);
+      expect((stray as any).scrollIntoView,
+        'a row outside the field the component recorded is not this menu\'s row').not.toHaveBeenCalled();
+    } finally {
+      host.remove();
+      stray.remove();
+    }
+  });
+
+  // m4 (final review, ruled): Tab is the third way out of a dropdown the keyboard can now enter,
+  // and A14.7 gave the Give menu exactly this on exactly this reasoning — two dropdowns shipping
+  // in one branch with different dismissal sets is the inconsistency the whole-branch review
+  // exists to catch. `relatedTarget` is where focus is GOING: anywhere inside the field (the
+  // trigger, another row) is a move within the control, and `null` is the browser leaving the
+  // document altogether — a window blur, which must close nothing.
+  it('Tab out of the menu closes it; moving focus within the field, or out of the document, does not', () => {
+    const host = document.createElement('div');
+    const trigger = document.createElement('button');
+    const row = document.createElement('button');
+    host.append(trigger, row);
+    const outside = document.createElement('button');
+    document.body.append(host, outside);
+    try {
+      c.componentDidMount();
+      c.renderVals().marketMenuRef(host);
+      // Closed: the handler's own early exit.
+      row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: outside }));
+      expect(c.state.marketMenu).toBeFalsy();
+      c.renderVals().toggleMarketMenu();
+      row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: trigger }));
+      expect(c.state.marketMenu, 'a move within the control is not a dismissal').toBe(true);
+      row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
+      expect(c.state.marketMenu, 'the window losing focus must not close the menu').toBe(true);
+      row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: outside }));
+      expect(c.state).toMatchObject({ marketMenu: false, marketMenuAt: -1 });
+      // …and with no field recorded, a focusout out of the control still closes rather than throwing.
+      c.renderVals().marketMenuRef(null);
+      c.renderVals().toggleMarketMenu();
+      row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: outside }));
+      expect(c.state.marketMenu).toBe(false);
+    } finally {
+      host.remove();
+      outside.remove();
+    }
+  });
+
+  // Round 4 (ruled): a choice unmounts the row the pointer or the keyboard was on, and without
+  // this focus lands on <body> — a keyboard user is dropped out of the control they were driving.
+  // A native <select> leaves focus on itself; so does the design's own listbox, whose rows sit
+  // inside the trigger's own card. Focus goes back to the trigger, whichever way the choice came.
+  describe('focus returns to the trigger after a choice', () => {
+    const field = () => {
+      const host = document.createElement('div');
+      const trigger = document.createElement('button');
+      trigger.setAttribute('aria-haspopup', 'listbox');
+      host.appendChild(trigger);
+      document.body.appendChild(host);
+      const spy = vi.spyOn(trigger, 'focus');
+      return { host, trigger, spy };
+    };
+
+    it('after a mouse choice on an option row', () => {
+      const { host, spy } = field();
+      try {
+        c.renderVals().marketMenuRef(host);
+        c.renderVals().toggleMarketMenu();
+        c.renderVals().marketOptions[2].go();
+        expect(c.state.market).toBe('Orlando, FL');
+        expect(spy, 'the row it was on has just been unmounted').toHaveBeenCalled();
+      } finally {
+        host.remove();
+      }
+    });
+
+    it('after Enter on the keyboard', () => {
+      const { host, spy } = field();
+      try {
+        c.renderVals().marketMenuRef(host);
+        c.renderVals().toggleMarketMenu();
+        c.renderVals().marketMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() });
+        c.renderVals().marketMenuKeys({ key: 'Enter', preventDefault: vi.fn() });
+        expect(c.state.market).toBe('Sacramento, CA');
+        expect(spy).toHaveBeenCalled();
+      } finally {
+        host.remove();
+      }
+    });
+
+    it('and copes with no field recorded, and with a field that holds no trigger', () => {
+      c.renderVals().marketOptions[1].go();                 // no ref yet — must not throw
+      expect(c.state.market).toBe('Sacramento, CA');
+      const bare = document.createElement('div');
+      document.body.appendChild(bare);
+      try {
+        c.renderVals().marketMenuRef(bare);
+        c.renderVals().marketOptions[3].go();
+        expect(c.state.market).toBe('Atlanta, GA');
+      } finally {
+        bare.remove();
+      }
+    });
+  });
+
+  // M2 (review, round 1, ruled): `Object.keys(MARKETS).indexOf(s.market)` is -1 whenever the
+  // current market is not one MARKETS holds — the shape Seed Listings can produce, since
+  // `applyListings` DELETES a market with no listings left (`listings/load.ts`). Unclamped,
+  // opening the menu seeded `marketMenuAt: -1` and Enter/Space then called `setMarket(keys[-1])`,
+  // i.e. `setMarket(undefined)`.
+  //
+  // The handlers are taken from a render made while the market was still valid, and the market is
+  // moved afterwards: that is the real sequence (the fixtures render, then the API's rows replace
+  // MARKETS in place), and it is also the only way to reach the branch — `renderVals()` reads
+  // `MARKETS[s.market || "Austin, TX"].center` on every render, so a re-render with an unknown
+  // market throws there long before the highlight is computed. See the report's Q5 note.
+  it('a market MARKETS no longer holds clamps the highlight to the first row', () => {
+    const v = c.renderVals();
+    c.setState({ market: 'Nowhere, ZZ' });
+    v.toggleMarketMenu();
+    expect(c.state.marketMenuAt, 'indexOf returned -1 and was not clamped').toBe(0);
+    v.marketMenuKeys({ key: 'Enter', preventDefault: vi.fn() });
+    expect(c.state.market, 'setMarket(keys[-1]) === setMarket(undefined)').toBe('Austin, TX');
+  });
+
+  it('ArrowUp with a market MARKETS no longer holds starts from the first row too', () => {
+    const v = c.renderVals();
+    c.setState({ market: 'Nowhere, ZZ' });
+    v.marketMenuKeys({ key: 'ArrowUp', preventDefault: vi.fn() });   // opens, seeds the highlight
+    expect(c.state).toMatchObject({ marketMenu: true, marketMenuAt: 0 });
+    v.marketMenuKeys({ key: 'ArrowUp', preventDefault: vi.fn() });   // …then wraps to the end
+    expect(c.state.marketMenuAt).toBe(3);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A14 — the header's Give button IS vinfoundation.org's Give dropdown (John, 2026-09-08:
+// "the Give button must be identical to the https://vinfoundation.org/ where the button is an
+// actual drop down (match button design pixel-by-pixel)"). Every literal asserted below was
+// measured on the live site on 2026-09-08; the plan's measurement table names the stylesheet and
+// the selector each one came from. The three mechanisms the live site has NO counterpart for —
+// Escape, outside-click and Arrow/Home/End movement — are John's ruling, not measurement, and are
+// characterised here branch by branch exactly as A13's are.
+// ---------------------------------------------------------------------------------------
+describe('A14 — the Give dropdown', () => {
+  // A13's rule, for A13's reason: three cases below arm real `document` listeners through
+  // `componentDidMount`, and a failed assertion would otherwise leave one bound to a dead
+  // component for the rest of the file. `componentWillUnmount` is a no-op if nothing mounted.
+  afterEach(() => { c.componentWillUnmount(); });
+
+  /** The four links, wired to real anchors, so `giveFocus` has something to move focus between. */
+  const rowEls = () => {
+    const els = [0, 1, 2, 3].map(() => {
+      const a = document.createElement('a');
+      a.href = '#';
+      document.body.appendChild(a);
+      return a;
+    });
+    c.renderVals().giveLinks.forEach((g: any, i: number) => g.ref(els[i]));
+    return els;
+  };
+  const prevent = () => { /* the handlers call it; nothing here needs to observe it */ };
+
+  it('starts closed, and the trigger carries the live pill in its idle colours', () => {
+    const v = c.renderVals();
+    expect(v.giveMenuOpen).toBe(false);
+    expect(v.giveButtonStyle).toContain('background: #339dde');
+    expect(v.giveButtonStyle).toContain('border-radius: 10px');
+    expect(v.giveButtonStyle).toContain('padding: 2px 22px');
+    expect(v.giveButtonStyle).toContain('font-size: 18px');
+    expect(v.giveButtonStyle).toContain('line-height: 24.3px');
+    // John's ruling: Montserrat 600, self-hosted, scoped to this control and its menu.
+    expect(v.giveButtonStyle).toContain("font-family: 'Montserrat', var(--rf-display)");
+    expect(v.giveButtonStyle).toContain('font-weight: 600');
+    // Closed, the underline is scaled to the hover variable, which is unset until :hover.
+    expect(v.giveUnderlineStyle).toContain('transform: scaleX(var(--rf-give-underline, 0))');
+    expect(v.giveUnderlineStyle).toContain('top: calc(100% + 4.34px)');
+    expect(v.giveUnderlineStyle).toContain('height: 3px');
+    expect(v.giveUnderlineStyle).toContain('background: #339dde');
+  });
+
+  it('the trigger opens and closes it, and opening closes the other two header menus', () => {
+    c.setState({ auth: true, screen: 'browse', navMenu: true, userMenu: true });
+    c.renderVals().toggleGiveMenu();
+    expect(c.state).toMatchObject({ giveMenu: true, navMenu: false, userMenu: false });
+    const open = c.renderVals();
+    expect(open.giveMenuOpen).toBe(true);
+    expect(open.giveButtonStyle).toContain('background: #07386f');   // the live hover/open navy
+    expect(open.giveUnderlineStyle).toContain('transform: scaleX(1)');
+    open.toggleGiveMenu();
+    expect(c.state.giveMenu).toBe(false);
+  });
+
+  it('carries John\'s four links, in his order, with his hrefs and no target', () => {
+    const rows = c.renderVals().giveLinks;
+    expect(rows.map((g: any) => g.label)).toEqual(['Annual Fund', 'Cor Group', 'Legacy Giving', 'Dr. Sophia Yin Memorial Fund']);
+    expect(rows.map((g: any) => g.href)).toEqual([
+      'https://vinfoundation.org/give/',
+      'https://vinfoundation.org/cor/',
+      'https://vinfoundation.org/legacy-giving/',
+      'https://vinfoundation.org/resources/dr-sophia-yin-memorial-fund/'
+    ]);
+    for (const g of rows) {
+      expect(g.rowStyle).toContain('font-size: 14px');
+      expect(g.rowStyle).toContain('padding: 8px 20px');
+      expect(g.rowStyle).toContain('border-left: 8px solid transparent');
+      expect(g.rowStyle).toContain('color: #07386f');
+      expect(g.rowStyle).toContain("font-family: 'Montserrat', var(--rf-display)");
+      expect(g.rowStyle).toContain('text-decoration: none');   // beats the design's own a:hover underline
+    }
+    // The rows carry exactly what the markup reads — no orphan keys (the A2.3/A13.6 rule).
+    expect(Object.keys(rows[0]).sort()).toEqual(['href', 'keys', 'label', 'pick', 'ref', 'rowStyle']);
+  });
+
+  it('choosing a link closes the menu', () => {
+    c.setState({ giveMenu: true });
+    c.renderVals().giveLinks[2].pick();
+    expect(c.state.giveMenu).toBe(false);
+  });
+
+  it('Escape closes it and returns focus to the trigger; Escape while closed is a no-op', () => {
+    const btn = document.createElement('button');
+    document.body.appendChild(btn);
+    try {
+      c.componentDidMount();
+      c.renderVals().giveButtonRef(btn);
+      c.setState({ giveMenu: true });
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      expect(c.state.giveMenu).toBe(false);
+      expect(document.activeElement).toBe(btn);
+      btn.blur();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));   // no-op, no throw
+      expect(c.state.giveMenu).toBe(false);
+      // A non-Escape key never closes anything.
+      c.setState({ giveMenu: true });
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }));
+      expect(c.state.giveMenu).toBe(true);
+      // …and with no trigger recorded, Escape still closes rather than throwing.
+      c.renderVals().giveButtonRef(null);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      expect(c.state.giveMenu).toBe(false);
+    } finally {
+      btn.remove();
+    }
+  });
+
+  it('a pointerdown outside closes it; one inside the wrapper does not', () => {
+    const host = document.createElement('div');
+    const inside = document.createElement('a');
+    host.appendChild(inside);
+    document.body.appendChild(host);
+    try {
+      c.componentDidMount();
+      c.renderVals().giveMenuRef(host);
+      // The closed menu takes the handler's own early exit — the branch nothing else reaches.
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.giveMenu).toBeFalsy();
+      c.setState({ giveMenu: true });
+      inside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.giveMenu, 'a click inside the menu must not dismiss it').toBe(true);
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.giveMenu).toBe(false);
+      // …and with no wrapper recorded, an outside click still closes rather than throwing.
+      c.renderVals().giveMenuRef(null);
+      c.setState({ giveMenu: true });
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.giveMenu).toBe(false);
+    } finally {
+      host.remove();
+    }
+  });
+
+  // C1 (review round 1, ruled). The app's `setState` runs its callback SYNCHRONOUSLY
+  // (`dc-logic.js`: `Object.assign(this.state, next); if (typeof cb === "function") cb();`) and
+  // Vue re-renders in a later microtask, so an ArrowDown that opened the menu and then focused a
+  // row inside the callback found `sc-if` unmounted, no row refs called, and focus left on the
+  // trigger — while the REFERENCE's React `setState` fires post-commit and worked. Two runtimes,
+  // two behaviours, and no gate can see it: the 45 states are captured by mouse and `screens.ts`
+  // presses no keys. The fix is A13's own mount-ref idiom (`marketPanelRef`, its round 5): the
+  // keys seed a PENDING index and the panel's callback ref spends it when the elements exist.
+  //
+  // So this case must not pre-wire the refs. It reproduces the app's real order — the handler
+  // first, against nothing, then the rows arriving, then the panel mounting — and it is the order
+  // that makes it RED against the code before the fix.
+  it('ArrowDown from the trigger opens it on the first link, ArrowUp on the last — at panel mount, not at keypress', () => {
+    const panel = document.createElement('div');
+    document.body.appendChild(panel);
+    const els = [0, 1, 2, 3].map(() => { const a = document.createElement('a'); a.href = '#'; document.body.appendChild(a); return a; });
+    try {
+      // 1. the keypress, with the menu shut and NOT ONE row rendered — the app's real state here
+      c.renderVals().giveMenuKeys({ key: 'ArrowDown', preventDefault: prevent });
+      expect(c.state.giveMenu, 'the menu opens on the keypress, as before').toBe(true);
+      expect(document.activeElement, 'there is nothing to focus yet — the panel has not mounted').not.toBe(els[0]);
+      // 2. Vue commits: the rows' refs run, then the panel's (children before parent, both
+      //    runtimes), and THAT is when the pending index is spent.
+      c.renderVals().giveLinks.forEach((g: any, i: number) => g.ref(els[i]));
+      c.renderVals().givePanelRef(panel);
+      expect(document.activeElement, 'ArrowDown opens on the first link').toBe(els[0]);
+      // 3. the same for ArrowUp, which opens on the LAST link
+      c.setState({ giveMenu: false });
+      c.renderVals().giveLinks.forEach((g: any) => g.ref(null));
+      c.renderVals().giveMenuKeys({ key: 'ArrowUp', preventDefault: prevent });
+      expect(document.activeElement, 'still nothing to focus').not.toBe(els[3]);
+      c.renderVals().giveLinks.forEach((g: any, i: number) => g.ref(els[i]));
+      c.renderVals().givePanelRef(panel);
+      expect(document.activeElement, 'ArrowUp opens on the last link').toBe(els[3]);
+      // A key that is neither arrow leaves it alone (Enter/Space is the button's own click).
+      c.setState({ giveMenu: false });
+      c.renderVals().giveMenuKeys({ key: 'Enter', preventDefault: prevent });
+      expect(c.state.giveMenu).toBe(false);
+      // Already open, the panel already mounted: the arrows move focus there and then.
+      c.setState({ giveMenu: true });
+      els[3].focus();
+      c.renderVals().giveMenuKeys({ key: 'ArrowDown', preventDefault: prevent });
+      expect(document.activeElement).toBe(els[0]);
+    } finally {
+      els.forEach((e) => e.remove());
+      panel.remove();
+    }
+  });
+
+  // The other half of C1: the pending index is the KEYBOARD's, so a menu opened with the mouse
+  // must mount with focus left exactly where the pointer put it. A ref that focused on every
+  // mount would drag a mouse user into the list, and would re-steal focus on every re-render
+  // while the menu is open.
+  it('a mouse-opened menu does not steal focus when the panel mounts, and the ref is spent once', () => {
+    const panel = document.createElement('div');
+    document.body.appendChild(panel);
+    const els = rowEls();
+    const outside = document.createElement('button');
+    document.body.appendChild(outside);
+    try {
+      outside.focus();
+      c.renderVals().toggleGiveMenu();
+      c.renderVals().givePanelRef(panel);
+      expect(document.activeElement, 'a click opened it — focus belongs to the pointer').toBe(outside);
+      // …and a keyboard open is spent exactly once: a re-render's second ref call is inert.
+      c.setState({ giveMenu: false });
+      c.renderVals().giveMenuKeys({ key: 'ArrowDown', preventDefault: prevent });
+      c.renderVals().givePanelRef(panel);
+      expect(document.activeElement).toBe(els[0]);
+      outside.focus();
+      c.renderVals().givePanelRef(panel);
+      expect(document.activeElement, 'the pending index was spent on the first mount').toBe(outside);
+      // Unmount hands the ref null, which must not focus anything or throw.
+      els[0].blur();
+      c.renderVals().givePanelRef(null);
+      expect(document.activeElement).toBe(outside);
+      // …and a stale index cannot survive into a later MOUSE open: an arrow that opened the menu
+      // and was then dismissed before the panel ever mounted leaves an index nothing spent.
+      c.setState({ giveMenu: false });
+      c.renderVals().giveMenuKeys({ key: 'ArrowUp', preventDefault: prevent });   // opens, seeds an index
+      expect(c.state.giveMenuAt, 'the arrow seeded a pending index the panel never spent').toBe(-1);
+      c.renderVals().toggleGiveMenu();                                            // shut with the pointer
+      c.renderVals().toggleGiveMenu();                                            // re-opened with the pointer
+      outside.focus();
+      c.renderVals().givePanelRef(panel);
+      expect(document.activeElement, 'a pointer open must never inherit a keyboard\'s pending index').toBe(outside);
+    } finally {
+      els.forEach((e) => e.remove());
+      outside.remove();
+      panel.remove();
+    }
+  });
+
+  it('opening from the trigger closes the other two header menus too', () => {
+    const els = rowEls();
+    try {
+      c.setState({ auth: true, screen: 'browse', navMenu: true, userMenu: true });
+      c.renderVals().giveMenuKeys({ key: 'ArrowDown', preventDefault: prevent });
+      expect(c.state).toMatchObject({ giveMenu: true, navMenu: false, userMenu: false });
+    } finally {
+      els.forEach((e) => e.remove());
+    }
+  });
+
+  it('the arrows wrap at both ends inside the menu, and Home/End jump', () => {
+    const els = rowEls();
+    try {
+      const rows = c.renderVals().giveLinks;
+      rows.forEach((g: any, i: number) => g.ref(els[i]));
+      rows[3].keys({ key: 'ArrowDown', preventDefault: prevent });
+      expect(document.activeElement, 'past the last link, focus wraps to the first').toBe(els[0]);
+      rows[0].keys({ key: 'ArrowUp', preventDefault: prevent });
+      expect(document.activeElement, 'before the first link, focus wraps to the last').toBe(els[3]);
+      rows[2].keys({ key: 'End', preventDefault: prevent });
+      expect(document.activeElement).toBe(els[3]);
+      rows[2].keys({ key: 'Home', preventDefault: prevent });
+      expect(document.activeElement).toBe(els[0]);
+      rows[1].keys({ key: 'x', preventDefault: prevent });
+      expect(document.activeElement, 'an unhandled key changes nothing').toBe(els[0]);
+      // A detached row (Vue has unmounted the menu) is skipped rather than focused…
+      rows.forEach((g: any) => g.ref(null));
+      rows[0].keys({ key: 'ArrowDown', preventDefault: prevent });   // no throw
+      expect(document.activeElement).toBe(els[0]);
+    } finally {
+      els.forEach((e) => e.remove());
+    }
+    // …and so is a component whose rows have never been rendered at all.
+    const fresh: any = new Component({});
+    fresh.renderVals().giveLinks[0].keys({ key: 'Home', preventDefault: prevent });   // no throw
+    expect(fresh.state.giveMenu).toBeFalsy();
+  });
+
+  // m2 (review round 1, ruled). Escape and outside-click were the two dismissals John's ruling
+  // named; Tab is the third way out of a menu a keyboard can now enter, and without this it left
+  // the panel open behind the focus ring. `relatedTarget` is where focus is GOING: anywhere inside
+  // the wrapper — the trigger, another row — is a move within the control, and `null` is the
+  // browser leaving the document altogether, which is not a dismissal either.
+  it('Tab out of the menu closes it; moving focus within the control, or out of the document, does not', () => {
+    const host = document.createElement('div');
+    const trigger = document.createElement('button');
+    const row = document.createElement('a');
+    row.href = '#';
+    host.append(trigger, row);
+    const outside = document.createElement('button');
+    document.body.append(host, outside);
+    try {
+      c.componentDidMount();
+      c.renderVals().giveMenuRef(host);
+      // Closed: the handler's own early exit.
+      row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: outside }));
+      expect(c.state.giveMenu).toBeFalsy();
+      // Open, and focus moves from a row to the trigger — still inside the control.
+      c.setState({ giveMenu: true });
+      row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: trigger }));
+      expect(c.state.giveMenu, 'a move within the control is not a dismissal').toBe(true);
+      // Focus leaving the document entirely (relatedTarget null) is not a dismissal either.
+      row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
+      expect(c.state.giveMenu, 'the window losing focus must not close the menu').toBe(true);
+      // Tab out: focus lands on something outside the wrapper.
+      row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: outside }));
+      expect(c.state.giveMenu).toBe(false);
+      // …and with no wrapper recorded, a focusout out of the control still closes rather than throwing.
+      c.renderVals().giveMenuRef(null);
+      c.setState({ giveMenu: true });
+      row.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: outside }));
+      expect(c.state.giveMenu).toBe(false);
+    } finally {
+      host.remove();
+      outside.remove();
+    }
+  });
+
+  it('componentWillUnmount removes all three document listeners trackMenuDismiss added', () => {
+    const add = vi.spyOn(document, 'addEventListener');
+    const remove = vi.spyOn(document, 'removeEventListener');
+    c.componentDidMount();
+    c.componentWillUnmount();
+    const kinds = (calls: unknown[][]) => calls.map(([t]) => t).filter((t) => t === 'pointerdown' || t === 'keydown' || t === 'focusout').sort();
+    expect(kinds(add.mock.calls)).toEqual(['focusout', 'keydown', 'pointerdown']);
+    expect(kinds(remove.mock.calls)).toEqual(['focusout', 'keydown', 'pointerdown']);
+    add.mockRestore();
+    remove.mockRestore();
+  });
+
+  // m6 (final review, ruled): Home and End moved the highlight on the metro trigger and inside
+  // the Give menu, but not on the Give TRIGGER — the one element a keyboard user starts from.
+  // They behave as they do on the metro trigger: only while the menu is open, because with it
+  // shut there is no list for an end to be an end of.
+  it('Home and End work on the Give trigger, as they do on the metro trigger, and only while open', () => {
+    const els = rowEls();
+    try {
+      c.renderVals().giveMenuKeys({ key: 'Home', preventDefault: prevent });
+      expect(c.state.giveMenu, 'a shut menu is not opened by Home').toBeFalsy();
+      expect(document.activeElement, 'and focus has not moved into it').not.toBe(els[0]);
+      c.setState({ giveMenu: true });
+      c.renderVals().giveMenuKeys({ key: 'End', preventDefault: prevent });
+      expect(document.activeElement, 'End on the trigger goes to the last link').toBe(els[3]);
+      c.renderVals().giveMenuKeys({ key: 'Home', preventDefault: prevent });
+      expect(document.activeElement, 'Home on the trigger goes back to the first').toBe(els[0]);
+    } finally {
+      els.forEach((e) => e.remove());
+    }
+  });
+
+  // m7 (final review, ruled): "opening me closes you" was one-directional. `toggleGiveMenu` and
+  // the arrow-open cleared the other two header menus; nothing cleared Give, and neither Give nor
+  // the metro listbox cleared the other. The global `pointerdown` and `focusout` listeners covered
+  // a pointer and a Tab, but a pure-keyboard user could hold two menus open at once and then shut
+  // both with one Escape. The toggles enforce the invariant themselves now, in both directions.
+  it('opening any other menu closes Give, and opening Give closes the metro listbox too', () => {
+    c.setState({ auth: true, screen: 'browse', giveMenu: true });
+    c.renderVals().toggleNavMenu();
+    expect(c.state.giveMenu, 'the nav menu closes Give').toBe(false);
+    c.setState({ giveMenu: true, navMenu: false });
+    c.renderVals().toggleUserMenu();
+    expect(c.state.giveMenu, 'the account menu closes Give').toBe(false);
+    c.setState({ giveMenu: true, userMenu: false });
+    c.renderVals().toggleMarketMenu();
+    expect(c.state.giveMenu, 'the metro listbox closes Give').toBe(false);
+    // …and the other way: Give closes the metro listbox as well as the two header menus, by the
+    // pointer path and by the arrow-key path, which are the two ways into it.
+    c.setState({ marketMenu: true, marketMenuAt: 2, navMenu: true, userMenu: true, giveMenu: false });
+    c.renderVals().toggleGiveMenu();
+    expect(c.state).toMatchObject({ giveMenu: true, marketMenu: false, marketMenuAt: -1, navMenu: false, userMenu: false });
+    c.setState({ giveMenu: false, marketMenu: true, marketMenuAt: 2, navMenu: true, userMenu: true });
+    c.renderVals().giveMenuKeys({ key: 'ArrowDown', preventDefault: prevent });
+    expect(c.state).toMatchObject({ giveMenu: true, marketMenu: false, marketMenuAt: -1, navMenu: false, userMenu: false });
+  });
+
+  it('A13\'s metro dismissals are unchanged by A14\'s branches', () => {
+    // The two closures are shared. A Give branch that is inert while `giveMenu` is falsy must
+    // leave the metro menu's Escape and outside-click behaving exactly as A13 left them.
+    c.componentDidMount();
+    c.setState({ marketMenu: true, marketMenuAt: 2, giveMenu: false });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(c.state).toMatchObject({ marketMenu: false, marketMenuAt: -1 });
+    c.setState({ marketMenu: true, marketMenuAt: 2 });
+    document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+    expect(c.state).toMatchObject({ marketMenu: false, marketMenuAt: -1 });
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A19 — the photo lightbox (John, 2026-09-09: "the images/photos should be clickable and they
+// expand and have < > to view all images larger with simple X to close"). The design shows a
+// photograph at 168 px in the detail grid and at 232 px in the Browse docked panel and enlarges
+// neither. The lightbox is composed from the interest modal's scrim, the panel's own prev/next
+// arrows, its close button and its two pills; every branch of the state machine is new and
+// every branch is covered here. `p2` (Round Rock) is the design's own three-photograph fixture.
+// ---------------------------------------------------------------------------------------
+describe('A19 — the photo lightbox', () => {
+  afterEach(() => { c.componentWillUnmount(); });
+
+  const P2 = { pid: 'p2', at: 'ph-p2-exterior' };
+  /** A mounted, focusable stand-in for a tile's hit-target — what `closeLightbox` hands focus back to. */
+  const opener = () => { const b = document.createElement('button'); document.body.appendChild(b); return b; };
+  /** Round Rock's tiles, through the detail's own render values. */
+  const p2Photos = () => { c.setState({ detailId: 'p2' }); return c.renderVals().d.photos; };
+
+  it('starts closed and exposes nothing the template would render (A19.1/A19.3)', () => {
+    expect(c.state).toMatchObject({ lightbox: null, lightboxFocus: false });
+    const lb = c.renderVals().lightbox;
+    expect(lb).toMatchObject({ open: false, src: '', caption: '', counter: '', label: '', multiple: false });
+    // No orphan keys (the A2.3/A13.6 dead-code rule): every key has a reader in A19.8's block.
+    expect(Object.keys(lb).sort()).toEqual(['backdrop', 'caption', 'close', 'counter', 'label', 'multiple', 'next', 'open', 'prev', 'ref', 'src']);
+  });
+
+  it('a filled tile carries an opener and its own label; an empty tile carries neither (A19.4)', () => {
+    const photos = p2Photos();
+    expect(photos.map((ph: any) => typeof ph.open)).toEqual(['function', 'function', 'function', 'undefined', 'undefined', 'undefined']);
+    expect(photos[0].openLabel).toBe('Expand photo: Exterior — street view');
+    expect(photos[1].openLabel).toBe('Expand photo: Exterior — side elevation');
+    // The empty tile is the design's own object, untouched.
+    expect(Object.keys(photos[3]).sort()).toEqual(['caption', 'hasSrc', 'id', 'index', 'noSrc', 'placeholder', 'src']);
+    // Cedar Park (p1), the `detail` state's listing, has no photograph and therefore no hit-target —
+    // which is why that frozen baseline cannot move.
+    c.setState({ detailId: 'p1' });
+    expect(c.renderVals().d.photos.every((ph: any) => ph.open === undefined && ph.openLabel === undefined)).toBe(true);
+  });
+
+  it('opening records the opener, names the photograph and closes the three header menus — not the metro one (A19.2)', () => {
+    const btn = opener();
+    try {
+      c.setState({ navMenu: true, userMenu: true, giveMenu: true, marketMenu: true, marketMenuAt: 1 });
+      p2Photos()[1].open({ currentTarget: btn });
+      expect(c.state).toMatchObject({ lightbox: { pid: 'p2', at: 'ph-p2-exterior2' }, lightboxFocus: true, navMenu: false, userMenu: false, giveMenu: false });
+      // The metro listbox is shut by its own pointerdown/focusout closures before a tile click can
+      // land, so `openLightbox` does not name it — which is what keeps design-amendments.test.ts's
+      // "exactly six sites" pin on `marketMenu: false, marketMenuAt: -1` true.
+      expect(c.state).toMatchObject({ marketMenu: true, marketMenuAt: 1 });
+      expect(c._lightboxOpener).toBe(btn);
+      expect(c.renderVals().lightbox).toMatchObject({
+        open: true, src: '/assets/photos/round-rock-exterior-side.webp', caption: 'Exterior — side elevation',
+        counter: '2/3', label: 'Photograph 2 of 3', multiple: true
+      });
+    } finally { btn.remove(); }
+  });
+
+  it('the docked panel opens the photograph its carousel is showing, so "N of M" equals its counter (A19.5)', () => {
+    c.setState({ screen: 'browse', mdSel: 'p2', mdPhoto: 2 });
+    const photos = c.renderVals().md.panel.photos;
+    expect(photos.counter).toBe('3/3');
+    expect(photos.openLabel).toBe('Expand photo: Exterior — parking and signage');
+    photos.open(undefined);
+    expect(c.state.lightbox).toEqual({ pid: 'p2', at: 'ph-p2-exterior3' });
+    expect(c.renderVals().lightbox.label).toBe('Photograph 3 of 3');
+    // Cedar Park has no photograph: `hasAny` is false, so the template mounts no hit-target there.
+    c.setState({ mdSel: 'p1', mdPhoto: 0 });
+    expect(c.renderVals().md.panel.photos.hasAny).toBe(false);
+  });
+
+  it('stepping wraps at both ends; a slot id the set no longer carries reads as the first (A19.2)', () => {
+    c.setState({ lightbox: P2 });
+    const step = (d: number) => { c.stepLightbox(d); return c.state.lightbox.at; };
+    expect(step(1)).toBe('ph-p2-exterior2');
+    expect(step(1)).toBe('ph-p2-exterior3');
+    expect(step(1), 'past the last photograph, wraps to the first').toBe('ph-p2-exterior');
+    expect(step(-1), 'before the first, wraps to the last').toBe('ph-p2-exterior3');
+    c.setState({ lightbox: { pid: 'p2', at: 'ph-p2-gone' } });
+    expect(c.renderVals().lightbox.label).toBe('Photograph 1 of 3');
+    expect(step(1)).toBe('ph-p2-exterior2');
+  });
+
+  it('one photograph never steps and hides the arrows; nothing open never steps (A19.2)', () => {
+    const one = { id: 'lb-one', area: 'Elgin', type: 'Small animal', photos: ['/api/listings/lb/photos/1'] };
+    (P as unknown as Array<{ id: string }>).push(one);
+    try {
+      c.setState({ lightbox: { pid: 'lb-one', at: 'ph-lb-one-exterior' } });
+      expect(c.renderVals().lightbox).toMatchObject({ open: true, multiple: false, counter: '1/1', label: 'Photograph 1 of 1' });
+      c.stepLightbox(1);
+      expect(c.state.lightbox.at).toBe('ph-lb-one-exterior');
+      c.setState({ lightbox: null });
+      c.stepLightbox(1);
+      expect(c.state.lightbox).toBeNull();
+    } finally {
+      const fixtures = P as unknown as Array<{ id: string }>;
+      fixtures.splice(fixtures.findIndex((x) => x.id === 'lb-one'), 1);   // structural restore (N1)
+    }
+  });
+
+  it('a lightbox that names a listing with no photograph, or no listing, renders nothing (A19.2)', () => {
+    c.setState({ lightbox: { pid: 'p1', at: 'ph-p1-exterior' } });
+    expect(c.renderVals().lightbox.open).toBe(false);
+    expect(c.lightboxPhotos()).toEqual([]);
+    c.setState({ lightbox: { pid: 'no-such-listing', at: 'x' } });
+    expect(c.lightboxPhotos()).toEqual([]);
+  });
+
+  it('closing clears the state and returns focus to the opener; with no opener recorded it just closes (A19.2)', () => {
+    const btn = opener();
+    try {
+      p2Photos()[0].open({ currentTarget: btn });
+      c.renderVals().lightbox.close();
+      expect(c.state).toMatchObject({ lightbox: null, lightboxFocus: false });
+      expect(document.activeElement).toBe(btn);
+      expect(c._lightboxOpener).toBeNull();
+      btn.blur();
+      p2Photos()[0].open(undefined);          // no event, no opener
+      expect(c._lightboxOpener).toBeNull();
+      c.closeLightbox();                       // no throw; focus is left where it was
+      expect(c.state.lightbox).toBeNull();
+      expect(document.activeElement).not.toBe(btn);
+    } finally { btn.remove(); }
+  });
+
+  it('the mount ref spends lightboxFocus exactly once, one macrotask deferred, and a Next or Prev re-render must not re-steal focus (A19.2)', () => {
+    // Live-browser finding (Step 10): Chromium silently drops a focus() call made synchronously
+    // while a just-mounted node has not yet had layout/style committed — the JSDOM unit
+    // environment has no such restriction, so only a real Chromium run surfaces it. Deferred one
+    // macrotask, the design's own setTimeout idiom (2 pristine uses). This deferral is the
+    // mount-ref's own (A19.2, a just-mounted node) and is unaffected by A-LB3, which removed the
+    // DIFFERENT setTimeout A19.10 once carried — deferring focus back INTO an already-mounted
+    // dialog from a focusout, which does not hold in real Chromium for the reason characterised
+    // below.
+    vi.useFakeTimers();
+    const box = document.createElement('div'); box.tabIndex = -1; document.body.appendChild(box);
+    try {
+      p2Photos()[0].open(undefined);
+      c.renderVals().lightbox.ref(box);
+      expect(c.state.lightboxFocus, 'the flag is spent synchronously; only the focus() call is deferred').toBe(false);
+      expect(c._lightboxEl).toBe(box);
+      expect(document.activeElement, 'not yet — the focus() call is queued, not run').not.toBe(box);
+      vi.advanceTimersByTime(0);
+      expect(document.activeElement).toBe(box);
+      box.blur();
+      // Both runtimes call the OLD ref with null and the NEW one with the element on every render
+      // (renderVals mints a new function each pass): the handle follows, the focus does not.
+      c.renderVals().lightbox.ref(null);
+      expect(c._lightboxEl).toBeNull();
+      c.renderVals().lightbox.ref(box);
+      expect(c._lightboxEl).toBe(box);
+      vi.advanceTimersByTime(0);
+      expect(document.activeElement).not.toBe(box);
+    } finally { box.remove(); vi.useRealTimers(); }
+  });
+
+  it('the backdrop closes only when the click lands on the scrim itself (A19.2)', () => {
+    const scrim = document.createElement('div'); const inner = document.createElement('img');
+    c.setState({ lightbox: P2 });
+    c.renderVals().lightbox.backdrop({ target: inner, currentTarget: scrim });
+    expect(c.state.lightbox, 'a click on the photograph or inside the dialog must not close it').toEqual(P2);
+    c.renderVals().lightbox.backdrop({ target: scrim, currentTarget: scrim });
+    expect(c.state.lightbox).toBeNull();
+  });
+
+  it('Escape closes and ArrowLeft/ArrowRight step through the armed document listener; other keys are not swallowed (A19.9)', () => {
+    const btn = opener();
+    try {
+      c.componentDidMount();
+      p2Photos()[0].open({ currentTarget: btn });
+      const press = (key: string) => { const e = new KeyboardEvent('keydown', { key, cancelable: true }); document.dispatchEvent(e); return e.defaultPrevented; };
+      expect(press('ArrowRight')).toBe(true);
+      expect(c.state.lightbox.at).toBe('ph-p2-exterior2');
+      expect(press('ArrowLeft')).toBe(true);
+      expect(c.state.lightbox.at).toBe('ph-p2-exterior');
+      expect(press('a')).toBe(false);
+      expect(c.state.lightbox).toEqual(P2);
+      expect(press('Escape')).toBe(true);
+      expect(c.state.lightbox).toBeNull();
+      expect(document.activeElement).toBe(btn);
+      c.componentWillUnmount();
+    } finally { btn.remove(); }
+  });
+
+  it('Tab from the last control wraps to the first; Shift+Tab from the first, or from the container itself, wraps to the last (A-LB3, A19.9)', () => {
+    // A-LB3: the focusout-based trap (A19.10) did not hold in real Chromium — a null
+    // relatedTarget cannot tell "the window blurred" from "focus left the dialog's own tabbable
+    // set". Tab is handled here instead, deterministically, by DOM position: no timer, no
+    // relatedTarget, one code path for both directions.
+    const box = document.createElement('div'); box.tabIndex = -1;
+    const closeBtn = document.createElement('button'); closeBtn.setAttribute('aria-label', 'Close photo');
+    const prevBtn = document.createElement('button'); prevBtn.setAttribute('aria-label', 'Previous photo');
+    const nextBtn = document.createElement('button'); nextBtn.setAttribute('aria-label', 'Next photo');
+    box.append(closeBtn, prevBtn, nextBtn);
+    document.body.appendChild(box);
+    const press = (shiftKey = false) => { const e = new KeyboardEvent('keydown', { key: 'Tab', shiftKey, cancelable: true }); document.dispatchEvent(e); return e.defaultPrevented; };
+    try {
+      c.componentDidMount();
+      c.setState({ lightbox: P2 });
+      c._lightboxEl = box;
+
+      // The container case: right after opening, focus is on the dialog itself (the mount-ref
+      // idiom) — Shift+Tab from there must reach the LAST control directly.
+      box.focus();
+      expect(press(true)).toBe(true);
+      expect(document.activeElement).toBe(nextBtn);
+
+      // Forward: last control wraps to the first.
+      nextBtn.focus();
+      expect(press()).toBe(true);
+      expect(document.activeElement).toBe(closeBtn);
+
+      // Backward: first control wraps to the last.
+      closeBtn.focus();
+      expect(press(true)).toBe(true);
+      expect(document.activeElement).toBe(nextBtn);
+
+      // A move in the middle of the cycle is not intercepted — no preventDefault, no forced
+      // focus — so the browser's own default Tab action is left alone.
+      prevBtn.focus();
+      expect(press()).toBe(false);
+      expect(press(true)).toBe(false);
+
+      c.componentWillUnmount();
+    } finally { box.remove(); }
+  });
+
+  it('with one photograph, Tab and Shift+Tab both keep focus on the sole control (Close) (A-LB3, A19.9)', () => {
+    const one = { id: 'lb-one', area: 'Elgin', type: 'Small animal', photos: ['/api/listings/lb/photos/1'] };
+    (P as unknown as Array<{ id: string }>).push(one);
+    const box = document.createElement('div'); box.tabIndex = -1;
+    const closeBtn = document.createElement('button'); closeBtn.setAttribute('aria-label', 'Close photo');
+    box.appendChild(closeBtn);
+    document.body.appendChild(box);
+    const press = (shiftKey = false) => { const e = new KeyboardEvent('keydown', { key: 'Tab', shiftKey, cancelable: true }); document.dispatchEvent(e); return e.defaultPrevented; };
+    try {
+      c.componentDidMount();
+      c.setState({ lightbox: { pid: 'lb-one', at: 'ph-lb-one-exterior' } });
+      c._lightboxEl = box;
+      closeBtn.focus();
+      expect(press()).toBe(true);
+      expect(document.activeElement).toBe(closeBtn);
+      expect(press(true)).toBe(true);
+      expect(document.activeElement).toBe(closeBtn);
+      c.componentWillUnmount();
+    } finally {
+      box.remove();
+      const fixtures = P as unknown as Array<{ id: string }>;
+      fixtures.splice(fixtures.findIndex((x) => x.id === 'lb-one'), 1);   // structural restore (N1)
+    }
+  });
+
+  it('Tab does nothing while the lightbox is closed, and nothing if no dialog element is mounted yet (A-LB3, A19.9)', () => {
+    const press = (shiftKey = false) => { const e = new KeyboardEvent('keydown', { key: 'Tab', shiftKey, cancelable: true }); document.dispatchEvent(e); return e.defaultPrevented; };
+    c.componentDidMount();
+    expect(c.state.lightbox).toBeNull();
+    expect(press()).toBe(false);
+    c.setState({ lightbox: P2 });
+    expect(c._lightboxEl).toBeFalsy();   // no ref has run yet
+    expect(press()).toBe(false);
+    c.componentWillUnmount();
+  });
+
+  it('with the lightbox closed, A13\'s and A14\'s dismissals are unchanged by A19\'s branches (A19.9)', () => {
+    c.componentDidMount();
+    c.setState({ marketMenu: true, marketMenuAt: 2, giveMenu: true, lightbox: null });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'ArrowRight' }));
+    expect(c.state).toMatchObject({ marketMenu: true, marketMenuAt: 2, giveMenu: true });   // arrows mean nothing while closed
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(c.state).toMatchObject({ marketMenu: false, marketMenuAt: -1, giveMenu: false });
+    const give = document.createElement('div'); const away = document.createElement('button');
+    document.body.append(give, away);
+    try {
+      c.renderVals().giveMenuRef(give);
+      c.setState({ giveMenu: true });
+      give.dispatchEvent(new FocusEvent('focusout', { relatedTarget: away, bubbles: true }));
+      expect(c.state.giveMenu, 'Tab out of the Give menu still closes it').toBe(false);
+    } finally { give.remove(); away.remove(); }
+    c.componentWillUnmount();
+  });
+
+  it('the focusout closure no longer treats an open lightbox specially — A19.10\'s trap is removed (A-LB3)', () => {
+    // A-LB3 (2026-09-09, ruling on fix round 1's NEEDS_CONTEXT): the focusout-based trap this
+    // test used to characterise (deferring `box.focus()` one macrotask whenever a non-null
+    // `relatedTarget` left the dialog) was found not to hold in real Chromium and is removed
+    // entirely — a null `relatedTarget` cannot distinguish "the window blurred" from "focus left
+    // the dialog's own tabbable set", and no threshold fixes that. Tab is instead handled
+    // deterministically in the keydown closure (A19.9, characterised above). This closure is now
+    // A13.8's own output, unchanged, whether the lightbox is open or not.
+    const box = document.createElement('div'); box.tabIndex = -1;
+    const inside = document.createElement('button'); box.appendChild(inside);
+    const away = document.createElement('button');
+    document.body.append(box, away);
+    try {
+      c.componentDidMount();
+      c.setState({ lightbox: P2 });
+      c.renderVals().lightbox.ref(box);
+      inside.focus();
+      inside.dispatchEvent(new FocusEvent('focusout', { relatedTarget: away, bubbles: true }));
+      // No pull-back, deferred or otherwise: the removed trap must not intervene.
+      expect(document.activeElement, 'the removed focusout trap must not pull focus back into the dialog').not.toBe(box);
+      expect(c.state.lightbox, 'a focusout must not close the lightbox either — only Escape/backdrop/X do that').toEqual(P2);
+      // The give/market dismissal logic A13.8/A14.7 own is untouched by A19 either way, and now
+      // runs unconditionally on every focusout — lightbox open or not — exactly as it did before
+      // A19 ever existed: no early return gates it on `this.state.lightbox` any more.
+      c.setState({ giveMenu: true });
+      const give = document.createElement('div');
+      document.body.appendChild(give);
+      try {
+        c.renderVals().giveMenuRef(give);
+        inside.dispatchEvent(new FocusEvent('focusout', { relatedTarget: away, bubbles: true }));
+        expect(c.state.giveMenu, 'the Give dismissal runs even with the lightbox open now — A13.8\'s own behaviour, restored').toBe(false);
+      } finally { give.remove(); }
+      c.componentWillUnmount();
+    } finally { box.remove(); away.remove(); }
+  });
+
+  it('go() and signOut clear it — a screen change closes the lightbox (A19.11/A19.12)', async () => {
+    c.setState({ auth: true, lightbox: P2, lightboxFocus: true });
+    c.go('browse')();
+    expect(c.state).toMatchObject({ screen: 'browse', lightbox: null, lightboxFocus: false });
+    c.setState({ lightbox: P2, lightboxFocus: true });
+    await c.renderVals().signOut();
+    expect(c.state).toMatchObject({ screen: 'gate', auth: false, lightbox: null, lightboxFocus: false });
+  });
+
+  it('componentWillUnmount still removes the three document listeners — A19 added none', () => {
+    const add = vi.spyOn(document, 'addEventListener');
+    const remove = vi.spyOn(document, 'removeEventListener');
+    c.componentDidMount();
+    c.componentWillUnmount();
+    const ours = (calls: unknown[][]) => calls.filter(([t]) => t === 'pointerdown' || t === 'keydown' || t === 'focusout');
+    expect(ours(add.mock.calls)).toHaveLength(3);
+    expect(ours(remove.mock.calls)).toHaveLength(3);
+    add.mockRestore(); remove.mockRestore();
+  });
+});

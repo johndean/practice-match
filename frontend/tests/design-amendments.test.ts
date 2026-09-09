@@ -103,17 +103,47 @@ describe('local design amendments (spec D15)', () => {
     // through the design's `stateOf` helper, and Community Context reaches the design's own
     // "Community data unavailable" card when D4 leaves the four figures null.
     'A12.8', 'A12.9', 'A12.10', 'A12.11',
+    // A13 — the metro selector becomes the design's own listbox (John, 2026-09-08). Five literal
+    // edits: the `setMarket` class property beside `setF`, the render values that drive the menu,
+    // the trigger-and-listbox markup, and the two lifecycle hooks that add and remove the Escape
+    // and outside-click listeners the design has never had. (A13.6–A13.8 follow, below and last.)
+    'A13.1', 'A13.2', 'A13.3', 'A13.4', 'A13.5',
+    // A13.6/A13.7 (review round 1, I2 — ruled): the two render-value orphans the <select> left,
+    // deleted under the bundle's own dead-code rule exactly as A2.2–A2.5 deleted the browseSel
+    // ones — `market:` (whose only reader was `<select value="{{ market }}">`) and the option
+    // rows' `v: m` (the `<option value>` a role="option" button does not have).
+    'A13.6', 'A13.7',
+    // A14 — the header's Give button IS vinfoundation.org's Give dropdown (John, 2026-09-08),
+    // measured on the live site rather than composed from this design's tokens. Six literal
+    // edits here: the focus helper, the renderVals keys, the markup, the two Give branches inside
+    // A13's shared `trackMenuDismiss` closures, and the `@font-face` that self-hosts the live
+    // site's Montserrat 600 — scoped to this control alone, which is John's ruling. (A14.7 and
+    // A14.8 follow.)
+    'A14.1', 'A14.2', 'A14.3', 'A14.4', 'A14.5', 'A14.6',
+    // A14.7 (review round 1, m2 — ruled): Tab out of the open menu closes it, the third
+    // dismissal beside A14.4's outside-click and A14.5's Escape, registered and torn down
+    // in A13.4's own `trackMenuDismiss`.
+    'A14.7',
+    // A14.8 (final whole-branch review, m7 — ruled): the last toggle no other amendment touches,
+    // so "opening me closes you" holds in every direction between the three header menus and the
+    // metro listbox rather than only outward from Give.
+    'A14.8',
+    // A13.8 (final whole-branch review, m4 — ruled): Tab out of the metro listbox closes it, on
+    // the reasoning A14.7 was accepted on. LAST in the list, and the one A13 entry that applies
+    // after A14's: the `out` closure it edits is A14.7's own.
+    'A13.8',
     // A15 — every uploaded photograph renders, with its own description (A-L11, John 2026-09-09).
-    // A13/A14 are reserved by the design-dropdowns branch. Six literal script edits: a
-    // photograph's own `photoCaptions[i]` wins over the design's fixed slot caption (A15.1/A15.2)
-    // and every photograph past the sixth gets a tile of its own (A15.3a–A15.3d, the two ends of
-    // each branch's `return`). The fixtures carry no `photos` and no `photoCaptions` at all, so
-    // both guards are falsey and no approved state moves.
+    // Six literal script edits: a photograph's own `photoCaptions[i]` wins over the design's
+    // fixed slot caption (A15.1/A15.2) and every photograph past the sixth gets a tile of its
+    // own (A15.3a–A15.3d, the two ends of each branch's `return`). The fixtures carry no
+    // `photos` and no `photoCaptions` at all, so both guards are falsey and A15 moves no
+    // approved state.
     'A15.1', 'A15.2', 'A15.3a', 'A15.3b', 'A15.3c', 'A15.3d',
     // A16 — the seller wizard and dashboard read and write the real API (spec D23, controller
-    // amendments A-SL17/A-SL20/A-SL22). A13 and A14 are the dropdown branch's; the family id is
-    // derived from the tree at branch time (A-SL4), never typed from the plan, which is why this
-    // one is 16.
+    // amendments A-SL17/A-SL20/A-SL22). A13 and A14 were the dropdown branch's, reserved while
+    // this branch was built; the family id is derived from the tree at branch time (A-SL4), never
+    // typed from the plan, which is why this one is 16. Merged after A13/A14/A15 at SL9 (A-SL34
+    // (3)): A16/A17 land here, between A15 and A18/A19, in id order.
     'A16.1', 'A16.2', 'A16.3', 'A16.4', 'A16.5', 'A16.6', 'A16.7', 'A16.8', 'A16.9', 'A16.10',
     // A16.11a/b — the eighth declared prototype prop, `startMyListings`: A-SL17's empty
     // dashboard is a state the design's fixtures cannot express, and this is the mechanism
@@ -157,11 +187,26 @@ describe('local design amendments (spec D15)', () => {
     // "every Admin tab must show real database data, never dummy rows"). A17.1 is A16.1's own
     // shape applied to the review queue; A17.2 is A16.9's, one line after A16.11b's.
     'A17.1', 'A17.2',
+    // A18 — the two backwards arrows (John, 2026-09-09: "the arrow icons are backwards on each
+    // location, reverse each"). Two template literals using the design's own flip idiom
+    // (V3:724): the Insights-tab CTA's arrow turns right, the detail's Back-to-results arrow
+    // turns left. Both finds are unique in the pristine file (A18.1 anchors on the bare <img>,
+    // never on A3's label — the citation chase); the family is appended last, as every family is.
+    'A18.1', 'A18.2',
+    // A19 — the photo lightbox (John, 2026-09-09). Twelve literal edits: the state keys, the
+    // five class members, the render key, the two openers (detail tiles and the docked panel's
+    // photograph), the two hit-targets, the overlay block at the root, the Escape/Arrow/Tab
+    // branch in A14.5's shared `key` closure and a comment (A-LB3: a focus trap was tried and
+    // retracted here) in A13.8's `out` closure, and the two screen changes the design owns
+    // (`go()`, `signOut`) clearing it. A19.9 and A19.10 read A14.5's and A13.8's output, so the
+    // whole family is appended last — after A16/A17 too: A19.11 was adapted at the SL9 merge to
+    // match `go()`'s shape once A16.20a has already split it (see the amendment's own comment).
+    'A19.1', 'A19.2', 'A19.3', 'A19.4', 'A19.5', 'A19.6', 'A19.7', 'A19.8', 'A19.9', 'A19.10', 'A19.11', 'A19.12',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(114);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(144);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -324,6 +369,269 @@ describe('local design amendments (spec D15)', () => {
     const declared = JSON.parse(attr[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) as Record<string, unknown>;
     expect(declared.startNotice).toEqual({ editor: 'text', default: '', tsType: 'string', section: 'Prototype', label: 'Sign-in notice on load' });
     expect(pristine, 'startNotice exists only as a local amendment').not.toContain('startNotice');
+  });
+
+  // A13 composes the metro dropdown from the design's OWN listbox: every style value it
+  // introduces already appears on the pristine bundle's layer/compare menu or on the metro
+  // field the amendment replaces. The one exception is asserted as an exception: the panel's
+  // `top: 46px`/`z-index: 700` anchoring comes from the "More filters" popover in the SAME
+  // toolbar row, which is a different element of the same design.
+  it('A13 introduces no new styling — every value is the design\'s own', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    for (const decl of [
+      'font-family: var(--rf-display); font-size: 13px; font-weight: ',   // rowStyle, V3:2112
+      'background: var(--vf-accent-bg)',                                   // selected row, V3:2113
+      'background: var(--vf-neutral)',                                     // hover / highlight, V3:525
+      'transition: transform 150ms var(--easing-out); transform: rotate(', // caret, V3:2096
+      'box-shadow: 0 6px 20px rgba(0,58,112,.16)',                         // More filters panel, V3:382
+      'top: 46px; z-index: 700',                                           // More filters anchoring, V3:382
+      'max-height: 232px; overflow-y: auto',                               // compare menu, V3:482
+      'flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;'
+    ]) {
+      expect(pristine, `${decl} is not the design's own`).toContain(decl);
+    }
+    // …and the operating system's popup is gone from the toolbar: the metro control is now a
+    // button that says what it opens, and the four markets are options in a labelled listbox.
+    expect(amended).toContain('aria-label="Metro area" aria-haspopup="listbox"');
+    expect(amended).toContain('<div role="listbox" aria-label="Metro area"');
+    // A13 round 3: `aria-activedescendant` belongs on the element that HOLDS FOCUS. Focus stays
+    // on the trigger button — the role="listbox" div is not focusable and never receives it — so
+    // on the panel the attribute is inert and no screen reader reads it.
+    expect(amended, 'aria-activedescendant must sit on the focused trigger')
+      .toContain('aria-expanded="{{ marketMenuOpen }}" aria-activedescendant="{{ marketActiveId }}"');
+    expect(amended, 'and not on the panel, which never holds focus')
+      .not.toContain('<div role="listbox" aria-label="Metro area" aria-activedescendant=');
+    // …and the reference has to RESOLVE: ARIA looks for the active descendant inside the element
+    // carrying the attribute or inside the one it owns/controls, and the panel is the trigger's
+    // sibling. `aria-controls` is what makes the pair reachable (round 5, N4).
+    expect(amended, 'the trigger must control the panel by id')
+      .toContain('aria-haspopup="listbox" aria-controls="metro-listbox" aria-expanded="{{ marketMenuOpen }}"');
+    expect(amended, 'and the panel must carry that id')
+      .toContain('<div role="listbox" aria-label="Metro area" id="metro-listbox"');
+    // Final review I1 (ruled, a widening of A13.3): ARIA 1.2 lists `aria-activedescendant` as
+    // supported on `application`, `combobox`, `group`, `textbox` and the composite widget roles —
+    // `button` is not among them, so a user agent need not expose it and the whole chain rounds 3
+    // to 5 built was liable to be dropped on the way to the accessibility tree. The trigger is the
+    // APG Select-Only Combobox in every other respect; it now says so. And a listbox driven by
+    // `aria-activedescendant` keeps focus on the one element that holds it, so the option rows
+    // leave the tab order rather than being Tab-able into a panel whose keys are not bound.
+    expect(amended, 'the trigger must carry a role that supports aria-activedescendant')
+      .toContain('role="combobox" aria-label="Metro area" aria-haspopup="listbox"');
+    expect(amended, 'the options leave the tab order — focus stays on the combobox')
+      .toContain('role="option" tabindex="-1"');
+    expect(amended).not.toContain('onChange="{{ setMarket }}"');
+    // The five filter selects, the sort select and the wizard's stay native (scope, Q1).
+    expect((amended.match(/<select /g) ?? []).length, 'A13 changed a select outside its scope').toBe(4);
+  });
+
+  // A14 (John, 2026-09-08: "the Give button must be identical to the https://vinfoundation.org/
+  // where the button is an actual drop down (match button design pixel-by-pixel)"). The pristine
+  // file has ONE Give control — an inert <button> at V3:104, outside both the signedIn and the
+  // signedOut blocks, so it is in the header of every screen. After A14 it is a trigger plus a
+  // four-item menu, and the four hrefs are John's, verbatim.
+  it('A14 turns the one Give button into a dropdown with John\'s four links', () => {
+    expect(pristine.split('>Give</button>').length - 1, 'the pristine file has exactly one Give button').toBe(1);
+    const amended = readFileSync(AMENDED, 'utf8');
+    expect(amended.split('role="menuitem"').length - 1).toBe(1);            // one row template, sc-for'd four times
+    expect(amended).toContain('aria-haspopup="menu"');
+    for (const href of ['https://vinfoundation.org/give/', 'https://vinfoundation.org/cor/',
+      'https://vinfoundation.org/legacy-giving/', 'https://vinfoundation.org/resources/dr-sophia-yin-memorial-fund/']) {
+      expect(amended.split(href).length - 1, `${href} is not in the amended design exactly once`).toBe(1);
+    }
+    expect(amended, 'a Give link must not open a new tab — the live site\'s do not').not.toContain('target="_blank"');
+    // m1 (review round 1, ruled): the same pairing A13's round 5 gave the metro control — a
+    // trigger that names the panel it controls, and a panel that carries that id. Without it the
+    // two dropdowns shipping together are inconsistent, and `aria-haspopup` alone leaves an
+    // assistive technology no route from the button to the menu.
+    expect(amended, 'the trigger must control the panel by id')
+      .toContain('aria-haspopup="menu" aria-controls="give-menu" aria-expanded="{{ giveMenuOpen }}"');
+    expect(amended, 'and the panel must carry that id')
+      .toContain('<div role="menu" aria-label="Give" id="give-menu" ref="{{ givePanelRef }}"');
+    // C1 (review round 1, ruled): the panel's mount ref is what spends the arrow keys' pending
+    // index, so its presence in the DESIGN is what makes the keyboard work on BOTH targets.
+    expect(amended, 'the arrow keys must not focus inside a setState callback — the app has not rendered yet')
+      .not.toContain('}, () => this.giveFocus(');
+    expect(amended).toContain('this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 });');
+    // m7 (final review, ruled): the invariant runs in every direction now — Give's two open paths
+    // close the other three menus, and each of the other three closes Give.
+    expect(amended, 'the nav toggle must close Give (A14.8)')
+      .toContain('toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false }),');
+    expect(amended, 'the account toggle must close Give (A14.2)')
+      .toContain('toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false }),');
+    expect(amended, 'the metro listbox must close Give (A13.2)')
+      .toContain('Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false }),');
+    // m6 (final review, ruled): Home and End on the TRIGGER, guarded on the menu being open, the
+    // way `marketMenuKeys` has them — the per-row handler already had them.
+    expect(amended, 'Home and End must reach the Give trigger')
+      .toContain('if (s.giveMenu && (e.key === "Home" || e.key === "End")) {');
+  });
+
+  // A14.7 (m2) and A13.8 (final review m4): the third dismissal, shared by both menus, and the
+  // proof it left A13's other two — and A14's Give behaviour — exactly as they were.
+  it('the focusout dismissal in trackMenuDismiss covers both menus and touches neither of the other two closures', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    expect(amended).toContain('document.addEventListener("focusout", out, true);');
+    expect(amended).toContain('if (this._onDocOut) document.removeEventListener("focusout", this._onDocOut, true);');
+    // Window blur (relatedTarget null) is the shared non-dismissal, and a move inside either
+    // control is a move within that control: A13.8 kept A14.7's Give semantics exactly.
+    expect(amended).toContain('      const to = e.relatedTarget;\n      if (!to) return;\n      if (this.state.giveMenu) {\n        const give = this._giveMenuEl;\n        if (!(give && give.contains(to))) this.setState({ giveMenu: false });\n      }');
+    // …and the metro branch is A14.4's own shape, one closure over (m4).
+    expect(amended, 'Tab out of the metro listbox must close it too').toContain('      if (!this.state.marketMenu) return;\n      const host = this._marketMenuEl;\n      if (host && host.contains(to)) return;\n      this.setState({ marketMenu: false, marketMenuAt: -1 });');
+    // A13's own pointerdown closure, byte for byte, after every A14 edit to the function.
+    expect(amended, 'A14 changed the metro menu\'s outside-click').toContain('      if (!this.state.marketMenu) return;\n      const host = this._marketMenuEl;\n      if (host && e.target && host.contains(e.target)) return;\n      this.setState({ marketMenu: false, marketMenuAt: -1 });');
+    // Six metro dismissal sites: A13.4's pointerdown and keydown, A13.8's focusout, A13.1's
+    // setMarket, and m7's two — Give's pointer open and its arrow open (A14.2).
+    expect((amended.match(/marketMenu: false, marketMenuAt: -1/g) ?? []).length, 'the metro menu is shut in exactly these six places').toBe(6);
+  });
+
+  // A14.6 + the ruling: "Self-host Montserrat 600 under the SIL Open Font Licence, scoped
+  // exclusively to the Give button and its menu. Keep the rest of the design typography
+  // unchanged." The scope is the whole point, and it is machine-checked here rather than
+  // promised: exactly one @font-face, exactly two declarations that name the family, and both of
+  // them inside the two style strings A14.2 builds.
+  it('A14.6 self-hosts Montserrat 600 and scopes it to the Give control alone', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    expect(pristine, 'the bundle loads no Montserrat of any kind').not.toContain('Montserrat');
+    expect(amended.split('@font-face').length - 1, 'A14 adds exactly one @font-face').toBe(1);
+    expect(amended).toContain("src: url('assets/fonts/Montserrat-SemiBold.woff2') format('woff2');");
+    expect(amended).toContain('font-weight: 600; font-style: normal; font-display: swap;');
+    // Two readers, and only two: the trigger's style and the menu row's style.
+    expect(amended.split("font-family: 'Montserrat', var(--rf-display)").length - 1).toBe(2);
+    expect((amended.match(/Montserrat/g) ?? []).length, 'Montserrat is named only by the @font-face and its two readers').toBe(5);
+    // …and no OTHER element's face changed: every remaining font-family in the design is the
+    // bundle's own token or its own literal stack.
+    for (const decl of [...amended.matchAll(/font-family:\s*([^;"']*(?:'[^']*')?[^;"]*)/g)].map((m) => m[0])) {
+      expect(decl.includes('Montserrat') || decl.includes('--rf-display') || decl.includes('--rf-serif') || decl.includes('ProximaNova') || decl.includes('inherit'),
+        `A14 must not restyle anything but the Give control: ${decl}`).toBe(true);
+    }
+  });
+
+  // A18 (John, 2026-09-09: "the arrow icons are backwards on each location, reverse each").
+  // `navigate-arrow.svg` points LEFT unrotated (path apex at x = 199 in a 640 viewBox) and the
+  // design's own way to point it RIGHT is `transform: rotate(180deg)` (V3:724). The Insights-tab
+  // CTA (V3:819) showed it unrotated AFTER "View full listing" — pointing back at the label; the
+  // detail's Back-to-results link (V3:895) showed it rotated BEFORE "Back to results" — pointing
+  // away from where it goes. A18 swaps the two. The other five sites are untouched: the docked
+  // panel's prev/next pair (correct), the metric glyph, and the two sign-out arrows John has not
+  // ruled on (D-A18).
+  it('A18 reverses exactly the two arrows John named and leaves the other five sites byte for byte', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    expect(amended.split('View full listing<img src="assets/icons/navigate-arrow.svg" alt="" width="12" height="12" style="transform: rotate(180deg); filter: brightness(0) invert(1);">').length - 1).toBe(1);
+    expect(amended.split('<img src="assets/icons/navigate-arrow.svg" alt="" width="13" height="13" style="flex: none; opacity: .7;">Back to results').length - 1).toBe(1);
+    expect(amended).not.toContain('height="12" style="filter: brightness(0) invert(1);">');
+    expect(amended).not.toContain('style="flex: none; transform: rotate(180deg); opacity: .7;">Back to results');
+    // (Not asserted: a count of the rotate idiom. A18 adds one and removes one, but A19.8's
+    // lightbox Next arrow adds another later in this branch, so an equality here would be a
+    // pin on the wrong family.)
+    // The five other sites, as designed. (Unrotated sign-out arrows at V3:140 and V3:1434 are
+    // John's question, not this amendment's; the phone frame's is on two frozen screens.) The
+    // docked panel's prev/next pair is pinned as each button line JOINED to its <img> line — by
+    // the panel's own `md.panel.photos.prev`/`.next` handlers — and not as the bare <img>: A19.8
+    // later in this branch copies both <img> tags verbatim into the lightbox, where a bare count
+    // would read 2 against the pristine 1 and fail this case for the wrong family.
+    for (const kept of [
+      '<img src="assets/icons/navigate-arrow.svg" alt="" width="14" height="14" style="flex: none; opacity: .7;">',                          // V3:140
+      '<button onClick="{{ md.panel.photos.prev }}" aria-label="Previous photo" style="position: absolute; left: 10px; top: 50%; margin-top: -17px; width: 34px; height: 34px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; opacity: .92; transition: opacity 150ms var(--easing-out);" style-hover="opacity: 1;">\n                      <img src="assets/icons/nav-arrow-white.svg" alt="" width="34" height="34" style="display: block; filter: drop-shadow(0 1px 3px rgba(0,58,112,.4));">',                              // V3:720–721
+      '<button onClick="{{ md.panel.photos.next }}" aria-label="Next photo" style="position: absolute; right: 10px; top: 50%; margin-top: -17px; width: 34px; height: 34px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; opacity: .92; transition: opacity 150ms var(--easing-out);" style-hover="opacity: 1;">\n                      <img src="assets/icons/nav-arrow-white.svg" alt="" width="34" height="34" style="display: block; transform: rotate(180deg); filter: drop-shadow(0 1px 3px rgba(0,58,112,.4));">',  // V3:723–724
+      'assets/icons/move-arrow.svg',                                                                                                            // V3:784
+      '<img src="assets/icons/navigate-arrow.svg" alt="" width="12" height="12" style="flex: none; opacity: .7;">'                            // V3:1434
+    ]) {
+      expect(pristine, `${kept} is not the pristine site this case thinks it is`).toContain(kept);
+      expect(amended.split(kept).length - 1, `A18 changed a site outside its ruling: ${kept}`).toBe(pristine.split(kept).length - 1);
+    }
+  });
+
+  // A19 (John, 2026-09-09: "the images/photos should be clickable and they expand and have < >
+  // to view all images larger with simple X to close"). Composed from the design's own elements —
+  // the interest modal's scrim (V3:1048), the detail tile's frame (V3:914), the docked panel's
+  // prev/next arrows (V3:720–725), its close button (V3:707–709) and its two pills (V3:729–731).
+  // Line numbers here name the file A19 is applied to — the design as A18 left it, the numbering
+  // its finds were measured against; the rows in LOCAL_AMENDMENTS.md carry the post-A19 ones.
+  const A19_PREV = '<button onClick="{{ lightbox.prev }}" aria-label="Previous photo" style="position: absolute; left: 10px; top: 50%; margin-top: -17px; width: 34px; height: 34px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; opacity: .92; transition: opacity 150ms var(--easing-out);" style-hover="opacity: 1;">';
+  const HIT_TARGET = 'style="position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: pointer;"></button>';
+  it('A19 introduces no styling beyond four named compositions, and every sc-if carries the design\'s hint', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    for (const decl of [
+      'position: fixed; inset: 0;',                                                            // scrim, V3:1048
+      'background: rgba(0,58,112,.55); display: grid; place-items: center; padding: 24px;',     // scrim, V3:1048
+      'border-radius: 10px; overflow: hidden; background: var(--rf-band);',                    // tile frame, V3:914
+      'box-shadow: var(--shadow-xl);',                                                         // modal box, V3:1049
+      'animation: rf-fade-up 300ms var(--easing-out) both;',                                   // modal box, V3:1049
+      'outline: none;',                                                                        // the design's inputs
+      'width: 38px; height: 38px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center;', // Close panel, V3:707
+      'opacity: .92; transition: opacity 150ms var(--easing-out);',                            // arrows, V3:720
+      'position: absolute; inset: 0',                                                          // the mobile sheet
+      'width: 100%; height: 100%',
+      'padding: 0; border: 0; background: none; cursor: pointer;',                             // the icon-button reset
+      'filter: brightness(0) invert(1)',                                                       // whitening, V3:819
+      'drop-shadow(0 1px 3px rgba(0,58,112,.4))',                                              // the arrows' shadow, V3:721
+      'aria-label="Previous photo" style="position: absolute; left: 10px; top: 50%; margin-top: -17px; width: 34px; height: 34px;',
+      'aria-label="Next photo" style="position: absolute; right: 10px; top: 50%; margin-top: -17px; width: 34px; height: 34px;',
+      'position: absolute; right: 12px; bottom: 12px; font-size: 12px; font-weight: 500; color: var(--vf-navy); background: rgba(255,255,255,.92); border-radius: 4px; padding: 3px 9px;',
+      'position: absolute; left: 12px; bottom: 12px; max-width: 55%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; font-weight: 500; color: var(--vf-navy); background: rgba(255,255,255,.92); border-radius: 4px; padding: 3px 9px;'
+    ]) expect(pristine, `${decl} is not the design's own`).toContain(decl);
+    // The four compositions — each once, and none in the pristine file.
+    for (const [decl, why] of [
+      ['z-index: 1100;', 'above Leaflet\'s .leaflet-top/.leaflet-bottom at 1000 — the Esri attribution and controls sit in the root stacking context on Browse'],
+      ['max-width: calc(100vw - 48px); max-height: calc(100vh - 48px);', 'the viewport minus the scrim\'s 24px padding; natural size otherwise'],
+      ['right: 10px; top: 10px;', 'the arrows\' 10px inset, applied to the top corner for the X'],
+      ['filter: brightness(0) invert(1) drop-shadow(0 1px 3px rgba(0,58,112,.4));', 'the whitening and the arrows\' shadow on one glyph']
+    ] as const) {
+      expect(amended.split(decl).length - 1, `${decl} — ${why} — must appear exactly once`).toBe(1);
+      expect(pristine, `${decl} is a composition, not the design's`).not.toContain(decl);
+    }
+    // One overlay at the root; the dialog, its accessible name, its image and its controls.
+    expect(amended.split('<sc-if value="{{ lightbox.open }}" hint-placeholder-val="{{ false }}">').length - 1).toBe(1);
+    expect(amended).toContain('<div role="dialog" aria-modal="true" aria-label="{{ lightbox.label }}" tabindex="-1" ref="{{ lightbox.ref }}"');
+    expect(amended).toContain('<img src="{{ lightbox.src }}" alt="{{ lightbox.caption }}"');
+    expect(amended.split('aria-label="Close photo"').length - 1).toBe(1);
+    expect(amended.split(A19_PREV).length - 1).toBe(1);
+    expect(amended.split('aria-label="Previous photo"').length - 1, 'the panel\'s pair and the lightbox\'s').toBe(2);
+    expect(amended.split('aria-label="Next photo"').length - 1).toBe(2);
+    // Two hit-targets, on the hasSrc/hasAny branches ONLY — never on an empty slot, whose click on
+    // the reference opens the design tool's file chooser (image-slot.js:571).
+    expect(amended.split(HIT_TARGET).length - 1).toBe(2);
+    expect(amended).toContain('<sc-if value="{{ ph.hasSrc }}" hint-placeholder-val="{{ false }}">\n                        <button onClick="{{ ph.open }}" aria-label="{{ ph.openLabel }}"');
+    expect(amended).toContain('<sc-if value="{{ md.panel.photos.hasAny }}" hint-placeholder-val="{{ false }}">\n                  <button onClick="{{ md.panel.photos.open }}" aria-label="{{ md.panel.photos.openLabel }}"');
+    // The pristine file has zero hint-less sc-ifs — a 100 % convention, kept.
+    expect(amended.match(/<sc-if value="\{\{ [^"]* \}\}">/g)).toBeNull();
+    // Focus moves through the mount ref, never a setState callback (A14 review C1); no new
+    // document listener; nothing of this exists in the pristine file.
+    expect(amended).not.toContain('}, () => this.closeLightbox(');
+    expect(amended).not.toContain('}, () => el.focus(');
+    expect(amended.split('document.addEventListener(').length - 1).toBe(3);
+    expect(pristine).not.toContain('lightbox');
+    expect(pristine, 'e.currentTarget is NEW to the design with A19 — parity rests on both runtimes, not on precedent').not.toContain('e.currentTarget');
+  });
+
+  // A-LB3 (2026-09-09, ruling on fix round 1's NEEDS_CONTEXT — the focusout trap does not hold
+  // in real Chromium): the trap is removed at the byte level, and Tab is instead handled
+  // deterministically in the shared `keydown` closure. Both are asserted directly against the
+  // amended file, independent of the row prose and of logic.test.ts's characterisation.
+  it('A-LB3 removes the focusout trap and moves Tab into the shared keydown closure', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    // The removed trap: no deferred focus() call into the dialog from a focusout, anywhere.
+    expect(amended).not.toContain('setTimeout(() => box.focus()');
+    // The `out` closure carries no lightbox branch at all — A13.8's own output, verbatim, right
+    // after the closure head (the comment recording the retraction, `document.addEventListener`
+    // count elsewhere already pins that no listener was added or removed by this).
+    expect(amended).toContain(
+      '    const out = (e) => {\n'
+      + '      // A19 (A-LB3, 2026-09-09): a focusout-based trap was tried here — deferring focus back\n'
+      + '      // into the dialog whenever it left for a non-null relatedTarget outside it — and found\n'
+      + '      // not to hold in real Chromium: a null relatedTarget also occurs at the edges of the\n'
+      + '      // dialog\'s own tabbable set, which the arm cannot tell apart from a window blur. Tab is\n'
+      + '      // instead handled deterministically in the shared keydown closure above (A19.9).\n'
+      + '      // `relatedTarget` is where focus is GOING'
+    );
+    expect(pristine).not.toContain('A-LB3');
+    // Tab, deterministically, by DOM position: read once, in the keydown closure, one code path
+    // for both directions, no `relatedTarget` anywhere in it.
+    expect(amended.split('else if (e.key === "Tab") {').length - 1).toBe(1);
+    expect(amended).toContain('const controls = box ? Array.from(box.querySelectorAll("button")) : [];');
+    expect(amended).toContain('if (e.shiftKey) { if (at <= 0) { e.preventDefault(); controls[controls.length - 1].focus(); } }');
+    expect(amended).toContain('else if (at === controls.length - 1) { e.preventDefault(); controls[0].focus(); }');
+    expect(pristine, 'Array.from(...querySelectorAll("button")) is new to the design with A-LB3').not.toContain('querySelectorAll');
   });
 
   it('the amended reference is the pristine Rev 2 file plus exactly the ruled edits', () => {

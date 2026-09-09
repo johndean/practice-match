@@ -3,7 +3,11 @@ import type { Router } from 'vue-router';
 import { useMe } from '../auth/me';
 import { guard, needsPatch, routeToPatch, sameLocation, stateToRoute, type RoutedState } from './sync';
 
-interface StatefulComponent { state: RoutedState; setState(patch: Partial<RoutedState>): void }
+// A19 (John, 2026-09-09): a route-driven screen change calls the design's own `closeLightbox` —
+// see `apply()`. Required, not optional: the one component this composable ever receives is the
+// design's `Component` (app.setup.js; every test here uses the real one), which carries it, and
+// an optional call would leave a branch no test could reach.
+interface StatefulComponent { state: RoutedState & { lightbox?: unknown }; setState(patch: Partial<RoutedState>): void; closeLightbox(): void }
 
 // Route → state first (so a deep link is honoured before the state → route watcher can
 // rewrite the URL), then state → route. A member route requested while signed out shows
@@ -100,7 +104,14 @@ export function useStateRouteSync(c: StatefulComponent, router: Router): void {
     // captured `null` would refuse every member route for the rest of the session.
     const g = guard(c.state, routeToPatch(to), { me: useMe().me.value });
     pending = g.pending;
-    if (needsPatch(c.state, g.apply)) c.setState(g.apply);
+    if (needsPatch(c.state, g.apply)) {
+      c.setState(g.apply);
+      // A19: a route-driven screen change — Browser Back or Forward — closes the photo lightbox,
+      // as the design's own `go()` and `signOut` do (A19.11/A19.12). The reference has no router,
+      // so this is the one leg of "a screen change closes it" that lives on the app side; it calls
+      // the design's own `closeLightbox` so the clearing stays one implementation.
+      if (c.state.lightbox) c.closeLightbox();
+    }
     // A stale in-session URL (e.g. a legacy ?tab= link visited via router.push while already
     // signed in and already on the target screen) resolves, via routeToPatch, to a patch
     // that never differs from state — needsPatch is false above, no setState fires, and the

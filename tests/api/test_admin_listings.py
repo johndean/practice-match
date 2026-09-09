@@ -96,15 +96,22 @@ def test_the_matrix_and_route_guard_tests_still_pass_with_listing_publish_audite
     `listing.publish` joins `AUDITED` because publishing, declining or unpublishing a listing is a
     staff decision of exactly the class `users.decide` is. `listing.review` stays OUT for the
     reason `users.review` is out (one audit row per poll of a tab into a table whose triggers
-    refuse DELETE), `REAUTH` is untouched — publishing is not in the class of revoke / role grant /
-    token mint / licence decision — and `ADMINISTRATIVE` does not move at all: it is DERIVED from
-    the matrix and `listing.publish` was already `_STAFF`."""
+    refuse DELETE), `REAUTH` is untouched BY THIS PLAN — publishing is not in the class of revoke /
+    role grant / token mint / licence decision — and `ADMINISTRATIVE` does not move WITH IT: it is
+    DERIVED from the matrix and `listing.publish` was already `_STAFF`.
+
+    SL9 merge (2026-09-09): `main`'s Task I5d joined `REAUTH` with `signups.notify` (the launch
+    mail is at least as consequential as a revocation) independently of this plan, which is why
+    the set below and `ADMINISTRATIVE`'s count (16 before that merge, matching the three `signups.*`
+    permissions it also added — `tests/auth/test_matrix.py`'s own 19-element pin is the same
+    number, read the same way) both carry it now; `listing.publish` joining `AUDITED` moved
+    neither."""
     from app.auth import permissions as PM
 
     assert "listing.publish" in PM.AUDITED
     assert "listing.review" not in PM.AUDITED and "listing.manage_own" not in PM.AUDITED
-    assert PM.REAUTH == frozenset({"licence.decide", "engine.activate", "roles.grant", "tokens.manage", "users.revoke"})
-    assert "listing.publish" in PM.ADMINISTRATIVE and len(PM.ADMINISTRATIVE) == 16
+    assert PM.REAUTH == frozenset({"licence.decide", "engine.activate", "roles.grant", "tokens.manage", "users.revoke", "signups.notify"})
+    assert "listing.publish" in PM.ADMINISTRATIVE and len(PM.ADMINISTRATIVE) == 19
 
 
 async def _staff(client: Any, member: Any) -> dict[str, str]:

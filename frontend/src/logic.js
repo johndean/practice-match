@@ -200,6 +200,7 @@ class Component extends DCLogic {
     f: { type: "Any", price: "Any", revenue: "Any", doctors: "Any", building: "Any" },
     loading: false, activeId: null, hoverId: null, detailId: "p1", detailDocs: false,
     interest: "closed", interestMsg: "", sent: [],
+    lightbox: null, lightboxFocus: false,
     step: 1, wizErr: "", wizSubmitted: false, wizAssets: [], creating: false,
     w: { name: "", type: "Small animal", est: "", city: "", zip: "", anon: true, price: "", rev: "", revBand: false, docs: "", rooms: "", sqft: "", bldg: "Included", facility: "", desc: "", photos: 0, ownership: "Sole proprietor", hours: "", facilityType: "Standalone", docsLocked: true },
     adminTab: "users", sellerView: "dash",
@@ -224,12 +225,77 @@ class Component extends DCLogic {
     window.addEventListener("resize", set);
   }
 
+  trackMenuDismiss() {
+    const down = (e) => {
+      if (this.state.giveMenu) {
+        const give = this._giveMenuEl;
+        if (!(give && e.target && give.contains(e.target))) this.setState({ giveMenu: false });
+      }
+      if (!this.state.marketMenu) return;
+      const host = this._marketMenuEl;
+      if (host && e.target && host.contains(e.target)) return;
+      this.setState({ marketMenu: false, marketMenuAt: -1 });
+    };
+    const key = (e) => {
+      if (this.state.lightbox) {
+        if (e.key === "Escape") { e.preventDefault(); this.closeLightbox(); }
+        else if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); this.stepLightbox(e.key === "ArrowLeft" ? -1 : 1); }
+        else if (e.key === "Tab") {
+          const box = this._lightboxEl;
+          const controls = box ? Array.from(box.querySelectorAll("button")) : [];
+          if (controls.length) {
+            const at = controls.indexOf(document.activeElement);
+            if (e.shiftKey) { if (at <= 0) { e.preventDefault(); controls[controls.length - 1].focus(); } }
+            else if (at === controls.length - 1) { e.preventDefault(); controls[0].focus(); }
+          }
+        }
+        return;
+      }
+      if (e.key !== "Escape") return;
+      if (this.state.giveMenu) {
+        this.setState({ giveMenu: false });
+        if (this._giveButtonEl) this._giveButtonEl.focus();
+      }
+      if (!this.state.marketMenu) return;
+      this.setState({ marketMenu: false, marketMenuAt: -1 });
+    };
+    const out = (e) => {
+      // A19 (A-LB3, 2026-09-09): a focusout-based trap was tried here — deferring focus back
+      // into the dialog whenever it left for a non-null relatedTarget outside it — and found
+      // not to hold in real Chromium: a null relatedTarget also occurs at the edges of the
+      // dialog's own tabbable set, which the arm cannot tell apart from a window blur. Tab is
+      // instead handled deterministically in the shared keydown closure above (A19.9).
+      // `relatedTarget` is where focus is GOING, and a null one is the browser leaving the
+      // document altogether — a window blur, which dismisses neither menu.
+      const to = e.relatedTarget;
+      if (!to) return;
+      if (this.state.giveMenu) {
+        const give = this._giveMenuEl;
+        if (!(give && give.contains(to))) this.setState({ giveMenu: false });
+      }
+      if (!this.state.marketMenu) return;
+      const host = this._marketMenuEl;
+      if (host && host.contains(to)) return;
+      this.setState({ marketMenu: false, marketMenuAt: -1 });
+    };
+    this._onDocDown = down;
+    this._onDocKey = key;
+    this._onDocOut = out;
+    document.addEventListener("pointerdown", down, true);
+    document.addEventListener("keydown", key, true);
+    document.addEventListener("focusout", out, true);
+  }
+
   componentWillUnmount() {
     if (this._onResize) window.removeEventListener("resize", this._onResize);
+    if (this._onDocDown) document.removeEventListener("pointerdown", this._onDocDown, true);
+    if (this._onDocKey) document.removeEventListener("keydown", this._onDocKey, true);
+    if (this._onDocOut) document.removeEventListener("focusout", this._onDocOut, true);
   }
 
   componentDidMount() {
     this.trackWidth();
+    this.trackMenuDismiss();
     const start = this.props.startScreen;
     if (start && start !== "gate") this.setState({ screen: start, auth: true });
     if (this.props.startViewport === "mobile") this.setState({ viewport: "mobile" });
@@ -251,6 +317,14 @@ class Component extends DCLogic {
     if (this.props.adminListings && me && me.state === "active" && (me.roles || []).some((r) => r === "staff" || r === "admin")) this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] }));
   }
 
+  // Arrow-key movement inside the Give menu. Focus IS the highlight — vinfoundation.org has
+  // no focus style of its own either — so this moves focus and nothing else. Wraps both ways.
+  giveFocus = (i) => {
+    const els = (this._giveItemEls || []).filter(Boolean);
+    if (!els.length) return;
+    els[((i % els.length) + els.length) % els.length].focus();
+  };
+
   money(n) {
     if (n == null || n === "") return "—";
     if (n >= 1000000) return "$" + (n / 1000000).toFixed(n >= 10000000 ? 0 : 2).replace(/\.00$/, "") + "M";
@@ -259,9 +333,9 @@ class Component extends DCLogic {
 
   go = (screen) => () => {
     if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false });
-    if (!this.props.listings || this.state.sellerView !== "wizard" || !this.state.editingId) return this.setState({ screen, interest: "closed", userMenu: false });
+    if (!this.props.listings || this.state.sellerView !== "wizard" || !this.state.editingId) return this.setState({ screen, interest: "closed", userMenu: false, lightbox: null, lightboxFocus: false });
     return this.props.listings.patch(this.state.editingId, this.state.step, this.state.w, true).then(
-      (d) => this.setState({ screen, interest: "closed", userMenu: false, wizAssets: d.assets, wizErr: "" }),
+      (d) => this.setState({ screen, interest: "closed", userMenu: false, wizAssets: d.assets, wizErr: "", lightbox: null, lightboxFocus: false }),
       (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })
     );
   };
@@ -271,6 +345,39 @@ class Component extends DCLogic {
     this.setState((s) => ({ f: Object.assign({}, s.f, { [key]: v }), loading: true }));
     clearTimeout(this._t);
     this._t = setTimeout(() => this.setState({ loading: false }), 320);
+  };
+
+  // The metro choice. One implementation, called by the dropdown rows and still accepting a
+  // change event the way setF does, so the transition below is the one the <select> had.
+  setMarket = (e) => {
+    const v = e && e.target ? e.target.value : e;
+    this.setState({ market: v, activeId: null, hoverId: null, loading: true, marketMenu: false, marketMenuAt: -1 }, () => {
+      clearTimeout(this._t);
+      this._t = setTimeout(() => this.setState({ loading: false }), 320);
+    });
+    // The choice unmounts the row the pointer or the keyboard was on, so focus would land on
+    // <body>. A native select leaves the user on the control; so does this one.
+    const host = this._marketMenuEl;
+    const trigger = host && host.querySelector('button[aria-haspopup="listbox"]');
+    if (trigger) trigger.focus();
+  };
+
+  // Bringing a row into view. The panel scrolls at its max-height as soon as the market list
+  // is longer than the design's four, so both the arrow keys and the panel's own mount need
+  // this: one while the rows are already there, one at the moment they arrive. The row is
+  // resolved through the field this component recorded, not across the document: the id is
+  // one this component mints, and setMarket's own trigger lookup is scoped the same way.
+  scrollMarketOption = (i) => {
+    const host = this._marketMenuEl;
+    const row = host && host.querySelector("#market-opt-" + i);
+    if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+  };
+
+  // Moving the keyboard highlight. The rows are all in the DOM while the menu is open, so the
+  // one being highlighted is scrolled into view here rather than after a re-render.
+  moveMarketHighlight = (i) => {
+    this.setState({ marketMenuAt: i });
+    this.scrollMarketOption(i);
   };
 
   // ---- Browse Practices: map, market layers, results -------------------------------------------------
@@ -823,6 +930,59 @@ class Component extends DCLogic {
 
   stateOf(market) { return (market || "Austin, TX").split(", ")[1] || "TX"; }
 
+  // A19 — the photo lightbox (John, 2026-09-09): one implementation of open, close and step,
+  // shared by the render values and by the document `key` closure in `trackMenuDismiss`.
+  // Every closure that runs AFTER a render reads `this.state`: the reference replaces the state
+  // object on each setState and the app mutates it in place, so a captured `s` is stale on one.
+  openLightbox = (pid, at, e) => {
+    this._lightboxOpener = (e && e.currentTarget) || null;
+    this.setState({ lightbox: { pid, at }, lightboxFocus: true, navMenu: false, userMenu: false, giveMenu: false });
+  };
+  closeLightbox = () => {
+    const back = this._lightboxOpener;
+    this._lightboxOpener = null;
+    this.setState({ lightbox: null, lightboxFocus: false });
+    if (back && back.focus) back.focus();
+  };
+  lightboxPhotos() {
+    const lb = this.state.lightbox;
+    const p = lb ? P.filter((x) => x.id === lb.pid)[0] : null;
+    return p ? this.photoSet(p).filter((ph) => ph.hasSrc) : [];
+  }
+  stepLightbox = (d) => {
+    const lb = this.state.lightbox;
+    const photos = this.lightboxPhotos();
+    const n = photos.length;
+    if (!lb || n < 2) return;
+    const i = Math.max(0, photos.map((ph) => ph.id).indexOf(lb.at));
+    this.setState({ lightbox: { pid: lb.pid, at: photos[((i + d) % n + n) % n].id } });
+  };
+  lightboxVals() {
+    const lb = this.state.lightbox;
+    const photos = this.lightboxPhotos();
+    const n = photos.length;
+    const i = lb ? Math.max(0, photos.map((ph) => ph.id).indexOf(lb.at)) : 0;
+    const cur = photos[i];
+    return {
+      open: !!(lb && cur),
+      src: cur ? cur.src : "",
+      caption: cur ? cur.caption : "",
+      counter: cur ? (i + 1) + "/" + n : "",
+      label: cur ? "Photograph " + (i + 1) + " of " + n : "",
+      multiple: n > 1,
+      prev: () => this.stepLightbox(-1),
+      next: () => this.stepLightbox(1),
+      close: this.closeLightbox,
+      backdrop: (e) => { if (e.target === e.currentTarget) this.closeLightbox(); },
+      ref: (el) => {
+        this._lightboxEl = el || null;
+        if (!el || !this.state.lightboxFocus) return;
+        this.setState({ lightboxFocus: false });
+        setTimeout(() => el.focus(), 0);
+      }
+    };
+  }
+
   marketPanel(sel, selComm, comms, market) {
     const s = this.state;
     const c = selComm || comms[0] || { pop: 0, hh: 0, income: 0, growth: 0, pets: 0, vets: 0 };
@@ -854,6 +1014,8 @@ class Component extends DCLogic {
           currentSrc: cur ? cur.src : "",
           currentId: cur ? cur.id : "ph-" + sel.id + "-exterior",
           currentCaption: cur ? cur.caption : "",
+          open: (e) => this.openLightbox(sel.id, cur ? cur.id : "", e),
+          openLabel: "Expand photo: " + (cur ? cur.caption : ""),
           emptyId: "ph-" + sel.id + "-exterior",
           emptyHint: this.practiceName(sel) + " — exterior, street view",
           prev: () => this.setState({ mdPhoto: i - 1 }),
@@ -1325,7 +1487,7 @@ class Component extends DCLogic {
       priceLabel: this.money(p.price),
       priceNote: "Practice only. " + bldg.toLowerCase() + ".",
       morePhotos: "+6 more photos",
-      photos: this.photoSet(p),
+      photos: this.photoSet(p).map((ph) => ph.hasSrc ? Object.assign({}, ph, { open: (e) => this.openLightbox(p.id, ph.id, e), openLabel: "Expand photo: " + ph.caption }) : ph),
       photoHeroId: "ph-" + p.id + "-exterior",
       photoHeroHint: this.practiceName(p) + " — exterior, street view",
       canRequest: !sent,
@@ -1469,20 +1631,83 @@ class Component extends DCLogic {
       navExpanded: !!s.auth && vw >= 1050,
       navCollapsed: !!s.auth && vw < 1050,
       navMenuOpen: !!s.navMenu,
-      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false }),
+      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false }),
       subBrandStyle: "width: 1px; height: 30px; background: var(--rf-line); display: " + (vw < 1050 ? "none" : "block") + ";",
       subBrandTextStyle: "font-family: var(--rf-display); font-size: 15px; font-weight: 800; letter-spacing: -.005em; color: var(--color-blue); white-space: nowrap; display: " +
         (vw < 1050 ? "none" : "block") + ";",
       identityStyle: "line-height: 1.25; display: " + (vw < 1180 ? "none" : "block") + ";",
       me: Object.assign({ email: s.email }, s.me),
       userMenuOpen: !!s.userMenu,
-      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu }),
+      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false }),
+      // The Give control, measured on vinfoundation.org (John, 2026-09-08). The literals are
+      // the live site's, not this design's tokens: #339dde is the idle pill, #07386f the
+      // hover/open pill and the panel border and the row text, 10px the pill radius, 4.34px
+      // the gap from the pill to the 3px underline, 28px the gap from the pill to the panel.
+      giveMenuOpen: !!s.giveMenu,
+      // `giveMenuAt: null` on every pointer open: the pending index below belongs to the
+      // KEYBOARD, and a stale one would drag a mouse user into the list on the next open.
+      // `marketMenu` too (final review m7): the invariant is that opening one menu closes
+      // the others, and Browse renders this control and the metro listbox on one screen.
+      toggleGiveMenu: () => this.setState({ giveMenu: !s.giveMenu, giveMenuAt: null, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 }),
+      giveMenuRef: (el) => { this._giveMenuEl = el || null; },
+      giveButtonRef: (el) => { this._giveButtonEl = el || null; },
+      // The panel's own mount is the first moment its links exist, so it is where an arrow
+      // key that OPENED the menu spends its pending index — the arrow itself cannot, having
+      // seeded it while the sc-if was still unrendered. Same callback-ref idiom the compare
+      // menu ships (md.compareMenuRef) and A13 reuses for marketPanelRef, and it fires on
+      // mount on both targets, children before parent, so the row refs are already in.
+      // Spent once: a re-render mounts the panel again and must not re-steal focus.
+      givePanelRef: (el) => {
+        const at = this.state.giveMenuAt;
+        if (!el || at == null) return;
+        this.setState({ giveMenuAt: null });
+        this.giveFocus(at);
+      },
+      giveWrapStyle: "position: relative; display: flex; align-items: center;",
+      giveButtonStyle: "display: flex; align-items: center; padding: 2px 22px; font-family: 'Montserrat', var(--rf-display); font-size: 18px; font-weight: 600; line-height: 24.3px; white-space: nowrap; color: #ffffff; background: " +
+        (s.giveMenu ? "#07386f" : "#339dde") + "; border: 0; border-radius: 10px; cursor: pointer; transition: background .4s;",
+      giveUnderlineStyle: "position: absolute; left: 0; right: 0; top: calc(100% + 4.34px); height: 3px; background: #339dde; transform-origin: center; transition: transform .3s cubic-bezier(.58,.3,.005,1); transform: scaleX(" +
+        (s.giveMenu ? "1" : "var(--rf-give-underline, 0)") + ");",
+      giveLinks: [
+        { label: "Annual Fund", href: "https://vinfoundation.org/give/" },
+        { label: "Cor Group", href: "https://vinfoundation.org/cor/" },
+        { label: "Legacy Giving", href: "https://vinfoundation.org/legacy-giving/" },
+        { label: "Dr. Sophia Yin Memorial Fund", href: "https://vinfoundation.org/resources/dr-sophia-yin-memorial-fund/" }
+      ].map((g, i) => Object.assign({}, g, {
+        rowStyle: "display: flex; align-items: center; padding: 8px 20px; border-left: 8px solid transparent; font-family: 'Montserrat', var(--rf-display); font-size: 14px; font-weight: 600; line-height: 21px; color: #07386f; background: none; white-space: nowrap; text-decoration: none;",
+        ref: (el) => { const a = this._giveItemEls || (this._giveItemEls = []); a[i] = el || null; },
+        keys: (e) => {
+          if (e.key === "ArrowDown") { e.preventDefault(); return this.giveFocus(i + 1); }
+          if (e.key === "ArrowUp") { e.preventDefault(); return this.giveFocus(i - 1); }
+          if (e.key === "Home") { e.preventDefault(); return this.giveFocus(0); }
+          if (e.key === "End") { e.preventDefault(); return this.giveFocus(-1); }
+        },
+        pick: () => this.setState({ giveMenu: false })
+      })),
+      giveMenuKeys: (e) => {
+        // Home and End, on the TRIGGER as well as inside the menu, and only while the menu
+        // is open — exactly where marketMenuKeys has them (final review m6). With the menu
+        // shut there is no list for an end to be an end of.
+        if (s.giveMenu && (e.key === "Home" || e.key === "End")) {
+          e.preventDefault();
+          return this.giveFocus(e.key === "Home" ? 0 : -1);
+        }
+        if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;
+        e.preventDefault();
+        const at = e.key === "ArrowDown" ? 0 : -1;
+        if (s.giveMenu) return this.giveFocus(at);
+        // Already-open: the panel is mounted, so focus moves here and now. Opening CANNOT do
+        // that — the app's setState runs its callback synchronously (dc-logic.js) and Vue
+        // has not rendered the panel yet, so the index is seeded and givePanelRef spends it.
+        this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 });
+      },
       signOut: () => (this.props.listings && s.sellerView === "wizard" && s.editingId
           ? this.props.listings.patch(s.editingId, s.step, s.w, true).catch(() => {})
           : Promise.resolve()
         ).then(() => (this.props.auth ? this.props.auth.signOut().catch(() => {}) : Promise.resolve())).then(() => this.setState({
         userMenu: false, auth: false, screen: "gate", gate: "signin", pw: "",
-        interest: "closed", activeId: null, hoverId: null, sellerView: "dash", wizSubmitted: false, formError: ""
+        interest: "closed", activeId: null, hoverId: null, sellerView: "dash", wizSubmitted: false, formError: "",
+        lightbox: null, lightboxFocus: false
       })),
       goHome: this.go("gate"),
       showGate: s.screen === "gate",
@@ -1593,11 +1818,63 @@ class Component extends DCLogic {
       resultCount: list.length,
 
       isBrowse: false,
-      market: s.market || "Austin, TX",
-      marketOptions: Object.keys(MARKETS).map((m) => ({ v: m, label: m + " metro" })),
-      setMarket: (e) => this.setState({ market: e.target.value, activeId: null, hoverId: null, loading: true }, () => {
-        clearTimeout(this._t);
-        this._t = setTimeout(() => this.setState({ loading: false }), 320);
+      // The metro SELECT is a dropdown list in this design's own style, not the operating
+      // system's popup: the same trigger + role="listbox" panel the Market data card uses.
+      marketMenuOpen: !!s.marketMenu,
+      // `giveMenu: false`: opening one menu closes the others, in every direction (final
+      // review m7). The global pointerdown and focusout listeners covered a pointer and a
+      // Tab; a pure-keyboard user could hold this listbox and the header's Give menu open
+      // at once, and then shut both with one Escape.
+      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false }),
+      // On the TRIGGER, which is always rendered: a shut menu has no active descendant, and
+      // null is what both renderers omit the attribute for (a string would spell a dead id).
+      marketActiveId: s.marketMenu ? "market-opt-" + s.marketMenuAt : null,
+      marketTriggerLabel: (s.market || "Austin, TX") + " metro",
+      marketFieldStyle: "position: relative; display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 8px 0 15px; min-width: 300px; background: var(--vf-neutral); border: 1px solid " +
+        (s.marketMenu ? "var(--vf-accent)" : "var(--border-subtle)") + "; border-radius: 6px;",
+      marketSelectStyle: "display: flex; align-items: center; gap: 8px; flex: 1; height: 36px; padding: 0; border: 0; outline: none; background: none; font-size: 14px; font-weight: 500; color: var(--vf-navy); cursor: pointer;",
+      marketCaretStyle: "flex: none; display: block; transition: transform 150ms var(--easing-out); transform: rotate(" +
+        (s.marketMenu ? "180deg" : "0deg") + ");",
+      marketMenuRef: (el) => { this._marketMenuEl = el || null; },
+      // The panel's own mount is when the option rows first exist, so it is where OPENING
+      // scrolls the highlighted row into view — the arrow keys cannot, having seeded the
+      // highlight while the panel was still unrendered. Same callback-ref idiom the compare
+      // menu already ships (md.compareMenuRef), and it fires on mount on both targets.
+      marketPanelRef: (el) => { if (el) this.scrollMarketOption(this.state.marketMenuAt); },
+      marketMenuKeys: (e) => {
+        const keys = Object.keys(MARKETS);
+        // Math.max: a market MARKETS no longer holds (Seed Listings drops a metro with no
+        // listings left) gives indexOf -1, and keys[-1] would reach setMarket as undefined.
+        const cur = Math.max(0, keys.indexOf(s.market || "Austin, TX"));
+        const at = s.marketMenuAt == null || s.marketMenuAt < 0 ? cur : s.marketMenuAt;
+        if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+          e.preventDefault();
+          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur });
+          return this.moveMarketHighlight((at + (e.key === "ArrowDown" ? 1 : keys.length - 1)) % keys.length);
+        }
+        if (!s.marketMenu) return;
+        if (e.key === "Home" || e.key === "End") {
+          e.preventDefault();
+          return this.moveMarketHighlight(e.key === "Home" ? 0 : keys.length - 1);
+        }
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          return this.setMarket(keys[at]);
+        }
+      },
+      marketOptions: Object.keys(MARKETS).map((m, i) => {
+        const on = (s.market || "Austin, TX") === m;
+        const hi = s.marketMenuAt === i;
+        return {
+          label: m + " metro", selected: on,
+          go: () => this.setMarket(m),
+          optId: "market-opt-" + i,
+          rowStyle: "display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 8px; font-family: var(--rf-display); font-size: 13px; font-weight: " +
+            (on ? "800" : "500") + "; color: var(--vf-navy); background: " +
+            (on ? "var(--vf-accent-bg)" : hi ? "var(--vf-neutral)" : "none") + "; border: 0; border-radius: 6px; cursor: pointer;",
+          tickStyle: "flex: none; display: block; filter: brightness(0) saturate(100%) invert(23%) sepia(89%) saturate(1352%) hue-rotate(184deg) brightness(94%) contrast(101%); opacity: " +
+            (on ? "1" : "0") + ";"
+        };
       }),
       marketLabel: (s.market || "Austin, TX") + " metro · within 40 miles",
       emptyNote: this.marketTotal() + " practices are listed in the " + (s.market || "Austin, TX") + " metro. Widening the price or revenue range usually brings results back.",
@@ -1674,6 +1951,7 @@ class Component extends DCLogic {
       isDetail: s.screen === "detail",
       backToBrowse: () => this.setState({ screen: "browse" }),
       d: this.detail(),
+      lightbox: this.lightboxVals(),
       interestOpen: s.interest !== "closed",
       interestMsg: s.interestMsg,
       setInterestMsg: (e) => this.setState({ interestMsg: e.target.value }),

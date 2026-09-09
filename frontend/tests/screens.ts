@@ -1,4 +1,4 @@
-import type { Page } from '@playwright/test';
+import { expect, type Page } from '@playwright/test';
 import { DECLINED_FIELDS, NEEDS_REVIEW_INFO_REQUEST, atTop, btn, click, expectApiStatus, reach, settleExpectedApiFailures, waitMap } from './harness';
 
 export interface Screen {
@@ -29,13 +29,34 @@ const mobile = async (p: Page) => { await reach(p, { screen: 'browse', viewport:
 // App.vue's single position:fixed element — the interest modal's backdrop (see harness.ts's
 // `atTop`, which explains why this one state has to be pinned to the top of the page).
 const MODAL = 'div[style*="z-index: 900"]';
+// A19: the photo lightbox. Addressed by ROLE, not by a z-index string: the overlay is App.vue's
+// SECOND `position: fixed` element (the interest modal's scrim is the first — see harness.ts's
+// `atTop`), and the two are never mounted in the same state, so `MODAL`'s `.first()` sites still
+// resolve to the modal in theirs. `atTop` runs `document.querySelector`, and this is a plain
+// selector.
+const LIGHTBOX = '[role="dialog"][aria-modal="true"]';
+// The enlarged photograph starts loading only when the dialog mounts, and `settle()`'s 600 ms is
+// not a proof that a 680 px WebP has decoded: wait for the image element itself.
+const photoLoaded = async (p: Page) => {
+  await p.waitForFunction((sel) => {
+    const i = document.querySelector(`${sel} img`) as HTMLImageElement | null;
+    return !!i && i.complete && i.naturalWidth > 0;
+  }, LIGHTBOX);
+};
 // The prototype's own 390×800 phone frame (App.vue:1242) and the market-data sheet inside it.
 // `z-index: 700` is not unique in App.vue on its own — the desktop "More filters" popover
-// carries it too — so the sheet is always addressed through the frame. `atTop` takes a plain
-// CSS selector (it runs document.querySelector in the page), and the popover is not in the DOM
-// while the mobile frame is showing, so the bare selector is unambiguous there.
+// carries it, and A13's metro dropdown panel is a third — so the sheet is always addressed
+// through the frame. `atTop` takes a plain CSS selector (it runs document.querySelector in the
+// page), and neither desktop popover is in the DOM while the mobile frame is showing, so the
+// bare selector is unambiguous there.
 const PHONE = 'div[style*="width: 390px"][style*="height: 800px"]';
 const SHEET = 'div[style*="z-index: 700"]';
+// The two Market data listbox triggers, addressed by exclusion rather than by page index. A13
+// added a third `aria-haspopup="listbox"` button — the metro selector in the toolbar, which
+// comes FIRST in the DOM and would otherwise be what `.first()` clicked. It is the only one of
+// the three with an `aria-label` (V3: `aria-label="Metro area"`), so `:not([aria-label])` leaves
+// exactly the layer select and, once Compare is open, its identical control — in that order.
+const layerTrigger = (p: Page) => p.locator('button[aria-haspopup="listbox"]:not([aria-label])');
 
 // ---------------------------------------------------------------------------------------
 // The fifteen account-screen states (spec §6, controller amendment A-S5). Three helpers, and
@@ -109,8 +130,9 @@ export const SCREENS: Screen[] = [
   { name: 'gate-declined', steps: async (p) => { await reach(p, { gate: 'rejected', persona: 'declined' }); } },
   { name: 'browse', steps: browse },
   // The Market data card's layer select (V3's `md.toggleLayerMenu` trigger). It is the first
-  // aria-haspopup="listbox" on the screen; Compare's identical control is the second, and
-  // only exists once Compare is open.
+  // UNLABELLED aria-haspopup="listbox" on the screen — A13's metro selector carries an
+  // `aria-label` and comes first in the DOM, which is what `layerTrigger` excludes; Compare's
+  // identical control is the second unlabelled one, and only exists once Compare is open.
   //
   // This state and the three below it (`browse-legend-collapsed`, `browse-layers-open`,
   // `browse-market-panel`) each wait for the thing the state exists to SHOW before the settle
@@ -118,15 +140,16 @@ export const SCREENS: Screen[] = [
   // click no-opped on both targets", which is exactly how the old `mobile-detail` step passed
   // while capturing the wrong screen (V9). The 400 ms settle stays after it: it is what the
   // committed baselines were taken through, and every one of them must stay byte-identical.
-  { name: 'browse-layer-menu', steps: async (p) => { await browse(p); await p.locator('button[aria-haspopup="listbox"]').first().click(); await p.getByRole('listbox', { name: 'Active market layer' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
+  { name: 'browse-layer-menu', steps: async (p) => { await browse(p); await layerTrigger(p).first().click(); await p.getByRole('listbox', { name: 'Active market layer' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
   // C4: Compare is collapsed by default; opening it reveals the shared layer-select control
   // and the six-row bar chart. Picking the metric that already shades the map would reset the
   // comparison (no self-compare), so pick the second option — the menu's first row is
   // "Choose a metric…" (logic.js `compareOptions`). The option lookup is scoped to the
-  // compare menu's own listbox: Browse's native <select>s (market, filters, sort) own the
-  // `option` role too and come first in the DOM, so an unscoped getByRole('option') resolves
-  // to a collapsed <select>'s hidden child on BOTH targets and never clicks.
-  { name: 'browse-compare-open', steps: async (p) => { await browse(p); await click(p, 'Compare'); await p.locator('button[aria-haspopup="listbox"]').nth(1).click(); await p.getByRole('listbox', { name: 'Comparison layer' }).getByRole('option').nth(1).click(); await p.waitForTimeout(400); } },
+  // compare menu's own listbox: Browse's native <select>s (filters, sort) own the `option` role
+  // too and come first in the DOM — as would A13's metro listbox, were it open — so an unscoped
+  // getByRole('option') resolves to a collapsed <select>'s hidden child on BOTH targets and never
+  // clicks. (The metro control is no longer one of them: A13 replaced that <select>.)
+  { name: 'browse-compare-open', steps: async (p) => { await browse(p); await click(p, 'Compare'); await layerTrigger(p).nth(1).click(); await p.getByRole('listbox', { name: 'Comparison layer' }).getByRole('option').nth(1).click(); await p.waitForTimeout(400); } },
   // C8: the merged legend/insight card is dismissible.
   { name: 'browse-legend-collapsed', steps: async (p) => { await browse(p); await p.getByRole('button', { name: 'Dismiss interpretation' }).click(); await p.getByRole('button', { name: 'Dismiss interpretation' }).waitFor({ state: 'detached' }); await p.waitForTimeout(400); } },
   // C9: V3's drawer button reads "Layers" with a count pill, where V2's read "Data Layers".
@@ -250,6 +273,91 @@ export const SCREENS: Screen[] = [
   { name: 'gate-signin-password-updated', steps: async (p) => { await reach(p, { gate: 'signin', notice: 'password-updated' }); } },
   { name: 'gate-signin-invite-set', steps: async (p) => { await reach(p, { gate: 'signin', notice: 'invite-set' }); } },
   { name: 'gate-signin-invite-expired', steps: async (p) => { await provokes400(p, 'This invitation link is no longer valid. Ask the VIN Foundation for a new one.', () => reach(p, { gate: 'signin', notice: 'invite-expired' })); } },
+  // A13: the metro dropdown, open — the 44th approved state (John's Q4 ruling), APPENDED rather
+  // than filed beside the other Browse states. `cross-plan-deltas.test.ts`'s `SCREENS.slice(0, 28)`
+  // pins the 28 Browse V3 states to their positions on the documented assumption that new states
+  // are appended, which is how Wave 2a's fifteen were added; inserting here would have pushed
+  // `header-1000` out of that window (controller ruling A on A13, 2026-09-08). Order is free:
+  // every consumer iterates or looks up by name, and `snapshotPathTemplate` names artefacts by
+  // state name, so the baselines and DOM snapshots are unaffected by where this line sits.
+  //
+  // The ruled change has no oracle state otherwise — the closed trigger is covered by every Browse
+  // state, but the panel the ruling is ABOUT would never be photographed or serialised. Reached
+  // the same way `browse-layer-menu` is: click, then wait for the thing the state exists to show,
+  // then the 400 ms settle every Browse state was taken with.
+  // The trigger is addressed as a COMBOBOX, not a button: the final whole-branch review's I1
+  // (ruled, A13.3) gave it `role="combobox"`, the role ARIA 1.2 supports `aria-activedescendant`
+  // on, so `getByRole('button', …)` no longer reaches it.
+  { name: 'browse-metro-menu', steps: async (p) => { await browse(p); await p.getByRole('combobox', { name: 'Metro area' }).click(); await p.getByRole('listbox', { name: 'Metro area' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
+  // A14: the Give dropdown, open — the 45th approved state, APPENDED for the same reason A13's
+  // was (`cross-plan-deltas.test.ts`'s `SCREENS.slice(0, 28)` pins the 28 Browse V3 states to
+  // their positions; a new state goes on the end, never in the middle).
+  //
+  // The Give trigger is in the header of EVERY screen — one unconditional <button> at V3:104 — so
+  // its closed state is already photographed 44 times over. The OPEN panel, which is what John's
+  // ruling is about, would otherwise never be photographed or serialised at all. `browse` is the
+  // screen a member actually meets it on. Both targets reach it identically: there is no
+  // prototype prop for it and none is needed, because it is a plain click on markup the design
+  // and the app both render. Waited on the LAST of the four links, so the panel is fully painted.
+  { name: 'header-give-menu', steps: async (p) => {
+    await browse(p);
+    await p.getByRole('button', { name: 'Give' }).click();
+    await p.getByRole('menuitem', { name: 'Dr. Sophia Yin Memorial Fund' }).waitFor({ state: 'visible' });
+    await expectMontserratApplied(p);
+    await p.waitForTimeout(400);
+  } },
+  // A19: the photo lightbox — the 46th, 47th and 48th approved states, APPENDED for the reason
+  // A13's and A14's were. Only Round Rock (p2) carries photographs on BOTH targets — the design's
+  // own `SRC` map, byte-identical in the bundle and in frontend/public — and the D6 stub sends
+  // `photos: []`, so both targets take the same branch; Cedar Park (`detail`'s p1) has six empty
+  // slots. So each state reaches p2 the way `interest-modal` does, clicks the FIRST tile's
+  // hit-target by its own label, waits for the dialog by its accessible name and for the image to
+  // decode, and — because the overlay is `position: fixed` — ends pinned at the top exactly as
+  // `interest-modal` is. There is no prototype prop for any of this and none is needed: it is a
+  // click on markup both targets render.
+  { name: 'detail-lightbox', steps: async (p) => {
+    await browse(p);
+    await p.getByText('Round Rock').first().click();
+    await click(p, 'View full listing');
+    await p.getByRole('button', { name: 'Expand photo: Exterior — street view' }).click();
+    await p.getByRole('dialog', { name: 'Photograph 1 of 3' }).waitFor({ state: 'visible' });
+    await photoLoaded(p);
+    await atTop(p, LIGHTBOX);
+  } },
+  // The Browse docked panel's photograph. `select` sets `mdPhoto: 0`, so the panel shows
+  // `withPhoto[0]` — the street view — and its hit-target is the only "Expand photo: Exterior —
+  // street view" button on the Browse screen (the detail grid is not mounted). Over the Leaflet
+  // map: this is the state that proves the scrim sits ABOVE the attribution (z-index 1100 > 1000).
+  { name: 'browse-panel-lightbox', steps: async (p) => {
+    await browse(p);
+    await p.getByText('Round Rock').first().click();
+    await p.getByText('View full listing').first().waitFor({ state: 'visible' });
+    await p.getByRole('button', { name: 'Expand photo: Exterior — street view' }).click();
+    await p.getByRole('dialog', { name: 'Photograph 1 of 3' }).waitFor({ state: 'visible' });
+    await photoLoaded(p);
+    await atTop(p, LIGHTBOX);
+  } },
+  // One Next: the second photograph (side elevation, 680 x 510) and the counter at 2/3, on both
+  // runtimes. "Next photo" is unique on the detail screen (the docked panel is not mounted). The
+  // button's hover cannot leak into the capture: `settle()` parks the mouse at (0,0) and the
+  // 150 ms opacity transition ends inside its 600 ms. The wrap-around and the keyboard paths are
+  // characterised in logic.test.ts, not photographed.
+  { name: 'detail-lightbox-next', steps: async (p) => {
+    await browse(p);
+    await p.getByText('Round Rock').first().click();
+    await click(p, 'View full listing');
+    await p.getByRole('button', { name: 'Expand photo: Exterior — street view' }).click();
+    await p.getByRole('dialog', { name: 'Photograph 1 of 3' }).waitFor({ state: 'visible' });
+    await photoLoaded(p);
+    await p.getByRole('button', { name: 'Next photo' }).click();
+    await p.getByRole('dialog', { name: 'Photograph 2 of 3' }).waitFor({ state: 'visible' });
+    await photoLoaded(p);
+    await atTop(p, LIGHTBOX);
+  } },
+  // ---------------------------------------------------------------------------------------
+  // SL9 merge (2026-09-09, A-SL34 (3)): main's A13/A14/A19 states above land BEFORE this
+  // branch's own — "screens.ts keeps main's entries before this branch's" — so the empty
+  // dashboard stays the newest-appended state and nothing above it moves.
   // ---------------------------------------------------------------------------------------
   // The empty dashboard (controller amendment A-SL17, John ~05:00 WITA 2026-09-09, verbatim
   // intent: "A real seller with zero listings should see the dashboard shell with no
@@ -265,3 +373,29 @@ export const SCREENS: Screen[] = [
   // ---------------------------------------------------------------------------------------
   { name: 'seller-dash-empty', steps: async (p) => { await reach(p, { screen: 'seller', myListings: [] }); } }
 ];
+
+/**
+ * I1 (A14 review round 1, ruled). A14.6 self-hosts Montserrat 600 for this control and nothing
+ * else, and BOTH targets load the same bytes from their own copy — which is exactly why the pixel
+ * gate cannot see the failure that matters here: a 404, a wrong path or an unusable file blinds
+ * the design and the app together, they both fall back to ProximaNova, and all 45 states still
+ * compare equal at maxDiffPixels: 0. (`frontend/tests/fonts.test.ts` pins the file's SHA-256 to
+ * the official release; this proves the browser actually got it and actually used it.)
+ *
+ * It lives in the state's own steps, so it runs on the reference and on the app, and under the
+ * visual spec and the DOM spec alike — `expectApiStatus` is in these steps for the same reason.
+ * Before the capture, and it changes nothing about it: `fonts.load` resolves against a face the
+ * harness's own `document.fonts.ready` await has already fetched.
+ */
+async function expectMontserratApplied(p: Page): Promise<void> {
+  const seen = await p.evaluate(async () => {
+    await (document as Document & { fonts: FontFaceSet }).fonts.load('600 18px Montserrat');
+    const trigger = document.querySelector('button[aria-haspopup="menu"]')!;
+    return {
+      loaded: (document as Document & { fonts: FontFaceSet }).fonts.check('600 18px Montserrat'),
+      family: getComputedStyle(trigger).fontFamily.replace(/^["']/, '')
+    };
+  });
+  expect(seen.loaded, 'the Give control\'s Montserrat 600 face did not load — both targets would silently fall back to ProximaNova and the pixel gate would stay green').toBe(true);
+  expect(seen.family, 'the Give trigger is not set in Montserrat').toMatch(/^Montserrat\b/);
+}

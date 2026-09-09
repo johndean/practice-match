@@ -34,6 +34,7 @@ function styledElements(html: string): Styled[] {
   return out;
 }
 const decl = (style: string, prop: string) => { const m = new RegExp(`(?:^|;)\\s*${prop}:\\s*([^;]+)`).exec(style); return m ? m[1].trim() : null; };
+
 /** Set, replace or remove ONE declaration in place — never reorders the others (a reorder is a byte change with no rendered effect, and would be a spurious amendment). */
 function setDecl(style: string, prop: string, value: string | null): string {
   const present = new RegExp(`(^|;)(\\s*)${prop}:\\s*[^;]+(;?)`);
@@ -1090,6 +1091,696 @@ const A12_11: Amendment = {
   replace: 'noDemo: p.id === "p8" || p.pop == null,', count: 1
 };
 
+/** A13 — the metro selector is a DROPDOWN LIST in the design's own popover style, not the
+ *  operating system's popup (John, 2026-09-08).
+ *
+ *  `<select>` on macOS opens the OS popup menu — a large dark panel drawn over the page by the
+ *  window server, which no page style reaches. The design already ships the alternative twice
+ *  over: the Market data card's layer select (V3:431 trigger, V3:523 panel, script V3:2091–2122)
+ *  and Compare's identical control (V3:477/482). A13 composes the metro picker from those
+ *  elements — trigger + `aria-haspopup="listbox"` + rotating `sub-chevron.svg`, a
+ *  `role="listbox"` panel of `role="option"` buttons with the tick glyph — reusing every inline
+ *  style verbatim and taking the panel's anchoring (`top: 46px; z-index: 700`, the offset for a
+ *  40 px control) from the "More filters" popover in the same toolbar row (V3:382).
+ *
+ *  `setMarket`'s state transition is unchanged, so filters, pins, the rail, `mapCenter`,
+ *  `marketLabel`, `emptyNote` and the 320 ms loading skeleton behave exactly as before; it moves
+ *  to a class property beside `setF` (V3:1906) so the option rows can call it, and takes `setF`'s
+ *  own "an event OR a bare value" line (V3:1907) so the old contract still holds. Its orphaned
+ *  `renderVals()` key goes with the `<select>` that was its only reader, under the same dead-code
+ *  rule A2.3/A2.5 applied to the `browseSel` helpers.
+ *
+ *  Two behaviours the design has NEVER had are added, because a dropdown a keyboard cannot drive
+ *  and a click cannot dismiss is not "a normal dropdown": Arrow/Home/End/Enter on the trigger
+ *  (A13.2's `marketMenuKeys`) and Escape + outside-click on `document` (A13.4's
+ *  `trackMenuDismiss`, modelled line for line on `trackWidth`, V3:1864–1869, and torn down in the
+ *  same `componentWillUnmount`). They live in the DESIGN's script, so the reference and the app
+ *  get them together and the oracles stay comparable. Scope is the metro selector: the five
+ *  filter selects, the sort select and the wizard's field selects stay native.
+ */
+const A13 = {
+  date: '2026-09-08',
+  ruling: 'must fix this drop-down to be an acutal drop-down vs the popup following the same design logic of a normal dropdown'
+};
+
+/** A13.1 — `setMarket` becomes a class property beside `setF`, so the option rows can call it and
+ *  there is exactly one implementation of the transition. The first line is `setF`'s own
+ *  event-or-value idiom (V3:1907), verbatim; the `setState` body is the old `setMarket`'s
+ *  (V3:3173–3176), verbatim, plus the two keys that close the menu on a choice and the focus
+ *  return that keeps the user on the control the choice was made from (round 4 ruling). */
+const A13_1: Amendment = {
+  id: 'A13.1', ...A13,
+  find: [
+    '  setF = (key) => (e) => {',
+    '    const v = e && e.target ? e.target.value : e;',
+    '    this.setState((s) => ({ f: Object.assign({}, s.f, { [key]: v }), loading: true }));',
+    '    clearTimeout(this._t);',
+    '    this._t = setTimeout(() => this.setState({ loading: false }), 320);',
+    '  };',
+    ''
+  ].join('\n'),
+  replace: [
+    '  setF = (key) => (e) => {',
+    '    const v = e && e.target ? e.target.value : e;',
+    '    this.setState((s) => ({ f: Object.assign({}, s.f, { [key]: v }), loading: true }));',
+    '    clearTimeout(this._t);',
+    '    this._t = setTimeout(() => this.setState({ loading: false }), 320);',
+    '  };',
+    '',
+    '  // The metro choice. One implementation, called by the dropdown rows and still accepting a',
+    '  // change event the way setF does, so the transition below is the one the <select> had.',
+    '  setMarket = (e) => {',
+    '    const v = e && e.target ? e.target.value : e;',
+    '    this.setState({ market: v, activeId: null, hoverId: null, loading: true, marketMenu: false, marketMenuAt: -1 }, () => {',
+    '      clearTimeout(this._t);',
+    '      this._t = setTimeout(() => this.setState({ loading: false }), 320);',
+    '    });',
+    '    // The choice unmounts the row the pointer or the keyboard was on, so focus would land on',
+    '    // <body>. A native select leaves the user on the control; so does this one.',
+    '    const host = this._marketMenuEl;',
+    '    const trigger = host && host.querySelector(\'button[aria-haspopup="listbox"]\');',
+    '    if (trigger) trigger.focus();',
+    '  };',
+    '',
+    '  // Bringing a row into view. The panel scrolls at its max-height as soon as the market list',
+    '  // is longer than the design\'s four, so both the arrow keys and the panel\'s own mount need',
+    '  // this: one while the rows are already there, one at the moment they arrive. The row is',
+    '  // resolved through the field this component recorded, not across the document: the id is',
+    '  // one this component mints, and setMarket\'s own trigger lookup is scoped the same way.',
+    '  scrollMarketOption = (i) => {',
+    '    const host = this._marketMenuEl;',
+    '    const row = host && host.querySelector("#market-opt-" + i);',
+    '    if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });',
+    '  };',
+    '',
+    '  // Moving the keyboard highlight. The rows are all in the DOM while the menu is open, so the',
+    '  // one being highlighted is scrolled into view here rather than after a re-render.',
+    '  moveMarketHighlight = (i) => {',
+    '    this.setState({ marketMenuAt: i });',
+    '    this.scrollMarketOption(i);',
+    '  };',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A13.2 — `renderVals()`: the menu's open state, its trigger and caret styles, its keyboard
+ *  handler, its callback ref, and the option rows. Modelled key for key on the layer menu
+ *  (V3:2091–2122): `marketMenuOpen` ↔ `layerMenuOpen`, `toggleMarketMenu` ↔ `toggleLayerMenu`,
+ *  `marketCaretStyle` ↔ `layerMenuCaretStyle`, `marketTriggerLabel` ↔ `compareTriggerLabel`
+ *  (V3:2135), `marketMenuRef` ↔ `compareMenuRef` (V3:2137), `rowStyle`/`tickStyle` verbatim from
+ *  V3:2112–2120 with the highlight taking the row's own hover grey (V3:525). The orphaned
+ *  `setMarket:` key is dropped — the `<select>` was its only reader (A2.3/A2.5's dead-code rule);
+ *  the class property A13.1 added is what the rows call. */
+const A13_2: Amendment = {
+  id: 'A13.2', ...A13,
+  find: [
+    '      marketOptions: Object.keys(MARKETS).map((m) => ({ v: m, label: m + " metro" })),',
+    '      setMarket: (e) => this.setState({ market: e.target.value, activeId: null, hoverId: null, loading: true }, () => {',
+    '        clearTimeout(this._t);',
+    '        this._t = setTimeout(() => this.setState({ loading: false }), 320);',
+    '      }),',
+    ''
+  ].join('\n'),
+  replace: [
+    '      // The metro SELECT is a dropdown list in this design\'s own style, not the operating',
+    '      // system\'s popup: the same trigger + role="listbox" panel the Market data card uses.',
+    '      marketMenuOpen: !!s.marketMenu,',
+    '      // `giveMenu: false`: opening one menu closes the others, in every direction (final',
+    '      // review m7). The global pointerdown and focusout listeners covered a pointer and a',
+    '      // Tab; a pure-keyboard user could hold this listbox and the header\'s Give menu open',
+    '      // at once, and then shut both with one Escape.',
+    '      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false }),',
+    '      // On the TRIGGER, which is always rendered: a shut menu has no active descendant, and',
+    '      // null is what both renderers omit the attribute for (a string would spell a dead id).',
+    '      marketActiveId: s.marketMenu ? "market-opt-" + s.marketMenuAt : null,',
+    '      marketTriggerLabel: (s.market || "Austin, TX") + " metro",',
+    '      marketFieldStyle: "position: relative; display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 8px 0 15px; min-width: 300px; background: var(--vf-neutral); border: 1px solid " +',
+    '        (s.marketMenu ? "var(--vf-accent)" : "var(--border-subtle)") + "; border-radius: 6px;",',
+    '      marketSelectStyle: "display: flex; align-items: center; gap: 8px; flex: 1; height: 36px; padding: 0; border: 0; outline: none; background: none; font-size: 14px; font-weight: 500; color: var(--vf-navy); cursor: pointer;",',
+    '      marketCaretStyle: "flex: none; display: block; transition: transform 150ms var(--easing-out); transform: rotate(" +',
+    '        (s.marketMenu ? "180deg" : "0deg") + ");",',
+    '      marketMenuRef: (el) => { this._marketMenuEl = el || null; },',
+    '      // The panel\'s own mount is when the option rows first exist, so it is where OPENING',
+    '      // scrolls the highlighted row into view — the arrow keys cannot, having seeded the',
+    '      // highlight while the panel was still unrendered. Same callback-ref idiom the compare',
+    '      // menu already ships (md.compareMenuRef), and it fires on mount on both targets.',
+    '      marketPanelRef: (el) => { if (el) this.scrollMarketOption(this.state.marketMenuAt); },',
+    '      marketMenuKeys: (e) => {',
+    '        const keys = Object.keys(MARKETS);',
+    '        // Math.max: a market MARKETS no longer holds (Seed Listings drops a metro with no',
+    '        // listings left) gives indexOf -1, and keys[-1] would reach setMarket as undefined.',
+    '        const cur = Math.max(0, keys.indexOf(s.market || "Austin, TX"));',
+    '        const at = s.marketMenuAt == null || s.marketMenuAt < 0 ? cur : s.marketMenuAt;',
+    '        if (e.key === "ArrowDown" || e.key === "ArrowUp") {',
+    '          e.preventDefault();',
+    '          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur });',
+    '          return this.moveMarketHighlight((at + (e.key === "ArrowDown" ? 1 : keys.length - 1)) % keys.length);',
+    '        }',
+    '        if (!s.marketMenu) return;',
+    '        if (e.key === "Home" || e.key === "End") {',
+    '          e.preventDefault();',
+    '          return this.moveMarketHighlight(e.key === "Home" ? 0 : keys.length - 1);',
+    '        }',
+    '        if (e.key === "Enter" || e.key === " ") {',
+    '          e.preventDefault();',
+    '          return this.setMarket(keys[at]);',
+    '        }',
+    '      },',
+    '      marketOptions: Object.keys(MARKETS).map((m, i) => {',
+    '        const on = (s.market || "Austin, TX") === m;',
+    '        const hi = s.marketMenuAt === i;',
+    '        return {',
+    '          v: m, label: m + " metro", selected: on,',
+    '          go: () => this.setMarket(m),',
+    '          optId: "market-opt-" + i,',
+    '          rowStyle: "display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 8px; font-family: var(--rf-display); font-size: 13px; font-weight: " +',
+    '            (on ? "800" : "500") + "; color: var(--vf-navy); background: " +',
+    '            (on ? "var(--vf-accent-bg)" : hi ? "var(--vf-neutral)" : "none") + "; border: 0; border-radius: 6px; cursor: pointer;",',
+    '          tickStyle: "flex: none; display: block; filter: brightness(0) saturate(100%) invert(23%) sepia(89%) saturate(1352%) hue-rotate(184deg) brightness(94%) contrast(101%); opacity: " +',
+    '            (on ? "1" : "0") + ";"',
+    '        };',
+    '      }),',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A13.3 — the markup. The field wrapper keeps its own declarations (V3:363) and gains
+ *  `position: relative` so the panel can anchor to it, exactly as the "More filters" wrapper does
+ *  (V3:379); the search glyph is untouched; the `<select>` becomes the layer menu's trigger
+ *  (V3:431–434) and its panel (V3:523–534) with the chip swatch left out — markets have no colour
+ *  ramp, and absent beats faked. Each row carries an `id` and the TRIGGER carries
+ *  `aria-activedescendant` — the focused element is the only place a screen reader reads it, and
+ *  focus stays on the trigger throughout (round 3 ruling; it sat on the panel, inert, in round 2).
+ *
+ *  Widened by the final whole-branch review's I1 (ruled): the trigger is `role="combobox"`, and
+ *  the option rows carry `tabindex="-1"`. ARIA 1.2 supports `aria-activedescendant` on
+ *  `application`, `combobox`, `group`, `textbox` and the composite widget roles — NOT on
+ *  `button` — so the whole attribute chain above hung off a role that does not carry it and was
+ *  liable to be dropped on the way to the accessibility tree. This markup is the APG Select-Only
+ *  Combobox in every other respect; saying so is one attribute. `tabindex="-1"` is the other half
+ *  of the same pattern: a listbox driven by `aria-activedescendant` keeps focus on the element
+ *  that holds it, and without it Tab from the trigger walked INTO the options, where
+ *  `marketMenuKeys` is not bound and the arrow keys did nothing. Both are DOM-only; no pixel
+ *  moves, and React 18 passes a lowercase `tabindex` through as a plain attribute, exactly as
+ *  Vue does, so the two targets stay byte-identical to the DOM oracle. */
+const A13_3: Amendment = {
+  id: 'A13.3', ...A13,
+  find: [
+    '          <div style="display: flex; align-items: center; gap: 9px; height: 40px; padding: 0 8px 0 15px; min-width: 300px; background: var(--vf-neutral); border: 1px solid var(--border-subtle); border-radius: 6px;">',
+    '            <img src="assets/icons/sub-search.svg" alt="" width="14" height="14" style="opacity: .45;">',
+    '            <select value="{{ market }}" onChange="{{ setMarket }}" style="flex: 1; height: 36px; border: 0; outline: none; background: none; font-size: 14px; font-weight: 500; color: var(--vf-navy); cursor: pointer;">',
+    '              <sc-for list="{{ marketOptions }}" as="m" hint-placeholder-count="4">',
+    '                <option value="{{ m.v }}">{{ m.label }}</option>',
+    '              </sc-for>',
+    '            </select>',
+    ''
+  ].join('\n'),
+  replace: [
+    '          <div ref="{{ marketMenuRef }}" style="{{ marketFieldStyle }}">',
+    '            <img src="assets/icons/sub-search.svg" alt="" width="14" height="14" style="opacity: .45;">',
+    '            <button onClick="{{ toggleMarketMenu }}" onKeyDown="{{ marketMenuKeys }}" role="combobox" aria-label="Metro area" aria-haspopup="listbox" aria-controls="metro-listbox" aria-expanded="{{ marketMenuOpen }}" aria-activedescendant="{{ marketActiveId }}" style="{{ marketSelectStyle }}">',
+    '              <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ marketTriggerLabel }}</span>',
+    '              <img src="assets/icons/sub-chevron.svg" alt="" width="14" height="14" style="{{ marketCaretStyle }}">',
+    '            </button>',
+    '            <sc-if value="{{ marketMenuOpen }}" hint-placeholder-val="{{ false }}">',
+    '              <div role="listbox" aria-label="Metro area" id="metro-listbox" ref="{{ marketPanelRef }}" style="position: absolute; left: 0; top: 46px; z-index: 700; width: 300px; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;" class="rf-scroll">',
+    '                <sc-for list="{{ marketOptions }}" as="m" hint-placeholder-count="4">',
+    '                  <button onClick="{{ m.go }}" id="{{ m.optId }}" role="option" tabindex="-1" aria-selected="{{ m.selected }}" style="{{ m.rowStyle }}" style-hover="background: var(--vf-neutral);">',
+    '                    <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ m.label }}</span>',
+    '                    <img src="assets/icons/sub-check-filled.svg" alt="" width="11" height="11" style="{{ m.tickStyle }}">',
+    '                  </button>',
+    '                </sc-for>',
+    '              </div>',
+    '            </sc-if>',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A13.4 — `trackMenuDismiss()`, and the two removals that pair with it. Modelled line for line
+ *  on `trackWidth` (V3:1864–1869) / `componentWillUnmount` (V3:1871–1873), which is the design's
+ *  only global listener and its only teardown. Escape and outside-click are the two dismissals a
+ *  normal dropdown has and this design has never had; they live here, once, for the one menu the
+ *  ruling names. */
+const A13_4: Amendment = {
+  id: 'A13.4', ...A13,
+  find: [
+    '  componentWillUnmount() {',
+    '    if (this._onResize) window.removeEventListener("resize", this._onResize);',
+    '  }',
+    ''
+  ].join('\n'),
+  replace: [
+    '  trackMenuDismiss() {',
+    '    const down = (e) => {',
+    '      if (!this.state.marketMenu) return;',
+    '      const host = this._marketMenuEl;',
+    '      if (host && e.target && host.contains(e.target)) return;',
+    '      this.setState({ marketMenu: false, marketMenuAt: -1 });',
+    '    };',
+    '    const key = (e) => {',
+    '      if (!this.state.marketMenu || e.key !== "Escape") return;',
+    '      this.setState({ marketMenu: false, marketMenuAt: -1 });',
+    '    };',
+    '    this._onDocDown = down;',
+    '    this._onDocKey = key;',
+    '    document.addEventListener("pointerdown", down, true);',
+    '    document.addEventListener("keydown", key, true);',
+    '  }',
+    '',
+    '  componentWillUnmount() {',
+    '    if (this._onResize) window.removeEventListener("resize", this._onResize);',
+    '    if (this._onDocDown) document.removeEventListener("pointerdown", this._onDocDown, true);',
+    '    if (this._onDocKey) document.removeEventListener("keydown", this._onDocKey, true);',
+    '  }',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A13.5 — `componentDidMount` arms them, immediately after `trackWidth()`, which is the line it
+ *  mirrors. */
+const A13_5: Amendment = {
+  id: 'A13.5', ...A13,
+  find: [
+    '  componentDidMount() {',
+    '    this.trackWidth();',
+    ''
+  ].join('\n'),
+  replace: [
+    '  componentDidMount() {',
+    '    this.trackWidth();',
+    '    this.trackMenuDismiss();',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A13.6 — the first of the two render-value orphans the `<select>` left behind, deleted under the
+ *  bundle's own dead-code rule, exactly as A2.2–A2.5 deleted the `browseSel` orphans C13 left.
+ *  `market:` fed `<select value="{{ market }}">` and nothing else: after A13.3 the template holds
+ *  no `{{ market }}` at all, and no module under `frontend/src` reads `v.market`. The trigger's
+ *  own label comes from `marketTriggerLabel`, and every reader of the CHOICE goes through
+ *  `s.market` in the script (review round 1, I2). */
+const A13_6: Amendment = {
+  id: 'A13.6', ...A13,
+  find: '      market: s.market || "Austin, TX",\n',
+  replace: '',
+  count: 1
+};
+
+/** A13.7 — the second orphan, on the option rows A13.2 builds: `v: m` was the `<option value>` the
+ *  listbox row does not have. The rows read `label`, `selected`, `go`, `rowStyle`, `tickStyle` and
+ *  `optId`; `go` closes over `m` itself, so nothing needs the value on the object. Same rule, same
+ *  ruling (review round 1, I2). */
+const A13_7: Amendment = {
+  id: 'A13.7', ...A13,
+  find: '          v: m, label: m + " metro", selected: on,\n',
+  replace: '          label: m + " metro", selected: on,\n',
+  count: 1
+};
+
+/** A14 — the header's Give button IS the VIN Foundation site's Give dropdown (John, 2026-09-08:
+ *  "match button design pixel-by-pixel").
+ *
+ *  Unlike A13, which composes from THIS design's popover pattern, every literal here was measured
+ *  on https://vinfoundation.org/ on 2026-09-08 and is cited in the plan's measurement table by the
+ *  stylesheet and selector it came from. Two of those values could not be taken from the bundle,
+ *  and John ruled on both rather than either being guessed: the live face is Montserrat 600, which
+ *  this design does not load and whose weight ProximaNova does not have (Q1 → A14.6 self-hosts it
+ *  under the SIL Open Font Licence, scoped to this control and its menu and to nothing else), and
+ *  the live navy is #07386f where `--vf-navy` is #003a70 (Q2 → the live literal, because
+ *  "pixel-by-pixel" names the live site). The light blue needed no decision — `--vf-accent`
+ *  (V3:22) is already #339dde, the same hex as the live pill.
+ *
+ *  Structure. The live control is `li.give-button > a.elementor-item > span.sub-arrow` with a
+ *  sibling `ul.sub-menu`, and the pill/typography split across the li and the a. A14 folds the two
+ *  boxes into one <button> whose padding is the li's vertical and the a's horizontal (`2px 22px`),
+ *  which reproduces the measured 28.30 px height and the same text baseline, and wraps it in the
+ *  header's own `position: relative` div (V3:88) so the underline and the panel can anchor.
+ *
+ *  Three mechanisms have no counterpart anywhere in this design and are composed, not measured
+ *  (John's ruling: click-to-open, keyboard navigation, Escape, outside-click dismissal): Escape
+ *  and outside-click (A14.4/A14.5, sharing A13's `trackMenuDismiss`), Arrow/Home/End movement
+ *  (A14.1's `giveFocus` plus A14.2's per-row `keys`), and the CSS custom property
+ *  `--rf-give-underline` that lets the wrapper's :hover drive a child element's transform. The
+ *  last one exists because the live underline is an `::after` on the link and this design's only
+ *  pseudo idiom is a flat `style-hover` (42 uses, no other kind) — it cannot express
+ *  `:hover::after`. A single inherited variable, set by the wrapper's own hover rule and read by
+ *  the underline's inline `scaleX()`, reproduces the live behaviour exactly: hovering anywhere on
+ *  the control OR the open panel shows the bar, which is what `li:hover` does on the live site
+ *  because the panel is inside the li there.
+ *
+ *  There is no keyboard HIGHLIGHT: focus is the highlight, exactly as on vinfoundation.org, which
+ *  has no focus style of its own. That is also why no `style-focus` appears here — the design has
+ *  never used a `style-` kind other than `hover`, and inventing one would be an untested path on
+ *  the reference runtime.
+ */
+const A14 = {
+  date: '2026-09-08',
+  ruling: 'the Give button must be identical to the https://vinfoundation.org/ where the button is an actual drop down (match button design pixel-by-pixel)'
+};
+
+/** A14.1 — `giveFocus`, a class property beside the other class members, so the trigger's key
+ *  handler and each row's key handler share one implementation. Anchored on `money(n) {`
+ *  (script V3:1893, one occurrence), the first member after `componentDidMount`, so it does not
+ *  collide with A13.1's `setF` anchor. Detached rows are filtered out: Vue calls a function ref
+ *  with `null` on unmount, and the menu unmounts every time it closes. */
+const A14_1: Amendment = {
+  id: 'A14.1', ...A14,
+  find: '  money(n) {\n',
+  replace: [
+    '  // Arrow-key movement inside the Give menu. Focus IS the highlight — vinfoundation.org has',
+    '  // no focus style of its own either — so this moves focus and nothing else. Wraps both ways.',
+    '  giveFocus = (i) => {',
+    '    const els = (this._giveItemEls || []).filter(Boolean);',
+    '    if (!els.length) return;',
+    '    els[((i % els.length) + els.length) % els.length].focus();',
+    '  };',
+    '',
+    '  money(n) {',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A14.2 — `renderVals()`: the menu's open state, the two refs, the trigger and underline styles,
+ *  the four links with their row style, per-row ref, per-row key handler and dismiss-on-choose,
+ *  and the trigger's own key handler. Anchored after `toggleUserMenu` (one occurrence), which is
+ *  the header block's last key, so the Give keys sit with the header's other two menus. The two
+ *  `'Montserrat'` declarations are the ONLY two in the design: A14.6's face reaches this control
+ *  and its menu and nothing else, which is the scope John's ruling names.
+ *
+ *  Two widenings from the final whole-branch review, both ruled. m6: `giveMenuKeys` takes Home
+ *  and End while the menu is open, which the per-row `keys` already had and the trigger — the one
+ *  element a keyboard user starts from — did not; the guard is `marketMenuKeys`'s, so the two
+ *  triggers answer the same keys in the same states. m7: the anchor line `toggleUserMenu` and both
+ *  of Give's own open paths now clear the OTHER menus as well, so "opening me closes you" holds in
+ *  every direction rather than only outward from Give. */
+const A14_2: Amendment = {
+  id: 'A14.2', ...A14,
+  find: '      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu }),\n',
+  replace: [
+    '      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false }),',
+    '      // The Give control, measured on vinfoundation.org (John, 2026-09-08). The literals are',
+    '      // the live site\'s, not this design\'s tokens: #339dde is the idle pill, #07386f the',
+    '      // hover/open pill and the panel border and the row text, 10px the pill radius, 4.34px',
+    '      // the gap from the pill to the 3px underline, 28px the gap from the pill to the panel.',
+    '      giveMenuOpen: !!s.giveMenu,',
+    '      // `giveMenuAt: null` on every pointer open: the pending index below belongs to the',
+    '      // KEYBOARD, and a stale one would drag a mouse user into the list on the next open.',
+    '      // `marketMenu` too (final review m7): the invariant is that opening one menu closes',
+    '      // the others, and Browse renders this control and the metro listbox on one screen.',
+    '      toggleGiveMenu: () => this.setState({ giveMenu: !s.giveMenu, giveMenuAt: null, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 }),',
+    '      giveMenuRef: (el) => { this._giveMenuEl = el || null; },',
+    '      giveButtonRef: (el) => { this._giveButtonEl = el || null; },',
+    '      // The panel\'s own mount is the first moment its links exist, so it is where an arrow',
+    '      // key that OPENED the menu spends its pending index — the arrow itself cannot, having',
+    '      // seeded it while the sc-if was still unrendered. Same callback-ref idiom the compare',
+    '      // menu ships (md.compareMenuRef) and A13 reuses for marketPanelRef, and it fires on',
+    '      // mount on both targets, children before parent, so the row refs are already in.',
+    '      // Spent once: a re-render mounts the panel again and must not re-steal focus.',
+    '      givePanelRef: (el) => {',
+    '        const at = this.state.giveMenuAt;',
+    '        if (!el || at == null) return;',
+    '        this.setState({ giveMenuAt: null });',
+    '        this.giveFocus(at);',
+    '      },',
+    '      giveWrapStyle: "position: relative; display: flex; align-items: center;",',
+    '      giveButtonStyle: "display: flex; align-items: center; padding: 2px 22px; font-family: \'Montserrat\', var(--rf-display); font-size: 18px; font-weight: 600; line-height: 24.3px; white-space: nowrap; color: #ffffff; background: " +',
+    '        (s.giveMenu ? "#07386f" : "#339dde") + "; border: 0; border-radius: 10px; cursor: pointer; transition: background .4s;",',
+    '      giveUnderlineStyle: "position: absolute; left: 0; right: 0; top: calc(100% + 4.34px); height: 3px; background: #339dde; transform-origin: center; transition: transform .3s cubic-bezier(.58,.3,.005,1); transform: scaleX(" +',
+    '        (s.giveMenu ? "1" : "var(--rf-give-underline, 0)") + ");",',
+    '      giveLinks: [',
+    '        { label: "Annual Fund", href: "https://vinfoundation.org/give/" },',
+    '        { label: "Cor Group", href: "https://vinfoundation.org/cor/" },',
+    '        { label: "Legacy Giving", href: "https://vinfoundation.org/legacy-giving/" },',
+    '        { label: "Dr. Sophia Yin Memorial Fund", href: "https://vinfoundation.org/resources/dr-sophia-yin-memorial-fund/" }',
+    '      ].map((g, i) => Object.assign({}, g, {',
+    '        rowStyle: "display: flex; align-items: center; padding: 8px 20px; border-left: 8px solid transparent; font-family: \'Montserrat\', var(--rf-display); font-size: 14px; font-weight: 600; line-height: 21px; color: #07386f; background: none; white-space: nowrap; text-decoration: none;",',
+    '        ref: (el) => { const a = this._giveItemEls || (this._giveItemEls = []); a[i] = el || null; },',
+    '        keys: (e) => {',
+    '          if (e.key === "ArrowDown") { e.preventDefault(); return this.giveFocus(i + 1); }',
+    '          if (e.key === "ArrowUp") { e.preventDefault(); return this.giveFocus(i - 1); }',
+    '          if (e.key === "Home") { e.preventDefault(); return this.giveFocus(0); }',
+    '          if (e.key === "End") { e.preventDefault(); return this.giveFocus(-1); }',
+    '        },',
+    '        pick: () => this.setState({ giveMenu: false })',
+    '      })),',
+    '      giveMenuKeys: (e) => {',
+    '        // Home and End, on the TRIGGER as well as inside the menu, and only while the menu',
+    '        // is open — exactly where marketMenuKeys has them (final review m6). With the menu',
+    '        // shut there is no list for an end to be an end of.',
+    '        if (s.giveMenu && (e.key === "Home" || e.key === "End")) {',
+    '          e.preventDefault();',
+    '          return this.giveFocus(e.key === "Home" ? 0 : -1);',
+    '        }',
+    '        if (e.key !== "ArrowDown" && e.key !== "ArrowUp") return;',
+    '        e.preventDefault();',
+    '        const at = e.key === "ArrowDown" ? 0 : -1;',
+    '        if (s.giveMenu) return this.giveFocus(at);',
+    '        // Already-open: the panel is mounted, so focus moves here and now. Opening CANNOT do',
+    '        // that — the app\'s setState runs its callback synchronously (dc-logic.js) and Vue',
+    '        // has not rendered the panel yet, so the index is seeded and givePanelRef spends it.',
+    '        this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 });',
+    '      },',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A14.3 — the markup. The inert <button> at V3:104 becomes the header's own wrapper/trigger/
+ *  sc-if/panel shape (V3:88-98) carrying the measured live values. The chevron is Font Awesome
+ *  Free 5.15.4's `solid/angle-down` inlined verbatim — the live glyph, at the live 11.25 x 18 px
+ *  box (FA's .625em advance at 18px) — rather than a new icon file, so `icons.test.ts` and the
+ *  bundle's asset folder are both untouched; inline <svg> with a camelCase viewBox is already a
+ *  design idiom (V3:1416) and `parseDocument` runs with `lowerCaseAttributeNames: false`.
+ *  `text-decoration: none` appears in the row's hover as well as its base because the design's own
+ *  `a:hover { text-decoration: underline }` (V3:54) would otherwise underline every row; a
+ *  generated `.sch…:hover` (0,2,0) beats `a:hover` (0,1,1) on both targets. The panel is
+ *  `width: max-content` because an absolutely positioned box shrink-to-fits inside its ~106px
+ *  containing block otherwise — the live site reaches the same 264px through SmartMenus' inline
+ *  width, and `min-width: 130px` is its measured `subMenusMinWidth: "10em"` at the panel's 13px em. */
+const A14_3: Amendment = {
+  id: 'A14.3', ...A14,
+  find: '        <button style="font-family: var(--rf-display); font-size: 14px; font-weight: 500; color: var(--color-white); background: var(--color-blue); border: 0; border-radius: 6px; padding: 10px 20px; cursor: pointer;" style-hover="background: var(--color-navy);">Give</button>\n',
+  replace: [
+    '        <div ref="{{ giveMenuRef }}" style="{{ giveWrapStyle }}" style-hover="--rf-give-underline: 1;">',
+    '          <button ref="{{ giveButtonRef }}" onClick="{{ toggleGiveMenu }}" onKeyDown="{{ giveMenuKeys }}" aria-haspopup="menu" aria-controls="give-menu" aria-expanded="{{ giveMenuOpen }}" style="{{ giveButtonStyle }}" style-hover="background: #07386f;">Give<span style="display: flex; align-items: center; line-height: 1; padding: 10px 0 10px 10px; margin: -10px 0;"><svg width="11.25" height="18" viewBox="0 0 320 512" fill="currentColor" aria-hidden="true" style="display: block;"><path d="M143 352.3L7 216.3c-9.4-9.4-9.4-24.6 0-33.9l22.6-22.6c9.4-9.4 24.6-9.4 33.9 0l96.4 96.4 96.4-96.4c9.4-9.4 24.6-9.4 33.9 0l22.6 22.6c9.4 9.4 9.4 24.6 0 33.9l-136 136c-9.2 9.4-24.4 9.4-33.8 0z"></path></svg></span></button>',
+    '          <div style="{{ giveUnderlineStyle }}"></div>',
+    '          <sc-if value="{{ giveMenuOpen }}" hint-placeholder-val="{{ false }}">',
+    '            <div role="menu" aria-label="Give" id="give-menu" ref="{{ givePanelRef }}" style="position: absolute; left: 0; top: calc(100% + 28px); z-index: 60; width: max-content; min-width: 130px; padding: 0; background: #ffffff; border: 1px solid #07386f; border-radius: 0;">',
+    '              <sc-for list="{{ giveLinks }}" as="g" hint-placeholder-count="4">',
+    '                <a href="{{ g.href }}" role="menuitem" ref="{{ g.ref }}" onClick="{{ g.pick }}" onKeyDown="{{ g.keys }}" style="{{ g.rowStyle }}" style-hover="background: #07386f; color: #ffffff; text-decoration: none;">{{ g.label }}</a>',
+    '              </sc-for>',
+    '            </div>',
+    '          </sc-if>',
+    '        </div>',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A14.4 — the Give branch of A13.4's `pointerdown` closure. Placed AHEAD of the metro guard and
+ *  written so it changes nothing about it: if `giveMenu` is falsy the block is skipped entirely,
+ *  and if it is open the click is tested against the Give wrapper alone. */
+const A14_4: Amendment = {
+  id: 'A14.4', ...A14,
+  find: [
+    '    const down = (e) => {',
+    '      if (!this.state.marketMenu) return;',
+    ''
+  ].join('\n'),
+  replace: [
+    '    const down = (e) => {',
+    '      if (this.state.giveMenu) {',
+    '        const give = this._giveMenuEl;',
+    '        if (!(give && e.target && give.contains(e.target))) this.setState({ giveMenu: false });',
+    '      }',
+    '      if (!this.state.marketMenu) return;',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A14.5 — the Give branch of A13.4's `keydown` closure. A13's single guard
+ *  (`!marketMenu || key !== "Escape"`) becomes two with the same net effect for the metro menu —
+ *  proved by `logic.test.ts`'s "A13's metro dismissals are unchanged" case — with the Give close,
+ *  and the focus return the live site gets for free from the browser, in between. */
+const A14_5: Amendment = {
+  id: 'A14.5', ...A14,
+  find: [
+    '    const key = (e) => {',
+    '      if (!this.state.marketMenu || e.key !== "Escape") return;',
+    '      this.setState({ marketMenu: false, marketMenuAt: -1 });',
+    '    };',
+    ''
+  ].join('\n'),
+  replace: [
+    '    const key = (e) => {',
+    '      if (e.key !== "Escape") return;',
+    '      if (this.state.giveMenu) {',
+    '        this.setState({ giveMenu: false });',
+    '        if (this._giveButtonEl) this._giveButtonEl.focus();',
+    '      }',
+    '      if (!this.state.marketMenu) return;',
+    '      this.setState({ marketMenu: false, marketMenuAt: -1 });',
+    '    };',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A14.6 — the face itself (John, 2026-09-08, ruling A14 GO: "Self-host Montserrat 600 under the
+ *  SIL Open Font Licence, scoped exclusively to the Give button and its menu. Keep the rest of the
+ *  design typography unchanged."). One `@font-face` in the helmet's own <style> block, beside the
+ *  `:root` tokens — the design's only stylesheet of its own — pointing at the official Montserrat
+ *  SemiBold woff2 the bundle now ships in `assets/fonts/`, with `OFL.txt` beside it.
+ *
+ *  It reaches the two targets by the two paths every other bundle asset does: the reference server
+ *  serves the bundle root, so `assets/fonts/…` resolves there; the app carries the same rule in
+ *  `frontend/src/styles/global.css` — the helmet's port, where the four Leaflet tooltip rules
+ *  already live — under the platform spec's §3 rule-1 rewrite (`assets/` → `/assets/`), against a
+ *  byte-identical copy in `frontend/public/assets/fonts/`. `frontend/tests/fonts.test.ts` derives
+ *  the app's rule FROM this one and proves the two copies of the file are identical, so the pixel
+ *  gate can never be comparing two different typefaces.
+ *
+ *  Nothing else changes face: `--rf-display` and `--rf-serif` are untouched, and the only two
+ *  declarations naming the family in the whole design are A14.2's trigger and row styles
+ *  (asserted both ways in `design-amendments.test.ts`). A1's ruling — "keep the V2 header and do
+ *  not restyle header or fonts" — is why the scope is stated as a rule and machine-checked rather
+ *  than left to review. */
+const A14_6: Amendment = {
+  id: 'A14.6', ...A14,
+  find: '<style>\n  :root {\n',
+  replace: [
+    '<style>',
+    '  /* Montserrat 600 — the face vinfoundation.org sets the Give button in, self-hosted under',
+    '     the SIL Open Font Licence 1.1 (assets/fonts/OFL.txt, shipped beside the file). Scoped to',
+    '     the Give control and its menu by A14.2; no other element names it. */',
+    '  @font-face {',
+    '    font-family: \'Montserrat\';',
+    '    src: url(\'assets/fonts/Montserrat-SemiBold.woff2\') format(\'woff2\');',
+    '    font-weight: 600; font-style: normal; font-display: swap;',
+    '  }',
+    '  :root {',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A14.7 — Tab out of the open menu closes it (review round 1, m2 — ruled). John's ruling named
+ *  Escape and outside-click; Tab is the third way out of a menu the keyboard can now enter, and
+ *  without it the panel stayed open behind the focus ring — the same "a dropdown a keyboard cannot
+ *  dismiss is not shippable" reasoning A13 and A14.4/A14.5 already applied. The live site has no
+ *  focusout dismissal either, because it has no keyboard entry to need one.
+ *
+ *  Modelled on A13.4's own two closures and registered and torn down beside them, so
+ *  `trackMenuDismiss` keeps having exactly one shape. `relatedTarget` is where focus is GOING:
+ *  anywhere inside the wrapper (the trigger, another row) is a move within the control, and `null`
+ *  is the browser leaving the document — a window blur, which must not close anything. When this
+ *  closure was written it read `giveMenu` and nothing else; A13.8 (applied last) later gave the metro
+ *  listbox the same dismissal inside it. */
+const A14_7: Amendment = {
+  id: 'A14.7', ...A14,
+  find: [
+    '    this._onDocDown = down;',
+    '    this._onDocKey = key;',
+    '    document.addEventListener("pointerdown", down, true);',
+    '    document.addEventListener("keydown", key, true);',
+    '  }',
+    '',
+    '  componentWillUnmount() {',
+    '    if (this._onResize) window.removeEventListener("resize", this._onResize);',
+    '    if (this._onDocDown) document.removeEventListener("pointerdown", this._onDocDown, true);',
+    '    if (this._onDocKey) document.removeEventListener("keydown", this._onDocKey, true);',
+    '  }',
+    ''
+  ].join('\n'),
+  replace: [
+    '    const out = (e) => {',
+    '      if (!this.state.giveMenu) return;',
+    '      const give = this._giveMenuEl;',
+    '      const to = e.relatedTarget;',
+    '      if (!to || (give && give.contains(to))) return;',
+    '      this.setState({ giveMenu: false });',
+    '    };',
+    '    this._onDocDown = down;',
+    '    this._onDocKey = key;',
+    '    this._onDocOut = out;',
+    '    document.addEventListener("pointerdown", down, true);',
+    '    document.addEventListener("keydown", key, true);',
+    '    document.addEventListener("focusout", out, true);',
+    '  }',
+    '',
+    '  componentWillUnmount() {',
+    '    if (this._onResize) window.removeEventListener("resize", this._onResize);',
+    '    if (this._onDocDown) document.removeEventListener("pointerdown", this._onDocDown, true);',
+    '    if (this._onDocKey) document.removeEventListener("keydown", this._onDocKey, true);',
+    '    if (this._onDocOut) document.removeEventListener("focusout", this._onDocOut, true);',
+    '  }',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A14.8 — the last leg of the "opening me closes you" invariant (final review m7 — ruled).
+ *  `toggleGiveMenu` and the arrow-open already cleared `navMenu` and `userMenu`, and A14.2 and
+ *  A13.2 close Give from `toggleUserMenu` and `toggleMarketMenu`; `toggleNavMenu` is the one
+ *  toggle no other amendment touches, so it gets its own literal. The design's own line already
+ *  clears `userMenu`, which is the idiom this follows exactly. Nothing else about it changes. */
+const A14_8: Amendment = {
+  id: 'A14.8', ...A14,
+  find: '      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false }),\n',
+  replace: '      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false }),\n',
+  count: 1
+};
+
+/** A13.8 — Tab out of the metro listbox closes it (final review m4 — ruled), on exactly the
+ *  reasoning A14.7 was accepted on two commits earlier: Escape and outside-click were the two
+ *  dismissals A13.4 gave the control, and Tab is the third way out of a dropdown the keyboard can
+ *  now enter. Two dropdowns shipping in one branch with different dismissal sets is the
+ *  inconsistency the whole-branch review exists to catch, and A13.3's `tabindex="-1"` makes Tab
+ *  from the trigger leave the control outright, which is precisely when the panel would otherwise
+ *  be left open behind the focus ring.
+ *
+ *  It applies LAST, after A14.7 — the `out` closure it edits is A14.7's own, and A13.4 cannot
+ *  reach forward to a closure that does not exist when it runs. The shape is A14.4's: the shared
+ *  guard first, then the Give branch, then the metro one, so the Give behaviour is bit-identical
+ *  (a null `relatedTarget` returned before, and returns before, on both branches). */
+const A13_8: Amendment = {
+  id: 'A13.8', ...A13,
+  find: [
+    '    const out = (e) => {',
+    '      if (!this.state.giveMenu) return;',
+    '      const give = this._giveMenuEl;',
+    '      const to = e.relatedTarget;',
+    '      if (!to || (give && give.contains(to))) return;',
+    '      this.setState({ giveMenu: false });',
+    '    };',
+    ''
+  ].join('\n'),
+  replace: [
+    '    const out = (e) => {',
+    '      // `relatedTarget` is where focus is GOING, and a null one is the browser leaving the',
+    '      // document altogether — a window blur, which dismisses neither menu.',
+    '      const to = e.relatedTarget;',
+    '      if (!to) return;',
+    '      if (this.state.giveMenu) {',
+    '        const give = this._giveMenuEl;',
+    '        if (!(give && give.contains(to))) this.setState({ giveMenu: false });',
+    '      }',
+    '      if (!this.state.marketMenu) return;',
+    '      const host = this._marketMenuEl;',
+    '      if (host && host.contains(to)) return;',
+    '      this.setState({ marketMenu: false, marketMenuAt: -1 });',
+    '    };',
+    ''
+  ].join('\n'),
+  count: 1
+};
 
 /** A15 — every uploaded photograph renders, with its OWN description (A-L11, John 2026-09-09).
  *
@@ -1895,12 +2586,447 @@ const A17_2: Amendment = {
   count: 1
 };
 
+/** A18 — the two backwards arrows (John, 2026-09-09; screenshots of the docked panel's "View
+ *  full listing" button and the detail's "Back to results" link).
+ *
+ *  `navigate-arrow.svg` points LEFT unrotated — its path's apex is at x = 199 of a 640 viewBox
+ *  and the shaft runs to x = 424 — and it is mirror-symmetric about its horizontal axis, which is
+ *  why `transform: rotate(180deg)` is a horizontal flip and the design's own idiom for pointing
+ *  it right (V3:724, the docked panel's Next arrow). The Insights-tab CTA carried it unrotated
+ *  AFTER its label, so it pointed back at the words; the detail's Back link carried it rotated
+ *  BEFORE its label, so it pointed away from where the link goes. A18 swaps the two — the
+ *  declaration order `transform` before `filter` copies V3:724.
+ *
+ *  Not touched, deliberately: the SVG files (flipping the glyph would reverse the correct
+ *  prev/next pair at V3:721/724 and the two sign-out arrows, and the app serves its own public
+ *  copy anyway — identical path, different C2PA metadata); V3:140 and V3:1434, the two unrotated
+ *  sign-out arrows, which are John's question (D-A18) and not his two screenshots — V3:1434 is
+ *  inside the phone frame, on `mobile-list` and `mobile-detail`'s frozen pixels.
+ *
+ *  Line numbers in this family's comments name the amended file as it stood when A18 was written
+ *  (the fa1ab3f convention: comments keep their numbers, LOCAL_AMENDMENTS.md's rows carry the ones
+ *  the citation test re-checks after a later family inserts lines).
+ */
+const A18 = {
+  date: '2026-09-09',
+  ruling: 'the arrow icons are backwards on each location, reverse each'
+};
+
+/** A18.1 — the Insights-tab CTA (V3:819). Anchored on the bare `<img>` — the only 12 × 12
+ *  `navigate-arrow` carrying the whitening filter, unique in the pristine file and at application
+ *  — and deliberately NOT on the button's "View full listing" label in front of it:
+ *  design-amendments.test.ts's citation case chases a row's output forward through any LATER
+ *  amendment whose `find` includes its `replace`, so a find that carried A3's text would make
+ *  A3's checked output this `<img>` line and stale A3's own V3:831 citation (A11's site, where
+ *  A3's text also stands). The bare anchor keeps A18 independent of A3's position in the list. */
+const A18_1: Amendment = {
+  id: 'A18.1', ...A18,
+  find: '<img src="assets/icons/navigate-arrow.svg" alt="" width="12" height="12" style="filter: brightness(0) invert(1);">',
+  replace: '<img src="assets/icons/navigate-arrow.svg" alt="" width="12" height="12" style="transform: rotate(180deg); filter: brightness(0) invert(1);">',
+  count: 1
+};
+
+/** A18.2 — the detail's Back-to-results link (V3:895). The plain text "Back to results" occurs
+ *  twice (the mobile back button's `backLabel` in the script is the other); the `<img` prefix
+ *  keeps this to the desktop link. */
+const A18_2: Amendment = {
+  id: 'A18.2', ...A18,
+  find: '<img src="assets/icons/navigate-arrow.svg" alt="" width="13" height="13" style="flex: none; transform: rotate(180deg); opacity: .7;">Back to results',
+  replace: '<img src="assets/icons/navigate-arrow.svg" alt="" width="13" height="13" style="flex: none; opacity: .7;">Back to results',
+  count: 1
+};
+
+/** A19 — the photo lightbox (John, 2026-09-09: "the images/photos should be clickable and they
+ *  expand and have < > to view all images larger with simple X to close").
+ *
+ *  The design shows a photograph at 168 px (the detail grid's tiles, V3:914) and at 232 px (the
+ *  Browse docked panel's carousel, V3:711) and enlarges neither; no `<img>` in the file has a
+ *  dynamic `src`, and no overlay but the interest modal's exists. The lightbox is composed from
+ *  what the design already has — the modal's scrim (V3:1048), the tile's frame (V3:914), the
+ *  panel's 34 px prev/next arrows (V3:720–725) verbatim, its 38 px close button (V3:707–709)
+ *  with the glyph whitened by the design's own `brightness(0) invert(1)`, and its counter and
+ *  caption pills (V3:729–731) verbatim — and it pages the SAME list the carousel counts
+ *  (`photoSet(p).filter(hasSrc)`, V3:2595), so "N of M" equals the panel's counter and A15's
+ *  extra tiles page too.
+ *
+ *  Four compositions have no counterpart and are asserted as exceptions in the test: the scrim's
+ *  `z-index: 1100` (Leaflet's attribution and controls are at 1000 in the root stacking context
+ *  on Browse — a dialog covers the page while open, and the attribution returns on close); the
+ *  image's two viewport bounds; the X's `right: 10px; top: 10px` corner; the X glyph's combined
+ *  `filter`. `e.currentTarget` is NEW to the design here (0 uses before); it works on both
+ *  runtimes because React 18's synthetic event sets it per listener during dispatch and
+ *  `openLightbox` reads it synchronously before `setState`, and Vue passes the native event.
+ *
+ *  Focus follows the A13/A14 mount-ref idiom, never a `setState` callback (review C1): the
+ *  dialog's callback ref spends the one-shot `lightboxFocus` flag, and `closeLightbox` focuses
+ *  the still-mounted opener directly. Every closure that runs after a render reads `this.state`,
+ *  because the reference replaces the state object on each `setState` while the app mutates it.
+ *
+ *  PIXEL-SAFE by construction: the overlay is one `sc-if` on `lightbox.open`, false in every
+ *  approved state, so it is never mounted there; the only closed-state markup added is a
+ *  contentless, borderless, transparent `<button>` over a FILLED slot, which paints nothing —
+ *  and across the 45 states that is exactly Round Rock's three tiles under `interest-modal`'s
+ *  scrim (`detail` is Cedar Park, six empty slots; `browse-market-panel` selects Cedar Park,
+ *  `isEmpty`; the results rail is not an amended site). The frozen manifest must not move at
+ *  all under A19 — that is the acceptance criterion, checked after A18's one-row re-pin.
+ *
+ *  Line numbers in this family's comments name the file A19 is applied to — the amended design
+ *  as A18 left it, the numbering every A19 `find` was measured against. The post-A19 numbers,
+ *  which the citation test checks, are LOCAL_AMENDMENTS.md's rows (fa1ab3f's convention: the rows
+ *  are recomputed, the comments keep the numbers they were written with).
+ */
+const A19 = {
+  date: '2026-09-09',
+  ruling: 'the images/photos should be clickable and they expand and have < > to view all images larger with simple X to close'
+};
+
+/** A19.1 — the two state keys, declared beside the interest modal's (A8.2 precedent for growing
+ *  `state`). `lightbox` is null while closed and `{ pid, at }` — listing id, slot id of the
+ *  photograph showing — while open, a slot id rather than an index so the open lightbox survives
+ *  a `photoSet` re-evaluation and the docked panel can hand over `cur.id` directly. */
+const A19_1: Amendment = {
+  id: 'A19.1', ...A19,
+  find: '    interest: "closed", interestMsg: "", sent: [],\n',
+  replace: '    interest: "closed", interestMsg: "", sent: [],\n    lightbox: null, lightboxFocus: false,\n',
+  count: 1
+};
+
+/** A19.2 — the class members, inserted before `marketPanel` (one occurrence) so the docked panel's
+ *  code and the lightbox's sit together; A14.1's `money(n)` anchor is left alone so the two
+ *  families never share a seam. `P.filter((x) => x.id === …)[0]` is `detail()`'s own lookup, so
+ *  seeded listings (load.ts replaces `P` in place) resolve exactly as fixtures do.
+ *
+ *  Step 10 finding (live Chromium, both targets, 2026-09-09): a `focus()` call made synchronously
+ *  on a node the SAME patch just mounted is silently dropped — the node has not yet had layout/
+ *  style committed, so Chromium does not yet consider it "being rendered" and the call is a
+ *  no-op; a manual `.focus()` on the identical element moments later succeeds. JSDOM has no such
+ *  restriction, so the plain characterisation this amendment shipped with never caught it. Fixed
+ *  by the design's own `setTimeout(…, 0)` idiom (2 pristine uses, `logic.js`'s `_t` debounce),
+ *  deferring the call one macrotask — the same fix A19.10's original `focusout` trap needed for
+ *  the identical reason, before A-LB3 removed that trap and moved Tab handling into the shared
+ *  `keydown` closure instead. `lightboxFocus` is still spent
+ *  synchronously; only the `focus()` call is deferred, so a second render before the timer fires
+ *  cannot re-arm it. */
+const A19_2: Amendment = {
+  id: 'A19.2', ...A19,
+  find: '  marketPanel(sel, selComm, comms, market) {\n',
+  replace: [
+    '  // A19 — the photo lightbox (John, 2026-09-09): one implementation of open, close and step,',
+    '  // shared by the render values and by the document `key` closure in `trackMenuDismiss`.',
+    '  // Every closure that runs AFTER a render reads `this.state`: the reference replaces the state',
+    '  // object on each setState and the app mutates it in place, so a captured `s` is stale on one.',
+    '  openLightbox = (pid, at, e) => {',
+    '    this._lightboxOpener = (e && e.currentTarget) || null;',
+    '    this.setState({ lightbox: { pid, at }, lightboxFocus: true, navMenu: false, userMenu: false, giveMenu: false });',
+    '  };',
+    '  closeLightbox = () => {',
+    '    const back = this._lightboxOpener;',
+    '    this._lightboxOpener = null;',
+    '    this.setState({ lightbox: null, lightboxFocus: false });',
+    '    if (back && back.focus) back.focus();',
+    '  };',
+    '  lightboxPhotos() {',
+    '    const lb = this.state.lightbox;',
+    '    const p = lb ? P.filter((x) => x.id === lb.pid)[0] : null;',
+    '    return p ? this.photoSet(p).filter((ph) => ph.hasSrc) : [];',
+    '  }',
+    '  stepLightbox = (d) => {',
+    '    const lb = this.state.lightbox;',
+    '    const photos = this.lightboxPhotos();',
+    '    const n = photos.length;',
+    '    if (!lb || n < 2) return;',
+    '    const i = Math.max(0, photos.map((ph) => ph.id).indexOf(lb.at));',
+    '    this.setState({ lightbox: { pid: lb.pid, at: photos[((i + d) % n + n) % n].id } });',
+    '  };',
+    '  lightboxVals() {',
+    '    const lb = this.state.lightbox;',
+    '    const photos = this.lightboxPhotos();',
+    '    const n = photos.length;',
+    '    const i = lb ? Math.max(0, photos.map((ph) => ph.id).indexOf(lb.at)) : 0;',
+    '    const cur = photos[i];',
+    '    return {',
+    '      open: !!(lb && cur),',
+    '      src: cur ? cur.src : "",',
+    '      caption: cur ? cur.caption : "",',
+    '      counter: cur ? (i + 1) + "/" + n : "",',
+    '      label: cur ? "Photograph " + (i + 1) + " of " + n : "",',
+    '      multiple: n > 1,',
+    '      prev: () => this.stepLightbox(-1),',
+    '      next: () => this.stepLightbox(1),',
+    '      close: this.closeLightbox,',
+    '      backdrop: (e) => { if (e.target === e.currentTarget) this.closeLightbox(); },',
+    '      ref: (el) => {',
+    '        this._lightboxEl = el || null;',
+    '        if (!el || !this.state.lightboxFocus) return;',
+    '        this.setState({ lightboxFocus: false });',
+    '        setTimeout(() => el.focus(), 0);',
+    '      }',
+    '    };',
+    '  }',
+    '',
+    '  marketPanel(sel, selComm, comms, market) {',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A19.3 — the render key, beside the interest modal's, so the root-level block reads
+ *  `{{ lightbox.open }}`, `{{ lightbox.src }}` and the rest. Closed → `open: false` and the
+ *  sc-if mounts nothing. */
+const A19_3: Amendment = {
+  id: 'A19.3', ...A19,
+  find: '      interestOpen: s.interest !== "closed",\n',
+  replace: '      lightbox: this.lightboxVals(),\n      interestOpen: s.interest !== "closed",\n',
+  count: 1
+};
+
+/** A19.4 — `detail()`: every FILLED tile gains its opener and its label; an empty tile is the
+ *  design's own object, untouched (nothing to enlarge, and on the reference an empty slot's click
+ *  is the design tool's file chooser). Anchored on the `photos:` line ALONE — the `photoHeroId`
+ *  line beneath it is a pristine orphan no template reads, a candidate for the dead-code rule,
+ *  and an anchor that includes it would break the day it is deleted. `Object.assign({}, …)` is
+ *  the design's own spread idiom. The label carries the photograph's OWN caption (A15), so three
+ *  buttons are not three identical names to a screen reader. */
+const A19_4: Amendment = {
+  id: 'A19.4', ...A19,
+  find: '      photos: this.photoSet(p),\n',
+  replace: '      photos: this.photoSet(p).map((ph) => ph.hasSrc ? Object.assign({}, ph, { open: (e) => this.openLightbox(p.id, ph.id, e), openLabel: "Expand photo: " + ph.caption }) : ph),\n',
+  count: 1
+};
+
+/** A19.5 — the docked panel's photos IIFE: `cur` is already the photograph the carousel shows
+ *  (`withPhoto[i]`), so the lightbox opens on exactly that one and its "N of M" is the panel's
+ *  own counter. */
+const A19_5: Amendment = {
+  id: 'A19.5', ...A19,
+  find: '          currentCaption: cur ? cur.caption : "",\n',
+  replace: '          currentCaption: cur ? cur.caption : "",\n          open: (e) => this.openLightbox(sel.id, cur ? cur.id : "", e),\n          openLabel: "Expand photo: " + (cur ? cur.caption : ""),\n',
+  count: 1
+};
+
+/** A19.6 — the detail tile: a third `sc-if`, on `ph.hasSrc`, holding a contentless absolute
+ *  `<button>` laid OVER the `<image-slot>` (never wrapping it, so the slot's `height: 100%`
+ *  geometry and the DOM around it are unchanged). A button is keyboard-reachable and
+ *  announceable where an `onClick` on a `<div>` is not (A13's standard). Its style is the
+ *  design's icon-button reset plus `inset: 0` and `width/height: 100%`: transparent, borderless,
+ *  contentless — zero painted pixels in the closed state, no outline unless `:focus-visible`,
+ *  which no mouse-driven capture triggers. Placed last in the frame so it paints above the slot. */
+const A19_6: Amendment = {
+  id: 'A19.6', ...A19,
+  find: [
+    '                      <sc-if value="{{ ph.noSrc }}" hint-placeholder-val="{{ false }}">',
+    '                        <image-slot id="{{ ph.id }}" shape="rect" placeholder="{{ ph.placeholder }}"></image-slot>',
+    '                      </sc-if>',
+    ''
+  ].join('\n'),
+  replace: [
+    '                      <sc-if value="{{ ph.noSrc }}" hint-placeholder-val="{{ false }}">',
+    '                        <image-slot id="{{ ph.id }}" shape="rect" placeholder="{{ ph.placeholder }}"></image-slot>',
+    '                      </sc-if>',
+    '                      <sc-if value="{{ ph.hasSrc }}" hint-placeholder-val="{{ false }}">',
+    '                        <button onClick="{{ ph.open }}" aria-label="{{ ph.openLabel }}" style="position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: pointer;"></button>',
+    '                      </sc-if>',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A19.7 — the docked panel's photograph: the same hit-target on a `hasAny` sc-if (the panel's
+ *  own habit — it gates the pills the same way, V3:727), placed BEFORE the `multiple` arrows so
+ *  the prev/next buttons, the pills and the dots — all later siblings, all absolutely positioned —
+ *  keep painting above it and stay clickable. */
+const A19_7: Amendment = {
+  id: 'A19.7', ...A19,
+  find: [
+    '                <sc-if value="{{ md.panel.photos.isEmpty }}" hint-placeholder-val="{{ false }}">',
+    '                  <image-slot id="{{ md.panel.photos.emptyId }}" shape="rect" placeholder="{{ md.panel.photos.emptyHint }}"></image-slot>',
+    '                </sc-if>',
+    ''
+  ].join('\n'),
+  replace: [
+    '                <sc-if value="{{ md.panel.photos.isEmpty }}" hint-placeholder-val="{{ false }}">',
+    '                  <image-slot id="{{ md.panel.photos.emptyId }}" shape="rect" placeholder="{{ md.panel.photos.emptyHint }}"></image-slot>',
+    '                </sc-if>',
+    '                <sc-if value="{{ md.panel.photos.hasAny }}" hint-placeholder-val="{{ false }}">',
+    '                  <button onClick="{{ md.panel.photos.open }}" aria-label="{{ md.panel.photos.openLabel }}" style="position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: pointer;"></button>',
+    '                </sc-if>',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A19.8 — the overlay, ONCE, at the root after the `isMobile` block: two screens open it, it is
+ *  `position: fixed` so its place in the tree affects no layout, and one block means one set of
+ *  render values and one focus/keyboard implementation. The scrim is the interest modal's string
+ *  (V3:1048) at `z-index: 1100`; the dialog takes the tile frame's declarations (V3:914) minus
+ *  its fixed height plus the modal box's shadow and entrance (V3:1049) and `outline: none`; the
+ *  image is natural size, never upscaled, bounded to the viewport minus the scrim's padding; the
+ *  X is the panel's close button (V3:707–709) at the arrows' 10 px inset with the glyph
+ *  whitened; the arrows are V3:720–725 verbatim, hidden when there is one photograph; the pills
+ *  are V3:729–731 verbatim. Exactly one blank line before and after (the doubled-blank-line
+ *  invariant). `aria-label="Close photo"` is new copy — the panel's says "Close panel". */
+const A19_8: Amendment = {
+  id: 'A19.8', ...A19,
+  find: '  </sc-if>\n\n</div>\n\n</x-dc>',
+  replace: [
+    '  </sc-if>',
+    '',
+    '  <sc-if value="{{ lightbox.open }}" hint-placeholder-val="{{ false }}">',
+    '    <div onClick="{{ lightbox.backdrop }}" style="position: fixed; inset: 0; z-index: 1100; background: rgba(0,58,112,.55); display: grid; place-items: center; padding: 24px;">',
+    '      <div role="dialog" aria-modal="true" aria-label="{{ lightbox.label }}" tabindex="-1" ref="{{ lightbox.ref }}" style="position: relative; border-radius: 10px; overflow: hidden; background: var(--rf-band); box-shadow: var(--shadow-xl); outline: none; animation: rf-fade-up 300ms var(--easing-out) both;">',
+    '        <img src="{{ lightbox.src }}" alt="{{ lightbox.caption }}" style="display: block; max-width: calc(100vw - 48px); max-height: calc(100vh - 48px);">',
+    '        <button onClick="{{ lightbox.close }}" aria-label="Close photo" style="position: absolute; right: 10px; top: 10px; width: 38px; height: 38px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; opacity: .92; transition: opacity 150ms var(--easing-out);" style-hover="opacity: 1;">',
+    '          <img src="assets/icons/close-x-gray.svg" alt="" width="26" height="26" style="display: block; filter: brightness(0) invert(1) drop-shadow(0 1px 3px rgba(0,58,112,.4));">',
+    '        </button>',
+    '        <sc-if value="{{ lightbox.multiple }}" hint-placeholder-val="{{ false }}">',
+    '          <div>',
+    '            <button onClick="{{ lightbox.prev }}" aria-label="Previous photo" style="position: absolute; left: 10px; top: 50%; margin-top: -17px; width: 34px; height: 34px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; opacity: .92; transition: opacity 150ms var(--easing-out);" style-hover="opacity: 1;">',
+    '              <img src="assets/icons/nav-arrow-white.svg" alt="" width="34" height="34" style="display: block; filter: drop-shadow(0 1px 3px rgba(0,58,112,.4));">',
+    '            </button>',
+    '            <button onClick="{{ lightbox.next }}" aria-label="Next photo" style="position: absolute; right: 10px; top: 50%; margin-top: -17px; width: 34px; height: 34px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; opacity: .92; transition: opacity 150ms var(--easing-out);" style-hover="opacity: 1;">',
+    '              <img src="assets/icons/nav-arrow-white.svg" alt="" width="34" height="34" style="display: block; transform: rotate(180deg); filter: drop-shadow(0 1px 3px rgba(0,58,112,.4));">',
+    '            </button>',
+    '          </div>',
+    '        </sc-if>',
+    '        <div>',
+    '          <span style="position: absolute; right: 12px; bottom: 12px; font-size: 12px; font-weight: 500; color: var(--vf-navy); background: rgba(255,255,255,.92); border-radius: 4px; padding: 3px 9px;">{{ lightbox.counter }}</span>',
+    '          <span style="position: absolute; left: 12px; bottom: 12px; max-width: 55%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; font-weight: 500; color: var(--vf-navy); background: rgba(255,255,255,.92); border-radius: 4px; padding: 3px 9px;">{{ lightbox.caption }}</span>',
+    '        </div>',
+    '      </div>',
+    '    </div>',
+    '  </sc-if>',
+    '',
+    '</div>',
+    '',
+    '</x-dc>'
+  ].join('\n'),
+  count: 1
+};
+
+/** A19.9 — the lightbox branch of the shared `keydown` closure, ahead of A14.5's Give guard. The
+ *  find is A14.5's OUTPUT (0 in the pristine file), so this applies after it. With the lightbox
+ *  closed the block is skipped and A13's and A14's Escape semantics are byte-identical; open, it
+ *  owns the three keys and returns — every menu is already shut (A19.2), and none can reopen
+ *  under a modal scrim. `preventDefault` so an arrow does not also scroll the page behind.
+ *
+ *  A-LB3 (2026-09-09, ruling on fix round 1's NEEDS_CONTEXT): Tab is handled HERE too, not by a
+ *  `focusout` trap (A19.10, below — removed). `box.querySelectorAll("button")` reads the dialog's
+ *  own controls in DOM order — Close photo, then Previous/Next when `multiple` — the container
+ *  itself is `tabindex="-1"` and is never one of them. On the last, Tab wraps to the first; on
+ *  the first, or on the container (where the mount-ref idiom leaves focus right after opening),
+ *  Shift+Tab wraps to the last. One code path, no timer, no `relatedTarget`: the browser's own
+ *  Tab motion is prevented only at the two wrap points, and left alone everywhere in between. */
+const A19_9: Amendment = {
+  id: 'A19.9', ...A19,
+  find: '    const key = (e) => {\n      if (e.key !== "Escape") return;\n',
+  replace: [
+    '    const key = (e) => {',
+    '      if (this.state.lightbox) {',
+    '        if (e.key === "Escape") { e.preventDefault(); this.closeLightbox(); }',
+    '        else if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); this.stepLightbox(e.key === "ArrowLeft" ? -1 : 1); }',
+    '        else if (e.key === "Tab") {',
+    '          const box = this._lightboxEl;',
+    '          const controls = box ? Array.from(box.querySelectorAll("button")) : [];',
+    '          if (controls.length) {',
+    '            const at = controls.indexOf(document.activeElement);',
+    '            if (e.shiftKey) { if (at <= 0) { e.preventDefault(); controls[controls.length - 1].focus(); } }',
+    '            else if (at === controls.length - 1) { e.preventDefault(); controls[0].focus(); }',
+    '          }',
+    '        }',
+    '        return;',
+    '      }',
+    '      if (e.key !== "Escape") return;',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A19.10 — A-LB3 (2026-09-09, ruling on fix round 1's NEEDS_CONTEXT — the focus trap does not
+ *  hold, and the implementer was right to stop). The `focusout` trap this amendment ORIGINALLY
+ *  inserted here — deferring `box.focus()` via `setTimeout` whenever a non-null `relatedTarget`
+ *  left the dialog — was tried live in Chromium (Step 10, fix round 1) and found not to hold,
+ *  reproducibly: forward Tab off the last control lands on real page content for a keypress
+ *  before self-correcting, and Shift+Tab from the first control never reaches the last at all.
+ *  Root cause is structural, not a tuning error: a null `relatedTarget` means both "the window
+ *  blurred" (must be ignored) and "focus left the dialog's own tabbable set" (must not), and the
+ *  arm cannot tell its two cases apart. The mechanism is REMOVED — Tab is instead handled
+ *  deterministically in the shared `keydown` closure, A19.9, above — so this closure carries no
+ *  lightbox branch at all; the find is still the closure head A14.7 introduced and A13.8 rewrote
+ *  (0 in the pristine file, so this still applies after A13.8), and the replace is that same head
+ *  plus a comment recording why nothing else stands here, so a reader who finds this closure
+ *  otherwise untouched by A19 knows a trap was tried and retracted rather than never attempted. */
+const A19_10: Amendment = {
+  id: 'A19.10', ...A19,
+  find: '    const out = (e) => {\n',
+  replace: [
+    '    const out = (e) => {',
+    '      // A19 (A-LB3, 2026-09-09): a focusout-based trap was tried here — deferring focus back',
+    '      // into the dialog whenever it left for a non-null relatedTarget outside it — and found',
+    '      // not to hold in real Chromium: a null relatedTarget also occurs at the edges of the',
+    '      // dialog\'s own tabbable set, which the arm cannot tell apart from a window blur. Tab is',
+    '      // instead handled deterministically in the shared keydown closure above (A19.9).',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A19.11 — `go()`: a screen change closes the lightbox, on the line that already closes the
+ *  interest modal for the same reason. (The signed-out branch above it is unreachable with a
+ *  lightbox open: a photograph is behind the sign-in gate on both targets.)
+ *
+ *  Adapted at the SL9 merge (2026-09-09): A16.20a, applied earlier in this list, already split
+ *  `go()`'s one-liner into the adapter's save-before-navigate branches, so the original single
+ *  `this.setState({ screen, interest: "closed", userMenu: false });` no longer occurs verbatim —
+ *  every reachable exit still SETS `screen`/`interest`/`userMenu` together, so the anchor widens
+ *  to A16.20a's own two such calls (the no-adapter/no-save early return, and the save's success
+ *  arm) rather than shrinking the check. The refusal arm sets none of the three (no screen change
+ *  happens on a failed save), so it is correctly left alone. */
+const A19_11: Amendment = {
+  id: 'A19.11', ...A19,
+  find: '    if (!this.props.listings || this.state.sellerView !== "wizard" || !this.state.editingId) return this.setState({ screen, interest: "closed", userMenu: false });\n'
+    + '    return this.props.listings.patch(this.state.editingId, this.state.step, this.state.w, true).then(\n'
+    + '      (d) => this.setState({ screen, interest: "closed", userMenu: false, wizAssets: d.assets, wizErr: "" }),\n'
+    + '      (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })\n'
+    + '    );',
+  replace: '    if (!this.props.listings || this.state.sellerView !== "wizard" || !this.state.editingId) return this.setState({ screen, interest: "closed", userMenu: false, lightbox: null, lightboxFocus: false });\n'
+    + '    return this.props.listings.patch(this.state.editingId, this.state.step, this.state.w, true).then(\n'
+    + '      (d) => this.setState({ screen, interest: "closed", userMenu: false, wizAssets: d.assets, wizErr: "", lightbox: null, lightboxFocus: false }),\n'
+    + '      (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })\n'
+    + '    );',
+  count: 1
+};
+
+/** A19.12 — `signOut`: the reset that already closes the interest modal closes the lightbox too,
+ *  so a session that ends (the 401 path on the app) cannot leave the scrim over the gate card. */
+const A19_12: Amendment = {
+  id: 'A19.12', ...A19,
+  find: '        interest: "closed", activeId: null, hoverId: null, sellerView: "dash", wizSubmitted: false, formError: ""\n',
+  replace: '        interest: "closed", activeId: null, hoverId: null, sellerView: "dash", wizSubmitted: false, formError: "",\n        lightbox: null, lightboxFocus: false\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
     A7_3, A7_4, A8_1a, A8_1b, A8_1c, A8_2, A8_3a, A8_3b, A8_4a, A8_4b, A8_5, A8_6, A8_7, A8_8a, A8_8b,
     A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5, A12_6, A12_7, A12_8, A12_9, A12_10, A12_11,
+    A13_1, A13_2, A13_3, A13_4, A13_5, A13_6, A13_7,
+    A14_1, A14_2, A14_3, A14_4, A14_5, A14_6, A14_7, A14_8,
+    // A13.8 edits the `out` closure A14.7 introduces, so it is the one A13 entry that has to run
+    // after A14's (final review m4). Definition order in this file matches this list (m8).
+    A13_8,
     A15_1, A15_2, A15_3a, A15_3b, A15_3c, A15_3d,
+    // A16 and A17 (the seller lifecycle, 2026-09-08/09) land here, between A15 and A18, in id
+    // order — this branch's own families, merged 2026-09-09 (SL9, A-SL34 (3)) against main's A18
+    // and A19. Neither family's `find` collides with A13/A14/A18/A19's: A16/A17 are wizard,
+    // dashboard and Admin Listings script edits (a disjoint set of methods/state keys from the
+    // metro dropdown, the Give button and the lightbox), confirmed by `design-amendments.test.ts`
+    // applying the whole merged list against the pristine bundle without a single re-match.
     A16_1, A16_2, A16_3, A16_4, A16_5, A16_6, A16_7, A16_8, A16_9, A16_10, A16_11a, A16_11b, A16_12, A16_13, A16_14, A16_15, A16_16, A16_17, A16_18, A16_19,
-    A16_20a, A16_20b, A16_21, A16_22, A17_1, A17_2];
+    A16_20a, A16_20b, A16_21, A16_22, A17_1, A17_2,
+    // A18 — the two arrow reversals (2026-09-09). Both finds are unique in the pristine file.
+    A18_1, A18_2,
+    // A19 — the photo lightbox (2026-09-09). A19.9 reads A14.5's output and A19.10 reads A13.8's,
+    // so the family is last. Definition order in this file matches this list (m8).
+    A19_1, A19_2, A19_3, A19_4, A19_5, A19_6, A19_7, A19_8, A19_9, A19_10, A19_11, A19_12];
 }

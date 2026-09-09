@@ -144,13 +144,14 @@ def test_a_minter_may_never_mint_a_token_that_administers_more_than_it_does():
     administrator holds — a plain subset test would refuse the `k6-qa`/`e2e-qa`/`deploy-verify`
     tokens the spec names. A buyer token is not more powerful than the admin who minted it."""
     # L3: the expected set spelled out, not the implementation's own expression restated (which
-    # would have been true of any matrix). Sixteen rows today — every one of them staff/admin only.
+    # would have been true of any matrix). Nineteen rows today — every one of them staff/admin only.
     assert PM.ADMINISTRATIVE == frozenset({
         "abuse.investigate", "audit.read", "data_sources.read", "engine.activate", "licence.decide",
         "listing.publish", "listing.review", "page.admin", "permissions.read", "request.oversee",
-        "roles.grant", "tokens.manage", "users.decide", "users.review", "users.revoke", "users.view_detail",
+        "roles.grant", "signups.export", "signups.notify", "signups.read", "tokens.manage",
+        "users.decide", "users.review", "users.revoke", "users.view_detail",
     })
-    assert len(PM.ADMINISTRATIVE) == 16
+    assert len(PM.ADMINISTRATIVE) == 19
     assert "market.read" not in PM.ADMINISTRATIVE and "request.create" not in PM.ADMINISTRATIVE
 
     admin, staff = frozenset({"admin"}), frozenset({"staff"})

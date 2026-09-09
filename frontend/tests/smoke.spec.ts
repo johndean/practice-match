@@ -512,6 +512,119 @@ test.describe('harness: atTop pins the interest modal against a scrolled capture
 });
 
 // ---------------------------------------------------------------------------------------
+// Fix round 1 (A-LB2), Important finding 1: a permanent guard for atTop's OWN-CONTAINER pin.
+//
+// `browse-panel-lightbox` (task L2 review) flaked once under full-suite load with a ~5 %-pixel
+// diff localized entirely BELOW the docked panel's "Practice detail" header — the lightbox
+// photograph itself was pixel-identical. Root cause: the docked panel's own `.rf-scroll`
+// container (App.vue:630, `v.md?.hasSel`) is independently scrollable, and Playwright's
+// click-actionability can scroll it into place before clicking the photo tile's transparent
+// hit-target — exactly the same class of bug `atTop` was written for the PAGE scroll, one level
+// deeper. `atTop()` pinned only `window.scrollY` before this fix; nothing reset the panel's own
+// `scrollTop`.
+//
+// This case forces the runner's own click-actionability scroll instead of hoping to reproduce
+// it under contention: an init script sets every `.rf-scroll` container's `scrollTop` to a
+// nonzero value on every click (capture phase, before the app's own handlers and before
+// Playwright's next action — the same ordering a real scroll-into-view has), then drives the
+// real `browse-panel-lightbox` step — not a copy of it — and asserts every `.rf-scroll`
+// container left in the DOM is back at `scrollTop` 0 once the step's own `atTop()` call returns.
+// Remove atTop's container-pinning and this fails on every platform, not only under contention.
+// ---------------------------------------------------------------------------------------
+test.describe('harness: atTop pins the docked panel\'s own scroll', () => {
+  test('the browse-panel-lightbox step ends with every .rf-scroll container at scrollTop 0, even when every click scrolls them', async ({ page }) => {
+    await prepare(page);
+    await page.addInitScript(() =>
+      document.addEventListener(
+        'click',
+        () => document.querySelectorAll('.rf-scroll').forEach((el) => { (el as HTMLElement).scrollTop = 40; }),
+        true
+      )
+    );
+    await booted(page);
+
+    const step = SCREENS.find((s) => s.name === 'browse-panel-lightbox');
+    expect(step, 'there is no browse-panel-lightbox state left to guard').toBeTruthy();
+    await step!.steps(page);
+
+    const offsets = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.rf-scroll')).map((el) => (el as HTMLElement).scrollTop)
+    );
+    expect(offsets.length, 'no .rf-scroll container was mounted, so this guard proved nothing').toBeGreaterThan(0);
+    expect(
+      offsets.every((n) => n === 0),
+      'a docked panel .rf-scroll container is not at scrollTop 0: atTop() is not pinning the panel\'s own scroll, so content painted beneath the fixed lightbox scrim will differ across runs — the browse-panel-lightbox flake, back'
+    ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Fix round 2 (A-LB3), item 4: the Tab-cycling confirmation Step 10 asked for, and fix round 1
+// refused to write against the broken `focusout` trap, is now the gate the ruling requires.
+//
+// A-LB3 replaced the trap with deterministic handling in the shared `keydown` closure (A19.9):
+// on Tab with the dialog open, read the dialog's controls in DOM order (Close photo, Previous
+// photo, Next photo — the container is `tabindex="-1"` and never in the cycle itself); on the
+// last, wrap to the first; on Shift+Tab on the first (or on the container, which is where the
+// mount-ref idiom leaves focus right after opening), wrap to the last. One `keydown` handler,
+// synchronous, no `setTimeout`, no `relatedTarget` ambiguity.
+//
+// Reached through Round Rock (3 photographs, so Previous/Next both render) via the same click
+// sequence `detail-lightbox` uses. Every assertion below is a single `Tab`/`Shift+Tab` keypress
+// checked immediately after — no retry, no wait beyond Playwright's own actionability — because
+// the fix is synchronous: nothing here is deferred to a macrotask the way the old trap was.
+// ---------------------------------------------------------------------------------------
+test.describe('A19 — the photo lightbox: the Tab trap holds (fix round 2, A-LB3)', () => {
+  test('Tab from the last control returns to the first, Shift+Tab from the first returns to the last, and a full cycle in both directions never leaves the dialog', async ({ page }) => {
+    await prepare(page);
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await page.getByText('Round Rock').first().click();
+    await click(page, 'View full listing');
+    await page.getByRole('button', { name: 'Expand photo: Exterior — street view' }).click();
+    const dialog = page.getByRole('dialog', { name: 'Photograph 1 of 3' });
+    await dialog.waitFor({ state: 'visible' });
+
+    const closeBtn = page.getByRole('button', { name: 'Close photo' });
+    const prevBtn = page.getByRole('button', { name: 'Previous photo' });
+    const nextBtn = page.getByRole('button', { name: 'Next photo' });
+
+    // Opening focuses the dialog itself (the mount-ref idiom, A19.2) — the container case Shift+Tab
+    // must also wrap from.
+    await expect(dialog).toBeFocused();
+
+    // A full forward cycle: dialog -> Close -> Previous -> Next -> (wrap) -> Close, asserted at
+    // every step so a mid-cycle escape (the old defect) cannot hide behind a later correction.
+    await page.keyboard.press('Tab');
+    await expect(closeBtn, 'Tab from the dialog must reach the first control').toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(prevBtn).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(nextBtn).toBeFocused();
+    await page.keyboard.press('Tab');
+    await expect(closeBtn, 'Tab from the last control (Next) must return to the first (Close), on this one keypress').toBeFocused();
+
+    // A full backward cycle from there: Close -> (wrap) -> Next -> Previous -> Close.
+    await page.keyboard.press('Shift+Tab');
+    await expect(nextBtn, 'Shift+Tab from the first control (Close) must return to the last (Next), on this one keypress').toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(prevBtn).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(closeBtn).toBeFocused();
+
+    // The container case: reopen (closing and reopening returns focus to the dialog itself, not
+    // to a control), then Shift+Tab immediately — must wrap to the last control directly, not
+    // bounce on the container the way the removed trap did.
+    await closeBtn.click();
+    await page.getByRole('button', { name: 'Expand photo: Exterior — street view' }).click();
+    await dialog.waitFor({ state: 'visible' });
+    await expect(dialog).toBeFocused();
+    await page.keyboard.press('Shift+Tab');
+    await expect(nextBtn, 'Shift+Tab from the container itself must reach the last control').toBeFocused();
+  });
+});
+
+// ---------------------------------------------------------------------------------------
 // Amendment A-I7 — the proof that the harness sign-in reaches the REAL API. No stub and no
 // mock: `tests/targets.ts`'s `api` web server migrated the local Postgres, seeded the design
 // persona and is serving `app.main:app`, and Vite proxies `/api` to it with the Host header

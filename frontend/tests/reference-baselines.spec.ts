@@ -25,7 +25,9 @@ test.describe('reference baselines', () => {
       // comment. `browse` is the state the race was measured on (it lost it every time);
       // `detail` and `interest-modal` mount six and nine slots and happened to win, so they are
       // checked here too at no extra cost.
-      if (['browse', 'detail', 'interest-modal'].includes(s.name)) {
+      // A19's three states mount filled slots beneath a 55 % scrim, where a pre-hydration ring
+      // would be frozen into the oracle.
+      if (['browse', 'detail', 'interest-modal', 'detail-lightbox', 'browse-panel-lightbox', 'detail-lightbox-next'].includes(s.name)) {
         expect(
           await placeholderRings(page),
           'an <image-slot> with a real src is still drawing its placeholder ring, so this baseline would freeze the design tool\'s pre-hydration artifact instead of the design'

@@ -1188,6 +1188,34 @@ def test_deploy_md_documents_how_to_seed_qa():
     assert "not a failed import" in section
 
 
+def test_deploy_md_documents_the_object_storage_layout():
+    """SL9 Step 2's docs sweep: the four `S3_*` rows (SL2) say what the credentials are, not what
+    the bucket holds. An operator diagnosing a photo or a document that failed to load needs the
+    key scheme, read from `upload_photo`'s own key-building expression rather than retyped, so a
+    changed prefix fails this test instead of leaving a stale runbook."""
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    assert "## Object storage" in deploy
+    section = deploy.split("## Object storage", 1)[1].split("\n## ", 1)[0]
+    seller = (ROOT / "app" / "api" / "seller_listings.py").read_text()
+    key_expr = re.search(r'key = f"([^"]+)"', seller)
+    assert key_expr, "app/api/seller_listings.py no longer builds the asset key the way this test reads"
+    variables_section = deploy.split("## Variables", 1)[1].split("\n## ", 1)[0]
+    bucket_row = re.search(r"`S3_BUCKET`.*", variables_section)
+    assert bucket_row, "DEPLOY.md's Variables table no longer has an S3_BUCKET row to cross-check against"
+    bucket_names = sorted(set(re.findall(r"`(practice-match-[a-z-]+)`", bucket_row.group(0))))
+    assert bucket_names, "the S3_BUCKET row does not name a `practice-match-*` bucket"
+    assert any(name in section for name in bucket_names), (
+        f"DEPLOY.md's Object storage section does not name the bucket ({bucket_names})"
+    )
+    assert "listings/" in section, "DEPLOY.md's Object storage section does not name the listings/ prefix"
+    assert "photos" in section and "documents" in section, (
+        "DEPLOY.md's Object storage section does not distinguish the photos/ and documents/ prefixes"
+    )
+    assert "seeds/" in section, (
+        "DEPLOY.md's Object storage section should say the eighteen seed photographs are NOT in the bucket (D26)"
+    )
+
+
 # --- Task S6: docs and drift, once the account screens (S1-S5), the reseed (S7) and main (M1) are
 # in ------------------------------------------------------------------------------------------
 # Every count below is a fact stated by hand in prose somewhere (CLAUDE.md, LOCAL_AMENDMENTS.md,
@@ -1239,7 +1267,12 @@ def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
     (`deriveTypographyB`, driven by V2 vs the pristine bundle) — so it is added by hand as the one
     family the regex cannot see. Entries: the literal count plus A1's own derived count, read from
     `design-amendments.test.ts`'s own `Array.from({ length: N }, ...)` rather than duplicated here,
-    so the two files cannot drift against each other silently."""
+    so the two files cannot drift against each other silently.
+
+    A18 (2026-09-09) made sixteen families and the tuple stopped at "Fifteen", so the assertion
+    below failed on its own vocabulary before it ever compared CLAUDE.md — the tuple runs to
+    "Twenty" now, which covers A19 (seventeen) and the seller branch's reserved A16/A17 (nineteen
+    after that merge)."""
     ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
     literal_families = re.findall(r"id: 'A(\d+)", ts)
     assert literal_families, "frontend/tests/design-amendments.ts: no literal amendment ids found (id: 'A<n>...)"
@@ -1254,7 +1287,8 @@ def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
 
     number_words = {n: w for n, w in enumerate(
         ("Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
-         "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen"))}
+         "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen",
+         "Nineteen", "Twenty"))}
     assert family_count in number_words, f"no spelled-out word on hand for {family_count} families"
 
     claude = (ROOT / "CLAUDE.md").read_text()
@@ -1453,6 +1487,35 @@ def test_claude_md_launch_removal_records_the_listings_boot_swap():
     assert "loadListings" in main_ts and "./listings/load" in main_ts
 
 
+def test_claude_md_launch_removal_records_the_seller_half_of_the_boot_swap():
+    """SL9 Step 2's docs sweep. The P/MARKETS sentence above only ever described the BUYER side of
+    D6's swap; SL7/SL8 landed the seller half (the dashboard's `sellerListings` and the Admin
+    Listings tab's rows), and the launch-removal section still read as if only the buyer surface
+    had ever been replaced. `sellerListings` and the admin rows are STILL in `logic.js` — the D6
+    stub's own source, unchanged field names — but the app now installs the seller's real listings
+    and the real review queue over them at boot, through the SAME `listings`/`adminListings`
+    adapter presence check A16.1/A17.1 read at render time."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    section = claude.split("## Launch-removal list")[1]
+    assert "the D6 stub's source for the gates" in section
+    tail = section.split("the D6 stub's source for the gates", 1)[1]
+    assert "sellerListings" in tail and "admin rows" in tail, (
+        "the launch-removal section does not say what became of sellerListings and the admin rows"
+    )
+    assert "still" in tail, "the seller-half sentence should say the fixtures STILL stay, matching the buyer half's own wording"
+    assert "installs the seller's real listings and the real review queue" in tail, (
+        "the launch-removal section does not say the app installs the real listings/queue at boot"
+    )
+    assert "when" in tail and "adapter" in tail, (
+        "the launch-removal section does not say the swap is conditioned on the adapter being present"
+    )
+    # ...and the files really do that: A16.1's dashboard ternary and A17.1's Listings-tab ternary
+    # both key on adapter presence, in `design-amendments.ts` itself, not merely in prose.
+    ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
+    assert "this.props.listings ?" in ts, "A16.1's dashboard ternary no longer keys on this.props.listings"
+    assert "this.props.adminListings" in ts, "A17.1's Listings-tab ternary no longer reads this.props.adminListings"
+
+
 def test_claude_md_layout_line_names_the_seed_assets_and_scripts():
     """A-L7 docs sweep item 6. The Seed Listings sub-project added `seeds/` (the demo hospital
     data and photographs) and two scripts the Layout line never mentioned, and `scripts/start.sh`
@@ -1552,6 +1615,28 @@ def test_the_docs_record_that_a_seller_edited_seed_listing_is_never_re_seeded():
     )
 
 
+def test_runbook_documents_recovering_from_a_wrong_frozen_postal_address():
+    """Final review M2 (blocking): controller amendment A-I5d.4b ratified, verbatim, that
+    "`postal_address` is frozen into each outbox row at enqueue (the runbook says so and tells the
+    operator that correcting a wrong address after a batch is queued means deleting the queued
+    rows, not just fixing the variable)" — but §13 never said so. `app/api/admin_signups.py`
+    freezes the address into `email_outbox.params` at enqueue time and the worker renders that
+    stored value, never the live `VIN_FOUNDATION_POSTAL_ADDRESS` setting, so a Railway variable fix
+    after a batch is already queued does nothing for those rows. Pinned on the operator-facing
+    mechanics named in the ruling — the outbox table and the `template = 'launch_announcement'`
+    filter an operator would actually run — not merely on the word "frozen" appearing somewhere."""
+    runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    section = runbook.split("## 13. The launch email", 1)[1]
+    assert "frozen" in section, "§13 never says the postal address is frozen into the queued rows"
+    assert "email_outbox" in section, "§13 does not name the table the wrong-address rows live in"
+    assert "template = 'launch_announcement'" in section, (
+        "§13 does not give the filter an operator would use to find/delete the wrong-address rows"
+    )
+    assert "queued" in section and re.search(r"\bdelet\w*\b", section, re.IGNORECASE), (
+        "§13 does not tell the operator to delete the already-queued rows rather than just fixing the variable"
+    )
+
+
 # --- Task S8: A-S6.2 — PERSONA_PASSWORD leaves Railway for the operator's Keychain; QA DB_POOL_MAX --
 
 
@@ -1619,6 +1704,131 @@ def test_persona_password_railway_set_instructions_are_marked_superseded():
                 )
 
 
+# --- Controller amendment A-I5d.5 (2026-09-09): the admin sign-ups router gates on SITE_MODE=app --
+
+
+def test_d_i5d_5_is_marked_superseded_by_a_i5d_5_without_being_deleted():
+    """John's ruling (2026-09-09, verbatim, quoted in the dispatch): "Gate the entire Admin Launch
+    Sign-ups router behind SITE_MODE=app. Do not expose the sign-up list or CSV export on
+    production while Coming Soon, even to an API_SECRET_KEY bearer." reverses D-I5d-5's
+    unconditional mount. D-I5d-5's table row stays in the plan as history — it recorded a real
+    decision that held for a real period — with a leading clause pointing at what replaced it, the
+    same pattern S8 used for A-S6.1 (test_a_s6_1_is_marked_superseded_by_a_s6_2_without_being_deleted)."""
+    plan = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-08-launch-signups-admin.md").read_text()
+    row = next(line for line in plan.splitlines() if line.startswith("| **D-I5d-5**"))
+    assert "Superseded 2026-09-09 by John's ruling (A-I5d.5)" in row, (
+        "D-I5d-5's row does not carry the added 'Superseded ... (A-I5d.5)' clause"
+    )
+    assert "The router is mounted in **both** site modes" in row, (
+        "D-I5d-5's original ruling text was rewritten or removed rather than kept as history"
+    )
+
+
+def test_every_plan_line_describing_the_pre_a_i5d_5_mount_carries_the_superseded_marker():
+    """Review round 1, M-2, then the coordinator's ruling on that round's concerns (zero gaps):
+    A-I5d.5's first pass marked only the D-I5d-5 table row (`:52`) — five more lines still
+    described the superseded mount as CURRENT fact: the file map (`:70`), Task I5d.3's own Modify
+    list (`:386`), Open Questions §2 (`:1574`), the Self-review (`:1587`), and the historical Step
+    3 code-instruction line (`:872`, "one `include_router` line **outside** the `site_mode ==
+    \"app\"` block"). Task I5d.5's Admin tab is still unbuilt, so this plan is still live, and the
+    file map/Modify list are exactly what a later implementer reads to learn the shape of
+    `app/main.py` — the review's own failure scenario (a later task re-derives the include from one
+    of these and puts it back outside the block).
+
+    Generic sweep, same shape as `test_persona_password_railway_set_instructions_are_marked_
+    superseded`: every line pairing the pre-ruling wording ("outside the `site_mode` block" /
+    "mounts the router in both site modes") with a description of the mount must carry the
+    superseded marker on that same line — so a sixth such line added later fails here too, instead
+    of silently reproducing the stale claim. The match is markdown-INSENSITIVE (matched against the
+    line with every `*` stripped first) per the coordinator's ruling: round 1's sweep matched plain
+    text only, so `:872`'s bold `**outside**` was exempt purely by formatting, which is exactly the
+    kind of gap a future reformat (or a fresh stale line typed with emphasis) could reproduce. With
+    `*` stripped, `:872` reads "...one `include_router` line outside the `site_mode == \"app\"`
+    block..." and matches like every other site. `count == 5` is now the TRUE count (round 1's `4`
+    undercounted by exactly the one line the markdown-sensitivity was hiding) — pinning it catches
+    both a broken pattern matching zero and any further over- or under-matching, without leaving a
+    formatting-shaped exemption for anything to hide behind."""
+    def _stripped(line: str) -> str:
+        return line.replace("*", "")
+
+    plan = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-08-launch-signups-admin.md").read_text()
+    matches = [line for line in plan.splitlines()
+               if "outside the `site_mode" in _stripped(line) or "mounts the router in both site modes" in _stripped(line)]
+    assert len(matches) == 5, f"expected exactly 5 matching lines, found {len(matches)}: {matches}"
+    for line in matches:
+        assert "(superseded 2026-09-09 by A-I5d.5" in line, (
+            f"line describes the pre-A-I5d.5 mount as current, without the superseded marker: {line!r}"
+        )
+
+
+def test_a_i5d_5_amendment_is_recorded_in_the_plan():
+    """The plan gains a dated record of John's ruling, verbatim, and the operational consequence it
+    has for production (which runs coming_soon until launch, so the sign-ups router is unreachable
+    there until the flip) — not just a change to the code."""
+    plan = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-08-launch-signups-admin.md").read_text()
+    assert "**Controller amendment A-I5d.5" in plan, "the plan does not record controller amendment A-I5d.5"
+    amendment = plan.split("**Controller amendment A-I5d.5", 1)[1]
+    assert "SITE_MODE=app" in amendment
+    assert "API_SECRET_KEY" in amendment
+    assert "SELECT email, created_at FROM interest_signup ORDER BY created_at" in amendment, (
+        "the amendment does not give the operator the read-only SQL fallback"
+    )
+
+
+def test_runbook_says_the_signups_router_is_app_mode_only():
+    """§13's "Before the flip" paragraph used to say the list and export were reachable on
+    production before launch (D-I5d-5). A-I5d.5 reverses that: the whole router 404s until
+    `SITE_MODE=app`, and an operator reads the sign-ups with SQL instead — this is the new pin for
+    that wording (there was no prior pin naming the old "reachable before launch"/"both site
+    modes" phrasing to update).
+
+    Review round 1, I-3: sliced to the next `## ` heading, the same way the DEPLOY.md test below
+    bounds its section — §13 is the last section today, so `404`/`SITE_MODE=app`/`API_SECRET_KEY`
+    each occur exactly once past this point and the bound is a no-op, but an unbounded slice would
+    let a later §14 satisfy any of these substrings instead."""
+    runbook = (ROOT / "docs" / "RUNBOOK-identity.md").read_text()
+    section = runbook.split("## 13. The launch email", 1)[1].split("\n## ", 1)[0]
+    assert "SITE_MODE=app" in section
+    assert "404" in section
+    assert "API_SECRET_KEY" in section
+    assert "SELECT email, created_at FROM interest_signup ORDER BY created_at" in section, (
+        "§13 does not give the read-only SQL an operator uses before the launch flip"
+    )
+    assert "A-I5d.5" in section
+    # Review round 1, M-5: the SQL alone is not executable — no connection recipe, and no
+    # `not_mailed`/count(*) projection to answer the same question the (now-unreachable) dry run
+    # would have. The recipe must mirror the repo's own established DATABASE_URL-from-Railway
+    # pattern (DEPLOY.md's seeding recipe, RUNBOOK §12's QA parity run): the PostGIS service's
+    # `DATABASE_URL`, read into an env prefix, never argv, never echoed.
+    assert "railway variable list --service PostGIS --environment production --json" in section, (
+        "§13 does not give the connection recipe for pulling production's DATABASE_URL"
+    )
+    assert "argv" in section, "§13 does not say the DATABASE_URL is kept out of argv"
+    assert "SELECT count(*) FILTER (WHERE launch_mailed_at IS NULL) AS not_mailed, count(*) FROM interest_signup" in section, (
+        "§13 does not extend the projection with the not_mailed/count(*) the dry run would have answered"
+    )
+
+
+def test_deploy_md_names_admin_signups_among_app_mode_only_surfaces():
+    """DEPLOY.md's Site mode section must say the admin sign-ups router is app-mode-only now,
+    alongside auth/applications/admin-users/listings, per A-I5d.5.
+
+    Review round 1, M-1: the original sentence ("probes each one on both environments (404 in
+    coming-soon mode, mounted-and-guarded in app mode)") overstated the app-mode half —
+    `scripts/verify-deploy.sh`'s `else` branch only probes `/api/listings` and
+    `/api/admin/signups`; auth, applications and `/api/admin/users` get no app-mode probe at all.
+    Pinned to the exact corrected wording so the false half cannot come back, and the old
+    overstatement is asserted absent."""
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    section = deploy.split("## Site mode (Coming Soon on production)", 1)[1].split("\n## ", 1)[0]
+    assert "/api/admin/signups" in section
+    assert "A-I5d.5" in section
+    assert "probes all five on a coming-soon deployment, and `/api/listings` and `/api/admin/signups` on an app-mode one" in section, (
+        "DEPLOY.md does not state exactly what scripts/verify-deploy.sh probes in each mode"
+    )
+    assert "mounted-and-guarded in app mode" not in section, (
+        "DEPLOY.md still overstates the app-mode probe as covering all five surfaces (M-1)"
+    )
 def _section(text: str, heading: str) -> str:
     """Returns one `## <heading>` section's body, up to (not including) the next `## ` heading —
     the same slice `test_deploy_md_documents_the_site_mode_matrix`-style tests would take by hand,

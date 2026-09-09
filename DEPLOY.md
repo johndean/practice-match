@@ -22,6 +22,7 @@ Railway project **Practice Match** (id `d20ecd90-2855-4b7d-957d-96a882b3a95d`) �
 | `DB_POOL_MAX` | ✓ | ✓ | QA (set 2026-09-08): `10` on api, `4` on worker — the size of the psycopg2 **reuse pool** per DSN (`app/db.py`), which is what removes the per-request connect. uvicorn runs the api as a single process and celery runs `--concurrency=2` (`scripts/start.sh`) plus beat, so the two reuse pools together hold at most 14 idle connections against PostGIS's `max_connections` of 100. It does **not** cap how many connections exist: past the pool a caller gets an un-pooled connection rather than an error — that overflow is per call and closes on return, so the ceiling on backends is request concurrency, not this number. Bounding that overflow is Sub-project 2's concurrency work (Identity plan Task I9); raise this only if the pool is measured to be the bottleneck (Identity plan Task I4) |
 | `MAIL_FROM` | | ✓ | `VIN Foundation — Practice Match <no-reply@foundation.vin>` — the Resend sender. `foundation.vin` is the sender domain only (spec §2); changing it needs the matching Resend DNS records (Identity plan Task I6) |
 | `MAIL_REPLY_TO` | | ✓ | `practicematch@vin.com` — **placeholder**. The mailbox replies to transactional email reach is an open item for the VIN Foundation (spec §10); set the real one before launch (Identity plan Task I6) |
+| `VIN_FOUNDATION_POSTAL_ADDRESS` | ✓ | ✓ | The VIN Foundation's official postal address, printed in the launch email's CAN-SPAM footer (`VIN Foundation · {address}`). John sets it; never invented and never a placeholder (controller amendment A-I5d.4, 2026-09-08 — "Do not invent the address"). Optional at boot: `POST /api/admin/signups/launch-mail` refuses a real send with `409 LAUNCH_MAIL_NOT_CONFIGURED` while it is unset, rather than sending a footer with a blank address line |
 | `RESEND_API_KEY` | | ✓ | **worker only** — the Resend API key. John holds it; never in git, chat, or CI, same rule as `CENSUS_API_KEY`. `railway variable set RESEND_API_KEY=… --service worker --environment <env>`. A worker without it raises on every `mail.send` beat rather than leaving mail silently queued (Identity plan Task I6) |
 | `RESEND_WEBHOOK_SECRET` | ✓ | | **api only** — the `whsec_…` signing secret Resend shows when the endpoint `https://<host>/api/webhooks/resend` is created. Same handling rule. Unset, the route answers `401` to every call rather than trusting one (Identity plan Task I6) |
 | `CENSUS_API_KEY` | | ✓ | Sub-project 3; John holds it — never in git, chat, or CI. `railway variable set CENSUS_API_KEY=… --service worker --environment <env>` |
@@ -160,6 +161,8 @@ An `api_token` is how CI and the load smoke authenticate (`k6-qa`, `e2e-qa`, `de
 | `PUBLIC_INDEXING` | unset (noindex) | `true` |
 
 Production publishes the VIN Foundation Coming Soon page (`coming-soon/`); QA is the marketplace. The coming-soon page never goes to QA — `scripts/verify-deploy.sh` now asserts `site_mode` per environment and refuses a mismatch outright: QA takes no override and fails any `coming_soon` body; production expects `coming_soon` by default, overridable with `EXPECT_SITE_MODE`. **Launch:** `railway status` (Project: Practice Match) → `railway variable set SITE_MODE=app --service api --environment production --skip-deploys` (and `--service worker`) → decide `PUBLIC_INDEXING` → `EXPECT_SITE_MODE=app scripts/deploy.sh production` (the prefix reaches the verifier `deploy.sh` runs; without it the deploy's own verification refuses `app` on production) → change the verifier's production default to `app` in the same release.
+
+**App-mode-only surfaces.** `app/main.py` mounts the auth, applications, `/api/admin/users`, `/api/listings` and (controller amendment A-I5d.5, John's ruling, 2026-09-09) `/api/admin/signups` routers only inside `if settings.site_mode == "app":` — every route on all five answers a plain `404` while production is still `coming_soon`, whatever credential is presented, `API_SECRET_KEY` bearer included. `scripts/verify-deploy.sh` probes all five on a coming-soon deployment, and `/api/listings` and `/api/admin/signups` on an app-mode one.
 
 **Client address for the sign-up rate limits.** `/api/interest` keys its per-IP limits on the **first X-Forwarded-For hop**, exactly as uvicorn does under `--forwarded-allow-ips='*'`: Railway's edge writes the client it accepted first and leaves any caller-supplied values after it (verified 2026-09-06 on QA — uvicorn logged the real client for spoofed headers, and the probe below limited the sixth request with one header line and with two). A first hop that is not a valid IP address (`ipaddress.ip_address` refuses it) is not trusted as an address at all: it is bucketed as the single subject `unknown`, so a caller reaching the api off the edge cannot mint a fresh rate-limit bucket per forged header. The header is trusted from any peer, as that uvicorn flag already implies; only Railway's edge and the project's private network reach the api. Re-run both passes against QA whenever Railway's networking changes. Each pass writes up to 5 rows into QA's `interest_signup` and spends 6 of the operator IP's 30/day budget, so at most five passes a day; expected `202 202 202 202 202 429` from each pass — **anything other than `202 ×5` then `429` (a sixth `202`, any `503`, a `429` before the sixth) means stop and investigate before any production deploy.**
 ```bash
@@ -306,6 +309,27 @@ one-off Railway service command. `python -m scripts.seed_listings` works too, fr
 `GET /api/listings` caches each page in Redis for 60 s and the seeder does not invalidate it, so
 after a re-seed the list refreshes within a minute (Task L5, A-L5.1) — a browse that still shows
 the previous eighteen straight after a seed is that cache, not a failed import.
+
+## Object storage
+
+The seller's own photographs and documents — never the eighteen seed hospitals' — live in the
+already-approved bucket `practice-match-data`, one per environment (Railway buckets are
+environment-scoped, no `-qa`/`-prod` suffix; see the four `S3_*` rows above for the credentials).
+`ObjectStore.from_settings` returns `None` until all four are set, and every seller upload is then
+refused with `503 STORAGE_UNAVAILABLE` rather than crashing — a developer's machine or a fresh
+environment still serves every READ (the eighteen seed hospitals' photographs come off disk and
+need none of this) while only the WRITES stop.
+
+Keys are `listings/<listing id>/photos/<asset id>.webp` for a photograph — every upload is
+re-encoded to WebP with its metadata stripped (D15) — and `listings/<listing id>/documents/<asset
+id><suffix>` for a floor plan, a financial packet or any other document, `<suffix>` being the
+uploaded file's own extension. An asset is written once (`put_immutable`'s never-overwrite
+guarantee) and deleted at most once; nothing under `listings/` is ever mutated in place.
+
+The eighteen demo hospitals' own photographs are **not** in this bucket at all (D26): they are
+committed under `seeds/hospitals/photos/`, already in the image, and served straight off disk by
+the same guarded route a seller's own photograph is served by — object storage holds only what a
+seller has uploaded.
 
 ## Census Phase A exit (QA)
 

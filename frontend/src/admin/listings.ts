@@ -263,7 +263,10 @@ export interface AdminListingsAdapter {
  */
 function windowUi(): ListingsUi {
   return {
-    needsNote: async (action) => window.prompt(`Why is this listing being ${action === 'decline' ? 'rejected' : action}?`),
+    // `decision()`'s only call is guarded by `NOTE_REQUIRED.includes(action)`, and `NOTE_REQUIRED`
+    // is `["decline"]` alone (D24), so `action` here is always `'decline'` — no ternary, unlike
+    // `decide`'s own wording below, which really is asked for every action.
+    needsNote: async () => window.prompt('Why is this listing being rejected?'),
     needsFields: async () => {
       const state = window.prompt('Two-letter state code (e.g. TX) — this listing has never been published before:');
       if (state === null) return null;
@@ -279,7 +282,9 @@ function windowUi(): ListingsUi {
       const res = await send('POST', `/listings/${item.id}/decide`, { action, reason: note, ...(fields ?? {}) });
       if (!res.ok) {
         const body = (await res.json().catch(() => null)) as { error?: { message?: string } } | null;
-        window.alert(body?.error?.message ?? `That listing could not be ${action === 'decline' ? 'rejected' : action}ed.`);
+        // SL9: was `'rejected'` here, doubling the suffix below into "rejecteded" — the ternary
+        // gives the ROOT VERB the trailing "ed" attaches to (`publish`/`unpublish` already are one).
+        window.alert(body?.error?.message ?? `That listing could not be ${action === 'decline' ? 'reject' : action}ed.`);
       }
     }
   };

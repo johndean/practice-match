@@ -75,6 +75,20 @@ describe('toListingRows renders the design\'s Listings table from the live paylo
     expect(row[1].sub).toBe('$860K asking');
   });
 
+  it('says "doctor" singular for exactly one, not the design\'s own plural default', () => {
+    const [row] = rowsFor([item({ docs: 1 })]);
+    expect(row[1].sub).toContain('1 doctor ·');
+    expect(row[1].sub).not.toContain('1 doctors');
+  });
+
+  it('falls back to the bldg column\'s own lowercased word when it is not one of the wizard\'s three', () => {
+    // `Separate`, the CHECK constraint's own spelling (`migrations/016_listing.sql`) — never the
+    // wizard's `BLDG_OUT` translation `Available separately` — is what a row would carry if the
+    // translation were ever skipped; BLDG_SUB has no entry for it, so this is the `??` fallback.
+    const [row] = rowsFor([item({ bldg: 'Separate' })]);
+    expect(row[1].sub).toContain('separate');
+  });
+
   it('leaves the "Listing" sub-line empty for a row with no submission date', () => {
     const [row] = rowsFor([item({ submitted_at: null })]);
     expect(row[0]).toMatchObject({ hasSub: false, sub: '' });
@@ -113,6 +127,15 @@ describe('toListingRows renders the design\'s Listings table from the live paylo
       (c) => ({ ...c, actions: c.actions.map(({ label, style }) => ({ label, style })) })
     ));
     expect(stable(toListingRows(designAdminListingRows(), recordingUi().ui))).toEqual(stable(DESIGN));
+  });
+
+  it('a design row\'s own action "go" behaves exactly like the design\'s prototype no-op it stands in for', async () => {
+    const { ui, calls } = recordingUi();
+    const rows = toListingRows(designAdminListingRows(), ui);
+    await expect(rows[0][3].actions[0].go()).resolves.toBeUndefined();
+    // ...and it never reaches the ui at all — a design row's own action is inert, exactly as the
+    // prototype's is, never `decision()`'s wired closure.
+    expect(calls).toEqual([]);
   });
 });
 
@@ -274,5 +297,64 @@ describe('makeAdminListingsAdapter, against the real fetch boundary', () => {
     const rows = await makeAdminListingsAdapter().list();
     await rows[0][3].actions.find((a) => a.label === 'Unpublish')!.go();
     expect(alertSpy).toHaveBeenCalledWith('cannot unpublish a listing in state paused');
+  });
+
+  it('alerts the reviewer with the design\'s own generic wording when the refusal carries no message', async () => {
+    // The `??` fallback: a decide refusal whose body is not the A5 envelope shape at all (a proxy
+    // error page, say) rather than one that names the field or the reason.
+    stubFetch(
+      { status: 200, body: { items: [item({ status: 'published' })], next_cursor: null } },
+      { status: 502, body: {} }
+    );
+    const alertSpy = vi.fn();
+    vi.stubGlobal('alert', alertSpy);
+    const rows = await makeAdminListingsAdapter().list();
+    await rows[0][3].actions.find((a) => a.label === 'Unpublish')!.go();
+    expect(alertSpy).toHaveBeenCalledWith('That listing could not be unpublished.');
+  });
+
+  it('asks for a decline reason through the browser\'s own prompt, and sends it', async () => {
+    const calls = stubFetch(
+      { status: 200, body: { items: [item({ status: 'in_review' })], next_cursor: null } },
+      { status: 200, body: {} }
+    );
+    const promptSpy = vi.fn().mockReturnValueOnce('affiliation could not be verified');
+    vi.stubGlobal('prompt', promptSpy);
+    const rows = await makeAdminListingsAdapter().list();
+    await rows[0][3].actions.find((a) => a.label === 'Reject')!.go();
+    expect(promptSpy).toHaveBeenCalledWith('Why is this listing being rejected?');
+    expect(JSON.parse(calls[1].init.body!)).toMatchObject({ action: 'decline', reason: 'affiliation could not be verified' });
+  });
+
+  it('sends nothing when the reviewer cancels the state prompt on a first publish', async () => {
+    const calls = stubFetch({ status: 200, body: { items: [item({ status: 'in_review', state: null })], next_cursor: null } });
+    vi.stubGlobal('prompt', vi.fn().mockReturnValueOnce(null));
+    const rows = await makeAdminListingsAdapter().list();
+    await rows[0][3].actions.find((a) => a.label === 'Publish')!.go();
+    expect(calls).toHaveLength(1);   // the list GET alone — no decide POST followed the cancel
+  });
+
+  it('sends nothing when the reviewer answers the state prompt but cancels the market one', async () => {
+    const calls = stubFetch({ status: 200, body: { items: [item({ status: 'in_review', state: null })], next_cursor: null } });
+    vi.stubGlobal('prompt', vi.fn().mockReturnValueOnce('TX').mockReturnValueOnce(null));
+    const rows = await makeAdminListingsAdapter().list();
+    await rows[0][3].actions.find((a) => a.label === 'Publish')!.go();
+    expect(calls).toHaveLength(1);
+  });
+
+  it('alerts with the decline-specific wording when a decline itself is refused', async () => {
+    // The other side of the same `${action === 'decline' ? 'rejected' : action}ed` ternary the
+    // generic-wording test above exercises via 'unpublish' — reached only when the DECLINE decide
+    // call itself is the one that fails, not merely requested.
+    stubFetch(
+      { status: 200, body: { items: [item({ status: 'in_review' })], next_cursor: null } },
+      { status: 502, body: {} }
+    );
+    vi.stubGlobal('prompt', vi.fn().mockReturnValueOnce('affiliation could not be verified'));
+    const alertSpy = vi.fn();
+    vi.stubGlobal('alert', alertSpy);
+    const rows = await makeAdminListingsAdapter().list();
+    await rows[0][3].actions.find((a) => a.label === 'Reject')!.go();
+    expect(alertSpy).toHaveBeenCalledWith('That listing could not be rejected.');
   });
 });

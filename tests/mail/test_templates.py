@@ -46,15 +46,68 @@ def test_application_received_uses_the_design_copy():
 # --- supplemental (not in the brief's Step 1 — the spec's escaping/no-pixel rules, and branches) ---
 
 
-def test_the_seventeen_keys_are_exactly_the_ones_the_outbox_accepts():
-    """`app.mail.outbox.TEMPLATES` is the gate on the REQUEST path (a typo there is refused at
+def test_the_eighteen_keys_are_exactly_the_ones_the_outbox_accepts():
+    """Was `test_the_seventeen_keys_…` (fourteen, then `test_the_fourteen_keys_…`) until this
+    merge added the seller lifecycle's three (`listing_submitted`/`listing_published`/
+    `listing_declined`) and Task I5d's one-off `launch_announcement` to the same fourteen-template
+    base. `app.mail.outbox.TEMPLATES` is the gate on the REQUEST path (a typo there is refused at
     enqueue time) and this module is what the WORKER renders. Two lists, one truth: a key added to
     one and not the other is either a row that can never be rendered or a template nothing can
     reach, and both would sit undetected until a real person failed to get an email."""
     from app.mail.outbox import TEMPLATES as ACCEPTED
 
     assert set(TP.TEMPLATES) == set(ACCEPTED)
-    assert len(TP.TEMPLATES) == 17
+    assert len(TP.TEMPLATES) == 18
+
+
+def test_the_launch_announcement_keeps_the_pages_promise_and_carries_a_link():
+    """The Coming Soon page's promise is the specification for this mail: "One message, when it
+    launches. Nothing else, and never shared." (`coming-soon/src/App.vue`) and "Leave your email
+    and we'll write to you once — the day it opens." The mail has to be that one message and has
+    to say so, or the promise was not kept."""
+    r = TP.render("launch_announcement", {"link": "https://foundation.vin"}, base_url="https://foundation.vin")
+    assert r.subject == "Practice Match is open"
+    assert "token=" not in r.subject
+    for part in (r.text, r.html):
+        assert "the one message you asked for" in part
+        assert "was not shared" in part
+        assert "https://foundation.vin" in part
+    assert "<img" not in r.html                       # spec §5: no tracking pixels, anywhere
+
+
+def test_the_launch_announcement_promise_is_read_from_the_page_rather_than_retyped():
+    """The page is the source of the promise, so the assertion reads it rather than repeating it —
+    the same rule `design_status_body` follows for the gate-screen copy."""
+    page = (Path(__file__).resolve().parents[2] / "coming-soon" / "src" / "App.vue").read_text()
+    assert "One message, when it launches. Nothing else, and never shared." in page
+
+
+def test_the_launch_announcement_footer_carries_the_can_spam_lines_and_the_configured_address():
+    """Controller amendment A-I5d.4 (John, 2026-09-08): "For the CAN-SPAM footer, include the VIN
+    Foundation's official postal address if required for the communication type. Do not invent the
+    address." So the footer is a substitution point, `{postal_address}`, never a literal string —
+    and `test_the_address_is_never_hard_coded_in_the_template` below pins that no address-shaped
+    literal ever sits in the template source itself."""
+    r = TP.render("launch_announcement", {"link": "https://foundation.vin", "postal_address": "123 Main St, Sacramento, CA 95814"},
+                  base_url="https://foundation.vin")
+    for part in (r.text, r.html):
+        assert ("You are receiving this because you asked to be notified on the Coming Soon page at "
+                "foundation.vin. There is no list to leave: this is the only message it will ever send.") in part
+        assert "VIN Foundation · 123 Main St, Sacramento, CA 95814" in part
+
+
+def test_the_address_is_never_hard_coded_in_the_template():
+    """The other half of A-I5d.4's "do not invent the address": `postal_address` is declared in
+    `launch_announcement`'s own `params`, which is what makes it a substitution the CALLER supplies
+    rather than a string living in this module."""
+    assert "postal_address" in TP.TEMPLATES["launch_announcement"].params
+
+
+def test_the_launch_copy_is_not_yet_approved():
+    """A-I5d.4: John's ruling was "COPY NOT YET APPROVED. Do not send." — pinned here so the gate
+    in `app.api.admin_signups` has something true to check. When John approves the copy, this test
+    (and the constant) flip together, in the same commit that pins the approved text verbatim."""
+    assert TP.LAUNCH_COPY_APPROVED is False
 
 
 def test_application_declined_uses_the_designs_declined_screen():
