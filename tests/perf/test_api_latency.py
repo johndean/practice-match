@@ -39,14 +39,10 @@ COLD_ME_BUDGET_MS = 60   # the review's ⚠️: /api/me with the principal cache
 # (2,000 seeded accounts, both index names asserted). The first version of this comment claimed
 # this budget was "about the INDEXES", which nothing here could have shown (I9a fix round 1,
 # Important 2).
-# `GET /api/admin/data-sources` joins the dict in Census Task A9's fix round (A-C9 (7); the review's
-# I5). It is a list endpoint, so it takes the Global Constraints' 100 ms rather than the admin
-# queue's spec-§6 150 ms above: seventeen registry rows, one LEFT JOIN and one correlated subquery
-# per row, on a table that is seeded by migration and never grows with traffic. Same caveat as the
-# queue's — this gates the CODE PATH (routing, the permission check, one pooled connection, the
-# query, the JSON), not the plan.
+# `GET /api/admin/data-sources` joins the dict in Census Task A9's fix round (A-C9 (7)); its budget is the
+# quality-and-performance policy's own 150 ms row for this path (A9 re-review), not the plan's paraphrase.
 BUDGET_MS = {"/api/healthz": 20, "/": 15, "/api/me": 20, "/api/admin/users?state=pending": 150,
-             "/api/admin/data-sources": 100}   # Census B5 and Map engines M3/M4 extend this dict
+             "/api/admin/data-sources": 150}   # Census B5 and Map engines M3/M4 extend this dict
 # Paths BUDGET_MS measures through the SIGNED-IN client rather than the anonymous one (Task I4):
 # `/api/me` answered anonymously is a 401 that never opens a connection, which is not the path the
 # app serves. Everything else here is public and is measured as a visitor sees it.
