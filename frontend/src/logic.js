@@ -248,6 +248,7 @@ class Component extends DCLogic {
     else if (this.state.gate === "verify" && this.props.auth) this.props.auth.verify(this.state.gateToken).then(() => this.setState({ gate: "signin", gateToken: "", formNotice: "Your address is verified. Sign in to complete your access request." }), () => this.setState({ gate: "verify-expired", gateToken: "" }));
     if (this.props.listings && me && me.state === "active" && (me.roles || []).indexOf("seller") > -1) this.reloadListings();
     if (this.props.startMyListings) this.setState({ myListings: this.props.startMyListings });
+    if (this.props.adminListings && me && me.state === "active" && (me.roles || []).some((r) => r === "staff" || r === "admin")) this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] }));
   }
 
   money(n) {
@@ -1093,13 +1094,13 @@ class Component extends DCLogic {
         columns: ["Listing", "Seller and figures", "Status", "Action"],
         grid: "1.2fr 1.4fr .8fr .9fr",
         footnote: "Listings stay invisible to buyers until a reviewer publishes them. Unpublishing is immediate and reversible; withdrawn listings keep their history for reporting but no longer appear in search.",
-        rows: [
+        rows: s.adminListingRows !== undefined ? s.adminListingRows : (this.props.adminListings ? [] : [
           [cell("Mixed practice — Bastrop", "Submitted September 1"), cell("Dr. Susan Ortiz", "$860K asking · $1.2M revenue · 2 doctors · building leased"), cell(null, null, "In review", "warn"), cell(null, null, null, null, [A("Publish", "primary"), A("Reject", "danger")])],
           [cell("Specialty practice — Pflugerville", "Submitted August 30"), cell("Dr. Nathan Weiss", "$2.65M asking · $3.8M revenue · 6 doctors · unit available separately"), cell(null, null, "In review", "warn"), cell(null, null, null, null, [A("Publish", "primary"), A("Reject", "danger")])],
           [cell("Small animal practice — Cedar Park", "Published August 24"), cell("Dr. James Whitfield", "$1.45M asking · 34 views · 2 requests"), cell(null, null, "Published", "ok"), cell(null, null, null, null, [A("Unpublish"), A("Edit")])],
           [cell("Small animal practice — Buda", "Paused by seller August 12"), cell("Dr. Helen Park", "$1.1M asking · hidden from search"), cell(null, null, "Paused", "info"), cell(null, null, null, null, [A("Contact seller")])],
           [cell("Small animal practice — Temple", "Flagged by two members"), cell("Unverified seller", "Figures appear copied from a broker listing; contact details in the description."), cell(null, null, "Flagged", "bad"), cell(null, null, null, null, [A("Investigate", "primary"), A("Unpublish", "danger")])]
-        ]
+        ])
       },
       activity: {
         columns: ["Request", "Practice", "Status", "Age"],

@@ -153,11 +153,15 @@ describe('local design amendments (spec D15)', () => {
     // photographs only, routed by source through the adapter's overloaded `describe`) and one
     // template literal (the one `onClick` the script literal needs).
     'A16.21', 'A16.22',
+    // A17 — Admin › Listings reads the real table (Task SL8; D24 and John's standing rule:
+    // "every Admin tab must show real database data, never dummy rows"). A17.1 is A16.1's own
+    // shape applied to the review queue; A17.2 is A16.9's, one line after A16.11b's.
+    'A17.1', 'A17.2',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(112);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(114);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

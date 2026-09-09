@@ -1827,6 +1827,74 @@ const A16_22: Amendment = {
   count: 1
 };
 
+// ---------------------------------------------------------------------------------------
+// A17 — Admin › Listings reads the real table (Task SL8; D24 and John's standing rule,
+// verbatim: "every Admin tab must show real database data, never dummy rows"). A13-A16 are
+// the dropdown, photo-rendering and seller-lifecycle branches'; the family id is derived from
+// the tree at branch time (A-SL4), never typed from the plan.
+//
+// The precedent is A16.1/A16.9 exactly: with an adapter present the tab renders the loaded
+// rows or ZERO rows, never the design's own five literal rows, whatever the API answered; the
+// reference and the Claude Design preview pass no `adminListings` prop and keep the design's
+// fixture path unchanged, which is what holds `admin-listings`'s frozen pixels on that side.
+// The APP holds the same pixels through the SUCCESS path: `frontend/tests/harness.ts` answers
+// `GET /api/admin/listings` with ALL FIVE of the design's own Listings rows, "Flagged" included —
+// A-SL24 (4)'s "the fifth fixture row is not reproduced" is the LIVE mapping's own limit (no
+// `listing.status` value backs it, so `admin/listings.ts`'s `PILLS`/`ACTIONS` can never route a
+// real row to it), not a limit on this oracle-only fixture — derived from this very fixture by
+// `frontend/tests/design-admin-listings.mjs`.
+// ---------------------------------------------------------------------------------------
+const SL8 = {
+  date: '2026-09-09',
+  ruling: 'every Admin tab must show real database data, never dummy rows'
+};
+
+/** A17.1 — the Listings tab's rows come from the review queue, and from nowhere else once an
+ *  adapter is present (A-SL24 (1)). The `!== undefined` test is A16.1's own reason: a LOADED
+ *  empty queue is a real answer and must empty the table, and where the array is not there at
+ *  all, who is asking decides — the app renders zero rows whatever the API answered (a load
+ *  failure never shows a reviewer five listings that are not real), and the reference and the
+ *  Claude Design preview keep the design's own fixture. `s.adminListingRows` is written by
+ *  A17.2's bootstrap alone: nothing else in this branch sets it. */
+const A17_1: Amendment = {
+  id: 'A17.1', ...SL8,
+  find: '        rows: [\n'
+    + '          [cell("Mixed practice — Bastrop", "Submitted September 1"), cell("Dr. Susan Ortiz", "$860K asking · $1.2M revenue · 2 doctors · building leased"), cell(null, null, "In review", "warn"), cell(null, null, null, null, [A("Publish", "primary"), A("Reject", "danger")])],\n'
+    + '          [cell("Specialty practice — Pflugerville", "Submitted August 30"), cell("Dr. Nathan Weiss", "$2.65M asking · $3.8M revenue · 6 doctors · unit available separately"), cell(null, null, "In review", "warn"), cell(null, null, null, null, [A("Publish", "primary"), A("Reject", "danger")])],\n'
+    + '          [cell("Small animal practice — Cedar Park", "Published August 24"), cell("Dr. James Whitfield", "$1.45M asking · 34 views · 2 requests"), cell(null, null, "Published", "ok"), cell(null, null, null, null, [A("Unpublish"), A("Edit")])],\n'
+    + '          [cell("Small animal practice — Buda", "Paused by seller August 12"), cell("Dr. Helen Park", "$1.1M asking · hidden from search"), cell(null, null, "Paused", "info"), cell(null, null, null, null, [A("Contact seller")])],\n'
+    + '          [cell("Small animal practice — Temple", "Flagged by two members"), cell("Unverified seller", "Figures appear copied from a broker listing; contact details in the description."), cell(null, null, "Flagged", "bad"), cell(null, null, null, null, [A("Investigate", "primary"), A("Unpublish", "danger")])]\n'
+    + '        ]\n'
+    + '      },',
+  replace: '        rows: s.adminListingRows !== undefined ? s.adminListingRows : (this.props.adminListings ? [] : [\n'
+    + '          [cell("Mixed practice — Bastrop", "Submitted September 1"), cell("Dr. Susan Ortiz", "$860K asking · $1.2M revenue · 2 doctors · building leased"), cell(null, null, "In review", "warn"), cell(null, null, null, null, [A("Publish", "primary"), A("Reject", "danger")])],\n'
+    + '          [cell("Specialty practice — Pflugerville", "Submitted August 30"), cell("Dr. Nathan Weiss", "$2.65M asking · $3.8M revenue · 6 doctors · unit available separately"), cell(null, null, "In review", "warn"), cell(null, null, null, null, [A("Publish", "primary"), A("Reject", "danger")])],\n'
+    + '          [cell("Small animal practice — Cedar Park", "Published August 24"), cell("Dr. James Whitfield", "$1.45M asking · 34 views · 2 requests"), cell(null, null, "Published", "ok"), cell(null, null, null, null, [A("Unpublish"), A("Edit")])],\n'
+    + '          [cell("Small animal practice — Buda", "Paused by seller August 12"), cell("Dr. Helen Park", "$1.1M asking · hidden from search"), cell(null, null, "Paused", "info"), cell(null, null, null, null, [A("Contact seller")])],\n'
+    + '          [cell("Small animal practice — Temple", "Flagged by two members"), cell("Unverified seller", "Figures appear copied from a broker listing; contact details in the description."), cell(null, null, "Flagged", "bad"), cell(null, null, null, null, [A("Investigate", "primary"), A("Unpublish", "danger")])]\n'
+    + '        ])\n'
+    + '      },',
+  count: 1
+};
+
+/** A17.2 — `componentDidMount` loads the review queue, gated on the account holding the staff
+ *  or admin role (`page.admin`'s own `["admin","staff"]`, `useStateRouteSync.test.ts`) — A16.9's
+ *  own shape and seam, one line after A16.11b's. A refusal renders ZERO rows (`adminListingRows:
+ *  []`): leaving it unset would fall back to the design's five fixture rows, showing a reviewer
+ *  five listings that are not theirs, with live Publish/Reject/Unpublish buttons on them. Called
+ *  directly rather than through a new `reloadAdminListings` method: nothing else in this branch
+ *  reloads the queue (the module note in `admin/listings.ts` records the reload-after-decide gap
+ *  as a deliberate, recorded scope boundary), so a second call site does not yet exist to share
+ *  one with. */
+const A17_2: Amendment = {
+  id: 'A17.2', ...SL8,
+  find: '    if (this.props.startMyListings) this.setState({ myListings: this.props.startMyListings });\n  }',
+  replace: '    if (this.props.startMyListings) this.setState({ myListings: this.props.startMyListings });\n'
+    + '    if (this.props.adminListings && me && me.state === "active" && (me.roles || []).some((r) => r === "staff" || r === "admin")) this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] }));\n'
+    + '  }',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -1834,5 +1902,5 @@ export function amendments(): Amendment[] {
     A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5, A12_6, A12_7, A12_8, A12_9, A12_10, A12_11,
     A15_1, A15_2, A15_3a, A15_3b, A15_3c, A15_3d,
     A16_1, A16_2, A16_3, A16_4, A16_5, A16_6, A16_7, A16_8, A16_9, A16_10, A16_11a, A16_11b, A16_12, A16_13, A16_14, A16_15, A16_16, A16_17, A16_18, A16_19,
-    A16_20a, A16_20b, A16_21, A16_22];
+    A16_20a, A16_20b, A16_21, A16_22, A17_1, A17_2];
 }

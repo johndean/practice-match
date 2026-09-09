@@ -390,4 +390,164 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
     // The claim (A-SL21): the row is the seller's own, source flipped, the moment they touch it.
     expect(after.status, 're-describing a photograph is an edit and re-enters review').toBe('in_review');
   });
+
+  // -------------------------------------------------------------------------------------
+  // Task SL8's seeded-listing assertion: Edit on one of the eighteen shows THAT hospital's own
+  // seeded values — never the design's fixture ones, and never a dash where a real figure exists.
+  // `abc_animal_hospital` is picked by its own SLUG: its ownership ("Sole proprietor") and every
+  // other enum are already in the wizard's own vocabulary, so this test is about what the fields
+  // SHOW, not about A-SL31's fix (SL7b's re-describe-photo test, above, exercises a hospital whose
+  // ownership is not, for that reason).
+  //
+  // Every step's rail press SAVES the step it leaves (A16.18) — on a PUBLISHED listing that is an
+  // edit, so this run also re-enters this hospital into review, exactly as the photograph test
+  // above does to its own. Accepted and precedented, not incidental: the seeder's `WHERE source =
+  // 'seed'` scope (A-SL21) leaves a claimed row alone from here on.
+  // -------------------------------------------------------------------------------------
+  test('Edit on a seeded hospital shows its own seeded values, not the design\'s fixture ones', async ({ page }) => {
+    guard(page);
+    await signInAs(page, 'seller', '/seller');
+
+    const mine = await page.evaluate(() =>
+      fetch('/api/seller/listings?limit=200', { credentials: 'same-origin' }).then((r) => r.json())) as
+      { items: { id: string; slug: string | null }[] };
+    const seeded = mine.items.find((item) => item.slug === 'abc_animal_hospital');
+    if (!seeded) throw new Error('scripts/seed_listings.py did not seed abc_animal_hospital for the seller persona');
+    const id = seeded.id;
+
+    const card = page.locator('div[style*="var(--shadow-sm)"]')
+      .filter({ hasText: 'Small animal practice — Houston' }).filter({ hasText: '$465K' });
+    await card.getByRole('button', { name: 'Edit', exact: true }).click();
+    await onStep(page, 1);
+
+    // Step 1: name, type and year — the seller's own prose, not "Hill Country Animal Hospital".
+    await expect(field(page, 'Practice name')).toHaveValue('ABC Animal Hospital');
+    await expect(field(page, 'Practice type')).toHaveValue('Small animal');
+    await expect(field(page, 'Year established')).toHaveValue('1987');
+    let row = await saved(page, id, 1, () => rail(page, 2).click());
+    expect(row).toMatchObject({ name: 'ABC Animal Hospital', type: 'Small animal', est: 1987 });
+
+    // Step 2: city and ZIP.
+    await onStep(page, 2);
+    await expect(field(page, 'City or community')).toHaveValue('Houston');
+    await expect(field(page, 'ZIP code')).toHaveValue('77076');
+    row = await saved(page, id, 2, () => rail(page, 3).click());
+    expect(row).toMatchObject({ city: 'Houston', zip: '77076' });
+
+    // Step 3: price and revenue.
+    await onStep(page, 3);
+    await expect(field(page, 'Asking price')).toHaveValue('465000');
+    await expect(field(page, 'Gross revenue, most recent year')).toHaveValue('950000');
+    row = await saved(page, id, 3, () => rail(page, 4).click());
+    expect(row).toMatchObject({ price: 465000, rev: 950000 });
+
+    // Step 4: doctors, exam rooms, square feet.
+    await onStep(page, 4);
+    await expect(field(page, 'Doctors (full-time equivalent)')).toHaveValue('1');
+    await expect(field(page, 'Exam rooms')).toHaveValue('3');
+    await expect(field(page, 'Approximate square feet')).toHaveValue('2400');
+    row = await saved(page, id, 4, () => rail(page, 5).click());
+    expect(row).toMatchObject({ docs: 1, rooms: 3, sqft: 2400 });
+
+    // Step 5: property status — the design's own word for the seeded column value ("Separate"
+    // reads as "Available separately", `BLDG_OUT`).
+    await onStep(page, 5);
+    await expect(field(page, 'Building status')).toHaveValue('Available separately');
+    row = await saved(page, id, 5, () => rail(page, 6).click());
+    expect(row).toMatchObject({ bldg: 'Available separately' });
+
+    // Step 6: the hospital's own photographs, listed BY CAPTION — never a filename, never the
+    // design's fixed slot names (A-SL20).
+    await onStep(page, 6);
+    await expect(page.getByText('Exterior — front', { exact: true }).first()).toBeVisible();
+    await expect(page.getByText('Interior — reception', { exact: true }).first()).toBeVisible();
+
+    // Step 8: the preview shows the real figures, never the design's em dash.
+    await rail(page, 8).click();
+    await expect(page.getByText('Preview — this is what an approved buyer sees')).toBeVisible();
+    await expect(page.getByText('Small animal practice — Houston', { exact: true })).toBeVisible();
+    await expect(previewValue(page, 'General location')).toHaveText('Houston, TX');
+    await expect(previewValue(page, 'Established')).toHaveText('1987');
+    await expect(previewValue(page, 'Asking price')).toHaveText('$465000');
+    await expect(previewValue(page, 'Gross revenue')).toHaveText('$950000');
+    await expect(previewValue(page, 'Doctors')).toHaveText('1');
+    await expect(previewValue(page, 'Exam rooms')).toHaveText('3');
+    await expect(previewValue(page, 'Square feet')).toHaveText('2400');
+    await expect(previewValue(page, 'Property')).toHaveText('Available separately');
+    // ...and every one of the eighteen photographs, not the design's fixed three.
+    await expect(previewValue(page, 'Photos attached')).toHaveText('18');
+  });
+
+  // -------------------------------------------------------------------------------------
+  // Task SL8's own deliverable, A-SL24 (2): sign in as the design persona, Admin › Listings shows
+  // the real queue — the listing this run just submitted, never one of the design's five fixture
+  // rows (D24) — decide it THROUGH THE UI (the browser's own prompts standing in for state and
+  // market, D12, `admin/listings.ts`'s `windowUi`), and the seller's dashboard reflects it. Every
+  // assertion is on the API's own rows, never on a card, which can render a value the server
+  // refused.
+  // -------------------------------------------------------------------------------------
+  test('admin decides the seller\'s submitted listing, and the seller\'s dashboard reflects it', async ({ page, browser }) => {
+    guard(page);
+    await signInAs(page, 'seller', '/seller');
+
+    const ADMIN_NAME = 'Flow Spec Admin Decision Hospital';
+    const created = page.waitForResponse((r) => r.url().endsWith('/api/seller/listings') && r.request().method() === 'POST');
+    await button(page, 'Create a listing').click();
+    const id = ((await (await created).json()) as { id: string }).id;
+    await onStep(page, 1);
+
+    await field(page, 'Practice name').fill(ADMIN_NAME);
+    await field(page, 'Year established').fill('1999');
+    await saved(page, id, 1, () => button(page, 'Continue').click());
+    await onStep(page, 2);
+    await field(page, 'City or community').fill('Kyle');
+    await field(page, 'ZIP code').fill('78640');
+    await saved(page, id, 2, () => button(page, 'Continue').click());
+    await onStep(page, 3);
+    await field(page, 'Asking price').fill('700,000');
+    await field(page, 'Gross revenue, most recent year').fill('900,000');
+    // `listing_submittable_ck` needs only name/city/zip/type/est/price, all set by now — straight
+    // to the preview, saving step 3 on the way (A16.18).
+    await saved(page, id, 3, () => rail(page, 8).click());
+    await onStep(page, 8);
+    const submitted = page.waitForResponse((r) => r.url().endsWith(`/api/seller/listings/${id}/submit`) && r.request().method() === 'POST');
+    await button(page, 'Submit for review').click();
+    expect((await submitted).status()).toBe(200);
+    expect((await draftOf(page, id)).status).toBe('in_review');
+
+    // The reviewer's own session — a second context, exactly `account-flows.spec.ts`'s
+    // `decideAs` shape — signed in as `design@`, staff and admin among its roles.
+    const adminContext = await browser.newContext();
+    try {
+      const adminPage = await adminContext.newPage();
+      guard(adminPage);
+      await signInAs(adminPage, 'design', '/admin?tab=listings');
+
+      // The real queue (D24): the row this run just submitted, found by its own name — never one
+      // of the design's five literal fixture rows, whichever the API answered.
+      const row = adminPage.locator('div[style*="grid-template-columns: 1.2fr 1.4fr .8fr .9fr"]').filter({ hasText: ADMIN_NAME });
+      await expect(row).toBeVisible();
+      await expect(row).toContainText('In review');
+
+      // Publish, through the UI: the browser's own two prompts for state and market (D12,
+      // `needsFields`), asked because this listing has never been published before.
+      adminPage.once('dialog', (dialog) => { void dialog.accept('TX'); });
+      adminPage.once('dialog', (dialog) => { void dialog.accept('Austin, TX'); });
+      const decided = adminPage.waitForResponse((r) =>
+        r.url().endsWith(`/api/admin/listings/${id}/decide`) && r.request().method() === 'POST');
+      await row.getByRole('button', { name: 'Publish', exact: true }).click();
+      const decidedResponse = await decided;
+      expect(decidedResponse.status(), `the decide POST: ${await decidedResponse.text()}`).toBe(200);
+      const decidedBody = await decidedResponse.json() as { status: string; state: string; market: string };
+      expect(decidedBody).toMatchObject({ status: 'published', state: 'TX', market: 'Austin, TX' });
+    } finally {
+      await adminContext.close();
+    }
+
+    // …and the seller's own dashboard reflects the decision — read from the API, not the card.
+    expect(await draftOf(page, id)).toMatchObject({ status: 'published', state: 'TX', market: 'Austin, TX' });
+    const onTheMarket = await page.evaluate(() =>
+      fetch('/api/listings', { credentials: 'same-origin' }).then((r) => r.json())) as { items: { id: string }[] };
+    expect(onTheMarket.items.map((item) => item.id), 'a publish reaches Browse at once (D16)').toContain(id);
+  });
 });

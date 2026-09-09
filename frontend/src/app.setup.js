@@ -3,6 +3,7 @@ import { useRouter } from 'vue-router';
 import { Component } from './logic.js';
 import MarketMapView from './components/MarketMapView.vue';
 import ImageSlot from './components/ImageSlot.vue';
+import { makeAdminListingsAdapter } from './admin/listings';
 import { makeAuthAdapter } from './auth/adapter';
 import { makeListingsAdapter } from './listings/seller';
 import * as api from './auth/api';
@@ -74,7 +75,18 @@ const props = defineProps({
   // `src/listings/seller.ts`, not an object literal here, for the reason `auth` records: this file
   // is copied verbatim into App.vue and sits outside the coverage gate, so the logic lives in a
   // module with unit tests. It needs no `data-props` entry — the parity gate is one-directional.
-  listings: { type: Object, default: () => makeListingsAdapter() }
+  listings: { type: Object, default: () => makeListingsAdapter() },
+  // A17: the real /api/admin client, as the prototype's `adminListings` adapter — the seam
+  // `adminVals()`'s Listings tab reads through (Task SL8, D24: "every Admin tab must show real
+  // database data, never dummy rows"). The reference and the Claude Design preview pass nothing
+  // and keep the design's fixture path, which is what keeps the two targets on the same pixels.
+  // Nothing in the template reads `adminListings`; only `logic.js` does.
+  //
+  // `src/admin/listings.ts`, not an object literal here, for the reason `listings` records: this
+  // file is copied verbatim into App.vue and sits outside the coverage gate, so the logic lives
+  // in a module with unit tests. It needs no `data-props` entry — the parity gate is
+  // one-directional.
+  adminListings: { type: Object, default: () => makeAdminListingsAdapter() }
 });
 
 // The approved prototype logic runs verbatim; `state` is made reactive so that

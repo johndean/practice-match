@@ -2,6 +2,7 @@ import { request as apiRequest, type BrowserContext, type Page } from '@playwrig
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { designAdminListingsBody } from './design-admin-listings.mjs';
 import { designListingsBody } from './design-listings.mjs';
 import { designSellerPageBody } from './design-seller-listings.mjs';
 import { designWizardDraftBody } from './design-wizard-draft.mjs';
@@ -144,17 +145,22 @@ export async function prepare(page: Page): Promise<void> {
   //
   // `seller-dash` and `admin-listings` are two of the thirteen frozen screens and their rows are
   // the design's own fixtures: four Austin listings whose notes carry a view count and a request
-  // count no column supplies, and a fifth admin row whose "Flagged" pill names a status
-  // `listing.status` does not have and which D24 refuses to invent.
+  // count no column supplies, and — for admin-listings — ALL FIVE of the design's own Listings
+  // rows, "Flagged" included: A-SL24 (4)'s "the fifth fixture row is not reproduced" is the LIVE
+  // mapping's own limit (`admin/listings.ts`'s `PILLS`/`ACTIONS`, keyed by real `listing.status`
+  // values, can never match a real row to it — no such status exists), not a limit on this
+  // oracle-only fixture, which answers through the `DesignListingRow` union arm that carries a
+  // row's own pill and action styles verbatim, never through those two maps.
   //
-  // SL7 reached those rows through a FAILURE: the answer here carried no `items` array, `list()`
-  // rejected on it, and the design's own fixtures stood in. Two things were wrong with that. The
-  // frozen capture depended on a body the real API cannot produce — so `seller-dash` matched no
-  // reachable state of the app — and the same fallback showed a REAL seller four invented
-  // listings whenever their own load genuinely failed (SL7 review, Critical-2). With an adapter
-  // present the app now renders what the API answered and NOTHING else, so the oracle has to
-  // answer, and what it answers is the design's own four rows (`design-seller-listings.mjs`,
-  // derived from `logic.js` exactly as `design-listings.mjs` is derived from `P`).
+  // SL7 reached the seller rows through a FAILURE (and SL8 the admin ones, the same way): the
+  // answer here carried no `items` array, `list()` rejected on it, and the design's own fixtures
+  // stood in. Two things were wrong with that. The frozen capture depended on a body the real API
+  // cannot produce — so neither screen matched a reachable state of the app — and the same
+  // fallback showed a REAL seller (or a REAL reviewer) invented rows whenever their own load
+  // genuinely failed (SL7 review, Critical-2). With an adapter present the app now renders what
+  // the API answered and NOTHING else, so the oracle has to answer, and what it answers is the
+  // design's own rows — `design-seller-listings.mjs` and `design-admin-listings.mjs`, both derived
+  // from `logic.js` exactly as `design-listings.mjs` is derived from `P`.
   //
   // POST is the four `wizard-*` captures' own path (A-SL23 (1)): "Create a listing" now creates
   // one, and a stub keeps those captures deterministic and costs the seller persona no throwaway
@@ -206,11 +212,12 @@ export function collectionStubUrls(env: NodeJS.ProcessEnv = process.env): string
   return ['/api/seller/listings', '/api/admin/listings'].map((path) => new URL(path, appOrigin(env)).href);
 }
 
-/** What each of them answers: the design's own four seller rows, and — for the admin collection,
- *  which nothing fetches until Task SL8 — a page with no rows on it. Never "no page": an
- *  error-shaped answer is exactly what A-SL23 (2) took out of this harness. */
+/** What each of them answers: the design's own four seller rows, and — for the admin collection
+ *  (Task SL8) — the design's own five Listings rows, "Flagged" included (see `design-admin-
+ *  listings.mjs`'s own note on why this oracle-only fixture is not A-SL24 (4)'s limit). Never "no
+ *  page": an error-shaped answer is exactly what A-SL23 (2) took out of this harness. */
 export function collectionStubBody(href: string): string {
-  return href.endsWith('/api/seller/listings') ? designSellerPageBody() : sellerPageBody([]);
+  return href.endsWith('/api/seller/listings') ? designSellerPageBody() : designAdminListingsBody();
 }
 
 /** The listing id `POST /api/seller/listings` answers with on the oracle. A fixed v4-shaped uuid

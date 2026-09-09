@@ -940,6 +940,49 @@ def test_the_admin_users_tables_match_the_api():
             assert state in TRANSITIONS[action][0], f"the Admin Users table offers {action!r} from {state!r}, which the API refuses"
 
 
+def _listings_ts_literal(name: str) -> object:
+    """One of the three exported JSON literals in `frontend/src/admin/listings.ts` — the same
+    single-line-double-quoted-JSON convention `_users_ts_literal` reads, applied to Task SL8's
+    own table."""
+    source = (ROOT / "frontend" / "src" / "admin" / "listings.ts").read_text()
+    match = re.search(rf"^export const {name}(?:: [^=]+)? = (.+);$", source, re.MULTILINE)
+    assert match, (
+        f"frontend/src/admin/listings.ts: {name} is not a single-line exported literal, so this "
+        f"cross-language pin cannot read it. Each of NOTE_REQUIRED, ACTIONS and PILLS is written "
+        f"as double-quoted JSON on ONE line for exactly that reason; the file says so beside them."
+    )
+    try:
+        return json.loads(match.group(1))
+    except json.JSONDecodeError as exc:
+        reason = str(exc)
+    pytest.fail(
+        f"frontend/src/admin/listings.ts: {name} is no longer DOUBLE-QUOTED JSON on a single "
+        f"line, so this cross-language pin cannot read it ({reason}). Got: {match.group(1)[:120]}"
+    )
+
+
+def test_the_admin_listings_table_matches_the_api():
+    """Task SL8, the same lesson `test_the_admin_users_tables_match_the_api` records for Users:
+    the Listings table's three decision tables must not silently drift from
+    `app/api/admin_listings.py`. A fifth REJECT-requires-a-reason action added on the server
+    would otherwise leave the UI POSTing a blank reason and taking a 422 at click time; a button
+    offered from a status `DECISIONS` refuses would take a 409 the same way; and a
+    `listing.status` the API can report with no pill would render its raw key.
+
+    The design deliberately offers a legal SUBSET of `DECISIONS` (its Paused row's "Contact
+    seller" is not wired, and the API also allows `publish` from `declined`/`paused`, which the
+    design's own In review row does not offer) and pictures only three of the six real statuses
+    (A-SL24 (4)) — what is pinned is that the subset is legal, not that it is complete."""
+    from app.api.admin_listings import DECISIONS, NOTE_REQUIRED, STATUSES
+
+    assert _listings_ts_literal("NOTE_REQUIRED") == list(NOTE_REQUIRED)
+    assert set(cast("dict[str, object]", _listings_ts_literal("PILLS"))) <= set(STATUSES)
+    for status, offered in cast("dict[str, list[str]]", _listings_ts_literal("ACTIONS")).items():
+        for action in offered:
+            assert action in DECISIONS, f"the Admin Listings table offers {action!r}, which app/api/admin_listings.py has no decision for"
+            assert status in DECISIONS[action][0], f"the Admin Listings table offers {action!r} from {status!r}, which the API refuses"
+
+
 # --- Task I9a: the identity wave's operator documentation -----------------------------------------
 # Four tests: two are PINS on what I4-I6 and I8a already made true (the variables, the launch
 # removal), two watch documentation this task wrote (the runbook's endpoints, the Resend DNS table).

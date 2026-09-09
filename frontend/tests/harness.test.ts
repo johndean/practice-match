@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest';
 import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, collectionStubUrls, collectionStubBody, newListingBody, draftStubUrl, isDraftStepUrl, submitStubUrl, WIZARD_LISTING_ID, sellerPageBody, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
+import { designAdminListingRows, designAdminListingsBody } from './design-admin-listings.mjs';
 import { designListingsBody } from './design-listings.mjs';
 import { designSellerPageBody, designSellerRows } from './design-seller-listings.mjs';
 import { designWizardDraftBody, designWizardTiles } from './design-wizard-draft.mjs';
@@ -292,11 +293,18 @@ describe('the seller and admin collection stubs (A-SL2, A-SL23 (2))', () => {
     expect(collectionStubBody('http://localhost:5473/api/seller/listings')).toBe(designSellerPageBody());
   });
 
-  it('answers the admin collection with an empty page, never with no page at all', () => {
-    // Nothing fetches it yet — it is armed for Task SL8 — but an ERROR-shaped answer is what
-    // A-SL23 (2) took out of this harness, so this one is a page with no rows on it.
-    expect(JSON.parse(collectionStubBody('http://localhost:5473/api/admin/listings')))
-      .toEqual({ items: [], next_cursor: null });
+  it('serves every design Listings fixture, "Flagged" included, as one complete page (Task SL8)', () => {
+    // The frozen `admin-listings` capture used to depend on the app FAILING to read this
+    // endpoint — an empty page nothing real produces. It answers now, with ALL FIVE of the
+    // design's own Listings rows, through the success path — A-SL24 (4)'s "the fifth fixture row
+    // is not reproduced" is the LIVE mapping's own limit (`admin/listings.ts`'s `PILLS`/`ACTIONS`
+    // can never match a real row to "Flagged"), not a limit on this oracle-only fixture.
+    const body = JSON.parse(collectionStubBody('http://localhost:5473/api/admin/listings')) as
+      { items: unknown[]; next_cursor: string | null };
+    expect(body.items).toEqual(designAdminListingRows());
+    expect(body.items).toHaveLength(5);
+    expect(body.next_cursor, 'the stub is one page — a cursor would send list() round again').toBeNull();
+    expect(collectionStubBody('http://localhost:5473/api/admin/listings')).toBe(designAdminListingsBody());
   });
 
   it('answers Create a listing with one new id, for the four wizard captures (A-SL23 (1))', () => {
