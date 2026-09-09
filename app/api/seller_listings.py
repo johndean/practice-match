@@ -228,12 +228,45 @@ def _flag(field: str, raw: object) -> bool:
     return raw
 
 
-def columns_for(step: int, body: dict[str, Any]) -> dict[str, Any]:
+def _one_of_or_unchanged(field: str, raw: object, allowed: tuple[str, ...], stored: str | None) -> str:
+    """A-SL31/A-SL32 (2): a value the seller did NOT change is not re-validated.
+
+    `OWNERSHIPS` is the design's four-option select vocabulary while fifteen of the eighteen seeded
+    hospitals carry the design's own richer prose ("Three-doctor LLC", the same register as the
+    design's own fixture "Four-doctor LLC") directly in the `ownership` column, which has no
+    database CHECK — so a seller who opened Edit on one of those and pressed Continue on step 1 was
+    refused for a value they never typed. The fix: skip `_one_of` when the incoming value equals
+    the row's OWN stored value — a no-op write — so nothing is loosened for new input and no design
+    option is invented. `stored is None` never matches (a listing that has not set this column yet
+    still requires a real value), so a bare create's null enum is refused exactly as before."""
+    if stored is not None and raw == stored:
+        return stored
+    return _one_of(field, raw, allowed)
+
+
+def _bldg_or_unchanged(raw: object, stored: str | None) -> str:
+    """`_one_of_or_unchanged`'s twin for `bldg`: the wizard's own word and the column's are not
+    spelled the same (`BLDG_IN`/`BLDG_OUT` — "Available separately" is stored as "Separate"), so
+    "unchanged" is asked in the WIZARD's vocabulary: the column's stored word translated back
+    through `BLDG_OUT` (the same expression `serialise_draft` reads it with), compared to what the
+    seller actually sent. A changed value is still translated forward through `BLDG_IN`, exactly as
+    before."""
+    if stored is not None and BLDG_OUT.get(stored) == raw:
+        return stored
+    return BLDG_IN[_one_of("bldg", raw, tuple(BLDG_IN))]
+
+
+def columns_for(step: int, body: dict[str, Any], row: dict[str, Any] | None = None) -> dict[str, Any]:
     """The step's fields as database columns, or a `Refusal`.
 
     The whitelist is one-directional and total: a field from another step is a 400 rather than a
     silent no-op, because the wizard sends one step at a time and a mis-sent field means the
-    adapter and this table disagree — which is a bug to see, not to absorb."""
+    adapter and this table disagree — which is a bug to see, not to absorb.
+
+    `row` is the listing being validated (A-SL31/A-SL32 (2)) — `None` for every caller that has no
+    row to compare against (the two-way pins in `tests/api/test_seller_listings.py`, which build a
+    payload with no listing in mind), so the four enum branches below fall back to full validation
+    exactly as they always have."""
     if step not in STEP_FIELDS:
         raise Refusal("BAD_REQUEST", f"step must be one of {', '.join(str(s) for s in sorted(STEP_FIELDS))}.", 400)
     stray = sorted(set(body) - set(STEP_FIELDS[step]))
@@ -244,13 +277,14 @@ def columns_for(step: int, body: dict[str, Any]) -> dict[str, Any]:
         if field in MONEY_FIELDS or field in INT_FIELDS:
             out[field] = _number(field, raw)
         elif field == "type":
-            out["type"] = _one_of("type", raw, TYPES)
+            out["type"] = _one_of_or_unchanged("type", raw, TYPES, row["type"] if row is not None else None)
         elif field == "ownership":
-            out["ownership"] = _one_of("ownership", raw, OWNERSHIPS)
+            out["ownership"] = _one_of_or_unchanged("ownership", raw, OWNERSHIPS, row["ownership"] if row is not None else None)
         elif field == "facilityType":
-            out["facility_type"] = _one_of("facilityType", raw, FACILITY_TYPES)
+            out["facility_type"] = _one_of_or_unchanged(
+                "facilityType", raw, FACILITY_TYPES, row["facility_type"] if row is not None else None)
         elif field == "bldg":
-            out["bldg"] = BLDG_IN[_one_of("bldg", raw, tuple(BLDG_IN))]
+            out["bldg"] = _bldg_or_unchanged(raw, row["bldg"] if row is not None else None)
         elif field == "desc":
             out["services"] = _text("desc", raw)
         elif field == "anon":
@@ -550,11 +584,13 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
     try:
         body = await _json_body(request)
         step = int(raw_step) if raw_step.isdecimal() else -1
-        columns = columns_for(step, body)
         with closing(sync_conn()) as conn, conn:
             row = owned_row(conn, listing_id, principal)
             if row["status"] == "withdrawn":
                 raise Refusal("STATE", "A withdrawn listing can no longer be edited.", 409)
+            # A-SL31/A-SL32 (2): the row is the "did the seller actually change this" oracle, so it
+            # has to be fetched before `columns_for` can compare against it.
+            columns = columns_for(step, body, row)
             # D3, John's ruling: the FIRST save to a published listing moves it to in_review and off
             # the market at once. `GET /api/listings` filters `status = 'published'`, so the
             # transition alone does the removing — no new code on the read side. Subsequent PATCHes

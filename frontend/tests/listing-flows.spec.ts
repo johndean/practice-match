@@ -330,13 +330,17 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
   // as) owns every hospital before any test runs, on EITHER target — no skip, the same "runs for
   // real everywhere" rule the photograph test's own probe-based skip is the sole exception to.
   //
-  // `abc_animal_hospital` is identified by its own SLUG (`serialise_draft` answers it verbatim),
-  // never by city or type alone, and chosen deliberately among the eighteen: its `ownership`
-  // ("Sole proprietor") is one of the wizard's own four enum values — most of the eighteen carry
-  // a real-world variant ("Sole proprietor (S-corp)", "Four-doctor LLC", …) that `columns_for`'s
-  // strict `_one_of` refuses outright, and the step rail this test presses PATCHes step 1's whole
-  // `w` (A16.18) to leave it — a pre-existing data/validation gap outside SL7b's scope, recorded
-  // for the controller rather than routed around silently.
+  // `4444_denver_veterinary_specialist_hospital` is identified by its own SLUG (`serialise_draft`
+  // answers it verbatim), never by city or type alone, and chosen DELIBERATELY among the eighteen
+  // (A-SL32 (3), on the SL7b re-review): its stored `ownership`, "Three-doctor LLC", is OUTSIDE the
+  // wizard's own four-option vocabulary — the same register as fifteen of the eighteen — and the
+  // step rail this test presses PATCHes step 1's whole `w` (A16.18) to leave it. Before A-SL31 this
+  // was refused (`400 ownership must be one of …`) for a value the seller never typed; `abc_animal_
+  // hospital`'s "Sole proprietor" was chosen instead precisely because it dodged that defect, which
+  // the re-review named as the second time on this branch that a convenient fixture concealed a
+  // real failure. `columns_for` now skips the vocabulary check for an enum the incoming PATCH does
+  // not change, so this hospital's own prose survives a step it never touched — proved here, not
+  // routed around.
   //
   // The seeder is idempotent but a re-caption is not undone by re-seeding a CLAIMED row (A-SL21:
   // `WHERE listing.source = 'seed'` leaves an edited row alone), so a second run of this suite
@@ -351,18 +355,18 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
     const mine = await page.evaluate(() =>
       fetch('/api/seller/listings?limit=200', { credentials: 'same-origin' }).then((r) => r.json())) as
       { items: { id: string; slug: string | null }[] };
-    const seeded = mine.items.find((item) => item.slug === 'abc_animal_hospital');
-    if (!seeded) throw new Error('scripts/seed_listings.py did not seed abc_animal_hospital for the seller persona');
+    const seeded = mine.items.find((item) => item.slug === '4444_denver_veterinary_specialist_hospital');
+    if (!seeded) throw new Error('scripts/seed_listings.py did not seed 4444_denver_veterinary_specialist_hospital for the seller persona');
     const id = seeded.id;
 
     const before = await draftOf(page, id);
-    expect(before.photos[0], 'position 1 is abc_animal_hospital\'s own first photograph — a SEED entry, all eighteen filled')
+    expect(before.photos[0], 'position 1 is this hospital\'s own first photograph — a SEED entry, all eighteen filled')
       .toMatchObject({ source: 'seed', position: 1 });
 
     // The dashboard's own card for this listing — found by its title and price together, since
     // the id is not in the DOM to select by.
     const card = page.locator('div[style*="var(--shadow-sm)"]')
-      .filter({ hasText: 'Small animal practice — Houston' }).filter({ hasText: '$465K' });
+      .filter({ hasText: 'Specialty practice — Denver' }).filter({ hasText: '$2.74M' });
     await card.getByRole('button', { name: 'Edit', exact: true }).click();
     await onStep(page, 1);
 

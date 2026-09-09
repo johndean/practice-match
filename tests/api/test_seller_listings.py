@@ -1726,3 +1726,112 @@ async def test_a_partial_step_one_save_without_the_year_is_a_200(client: Any, co
                                json={key: DESIGN_W[key] for key in keys}, headers=signed)
     assert saved.status_code == 200, saved.text
     assert (saved.json()["name"], saved.json()["est"]) == ("ABC Animal Hospital", None)
+
+
+# --- A-SL31 / A-SL32 (2): an enum the seller did NOT change is not re-validated --------------------
+#
+# `OWNERSHIPS` is the design's four-option select vocabulary while fifteen of the eighteen seeded
+# hospitals carry the design's own richer prose ("Three-doctor LLC", the same register as the
+# design's own fixture value "Four-doctor LLC" in `logic.js`) directly in the `ownership` column,
+# which has no database CHECK — so a seller who opened Edit on one of those and pressed Continue on
+# step 1 was refused for a value they never typed. The ruling: a value the seller did not change is
+# not re-validated. `columns_for` now takes the row it is validating and skips `_one_of` when the
+# incoming value equals the row's OWN stored value; the seed data is not rewritten and the design's
+# select is not widened (D-SL31 is John's, still open).
+#
+# `type` and `bldg` both carry a database CHECK (migrations 030, 016) restricting them to the exact
+# vocabulary already, so neither can ever hold a real out-of-vocabulary value the way `ownership`
+# does — there is no seeded row to reproduce the defect with. The rule still covers all four alike
+# (A-SL31 (1): "derived from the row, never a per-field allowlist"), so the four cases below call
+# `columns_for` directly, the same unit-level pattern `test_the_adapter_omits_in_partial_mode_...`
+# above already uses, with a hand-built row standing in for one the CHECK could never let exist.
+
+
+async def test_a_seeded_listings_out_of_vocabulary_ownership_round_trips_unchanged(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """A-SL31 (1)'s own complaint, end to end: `ownership` has no CHECK, so this is the one enum
+    whose real seed prose can be reproduced at the row level, exactly as `scripts/seed_listings.py`
+    writes it."""
+    _, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id = await _create(client, cookies, headers)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET ownership = 'Three-doctor LLC' WHERE id = %s", (listing_id,))
+
+    unchanged = await client.patch(f"/api/seller/listings/{listing_id}?step=1",
+                                   json={"ownership": "Three-doctor LLC"}, headers=signed)
+    assert unchanged.status_code == 200, unchanged.text
+    assert unchanged.json()["ownership"] == "Three-doctor LLC"
+    with conn.cursor() as cur:
+        cur.execute("SELECT ownership FROM listing WHERE id=%s", (listing_id,))
+        assert cur.fetchone() == ("Three-doctor LLC",)
+
+    # A DIFFERENT out-of-vocabulary value is still refused, with the field's existing envelope code.
+    refused = await client.patch(f"/api/seller/listings/{listing_id}?step=1",
+                                 json={"ownership": "Four-doctor LLC"}, headers=signed)
+    assert refused.status_code == 400
+    assert refused.json()["error"]["code"] == "BAD_REQUEST"
+    assert refused.json()["error"]["message"] == "ownership must be one of Sole proprietor, Two-doctor" \
+        " partnership, Multi-doctor LLC, Other."
+    with conn.cursor() as cur:
+        cur.execute("SELECT ownership FROM listing WHERE id=%s", (listing_id,))
+        assert cur.fetchone() == ("Three-doctor LLC",), "the refused write must not have touched the row"
+
+    # ...and a different IN-vocabulary value succeeds, exactly as before this ruling.
+    changed = await client.patch(f"/api/seller/listings/{listing_id}?step=1",
+                                 json={"ownership": "Sole proprietor"}, headers=signed)
+    assert changed.status_code == 200
+    assert changed.json()["ownership"] == "Sole proprietor"
+
+
+@pytest.mark.parametrize(("field", "column", "step", "allowed"), [
+    ("ownership", "ownership", 1, ("Sole proprietor", "Two-doctor partnership", "Multi-doctor LLC", "Other")),
+    ("type", "type", 1, ("Small animal", "Mixed", "Large animal", "Emergency", "Specialty", "Other")),
+    ("facilityType", "facility_type", 5, ("Standalone", "Strip or plaza", "Medical park", "Other")),
+])
+def test_columns_for_skips_the_vocabulary_check_for_an_unchanged_value(
+    field: str, column: str, step: int, allowed: tuple[str, ...]
+) -> None:
+    """The three cases A-SL31/A-SL32 (2) name, for `ownership` and `type` alike (plus
+    `facilityType`, the other enum column with no CHECK) — as a direct call, `type`'s own CHECK
+    meaning no row could ever really hold the out-of-vocabulary value this proves the FUNCTION
+    treats the same way `ownership`'s does."""
+    from app.api.seller_listings import Refusal, columns_for
+
+    stored = "Some out-of-vocabulary prose nobody picked from a menu"
+    row = {column: stored}
+
+    # Unchanged: the out-of-vocabulary value round-trips without `_one_of` ever seeing it.
+    assert columns_for(step, {field: stored}, row) == {column: stored}
+
+    # A DIFFERENT out-of-vocabulary value is still refused, with the field's existing code.
+    with pytest.raises(Refusal, match=f"{field} must be one of"):
+        columns_for(step, {field: "Also not one of the options"}, row)
+
+    # ...and a different IN-vocabulary value succeeds.
+    assert columns_for(step, {field: allowed[0]}, row) == {column: allowed[0]}
+
+    # A column with no stored value yet (a bare create) is never treated as "unchanged" by a null
+    # comparison: the very value that round-tripped above is refused when there is nothing stored
+    # for it to match.
+    with pytest.raises(Refusal, match=f"{field} must be one of"):
+        columns_for(step, {field: stored}, {column: None})
+
+
+def test_columns_for_skips_the_vocabulary_check_for_an_unchanged_bldg_through_its_own_value_map() -> None:
+    """`bldg`'s twin: the column CHECK (`migrations/016_listing.sql`) keeps it in
+    `{'Included', 'Leased', 'Separate'}`, but the WIZARD's own word for one of those three
+    ("Available separately") is not spelled the same as the column's ("Separate") — so "unchanged"
+    has to be asked in the wizard's vocabulary, through `BLDG_OUT`, not by comparing the two
+    strings directly."""
+    from app.api.seller_listings import Refusal, columns_for
+
+    row = {"bldg": "Separate"}
+    # Unchanged, translated: the wizard sent its own word for the very value already stored.
+    assert columns_for(5, {"bldg": "Available separately"}, row) == {"bldg": "Separate"}
+    # A different, in-vocabulary word still succeeds.
+    assert columns_for(5, {"bldg": "Included"}, row) == {"bldg": "Included"}
+    # A word that is not one of the three at all is still refused.
+    with pytest.raises(Refusal, match="bldg must be one of"):
+        columns_for(5, {"bldg": "Owned outright"}, row)
