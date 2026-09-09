@@ -2,6 +2,8 @@ import { router } from './router/routes';
 import './styles/tokens.css';
 import './styles/global.css';
 import { useMe } from './auth/me';
+import { makeAuthAdapter } from './auth/adapter';
+import * as api from './auth/api';
 import { bootstrap } from './bootstrap';
 import { loadListings } from './listings/load';
 import type { Markets, Practice } from './listings/load';
@@ -39,4 +41,17 @@ import { MARKETS, P } from './logic.js';
 void Promise.all([
   useMe().load().catch(() => null),
   loadListings(globalThis.fetch.bind(globalThis), P as unknown as Practice[], MARKETS as unknown as Markets).catch(() => null)
-]).then(() => bootstrap(router, '#app'));
+]).then(() => {
+  // A-L14: Create the auth adapter with the listings loader so it can re-read on interactive
+  // sign-in. The loader, practices array, and markets object are passed so the adapter can
+  // re-read the catalogue after a member signs in interactively.
+  const auth = makeAuthAdapter(
+    api,
+    useMe(),
+    loadListings,
+    globalThis.fetch.bind(globalThis),
+    P as unknown as Practice[],
+    MARKETS as unknown as Markets
+  );
+  return bootstrap(router, '#app', auth);
+});
