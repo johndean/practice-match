@@ -73,6 +73,12 @@ export interface ApiListing {
   // through as-is — `photoSet`'s `p.photos[i]` renders the design's own placeholder for a null,
   // and compacting the list would put every later photograph under the wrong caption.
   photos: (string | null)[];
+  // A-L11: one description per photograph, PARALLEL to `photos` — position `n` describes position
+  // `n`, `null` where nobody has described that photograph yet. OPTIONAL because a server that
+  // predates migrations/024 does not send it, and because the D6 design-fixture stub has nothing
+  // to say: amendment A15 falls back to the design's own fixed slot caption wherever the entry is
+  // absent, which is what keeps the approved states on their pixels.
+  photo_captions?: (string | null)[];
 }
 
 export interface Practice {
@@ -103,6 +109,7 @@ export interface Practice {
   market: string;
   name?: string;
   photos?: (string | null)[];
+  photoCaptions?: (string | null)[];
 }
 
 export type Markets = Record<string, { center: [number, number]; zoom: number }>;
@@ -120,9 +127,9 @@ export interface ListingsPage {
  * the frontend can rely on, and `id` is. The design uses `p.id` as a DOM key, as the key of its
  * own `NAMES`/`SRC` fixture maps and as the detail route's segment; a uuid serves all three.
  *
- * `name` and `photos` are added only when the API actually sent them, so an API row built from a
- * design fixture maps back to exactly that fixture — which is what keeps the pixel gates honest
- * (D6) now that A12 has the design read both.
+ * `name`, `photos` and `photoCaptions` are added only when the API actually sent them, so an API
+ * row built from a design fixture maps back to exactly that fixture — which is what keeps the
+ * pixel gates honest (D6) now that A12 has the design read the first two and A15 the third.
  */
 export function toPractice(row: ApiListing): Practice {
   const p: Practice = {
@@ -156,6 +163,10 @@ export function toPractice(row: ApiListing): Practice {
   // `p.name = undefined`, which is a key the design's `p.name ||` chain then has to absorb.
   if (row.name != null) p.name = row.name;
   if (row.photos.length > 0) p.photos = row.photos;
+  // A-L11 (A15): the same rule again, and `?.` rather than a length test alone — a server that
+  // predates migrations/024 sends no `photo_captions` at all, and the design's own fixed slot
+  // captions are the right answer for such a row.
+  if (row.photo_captions && row.photo_captions.length > 0) p.photoCaptions = row.photo_captions;
   return p;
 }
 

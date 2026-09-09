@@ -83,7 +83,7 @@ _SELECT = """
 SELECT id, slug, name, street, city, state, zip, phone, hours, status, location_disclosed,
        name_disclosed, ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lng,
        area, type, market, price, rev, docs, rooms, sqft, bldg, est, listed_at,
-       note, staff, services, facility, ownership, photos
+       note, staff, services, facility, ownership, photos, photo_captions
   FROM listing
 """
 
@@ -136,12 +136,17 @@ def decode_cursor(raw: str) -> tuple[datetime, UUID]:
 
 
 def photo_list(value: object) -> list[str | None]:
-    """`listing.photos` as a list of relative paths, `None` where the slot is empty (A-L10).
+    """`listing.photos` — or its parallel `listing.photo_captions` (A-L11) — as a list of strings,
+    `None` where the slot is empty (A-L10) or the photograph has no description of its own.
 
-    The list is POSITIONAL: position `n` is the design's photo slot `n`, and the seeder stores a
-    `null` for a slot no photograph in that hospital's folder truthfully fills. The null is
-    carried, never dropped — compacting the list would slide every later photograph up one slot
-    and put it under a caption describing something else.
+    The list is POSITIONAL: position `n` of both columns is one photograph, and the first six are
+    the design's photo slots. The seeder stores a `null` for a slot the hospital's folder was too
+    thin to fill. The null is carried, never dropped — compacting either list would slide every
+    later photograph up one slot and put it under a caption describing something else, and would
+    slide the two lists out of step with each other.
+
+    One helper for both columns because they are the same shape and the same rule; the caller
+    names which one it is reading.
 
     psycopg2 decodes a `jsonb` column to a Python list, so the string arm is unreachable from a
     request — but `serialise` is also called directly (by tests, and by Wave 2b's admin views,
@@ -222,6 +227,11 @@ def serialise(row: Mapping[str, Any], now: datetime) -> dict[str, Any]:
             None if path is None else f"/api/listings/{listing_id}/photos/{n}"
             for n, path in enumerate(photos, start=1)
         ],
+        # A-L11: one description per photograph, PARALLEL to `photos` — position `n` describes
+        # position `n`. The design's `photoSet` reads it as `p.photoCaptions[i]` and falls back to
+        # its own fixed slot caption where the entry is null (amendment A15), which is what lets a
+        # photograph past the sixth be rendered at all: the design has no seventh caption.
+        "photo_captions": photo_list(row["photo_captions"]),
     }
 
 

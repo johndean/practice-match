@@ -12,12 +12,14 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 PHOTOS = ROOT / "seeds" / "hospitals" / "photos"
 INDEX = PHOTOS / "index.json"
 CURATION = PHOTOS / "curation.json"
-# Deliberately BELOW what the per-file ceiling would allow (108 x 250 KB is 26 MB): the committed
-# set is 2.3 MB since A-L10 (73 files, was 108/4.0 MB), so 18 MB stays a real guard against a
-# runaway rather than a restatement of MAX_BYTES.
+# Deliberately BELOW what the per-file ceiling would allow (195 x 250 KB is 48 MB): the committed
+# set is 7.4 MB since A-L11 (195 files — every photograph John supplied — where A-L10 kept 73 and
+# A-L9 108), so 18 MB stays a real guard against a runaway rather than a restatement of MAX_BYTES.
 TOTAL_CEILING_BYTES = 18 * 1024 * 1024
 MAX_BYTES = 250 * 1024
-MAX_PHOTOS = 6   # the design renders six photo slots per practice (A-L9); more can never be shown
+# The design renders six CAPTIONED photo slots per practice (A-L9). Since A-L11 that is not a cap:
+# amendment A15.3 renders a tile of its own for every photograph beyond the sixth.
+SLOT_COUNT = 6
 
 
 def inventory() -> dict[str, list[dict[str, object]]]:
@@ -39,38 +41,48 @@ def seed_slugs() -> list[str]:
 
 def test_every_seeded_hospital_has_photographs() -> None:
     """Review i4: since A-L10 an ENTRY is not a photograph — six nulls would satisfy a count. Every
-    seeded hospital must carry at least one real one, or its card and its detail page are empty."""
+    seeded hospital must carry at least one real one, or its card and its detail page are empty.
+    A-L11 drops the upper bound: a folder's photographs are no longer capped at six."""
     inv = inventory()
     for slug in seed_slugs():
-        assert slug in inv and 1 <= len(inv[slug]) <= MAX_PHOTOS, slug
+        assert slug in inv and len(inv[slug]) >= SLOT_COUNT, slug
         assert any(e["file"] is not None for e in inv[slug]), f"{slug} carries no photograph at all"
 
 
 def test_every_seeded_hospital_carries_all_six_of_the_designs_photo_slots() -> None:
     """A-L9 (John, 2026-09-09: "the seed phase failed to upload ALL the images"). The detail page
-    renders six captioned slots per practice, so the inventory carries an entry for every one —
-    a photograph or, since A-L10, an explicit empty. A hospital with fewer than six ENTRIES means
-    the pipeline dropped a slot again, which is exactly what `[:4]` did."""
+    renders six captioned slots per practice, so the inventory's FIRST SIX entries are those six
+    slots, in the practice type's own order. A hospital with fewer than six means the pipeline
+    dropped a slot again, which is exactly what `[:4]` did.
+
+    A-L11: everything after the sixth is a photograph with NO slot — the design has no caption
+    for it, so it carries the supplier's own description instead (amendment A15.3)."""
     inv = inventory()
     for slug in seed_slugs():
-        assert len(inv[slug]) == MAX_PHOTOS, (slug, len(inv[slug]))
-        slots = [e["slot"] for e in inv[slug]]
+        assert len(inv[slug]) >= SLOT_COUNT, (slug, len(inv[slug]))
+        slots = [e["slot"] for e in inv[slug][:SLOT_COUNT]]
         assert slots[0] == "exterior", (slug, slots)
-        assert len(set(slots)) == MAX_PHOTOS, (slug, slots)
+        assert len(set(slots)) == SLOT_COUNT, (slug, slots)
+        assert all(e["slot"] is None for e in inv[slug][SLOT_COUNT:]), slug
 
 
 def test_the_inventory_is_the_curation_slot_for_slot() -> None:
     """A-L10 (John, 2026-09-09: "match the description"). The design's caption is fixed per slot,
     so the ONLY thing that makes a caption true is the photograph at that POSITION showing that
     subject. The controller verified that by looking at every source image; this asserts the
-    committed tree is exactly what he verified — same slots in the same order, the same source
-    file in each, and an empty where he found nothing truthful."""
+    committed tree is exactly what he verified — the same slots in the same order, and the
+    photograph he named in each of them.
+
+    A-L11 narrows the claim to the slots the map FILLS: a slot it left `null` now holds one of the
+    folder's other photographs (never dropped, and honestly captioned by the amendment's own
+    fallback) rather than nothing, so this can no longer be an equality over the whole list."""
     inv = inventory()
     cur = curation()
     assert set(cur) == set(seed_slugs()), "the curation must name every seeded hospital and no other"
     for slug, slots in cur.items():
-        assert [e["slot"] for e in inv[slug]] == list(slots), slug
-        assert [e["source"] for e in inv[slug]] == list(slots.values()), slug
+        assert [e["slot"] for e in inv[slug][:SLOT_COUNT]] == list(slots), slug
+        named = [(n, name) for n, name in enumerate(slots.values()) if name is not None]
+        assert [(n, inv[slug][n]["source"]) for n, _ in named] == named, slug
 
 
 def test_a_curated_photograph_sits_at_its_slots_own_position() -> None:
@@ -82,23 +94,43 @@ def test_a_curated_photograph_sits_at_its_slots_own_position() -> None:
             assert entry["file"] == expected, (slug, position, entry["file"])
 
 
-def test_the_committed_set_fills_seventy_three_of_the_hundred_and_eight_slots() -> None:
-    """The measured outcome of A-L10, pinned: 73 slots carry a content-verified photograph and 35
-    stay empty, where the design renders its own placeholder (absent beats faked). Four hospitals
-    have nothing but an exterior — their interiors exist only as collage fragments or mislabeled
-    exteriors — and John owes clean images for them; the plan record says so, and this test is
-    what will notice when they arrive."""
+# Every photograph in John's eighteen source folders, counted by folder. A-L9 kept 108 of them
+# (six per hospital) and A-L10 kept 73; A-L11 keeps all 195. Pinned per hospital rather than as a
+# total, because the total is what hid the loss John found: `def_veterinary_hospital` went from 9
+# to 3 and the sum still looked plausible.
+PHOTOGRAPHS_PER_HOSPITAL = {
+    "1111_pet_hospital": 10,
+    "123_route66": 10,
+    "2222_pet_hospital": 12,
+    "3333_santa_barbara_veterinary_specialist_hospital": 11,
+    "4444_denver_veterinary_specialist_hospital": 11,
+    "456_pet_er": 11,
+    "5555_new_york_veterinary_specialist_hospital": 12,
+    "6666_dallas_veterinary_specialist_hospital": 10,
+    "789_lake_tahoe_pet_hospital": 10,
+    "abc_animal_hospital": 18,
+    "def_veterinary_hospital": 9,
+    "ghi_veterinary_hospital": 11,
+    "jkl_animal_hospital": 10,
+    "mno_pet_hospital": 11,
+    "pqr_veterinary_hospital": 8,
+    "stu_veterinary_specialist_center": 10,
+    "vwx_veterinary_hospital": 10,
+    "yz_rural_animal_hospital": 11,
+}
+
+
+def test_the_committed_set_is_every_photograph_john_supplied() -> None:
+    """The measured outcome of A-L11 (John, 2026-09-09: "render ALL images"), pinned: 195 files,
+    one per source image, and NOT ONE empty slot — every folder holds more than the design's six.
+    A-L10's 73-of-108 is superseded: 117 of John's photographs had no by-eye match to one of the
+    six fixed captions and were dropped, which is the failure this hotfix exists to end."""
     inv = inventory()
+    assert {slug: len(entries) for slug, entries in inv.items()} == PHOTOGRAPHS_PER_HOSPITAL
     filled = [e for entries in inv.values() for e in entries if e["file"] is not None]
-    assert (len(filled), sum(len(e) for e in inv.values())) == (73, 108)
-    exterior_only = sorted(
-        slug for slug, entries in inv.items()
-        if [e["slot"] for e in entries if e["file"] is not None] == ["exterior"]
-    )
-    assert exterior_only == [
-        "1111_pet_hospital", "ghi_veterinary_hospital", "pqr_veterinary_hospital",
-        "stu_veterinary_specialist_center",
-    ]
+    assert (len(filled), sum(len(e) for e in inv.values())) == (195, 195), "a photograph was dropped"
+    beyond = [e for entries in inv.values() for e in entries if e["slot"] is None]
+    assert len(beyond) == 87, "the photographs past the design's six slots (A15.3 renders each)"
 
 
 def test_the_inventory_names_no_hospital_that_is_not_seeded() -> None:
@@ -126,11 +158,13 @@ def test_the_tree_holds_nothing_the_inventory_does_not_name() -> None:
 
 def test_every_committed_photograph_has_a_caption_and_a_source() -> None:
     """What each file actually shows and which of the design's six photo slots it was selected
-    for (pre-flight I2; the slot since A-L9). The caption the buyer reads is the design's own,
-    fixed per slot — `slot` is what makes it true of the photograph underneath it."""
+    for (pre-flight I2; the slot since A-L9). In one of those six the caption the buyer reads is
+    the design's own — `slot` is what makes it true of the photograph underneath it; beyond them
+    the design has no caption, `slot` is null, and the CAPTION recorded here is what the buyer
+    reads (A-L11, amendment A15.3)."""
     for slug, entries in inventory().items():
         for entry in entries:
-            assert isinstance(entry["slot"], str) and entry["slot"], (slug, entry["file"])
+            assert entry["slot"] is None or entry["slot"], (slug, entry["file"])
             if entry["file"] is None:
                 # An empty slot is a statement, not a photograph (A-L10): no bytes, no caption,
                 # no source, and no measured field claiming otherwise.

@@ -103,11 +103,18 @@ describe('local design amendments (spec D15)', () => {
     // through the design's `stateOf` helper, and Community Context reaches the design's own
     // "Community data unavailable" card when D4 leaves the four figures null.
     'A12.8', 'A12.9', 'A12.10', 'A12.11',
+    // A15 — every uploaded photograph renders, with its own description (A-L11, John 2026-09-09).
+    // A13/A14 are reserved by the design-dropdowns branch. Six literal script edits: a
+    // photograph's own `photoCaptions[i]` wins over the design's fixed slot caption (A15.1/A15.2)
+    // and every photograph past the sixth gets a tile of its own (A15.3a–A15.3d, the two ends of
+    // each branch's `return`). The fixtures carry no `photoCaptions` and at most three
+    // photographs, so no approved state moves.
+    'A15.1', 'A15.2', 'A15.3a', 'A15.3b', 'A15.3c', 'A15.3d',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(82);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(88);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

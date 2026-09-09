@@ -1,0 +1,14 @@
+-- A-L11 (John, 2026-09-09: "surface all images uploaded and have the user articulate what it is
+-- and render ALL images"). One description per photograph, parallel to `listing.photos`.
+--
+-- Why a column and not the design's captions: `photoSet(p)` renders SIX fixed captions chosen by
+-- practice type, so a photograph could only ever be captioned truthfully by being placed in the
+-- slot whose caption describes it — which is why hotfix 2 (A-L10) dropped 117 of the 190 images
+-- John supplied. A photograph now carries its OWN words (the supplier's filename description
+-- today, a seller's own text once Wave 2b lets them write one) and the design's fixed caption is
+-- the fallback for a slot with none (amendment A15).
+--
+-- Parallel to `photos`, never keyed to it: the two are read by the same index, so position `n` of
+-- this array describes position `n` of that one, and a `null` means "nobody has described this
+-- photograph yet" exactly as a `null` in `photos` means "this slot has no photograph".
+ALTER TABLE listing ADD COLUMN photo_captions jsonb NOT NULL DEFAULT '[]'::jsonb;
