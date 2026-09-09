@@ -10,8 +10,8 @@
 --
 -- Why a column and not the design's captions: `photoSet(p)` renders SIX fixed captions chosen by
 -- practice type, so a photograph could only ever be captioned truthfully by being placed in the
--- slot whose caption describes it — which is why hotfix 2 (A-L10) dropped 117 of the 190 images
--- John supplied. A photograph now carries its OWN words (the supplier's filename description
+-- slot whose caption describes it — which is why hotfix 2 (A-L10) rendered only 73 of the 195
+-- photographs John supplied. A photograph now carries its OWN words (the supplier's filename description
 -- today, a seller's own text once Wave 2b lets them write one) and the design's fixed caption is
 -- the fallback for a slot with none (amendment A15).
 --

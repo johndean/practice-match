@@ -1102,8 +1102,9 @@ const A12_11: Amendment = {
  *  The rule is now the opposite, and these six literal script edits are it:
  *
  *    - a photograph carries its OWN description — `p.photoCaptions[i]`, the API's new
- *      `photo_captions` (migrations/024), the supplier's words today and the seller's in Wave 2b
- *      — and the design's fixed slot caption is the FALLBACK where there is none (A15.1, A15.2);
+ *      `photo_captions` (`migrations/090_listing_photo_captions.sql`), the supplier's words today
+ *      and the seller's in Wave 2b — and the design's fixed slot caption is the FALLBACK where
+ *      there is none (A15.1, A15.2);
  *    - every photograph past the sixth gets a tile of its own, appended after the six slots, with
  *      "Photo N" as the last-resort caption because the design has no seventh caption to lend
  *      (A15.3a-A15.3d: the head and the tail of the generic branch's `return`, then the head and

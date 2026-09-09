@@ -123,8 +123,8 @@ PHOTOGRAPHS_PER_HOSPITAL = {
 def test_the_committed_set_is_every_photograph_john_supplied() -> None:
     """The measured outcome of A-L11 (John, 2026-09-09: "render ALL images"), pinned: 195 files,
     one per source image, and NOT ONE empty slot — every folder holds more than the design's six.
-    A-L10's 73-of-108 is superseded: 117 of John's photographs had no by-eye match to one of the
-    six fixed captions and were dropped, which is the failure this hotfix exists to end."""
+    A-L10's 73-of-108 is superseded: the photographs with no by-eye match to one of the six fixed
+    captions were dropped, which is the failure this hotfix exists to end."""
     inv = inventory()
     assert {slug: len(entries) for slug, entries in inv.items()} == PHOTOGRAPHS_PER_HOSPITAL
     filled = [e for entries in inv.values() for e in entries if e["file"] is not None]

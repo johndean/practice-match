@@ -624,7 +624,8 @@ async def test_an_empty_photo_slot_is_a_404_and_the_slot_after_it_still_serves(
 # --- A-L11: every photograph is served, each with its own description -------------------------
 # John, 2026-09-09: "surface all images uploaded and have the user articulate what it is and render
 # ALL images". `photos` is no longer bounded by the design's six captioned slots, and `listing`
-# carries a `photo_captions` array parallel to it (migrations/024) — the supplier's own words
+# carries a `photo_captions` array parallel to it (`migrations/090_listing_photo_captions.sql`)
+# — the supplier's own words
 # today, a seller's own words once Wave 2b lets them write one. Amendment A15 renders a caption
 # where there is one and the design's fixed slot caption where there is not.
 

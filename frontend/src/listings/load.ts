@@ -75,8 +75,8 @@ export interface ApiListing {
   photos: (string | null)[];
   // A-L11: one description per photograph, PARALLEL to `photos` — position `n` describes position
   // `n`, `null` where nobody has described that photograph yet. OPTIONAL because a server that
-  // predates migrations/024 does not send it, and because the D6 design-fixture stub has nothing
-  // to say: amendment A15 falls back to the design's own fixed slot caption wherever the entry is
+  // predates `090_listing_photo_captions.sql` does not send it, and because the D6 design-fixture
+  // stub has nothing to say: A15 falls back to the design's own fixed slot caption wherever it is
   // absent, which is what keeps the approved states on their pixels.
   photo_captions?: (string | null)[];
 }
@@ -163,9 +163,9 @@ export function toPractice(row: ApiListing): Practice {
   // `p.name = undefined`, which is a key the design's `p.name ||` chain then has to absorb.
   if (row.name != null) p.name = row.name;
   if (row.photos.length > 0) p.photos = row.photos;
-  // A-L11 (A15): the same rule again, and `?.` rather than a length test alone — a server that
-  // predates migrations/024 sends no `photo_captions` at all, and the design's own fixed slot
-  // captions are the right answer for such a row.
+  // A-L11 (A15): the same rule again, and a presence test as well as a length one — a server
+  // that predates `090_listing_photo_captions.sql` sends no `photo_captions` at all, and the
+  // design's own fixed slot captions are the right answer for such a row.
   if (row.photo_captions && row.photo_captions.length > 0) p.photoCaptions = row.photo_captions;
   return p;
 }
