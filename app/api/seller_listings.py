@@ -123,7 +123,18 @@ STEP_FIELDS: dict[int, tuple[str, ...]] = {
 # The design's own option lists (logic.js:1174, :1178), checked here so a CheckViolation from the
 # database can never become a 500.
 TYPES = ("Small animal", "Mixed", "Large animal", "Emergency", "Specialty", "Other")
-OWNERSHIPS = ("Sole proprietor", "Two-doctor partnership", "Multi-doctor LLC", "Other")
+OWNERSHIPS = (
+    "Sole proprietor",
+    "Sole proprietor (LLC)",
+    "Sole proprietor (S-corp)",
+    "Two-doctor partnership",
+    "Three-doctor LLC",
+    "Four-doctor partnership",
+    "Four-doctor LLC",
+    "Five-doctor LLC",
+    "Multi-doctor LLC",
+    "Other",
+)
 FACILITY_TYPES = ("Standalone", "Strip or plaza", "Medical park", "Other")
 BLDG_IN = {"Included": "Included", "Available separately": "Separate", "Leased": "Leased"}
 BLDG_OUT = {value: key for key, value in BLDG_IN.items()}

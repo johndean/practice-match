@@ -202,11 +202,15 @@ describe('local design amendments (spec D15)', () => {
     // whole family is appended last — after A16/A17 too: A19.11 was adapted at the SL9 merge to
     // match `go()`'s shape once A16.20a has already split it (see the amendment's own comment).
     'A19.1', 'A19.2', 'A19.3', 'A19.4', 'A19.5', 'A19.6', 'A19.7', 'A19.8', 'A19.9', 'A19.10', 'A19.11', 'A19.12',
+    // A22 — the ownership vocabulary widens to the seeds' own wording (John, 2026-09-10, Task SL10:
+    // "Preserve existing seed wording/detail"). One literal edit: the wizard step 1 ownership
+    // select's ten options, combining the design's four with the seeds' own six phrasings.
+    'A22',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(144);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(145);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

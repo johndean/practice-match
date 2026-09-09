@@ -3005,6 +3005,18 @@ const A19_12: Amendment = {
   count: 1
 };
 
+/** A22 (John, 2026-09-10 — Task SL10: "Preserve existing seed wording/detail"): the wizard's
+ *  ownership select widens from four options (the design's four) to ten, adding the seeds' own six
+ *  phrasings alongside the design's four. The API's `OWNERSHIPS` tuple and the design's option
+ *  array are identical and pinned two-way by pytest (step 1 of the task's own test cases). */
+const A22: Amendment = {
+  id: 'A22', date: '2026-09-10',
+  ruling: 'Preserve existing seed wording/detail — widen the ownership dropdown to carry the seeds\' six phrasings beside the design\'s four (Task SL10)',
+  find: 'sel("ownership", "Current ownership", ["Sole proprietor", "Two-doctor partnership", "Multi-doctor LLC", "Other"])',
+  replace: 'sel("ownership", "Current ownership", ["Sole proprietor", "Sole proprietor (LLC)", "Sole proprietor (S-corp)", "Two-doctor partnership", "Three-doctor LLC", "Four-doctor partnership", "Four-doctor LLC", "Five-doctor LLC", "Multi-doctor LLC", "Other"])',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -3028,5 +3040,7 @@ export function amendments(): Amendment[] {
     A18_1, A18_2,
     // A19 — the photo lightbox (2026-09-09). A19.9 reads A14.5's output and A19.10 reads A13.8's,
     // so the family is last. Definition order in this file matches this list (m8).
-    A19_1, A19_2, A19_3, A19_4, A19_5, A19_6, A19_7, A19_8, A19_9, A19_10, A19_11, A19_12];
+    A19_1, A19_2, A19_3, A19_4, A19_5, A19_6, A19_7, A19_8, A19_9, A19_10, A19_11, A19_12,
+    // A22 — the ownership vocabulary widens to the seeds' own wording (2026-09-10, Task SL10).
+    A22];
 }
