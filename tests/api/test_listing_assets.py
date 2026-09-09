@@ -40,11 +40,9 @@ CSV = b"month,revenue\n2026-01,84000\n2026-02,91250\n"
 
 _SEED_INSERT = """
 INSERT INTO listing (slug, name, street, city, state, zip, hours, status, location_disclosed,
-                     name_disclosed, area, type, market, est, price, sqft, source, photos,
-                     identifiable_content_visibility)
+                     name_disclosed, area, type, market, est, price, sqft, source, photos)
 VALUES (%(slug)s, 'Demo Hospital', '1 Main St', 'Austin', 'TX', '78701', '24/7', 'published',
-        true, true, 'Austin', 'Small animal', 'Austin, TX', 1998, 1450000, 3000, 'seed', %(photos)s::jsonb,
-        'SHOW')
+        true, true, 'Austin', 'Small animal', 'Austin, TX', 1998, 1450000, 3000, 'seed', %(photos)s::jsonb)
 RETURNING id
 """
 

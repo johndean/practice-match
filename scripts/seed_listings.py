@@ -114,13 +114,13 @@ def resolve_owner(conn: Any, email: str | None) -> UUID | None:
 
 UPSERT = """
 INSERT INTO listing (
-  slug, name, street, city, state, zip, phone, hours, status, identifiable_content_visibility, location_disclosed, name_disclosed,
+  slug, name, street, city, state, zip, phone, hours, status, location_disclosed, name_disclosed,
   rev_disclosed, documents_disclosed, seller_id,
   geom, area, type, market, price, rev, docs, rooms, sqft, bldg, est, listed_at,
   note, staff, services, facility, ownership, photos, photo_captions, source, updated_at
 ) VALUES (
   %(slug)s, %(name)s, %(street)s, %(city)s, %(state)s, %(zip)s, %(phone)s, %(hours)s,
-  %(status)s, 'SHOW', %(location_disclosed)s, %(name_disclosed)s,
+  %(status)s, %(location_disclosed)s, %(name_disclosed)s,
   %(rev_disclosed)s, %(documents_disclosed)s, %(seller_id)s,
   ST_SetSRID(ST_MakePoint(%(lng)s, %(lat)s), 4326)::geography,
   %(area)s, %(type)s, %(market)s, %(price)s, %(rev)s, %(docs)s, %(rooms)s, %(sqft)s,
@@ -131,7 +131,6 @@ INSERT INTO listing (
 ON CONFLICT (slug) DO UPDATE SET
   name = EXCLUDED.name, street = EXCLUDED.street, city = EXCLUDED.city, state = EXCLUDED.state,
   zip = EXCLUDED.zip, phone = EXCLUDED.phone, hours = EXCLUDED.hours, status = EXCLUDED.status,
-  identifiable_content_visibility = EXCLUDED.identifiable_content_visibility,
   location_disclosed = EXCLUDED.location_disclosed, name_disclosed = EXCLUDED.name_disclosed,
   -- D22 and D25, on the UPDATE half as well as the insert: the eighteen already exist on QA, so
   -- a disclosure flag or an ownership that only landed on an INSERT would never land at all.

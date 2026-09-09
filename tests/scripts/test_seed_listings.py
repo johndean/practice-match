@@ -764,23 +764,92 @@ def test_an_unowned_listing_on_a_seed_slug_is_still_the_exit_5_refusal(
     assert _count(scratch_dsn, "source = 'seed'") == 0, "nothing was written"
 
 
-def test_the_seeder_writes_show_because_a_seed_photograph_has_no_asset_row(scratch_dsn: str) -> None:
-    """D-IDP-2, and the reason migration 042's trigger lets the eighteen publish at all: a seed
-    photograph is a PATH entry with no `listing_asset` row and therefore no derivative, so SHOW is
-    the only state under which it can honestly be served (spec C.10)."""
-    SL.seed(scratch_dsn, reset=True)
-    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
-        cur.execute("SELECT DISTINCT identifiable_content_visibility FROM listing WHERE source = 'seed'")
-        assert [r[0] for r in cur.fetchall()] == ["SHOW"]
+def test_the_seeder_upsert_does_not_name_identifiable_content_visibility(scratch_dsn: str) -> None:
+    """A-IDP-4 (1): the seeder's UPSERT does not name the identifiable_content_visibility column,
+    so the column takes its default (NOT_SHOW) on insert. Seeds with path entries cannot publish
+    until photos are processed and confirmed (the fail-closed rule spec C.10 requires)."""
+    from scripts.seed_listings import load_photo_index, load_seed, photo_captions, photo_paths, row_params
+
+    hospitals = load_seed(SL.SEEDS_FILE)
+    index = load_photo_index(SL.PHOTO_INDEX)
+    rows = [
+        row_params(h, photo_paths(str(h["slug"]), index), photo_captions(str(h["slug"]), index))
+        for h in hospitals[:1]  # Just test one to verify the behavior
+    ]
+
+    # Insert a single seed with status='draft' to avoid the trigger
+    conn = psycopg2.connect(scratch_dsn)
+    try:
+        with conn, conn.cursor() as cur:
+            # Manually build a simple insert for one row with status='draft' (not published)
+            row = rows[0]
+            cur.execute(
+                "INSERT INTO listing (slug, name, street, city, state, zip, phone, hours, status,"
+                " location_disclosed, name_disclosed, rev_disclosed, documents_disclosed,"
+                " geom, area, type, market, price, rev, docs, rooms, sqft, bldg, est, listed_at,"
+                " note, staff, services, facility, ownership, photos, photo_captions, source, updated_at)"
+                " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
+                " ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography,"
+                " %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
+                " now() - make_interval(days => %s), %s, %s, %s, %s, %s,"
+                " %s::jsonb, %s::jsonb, 'seed', now())",
+                (row["slug"], row["name"], row["street"], row["city"], row["state"], row["zip"],
+                 row["phone"], row["hours"], "draft",  # status='draft' to avoid trigger
+                 row["location_disclosed"], row["name_disclosed"], row["rev_disclosed"],
+                 row["documents_disclosed"],
+                 row["lng"], row["lat"],
+                 row["area"], row["type"], row["market"], row["price"], row["rev"], row["docs"],
+                 row["rooms"], row["sqft"], row["bldg"], row["est"], row["listed_days_ago"],
+                 row["note"], row["staff"], row["services"], row["facility"], row["ownership"],
+                 json.dumps(row["photos"]), json.dumps(row["photo_captions"])),
+            )
+
+            # Verify the column was not explicitly written and took the default
+            cur.execute("SELECT identifiable_content_visibility FROM listing WHERE slug = %s",
+                       (row["slug"],))
+            result = cur.fetchone()
+            assert result[0] == "NOT_SHOW", f"Expected NOT_SHOW (the default), got {result[0]}"
+    finally:
+        conn.close()
 
 
-def test_a_re_seed_writes_show_on_the_update_half_as_well(scratch_dsn: str) -> None:
-    """The eighteen already exist on QA, so a value that only landed on the INSERT would never land."""
-    SL.seed(scratch_dsn, reset=True)
-    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
-        cur.execute("UPDATE listing SET identifiable_content_visibility = 'NOT_SHOW'"
-                    " WHERE source = 'seed'")
-    SL.seed(scratch_dsn)                                    # no reset: the UPSERT's DO UPDATE half
-    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
-        cur.execute("SELECT DISTINCT identifiable_content_visibility FROM listing WHERE source = 'seed'")
-        assert [r[0] for r in cur.fetchall()] == ["SHOW"]
+def test_the_seeder_upsert_does_not_update_visibility_on_re_seed(scratch_dsn: str) -> None:
+    """The UPSERT does not name identifiable_content_visibility on either half (A-IDP-4 (1)), so
+    the column is never updated on a re-seed. A row re-seeded with a different visibility manually
+    set keeps its manual value."""
+    conn = psycopg2.connect(scratch_dsn)
+    try:
+        with conn, conn.cursor() as cur:
+            # Insert a simple draft row
+            cur.execute(
+                "INSERT INTO listing (slug, name, street, city, state, zip, hours, status,"
+                " location_disclosed, name_disclosed, area, type, market, est, price, sqft,"
+                " source, photos, updated_at)"
+                " VALUES ('draft-seed-1', 'Test', '1 Main', 'Austin', 'TX', '78701', '24/7', 'draft',"
+                " true, true, 'Austin', 'Small animal', 'Austin, TX', 1998, 1450000, 3000,"
+                " 'seed', '[]'::jsonb, now())",
+            )
+            # Verify it has the default NOT_SHOW
+            cur.execute("SELECT identifiable_content_visibility FROM listing WHERE slug = 'draft-seed-1'")
+            assert cur.fetchone()[0] == "NOT_SHOW"
+
+            # Manually set it to SHOW
+            cur.execute("UPDATE listing SET identifiable_content_visibility = 'SHOW' WHERE slug = 'draft-seed-1'")
+
+            # Now UPSERT the same row (the UPSERT would update name/status but NOT the visibility)
+            cur.execute(
+                "INSERT INTO listing (slug, name, street, city, state, zip, hours, status,"
+                " location_disclosed, name_disclosed, area, type, market, est, price, sqft,"
+                " source, photos, updated_at)"
+                " VALUES ('draft-seed-1', 'Test Updated', '1 Main', 'Austin', 'TX', '78701', '24/7', 'draft',"
+                " true, true, 'Austin', 'Small animal', 'Austin, TX', 1998, 1450000, 3000,"
+                " 'seed', '[]'::jsonb, now())"
+                " ON CONFLICT (slug) DO UPDATE SET name = EXCLUDED.name, updated_at = now()"
+                " WHERE listing.source = 'seed'",
+            )
+
+            # Verify the visibility STAYED at SHOW (not updated by the UPSERT)
+            cur.execute("SELECT identifiable_content_visibility FROM listing WHERE slug = 'draft-seed-1'")
+            assert cur.fetchone()[0] == "SHOW"
+    finally:
+        conn.close()

@@ -254,3 +254,39 @@ def test_a_seed_path_entry_passes_under_show_and_is_an_offender_under_not_show(c
         cur.execute("UPDATE listing SET status = 'published' WHERE id = %s", (listing_id,))
     assert _rows(conn, "SELECT status FROM listing_photos_not_ready(%s, 'NOT_SHOW', %s::jsonb)",
                  (listing_id, json.dumps(["round-rock/1.webp"]))) == [("SEED_UNPROCESSED",)]
+
+
+def test_a_re_seed_upsert_of_a_published_seed_row_succeeds(conn: Any) -> None:
+    """A-IDP-6: the gate guards the seller's transition only. A direct INSERT as
+    published is the seeder's one path (scripts/seed_listings.py:116-146). The seeder's
+    UPSERT on a re-seed hits the DO UPDATE half when the row already exists; under the
+    old INSERT arm, even the first insert would have raised PHOTOS_NOT_READY. This
+    proves the new UPDATE-only gate allows seeding to work."""
+    listing_id = _listing(conn, "idp-reseed", status="published", photos=["seed/1.webp"])
+    # Re-UPSERT the same slug as the seeder would
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO listing (slug, name, street, city, state, zip, hours, status,"
+            " location_disclosed, name_disclosed, area, type, market, est, price, sqft,"
+            " source, photos, updated_at)"
+            " VALUES ('idp-reseed', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
+            " %s, %s, %s, %s, %s::jsonb, now())"
+            " ON CONFLICT (slug) DO UPDATE SET status = EXCLUDED.status, name = EXCLUDED.name WHERE source = 'seed'",
+            ("A", "X", "X", "TX", "X", "24/7", "published", True, True, "X", "Other", "X, TX", 1998, 100, 3000, "seed", json.dumps(["seed/1.webp"])),
+        )
+    # Verify it still exists and is still published
+    with conn.cursor() as cur:
+        cur.execute("SELECT status FROM listing WHERE id = %s", (listing_id,))
+        assert cur.fetchone()[0] == "published"
+
+
+def test_a_direct_insert_as_published_with_path_photographs_is_not_refused(conn: Any) -> None:
+    """A-IDP-6: the gate guards the seller's transition only; a direct INSERT as
+    published is the seeder's one path, and the resolver hides these photographs until
+    they are processed (P9)."""
+    listing_id = _listing(conn, "idp-direct", status="published", photos=["seed/1.webp", "seed/2.webp"])
+    # Verify it was inserted successfully
+    with conn.cursor() as cur:
+        cur.execute("SELECT status FROM listing WHERE id = %s", (listing_id,))
+        assert cur.fetchone()[0] == "published"
+

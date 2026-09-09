@@ -21,13 +21,12 @@ $$;
 
 CREATE OR REPLACE FUNCTION listing_publish_requires_ready_photos() RETURNS trigger LANGUAGE plpgsql AS $$
 BEGIN
-  IF NEW.status = 'published' AND (TG_OP = 'INSERT' OR OLD.status <> 'published') THEN
-    IF EXISTS (SELECT 1 FROM listing_photos_not_ready(NEW.id, NEW.identifiable_content_visibility, NEW.photos)) THEN
-      RAISE EXCEPTION 'PHOTOS_NOT_READY' USING ERRCODE = 'P0001';
-    END IF;
+  IF EXISTS (SELECT 1 FROM listing_photos_not_ready(NEW.id, NEW.identifiable_content_visibility, NEW.photos)) THEN
+    RAISE EXCEPTION 'PHOTOS_NOT_READY' USING ERRCODE = 'P0001';
   END IF;
   RETURN NEW;
 END $$;
 
-CREATE TRIGGER listing_publish_photos_ready BEFORE INSERT OR UPDATE OF status
-  ON listing FOR EACH ROW EXECUTE FUNCTION listing_publish_requires_ready_photos();
+CREATE TRIGGER listing_publish_photos_ready BEFORE UPDATE OF status
+  ON listing FOR EACH ROW WHEN (OLD.status IS DISTINCT FROM 'published' AND NEW.status = 'published')
+  EXECUTE FUNCTION listing_publish_requires_ready_photos();
