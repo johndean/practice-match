@@ -46,7 +46,7 @@ import httpx
 import psycopg2
 import psycopg2.extensions
 
-from app.census import acs, bds, cbp, ingest, license, qwi, tiger, zbp
+from app.census import acs, bds, cbp, geocode, ingest, license, qwi, tiger, zbp
 from app.census.client import CensusClient, missing_archive_settings, require_archive, require_contact, require_key
 from app.census.registry import Dataset
 from app.census.registry import load as load_registry
@@ -298,6 +298,46 @@ def license_audit() -> dict[str, object]:
         conn.close()
 
 
+def geocode_listing(listing_id: str) -> dict[str, object]:
+    """Phase B, B2 (spec §6/§10/§11): geocodes one listing -- cache, then the Census geocoder,
+    then the fallback ladder (`app.census.geocode.resolve`) -- and writes `practice_location`
+    (+ `geocode_review` when the precision falls below rooftop).
+
+    `geocode.GeocodeFailed` is deliberately let PROPAGATE, unlike every `load_*` task above: this
+    task has no `dataset_key`/`vintage` pair to record an `ingest_run` against (`resolve` is
+    scoped to one listing, not a dataset ingest), and SP2 (not built in this phase) reads the
+    exception's own message into the seller's draft status -- catching it here and returning a
+    summary dict, the shape every loader above uses for its OWN failure mode, would hide that
+    message from whatever reads this task's result/failure instead of surfacing it.
+
+    Only the missing-contact case is caught: `require_contact()`'s `SystemExit(2)` (correct at a
+    CLI entry point) must never propagate out of a Celery task and take the worker -- which also
+    runs the mail pipeline -- down with it, exactly as `_resolve_contact()`'s module-docstring
+    contract already promises every task in this file.
+
+    On success, the B4 backfill task is enqueued BY NAME by `celery_app.send_task` -- never
+    imported -- because B4 owns `census.backfill_listing` (A-C14 (3) correction: the brief's own
+    interface note wrongly attributed it to B5) and this worktree never imports B4's module,
+    keeping B2 the leaf task-B2-brief.md describes."""
+    conn = _conn()
+    try:
+        try:
+            contact = _resolve_contact()
+        except _NotReady as exc:
+            log.error("[census] geocode_listing refused: %s", exc)
+            return {"listing_id": listing_id, "error": str(exc)}
+        # A-C3 (2): never "VIN Foundation; " (the brief's own illustrative text, superseded) --
+        # the same `PracticeMatch/{VERSION} ({contact})` shape every other task's User-Agent uses.
+        ua = f"PracticeMatch/{VERSION} ({contact})"
+        with httpx.Client() as http:
+            gc = geocode.Geocoder(http, "https://geocoding.geo.census.gov/geocoder", ua)
+            loc = geocode.resolve(conn, gc, listing_id)
+        celery_app.send_task("census.backfill_listing", args=[listing_id])
+        return {"listing_id": listing_id, "precision": loc.geo_precision}
+    finally:
+        conn.close()
+
+
 # Registered by CALLING `celery_app.task(...)` rather than by decorating (see the module
 # docstring): the functions above stay ordinary, fully typed and directly callable.
 load_tiger_task = celery_app.task(name="census.load_tiger")(load_tiger)
@@ -309,5 +349,6 @@ load_bds_task = celery_app.task(name="census.load_bds")(load_bds)
 license_audit_task = celery_app.task(name="census.license_audit")(license_audit)
 
 # Phase B, B2: geocode_listing_task registers here.
+geocode_listing_task = celery_app.task(name="census.geocode_listing")(geocode_listing)
 
 # Phase B, B4: backfill_listing_task and materialize_all_task register here.
