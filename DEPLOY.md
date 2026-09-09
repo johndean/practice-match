@@ -168,32 +168,42 @@ never on production without John's go — against `ENVIRONMENT=production` the s
 unless the operator says it out loud with `--production`, exactly as `scripts/bootstrap_admin.py`
 does; with the flag, the run's first line of output names the environment it is writing to.
 
-**The photographs (A-L9, revised by A-L10 on 2026-09-09).** Each hospital carries **six slots**, one
-for every photo slot the design's detail page renders — `photoSet(p)` in `Practice Match V3.dc.html`
-gives an exterior plus five subjects chosen by practice type, and nothing beyond six can be
-displayed. The caption under each photograph is the DESIGN's, fixed per slot and never stored, so
-the only thing that can make a caption true is the photograph at that position showing that subject.
+**The photographs (A-L9, revised by A-L10, and by A-L11 on 2026-09-09).** **Every photograph John
+supplies is rendered — 195 of them today, 8 to 18 per hospital.** Positions **1-6** are the six
+captioned slots the design's detail page renders (`photoSet(p)` in `Practice Match V3.dc.html`: an
+exterior plus five subjects chosen by practice type); everything after them is an extra tile,
+appended to the same grid by amendment A15 and counted by the docked panel's carousel. The caption
+under one of the design's six is the DESIGN's own, fixed per slot, so the photograph at that
+position has to show that subject — but a photograph now also carries its OWN description, and
+that wins where there is one.
+
+**Where a description comes from.** Today it is the **supplier's own filename** —
+`06_interior_reception_lobby.png` becomes "Interior — reception lobby" — recorded per photograph in
+`index.json` by `scripts/prepare_photos.py`, stored in `listing.photo_captions` (migrations/024) by
+the seeder, and served beside `photos` by the API. Wave 2b's sellers write their own, in the same
+column. A photograph with none falls back to the design's fixed slot caption, and past the sixth
+slot — where the design has no caption to lend — to "Photo N".
 
 **`seeds/hospitals/photos/curation.json` is the source of truth for which photograph fills which
 slot.** It was written by looking at every source image, because John's filenames do not reliably
 describe their contents (one folder's `06_interior_reception.png` is a photograph of an exterior
 sign) and several files are sliced fragments of a collage sheet. For every slug it names it is
-authoritative; a slot whose value is `null` has **no truthful photograph in that folder and stays
-empty**, where the design renders its own placeholder — absent beats faked. 73 of the 108 slots are
-filled today; the other 35 are placeholders, and four hospitals (`1111_pet_hospital`,
-`ghi_veterinary_hospital`, `pqr_veterinary_hospital`, `stu_veterinary_specialist_center`) have
-nothing but an exterior until John supplies clean interiors.
+authoritative for the slots it fills; a slot whose value is `null` has no truthful photograph in
+that folder, and since A-L11 one of the folder's other images fills it rather than the slot
+standing empty. A slot **stays empty** — where the design renders its own placeholder — only when a
+folder holds fewer images than the design has slots, which no seeded hospital does today.
 
 `scripts/prepare_photos.py` writes `seeds/hospitals/photos/<slug>/<k>.webp` — **the number is the
-slot's position**, so an empty slot leaves a gap (`…/4.webp` then `…/6.webp`) and `p.photos[i]`
-still fills the design's slot `i` — plus the `index.json` beside them, which carries one entry per
-slot with nulls where the slot is empty. Both files and the curation are committed to the
-repository and baked into the image. The seeder uploads no bytes — it records the relative paths
-positionally, with a JSON `null` for an empty slot, and the `api` service serves the files off disk
-at `/api/listings/{id}/photos/{n}` (an empty slot is a 404 there, and the API sends `null` rather
-than a URL for it, so nothing requests it). Re-run
+position**, so positions 1-6 are the design's slots (`p.photos[i]` still fills slot `i`) and 7, 8, …
+are the photographs beyond them — plus the `index.json` beside them, which carries one entry per
+position with its `source`, its `caption` and the `slot` it fills (`null` past the sixth). Both
+files and the curation are committed to the repository and baked into the image. The seeder uploads
+no bytes — it records the relative paths positionally, with a JSON `null` for an empty slot, and the
+`api` service serves the files off disk at `/api/listings/{id}/photos/{n}` (an empty slot is a 404
+there, and the API sends `null` rather than a URL for it, so nothing requests it). Re-run
 `poetry run python scripts/prepare_photos.py` only when the source folders or the curation change;
-it needs Pillow (a dev dependency), prints `N files, M empty slots`, and is never part of a deploy.
+it needs Pillow (a dev dependency), prints `N files, M empty slots, K beyond the design's six
+slots`, and is never part of a deploy.
 A curation entry that names a hospital the seed file does not, lists slots that are not the
 practice type's list in order, names a file the folder does not hold, or uses one file for two
 slots stops the run with exit 2 before anything is written.

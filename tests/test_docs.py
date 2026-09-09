@@ -1463,3 +1463,39 @@ def test_the_seed_plan_records_a_l10_and_deploy_md_names_the_curation_file():
     seeds = {h["slug"] for h in json.loads((ROOT / "seeds" / "hospitals.json").read_text())["hospitals"]}
     assert named == seeds, "curation.json and seeds/hospitals.json name different hospitals"
     assert "_comment" in curation, "curation.json lost the comment that says what it is"
+
+
+# --- A-L11: every uploaded photograph renders, with its own description -----------------------
+
+
+def test_the_seed_plan_records_a_l11_and_deploy_md_says_every_image_renders():
+    """A-L11 (John, 2026-09-09: "HAS FAILED and wiped out all the images … render ALL images").
+    The same two documents of record as A-L10, for the hotfix that reverses its rule: the plan
+    says what went wrong, what the rule is now and what carries the words; DEPLOY.md — where hand
+    operations live — says what an operator will actually see on the detail page. Pinned to the
+    claims, not to prose, so a rewrite that keeps the meaning still passes and a deletion does
+    not."""
+    plan = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-06-practice-match-seed-listings.md").read_text()
+    assert len(plan.split("**Controller amendment A-L11")) == 2, "the A-L11 record is missing or duplicated"
+    record = plan.split("**Controller amendment A-L11")[-1]
+    assert "render ALL images" in record, "the record does not quote John's ruling"
+    # The root cause, in the terms that make it a design fact and not a bug report.
+    assert "photoSet(p)" in record and "117" in record and "190" in record
+    assert "195" in record, "the record does not state the measured outcome"
+    # What now carries the description, and what renders it.
+    assert "A15" in record and "photo_captions" in record
+    assert "024_listing_photo_captions.sql" in record
+    assert "Supersedes A-L10" in record, "the record does not retire A-L10's empty-slot rule"
+    # The one thing this hotfix deliberately did NOT change, so the next reader does not "fix" it.
+    assert "Six views per practice" in record, "the queued design-copy question is not recorded"
+
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    section = deploy.split("## Seeding the demo hospitals (QA)", 1)[1].split("\n## ", 1)[0]
+    assert "A-L11" in section
+    assert "is rendered" in section and "195 of them today" in section, (
+        "the runbook does not say that every image John supplies is rendered, and how many that is"
+    )
+    # Hyphen-minus, deliberately: the runbook writes the range that way and RUF001 refuses an
+    # en dash in a source literal.
+    assert "positions 1-6" in section, "the runbook does not say which positions the design's slots are"
+    assert "supplier" in section, "the runbook does not say where a photograph's description comes from"
