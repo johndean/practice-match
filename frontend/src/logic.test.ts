@@ -1173,6 +1173,31 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
     expect(slots[0].id).toBe('ph-abc-animal-hospital-exterior');
   });
 
+  // A-L10 (John, 2026-09-09: "match the description"). The caption under each photograph is the
+  // DESIGN's own fixed slot caption, so a slot whose hospital has no truthful photograph must
+  // stay EMPTY rather than borrow the next one — `photos` is positional and the API now sends a
+  // JSON `null` for such a slot. Nothing in the design changes: this is the proof that the
+  // design's own expressions already render a null slot as the placeholder they render an absent
+  // one as, which is why A-L10 needed no amendment.
+  it('a null photo slot renders the design\'s own placeholder and never shifts the others (A-L10)', () => {
+    const url1 = '/api/listings/a1/photos/1';
+    const url3 = '/api/listings/a1/photos/3';
+    const gappy = { ...SEEDED, photos: [url1, null, url3, null, null, null] };
+    const slots = c.photoSet(gappy);
+    expect(slots.map((s: any) => s.src)).toEqual([url1, '', url3, '', '', '']);
+    expect(slots.map((s: any) => s.hasSrc)).toEqual([true, false, true, false, false, false]);
+    expect(slots.map((s: any) => s.noSrc)).toEqual([false, true, false, true, true, true]);
+    // The exam room is still under "Exam room" — the whole point: slot 3 did not slide up to 2.
+    expect(slots.map((s: any) => s.caption)).toEqual([
+      'Exterior — street view', 'Reception and waiting', 'Exam room', 'Treatment area', 'Surgery suite', 'Boarding and runs'
+    ]);
+    expect(slots[1].placeholder).toBe('ABC Animal Hospital — Reception and waiting');
+    expect(c.heroSrc(gappy)).toBe(url1);
+    // A12.5's `p.photos[1] || p.photos[0]`: a null second view falls back to the first, so the
+    // card thumbnail is a photograph rather than a broken image.
+    expect(c.thumbSrc(gappy)).toBe(url1);
+  });
+
   // The other half, and the reason every approved state keeps its pixels: a practice with no
   // `name` and no `photos` — which is every fixture the design ships, and every row the D6 stub
   // returns — renders exactly what it rendered before A12.

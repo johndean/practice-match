@@ -1472,3 +1472,42 @@ def test_persona_password_railway_set_instructions_are_marked_superseded():
                     f"{relpath}: line mentions PERSONA_PASSWORD and `railway variables --set` "
                     f"but is not marked superseded: {line!r}"
                 )
+
+
+# --- A-L10: the seed photographs match the design's captions ---------------------------------
+
+
+def test_the_seed_plan_records_a_l10_and_deploy_md_names_the_curation_file():
+    """A-L10 (John, 2026-09-09: "explain where the image description is coming from…" and "match
+    the description"). Two documents of record have to carry this or the next operator repeats
+    A-L9's mistake: the plan says WHY the captions are the design's and why a filename is not
+    evidence, and DEPLOY.md — where hand operations live — says which file decides and what an
+    empty slot means. Pinned to the claims, not to prose, so a rewrite that keeps the meaning
+    still passes and a deletion does not."""
+    plan = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-06-practice-match-seed-listings.md").read_text()
+    record = plan.split("**Controller amendment A-L10")[-1]
+    assert len(plan.split("**Controller amendment A-L10")) == 2, "the A-L10 record is missing or duplicated"
+    assert '"match the description"' in record, "the record does not quote John's ruling"
+    assert "photoSet(p)" in record and "the DESIGN's own" in record, (
+        "the record must say where the caption comes from — the design's fixed slot captions"
+    )
+    assert "curation.json" in record
+    assert "73" in record and "108" in record and "35" in record, "the record does not state 73 of 108 filled"
+    for slug in ("1111_pet_hospital", "ghi_veterinary_hospital", "pqr_veterinary_hospital",
+                 "stu_veterinary_specialist_center"):
+        assert slug in record, f"the record does not name {slug} as needing clean images from John"
+    assert "Supersedes A-L9's fallback rule" in record
+    assert "placeholder" in record, "the record does not say an empty slot renders the design's placeholder"
+
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    section = deploy.split("## Seeding the demo hospitals (QA)", 1)[1].split("\n## ", 1)[0]
+    assert "A-L10" in section
+    assert "`seeds/hospitals/photos/curation.json` is the source of truth" in section
+    assert "stays\nempty" in section or "stays empty" in section
+    assert "placeholder" in section, "the runbook does not say an empty slot shows the design's placeholder"
+    # …and the file it points at really is there and really covers the seeds.
+    curation = json.loads((ROOT / "seeds" / "hospitals" / "photos" / "curation.json").read_text())
+    named = {slug for slug in curation if not slug.startswith("_")}
+    seeds = {h["slug"] for h in json.loads((ROOT / "seeds" / "hospitals.json").read_text())["hospitals"]}
+    assert named == seeds, "curation.json and seeds/hospitals.json name different hospitals"
+    assert "_comment" in curation, "curation.json lost the comment that says what it is"

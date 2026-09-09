@@ -506,7 +506,10 @@ async def test_a_seeded_database_serves_all_eighteen(client: Any, conn: Any, red
     r = await client.get("/api/listings?limit=200", headers=auth_headers(cookies, headers))
     items = r.json()["items"]
     assert len(items) == 18
-    assert all(item["photos"] for item in items)
+    # Review m1: a list of six `null`s is TRUTHY, so `all(item["photos"] …)` stopped meaning
+    # "every hospital has a photograph" the moment A-L10 made the slots nullable. Every seeded
+    # listing must carry at least one real photograph — a card with none shows nothing at all.
+    assert all(any(p for p in item["photos"]) for item in items)
     assert all(item["lat"] is not None and item["lng"] is not None for item in items)
     assert {item["market"] for item in items} >= {"Dallas, TX", "Austin, TX", "Atlanta, GA"}
     # A-L5: John's demo hospitals show their names on QA.
@@ -525,7 +528,12 @@ async def test_a_photograph_of_a_seeded_hospital_is_really_served(
     auth = auth_headers(cookies, headers)
     items = (await client.get("/api/listings?limit=200", headers=auth)).json()["items"]
     first = items[0]
-    photo = await client.get(first["photos"][0], headers=auth)
+    # Review m2: position 1 is not guaranteed to be filled — it is only the exterior slot, which
+    # every hospital happens to have TODAY. Take the first slot that is actually filled, and say
+    # so with an assertion rather than letting a `null` reach the client as a URL.
+    url = next((p for p in first["photos"] if p is not None), None)
+    assert isinstance(url, str), f"{first['name']} has no photograph to serve: {first['photos']}"
+    photo = await client.get(url, headers=auth)
     assert photo.status_code == 200 and photo.content[:4] == b"RIFF"
 
 
@@ -582,3 +590,52 @@ async def test_a_disclosed_revenue_reaches_a_buyer_and_a_hidden_one_does_not(
     assert (await client.get(f"/api/listings/{hidden}", headers=auth)).json()["rev"] is None
     listed = {item["id"]: item["rev"] for item in (await client.get("/api/listings", headers=auth)).json()["items"]}
     assert listed[shown] == 1500000 and listed[hidden] is None
+
+
+# --- A-L10: a photo slot with no truthful photograph stays empty -----------------------------
+# John, 2026-09-09: "match the description". The caption under each photograph is the DESIGN's
+# fixed slot caption, so `photos` is POSITIONAL — position `n` is the design's slot `n` — and a
+# slot the curation left empty travels as JSON `null` all the way to `photoSet`, which renders the
+# design's own placeholder for it. Compacting the list here would slide every later photograph up
+# one slot and caption it with a subject it does not show.
+
+EMPTY_SLOTS = ["abc_animal_hospital/1.webp", None, "abc_animal_hospital/2.webp", None, None, None]
+
+
+def test_photo_list_keeps_a_null_slot_in_place() -> None:
+    """Both decode arms — psycopg2's list and the json string — carry the null through."""
+    assert photo_list(["a/1.webp", None]) == ["a/1.webp", None]
+    assert photo_list('["a/1.webp", null]') == ["a/1.webp", None]
+
+
+def test_serialise_emits_null_for_an_empty_photo_slot() -> None:
+    body = serialise(_row(photos=EMPTY_SLOTS), datetime(2026, 9, 6, tzinfo=UTC))
+    listing_id = body["id"]
+    assert body["photos"] == [
+        f"/api/listings/{listing_id}/photos/1", None, f"/api/listings/{listing_id}/photos/3",
+        None, None, None,
+    ]
+
+
+def test_photo_file_treats_an_empty_slot_exactly_like_an_out_of_range_index() -> None:
+    assert photo_file(EMPTY_SLOTS, 2) is None
+    assert photo_file(EMPTY_SLOTS, 3) is not None
+
+
+async def test_an_empty_photo_slot_is_a_404_and_the_slot_after_it_still_serves(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """The route half: slot 2 is empty, slot 3 is a real photograph, and asking for slot 3 must
+    not have been shifted onto slot 2's bytes."""
+    listing_id = _insert(conn, photos=json.dumps(EMPTY_SLOTS))
+    _, cookies, headers = member()
+    auth = auth_headers(cookies, headers)
+    empty = await client.get(f"/api/listings/{listing_id}/photos/2", headers=auth)
+    assert empty.status_code == 404
+    assert empty.json() == {"error": {"code": "NOT_FOUND", "message": "No such photograph."}}
+    filled = await client.get(f"/api/listings/{listing_id}/photos/3", headers=auth)
+    assert filled.status_code == 200
+    assert filled.headers["content-type"] == "image/webp"
+    assert filled.content[:4] == b"RIFF" and filled.content[8:12] == b"WEBP"
+    # …and an empty slot is not a hole in the wall: it is still a member endpoint.
+    assert (await client.get(f"/api/listings/{listing_id}/photos/2")).status_code == 401

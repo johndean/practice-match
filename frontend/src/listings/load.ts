@@ -68,7 +68,11 @@ export interface ApiListing {
   lat: number | null;
   lng: number | null;
   location_disclosed: boolean;
-  photos: string[];
+  // Positional, and NULLABLE since A-L10: position `n` is the design's photo slot `n`, and the
+  // server sends `null` for a slot no photograph of that hospital truthfully fills. Carried
+  // through as-is — `photoSet`'s `p.photos[i]` renders the design's own placeholder for a null,
+  // and compacting the list would put every later photograph under the wrong caption.
+  photos: (string | null)[];
 }
 
 export interface Practice {
@@ -98,7 +102,7 @@ export interface Practice {
   ownership: string | null;
   market: string;
   name?: string;
-  photos?: string[];
+  photos?: (string | null)[];
 }
 
 export type Markets = Record<string, { center: [number, number]; zoom: number }>;

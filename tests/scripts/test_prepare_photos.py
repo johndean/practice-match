@@ -526,14 +526,17 @@ def test_select_for_slots_returns_the_chosen_files_in_slot_order(tmp_path: Path)
 def test_main_reads_each_hospitals_type_from_the_seed_file(tmp_path: Path) -> None:
     """Which of the design's four lists a hospital's photographs fill is data, read from
     `seeds/hospitals.json` where the default slugs are read — so a hand re-run of one slug
-    selects exactly the six files the full run would."""
+    selects exactly the six files the full run would.
+
+    Sharper since A-L10: the source folder is the one the committed curation names for this slug,
+    so reading the WRONG slot list is not merely a differently ordered index — `validate_curation`
+    refuses it and `main()` returns 2, because the curated keys would not be the type's list."""
     slug = "6666_dallas_veterinary_specialist_hospital"
     assert PP.seed_types()[slug] == "Specialty"
     assert set(PP.seed_types()) == set(PP.seed_slugs())
+    curated = PP.load_curation(PP.CURATION_FILE)[slug]
     root = tmp_path / "src"
-    _folder(root, slug, ["01_exterior_front_entrance.png", "06_interior_lobby.png", "08_interior_exam_room.png",
-                         "09_interior_treatment_surgery_area.png", "10_interior_ct_scanner.png",
-                         "11_interior_recovery_ward.png"])
+    _folder(root, slug, [name for name in curated.values() if name is not None])
     out = tmp_path / "out"
     assert PP.main(["--source", str(root), "--out", str(out), "--slugs", slug]) == 0
     index = json.loads((out / "index.json").read_text(encoding="utf-8"))
@@ -541,3 +544,168 @@ def test_main_reads_each_hospitals_type_from_the_seed_file(tmp_path: Path) -> No
     assert [e["slot"] for e in index["hospitals"][slug]] == list(PP.SLOTS_BY_TYPE["Specialty"]), (
         "main() fell back to the default slot list instead of reading the seed file's type"
     )
+
+
+# --- A-L10: the content-verified curation map ------------------------------------------------
+# John, 2026-09-09: "explain where the image description is coming from because they don't mirror
+# the file name of the image and the images don" (truncated as received) → "match the
+# description". The caption
+# a buyer reads is the DESIGN's fixed slot caption, so the only way a caption is TRUE is for the
+# photograph at that POSITION to show that subject. A-L9 chose by filename keyword, and many of
+# John's filenames lie (`ghi_veterinary_hospital/06_interior_reception.png` is an exterior sign)
+# while many files are sliced fragments of a collage sheet — no keyword can fix either. The
+# controller viewed every source image and wrote `seeds/hospitals/photos/curation.json`, which is
+# AUTHORITATIVE for every slug it names; a slot no single photograph truthfully fills stays EMPTY,
+# where the design renders its own placeholder (absent beats faked).
+
+# One small-animal folder's worth of map: three photographs, three slots left empty.
+CURATED: dict[str, str | None] = {
+    "exterior": "01_exterior_front.png", "lobby": None, "exam": "03_interior_exam.png",
+    "treatment": None, "surgery": None, "kennel": "05_interior_kennels.png",
+}
+
+
+def test_load_curation_reads_the_map_and_ignores_the_underscore_keys(tmp_path: Path) -> None:
+    """`_comment` is the map's own explanation of itself and is kept in the committed file, so
+    the loader has to skip it rather than read it as a hospital."""
+    path = tmp_path / "curation.json"
+    path.write_text(
+        json.dumps({"_comment": "why this file exists",
+                    "demo": {"exterior": "01_exterior_front.png", "lobby": None}}),
+        encoding="utf-8",
+    )
+    assert PP.load_curation(path) == {"demo": {"exterior": "01_exterior_front.png", "lobby": None}}
+
+
+def test_the_committed_curation_names_every_seeded_hospital_in_its_types_slot_order() -> None:
+    """The map is data the pipeline trusts, so its shape is pinned here: one entry per seeded
+    hospital, whose keys are exactly the slots that hospital's practice type renders, in order.
+    73 of the 108 slots are filled — the other 35 have no truthful photograph in John's folders."""
+    curation = PP.load_curation(PP.CURATION_FILE)
+    types = PP.seed_types()
+    assert set(curation) == set(PP.seed_slugs())
+    for slug, slots in curation.items():
+        assert list(slots) == list(PP.slots_for(types[slug])), slug
+    filled = sum(1 for slots in curation.values() for name in slots.values() if name is not None)
+    assert (filled, sum(len(slots) for slots in curation.values())) == (73, 108), (
+        "A-L10's content-verified count moved; the plan record says 73 of 108"
+    )
+
+
+def test_a_curated_slug_numbers_its_files_by_slot_position(tmp_path: Path) -> None:
+    """The heart of A-L10: `p.photos[i]` fills slot `i` (A12.2), so a file's NUMBER is its slot's
+    position — never its rank among the files that happened to be found. Slot 3 is `3.webp` even
+    though it is the second photograph in the folder."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_exterior_front.png", "03_interior_exam.png", "05_interior_kennels.png"])
+    index = PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"}, {"cur": CURATED})
+    assert [(e["slot"], e["file"], e["source"]) for e in index["cur"]] == [
+        ("exterior", "1.webp", "01_exterior_front.png"),
+        ("lobby", None, None),
+        ("exam", "3.webp", "03_interior_exam.png"),
+        ("treatment", None, None),
+        ("surgery", None, None),
+        ("kennel", "6.webp", "05_interior_kennels.png"),
+    ]
+    assert sorted(p.name for p in (tmp_path / "out" / "cur").iterdir()) == ["1.webp", "3.webp", "6.webp"]
+
+
+def test_an_empty_slot_writes_no_file_and_carries_no_measured_fields(tmp_path: Path) -> None:
+    """An empty slot is a statement, not a photograph: no bytes, no width, no sha256, and a null
+    caption — the design's placeholder is what the buyer sees."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_exterior_front.png", "03_interior_exam.png", "05_interior_kennels.png"])
+    index = PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"}, {"cur": CURATED})
+    assert index["cur"][1] == {"slot": "lobby", "file": None, "source": None, "caption": None}
+
+
+def test_a_slug_absent_from_the_curation_still_takes_the_keyword_path(tmp_path: Path) -> None:
+    """The map is authoritative only for the slugs it names; anything else keeps A-L9's keyword
+    selection, numbered sequentially, so the fallback the map does not cover is unchanged."""
+    root = tmp_path / "src"
+    _folder(root, "kw", ["01_exterior_front.png", "02_interior_reception.png"])
+    index = PP.prepare(root, tmp_path / "out", ["kw"],
+                       {"kw": "Small animal", "cur": "Small animal"}, {"cur": CURATED})
+    assert [(e["slot"], e["file"]) for e in index["kw"]] == [("exterior", "1.webp"), ("lobby", "2.webp")]
+
+
+def test_a_curated_slug_the_seed_file_does_not_name_is_refused(tmp_path: Path) -> None:
+    """A slug in the map and not in `seeds/hospitals.json` is a typo that would silently curate
+    nothing — the whole point of the map is that it is checked against the seeds."""
+    with pytest.raises(PP.SeedDataError) as exc:
+        PP.prepare(tmp_path / "src", tmp_path / "out", [], {}, {"ghost_hospital": CURATED})
+    assert "ghost_hospital" in str(exc.value)
+
+
+def test_curated_slots_that_are_not_the_types_list_in_order_are_refused(tmp_path: Path) -> None:
+    """Order IS the mapping: the keys are read positionally, so `exam` before `lobby` would put
+    the exam room under "Reception and waiting"."""
+    swapped: dict[str, str | None] = {
+        "exterior": None, "exam": None, "lobby": None, "treatment": None, "surgery": None, "kennel": None,
+    }
+    with pytest.raises(PP.SeedDataError) as exc:
+        PP.prepare(tmp_path / "src", tmp_path / "out", [], {"cur": "Small animal"}, {"cur": swapped})
+    assert "cur" in str(exc.value) and "lobby" in str(exc.value)
+
+
+def test_a_curated_file_the_folder_does_not_hold_is_refused(tmp_path: Path) -> None:
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_exterior_front.png"])
+    absent: dict[str, str | None] = {
+        "exterior": "01_exterior_front.png", "lobby": None, "exam": "99_absent.png",
+        "treatment": None, "surgery": None, "kennel": None,
+    }
+    with pytest.raises(PP.SeedDataError) as exc:
+        PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"}, {"cur": absent})
+    assert "99_absent.png" in str(exc.value) and "cur" in str(exc.value)
+
+
+TWICE: dict[str, str | None] = {
+    "exterior": "01_exterior_front.png", "lobby": None, "exam": "03_interior_exam.png",
+    "treatment": "03_interior_exam.png", "surgery": None, "kennel": None,
+}
+
+
+def test_a_file_that_fills_two_slots_is_refused(tmp_path: Path) -> None:
+    """Two slots, one photograph, two captions: one of them is false by construction."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_exterior_front.png", "03_interior_exam.png"])
+    with pytest.raises(PP.SeedDataError) as exc:
+        PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"}, {"cur": TWICE})
+    assert "03_interior_exam.png" in str(exc.value) and "cur" in str(exc.value)
+
+
+def test_a_duplicate_is_refused_even_in_a_slug_this_run_is_not_processing(tmp_path: Path) -> None:
+    """Review i2. The duplicate check belongs with the slug/slot-order checks, over the WHOLE map
+    and before a single byte is written: a hand re-run of one hospital (`--slugs X`) must still
+    refuse a duplicate someone introduced for hospital Y, because the file being committed is the
+    map, not the run. Only the missing-file arm has to stay per-slug — it needs the folders."""
+    with pytest.raises(PP.SeedDataError) as exc:
+        PP.prepare(tmp_path / "src", tmp_path / "out", [], {"cur": "Small animal"}, {"cur": TWICE})
+    assert "03_interior_exam.png" in str(exc.value) and "cur" in str(exc.value)
+
+
+def test_main_returns_two_when_the_curation_is_unusable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """SeedDataError joins FileNotFoundError and RuntimeError on the script's existing exit-2 path."""
+    bad = tmp_path / "curation.json"
+    bad.write_text(json.dumps({"ghost_hospital": {}}), encoding="utf-8")
+    monkeypatch.setattr(PP, "CURATION_FILE", bad)
+    assert PP.main(["--source", str(tmp_path), "--out", str(tmp_path / "out"), "--slugs", "nope"]) == 2
+
+
+def test_main_reads_the_committed_curation_and_reports_the_empty_slots(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """End to end through `main()`: the committed map decides, not the keywords, and the run says
+    how many slots it left empty — the number the operator has to be able to see."""
+    slug = "123_route66"
+    curated = PP.load_curation(PP.CURATION_FILE)[slug]
+    root = tmp_path / "src"
+    _folder(root, slug, [name for name in curated.values() if name is not None])
+    out = tmp_path / "out"
+    assert PP.main(["--source", str(root), "--out", str(out), "--slugs", slug]) == 0
+    index = json.loads((out / "index.json").read_text(encoding="utf-8"))
+    assert [e["file"] for e in index["hospitals"][slug]] == [
+        "1.webp", "2.webp", "3.webp", "4.webp", None, "6.webp"
+    ], "surgery has no truthful photograph in this folder and must stay empty"
+    assert "5 files, 1 empty slots" in capsys.readouterr().out

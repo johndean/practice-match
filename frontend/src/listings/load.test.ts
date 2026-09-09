@@ -90,6 +90,10 @@ describe('toPractice', () => {
   it('adds `photos` only when there is at least one', () => {
     expect('photos' in toPractice(row())).toBe(false);
     expect(toPractice(row({ photos: ['/api/listings/x/photos/1'] })).photos).toEqual(['/api/listings/x/photos/1']);
+    // A-L10: an empty slot arrives as `null` and stays AT ITS POSITION — compacting it here would
+    // caption every later photograph with the subject of the slot before it.
+    expect(toPractice(row({ photos: ['/api/listings/x/photos/1', null, '/api/listings/x/photos/3'] })).photos)
+      .toEqual(['/api/listings/x/photos/1', null, '/api/listings/x/photos/3']);
   });
 
   it('carries a withheld location through as null rather than inventing a point', () => {
