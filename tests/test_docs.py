@@ -1315,6 +1315,32 @@ def test_local_amendments_row_count_matches_design_amendments():
     )
 
 
+def test_claude_md_amendment_paragraph_has_a_prose_section_for_every_family():
+    """This branch's merge of the 0.1.10 release silently dropped the A13 (Browse metro dropdown)
+    and A14 (Give button) prose paragraphs from CLAUDE.md's "Source of truth" amendment sequence,
+    while their `design-amendments.ts` entries, their `LOCAL_AMENDMENTS.md` rows and every derived
+    count remained correct. No existing test caught it: the family/entry-count test above only
+    matches the summary sentence's numbers, and `test_claude_md_literal_edit_clauses_count_each_family_s_own_entries`
+    only walks the `**A<n>**` markers CLAUDE.md actually has — neither notices a family with no
+    marker at all. Later paragraphs (A13.8's Tab dismissal, A14.4/A14.5's shared closures, A14's own
+    header re-basing note) go on citing A13 and A14 by name, so the document was left referring to
+    sections that are not there.
+
+    Family identifiers are read from `design-amendments.ts`'s own literal ids (`id: 'A<n>...'`) —
+    the same source the family/entry-count test above reads — never hand-typed here: for every
+    distinct family number found there, CLAUDE.md must carry that family's own bold marker,
+    `**A<n>**`, opening a prose section."""
+    claude = (ROOT / "CLAUDE.md").read_text()
+    ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
+    literal_families = sorted({int(n) for n in re.findall(r"id: 'A(\d+)", ts)})
+    assert literal_families, "frontend/tests/design-amendments.ts: no literal amendment ids found (id: 'A<n>...)"
+    missing = [f"A{n}" for n in literal_families if not re.search(rf"\*\*A{n}\*\*", claude)]
+    assert missing == [], (
+        "CLAUDE.md's amendment paragraph carries no prose section (no **A<n>** marker) for: "
+        f"{', '.join(missing)}"
+    )
+
+
 def test_runbook_qa_parity_sign_in_budget_matches_the_harness_trace():
     """S6 review round 1 (Critical). The runbook's QA parity run section stated the sign-in budget
     as "sixteen" of `SIGNIN_IP`'s thirty — a stale figure carried over from the account-screens
