@@ -16,6 +16,7 @@ from app.api.health import not_found_router
 from app.api.health import router as health_router
 from app.api.interest import router as interest_router
 from app.api.listings import router as listings_router
+from app.api.market import router as market_router
 from app.api.webhooks import router as webhooks_router
 from app.auth import deps
 from app.config import settings
@@ -91,6 +92,12 @@ def create_app(dist: Path | None = None) -> FastAPI:
         # absent rather than merely guarded, and `scripts/verify-deploy.sh production` probes
         # that alongside the auth, applications and admin surfaces.
         app.include_router(listings_router)
+        # Same gate again (Census B5, A-C13 (11)): the market API is member-gated
+        # (`market.read` — buyer/seller/staff/admin, or anonymous only while
+        # `MARKET_DATA_PUBLIC` is set, which John's ruling (A-C13 (3)) keeps `false` in every
+        # environment) — so behind the Coming Soon page it is absent, like every other member
+        # surface above.
+        app.include_router(market_router)
         # Superseded 2026-09-09 by John's ruling (A-I5d.5) — this used to be UNCONDITIONAL (Task
         # I5d, D-I5d-5): `interest_signup` is filled by the Coming Soon page, so the rows this
         # reads only exist on PRODUCTION, which runs `coming_soon` until launch, and gating the

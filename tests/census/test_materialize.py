@@ -218,6 +218,26 @@ def test_estimates_without_a_margin_of_error_are_suppressed_as_unmeasured(conn, 
     assert pop[5] is False  # population's own MOE is untouched
 
 
+def test_income_suppressed_alone_still_suppresses_the_score(conn, world):
+    """A-C22's own carried Minor: `score_sup = hh_sup or inc_sup` (the line just above the score's
+    `_row(...)` call) is an `or`, but every committed case up to this one always suppressed BOTH
+    households and income together (`test_estimates_without_a_margin_of_error_are_suppressed_as_
+    unmeasured` nulls both MOEs at once), so a change that quietly dropped `inc_sup` from that
+    boolean -- leaving only `hh_sup` -- would still pass every test in this file. Suppress income
+    ALONE at the place band (leave households' own MOE untouched, so `hh_sup` stays `False`) and
+    prove the score is suppressed anyway, with the same `input_suppressed` reason the households
+    case already carries."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE acs_measure SET moe = NULL WHERE geo_id='4813552' AND variable='B19013_001E'")
+    materialize.materialize_listing(conn, fakeredis.FakeRedis(), world)
+    hh = _metric(conn, world, "households", "place")
+    assert hh[5] is False  # households' own MOE is untouched -- hh_sup is False
+    inc = _metric(conn, world, "median_hh_income", "place")
+    assert inc[5] is True and inc[6] == "no_moe"
+    score = _metric(conn, world, "opportunity_score", "place")
+    assert score[0] is not None and score[5] is True and score[6] == "input_suppressed"
+
+
 # ---- fix round 1 (A-C21 (2)): the rewrite must be one transaction -----------------------------
 
 

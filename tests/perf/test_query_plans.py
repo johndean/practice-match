@@ -52,6 +52,10 @@ from app.census.catchment import SQL as CATCHMENT_SQL
 # seed and the plan's own params so the two cannot drift apart.
 _CATCHMENT_LISTING_ID = "00000000-0000-0000-0000-0000000c3a90"
 
+# Census Task B5's own target listing — shared between `_seed_panel_metrics` and the "panel" plan's
+# own params, same reason as `_CATCHMENT_LISTING_ID` above.
+_PANEL_LISTING_ID = "00000000-0000-0000-0000-0000000ac1e1"
+
 PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
     "users_queue": (
         "EXPLAIN (FORMAT JSON) " + LIST_SQL,
@@ -99,6 +103,22 @@ PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
         {"band": "drive_10", "level": "140", "vintage": "2023", "method": CATCHMENT_METHOD,
          "radius": CATCHMENT_BANDS["drive_10"], "listing_id": _CATCHMENT_LISTING_ID},
     ),
+    # Census Task B5: `GET /api/listings/{id}/market`'s own query on a cache miss
+    # (`app.api.market._PANEL_SQL`, run inside `listing_market`). Hand-matched here — same columns,
+    # same join, same WHERE — rather than imported: the production string is composed for
+    # SQLAlchemy's `text()` (`:id`/`:band` bind markers, translated to asyncpg's own paramstyle at
+    # execution) and cannot be handed to a raw psycopg2 cursor as-is, exactly the reason
+    # `session_lookup` above is inlined rather than imported from `app.auth.sessions`. The brief's
+    # own parenthetical guessed "market_metric PK lookup" — measured against 3,000 seeded listings
+    # below, the planner reaches for `market_metric_lookup_idx` (listing_id, band, vintage)
+    # instead: three columns beat the four-column primary key on the SAME (listing_id, band)
+    # prefix this query actually filters on, so Postgres picks the narrower, cheaper index.
+    "panel": (
+        "EXPLAIN (FORMAT JSON) SELECT mm.*, pl.geo_precision FROM market_metric mm "
+        + "JOIN practice_location pl ON pl.listing_id = mm.listing_id "
+        + "WHERE mm.listing_id = %(listing_id)s AND mm.band = %(band)s",
+        {"listing_id": _PANEL_LISTING_ID, "band": "drive_10"},
+    ),
 }
 
 # The index each plan must be using, by name. Absent for an entry whose only claim is its shape.
@@ -115,6 +135,10 @@ INDEXES: dict[str, tuple[str, ...]] = {
     # migrations/018_census_geo.sql's GiST index on geo_area.geom — the one correction 5 exists to
     # keep usable.
     "catchment_tracts": ("geo_area_geom_gix",),
+    # migrations/061_census_listing_tables.sql: `market_metric_lookup_idx (listing_id, band,
+    # vintage)` for the metric rows, `practice_location_pkey` (its PRIMARY KEY IS `listing_id`) for
+    # the join — measured, not the brief's guessed `market_metric_pkey` (see the PLANS entry above).
+    "panel": ("market_metric_lookup_idx", "practice_location_pkey"),
 }
 
 
@@ -194,8 +218,40 @@ def _seed_catchment_geo(conn: Any) -> None:
         cur.execute("ANALYZE geo_area")
 
 
+def _seed_panel_metrics(conn: Any) -> None:
+    """3,000 listings, each geocoded and carrying `market_metric` rows across all three bands and
+    five metric keys (the same shape `tests/census/test_materialize.py`'s `world` fixture writes),
+    plus the one target row `PLANS["panel"]` explains against — without the volume, `market_metric`
+    and `practice_location` plan against a handful of rows each, which says nothing about what the
+    planner does on a real, thousands-of-listings table (same "row counts are part of the gate"
+    reasoning `_seed_catchment_geo`/`_seed_admin_queue` document above). The target listing's own
+    slug matches the same `LIKE` pattern as the noise rows, so one bulk INSERT gives it the same
+    fifteen metric rows every other seeded listing gets — no separate statement needed."""
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO listing (id, slug, name, street, city, state, zip, status, area, type, market, source)
+                       SELECT md5(random()::text || i::text)::uuid, 'plan-panel-'||i, 'Plan Panel '||i, '1 Main St',
+                              'Cedar Park', 'TX', '78613', 'published', 'Cedar Park', 'Small animal', 'Cedar Park, TX', 'seed'
+                         FROM generate_series(1, 3000) i""")
+        cur.execute("""INSERT INTO listing (id, slug, name, street, city, state, zip, status, area, type, market, source)
+                       VALUES (%s, 'plan-panel-target', 'Plan Panel Target', '1 Main St', 'Cedar Park', 'TX', '78613',
+                               'published', 'Cedar Park', 'Small animal', 'Cedar Park, TX', 'seed')""", (_PANEL_LISTING_ID,))
+        cur.execute("""INSERT INTO practice_location (listing_id, address_hash, point, geo_precision, geocoded_at, geocoder_vintage)
+                       SELECT id, 'h-'||id, ST_SetSRID(ST_Point(-97.8 + (random() * 0.2), 30.4 + (random() * 0.2)), 4269),
+                              'rooftop', now(), 'Current_Current'
+                         FROM listing WHERE slug LIKE 'plan-panel-%'""")
+        cur.execute("""INSERT INTO market_metric (listing_id, band, metric_key, vintage, value_num, unit, is_derived,
+                                                   formula_version, moe, suppressed, suppress_reason, source_dataset, computed_at)
+                       SELECT l.id, b.band, m.metric_key, '2019\u20132023', 100, 'count', false, NULL, 5, false, NULL, 'acs5', now()
+                         FROM listing l, (VALUES ('place'),('drive_10'),('drive_20')) AS b(band),
+                              (VALUES ('population'),('households'),('median_hh_income'),('pet_households_est'),('income_index_vs_us')) AS m(metric_key)
+                        WHERE l.slug LIKE 'plan-panel-%'""")
+        cur.execute("ANALYZE listing")
+        cur.execute("ANALYZE practice_location")
+        cur.execute("ANALYZE market_metric")
+
+
 SEEDS: dict[str, Any] = {"users_queue": _seed_admin_queue, "signups_list": _seed_signups, "signups_counts": _seed_signups,
-                        "signups_unmailed": _seed_signups, "catchment_tracts": _seed_catchment_geo}
+                        "signups_unmailed": _seed_signups, "catchment_tracts": _seed_catchment_geo, "panel": _seed_panel_metrics}
 
 
 def _node_types(plan: dict[str, Any]) -> list[str]:
