@@ -231,6 +231,88 @@ def test_version_stamp_uses_nanosecond_resolution_so_two_runs_in_one_second_diff
     assert int(v2) == 1_700_000_000_100_000_001
 
 
+# ---- branch coverage: growth resolution, and the competition fallback's own edges -------------
+
+
+def test_growth_stays_none_when_no_geography_yields_a_prior_population(conn):
+    """`_Ctx.__init__`'s growth-resolution loop tries `("160", place)` then `("050", county)`,
+    breaking on the first geography that yields a growth figure. A listing with a place but no
+    county, and place data for the acs5 vintage but none for acs5_prior, exercises all three
+    branches no other test here reaches: the place iteration computes a real `now`/`prior` pair
+    but `g` comes back `None` (loop back to the top rather than break), the county iteration has
+    no `gid` at all (`continue`), and the loop then exhausts both tuple entries without ever
+    breaking. `population_growth_pct` is absent from the place band as a result."""
+    lid = make_listing(conn)
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, geom, centroid) VALUES "
+            "('4813552','160','2023','Cedar Park city','48', ST_Multi(ST_GeomFromText(%s,4269)), ST_Point(-97.80,30.55,4269))",
+            (PLACE,),
+        )
+        cur.execute(
+            "INSERT INTO ingest_run (dataset_key, vintage, started_at, status) VALUES ('acs5','2019\u20132023',now(),'succeeded')"
+        )
+        cur.execute("SELECT id FROM ingest_run WHERE dataset_key='acs5'")
+        (run_id,) = cur.fetchone()
+        cur.execute("INSERT INTO acs_measure VALUES ('4813552','160','2019\u20132023','B01003_001E',50000,500,%s)", (run_id,))
+        # No acs5_prior row at all for the place: `now`/`prior` resolve but `prior` is None, so
+        # `population_growth_pct` returns None -- the place iteration does not break.
+        cur.executemany(
+            "INSERT INTO active_vintage VALUES (%s,%s,now(),'test')",
+            [("acs5", "2019\u20132023"), ("acs5_prior", "2014\u20132018"), ("tiger_cb", "2023")],
+        )
+        cur.execute(
+            "INSERT INTO practice_location (listing_id, address_hash, point, place_geoid, geo_precision, geocoded_at, geocoder_vintage) "
+            "VALUES (%s,'h', ST_SetSRID(ST_Point(-97.80,30.55),4269), '4813552','rooftop',now(),'Current_Current')",
+            (lid,),
+        )
+    materialize.materialize_listing(conn, fakeredis.FakeRedis(), lid)
+    assert _metric(conn, lid, "population", "place")[0] == 50000
+    assert _metric(conn, lid, "population_growth_pct", "place") is None
+
+
+def test_zbp_returning_no_usable_estimate_falls_back_to_county_apportionment(conn, world):
+    """`_competition`'s ZBP branch can be ENTERED (the dataset is cleared and the band has ZCTA
+    weights) and still come back with no usable estimate -- every ZCTA in the catchment simply
+    has no `zbp_industry` row for this vintage -- which is a different path than
+    `test_without_zbp_competition_falls_back_to_labelled_county_apportionment` above (there, the
+    dataset itself is unresolved, so the ZBP branch is never entered at all)."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM zbp_industry")
+    materialize.materialize_listing(conn, fakeredis.FakeRedis(), world)
+    est = _metric(conn, world, "establishments", "place")
+    assert est[7] == "cbp" and est[2] is True and est[9]["method"] == "county_apportioned"
+
+
+def test_cbp_apportionment_skips_when_the_establishment_count_itself_is_census_suppressed(conn, world):
+    """The CBP fallback's own `estab is not None` guard: Census can suppress a noise-flagged
+    establishment count to NULL (`cbp_industry.establishments`) even on a row that otherwise
+    exists and is licence-cleared. Combined with no ZBP data (as above), `_competition` returns
+    `None` outright -- a different reason than the licence-gate case
+    `test_uncleared_cbp_and_zbp_leave_no_competition_rows` already covers."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM zbp_industry")
+        cur.execute("UPDATE cbp_industry SET establishments = NULL WHERE naics_code='541940'")
+    materialize.materialize_listing(conn, fakeredis.FakeRedis(), world)
+    assert _metric(conn, world, "establishments", "place") is None
+    assert _metric(conn, world, "opportunity_score", "place") is None
+
+
+def test_competition_from_zbp_without_a_cleared_cbp_skips_revenue_but_keeps_opportunity_score(conn, world):
+    """`revenue_per_establishment` is gated on `ctx.cbp` (a real CBP row), independently of which
+    source `_competition` actually used. With `cbp` unresolved, `ctx.cbp` is `None` even though
+    ZBP alone resolves `establishments` just fine -- the revenue figure is skipped, but
+    `opportunity_score` (which needs only income/growth/vets-per-10k, none of them CBP-specific)
+    is not."""
+    with conn.cursor() as cur:
+        cur.execute("UPDATE dataset_registry SET license_status='unresolved' WHERE dataset_key='cbp'")
+    materialize.materialize_listing(conn, fakeredis.FakeRedis(), world)
+    est = _metric(conn, world, "establishments", "place")
+    assert est[7] == "zbp"
+    assert _metric(conn, world, "revenue_per_establishment", "place") is None
+    assert _metric(conn, world, "opportunity_score", "place") is not None
+
+
 # ---- structural edges: no location, no active vintages ----------------------------------------
 
 
