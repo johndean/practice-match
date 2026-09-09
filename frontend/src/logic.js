@@ -200,6 +200,7 @@ class Component extends DCLogic {
     f: { type: "Any", price: "Any", revenue: "Any", doctors: "Any", building: "Any" },
     loading: false, activeId: null, hoverId: null, detailId: "p1", detailDocs: false,
     interest: "closed", interestMsg: "", sent: [],
+    lightbox: null, lightboxFocus: false,
     step: 1, wizErr: "", wizSubmitted: false,
     w: { name: "", type: "Small animal", est: "", city: "", zip: "", anon: true, price: "", rev: "", revBand: false, docs: "", rooms: "", sqft: "", bldg: "Included", facility: "", desc: "", photos: 0, ownership: "Sole proprietor", hours: "", facilityType: "Standalone", docsLocked: true },
     adminTab: "users", sellerView: "dash",
@@ -236,6 +237,20 @@ class Component extends DCLogic {
       this.setState({ marketMenu: false, marketMenuAt: -1 });
     };
     const key = (e) => {
+      if (this.state.lightbox) {
+        if (e.key === "Escape") { e.preventDefault(); this.closeLightbox(); }
+        else if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); this.stepLightbox(e.key === "ArrowLeft" ? -1 : 1); }
+        else if (e.key === "Tab") {
+          const box = this._lightboxEl;
+          const controls = box ? Array.from(box.querySelectorAll("button")) : [];
+          if (controls.length) {
+            const at = controls.indexOf(document.activeElement);
+            if (e.shiftKey) { if (at <= 0) { e.preventDefault(); controls[controls.length - 1].focus(); } }
+            else if (at === controls.length - 1) { e.preventDefault(); controls[0].focus(); }
+          }
+        }
+        return;
+      }
       if (e.key !== "Escape") return;
       if (this.state.giveMenu) {
         this.setState({ giveMenu: false });
@@ -245,6 +260,11 @@ class Component extends DCLogic {
       this.setState({ marketMenu: false, marketMenuAt: -1 });
     };
     const out = (e) => {
+      // A19 (A-LB3, 2026-09-09): a focusout-based trap was tried here — deferring focus back
+      // into the dialog whenever it left for a non-null relatedTarget outside it — and found
+      // not to hold in real Chromium: a null relatedTarget also occurs at the edges of the
+      // dialog's own tabbable set, which the arm cannot tell apart from a window blur. Tab is
+      // instead handled deterministically in the shared keydown closure above (A19.9).
       // `relatedTarget` is where focus is GOING, and a null one is the browser leaving the
       // document altogether — a window blur, which dismisses neither menu.
       const to = e.relatedTarget;
@@ -310,7 +330,7 @@ class Component extends DCLogic {
 
   go = (screen) => () => {
     if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false });
-    this.setState({ screen, interest: "closed", userMenu: false });
+    this.setState({ screen, interest: "closed", userMenu: false, lightbox: null, lightboxFocus: false });
   };
 
   setF = (key) => (e) => {
@@ -903,6 +923,59 @@ class Component extends DCLogic {
 
   stateOf(market) { return (market || "Austin, TX").split(", ")[1] || "TX"; }
 
+  // A19 — the photo lightbox (John, 2026-09-09): one implementation of open, close and step,
+  // shared by the render values and by the document `key` closure in `trackMenuDismiss`.
+  // Every closure that runs AFTER a render reads `this.state`: the reference replaces the state
+  // object on each setState and the app mutates it in place, so a captured `s` is stale on one.
+  openLightbox = (pid, at, e) => {
+    this._lightboxOpener = (e && e.currentTarget) || null;
+    this.setState({ lightbox: { pid, at }, lightboxFocus: true, navMenu: false, userMenu: false, giveMenu: false });
+  };
+  closeLightbox = () => {
+    const back = this._lightboxOpener;
+    this._lightboxOpener = null;
+    this.setState({ lightbox: null, lightboxFocus: false });
+    if (back && back.focus) back.focus();
+  };
+  lightboxPhotos() {
+    const lb = this.state.lightbox;
+    const p = lb ? P.filter((x) => x.id === lb.pid)[0] : null;
+    return p ? this.photoSet(p).filter((ph) => ph.hasSrc) : [];
+  }
+  stepLightbox = (d) => {
+    const lb = this.state.lightbox;
+    const photos = this.lightboxPhotos();
+    const n = photos.length;
+    if (!lb || n < 2) return;
+    const i = Math.max(0, photos.map((ph) => ph.id).indexOf(lb.at));
+    this.setState({ lightbox: { pid: lb.pid, at: photos[((i + d) % n + n) % n].id } });
+  };
+  lightboxVals() {
+    const lb = this.state.lightbox;
+    const photos = this.lightboxPhotos();
+    const n = photos.length;
+    const i = lb ? Math.max(0, photos.map((ph) => ph.id).indexOf(lb.at)) : 0;
+    const cur = photos[i];
+    return {
+      open: !!(lb && cur),
+      src: cur ? cur.src : "",
+      caption: cur ? cur.caption : "",
+      counter: cur ? (i + 1) + "/" + n : "",
+      label: cur ? "Photograph " + (i + 1) + " of " + n : "",
+      multiple: n > 1,
+      prev: () => this.stepLightbox(-1),
+      next: () => this.stepLightbox(1),
+      close: this.closeLightbox,
+      backdrop: (e) => { if (e.target === e.currentTarget) this.closeLightbox(); },
+      ref: (el) => {
+        this._lightboxEl = el || null;
+        if (!el || !this.state.lightboxFocus) return;
+        this.setState({ lightboxFocus: false });
+        setTimeout(() => el.focus(), 0);
+      }
+    };
+  }
+
   marketPanel(sel, selComm, comms, market) {
     const s = this.state;
     const c = selComm || comms[0] || { pop: 0, hh: 0, income: 0, growth: 0, pets: 0, vets: 0 };
@@ -934,6 +1007,8 @@ class Component extends DCLogic {
           currentSrc: cur ? cur.src : "",
           currentId: cur ? cur.id : "ph-" + sel.id + "-exterior",
           currentCaption: cur ? cur.caption : "",
+          open: (e) => this.openLightbox(sel.id, cur ? cur.id : "", e),
+          openLabel: "Expand photo: " + (cur ? cur.caption : ""),
           emptyId: "ph-" + sel.id + "-exterior",
           emptyHint: this.practiceName(sel) + " — exterior, street view",
           prev: () => this.setState({ mdPhoto: i - 1 }),
@@ -1358,7 +1433,7 @@ class Component extends DCLogic {
       priceLabel: this.money(p.price),
       priceNote: "Practice only. " + bldg.toLowerCase() + ".",
       morePhotos: "+6 more photos",
-      photos: this.photoSet(p),
+      photos: this.photoSet(p).map((ph) => ph.hasSrc ? Object.assign({}, ph, { open: (e) => this.openLightbox(p.id, ph.id, e), openLabel: "Expand photo: " + ph.caption }) : ph),
       photoHeroId: "ph-" + p.id + "-exterior",
       photoHeroHint: this.practiceName(p) + " — exterior, street view",
       canRequest: !sent,
@@ -1574,7 +1649,8 @@ class Component extends DCLogic {
       },
       signOut: () => (this.props.auth ? this.props.auth.signOut().catch(() => {}) : Promise.resolve()).then(() => this.setState({
         userMenu: false, auth: false, screen: "gate", gate: "signin", pw: "",
-        interest: "closed", activeId: null, hoverId: null, sellerView: "dash", wizSubmitted: false, formError: ""
+        interest: "closed", activeId: null, hoverId: null, sellerView: "dash", wizSubmitted: false, formError: "",
+        lightbox: null, lightboxFocus: false
       })),
       goHome: this.go("gate"),
       showGate: s.screen === "gate",
@@ -1818,6 +1894,7 @@ class Component extends DCLogic {
       isDetail: s.screen === "detail",
       backToBrowse: () => this.setState({ screen: "browse" }),
       d: this.detail(),
+      lightbox: this.lightboxVals(),
       interestOpen: s.interest !== "closed",
       interestMsg: s.interestMsg,
       setInterestMsg: (e) => this.setState({ interestMsg: e.target.value }),

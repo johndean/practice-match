@@ -37,6 +37,17 @@ import { MANIFEST_PATH, SNAPSHOT_DIR, UNCHANGED_SCREENS, hashBaselines } from '.
 // UNCHANGED across A14 — which is the tidiest available proof that this amendment reached
 // nothing but the desktop header, since a font or token leak would have moved them too.
 //
+// Amendment A18 (John, 2026-09-09: "the arrow icons are backwards on each location, reverse
+// each") re-based ONE row. The detail's Back-to-results arrow (V3:895) pointed away from the
+// results — the glyph points left unrotated and the design had rotated it; A18.2 removes the
+// rotation, so `detail` moved by ruled design change. The other twelve kept their hashes: the
+// two phone-frame captures because the frame's own sign-out arrow (V3:1434) is not in the ruling
+// and was not touched, the other ten because nothing but that one `<img>` style changed. That is
+// the tidiest available proof that A18 reached exactly the two elements John named. A18.1's
+// site (the docked panel's CTA) is a Browse capture and not in this manifest. (Line numbers
+// name the design as it stood at this re-pin; the rows in LOCAL_AMENDMENTS.md carry the ones
+// re-checked after later insertions.)
+//
 // From here a moved hash means a CODE change moved a screen the design did not.
 const manifest = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8')) as { platform: string; screens: Record<string, string> };
 

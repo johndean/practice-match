@@ -1098,7 +1098,12 @@ def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
     (`deriveTypographyB`, driven by V2 vs the pristine bundle) — so it is added by hand as the one
     family the regex cannot see. Entries: the literal count plus A1's own derived count, read from
     `design-amendments.test.ts`'s own `Array.from({ length: N }, ...)` rather than duplicated here,
-    so the two files cannot drift against each other silently."""
+    so the two files cannot drift against each other silently.
+
+    A18 (2026-09-09) made sixteen families and the tuple stopped at "Fifteen", so the assertion
+    below failed on its own vocabulary before it ever compared CLAUDE.md — the tuple runs to
+    "Twenty" now, which covers A19 (seventeen) and the seller branch's reserved A16/A17 (nineteen
+    after that merge)."""
     ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
     literal_families = re.findall(r"id: 'A(\d+)", ts)
     assert literal_families, "frontend/tests/design-amendments.ts: no literal amendment ids found (id: 'A<n>...)"
@@ -1113,7 +1118,8 @@ def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
 
     number_words = {n: w for n, w in enumerate(
         ("Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
-         "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen"))}
+         "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen",
+         "Nineteen", "Twenty"))}
     assert family_count in number_words, f"no spelled-out word on hand for {family_count} families"
 
     claude = (ROOT / "CLAUDE.md").read_text()

@@ -1893,6 +1893,409 @@ const A15_3d: Amendment = {
   count: 1
 };
 
+/** A18 — the two backwards arrows (John, 2026-09-09; screenshots of the docked panel's "View
+ *  full listing" button and the detail's "Back to results" link).
+ *
+ *  `navigate-arrow.svg` points LEFT unrotated — its path's apex is at x = 199 of a 640 viewBox
+ *  and the shaft runs to x = 424 — and it is mirror-symmetric about its horizontal axis, which is
+ *  why `transform: rotate(180deg)` is a horizontal flip and the design's own idiom for pointing
+ *  it right (V3:724, the docked panel's Next arrow). The Insights-tab CTA carried it unrotated
+ *  AFTER its label, so it pointed back at the words; the detail's Back link carried it rotated
+ *  BEFORE its label, so it pointed away from where the link goes. A18 swaps the two — the
+ *  declaration order `transform` before `filter` copies V3:724.
+ *
+ *  Not touched, deliberately: the SVG files (flipping the glyph would reverse the correct
+ *  prev/next pair at V3:721/724 and the two sign-out arrows, and the app serves its own public
+ *  copy anyway — identical path, different C2PA metadata); V3:140 and V3:1434, the two unrotated
+ *  sign-out arrows, which are John's question (D-A18) and not his two screenshots — V3:1434 is
+ *  inside the phone frame, on `mobile-list` and `mobile-detail`'s frozen pixels.
+ *
+ *  Line numbers in this family's comments name the amended file as it stood when A18 was written
+ *  (the fa1ab3f convention: comments keep their numbers, LOCAL_AMENDMENTS.md's rows carry the ones
+ *  the citation test re-checks after a later family inserts lines).
+ */
+const A18 = {
+  date: '2026-09-09',
+  ruling: 'the arrow icons are backwards on each location, reverse each'
+};
+
+/** A18.1 — the Insights-tab CTA (V3:819). Anchored on the bare `<img>` — the only 12 × 12
+ *  `navigate-arrow` carrying the whitening filter, unique in the pristine file and at application
+ *  — and deliberately NOT on the button's "View full listing" label in front of it:
+ *  design-amendments.test.ts's citation case chases a row's output forward through any LATER
+ *  amendment whose `find` includes its `replace`, so a find that carried A3's text would make
+ *  A3's checked output this `<img>` line and stale A3's own V3:831 citation (A11's site, where
+ *  A3's text also stands). The bare anchor keeps A18 independent of A3's position in the list. */
+const A18_1: Amendment = {
+  id: 'A18.1', ...A18,
+  find: '<img src="assets/icons/navigate-arrow.svg" alt="" width="12" height="12" style="filter: brightness(0) invert(1);">',
+  replace: '<img src="assets/icons/navigate-arrow.svg" alt="" width="12" height="12" style="transform: rotate(180deg); filter: brightness(0) invert(1);">',
+  count: 1
+};
+
+/** A18.2 — the detail's Back-to-results link (V3:895). The plain text "Back to results" occurs
+ *  twice (the mobile back button's `backLabel` in the script is the other); the `<img` prefix
+ *  keeps this to the desktop link. */
+const A18_2: Amendment = {
+  id: 'A18.2', ...A18,
+  find: '<img src="assets/icons/navigate-arrow.svg" alt="" width="13" height="13" style="flex: none; transform: rotate(180deg); opacity: .7;">Back to results',
+  replace: '<img src="assets/icons/navigate-arrow.svg" alt="" width="13" height="13" style="flex: none; opacity: .7;">Back to results',
+  count: 1
+};
+
+/** A19 — the photo lightbox (John, 2026-09-09: "the images/photos should be clickable and they
+ *  expand and have < > to view all images larger with simple X to close").
+ *
+ *  The design shows a photograph at 168 px (the detail grid's tiles, V3:914) and at 232 px (the
+ *  Browse docked panel's carousel, V3:711) and enlarges neither; no `<img>` in the file has a
+ *  dynamic `src`, and no overlay but the interest modal's exists. The lightbox is composed from
+ *  what the design already has — the modal's scrim (V3:1048), the tile's frame (V3:914), the
+ *  panel's 34 px prev/next arrows (V3:720–725) verbatim, its 38 px close button (V3:707–709)
+ *  with the glyph whitened by the design's own `brightness(0) invert(1)`, and its counter and
+ *  caption pills (V3:729–731) verbatim — and it pages the SAME list the carousel counts
+ *  (`photoSet(p).filter(hasSrc)`, V3:2595), so "N of M" equals the panel's counter and A15's
+ *  extra tiles page too.
+ *
+ *  Four compositions have no counterpart and are asserted as exceptions in the test: the scrim's
+ *  `z-index: 1100` (Leaflet's attribution and controls are at 1000 in the root stacking context
+ *  on Browse — a dialog covers the page while open, and the attribution returns on close); the
+ *  image's two viewport bounds; the X's `right: 10px; top: 10px` corner; the X glyph's combined
+ *  `filter`. `e.currentTarget` is NEW to the design here (0 uses before); it works on both
+ *  runtimes because React 18's synthetic event sets it per listener during dispatch and
+ *  `openLightbox` reads it synchronously before `setState`, and Vue passes the native event.
+ *
+ *  Focus follows the A13/A14 mount-ref idiom, never a `setState` callback (review C1): the
+ *  dialog's callback ref spends the one-shot `lightboxFocus` flag, and `closeLightbox` focuses
+ *  the still-mounted opener directly. Every closure that runs after a render reads `this.state`,
+ *  because the reference replaces the state object on each `setState` while the app mutates it.
+ *
+ *  PIXEL-SAFE by construction: the overlay is one `sc-if` on `lightbox.open`, false in every
+ *  approved state, so it is never mounted there; the only closed-state markup added is a
+ *  contentless, borderless, transparent `<button>` over a FILLED slot, which paints nothing —
+ *  and across the 45 states that is exactly Round Rock's three tiles under `interest-modal`'s
+ *  scrim (`detail` is Cedar Park, six empty slots; `browse-market-panel` selects Cedar Park,
+ *  `isEmpty`; the results rail is not an amended site). The frozen manifest must not move at
+ *  all under A19 — that is the acceptance criterion, checked after A18's one-row re-pin.
+ *
+ *  Line numbers in this family's comments name the file A19 is applied to — the amended design
+ *  as A18 left it, the numbering every A19 `find` was measured against. The post-A19 numbers,
+ *  which the citation test checks, are LOCAL_AMENDMENTS.md's rows (fa1ab3f's convention: the rows
+ *  are recomputed, the comments keep the numbers they were written with).
+ */
+const A19 = {
+  date: '2026-09-09',
+  ruling: 'the images/photos should be clickable and they expand and have < > to view all images larger with simple X to close'
+};
+
+/** A19.1 — the two state keys, declared beside the interest modal's (A8.2 precedent for growing
+ *  `state`). `lightbox` is null while closed and `{ pid, at }` — listing id, slot id of the
+ *  photograph showing — while open, a slot id rather than an index so the open lightbox survives
+ *  a `photoSet` re-evaluation and the docked panel can hand over `cur.id` directly. */
+const A19_1: Amendment = {
+  id: 'A19.1', ...A19,
+  find: '    interest: "closed", interestMsg: "", sent: [],\n',
+  replace: '    interest: "closed", interestMsg: "", sent: [],\n    lightbox: null, lightboxFocus: false,\n',
+  count: 1
+};
+
+/** A19.2 — the class members, inserted before `marketPanel` (one occurrence) so the docked panel's
+ *  code and the lightbox's sit together; A14.1's `money(n)` anchor is left alone so the two
+ *  families never share a seam. `P.filter((x) => x.id === …)[0]` is `detail()`'s own lookup, so
+ *  seeded listings (load.ts replaces `P` in place) resolve exactly as fixtures do.
+ *
+ *  Step 10 finding (live Chromium, both targets, 2026-09-09): a `focus()` call made synchronously
+ *  on a node the SAME patch just mounted is silently dropped — the node has not yet had layout/
+ *  style committed, so Chromium does not yet consider it "being rendered" and the call is a
+ *  no-op; a manual `.focus()` on the identical element moments later succeeds. JSDOM has no such
+ *  restriction, so the plain characterisation this amendment shipped with never caught it. Fixed
+ *  by the design's own `setTimeout(…, 0)` idiom (2 pristine uses, `logic.js`'s `_t` debounce),
+ *  deferring the call one macrotask — the same fix A19.10's original `focusout` trap needed for
+ *  the identical reason, before A-LB3 removed that trap and moved Tab handling into the shared
+ *  `keydown` closure instead. `lightboxFocus` is still spent
+ *  synchronously; only the `focus()` call is deferred, so a second render before the timer fires
+ *  cannot re-arm it. */
+const A19_2: Amendment = {
+  id: 'A19.2', ...A19,
+  find: '  marketPanel(sel, selComm, comms, market) {\n',
+  replace: [
+    '  // A19 — the photo lightbox (John, 2026-09-09): one implementation of open, close and step,',
+    '  // shared by the render values and by the document `key` closure in `trackMenuDismiss`.',
+    '  // Every closure that runs AFTER a render reads `this.state`: the reference replaces the state',
+    '  // object on each setState and the app mutates it in place, so a captured `s` is stale on one.',
+    '  openLightbox = (pid, at, e) => {',
+    '    this._lightboxOpener = (e && e.currentTarget) || null;',
+    '    this.setState({ lightbox: { pid, at }, lightboxFocus: true, navMenu: false, userMenu: false, giveMenu: false });',
+    '  };',
+    '  closeLightbox = () => {',
+    '    const back = this._lightboxOpener;',
+    '    this._lightboxOpener = null;',
+    '    this.setState({ lightbox: null, lightboxFocus: false });',
+    '    if (back && back.focus) back.focus();',
+    '  };',
+    '  lightboxPhotos() {',
+    '    const lb = this.state.lightbox;',
+    '    const p = lb ? P.filter((x) => x.id === lb.pid)[0] : null;',
+    '    return p ? this.photoSet(p).filter((ph) => ph.hasSrc) : [];',
+    '  }',
+    '  stepLightbox = (d) => {',
+    '    const lb = this.state.lightbox;',
+    '    const photos = this.lightboxPhotos();',
+    '    const n = photos.length;',
+    '    if (!lb || n < 2) return;',
+    '    const i = Math.max(0, photos.map((ph) => ph.id).indexOf(lb.at));',
+    '    this.setState({ lightbox: { pid: lb.pid, at: photos[((i + d) % n + n) % n].id } });',
+    '  };',
+    '  lightboxVals() {',
+    '    const lb = this.state.lightbox;',
+    '    const photos = this.lightboxPhotos();',
+    '    const n = photos.length;',
+    '    const i = lb ? Math.max(0, photos.map((ph) => ph.id).indexOf(lb.at)) : 0;',
+    '    const cur = photos[i];',
+    '    return {',
+    '      open: !!(lb && cur),',
+    '      src: cur ? cur.src : "",',
+    '      caption: cur ? cur.caption : "",',
+    '      counter: cur ? (i + 1) + "/" + n : "",',
+    '      label: cur ? "Photograph " + (i + 1) + " of " + n : "",',
+    '      multiple: n > 1,',
+    '      prev: () => this.stepLightbox(-1),',
+    '      next: () => this.stepLightbox(1),',
+    '      close: this.closeLightbox,',
+    '      backdrop: (e) => { if (e.target === e.currentTarget) this.closeLightbox(); },',
+    '      ref: (el) => {',
+    '        this._lightboxEl = el || null;',
+    '        if (!el || !this.state.lightboxFocus) return;',
+    '        this.setState({ lightboxFocus: false });',
+    '        setTimeout(() => el.focus(), 0);',
+    '      }',
+    '    };',
+    '  }',
+    '',
+    '  marketPanel(sel, selComm, comms, market) {',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A19.3 — the render key, beside the interest modal's, so the root-level block reads
+ *  `{{ lightbox.open }}`, `{{ lightbox.src }}` and the rest. Closed → `open: false` and the
+ *  sc-if mounts nothing. */
+const A19_3: Amendment = {
+  id: 'A19.3', ...A19,
+  find: '      interestOpen: s.interest !== "closed",\n',
+  replace: '      lightbox: this.lightboxVals(),\n      interestOpen: s.interest !== "closed",\n',
+  count: 1
+};
+
+/** A19.4 — `detail()`: every FILLED tile gains its opener and its label; an empty tile is the
+ *  design's own object, untouched (nothing to enlarge, and on the reference an empty slot's click
+ *  is the design tool's file chooser). Anchored on the `photos:` line ALONE — the `photoHeroId`
+ *  line beneath it is a pristine orphan no template reads, a candidate for the dead-code rule,
+ *  and an anchor that includes it would break the day it is deleted. `Object.assign({}, …)` is
+ *  the design's own spread idiom. The label carries the photograph's OWN caption (A15), so three
+ *  buttons are not three identical names to a screen reader. */
+const A19_4: Amendment = {
+  id: 'A19.4', ...A19,
+  find: '      photos: this.photoSet(p),\n',
+  replace: '      photos: this.photoSet(p).map((ph) => ph.hasSrc ? Object.assign({}, ph, { open: (e) => this.openLightbox(p.id, ph.id, e), openLabel: "Expand photo: " + ph.caption }) : ph),\n',
+  count: 1
+};
+
+/** A19.5 — the docked panel's photos IIFE: `cur` is already the photograph the carousel shows
+ *  (`withPhoto[i]`), so the lightbox opens on exactly that one and its "N of M" is the panel's
+ *  own counter. */
+const A19_5: Amendment = {
+  id: 'A19.5', ...A19,
+  find: '          currentCaption: cur ? cur.caption : "",\n',
+  replace: '          currentCaption: cur ? cur.caption : "",\n          open: (e) => this.openLightbox(sel.id, cur ? cur.id : "", e),\n          openLabel: "Expand photo: " + (cur ? cur.caption : ""),\n',
+  count: 1
+};
+
+/** A19.6 — the detail tile: a third `sc-if`, on `ph.hasSrc`, holding a contentless absolute
+ *  `<button>` laid OVER the `<image-slot>` (never wrapping it, so the slot's `height: 100%`
+ *  geometry and the DOM around it are unchanged). A button is keyboard-reachable and
+ *  announceable where an `onClick` on a `<div>` is not (A13's standard). Its style is the
+ *  design's icon-button reset plus `inset: 0` and `width/height: 100%`: transparent, borderless,
+ *  contentless — zero painted pixels in the closed state, no outline unless `:focus-visible`,
+ *  which no mouse-driven capture triggers. Placed last in the frame so it paints above the slot. */
+const A19_6: Amendment = {
+  id: 'A19.6', ...A19,
+  find: [
+    '                      <sc-if value="{{ ph.noSrc }}" hint-placeholder-val="{{ false }}">',
+    '                        <image-slot id="{{ ph.id }}" shape="rect" placeholder="{{ ph.placeholder }}"></image-slot>',
+    '                      </sc-if>',
+    ''
+  ].join('\n'),
+  replace: [
+    '                      <sc-if value="{{ ph.noSrc }}" hint-placeholder-val="{{ false }}">',
+    '                        <image-slot id="{{ ph.id }}" shape="rect" placeholder="{{ ph.placeholder }}"></image-slot>',
+    '                      </sc-if>',
+    '                      <sc-if value="{{ ph.hasSrc }}" hint-placeholder-val="{{ false }}">',
+    '                        <button onClick="{{ ph.open }}" aria-label="{{ ph.openLabel }}" style="position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: pointer;"></button>',
+    '                      </sc-if>',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A19.7 — the docked panel's photograph: the same hit-target on a `hasAny` sc-if (the panel's
+ *  own habit — it gates the pills the same way, V3:727), placed BEFORE the `multiple` arrows so
+ *  the prev/next buttons, the pills and the dots — all later siblings, all absolutely positioned —
+ *  keep painting above it and stay clickable. */
+const A19_7: Amendment = {
+  id: 'A19.7', ...A19,
+  find: [
+    '                <sc-if value="{{ md.panel.photos.isEmpty }}" hint-placeholder-val="{{ false }}">',
+    '                  <image-slot id="{{ md.panel.photos.emptyId }}" shape="rect" placeholder="{{ md.panel.photos.emptyHint }}"></image-slot>',
+    '                </sc-if>',
+    ''
+  ].join('\n'),
+  replace: [
+    '                <sc-if value="{{ md.panel.photos.isEmpty }}" hint-placeholder-val="{{ false }}">',
+    '                  <image-slot id="{{ md.panel.photos.emptyId }}" shape="rect" placeholder="{{ md.panel.photos.emptyHint }}"></image-slot>',
+    '                </sc-if>',
+    '                <sc-if value="{{ md.panel.photos.hasAny }}" hint-placeholder-val="{{ false }}">',
+    '                  <button onClick="{{ md.panel.photos.open }}" aria-label="{{ md.panel.photos.openLabel }}" style="position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: pointer;"></button>',
+    '                </sc-if>',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A19.8 — the overlay, ONCE, at the root after the `isMobile` block: two screens open it, it is
+ *  `position: fixed` so its place in the tree affects no layout, and one block means one set of
+ *  render values and one focus/keyboard implementation. The scrim is the interest modal's string
+ *  (V3:1048) at `z-index: 1100`; the dialog takes the tile frame's declarations (V3:914) minus
+ *  its fixed height plus the modal box's shadow and entrance (V3:1049) and `outline: none`; the
+ *  image is natural size, never upscaled, bounded to the viewport minus the scrim's padding; the
+ *  X is the panel's close button (V3:707–709) at the arrows' 10 px inset with the glyph
+ *  whitened; the arrows are V3:720–725 verbatim, hidden when there is one photograph; the pills
+ *  are V3:729–731 verbatim. Exactly one blank line before and after (the doubled-blank-line
+ *  invariant). `aria-label="Close photo"` is new copy — the panel's says "Close panel". */
+const A19_8: Amendment = {
+  id: 'A19.8', ...A19,
+  find: '  </sc-if>\n\n</div>\n\n</x-dc>',
+  replace: [
+    '  </sc-if>',
+    '',
+    '  <sc-if value="{{ lightbox.open }}" hint-placeholder-val="{{ false }}">',
+    '    <div onClick="{{ lightbox.backdrop }}" style="position: fixed; inset: 0; z-index: 1100; background: rgba(0,58,112,.55); display: grid; place-items: center; padding: 24px;">',
+    '      <div role="dialog" aria-modal="true" aria-label="{{ lightbox.label }}" tabindex="-1" ref="{{ lightbox.ref }}" style="position: relative; border-radius: 10px; overflow: hidden; background: var(--rf-band); box-shadow: var(--shadow-xl); outline: none; animation: rf-fade-up 300ms var(--easing-out) both;">',
+    '        <img src="{{ lightbox.src }}" alt="{{ lightbox.caption }}" style="display: block; max-width: calc(100vw - 48px); max-height: calc(100vh - 48px);">',
+    '        <button onClick="{{ lightbox.close }}" aria-label="Close photo" style="position: absolute; right: 10px; top: 10px; width: 38px; height: 38px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; opacity: .92; transition: opacity 150ms var(--easing-out);" style-hover="opacity: 1;">',
+    '          <img src="assets/icons/close-x-gray.svg" alt="" width="26" height="26" style="display: block; filter: brightness(0) invert(1) drop-shadow(0 1px 3px rgba(0,58,112,.4));">',
+    '        </button>',
+    '        <sc-if value="{{ lightbox.multiple }}" hint-placeholder-val="{{ false }}">',
+    '          <div>',
+    '            <button onClick="{{ lightbox.prev }}" aria-label="Previous photo" style="position: absolute; left: 10px; top: 50%; margin-top: -17px; width: 34px; height: 34px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; opacity: .92; transition: opacity 150ms var(--easing-out);" style-hover="opacity: 1;">',
+    '              <img src="assets/icons/nav-arrow-white.svg" alt="" width="34" height="34" style="display: block; filter: drop-shadow(0 1px 3px rgba(0,58,112,.4));">',
+    '            </button>',
+    '            <button onClick="{{ lightbox.next }}" aria-label="Next photo" style="position: absolute; right: 10px; top: 50%; margin-top: -17px; width: 34px; height: 34px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; opacity: .92; transition: opacity 150ms var(--easing-out);" style-hover="opacity: 1;">',
+    '              <img src="assets/icons/nav-arrow-white.svg" alt="" width="34" height="34" style="display: block; transform: rotate(180deg); filter: drop-shadow(0 1px 3px rgba(0,58,112,.4));">',
+    '            </button>',
+    '          </div>',
+    '        </sc-if>',
+    '        <div>',
+    '          <span style="position: absolute; right: 12px; bottom: 12px; font-size: 12px; font-weight: 500; color: var(--vf-navy); background: rgba(255,255,255,.92); border-radius: 4px; padding: 3px 9px;">{{ lightbox.counter }}</span>',
+    '          <span style="position: absolute; left: 12px; bottom: 12px; max-width: 55%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; font-weight: 500; color: var(--vf-navy); background: rgba(255,255,255,.92); border-radius: 4px; padding: 3px 9px;">{{ lightbox.caption }}</span>',
+    '        </div>',
+    '      </div>',
+    '    </div>',
+    '  </sc-if>',
+    '',
+    '</div>',
+    '',
+    '</x-dc>'
+  ].join('\n'),
+  count: 1
+};
+
+/** A19.9 — the lightbox branch of the shared `keydown` closure, ahead of A14.5's Give guard. The
+ *  find is A14.5's OUTPUT (0 in the pristine file), so this applies after it. With the lightbox
+ *  closed the block is skipped and A13's and A14's Escape semantics are byte-identical; open, it
+ *  owns the three keys and returns — every menu is already shut (A19.2), and none can reopen
+ *  under a modal scrim. `preventDefault` so an arrow does not also scroll the page behind.
+ *
+ *  A-LB3 (2026-09-09, ruling on fix round 1's NEEDS_CONTEXT): Tab is handled HERE too, not by a
+ *  `focusout` trap (A19.10, below — removed). `box.querySelectorAll("button")` reads the dialog's
+ *  own controls in DOM order — Close photo, then Previous/Next when `multiple` — the container
+ *  itself is `tabindex="-1"` and is never one of them. On the last, Tab wraps to the first; on
+ *  the first, or on the container (where the mount-ref idiom leaves focus right after opening),
+ *  Shift+Tab wraps to the last. One code path, no timer, no `relatedTarget`: the browser's own
+ *  Tab motion is prevented only at the two wrap points, and left alone everywhere in between. */
+const A19_9: Amendment = {
+  id: 'A19.9', ...A19,
+  find: '    const key = (e) => {\n      if (e.key !== "Escape") return;\n',
+  replace: [
+    '    const key = (e) => {',
+    '      if (this.state.lightbox) {',
+    '        if (e.key === "Escape") { e.preventDefault(); this.closeLightbox(); }',
+    '        else if (e.key === "ArrowLeft" || e.key === "ArrowRight") { e.preventDefault(); this.stepLightbox(e.key === "ArrowLeft" ? -1 : 1); }',
+    '        else if (e.key === "Tab") {',
+    '          const box = this._lightboxEl;',
+    '          const controls = box ? Array.from(box.querySelectorAll("button")) : [];',
+    '          if (controls.length) {',
+    '            const at = controls.indexOf(document.activeElement);',
+    '            if (e.shiftKey) { if (at <= 0) { e.preventDefault(); controls[controls.length - 1].focus(); } }',
+    '            else if (at === controls.length - 1) { e.preventDefault(); controls[0].focus(); }',
+    '          }',
+    '        }',
+    '        return;',
+    '      }',
+    '      if (e.key !== "Escape") return;',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A19.10 — A-LB3 (2026-09-09, ruling on fix round 1's NEEDS_CONTEXT — the focus trap does not
+ *  hold, and the implementer was right to stop). The `focusout` trap this amendment ORIGINALLY
+ *  inserted here — deferring `box.focus()` via `setTimeout` whenever a non-null `relatedTarget`
+ *  left the dialog — was tried live in Chromium (Step 10, fix round 1) and found not to hold,
+ *  reproducibly: forward Tab off the last control lands on real page content for a keypress
+ *  before self-correcting, and Shift+Tab from the first control never reaches the last at all.
+ *  Root cause is structural, not a tuning error: a null `relatedTarget` means both "the window
+ *  blurred" (must be ignored) and "focus left the dialog's own tabbable set" (must not), and the
+ *  arm cannot tell its two cases apart. The mechanism is REMOVED — Tab is instead handled
+ *  deterministically in the shared `keydown` closure, A19.9, above — so this closure carries no
+ *  lightbox branch at all; the find is still the closure head A14.7 introduced and A13.8 rewrote
+ *  (0 in the pristine file, so this still applies after A13.8), and the replace is that same head
+ *  plus a comment recording why nothing else stands here, so a reader who finds this closure
+ *  otherwise untouched by A19 knows a trap was tried and retracted rather than never attempted. */
+const A19_10: Amendment = {
+  id: 'A19.10', ...A19,
+  find: '    const out = (e) => {\n',
+  replace: [
+    '    const out = (e) => {',
+    '      // A19 (A-LB3, 2026-09-09): a focusout-based trap was tried here — deferring focus back',
+    '      // into the dialog whenever it left for a non-null relatedTarget outside it — and found',
+    '      // not to hold in real Chromium: a null relatedTarget also occurs at the edges of the',
+    '      // dialog\'s own tabbable set, which the arm cannot tell apart from a window blur. Tab is',
+    '      // instead handled deterministically in the shared keydown closure above (A19.9).',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A19.11 — `go()`: a screen change closes the lightbox, on the line that already closes the
+ *  interest modal for the same reason. (The signed-out branch above it is unreachable with a
+ *  lightbox open: a photograph is behind the sign-in gate on both targets.) */
+const A19_11: Amendment = {
+  id: 'A19.11', ...A19,
+  find: '    this.setState({ screen, interest: "closed", userMenu: false });\n',
+  replace: '    this.setState({ screen, interest: "closed", userMenu: false, lightbox: null, lightboxFocus: false });\n',
+  count: 1
+};
+
+/** A19.12 — `signOut`: the reset that already closes the interest modal closes the lightbox too,
+ *  so a session that ends (the 401 path on the app) cannot leave the scrim over the gate card. */
+const A19_12: Amendment = {
+  id: 'A19.12', ...A19,
+  find: '        interest: "closed", activeId: null, hoverId: null, sellerView: "dash", wizSubmitted: false, formError: ""\n',
+  replace: '        interest: "closed", activeId: null, hoverId: null, sellerView: "dash", wizSubmitted: false, formError: "",\n        lightbox: null, lightboxFocus: false\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -1903,5 +2306,10 @@ export function amendments(): Amendment[] {
     // A13.8 edits the `out` closure A14.7 introduces, so it is the one A13 entry that has to run
     // after A14's (final review m4). Definition order in this file matches this list (m8).
     A13_8,
-    A15_1, A15_2, A15_3a, A15_3b, A15_3c, A15_3d];
+    A15_1, A15_2, A15_3a, A15_3b, A15_3c, A15_3d,
+    // A18 — the two arrow reversals (2026-09-09). Both finds are unique in the pristine file.
+    A18_1, A18_2,
+    // A19 — the photo lightbox (2026-09-09). A19.9 reads A14.5's output and A19.10 reads A13.8's,
+    // so the family is last. Definition order in this file matches this list (m8).
+    A19_1, A19_2, A19_3, A19_4, A19_5, A19_6, A19_7, A19_8, A19_9, A19_10, A19_11, A19_12];
 }

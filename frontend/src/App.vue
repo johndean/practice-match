@@ -641,6 +641,9 @@
                 <template v-if="v.md?.panel?.photos?.isEmpty">
                   <ImageSlot :id="v.md?.panel?.photos?.emptyId" shape="rect" :placeholder="v.md?.panel?.photos?.emptyHint"></ImageSlot>
                 </template>
+                <template v-if="v.md?.panel?.photos?.hasAny">
+                  <button @click="v.md?.panel?.photos?.open" :aria-label="v.md?.panel?.photos?.openLabel" style="position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: pointer;"></button>
+                </template>
                 <template v-if="v.md?.panel?.photos?.multiple">
                   <div>
                     <button class="sch9" @click="v.md?.panel?.photos?.prev" aria-label="Previous photo" style="position: absolute; left: 10px; top: 50%; margin-top: -17px; width: 34px; height: 34px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; opacity: .92; transition: opacity 150ms var(--easing-out);">
@@ -742,7 +745,7 @@
                   </div>
 
                   <button class="sch8" @click="v.md?.panel?.openListing" style="display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%; height: 44px; margin-top: 16px; font-family: var(--rf-display); font-size: 13.5px; font-weight: 500; color: var(--vf-white); background: var(--vf-accent); border: 0; border-radius: 6px; cursor: pointer;">
-                    View full listing<img src="/assets/icons/navigate-arrow.svg" alt width="12" height="12" style="filter: brightness(0) invert(1);">
+                    View full listing<img src="/assets/icons/navigate-arrow.svg" alt width="12" height="12" style="transform: rotate(180deg); filter: brightness(0) invert(1);">
                   </button>
                   <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">Drive-time figures are approximated from a straight-line catchment around the practice. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>
                 </div>
@@ -817,7 +820,7 @@
         <div style="padding: 28px 34px; background: var(--rf-band);">
           <div style="max-width: 1180px; margin: 0 auto;">
             <button @click="v.backToBrowse" style="display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500; color: var(--color-navy); background: none; border: 0; padding: 0; cursor: pointer;">
-              <img src="/assets/icons/navigate-arrow.svg" alt width="13" height="13" style="flex: none; transform: rotate(180deg); opacity: .7;">Back to results
+              <img src="/assets/icons/navigate-arrow.svg" alt width="13" height="13" style="flex: none; opacity: .7;">Back to results
             </button>
             <h1 style="font-family: var(--rf-display); font-size: 34px; font-weight: 800; color: var(--color-navy); margin: 12px 0 0; text-transform: uppercase; letter-spacing: .005em;"><span v-if="__s(v.d?.title) !== null" class="sc-interp">{{ __s(v.d?.title) }}</span></h1>
             <div style="display: flex; align-items: center; gap: 14px; margin-top: 8px; flex-wrap: wrap;">
@@ -842,6 +845,9 @@
                       </template>
                       <template v-if="ph?.noSrc">
                         <ImageSlot :id="ph?.id" shape="rect" :placeholder="ph?.placeholder"></ImageSlot>
+                      </template>
+                      <template v-if="ph?.hasSrc">
+                        <button @click="ph?.open" :aria-label="ph?.openLabel" style="position: absolute; inset: 0; width: 100%; height: 100%; padding: 0; border: 0; background: none; cursor: pointer;"></button>
                       </template>
                     </div>
                     <div style="display: flex; align-items: baseline; gap: 7px; margin-top: 7px;">
@@ -1588,6 +1594,31 @@
             </template>
           </div>
           <button @click="v.mob?.back" :style="v.mob?.backStyle"><span v-if="__s(v.mob?.backLabel) !== null" class="sc-interp">{{ __s(v.mob?.backLabel) }}</span></button>
+        </div>
+      </div>
+    </div>
+  </template>
+
+  <template v-if="v.lightbox?.open">
+    <div @click="v.lightbox?.backdrop" style="position: fixed; inset: 0; z-index: 1100; background: rgba(0,58,112,.55); display: grid; place-items: center; padding: 24px;">
+      <div role="dialog" aria-modal="true" :aria-label="v.lightbox?.label" tabindex="-1" :ref="v.lightbox?.ref" style="position: relative; border-radius: 10px; overflow: hidden; background: var(--rf-band); box-shadow: var(--shadow-xl); outline: none; animation: rf-fade-up 300ms var(--easing-out) both;">
+        <img :src="v.lightbox?.src" :alt="v.lightbox?.caption" style="display: block; max-width: calc(100vw - 48px); max-height: calc(100vh - 48px);">
+        <button class="sch9" @click="v.lightbox?.close" aria-label="Close photo" style="position: absolute; right: 10px; top: 10px; width: 38px; height: 38px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; opacity: .92; transition: opacity 150ms var(--easing-out);">
+          <img src="/assets/icons/close-x-gray.svg" alt width="26" height="26" style="display: block; filter: brightness(0) invert(1) drop-shadow(0 1px 3px rgba(0,58,112,.4));">
+        </button>
+        <template v-if="v.lightbox?.multiple">
+          <div>
+            <button class="sch9" @click="v.lightbox?.prev" aria-label="Previous photo" style="position: absolute; left: 10px; top: 50%; margin-top: -17px; width: 34px; height: 34px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; opacity: .92; transition: opacity 150ms var(--easing-out);">
+              <img src="/assets/icons/nav-arrow-white.svg" alt width="34" height="34" style="display: block; filter: drop-shadow(0 1px 3px rgba(0,58,112,.4));">
+            </button>
+            <button class="sch9" @click="v.lightbox?.next" aria-label="Next photo" style="position: absolute; right: 10px; top: 50%; margin-top: -17px; width: 34px; height: 34px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; opacity: .92; transition: opacity 150ms var(--easing-out);">
+              <img src="/assets/icons/nav-arrow-white.svg" alt width="34" height="34" style="display: block; transform: rotate(180deg); filter: drop-shadow(0 1px 3px rgba(0,58,112,.4));">
+            </button>
+          </div>
+        </template>
+        <div>
+          <span style="position: absolute; right: 12px; bottom: 12px; font-size: 12px; font-weight: 500; color: var(--vf-navy); background: rgba(255,255,255,.92); border-radius: 4px; padding: 3px 9px;"><span v-if="__s(v.lightbox?.counter) !== null" class="sc-interp">{{ __s(v.lightbox?.counter) }}</span></span>
+          <span style="position: absolute; left: 12px; bottom: 12px; max-width: 55%; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; font-weight: 500; color: var(--vf-navy); background: rgba(255,255,255,.92); border-radius: 4px; padding: 3px 9px;"><span v-if="__s(v.lightbox?.caption) !== null" class="sc-interp">{{ __s(v.lightbox?.caption) }}</span></span>
         </div>
       </div>
     </div>

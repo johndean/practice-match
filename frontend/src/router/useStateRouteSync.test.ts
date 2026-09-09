@@ -345,6 +345,36 @@ describe('useStateRouteSync — account gate routes with a token (S2)', () => {
 });
 
 // ---------------------------------------------------------------------------------------
+// A19 (John, 2026-09-09). The design's own `go()` and `signOut` clear the lightbox (A19.11/
+// A19.12); a route-driven screen change — what history.back() delivers — reaches state through
+// `apply()` and must clear it the same way, or the scrim outlives the screen it was opened on.
+// ---------------------------------------------------------------------------------------
+describe('useStateRouteSync — a route-driven screen change closes the photo lightbox (A19)', () => {
+  it('Browser Back from an open lightbox closes it; a navigation that changes no state leaves it open', async () => {
+    const { c, router } = await setup('/practices/p2');
+    // `new Component({})` starts signed out, and `guard()` (sync.ts) answers a member route with
+    // the sign-in gate and a pending patch while `state.auth` is false — so, exactly as the
+    // pending-route cases above do, sign in first and let the remembered deep link apply. Without
+    // this the component sits on the gate, `needsPatch` is false there, and the branch under test
+    // is never entered.
+    c.setState({ auth: true }); await flush(); await nextTick();
+    expect(c.state).toMatchObject({ screen: 'detail', detailId: 'p2' });
+    c.openLightbox('p2', 'ph-p2-exterior', undefined);
+    expect(c.state.lightbox).toEqual({ pid: 'p2', at: 'ph-p2-exterior' });
+    await router.push('/browse');                 // a route the visitor did not reach through state
+    await flush(); await nextTick();
+    expect(c.state.screen).toBe('browse');
+    expect(c.state).toMatchObject({ lightbox: null, lightboxFocus: false });
+    await router.push('/practices/p2');
+    await flush(); await nextTick();
+    c.openLightbox('p2', 'ph-p2-exterior2', undefined);
+    await router.push('/practices/p2');           // the same route again: no state change, nothing closes
+    await flush(); await nextTick();
+    expect(c.state.lightbox).toEqual({ pid: 'p2', at: 'ph-p2-exterior2' });
+  });
+});
+
+// ---------------------------------------------------------------------------------------
 // Review fix round 1, Important 1. The four A-S2 proofs above all exercise the COLD-LOAD
 // path: `apply(router.currentRoute.value)` runs before the state → route watcher is even
 // registered (`useStateRouteSync`'s own source order), so that first setState is invisible to
