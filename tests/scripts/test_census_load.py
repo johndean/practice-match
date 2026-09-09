@@ -290,7 +290,7 @@ def test_cmd_acs_refuses_when_a_key_is_present_but_the_archive_is_not_configured
     from app.config import settings
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     monkeypatch.setattr(settings, "census_api_key", "the-key")
     monkeypatch.setattr(settings, "s3_endpoint_url", None)
@@ -310,7 +310,7 @@ def test_cmd_acs_refuses_when_a_key_is_present_but_the_archive_is_not_configured
 
 def test_cmd_acs_queries_market_state_and_prints_measure_counts(scratch_dsn, monkeypatch, capsys):
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     captured: dict = {}
 
@@ -333,7 +333,7 @@ def test_cmd_acs_queries_market_state_and_prints_measure_counts(scratch_dsn, mon
 
 def test_cmd_acs_accepts_a_dataset_override(scratch_dsn, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     captured: dict = {}
 
@@ -367,7 +367,7 @@ def test_cmd_acs_builds_the_client_factory_from_the_required_key_and_contact_nev
     `require_contact` must be the source for both, exactly as `cmd_tiger` already does for the
     contact alone."""
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "distinctive-key-123")
+    monkeypatch.setenv("CENSUS_API_KEY", "distinctive-key-123")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "distinctive-contact@vinfoundation.example.org")
     captured: dict = {}
 
@@ -392,7 +392,7 @@ def test_cmd_acs_leaves_the_archive_disabled_without_s3_settings(scratch_dsn, mo
     from app.config import settings
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     monkeypatch.setattr(settings, "s3_endpoint_url", None)
     monkeypatch.setattr(settings, "s3_bucket", None)
@@ -416,7 +416,7 @@ def test_cmd_acs_passes_a_real_archive_once_s3_settings_are_configured(scratch_d
     from app.storage import ObjectStore
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     monkeypatch.setattr(settings, "s3_endpoint_url", "http://s3.example.internal")
     monkeypatch.setattr(settings, "s3_bucket", "practice-match-data")
@@ -447,7 +447,7 @@ def test_cmd_acs_exits_two_naming_the_missing_api_key(monkeypatch, capsys):
 
 
 def test_cmd_acs_exits_two_naming_the_missing_contact_email(monkeypatch, capsys):
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.delenv("CENSUS_CONTACT_EMAIL", raising=False)
     with pytest.raises(SystemExit) as exc:
         census_load.main(["acs"])
@@ -456,7 +456,7 @@ def test_cmd_acs_exits_two_naming_the_missing_contact_email(monkeypatch, capsys)
 
 
 def test_cmd_acs_returns_two_without_a_database_url(monkeypatch, capsys):
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     monkeypatch.delenv("DATABASE_URL", raising=False)
 
@@ -465,7 +465,7 @@ def test_cmd_acs_returns_two_without_a_database_url(monkeypatch, capsys):
 
 
 def test_cmd_acs_returns_three_when_the_database_is_unreachable(monkeypatch, capsys):
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
 
@@ -477,7 +477,7 @@ def test_cmd_acs_returns_four_when_a_dataset_download_fails(scratch_dsn, monkeyp
     from app.census.client import CensusHTTPError
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
     def fake_load(conn, client_factory, dataset_key, states):
@@ -494,7 +494,7 @@ def test_cmd_acs_returns_five_when_a_dataset_fails_validation(scratch_dsn, monke
     from app.census.client import VariableMissing
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
     def fake_load(conn, client_factory, dataset_key, states):
@@ -514,7 +514,7 @@ def test_cmd_acs_returns_two_when_a_dataset_is_licence_gated(scratch_dsn, monkey
     refusal, not a download failure, so it must map to exit 2 ("refused before anything is
     opened", A-C4 ¶2), never surface as an uncaught exception out of `main()`."""
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
     def fake_load(conn, client_factory, dataset_key, states):
@@ -534,7 +534,7 @@ def test_cmd_acs_returns_two_when_a_dataset_is_licence_gated(scratch_dsn, monkey
 
 def test_cmd_cbp_queries_market_state_and_prints_row_count(scratch_dsn, monkeypatch, capsys):
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     captured: dict = {}
 
@@ -552,7 +552,7 @@ def test_cmd_cbp_queries_market_state_and_prints_row_count(scratch_dsn, monkeypa
 
 
 def test_cmd_cbp_returns_two_without_a_database_url(monkeypatch, capsys):
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     monkeypatch.delenv("DATABASE_URL", raising=False)
 
@@ -561,7 +561,7 @@ def test_cmd_cbp_returns_two_without_a_database_url(monkeypatch, capsys):
 
 
 def test_cmd_cbp_returns_three_when_the_database_is_unreachable(monkeypatch, capsys):
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
 
@@ -571,7 +571,7 @@ def test_cmd_cbp_returns_three_when_the_database_is_unreachable(monkeypatch, cap
 
 def test_cmd_cbp_builds_the_client_factory_from_the_required_key_and_contact(scratch_dsn, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "distinctive-key-123")
+    monkeypatch.setenv("CENSUS_API_KEY", "distinctive-key-123")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "distinctive-contact@vinfoundation.example.org")
     captured: dict = {}
 
@@ -592,7 +592,7 @@ def test_cmd_cbp_builds_the_client_factory_from_the_required_key_and_contact(scr
 
 def test_cmd_cbp_returns_two_when_licence_gated(scratch_dsn, monkeypatch, capsys):
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
     def fake_load(conn, client_factory, states):
@@ -608,7 +608,7 @@ def test_cmd_cbp_returns_four_when_the_download_fails(scratch_dsn, monkeypatch, 
     from app.census.client import CensusHTTPError
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
     def fake_load(conn, client_factory, states):
@@ -625,7 +625,7 @@ def test_cmd_cbp_returns_five_when_validation_fails(scratch_dsn, monkeypatch, ca
     from app.census.client import VariableMissing
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
     def fake_load(conn, client_factory, states):
@@ -640,7 +640,7 @@ def test_cmd_cbp_returns_five_when_validation_fails(scratch_dsn, monkeypatch, ca
 
 def test_cmd_zbp_queries_market_state_and_prints_row_count(scratch_dsn, monkeypatch, capsys):
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     captured: dict = {}
 
@@ -657,7 +657,7 @@ def test_cmd_zbp_queries_market_state_and_prints_row_count(scratch_dsn, monkeypa
 
 
 def test_cmd_zbp_returns_two_without_a_database_url(monkeypatch, capsys):
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     monkeypatch.delenv("DATABASE_URL", raising=False)
 
@@ -666,7 +666,7 @@ def test_cmd_zbp_returns_two_without_a_database_url(monkeypatch, capsys):
 
 
 def test_cmd_zbp_returns_three_when_the_database_is_unreachable(monkeypatch, capsys):
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
 
@@ -676,7 +676,7 @@ def test_cmd_zbp_returns_three_when_the_database_is_unreachable(monkeypatch, cap
 
 def test_cmd_zbp_builds_the_client_factory_from_the_required_key_and_contact(scratch_dsn, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "distinctive-key-123")
+    monkeypatch.setenv("CENSUS_API_KEY", "distinctive-key-123")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "distinctive-contact@vinfoundation.example.org")
     captured: dict = {}
 
@@ -697,7 +697,7 @@ def test_cmd_zbp_builds_the_client_factory_from_the_required_key_and_contact(scr
 
 def test_cmd_zbp_returns_two_when_licence_gated(scratch_dsn, monkeypatch, capsys):
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
     def fake_load(conn, client_factory, states):
@@ -713,7 +713,7 @@ def test_cmd_zbp_returns_four_when_the_download_fails(scratch_dsn, monkeypatch, 
     from app.census.client import CensusHTTPError
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
     def fake_load(conn, client_factory, states):
@@ -730,7 +730,7 @@ def test_cmd_zbp_returns_five_when_validation_fails(scratch_dsn, monkeypatch, ca
     from app.census.client import VariableMissing
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
     def fake_load(conn, client_factory, states):
@@ -747,7 +747,7 @@ def test_cmd_zbp_returns_two_when_geo_area_has_no_zctas_yet(scratch_dsn, monkeyp
     """A-C6: `zbp` cannot run before A4's TIGER load has bounded the market states' ZCTAs --
     `zbp.MissingBoundaries` is a refusal (exit 2), naming the prerequisite, like a licence gate."""
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
     def fake_load(conn, client_factory, states):
@@ -762,7 +762,7 @@ def test_cmd_zbp_returns_two_when_geo_area_has_no_zctas_yet(scratch_dsn, monkeyp
 
 def test_cmd_bds_requires_a_year_and_prints_row_count(scratch_dsn, monkeypatch, capsys):
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     captured: dict = {}
 
@@ -781,7 +781,7 @@ def test_cmd_bds_requires_a_year_and_prints_row_count(scratch_dsn, monkeypatch, 
 
 
 def test_cmd_bds_returns_two_without_a_database_url(monkeypatch, capsys):
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     monkeypatch.delenv("DATABASE_URL", raising=False)
 
@@ -790,7 +790,7 @@ def test_cmd_bds_returns_two_without_a_database_url(monkeypatch, capsys):
 
 
 def test_cmd_bds_returns_three_when_the_database_is_unreachable(monkeypatch, capsys):
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
 
@@ -800,7 +800,7 @@ def test_cmd_bds_returns_three_when_the_database_is_unreachable(monkeypatch, cap
 
 def test_cmd_bds_builds_the_client_factory_from_the_required_key_and_contact(scratch_dsn, monkeypatch):
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "distinctive-key-123")
+    monkeypatch.setenv("CENSUS_API_KEY", "distinctive-key-123")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "distinctive-contact@vinfoundation.example.org")
     captured: dict = {}
 
@@ -821,7 +821,7 @@ def test_cmd_bds_builds_the_client_factory_from_the_required_key_and_contact(scr
 
 def test_cmd_bds_returns_two_when_licence_gated(scratch_dsn, monkeypatch, capsys):
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
     def fake_load(conn, client_factory, states, *, year):
@@ -837,7 +837,7 @@ def test_cmd_bds_returns_four_when_the_download_fails(scratch_dsn, monkeypatch, 
     from app.census.client import CensusHTTPError
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
     def fake_load(conn, client_factory, states, *, year):
@@ -854,7 +854,7 @@ def test_cmd_bds_returns_five_when_validation_fails(scratch_dsn, monkeypatch, ca
     from app.census.client import VariableMissing
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
     def fake_load(conn, client_factory, states, *, year):
@@ -890,7 +890,7 @@ def test_cmd_qwi_loads_a_given_quarter_without_resolving_latest(scratch_dsn, mon
         raise AssertionError("latest_available must not run when --year/--quarter are both given")
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     monkeypatch.setattr(census_qwi, "load", fake_load)
     monkeypatch.setattr(census_qwi, "trim", fake_trim)
@@ -918,7 +918,7 @@ def test_cmd_qwi_resolves_the_latest_available_quarter_when_omitted(scratch_dsn,
         return 6
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     monkeypatch.setattr(census_qwi, "latest_available", fake_latest_available)
     monkeypatch.setattr(census_qwi, "load", fake_load)
@@ -932,7 +932,7 @@ def test_cmd_qwi_resolves_the_latest_available_quarter_when_omitted(scratch_dsn,
 
 
 def test_cmd_qwi_returns_two_without_a_database_url(monkeypatch, capsys):
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     monkeypatch.delenv("DATABASE_URL", raising=False)
 
@@ -941,7 +941,7 @@ def test_cmd_qwi_returns_two_without_a_database_url(monkeypatch, capsys):
 
 
 def test_cmd_qwi_returns_three_when_the_database_is_unreachable(monkeypatch, capsys):
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
 
@@ -954,7 +954,7 @@ def test_cmd_qwi_returns_two_when_licence_gated_before_any_probe(scratch_dsn, mo
     for a blocked dataset (spec §1), including on the auto-resolve path (`--year`/`--quarter`
     both omitted here)."""
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
     conn = census_load._conn(scratch_dsn)
@@ -979,7 +979,7 @@ def test_cmd_qwi_returns_four_when_resolving_the_latest_quarter_fails(scratch_ds
     from app.census.client import CensusHTTPError
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
     def fake_latest_available(client, state, *, today):
@@ -999,7 +999,7 @@ def test_cmd_qwi_returns_five_when_resolving_the_latest_quarter_fails_validation
     from app.census.client import VariableMissing
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
     def fake_latest_available(client, state, *, today):
@@ -1017,7 +1017,7 @@ def test_cmd_qwi_returns_two_when_the_load_itself_is_licence_gated(scratch_dsn, 
     `license_status` mid-run via a separate connection while a long, six-state QWI load is in
     flight -- `qwi.load`'s own `PermissionError` must map to exit 2 here too, not propagate."""
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
     def fake_load(conn, client_factory, states, *, year, quarter):
@@ -1033,7 +1033,7 @@ def test_cmd_qwi_returns_four_when_the_load_itself_fails(scratch_dsn, monkeypatc
     from app.census.client import CensusHTTPError
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
     def fake_load(conn, client_factory, states, *, year, quarter):
@@ -1050,7 +1050,7 @@ def test_cmd_qwi_returns_five_when_validation_fails(scratch_dsn, monkeypatch, ca
     from app.census.client import VariableMissing
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
     def fake_load(conn, client_factory, states, *, year, quarter):
@@ -1069,7 +1069,7 @@ def test_cmd_qwi_refuses_with_a_named_prerequisite_when_market_state_is_empty(sc
     rows and nothing deletes them, but the CLI must not depend on that forever) gave a bare
     `IndexError` and exit 1 instead of a named refusal."""
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     conn = census_load._conn(scratch_dsn)
     try:

@@ -195,7 +195,7 @@ def _fake_acs_load(captured):
 
 
 def test_load_acs_builds_a_keyed_client_and_delegates_to_acs_load(conn, monkeypatch):
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
     captured: dict = {}
     monkeypatch.setattr(census_acs, "load", _fake_acs_load(captured))
@@ -209,7 +209,7 @@ def test_load_acs_builds_a_keyed_client_and_delegates_to_acs_load(conn, monkeypa
 
 
 def test_load_acs_defaults_to_acs5(conn, monkeypatch):
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
     captured: dict = {}
     monkeypatch.setattr(census_acs, "load", _fake_acs_load(captured))
@@ -242,7 +242,7 @@ def test_load_acs_records_a_failed_ingest_run_when_a_key_is_present_but_the_arch
     uses for a missing key/contact."""
     from app.config import settings
 
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
     monkeypatch.setattr(settings, "census_api_key", "the-key")
     monkeypatch.setattr(census_acs, "load", lambda *a, **kw: pytest.fail("must not run without the required archive"))
@@ -269,7 +269,7 @@ def test_load_acs_without_a_contact_refuses_before_checking_the_key(conn, monkey
 # ---- load_cbp -----------------------------------------------------------------------------------
 
 def test_load_cbp_builds_a_keyed_client_and_delegates_to_cbp_load(conn, monkeypatch):
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
     captured: dict = {}
 
@@ -308,7 +308,7 @@ def test_load_cbp_records_a_failed_ingest_run_when_a_key_is_present_but_the_arch
     every task."""
     from app.config import settings
 
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
     monkeypatch.setattr(settings, "census_api_key", "the-key")
     monkeypatch.setattr(census_cbp, "load", lambda *a, **kw: pytest.fail("must not run without the required archive"))
@@ -326,7 +326,7 @@ def test_load_cbp_records_a_failed_ingest_run_when_a_key_is_present_but_the_arch
 # ---- load_bds -----------------------------------------------------------------------------------
 
 def test_load_bds_builds_a_keyed_client_and_delegates_to_bds_load(conn, monkeypatch):
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
     captured: dict = {}
 
@@ -366,7 +366,7 @@ def test_load_bds_records_a_failed_ingest_run_when_a_key_is_present_but_the_arch
     the same as its own missing-key arm above."""
     from app.config import settings
 
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
     monkeypatch.setattr(settings, "census_api_key", "the-key")
     monkeypatch.setattr(census_bds, "load", lambda *a, **kw: pytest.fail("must not run without the required archive"))
@@ -384,7 +384,7 @@ def test_load_bds_records_a_failed_ingest_run_when_a_key_is_present_but_the_arch
 # ---- load_qwi -----------------------------------------------------------------------------------
 
 def test_load_qwi_uses_the_given_year_and_quarter_without_resolving(conn, monkeypatch):
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
     captured: dict = {}
 
@@ -407,7 +407,7 @@ def test_load_qwi_uses_the_given_year_and_quarter_without_resolving(conn, monkey
 
 
 def test_load_qwi_resolves_the_latest_quarter_when_omitted(conn, monkeypatch):
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
     resolve_calls: list = []
 
@@ -430,7 +430,7 @@ def test_load_qwi_resolves_the_latest_quarter_when_omitted(conn, monkeypatch):
 
 
 def test_load_qwi_trims_to_20_quarters(conn, monkeypatch):
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
     trim_calls: list = []
     monkeypatch.setattr(census_qwi, "load", lambda *a, **kw: 1)
@@ -461,7 +461,7 @@ def test_load_qwi_records_a_failed_ingest_run_when_a_key_is_present_but_the_arch
     branch, so neither `latest_available` nor `load` ever runs without the required archive."""
     from app.config import settings
 
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
     monkeypatch.setattr(settings, "census_api_key", "the-key")
     monkeypatch.setattr(census_qwi, "latest_available", lambda *a, **kw: pytest.fail("must not resolve without the required archive"))
@@ -484,7 +484,7 @@ def test_load_qwi_refuses_a_blocked_dataset_before_probing_the_latest_quarter(co
     Called with year/quarter omitted (precisely the shape `qwi-quarterly`'s beat entry publishes)
     so the resolve branch would otherwise run; `latest_available` and `load` both `pytest.fail` if
     reached, proving neither a request nor an archive write happens."""
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
     with conn.cursor() as cur:
         cur.execute("UPDATE dataset_registry SET license_status = 'blocked' WHERE dataset_key = 'qwi'")
@@ -506,7 +506,7 @@ def test_load_qwi_records_a_failed_ingest_run_when_market_state_is_empty(conn, m
     `states[0]` -- an empty `market_state` used to raise a bare `IndexError` and crash the task
     instead of recording a named, failed `ingest_run`. Unreachable today (017_census_registry.sql
     seeds six rows and nothing deletes them), but the task must not depend on that forever."""
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
     with conn.cursor() as cur:
         cur.execute("DELETE FROM market_state")
@@ -527,7 +527,7 @@ def test_load_qwi_records_a_failed_ingest_run_when_market_state_is_empty(conn, m
 def test_load_zbp_builds_a_keyed_client_and_delegates_to_zbp_load(conn, monkeypatch):
     """A-C8 (8) / i1: `census.load_zbp` exists for parity with its siblings -- manual trigger
     only (`test_beat_schedules_only_the_automatic_cadences` pins that no beat entry names it)."""
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
     captured: dict = {}
 
@@ -564,7 +564,7 @@ def test_load_zbp_records_a_failed_ingest_run_when_a_key_is_present_but_the_arch
     """Controller amendment A-C11 (10) -- the same `_resolve_archive` shape as its siblings."""
     from app.config import settings
 
-    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
     monkeypatch.setattr(settings, "census_api_key", "the-key")
     monkeypatch.setattr(census_zbp, "load", lambda *a, **kw: pytest.fail("must not run without the required archive"))
