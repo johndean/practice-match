@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, collectionStubUrls, collectionStubBody, newListingBody, draftStubUrl, submitStubUrl, WIZARD_LISTING_ID, sellerPageBody, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
+import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, collectionStubUrls, collectionStubBody, newListingBody, draftStubUrl, isDraftStepUrl, submitStubUrl, WIZARD_LISTING_ID, sellerPageBody, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
 import { designListingsBody } from './design-listings.mjs';
 import { designSellerPageBody, designSellerRows } from './design-seller-listings.mjs';
 import { designWizardDraftBody, designWizardTiles } from './design-wizard-draft.mjs';
@@ -333,6 +333,37 @@ describe('the seller and admin collection stubs (A-SL2, A-SL23 (2))', () => {
     // listing as. Nothing reads it; a stub that says something its endpoint cannot say is a trap.
     expect(JSON.parse(designWizardDraftBody(WIZARD_LISTING_ID)).status).toBe('draft');
     expect(JSON.parse(designWizardDraftBody(WIZARD_LISTING_ID, 'in_review')).status).toBe('in_review');
+  });
+
+  it('the created draft carries NULL for every column create leaves null — the four enums among them (A-SL27 (1))', () => {
+    // CRITICAL-C, round-3 re-review: this stub used to answer `type: 'Small animal'`,
+    // `ownership: 'Sole proprietor'`, `bldg: 'Included'` and `facilityType: 'Standalone'` for a
+    // listing the seller had just created — the DESIGN's defaults, not the nulls `serialise_draft`
+    // really sends for a row `create` inserts four columns into — while its docstring said
+    // "exactly as `serialise_draft` shapes one". Those four values were load-bearing for
+    // `wizard-step-1`'s frozen hash and made `seller.test.ts`'s `state.w` pin vacuous. The set
+    // below is the API's own, pinned on the Python side by
+    // `tests/api/test_seller_listings.py::test_a_bare_create_answers_null_for_exactly_these_columns`.
+    const draft = JSON.parse(designWizardDraftBody(WIZARD_LISTING_ID)) as Record<string, unknown>;
+    expect(Object.keys(draft).filter((key) => draft[key] === null).sort()).toEqual([
+      'area', 'bldg', 'city', 'decline_reason', 'desc', 'docs', 'est', 'facility', 'facilityType', 'hours',
+      'market', 'name', 'ownership', 'price', 'rev', 'rooms', 'sqft', 'state', 'submitted_at', 'type', 'zip'
+    ]);
+    // The three switches at the design's own values — see the report's concern on `revBand`.
+    expect([draft.anon, draft.revBand, draft.docsLocked]).toEqual([true, false, true]);
+  });
+
+  it('a rail press on the app is answered with the same draft (A-SL27 (3))', () => {
+    // A16.18 PATCHes `…/{id}?step=N` when a rail row is pressed, and the exact-URL route for the
+    // bare draft does not match a query. Three of the 45 captures press the rail (`wizard-step-7`,
+    // `wizard-preview`, `wizard-done`); without this route their PATCH reached the real API and
+    // painted a refusal.
+    const draft = draftStubUrl({ PW_APP_PORT: '5473' } as NodeJS.ProcessEnv)!;
+    expect(isDraftStepUrl(`${draft}?step=1`, draft)).toBe(true);
+    expect(isDraftStepUrl(`${draft}?step=8`, draft)).toBe(true);
+    expect(isDraftStepUrl(draft, draft), 'the bare read has its own route').toBe(false);
+    expect(isDraftStepUrl(`${draft}/submit`, draft), 'so does the submit').toBe(false);
+    expect(isDraftStepUrl(`${draft}/assets/x`, draft)).toBe(false);
   });
 
   it('the empty-dashboard body is a REAL page with no rows on it (A-SL17)', () => {

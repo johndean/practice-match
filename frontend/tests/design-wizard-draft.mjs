@@ -20,10 +20,16 @@
 // Floor plan.pdf].slice(0, 3 + (w.photos || 0))` evaluated at the design's own `w.photos: 0`. Edit
 // that literal and this stub follows it; hand-copy a tile and `harness.test.ts` fails.
 //
-// Every other field is the value the design's own `state.w` already holds, so `toWizardState`
-// changes nothing the wizard renders — `seller.test.ts` pins that, which is what keeps the three
-// captures byte-identical while the app's real behaviour becomes honest: a listing created against
-// the real API answers with no assets at all, and the wizard shows no tiles and "Photos attached 0".
+// Every other column is what `create` really leaves there — NULL, all twenty-one of them (A-SL27
+// (1); `harness.test.ts` pins the set, and `tests/api/test_seller_listings.py` pins the API's).
+// Until round 4 this stub answered the DESIGN's own `type`, `ownership`, `bldg` and `facilityType`
+// for a listing nobody had touched, which hid CRITICAL-C: the real API answers null for all four,
+// `toWizardState` turned each into `""`, and the first Continue was a 400. `toWizardState` leaves a
+// null column alone now, so the design's literal supplies the default on the app exactly as it does
+// on the reference, and `seller.test.ts` pins that laying this draft over the design's `w` moves
+// nothing — which is what keeps the three captures byte-identical while the app's real behaviour is
+// honest: a listing created against the real API opens on the design's four defaults, with no tiles
+// and "Photos attached 0".
 import { Component } from '../src/logic.js';
 
 /** The design's own step-6 tiles for a wizard nobody has typed into. */
@@ -50,15 +56,21 @@ export function designWizardAssets(listingId) {
 }
 
 /** The whole draft `GET /api/seller/listings/{id}` answers with, exactly as `serialise_draft`
- *  shapes one: every column the wizard reads, at the value the DESIGN's own `state.w` holds, and
- *  the two ordered projections step 6 renders. */
+ *  shapes one for a row `create` has just inserted: every column NULL, the switches, and the two
+ *  ordered projections step 6 renders — carrying the design's own three tiles.
+ *
+ *  `revBand: false` is the design's value, not the table's: `create` leaves `rev_disclosed` at
+ *  its default `false`, which `serialise_draft` answers as `revBand: true`, while the design's
+ *  `w` opens the step-7 switch OFF. A-SL27 (1) rules the NULL set alone; this one field is
+ *  recorded for the controller in the round-4 report rather than moved here, because `wizard-step-7`
+ *  is a frozen capture of that switch. */
 export function designWizardDraft(listingId, status = 'draft') {
   const assets = designWizardAssets(listingId);
   return {
     id: listingId, slug: `listing-${listingId}`, status,
-    name: null, type: 'Small animal', est: null, ownership: 'Sole proprietor',
+    name: null, type: null, est: null, ownership: null,
     city: null, zip: null, price: null, rev: null, docs: null, rooms: null, sqft: null,
-    hours: null, desc: null, bldg: 'Included', facilityType: 'Standalone', facility: null,
+    hours: null, desc: null, bldg: null, facilityType: null, facility: null,
     anon: true, revBand: false, docsLocked: true,
     state: null, market: null, area: null,
     decline_reason: null, submitted_at: null, updated_at: '2026-09-09T00:00:00+00:00',

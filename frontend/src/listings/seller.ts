@@ -15,6 +15,7 @@
  * unwrapped from the A5 envelope `{"error": {"code", "message"}}`.
  */
 import { csrfToken } from '../auth/api';
+import stepFields from './step-fields.json';
 
 /** A refusal, carrying the code the server chose (`src/auth/api.ts`'s `AuthError`, same reason:
  *  a caller branches on the code and renders the message, which is the server's own prose). */
@@ -127,15 +128,19 @@ export type StatusAction = 'pause' | 'republish' | 'withdraw';
  * names, and `columns_for` maps them to columns and refuses anything else: the whitelist is
  * "one-directional and total ... because the wizard sends one step at a time and a mis-sent field
  * means the adapter and this table disagree — which is a bug to see, not to absorb". The design's
- * handlers hand `patch()` the WHOLE `w` (A16.6's Continue, A16.15's Save and exit) and always
- * have, so the projection has to happen here. Sending `w` unfiltered made every Continue
- * `400 step 1 does not accept anon, bldg, city, …`, and not one field a seller typed was ever
- * written (round-2 re-review, CRITICAL-B; A-SL26 (1) rules the fix here rather than loosening D10).
+ * handlers hand `patch()` the WHOLE `w` (A16.6's Continue, A16.15's Save and exit, A16.18's rail)
+ * and always have, so the projection has to happen here. Sending `w` unfiltered made every
+ * Continue `400 step 1 does not accept anon, bldg, city, …`, and not one field a seller typed was
+ * ever written (round-2 re-review, CRITICAL-B; A-SL26 (1) rules the fix here rather than
+ * loosening D10).
  *
- * The two tables are pinned against each other from the Python side —
- * `tests/api/test_seller_listings.py::test_the_adapter_and_the_api_agree_on_every_step_s_fields`
- * reads this literal out of this file and compares it to `columns_for`'s own whitelist, step by
- * step — so neither can drift without a failure naming the other.
+ * Both tables live in ONE data file, `./step-fields.json`, that both sides read without parsing
+ * anything: this module imports it, and `tests/api/test_seller_listings.py` `json.load`s it and
+ * compares it to `columns_for`'s own whitelist step by step, and `requiredNumeric` to this
+ * module's own `(MONEY_FIELDS + INT_FIELDS) - OPTIONAL_NUMERIC` — so neither side can drift
+ * without a failure naming the other, and no formatting of a TypeScript literal can ever be
+ * mistaken for drift (round-3 re-review INFO-K, fixed at source by the A-SL27 addendum; the pin
+ * used to regex this literal out of this file).
  *
  * Steps 6 and 8 are absent, exactly as they are absent from the API's table: step 6's photographs
  * and documents are saved one upload at a time and step 8 is the preview, so neither takes a field
@@ -143,14 +148,17 @@ export type StatusAction = 'pause' | 'republish' | 'withdraw';
  * writing. `photos` — the design's own fake photograph counter — and `state` — the reviewer's, at
  * the first publish (spec Q2) — live in `w` and belong to no step.
  */
-export const STEP_FIELDS: Readonly<Record<number, readonly string[]>> = {
-  1: ['name', 'type', 'est', 'ownership'],
-  2: ['city', 'zip', 'anon'],
-  3: ['price', 'rev', 'revBand'],
-  4: ['docs', 'rooms', 'sqft', 'hours', 'desc'],
-  5: ['bldg', 'facilityType', 'facility'],
-  7: ['anon', 'revBand', 'docsLocked']
-};
+export const STEP_FIELDS: Readonly<Record<number, readonly string[]>> = stepFields.steps;
+
+/**
+ * The numbers the API refuses a blank for — `est` and `price`, every money or integer field that is
+ * not in `OPTIONAL_NUMERIC`, whose blank the API takes as "clear it". The design's own step guards
+ * make the seller type both before Continue will advance; Save and exit and the step rail have no
+ * guard and save whatever step the seller is on, half-filled, so `patch()`'s partial mode leaves a
+ * blank one out rather than sending `""` and being refused (round-3 re-review MAJOR-D, A-SL27 (2)).
+ * Same data file, same two-way pin: the Python side derives this list from its own tables.
+ */
+export const REQUIRED_NUMERIC: readonly string[] = stepFields.requiredNumeric;
 
 /** One page of the seller's own listings, as `GET /api/seller/listings` answers it. */
 interface ListingsPage { items?: unknown; next_cursor?: string | null }
@@ -236,8 +244,8 @@ export function toDashboardRow(d: Draft | DesignRow): DashboardRow {
   };
 }
 
-/** The columns the design's fields edit as text: a number is rendered into the input, and an
- *  absent column becomes the empty string the design's own initial `w` holds (logic.js:204). */
+/** The columns the design's fields edit as text: a number is rendered into the input, and a NULL
+ *  column is left out, so that the design's own initial `w` (logic.js:204) supplies the value. */
 const TEXT_FIELDS = ['name', 'type', 'est', 'ownership', 'city', 'zip', 'price', 'rev', 'docs',
   'rooms', 'sqft', 'hours', 'desc', 'bldg', 'facilityType', 'facility', 'state'] as const;
 
@@ -247,12 +255,22 @@ const TEXT_FIELDS = ['name', 'type', 'est', 'ownership', 'city', 'zip', 'price',
  * The API already answers in the wizard's key names (`serialise_draft`'s docstring), so this is a
  * projection and a spelling change, not a translation: every value becomes what the design's own
  * `<input>` holds, and the three disclosure switches keep the design's polarity (on means HIDE).
+ *
+ * A null column is OMITTED, not spelled `""` (round-3 re-review CRITICAL-C, A-SL27 (1)). `openDraft`
+ * lays this over the design's own initial literal, and a listing the seller has just created
+ * holds NULL in `type`, `ownership`, `bldg` and `facility_type` — `create` inserts none of them.
+ * Turned into `""` here, those four replaced the design's "Small animal", "Sole proprietor",
+ * "Included" and "Standalone" with blank selects, and the first Continue of the first listing sent
+ * `""` where `columns_for` wants one of the enum's values: `400 type must be one of Small animal,
+ * …`. Left out, the design's default stands — exactly as the prototype shows it — and the first
+ * Continue PATCHes it. The API never answers `""` for a text column (`_text` stores a blank as
+ * NULL), so nothing is lost by the distinction; a number can be 0, and 0 is kept.
  */
 export function toWizardState(d: Draft): Record<string, string | boolean> {
   const w: Record<string, string | boolean> = {};
   for (const key of TEXT_FIELDS) {
     const value = d[key];
-    w[key] = value == null ? '' : String(value);
+    if (value != null) w[key] = String(value);
   }
   w.anon = d.anon;
   w.revBand = d.revBand;
@@ -320,7 +338,7 @@ export interface ListingsAdapter {
   list(): Promise<DashboardRow[]>;
   create(): Promise<string>;
   get(id: string): Promise<WizardDraft>;
-  patch(id: string, step: number, fields: Record<string, unknown>): Promise<WizardDraft>;
+  patch(id: string, step: number, fields: Record<string, unknown>, partial?: boolean): Promise<WizardDraft>;
   upload(id: string, file: File): Promise<ApiAsset>;
   document(id: string, file: File, kind?: string): Promise<ApiAsset>;
   caption(id: string, assetId: string, text: string): Promise<WizardDraft>;
@@ -383,12 +401,25 @@ export function makeListingsAdapter(): ListingsAdapter {
      * the body, step 6's assets are already stored one upload at a time, and step 8 is the
      * preview. The draft is RE-READ instead, so the caller still gets the tiles it renders (A16.6
      * writes `wizAssets` from this answer) and the seller is neither refused nor trapped.
+     *
+     * `partial` is the mode of a save that is NOT Continue — Save and exit (A16.15) and the step
+     * rail (A16.18). Continue runs behind the design's own guards, which make the seller type the
+     * year and the asking price before it will advance; those two saves have no guard and write
+     * whatever step the seller is on, half-filled, and a draft is incomplete by nature. So in
+     * partial mode a blank REQUIRED number is left out — the API reads a missing field as
+     * "unchanged" — rather than sent as `""` and refused with `est must be a number.`, which held
+     * the seller in the wizard behind the button labelled *Save* (round-3 re-review MAJOR-D,
+     * A-SL27 (2)). Every other blank still goes: an optional number's blank CLEARS it (A-SL13 M1),
+     * and a text field's blank is stored as NULL. Continue's full mode sends everything as it is.
      */
-    patch: async (id, step, fields) => {
+    patch: async (id, step, fields, partial = false) => {
       const keys = STEP_FIELDS[step];
       if (keys === undefined) return adapter.get(id);
       const body: Record<string, unknown> = {};
-      for (const key of keys) body[key] = fields[key];
+      for (const key of keys) {
+        if (partial && fields[key] === '' && REQUIRED_NUMERIC.includes(key)) continue;
+        body[key] = fields[key];
+      }
       return toWizardDraft(await json<Draft>('PATCH', `/listings/${id}?step=${step}`, body));
     },
     upload: (id, file) => upload(`/listings/${id}/photos`, file),

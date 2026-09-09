@@ -301,6 +301,68 @@ describe('account-flows.spec.ts — the live account flows (Task S5)', () => {
 });
 
 // ---------------------------------------------------------------------------------------
+// A-SL27 (5) — `listing-flows.spec.ts`, the same three facts again, for the seller lifecycle.
+//
+// It is the only place the wizard is proven END TO END against the real API: "Create a listing"
+// creates, every step's Continue is a 200 with the step's own fields, a photograph uploads with
+// its caption, Submit leaves the row `in_review`, and Save-and-exit and the step rail each save
+// what they leave. The four `wizard-*` states photograph the wizard through the oracle's stubs;
+// three fix rounds passed every gate while no step could be saved, because nothing pressed
+// Continue against a real endpoint. This file is what proves the product produced the pixels.
+// ---------------------------------------------------------------------------------------
+describe('listing-flows.spec.ts — the live seller lifecycle (A-SL27 (5))', () => {
+  const FLOWS = join(fileURLToPath(new URL('.', import.meta.url)), 'listing-flows.spec.ts');
+
+  it('is in the app project, or Playwright would never run it', () => {
+    expect(
+      project('app'),
+      'listing-flows.spec.ts is not matched by the app project, so the only end-to-end proof that a ' +
+      'seller can save a wizard step against the real API would silently stop running while the ' +
+      'stubbed screenshots kept passing — the exact hole CRITICAL-B and CRITICAL-C lived in.'
+    ).toContain('listing-flows');
+  });
+
+  it('carries the same PW_APP_URL-conditional trace at the top level, for the same reason', () => {
+    const spec = withoutComments(readFileSync(FLOWS, 'utf8'));
+    expect(spec).toMatch(USE_TRACE);
+    const firstDescribe = spec.indexOf('test.describe(');
+    expect(spec.search(USE_TRACE)).toBeLessThan(firstDescribe === -1 ? spec.length : firstDescribe);
+  });
+
+  it('does not skip itself on a live run, and arms no stub — `prepare()` is never called', () => {
+    const spec = withoutComments(readFileSync(FLOWS, 'utf8'));
+    expect(spec).not.toMatch(/test\.skip\([^)]*PW_APP_URL/);
+    // `prepare()` answers the seller endpoints for the frozen wizard captures; this spec exists to
+    // reach those same endpoints for real, so it takes the error gate alone (`guard`).
+    expect(spec, 'the flow spec must not arm the oracle\'s stubs').not.toMatch(/\bprepare\(/);
+    expect(spec).not.toMatch(/page\.route\(/);
+    expect(spec).toMatch(/\bguard\(page\)/);
+  });
+
+  it('stands aside on exactly one condition — an api with no object store — and only for the photograph', () => {
+    // The upload routes answer `503 STORAGE_UNAVAILABLE` until all four `S3_*` settings are
+    // present (`app/api/seller_listings.py::store_for_request`), and the local Playwright api has
+    // none of them (round-4 report, NEEDS_CONTEXT). The skip mirrors that four-setting rule, names
+    // the four, never fires on a live target, and gates the photograph test alone: the lifecycle
+    // test — every wizard step against the real API — has no skip at all.
+    const spec = withoutComments(readFileSync(FLOWS, 'utf8'));
+    const skips = [...spec.matchAll(/test\.skip\(([^,]+),/g)].map((m) => m[1].trim());
+    expect(skips).toEqual(['!canStorePhotographs']);
+    for (const name of ['S3_ENDPOINT_URL', 'S3_BUCKET', 'S3_ACCESS_KEY_ID', 'S3_SECRET_ACCESS_KEY']) {
+      expect(spec, `the store rule names ${name}`).toContain(`process.env.${name}`);
+    }
+    expect(spec).toMatch(/const canStorePhotographs = !!process\.env\.PW_APP_URL\s*\|\|/);
+    expect(spec).toContain('STORAGE_UNAVAILABLE');
+    // The lifecycle test is the first `test(` and carries no skip before the second `test(`.
+    const first = spec.indexOf("test('a seller creates a listing");
+    const second = spec.indexOf("test('a seller adds a photograph");
+    expect(first).toBeGreaterThan(-1);
+    expect(second).toBeGreaterThan(first);
+    expect(spec.slice(first, second)).not.toContain('test.skip(');
+  });
+});
+
+// ---------------------------------------------------------------------------------------
 // A-L6.2 (2) — the two oracles are the OPPOSITE case, and for the opposite reason.
 //
 // `visual.spec.ts` and `dom.spec.ts` compare the app against baselines generated from the

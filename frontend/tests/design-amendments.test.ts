@@ -134,11 +134,16 @@ describe('local design amendments (spec D15)', () => {
     // state, and `reloadListings`, the one loader, which carries the rejection arm its callers
     // kept forgetting.
     'A16.16', 'A16.17',
+    // A16.18 (A-SL27 (3), the round-3 re-review's MAJOR-E): the step rail saves the step it leaves
+    // before it moves — in the adapter's partial mode, through Continue's own rejection arm — so
+    // the one navigation control that silently discarded typed work under "Saved automatically"
+    // no longer does. A16.15 was revised in the same round to save in that partial mode (MAJOR-D).
+    'A16.18',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(106);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(107);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

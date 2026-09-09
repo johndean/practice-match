@@ -1250,7 +1250,11 @@ class Component extends DCLogic {
       progressLabel: "Step " + step + " of 8",
       barStyle: "height: 100%; width: " + Math.round((step / 8) * 100) + "%; background: var(--color-blue); transition: width 300ms var(--easing-out);",
       steps: names.map((n, i) => ({
-        n: String(i + 1), label: n, go: () => this.setState({ step: i + 1, wizErr: "" }),
+        n: String(i + 1), label: n, go: () => (!this.props.listings || !s.editingId
+          ? this.setState({ step: i + 1, wizErr: "" })
+          : this.props.listings.patch(s.editingId, step, w, true).then(
+              (d) => this.setState({ step: i + 1, wizErr: "", wizAssets: d.assets }),
+              (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." }))),
         style: "display: flex; align-items: center; gap: 11px; padding: 9px 10px; text-align: left; font-family: var(--rf-display); font-size: 13.5px; font-weight: " + (step === i + 1 ? "600" : "400") + "; color: " + (step === i + 1 ? "var(--color-navy)" : "var(--color-steel)") + "; background: " + (step === i + 1 ? "var(--rf-band)" : "transparent") + "; border: 0; border-radius: 6px; cursor: pointer;",
         dotStyle: "flex: none; width: 22px; height: 22px; border-radius: 999px; display: grid; place-items: center; font-size: 11px; font-weight: 700; color: " + (step > i + 1 ? "var(--color-white)" : step === i + 1 ? "var(--color-white)" : "var(--color-steel)") + "; background: " + (step > i + 1 ? "var(--vf-navy)" : step === i + 1 ? "var(--color-blue)" : "var(--color-off-white)") + "; border: 1px solid " + (step >= i + 1 ? "transparent" : "var(--border-subtle)") + ";"
       })),
@@ -1718,7 +1722,7 @@ class Component extends DCLogic {
       },
       exitWizard: () => {
         if (!this.props.listings || !s.editingId) return this.setState({ sellerView: "dash", wizSubmitted: false });
-        return this.props.listings.patch(s.editingId, s.step, s.w)
+        return this.props.listings.patch(s.editingId, s.step, s.w, true)
           .then(() => this.reloadListings())
           .then(() => this.setState({ sellerView: "dash", wizSubmitted: false, wizErr: "" }), (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." }));
       },

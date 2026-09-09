@@ -1584,6 +1584,15 @@ const A16_14: Amendment = {
  *  why the chain reads `patch → reloadListings → exit` with ONE rejection arm at the end: it can
  *  only ever be the patch's, because `reloadListings()` settles its own (A-SL25 (3)).
  *
+ *  It saves in the adapter's PARTIAL mode — the fourth argument (A-SL27 (2), on the round-3
+ *  re-review's MAJOR-D). Continue runs behind the design's own step guards, which make the seller
+ *  type the year and the asking price before it advances; this button has no guard and saves
+ *  whatever step the seller is on, half-filled, and a draft is incomplete by nature. Sent as `""`,
+ *  a blank year was `400 est must be a number.` and the rejection arm — correctly — kept the
+ *  seller in the wizard: trapped behind the button labelled *Save*. Partial mode leaves a blank
+ *  required number out (the API reads a missing field as "unchanged"), so the arm now fires only on
+ *  a genuine server refusal.
+ *
  *  Pixel-safe: none of the four `wizard-*` captures presses it, and with no adapter the design's
  *  own one-liner runs untouched. */
 const A16_15: Amendment = {
@@ -1591,7 +1600,7 @@ const A16_15: Amendment = {
   find: '      exitWizard: () => this.setState({ sellerView: "dash", wizSubmitted: false }),',
   replace: '      exitWizard: () => {\n'
     + '        if (!this.props.listings || !s.editingId) return this.setState({ sellerView: "dash", wizSubmitted: false });\n'
-    + '        return this.props.listings.patch(s.editingId, s.step, s.w)\n'
+    + '        return this.props.listings.patch(s.editingId, s.step, s.w, true)\n'
     + '          .then(() => this.reloadListings())\n'
     + '          .then(() => this.setState({ sellerView: "dash", wizSubmitted: false, wizErr: "" }), (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." }));\n'
     + '      },',
@@ -1654,11 +1663,45 @@ const A16_17: Amendment = {
   count: 1
 };
 
+/** A16.18 — the step rail SAVES the step it leaves before it moves (A-SL27 (3), on the round-3
+ *  re-review's MAJOR-E — the round-3 implementer's own concern 1, graded Major).
+ *
+ *  The design gives every rail row `go: () => this.setState({ step: i + 1, wizErr: "" })` — a pure
+ *  state move. In the prototype that was harmless: nothing was ever persisted, so nothing could
+ *  be lost. This branch made persistence real and PER STEP, on Continue (A16.6) and on Save and
+ *  exit (A16.15), and the rail became the one navigation control in the wizard that silently
+ *  discarded work: type on step 5, jump to step 6 by the rail, press Save and exit, and step 5 is
+ *  gone — under chrome that reads "Saved automatically" (`saveNote`). Silent, reachable by an
+ *  ordinary click, no error, no recovery.
+ *
+ *  Shaped exactly like `next()`'s existing single rejection arm: with an adapter and a listing, the
+ *  current step is PATCHed first — in the adapter's partial mode, since the rail has no guard and
+ *  the step may be half-filled (A-SL27 (2)) — and only a success moves; a refusal keeps the seller
+ *  on the step they were typing on with the message in `wizErr`. Steps 6 and 8 have no fields, so
+ *  the adapter re-reads the draft and issues no PATCH (`patch()`'s own rule). `wizAssets` is
+ *  re-set from the answer, as Continue's arm sets it.
+ *
+ *  With no adapter the design's own move runs untouched, which is the reference. On the APP three
+ *  of the captures press the rail — `wizard-step-7`, `wizard-preview`, `wizard-done` — so
+ *  `prepare()` answers `…/{WIZARD_LISTING_ID}?step=N` with the same design draft it answers the
+ *  bare read with (`isDraftStepUrl`), and the render is identical: `baseline-manifest.json`
+ *  unchanged is the acceptance. */
+const A16_18: Amendment = {
+  id: 'A16.18', ...SL,
+  find: '        n: String(i + 1), label: n, go: () => this.setState({ step: i + 1, wizErr: "" }),',
+  replace: '        n: String(i + 1), label: n, go: () => (!this.props.listings || !s.editingId\n'
+    + '          ? this.setState({ step: i + 1, wizErr: "" })\n'
+    + '          : this.props.listings.patch(s.editingId, step, w, true).then(\n'
+    + '              (d) => this.setState({ step: i + 1, wizErr: "", wizAssets: d.assets }),\n'
+    + '              (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." }))),',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
     A7_3, A7_4, A8_1a, A8_1b, A8_1c, A8_2, A8_3a, A8_3b, A8_4a, A8_4b, A8_5, A8_6, A8_7, A8_8a, A8_8b,
     A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5, A12_6, A12_7, A12_8, A12_9, A12_10, A12_11,
     A15_1, A15_2, A15_3a, A15_3b, A15_3c, A15_3d,
-    A16_1, A16_2, A16_3, A16_4, A16_5, A16_6, A16_7, A16_8, A16_9, A16_10, A16_11a, A16_11b, A16_12, A16_13, A16_14, A16_15, A16_16, A16_17];
+    A16_1, A16_2, A16_3, A16_4, A16_5, A16_6, A16_7, A16_8, A16_9, A16_10, A16_11a, A16_11b, A16_12, A16_13, A16_14, A16_15, A16_16, A16_17, A16_18];
 }

@@ -5,6 +5,7 @@ import { designWizardDraft, designWizardTiles } from '../../tests/design-wizard-
 import {
   ListingError,
   MAX_PAGES,
+  REQUIRED_NUMERIC,
   STEP_FIELDS,
   makeListingsAdapter,
   money,
@@ -12,6 +13,7 @@ import {
   toWizardState,
   type Draft
 } from './seller';
+import stepFields from './step-fields.json';
 
 interface Call { url: string; init: { method: string; credentials: string; headers: Record<string, string>; body?: unknown } }
 
@@ -148,12 +150,22 @@ describe('toWizardState', () => {
     });
   });
 
-  it('turns every absent column into the empty string the design\'s own initial `w` holds', () => {
-    expect(toWizardState(draft())).toEqual({
-      name: '', type: '', est: '', ownership: '', city: '', zip: '', price: '', rev: '', docs: '',
-      rooms: '', sqft: '', hours: '', desc: '', bldg: '', facilityType: '', facility: '',
-      anon: true, revBand: false, docsLocked: true, state: ''
-    });
+  it('leaves out every absent column, so the design\'s own default stands where the API has nothing (A-SL27 (1))', () => {
+    // CRITICAL-C, round-3 re-review: a listing `create` has just made holds NULL in `type`,
+    // `ownership`, `bldg` and `facility_type`. Turned into `""` here and laid over the design's
+    // literal by `openDraft`, those four became blank selects — and the first Continue sent `""`
+    // where `columns_for` wants one of the enum's values: `400 type must be one of Small animal,
+    // …` on the first step of the first listing. A null column is now OMITTED, so `Object.assign`
+    // leaves the design's own "Small animal" / "Sole proprietor" / "Included" / "Standalone" in
+    // place, exactly as the prototype shows them. Only the three switches, which the API always
+    // answers, come through.
+    expect(toWizardState(draft())).toEqual({ anon: true, revBand: false, docsLocked: true });
+  });
+
+  it('keeps an empty string the seller really stored apart from a column that was never set', () => {
+    // `_text` stores a blank as NULL, so the API never answers `""` for a text column — but a
+    // number can be 0, and 0 is a value, not an absence.
+    expect(toWizardState(draft({ docs: 0, rooms: 0 }))).toMatchObject({ docs: '0', rooms: '0' });
   });
 });
 
@@ -257,6 +269,49 @@ describe('the adapter', () => {
     const answer = await api().patch('a3f1', 6, { name: 'x' });
     expect(calls.map((c) => [c.init.method, c.url])).toEqual([['GET', '/api/seller/listings/a3f1']]);
     expect(answer.assets).toEqual([{ kind: 'Photo', name: 'Reception', id: 'as-1' }]);
+  });
+
+  it('patch() in partial mode leaves out a blank required number, and in full mode sends it (A-SL27 (2))', async () => {
+    // MAJOR-D, round-3 re-review: `est` and `price` are deliberately not in the API's
+    // `OPTIONAL_NUMERIC` — the design's own step guards make the seller type both before Continue
+    // advances — but "Save and exit" and the step rail have no guard and save whatever step the
+    // seller is on, half-filled. Sent as `""`, a blank year was `400 est must be a number.` and the
+    // seller was held in the wizard by the button labelled *Save*. A draft is incomplete by
+    // nature: partial mode omits the blank, the API reads a missing field as "unchanged", and the
+    // seller leaves. Continue's full mode still sends everything — the guards are what keep a
+    // blank required number away from it.
+    const half = { ...(new Component({}).state.w as Record<string, unknown>), name: 'ABC Animal Hospital', est: '', price: '' };
+    let calls = stubFetch({ status: 200, body: draft() });
+    await api().patch('a3f1', 1, half, true);
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ name: 'ABC Animal Hospital', type: 'Small animal', ownership: 'Sole proprietor' });
+    vi.unstubAllGlobals();
+
+    calls = stubFetch({ status: 200, body: draft() });
+    await api().patch('a3f1', 3, half, true);
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ rev: '', revBand: false });
+    vi.unstubAllGlobals();
+
+    // Full mode — Continue's — sends the blank exactly as it is.
+    calls = stubFetch({ status: 200, body: draft() });
+    await api().patch('a3f1', 1, half);
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ name: 'ABC Animal Hospital', type: 'Small animal', est: '', ownership: 'Sole proprietor' });
+    vi.unstubAllGlobals();
+
+    // A required number the seller HAS typed goes on the wire in partial mode too; only a blank
+    // one is left out, and an optional blank (`rev`, above) is sent so the API can clear it.
+    calls = stubFetch({ status: 200, body: draft() });
+    await api().patch('a3f1', 1, { ...half, est: '1998' }, true);
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ name: 'ABC Animal Hospital', type: 'Small animal', est: '1998', ownership: 'Sole proprietor' });
+  });
+
+  it('STEP_FIELDS and REQUIRED_NUMERIC are the one data file both sides read, unparsed (A-SL27 addendum, INFO-K)', () => {
+    // `tests/api/test_seller_listings.py` `json.load`s the same file and pins it against
+    // `columns_for` and `OPTIONAL_NUMERIC`; this side pins that the adapter's two tables ARE the
+    // file, so there is no third copy for either to drift from.
+    expect(STEP_FIELDS).toEqual(stepFields.steps);
+    expect(REQUIRED_NUMERIC).toEqual(stepFields.requiredNumeric);
+    expect(Object.keys(stepFields), 'the file carries exactly these two tables').toEqual(['steps', 'requiredNumeric']);
+    for (const key of REQUIRED_NUMERIC) expect(Object.values(STEP_FIELDS).flat(), `${key} belongs to a step`).toContain(key);
   });
 
   it("patch() surfaces the server's own message and code", async () => {
@@ -516,19 +571,20 @@ describe('toDashboardRow on the design\'s own fixture row', () => {
 
 // --- A-SL25 (1): the oracle's created draft is the design's own wizard, field for field ---------
 describe('the design\'s wizard draft (frontend/tests/design-wizard-draft.mjs)', () => {
-  it('changes nothing the design\'s own initial `w` holds', () => {
+  it('lays over the design\'s own initial `w` and moves nothing in it (A-SL25 (1), A-SL27 (1))', () => {
     // A16.14 chains `create → get` and A16.17's `openDraft` lays the draft's values over the
     // DESIGN's initial `w`. `wizard-step-1`, `wizard-preview` and `wizard-done` are frozen
     // screens, so the draft the oracle answers with has to leave that `w` exactly as it was —
     // otherwise the app's three captures diverge from the reference, which renders the literal.
     //
-    // Spelled as a merge rather than a bare `toEqual`: `toWizardState` emits `state`, which the
-    // design's `w` has no key for (the reviewer supplies it at the first publish, spec Q2), and
-    // does not emit `photos`, the design's own fake counter that `openDraft` keeps. So the
-    // assertion is the one that matters — applying the draft moves nothing the design declares.
+    // Spelled as the very merge `openDraft` performs (A-SL27 (1)). Until round 4 the stub carried
+    // the design's four enum defaults itself, so this pin held only because the stub was not
+    // telling the truth about a created row; it carries the nulls `create` really leaves now
+    // (`harness.test.ts` pins that null set), and it is `toWizardState` leaving a null column
+    // alone that keeps the design's `w` unmoved — which is what a real seller's first step now
+    // renders too.
     const w = new Component({}).state.w as Record<string, unknown>;
-    const applied = toWizardState(designWizardDraft('wiz-1') as unknown as Draft);
-    expect({ ...w, ...applied }).toEqual({ ...w, state: '' });
+    expect(Object.assign({}, w, toWizardState(designWizardDraft('wiz-1') as unknown as Draft))).toEqual(w);
   });
 
   it('its photograph tiles are the design\'s own three, through toWizardDraft', async () => {

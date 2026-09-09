@@ -32,7 +32,17 @@ const VENDORED: Record<string, { file: string; type: string }> = {
 // tile the basemap area is Leaflet's own #ddd rather than white, on both targets.
 export const BLANK_GIF = Buffer.from('R0lGODlhAQABAIAAAAAAAP///yH5BAEAAAAALAAAAAABAAEAAAIBRAA7', 'base64');
 
-export async function prepare(page: Page): Promise<void> {
+/**
+ * The error gate alone — every page error and every console error fails the test at its cause —
+ * and NO route of any kind.
+ *
+ * `prepare()` arms this first and then the oracle's stubs. `listing-flows.spec.ts` arms this and
+ * nothing else: the seller endpoints `prepare()` answers for the four frozen `wizard-*` captures
+ * are exactly the endpoints that spec exists to reach for real (A-SL24 (2), A-SL27 (5) — "NO stub
+ * armed"), and three fix rounds passed every gate while no wizard step could be saved because
+ * every path to the wizard went through a stub.
+ */
+export function guard(page: Page): void {
   page.on('pageerror', (e) => { throw new Error(`page error: ${e.message}`); });
   // A-S5 ruling 4: three approved states deliberately provoke a real 400 from the API, and
   // Chromium logs every 4xx subresource as a console error. `expectApiStatus` arms ONE status at
@@ -42,6 +52,10 @@ export async function prepare(page: Page): Promise<void> {
     if (consumeExpectedApiFailure(page, m.text())) return;
     throw new Error(`console.error: ${m.text()}`);
   });
+}
+
+export async function prepare(page: Page): Promise<void> {
+  guard(page);
   // ---------------------------------------------------------------------------------------
   // B2 (A-I8.2): suppress the design runtime's re-fetch of its own document, on the REFERENCE
   // ORIGIN ONLY. `support.js`'s `boot()` guards that re-fetch on `window.__resources`
@@ -170,6 +184,18 @@ export async function prepare(page: Page): Promise<void> {
       status: 200, contentType: 'application/json', body: designWizardDraftBody(WIZARD_LISTING_ID, status)
     }));
   }
+  // …and the one write the step rail makes on the app (A16.18, A-SL27 (3)): a rail row saves the
+  // step it leaves before it moves, as `PATCH …/{id}?step=N`, which the exact-URL route above does
+  // not match. Three of the captures press the rail — `wizard-step-7`, `wizard-preview` and
+  // `wizard-done` (`screens.ts`) — and each is answered with the same draft, so `wizAssets` is
+  // re-set to the three tiles it already holds and the render is the one the reference makes with
+  // no adapter at all. Against the real API a created listing's rail press is a real save.
+  const draft = draftStubUrl();
+  if (draft !== null) {
+    await page.route((url) => isDraftStepUrl(url.href, draft), (route) => route.fulfill({
+      status: 200, contentType: 'application/json', body: designWizardDraftBody(WIZARD_LISTING_ID)
+    }));
+  }
 }
 
 /** The two collection endpoints the oracle answers itself, or `[]` on a remote target
@@ -204,6 +230,14 @@ export function newListingBody(): string {
 export function draftStubUrl(env: NodeJS.ProcessEnv = process.env): string | null {
   if (env.PW_APP_URL) return null;
   return new URL(`/api/seller/listings/${WIZARD_LISTING_ID}`, appOrigin(env)).href;
+}
+
+/** Is `href` a rail press's PATCH of the oracle's draft — `…/{WIZARD_LISTING_ID}?step=N`? A16.18
+ *  saves the step a rail row leaves before it moves, and the bare draft's exact-URL route does not
+ *  match a query, so the three rail-pressing captures need this one (A-SL27 (3)). Pure, so
+ *  harness.test.ts can pin it. */
+export function isDraftStepUrl(href: string, draft: string): boolean {
+  return href.startsWith(`${draft}?step=`);
 }
 
 /** Where `wizard-done`'s Submit for review lands. The same body, at the status the endpoint

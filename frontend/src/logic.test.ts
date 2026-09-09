@@ -1659,12 +1659,15 @@ describe('logic.js — the seller adapter paths (A16, A-SL25)', () => {
 describe('logic.js — what Continue actually sends (A-SL26)', () => {
   interface Sent { url: string; method: string; body: unknown }
 
-  /** The network boundary, recording every request; `seller.test.ts`'s own stub, widened. */
-  function record(answer: unknown): Sent[] {
+  /** The network boundary, recording every request; `seller.test.ts`'s own stub, widened. The
+   *  answer may depend on the request (a create answers an id, every read the draft), and a
+   *  `status` outside 2xx makes every answer a refusal in the A5 envelope. */
+  function record(answer: unknown | ((url: string, method: string) => unknown), status = 200): Sent[] {
     const sent: Sent[] = [];
     vi.stubGlobal('fetch', (url: string, init: { method: string; body?: string }) => {
       sent.push({ url, method: init.method, body: init.body === undefined ? undefined : JSON.parse(init.body) });
-      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(answer) });
+      const body = typeof answer === 'function' ? (answer as (u: string, m: string) => unknown)(url, init.method) : answer;
+      return Promise.resolve({ ok: status < 300, status, json: () => Promise.resolve(body) });
     });
     return sent;
   }
@@ -1738,5 +1741,157 @@ describe('logic.js — what Continue actually sends (A-SL26)', () => {
     expect(sent[0].url).toBe('/api/seller/listings/a3f1?step=3');
     expect(Object.keys(sent[0].body as object).sort()).toEqual(['price', 'rev', 'revBand']);
     expect(c2.state.sellerView).toBe('dash');
+  });
+
+  // -------------------------------------------------------------------------------------------
+  // A-SL27, the round-3 re-review: the same wire, watched on the paths the three fixtures above
+  // never took — a listing the seller has JUST CREATED (every column null), a save that is not
+  // Continue, and the step rail.
+  // -------------------------------------------------------------------------------------------
+  describe('a created listing, Save and exit, and the step rail (A-SL27)', () => {
+    /** A component on the seller dashboard with the REAL adapter, and a network that answers a
+     *  create with an id and every read with a BARE draft — what `serialise_draft` really sends
+     *  for a row `create` has just inserted: every column null, the three switches at the table's
+     *  defaults. `onStep()` above seeds `w` from the design's literal; this is the one path that
+     *  seeds it from the API. */
+    async function created(): Promise<{ c2: any; sent: Sent[] }> {
+      const c2: any = new Component({ listings: makeListingsAdapter() });
+      c2.setState({ auth: true, screen: 'seller', sellerView: 'dash', myListings: [] });
+      const sent = record((url: string, method: string) => (method === 'POST' && url === '/api/seller/listings'
+        ? { id: 'new-1' }
+        : draft({ id: 'new-1', revBand: true })));
+      await c2.renderVals().startWizard();
+      return { c2, sent };
+    }
+
+    it('a listing the seller just created opens on the design\'s own four defaults, not on blanks (CRITICAL-C)', async () => {
+      const { c2 } = await created();
+      expect(c2.state.editingId).toBe('new-1');
+      expect(c2.state.step).toBe(1);
+      // The API answered null for all four; the design's literal is what the wizard shows.
+      expect(c2.state.w).toMatchObject({ type: 'Small animal', ownership: 'Sole proprietor', bldg: 'Included', facilityType: 'Standalone' });
+      expect(c2.wizardVals().fields.map((f: { value: unknown }) => f.value)).toEqual(['', 'Small animal', '', 'Sole proprietor']);
+      // …and what the API DID answer is taken as it is: the switches, in the table's own polarity.
+      expect(c2.state.w).toMatchObject({ anon: true, revBand: true, docsLocked: true });
+    });
+
+    it('the first Continue of that listing PATCHes the design\'s default enums, on step 1 and on step 5 (CRITICAL-C)', async () => {
+      const { c2, sent } = await created();
+      // The seller types what the design's own step-1 guard requires and presses Continue.
+      c2.setW('name')('ABC Animal Hospital');
+      c2.setW('est')('1998');
+      await c2.wizardVals().next();
+      const first = sent.filter((r) => r.method === 'PATCH');
+      expect(first).toHaveLength(1);
+      expect(first[0].url).toBe('/api/seller/listings/new-1?step=1');
+      expect(first[0].body, 'never "" for an enum').toEqual({ name: 'ABC Animal Hospital', type: 'Small animal', est: '1998', ownership: 'Sole proprietor' });
+      expect(c2.state.step).toBe(2);
+      expect(c2.state.wizErr).toBe('');
+
+      c2.setState({ step: 5 });
+      await c2.wizardVals().next();
+      const fifth = sent.filter((r) => r.method === 'PATCH')[1];
+      expect(fifth.url).toBe('/api/seller/listings/new-1?step=5');
+      expect(fifth.body).toEqual({ bldg: 'Included', facilityType: 'Standalone', facility: '' });
+      expect(c2.state.step).toBe(6);
+    });
+
+    it('Save and exit on step 1 with the year still blank saves without it, and leaves (MAJOR-D)', async () => {
+      const { c2, sent } = await created();
+      c2.setW('name')('ABC Animal Hospital');
+      await c2.renderVals().exitWizard();
+      const patch = sent.filter((r) => r.method === 'PATCH');
+      expect(patch).toHaveLength(1);
+      expect(patch[0].url).toBe('/api/seller/listings/new-1?step=1');
+      expect(patch[0].body, 'the blank required number is left out, not sent as ""').toEqual({ name: 'ABC Animal Hospital', type: 'Small animal', ownership: 'Sole proprietor' });
+      expect(c2.state.sellerView).toBe('dash');
+      expect(c2.state.wizErr).toBe('');
+    });
+
+    it('Save and exit on step 3 with the asking price still blank saves without it, and leaves (MAJOR-D)', async () => {
+      const { c2, sent } = await created();
+      c2.setState({ step: 3 });
+      await c2.renderVals().exitWizard();
+      const patch = sent.filter((r) => r.method === 'PATCH');
+      expect(patch[0].url).toBe('/api/seller/listings/new-1?step=3');
+      expect(patch[0].body).toEqual({ rev: '', revBand: true });
+      expect(c2.state.sellerView).toBe('dash');
+    });
+
+    it('a genuine refusal of Save and exit still keeps the seller in the wizard, with the message (A-SL23 (3))', async () => {
+      const c2 = onStep(2);
+      record({ error: { code: 'BAD_REQUEST', message: 'zip must be text.' } }, 400);
+      await c2.renderVals().exitWizard();
+      expect(c2.state.sellerView).toBe('wizard');
+      expect(c2.state.wizErr).toBe('zip must be text.');
+    });
+
+    it('the step rail saves the step it leaves before it moves (MAJOR-E, A16.18)', async () => {
+      const c2 = onStep(5);
+      c2.setW('facility')('Two surgical suites');
+      const sent = record(draft({ photos: [{ id: 'as-1', name: 'Reception' }] }));
+      await c2.wizardVals().steps[5].go();
+      expect(sent.map((r) => r.method)).toEqual(['PATCH']);
+      expect(sent[0].url).toBe('/api/seller/listings/a3f1?step=5');
+      expect(sent[0].body).toEqual({ bldg: 'Included', facilityType: 'Standalone', facility: 'Two surgical suites' });
+      expect(c2.state.step).toBe(6);
+      expect(c2.state.wizErr).toBe('');
+      expect(c2.state.wizAssets, 'the tiles come from the answer, as Continue\'s do').toEqual([{ kind: 'Photo', name: 'Reception', id: 'as-1' }]);
+    });
+
+    it('the rail saves in partial mode, so leaving a half-filled step 1 by the rail is not a refusal (MAJOR-D/E)', async () => {
+      const { c2, sent } = await created();
+      c2.setW('name')('ABC Animal Hospital');
+      await c2.wizardVals().steps[2].go();
+      const patch = sent.filter((r) => r.method === 'PATCH');
+      expect(patch[0].url).toBe('/api/seller/listings/new-1?step=1');
+      expect(patch[0].body).toEqual({ name: 'ABC Animal Hospital', type: 'Small animal', ownership: 'Sole proprietor' });
+      expect(c2.state.step).toBe(3);
+    });
+
+    it('a refused rail save keeps the seller on the step they were typing on, with the message (MAJOR-E)', async () => {
+      const c2 = onStep(4);
+      record({ error: { code: 'BAD_REQUEST', message: 'sqft is larger than this listing can hold.' } }, 422);
+      await c2.wizardVals().steps[6].go();
+      expect(c2.state.step).toBe(4);
+      expect(c2.state.wizErr).toBe('sqft is larger than this listing can hold.');
+    });
+
+    it('the rail off step 6 or step 8 re-reads and moves — no PATCH, since neither step has a field (MAJOR-E)', async () => {
+      for (const from of [6, 8]) {
+        const c2 = onStep(from);
+        const sent = record(draft());
+        await c2.wizardVals().steps[0].go();
+        expect(sent.map((r) => [r.method, r.url]), `from step ${from}`).toEqual([['GET', '/api/seller/listings/a3f1']]);
+        expect(c2.state.step, `from step ${from}`).toBe(1);
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('without an adapter the rail is the design\'s own move, and spends no request (MAJOR-E)', () => {
+      const plain: any = new Component({});
+      plain.setState({ auth: true, screen: 'seller', sellerView: 'wizard', step: 2, wizErr: 'x' });
+      const sent = record(draft());
+      plain.wizardVals().steps[6].go();
+      expect(plain.state.step).toBe(7);
+      expect(plain.state.wizErr).toBe('');
+      expect(sent).toEqual([]);
+    });
+
+    it('every field of the design\'s `w` except photos is saved by some step; the two switches step 7 repeats belong to two (INFO-J)', () => {
+      // The pin was one-directional: `photos` and `state` were asserted absent from every step,
+      // but nothing said the other nineteen keys were each PRESENT in one. A twentieth field added
+      // to `w` by a later amendment would have been silently un-saveable, every gate green.
+      const w = Object.keys(new Component({}).state.w).filter((key) => key !== 'photos');
+      const count = (key: string) => Object.values(STEP_FIELDS).filter((keys) => keys.includes(key)).length;
+      for (const key of w) expect(count(key), `${key} is saved by no step`).toBeGreaterThanOrEqual(1);
+      // `anon` and `revBand` are the design's own repeats — step 7's disclosure settings re-offer
+      // step 2's and step 3's switch — so each is saved from exactly two steps; every other key
+      // from exactly one. The ruling's "exactly one" is true of every key the design does not
+      // deliberately repeat; the two it does are pinned by name so a third cannot appear unnoticed.
+      expect(w.filter((key) => count(key) !== 1).sort()).toEqual(['anon', 'revBand']);
+      expect(count('anon')).toBe(2);
+      expect(count('revBand')).toBe(2);
+    });
   });
 });

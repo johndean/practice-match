@@ -7,6 +7,8 @@ every migration applied and `settings.database_url` pointed at it.
 """
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -1317,7 +1319,7 @@ async def test_serialise_draft_never_emits_a_presentational_field(client: Any, c
     assert {"id", "status", "city", "type", "price", "docs", "sqft", "decline_reason"} <= set(draft)
 
 
-# --- A-SL26 (1): the adapter's step→fields map and this module's are ONE table ------------------
+# --- A-SL26 (1) / A-SL27: the adapter's step→fields map and this module's are ONE table ----------
 # CRITICAL-B, round-2 re-review: `columns_for`'s whitelist is one-directional and total by ruling
 # D10 — "a mis-sent field is a 400 rather than a silent no-op, because ... a mis-sent field means
 # the adapter and this table disagree — which is a bug to see, not to absorb". Nothing made that
@@ -1327,12 +1329,16 @@ async def test_serialise_draft_never_emits_a_presentational_field(client: Any, c
 # with correct bodies), to vitest (which stubbed a pre-filtered body) and to the pixel and DOM
 # oracles (whose wizard captures move by the design's step rail, which patches nothing).
 #
-# The projection now lives in `frontend/src/listings/seller.ts`'s own `STEP_FIELDS`, in these same
-# wizard key names. These two cases are the pin, read the way `tests/test_docs.py` reads a file: one
-# compares the two tables step by step and through `columns_for`'s own mapping, the other spends a
-# real request per step with exactly the payload the adapter would send.
+# The adapter's half of the table lives in ONE data file, `frontend/src/listings/step-fields.json`,
+# which `frontend/src/listings/seller.ts` imports as `STEP_FIELDS` and `REQUIRED_NUMERIC` and this
+# module reads with `json.load` — no regex over TypeScript, so a reformatted literal cannot fail
+# the pin and a renamed constant cannot make it vacuous (round-3 re-review INFO-K, fixed at source
+# by the A-SL27 addendum). The cases below are the pin: one compares the two step tables step by
+# step and through `columns_for`'s own key→column mapping, one spends a real request per step with
+# exactly the payload the adapter would send, and one derives the partial-mode omission list from
+# this module's own numeric tables so neither side hand-types it (A-SL27 (2)).
 
-SELLER_ADAPTER = ROOT / "frontend" / "src" / "listings" / "seller.ts"
+STEP_FIELDS_JSON = ROOT / "frontend" / "src" / "listings" / "step-fields.json"
 
 #: A design-shaped value per wizard field — what `state.w` (logic.js:204) actually holds after a
 #: seller has filled the wizard in, so the payloads below are the ones the adapter really sends.
@@ -1346,19 +1352,34 @@ DESIGN_W: dict[str, Any] = {
 }
 
 
+def adapter_tables() -> dict[str, Any]:
+    """`frontend/src/listings/step-fields.json`, exactly as the adapter imports it.
+
+    Read off disk rather than duplicated here, for `tests/test_docs.py`'s own reason: a copy is a
+    third table to keep in step, and the whole point of this pin is that there are two."""
+    with STEP_FIELDS_JSON.open(encoding="utf-8") as handle:
+        tables: dict[str, Any] = json.load(handle)
+    return tables
+
+
 def adapter_step_fields() -> dict[int, list[str]]:
-    """`STEP_FIELDS` as `frontend/src/listings/seller.ts` declares it.
+    """The adapter's `STEP_FIELDS`: the data file's `steps`, keyed by the step as an integer."""
+    return {int(step): list(keys) for step, keys in adapter_tables()["steps"].items()}
 
-    Read out of the file rather than duplicated here, for `tests/test_docs.py`'s own reason: a copy
-    is a third table to keep in step, and the whole point of this pin is that there are two."""
-    import re
 
-    source = SELLER_ADAPTER.read_text(encoding="utf-8")
-    block = re.search(r"export const STEP_FIELDS[^=]*=\s*\{(.*?)\n\};", source, re.DOTALL)
-    assert block, "seller.ts no longer declares `export const STEP_FIELDS = { … };`"
-    rows = re.findall(r"^\s*(\d+):\s*\[([^\]]*)\],?\s*$", block.group(1), re.MULTILINE)
-    assert rows, f"no `<step>: [ … ]` rows found in seller.ts's STEP_FIELDS:\n{block.group(1)}"
-    return {int(step): re.findall(r"'([^']+)'", fields) for step, fields in rows}
+def design_initial_w() -> dict[str, Any]:
+    """The design's own initial `state.w` (logic.js:204) — the values a bare draft's wizard holds
+    once `toWizardState` has left every null column alone (A-SL27 (1)).
+
+    Read out of the generated `logic.js` rather than typed here: the literal is the design's, held
+    byte-for-byte by `frontend/tests/app-generated.test.ts`, so this is the one copy that cannot
+    drift from it. Every value is a JSON scalar, which is why `json.loads` can read each one."""
+    source = (ROOT / "frontend" / "src" / "logic.js").read_text(encoding="utf-8")
+    line = re.search(r"^\s*w: \{ (.*) \},\s*$", source, re.MULTILINE)
+    assert line, "logic.js no longer declares the wizard's `w: { … },` literal on one line"
+    pairs = re.findall(r'(\w+): ("[^"]*"|true|false|\d+)', line.group(1))
+    assert pairs, "the wizard's `w` literal holds no `key: value` pairs this parser knows"
+    return {key: json.loads(raw) for key, raw in pairs}
 
 
 def test_the_adapter_and_the_api_agree_on_every_step_s_fields() -> None:
@@ -1385,6 +1406,29 @@ def test_the_adapter_and_the_api_agree_on_every_step_s_fields() -> None:
     assert "state" not in every
 
 
+def test_the_adapter_omits_in_partial_mode_exactly_the_numerics_this_module_requires() -> None:
+    """A-SL27 (2), on MAJOR-D: a draft is incomplete by nature, so Save-and-exit and the step rail
+    save in a PARTIAL mode that leaves out a blank required number instead of sending `""` for it.
+    The list of those numbers is this module's — every money or integer field that is not in
+    `OPTIONAL_NUMERIC` — and the data file's `requiredNumeric` must be exactly that list, so
+    neither side hand-types it. The probes prove the list is the right one: `columns_for` refuses
+    `""` for each required number and clears the column for each optional one."""
+    from app.api.seller_listings import INT_FIELDS, MONEY_FIELDS, OPTIONAL_NUMERIC, STEP_FIELDS, Refusal, columns_for
+
+    required = sorted(set(MONEY_FIELDS + INT_FIELDS) - set(OPTIONAL_NUMERIC))
+    assert sorted(adapter_tables()["requiredNumeric"]) == required, (
+        "step-fields.json's requiredNumeric is not this module's own (MONEY_FIELDS + INT_FIELDS)"
+        " - OPTIONAL_NUMERIC; a field missing from it is a 400 on every Save-and-exit that leaves"
+        " it blank, and a field wrongly in it is a blank the seller can never clear"
+    )
+    step_of = {key: step for step, keys in STEP_FIELDS.items() for key in keys}
+    for key in required:
+        with pytest.raises(Refusal, match=f"{key} must be a number"):
+            columns_for(step_of[key], {key: ""})
+    for key in OPTIONAL_NUMERIC:
+        assert columns_for(step_of[key], {key: ""}) == {key: None}, key
+
+
 @pytest.mark.parametrize("step", [1, 2, 3, 4, 5, 7])
 async def test_every_step_accepts_exactly_what_the_adapter_sends_it(
     client: Any, conn: Any, redis: Any, member: Any, step: int
@@ -1400,3 +1444,82 @@ async def test_every_step_accepts_exactly_what_the_adapter_sends_it(
                                json={key: DESIGN_W[key] for key in keys}, headers=signed)
     assert saved.status_code == 200, saved.text
     assert saved.json()["id"] == listing_id
+
+
+# --- A-SL27 (1): a listing the seller has just created, exactly as the API answers it ------------
+# CRITICAL-C, round-3 re-review: `create` inserts four columns and no more, so a fresh row holds
+# NULL in `type`, `ownership`, `bldg` and `facility_type`; `toWizardState` turned each null into
+# `""`, `openDraft` laid that over the design's own defaults, and the first Continue of the first
+# listing was `400 type must be one of Small animal, …`. Every fixture in the tree hid it by
+# answering the created listing with the DESIGN's defaults instead of the nulls this endpoint really
+# sends. The adapter now leaves a null column alone, so the design's literal supplies the default —
+# and these pins make the fixtures tell the truth: this is the null set `frontend/tests/
+# design-wizard-draft.mjs` must carry (its own pin is in `frontend/tests/harness.test.ts`), and the
+# design's defaults are a 200 on the two enum steps.
+
+#: Every key `serialise_draft` answers `null` for on a listing `create` has just made. The four
+#: enums are among them, which is the whole of CRITICAL-C.
+BARE_DRAFT_NULLS = frozenset({
+    "name", "type", "est", "ownership", "city", "zip", "price", "rev", "docs", "rooms", "sqft",
+    "hours", "desc", "bldg", "facilityType", "facility", "state", "market", "area",
+    "decline_reason", "submitted_at",
+})
+
+
+async def test_a_bare_create_answers_null_for_exactly_these_columns(client: Any, conn: Any, member: Any) -> None:
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    draft = (await client.get(f"/api/seller/listings/{listing_id}", headers=auth_headers(cookies, headers))).json()
+
+    assert {key for key, value in draft.items() if value is None} == BARE_DRAFT_NULLS
+    assert {"type", "ownership", "bldg", "facilityType"} <= BARE_DRAFT_NULLS
+    # The rest of the payload is not null: the id, the slug `create` writes, the status, the three
+    # switches at the table's own defaults (hide by default, D11) and the three empty lists.
+    assert draft["status"] == "draft"
+    assert draft["slug"] == f"listing-{listing_id}"
+    assert (draft["anon"], draft["revBand"], draft["docsLocked"]) == (True, True, True)
+    assert (draft["assets"], draft["photos"], draft["documents"]) == ([], [], [])
+
+
+@pytest.mark.parametrize("step", [1, 5])
+async def test_the_design_s_own_defaults_are_a_200_on_both_enum_steps(
+    client: Any, conn: Any, redis: Any, member: Any, step: int
+) -> None:
+    """The first Continue of a created listing, as the adapter now builds it: the design's own
+    `state.w` projected to the step, with the two fields the design's step-1 guard makes the seller
+    type before it will advance. `type`/`ownership` and `bldg`/`facilityType` go as the design's
+    literal holds them — never as `""` — and the row comes back holding them."""
+    _, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id = await _create(client, cookies, headers)
+
+    design = design_initial_w()
+    payload = {key: design[key] for key in adapter_step_fields()[step]}
+    if step == 1:
+        payload.update(name="ABC Animal Hospital", est="1998")
+    saved = await client.patch(f"/api/seller/listings/{listing_id}?step={step}", json=payload, headers=signed)
+    assert saved.status_code == 200, saved.text
+    body = saved.json()
+    if step == 1:
+        assert (body["type"], body["ownership"], body["est"]) == (design["type"], design["ownership"], 1998)
+        assert (design["type"], design["ownership"]) == ("Small animal", "Sole proprietor")
+    else:
+        assert (body["bldg"], body["facilityType"], body["facility"]) == (design["bldg"], design["facilityType"], None)
+        assert (design["bldg"], design["facilityType"]) == ("Included", "Standalone")
+
+
+async def test_a_partial_step_one_save_without_the_year_is_a_200(client: Any, conn: Any, redis: Any, member: Any) -> None:
+    """A-SL27 (2), on MAJOR-D: the payload Save-and-exit builds on a step 1 whose year is still
+    blank — the step's fields minus the blank required number — is accepted, and the year stays
+    unset rather than refused. Until this the seller who pressed the button labelled *Save* on a
+    half-filled step was held in the wizard by `est must be a number`."""
+    _, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id = await _create(client, cookies, headers)
+
+    keys = [key for key in adapter_step_fields()[1] if key not in adapter_tables()["requiredNumeric"]]
+    assert keys == ["name", "type", "ownership"]
+    saved = await client.patch(f"/api/seller/listings/{listing_id}?step=1",
+                               json={key: DESIGN_W[key] for key in keys}, headers=signed)
+    assert saved.status_code == 200, saved.text
+    assert (saved.json()["name"], saved.json()["est"]) == ("ABC Animal Hospital", None)
