@@ -1531,7 +1531,7 @@ def test_the_seed_plan_records_a_l11_and_deploy_md_says_every_image_renders():
 # pattern -> why it is retired. Regexes, because the same fact is spelled several ways
 # ("117 of 190", "117 of the 190").
 RETIRED_TEXT = {
-    r"migrations/024": "the photo-captions migration was renumbered 024 -> 090 (A-L12): 017-059 is the Census plan's range",
+    r"migrations/024_listing_photo_captions": "the photo-captions migration was renumbered 024 -> 090 (A-L12): 017-059 is the Census plan's range — the bare number 024 stays free for the Census plan (re-review 2)",
     r"117 of (?:the )?190": "the A-L10 arithmetic (A-L12, m4): the folders hold 195 and A-L10 rendered 73",
 }
 # This file has to spell the strings it forbids, so it cannot check itself.
