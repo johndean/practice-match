@@ -83,7 +83,7 @@ _SELECT = """
 SELECT id, slug, name, street, city, state, zip, phone, hours, status, location_disclosed,
        name_disclosed, ST_Y(geom::geometry) AS lat, ST_X(geom::geometry) AS lng,
        area, type, market, price, rev, docs, rooms, sqft, bldg, est, listed_at,
-       note, staff, services, facility, ownership, photos
+       note, staff, services, facility, ownership, photos, photo_captions
   FROM listing
 """
 
@@ -135,8 +135,18 @@ def decode_cursor(raw: str) -> tuple[datetime, UUID]:
     return datetime.fromisoformat(at), UUID(listing_id)
 
 
-def photo_list(value: object) -> list[str]:
-    """`listing.photos` as a list of relative paths.
+def photo_list(value: object) -> list[str | None]:
+    """`listing.photos` — or its parallel `listing.photo_captions` (A-L11) — as a list of strings,
+    `None` where the slot is empty (A-L10) or the photograph has no description of its own.
+
+    The list is POSITIONAL: position `n` of both columns is one photograph, and the first six are
+    the design's photo slots. The seeder stores a `null` for a slot the hospital's folder was too
+    thin to fill. The null is carried, never dropped — compacting either list would slide every
+    later photograph up one slot and put it under a caption describing something else, and would
+    slide the two lists out of step with each other.
+
+    One helper for both columns because they are the same shape and the same rule; the caller
+    names which one it is reading.
 
     psycopg2 decodes a `jsonb` column to a Python list, so the string arm is unreachable from a
     request — but `serialise` is also called directly (by tests, and by Wave 2b's admin views,
@@ -144,20 +154,26 @@ def photo_list(value: object) -> list[str]:
     tested arms, rather than the same defensive ternary written twice (pre-flight C2)."""
     if isinstance(value, str):
         loaded = json.loads(value)
-        return [str(item) for item in loaded]
+        return [None if item is None else str(item) for item in loaded]
     if isinstance(value, list):
-        return [str(item) for item in value]
+        return [None if item is None else str(item) for item in value]
     return []   # a NULL `photos` (nothing writes one: the column is NOT NULL DEFAULT '[]')
 
 
-def photo_file(photos: list[str], n: int) -> Path | None:
+def photo_file(photos: list[str | None], n: int) -> Path | None:
     """The file behind photo `n` (1-based) of `photos`, or None. The path comes from the
     database, so it is resolved under PHOTOS_ROOT and anything that escapes is refused —
-    a `photos` value of `["../../../etc/passwd"]` must be a 404, not a file read."""
+    a `photos` value of `["../../../etc/passwd"]` must be a 404, not a file read.
+
+    An EMPTY slot (A-L10) is None here for the same reason an out-of-range `n` is: there is no
+    photograph to serve, so the route answers 404 and the design renders its placeholder."""
     if not 1 <= n <= len(photos):
         return None
+    relative = photos[n - 1]
+    if relative is None:
+        return None
     root = PHOTOS_ROOT.resolve()
-    candidate = (root / photos[n - 1]).resolve()
+    candidate = (root / relative).resolve()
     if not candidate.is_relative_to(root) or not candidate.is_file():
         return None
     return candidate
@@ -204,7 +220,18 @@ def serialise(row: Mapping[str, Any], now: datetime) -> dict[str, Any]:
         "lat": float(row["lat"]) if disclosed and row["lat"] is not None else None,
         "lng": float(row["lng"]) if disclosed and row["lng"] is not None else None,
         "location_disclosed": disclosed,
-        "photos": [f"/api/listings/{listing_id}/photos/{n}" for n in range(1, len(photos) + 1)],
+        # Positional (A-L10): position `n` is the design's photo slot `n`, and an empty slot is a
+        # JSON `null` rather than a URL that would 404 — `photoSet`'s `p.photos[i]` then falls to
+        # the design's own placeholder for that slot instead of a broken image.
+        "photos": [
+            None if path is None else f"/api/listings/{listing_id}/photos/{n}"
+            for n, path in enumerate(photos, start=1)
+        ],
+        # A-L11: one description per photograph, PARALLEL to `photos` — position `n` describes
+        # position `n`. The design's `photoSet` reads it as `p.photoCaptions[i]` and falls back to
+        # its own fixed slot caption where the entry is null (amendment A15), which is what lets a
+        # photograph past the sixth be rendered at all: the design has no seventh caption.
+        "photo_captions": photo_list(row["photo_captions"]),
     }
 
 
@@ -321,7 +348,7 @@ def _published(conn: Any, listing_id: str) -> dict[str, Any] | None:
     return rows[0] if rows else None
 
 
-def _published_photos(conn: Any, listing_id: str) -> list[str] | None:
+def _published_photos(conn: Any, listing_id: str) -> list[str | None] | None:
     """The `photos` of one published listing, or None when there is no such listing.
 
     One column, not `_SELECT`'s thirty-one and its two PostGIS accessors (review round 2, M6): the

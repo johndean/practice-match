@@ -102,6 +102,16 @@ Expected `verify-deploy.sh` output on QA (app mode): `healthz OK  version X.Y.Z 
 
 ## Migrations
 
+**Numbering is reserved by plan, and a new file must take a free range.** `001`–`002` are the
+original platform migrations · `010`–`015` Sub-project 2 (identity) · `016` the Seed Listings plan
+· **`017`–`059` the Census plan's Sub-project 3 Phase A** and **`060`+ its Phase B** (that plan's
+D14) · `080`–`089` the map engines · **`090`–`099` platform and hotfix migrations on `main`**
+(A-L12, 2026-09-09 — `090_listing_photo_captions.sql` is the first). `003`–`009` are unassigned and
+may only be taken by a platform migration that depends on nothing later.
+`scripts/migrate.py` applies files in FILENAME order, so a file may only be numbered above
+everything it depends on; the test suite applies the whole ladder into a fresh database on every
+run, which is where a mis-numbered dependency fails.
+
 **An applied migration is immutable.** From `f3b7d41` the ledger records each file's SHA-256 alongside its name, and a file whose bytes have changed since it was applied stops the container before uvicorn with exit 4 (`[migrate] <file> changed after it was applied — drop and recreate the database or restore the file`) — so amend a numbered file in place only while no persistent database has yet run it, which today means only files added after `b9d01ad`: QA and production predate Wave 2a and neither is affected. Enforcement begins with the files applied from `f3b7d41` onward and is not retroactive: ledger rows written before it carry no checksum and are not checked, so `001_init.sql` and `002_interest_signup.sql` — already applied on QA and production — stay unchecked and must simply be left alone.
 
 ## Identity operations (Wave 2a)
@@ -171,16 +181,45 @@ never on production without John's go — against `ENVIRONMENT=production` the s
 unless the operator says it out loud with `--production`, exactly as `scripts/bootstrap_admin.py`
 does; with the flag, the run's first line of output names the environment it is writing to.
 
-**The photographs (A-L9, 2026-09-09).** Each hospital carries **six**, one for every photo slot the
-design's detail page renders — `photoSet(p)` in `Practice Match V3.dc.html` gives an exterior plus
-five subjects chosen by practice type, and nothing beyond six can be displayed. They are selected
-from John's curated source folders by what the filename says the photograph shows, so the design's
-fixed caption is true of the picture under it; `scripts/prepare_photos.py` writes
-`seeds/hospitals/photos/<slug>/1.webp … 6.webp` and the `index.json` beside them, and both are
-committed to the repository and baked into the image. The seeder uploads no bytes — it records the
-relative paths, and the `api` service serves the files off disk at `/api/listings/{id}/photos/{n}`.
-Re-run `poetry run python scripts/prepare_photos.py` only when the source folders change; it needs
-Pillow (a dev dependency) and is never part of a deploy.
+**The photographs (A-L9, revised by A-L10, and by A-L11 on 2026-09-09).** **Every photograph John
+supplies is rendered — 195 of them today, 8 to 18 per hospital.** Positions **1-6** are the six
+captioned slots the design's detail page renders (`photoSet(p)` in `Practice Match V3.dc.html`: an
+exterior plus five subjects chosen by practice type); everything after them is an extra tile,
+appended to the same grid by amendment A15 and counted by the docked panel's carousel. The caption
+under one of the design's six is the DESIGN's own, fixed per slot, so the photograph at that
+position has to show that subject — but a photograph now also carries its OWN description, and
+that wins where there is one.
+
+**Where a description comes from.** Today it is the **supplier's own filename** —
+`06_interior_reception_lobby.png` becomes "Interior — reception lobby" — recorded per photograph in
+`index.json` by `scripts/prepare_photos.py`, stored in `listing.photo_captions` (migrations/090) by
+the seeder, and served beside `photos` by the API. Wave 2b's sellers write their own, in the same
+column. A photograph with none falls back to the design's fixed slot caption, and past the sixth
+slot — where the design has no caption to lend — to "Photo N".
+
+**`seeds/hospitals/photos/curation.json` is the source of truth for which photograph fills which
+slot.** It was written by looking at every source image, because John's filenames do not reliably
+describe their contents (one folder's `06_interior_reception.png` is a photograph of an exterior
+sign) and several files are sliced fragments of a collage sheet. For every slug it names it is
+authoritative for the slots it fills; a slot whose value is `null` has no truthful photograph in
+that folder, and since A-L11 one of the folder's other images fills it rather than the slot
+standing empty. A slot **stays empty** — where the design renders its own placeholder — only when a
+folder holds fewer images than the design has slots, which no seeded hospital does today.
+
+`scripts/prepare_photos.py` writes `seeds/hospitals/photos/<slug>/<k>.webp` — **the number is the
+position**, so positions 1-6 are the design's slots (`p.photos[i]` still fills slot `i`) and 7, 8, …
+are the photographs beyond them — plus the `index.json` beside them, which carries one entry per
+position with its `source`, its `caption` and the `slot` it fills (`null` past the sixth). Both
+files and the curation are committed to the repository and baked into the image. The seeder uploads
+no bytes — it records the relative paths positionally, with a JSON `null` for an empty slot, and the
+`api` service serves the files off disk at `/api/listings/{id}/photos/{n}` (an empty slot is a 404
+there, and the API sends `null` rather than a URL for it, so nothing requests it). Re-run
+`poetry run python scripts/prepare_photos.py` only when the source folders or the curation change;
+it needs Pillow (a dev dependency), prints `N files, M empty slots, K beyond the design's six
+slots`, and is never part of a deploy.
+A curation entry that names a hospital the seed file does not, lists slots that are not the
+practice type's list in order, names a file the folder does not hold, or uses one file for two
+slots stops the run with exit 2 before anything is written.
 
 **How it is actually run (A-L7 (3)):** locally, against the QA PostGIS service's public URL, with
 `ENVIRONMENT=qa` and that URL handed to the process in its environment and never printed (the

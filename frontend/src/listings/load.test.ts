@@ -90,6 +90,31 @@ describe('toPractice', () => {
   it('adds `photos` only when there is at least one', () => {
     expect('photos' in toPractice(row())).toBe(false);
     expect(toPractice(row({ photos: ['/api/listings/x/photos/1'] })).photos).toEqual(['/api/listings/x/photos/1']);
+    // A-L10: an empty slot arrives as `null` and stays AT ITS POSITION — compacting it here would
+    // caption every later photograph with the subject of the slot before it.
+    expect(toPractice(row({ photos: ['/api/listings/x/photos/1', null, '/api/listings/x/photos/3'] })).photos)
+      .toEqual(['/api/listings/x/photos/1', null, '/api/listings/x/photos/3']);
+  });
+
+  // A-L11: a photograph carries its OWN description, and the design's fixed slot caption is the
+  // fallback (amendment A15). Added only when the API actually sent one, exactly as `name` and
+  // `photos` are — the D6 design-fixture stub sends an empty list, so no fixture practice gains
+  // the key and no approved state moves.
+  it('adds `photoCaptions` only when the API sends at least one', () => {
+    expect('photoCaptions' in toPractice(row())).toBe(false);
+    expect('photoCaptions' in toPractice(row({ photo_captions: [] }))).toBe(false);
+    const described = toPractice(row({
+      photos: ['/api/listings/x/photos/1', '/api/listings/x/photos/2'],
+      photo_captions: ['Exterior — front entrance', null]
+    }));
+    expect(described.photoCaptions).toEqual(['Exterior — front entrance', null]);
+    // Positional, like `photos` and for the same reason: position `n` describes position `n`.
+    expect(described.photoCaptions).toHaveLength(described.photos!.length);
+  });
+
+  it('tolerates a row from a server that predates photo_captions', () => {
+    const { photo_captions: _dropped, ...older } = row({ photo_captions: ['x'] });
+    expect('photoCaptions' in toPractice(older as ApiListing)).toBe(false);
   });
 
   it('carries a withheld location through as null rather than inventing a point', () => {

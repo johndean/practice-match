@@ -15,7 +15,9 @@
 // the design's own titles and move every card and detail screen. `null` is the value that means
 // "the design has no name for this practice", and it is the only value that keeps the gates
 // comparing like with like. `photos: []` is the same statement about the photo slots — and there
-// it IS exactly what the server sends for a listing with no photographs.
+// it IS exactly what the server sends for a listing with no photographs. `photo_captions: []`
+// says the same about the descriptions amendment A15 reads (A-L11): the design's fixtures have
+// no words of their own, so every caption they render is the design's own fixed slot caption.
 import { P } from '../src/logic.js';
 
 /**
@@ -66,7 +68,8 @@ export function toApiShape(p, i) {
     lat: p.lat ?? null,
     lng: p.lng ?? null,
     location_disclosed: true,
-    photos: []
+    photos: [],
+    photo_captions: []
   };
 }
 
