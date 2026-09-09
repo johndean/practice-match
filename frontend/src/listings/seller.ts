@@ -43,8 +43,13 @@ export interface ApiDocument extends ApiAsset { url: string }
 
 /** A photograph tile, in `listing.photos`' own order: the seller's caption (A-SL20), the seed
  *  inventory's caption for a seeded photograph, or `''` where the photograph has never been
- *  described — the design's own slot name by position is what fills that in (amendment A16.4). */
-export interface ApiPhoto { id: string; name: string }
+ *  described — the design's own slot name by position is what fills that in (amendment A16.4).
+ *
+ *  `source` is SL7b's discriminator (A-SL25 (10)): `id` alone cannot tell an ASSET (a uuid,
+ *  `PATCH .../assets/{id}`) from a SEED entry (a `<slug>/<file>` path, the new POSITIONAL route)
+ *  without parsing it, so the API states which — and, for a seed entry, its `position` (1-based,
+ *  the route's own `{n}`), which the click handler needs and the id does not carry. */
+export interface ApiPhoto { id: string; name: string; source: 'seed' | 'asset'; position?: number }
 
 /** The OWNER's own truth, exactly as `app/api/seller_listings.py::serialise_draft` sends it: the
  *  keys are the wizard's (`state.w` in logic.js:204), not the columns'. */
@@ -113,8 +118,13 @@ export interface DashboardRow {
  */
 export interface DesignRow { id: string; status: string; title: string; meta: string; note: string }
 
-/** One step-6 tile: the badge the design draws and the name under it. */
-export interface WizardAsset { kind: string; name: string; id: string }
+/** One step-6 tile: the badge the design draws and the name under it, plus — for a photograph
+ *  (SL7b, A-SL25 (10)) — what the click-to-caption handler needs to route the click: `source`
+ *  names which of the two caption routes describes it, and `position` is the positional route's
+ *  own `{n}` for a seed entry (absent for an asset, which routes by `id` alone). A document tile
+ *  carries neither: it has no caption route of its own (`caption_asset`'s own `kind = 'photo'`
+ *  guard), and the click handler never fires for one (A16.21's own guard, `u.kind !== 'Photo'`). */
+export interface WizardAsset { kind: string; name: string; id: string; source?: 'seed' | 'asset'; position?: number }
 
 /** What Continue, Edit and every save hand back to the design's script. */
 export interface WizardDraft { w: Record<string, string | boolean>; assets: WizardAsset[] }
@@ -291,7 +301,7 @@ function toWizardDraft(d: Draft): WizardDraft {
     // Photographs first, in `listing.photos`' order, then the documents: the design's own literal
     // list is ordered the same way, and A16.4's name fallback counts photo tiles by position.
     assets: [
-      ...d.photos.map((p) => ({ kind: 'Photo', name: p.name, id: p.id })),
+      ...d.photos.map((p) => ({ kind: 'Photo', name: p.name, id: p.id, source: p.source, position: p.position })),
       ...d.documents.map((doc) => ({ kind: badge(doc.name), name: doc.name, id: doc.id }))
     ]
   };
@@ -342,13 +352,21 @@ export interface ListingsAdapter {
   upload(id: string, file: File): Promise<ApiAsset>;
   document(id: string, file: File, kind?: string): Promise<ApiAsset>;
   caption(id: string, assetId: string, text: string): Promise<WizardDraft>;
+  /**
+   * Overloaded rather than two names (SL7b, A-SL25 (10)): the ZERO-ARG form is the browser's own
+   * prompt (unchanged from SL7's `attach()`), and the THREE-ARG form is the positional caption
+   * write for a SEED photograph — a path in `listing.photos`, not an asset id, so `caption()` has
+   * nothing to match one against. The step-6 tile's click handler chains them exactly as "Add
+   * files" chains ask-then-write (A16.5): `describe(id, position, describe())`.
+   */
+  describe(): string;
+  describe(id: string, position: number, text: string): Promise<WizardDraft>;
   attach(id: string): Promise<WizardDraft | null>;
   remove(id: string, assetId: string): Promise<void>;
   reorder(id: string, ids: string[]): Promise<WizardDraft>;
   submit(id: string): Promise<WizardDraft>;
   setStatus(id: string, action: StatusAction): Promise<WizardDraft>;
   pick(): Promise<File | null>;
-  describe(): string;
 }
 
 const ACTIONS: StatusAction[] = ['pause', 'republish', 'withdraw'];
@@ -362,6 +380,25 @@ const DOCUMENT_TYPES = ['application/pdf', 'text/csv',
 /** Everything "Add files" may hand back: the three photograph types the API re-encodes, then the
  *  three document types it stores as they are. */
 const ACCEPT = ['image/jpeg', 'image/png', 'image/webp', ...DOCUMENT_TYPES].join(',');
+
+/**
+ * The two jobs `ListingsAdapter#describe` names, as ONE function (SL7b, A-SL25 (10)) rather than
+ * two, so the click-to-caption handler can chain them exactly as "Add files" chains ask-then-write
+ * (A16.5): `describe(id, position, describe())`.
+ *
+ * ZERO args: "have the user articulate what it is" (A-SL20), through the browser's own prompt, for
+ * the same reason `pick()` uses the browser's own file dialog — unchanged from SL7's upload flow.
+ *
+ * THREE args: the positional caption write for a SEED photograph — `listing.photos[position]` is
+ * a path, not an asset id, so `caption()` has nothing to match it against. Same shape as `caption`:
+ * `PATCH .../photos/{position}`, `{ caption: text }`, the refreshed draft back.
+ */
+function describe(): string;
+function describe(id: string, position: number, text: string): Promise<WizardDraft>;
+function describe(id?: string, position?: number, text?: string): string | Promise<WizardDraft> {
+  if (id === undefined) return window.prompt('What does this photograph show?')?.trim() ?? '';
+  return json<Draft>('PATCH', `/listings/${id}/photos/${position}`, { caption: text }).then(toWizardDraft);
+}
 
 export function makeListingsAdapter(): ListingsAdapter {
   const adapter: ListingsAdapter = {
@@ -452,13 +489,7 @@ export function makeListingsAdapter(): ListingsAdapter {
       input.addEventListener('cancel', () => resolve(null));
       input.click();
     }),
-    /**
-     * "have the user articulate what it is" — John's ruling, A-SL20 — asked through the browser's
-     * own prompt for the same reason `pick()` uses the browser's own file dialog: the approved
-     * step 6 has no caption field and the design is not invented against. An empty answer leaves
-     * the photograph undescribed, and the design's own slot name by position is what it reads as.
-     */
-    describe: () => window.prompt('What does this photograph show?')?.trim() ?? '',
+    describe,
     /**
      * The whole of "Add files": choose a file, put it where its type belongs, and hand back the
      * draft the tiles are drawn from. ONE promise, so ONE rejection handler covers all four steps

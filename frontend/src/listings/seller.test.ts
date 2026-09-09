@@ -204,14 +204,14 @@ describe('the adapter', () => {
   it('get() hands the wizard its state and its tiles', async () => {
     stubFetch({ status: 200, body: draft({
       id: 'a3f1', city: 'Bastrop',
-      photos: [{ id: 'p1', name: 'Front door in the morning' }, { id: 'p2', name: '' }],
+      photos: [{ id: 'p1', name: 'Front door in the morning', source: 'asset' }, { id: 'p2', name: '', source: 'asset' }],
       documents: [{ id: 'd1', kind: 'other', name: 'Floor plan.pdf', content_type: 'application/pdf', byte_size: 10, url: '/x' }]
     }) });
     expect(await api().get('a3f1')).toEqual({
       w: expect.objectContaining({ city: 'Bastrop' }),
       assets: [
-        { kind: 'Photo', name: 'Front door in the morning', id: 'p1' },
-        { kind: 'Photo', name: '', id: 'p2' },
+        { kind: 'Photo', name: 'Front door in the morning', id: 'p1', source: 'asset' },
+        { kind: 'Photo', name: '', id: 'p2', source: 'asset' },
         { kind: 'PDF', name: 'Floor plan.pdf', id: 'd1' }
       ]
     });
@@ -265,10 +265,10 @@ describe('the adapter', () => {
     // outright — "step must be one of 1, 2, 3, 4, 5, 7" — whatever the body. Step 6's assets are
     // already saved, one upload at a time, so there is nothing to write: the draft is re-READ, so
     // the caller still gets the tiles it renders, and no PATCH is issued (A-SL26 (1)).
-    const calls = stubFetch({ status: 200, body: draft({ photos: [{ id: 'as-1', name: 'Reception' }] }) });
+    const calls = stubFetch({ status: 200, body: draft({ photos: [{ id: 'as-1', name: 'Reception', source: 'asset' }] }) });
     const answer = await api().patch('a3f1', 6, { name: 'x' });
     expect(calls.map((c) => [c.init.method, c.url])).toEqual([['GET', '/api/seller/listings/a3f1']]);
-    expect(answer.assets).toEqual([{ kind: 'Photo', name: 'Reception', id: 'as-1' }]);
+    expect(answer.assets).toEqual([{ kind: 'Photo', name: 'Reception', id: 'as-1', source: 'asset' }]);
   });
 
   it('patch() in partial mode leaves out a blank required number, and in full mode sends it (A-SL27 (2))', async () => {
@@ -423,6 +423,27 @@ describe('the adapter', () => {
     expect(api().describe()).toBe('');
   });
 
+  // SL7b, A-SL25 (10): describe(id, position, text) is the OTHER overload — the positional write
+  // for a SEED photograph, which has no asset id for caption() to match. Same shape as caption().
+  it('describe(id, position, text) writes the positional caption and hands back the refreshed draft', async () => {
+    const calls = stubFetch({ status: 200, body: draft({
+      photos: [{ id: 'abc_animal_hospital/1.webp', name: 'The lobby, freshly painted', source: 'seed', position: 1 }]
+    }) });
+    const answer = await api().describe('a3f1', 1, 'The lobby, freshly painted');
+    expect(calls[0].url).toBe('/api/seller/listings/a3f1/photos/1');
+    expect(calls[0].init.method).toBe('PATCH');
+    expect(calls[0].init.headers['X-CSRF-Token']).toBe('tok');
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ caption: 'The lobby, freshly painted' });
+    expect(answer.assets).toEqual([
+      { kind: 'Photo', name: 'The lobby, freshly painted', id: 'abc_animal_hospital/1.webp', source: 'seed', position: 1 }
+    ]);
+  });
+
+  it('describe(id, position, text) surfaces the server\'s own refusal (the asset-backed / out-of-range cases)', async () => {
+    stubFetch({ status: 409, body: { error: { code: 'STATE', message: 'That photograph is its own asset now; describe it through its own caption.' } } });
+    await expect(api().describe('a3f1', 1, 'x')).rejects.toThrow('That photograph is its own asset now; describe it through its own caption.');
+  });
+
   it('is a ListingError with the code every time, so a caller can branch on it', () => {
     expect(new ListingError('STATE', 'no').code).toBe('STATE');
     expect(new ListingError('STATE', 'no').name).toBe('ListingError');
@@ -490,12 +511,12 @@ describe('the adapter', () => {
   it('attach() uploads a photograph, asks what it shows and hands back the refreshed draft', async () => {
     const calls = stubFetch(
       { status: 201, body: { id: 'as-1', kind: 'photo', name: 'x.jpg', content_type: 'image/webp', byte_size: 9 } },
-      { status: 200, body: draft({ photos: [{ id: 'as-1', name: 'Reception, looking in' }] }) }
+      { status: 200, body: draft({ photos: [{ id: 'as-1', name: 'Reception, looking in', source: 'asset' }] }) }
     );
     pickReturns(new File([new Uint8Array([1])], 'x.jpg', { type: 'image/jpeg' }));
     vi.stubGlobal('prompt', vi.fn().mockReturnValue('Reception, looking in'));
     const answer = await api().attach('a3f1');
-    expect(answer?.assets).toEqual([{ kind: 'Photo', name: 'Reception, looking in', id: 'as-1' }]);
+    expect(answer?.assets).toEqual([{ kind: 'Photo', name: 'Reception, looking in', id: 'as-1', source: 'asset' }]);
     expect(calls.map((c) => c.url)).toEqual([
       '/api/seller/listings/a3f1/photos', '/api/seller/listings/a3f1/assets/as-1'
     ]);

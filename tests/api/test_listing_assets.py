@@ -218,7 +218,7 @@ async def test_a_caption_is_the_sellers_own_words_for_one_photograph(
     response = await client.patch(f"/api/seller/listings/{listing_id}/assets/{asset_id}",
                                   json={"caption": "  Reception, looking in  "}, headers=signed)
     assert response.status_code == 200, response.text
-    assert response.json()["photos"] == [{"id": asset_id, "name": "Reception, looking in"}]
+    assert response.json()["photos"] == [{"id": asset_id, "name": "Reception, looking in", "source": "asset"}]
     assert [a["caption"] for a in response.json()["assets"]] == ["Reception, looking in"]
 
 
@@ -234,7 +234,7 @@ async def test_an_undescribed_photograph_is_named_by_nothing_at_all(
     asset_id = (await _upload_photo(client, listing_id, signed, filename="DSC_0431.jpg")).json()["id"]
 
     read = await client.get(f"/api/seller/listings/{listing_id}", headers=signed)
-    assert read.json()["photos"] == [{"id": asset_id, "name": ""}]
+    assert read.json()["photos"] == [{"id": asset_id, "name": "", "source": "asset"}]
 
 
 async def test_a_blank_caption_clears_the_one_that_was_there(
@@ -253,7 +253,7 @@ async def test_a_blank_caption_clears_the_one_that_was_there(
         response = await client.patch(f"/api/seller/listings/{listing_id}/assets/{asset_id}",
                                       json={"caption": blank}, headers=signed)
         assert response.status_code == 200, response.text
-        assert response.json()["photos"] == [{"id": asset_id, "name": ""}]
+        assert response.json()["photos"] == [{"id": asset_id, "name": "", "source": "asset"}]
 
 
 async def test_a_caption_is_refused_when_it_is_not_text_and_when_the_asset_is_not_this_listings(
@@ -931,8 +931,8 @@ async def test_the_draft_read_carries_its_photographs_in_order_and_its_documents
                                json={"ids": [second, first]}, headers=signed)).status_code == 200
 
     body = (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()
-    assert body["photos"] == [{"id": second, "name": "Reception, looking in"},
-                              {"id": first, "name": ""}]
+    assert body["photos"] == [{"id": second, "name": "Reception, looking in", "source": "asset"},
+                              {"id": first, "name": "", "source": "asset"}]
     assert body["documents"] == [{"id": document, "kind": "other", "name": "accounts.pdf",
                                   "content_type": "application/pdf", "byte_size": len(PDF),
                                   "caption": None,
@@ -956,13 +956,13 @@ async def test_a_seed_listings_tiles_are_named_by_the_seed_caption(client: Any, 
     # The committed inventory's own captions, curated slot by slot against the photographs
     # themselves (A-L10, merged from `main`).
     assert body["photos"] == [
-        {"id": "abc_animal_hospital/1.webp", "name": "Exterior — front"},
-        {"id": "abc_animal_hospital/2.webp", "name": "Interior — reception"},
-        {"id": "abc_animal_hospital/3.webp", "name": "Interior — exam room 1"},
+        {"id": "abc_animal_hospital/1.webp", "name": "Exterior — front", "source": "seed", "position": 1},
+        {"id": "abc_animal_hospital/2.webp", "name": "Interior — reception", "source": "seed", "position": 2},
+        {"id": "abc_animal_hospital/3.webp", "name": "Interior — exam room 1", "source": "seed", "position": 3},
         # An entry the inventory does not name is named by NOTHING (A-SL22 (2)): a file name is
         # not a description, and the design's own slot caption at that position is what the
         # wizard renders in its place (amendment A16.4).
-        {"id": "abc_animal_hospital/nope.webp", "name": ""},
+        {"id": "abc_animal_hospital/nope.webp", "name": "", "source": "seed", "position": 4},
     ]
     assert body["documents"] == []
 
@@ -985,8 +985,8 @@ async def test_a_seed_slot_the_curation_left_empty_is_no_tile_at_all(
 
     body = (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()
     assert body["photos"] == [
-        {"id": "abc_animal_hospital/1.webp", "name": "Exterior — front"},
-        {"id": "abc_animal_hospital/3.webp", "name": "Interior — exam room 1"},
+        {"id": "abc_animal_hospital/1.webp", "name": "Exterior — front", "source": "seed", "position": 1},
+        {"id": "abc_animal_hospital/3.webp", "name": "Interior — exam room 1", "source": "seed", "position": 3},
     ]
 
     moved = await client.patch(f"/api/seller/listings/{listing_id}/photos",

@@ -1207,19 +1207,29 @@ async def test_an_edit_to_a_paused_listing_leaves_the_browse_cache_alone(
 
 _SEED_INSERT = """
 INSERT INTO listing (slug, name, street, city, state, zip, hours, status, location_disclosed,
-                     name_disclosed, area, type, market, est, price, source, seller_id)
+                     name_disclosed, area, type, market, est, price, source, seller_id,
+                     photos, photo_captions)
 VALUES (%(slug)s, 'Demo Hospital', '1 Main St', 'Austin', 'TX', '78701', '24/7', %(status)s,
-        true, true, 'Austin', 'Small animal', 'Austin, TX', 1998, 1450000, 'seed', %(seller)s)
+        true, true, 'Austin', 'Small animal', 'Austin, TX', 1998, 1450000, 'seed', %(seller)s,
+        %(photos)s::jsonb, %(photo_captions)s::jsonb)
 RETURNING id
 """
 
 
-def _seed_listing(conn: Any, seller_id: Any, status: str = "published") -> str:
+def _seed_listing(conn: Any, seller_id: Any, status: str = "published",
+                  photos: list[str | None] | None = None,
+                  photo_captions: list[str | None] | None = None) -> str:
     """One of the eighteen as `scripts/seed_listings.py` writes them and as D25 now owns them:
     `source='seed'` with a real `seller_id`. The same row shape as
-    `tests/api/test_listing_assets.py::_SEED_INSERT`, with the owner and the status as arguments."""
+    `tests/api/test_listing_assets.py::_SEED_INSERT`, with the owner and the status as arguments,
+    plus the two positional arrays SL7b's click-to-caption route reads and writes (A-SL25 (10)):
+    `photos` (the seeder's own paths) and `photo_captions` (the seeder's own inventory captions,
+    A-L11) — both empty unless a test names its own, so every existing caller is unaffected."""
     with conn.cursor() as cur:
-        cur.execute(_SEED_INSERT, {"slug": f"seed-{uuid4().hex[:8]}", "status": status, "seller": seller_id})
+        cur.execute(_SEED_INSERT, {
+            "slug": f"seed-{uuid4().hex[:8]}", "status": status, "seller": seller_id,
+            "photos": json.dumps(photos or []), "photo_captions": json.dumps(photo_captions or []),
+        })
         return str(cur.fetchone()[0])
 
 
@@ -1289,6 +1299,201 @@ async def test_claiming_is_idempotent_and_never_reaches_another_sellers_row(
         assert response.status_code == 200, response.text
     assert _source(conn, mine) == "seller"
     assert _source(conn, theirs) == "seed", "another seller's seeded listing is untouched"
+
+
+# --- A-SL25 (10) / SL7b: click-to-caption for an EXISTING photograph, seeded ones included --------
+# `PATCH /api/seller/listings/{id}/photos/{n}` — POSITIONAL, `n` 1-based (the buyer's own
+# `GET .../photos/{n}` and `photo_file`'s convention) — writes `listing.photo_captions[n]` for a
+# SEED entry (a path in `listing.photos`, not an asset id): the caption route by asset id has
+# nothing to match one against, so until this a seeded photograph could never be re-described. A
+# seed entry and an asset entry are told apart by the VALUE ITSELF, `app/api/listings.py::
+# get_listing_photo`'s own rule ("a seed entry always contains a '/'... told apart by the value
+# itself rather than by a second query") — an asset id is a bare uuid and never contains one.
+
+async def test_a_seed_photograph_shows_the_inventorys_caption_until_the_seller_describes_it(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """The wizard tile's default is the seed inventory's own caption.
+    `abc_animal_hospital/1.webp` is the committed index's own fixture entry (`test_listing_assets.py
+    ::test_the_seed_captions_are_read_from_the_committed_index`), captioned "Exterior — front"."""
+    account_id, cookies, headers = _seller(member)
+    listing_id = _seed_listing(conn, account_id, photos=["abc_animal_hospital/1.webp"])
+    read = await client.get(f"/api/seller/listings/{listing_id}", headers=auth_headers(cookies, headers))
+    assert read.json()["photos"] == [
+        {"id": "abc_animal_hospital/1.webp", "name": "Exterior — front", "source": "seed", "position": 1}
+    ]
+
+
+async def test_the_listings_own_caption_wins_over_the_seed_inventory(client: Any, conn: Any, member: Any) -> None:
+    """A-SL25 (10)'s pre-flight fact, the RED this fixes: `photo_tiles()` named a seed photograph
+    from the seed INVENTORY alone, never from the listing's own `photo_captions` column — so a
+    positional write would reach Browse (`serialise` reads that column) but never the wizard tile.
+    The listing's own words win, exactly as an uploaded asset's own caption already does."""
+    account_id, cookies, headers = _seller(member)
+    listing_id = _seed_listing(conn, account_id, photos=["abc_animal_hospital/1.webp"],
+                               photo_captions=["The reception desk at sunrise"])
+    read = await client.get(f"/api/seller/listings/{listing_id}", headers=auth_headers(cookies, headers))
+    assert read.json()["photos"] == [
+        {"id": "abc_animal_hospital/1.webp", "name": "The reception desk at sunrise", "source": "seed", "position": 1}
+    ]
+
+
+async def test_an_empty_seed_slot_carries_no_tile_and_does_not_shift_position(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """A-L10's empty slot (a JSON `null`) is still no tile; the photograph after it keeps ITS OWN
+    position, 2, not 1 — the wizard tile's position must match `photo_captions`' own index."""
+    account_id, cookies, headers = _seller(member)
+    listing_id = _seed_listing(conn, account_id, photos=[None, "abc_animal_hospital/1.webp"])
+    read = await client.get(f"/api/seller/listings/{listing_id}", headers=auth_headers(cookies, headers))
+    assert read.json()["photos"] == [
+        {"id": "abc_animal_hospital/1.webp", "name": "Exterior — front", "source": "seed", "position": 2}
+    ]
+
+
+async def test_the_owner_can_describe_a_seeded_photograph_positionally(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    account_id, cookies, headers = _seller(member)
+    listing_id = _seed_listing(conn, account_id, photos=["abc_animal_hospital/1.webp"])
+    signed = auth_headers(cookies, headers)
+    response = await client.patch(f"/api/seller/listings/{listing_id}/photos/1",
+                                  json={"caption": "  The lobby, freshly painted  "}, headers=signed)
+    assert response.status_code == 200, response.text
+    assert response.json()["photos"] == [
+        {"id": "abc_animal_hospital/1.webp", "name": "The lobby, freshly painted", "source": "seed", "position": 1}
+    ]
+    with conn.cursor() as cur:
+        cur.execute("SELECT photo_captions FROM listing WHERE id=%s", (listing_id,))
+        assert cur.fetchone()[0] == ["The lobby, freshly painted"]
+
+
+async def test_describing_pads_photo_captions_to_the_length_of_photos(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """A-SL25 (7)'s one-caption-per-photograph contract, on the WRITE side: describing the SECOND
+    of two photographs when the column has never been written pads the first with "" rather than
+    shifting the new caption onto the wrong photograph."""
+    account_id, cookies, headers = _seller(member)
+    listing_id = _seed_listing(conn, account_id, photos=["a/1.webp", "a/2.webp"])
+    signed = auth_headers(cookies, headers)
+    response = await client.patch(f"/api/seller/listings/{listing_id}/photos/2",
+                                  json={"caption": "The exam room"}, headers=signed)
+    assert response.status_code == 200, response.text
+    with conn.cursor() as cur:
+        cur.execute("SELECT photo_captions FROM listing WHERE id=%s", (listing_id,))
+        assert cur.fetchone()[0] == ["", "The exam room"]
+
+
+async def test_a_blank_caption_clears_a_seed_photographs_own_description(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """Blank and null are one intent (A-SL18, Info), exactly as `PATCH .../assets/{id}` already
+    treats them: the seller is taking the description back, and the tile returns to the seed
+    inventory's own caption."""
+    account_id, cookies, headers = _seller(member)
+    listing_id = _seed_listing(conn, account_id, photos=["abc_animal_hospital/1.webp"],
+                               photo_captions=["Something the seller wrote"])
+    signed = auth_headers(cookies, headers)
+    for blank in ("", None):
+        response = await client.patch(f"/api/seller/listings/{listing_id}/photos/1",
+                                      json={"caption": blank}, headers=signed)
+        assert response.status_code == 200, response.text
+        assert response.json()["photos"][0]["name"] == "Exterior — front"
+
+
+async def test_the_positional_route_refuses_a_position_out_of_range(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    account_id, cookies, headers = _seller(member)
+    listing_id = _seed_listing(conn, account_id, photos=["a/1.webp"])
+    signed = auth_headers(cookies, headers)
+    for n in (0, 2, 99):
+        response = await client.patch(f"/api/seller/listings/{listing_id}/photos/{n}",
+                                      json={"caption": "x"}, headers=signed)
+        assert response.status_code == 404, (n, response.text)
+        assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+async def test_the_positional_route_refuses_an_empty_slot(client: Any, conn: Any, redis: Any, member: Any) -> None:
+    account_id, cookies, headers = _seller(member)
+    listing_id = _seed_listing(conn, account_id, photos=[None, "a/2.webp"])
+    signed = auth_headers(cookies, headers)
+    response = await client.patch(f"/api/seller/listings/{listing_id}/photos/1",
+                                  json={"caption": "x"}, headers=signed)
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+async def test_the_positional_route_refuses_an_asset_backed_entry(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """A photograph the seller has already uploaded has its own caption route, `PATCH
+    .../assets/{id}`; the positional one is for a seed PATH and refuses an asset id — told apart by
+    the value itself (D15's own rule, `app/api/listings.py::get_listing_photo`), never by a second
+    query. 409, not 404: the photograph at that position is real, just not this route's to name."""
+    account_id, cookies, headers = _seller(member)
+    listing_id = _seed_listing(conn, account_id, photos=["11111111-1111-1111-1111-111111111111"])
+    signed = auth_headers(cookies, headers)
+    response = await client.patch(f"/api/seller/listings/{listing_id}/photos/1",
+                                  json={"caption": "x"}, headers=signed)
+    assert response.status_code == 409, response.text
+    assert response.json()["error"]["code"] == "STATE"
+
+
+async def test_a_non_owner_gets_404_on_the_positional_caption_route(client: Any, conn: Any, member: Any) -> None:
+    """D7: 404, never 403."""
+    account_id, _cookies, _headers = _seller(member)
+    listing_id = _seed_listing(conn, account_id, photos=["a/1.webp"])
+    _, thief_cookies, thief_headers = member(roles=("buyer", "seller"), email="sl-sl7b-thief@example.org")
+    response = await client.patch(f"/api/seller/listings/{listing_id}/photos/1", json={"caption": "x"},
+                                  headers=auth_headers(thief_cookies, thief_headers))
+    assert response.status_code == 404
+    assert response.json()["error"]["code"] == "NOT_FOUND"
+
+
+async def test_the_positional_route_claims_a_seeded_listing(client: Any, conn: Any, redis: Any, member: Any) -> None:
+    """A-SL21: the first seller write of any kind claims the row."""
+    account_id, cookies, headers = _seller(member)
+    listing_id = _seed_listing(conn, account_id, photos=["a/1.webp"])
+    assert _source(conn, listing_id) == "seed"
+    response = await client.patch(f"/api/seller/listings/{listing_id}/photos/1", json={"caption": "x"},
+                                  headers=auth_headers(cookies, headers))
+    assert response.status_code == 200, response.text
+    assert _source(conn, listing_id) == "seller"
+
+
+async def test_the_positional_route_takes_a_published_listing_off_market_and_drops_the_cache(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """D3/D16: describing a photograph is an EDIT, exactly as the asset caption route is (A-SL15
+    (1)); a published listing re-enters review and the Browse cache is dropped."""
+    account_id, cookies, headers = _seller(member)
+    listing_id = _seed_listing(conn, account_id, status="published", photos=["a/1.webp"])
+    redis.set("listings:v1:::50", b'{"items": []}')
+    response = await client.patch(f"/api/seller/listings/{listing_id}/photos/1", json={"caption": "x"},
+                                  headers=auth_headers(cookies, headers))
+    assert response.status_code == 200, response.text
+    assert response.json()["status"] == "in_review"
+    assert redis.get("listings:v1:::50") is None
+
+
+async def test_a_withdrawn_listings_photograph_may_not_be_described(client: Any, conn: Any, member: Any) -> None:
+    account_id, cookies, headers = _seller(member)
+    listing_id = _seed_listing(conn, account_id, status="withdrawn", photos=["a/1.webp"])
+    response = await client.patch(f"/api/seller/listings/{listing_id}/photos/1", json={"caption": "x"},
+                                  headers=auth_headers(cookies, headers))
+    assert response.status_code == 409
+    assert response.json()["error"]["code"] == "STATE"
+
+
+async def test_the_positional_caption_is_refused_when_it_is_not_text(client: Any, conn: Any, member: Any) -> None:
+    account_id, cookies, headers = _seller(member)
+    listing_id = _seed_listing(conn, account_id, photos=["a/1.webp"])
+    response = await client.patch(f"/api/seller/listings/{listing_id}/photos/1", json={"caption": 123},
+                                  headers=auth_headers(cookies, headers))
+    assert response.status_code == 400
+    assert response.json()["error"]["message"] == "caption must be text."
 
 
 async def test_serialise_draft_never_emits_a_presentational_field(client: Any, conn: Any, member: Any) -> None:

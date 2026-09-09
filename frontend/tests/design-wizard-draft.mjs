@@ -75,7 +75,7 @@ export function designWizardDraft(listingId, status = 'draft') {
     state: null, market: null, area: null,
     decline_reason: null, submitted_at: null, updated_at: '2026-09-09T00:00:00+00:00',
     assets,
-    photos: assets.filter((a) => a.kind === 'photo').map((a) => ({ id: a.id, name: a.name })),
+    photos: assets.filter((a) => a.kind === 'photo').map((a) => ({ id: a.id, name: a.name, source: 'asset' })),
     documents: assets.filter((a) => a.kind !== 'photo')
       .map((a) => ({ ...a, url: `/api/seller/listings/${listingId}/documents/${a.id}` }))
   };

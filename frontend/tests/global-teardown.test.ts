@@ -42,10 +42,13 @@ describe('global teardown (S7 fix round 1)', () => {
     expect(calls).toEqual([]);
   });
 
-  it('runs the seed exactly once after a remote run', () => {
+  it('runs the reseed exactly once after a remote run — both scripts, SL7b\'s hospitals included', () => {
     const calls: { file: string; args: readonly string[] }[] = [];
     expect(teardownReseed(REMOTE, (file, args) => { calls.push({ file, args }); })).toBe(true);
-    expect(calls).toEqual([{ file: 'poetry', args: ['run', 'python', 'scripts/seed_persona.py'] }]);
+    expect(calls).toEqual([
+      { file: 'poetry', args: ['run', 'python', 'scripts/seed_persona.py'] },
+      { file: 'poetry', args: ['run', 'python', 'scripts/seed_listings.py'] }
+    ]);
   });
 
   it('reports a failed reseed rather than swallowing it', () => {

@@ -45,10 +45,12 @@ describe('resolveTargets', () => {
     // uvicorn exactly as the bare command did — so `listing-flows.spec.ts`'s photograph reaches a
     // real upload route locally and in CI instead of `503 STORAGE_UNAVAILABLE`. It refuses to
     // start anywhere but `ENVIRONMENT=test` (`tests/e2e/test_api_under_test.py` pins that).
-    it('resets the local rate limits and seeds the persona before it serves, from the repository root', () => {
+    // SL7b (A-SL25 (10)): `seed_listings.py` joins the chain, so the click-to-caption flow spec's
+    // seeded photograph exists before any test runs rather than being a test's own side effect.
+    it('resets the local rate limits, seeds the persona and the demo hospitals before it serves, from the repository root', () => {
       const w = api()!;
       expect(w.command).toBe(
-        'poetry run python scripts/migrate.py && poetry run python scripts/reset_rate_limits.py && poetry run python scripts/seed_persona.py && poetry run python -m tests.e2e.api_under_test --port 8017'
+        'poetry run python scripts/migrate.py && poetry run python scripts/reset_rate_limits.py && poetry run python scripts/seed_persona.py && poetry run python scripts/seed_listings.py && poetry run python -m tests.e2e.api_under_test --port 8017'
       );
       expect(w.cwd).toBe('../..');
       expect(w.url).toBe('http://localhost:8017/api/healthz');

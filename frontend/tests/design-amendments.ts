@@ -1783,6 +1783,50 @@ const A16_20b: Amendment = {
   count: 1
 };
 
+/** A16.21 — the step-6 tile re-describes an EXISTING photograph, seeded ones included, by
+ *  clicking it (A-SL25 (10): "click-to-caption for EXISTING photographs is its own task, SL7b").
+ *
+ *  SL7's `describe()` on upload wired the browser's own prompt to a NEW photograph; the tile
+ *  itself had no handler at all, so all 195 seeded photographs — and every asset a seller had
+ *  already uploaded — could be captioned once, on the way in, and never again. Each `uploads`
+ *  entry gains `describe`, PHOTOGRAPHS ONLY (`a.kind !== "Photo"` is `null`) and only where there
+ *  is a listing to save it to (`!s.editingId` is `null` too — the design's own fixture path, with
+ *  no adapter, never reaches this branch at all and is untouched).
+ *
+ *  ONE chained promise, ONE rejection arm into `wizErr` (A-SL23 (4)'s `attach` shape), routed by
+ *  the tile's own discriminator (A-SL25 (10)'s pre-flight fact) rather than by parsing the id:
+ *  `caption(editingId, a.id, text)` for an ASSET, the positional route `describe(editingId,
+ *  a.position, text)` for a SEED entry — the SAME adapter method the ask itself is, overloaded
+ *  (`ListingsAdapter#describe`), because the tile's click chains ask-then-write exactly as "Add
+ *  files" already does (A16.5): `describe(id, position, describe())`. The tiles refresh from the
+ *  returned draft, exactly as `attach()`'s success arm does.
+ *
+ *  Pixel-safe: A16.22 is the ONLY markup change (one `onClick`, `cursor: pointer`, a `title`, none
+ *  of which any approved capture's pixels can see), and no approved capture clicks a tile. */
+const A16_21: Amendment = {
+  id: 'A16.21', ...SL,
+  find: '      ? (s.wizAssets || []).map((a, i) => ({ kind: a.kind, name: a.name || (slots[i] ? slots[i].caption : "Photo " + (i + 1)) }))',
+  replace: '      ? (s.wizAssets || []).map((a, i) => ({ kind: a.kind, name: a.name || (slots[i] ? slots[i].caption : "Photo " + (i + 1)), describe: a.kind !== "Photo" || !s.editingId ? null : () => (a.source === "asset" ? this.props.listings.caption(s.editingId, a.id, this.props.listings.describe()) : this.props.listings.describe(s.editingId, a.position, this.props.listings.describe())).then((d) => this.setState({ wizAssets: d.assets, wizErr: "" }), (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })) }))',
+  count: 1
+};
+
+/** A16.22 — the step-6 tile's own markup, so A16.21's handler has something to click (A-SL25 (10)).
+ *
+ *  One template attribute (`onClick="{{ u.describe }}"`, the design's own way of wiring an
+ *  already-bound handler — `wiz.addPhoto`'s own convention): `u.describe` is `null` for a document
+ *  tile or when there is nothing to save to, and Vue attaches no listener for a falsy `onClick`,
+ *  so the guard lives in the SCRIPT (A16.21) and the template stays a one-line, unconditional
+ *  addition to the tile's existing `<div style="width: 92px;">` — one occurrence in the pristine
+ *  file. `cursor: pointer` and a static `title` are cosmetic only (invisible to a screenshot and
+ *  to the DOM oracle's own walk, which does not compare `title` or computed style) and cost the
+ *  pixel budget nothing. */
+const A16_22: Amendment = {
+  id: 'A16.22', ...SL,
+  find: '                            <div style="width: 92px;">',
+  replace: '                            <div style="width: 92px; cursor: pointer;" title="Change what this photograph shows" onClick="{{ u.describe }}">',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -1790,5 +1834,5 @@ export function amendments(): Amendment[] {
     A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5, A12_6, A12_7, A12_8, A12_9, A12_10, A12_11,
     A15_1, A15_2, A15_3a, A15_3b, A15_3c, A15_3d,
     A16_1, A16_2, A16_3, A16_4, A16_5, A16_6, A16_7, A16_8, A16_9, A16_10, A16_11a, A16_11b, A16_12, A16_13, A16_14, A16_15, A16_16, A16_17, A16_18, A16_19,
-    A16_20a, A16_20b];
+    A16_20a, A16_20b, A16_21, A16_22];
 }

@@ -51,7 +51,9 @@ const onStep = (page: Page, step: number) => expect(page.getByText(BLURB[step]))
 
 /** `GET /api/seller/listings/{id}`, read from the page's own session — the row as the API serves
  *  it, not as the wizard renders it. */
-async function draftOf(page: Page, id: string): Promise<Record<string, unknown> & { photos: { id: string; name: string }[]; assets: unknown[] }> {
+async function draftOf(page: Page, id: string): Promise<Record<string, unknown> & {
+  photos: { id: string; name: string; source: 'seed' | 'asset'; position?: number }[]; assets: unknown[];
+}> {
   return page.evaluate((listingId) => fetch(`/api/seller/listings/${listingId}`, { credentials: 'same-origin' }).then((r) => r.json()), id);
 }
 
@@ -313,5 +315,75 @@ test.describe('the seller listing lifecycle against the real API (A-SL27 (5))', 
     await rail(page, 8).click();
     await expect(page.getByText('Preview — this is what an approved buyer sees')).toBeVisible();
     await expect(previewValue(page, 'Photos attached')).toHaveText('1');
+  });
+
+  // -------------------------------------------------------------------------------------
+  // Click-to-caption for an EXISTING photograph — A-SL25 (10) / Task SL7b. All 195 seeded
+  // photographs carry only their SEED inventory caption until a seller clicks the tile and
+  // re-describes it; `caption()` (the asset route) has no uuid to match a seed path against, so
+  // this exercises the NEW positional route, `PATCH /api/seller/listings/{id}/photos/{n}`.
+  //
+  // The eighteen demo hospitals are a GLOBAL guarantee, not this test's own side effect —
+  // `scripts/seed_listings.py` joins `targets.ts`'s LOCAL `api` web server chain and
+  // `global-setup.ts::reseedRemoteFixtures`'s REMOTE one, right beside `seed_persona.py`, so the
+  // seller persona (`SEED_OWNER_EMAIL`, the same `seller@practice-match.test` `signInAs` signs in
+  // as) owns every hospital before any test runs, on EITHER target — no skip, the same "runs for
+  // real everywhere" rule the photograph test's own probe-based skip is the sole exception to.
+  //
+  // `abc_animal_hospital` is identified by its own SLUG (`serialise_draft` answers it verbatim),
+  // never by city or type alone, and chosen deliberately among the eighteen: its `ownership`
+  // ("Sole proprietor") is one of the wizard's own four enum values — most of the eighteen carry
+  // a real-world variant ("Sole proprietor (S-corp)", "Four-doctor LLC", …) that `columns_for`'s
+  // strict `_one_of` refuses outright, and the step rail this test presses PATCHes step 1's whole
+  // `w` (A16.18) to leave it — a pre-existing data/validation gap outside SL7b's scope, recorded
+  // for the controller rather than routed around silently.
+  //
+  // The seeder is idempotent but a re-caption is not undone by re-seeding a CLAIMED row (A-SL21:
+  // `WHERE listing.source = 'seed'` leaves an edited row alone), so a second run of this suite
+  // finds the SAME row already carrying a PREVIOUS run's caption — nothing here asserts what the
+  // caption WAS, only what this run's own write leaves it as, and the tile is found by its
+  // POSITION in the DOM (the first of step 6's tiles), never by caption text.
+  // -------------------------------------------------------------------------------------
+  test('a seller re-describes a seeded photograph by clicking its tile', async ({ page }) => {
+    guard(page);
+    await signInAs(page, 'seller', '/seller');
+
+    const mine = await page.evaluate(() =>
+      fetch('/api/seller/listings?limit=200', { credentials: 'same-origin' }).then((r) => r.json())) as
+      { items: { id: string; slug: string | null }[] };
+    const seeded = mine.items.find((item) => item.slug === 'abc_animal_hospital');
+    if (!seeded) throw new Error('scripts/seed_listings.py did not seed abc_animal_hospital for the seller persona');
+    const id = seeded.id;
+
+    const before = await draftOf(page, id);
+    expect(before.photos[0], 'position 1 is abc_animal_hospital\'s own first photograph — a SEED entry, all eighteen filled')
+      .toMatchObject({ source: 'seed', position: 1 });
+
+    // The dashboard's own card for this listing — found by its title and price together, since
+    // the id is not in the DOM to select by.
+    const card = page.locator('div[style*="var(--shadow-sm)"]')
+      .filter({ hasText: 'Small animal practice — Houston' }).filter({ hasText: '$465K' });
+    await card.getByRole('button', { name: 'Edit', exact: true }).click();
+    await onStep(page, 1);
+
+    await saved(page, id, 1, () => rail(page, 6).click());
+    await onStep(page, 6);
+
+    // The FIRST tile — position 1 — by its place in the DOM, not by its (possibly already
+    // rewritten, by an earlier run of this very test) caption.
+    const tile = page.locator('div[style*="width: 92px"]').first();
+    const NEW_CAPTION = 'Freshly repainted entrance, photographed this spring';
+    page.once('dialog', (dialog) => { void dialog.accept(NEW_CAPTION); });
+    const described = page.waitForResponse((r) =>
+      r.url().endsWith(`/api/seller/listings/${id}/photos/1`) && r.request().method() === 'PATCH');
+    await tile.click();
+    const describedResponse = await described;
+    expect(describedResponse.status(), `the positional caption PATCH: ${await describedResponse.text()}`).toBe(200);
+    await expect(page.getByText(NEW_CAPTION, { exact: true })).toBeVisible();
+
+    const after = await draftOf(page, id);
+    expect(after.photos[0]).toMatchObject({ name: NEW_CAPTION, source: 'seed', position: 1 });
+    // The claim (A-SL21): the row is the seller's own, source flipped, the moment they touch it.
+    expect(after.status, 're-describing a photograph is an edit and re-enters review').toBe('in_review');
   });
 });

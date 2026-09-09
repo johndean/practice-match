@@ -147,7 +147,7 @@ SUBMITTABLE_EXEMPT = ("draft", "withdrawn")
 _COLUMNS = """id, slug, name, city, zip, state, area, market, type, est, ownership, price, rev,
               docs, rooms, sqft, hours, services, bldg, facility_type, facility, status,
               location_disclosed, name_disclosed, rev_disclosed, documents_disclosed,
-              photos, seller_id, submitted_at, created_at, updated_at,
+              photos, photo_captions, seller_id, submitted_at, created_at, updated_at,
               (SELECT a.reason FROM audit_log a
                 WHERE a.target_type = 'listing' AND a.target_id = listing.id::text
                   AND a.after ->> 'status' = 'declined'
@@ -298,25 +298,44 @@ def seed_captions() -> dict[str, str]:
         return {}
 
 
-def photo_tiles(row: dict[str, Any], assets: list[dict[str, Any]]) -> list[dict[str, str]]:
+def photo_tiles(row: dict[str, Any], assets: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Step 6's tiles in `listing.photos`' own order, named by what the photograph SHOWS.
 
     Order comes from `listing.photos` and from nowhere else (D15 reason 3), which is why this is a
     projection of that array rather than a second sort of `assets`.
 
-    The NAME is the seller's own caption (A-SL20: "have the user articulate what it is"), or the
-    seed inventory's caption for a seeded photograph, and otherwise EMPTY — never the filename
-    D26 originally asked for (A-SL22 (2)). `DSC_0431.jpg` says nothing about what a buyer is
-    looking at, and the design already has a truthful name for a photograph nobody has described:
-    its own slot caption at that position, which the wizard fills in (amendment A16.4)."""
+    The NAME is the seller's own caption (A-SL20: "have the user articulate what it is"). For an
+    ASSET entry that is `listing_asset.caption`; for a SEED entry (SL7b, A-SL25 (10)) it is the
+    listing's OWN `photo_captions[n]` FIRST — a seller's positional re-caption, `PATCH
+    .../photos/{n}`, writes exactly that column, and it must be what the very next read shows — and
+    only then the seed inventory's caption, and otherwise EMPTY. Never the filename D26 originally
+    asked for (A-SL22 (2)): `DSC_0431.jpg` says nothing about what a buyer is looking at, and the
+    design already has a truthful name for a photograph nobody has described, its own slot caption
+    at that position, which the wizard fills in (amendment A16.4).
+
+    An ASSET and a SEED entry are told apart by the VALUE ITSELF — an asset id is a bare uuid and a
+    seed entry is always a `<slug>/<file>` path — `app/api/listings.py::get_listing_photo`'s own
+    rule, not a second query. The DISCRIMINATOR (`source`, plus `position` for a seed entry) is on
+    the TILE, not on `serialise_draft`'s own top-level keys (A-SL25 (4)'s pin is scoped there),
+    so the frontend can route a click without parsing an id: `PATCH .../assets/{id}` for `"asset"`,
+    the positional route by `position` for `"seed"`."""
     captions = {asset["id"]: asset["caption"] for asset in assets if asset["kind"] == "photo"}
+    own = photo_list(row["photo_captions"])
     seeded = seed_captions()
+    tiles: list[dict[str, Any]] = []
     # A null entry is a seed slot the curation left EMPTY (A-L10, merged from `main`): there is no
-    # photograph there, so there is no tile for it. Only a seed row can hold one — a seller's own
-    # `listing.photos` is asset ids and nothing else — and every seed photograph that IS there
-    # carries the inventory's caption, so the design's by-position fallback never sees the gap.
-    return [{"id": entry, "name": captions.get(entry) or seeded.get(entry) or ""}
-            for entry in photo_list(row["photos"]) if entry is not None]
+    # photograph there, so there is no tile for it — but its POSITION is still spent, so the
+    # photograph after it keeps the position `photo_captions` itself indexes it by.
+    for position, entry in enumerate(photo_list(row["photos"]), start=1):
+        if entry is None:
+            continue
+        if "/" not in entry:
+            tiles.append({"id": entry, "name": captions.get(entry) or "", "source": "asset"})
+        else:
+            stored = own[position - 1] if position - 1 < len(own) else None
+            tiles.append({"id": entry, "name": stored or seeded.get(entry) or "",
+                          "source": "seed", "position": position})
+    return tiles
 
 
 def serialise_draft(row: dict[str, Any], assets: list[dict[str, Any]]) -> dict[str, Any]:
@@ -977,6 +996,62 @@ async def caption_asset(listing_id: str, asset_id: str, request: Request, princi
                     raise Refusal("NOT_FOUND", "No such asset.", 404)
                 cur.execute("UPDATE listing SET updated_at = now() WHERE id = %s AND seller_id = %s",
                             (row["id"], principal.account_id))
+            claim_from_seed(conn, row, principal)
+            on_market = take_off_market(conn, row, principal, request)
+            payload = serialise_draft(locked_row(conn, listing_id, principal), assets_of(conn, row["id"]))
+    except Refusal as exc:
+        return _refused(exc)
+    if on_market:
+        drop_list_cache(sync_redis())
+    return JSONResponse(payload)
+
+
+@router.patch("/listings/{listing_id}/photos/{n}")
+async def caption_seed_photo(listing_id: str, n: int, request: Request, principal: Owner) -> Response:
+    """`caption_asset`'s twin for a SEED photograph (SL7b, A-SL25 (10)): "have the user articulate
+    what it is", for the 195 seeded photographs a seller cannot reach by asset id because they are
+    not asset rows at all — `listing.photos` holds a PATH for one, written by `scripts/
+    seed_listings.py` from `seeds/hospitals/photos/index.json`, and `PATCH .../assets/{id}` has no
+    uuid to match it against.
+
+    POSITIONAL, 1-based — the buyer's own `GET .../photos/{n}` and `photo_file`'s convention — and
+    writes `listing.photo_captions[n]`, PADDED to `len(photos)` with `""` when it is shorter
+    (A-SL25 (7)'s one-caption-per-photograph contract): a caption at a position the column does not
+    yet reach must not slide onto the photograph beside it once the column catches up.
+
+    `n` out of range, or naming an EMPTY slot (A-L10's `null`), is `404 NOT_FOUND` — there is no
+    photograph there to describe, the same fact `caption_asset` states for an asset id that names
+    no row. An entry that is an ASSET, not a seed path, is `409 STATE`: the photograph is real, this
+    is simply the wrong route for it — told apart by the value itself, never a second query
+    (`app/api/listings.py::get_listing_photo`'s own rule: an asset id never contains a "/").
+
+    Blank and null are one intent, exactly as `caption_asset` treats them: the seller is taking the
+    description back, and the tile returns to the seed inventory's own caption (`photo_tiles`'s own
+    fallback chain). An edit either way is an EDIT (A-SL15 (1)), claims the listing (A-SL21) and
+    re-enters review a published or paused row, in the same transaction as `caption_asset`'s."""
+    hit(sync_redis(), "listing:patch", str(principal.account_id), *LISTING_PATCH)
+    try:
+        body = await _json_body(request)
+        caption = _text("caption", body.get("caption"))
+        with closing(sync_conn()) as conn, conn:
+            row = locked_row(conn, listing_id, principal)
+            _writable(row)
+            photos = photo_list(row["photos"])
+            if not 1 <= n <= len(photos):
+                raise Refusal("NOT_FOUND", "No such photograph.", 404)
+            entry = photos[n - 1]
+            if entry is None:
+                raise Refusal("NOT_FOUND", "No such photograph.", 404)
+            if "/" not in entry:
+                raise Refusal("STATE", "That photograph is its own asset now; describe it through"
+                              " its own caption.", 409)
+            stored = photo_list(row["photo_captions"])
+            padded = ([*stored, *[""] * (len(photos) - len(stored))])[:len(photos)]
+            padded[n - 1] = caption or ""
+            with conn.cursor() as cur:
+                cur.execute("UPDATE listing SET photo_captions = %s::jsonb, updated_at = now()"
+                            " WHERE id = %s AND seller_id = %s",
+                            (json.dumps(padded), row["id"], principal.account_id))
             claim_from_seed(conn, row, principal)
             on_market = take_off_market(conn, row, principal, request)
             payload = serialise_draft(locked_row(conn, listing_id, principal), assets_of(conn, row["id"]))

@@ -113,8 +113,17 @@ export function resolveTargets(env: NodeJS.ProcessEnv, ports: { app: number; ref
   // `listing-flows.spec.ts` reaches a real upload route here and in CI. It refuses to start
   // anywhere but `ENVIRONMENT=test` (`tests/e2e/test_api_under_test.py` pins that, and the other
   // two refusals), for the same reason `reset_rate_limits.py` does.
+  //
+  // SL7b (A-SL25 (10)): `seed_listings.py` joins the chain, the same reason `seed_persona.py` is
+  // here — the click-to-caption flow spec re-describes one of the eighteen SEEDED photographs, and
+  // that data must exist before any test runs rather than be a test's own side effect. It defaults
+  // to owning every hospital by `seller@practice-match.test` (`SEED_OWNER_EMAIL`), the very persona
+  // `seed_persona.py` just created, and is idempotent (`ON CONFLICT (slug) DO UPDATE ... WHERE
+  // listing.source = 'seed'`), so a second run of this chain changes nothing a seller has since
+  // edited. `prepare()` stubs `/api/listings` for every pixel and smoke spec (`harness.ts`), so
+  // eighteen real rows in the database change no approved capture's pixels.
   const api: WebServerSpec = {
-    command: `poetry run python scripts/migrate.py && poetry run python scripts/reset_rate_limits.py && poetry run python scripts/seed_persona.py && poetry run python -m tests.e2e.api_under_test --port ${ports.api}`,
+    command: `poetry run python scripts/migrate.py && poetry run python scripts/reset_rate_limits.py && poetry run python scripts/seed_persona.py && poetry run python scripts/seed_listings.py && poetry run python -m tests.e2e.api_under_test --port ${ports.api}`,
     url: `http://localhost:${ports.api}/api/healthz`,
     cwd: '../..',
     timeout: 90_000,

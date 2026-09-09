@@ -2082,4 +2082,70 @@ describe('logic.js — what Continue actually sends (A-SL26)', () => {
       expect(plain.state.auth).toBe(false);
     });
   });
+
+  // ---------------------------------------------------------------------------------------
+  // A-SL25 (10) / SL7b: the step-6 tile re-describes an EXISTING photograph, seeded ones
+  // included, by clicking it — the design's own `prompt`-based describe flow SL7 wired for
+  // upload, now wired to the tile too. ONE chained promise, one rejection arm into `wizErr`
+  // (A-SL23 (4)'s `attach` shape), routed by the tile's own `source`: `caption()` for an asset,
+  // the positional route for a seed entry. Photographs only; a document tile has no handler.
+  // ---------------------------------------------------------------------------------------
+  describe('the step-6 tile re-describes an existing photograph on click (A-SL25 (10), A16.21/A16.22)', () => {
+    it('an asset-backed tile\'s describe writes through caption(), and refreshes the tiles (A16.21)', async () => {
+      const c2 = onStep(6);
+      c2.setState({ wizAssets: [{ kind: 'Photo', name: 'Reception', id: 'as-1', source: 'asset' }] });
+      const sent = record(draft({ photos: [{ id: 'as-1', name: 'The lobby', source: 'asset' }] }));
+      vi.stubGlobal('prompt', vi.fn().mockReturnValue('The lobby'));
+      await c2.wizardVals().uploads[0].describe();
+      expect(sent.map((r) => [r.method, r.url])).toEqual([['PATCH', '/api/seller/listings/a3f1/assets/as-1']]);
+      expect(sent[0].body).toEqual({ caption: 'The lobby' });
+      expect(c2.state.wizAssets).toEqual([{ kind: 'Photo', id: 'as-1', name: 'The lobby', source: 'asset' }]);
+      expect(c2.state.wizErr).toBe('');
+      vi.unstubAllGlobals();
+    });
+
+    it('a seed-backed tile\'s describe writes through the positional route, by its own position (A16.21)', async () => {
+      const c2 = onStep(6);
+      c2.setState({ wizAssets: [{ kind: 'Photo', name: 'Exterior — front', id: 'a/3.webp', source: 'seed', position: 3 }] });
+      const sent = record(draft({ photos: [{ id: 'a/3.webp', name: 'The exam room', source: 'seed', position: 3 }] }));
+      vi.stubGlobal('prompt', vi.fn().mockReturnValue('The exam room'));
+      await c2.wizardVals().uploads[0].describe();
+      expect(sent.map((r) => [r.method, r.url])).toEqual([['PATCH', '/api/seller/listings/a3f1/photos/3']]);
+      expect(sent[0].body).toEqual({ caption: 'The exam room' });
+      expect(c2.state.wizAssets).toEqual([{ kind: 'Photo', id: 'a/3.webp', name: 'The exam room', source: 'seed', position: 3 }]);
+      vi.unstubAllGlobals();
+    });
+
+    it('a refused re-caption sets wizErr and leaves the tiles as they were (A16.21)', async () => {
+      const c2 = onStep(6);
+      c2.setState({ wizAssets: [{ kind: 'Photo', name: 'Reception', id: 'as-1', source: 'asset' }] });
+      record({ error: { code: 'BAD_REQUEST', message: 'caption is too long.' } }, 400);
+      vi.stubGlobal('prompt', vi.fn().mockReturnValue('x'));
+      await c2.wizardVals().uploads[0].describe();
+      expect(c2.state.wizErr).toBe('caption is too long.');
+      expect(c2.state.wizAssets).toEqual([{ kind: 'Photo', name: 'Reception', id: 'as-1', source: 'asset' }]);
+      vi.unstubAllGlobals();
+    });
+
+    it('a document tile has no describe handler (photographs only, A16.21)', () => {
+      const c2 = onStep(6);
+      c2.setState({ wizAssets: [{ kind: 'PDF', name: 'Floor plan.pdf', id: 'd1' }] });
+      expect(c2.wizardVals().uploads[0].describe).toBeNull();
+    });
+
+    it('a tile has no describe handler when there is no listing to save it to (A16.21)', () => {
+      const c2: any = new Component({ listings: makeListingsAdapter() });
+      c2.setState({
+        auth: true, screen: 'seller', sellerView: 'wizard', step: 6, editingId: null,
+        wizAssets: [{ kind: 'Photo', name: 'x', id: 'as-1', source: 'asset' }]
+      });
+      expect(c2.wizardVals().uploads[0].describe).toBeNull();
+    });
+
+    it('without an adapter the design\'s own fixture tiles carry no describe handler (A16.21)', () => {
+      const plain: any = new Component({});
+      plain.setState({ auth: true, screen: 'seller', sellerView: 'wizard', step: 6 });
+      expect(plain.wizardVals().uploads[0].describe).toBeUndefined();
+    });
+  });
 });

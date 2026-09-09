@@ -1271,7 +1271,7 @@
                         </div>
                         <div style="display: flex; gap: 9px; margin-top: 14px; flex-wrap: wrap;">
                           <sc-for list="{{ wiz.uploads }}" as="u" hint-placeholder-count="3">
-                            <div style="width: 92px;">
+                            <div style="width: 92px; cursor: pointer;" title="Change what this photograph shows" onClick="{{ u.describe }}">
                               <div style="height: 68px; border-radius: 8px; background: var(--rf-band); display: grid; place-items: center; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #339dde;">{{ u.kind }}</div>
                               <div style="font-size: 11px; color: var(--color-steel); margin-top: 4px;">{{ u.name }}</div>
                             </div>
@@ -2872,7 +2872,7 @@ class Component extends DCLogic {
     const cfg = byStep[step] || byStep[1];
     const slots = this.photoSet({ id: "wiz", type: w.type, photos: [], name: w.name, area: w.city });
     const uploads = this.props.listings
-      ? (s.wizAssets || []).map((a, i) => ({ kind: a.kind, name: a.name || (slots[i] ? slots[i].caption : "Photo " + (i + 1)) }))
+      ? (s.wizAssets || []).map((a, i) => ({ kind: a.kind, name: a.name || (slots[i] ? slots[i].caption : "Photo " + (i + 1)), describe: a.kind !== "Photo" || !s.editingId ? null : () => (a.source === "asset" ? this.props.listings.caption(s.editingId, a.id, this.props.listings.describe()) : this.props.listings.describe(s.editingId, a.position, this.props.listings.describe())).then((d) => this.setState({ wizAssets: d.assets, wizErr: "" }), (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })) }))
       : [{ kind: "Photo", name: "Exterior.jpg" }, { kind: "Photo", name: "Lobby.jpg" }, { kind: "Photo", name: "Treatment.jpg" }, { kind: "PDF", name: "Floor plan.pdf" }].slice(0, 3 + (w.photos || 0));
 
     return {

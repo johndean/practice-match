@@ -148,11 +148,16 @@ describe('local design amendments (spec D15)', () => {
     // and Sign out, which ATTEMPTS the same save and ends the session regardless of the answer,
     // because a session end is the seller's own explicit act and must never be held hostage to one.
     'A16.20a', 'A16.20b',
+    // A16.21/A16.22 (A-SL25 (10), SL7b): the step-6 tile re-describes an EXISTING photograph,
+    // seeded ones included, by clicking it — one script literal (the tile's own `describe`,
+    // photographs only, routed by source through the adapter's overloaded `describe`) and one
+    // template literal (the one `onClick` the script literal needs).
+    'A16.21', 'A16.22',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(110);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(112);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

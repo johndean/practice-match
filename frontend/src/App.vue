@@ -1204,7 +1204,7 @@
                         </div>
                         <div style="display: flex; gap: 9px; margin-top: 14px; flex-wrap: wrap;">
                           <template v-for="(u, $index) in __arr(v.wiz?.uploads)" :key="$index">
-                            <div style="width: 92px;">
+                            <div style="width: 92px; cursor: pointer;" title="Change what this photograph shows" @click="u?.describe">
                               <div style="height: 68px; border-radius: 8px; background: var(--rf-band); display: grid; place-items: center; font-size: 10px; font-weight: 700; letter-spacing: .1em; text-transform: uppercase; color: #339dde;"><span v-if="__s(u?.kind) !== null" class="sc-interp">{{ __s(u?.kind) }}</span></div>
                               <div style="font-size: 11px; color: var(--color-steel); margin-top: 4px;"><span v-if="__s(u?.name) !== null" class="sc-interp">{{ __s(u?.name) }}</span></div>
                             </div>
