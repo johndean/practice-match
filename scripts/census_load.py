@@ -543,6 +543,114 @@ def cmd_materialize(args: argparse.Namespace) -> int:
         conn.close()
 
 
+def cmd_geocode(args: argparse.Namespace) -> int:
+    """Task B9: resolves every listing without a `practice_location` row, or one with `--listing`,
+    or with `--force` re-resolves one that already has a row. Calls the same `app.census.geocode`
+    code the Celery task calls, synchronously: geocode, then `catchment.build`, then
+    `materialize.materialize_listing`, so one command takes a listing from an address to its
+    figures. Never touches the Census API (no key/contact gate, like `activate` and `materialize`),
+    so it shares only the DATABASE_URL/unreachable/post-connect-database-error arms; it DOES need
+    Redis, like `materialize`."""
+    from app.cache import sync_redis
+    from app.census import catchment, geocode, materialize
+
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        print("[census_load] DATABASE_URL is not set", file=sys.stderr)
+        return 2
+    try:
+        conn = _conn(dsn)
+    except psycopg2.OperationalError as exc:
+        print(f"[census_load] database unreachable: {type(exc).__name__}", file=sys.stderr)
+        return 3
+    try:
+        redis = sync_redis()
+        # Fetch the listings to geocode
+        with conn.cursor() as cur:
+            if args.listing:
+                cur.execute("SELECT id FROM listing WHERE id = %s", (args.listing,))
+            else:
+                # Listings without a practice_location row, or --force re-geocodes existing ones
+                if args.force:
+                    cur.execute("SELECT id FROM listing ORDER BY id")
+                else:
+                    cur.execute(
+                        "SELECT l.id FROM listing l LEFT JOIN practice_location p ON l.id = p.listing_id "
+                        "WHERE p.listing_id IS NULL ORDER BY l.id"
+                    )
+            rows = cur.fetchall()
+
+        if not rows:
+            if args.listing:
+                print(f"[census_load] geocode refused: no such listing {args.listing}", file=sys.stderr)
+                return 2
+            else:
+                print("[census_load] no listings to geocode")
+                return 0
+
+        # Try to get the active tiger_cb vintage early, fail fast if missing
+        try:
+            with conn.cursor() as cur:
+                cur.execute("SELECT vintage FROM active_vintage WHERE dataset_key = 'tiger_cb'")
+                row = cur.fetchone()
+            if row is None:
+                print("[census_load] geocode refused: no active tiger_cb vintage — run census_load.py tiger and activate it", file=sys.stderr)
+                return 2
+        except psycopg2.Error as exc:
+            print(f"[census_load] database error: {type(exc).__name__}", file=sys.stderr)
+            return 3
+
+        # Geocode each listing
+        geocoded_count = 0
+        try:
+            import httpx
+            ua = f"PracticeMatch/{__import__('app.version', fromlist=['VERSION']).VERSION} (census-operator)"
+            with httpx.Client(headers={"User-Agent": ua}) as http:
+                gc = geocode.Geocoder(http, "https://geocoding.geo.census.gov/geocoder", ua)
+                for (listing_id,) in rows:
+                    try:
+                        loc = geocode.resolve(conn, gc, listing_id)
+                        # Determine rung
+                        if loc.geo_precision == "rooftop":
+                            rung = "rooftop"
+                        elif loc.geo_precision == "tract":
+                            rung = "tract"
+                        elif loc.geo_precision == "zcta":
+                            rung = "zcta"
+                        elif loc.geo_precision == "place":
+                            rung = "place"
+                        elif loc.geo_precision == "county":
+                            rung = "county"
+                        else:
+                            rung = loc.geo_precision
+                        # Check if geocode_review was written (below rooftop)
+                        with conn.cursor() as cur:
+                            cur.execute("SELECT 1 FROM geocode_review WHERE listing_id = %s", (listing_id,))
+                            has_review = cur.fetchone() is not None
+                        review_str = "review row written" if has_review else "no review needed"
+                        print(f"  {listing_id}: {rung} ({review_str})")
+                        geocoded_count += 1
+                        # Build catchment and materialize
+                        geo_vintage = materialize.active_geo_vintage(conn)
+                        catchment.build(conn, listing_id, geo_vintage)
+                        materialize.materialize_listing(conn, redis, listing_id)
+                    except geocode.GeocodeFailed as exc:
+                        print(f"  {listing_id}: geocoding failed: {exc}", file=sys.stderr)
+                        return 5
+        except RuntimeError as exc:
+            # No active vintage
+            print(f"[census_load] geocode refused: {exc}", file=sys.stderr)
+            return 2
+        except psycopg2.Error as exc:
+            print(f"[census_load] database error: {type(exc).__name__}", file=sys.stderr)
+            return 3
+
+        print(f"[census_load] {geocoded_count} listing(s) geocoded")
+        return 0
+    finally:
+        conn.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     # Imported here, not inside `cmd_acs` alone (A5's review of itself): `--dataset`'s `choices`
     # must be built while the parser itself is under construction, before `parse_args` runs --
@@ -578,6 +686,10 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("--force", action="store_true", help="activate despite a row-count ratio outside [0.8, 1.25] (reviewed override)")
     v.add_argument("--note", default=None, help="reason for this activation, persisted in active_vintage.note; REQUIRED with --force, optional otherwise")
     v.set_defaults(fn=cmd_activate)
+    g = sub.add_parser("geocode", help="geocode listings -- every one without a practice_location row, or one given --listing, or all with --force")
+    g.add_argument("--listing", default=None, help="listing id to geocode (default: every listing without a geocoded location)")
+    g.add_argument("--force", action="store_true", help="re-geocode listings that already have a practice_location row")
+    g.set_defaults(fn=cmd_geocode)
     m = sub.add_parser("materialize", help="rebuild market_metric rows for one listing (--listing) or every geocoded listing, from the active vintages")
     m.add_argument("--listing", default=None, help="listing id to materialise (default: every listing with a geocoded location)")
     m.set_defaults(fn=cmd_materialize)

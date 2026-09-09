@@ -1345,6 +1345,34 @@ def test_cmd_materialize_returns_three_when_the_database_is_unreachable(monkeypa
 # which do -- so monkeypatching `census_load._conn` to hand back a connection whose cursor always
 # raises reaches every subcommand's first database statement uniformly, real or delegated.
 
+# --- geocode subcommand (Task B9) ---------------------------------------------------------------
+
+def test_cmd_geocode_returns_two_when_no_listings_to_geocode(scratch_dsn, monkeypatch, capsys):
+    """Task B9: geocoding reports a non-existent listing as exit 2."""
+    from uuid import uuid4
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+
+    listing_id = str(uuid4())
+    assert census_load.main(["geocode", "--listing", listing_id]) == 2
+    err = capsys.readouterr().err
+    assert "refused" in err or "no such listing" in err
+
+
+def test_cmd_geocode_returns_two_without_a_database_url(monkeypatch, capsys):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    assert census_load.main(["geocode"]) == 2
+    assert "DATABASE_URL" in capsys.readouterr().err
+
+
+def test_cmd_geocode_returns_three_when_the_database_is_unreachable(monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
+
+    assert census_load.main(["geocode"]) == 3
+    assert "database unreachable" in capsys.readouterr().err
+
+
 class _RaisingCursor:
     def __enter__(self):
         return self
@@ -1377,9 +1405,10 @@ class _RaisingConn:
         (["bds", "--year", "2022"], {"CENSUS_API_KEY": "the-key", "CENSUS_CONTACT_EMAIL": "tech@vinfoundation.example.org"}),
         (["qwi", "--year", "2024", "--quarter", "4"], {"CENSUS_API_KEY": "the-key", "CENSUS_CONTACT_EMAIL": "tech@vinfoundation.example.org"}),
         (["activate", "acs5", "2019\u20132023", "--by", "john"], {}),
+        (["geocode"], {}),
         (["materialize"], {}),
     ],
-    ids=["tiger", "acs", "cbp", "zbp", "bds", "qwi", "activate", "materialize"],
+    ids=["tiger", "acs", "cbp", "zbp", "bds", "qwi", "activate", "geocode", "materialize"],
 )
 def test_every_subcommand_closes_its_connection_and_returns_three_on_a_post_connect_database_error(argv, env, redis, monkeypatch, capsys):
     monkeypatch.setenv("DATABASE_URL", "postgresql://placeholder/placeholder")

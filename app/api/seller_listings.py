@@ -72,6 +72,7 @@ from app.db import sync_conn
 from app.mail.outbox import enqueue
 from app.media.encode import encode_webp, sha256_hex
 from app.storage import ObjectStore
+from app.tasks.celery_app import celery_app
 
 router = APIRouter(prefix="/api/seller")
 
@@ -1393,4 +1394,10 @@ async def set_status(listing_id: str, request: Request, principal: Owner) -> Res
     # bounded by `LISTING_SUBMIT`, three of the four move a row onto or off the market, and a SCAN
     # that matches nothing costs one round trip.
     drop_list_cache(sync_redis())
+    # Task B9: enqueue geocoding when republishing (republish moves from paused to published)
+    if action == "republish":
+        with conn.cursor() as cur:
+            cur.execute("SELECT 1 FROM practice_location WHERE listing_id = %s", (listing_id,))
+            if cur.fetchone() is None:
+                celery_app.send_task("census.geocode_listing", args=[listing_id])
     return JSONResponse(payload)
