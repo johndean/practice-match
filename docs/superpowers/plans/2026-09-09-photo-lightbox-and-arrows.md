@@ -524,6 +524,8 @@ Files: `frontend/tests/baseline-manifest.json`, `frontend/tests/baseline-manifes
 
 ---
 
+**Controller amendment A-LB1 (2026-09-09 ~17:15 WITA; ruling on the L1 review's one Important finding — a worktree-setup gap, not a code defect).** L1's first attempt died at Playwright's web-server start and its second attempt fixed it by hand: **a fresh worktree needs `npm ci` in `coming-soon/` as well as in `frontend/`**, because `frontend/tests/targets.ts` starts the Coming Soon app as one of its web servers, and a missing `node_modules` there fails the whole e2e run in seconds — the failure mode this plan already warns about reading as a pass. **And `docker-compose.dev.yml` binds fixed host ports (5433/6380), so a second worktree must never start its own stack**: reuse the running one, inside which this worktree's own database `practice_match_lightbox` and Redis index `/8` already live (Global Constraint (l)'s isolation is the database name, the Redis index and the Playwright ports — not a private container). Both facts are now Step 0 of every task in this plan and of any future worktree brief. The finding's process half is upheld and recorded: an implementer that meets an environmental blocker fixes it only when it touches nothing under version control, and says so in its return, not only in its report — anything that would edit a tracked file is still a STOP.
+
 ### Task L2: A19, the photo lightbox
 
 ### Step 1 — RED: `frontend/src/logic.test.ts`
