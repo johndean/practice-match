@@ -349,3 +349,58 @@ def test_the_zcta_fallback_also_failing_raises(conn):
     with pytest.raises(CensusHTTPError) as exc:
         load_boundaries(conn, http, [], "2023")
     assert exc.value.status == 404
+
+
+# --- MAX_TIGER_BYTES: streaming to a bounded temp file (controller amendment A-C11 (11)) -------
+# `resp.content` (the pre-fix download path) holds the whole body in memory with no ceiling at
+# all (final-review Info 3) -- these files run tens to hundreds of MB. The tests below prove: (1)
+# a stream that runs past the bound is refused before it is fully read, not after; (2) the normal
+# path still parses correctly from the temp file it downloads to; (3) that temp file is gone
+# afterwards either way.
+
+def _glob_tiger_tempfiles() -> set[str]:
+    import glob
+    import tempfile as _tempfile
+
+    return set(glob.glob(_tempfile.gettempdir() + "/tiger_*"))
+
+
+def test_a_stream_over_the_bound_is_refused_before_it_is_fully_read(conn, monkeypatch):
+    from app.census import tiger as tiger_module
+
+    monkeypatch.setattr(tiger_module, "MAX_TIGER_BYTES", 5000)  # 5 KB, well under the 1 MB body below
+    chunks_yielded: list[int] = []
+
+    def gen():
+        for i in range(1000):  # 1000 * 1024 B = ~1 MB if fully consumed
+            chunks_yielded.append(i)
+            yield b"x" * 1024
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        if str(request.url).endswith("cb_2023_us_nation_5m.zip"):
+            return httpx.Response(200, content=gen())
+        raise AssertionError("only the nation URL should be requested before the failure")
+
+    http = httpx.Client(transport=httpx.MockTransport(handler))
+    before = _glob_tiger_tempfiles()
+    with pytest.raises(CensusHTTPError) as exc:
+        load_boundaries(conn, http, ["48"], "2023")
+
+    assert exc.value.status == 413
+    # stopped well short of consuming the whole generator (1000 chunks) -- proves the download was
+    # aborted mid-stream, not merely rejected after being fully read into memory first.
+    assert len(chunks_yielded) <= (5000 // 1024) + 2
+    # no temp file left behind after the abort.
+    assert _glob_tiger_tempfiles() == before
+
+
+def test_a_stream_within_the_bound_still_parses_normally(conn):
+    """The happy path already exercised throughout this file (e.g.
+    `test_load_boundaries_upserts_every_level_and_filters_zctas_by_state_containment`) now runs
+    through the same bounded-temp-file download path -- this test additionally proves no temp file
+    survives a normal, successful run."""
+    before = _glob_tiger_tempfiles()
+    http = httpx.Client(transport=_handler())
+    counts = load_boundaries(conn, http, ["48"], "2023")
+    assert sum(counts.values()) == 7
+    assert _glob_tiger_tempfiles() == before

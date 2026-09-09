@@ -92,6 +92,59 @@ def test_require_contact_exits_naming_the_variable(capsys):
     assert require_contact(env={"CENSUS_CONTACT_EMAIL": "contact@vinfoundation.org"}) == "contact@vinfoundation.org"
 
 
+# --- require_archive / missing_archive_settings (controller amendment A-C11 (10)) -------------
+# A-C1 ¶7 requires the raw archive ON whenever a live Census load is possible; the signal is
+# `settings.census_api_key` -- read from the already-loaded `Settings` object, never from
+# `os.environ` directly the way `require_key`'s own CLI gate does -- so a test's
+# `monkeypatch.setenv("CENSUS_API_KEY", ...)` (which every existing acs/cbp/zbp/bds/qwi test in
+# this suite already does, and must keep doing unmodified) can never trip this: `Settings` is
+# built once, at process start, and none of those tests touch the `settings` singleton's
+# attributes directly. Only a test that does -- exactly the two below -- exercises this rule.
+
+def _settings(**overrides):
+    from app.config import Settings
+
+    base = {"database_url": "postgresql://x", "redis_url": "redis://x", "environment": "test", "api_secret_key": "x"}
+    base.update(overrides)
+    return Settings(**base)
+
+
+def test_missing_archive_settings_names_only_what_is_absent():
+    from app.census.client import missing_archive_settings
+
+    assert missing_archive_settings(_settings()) == ["S3_ENDPOINT_URL", "S3_BUCKET", "S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"]
+    assert missing_archive_settings(_settings(s3_endpoint_url="https://s3.example", s3_bucket="b")) == ["S3_ACCESS_KEY_ID", "S3_SECRET_ACCESS_KEY"]
+    assert missing_archive_settings(_settings(
+        s3_endpoint_url="https://s3.example", s3_bucket="b", s3_access_key_id="a", s3_secret_access_key="s",
+    )) == []
+
+
+def test_require_archive_is_silent_when_the_archive_is_configured():
+    from app.census.client import require_archive
+
+    require_archive(object(), _settings(census_api_key="the-key"))  # any non-None archive passes -- `object()` is never inspected
+
+
+def test_require_archive_is_silent_when_no_key_is_set_even_without_an_archive():
+    """A live load is impossible without a key -- the disabled-archive path stays a legitimate,
+    silent no-op exactly as it is today for a developer running locally with no S3 bucket and no
+    Census key at all (`require_key` would refuse first anyway)."""
+    from app.census.client import require_archive
+
+    require_archive(None, _settings())  # census_api_key defaults to None
+
+
+def test_require_archive_exits_two_naming_the_missing_settings_when_a_key_is_present(capsys):
+    from app.census.client import require_archive
+
+    with pytest.raises(SystemExit) as e:
+        require_archive(None, _settings(census_api_key="the-key"))
+    assert e.value.code == 2
+    err = capsys.readouterr().err
+    assert "S3_ENDPOINT_URL" in err and "S3_BUCKET" in err and "S3_ACCESS_KEY_ID" in err and "S3_SECRET_ACCESS_KEY" in err
+    assert "the-key" not in err  # never a value, names only
+
+
 # --- redact -------------------------------------------------------------------------------------
 
 def test_redact_strips_the_key_param_from_a_url():

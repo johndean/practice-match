@@ -47,7 +47,7 @@ import psycopg2
 import psycopg2.extensions
 
 from app.census import acs, bds, cbp, ingest, license, qwi, tiger, zbp
-from app.census.client import CensusClient, require_contact, require_key
+from app.census.client import CensusClient, missing_archive_settings, require_archive, require_contact, require_key
 from app.census.registry import Dataset
 from app.census.registry import load as load_registry
 from app.config import settings
@@ -124,6 +124,28 @@ def _refuse(conn: psycopg2.extensions.connection, dataset_key: str, vintage: str
     return {"dataset": dataset_key, "error": reason}
 
 
+def _resolve_archive(
+    conn: psycopg2.extensions.connection, dataset_key: str, vintage: str
+) -> tuple[ObjectStore | None, dict[str, object] | None]:
+    """A-C1 ¶7 / controller amendment A-C11 (10): once a live Census load is possible
+    (`settings.census_api_key` set), the raw archive must never come back silently disabled --
+    every load task calls this right where it used to call bare `ObjectStore.from_settings(
+    settings)`, exactly where `scripts/census_load.py`'s own `cmd_*` entry points call
+    `require_archive` directly. `require_archive`'s `SystemExit(2)` (correct at a CLI entry point)
+    is converted here the same way `require_key`/`require_contact`'s already are: caught and
+    turned into a recorded, failed `ingest_run` instead of taking the worker down. Returns
+    `(archive, None)` when ready to proceed, or `(None, refusal)` when the caller must return
+    `refusal` immediately instead."""
+    archive = ObjectStore.from_settings(settings)
+    try:
+        require_archive(archive, settings)
+    except SystemExit:
+        missing = missing_archive_settings(settings)
+        reason = f"the raw archive is required once CENSUS_API_KEY is set; missing: {', '.join(missing)} (A-C1 ¶7)"
+        return None, _refuse(conn, dataset_key, vintage, reason)
+    return archive, None
+
+
 def load_tiger(vintage: str = "2023") -> dict[str, object]:
     conn = _conn()
     try:
@@ -136,7 +158,9 @@ def load_tiger(vintage: str = "2023") -> dict[str, object]:
             contact = _resolve_contact()
         except _NotReady as exc:
             return _refuse(conn, "tiger_cb", vintage, str(exc))
-        archive = ObjectStore.from_settings(settings)
+        archive, refusal = _resolve_archive(conn, "tiger_cb", vintage)
+        if refusal is not None:
+            return refusal
         ua = f"PracticeMatch/{VERSION} ({contact})"
         # follow_redirects=False (tiger.py's own docstring: the Celery task is expected to build
         # its httpx.Client this way) -- a 3xx must never be silently followed into a body that
@@ -155,7 +179,10 @@ def load_acs(dataset_key: str = "acs5") -> dict[str, object]:
             key, contact = _resolve_key_and_contact()
         except _NotReady as exc:
             return _refuse(conn, dataset_key, ds.vintage, str(exc))
-        factory = _factory(key, contact, ObjectStore.from_settings(settings))
+        archive, refusal = _resolve_archive(conn, dataset_key, ds.vintage)
+        if refusal is not None:
+            return refusal
+        factory = _factory(key, contact, archive)
         return {"dataset": dataset_key, "rows": acs.load(conn, factory, dataset_key, _states(conn))}
     finally:
         conn.close()
@@ -169,7 +196,10 @@ def load_cbp() -> dict[str, object]:
             key, contact = _resolve_key_and_contact()
         except _NotReady as exc:
             return _refuse(conn, "cbp", ds.vintage, str(exc))
-        factory = _factory(key, contact, ObjectStore.from_settings(settings))
+        archive, refusal = _resolve_archive(conn, "cbp", ds.vintage)
+        if refusal is not None:
+            return refusal
+        factory = _factory(key, contact, archive)
         return {"rows": cbp.load(conn, factory, _states(conn))}
     finally:
         conn.close()
@@ -186,7 +216,10 @@ def load_zbp() -> dict[str, object]:
             key, contact = _resolve_key_and_contact()
         except _NotReady as exc:
             return _refuse(conn, "zbp", ds.vintage, str(exc))
-        factory = _factory(key, contact, ObjectStore.from_settings(settings))
+        archive, refusal = _resolve_archive(conn, "zbp", ds.vintage)
+        if refusal is not None:
+            return refusal
+        factory = _factory(key, contact, archive)
         return {"rows": zbp.load(conn, factory, _states(conn))}
     finally:
         conn.close()
@@ -208,9 +241,17 @@ def load_qwi(year: int | None = None, quarter: int | None = None) -> dict[str, o
             key, contact = _resolve_key_and_contact()
         except _NotReady as exc:
             return _refuse(conn, "qwi", ds.vintage, str(exc))
-        factory = _factory(key, contact, ObjectStore.from_settings(settings))
+        archive, refusal = _resolve_archive(conn, "qwi", ds.vintage)
+        if refusal is not None:
+            return refusal
+        factory = _factory(key, contact, archive)
         states = _states(conn)
         if year is None or quarter is None:
+            if not states:
+                # m5 (controller amendment A-C11 (6)): resolving the latest published quarter
+                # indexes `states[0]` -- an empty `market_state` used to raise a bare `IndexError`
+                # and crash the task instead of recording a named, failed `ingest_run`.
+                return _refuse(conn, "qwi", ds.vintage, "market_state has no rows yet; qwi's latest-quarter resolution needs at least one state")
             now = datetime.now(UTC)
             with factory(ds) as client:
                 year, quarter = qwi.latest_available(client, states[0], today=(now.year, (now.month - 1) // 3 + 1))
@@ -228,7 +269,10 @@ def load_bds(year: int) -> dict[str, object]:
             key, contact = _resolve_key_and_contact()
         except _NotReady as exc:
             return _refuse(conn, "bds", str(year), str(exc))
-        factory = _factory(key, contact, ObjectStore.from_settings(settings))
+        archive, refusal = _resolve_archive(conn, "bds", str(year))
+        if refusal is not None:
+            return refusal
+        factory = _factory(key, contact, archive)
         return {"year": year, "rows": bds.load(conn, factory, _states(conn), year=year)}
     finally:
         conn.close()

@@ -188,9 +188,10 @@ Pillow (a dev dependency) and is never part of a deploy.
 `ENVIRONMENT=qa` and that URL handed to the process in its environment and never printed (the
 script reads only `DATABASE_URL` and `ENVIRONMENT`; the `api` service's `DATABASE_URL` is the
 `.railway.internal` private URL, unreachable off-platform — the PostGIS service's own variable is
-the public one). `railway ssh` needs an SSH key this machine does not hold, so the
-in-container route below is for when a key is on file; the script, its idempotency and its output
-lines are identical either way.
+the public one). `railway ssh` needs an SSH key on file for the CLI — the key `practice-match-cli`
+is registered on this machine (A-C11 (1), 2026-09-09; this line previously, and incorrectly, said
+no key was on file), so the in-container route below works directly, with no public URL to hand
+around; the script, its idempotency and its output lines are identical either way.
 
 ```bash
 railway status                                   # MUST print Project: Practice Match
@@ -201,11 +202,11 @@ ENVIRONMENT=qa poetry run python scripts/seed_listings.py   # the PostGIS servic
 #             carries, which every import deletes; the eighteen keep their ids.
 ```
 
-In-container, when an SSH key is on file:
+In-container (the `practice-match-cli` key on file):
 
 ```bash
 railway status                                   # MUST print Project: Practice Match
-railway ssh --service api --environment QA       # John's ed25519 key; the CLI needs a key on file
+railway ssh --service api --environment QA       # practice-match-cli key
 python scripts/seed_listings.py                  # inside the container — the same operation
 ```
 
@@ -239,6 +240,64 @@ one-off Railway service command. `python -m scripts.seed_listings` works too, fr
 `GET /api/listings` caches each page in Redis for 60 s and the seeder does not invalidate it, so
 after a re-seed the list refreshes within a minute (Task L5, A-L5.1) — a browse that still shows
 the previous eighteen straight after a seed is that cache, not a failed import.
+
+## Census Phase A exit (QA)
+
+**Runs in the worker container, never on this machine — `railway ssh --service worker`, never
+`railway run` (controller amendment A-C11 (1), 2026-09-09, superseding the census plan's original
+`railway run` step and `scripts/census_load.py`'s own former docstring).** `railway run --service
+worker --environment QA -- python scripts/census_load.py …` executes **locally**, with the
+worker's variables injected into this machine's process: that would pull `CENSUS_API_KEY`,
+`CENSUS_CONTACT_EMAIL` and all four `S3_*` bucket credentials onto the operator's laptop — directly
+against A-C1 ¶8, which stores the key only as a Railway secret, and against CLAUDE.md's rule
+naming `CENSUS_API_KEY` as the one variable that must never leave Railway — and it would then fail
+anyway on connect, because the worker's own `DATABASE_URL` is the `.railway.internal` private URL
+(see "How it is actually run" above). The key `practice-match-cli` is registered on this machine,
+so the in-container route below is available.
+
+The controller runs this sequence **only on John's explicit word** — never on its own initiative,
+and never as part of a routine deploy. Every subcommand is idempotent, so a failed step can simply
+be re-run once fixed.
+
+```bash
+railway status                                        # MUST print Project: Practice Match
+railway ssh --service worker --environment QA
+```
+
+Inside that shell, the load order matters — TIGER first, because `zbp` refuses without the ZCTA
+boundaries TIGER writes to `geo_area`:
+
+```bash
+python scripts/census_load.py tiger
+python scripts/census_load.py acs                     # all three ACS datasets: acs5, acs5_subject, acs5_prior
+python scripts/census_load.py cbp
+python scripts/census_load.py zbp
+python scripts/census_load.py qwi                      # resolves the latest published quarter, then trims to 20
+python scripts/census_load.py bds --year 2022
+```
+
+Check each exit code against the shared scheme (`0` done · `2` refused before anything opened,
+e.g. a licence gate or a missing prerequisite · `3` database unreachable or failed · `4` a
+download/fetch failed · `5` validation failed) and stop on the first non-zero — nothing later
+depends on a partial load, and every table is an idempotent upsert.
+
+Then activate, one dataset at a time, each with its own reviewed note — `--force` needs both
+`--note` and John's word, never one without the other:
+
+```bash
+python scripts/census_load.py activate tiger_cb      2023        --by john --note "…"
+python scripts/census_load.py activate acs5          "2019–2023" --by john --note "…"
+python scripts/census_load.py activate acs5_subject  "2019–2023" --by john --note "…"
+python scripts/census_load.py activate acs5_prior    "2014–2018" --by john --note "…"
+python scripts/census_load.py activate cbp           2022        --by john --note "…"
+python scripts/census_load.py activate zbp           2022        --by john --note "…"
+```
+
+The vintage string must match what was ingested exactly, en dash included. `bds` and `qwi` have no
+`activate` step in this sequence — `qwi`'s vintage is `<year>Q<quarter>` and `bds`'s is the year;
+activate them only if the controller wants them pinned. Finally, `GET /api/admin/data-sources` on
+qa.foundation.vin shows every dataset with its licence status, last run and active vintage.
+Production stays gated (`MARKET_DATA_PUBLIC` false, A-C1 ¶10; the key gated per A-C1 ¶8).
 
 ## Rollback
 

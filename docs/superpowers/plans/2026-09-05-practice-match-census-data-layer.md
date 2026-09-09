@@ -1270,6 +1270,8 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin fea
 
 ### Task A5: ACS loads (detailed, subject, prior baseline) with the ingest-run ledger
 
+> Illustrative — superseded by A-C6: use `EMP_N`/`PAYANN_N`, `ESTABS_ENTRY`, `2022/cbp` `zip code`, `ObjectStore.put`; the committed code is authoritative (A-C5).
+
 **Files:**
 - Create: `app/census/ingest.py`, `app/census/acs.py`, `tests/census/test_ingest.py`, `tests/census/test_acs.py`, `tests/census/fixtures/acs_tract_48.json`
 - Modify: `scripts/census_load.py` (`acs` subcommand)
@@ -1621,6 +1623,8 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin fea
 ---
 
 ### Task A6: Industry loads — CBP (541940 + adjacent), ZBP (ZIP-level competition, D11), QWI (5419, 20 quarters), BDS (54)
+
+> Illustrative — superseded by A-C6: use `EMP_N`/`PAYANN_N`, `ESTABS_ENTRY`, `2022/cbp` `zip code`, `ObjectStore.put`; the committed code is authoritative (A-C5).
 
 **Files:**
 - Create: `migrations/023_zbp.sql`, `app/census/cbp.py`, `app/census/zbp.py`, `app/census/qwi.py`, `app/census/bds.py`, `tests/census/test_industry.py`
@@ -2082,7 +2086,7 @@ Run: `poetry run pytest tests/census/test_vintage.py -q` → all pass (GREEN); t
 
 **Controller amendment A-C7 (2026-09-09 ~05:15 WITA; rulings on the A7 review — 2 Major, 3 Minor, 14 Info; spec ✅, quality APPROVED — record before `### Task A8`; closed in one fix round after the A6 fix round lands, single writer).** (1) **M1 — TIGER writes the ledger.** `tiger.load_boundaries` runs inside `ingest.run(conn, "tiger_cb", vintage)` like every other loader (its `rows` = the boundary rows upserted, `requests` = the files fetched), so `qa()`/`activate()` see a `succeeded` run for `tiger_cb` and the Phase A exit sequence's `activate tiger_cb` works; a test activates `tiger_cb` end to end and the CLI's `tiger` subcommand maps a failed run per A-C4. (2) **M2 — dataset-scoped counts.** `qa()` counts `… FROM <table> m JOIN ingest_run r ON r.id = m.ingest_run_id WHERE m.vintage = %s AND r.dataset_key = %s` for every table that carries `ingest_run_id`; `geo_area` (no `ingest_run_id`; one dataset) keeps the vintage-only count, documented in `TABLE_FOR`'s comment; a test loads `acs5` and a zero-row `acs5_subject` at one vintage and proves the subject activation is refused. (3) **m1** — the pass side of the ratio guard is tested (ratio 0.9 activates without `force`; ratio exactly 0.8 activates: inclusive bounds pinned). (4) **m2** — a forced activation prints ` (forced)` on the confirmation line, one CLI test. (5) **I2** — a test pins that `force=True` cannot bypass a failed or aborted run. (6) **Concern 1 — the why is persisted.** `active_vintage` gains `note text` (edit `017_census_registry.sql` in place — unreleased, applied only to this worktree's database, which the A6 fix round recreates; A1 precedent); `activate(conn, dataset_key, vint, by, *, force=False, note=None)` stores it; the CLI takes `--note`, REQUIRED when `--force` is given (argparse error → exit 2) and optional otherwise; the printed Report carries it too. (7) **I12 — every `cmd_*` closes its connection (`try/finally`) and maps a `psycopg2.Error` raised after connect to exit 3 with the exception's type name only (never its text, which can carry a DSN) — an A-C4 addendum: 3 = "database unreachable or failed".** (8) **I5** — record-only by ruling: the diff and the write are separate autocommit statements; acceptable because activation is operator-initiated and nothing in `app/tasks/` may ever call `activate` (A8 must respect this). (9) **m3** — process note: a suspected brief conflict is posed as a question (NEEDS_CONTEXT), never resolved in the report. (10) **I11** — the committed parameter name is `vint`; callers use it positionally. Info I1, I3, I4, I6–I10, I13, I14 accepted as recorded.
 
-**Release number shift (John, 2026-09-09 ~05:30 WITA — "ship hotfix now" after his forced order Census → sign-ups → dropdowns → seller).** The seed-photo hotfix (A-L9) takes 0.1.4; Census Phase A releases as **0.1.5** (A-C1 ¶13's 0.1.4 is superseded); launch sign-ups 0.1.6; dropdowns 0.1.7; seller lifecycle 0.1.8. Task A9's version step uses 0.1.5.
+**Release number shift (John, 2026-09-09 ~05:30 WITA — "ship hotfix now" after his forced order Census → sign-ups → dropdowns → seller).** The seed-photo hotfix (A-L9) takes 0.1.4; Census Phase A releases as **0.1.7** (A-C11 (5), 2026-09-09: superseding this line's original 0.1.5 — the two seed hotfixes John's forced order actually shipped first took 0.1.5 and 0.1.6, not just the one A-L9 named here). Launch sign-ups, dropdowns and seller lifecycle take the next numbers in order at merge time — A-C11 (9) has the controller reconcile that cascade against whatever `main` actually carries, not this line. Task A9's version step uses 0.1.7.
 
 ### Task A8: Celery tasks, beat schedule, licence audit
 
@@ -2536,7 +2540,7 @@ git add -A && git commit -m "feat(census): admin Data Sources API, licence decis
 Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>" && git push origin feat/census-data-layer && git push production feat/census-data-layer
 ```
 
-**Phase A exit:** deploy to QA (`scripts/deploy.sh QA`), then from the worker: `railway run --service worker --environment QA -- python scripts/census_load.py tiger`, `… acs`, `… cbp`, `… zbp`, `… qwi`, `… bds --year 2022`, then `… activate acs5 "2019–2023" --by john` (and `acs5_subject`, `acs5_prior`, `cbp`, `zbp`, `tiger_cb`). `GET /api/admin/data-sources` on qa.foundation.vin shows every dataset with its status, last run and active vintage.
+**Phase A exit (A-C11 (1), superseding this step's original `railway run` form):** deploy to QA (`scripts/deploy.sh QA`); confirm `railway status` prints Project: Practice Match; then run every load and activation IN the worker container — `railway ssh --service worker --environment QA`, never `railway run`, which executes locally with the service's variables injected and would pull `CENSUS_API_KEY` and the bucket credentials onto the operator's machine (A-C1 ¶8) while also failing on the worker's `.railway.internal`-only `DATABASE_URL`. Inside that shell: `python scripts/census_load.py tiger`, `… acs`, `… cbp`, `… zbp`, `… qwi`, `… bds --year 2022`, then `… activate acs5 "2019–2023" --by john` (and `acs5_subject`, `acs5_prior`, `cbp`, `zbp`, `tiger_cb`) — `--force` is never used without both `--note` and John's word, and the controller runs this whole sequence only on John's explicit word, never on its own initiative. `GET /api/admin/data-sources` on qa.foundation.vin shows every dataset with its status, last run and active vintage.
 
 ---
 

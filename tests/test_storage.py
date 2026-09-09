@@ -70,6 +70,49 @@ def test_list_returns_empty_for_no_matches(store):
     assert store.list("nothing/here/") == []
 
 
+def test_list_paginates_across_more_than_one_page(store, monkeypatch):
+    """m6 (controller amendment A-C11 (7)): `list_objects_v2` truncates at `MaxKeys` (1 000 by
+    default) and reports `IsTruncated`/`NextContinuationToken` when there is more -- a single
+    unpaginated call silently drops everything past the first page. `_LIST_PAGE_SIZE` is
+    monkeypatched down to 2 so five objects force three real moto pages (2, 2, 1), not just a
+    loop that never actually executes twice."""
+    from app import storage
+
+    monkeypatch.setattr(storage, "_LIST_PAGE_SIZE", 2)
+    keys = [f"listings/l1/{i}.jpg" for i in range(5)]
+    for k in keys:
+        store.put(k, b"x", "image/jpeg")
+    store.put("census/other.json", b"{}", "application/json")
+
+    assert sorted(store.list("listings/l1/")) == sorted(keys)
+
+
+def test_list_page_size_is_passed_as_max_keys(store, monkeypatch):
+    """Proves the loop actually asks S3 for `_LIST_PAGE_SIZE`-sized pages rather than coincidentally
+    working because moto ignores a small `MaxKeys` -- a spy on the underlying client call."""
+    from app import storage
+
+    monkeypatch.setattr(storage, "_LIST_PAGE_SIZE", 2)
+    calls: list[dict] = []
+    original = store._s3.list_objects_v2
+
+    def spy(**kwargs):
+        calls.append(kwargs)
+        return original(**kwargs)
+
+    monkeypatch.setattr(store._s3, "list_objects_v2", spy)
+    for i in range(3):
+        store.put(f"listings/l2/{i}.jpg", b"x", "image/jpeg")
+
+    result = store.list("listings/l2/")
+
+    assert len(result) == 3
+    assert len(calls) == 2  # 2 + 1, MaxKeys=2
+    assert all(c["MaxKeys"] == 2 for c in calls)
+    assert "ContinuationToken" not in calls[0]
+    assert "ContinuationToken" in calls[1]
+
+
 def test_exists_reraises_non_404_client_errors():
     with mock_aws():
         store = ObjectStore(endpoint_url=None, bucket="does-not-exist", access_key="x", secret_key="y", region="us-east-1")

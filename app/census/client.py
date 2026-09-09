@@ -63,6 +63,7 @@ from urllib.parse import quote, urlencode
 import httpx
 
 from app.census.registry import Dataset
+from app.config import Settings
 from app.storage import ObjectStore
 from app.version import VERSION
 
@@ -98,6 +99,49 @@ def require_contact(env: Mapping[str, str] = os.environ) -> str:
         )
         raise SystemExit(2)
     return contact
+
+
+#: Each pair is (the attribute on `Settings`, the env var name it is documented under) -- shared
+#: by `missing_archive_settings` and `require_archive` below (controller amendment A-C11 (10)).
+_ARCHIVE_SETTINGS = (
+    ("s3_endpoint_url", "S3_ENDPOINT_URL"),
+    ("s3_bucket", "S3_BUCKET"),
+    ("s3_access_key_id", "S3_ACCESS_KEY_ID"),
+    ("s3_secret_access_key", "S3_SECRET_ACCESS_KEY"),
+)
+
+
+def missing_archive_settings(settings: Settings) -> list[str]:
+    """The `S3_*` env var NAMES (never values) that are absent from `settings` -- the four
+    `ObjectStore.from_settings` requires together before it will build a real client."""
+    return [env_name for attr, env_name in _ARCHIVE_SETTINGS if not getattr(settings, attr)]
+
+
+def require_archive(archive: ObjectStore | None, settings: Settings) -> None:
+    """A-C1 ¶7 / controller amendment A-C11 (10): once a live Census load is POSSIBLE, the raw
+    response archive must never be silently disabled -- a missing `S3_*` setting must refuse
+    (`SystemExit(2)`, naming the missing setting names only, never a value), not just log a
+    warning and carry on (`ObjectStore.from_settings`'s own behaviour, still correct for a
+    service, like the api, that never needs the archive at all).
+
+    "A live load is possible" is read from `settings.census_api_key` -- the `Settings` object
+    built once, at process start, from `CENSUS_API_KEY` -- deliberately NOT from `os.environ`
+    the way `require_key`'s own CLI-entry-point gate reads it. Every `cmd_*`/task test in this
+    programme that exercises an unrelated branch does so by `monkeypatch.setenv("CENSUS_API_KEY",
+    ...)`, which never touches the already-constructed `settings` singleton's attributes -- so
+    those tests keep passing unchanged, and only a test that deliberately sets
+    `settings.census_api_key` (as this rule's own tests do) ever reaches this refusal. In the
+    worker container this is exactly the same value either way, because `CENSUS_API_KEY` is set
+    in the environment before the process -- and therefore `Settings()` -- ever starts."""
+    if archive is not None or not settings.census_api_key:
+        return
+    missing = missing_archive_settings(settings)
+    print(
+        "[census] the raw archive is required once CENSUS_API_KEY is set (A-C1 ¶7) — "
+        f"missing: {', '.join(missing)}",
+        file=sys.stderr,
+    )
+    raise SystemExit(2)
 
 
 def redact(url: str) -> str:

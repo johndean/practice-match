@@ -29,10 +29,12 @@ from __future__ import annotations
 
 import runpy
 import sys
+import zipfile
 from pathlib import Path
 
 import psycopg2
 import pytest
+import shapefile  # pyshp
 
 from app.census import acs as census_acs
 from app.census import bds as census_bds
@@ -194,6 +196,114 @@ def test_cmd_tiger_returns_four_when_the_boundary_download_fails(scratch_dsn, mo
 
     assert census_load.main(["tiger"]) == 4
     assert "boundary download failed" in capsys.readouterr().err
+
+
+def test_cmd_tiger_returns_two_when_tiger_cb_is_not_cleared(scratch_dsn, monkeypatch, capsys):
+    """m1 (controller amendment A-C11 (2)): `cmd_tiger` is the one loader entry point that never
+    checked the registry itself -- `load_boundaries` has no internal `cleared` check (unlike
+    every other loader's `load()`), and the Celery task already gates this (A-C8 (9)/i2); the CLI
+    did not, so an admin moving `tiger_cb` to `blocked` would stop the quarterly task while an
+    operator running this command by hand could still ingest it."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    conn = census_load._conn(scratch_dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("UPDATE dataset_registry SET license_status = 'blocked' WHERE dataset_key = 'tiger_cb'")
+    finally:
+        conn.close()
+    monkeypatch.setattr(census_tiger, "load_boundaries", lambda *a, **kw: pytest.fail("tiger.load_boundaries must not run for a blocked dataset"))
+
+    assert census_load.main(["tiger"]) == 2
+    err = capsys.readouterr().err
+    assert "tiger" in err and "refused" in err and "blocked" in err
+
+
+def test_cmd_tiger_returns_five_when_the_boundary_file_is_corrupt_or_unreadable(scratch_dsn, monkeypatch, capsys):
+    """m2 (controller amendment A-C11 (3)): `parse_shapefile` can raise `zipfile.BadZipFile` (a
+    truncated or corrupt download -- a fixture zip of garbage bytes, below) or a pyshp
+    `shapefile.ShapefileException` on a malformed shapefile inside an otherwise-valid zip;
+    `cmd_tiger` only mapped `CensusHTTPError`, so either escaped as an uncaught traceback (exit 1)
+    instead of the A-C4 scheme's 5 ("validation failed")."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+
+    def fake(conn, http, states, vintage, archive=None):
+        raise zipfile.BadZipFile("File is not a zip file")
+
+    monkeypatch.setattr(census_tiger, "load_boundaries", fake)
+
+    assert census_load.main(["tiger"]) == 5
+    err = capsys.readouterr().err
+    assert "boundary file corrupt or unreadable" in err
+
+
+def test_cmd_tiger_returns_five_for_a_pyshp_shapefile_exception_too(scratch_dsn, monkeypatch, capsys):
+    """The other documented arm of the same m2 fix -- a zip that opens fine but whose shapefile
+    contents pyshp itself refuses to parse."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+
+    def fake(conn, http, states, vintage, archive=None):
+        raise shapefile.ShapefileException("Unable to determine shape type")
+
+    monkeypatch.setattr(census_tiger, "load_boundaries", fake)
+
+    assert census_load.main(["tiger"]) == 5
+    err = capsys.readouterr().err
+    assert "boundary file corrupt or unreadable" in err
+
+
+# --- the raw archive is required once a live load is possible (controller amendment A-C11 (10)) -
+# `require_archive` itself is exercised at 100% branch by `tests/census/test_client.py`; these
+# pin that each CLI entry point actually CALLS it, right where `archive = ObjectStore.from_
+# settings(settings)` is computed. The signal is `settings.census_api_key` -- the already-loaded
+# `Settings` singleton's attribute, never `os.environ` -- so every OTHER test in this file, which
+# only ever does `monkeypatch.setenv("CENSUS_API_KEY", ...)`, never trips this and needs no
+# changes: only a test that does `monkeypatch.setattr(settings, "census_api_key", ...)`, as the
+# two below do, reaches this refusal.
+
+def test_cmd_tiger_refuses_when_a_key_is_present_but_the_archive_is_not_configured(scratch_dsn, monkeypatch, capsys):
+    """Tiger itself never needs `CENSUS_API_KEY` -- but on the real worker the same process also
+    runs acs/cbp/zbp/bds/qwi, which do, so `settings.census_api_key` being set is exactly the
+    "a live load is possible" signal A-C1 ¶7 cares about, even for the one loader that does not
+    consume the key itself."""
+    from app.config import settings
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    monkeypatch.setattr(settings, "census_api_key", "the-key")
+    monkeypatch.setattr(settings, "s3_endpoint_url", None)
+    monkeypatch.setattr(settings, "s3_bucket", None)
+    monkeypatch.setattr(settings, "s3_access_key_id", None)
+    monkeypatch.setattr(settings, "s3_secret_access_key", None)
+    monkeypatch.setattr(census_tiger, "load_boundaries", lambda *a, **kw: pytest.fail("must not run without the required archive"))
+
+    with pytest.raises(SystemExit) as exc:
+        census_load.main(["tiger"])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "S3_ENDPOINT_URL" in err and "S3_BUCKET" in err and "S3_ACCESS_KEY_ID" in err and "S3_SECRET_ACCESS_KEY" in err
+
+
+def test_cmd_acs_refuses_when_a_key_is_present_but_the_archive_is_not_configured(scratch_dsn, monkeypatch, capsys):
+    from app.config import settings
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    monkeypatch.setattr(settings, "census_api_key", "the-key")
+    monkeypatch.setattr(settings, "s3_endpoint_url", None)
+    monkeypatch.setattr(settings, "s3_bucket", None)
+    monkeypatch.setattr(settings, "s3_access_key_id", None)
+    monkeypatch.setattr(settings, "s3_secret_access_key", None)
+    monkeypatch.setattr(census_acs, "load", lambda *a, **kw: pytest.fail("must not run without the required archive"))
+
+    with pytest.raises(SystemExit) as exc:
+        census_load.main(["acs", "--dataset", "acs5"])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "S3_ENDPOINT_URL" in err and "S3_SECRET_ACCESS_KEY" in err
 
 
 # --- acs subcommand (Task A5) ---------------------------------------------------------------
@@ -951,6 +1061,27 @@ def test_cmd_qwi_returns_five_when_validation_fails(scratch_dsn, monkeypatch, ca
     assert census_load.main(["qwi", "--year", "2024", "--quarter", "4"]) == 5
     err = capsys.readouterr().err
     assert "qwi failed validation" in err and "Emp" in err
+
+
+def test_cmd_qwi_refuses_with_a_named_prerequisite_when_market_state_is_empty(scratch_dsn, monkeypatch, capsys):
+    """m5 (controller amendment A-C11 (6)): resolving the latest published quarter indexes
+    `states[0]` -- an empty `market_state` (unreachable today; `017_census_registry.sql` seeds six
+    rows and nothing deletes them, but the CLI must not depend on that forever) gave a bare
+    `IndexError` and exit 1 instead of a named refusal."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    conn = census_load._conn(scratch_dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM market_state")
+    finally:
+        conn.close()
+    monkeypatch.setattr(census_qwi, "latest_available", lambda *a, **kw: pytest.fail("must not resolve a quarter with no states"))
+
+    assert census_load.main(["qwi"]) == 2
+    err = capsys.readouterr().err
+    assert "qwi refused" in err and "market_state" in err
 
 
 def test_normalize_dsn_handles_the_legacy_postgres_scheme_and_asyncpg():

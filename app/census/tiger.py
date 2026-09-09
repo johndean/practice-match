@@ -30,6 +30,8 @@ records the run 'failed'.
 from __future__ import annotations
 
 import io
+import os
+import tempfile
 import zipfile
 from dataclasses import dataclass
 
@@ -51,6 +53,12 @@ BASE = "https://www2.census.gov/geo/tiger/GENZ{y}/shp"
 #: TIGER files run tens to hundreds of MB; the spec §3 45 s read timeout is for the (small)
 #: Census Data API JSON responses, not this bulk static-file download.
 _TIMEOUT = httpx.Timeout(connect=15.0, read=300.0, write=15.0, pool=15.0)
+
+#: Controller amendment A-C11 (11): unlike every other download in this programme, this one had
+#: NO ceiling at all (final-review Info 3) -- `resp.content` held the whole body in memory
+#: regardless of size. `_stream_to_tempfile` below refuses, with a redacted `CensusHTTPError`,
+#: a stream that runs past this many bytes before it finishes.
+MAX_TIGER_BYTES = 512 * 1024 * 1024
 
 
 @dataclass(frozen=True)
@@ -105,8 +113,13 @@ def _parent(spec: BoundarySpec, state: str | None, county: str | None) -> str | 
     return None
 
 
-def parse_shapefile(zip_bytes: bytes, spec: BoundarySpec) -> list[GeoRow]:
-    with zipfile.ZipFile(io.BytesIO(zip_bytes)) as z:
+def parse_shapefile(zip_source: bytes | str, spec: BoundarySpec) -> list[GeoRow]:
+    """`zip_source` is either the zip's raw bytes (every existing test in this module) or a
+    filesystem path (what `load_boundaries` now hands it, having streamed the download to a
+    bounded temp file rather than holding it whole in memory -- A-C11 (11)); `zipfile.ZipFile`
+    accepts either directly once bytes are wrapped in a `BytesIO`."""
+    source = io.BytesIO(zip_source) if isinstance(zip_source, bytes) else zip_source
+    with zipfile.ZipFile(source) as z:
         names = {n.rsplit(".", 1)[1].lower(): n for n in z.namelist() if n.lower().endswith((".shp", ".shx", ".dbf"))}
         reader = shapefile.Reader(shp=io.BytesIO(z.read(names["shp"])), shx=io.BytesIO(z.read(names["shx"])), dbf=io.BytesIO(z.read(names["dbf"])))
     rows: list[GeoRow] = []
@@ -147,24 +160,54 @@ def _archive_key(vintage: str, url: str) -> str:
     return f"census/tiger/{vintage}/{url.rsplit('/', 1)[1]}"
 
 
-def _get_with_fallback(http: httpx.Client, spec: BoundarySpec, vintage: str) -> httpx.Response:
+def _stream_to_tempfile(http: httpx.Client, url: str) -> tuple[str, str]:
+    """One GET, streamed to a bounded temporary file rather than held whole in memory via
+    `resp.content` (A-C11 (11), `MAX_TIGER_BYTES`) -- these files run tens to hundreds of MB and
+    this download previously had no ceiling at all (final-review Info 3). Returns `(tmp_path,
+    resolved_url)` for a 2xx response; the CALLER owns deleting `tmp_path`. Raises
+    `CensusHTTPError` -- redacted the same way every other failing status in this module already
+    is (A-C3 (3)) -- for any other status, or for a stream that runs past the bound before it
+    finishes (status `413`, chosen because it names the real condition even though the server
+    itself never sent it -- this script detected it client-side)."""
+    with http.stream("GET", url, timeout=_TIMEOUT) as resp:
+        status = resp.status_code
+        resolved_url = str(resp.url)
+        # Only a 2xx is a success (A-C3b's M2 ruling, "now the written rule for every downloader"
+        # -- A-C4 ¶1). A 3xx must never reach `parse_shapefile`: `follow_redirects=False` at the
+        # call site means it is never transparently followed, but without this check it was also
+        # never REJECTED, so a redirect page flowed into the zip parser as an uncaught
+        # `BadZipFile` instead of this documented, redacted error (A4 review round 1, M-2).
+        if status < 200 or status >= 300:
+            resp.read()  # drain the small error body; never parsed or archived
+            raise CensusHTTPError(status, resolved_url)
+        fd, tmp_path = tempfile.mkstemp(prefix="tiger_", suffix=".zip")
+        total = 0
+        try:
+            with os.fdopen(fd, "wb") as tmp:
+                for chunk in resp.iter_bytes():
+                    total += len(chunk)
+                    if total > MAX_TIGER_BYTES:
+                        raise CensusHTTPError(413, resolved_url)
+                    tmp.write(chunk)
+        except BaseException:
+            os.unlink(tmp_path)
+            raise
+        return tmp_path, resolved_url
+
+
+def _get_with_fallback(http: httpx.Client, spec: BoundarySpec, vintage: str) -> tuple[str, str]:
     """One request, with the single documented exception (D2 / spec note): ZCTAs are
     2020-based and a `GENZ{vintage}` folder may not republish them, so a 404 on that one
     summary level retries against the fixed `GENZ2020` release before giving up. Any other
     failing status -- on this attempt or the retry -- raises `CensusHTTPError`, which redacts
-    the URL (A-C3 (3))."""
-    resp = http.get(spec.url, timeout=_TIMEOUT)
-    if resp.status_code == 404 and spec.summary_level == "860":
-        fallback_url = spec.url.replace(f"GENZ{vintage}", "GENZ2020").replace(f"cb_{vintage}_", "cb_2020_")
-        resp = http.get(fallback_url, timeout=_TIMEOUT)
-    # Only a 2xx is a success (A-C3b's M2 ruling, "now the written rule for every downloader" --
-    # A-C4 ¶1). A 3xx must never reach `parse_shapefile`: `follow_redirects=False` at the call
-    # site means it is never transparently followed, but without this check it was also never
-    # REJECTED, so a redirect page flowed into the zip parser as an uncaught `BadZipFile` instead
-    # of this documented, redacted error (A4 review round 1, M-2).
-    if resp.status_code < 200 or resp.status_code >= 300:
-        raise CensusHTTPError(resp.status_code, str(resp.url))
-    return resp
+    the URL (A-C3 (3)). Returns `(tmp_path, resolved_url)`; the caller deletes `tmp_path`."""
+    try:
+        return _stream_to_tempfile(http, spec.url)
+    except CensusHTTPError as exc:
+        if exc.status == 404 and spec.summary_level == "860":
+            fallback_url = spec.url.replace(f"GENZ{vintage}", "GENZ2020").replace(f"cb_{vintage}_", "cb_2020_")
+            return _stream_to_tempfile(http, fallback_url)
+        raise
 
 
 def load_boundaries(
@@ -188,20 +231,23 @@ def load_boundaries(
     state_geoms: list[BaseGeometry] | None = None
     with ingest.run(conn, "tiger_cb", vintage) as run:
         for spec in BOUNDARY_FILES(int(vintage), states):
-            resp = _get_with_fallback(http, spec, vintage)
-            body = resp.content
-            rows = parse_shapefile(body, spec)  # never archived unless this line does not raise
-            if archive is not None:
-                key = _archive_key(vintage, str(resp.url))
-                if not archive.exists(key):  # append-only by convention (A-C3 (1)): never re-write an archived key
-                    archive.put(key, body, "application/zip")
-            if spec.summary_level == "040":
-                state_geoms = [wkb.loads(r.wkb) for r in rows if r.geo_id in states]
-            if spec.summary_level == "860" and state_geoms:
-                market = unary_union(state_geoms)
-                rows = [r for r in rows if market.contains(wkb.loads(r.wkb).centroid)]
-            n = upsert_geo(conn, rows, vintage)
-            counts[f"{spec.summary_level}:{str(resp.url).rsplit('/', 1)[1]}"] = n
-            run.rows += n
+            tmp_path, url = _get_with_fallback(http, spec, vintage)
+            try:
+                rows = parse_shapefile(tmp_path, spec)  # never archived unless this line does not raise
+                if archive is not None:
+                    key = _archive_key(vintage, url)
+                    if not archive.exists(key):  # append-only by convention (A-C3 (1)): never re-write an archived key
+                        with open(tmp_path, "rb") as fh:
+                            archive.put(key, fh.read(), "application/zip")
+                if spec.summary_level == "040":
+                    state_geoms = [wkb.loads(r.wkb) for r in rows if r.geo_id in states]
+                if spec.summary_level == "860" and state_geoms:
+                    market = unary_union(state_geoms)
+                    rows = [r for r in rows if market.contains(wkb.loads(r.wkb).centroid)]
+                n = upsert_geo(conn, rows, vintage)
+                counts[f"{spec.summary_level}:{url.rsplit('/', 1)[1]}"] = n
+                run.rows += n
+            finally:
+                os.unlink(tmp_path)
         run.requests = len(counts)
     return counts

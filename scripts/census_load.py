@@ -1,7 +1,10 @@
 #!/usr/bin/env python3
-"""Operator entry points for the market-data layer. Runs inside the worker image
-(`railway run --service worker -- python scripts/census_load.py …`) or locally against
-docker-compose. Every subcommand is idempotent.
+"""Operator entry points for the market-data layer. Runs inside the worker image, reached with
+`railway ssh --service worker --environment QA` then `python scripts/census_load.py …` (never
+`railway run`, which executes on the OPERATOR'S machine with the worker's variables injected —
+controller amendment A-C11 (1), 2026-09-09, superseding this docstring's own former `railway run`
+form; see DEPLOY.md's "Census Phase A exit (QA)"), or locally against docker-compose. Every
+subcommand is idempotent.
 
 `tiger` (Task A4) is the first subcommand: it loads TIGER cartographic boundary files
 (`app/census/tiger.py`) for every state `market_state` names, into `geo_area`. `acs` (Task A5)
@@ -31,7 +34,10 @@ for an `unresolved`/`blocked` `dataset_registry` row, spec §1, is a refusal too
 this itself, before `latest_available`'s probe, rather than through `qwi.load`'s own identical
 check, so a blocked QWI dataset is never even queried -- or `zbp`'s `geo_area` holding no ZCTA
 (`860`) rows yet (`zbp.MissingBoundaries`, controller amendment A-C6): naming the prerequisite
-(`census_load.py tiger` first) is a refusal of the same kind); 3 the database
+(`census_load.py tiger` first) is a refusal of the same kind -- or an empty `market_state` (A-C11
+(6)): resolving `qwi`'s latest published quarter needs at least one state -- or `require_archive`
+(`app/census/client.py`, A-C11 (10)) finding a `CENSUS_API_KEY` set but the raw archive still
+unconfigured, naming the missing `S3_*` settings); 3 the database
 is unreachable (retryable) OR a `psycopg2.Error` raised after connect, e.g. `UndefinedTable` on an
 unmigrated database (A-C7 (7) / I12: every `cmd_*` closes its connection in `try`/`finally` and
 prints only the exception's type name here, never its text, which can carry the statement or the
@@ -39,8 +45,9 @@ DSN); 4 a download or API fetch
 failed (`CensusHTTPError`, its message already redacted -- A-C3 (3)); 5 validation failed -- every
 loader raises this when a response is missing an expected variable (`VariableMissing`; spec
 §4/¶12, a partial vintage that must never go active) -- reserved more broadly for malformed
-bodies or bounds, and is what `activate` returns for a QA diff or ingest-run status `vintage.qa`
-refuses on (`ActivationRefused`).
+bodies or bounds (`tiger`'s own arm, A-C11 (3): a truncated or corrupt boundary zip --
+`zipfile.BadZipFile`/`shapefile.ShapefileException` -- maps here too), and is what `activate`
+returns for a QA diff or ingest-run status `vintage.qa` refuses on (`ActivationRefused`).
 
 The `app.*` imports are inside each `cmd_*` function for the reason `scripts/bootstrap_admin.py`
 and `scripts/reset_rate_limits.py` record: `python scripts/census_load.py` puts `scripts/` on
@@ -77,7 +84,12 @@ def _conn(dsn: str) -> psycopg2.extensions.connection:
 
 
 def cmd_tiger(args: argparse.Namespace) -> int:
-    from app.census.client import CensusHTTPError, require_contact
+    import zipfile
+
+    import shapefile  # type: ignore[import-untyped]  # pyshp ships no py.typed marker / stubs (A-C0 ¶7)
+
+    from app.census.client import CensusHTTPError, redact, require_archive, require_contact
+    from app.census.registry import load as load_registry
     from app.census.tiger import load_boundaries
     from app.config import settings
     from app.storage import ObjectStore
@@ -97,12 +109,21 @@ def cmd_tiger(args: argparse.Namespace) -> int:
         print(f"[census_load] database unreachable: {type(exc).__name__}", file=sys.stderr)
         return 3
     try:
+        # m1 (controller amendment A-C11 (2)): unlike every other loader's own `load()`,
+        # `tiger.load_boundaries` has no internal `cleared` check at all -- the Celery task
+        # already gates this (A-C8 (9)/i2); the CLI did not.
+        ds = load_registry(conn)["tiger_cb"]
+        if not ds.cleared:
+            print(f"[census_load] tiger refused: tiger_cb is {ds.license_status}; loads are refused (spec §1 licensing gate)", file=sys.stderr)
+            return 2
         with conn.cursor() as cur:
             cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
             states = [r[0] for r in cur.fetchall()]
         # `None` when the bucket is not configured (A-C2 P2) -- the boundary load still runs,
-        # simply without archiving the raw zips.
+        # simply without archiving the raw zips, UNLESS a live load is possible at all (A-C1 ¶7 /
+        # A-C11 (10)), in which case `require_archive` refuses instead of silently disabling it.
         archive = ObjectStore.from_settings(settings)
+        require_archive(archive, settings)
         ua = f"PracticeMatch/{VERSION} ({contact})"
         # `follow_redirects=False` (controller correction, 2026-09-09): a 3xx from
         # www2.census.gov must never be transparently followed into a body that gets parsed and
@@ -114,6 +135,12 @@ def cmd_tiger(args: argparse.Namespace) -> int:
                 # CensusHTTPError's own message is already redacted (A-C3 (3)).
                 print(f"[census_load] boundary download failed: {exc}", file=sys.stderr)
                 return 4
+            except (zipfile.BadZipFile, shapefile.ShapefileException) as exc:
+                # m2 (controller amendment A-C11 (3)): a truncated or corrupt download -- neither
+                # exception carries a URL, but every raised/logged message in this programme is
+                # redacted on principle (A-C3 (3)'s habit, uniform even when nothing to strip).
+                print(f"[census_load] boundary file corrupt or unreadable: {redact(str(exc))}", file=sys.stderr)
+                return 5
         for k, n in counts.items():
             print(f"  {k}: {n} rows")
         return 0
@@ -129,7 +156,7 @@ def cmd_tiger(args: argparse.Namespace) -> int:
 
 def cmd_acs(args: argparse.Namespace) -> int:
     from app.census import acs
-    from app.census.client import CensusClient, CensusHTTPError, VariableMissing, require_contact, require_key
+    from app.census.client import CensusClient, CensusHTTPError, VariableMissing, require_archive, require_contact, require_key
     from app.census.registry import Dataset
     from app.config import settings
     from app.storage import ObjectStore
@@ -160,6 +187,7 @@ def cmd_acs(args: argparse.Namespace) -> int:
         # `None` when the bucket is not configured (A-C2 P2) -- the load still runs, simply
         # without archiving the raw responses.
         archive = ObjectStore.from_settings(settings)
+        require_archive(archive, settings)
 
         def factory(ds: Dataset) -> CensusClient:
             return CensusClient(key, ds, archive, version=VERSION, contact=contact)
@@ -193,7 +221,7 @@ def cmd_acs(args: argparse.Namespace) -> int:
 
 def cmd_cbp(args: argparse.Namespace) -> int:
     from app.census import cbp
-    from app.census.client import CensusClient, CensusHTTPError, VariableMissing, require_contact, require_key
+    from app.census.client import CensusClient, CensusHTTPError, VariableMissing, require_archive, require_contact, require_key
     from app.census.registry import Dataset
     from app.config import settings
     from app.storage import ObjectStore
@@ -215,6 +243,7 @@ def cmd_cbp(args: argparse.Namespace) -> int:
             cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
             states = [r[0] for r in cur.fetchall()]
         archive = ObjectStore.from_settings(settings)
+        require_archive(archive, settings)
 
         def factory(ds: Dataset) -> CensusClient:
             return CensusClient(key, ds, archive, version=VERSION, contact=contact)
@@ -241,7 +270,7 @@ def cmd_cbp(args: argparse.Namespace) -> int:
 
 def cmd_zbp(args: argparse.Namespace) -> int:
     from app.census import zbp
-    from app.census.client import CensusClient, CensusHTTPError, VariableMissing, require_contact, require_key
+    from app.census.client import CensusClient, CensusHTTPError, VariableMissing, require_archive, require_contact, require_key
     from app.census.registry import Dataset
     from app.config import settings
     from app.storage import ObjectStore
@@ -263,6 +292,7 @@ def cmd_zbp(args: argparse.Namespace) -> int:
             cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
             states = [r[0] for r in cur.fetchall()]
         archive = ObjectStore.from_settings(settings)
+        require_archive(archive, settings)
 
         def factory(ds: Dataset) -> CensusClient:
             return CensusClient(key, ds, archive, version=VERSION, contact=contact)
@@ -295,7 +325,7 @@ def cmd_zbp(args: argparse.Namespace) -> int:
 
 def cmd_bds(args: argparse.Namespace) -> int:
     from app.census import bds
-    from app.census.client import CensusClient, CensusHTTPError, VariableMissing, require_contact, require_key
+    from app.census.client import CensusClient, CensusHTTPError, VariableMissing, require_archive, require_contact, require_key
     from app.census.registry import Dataset
     from app.config import settings
     from app.storage import ObjectStore
@@ -317,6 +347,7 @@ def cmd_bds(args: argparse.Namespace) -> int:
             cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
             states = [r[0] for r in cur.fetchall()]
         archive = ObjectStore.from_settings(settings)
+        require_archive(archive, settings)
 
         def factory(ds: Dataset) -> CensusClient:
             return CensusClient(key, ds, archive, version=VERSION, contact=contact)
@@ -345,7 +376,7 @@ def cmd_qwi(args: argparse.Namespace) -> int:
     from datetime import UTC, datetime
 
     from app.census import qwi
-    from app.census.client import CensusClient, CensusHTTPError, VariableMissing, require_contact, require_key
+    from app.census.client import CensusClient, CensusHTTPError, VariableMissing, require_archive, require_contact, require_key
     from app.census.registry import Dataset
     from app.census.registry import load as load_registry
     from app.config import settings
@@ -368,6 +399,7 @@ def cmd_qwi(args: argparse.Namespace) -> int:
             cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
             states = [r[0] for r in cur.fetchall()]
         archive = ObjectStore.from_settings(settings)
+        require_archive(archive, settings)
 
         def factory(ds: Dataset) -> CensusClient:
             return CensusClient(key, ds, archive, version=VERSION, contact=contact)
@@ -382,6 +414,13 @@ def cmd_qwi(args: argparse.Namespace) -> int:
 
         year, quarter = args.year, args.quarter
         if year is None or quarter is None:
+            if not states:
+                # m5 (controller amendment A-C11 (6)): resolving the latest published quarter
+                # indexes `states[0]` -- an empty `market_state` gave a bare `IndexError` (exit 1)
+                # instead of a named refusal. Unreachable today (017_census_registry.sql seeds six
+                # rows and nothing deletes them), but the CLI must not depend on that forever.
+                print("[census_load] qwi refused: market_state has no rows yet; qwi's latest-quarter resolution needs at least one state", file=sys.stderr)
+                return 2
             now = datetime.now(UTC)
             with factory(ds) as client:
                 try:

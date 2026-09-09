@@ -141,6 +141,27 @@ def test_load_tiger_without_a_contact_records_a_failed_ingest_run_and_does_not_r
     assert status == "failed" and vintage == "2023" and "CENSUS_CONTACT_EMAIL" in error
 
 
+def test_load_tiger_records_a_failed_ingest_run_when_a_key_is_present_but_the_archive_is_not(conn, monkeypatch):
+    """Controller amendment A-C11 (10): even though `load_tiger` itself needs no
+    `CENSUS_API_KEY`, the SAME worker process runs the keyed loaders too -- once
+    `settings.census_api_key` is set (the "a live load is possible" signal A-C1 ¶7 cares about),
+    the raw archive coming back `None` must refuse, not silently disable archiving."""
+    from app.config import settings
+
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+    monkeypatch.setattr(settings, "census_api_key", "the-key")
+    monkeypatch.setattr(census_tiger, "load_boundaries", lambda *a, **kw: pytest.fail("must not run without the required archive"))
+
+    result = CT.load_tiger()
+
+    assert result["dataset"] == "tiger_cb"
+    assert "S3_ENDPOINT_URL" in result["error"] and "A-C1" in result["error"]
+    with conn.cursor() as cur:
+        cur.execute("SELECT status FROM ingest_run WHERE dataset_key = 'tiger_cb' ORDER BY id DESC LIMIT 1")
+        (status,) = cur.fetchone()
+    assert status == "failed"
+
+
 def test_load_tiger_refuses_a_dataset_that_is_not_cleared(conn, monkeypatch):
     """A-C8 (9) / i2: unlike acs/cbp/bds/qwi/zbp's own `load()` functions, `tiger.load_boundaries`
     has no internal `cleared` check at all, so the task adds one -- exactly like its siblings."""
@@ -214,6 +235,28 @@ def test_load_acs_without_a_key_records_a_failed_ingest_run_for_that_datasets_ow
     assert status == "failed" and vintage == "2014\u20132018"  # the registry's own seeded vintage for acs5_prior
 
 
+def test_load_acs_records_a_failed_ingest_run_when_a_key_is_present_but_the_archive_is_not(conn, monkeypatch):
+    """Controller amendment A-C11 (10): `require_archive`'s own branch logic is exercised at 100%
+    branch in `tests/census/test_client.py`; this pins that `load_acs` actually calls it, at the
+    registry's OWN vintage for the dataset key given, the same shape every `_refuse` call already
+    uses for a missing key/contact."""
+    from app.config import settings
+
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+    monkeypatch.setattr(settings, "census_api_key", "the-key")
+    monkeypatch.setattr(census_acs, "load", lambda *a, **kw: pytest.fail("must not run without the required archive"))
+
+    result = CT.load_acs("acs5_prior")
+
+    assert result["dataset"] == "acs5_prior"
+    assert "S3_BUCKET" in result["error"]
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, vintage FROM ingest_run WHERE dataset_key = 'acs5_prior' ORDER BY id DESC LIMIT 1")
+        status, vintage = cur.fetchone()
+    assert status == "failed" and vintage == "2014\u20132018"  # the registry's own seeded vintage for acs5_prior
+
+
 def test_load_acs_without_a_contact_refuses_before_checking_the_key(conn, monkeypatch):
     monkeypatch.delenv("CENSUS_CONTACT_EMAIL", raising=False)
     monkeypatch.delenv("CENSUS_API_KEY", raising=False)
@@ -259,6 +302,27 @@ def test_load_cbp_without_a_key_records_a_failed_ingest_run(conn, monkeypatch):
     assert status == "failed" and vintage == "2022"
 
 
+def test_load_cbp_records_a_failed_ingest_run_when_a_key_is_present_but_the_archive_is_not(conn, monkeypatch):
+    """Controller amendment A-C11 (10), the same `_resolve_archive` shape `load_tiger`/`load_acs`
+    already prove -- pinned here too since `_resolve_archive`'s call site is a distinct line in
+    every task."""
+    from app.config import settings
+
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+    monkeypatch.setattr(settings, "census_api_key", "the-key")
+    monkeypatch.setattr(census_cbp, "load", lambda *a, **kw: pytest.fail("must not run without the required archive"))
+
+    result = CT.load_cbp()
+
+    assert result["dataset"] == "cbp"
+    assert "S3_ACCESS_KEY_ID" in result["error"]
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, vintage FROM ingest_run WHERE dataset_key = 'cbp' ORDER BY id DESC LIMIT 1")
+        status, vintage = cur.fetchone()
+    assert status == "failed" and vintage == "2022"
+
+
 # ---- load_bds -----------------------------------------------------------------------------------
 
 def test_load_bds_builds_a_keyed_client_and_delegates_to_bds_load(conn, monkeypatch):
@@ -291,6 +355,26 @@ def test_load_bds_without_a_key_records_a_failed_ingest_run_at_the_given_year(co
     result = CT.load_bds(2021)
 
     assert result["dataset"] == "bds" and "CENSUS_API_KEY" in result["error"]
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, vintage FROM ingest_run WHERE dataset_key = 'bds' ORDER BY id DESC LIMIT 1")
+        status, vintage = cur.fetchone()
+    assert status == "failed" and vintage == "2021"
+
+
+def test_load_bds_records_a_failed_ingest_run_when_a_key_is_present_but_the_archive_is_not(conn, monkeypatch):
+    """Controller amendment A-C11 (10) -- `load_bds` refuses using the given year as the vintage,
+    the same as its own missing-key arm above."""
+    from app.config import settings
+
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+    monkeypatch.setattr(settings, "census_api_key", "the-key")
+    monkeypatch.setattr(census_bds, "load", lambda *a, **kw: pytest.fail("must not run without the required archive"))
+
+    result = CT.load_bds(2021)
+
+    assert result["dataset"] == "bds"
+    assert "S3_SECRET_ACCESS_KEY" in result["error"]
     with conn.cursor() as cur:
         cur.execute("SELECT status, vintage FROM ingest_run WHERE dataset_key = 'bds' ORDER BY id DESC LIMIT 1")
         status, vintage = cur.fetchone()
@@ -372,6 +456,27 @@ def test_load_qwi_without_a_key_records_a_failed_ingest_run_at_the_registrys_vin
     assert status == "failed" and vintage == "latest quarter"  # 017_census_registry.sql's seeded qwi vintage
 
 
+def test_load_qwi_records_a_failed_ingest_run_when_a_key_is_present_but_the_archive_is_not(conn, monkeypatch):
+    """Controller amendment A-C11 (10) -- checked after the licence gate, before the resolve
+    branch, so neither `latest_available` nor `load` ever runs without the required archive."""
+    from app.config import settings
+
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+    monkeypatch.setattr(settings, "census_api_key", "the-key")
+    monkeypatch.setattr(census_qwi, "latest_available", lambda *a, **kw: pytest.fail("must not resolve without the required archive"))
+    monkeypatch.setattr(census_qwi, "load", lambda *a, **kw: pytest.fail("must not run without the required archive"))
+
+    result = CT.load_qwi()
+
+    assert result["dataset"] == "qwi"
+    assert "S3_ENDPOINT_URL" in result["error"]
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, vintage FROM ingest_run WHERE dataset_key = 'qwi' ORDER BY id DESC LIMIT 1")
+        status, vintage = cur.fetchone()
+    assert status == "failed" and vintage == "latest quarter"
+
+
 def test_load_qwi_refuses_a_blocked_dataset_before_probing_the_latest_quarter(conn, monkeypatch):
     """A-C8 (1) / M1: `qwi.load`'s own `cleared` check runs only AFTER `latest_available` has
     already probed Census up to twelve times and `CensusClient.fetch_table` has already archived
@@ -394,6 +499,27 @@ def test_load_qwi_refuses_a_blocked_dataset_before_probing_the_latest_quarter(co
         cur.execute("SELECT status, vintage FROM ingest_run WHERE dataset_key = 'qwi' ORDER BY id DESC LIMIT 1")
         status, vintage = cur.fetchone()
     assert status == "failed" and vintage == "latest quarter"
+
+
+def test_load_qwi_records_a_failed_ingest_run_when_market_state_is_empty(conn, monkeypatch):
+    """m5 (controller amendment A-C11 (6)): resolving the latest published quarter indexes
+    `states[0]` -- an empty `market_state` used to raise a bare `IndexError` and crash the task
+    instead of recording a named, failed `ingest_run`. Unreachable today (017_census_registry.sql
+    seeds six rows and nothing deletes them), but the task must not depend on that forever."""
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM market_state")
+    monkeypatch.setattr(census_qwi, "latest_available", lambda *a, **kw: pytest.fail("must not resolve a quarter with no states"))
+
+    result = CT.load_qwi()
+
+    assert result["dataset"] == "qwi"
+    assert "market_state" in result["error"]
+    with conn.cursor() as cur:
+        cur.execute("SELECT status FROM ingest_run WHERE dataset_key = 'qwi' ORDER BY id DESC LIMIT 1")
+        (status,) = cur.fetchone()
+    assert status == "failed"
 
 
 # ---- load_zbp -----------------------------------------------------------------------------------
@@ -428,6 +554,25 @@ def test_load_zbp_without_a_key_records_a_failed_ingest_run(conn, monkeypatch):
     result = CT.load_zbp()
 
     assert result["dataset"] == "zbp" and "CENSUS_API_KEY" in result["error"]
+    with conn.cursor() as cur:
+        cur.execute("SELECT status, vintage FROM ingest_run WHERE dataset_key = 'zbp' ORDER BY id DESC LIMIT 1")
+        status, vintage = cur.fetchone()
+    assert status == "failed" and vintage == "2022"
+
+
+def test_load_zbp_records_a_failed_ingest_run_when_a_key_is_present_but_the_archive_is_not(conn, monkeypatch):
+    """Controller amendment A-C11 (10) -- the same `_resolve_archive` shape as its siblings."""
+    from app.config import settings
+
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+    monkeypatch.setattr(settings, "census_api_key", "the-key")
+    monkeypatch.setattr(census_zbp, "load", lambda *a, **kw: pytest.fail("must not run without the required archive"))
+
+    result = CT.load_zbp()
+
+    assert result["dataset"] == "zbp"
+    assert "S3_BUCKET" in result["error"]
     with conn.cursor() as cur:
         cur.execute("SELECT status, vintage FROM ingest_run WHERE dataset_key = 'zbp' ORDER BY id DESC LIMIT 1")
         status, vintage = cur.fetchone()

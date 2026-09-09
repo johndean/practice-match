@@ -24,6 +24,12 @@ from app.config import Settings
 log = logging.getLogger(__name__)
 
 _NOT_FOUND_CODES = ("404", "NoSuchKey", "NotFound")
+#: m6 (controller amendment A-C11 (7)): `list_objects_v2` truncates at this many keys per call and
+#: reports `IsTruncated`/`NextContinuationToken` when there is more -- `list()` below follows the
+#: token across pages rather than silently returning only the first one. A module-level constant
+#: (not a `list()` parameter) so a caller never has to think about it, and a test can monkeypatch
+#: it down to force real multi-page moto behaviour without waiting on 1 000+ fixture objects.
+_LIST_PAGE_SIZE = 1000
 
 
 class ObjectStore:
@@ -74,5 +80,18 @@ class ObjectStore:
         return existed
 
     def list(self, prefix: str) -> list[str]:
-        resp = self._s3.list_objects_v2(Bucket=self.bucket, Prefix=prefix)
-        return [obj["Key"] for obj in resp.get("Contents", [])]
+        """Follows `NextContinuationToken` across every page (m6, A-C11 (7)) -- a single call
+        silently truncated at `_LIST_PAGE_SIZE` keys, which is exactly the failure mode a caller
+        with more objects than that under one prefix would hit with no error at all."""
+        keys: list[str] = []
+        token: str | None = None
+        while True:
+            resp = (
+                self._s3.list_objects_v2(Bucket=self.bucket, Prefix=prefix, MaxKeys=_LIST_PAGE_SIZE, ContinuationToken=token)
+                if token is not None
+                else self._s3.list_objects_v2(Bucket=self.bucket, Prefix=prefix, MaxKeys=_LIST_PAGE_SIZE)
+            )
+            keys.extend(obj["Key"] for obj in resp.get("Contents", []))
+            if not resp.get("IsTruncated"):
+                return keys
+            token = resp["NextContinuationToken"]
