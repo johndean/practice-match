@@ -12,7 +12,9 @@ def test_market_metric_refuses_datasets_that_are_not_cleared(conn):
         with pytest.raises(psycopg2.errors.RaiseException) as e:
             cur.execute("""INSERT INTO market_metric (listing_id, band, metric_key, vintage, value_num, unit, source_dataset, computed_at)
                            VALUES (%s, 'drive_10', 'pet_households_licensed', 'n/a', 1, 'count', 'pet_ownership', now())""", (lid,))
-        assert "pet_ownership" in str(e.value) and "blocked" in str(e.value)
+        # Migration 062 (A-C16 finding 2): the message no longer names the status it read (which
+        # could go stale under a concurrent flip) -- only the dataset key, which cannot.
+        assert "pet_ownership" in str(e.value) and "not licence-cleared" in str(e.value)
 
 
 def test_status_flip_blocks_future_writes_but_keeps_rows(conn):
