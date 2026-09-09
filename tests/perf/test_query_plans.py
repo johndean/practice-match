@@ -31,6 +31,9 @@ from app.api.admin_signups import LIST_SQL as SIGNUPS_LIST_SQL
 from app.api.admin_signups import MAX_LAUNCH_BATCH, UNMAILED_SQL
 from app.api.admin_signups import MAX_LIST as SIGNUPS_MAX_LIST
 from app.api.admin_users import LIST_SQL, MAX_LIST
+from app.census.catchment import BANDS as CATCHMENT_BANDS
+from app.census.catchment import METHOD as CATCHMENT_METHOD
+from app.census.catchment import SQL as CATCHMENT_SQL
 
 # Task I9a fix round 1, Important 2. `users_queue` is `GET /api/admin/users?state=pending` — the
 # endpoint's OWN query, imported from the handler rather than retyped, so this gate cannot drift
@@ -44,6 +47,11 @@ from app.api.admin_users import LIST_SQL, MAX_LIST
 # pinned here: no query in `app/` filters `application.status` — the queue is read through the
 # `account`-driven join above — so there is nothing to explain. The first task that reads the
 # application table by status should add its query here and pin that index then.)
+
+# The one listing `_seed_catchment_geo` gives a real, matched geo_area row — shared between the
+# seed and the plan's own params so the two cannot drift apart.
+_CATCHMENT_LISTING_ID = "00000000-0000-0000-0000-0000000c3a90"
+
 PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
     "users_queue": (
         "EXPLAIN (FORMAT JSON) " + LIST_SQL,
@@ -78,6 +86,19 @@ PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
         "EXPLAIN (FORMAT JSON) " + UNMAILED_SQL.replace(" FOR UPDATE", ""),
         (MAX_LAUNCH_BATCH,),
     ),
+    # Task B3 correction 5: `app.census.catchment.SQL` joins `geo_area` on
+    # `ST_Intersects(g.geom, ...)` with `g.geom` left BARE so `geo_area_geom_gix` (a GiST index on
+    # that column) stays usable — the brief's own form wrapped `g.geom` in `ST_Transform(...)::
+    # geography`, which made the index unusable and the query degrade to a full scan as the table
+    # grows. `_CATCHMENT_LISTING_ID` is a fixed id seeded by `_seed_catchment_geo` below, matched
+    # to the one `geo_area` row that actually contains the seeded point — real params, not stand-
+    # ins, since a spatial predicate's selectivity is exactly what decides whether the planner
+    # reaches for the index at all.
+    "catchment_tracts": (
+        "EXPLAIN (FORMAT JSON) " + CATCHMENT_SQL,
+        {"band": "drive_10", "level": "140", "vintage": "2023", "method": CATCHMENT_METHOD,
+         "radius": CATCHMENT_BANDS["drive_10"], "listing_id": _CATCHMENT_LISTING_ID},
+    ),
 }
 
 # The index each plan must be using, by name. Absent for an entry whose only claim is its shape.
@@ -91,6 +112,9 @@ INDEXES: dict[str, tuple[str, ...]] = {
     "session_lookup": ("session_pkey",),
     "signups_list": ("interest_signup_listing_idx",),
     "signups_unmailed": ("interest_signup_unmailed_idx",),
+    # migrations/018_census_geo.sql's GiST index on geo_area.geom — the one correction 5 exists to
+    # keep usable.
+    "catchment_tracts": ("geo_area_geom_gix",),
 }
 
 
@@ -125,8 +149,53 @@ def _seed_signups(conn: Any) -> None:
         cur.execute("ANALYZE interest_signup")
 
 
+def _seed_catchment_geo(conn: Any) -> None:
+    """2,000 `listing`/`practice_location` rows plus the one seeded target, and 5,000 `geo_area`
+    tracts scattered far from the target's point plus the one tract that actually contains it.
+
+    Without the 2,000-row `practice_location` volume, `listing_id = %(listing_id)s` — an equality
+    lookup on that table's OWN primary key — planned as a `Seq Scan` on the single seeded row: a
+    correct choice for one row, but not what a real, thousands-of-listings `practice_location`
+    plans against (same "row counts are part of the gate" reasoning `_seed_admin_queue` documents,
+    applied to the OTHER side of this join).
+
+    The 5,000 `geo_area` rows share the query's own `summary_level`/`vintage` with the one tract
+    that actually contains the target point — those two equality filters therefore match nearly
+    the WHOLE table (not selective on their own) while the spatial predicate matches almost
+    nothing, which is what should push the planner onto `geo_area_geom_gix` rather than a
+    sequential scan or the unrelated `(summary_level, vintage)` btree index. `ANALYZE` is what
+    makes PostGIS's own geometry statistics visible to the planner at all — without it Postgres
+    has no histogram to estimate the spatial predicate's selectivity from."""
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO listing (id, slug, name, street, city, state, zip, status, area, type, market, source)
+                       SELECT md5(random()::text || i::text)::uuid, 'plan-catchment-'||i, 'Plan Catchment '||i, '1 Main St',
+                              'Cedar Park', 'TX', '78613', 'published', 'Cedar Park', 'Small animal', 'Cedar Park, TX', 'seed'
+                         FROM generate_series(1, 2000) i""")
+        cur.execute("""INSERT INTO practice_location (listing_id, address_hash, point, geo_precision, geocoded_at, geocoder_vintage)
+                       SELECT id, 'h-'||id, ST_SetSRID(ST_Point(-110 + (random() * 10), 25 + (random() * 10)), 4269),
+                              'rooftop', now(), 'Current_Current'
+                         FROM listing WHERE slug LIKE 'plan-catchment-%'""")
+        cur.execute("""INSERT INTO listing (id, slug, name, street, city, state, zip, status, area, type, market, source)
+                       VALUES (%s, 'plan-catchment-target', 'Plan Catchment Target', '1 Main St', 'Cedar Park', 'TX', '78613',
+                               'published', 'Cedar Park', 'Small animal', 'Cedar Park, TX', 'seed')""", (_CATCHMENT_LISTING_ID,))
+        cur.execute("""INSERT INTO practice_location (listing_id, address_hash, point, geo_precision, geocoded_at, geocoder_vintage)
+                       VALUES (%s, 'h-plan-catchment-target', ST_SetSRID(ST_Point(-97.85, 30.55), 4269), 'rooftop', now(), 'Current_Current')""",
+                    (_CATCHMENT_LISTING_ID,))
+        cur.execute("""INSERT INTO geo_area (geo_id, summary_level, vintage, name, geom)
+                       SELECT 'plan-tract-'||i, '140', '2023', 'plan-tract-'||i,
+                              ST_Multi(ST_MakeEnvelope(-130 + (i % 500) * 0.1, 20 + (i / 500) * 0.05,
+                                                        -130 + (i % 500) * 0.1 + 0.05, 20 + (i / 500) * 0.05 + 0.05, 4269))
+                         FROM generate_series(1, 5000) i""")
+        cur.execute("""INSERT INTO geo_area (geo_id, summary_level, vintage, name, geom)
+                       VALUES ('plan-tract-target', '140', '2023', 'plan-tract-target',
+                               ST_Multi(ST_GeomFromText('POLYGON((-97.90 30.50,-97.80 30.50,-97.80 30.60,-97.90 30.60,-97.90 30.50))', 4269)))""")
+        cur.execute("ANALYZE listing")
+        cur.execute("ANALYZE practice_location")
+        cur.execute("ANALYZE geo_area")
+
+
 SEEDS: dict[str, Any] = {"users_queue": _seed_admin_queue, "signups_list": _seed_signups, "signups_counts": _seed_signups,
-                        "signups_unmailed": _seed_signups}
+                        "signups_unmailed": _seed_signups, "catchment_tracts": _seed_catchment_geo}
 
 
 def _node_types(plan: dict[str, Any]) -> list[str]:
