@@ -139,11 +139,17 @@ describe('local design amendments (spec D15)', () => {
     // `photos` and no `photoCaptions` at all, so both guards are falsey and A15 moves no
     // approved state.
     'A15.1', 'A15.2', 'A15.3a', 'A15.3b', 'A15.3c', 'A15.3d',
+    // A18 — the two backwards arrows (John, 2026-09-09: "the arrow icons are backwards on each
+    // location, reverse each"). Two template literals using the design's own flip idiom
+    // (V3:724): the Insights-tab CTA's arrow turns right, the detail's Back-to-results arrow
+    // turns left. Both finds are unique in the pristine file (A18.1 anchors on the bare <img>,
+    // never on A3's label — the citation chase); the family is appended last, as every family is.
+    'A18.1', 'A18.2',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(104);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(106);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -433,6 +439,41 @@ describe('local design amendments (spec D15)', () => {
     for (const decl of [...amended.matchAll(/font-family:\s*([^;"']*(?:'[^']*')?[^;"]*)/g)].map((m) => m[0])) {
       expect(decl.includes('Montserrat') || decl.includes('--rf-display') || decl.includes('--rf-serif') || decl.includes('ProximaNova') || decl.includes('inherit'),
         `A14 must not restyle anything but the Give control: ${decl}`).toBe(true);
+    }
+  });
+
+  // A18 (John, 2026-09-09: "the arrow icons are backwards on each location, reverse each").
+  // `navigate-arrow.svg` points LEFT unrotated (path apex at x = 199 in a 640 viewBox) and the
+  // design's own way to point it RIGHT is `transform: rotate(180deg)` (V3:724). The Insights-tab
+  // CTA (V3:819) showed it unrotated AFTER "View full listing" — pointing back at the label; the
+  // detail's Back-to-results link (V3:895) showed it rotated BEFORE "Back to results" — pointing
+  // away from where it goes. A18 swaps the two. The other five sites are untouched: the docked
+  // panel's prev/next pair (correct), the metric glyph, and the two sign-out arrows John has not
+  // ruled on (D-A18).
+  it('A18 reverses exactly the two arrows John named and leaves the other five sites byte for byte', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    expect(amended.split('View full listing<img src="assets/icons/navigate-arrow.svg" alt="" width="12" height="12" style="transform: rotate(180deg); filter: brightness(0) invert(1);">').length - 1).toBe(1);
+    expect(amended.split('<img src="assets/icons/navigate-arrow.svg" alt="" width="13" height="13" style="flex: none; opacity: .7;">Back to results').length - 1).toBe(1);
+    expect(amended).not.toContain('height="12" style="filter: brightness(0) invert(1);">');
+    expect(amended).not.toContain('style="flex: none; transform: rotate(180deg); opacity: .7;">Back to results');
+    // (Not asserted: a count of the rotate idiom. A18 adds one and removes one, but A19.8's
+    // lightbox Next arrow adds another later in this branch, so an equality here would be a
+    // pin on the wrong family.)
+    // The five other sites, as designed. (Unrotated sign-out arrows at V3:140 and V3:1434 are
+    // John's question, not this amendment's; the phone frame's is on two frozen screens.) The
+    // docked panel's prev/next pair is pinned as each button line JOINED to its <img> line — by
+    // the panel's own `md.panel.photos.prev`/`.next` handlers — and not as the bare <img>: A19.8
+    // later in this branch copies both <img> tags verbatim into the lightbox, where a bare count
+    // would read 2 against the pristine 1 and fail this case for the wrong family.
+    for (const kept of [
+      '<img src="assets/icons/navigate-arrow.svg" alt="" width="14" height="14" style="flex: none; opacity: .7;">',                          // V3:140
+      '<button onClick="{{ md.panel.photos.prev }}" aria-label="Previous photo" style="position: absolute; left: 10px; top: 50%; margin-top: -17px; width: 34px; height: 34px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; opacity: .92; transition: opacity 150ms var(--easing-out);" style-hover="opacity: 1;">\n                      <img src="assets/icons/nav-arrow-white.svg" alt="" width="34" height="34" style="display: block; filter: drop-shadow(0 1px 3px rgba(0,58,112,.4));">',                              // V3:720–721
+      '<button onClick="{{ md.panel.photos.next }}" aria-label="Next photo" style="position: absolute; right: 10px; top: 50%; margin-top: -17px; width: 34px; height: 34px; padding: 0; border: 0; background: none; cursor: pointer; display: grid; place-items: center; opacity: .92; transition: opacity 150ms var(--easing-out);" style-hover="opacity: 1;">\n                      <img src="assets/icons/nav-arrow-white.svg" alt="" width="34" height="34" style="display: block; transform: rotate(180deg); filter: drop-shadow(0 1px 3px rgba(0,58,112,.4));">',  // V3:723–724
+      'assets/icons/move-arrow.svg',                                                                                                            // V3:784
+      '<img src="assets/icons/navigate-arrow.svg" alt="" width="12" height="12" style="flex: none; opacity: .7;">'                            // V3:1434
+    ]) {
+      expect(pristine, `${kept} is not the pristine site this case thinks it is`).toContain(kept);
+      expect(amended.split(kept).length - 1, `A18 changed a site outside its ruling: ${kept}`).toBe(pristine.split(kept).length - 1);
     }
   });
 

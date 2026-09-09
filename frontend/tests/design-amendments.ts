@@ -1893,6 +1893,56 @@ const A15_3d: Amendment = {
   count: 1
 };
 
+/** A18 — the two backwards arrows (John, 2026-09-09; screenshots of the docked panel's "View
+ *  full listing" button and the detail's "Back to results" link).
+ *
+ *  `navigate-arrow.svg` points LEFT unrotated — its path's apex is at x = 199 of a 640 viewBox
+ *  and the shaft runs to x = 424 — and it is mirror-symmetric about its horizontal axis, which is
+ *  why `transform: rotate(180deg)` is a horizontal flip and the design's own idiom for pointing
+ *  it right (V3:724, the docked panel's Next arrow). The Insights-tab CTA carried it unrotated
+ *  AFTER its label, so it pointed back at the words; the detail's Back link carried it rotated
+ *  BEFORE its label, so it pointed away from where the link goes. A18 swaps the two — the
+ *  declaration order `transform` before `filter` copies V3:724.
+ *
+ *  Not touched, deliberately: the SVG files (flipping the glyph would reverse the correct
+ *  prev/next pair at V3:721/724 and the two sign-out arrows, and the app serves its own public
+ *  copy anyway — identical path, different C2PA metadata); V3:140 and V3:1434, the two unrotated
+ *  sign-out arrows, which are John's question (D-A18) and not his two screenshots — V3:1434 is
+ *  inside the phone frame, on `mobile-list` and `mobile-detail`'s frozen pixels.
+ *
+ *  Line numbers in this family's comments name the amended file as it stood when A18 was written
+ *  (the fa1ab3f convention: comments keep their numbers, LOCAL_AMENDMENTS.md's rows carry the ones
+ *  the citation test re-checks after a later family inserts lines).
+ */
+const A18 = {
+  date: '2026-09-09',
+  ruling: 'the arrow icons are backwards on each location, reverse each'
+};
+
+/** A18.1 — the Insights-tab CTA (V3:819). Anchored on the bare `<img>` — the only 12 × 12
+ *  `navigate-arrow` carrying the whitening filter, unique in the pristine file and at application
+ *  — and deliberately NOT on the button's "View full listing" label in front of it:
+ *  design-amendments.test.ts's citation case chases a row's output forward through any LATER
+ *  amendment whose `find` includes its `replace`, so a find that carried A3's text would make
+ *  A3's checked output this `<img>` line and stale A3's own V3:831 citation (A11's site, where
+ *  A3's text also stands). The bare anchor keeps A18 independent of A3's position in the list. */
+const A18_1: Amendment = {
+  id: 'A18.1', ...A18,
+  find: '<img src="assets/icons/navigate-arrow.svg" alt="" width="12" height="12" style="filter: brightness(0) invert(1);">',
+  replace: '<img src="assets/icons/navigate-arrow.svg" alt="" width="12" height="12" style="transform: rotate(180deg); filter: brightness(0) invert(1);">',
+  count: 1
+};
+
+/** A18.2 — the detail's Back-to-results link (V3:895). The plain text "Back to results" occurs
+ *  twice (the mobile back button's `backLabel` in the script is the other); the `<img` prefix
+ *  keeps this to the desktop link. */
+const A18_2: Amendment = {
+  id: 'A18.2', ...A18,
+  find: '<img src="assets/icons/navigate-arrow.svg" alt="" width="13" height="13" style="flex: none; transform: rotate(180deg); opacity: .7;">Back to results',
+  replace: '<img src="assets/icons/navigate-arrow.svg" alt="" width="13" height="13" style="flex: none; opacity: .7;">Back to results',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -1903,5 +1953,7 @@ export function amendments(): Amendment[] {
     // A13.8 edits the `out` closure A14.7 introduces, so it is the one A13 entry that has to run
     // after A14's (final review m4). Definition order in this file matches this list (m8).
     A13_8,
-    A15_1, A15_2, A15_3a, A15_3b, A15_3c, A15_3d];
+    A15_1, A15_2, A15_3a, A15_3b, A15_3c, A15_3d,
+    // A18 — the two arrow reversals (2026-09-09). Both finds are unique in the pristine file.
+    A18_1, A18_2];
 }

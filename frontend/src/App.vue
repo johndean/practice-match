@@ -742,7 +742,7 @@
                   </div>
 
                   <button class="sch8" @click="v.md?.panel?.openListing" style="display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%; height: 44px; margin-top: 16px; font-family: var(--rf-display); font-size: 13.5px; font-weight: 500; color: var(--vf-white); background: var(--vf-accent); border: 0; border-radius: 6px; cursor: pointer;">
-                    View full listing<img src="/assets/icons/navigate-arrow.svg" alt width="12" height="12" style="filter: brightness(0) invert(1);">
+                    View full listing<img src="/assets/icons/navigate-arrow.svg" alt width="12" height="12" style="transform: rotate(180deg); filter: brightness(0) invert(1);">
                   </button>
                   <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">Drive-time figures are approximated from a straight-line catchment around the practice. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>
                 </div>
@@ -817,7 +817,7 @@
         <div style="padding: 28px 34px; background: var(--rf-band);">
           <div style="max-width: 1180px; margin: 0 auto;">
             <button @click="v.backToBrowse" style="display: inline-flex; align-items: center; gap: 7px; font-size: 13px; font-weight: 500; color: var(--color-navy); background: none; border: 0; padding: 0; cursor: pointer;">
-              <img src="/assets/icons/navigate-arrow.svg" alt width="13" height="13" style="flex: none; transform: rotate(180deg); opacity: .7;">Back to results
+              <img src="/assets/icons/navigate-arrow.svg" alt width="13" height="13" style="flex: none; opacity: .7;">Back to results
             </button>
             <h1 style="font-family: var(--rf-display); font-size: 34px; font-weight: 800; color: var(--color-navy); margin: 12px 0 0; text-transform: uppercase; letter-spacing: .005em;"><span v-if="__s(v.d?.title) !== null" class="sc-interp">{{ __s(v.d?.title) }}</span></h1>
             <div style="display: flex; align-items: center; gap: 14px; margin-top: 8px; flex-wrap: wrap;">
