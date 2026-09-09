@@ -2214,6 +2214,7 @@ class Component extends DCLogic {
         const vals = {};
         ["income", "pets", "growth", "households", "econ", "competition"].forEach((k) => {
           const raw = k === "households" ? c.hh : k === "competition" ? c.vets : c[k];
+          if (raw == null) return;
           const b = this.bucket(k, raw);
           vals[k] = { t: b.t, color: b.color, label: this.fmtMetric(k, raw) };
         });

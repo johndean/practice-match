@@ -3017,6 +3017,14 @@ const A21_1: Amendment = {
   count: 1
 };
 
+/** A21.1b — at the assembly point, skip metrics with null or undefined values instead of bucketing them */
+const A21_1b: Amendment = {
+  id: 'A21.1b', date: '2026-09-10', ruling: 'a missing figure is omitted, never zeroed (controller amendment A-C28)',
+  find: '        ["income", "pets", "growth", "households", "econ", "competition"].forEach((k) => {\n          const raw = k === "households" ? c.hh : k === "competition" ? c.vets : c[k];\n          const b = this.bucket(k, raw);',
+  replace: '        ["income", "pets", "growth", "households", "econ", "competition"].forEach((k) => {\n          const raw = k === "households" ? c.hh : k === "competition" ? c.vets : c[k];\n          if (raw == null) return;\n          const b = this.bucket(k, raw);',
+  count: 1
+};
+
 /** A21.2 — correct the economic layer label: B7 sends revenue per establishment, not payroll */
 const A21_2: Amendment = {
   id: 'A21.2', date: '2026-09-10', ruling: 'the economic layer says what the number is (controller amendment A-C28)',
@@ -3066,5 +3074,5 @@ export function amendments(): Amendment[] {
     // so the family is last. Definition order in this file matches this list (m8).
     A19_1, A19_2, A19_3, A19_4, A19_5, A19_6, A19_7, A19_8, A19_9, A19_10, A19_11, A19_12,
     // A21 — market-data layers do not render absence as zero (controller amendment A-C28, 2026-09-10; Task B8 review).
-    A21_1, A21_2, A21_2b, A21_3];
+    A21_1, A21_1b, A21_2, A21_2b, A21_3];
 }

@@ -203,18 +203,19 @@ describe('local design amendments (spec D15)', () => {
     // match `go()`'s shape once A16.20a has already split it (see the amendment's own comment).
     'A19.1', 'A19.2', 'A19.3', 'A19.4', 'A19.5', 'A19.6', 'A19.7', 'A19.8', 'A19.9', 'A19.10', 'A19.11', 'A19.12',
     // A21 — the Browse map's veterinarian and economic layers read real API data without
-    // rendering missing data as zero (controller amendment A-C28, 2026-09-10). Four literal
-    // script edits: A21.1 removes the `|| 0` defaults so missing census figures are omitted
-    // rather than bucketed at zero on the map; A21.2 corrects the economic layer's label from
-    // "Payroll" to "Revenue" to match the API contract; A21.2b updates the menu radio button
-    // label to "Revenue" for consistency; A21.3 removes the hardcoded year from the growth
-    // layer's label, making it vintage-neutral.
-    'A21.1', 'A21.2', 'A21.2b', 'A21.3',
+    // rendering missing data as zero (controller amendment A-C28, 2026-09-10). Five literal
+    // script edits: A21.1 removes the `|| 0` defaults so missing census figures become undefined
+    // in communities(); A21.1b completes the fix at the assembly point, skipping entries in
+    // marketVals when the raw value is null/undefined so they never reach the renderer; A21.2
+    // corrects the economic layer's label from "Payroll" to "Revenue" to match the API contract;
+    // A21.2b updates the menu radio button label to "Revenue" for consistency; A21.3 removes the
+    // hardcoded year from the growth layer's label, making it vintage-neutral.
+    'A21.1', 'A21.1b', 'A21.2', 'A21.2b', 'A21.3',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(148);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(149);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
