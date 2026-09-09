@@ -7,12 +7,15 @@ every migration applied and `settings.database_url` pointed at it.
 """
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
 import pytest
 
 from tests.api.conftest import auth_headers, padded_json
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _seller(member: Any) -> tuple[Any, dict[str, str], dict[str, str]]:
@@ -1312,3 +1315,88 @@ async def test_serialise_draft_never_emits_a_presentational_field(client: Any, c
     )
     # Not vacuous: the payload really is the draft, with the keys the dashboard mapping reads.
     assert {"id", "status", "city", "type", "price", "docs", "sqft", "decline_reason"} <= set(draft)
+
+
+# --- A-SL26 (1): the adapter's step→fields map and this module's are ONE table ------------------
+# CRITICAL-B, round-2 re-review: `columns_for`'s whitelist is one-directional and total by ruling
+# D10 — "a mis-sent field is a 400 rather than a silent no-op, because ... a mis-sent field means
+# the adapter and this table disagree — which is a bug to see, not to absorb". Nothing made that
+# disagreement visible. The design's Continue hands the adapter the whole of `state.w` and the
+# adapter forwarded it, so every Continue was `400 step 1 does not accept anon, bldg, city, …` and
+# not one field a seller typed was ever written — invisible to pytest (which calls the endpoint
+# with correct bodies), to vitest (which stubbed a pre-filtered body) and to the pixel and DOM
+# oracles (whose wizard captures move by the design's step rail, which patches nothing).
+#
+# The projection now lives in `frontend/src/listings/seller.ts`'s own `STEP_FIELDS`, in these same
+# wizard key names. These two cases are the pin, read the way `tests/test_docs.py` reads a file: one
+# compares the two tables step by step and through `columns_for`'s own mapping, the other spends a
+# real request per step with exactly the payload the adapter would send.
+
+SELLER_ADAPTER = ROOT / "frontend" / "src" / "listings" / "seller.ts"
+
+#: A design-shaped value per wizard field — what `state.w` (logic.js:204) actually holds after a
+#: seller has filled the wizard in, so the payloads below are the ones the adapter really sends.
+DESIGN_W: dict[str, Any] = {
+    "name": "ABC Animal Hospital", "type": "Small animal", "est": "1998",
+    "ownership": "Sole proprietor", "city": "Bastrop", "zip": "78602", "anon": True,
+    "price": "860,000", "rev": "700,000", "revBand": False,
+    "docs": "2", "rooms": "4", "sqft": "3,000", "hours": "Mon-Fri 8-6", "desc": "Dentistry",
+    "bldg": "Included", "facilityType": "Standalone", "facility": "Two surgical suites",
+    "docsLocked": True,
+}
+
+
+def adapter_step_fields() -> dict[int, list[str]]:
+    """`STEP_FIELDS` as `frontend/src/listings/seller.ts` declares it.
+
+    Read out of the file rather than duplicated here, for `tests/test_docs.py`'s own reason: a copy
+    is a third table to keep in step, and the whole point of this pin is that there are two."""
+    import re
+
+    source = SELLER_ADAPTER.read_text(encoding="utf-8")
+    block = re.search(r"export const STEP_FIELDS[^=]*=\s*\{(.*?)\n\};", source, re.DOTALL)
+    assert block, "seller.ts no longer declares `export const STEP_FIELDS = { … };`"
+    rows = re.findall(r"^\s*(\d+):\s*\[([^\]]*)\],?\s*$", block.group(1), re.MULTILINE)
+    assert rows, f"no `<step>: [ … ]` rows found in seller.ts's STEP_FIELDS:\n{block.group(1)}"
+    return {int(step): re.findall(r"'([^']+)'", fields) for step, fields in rows}
+
+
+def test_the_adapter_and_the_api_agree_on_every_step_s_fields() -> None:
+    from app.api.seller_listings import STEP_FIELDS, columns_for
+
+    adapter = adapter_step_fields()
+    assert sorted(adapter) == sorted(STEP_FIELDS), (
+        "the two tables name different steps; a step the adapter has and this module does not is a"
+        " 400 on every Continue, and the other way round is a field that can never be saved"
+    )
+    for step, keys in sorted(adapter.items()):
+        assert sorted(keys) == sorted(STEP_FIELDS[step]), f"step {step}"
+        # Not a name comparison alone: the payload the adapter would send is put through the very
+        # mapping `serialise_draft`/`toWizardState` invert — `desc` → `services`, `facilityType` →
+        # `facility_type`, `anon` → the two disclosure columns, `bldg` → its own value map — so a
+        # key that no longer maps to a column fails here rather than at a seller's Continue.
+        columns = columns_for(step, {key: DESIGN_W[key] for key in keys})
+        assert columns, f"step {step} mapped to no columns at all"
+    # `photos` is the design's own fake photograph counter and `state` is the reviewer's, supplied
+    # at the first publish (spec Q2). Both live in `w`; neither belongs to any step, and `photos`
+    # sent on step 1 is one of the seventeen strays CRITICAL-B was made of.
+    every = [key for keys in adapter.values() for key in keys]
+    assert "photos" not in every
+    assert "state" not in every
+
+
+@pytest.mark.parametrize("step", [1, 2, 3, 4, 5, 7])
+async def test_every_step_accepts_exactly_what_the_adapter_sends_it(
+    client: Any, conn: Any, redis: Any, member: Any, step: int
+) -> None:
+    """The other direction, spending a real request: the payload `patch(id, step, w)` builds is a
+    200 with the draft, on every step the wizard has."""
+    _, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id = await _create(client, cookies, headers)
+
+    keys = adapter_step_fields()[step]
+    saved = await client.patch(f"/api/seller/listings/{listing_id}?step={step}",
+                               json={key: DESIGN_W[key] for key in keys}, headers=signed)
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["id"] == listing_id

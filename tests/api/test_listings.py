@@ -667,14 +667,31 @@ def test_serialise_emits_a_caption_for_every_photograph() -> None:
     assert len(body["photo_captions"]) == len(body["photos"]), "the two lists are parallel"
 
 
-def test_serialise_carries_a_null_caption_at_its_own_position() -> None:
-    """A photograph nobody has described yet is a `null`, kept AT ITS POSITION for exactly the
-    reason an empty photo slot is: the two lists are read by index."""
+def test_serialise_carries_an_undescribed_photograph_at_its_own_position() -> None:
+    """A photograph nobody has described yet keeps ITS POSITION, for exactly the reason an empty
+    photo slot does: the two lists are read by index.
+
+    A-SL25 (7) made a slot the column does not reach `""`; A-SL26 (2) makes an explicit `null`
+    INSIDE the column the same thing, so there is one rule rather than two that happen to render
+    alike (round-2 re-review, Minor-E). Nothing downstream can tell them apart — `photoSet` reads
+    `p.photoCaptions[i] || <the design's own slot caption>` and both are falsey — but the
+    docstring stated one rule and the function implemented two, and SL7b's positional caption
+    route writes this very column."""
     body = serialise(
         _row(photos=EMPTY_SLOTS, photo_captions=["Exterior — front", None, "Interior — exam", None, None, None]),
         datetime(2026, 9, 6, tzinfo=UTC),
     )
-    assert body["photo_captions"] == ["Exterior — front", None, "Interior — exam", None, None, None]
+    assert body["photo_captions"] == ["Exterior — front", "", "Interior — exam", "", "", ""]
+    assert all(isinstance(caption, str) for caption in body["photo_captions"]), "strings only"
+
+
+def test_an_interior_null_is_a_string_on_the_merged_path_too() -> None:
+    """The same rule where a seller HAS described one of the photographs beside it."""
+    body = serialise(_row(photos=["as-1", "as-2", "as-3"],
+                          photo_captions=["The seeder's guess", None, None],
+                          asset_captions={"as-3": "The dental suite"}),
+                     datetime(2026, 9, 6, tzinfo=UTC))
+    assert body["photo_captions"] == ["The seeder's guess", "", "The dental suite"]
 
 
 def test_serialise_handles_photo_captions_arriving_as_a_json_string() -> None:
@@ -806,7 +823,7 @@ async def test_a_seeded_listing_keeps_its_positional_captions(
                          photo_captions=json.dumps(["Exterior — front", None, "Interior — exam", None, None, None]))
     _, cookies, headers = member()
     body = (await client.get(f"/api/listings/{listing_id}", headers=auth_headers(cookies, headers))).json()
-    assert body["photo_captions"] == ["Exterior — front", None, "Interior — exam", None, None, None]
+    assert body["photo_captions"] == ["Exterior — front", "", "Interior — exam", "", "", ""]
 
 
 def test_photo_captions_prefers_the_asset_s_own_words_over_the_column() -> None:

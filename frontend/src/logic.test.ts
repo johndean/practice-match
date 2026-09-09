@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { Component, P } from './logic.js';
+import { STEP_FIELDS, makeListingsAdapter } from './listings/seller';
 
 let c: any;
 beforeEach(() => { c = new Component({}); });
@@ -1560,6 +1561,12 @@ describe('logic.js — the seller adapter paths (A16, A-SL25)', () => {
 
   // --- Minor-B ---------------------------------------------------------------------------
   it('a second press while the create is in flight creates nothing more', async () => {
+    // The guard is stronger than this case can show, and the reason is the seam (round-2
+    // re-review, Info-H): `app.setup.js` wraps the state in Vue's `reactive()` and `renderVals()`
+    // closes over `const s = this.state` — the reactive object itself, not a snapshot — so
+    // `s.creating` reads the LIVE value at click time and the guard holds with no re-render
+    // between two presses. Calling `renderVals()` afresh per press models a re-render, which is
+    // the weaker property; the stronger one belongs to the adapter seam, not to this file.
     let release: (id: string) => void = () => {};
     const api = adapter({ create: vi.fn().mockReturnValue(new Promise<string>((r) => { release = r; })) });
     const c2: any = new Component({ listings: api });
@@ -1633,5 +1640,103 @@ describe('logic.js — the seller adapter paths (A16, A-SL25)', () => {
     c2.wizardVals().addPhoto();
     expect(api.attach, 'nothing to upload onto').not.toHaveBeenCalled();
     expect(c2.state.w.photos, 'and the design\'s fake counter is never bumped behind an adapter').toBe(0);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// The design's own Continue and Save-and-exit, driven against the REAL adapter over a stubbed
+// `fetch` (fix round 3, controller amendment A-SL26). The suite above hands `logic.js` a fake
+// adapter, which proves what the handlers do with an answer but not what they ASK FOR — and what
+// they asked for was every one of `w`'s 21 keys on a step that accepts four. `columns_for`'s
+// whitelist is total and one-directional (ruling D10), so the first Continue was
+// `400 step 1 does not accept anon, bldg, city, …` and not one field the seller typed was ever
+// written; Save and exit took the same refusal and its arm deliberately keeps the seller in the
+// wizard, so they were trapped on the step (round-2 re-review, CRITICAL-B). Nothing could see it:
+// `logic.js` is outside the coverage gate, the adapter's own test was handed a pre-filtered body,
+// pytest calls the endpoint with correct bodies, and the four `wizard-*` captures reach steps 7
+// and 8 through the design's step rail, which patches nothing.
+// ---------------------------------------------------------------------------------------
+describe('logic.js — what Continue actually sends (A-SL26)', () => {
+  interface Sent { url: string; method: string; body: unknown }
+
+  /** The network boundary, recording every request; `seller.test.ts`'s own stub, widened. */
+  function record(answer: unknown): Sent[] {
+    const sent: Sent[] = [];
+    vi.stubGlobal('fetch', (url: string, init: { method: string; body?: string }) => {
+      sent.push({ url, method: init.method, body: init.body === undefined ? undefined : JSON.parse(init.body) });
+      return Promise.resolve({ ok: true, status: 200, json: () => Promise.resolve(answer) });
+    });
+    return sent;
+  }
+
+  /** A `serialise_draft` payload — every key the adapter's `Draft` declares. */
+  const draft = (over: Record<string, unknown> = {}) => ({
+    id: 'a3f1', slug: 'listing-a3f1', status: 'draft',
+    name: null, type: null, est: null, ownership: null, city: null, zip: null,
+    price: null, rev: null, docs: null, rooms: null, sqft: null, hours: null, desc: null,
+    bldg: null, facilityType: null, facility: null, anon: true, revBand: false, docsLocked: true,
+    state: null, market: null, area: null, decline_reason: null, submitted_at: null,
+    updated_at: '2026-09-09T00:00:00Z', assets: [], photos: [], documents: [], ...over
+  });
+
+  /** A component on the wizard, with the REAL adapter and a listing behind it. */
+  function onStep(step: number): any {
+    const c2: any = new Component({ listings: makeListingsAdapter() });
+    c2.setState({
+      auth: true, screen: 'seller', sellerView: 'wizard', step, editingId: 'a3f1',
+      // Every field the design's own steps validate before they advance, so `next()` reaches the
+      // request rather than stopping at one of the design's three guards (logic.js:1253-1255).
+      w: { ...c2.state.w, name: 'ABC Animal Hospital', est: '1998', city: 'Bastrop', zip: '78602', price: '860000', rev: '700000', state: 'TX' }
+    });
+    return c2;
+  }
+
+  beforeEach(() => { document.cookie = 'pm_csrf=tok'; });
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    document.cookie = 'pm_csrf=; expires=Thu, 01 Jan 1970 00:00:00 GMT';
+  });
+
+  it('Continue sends exactly the step\'s own fields, on every step that has any', async () => {
+    for (const [step, keys] of Object.entries(STEP_FIELDS)) {
+      const c2 = onStep(Number(step));
+      const sent = record(draft());
+      await c2.wizardVals().next();
+      expect(sent.map((r) => r.method), `step ${step}`).toEqual(['PATCH']);
+      expect(sent[0].url, `step ${step}`).toBe(`/api/seller/listings/a3f1?step=${step}`);
+      expect(Object.keys(sent[0].body as object).sort(), `step ${step}`).toEqual([...keys].sort());
+      expect(c2.state.wizErr, `step ${step}`).toBe('');
+      expect(c2.state.step, `step ${step}`).toBe(Math.min(8, Number(step) + 1));
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it('Continue on step 6 advances without a PATCH — its assets were saved on upload', async () => {
+    const c2 = onStep(6);
+    const sent = record(draft({ photos: [{ id: 'as-1', name: 'Reception' }] }));
+    await c2.wizardVals().next();
+    expect(sent.map((r) => r.method)).toEqual(['GET']);
+    expect(c2.state.step).toBe(7);
+    expect(c2.state.wizErr).toBe('');
+    expect(c2.state.wizAssets).toEqual([{ kind: 'Photo', name: 'Reception', id: 'as-1' }]);
+  });
+
+  it('Save and exit on step 6 leaves the wizard without a PATCH', async () => {
+    const c2 = onStep(6);
+    const sent = record(draft());
+    await c2.renderVals().exitWizard();
+    expect(sent.map((r) => r.method)).toEqual(['GET', 'GET']);   // the re-read, then the reload
+    expect(c2.state.sellerView).toBe('dash');
+    expect(c2.state.wizErr).toBe('');
+  });
+
+  it('Save and exit on a field step saves that step, then leaves', async () => {
+    const c2 = onStep(3);
+    const sent = record(draft());
+    await c2.renderVals().exitWizard();
+    expect(sent[0].method).toBe('PATCH');
+    expect(sent[0].url).toBe('/api/seller/listings/a3f1?step=3');
+    expect(Object.keys(sent[0].body as object).sort()).toEqual(['price', 'rev', 'revBand']);
+    expect(c2.state.sellerView).toBe('dash');
   });
 });

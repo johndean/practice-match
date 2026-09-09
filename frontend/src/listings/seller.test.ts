@@ -5,6 +5,7 @@ import { designWizardDraft, designWizardTiles } from '../../tests/design-wizard-
 import {
   ListingError,
   MAX_PAGES,
+  STEP_FIELDS,
   makeListingsAdapter,
   money,
   toDashboardRow,
@@ -213,15 +214,49 @@ describe('the adapter', () => {
     expect((await api().get('a3f1')).assets.map((a) => a.kind)).toEqual(['CSV', 'XLSX', 'PDF']);
   });
 
-  it('patch() sends the step in the query and only the fields it was given', async () => {
+  it('patch() sends only the step\'s fields and the step in the query', async () => {
+    // The plan's own required adapter test (Task SL7 Step 1), restored to the property it names.
+    // The delivered case asserted PASS-THROUGH and was handed a pre-filtered `{ city, zip }` — a
+    // weaker property that moved the obligation onto a caller which does not honour it. The design
+    // hands `patch()` the WHOLE `w` (A16.6, A16.15) and `columns_for`'s whitelist is total and
+    // one-directional by ruling D10, so an unfiltered body is `400 step 1 does not accept anon,
+    // bldg, city, …` on every Continue: not one field of the wizard was ever written (round-2
+    // re-review, CRITICAL-B). So this case is fed the whole `w`, exactly as the design does.
+    const whole = { ...(new Component({}).state.w as Record<string, unknown>), state: 'TX', city: 'Buda', zip: '78610' };
     const calls = stubFetch({ status: 200, body: draft({ city: 'Buda' }) });
-    const answer = await api().patch('a3f1', 2, { city: 'Buda', zip: '78610' });
+    const answer = await api().patch('a3f1', 2, whole);
     expect(calls[0].url).toBe('/api/seller/listings/a3f1?step=2');
     expect(calls[0].init.method).toBe('PATCH');
     expect(calls[0].init.headers['X-CSRF-Token']).toBe('tok');
     expect(calls[0].init.headers['Content-Type']).toBe('application/json');
-    expect(JSON.parse(String(calls[0].init.body))).toEqual({ city: 'Buda', zip: '78610' });
+    expect(JSON.parse(String(calls[0].init.body))).toEqual({ city: 'Buda', zip: '78610', anon: true });
     expect(answer.w.city).toBe('Buda');
+  });
+
+  it('patch() sends each of the six field steps exactly its own keys, out of the whole `w`', async () => {
+    const whole = { ...(new Component({}).state.w as Record<string, unknown>), state: 'TX' };
+    for (const [step, keys] of Object.entries(STEP_FIELDS)) {
+      const calls = stubFetch({ status: 200, body: draft() });
+      await api().patch('a3f1', Number(step), whole);
+      expect(calls[0].url, `step ${step}`).toBe(`/api/seller/listings/a3f1?step=${step}`);
+      expect(Object.keys(JSON.parse(String(calls[0].init.body))).sort(), `step ${step}`).toEqual([...keys].sort());
+      vi.unstubAllGlobals();
+    }
+    // `photos` — the design's own fake photograph counter — belongs to no step, and `state` is the
+    // reviewer's (spec Q2). Both live in `w` and neither may ever be sent.
+    expect(Object.values(STEP_FIELDS).flat()).not.toContain('photos');
+    expect(Object.values(STEP_FIELDS).flat()).not.toContain('state');
+  });
+
+  it('patch() sends NO request at all for a step that takes no fields', async () => {
+    // Steps 6 and 8 are not keys of the API's own `STEP_FIELDS`, so `columns_for` refuses them
+    // outright — "step must be one of 1, 2, 3, 4, 5, 7" — whatever the body. Step 6's assets are
+    // already saved, one upload at a time, so there is nothing to write: the draft is re-READ, so
+    // the caller still gets the tiles it renders, and no PATCH is issued (A-SL26 (1)).
+    const calls = stubFetch({ status: 200, body: draft({ photos: [{ id: 'as-1', name: 'Reception' }] }) });
+    const answer = await api().patch('a3f1', 6, { name: 'x' });
+    expect(calls.map((c) => [c.init.method, c.url])).toEqual([['GET', '/api/seller/listings/a3f1']]);
+    expect(answer.assets).toEqual([{ kind: 'Photo', name: 'Reception', id: 'as-1' }]);
   });
 
   it("patch() surfaces the server's own message and code", async () => {

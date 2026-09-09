@@ -52,10 +52,10 @@ export function designWizardAssets(listingId) {
 /** The whole draft `GET /api/seller/listings/{id}` answers with, exactly as `serialise_draft`
  *  shapes one: every column the wizard reads, at the value the DESIGN's own `state.w` holds, and
  *  the two ordered projections step 6 renders. */
-export function designWizardDraft(listingId) {
+export function designWizardDraft(listingId, status = 'draft') {
   const assets = designWizardAssets(listingId);
   return {
-    id: listingId, slug: `listing-${listingId}`, status: 'draft',
+    id: listingId, slug: `listing-${listingId}`, status,
     name: null, type: 'Small animal', est: null, ownership: 'Sole proprietor',
     city: null, zip: null, price: null, rev: null, docs: null, rooms: null, sqft: null,
     hours: null, desc: null, bldg: 'Included', facilityType: 'Standalone', facility: null,
@@ -69,8 +69,13 @@ export function designWizardDraft(listingId) {
   };
 }
 
-/** That draft as the body of both writes the wizard captures make: the read after `create()`, and
- *  `wizard-done`'s Submit for review. */
-export function designWizardDraftBody(listingId) {
-  return JSON.stringify(designWizardDraft(listingId));
+/** That draft as the body of both reads the wizard captures make: the one after `create()`, and
+ *  `wizard-done`'s Submit for review — which answers `in_review`, because that is what
+ *  `POST …/submit` leaves the listing as (round-2 re-review, Info-F). Nothing reads the status:
+ *  `logic.js` discards the resolved value and the design's "Submitted" card is drawn
+ *  synchronously. A stub that says something the endpoint it stands in for cannot say is a trap
+ *  for the next reader, which is the same rule `design-listings.mjs` states about its own one
+ *  field that differs. */
+export function designWizardDraftBody(listingId, status = 'draft') {
+  return JSON.stringify(designWizardDraft(listingId, status));
 }

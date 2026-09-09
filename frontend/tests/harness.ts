@@ -164,10 +164,10 @@ export async function prepare(page: Page): Promise<void> {
   // The two writes the four `wizard-*` captures make after that POST: the read of the listing it
   // created (A16.14 chains `create → get`), and `wizard-done`'s Submit for review. Both answer the
   // DESIGN's own draft, so the captures keep their frozen hashes through the SUCCESS path.
-  for (const href of [draftStubUrl(), submitStubUrl()]) {
+  for (const [href, status] of [[draftStubUrl(), 'draft'], [submitStubUrl(), 'in_review']] as const) {
     if (href === null) continue;
     await page.route(href, (route) => route.fulfill({
-      status: 200, contentType: 'application/json', body: designWizardDraftBody(WIZARD_LISTING_ID)
+      status: 200, contentType: 'application/json', body: designWizardDraftBody(WIZARD_LISTING_ID, status)
     }));
   }
 }
@@ -206,7 +206,8 @@ export function draftStubUrl(env: NodeJS.ProcessEnv = process.env): string | nul
   return new URL(`/api/seller/listings/${WIZARD_LISTING_ID}`, appOrigin(env)).href;
 }
 
-/** Where `wizard-done`'s Submit for review lands. Same body, same rule. */
+/** Where `wizard-done`'s Submit for review lands. The same body, at the status the endpoint
+ *  actually leaves the listing in — `in_review` (Info-F). Same rule about a remote target. */
 export function submitStubUrl(env: NodeJS.ProcessEnv = process.env): string | null {
   if (env.PW_APP_URL) return null;
   return new URL(`/api/seller/listings/${WIZARD_LISTING_ID}/submit`, appOrigin(env)).href;

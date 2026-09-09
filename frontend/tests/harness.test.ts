@@ -315,7 +315,7 @@ describe('the seller and admin collection stubs (A-SL2, A-SL23 (2))', () => {
     // `design-seller-listings.mjs` is derived from `state.sellerListings`, so a hand-copied tile
     // fails this case; and `newDraftBody`, which had no pin at all (re-review Info-A), is gone.
     const draft = JSON.parse(designWizardDraftBody(WIZARD_LISTING_ID)) as {
-      id: string; assets: { kind: string; name: string; id: string }[];
+      id: string; status: string; assets: { kind: string; name: string; id: string }[];
       photos: { id: string; name: string }[]; documents: unknown[];
     };
     expect(designWizardTiles()).toEqual([
@@ -329,6 +329,10 @@ describe('the seller and admin collection stubs (A-SL2, A-SL23 (2))', () => {
     expect(draft.photos.map((ph) => ph.name)).toEqual(designWizardTiles().map((t) => t.name));
     expect(draft.documents, 'the design\'s fresh wizard has no document tile').toEqual([]);
     expect(new Set(draft.assets.map((a) => a.id)).size, 'every tile needs its own id').toBe(3);
+    // Info-F: one body serves two routes, and each says what its own endpoint would leave the
+    // listing as. Nothing reads it; a stub that says something its endpoint cannot say is a trap.
+    expect(JSON.parse(designWizardDraftBody(WIZARD_LISTING_ID)).status).toBe('draft');
+    expect(JSON.parse(designWizardDraftBody(WIZARD_LISTING_ID, 'in_review')).status).toBe('in_review');
   });
 
   it('the empty-dashboard body is a REAL page with no rows on it (A-SL17)', () => {

@@ -190,8 +190,9 @@ def photo_list(value: object) -> list[str | None]:
     return []   # a NULL `photos` (nothing writes one: the column is NOT NULL DEFAULT '[]')
 
 
-def photo_captions(photos: list[str | None], stored: list[str | None], owned: Mapping[str, str]) -> list[str | None]:
-    """EXACTLY ONE description per photograph, whichever of its TWO homes it was written in.
+def photo_captions(photos: list[str | None], stored: list[str | None], owned: Mapping[str, str]) -> list[str]:
+    """EXACTLY ONE description per photograph — always a string — whichever of its TWO homes it was
+    written in.
 
     A SEED photograph's description is `listing.photo_captions[n]`, written by the seeder from the
     supplier's own filename (A-L11), and positional — position `n` describes position `n`. A
@@ -204,17 +205,23 @@ def photo_captions(photos: list[str | None], stored: list[str | None], owned: Ma
     The seller's own words win where both homes have something to say: a seeded listing the seller
     has since edited is theirs (A-SL21), and they have looked at the photograph.
 
-    The answer is `len(photos)` long on BOTH paths — padded with `""` where the column is short,
-    truncated where it is long (A-SL25 (7), on the SL7 re-review's Minor-D). The two lists are read
-    BY INDEX (`photoSet`'s `p.photoCaptions[i]`), so a ragged pair is a caption sliding onto a
-    photograph it does not describe; returning the column untouched wherever no asset had spoken
-    made that guarantee conditional on a seller having captioned something, which is not a rule
-    anyone could rely on. `""` rather than `None` for the padding: it is a caption slot that exists
-    and holds nothing, which is what `photoSet` renders its own fixed slot caption in place of."""
+    The answer is `len(photos)` long on BOTH paths — padded where the column is short, truncated
+    where it is long (A-SL25 (7), on the SL7 re-review's Minor-D). The two lists are read BY INDEX
+    (`photoSet`'s `p.photoCaptions[i]`), so a ragged pair is a caption sliding onto a photograph it
+    does not describe; returning the column untouched wherever no asset had spoken made that
+    guarantee conditional on a seller having captioned something, which is not a rule anyone could
+    rely on.
+
+    ONE rule for "nobody has described this one", and it is `""` (A-SL26 (2), the round-2
+    re-review's Minor-E): a position past the end of the column, a JSON `null` inside it, and an
+    asset with no caption are the same fact and now read the same. `photoSet` renders the design's
+    own fixed slot caption in place of any of them — `p.photoCaptions[i] || <slot caption>`, both
+    falsey — so nothing downstream could tell them apart; what differed was this function's promise
+    against its behaviour, and SL7b's positional caption route writes this very column."""
     padded: list[str | None] = [*stored, *[""] * (len(photos) - len(stored))]
     if not owned:
-        return padded[:len(photos)]
-    return [(owned.get(entry) if entry is not None else None) or padded[n] for n, entry in enumerate(photos)]
+        return [entry or "" for entry in padded[:len(photos)]]
+    return [(owned.get(entry) if entry is not None else None) or padded[n] or "" for n, entry in enumerate(photos)]
 
 
 def photo_file(photos: list[str | None], n: int) -> Path | None:

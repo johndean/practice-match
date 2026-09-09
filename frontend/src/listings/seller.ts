@@ -120,6 +120,38 @@ export interface WizardDraft { w: Record<string, string | boolean>; assets: Wiza
 
 export type StatusAction = 'pause' | 'republish' | 'withdraw';
 
+/**
+ * Which of the wizard's fields belong to which step — the ADAPTER's half of ruling D10.
+ *
+ * `app/api/seller_listings.py`'s own `STEP_FIELDS` is the other half, in these same wizard key
+ * names, and `columns_for` maps them to columns and refuses anything else: the whitelist is
+ * "one-directional and total ... because the wizard sends one step at a time and a mis-sent field
+ * means the adapter and this table disagree — which is a bug to see, not to absorb". The design's
+ * handlers hand `patch()` the WHOLE `w` (A16.6's Continue, A16.15's Save and exit) and always
+ * have, so the projection has to happen here. Sending `w` unfiltered made every Continue
+ * `400 step 1 does not accept anon, bldg, city, …`, and not one field a seller typed was ever
+ * written (round-2 re-review, CRITICAL-B; A-SL26 (1) rules the fix here rather than loosening D10).
+ *
+ * The two tables are pinned against each other from the Python side —
+ * `tests/api/test_seller_listings.py::test_the_adapter_and_the_api_agree_on_every_step_s_fields`
+ * reads this literal out of this file and compares it to `columns_for`'s own whitelist, step by
+ * step — so neither can drift without a failure naming the other.
+ *
+ * Steps 6 and 8 are absent, exactly as they are absent from the API's table: step 6's photographs
+ * and documents are saved one upload at a time and step 8 is the preview, so neither takes a field
+ * and `columns_for` refuses both outright. `patch()` re-reads the draft for those rather than
+ * writing. `photos` — the design's own fake photograph counter — and `state` — the reviewer's, at
+ * the first publish (spec Q2) — live in `w` and belong to no step.
+ */
+export const STEP_FIELDS: Readonly<Record<number, readonly string[]>> = {
+  1: ['name', 'type', 'est', 'ownership'],
+  2: ['city', 'zip', 'anon'],
+  3: ['price', 'rev', 'revBand'],
+  4: ['docs', 'rooms', 'sqft', 'hours', 'desc'],
+  5: ['bldg', 'facilityType', 'facility'],
+  7: ['anon', 'revBand', 'docsLocked']
+};
+
 /** One page of the seller's own listings, as `GET /api/seller/listings` answers it. */
 interface ListingsPage { items?: unknown; next_cursor?: string | null }
 
@@ -341,7 +373,24 @@ export function makeListingsAdapter(): ListingsAdapter {
     },
     create: async () => (await json<{ id: string }>('POST', '/listings')).id,
     get: async (id) => toWizardDraft(await json<Draft>('GET', `/listings/${id}`)),
-    patch: async (id, step, fields) => toWizardDraft(await json<Draft>('PATCH', `/listings/${id}?step=${step}`, fields)),
+    /**
+     * One step, saved. The caller hands the whole of `state.w` — that is what the design's own
+     * Continue and Save and exit do — and only the step's own fields go on the wire (D10,
+     * A-SL26 (1)). A key `w` does not carry is left out rather than sent as `undefined`:
+     * `JSON.stringify` drops it either way, and the API reads a missing field as "unchanged".
+     *
+     * A step with no fields is not written at all: `columns_for` refuses steps 6 and 8 whatever
+     * the body, step 6's assets are already stored one upload at a time, and step 8 is the
+     * preview. The draft is RE-READ instead, so the caller still gets the tiles it renders (A16.6
+     * writes `wizAssets` from this answer) and the seller is neither refused nor trapped.
+     */
+    patch: async (id, step, fields) => {
+      const keys = STEP_FIELDS[step];
+      if (keys === undefined) return adapter.get(id);
+      const body: Record<string, unknown> = {};
+      for (const key of keys) body[key] = fields[key];
+      return toWizardDraft(await json<Draft>('PATCH', `/listings/${id}?step=${step}`, body));
+    },
     upload: (id, file) => upload(`/listings/${id}/photos`, file),
     // D18: the approved step 6 has no kind picker, so the wizard sends `other` until Rev 3 gives
     // it one — the API takes the field today so that picker needs no API change.
