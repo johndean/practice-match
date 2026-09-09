@@ -215,9 +215,24 @@ export function btn(page: Page, name: RegExp) {
 // overlay's own box has been identical across two consecutive animation frames with the page
 // still at the top. Nothing is relaxed and no tolerance moves — the screenshot is simply
 // taken from the one viewport position the design's centred dialog is drawn for.
+//
+// Fix round 1 (A-LB2), Important finding 1: the PAGE is not the only thing that scrolls. Every
+// `.rf-scroll` container (App.vue: the metro/layer listboxes, the results rail, the docked
+// panel, the mobile sheet/list/detail bodies) is independently scrollable, and Playwright's
+// click-actionability can scroll one of them into place before a click on a hit-target inside
+// it — exactly what made `browse-panel-lightbox` (task L2 review) flake once with a pixel diff
+// localized to the docked panel, not the lightbox itself: the panel's own `scrollTop` was left
+// wherever the click happened to leave it, and nothing after the click reset or checked it. Pinned
+// here in `atTop`'s own shape — reset alongside the page scroll, held stable alongside the
+// selector's own box — so every state that calls `atTop` benefits, not only the lightbox ones. No
+// approved state depends on a `.rf-scroll` container being scrolled away from the top when its
+// capture is taken (grep finds no such step), so resetting all of them unconditionally is safe.
 export async function atTop(page: Page, selector: string): Promise<void> {
   await page.locator(selector).first().waitFor({ state: 'visible' });
-  await page.evaluate(() => window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior }));
+  await page.evaluate(() => {
+    window.scrollTo({ top: 0, left: 0, behavior: 'instant' as ScrollBehavior });
+    document.querySelectorAll('.rf-scroll').forEach((el) => { (el as HTMLElement).scrollTop = 0; });
+  });
   await page.waitForFunction(
     (sel) =>
       new Promise<boolean>((resolve) => {
@@ -227,7 +242,8 @@ export async function atTop(page: Page, selector: string): Promise<void> {
         requestAnimationFrame(() =>
           requestAnimationFrame(() => {
             const b = el.getBoundingClientRect();
-            resolve(window.scrollY === 0 && a.top === b.top && a.left === b.left && a.width === b.width && a.height === b.height);
+            const panelsAtTop = Array.from(document.querySelectorAll('.rf-scroll')).every((p) => (p as HTMLElement).scrollTop === 0);
+            resolve(window.scrollY === 0 && panelsAtTop && a.top === b.top && a.left === b.left && a.width === b.width && a.height === b.height);
           })
         );
       }),

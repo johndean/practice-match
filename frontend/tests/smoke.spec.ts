@@ -512,6 +512,53 @@ test.describe('harness: atTop pins the interest modal against a scrolled capture
 });
 
 // ---------------------------------------------------------------------------------------
+// Fix round 1 (A-LB2), Important finding 1: a permanent guard for atTop's OWN-CONTAINER pin.
+//
+// `browse-panel-lightbox` (task L2 review) flaked once under full-suite load with a ~5 %-pixel
+// diff localized entirely BELOW the docked panel's "Practice detail" header — the lightbox
+// photograph itself was pixel-identical. Root cause: the docked panel's own `.rf-scroll`
+// container (App.vue:630, `v.md?.hasSel`) is independently scrollable, and Playwright's
+// click-actionability can scroll it into place before clicking the photo tile's transparent
+// hit-target — exactly the same class of bug `atTop` was written for the PAGE scroll, one level
+// deeper. `atTop()` pinned only `window.scrollY` before this fix; nothing reset the panel's own
+// `scrollTop`.
+//
+// This case forces the runner's own click-actionability scroll instead of hoping to reproduce
+// it under contention: an init script sets every `.rf-scroll` container's `scrollTop` to a
+// nonzero value on every click (capture phase, before the app's own handlers and before
+// Playwright's next action — the same ordering a real scroll-into-view has), then drives the
+// real `browse-panel-lightbox` step — not a copy of it — and asserts every `.rf-scroll`
+// container left in the DOM is back at `scrollTop` 0 once the step's own `atTop()` call returns.
+// Remove atTop's container-pinning and this fails on every platform, not only under contention.
+// ---------------------------------------------------------------------------------------
+test.describe('harness: atTop pins the docked panel\'s own scroll', () => {
+  test('the browse-panel-lightbox step ends with every .rf-scroll container at scrollTop 0, even when every click scrolls them', async ({ page }) => {
+    await prepare(page);
+    await page.addInitScript(() =>
+      document.addEventListener(
+        'click',
+        () => document.querySelectorAll('.rf-scroll').forEach((el) => { (el as HTMLElement).scrollTop = 40; }),
+        true
+      )
+    );
+    await booted(page);
+
+    const step = SCREENS.find((s) => s.name === 'browse-panel-lightbox');
+    expect(step, 'there is no browse-panel-lightbox state left to guard').toBeTruthy();
+    await step!.steps(page);
+
+    const offsets = await page.evaluate(() =>
+      Array.from(document.querySelectorAll('.rf-scroll')).map((el) => (el as HTMLElement).scrollTop)
+    );
+    expect(offsets.length, 'no .rf-scroll container was mounted, so this guard proved nothing').toBeGreaterThan(0);
+    expect(
+      offsets.every((n) => n === 0),
+      'a docked panel .rf-scroll container is not at scrollTop 0: atTop() is not pinning the panel\'s own scroll, so content painted beneath the fixed lightbox scrim will differ across runs — the browse-panel-lightbox flake, back'
+    ).toBe(true);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
 // Amendment A-I7 — the proof that the harness sign-in reaches the REAL API. No stub and no
 // mock: `tests/targets.ts`'s `api` web server migrated the local Postgres, seeded the design
 // persona and is serving `app.main:app`, and Vite proxies `/api` to it with the Host header
