@@ -310,10 +310,18 @@ def geocode_listing(listing_id: str) -> dict[str, object]:
     summary dict, the shape every loader above uses for its OWN failure mode, would hide that
     message from whatever reads this task's result/failure instead of surfacing it.
 
-    Only the missing-contact case is caught: `require_contact()`'s `SystemExit(2)` (correct at a
-    CLI entry point) must never propagate out of a Celery task and take the worker -- which also
-    runs the mail pipeline -- down with it, exactly as `_resolve_contact()`'s module-docstring
-    contract already promises every task in this file.
+    The missing-contact case is caught only long enough to LOG it, then RE-RAISED (controller
+    amendment A-C18 ruling 3, fix round 1): every `load_*` task above instead returns a
+    success-shaped summary dict for this same `_NotReady` case, which is safe there because a
+    failed `ingest_run` row carries the refusal durably regardless of what the Celery result
+    looks like. This task has no `dataset_key`/`vintage` to record one against, so a returned
+    dict would be the ONLY trace of the refusal -- and Celery marks a task that returns normally
+    SUCCEEDED, meaning a misconfigured worker (no `CENSUS_CONTACT_EMAIL`) would report every
+    listing geocoded when nothing was. `require_contact()`'s own `SystemExit(2)` (correct at a
+    CLI entry point) still must never propagate un-translated and take the worker -- which also
+    runs the mail pipeline -- down with it, so it is still caught and converted to `_NotReady`
+    by `_resolve_contact()` exactly as every task in this file relies on; only the SECOND catch,
+    the one that used to swallow `_NotReady` into a return value, is gone.
 
     On success, the B4 backfill task is enqueued BY NAME by `celery_app.send_task` -- never
     imported -- because B4 owns `census.backfill_listing` (A-C14 (3) correction: the brief's own
@@ -325,9 +333,14 @@ def geocode_listing(listing_id: str) -> dict[str, object]:
             contact = _resolve_contact()
         except _NotReady as exc:
             log.error("[census] geocode_listing refused: %s", exc)
-            return {"listing_id": listing_id, "error": str(exc)}
-        # A-C3 (2): never "VIN Foundation; " (the brief's own illustrative text, superseded) --
-        # the same `PracticeMatch/{VERSION} ({contact})` shape every other task's User-Agent uses.
+            raise
+        # Controller amendment A-C18 ruling 2 (fix round 1): A-C3 (2) is a STANDING RULING on
+        # this exact shape -- `PracticeMatch/<version> (<contact>)`, contact from
+        # `CENSUS_CONTACT_EMAIL`, never a default address -- not merely sibling precedent
+        # borrowed from `load_tiger`'s own User-Agent, and never the brief's own illustrative
+        # "VIN Foundation; " text.
+        # test_geocode_listing_task_resolves_and_enqueues_the_b4_backfill_task asserts the
+        # literal, not just that a `Geocoder` was built.
         ua = f"PracticeMatch/{VERSION} ({contact})"
         with httpx.Client() as http:
             gc = geocode.Geocoder(http, "https://geocoding.geo.census.gov/geocoder", ua)

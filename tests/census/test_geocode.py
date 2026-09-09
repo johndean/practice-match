@@ -74,6 +74,70 @@ def _seed_geo(conn):
         )
 
 
+def _seed_county(conn, geo_id, state_fips, county_fips, name, polygon_wkt, centroid):
+    lng, lat = centroid
+    with conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, county_fips, parent_geo_id, geom, centroid)
+               VALUES (%s, '050', '2023', %s, %s, %s, %s, ST_Multi(ST_GeomFromText(%s, 4269)), ST_SetSRID(ST_MakePoint(%s, %s), 4269))""",
+            (geo_id, name, state_fips, county_fips, state_fips, polygon_wkt, lng, lat),
+        )
+
+
+def _seed_zcta(conn, geo_id, polygon_wkt, centroid):
+    """A standalone ZCTA -- unlike `_seed_geo`'s 78613, no tract polygon covers this one, by
+    construction: its centroid sits outside `_seed_geo`'s square but inside `_seed_county`'s."""
+    lng, lat = centroid
+    with conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, county_fips, parent_geo_id, geom, centroid)
+               VALUES (%s, '860', '2023', %s, NULL, NULL, NULL, ST_Multi(ST_GeomFromText(%s, 4269)), ST_SetSRID(ST_MakePoint(%s, %s), 4269))""",
+            (geo_id, f"ZCTA5 {geo_id}", polygon_wkt, lng, lat),
+        )
+
+
+# A county square large enough to contain BOTH `_seed_geo`'s square ((-97.9,30.5)-(-97.7,30.6))
+# AND `_ZCTA_NO_TRACT`'s centroid below, so 48491 (Williamson) is the SAME county geoid whether
+# reached through a tract's own `parent_geo_id` (the "zcta" rung) or the standalone spatial join
+# (the "county" rung) -- one consistent place throughout the ladder-order test.
+_COUNTY_SQUARE = "POLYGON((-99.0 30.0,-97.0 30.0,-97.0 31.0,-99.0 31.0,-99.0 30.0))"
+_ZCTA_NO_TRACT_GEOID = "78610"
+_ZCTA_NO_TRACT_POLY = "POLYGON((-98.6 30.1,-98.4 30.1,-98.4 30.3,-98.6 30.3,-98.6 30.1))"
+_ZCTA_NO_TRACT_CENTROID = (-98.5, 30.2)  # inside _COUNTY_SQUARE, outside _seed_geo's tract square
+
+
+class _RecordingCursor:
+    """Wraps a real psycopg2 cursor, recording the (whitespace-collapsed) text of every SQL
+    statement executed through it -- used to prove a query never ran at all, not just that the
+    overall outcome matches what an ungated query would also happen to produce."""
+
+    def __init__(self, real, executed):
+        self._real, self._executed = real, executed
+
+    def execute(self, sql, params=None):
+        self._executed.append(" ".join(sql.split()))
+        return self._real.execute(sql, params)
+
+    def fetchone(self):
+        return self._real.fetchone()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        self._real.close()
+        return False
+
+
+class _RecordingConn:
+    def __init__(self, real):
+        self._real = real
+        self.executed = []
+
+    def cursor(self):
+        return _RecordingCursor(self._real.cursor(), self.executed)
+
+
 # ---- normalize / address_hash --------------------------------------------------------------
 
 
@@ -224,11 +288,89 @@ def test_resolve_falls_back_to_place_then_fails(conn):
         geocode.resolve(conn, _geocoder(NOMATCH), lid2)
 
 
-def test_resolve_fails_without_a_place_fallback_for_a_state_outside_the_six_ruled_states(conn):
-    """A-C15 correction 2: `STATE_FIPS` covers only the six ruled states; a listing outside them
-    must reach `GeocodeFailed` without the place query ever running (`state_fips is None`)."""
+def test_resolve_falls_back_to_county_and_flags_for_staff_when_no_tract_or_place_matches(conn):
+    """A-C18 ruling 1 (Critical): Section 6's fourth rung -- a county covering the ZCTA's own
+    centroid, tried only when the ZCTA is known (rung 1 found it) but no tract covers it, and no
+    place matched either. Migration 061's `geo_precision` CHECK constraint has admitted 'county'
+    since Task B1; before this rung existed, nothing could ever write it."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES (%s, %s, now(), %s)",
+            ("tiger_cb", "2023", "test"),
+        )
+    _seed_county(conn, "48491", "48", "491", "Williamson County", _COUNTY_SQUARE, (-97.75, 30.5))
+    _seed_zcta(conn, _ZCTA_NO_TRACT_GEOID, _ZCTA_NO_TRACT_POLY, _ZCTA_NO_TRACT_CENTROID)
+    # deliberately no place row at all: the place query must fail regardless of city
+    lid = make_listing(conn, zip=_ZCTA_NO_TRACT_GEOID, city="Nowhereville", state="TX")
+    loc = geocode.resolve(conn, _geocoder(NOMATCH), lid)
+    assert loc.geo_precision == "county" and loc.county_geoid == "48491"
+    assert loc.tract_geoid is None and loc.place_geoid is None
+    with conn.cursor() as cur:
+        cur.execute("SELECT reason FROM geocode_review WHERE listing_id=%s", (lid,))
+        assert "county" in cur.fetchone()[0]
+
+
+def test_fallback_rung_order_is_zcta_then_place_then_county_then_geocode_failed(conn):
+    """A-C18 ruling 1: pins the FIXED order of all four rungs so a future edit cannot silently
+    reorder them. Each successive listing loses the higher-priority rung's data while KEEPING
+    every lower rung's data available, so a wrong precedence (e.g. county checked before place)
+    would resolve the wrong listing at the wrong precision instead of merely failing outright."""
+    _seed_geo(conn)  # zcta 78613 + covering tract 48491020355 (parent county 48491) + place 4813552 "Cedar Park city"
+    _seed_county(conn, "48491", "48", "491", "Williamson County", _COUNTY_SQUARE, (-97.75, 30.5))
+    _seed_zcta(conn, _ZCTA_NO_TRACT_GEOID, _ZCTA_NO_TRACT_POLY, _ZCTA_NO_TRACT_CENTROID)
+
+    # rung 1 (zcta+tract) wins even though a matching place AND a covering county both exist too
+    lid1 = make_listing(conn, zip="78613", city="Cedar Park", state="TX")
+    assert geocode.resolve(conn, _geocoder(NOMATCH), lid1).geo_precision == "zcta"
+
+    # rung 1 fails (this zip's ZCTA has no covering tract) -> rung 2 (place) wins even though
+    # rung 3's county is also available for this same zip
+    lid2 = make_listing(conn, zip=_ZCTA_NO_TRACT_GEOID, city="Cedar Park", state="TX")
+    assert geocode.resolve(conn, _geocoder(NOMATCH), lid2).geo_precision == "place"
+
+    # rung 1 and rung 2 both fail (unmatched city) -> rung 3 (county) wins
+    lid3 = make_listing(conn, zip=_ZCTA_NO_TRACT_GEOID, city="Nowhereville", state="TX")
+    loc3 = geocode.resolve(conn, _geocoder(NOMATCH), lid3)
+    assert loc3.geo_precision == "county" and loc3.county_geoid == "48491"
+
+    # rungs 1-3 all fail (unknown zip, unmatched city) -> GeocodeFailed
+    lid4 = make_listing(conn, zip="00000", city="Nowhereville", state="TX")
+    with pytest.raises(geocode.GeocodeFailed):
+        geocode.resolve(conn, _geocoder(NOMATCH), lid4)
+
+
+def test_resolve_fails_without_running_the_place_query_for_a_state_outside_the_six_ruled_states(conn):
+    """A-C18 ruling 4 (Minor): discriminating, not just outcome-matching -- a null `state_fips`
+    bind parameter would make `state_fips = %s` fail identically with the guard deleted (SQL
+    `NULL = NULL` is never true), so the ORIGINAL version of this test (asserting only
+    `GeocodeFailed`) could not tell a real guard from no guard at all. The recording connection
+    proves the place query's own SQL text never executes."""
     _seed_geo(conn)
     lid = make_listing(conn, zip="00000", city="Cedar Park", state="WA")
+    rec = _RecordingConn(conn)
+    with pytest.raises(geocode.GeocodeFailed):
+        geocode.resolve(rec, _geocoder(NOMATCH), lid)
+    assert not any("summary_level = '160'" in q for q in rec.executed)
+    assert any("summary_level = '860'" in q for q in rec.executed)  # the zcta query DID run
+
+
+def test_fallback_place_query_requires_a_true_prefix_not_a_substring_match(conn):
+    """A-C18 ruling 4 (Minor): discriminating -- "Cedar Park city" (the only seeded place row in
+    every other test) satisfies both a genuine prefix anchor (`LIKE 'cedar park %'`) and a bare
+    substring search, so no test built only from it can tell the two apart. A decoy row that
+    contains the city name as a SUBSTRING but not as a PREFIX must be rejected."""
+    with conn.cursor() as cur:
+        cur.execute(
+            """INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, county_fips, parent_geo_id, geom, centroid) VALUES
+                 ('4899999','160','2023','North Cedar Park CDP','48',NULL,'48',
+                  ST_Multi(ST_GeomFromText('POLYGON((-97.9 30.5,-97.7 30.5,-97.7 30.6,-97.9 30.6,-97.9 30.5))',4269)),
+                  ST_SetSRID(ST_MakePoint(-97.8,30.55),4269))"""
+        )
+        cur.execute(
+            "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES (%s, %s, now(), %s)",
+            ("tiger_cb", "2023", "test"),
+        )
+    lid = make_listing(conn, zip="00000", city="Cedar Park", state="TX")
     with pytest.raises(geocode.GeocodeFailed):
         geocode.resolve(conn, _geocoder(NOMATCH), lid)
 
@@ -259,23 +401,29 @@ def test_geocode_listing_task_resolves_and_enqueues_the_b4_backfill_task(conn, m
     assert result == {"listing_id": lid, "precision": "rooftop"}
     assert captured["listing_id"] == lid
     assert isinstance(captured["geocoder"], geocode.Geocoder)
+    # A-C18 ruling 2: A-C3 (2) is a standing ruling on this EXACT User-Agent shape (not merely
+    # sibling precedent) -- pin the literal the task actually builds, not just its type.
+    assert captured["geocoder"].ua == f"PracticeMatch/{CT.VERSION} ({CONTACT})"
     # B4 owns census.backfill_listing (A-C14 (3): the brief's interface note wrongly said B5) --
     # published by name, so no import of B4's module is needed to prove the enqueue happened.
     assert sent == [("census.backfill_listing", [lid])]
 
 
-def test_geocode_listing_task_without_a_contact_does_not_resolve_or_enqueue(conn, monkeypatch):
+def test_geocode_listing_task_without_a_contact_raises_and_does_not_resolve_or_enqueue(conn, monkeypatch):
+    """A-C18 ruling 3 (Important): a misconfigured worker must not report success. Returning a
+    dict here (the old behaviour) let Celery record SUCCEEDED for a listing that was never
+    geocoded, with a log line as the only trace -- unlike a load_* task's own refusal, there is
+    no `ingest_run` row to carry the failure durably, so this task must raise instead."""
     monkeypatch.delenv("CENSUS_CONTACT_EMAIL", raising=False)
     lid = make_listing(conn)
     monkeypatch.setattr(geocode, "resolve", lambda *a, **kw: pytest.fail("must not run without a contact"))
     sent = []
     monkeypatch.setattr(celery_app, "send_task", lambda *a, **kw: sent.append(a))
 
-    result = CT.geocode_listing(lid)
+    with pytest.raises(CT._NotReady, match="CENSUS_CONTACT_EMAIL"):
+        CT.geocode_listing(lid)
 
     assert sent == []
-    assert result["listing_id"] == lid
-    assert "CENSUS_CONTACT_EMAIL" in str(result["error"])
 
 
 def test_geocode_listing_task_lets_geocode_failed_propagate_without_enqueuing(conn, monkeypatch):

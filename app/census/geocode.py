@@ -7,12 +7,18 @@ recorded "no geocoder match" -- both are cached (§10), a nomatch included, so a
 not re-queried every time a listing is touched. A cache miss calls the Census Geocoder itself
 (`Geocoder.lookup`); a real match resolves at "rooftop" precision when its geographies carry a
 Census Tract (almost always, once `layers=all` is requested -- see below), else "tract". No
-match at all runs the fallback ladder: the ZCTA containing the listing's ZIP code, centroid of
-its CONTAINING tract (`tract`/`county_geoid` inherited from that tract, not the ZCTA itself);
-else the state's own place boundary whose name starts with the listing's city; else
+match at all runs the fallback ladder, FOUR rungs in this fixed order (§6; pinned by
+`tests/census/test_geocode.py::test_fallback_rung_order_is_zcta_then_place_then_county_then_geocode_failed`
+so a future edit cannot silently reorder them): (1) the ZCTA containing the listing's ZIP code,
+inheriting the tract (and that tract's own parent county) whose polygon contains the ZCTA's
+centroid; (2) the state's own place boundary whose name starts with the listing's city; (3) the
+county whose polygon contains that SAME ZCTA's centroid, tried only when the ZCTA itself is known
+(rung 1 found it) but no tract covers it -- "county (only when a county is known)" per spec §6,
+and migration 061's `geo_precision` CHECK constraint has admitted 'county' since Task B1; (4)
 `GeocodeFailed` -- SP2 (not built in this phase) reads that exception's own message into the
 seller's draft status, so it is never caught here, only by `app.tasks.census.geocode_listing`'s
-narrower `_NotReady` gate for a missing contact.
+narrower `_NotReady` gate for a missing contact (and even there it now RAISES rather than
+returning a success-shaped result -- A-C18 ruling 3).
 
 Every resolution -- ladder rung or fallback -- writes `practice_location` (upserted on
 `listing_id`), and `geocode_review` gets a row whenever the precision lands below "rooftop" (the
@@ -36,6 +42,37 @@ Controller amendment A-C15 corrections, applied here (not rediscovered):
        `450 Cypress Creek Rd, Cedar Park, TX 78613`, Cedar Park City Hall, and a nonsense
        address), not the brief's own invented shape -- see `test_geocode.py`'s module docstring
        for the full provenance note.
+
+Fix round 1, controller amendment A-C18 (review round: spec 14/15, quality NOT APPROVED --
+1 Critical, 2 Important, 2 Minor):
+  1 (Critical) -- the fallback ladder was two rungs (ZCTA, place) then a raise; the THIRD rung,
+       county, was missing, undeclared and untested, even though migration 061's `geo_precision`
+       CHECK constraint has admitted 'county' since Task B1 -- proof it was always meant to
+       exist. `_fallback` now tries it third, and
+       `test_fallback_rung_order_is_zcta_then_place_then_county_then_geocode_failed` pins the
+       order of all four rungs (including the terminal `GeocodeFailed`) so a future edit cannot
+       silently reorder them.
+  2 (Important) -- the geocoder's User-Agent literal (`app.tasks.census.geocode_listing`) is
+       pinned by amendment A-C3 (2) itself, a STANDING RULING on this exact shape
+       (`PracticeMatch/<version> (<contact>)`, contact from `CENSUS_CONTACT_EMAIL`, never a
+       default address) -- not merely sibling precedent borrowed from `load_tiger`'s own
+       User-Agent, and never the brief's own illustrative "VIN Foundation; " text. The task test
+       that builds a `Geocoder` now asserts the literal, not just its type.
+  3 (Important) -- `geocode_listing`'s missing-contact path used to CATCH `_NotReady` and return
+       a success-shaped dict (`{"listing_id": ..., "error": ...}`), the same shape every load_*
+       task's OWN refusal returns. For those tasks that shape is safe: a failed `ingest_run` row
+       carries the failure durably regardless of what the Celery result looks like. This task
+       has no dataset/vintage to record one against, so the return value was the ONLY trace
+       Celery's own result backend would ever see -- and a plain dict return marks the task
+       SUCCEEDED. `geocode_listing` now lets `_NotReady` propagate (after logging) instead.
+  4 (Minor) -- two tests proved an outcome without proving the mechanism their docstrings
+       claimed. The unmapped-state test asserted only `GeocodeFailed`, which a NULL `state_fips`
+       bind parameter would produce identically even with the guard deleted (SQL `NULL = NULL`
+       is never true either way) -- it now wraps `conn` in a small recording proxy and asserts
+       the place query's own SQL text never ran. The place-match test's only seeded row ("Cedar
+       Park city") satisfies both a true prefix anchor and a bare substring search, so it could
+       never tell the two apart -- a new test seeds a decoy row containing the city name as a
+       substring but not a prefix ("North Cedar Park CDP") and asserts it is rejected.
 
 `_first_geoid` reads the FIRST geography row under any key containing one of its needles --
 `layers=all` returns dozens of geography layers per match (congressional districts, school
@@ -228,19 +265,27 @@ def _txt(v: object) -> str | None:
 
 
 def _fallback(conn: psycopg2.extensions.connection, city: str, state_abbr: str, zip_: str, vintage: str) -> tuple[str, dict[str, object]]:
-    """§11: ZCTA centroid, inheriting the tract/county it falls inside -> else the state's own
-    place boundary whose name starts with the city -> else `GeocodeFailed`.
-
-    A-C15 correction 2: the place query filters `geo_area.state_fips` directly against
-    `STATE_FIPS`, never by joining to a `geo_area` row's own name -- a listing whose state is
-    not one of the six ruled ones (`state_fips is None`) skips the place query entirely rather
-    than running a query that can only ever return nothing."""
+    """§6/§11's four rungs, in this FIXED order (`test_fallback_rung_order_is_zcta_then_place_
+    then_county_then_geocode_failed` pins it so a future edit cannot silently reorder them):
+      1. The ZCTA covering the ZIP code, inheriting the tract (and that tract's own parent
+         county) whose polygon contains the ZCTA's centroid.
+      2. The state's own place boundary whose name starts with the city (A-C15 correction 2:
+         `geo_area.state_fips` filtered directly against `STATE_FIPS`, never a joined name
+         lookup; a state outside the six ruled ones skips this query entirely, `state_fips is
+         None`).
+      3. The county whose polygon contains that SAME ZCTA's centroid -- tried only when the
+         ZCTA itself is known (rung 1 found it, `zrow` is truthy) but no tract covers it. "county
+         (only when a county is known)" per spec §6: a ZCTA the loaded tract vintage does not
+         fully cover is a real data gap, not a hypothetical one, and migration 061's
+         `geo_precision` CHECK constraint has admitted 'county' since Task B1 (A-C18 ruling 1).
+      4. `GeocodeFailed` -- nothing resolved; the listing stays in draft."""
     state_fips = STATE_FIPS.get(state_abbr.upper())
     with conn.cursor() as cur:
         cur.execute(
-            """SELECT z.geo_id, ST_X(z.centroid), ST_Y(z.centroid), t.geo_id, t.parent_geo_id
+            """SELECT z.geo_id, ST_X(z.centroid), ST_Y(z.centroid), t.geo_id, t.parent_geo_id, c.geo_id
                FROM geo_area z
                LEFT JOIN geo_area t ON t.summary_level = '140' AND t.vintage = z.vintage AND ST_Contains(t.geom, z.centroid)
+               LEFT JOIN geo_area c ON c.summary_level = '050' AND c.vintage = z.vintage AND ST_Contains(c.geom, z.centroid)
                WHERE z.summary_level = '860' AND z.vintage = %s AND z.geo_id = %s""",
             (vintage, (zip_ or "")[:5]),
         )
@@ -257,7 +302,9 @@ def _fallback(conn: psycopg2.extensions.connection, city: str, state_abbr: str, 
             prow = cur.fetchone()
             if prow:
                 return "place", {"place_geoid": prow[0], "lng": prow[1], "lat": prow[2]}
-    raise GeocodeFailed(f"no geocoder match and no ZCTA/place fallback for {city!r} {zip_!r} in state {state_abbr!r}")
+        if zrow and zrow[5]:
+            return "county", {"county_geoid": zrow[5], "lng": zrow[1], "lat": zrow[2]}
+    raise GeocodeFailed(f"no geocoder match and no ZCTA/place/county fallback for {city!r} {zip_!r} in state {state_abbr!r}")
 
 
 def resolve(conn: psycopg2.extensions.connection, geocoder: Geocoder, listing_id: str) -> Location:
