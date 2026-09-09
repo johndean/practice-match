@@ -271,33 +271,38 @@ def _seed_panel_metrics(conn: Any) -> None:
 
 
 def _seed_community_rows(conn: Any) -> None:
-    """3,000 listings with market_metric rows for the batch query test. The seed function reuses
-    the same setup as _seed_panel_metrics since the query just needs many metric rows across
-    multiple listings. The `_COMMUNITY_ROWS_LISTING_IDS` constants define specific listing ids that
-    are guaranteed to have data."""
+    """3,000+ listings with market_metric rows for the batch query test. The seed function creates
+    enough data for the planner to prefer index scans. The `_COMMUNITY_ROWS_LISTING_IDS` constants
+    define specific listing ids that are guaranteed to have data."""
     with conn.cursor() as cur:
-        # Seed three specific target listings plus noise
+        # Seed background listings for planner context
         cur.execute("""INSERT INTO listing (id, slug, name, street, city, state, zip, status, area, type, market, source, sqft, est, price)
-                       SELECT md5(random()::text || i::text)::uuid, 'plan-community-'||i, 'Plan Community '||i, '1 Main St',
+                       SELECT md5(random()::text || i::text)::uuid, 'plan-community-bg-'||i, 'Plan Community BG '||i, '1 Main St',
                               'Cedar Park', 'TX', '78613', 'published', 'Cedar Park', 'Small animal', 'Cedar Park, TX', 'seed', 3000, 2005, 1200000
                          FROM generate_series(1, 3000) i""")
-        # Insert the three target listings
-        for listing_id in _COMMUNITY_ROWS_LISTING_IDS:
+        # Insert the three target listings, using full UUID in slug to ensure uniqueness
+        for i, listing_id in enumerate(_COMMUNITY_ROWS_LISTING_IDS):
             cur.execute("""INSERT INTO listing (id, slug, name, street, city, state, zip, status, area, type, market, source, sqft, est, price)
                            VALUES (%s, %s, %s, '1 Main St', 'Cedar Park', 'TX', '78613',
-                                   'published', 'Cedar Park', 'Small animal', 'Cedar Park, TX', 'seed', 3000, 2005, 1200000)""",
-                        (listing_id, f"plan-community-target-{listing_id[:8]}", f"Plan Community Target {listing_id[:8]}"))
+                                   'published', 'Cedar Park', 'Small animal', 'Cedar Park, TX', 'seed', 3000, 2005, 1200000)
+                           ON CONFLICT (slug) DO NOTHING""",
+                        (listing_id, f"plan-community-target-{listing_id}", f"Plan Community Target {i+1}"))
         cur.execute("""INSERT INTO practice_location (listing_id, address_hash, point, geo_precision, geocoded_at, geocoder_vintage)
                        SELECT id, 'h-'||id, ST_SetSRID(ST_Point(-97.8 + (random() * 0.2), 30.4 + (random() * 0.2)), 4269),
                               'rooftop', now(), 'Current_Current'
                          FROM listing WHERE slug LIKE 'plan-community-%'""")
-        # Seed market_metric rows for place band only
+        # Seed market_metric rows for place band across all listings
         cur.execute("""INSERT INTO market_metric (listing_id, band, metric_key, vintage, value_num, unit, is_derived,
                                                    formula_version, moe, suppressed, suppress_reason, source_dataset, computed_at)
                        SELECT l.id, 'place', m.metric_key, '2019-2023', 100, 'count', false, NULL, 5, false, NULL, 'acs5', now()
                          FROM listing l,
                               (VALUES ('population'),('households'),('median_hh_income'),('population_growth_pct'),('establishments')) AS m(metric_key)
                         WHERE l.slug LIKE 'plan-community-%'""")
+        # Seed some drive_10 band rows to add noise and make index selection more likely
+        cur.execute("""INSERT INTO market_metric (listing_id, band, metric_key, vintage, value_num, unit, is_derived,
+                                                   formula_version, moe, suppressed, suppress_reason, source_dataset, computed_at)
+                       SELECT l.id, 'drive_10', 'population', '2019-2023', 100, 'count', false, NULL, 5, false, NULL, 'acs5', now()
+                         FROM listing l WHERE l.slug LIKE 'plan-community-%'""")
         cur.execute("ANALYZE listing")
         cur.execute("ANALYZE practice_location")
         cur.execute("ANALYZE market_metric")

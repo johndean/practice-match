@@ -466,7 +466,23 @@ async def get_listing(listing_id: str) -> Response:
         row = _published(conn, listing_id)
     if row is None:
         return _error("NOT_FOUND", "No such listing.", 404)
-    return JSONResponse(serialise(row, datetime.now(UTC)))
+
+    # Task B7: Fetch community context data for the single listing
+    now = datetime.now(UTC)
+    with closing(sync_conn()) as conn, conn:
+        # Fetch active vintages and registry for community_rows
+        with conn.cursor() as cur:
+            cur.execute("SELECT dataset_key, vintage FROM active_vintage")
+            active = {r[0]: r[1] for r in cur.fetchall()}
+
+            cur.execute("SELECT dataset_key, attribution_text, vintage, license_status, notes FROM dataset_registry")
+            assert cur.description is not None  # After execute(), description is never None
+            reg_cols = [d[0] for d in cur.description]
+            registry = {r[0]: dict(zip(reg_cols, r)) for r in cur.fetchall()}
+
+        community_data = community_rows(conn, [str(row["id"])], active=active, registry=registry)
+
+    return JSONResponse(serialise(row, now, community=community_data.get(str(row["id"]))))
 
 
 def _asset_bytes(conn: Any, listing_id: str, entry: str) -> bytes | None:
