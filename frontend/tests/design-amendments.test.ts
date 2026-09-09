@@ -143,11 +143,16 @@ describe('local design amendments (spec D15)', () => {
     // it leaves before it moves — A16.18's own shape on the other navigation control, which round
     // 3's "the ONE navigation control that silently discards work" missed by one.
     'A16.19',
+    // A16.20a/A16.20b (A-SL30 (3), on the round-5 re-review's Info-15): the two remaining doors out
+    // of the wizard also save the step it is on — the header nav (`go`), the rail/Back's own shape,
+    // and Sign out, which ATTEMPTS the same save and ends the session regardless of the answer,
+    // because a session end is the seller's own explicit act and must never be held hostage to one.
+    'A16.20a', 'A16.20b',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(108);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(110);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

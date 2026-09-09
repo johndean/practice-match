@@ -8,8 +8,6 @@ every migration applied and `settings.database_url` pointed at it.
 from __future__ import annotations
 
 import json
-import shutil
-import subprocess
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -1368,24 +1366,18 @@ def adapter_step_fields() -> dict[int, list[str]]:
     return {int(step): list(keys) for step, keys in adapter_tables()["steps"].items()}
 
 
-def design_initial_w() -> dict[str, Any]:
-    """The design's own initial `state.w` (logic.js:204) — the values a bare draft's wizard holds
-    once `toWizardState` has left every null column alone (A-SL27 (1)).
-
-    Read the way every vitest pin reads it — `new Component({}).state.w`, evaluated by Node from
-    `frontend/src/logic.js`, which exports `Component` — and not by a regex over the byte-locked
-    literal (A-SL29 (5), on the round-4 re-review's Info-7: the addendum removed one regex over
-    source and the same commit had added this one). Node is on every machine that runs this suite
-    for the same reason Python is on every machine that runs the frontend's: each gate starts the
-    other side's server."""
-    node = shutil.which("node")
-    assert node, "Node is needed to evaluate the design's own Component for this pin"
-    script = "import('./src/logic.js').then((m) => process.stdout.write(JSON.stringify(new m.Component({}).state.w)))"
-    result = subprocess.run([node, "--input-type=module", "-e", script], cwd=ROOT / "frontend",
-                            capture_output=True, text=True, check=True)
-    w: dict[str, Any] = json.loads(result.stdout)
-    assert w and isinstance(w, dict), "the design's wizard literal evaluated to no object"
-    return w
+#: The design's own initial `state.w` (logic.js:204), the four enum defaults `toWizardState`
+#: leaves standing once it has left every null column alone (A-SL27 (1)) — a plain literal, not
+#: read from the design at all (A-SL30 (1), on the round-5 re-review's MINOR-4: the CROSS-RUNTIME
+#: coupling this pin used to buy with a Node subprocess is not this module's to hold — the design
+#: side of "these four strings really are the design's own" is `logic.test.ts`'s (it already
+#: evaluates `new Component({}).state.w` directly), and this module's own job is only the OTHER
+#: half: that a payload built from them is a 200 through `columns_for`. By NAME, as the design
+#: names them, so the two by-name assertions below stand unchanged.
+DESIGN_INITIAL_W: dict[str, Any] = {
+    "name": "", "type": "Small animal", "est": "", "ownership": "Sole proprietor",
+    "bldg": "Included", "facilityType": "Standalone", "facility": "",
+}
 
 
 def test_the_adapter_and_the_api_agree_on_every_step_s_fields() -> None:
@@ -1499,7 +1491,7 @@ async def test_the_design_s_own_defaults_are_a_200_on_both_enum_steps(
     signed = auth_headers(cookies, headers)
     listing_id = await _create(client, cookies, headers)
 
-    design = design_initial_w()
+    design = DESIGN_INITIAL_W
     payload = {key: design[key] for key in adapter_step_fields()[step]}
     if step == 1:
         payload.update(name="ABC Animal Hospital", est="1998")

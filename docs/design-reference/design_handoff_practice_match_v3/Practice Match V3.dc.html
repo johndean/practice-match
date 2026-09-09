@@ -1902,7 +1902,11 @@ class Component extends DCLogic {
 
   go = (screen) => () => {
     if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false });
-    this.setState({ screen, interest: "closed", userMenu: false });
+    if (!this.props.listings || this.state.sellerView !== "wizard" || !this.state.editingId) return this.setState({ screen, interest: "closed", userMenu: false });
+    return this.props.listings.patch(this.state.editingId, this.state.step, this.state.w, true).then(
+      (d) => this.setState({ screen, interest: "closed", userMenu: false, wizAssets: d.assets, wizErr: "" }),
+      (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })
+    );
   };
 
   setF = (key) => (e) => {
@@ -3116,7 +3120,10 @@ class Component extends DCLogic {
       me: Object.assign({ email: s.email }, s.me),
       userMenuOpen: !!s.userMenu,
       toggleUserMenu: () => this.setState({ userMenu: !s.userMenu }),
-      signOut: () => (this.props.auth ? this.props.auth.signOut().catch(() => {}) : Promise.resolve()).then(() => this.setState({
+      signOut: () => (this.props.listings && s.sellerView === "wizard" && s.editingId
+          ? this.props.listings.patch(s.editingId, s.step, s.w, true).catch(() => {})
+          : Promise.resolve()
+        ).then(() => (this.props.auth ? this.props.auth.signOut().catch(() => {}) : Promise.resolve())).then(() => this.setState({
         userMenu: false, auth: false, screen: "gate", gate: "signin", pw: "",
         interest: "closed", activeId: null, hoverId: null, sellerView: "dash", wizSubmitted: false, formError: ""
       })),

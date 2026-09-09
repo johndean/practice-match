@@ -207,22 +207,69 @@ def test_the_e2e_launcher_is_in_both_gates_a_module_of_its_shape_lives_in():
     assert all(gate in row for row in table_rows), [row[:80] for row in table_rows if gate not in row]
 
 
-def test_claude_md_a16_clause_counts_the_family_s_literal_edits():
-    """A-SL29 (3), on MINOR-3: CLAUDE.md's A16 sentence opened "eighteen literal script edits" while
-    the family had nineteen entries. The GLOBAL counts are derived (the test above this file's
-    amendment section); the per-family word was not. The number written is the one the id list
-    derives — A16.11a and A16.11b are two entries, as `design-amendments.test.ts` counts them."""
+def test_no_test_under_tests_spawns_node():
+    """A-SL30 (1), on the round-5 re-review's MINOR-4: the backend gate must stay inside its own
+    runtime. `tests/api/test_seller_listings.py::design_initial_w()` used to shell out to Node
+    (`shutil.which("node")` + `subprocess.run`) to evaluate the design's own `state.w` for a pin —
+    green on every machine that happens to have Node beside Python, but a job that does not
+    declare it, and a coupling this suite does not need: the design ↔ `step-fields.json` proof
+    lives ONLY in vitest (`logic.test.ts`), which already evaluates `new Component({}).state.w`
+    directly, and this module's own `DESIGN_INITIAL_W` is a plain literal beside `DESIGN_W`. No
+    test under `tests/` may spawn a `node` process for any reason.
+
+    This module is exempt from its own scan: this docstring and the regex below both name the
+    string being forbidden everywhere else."""
+    hits = [name for name, text in tracked_text_files()
+            if name.startswith("tests/") and name != "tests/test_docs.py" and re.search(r'''["']node["']''', text)]
+    assert hits == [], f"{hits} name a `node` process — the backend gate must not need a JS runtime"
+
+
+def test_claude_md_literal_edit_clauses_count_each_family_s_own_entries():
+    """A-SL30 (2), on the round-5 re-review's MINOR-5, widening A-SL29 (3)'s A16-only pin: CLAUDE.md's
+    A12 clause reads "seven literal script edits" against its own enumeration, A12.1-A12.11 —
+    eleven ids, a documentation defect pre-existing on `main` and, once A16 alone was pinned, the
+    only per-family word left unguarded (re-review round 5, MINOR-5).
+
+    EVERY family CLAUDE.md gives a spelled-out "<word> literal edits" or "<word> literal script
+    edits" clause to is checked the same way, the word derived from `design-amendments.ts`'s own
+    ids for that family and never hand-typed here (A16.11a and A16.11b are two entries, as
+    `design-amendments.test.ts` counts them) — A8's clause reads "literal edits", A12/A15/A16 read
+    "literal script edits", so the phrase is matched either way.
+
+    Found by BLOCK, not by one pass over the whole file: CLAUDE.md's account-screens paragraph
+    reintroduces A7's bold marker a second time ("widened **A7** with A7.3-A7.4") with no count
+    clause of its own, so a family's block runs from ONE of its `**A<n>**` markers to the very NEXT
+    such marker of ANY family — a phrase found in that span belongs to the family whose marker
+    opened it, never to whatever other family's clause happens to follow it in the file."""
+    claude = (ROOT / "CLAUDE.md").read_text()
     ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
-    entries = len(set(re.findall(r"id: 'A16\.[^']+'", ts)))
-    assert entries, "frontend/tests/design-amendments.ts declares no A16 entries"
     words = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
              "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "twenty-one",
              "twenty-two", "twenty-three", "twenty-four", "twenty-five")
-    assert entries < len(words), f"no spelled-out word on hand for {entries} A16 entries"
-    claude = (ROOT / "CLAUDE.md").read_text()
-    assert f"; {words[entries]} literal script edits — A16.1" in claude, (
-        f"CLAUDE.md's A16 clause must read '{words[entries]} literal script edits' — the family has {entries} entries"
-    )
+    markers = list(re.finditer(r"\*\*A(\d+)\*\*", claude))
+    assert markers, "CLAUDE.md declares no bold amendment family markers (**A<n>**)"
+    # The captured word is one of `words` ITSELF, not any `\w+` — a GROUP descriptor ("three more
+    # families **of literal** edits", "the other three families are literal script or template
+    # edits") reads as a false per-family clause under a bare `\w+`, which is how this first found
+    # A4's block: the next family's own preamble ("... of literal edits: **A5** (...") sits inside
+    # A4's span and `\w+` happily captured "of".
+    number = "|".join(words)
+    checked = []
+    for i, marker in enumerate(markers):
+        family = marker.group(1)
+        end = markers[i + 1].start() if i + 1 < len(markers) else len(claude)
+        clause = re.search(rf"\b({number}) literal (?:script )?edits\b", claude[marker.start():end])
+        if clause is None:
+            continue
+        entries = len(set(re.findall(rf"id: 'A{family}\.[^']+'", ts)))
+        assert entries, f"A{family}'s clause names literal edits but design-amendments.ts declares no A{family} entries"
+        assert entries < len(words), f"no spelled-out word on hand for {entries} A{family} entries"
+        assert clause.group(1) == words[entries], (
+            f"CLAUDE.md's A{family} clause says '{clause.group(1)} literal edits'; the family has "
+            f"{entries} entries ('{words[entries]}')"
+        )
+        checked.append(family)
+    assert len(checked) >= 4, f"only {checked} families carry a literal-count clause — the scan may have broken"
 
 
 def test_ci_workflow_installs_no_ad_hoc_tooling():

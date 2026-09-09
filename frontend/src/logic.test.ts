@@ -1951,4 +1951,135 @@ describe('logic.js — what Continue actually sends (A-SL26)', () => {
       expect(count('revBand')).toBe(2);
     });
   });
+
+  // ---------------------------------------------------------------------------------------
+  // A-SL30 (3), on the round-5 re-review's Info-15: A16.18/A16.19 made the rail and Back save the
+  // step they leave; two doors out of the wizard still did not — the header nav (`go`) and Sign
+  // out, both under the same "Saved automatically" chrome. A16.20a/A16.20b are the rail's shape at
+  // both doors: partial mode, Continue's own single rejection arm, no PATCH on steps 6/8. Sign out
+  // is a genuine exception (A-SL30 (3)'s own ruling): it ATTEMPTS the save and ends the session
+  // regardless of the answer, because a session end is the seller's explicit act and must never be
+  // held hostage to one.
+  // ---------------------------------------------------------------------------------------
+  describe('leaving the wizard by header navigation or signing out also saves the step (A-SL30 (3), Info-15)', () => {
+    it('go() saves the step it leaves before it navigates (A16.20a)', async () => {
+      const c2 = onStep(5);
+      c2.setW('facility')('Two surgical suites');
+      const sent = record(draft({ photos: [{ id: 'as-1', name: 'Reception' }] }));
+      await c2.go('browse')();
+      expect(sent.map((r) => r.method)).toEqual(['PATCH']);
+      expect(sent[0].url).toBe('/api/seller/listings/a3f1?step=5');
+      expect(sent[0].body).toEqual({ bldg: 'Included', facilityType: 'Standalone', facility: 'Two surgical suites' });
+      expect(c2.state.screen).toBe('browse');
+      expect(c2.state.wizErr).toBe('');
+      expect(c2.state.wizAssets).toEqual([{ kind: 'Photo', name: 'Reception', id: 'as-1' }]);
+    });
+
+    it('a refused go() save keeps the seller in the wizard, with the message (A16.20a)', async () => {
+      const c2 = onStep(4);
+      record({ error: { code: 'BAD_REQUEST', message: 'sqft must be a number.' } }, 400);
+      await c2.go('browse')();
+      expect(c2.state.screen).toBe('seller');
+      expect(c2.state.sellerView).toBe('wizard');
+      expect(c2.state.wizErr).toBe('sqft must be a number.');
+    });
+
+    it('go() off step 6 or step 8 re-reads and moves — no PATCH, since neither step has a field (A16.20a)', async () => {
+      for (const from of [6, 8]) {
+        const c2 = onStep(from);
+        const sent = record(draft());
+        await c2.go('browse')();
+        expect(sent.map((r) => [r.method, r.url]), `from step ${from}`).toEqual([['GET', '/api/seller/listings/a3f1']]);
+        expect(c2.state.screen, `from step ${from}`).toBe('browse');
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('go() navigates at once when the wizard is not open, whatever the adapter (A16.20a)', () => {
+      const c2: any = new Component({ listings: makeListingsAdapter() });
+      c2.setState({ auth: true, screen: 'browse', sellerView: 'dash' });
+      const sent = record(draft());
+      c2.go('seller')();
+      expect(c2.state.screen).toBe('seller');
+      expect(sent).toEqual([]);
+    });
+
+    it('go() navigates at once when the wizard is open but nothing is being edited (A16.20a)', () => {
+      const c2: any = new Component({ listings: makeListingsAdapter() });
+      c2.setState({ auth: true, screen: 'seller', sellerView: 'wizard', editingId: null });
+      const sent = record(draft());
+      c2.go('browse')();
+      expect(c2.state.screen).toBe('browse');
+      expect(sent).toEqual([]);
+    });
+
+    it('without an adapter go() is the design\'s own move, and spends no request (A16.20a)', () => {
+      const plain: any = new Component({});
+      plain.setState({ auth: true, screen: 'seller', sellerView: 'wizard', editingId: 'a3f1' });
+      const sent = record(draft());
+      plain.go('browse')();
+      expect(plain.state.screen).toBe('browse');
+      expect(sent).toEqual([]);
+    });
+
+    it('signOut attempts to save the step the wizard is on, then signs out regardless of the answer (A16.20b)', async () => {
+      const c2 = onStep(5);
+      c2.setW('facility')('Two surgical suites');
+      const sent = record(draft());
+      await c2.renderVals().signOut();
+      expect(sent.map((r) => r.method)).toEqual(['PATCH']);
+      expect(sent[0].url).toBe('/api/seller/listings/a3f1?step=5');
+      expect(sent[0].body).toEqual({ bldg: 'Included', facilityType: 'Standalone', facility: 'Two surgical suites' });
+      expect(c2.state.auth).toBe(false);
+      expect(c2.state.screen).toBe('gate');
+      expect(c2.state.sellerView).toBe('dash');
+    });
+
+    it('a refused signOut save still signs out — a session end is never held hostage to a save (A16.20b)', async () => {
+      const c2 = onStep(5);
+      record({ error: { code: 'BAD_REQUEST', message: 'sqft must be a number.' } }, 400);
+      await c2.renderVals().signOut();
+      expect(c2.state.auth).toBe(false);
+      expect(c2.state.screen).toBe('gate');
+      expect(c2.state.sellerView).toBe('dash');
+    });
+
+    it('signOut off step 6 or step 8 re-reads and still signs out — no PATCH (A16.20b)', async () => {
+      for (const from of [6, 8]) {
+        const c2 = onStep(from);
+        const sent = record(draft());
+        await c2.renderVals().signOut();
+        expect(sent.map((r) => [r.method, r.url]), `from step ${from}`).toEqual([['GET', '/api/seller/listings/a3f1']]);
+        expect(c2.state.auth, `from step ${from}`).toBe(false);
+        vi.unstubAllGlobals();
+      }
+    });
+
+    it('signOut outside the wizard signs out with no save attempt (A16.20b)', async () => {
+      const c2: any = new Component({ listings: makeListingsAdapter() });
+      c2.setState({ auth: true, screen: 'browse', sellerView: 'dash' });
+      const sent = record(draft());
+      await c2.renderVals().signOut();
+      expect(sent).toEqual([]);
+      expect(c2.state.auth).toBe(false);
+    });
+
+    it('signOut with the wizard open but nothing being edited signs out with no save attempt (A16.20b)', async () => {
+      const c2: any = new Component({ listings: makeListingsAdapter() });
+      c2.setState({ auth: true, screen: 'seller', sellerView: 'wizard', editingId: null });
+      const sent = record(draft());
+      await c2.renderVals().signOut();
+      expect(sent).toEqual([]);
+      expect(c2.state.auth).toBe(false);
+    });
+
+    it('without an adapter signOut is the design\'s own move, and spends no request (A16.20b)', async () => {
+      const plain: any = new Component({});
+      plain.setState({ auth: true, screen: 'seller', sellerView: 'wizard', editingId: 'a3f1' });
+      const sent = record(draft());
+      await plain.renderVals().signOut();
+      expect(sent).toEqual([]);
+      expect(plain.state.auth).toBe(false);
+    });
+  });
 });

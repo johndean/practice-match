@@ -1728,11 +1728,67 @@ const A16_19: Amendment = {
   count: 1
 };
 
+/** A16.20a — the header nav (`go`) saves the step the wizard is on before it navigates away
+ *  (A-SL30 (3), on the round-5 re-review's Info-15).
+ *
+ *  A16.18/A16.19 gave the rail and Back this shape; Info-15 named the two doors that still did
+ *  not — this one and Sign out (A16.20b) — both under the same "Saved automatically" chrome,
+ *  neither a re-run of MAJOR-E/F because neither writes `step`: `go` only ever changed `screen`,
+ *  so returning to Seller showed the typed values (nothing was lost from MEMORY) but nothing had
+ *  been PERSISTED, and a tab closed between the two clicks lost it for good.
+ *
+ *  Mechanically identical to the rail and to Back: with an adapter, the wizard open and a listing
+ *  being edited, `patch(editingId, step, w, true)` first — partial mode, since the destination is
+ *  not a step and there is no guard to run first — through Continue's own single rejection arm; a
+ *  refusal keeps the seller on the wizard with the message in `wizErr` and the navigation never
+ *  happens. Steps 6 and 8 have no fields, so the adapter re-reads and issues no PATCH, exactly as
+ *  it does for the rail and for Back. Outside the wizard — no adapter, not on `sellerView:
+ *  "wizard"`, or a wizard with no `editingId` (the design's own fixture path) — `go` is the design's
+ *  one-liner, unchanged, and spends no request.
+ *
+ *  Pixel-free: no approved capture presses a header nav item from inside the wizard (`screens.ts`
+ *  reaches every `wizard-*` state through the rail alone), so no capture's `go` call takes the new
+ *  branch at all. */
+const A16_20a: Amendment = {
+  id: 'A16.20a', ...SL,
+  find: '    this.setState({ screen, interest: "closed", userMenu: false });',
+  replace: '    if (!this.props.listings || this.state.sellerView !== "wizard" || !this.state.editingId) return this.setState({ screen, interest: "closed", userMenu: false });\n'
+    + '    return this.props.listings.patch(this.state.editingId, this.state.step, this.state.w, true).then(\n'
+    + '      (d) => this.setState({ screen, interest: "closed", userMenu: false, wizAssets: d.assets, wizErr: "" }),\n'
+    + '      (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })\n'
+    + '    );',
+  count: 1
+};
+
+/** A16.20b — Sign out ATTEMPTS the same save, and ends the session regardless of the answer
+ *  (A-SL30 (3), on Info-15).
+ *
+ *  Deliberately not A16.20a's shape: John's ruling is explicit that a session end is the seller's
+ *  own explicit act and must never be held hostage to a save the seller did not ask for — "the
+ *  attempt is the most the chrome's 'Saved automatically' can honestly offer". So the save (when
+ *  there is one to attempt — an adapter, the wizard open, a listing being edited) is chained with
+ *  its OWN swallowed rejection (`.catch(() => {})`, the shape the sign-out call beside it has
+ *  always used) ahead of the existing `auth.signOut()` step, never inside its single rejection
+ *  arm: whatever the save answers, sign-out proceeds. Outside the wizard, or with no adapter, the
+ *  chain starts from `Promise.resolve()` exactly as the design's own one-liner did.
+ *
+ *  Pixel-free: no approved capture signs out from inside the wizard. */
+const A16_20b: Amendment = {
+  id: 'A16.20b', ...SL,
+  find: '      signOut: () => (this.props.auth ? this.props.auth.signOut().catch(() => {}) : Promise.resolve()).then(() => this.setState({',
+  replace: '      signOut: () => (this.props.listings && s.sellerView === "wizard" && s.editingId\n'
+    + '          ? this.props.listings.patch(s.editingId, s.step, s.w, true).catch(() => {})\n'
+    + '          : Promise.resolve()\n'
+    + '        ).then(() => (this.props.auth ? this.props.auth.signOut().catch(() => {}) : Promise.resolve())).then(() => this.setState({',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
     A7_3, A7_4, A8_1a, A8_1b, A8_1c, A8_2, A8_3a, A8_3b, A8_4a, A8_4b, A8_5, A8_6, A8_7, A8_8a, A8_8b,
     A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5, A12_6, A12_7, A12_8, A12_9, A12_10, A12_11,
     A15_1, A15_2, A15_3a, A15_3b, A15_3c, A15_3d,
-    A16_1, A16_2, A16_3, A16_4, A16_5, A16_6, A16_7, A16_8, A16_9, A16_10, A16_11a, A16_11b, A16_12, A16_13, A16_14, A16_15, A16_16, A16_17, A16_18, A16_19];
+    A16_1, A16_2, A16_3, A16_4, A16_5, A16_6, A16_7, A16_8, A16_9, A16_10, A16_11a, A16_11b, A16_12, A16_13, A16_14, A16_15, A16_16, A16_17, A16_18, A16_19,
+    A16_20a, A16_20b];
 }
