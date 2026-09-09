@@ -6,6 +6,7 @@ import pytest
 
 from app import db
 from app.config import settings
+from tests.census.test_materialize import world  # noqa: F401 -- reuse the seeded listing fixture (Census Task B5)
 from tests.perf.gate import gate_p95, p95_of
 
 __all__ = ["p95_of"]   # re-exported: the Census/Map import path the M7 ruling named (p95_of moved to gate.py in Task 15)
@@ -392,3 +393,58 @@ async def test_listings_p95_within_budget(origin_client, conn, redis, member):
         ("photo", f"/api/listings/{first['id']}/photos/1"),
     ):
         await gate_p95(lambda p=path: measure(p), LISTINGS_BUDGET_MS[label], label=path)
+
+
+# --- Census Task B5 budgets (policy §3; plan Task B5) --------------------------------------------
+# Live in their own test, the same reason `LISTINGS_BUDGET_MS` above does not live in the module's
+# `BUDGET_MS`: the panel path carries a REAL listing id that only exists once this test has seeded
+# and materialised one, and `BUDGET_MS` is a module-level dict evaluated once at import — before any
+# listing this suite seeds exists at all. `/api/layers`, `/api/markets` and
+# `/api/markets/{cbsa}/communities` could in principle sit in `BUDGET_MS` on their own (their paths
+# are static), but measuring all four through the same seeded, materialised listing in one test is
+# what proves the budget is against the endpoint's REAL code path (a live registry read, a real
+# `market_metric` join) rather than an empty-table shortcut.
+MARKET_BUDGET_MS = {"layers": 100, "markets": 100, "communities": 150, "panel": 150}
+
+
+async def test_market_api_p95_within_budget(origin_client, conn, redis, member, world):  # noqa: F811  (`world` the fixture, by name)
+    """The four member-gated market reads (Task B5) against one real, materialised listing. `conn`
+    points `settings.database_url` at a scratch database, so this neither reads nor writes the
+    shared dev one, exactly as `test_listings_p95_within_budget` above; `world` (imported from
+    `tests.census.test_materialize`) is the same seeded-listing fixture Task B5's own test suite
+    builds on, so the shape of the data behind these numbers is not invented for this file."""
+    from app.cache import sync_redis
+    from app.census import materialize
+    from tests.api.conftest import auth_headers
+
+    lid = world
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, geom, centroid) VALUES "
+            "('12420','310','2023','Austin-Round Rock-San Marcos, TX Metro Area', "
+            "ST_Multi(ST_GeomFromText('POLYGON((-98 30,-97 30,-97 31,-98 31,-98 30))',4269)), "
+            "ST_Point(-97.75,30.31,4269))"
+        )
+        cur.execute("UPDATE practice_location SET cbsa_geoid='12420' WHERE listing_id=%s", (lid,))
+    materialize.materialize_listing(conn, sync_redis(), lid)
+
+    _, cookies, headers = member()
+    auth = auth_headers(cookies, headers)
+
+    async def measure(path: str) -> list[float]:
+        await origin_client.get(path, headers=auth)   # warm-up, so a re-measurement is warm too
+        samples = []
+        for _ in range(50):
+            t0 = time.perf_counter()
+            r = await origin_client.get(path, headers=auth)
+            samples.append((time.perf_counter() - t0) * 1000)
+            assert r.status_code == 200, path
+        return samples
+
+    for label, path in (
+        ("layers", "/api/layers"),
+        ("markets", "/api/markets"),
+        ("communities", "/api/markets/12420/communities"),
+        ("panel", f"/api/listings/{lid}/market"),
+    ):
+        await gate_p95(lambda p=path: measure(p), MARKET_BUDGET_MS[label], label=path)

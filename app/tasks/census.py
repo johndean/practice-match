@@ -46,7 +46,7 @@ import httpx
 import psycopg2
 import psycopg2.extensions
 
-from app.census import acs, bds, cbp, ingest, license, qwi, tiger, zbp
+from app.census import acs, bds, cbp, geocode, ingest, license, qwi, tiger, zbp
 from app.census.client import CensusClient, missing_archive_settings, require_archive, require_contact, require_key
 from app.census.registry import Dataset
 from app.census.registry import load as load_registry
@@ -298,6 +298,99 @@ def license_audit() -> dict[str, object]:
         conn.close()
 
 
+def geocode_listing(listing_id: str) -> dict[str, object]:
+    """Phase B, B2 (spec §6/§10/§11): geocodes one listing -- cache, then the Census geocoder,
+    then the fallback ladder (`app.census.geocode.resolve`) -- and writes `practice_location`
+    (+ `geocode_review` when the precision falls below rooftop).
+
+    `geocode.GeocodeFailed` is deliberately let PROPAGATE, unlike every `load_*` task above: this
+    task has no `dataset_key`/`vintage` pair to record an `ingest_run` against (`resolve` is
+    scoped to one listing, not a dataset ingest), and SP2 (not built in this phase) reads the
+    exception's own message into the seller's draft status -- catching it here and returning a
+    summary dict, the shape every loader above uses for its OWN failure mode, would hide that
+    message from whatever reads this task's result/failure instead of surfacing it.
+
+    The missing-contact case is caught only long enough to LOG it, then RE-RAISED (controller
+    amendment A-C18 ruling 3, fix round 1): every `load_*` task above instead returns a
+    success-shaped summary dict for this same `_NotReady` case, which is safe there because a
+    failed `ingest_run` row carries the refusal durably regardless of what the Celery result
+    looks like. This task has no `dataset_key`/`vintage` to record one against, so a returned
+    dict would be the ONLY trace of the refusal -- and Celery marks a task that returns normally
+    SUCCEEDED, meaning a misconfigured worker (no `CENSUS_CONTACT_EMAIL`) would report every
+    listing geocoded when nothing was. `require_contact()`'s own `SystemExit(2)` (correct at a
+    CLI entry point) still must never propagate un-translated and take the worker -- which also
+    runs the mail pipeline -- down with it, so it is still caught and converted to `_NotReady`
+    by `_resolve_contact()` exactly as every task in this file relies on; only the SECOND catch,
+    the one that used to swallow `_NotReady` into a return value, is gone.
+
+    On success, the B4 backfill task is enqueued BY NAME by `celery_app.send_task` -- never
+    imported -- because B4 owns `census.backfill_listing` (A-C14 (3) correction: the brief's own
+    interface note wrongly attributed it to B5) and this worktree never imports B4's module,
+    keeping B2 the leaf task-B2-brief.md describes."""
+    conn = _conn()
+    try:
+        try:
+            contact = _resolve_contact()
+        except _NotReady as exc:
+            log.error("[census] geocode_listing refused: %s", exc)
+            raise
+        # Controller amendment A-C18 ruling 2 (fix round 1): A-C3 (2) is a STANDING RULING on
+        # this exact shape -- `PracticeMatch/<version> (<contact>)`, contact from
+        # `CENSUS_CONTACT_EMAIL`, never a default address -- not merely sibling precedent
+        # borrowed from `load_tiger`'s own User-Agent, and never the brief's own illustrative
+        # "VIN Foundation; " text.
+        # test_geocode_listing_task_resolves_and_enqueues_the_b4_backfill_task asserts the
+        # literal, not just that a `Geocoder` was built.
+        ua = f"PracticeMatch/{VERSION} ({contact})"
+        with httpx.Client() as http:
+            gc = geocode.Geocoder(http, "https://geocoding.geo.census.gov/geocoder", ua)
+            loc = geocode.resolve(conn, gc, listing_id)
+        celery_app.send_task("census.backfill_listing", args=[listing_id])
+        return {"listing_id": listing_id, "precision": loc.geo_precision}
+    finally:
+        conn.close()
+
+
+def materialize_metrics() -> dict[str, object]:
+    """Nightly job (spec §9, Task B4b): rebuilds every geocoded listing's `market_metric` rows
+    across all three bands from whatever vintages are currently active. Unlike every loader
+    above, this does no Census I/O at all -- only local aggregation over `geo_area`,
+    `acs_measure`, `cbp_industry` and `zbp_industry` -- so it needs no `CENSUS_API_KEY`/
+    `CENSUS_CONTACT_EMAIL` gate and no `_NotReady` handling: a missing active vintage
+    (`app.census.materialize._Ctx`) is a real configuration error, not an optional
+    prerequisite, so it is left to raise and fail the task visibly rather than being folded into
+    a success-shaped result (A-C18 (3): silence that looks like success is the failure mode this
+    programme keeps getting bitten by)."""
+    from app.cache import sync_redis
+    from app.census import materialize
+
+    conn = _conn()
+    try:
+        return {"listings": len(materialize.materialize_all(conn, sync_redis()))}
+    finally:
+        conn.close()
+
+
+def backfill_listing(listing_id: str) -> dict[str, object]:
+    """Runs once for a single listing right after it is geocoded (spec §7): rebuilds its
+    catchments at the active `tiger_cb` vintage, then materialises its `market_metric` rows.
+    Reaches that vintage through `materialize.active_geo_vintage`, never `app.census.vintage`
+    directly -- the module docstring above explains why, and
+    `tests/test_tasks_never_activates_vintage.py` enforces it at the AST level for every module
+    under `app/tasks/`."""
+    from app.cache import sync_redis
+    from app.census import catchment, materialize
+
+    conn = _conn()
+    try:
+        geo_vintage = materialize.active_geo_vintage(conn)
+        bands = catchment.build(conn, listing_id, geo_vintage)
+        rows = materialize.materialize_listing(conn, sync_redis(), listing_id)
+        return {"listing_id": listing_id, "catchment": bands, "rows": rows}
+    finally:
+        conn.close()
+
+
 # Registered by CALLING `celery_app.task(...)` rather than by decorating (see the module
 # docstring): the functions above stay ordinary, fully typed and directly callable.
 load_tiger_task = celery_app.task(name="census.load_tiger")(load_tiger)
@@ -307,3 +400,10 @@ load_zbp_task = celery_app.task(name="census.load_zbp")(load_zbp)
 load_qwi_task = celery_app.task(name="census.load_qwi")(load_qwi)
 load_bds_task = celery_app.task(name="census.load_bds")(load_bds)
 license_audit_task = celery_app.task(name="census.license_audit")(license_audit)
+
+# Phase B, B2: geocode_listing_task registers here.
+geocode_listing_task = celery_app.task(name="census.geocode_listing")(geocode_listing)
+
+# Phase B, B4: backfill_listing_task and materialize_metrics_task register here.
+materialize_metrics_task = celery_app.task(name="census.materialize_metrics")(materialize_metrics)
+backfill_listing_task = celery_app.task(name="census.backfill_listing")(backfill_listing)

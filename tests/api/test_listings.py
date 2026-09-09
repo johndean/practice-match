@@ -464,8 +464,12 @@ def test_cursors_round_trip_and_reject_rubbish() -> None:
 
 
 def test_the_listings_routes_are_guarded_not_public(dist: Any) -> None:
-    """Global Constraint (e): three new routes, GET only, each guarded by `listing.read`, and
-    nothing added to PUBLIC_ROUTES.
+    """Global Constraint (e): four routes now live under the `/api/listings` prefix, GET only, and
+    nothing added to PUBLIC_ROUTES. Three are guarded by `listing.read` (this module); the fourth,
+    `/api/listings/{listing_id}/market` (Census Task B5), is a MARKET route that happens to nest
+    under the same path prefix and is guarded by `market.read` instead — this committed guard walks
+    every mounted route whose path begins with the listings prefix and asserts EACH is protected, by
+    name, rather than asserting one blanket permission for the whole prefix (task B5 correction 4).
 
     Enumerated with `tests.conftest.walk_routes`, not `app.routes`: FastAPI 0.141 keeps an included
     router as a WRAPPER object rather than flattening it, so `{r.path for r in app.routes}` sees
@@ -473,6 +477,7 @@ def test_the_listings_routes_are_guarded_not_public(dist: Any) -> None:
     (the brief's own sketch of this test asserted against that set and could never pass)."""
     from fastapi import Depends
 
+    from app.api.market import REQUIRE_MARKET_READ
     from app.auth import deps
     from app.auth import permissions as PM
     from app.main import create_app
@@ -487,16 +492,25 @@ def test_the_listings_routes_are_guarded_not_public(dist: Any) -> None:
     assert sorted(mounted) == [
         ("GET", "/api/listings"),
         ("GET", "/api/listings/{listing_id}"),
+        ("GET", "/api/listings/{listing_id}/market"),
         ("GET", "/api/listings/{listing_id}/photos/{n}"),
     ]
+    expected_guard = {
+        ("GET", "/api/listings"): "listing.read",
+        ("GET", "/api/listings/{listing_id}"): "listing.read",
+        ("GET", "/api/listings/{listing_id}/photos/{n}"): "listing.read",
+        ("GET", "/api/listings/{listing_id}/market"): "market.read",
+    }
     for (method, path), route in mounted.items():
         # `permission_of` already answers None for anything that is not a `require(...)` guard, so
         # it is the whole filter — no isinstance dance in front of it (review round 2, M9).
         guards = [p for d in route.dependant.dependencies if (p := deps.permission_of(d.call))]
-        assert guards == ["listing.read"], (method, path)
-    # (g): one hoisted constant, shared by all three, never wrapped.
+        assert guards == [expected_guard[method, path]], (method, path)
+    # (g): one hoisted constant per permission, shared by every route it guards, never wrapped.
     assert deps.permission_of(REQUIRE_LISTING_READ) == "listing.read"
     assert Depends(REQUIRE_LISTING_READ).dependency is REQUIRE_LISTING_READ
+    assert deps.permission_of(REQUIRE_MARKET_READ) == "market.read"
+    assert Depends(REQUIRE_MARKET_READ).dependency is REQUIRE_MARKET_READ
 
 
 async def test_a_seeded_database_serves_all_eighteen(client: Any, conn: Any, redis: Any, member: Any) -> None:
@@ -544,13 +558,15 @@ async def test_a_photograph_of_a_seeded_hospital_is_really_served(
 
 
 async def test_the_listings_routes_exist_only_in_app_mode(dist: Any, redis: Any, monkeypatch: Any) -> None:
-    """A-L5.1: the three routes are MEMBER endpoints, so they follow the auth, applications and
-    admin routers into `create_app()`'s `site_mode == "app"` block rather than being mounted
-    unconditionally — `scripts/verify-deploy.sh production` asserts "member endpoints absent" and
-    that claim has to be true of these too.
+    """A-L5.1 (widened by Census Task B5, A-C13 (11)): all four routes under this prefix are MEMBER
+    endpoints — the three this module owns (`listing.read`) and `/api/listings/{id}/market`
+    (`market.read`, `app.api.market`) — so all four follow the auth, applications and admin routers
+    into `create_app()`'s `site_mode == "app"` block rather than being mounted unconditionally —
+    `scripts/verify-deploy.sh production` asserts "member endpoints absent" and that claim has to be
+    true of every one of them.
 
     In `coming_soon` nothing is registered and `not_found_router`'s catch-all answers the same JSON
-    404 it gives any unknown /api path; in `app` the three are registered and guarded."""
+    404 it gives any unknown /api path; in `app` all four are registered and guarded."""
     import httpx
     from httpx import ASGITransport
 
@@ -563,7 +579,7 @@ async def test_the_listings_routes_exist_only_in_app_mode(dist: Any, redis: Any,
     coming = create_app(dist=dist)
     assert [p for _, p, _ in walk_routes(coming.routes) if p.startswith("/api/listings")] == []
     async with httpx.AsyncClient(transport=ASGITransport(app=coming), base_url=ORIGIN) as c:
-        for path in ("/api/listings", f"/api/listings/{uuid4()}", f"/api/listings/{uuid4()}/photos/1"):
+        for path in ("/api/listings", f"/api/listings/{uuid4()}", f"/api/listings/{uuid4()}/photos/1", f"/api/listings/{uuid4()}/market"):
             r = await c.get(path)
             assert r.status_code == 404, path
             assert r.json()["error"]["code"] == "NOT_FOUND"
@@ -572,10 +588,10 @@ async def test_the_listings_routes_exist_only_in_app_mode(dist: Any, redis: Any,
     monkeypatch.setattr(settings, "site_mode", "app")
     live = create_app(dist=dist)
     assert sorted(p for _, p, _ in walk_routes(live.routes) if p.startswith("/api/listings")) == [
-        "/api/listings", "/api/listings/{listing_id}", "/api/listings/{listing_id}/photos/{n}",
+        "/api/listings", "/api/listings/{listing_id}", "/api/listings/{listing_id}/market", "/api/listings/{listing_id}/photos/{n}",
     ]
     async with httpx.AsyncClient(transport=ASGITransport(app=live), base_url=ORIGIN) as c:
-        for path in ("/api/listings", f"/api/listings/{uuid4()}", f"/api/listings/{uuid4()}/photos/1"):
+        for path in ("/api/listings", f"/api/listings/{uuid4()}", f"/api/listings/{uuid4()}/photos/1", f"/api/listings/{uuid4()}/market"):
             r = await c.get(path)
             assert r.status_code == 401, path
             assert r.json() == {"error": {"code": "UNAUTHORIZED", "message": "Sign in to continue."}}

@@ -389,6 +389,14 @@ activate them only if the controller wants them pinned. Finally, `GET /api/admin
 qa.foundation.vin shows every dataset with its licence status, last run and active vintage.
 Production stays gated (`MARKET_DATA_PUBLIC` false, A-C1 ¶10; the key gated per A-C1 ¶8).
 
+**Phase B (listing-dependent market data) has its own integration contract, not a second runbook
+here**: `docs/integrations/market-data-api.md` documents the member-gated `/api/layers`,
+`/api/markets`, `/api/markets/{cbsa}/communities` and `/api/listings/{id}/market` routes, the
+admin Data Sources console above, the licence gates each figure carries, and — corrected there,
+not here — the Phase B exit checklist's per-dataset licence-flip verification (`zbp` for `vets`,
+`cbp` for `econ`, `acs5` for the two figures Task B6 closed a licence hole on). The ingest/activate
+sequence above is unchanged by Phase B; nothing here is repeated in that document.
+
 ## Rollback
 
 Redeploy the previous image/deployment for the service — Railway dashboard → the service → **Deployments** → pick the last good one → **Redeploy** — then re-run `scripts/verify-deploy.sh <env>` to confirm.

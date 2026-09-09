@@ -44,6 +44,11 @@ celery_app.conf.update(
 celery_app.conf.beat_schedule.update({
     "qwi-quarterly": {"task": "census.load_qwi", "schedule": crontab(minute=0, hour=6, day_of_month="15", month_of_year="2,5,8,11")},
     "license-audit-quarterly": {"task": "census.license_audit", "schedule": crontab(minute=0, hour=7, day_of_month="1", month_of_year="1,4,7,10")},
+    # Task B4b: rebuilds every geocoded listing's market_metric rows from the active vintages.
+    # Cheap and purely local (no Census I/O), so it runs nightly rather than quarterly like the
+    # loads above. `census.backfill_listing` (the per-listing, on-demand counterpart) has no
+    # beat entry -- it runs once, right after a listing is geocoded, never on a schedule.
+    "materialize-nightly": {"task": "census.materialize_metrics", "schedule": crontab(minute=0, hour=3)},
 })
 
 

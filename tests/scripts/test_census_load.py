@@ -1264,6 +1264,78 @@ def test_cmd_activate_requires_by(capsys):
     assert exc.value.code == 2
 
 
+# --- materialize subcommand (Task B4b) -----------------------------------------------------------
+# `materialize` never touches the Census API either -- like `activate`, it shares only the
+# DATABASE_URL/unreachable/post-connect-database-error arms with the keyed loaders above. Unlike
+# `activate`, it DOES need Redis (the listing cache-version bump), so these tests use the `redis`
+# fixture (tests/conftest.py) -- the fakeredis double that already patches `app.cache`'s
+# factories -- rather than reaching a real Redis.
+
+def test_cmd_materialize_with_a_listing_id_calls_materialize_listing_and_prints_the_row_count(scratch_dsn, redis, monkeypatch, capsys):
+    from app.census import materialize as census_materialize
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    captured: dict = {}
+
+    def fake(conn, r, listing_id):
+        captured["listing_id"] = listing_id
+        captured["redis"] = r
+        return 18
+
+    monkeypatch.setattr(census_materialize, "materialize_listing", fake)
+
+    assert census_load.main(["materialize", "--listing", "some-listing-id"]) == 0
+
+    assert captured["listing_id"] == "some-listing-id"
+    assert captured["redis"] is redis
+    assert "some-listing-id: 18 rows" in capsys.readouterr().out
+
+
+def test_cmd_materialize_without_a_listing_materialises_every_geocoded_listing(scratch_dsn, redis, monkeypatch, capsys):
+    from app.census import materialize as census_materialize
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setattr(census_materialize, "materialize_all", lambda conn, r: {"a": 3, "b": 5})
+
+    assert census_load.main(["materialize"]) == 0
+
+    out = capsys.readouterr().out
+    assert "a: 3 rows" in out and "b: 5 rows" in out
+    assert "2 listing(s) materialised" in out
+
+
+def test_cmd_materialize_returns_two_when_no_active_vintage_is_ready(scratch_dsn, redis, monkeypatch, capsys):
+    """A missing active acs5/tiger_cb vintage (`app.census.materialize._Ctx`'s own
+    `RuntimeError`) is "refused before anything is opened" in spirit -- an operator has not
+    activated a required dataset yet -- so it maps to exit 2, the same code every other
+    licence-gate/missing-prerequisite refusal in this file already uses."""
+    from app.census import materialize as census_materialize
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+
+    def fake(conn, r):
+        raise RuntimeError("acs5 and tiger_cb must have active vintages before materialising")
+
+    monkeypatch.setattr(census_materialize, "materialize_all", fake)
+
+    assert census_load.main(["materialize"]) == 2
+    assert "materialize refused" in capsys.readouterr().err
+
+
+def test_cmd_materialize_returns_two_without_a_database_url(monkeypatch, capsys):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    assert census_load.main(["materialize"]) == 2
+    assert "DATABASE_URL" in capsys.readouterr().err
+
+
+def test_cmd_materialize_returns_three_when_the_database_is_unreachable(monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
+
+    assert census_load.main(["materialize"]) == 3
+    assert "database unreachable" in capsys.readouterr().err
+
+
 # --- every cmd_* closes its connection and maps a post-connect database error (A-C7 (7)) --------
 # I12 / an A-C4 addendum: a `psycopg2.Error` raised AFTER `_conn()` succeeds (the realistic case
 # is `UndefinedTable`, an unmigrated database) used to escape as an uncaught traceback (exit 1)
@@ -1305,10 +1377,11 @@ class _RaisingConn:
         (["bds", "--year", "2022"], {"CENSUS_API_KEY": "the-key", "CENSUS_CONTACT_EMAIL": "tech@vinfoundation.example.org"}),
         (["qwi", "--year", "2024", "--quarter", "4"], {"CENSUS_API_KEY": "the-key", "CENSUS_CONTACT_EMAIL": "tech@vinfoundation.example.org"}),
         (["activate", "acs5", "2019\u20132023", "--by", "john"], {}),
+        (["materialize"], {}),
     ],
-    ids=["tiger", "acs", "cbp", "zbp", "bds", "qwi", "activate"],
+    ids=["tiger", "acs", "cbp", "zbp", "bds", "qwi", "activate", "materialize"],
 )
-def test_every_subcommand_closes_its_connection_and_returns_three_on_a_post_connect_database_error(argv, env, monkeypatch, capsys):
+def test_every_subcommand_closes_its_connection_and_returns_three_on_a_post_connect_database_error(argv, env, redis, monkeypatch, capsys):
     monkeypatch.setenv("DATABASE_URL", "postgresql://placeholder/placeholder")
     for k, v in env.items():
         monkeypatch.setenv(k, v)

@@ -498,6 +498,51 @@ def cmd_activate(args: argparse.Namespace) -> int:
         conn.close()
 
 
+def cmd_materialize(args: argparse.Namespace) -> int:
+    """Task B4b: rebuilds `market_metric` rows -- one listing, given `--listing`, or every
+    geocoded listing otherwise -- from whatever vintages are currently active. Never touches the
+    Census API (no key/contact gate, like `activate`), so it shares only the
+    DATABASE_URL/unreachable/post-connect-database-error arms with the keyed loaders above; unlike
+    `activate`, it DOES need Redis, for the listing cache-version bump `materialize_listing` sets
+    on every call."""
+    from app.cache import sync_redis
+    from app.census import materialize
+
+    dsn = os.environ.get("DATABASE_URL")
+    if not dsn:
+        print("[census_load] DATABASE_URL is not set", file=sys.stderr)
+        return 2
+    try:
+        conn = _conn(dsn)
+    except psycopg2.OperationalError as exc:
+        print(f"[census_load] database unreachable: {type(exc).__name__}", file=sys.stderr)
+        return 3
+    try:
+        redis = sync_redis()
+        try:
+            if args.listing:
+                n = materialize.materialize_listing(conn, redis, args.listing)
+                print(f"  {args.listing}: {n} rows")
+            else:
+                counts = materialize.materialize_all(conn, redis)
+                for lid, n in counts.items():
+                    print(f"  {lid}: {n} rows")
+                print(f"  {len(counts)} listing(s) materialised")
+        except RuntimeError as exc:
+            # `app.census.materialize._Ctx`'s own refusal: no active acs5/tiger_cb vintage yet --
+            # an operator hasn't run `tiger`/`acs` then `activate` -- "refused before anything
+            # useful happened" in spirit, so it maps to the same exit 2 every other
+            # licence-gate/missing-prerequisite refusal in this file uses.
+            print(f"[census_load] materialize refused: {exc}", file=sys.stderr)
+            return 2
+        return 0
+    except psycopg2.Error as exc:
+        print(f"[census_load] database error: {type(exc).__name__}", file=sys.stderr)
+        return 3
+    finally:
+        conn.close()
+
+
 def main(argv: list[str] | None = None) -> int:
     # Imported here, not inside `cmd_acs` alone (A5's review of itself): `--dataset`'s `choices`
     # must be built while the parser itself is under construction, before `parse_args` runs --
@@ -533,6 +578,9 @@ def main(argv: list[str] | None = None) -> int:
     v.add_argument("--force", action="store_true", help="activate despite a row-count ratio outside [0.8, 1.25] (reviewed override)")
     v.add_argument("--note", default=None, help="reason for this activation, persisted in active_vintage.note; REQUIRED with --force, optional otherwise")
     v.set_defaults(fn=cmd_activate)
+    m = sub.add_parser("materialize", help="rebuild market_metric rows for one listing (--listing) or every geocoded listing, from the active vintages")
+    m.add_argument("--listing", default=None, help="listing id to materialise (default: every listing with a geocoded location)")
+    m.set_defaults(fn=cmd_materialize)
     args = p.parse_args(argv)
     if args.cmd == "activate" and args.force and not args.note:
         # A-C7 concern 1: a forced override -- the one case this ledger most needs a persisted
