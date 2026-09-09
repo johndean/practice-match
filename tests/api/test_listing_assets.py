@@ -40,9 +40,11 @@ CSV = b"month,revenue\n2026-01,84000\n2026-02,91250\n"
 
 _SEED_INSERT = """
 INSERT INTO listing (slug, name, street, city, state, zip, hours, status, location_disclosed,
-                     name_disclosed, area, type, market, est, price, sqft, source, photos)
+                     name_disclosed, area, type, market, est, price, sqft, source, photos,
+                     identifiable_content_visibility)
 VALUES (%(slug)s, 'Demo Hospital', '1 Main St', 'Austin', 'TX', '78701', '24/7', 'published',
-        true, true, 'Austin', 'Small animal', 'Austin, TX', 1998, 1450000, 3000, 'seed', %(photos)s::jsonb)
+        true, true, 'Austin', 'Small animal', 'Austin, TX', 1998, 1450000, 3000, 'seed', %(photos)s::jsonb,
+        'SHOW')
 RETURNING id
 """
 
@@ -131,13 +133,28 @@ def _asset_rows(conn: Any, listing_id: str) -> list[tuple[Any, ...]]:
 
 def _publish(conn: Any, listing_id: str) -> None:
     """The draft, made publishable: 030's two CHECKs want the wizard's own fields plus the three
-    the reviewer supplies at the first publish (D12), and 034 (A-SL33 (1)) adds a fourth —
-    `sqft`, which `frontend/src/logic.js` dereferences unconditionally at every site Browse
-    renders a practice from."""
+    the reviewer supplies at the first publish (D12) — the original ten columns, unchanged — and
+    migration 042 now also wants a ready privacy row for every photograph (spec 2026-09-09 C.8).
+    A helper that could publish an unprocessed photograph would be a hole in exactly the gate this
+    sub-project exists to close."""
     with conn.cursor() as cur:
-        cur.execute("UPDATE listing SET name='Hill Country Animal Hospital', city='Cedar Park', zip='78613',"
-                    " type='Small animal', est=1998, price=1450000, sqft=3000, state='TX', market='Austin, TX',"
-                    " area='Cedar Park', status='published' WHERE id=%s", (listing_id,))
+        cur.execute("SELECT jsonb_array_elements_text(photos) FROM listing WHERE id = %s", (listing_id,))
+        for (entry,) in cur.fetchall():
+            if "/" in entry:                      # a seed path entry: no asset row, SHOW only
+                continue
+            cur.execute(
+                "INSERT INTO listing_asset_privacy (asset_id, listing_id, processing_version,"
+                " original_storage_key, processing_status, seller_confirmed, seller_confirmed_at,"
+                " final_privacy_state, confirmed_sha256, redacted_storage_key, redacted_sha256, buyer_visible)"
+                " VALUES (%s,%s,1,%s,'SELLER_CONFIRMED',true,now(),'NOT_SHOW',%s,%s,%s,true)"
+                " ON CONFLICT (asset_id) DO NOTHING",
+                (entry, listing_id, f"listings/{listing_id}/photos/{entry}/original.jpg",
+                 "f" * 64, f"listings/{listing_id}/photos/{entry}/redacted.webp", "f" * 64),
+            )
+        cur.execute("UPDATE listing SET name='Hill Country Animal Hospital', city='Cedar Park',"
+                    " zip='78613', type='Small animal', est=1998, price=1450000, sqft=3000, state='TX',"
+                    " market='Austin, TX', area='Cedar Park', status='published' WHERE id=%s",
+                    (listing_id,))
 
 
 def _seed_listing(conn: Any, photos: list[str | None]) -> str:
@@ -1057,8 +1074,22 @@ async def test_a_listing_id_that_is_not_a_uuid_is_a_404_on_every_asset_write(
 
 
 def _republish(conn: Any, listing_id: str) -> None:
-    """Back on the market, and its review stamp cleared, so the next write's transition is visible."""
+    """Back on the market, and its review stamp cleared, so the next write's transition is visible.
+    Like _publish, this ensures privacy rows exist for all photographs before re-publishing."""
     with conn.cursor() as cur:
+        cur.execute("SELECT jsonb_array_elements_text(photos) FROM listing WHERE id = %s", (listing_id,))
+        for (entry,) in cur.fetchall():
+            if "/" in entry:                      # a seed path entry: no asset row, SHOW only
+                continue
+            cur.execute(
+                "INSERT INTO listing_asset_privacy (asset_id, listing_id, processing_version,"
+                " original_storage_key, processing_status, seller_confirmed, seller_confirmed_at,"
+                " final_privacy_state, confirmed_sha256, redacted_storage_key, redacted_sha256, buyer_visible)"
+                " VALUES (%s,%s,1,%s,'SELLER_CONFIRMED',true,now(),'NOT_SHOW',%s,%s,%s,true)"
+                " ON CONFLICT (asset_id) DO NOTHING",
+                (entry, listing_id, f"listings/{listing_id}/photos/{entry}/original.jpg",
+                 "f" * 64, f"listings/{listing_id}/photos/{entry}/redacted.webp", "f" * 64),
+            )
         cur.execute("UPDATE listing SET status='published', submitted_at=NULL WHERE id=%s", (listing_id,))
 
 

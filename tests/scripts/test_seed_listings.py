@@ -762,3 +762,25 @@ def test_an_unowned_listing_on_a_seed_slug_is_still_the_exit_5_refusal(
     assert SL.main([]) == 5
     assert taken in capsys.readouterr().err
     assert _count(scratch_dsn, "source = 'seed'") == 0, "nothing was written"
+
+
+def test_the_seeder_writes_show_because_a_seed_photograph_has_no_asset_row(scratch_dsn: str) -> None:
+    """D-IDP-2, and the reason migration 042's trigger lets the eighteen publish at all: a seed
+    photograph is a PATH entry with no `listing_asset` row and therefore no derivative, so SHOW is
+    the only state under which it can honestly be served (spec C.10)."""
+    SL.seed(scratch_dsn, reset=True)
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT identifiable_content_visibility FROM listing WHERE source = 'seed'")
+        assert [r[0] for r in cur.fetchall()] == ["SHOW"]
+
+
+def test_a_re_seed_writes_show_on_the_update_half_as_well(scratch_dsn: str) -> None:
+    """The eighteen already exist on QA, so a value that only landed on the INSERT would never land."""
+    SL.seed(scratch_dsn, reset=True)
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("UPDATE listing SET identifiable_content_visibility = 'NOT_SHOW'"
+                    " WHERE source = 'seed'")
+    SL.seed(scratch_dsn)                                    # no reset: the UPSERT's DO UPDATE half
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT DISTINCT identifiable_content_visibility FROM listing WHERE source = 'seed'")
+        assert [r[0] for r in cur.fetchall()] == ["SHOW"]

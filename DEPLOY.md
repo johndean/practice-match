@@ -109,8 +109,10 @@ Expected `verify-deploy.sh` output on QA (app mode): `healthz OK  version X.Y.Z 
 
 **Numbering is reserved by plan, and a new file must take a free range.** `001`–`002` are the
 original platform migrations · `010`–`015` Sub-project 2 (identity) · `016` the Seed Listings plan
-· **`017`–`059` the Census plan's Sub-project 3 Phase A** and **`060`+ its Phase B** (that plan's
-D14) · `080`–`089` the map engines · **`090`–`099` platform and hotfix migrations on `main`**
+· **`017`–`029` and `050`–`059` the Census plan's Sub-project 3 Phase A** and **`060`+ its Phase B**
+(that plan's D14) · **`030`–`039` the seller listing lifecycle** (A-SL5) · **`040`–`049` the image
+identifiability protection sub-project** (A-C12, 2026-09-09) · `080`–`089` the map engines ·
+**`090`–`099` platform and hotfix migrations on `main`**
 (A-L12, 2026-09-09 — `090_listing_photo_captions.sql` is the first). `003`–`009` are unassigned and
 may only be taken by a platform migration that depends on nothing later.
 `scripts/migrate.py` applies files in FILENAME order, so a file may only be numbered above
