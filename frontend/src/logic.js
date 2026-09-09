@@ -2027,4 +2027,4 @@ class Component extends DCLogic {
   }
 }
 
-export { Component, MARKETS, P };
+export { Component, MARKETS, P, VETS, ECON_K };

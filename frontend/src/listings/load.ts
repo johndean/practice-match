@@ -79,6 +79,10 @@ export interface ApiListing {
   // stub has nothing to say: A15 falls back to the design's own fixed slot caption wherever it is
   // absent, which is what keeps the approved states on their pixels.
   photo_captions?: (string | null)[];
+  // B8: veterinary establishment count from Census CBP, or null if the market data is unavailable
+  vets: number | null;
+  // B8: annual payroll per establishment in $thousands from Census CBP, or null if unavailable
+  econ_k: number | null;
 }
 
 export interface Practice {
@@ -190,9 +194,39 @@ export function centroid(practices: Practice[], market: string): [number, number
  * and recomputing it would pan the map and fail a zero-tolerance visual gate for a reason that
  * has nothing to do with this change. A market with no listings left is dropped so the metro
  * selector never offers an empty one.
+ *
+ * B8: also install the market-data maps VETS and ECON_K from the API rows, and clear any
+ * fixture keys that were there before. A null figure installs no key—the design's logic.js
+ * default handler (VETS[p.id] || 0) renders 0 for a missing key.
  */
-export function applyListings(rows: ApiListing[], practices: Practice[], markets: Markets): void {
+export function applyListings(
+  rows: ApiListing[],
+  practices: Practice[],
+  markets: Markets,
+  vets?: Record<string, number>,
+  econ_k?: Record<string, number>
+): void {
   const next = rows.map(toPractice);
+
+  // B8: map every row BEFORE clearing anything, so a malformed row leaves the fixtures standing
+  if (vets && econ_k) {
+    // Install API vets and econ_k (only non-null values get keys)
+    for (const row of rows) {
+      if (row.vets != null) vets[row.id] = row.vets;
+      if (row.econ_k != null) econ_k[row.id] = row.econ_k;
+    }
+
+    // Clear fixture keys (p1…p9, c1…c4, o1…o4, g1…g4)
+    const fixtureIds = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8', 'p9',
+                        'c1', 'c2', 'c3', 'c4',
+                        'o1', 'o2', 'o3', 'o4',
+                        'g1', 'g2', 'g3', 'g4'];
+    for (const id of fixtureIds) {
+      delete vets[id];
+      delete econ_k[id];
+    }
+  }
+
   practices.length = 0;
   for (const p of next) practices.push(p);
   const wanted = new Set(next.map((p) => p.market));
@@ -228,12 +262,16 @@ function withCursor(base: string, cursor: string): string {
  * `applyListings` maps every row BEFORE it clears anything, so even a malformed row inside an
  * otherwise well-formed page leaves the fixtures standing; `main.ts` catches that throw so the
  * app still mounts.
+ *
+ * B8: also accepts the market-data maps VETS and ECON_K so they can be installed from the API.
  */
 export async function loadListings(
   fetchFn: typeof fetch,
   practices: Practice[],
   markets: Markets,
-  url: string = LIST_URL
+  url: string = LIST_URL,
+  vets?: Record<string, number>,
+  econ_k?: Record<string, number>
 ): Promise<boolean> {
   const rows: ApiListing[] = [];
   try {
@@ -254,6 +292,6 @@ export async function loadListings(
     return false;
   }
   if (rows.length === 0) return false;
-  applyListings(rows, practices, markets);
+  applyListings(rows, practices, markets, vets, econ_k);
   return true;
 }
