@@ -240,6 +240,8 @@ git -C . diff --stat frontend/tests/baseline-manifest.json     # expect: no outp
 
 ---
 
+**Controller amendment A-SL36 (2026-09-10 ~04:40 WITA; John's ruling on D-SL31, verbatim: "Widen ownership dropdown" → "Preserve existing seed wording/detail").** The select widens; the seeds do not move. The eighteen hospitals keep every word of their ownership prose exactly as seeded — nothing is normalised, remapped or "cleaned" — and the wizard's ownership select gains the seeds' six phrasings beside the design's four, so a seller who opens a seeded hospital sees its own ownership selected and can keep it, and a new seller has the richer vocabulary too. This is Task SL10, in a worktree cut from `main` after 0.1.12: `.worktrees/feat-seller-ownership`, database `practice_match_ownership`, Redis `/14`, Playwright ports 5873–5875 / 8447. **What stays:** A-SL31's rule that an unchanged enum value is not re-validated stays in force — it is correct on its own terms and protects any future vocabulary drift — but its tests that used "Three-doctor LLC" as the out-of-vocabulary example must pick a value that is still outside the widened list. **The design edit is a ruled amendment, family A22** (A20 is the identifiability plan's, A21 is reserved for Census B8): one literal edit to the `sel("ownership", …)` option array at `logic.js:1378`, so the pristine-plus-amendments proof holds and the `wizard-step-1` DOM oracle regenerates from the amended design. A closed `<select>` paints only its selected value, so `wizard-step-1`'s pixels — and its `baseline-manifest.json` hash, one of the thirteen frozen — must NOT move; if they do, the implementer STOPS with NEEDS_CONTEXT rather than re-pinning.
+
 ### Task SL1: `listing` grows an owner, a lifecycle and an asset table — **1 day**
 
 **Files:**
@@ -3117,6 +3119,42 @@ ENVIRONMENT=qa DATABASE_URL=<QA public URL> poetry run python scripts/seed_listi
 - [ ] **Step 9: The hand-back** — a forwardable plain-language summary, the screenshots, and a one-line engineer's note with the risk, written to `.superpowers/sdd/2026-09-08-seller-listing-lifecycle/task-SL9-handback.md` (**never into this plan**). It must name, in John's language: what Edit shows now; that submitting and reviewing are real; that the eighteen belong to the seller persona; that photographs and documents are stored in the VIN Foundation's own bucket and are never public; and the four things deliberately **not** done — the buyer detail's document rows, the four separate disclosure switches, a revenue range on the detail, and step 6's delete/reorder/kind controls — each with its Rev 3 item number.
 
 ---
+
+### Task SL10: the ownership vocabulary widens to the seeds' own wording — **0.5 day**
+
+**Files:**
+- Modify: `app/api/seller_listings.py:126` — `OWNERSHIPS`
+- Modify: `frontend/tests/design-amendments.ts` — family A22 (one entry, A22.1) and `docs/design-reference/design_handoff_practice_match_v3/LOCAL_AMENDMENTS.md` (one row); then `npm run gen:design && npm run gen:app`
+- Modify: `tests/api/test_seller_listings.py` — the A-SL31 cases' out-of-vocabulary example
+- Regenerate: `frontend/tests/dom-snapshots/wizard-step-1.json` (from the amended design, by the oracle's own generator — never by hand)
+- Unchanged: `seeds/hospitals.json` (John: preserve the wording), `frontend/src/listings/step-fields.json` (fields, not enums), every migration (no CHECK constrains `ownership`)
+
+**Interfaces:**
+- Consumes: the seeds' six phrasings, exactly as they appear in `seeds/hospitals.json` (counts today: Three-doctor LLC ×5, Sole proprietor (S-corp) ×3, Sole proprietor ×3, Sole proprietor (LLC) ×3, Four-doctor LLC ×2, Five-doctor LLC ×1, Four-doctor partnership ×1) and the design's four
+- Produces: the widened vocabulary, in this order on both sides (server tuple and design option array must be IDENTICAL, and a test pins that they are):
+
+```python
+OWNERSHIPS = (
+    "Sole proprietor",
+    "Sole proprietor (LLC)",
+    "Sole proprietor (S-corp)",
+    "Two-doctor partnership",
+    "Three-doctor LLC",
+    "Four-doctor partnership",
+    "Four-doctor LLC",
+    "Five-doctor LLC",
+    "Multi-doctor LLC",
+    "Other",
+)
+```
+
+- [ ] **Step 1: RED — the two sides agree**: a pytest case in `tests/api/test_seller_listings.py` that reads `frontend/src/logic.js`, extracts the `sel("ownership", "Current ownership", [...])` option array with a regex, and asserts it equals `list(OWNERSHIPS)` — the way `step-fields.json` is pinned two-way without parsing TypeScript. Run: FAIL (four vs ten).
+- [ ] **Step 2: RED — the seeds fit**: a case that loads `seeds/hospitals.json` and asserts every hospital's `ownership` is in `OWNERSHIPS`. Run: FAIL (fifteen of eighteen outside).
+- [ ] **Step 3: GREEN — the server**: the tuple above. Step 2 passes; Step 1 still fails (the design has four).
+- [ ] **Step 4: the design, as amendment A22.1**: in `frontend/tests/design-amendments.ts`, one literal `find`/`replace` on the option array (`count: 1`), family A22 with John's words as the rationale; the row in `LOCAL_AMENDMENTS.md`; `npm run gen:design && npm run gen:app`; `npx vitest run tests/design-amendments.test.ts tests/app-generated.test.ts` green (the set count moves from 144 to 145 entries and the test's pinned totals move with it — update the pins in the SAME commit, as A19 did). Step 1 passes.
+- [ ] **Step 5: A-SL31's cases**: where a test sends "Three-doctor LLC" as the OUT-of-vocabulary value, change the example to a phrase that is still outside (`"Co-operative"`); the unchanged-value cases keep passing because the rule still exists. Run `poetry run pytest tests/api/test_seller_listings.py -q -W error`: green.
+- [ ] **Step 6: the oracle**: `npm run test:visual:baselines` on this worktree's ports regenerates `wizard-step-1.json` from the amended design; `npm run test:e2e`: every state green, `baseline-manifest.json` unchanged (a closed select paints the same). If the manifest moves, STOP — NEEDS_CONTEXT with the moved hash.
+- [ ] **Step 7: gates and commit** — ruff, mypy strict, the full backend gate once (exit code gates the commit); `npm run typecheck && npm test && npm run build`. Commit with explicit pathspecs. Report the regenerated snapshot's diff summary (the ten `<option>`s and nothing else).
 
 ## Self-Review
 
