@@ -70,7 +70,7 @@ from app.cache import sync_redis
 from app.config import settings
 from app.db import sync_conn
 from app.mail.outbox import enqueue
-from app.media.encode import MAX_PHOTOS, encode_webp, sha256_hex
+from app.media.encode import encode_webp, sha256_hex
 from app.storage import ObjectStore
 
 router = APIRouter(prefix="/api/seller")
@@ -288,8 +288,10 @@ def seed_captions() -> dict[str, str]:
     rather than failing a draft read."""
     try:
         index = json.loads(PHOTO_INDEX.read_text())
+        # `photo["file"]` is null for a slot the curation left empty (A-L10, merged from `main`):
+        # nothing was written there, so there is no path for a caption to be keyed by.
         return {f"{slug}/{photo['file']}": photo["caption"]
-                for slug, photos in index["hospitals"].items() for photo in photos}
+                for slug, photos in index["hospitals"].items() for photo in photos if photo["file"]}
     except (OSError, ValueError, KeyError):
         # Absent, malformed or restructured, the answer is the same fallback the docstring promises
         # (review L10). A draft read must not 500 because an inventory file changed shape.
@@ -297,16 +299,24 @@ def seed_captions() -> dict[str, str]:
 
 
 def photo_tiles(row: dict[str, Any], assets: list[dict[str, Any]]) -> list[dict[str, str]]:
-    """Step 6's tiles in `listing.photos`' own order, named as D26 says.
+    """Step 6's tiles in `listing.photos`' own order, named by what the photograph SHOWS.
 
     Order comes from `listing.photos` and from nowhere else (D15 reason 3), which is why this is a
-    projection of that array rather than a second sort of `assets`: a seller upload is named by the
-    filename they chose, a seed path by its caption, and anything else by its own last segment so a
-    stale entry still renders as a tile instead of throwing."""
-    names = {asset["id"]: asset["name"] for asset in assets if asset["kind"] == "photo"}
-    captions = seed_captions()
-    return [{"id": entry, "name": names.get(entry) or captions.get(entry) or entry.rsplit("/", 1)[-1]}
-            for entry in photo_list(row["photos"])]
+    projection of that array rather than a second sort of `assets`.
+
+    The NAME is the seller's own caption (A-SL20: "have the user articulate what it is"), or the
+    seed inventory's caption for a seeded photograph, and otherwise EMPTY — never the filename
+    D26 originally asked for (A-SL22 (2)). `DSC_0431.jpg` says nothing about what a buyer is
+    looking at, and the design already has a truthful name for a photograph nobody has described:
+    its own slot caption at that position, which the wizard fills in (amendment A16.4)."""
+    captions = {asset["id"]: asset["caption"] for asset in assets if asset["kind"] == "photo"}
+    seeded = seed_captions()
+    # A null entry is a seed slot the curation left EMPTY (A-L10, merged from `main`): there is no
+    # photograph there, so there is no tile for it. Only a seed row can hold one — a seller's own
+    # `listing.photos` is asset ids and nothing else — and every seed photograph that IS there
+    # carries the inventory's caption, so the design's by-position fallback never sees the gap.
+    return [{"id": entry, "name": captions.get(entry) or seeded.get(entry) or ""}
+            for entry in photo_list(row["photos"]) if entry is not None]
 
 
 def serialise_draft(row: dict[str, Any], assets: list[dict[str, Any]]) -> dict[str, Any]:
@@ -417,11 +427,11 @@ def assets_for(conn: Any, listing_ids: list[Any]) -> dict[Any, list[dict[str, An
         # first thing a new seller sees.
         return grouped
     with conn.cursor() as cur:
-        cur.execute("SELECT listing_id, id, kind, name, content_type, byte_size FROM listing_asset"
+        cur.execute("SELECT listing_id, id, kind, name, content_type, byte_size, caption FROM listing_asset"
                     " WHERE listing_id = ANY(%s) ORDER BY listing_id, created_at, id", (listing_ids,))
         for r in cur.fetchall():
             grouped[r[0]].append({"id": str(r[1]), "kind": r[2], "name": r[3],
-                                  "content_type": r[4], "byte_size": r[5]})
+                                  "content_type": r[4], "byte_size": r[5], "caption": r[6]})
     return grouped
 
 
@@ -866,13 +876,11 @@ async def upload_photo(listing_id: str, request: Request, principal: Owner) -> R
             row = locked_row(conn, listing_id, principal)
             _writable(row)
             photos = photo_list(row["photos"])
-            # John's ruling, restated in D18: "Keep the existing 4-photo seller-upload cap." The
-            # seed pipeline's MAX_PHOTOS is the API's cap too, enforced server-side with the row
-            # locked, and the fifth upload is surfaced through the wizard's single error slot
-            # (logic.js:1197). Checked BEFORE the insert, so the client gets this envelope rather
-            # than a constraint violation.
-            if len(photos) >= MAX_PHOTOS:
-                raise Refusal("PHOTO_LIMIT", f"A listing may carry {MAX_PHOTOS} photographs.", 409)
+            # NO CAP (A-SL20, John 2026-09-09: "render ALL images"). D18's four-photograph limit
+            # is withdrawn: the design's six slots are what it can CAPTION, not what a listing may
+            # hold, and a hospital with nine photographs showed three. Every upload is stored and
+            # every stored photograph is listed; the wizard names the ones past the design's slots
+            # by the seller's own caption.
             encoded = encode_webp(data)
             if encoded is None:
                 raise Refusal("BAD_IMAGE", "That file could not be read as a photograph.", 422)
@@ -911,13 +919,59 @@ async def reorder_photos(listing_id: str, request: Request, principal: Owner) ->
             row = locked_row(conn, listing_id, principal)
             _writable(row)
             photos = photo_list(row["photos"])
-            if sorted(ids) != sorted(photos):
+            # `or ""` for a null slot (A-L10, merged from `main`): an EMPTY slot cannot be named
+            # in an id list, and `""` is an id nothing sends — so a row that has one is refused
+            # here rather than reordered into a shape that loses it. It also keeps `sorted` off a
+            # `str | None`, which has no ordering at all.
+            if sorted(ids) != sorted(entry or "" for entry in photos):
                 raise Refusal("BAD_REQUEST",
                               "ids must be exactly this listing's photographs, in the new order.", 400)
             with conn.cursor() as cur:
                 cur.execute("UPDATE listing SET photos = %s::jsonb, updated_at = now()"
                             " WHERE id = %s AND seller_id = %s",
                             (json.dumps(ids), row["id"], principal.account_id))
+            claim_from_seed(conn, row, principal)
+            on_market = take_off_market(conn, row, principal, request)
+            payload = serialise_draft(locked_row(conn, listing_id, principal), assets_of(conn, row["id"]))
+    except Refusal as exc:
+        return _refused(exc)
+    if on_market:
+        drop_list_cache(sync_redis())
+    return JSONResponse(payload)
+
+
+@router.patch("/listings/{listing_id}/assets/{asset_id}")
+async def caption_asset(listing_id: str, asset_id: str, request: Request, principal: Owner) -> Response:
+    """What this photograph SHOWS, in the seller's own words (A-SL20, A-SL22 (2)).
+
+    John's ruling, verbatim: "have the user articulate what it is". The design captions its six
+    photo slots by practice type and the caption is fixed, so until now a photograph could only sit
+    under a true caption by happening to show that slot's subject — which is what the hotfix chain
+    on `main` spent two rounds discovering. The seller says it instead, once per photograph.
+
+    PHOTOGRAPHS ONLY. A document tile is named by the filename the seller chose, which is a true
+    name for a document and no name at all for a picture; a document has no design slot for this
+    sentence to stand in for, so `kind <> 'photo'` is a 404 rather than a silent write.
+
+    Blank and null are one intent (A-SL18, Info), exactly as they are for every optional wizard
+    field: the seller is taking the description back, and the tile returns to the design's own slot
+    caption. An edit either way is an EDIT (A-SL15 (1)) — what a buyer reads under a photograph is
+    part of the listing — so a published or paused row re-enters review in the same transaction."""
+    hit(sync_redis(), "listing:patch", str(principal.account_id), *LISTING_PATCH)
+    try:
+        parsed = _asset_uuid(asset_id)
+        body = await _json_body(request)
+        caption = _text("caption", body.get("caption"))
+        with closing(sync_conn()) as conn, conn:
+            row = locked_row(conn, listing_id, principal)
+            _writable(row)
+            with conn.cursor() as cur:
+                cur.execute("UPDATE listing_asset SET caption = %s WHERE id = %s AND listing_id = %s"
+                            " AND kind = 'photo' RETURNING id", (caption, parsed, row["id"]))
+                if cur.fetchone() is None:
+                    raise Refusal("NOT_FOUND", "No such asset.", 404)
+                cur.execute("UPDATE listing SET updated_at = now() WHERE id = %s AND seller_id = %s",
+                            (row["id"], principal.account_id))
             claim_from_seed(conn, row, principal)
             on_market = take_off_market(conn, row, principal, request)
             payload = serialise_draft(locked_row(conn, listing_id, principal), assets_of(conn, row["id"]))

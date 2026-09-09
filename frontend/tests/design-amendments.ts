@@ -1090,9 +1090,256 @@ const A12_11: Amendment = {
   replace: 'noDemo: p.id === "p8" || p.pop == null,', count: 1
 };
 
+
+
+// ---------------------------------------------------------------------------------------
+// A16 — the seller wizard and dashboard read and write the real API (spec 2026-09-08 D23,
+// controller amendments A-SL17, A-SL20 and A-SL22).
+//
+// The precedent is A5 (sign-in through the `auth` adapter) and A12 (the design reads a listing's
+// own name and photographs): literal script edits, each of which KEEPS THE DESIGN'S OWN PATH when
+// no adapter is passed. The reference and the Claude Design preview pass no `listings` prop and
+// take the fixture path unchanged, which is what keeps both targets on the same pixels.
+//
+// One prototype prop joins the seven, for the one state the fixtures cannot express: a real seller
+// with no listings at all (A-SL17). `startMyListings` reaches it exactly as `startNotice` reaches
+// the sign-in notices — declared in the design, injected per request from `?props=`, never passed
+// by the app.
+//
+// None of these is markup. Step 6's per-tile controls, the four disclosure switches, a revenue
+// range on the buyer detail, the document rows and an admin field editor are all Rev 3 (spec §14):
+// the approved design has no slot for any of them and inventing one is forbidden. The two places
+// the seller has to say something the design has no field for — WHICH file, and WHAT it shows —
+// are asked through the browser's own dialogs by the adapter (`pick`, `describe`), which is not
+// design surface at all.
+// ---------------------------------------------------------------------------------------
+const SL = {
+  date: '2026-09-08',
+  ruling: 'none of the existing Photes and Documents are being render4ed in the "EDIT" of an existing listing by hospital across all the data seeded on and also none of the actual inputs are appearing in the PREVIEW and SUBMIT, it appears to be stubs and not functional, this gap must be corrected and the UX true'
+};
+
+/** A16.1 — the dashboard's rows come from the seller's OWN listings once they have been loaded,
+ *  and the design's four Austin fixtures are what shows when they have not been (A-SL22 (1),
+ *  on John's A-SL17 ruling: "a real seller with zero listings should see the dashboard shell with
+ *  no invented/sample listings"). `!== undefined`, not `&& length`: a loaded EMPTY array is a real
+ *  answer and must empty the table, which is the whole of that ruling. `s.myListings` is written
+ *  by A16.9's bootstrap, by A16.8's transitions and by A16.7's submit — and, on the reference
+ *  alone, by A16.11b's prototype prop. */
+const A16_1: Amendment = {
+  id: 'A16.1', ...SL,
+  find: '      listings: s.sellerListings.map((l) => {',
+  replace: '      listings: (s.myListings !== undefined ? s.myListings : s.sellerListings).map((l) => {',
+  count: 1
+};
+
+/** A16.2 — Continue and Edit hydrate `w` from the fetched draft and record which listing is being
+ *  edited. John's finding, exactly: both handlers were `setState({ sellerView: "wizard", step: 1 })`
+ *  and nothing else, so `w` stayed at its empty initial value and every `w.x || "—"` in
+ *  `previewRows` rendered an em dash — the "stubs and not functional" in the ruling above. With no
+ *  adapter the design's own path runs unchanged, which is why `wizard-step-1`'s baseline does not
+ *  move. A refusal lands in `wizErr`, the design's own single error slot (A-SL22 (5): the design's
+ *  existing surfaces, never an invented banner). */
+const A16_2: Amendment = {
+  id: 'A16.2', ...SL,
+  find: '        if (l.status === "draft") actions.push({ label: "Continue", go: () => this.setState({ sellerView: "wizard", step: 1 }) });\n'
+    + '        else actions.push({ label: "Edit", go: () => this.setState({ sellerView: "wizard", step: 1 }) });',
+  replace: '        const openWizard = () => {\n'
+    + '          if (!this.props.listings) return this.setState({ sellerView: "wizard", step: 1 });\n'
+    + '          return this.props.listings.get(l.id).then(\n'
+    + '            (d) => this.setState((st) => ({ sellerView: "wizard", step: 1, wizErr: "", wizSubmitted: false, editingId: l.id, wizAssets: d.assets, w: Object.assign({}, st.w, d.w) })),\n'
+    + '            (e) => this.setState({ sellerView: "wizard", step: 1, wizErr: (e && e.message) || "That listing could not be opened." })\n'
+    + '          );\n'
+    + '        };\n'
+    + '        if (l.status === "draft") actions.push({ label: "Continue", go: openWizard });\n'
+    + '        else actions.push({ label: "Edit", go: openWizard });',
+  count: 1
+};
+
+/** A16.3 — View opens the listing the row is about. The design hard-coded `"p1"` because its four
+ *  rows are fixtures with no listing behind them; a real row has an id. */
+const A16_3: Amendment = {
+  id: 'A16.3', ...SL,
+  find: 'actions.push({ label: "View", go: () => this.setState({ screen: "detail", detailId: "p1" }) });',
+  replace: 'actions.push({ label: "View", go: () => this.setState({ screen: "detail", detailId: l.id || "p1" }) });',
+  count: 1
+};
+
+/** A16.4 — step 6's tiles are the listing's real photographs and documents; the design's four-item
+ *  literal is the no-adapter fallback. `s.wizAssets` is set by A16.2's hydration and by every
+ *  upload.
+ *
+ *  The NAME is what the photograph shows, by A-SL20's rule and in this order: the seller's own
+ *  caption, then the DESIGN's own slot caption at that position (`photoSet`'s list for the
+ *  practice type being edited), then "Photo N" for a photograph past the six slots the design
+ *  captions — `main`'s A15.3b's own last resort, so the two agree. Never a filename: `DSC_0431.jpg`
+ *  says nothing about what a buyer is looking at, which is the failure John's ruling names.
+ *
+ *  The `.slice` stays on the FALLBACK only: a real listing's photographs must not be truncated to
+ *  three by the counter the design used to fake progress with. */
+const A16_4: Amendment = {
+  id: 'A16.4', ...SL,
+  find: '    const uploads = [{ kind: "Photo", name: "Exterior.jpg" }, { kind: "Photo", name: "Lobby.jpg" }, { kind: "Photo", name: "Treatment.jpg" }, { kind: "PDF", name: "Floor plan.pdf" }].slice(0, 3 + (w.photos || 0));',
+  replace: '    const slots = this.photoSet({ id: "wiz", type: w.type, photos: [] });\n'
+    + '    const uploads = s.wizAssets\n'
+    + '      ? s.wizAssets.map((a, i) => ({ kind: a.kind, name: a.name || (slots[i] ? slots[i].caption : "Photo " + (i + 1)) }))\n'
+    + '      : [{ kind: "Photo", name: "Exterior.jpg" }, { kind: "Photo", name: "Lobby.jpg" }, { kind: "Photo", name: "Treatment.jpg" }, { kind: "PDF", name: "Floor plan.pdf" }].slice(0, 3 + (w.photos || 0));',
+  count: 1
+};
+
+/** A16.5 — "Add files" opens a real file picker, uploads what it returns and asks the seller what
+ *  it shows. UNCAPPED (A-SL20, John: "surface all images uploaded and have the user articulate
+ *  what it is and render ALL images") — there is no `Math.min` on this path and the API's own
+ *  four-photograph cap went with the same ruling.
+ *
+ *  With no adapter the design's counter runs unchanged, so the reference's step 6 is byte-identical
+ *  (it has no baseline either way — spec §14 item 7 asks Rev 3 for one). A refusal lands in
+ *  `wizErr`, the design's own single error slot (logic.js:1197, App.vue:1216-1218). */
+const A16_5: Amendment = {
+  id: 'A16.5', ...SL,
+  find: '      addPhoto: () => this.setState((st) => ({ w: Object.assign({}, st.w, { photos: Math.min((st.w.photos || 0) + 1, 1) }) })),',
+  replace: '      addPhoto: () => {\n'
+    + '        if (!this.props.listings || !s.editingId) return this.setState((st) => ({ w: Object.assign({}, st.w, { photos: Math.min((st.w.photos || 0) + 1, 1) }) }));\n'
+    + '        return this.props.listings.pick().then((file) => (file ? this.props.listings.upload(s.editingId, file).then(\n'
+    + '          (a) => this.props.listings.caption(s.editingId, a.id, this.props.listings.describe()).then((d) => this.setState({ wizAssets: d.assets, wizErr: "" })),\n'
+    + '          (e) => this.setState({ wizErr: (e && e.message) || "That file could not be uploaded." })\n'
+    + '        ) : null));\n'
+    + '      },',
+  count: 1
+};
+
+/** A16.6 — Continue saves the step. The design's own three validations are untouched and run
+ *  FIRST (they must refuse before spending a request against a rate-limited endpoint, which is
+ *  A5.1's rule for the sign-in form); only the advance is wrapped. A refusal lands in `wizErr` and
+ *  the step does NOT advance, so the seller never walks past a field the server rejected. */
+const A16_6: Amendment = {
+  id: 'A16.6', ...SL,
+  find: '        this.setState({ step: Math.min(8, step + 1), wizErr: "" });',
+  replace: '        if (!this.props.listings || !s.editingId) return this.setState({ step: Math.min(8, step + 1), wizErr: "" });\n'
+    + '        return this.props.listings.patch(s.editingId, step, w).then(\n'
+    + '          (d) => this.setState({ step: Math.min(8, step + 1), wizErr: "", wizAssets: d.assets }),\n'
+    + '          (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })\n'
+    + '        );',
+  count: 1
+};
+
+/** A16.7 — Submit posts, then runs the design's own `setState` unchanged, so the "Submitted" card
+ *  the design draws appears at once and the dashboard behind it is refreshed with the server's
+ *  own rows. */
+const A16_7: Amendment = {
+  id: 'A16.7', ...SL,
+  find: '      submit: () => this.setState({ wizSubmitted: true,',
+  replace: '      submit: () => (this.props.listings && s.editingId\n'
+    + '        ? this.props.listings.submit(s.editingId).then(() => this.props.listings.list().then((rows) => this.setState({ myListings: rows })), (e) => this.setState({ wizErr: (e && e.message) || "That could not be submitted." }))\n'
+    + '        : Promise.resolve()) && this.setState({ wizSubmitted: true,',
+  count: 1
+};
+
+/** A16.8 — Pause, Republish and Withdraw go through the adapter, then reload. The design's own
+ *  optimistic `setState` is kept as the no-adapter path and as the immediate feedback. */
+const A16_8: Amendment = {
+  id: 'A16.8', ...SL,
+  find: '  setListingStatus(id, status) {\n',
+  replace: '  setListingStatus(id, status) {\n'
+    + '    if (this.props.listings) {\n'
+    + '      const action = status === "paused" ? "pause" : status === "withdrawn" ? "withdraw" : "republish";\n'
+    + '      this.props.listings.setStatus(id, action).then(\n'
+    + '        () => this.props.listings.list().then((rows) => this.setState({ myListings: rows })),\n'
+    + '        (e) => this.setState({ wizErr: (e && e.message) || "That could not be changed." })\n'
+    + '      );\n'
+    + '    }\n',
+  count: 1
+};
+
+/** A16.9 — the bootstrap loads the seller's own listings, in A5.4's own five-line shape and at the
+ *  same seam. Gated on the account actually holding the seller role, so a buyer's session spends no
+ *  request on an endpoint it would be refused from. A refusal leaves `myListings` UNSET rather than
+ *  empty: "not loaded" and "loaded, and there are none" are different things and A16.1 renders
+ *  them differently. */
+const A16_9: Amendment = {
+  id: 'A16.9', ...SL,
+  find: '    else if (this.state.gate === "verify" && this.props.auth) this.props.auth.verify(this.state.gateToken).then(() => this.setState({ gate: "signin", gateToken: "", formNotice: "Your address is verified. Sign in to complete your access request." }), () => this.setState({ gate: "verify-expired", gateToken: "" }));\n  }',
+  replace: '    else if (this.state.gate === "verify" && this.props.auth) this.props.auth.verify(this.state.gateToken).then(() => this.setState({ gate: "signin", gateToken: "", formNotice: "Your address is verified. Sign in to complete your access request." }), () => this.setState({ gate: "verify-expired", gateToken: "" }));\n'
+    + '    if (this.props.listings && me && me.state === "active" && (me.roles || []).indexOf("seller") > -1) this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => {});\n'
+    + '  }',
+  count: 1
+};
+
+/** A16.10 — the `declined` pill (John's ruled default, spec §16 Q1: the label "Declined" in the
+ *  `bad` tone). Without it a declined row falls through `map[status] || map.draft` and reads
+ *  "Draft" — a seller told their listing is a draft when the VIN Foundation has declined it.
+ *  The three colours are `withdrawn`'s own triple, which IS the `bad` tone in `adminVals`'s table
+ *  (`bad: ["#494949", "#ffffff", "#494949"]`), so no colour is invented. Pixel-safe: no approved
+ *  state has a declined listing — the design's four fixtures are published, in_review, draft and
+ *  paused. */
+const A16_10: Amendment = {
+  id: 'A16.10', ...SL,
+  find: '      withdrawn: ["Withdrawn", "#494949", "#ffffff", "#494949"]\n    };',
+  replace: '      withdrawn: ["Withdrawn", "#494949", "#ffffff", "#494949"],\n'
+    + '      declined: ["Declined", "#494949", "#ffffff", "#494949"]\n    };',
+  count: 1
+};
+
+/** A16.11a — the eighth declared prototype prop, spliced immediately after A9.1a's
+ *  `startAnswerNote` with the same `&quot;` escaping as its neighbours, and with `me`'s own
+ *  `json` editor because the value is an array rather than a line of text.
+ *
+ *  A-SL17 gave the oracle a state the design's fixtures cannot express — a real seller with no
+ *  listings — and A-SL22 (1) ruled the mechanism: the same one A8.8b and A9.1a established.
+ *  `app.setup.js` declares it too, because `app-generated.test.ts` requires that file to declare
+ *  everything the design does; the app never passes it (D-I8-2). */
+const STARTMYLISTINGS_ENTRY = '&quot;startMyListings&quot;:{&quot;editor&quot;:&quot;json&quot;,&quot;default&quot;:null,&quot;tsType&quot;:&quot;object&quot;,&quot;section&quot;:&quot;Prototype&quot;,&quot;label&quot;:&quot;Seller listings on load&quot;}';
+const A16_11a: Amendment = {
+  id: 'A16.11a', ...SL,
+  find: STARTANSWERNOTE_ENTRY, replace: `${STARTANSWERNOTE_ENTRY},${STARTMYLISTINGS_ENTRY}`, count: 1
+};
+
+/** A16.11b — `componentDidMount` writes it into the dashboard's rows, one line after A16.9's,
+ *  which is A9.1b's own shape. An empty ARRAY is truthy, which is the point: `[]` is what the
+ *  `seller-dash-empty` state injects and what A16.1 renders as no rows at all, while the default
+ *  `null` leaves `myListings` unset and the design's own four fixtures in place. Last, so the APP
+ *  — which passes no `startMyListings` — keeps whatever A16.9 loaded. */
+const A16_11b: Amendment = {
+  id: 'A16.11b', ...SL,
+  find: '    if (this.props.listings && me && me.state === "active" && (me.roles || []).indexOf("seller") > -1) this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => {});\n  }',
+  replace: '    if (this.props.listings && me && me.state === "active" && (me.roles || []).indexOf("seller") > -1) this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => {});\n'
+    + '    if (this.props.startMyListings) this.setState({ myListings: this.props.startMyListings });\n'
+    + '  }',
+  count: 1
+};
+
+/** A16.12 — "Photos attached" counts PHOTOGRAPHS. The design's own tile list is three photographs
+ *  and a PDF, so `uploads.length` read four and called them all photographs; with a real listing
+ *  behind it the row would tell a seller they had attached seven when five were pictures. A-SL22
+ *  (4): every preview row is the truth about the draft.
+ *
+ *  Pixel-safe: the design's fallback list is `.slice(0, 3 + (w.photos || 0))` and `w.photos` is 0
+ *  on every approved state, so the slice is the three Photo tiles and both spellings count 3. */
+const A16_12: Amendment = {
+  id: 'A16.12', ...SL,
+  find: '        { k: "Photos attached", v: String(uploads.length) }',
+  replace: '        { k: "Photos attached", v: String(uploads.filter((u) => u.kind === "Photo").length) }',
+  count: 1
+};
+
+/** A16.13 — the preview names the listing's OWN state, not Texas. A12.8/A12.9's ruled edit, in the
+ *  one place the wizard makes the same claim: the design's four fixtures are all in the Austin
+ *  metro, so `", TX"` was true of every one of them and false of the Oregon hospital a seeded
+ *  seller is editing. `w.state` is `serialise_draft`'s own column (the reviewer supplies it at the
+ *  first publish, spec Q2 — there is no wizard field for it and inventing one is forbidden).
+ *
+ *  Pixel-safe: `wizard-preview` is one of the thirteen frozen screens and reaches this row with
+ *  `w.city` empty, which is the em dash on both spellings. */
+const A16_13: Amendment = {
+  id: 'A16.13', ...SL,
+  find: '        { k: "General location", v: (w.city || "\\u2014") + (w.city ? ", TX" : "") },',
+  replace: '        { k: "General location", v: (w.city || "\\u2014") + (w.city && w.state ? ", " + w.state : "") },',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
     A7_3, A7_4, A8_1a, A8_1b, A8_1c, A8_2, A8_3a, A8_3b, A8_4a, A8_4b, A8_5, A8_6, A8_7, A8_8a, A8_8b,
-    A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5, A12_6, A12_7, A12_8, A12_9, A12_10, A12_11];
+    A9_1a, A9_1b, A10, A11, A10_2, A12_1, A12_2, A12_3, A12_4, A12_5, A12_6, A12_7, A12_8, A12_9, A12_10, A12_11,
+    A16_1, A16_2, A16_3, A16_4, A16_5, A16_6, A16_7, A16_8, A16_9, A16_10, A16_11a, A16_11b, A16_12, A16_13];
 }

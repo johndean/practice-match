@@ -138,7 +138,7 @@ def _publish(conn: Any, listing_id: str) -> None:
                     " area='Cedar Park', status='published' WHERE id=%s", (listing_id,))
 
 
-def _seed_listing(conn: Any, photos: list[str]) -> str:
+def _seed_listing(conn: Any, photos: list[str | None]) -> str:
     with conn.cursor() as cur:
         cur.execute(_SEED_INSERT, {"slug": f"s-{uuid4().hex[:8]}", "photos": json.dumps(photos)})
         return str(cur.fetchone()[0])
@@ -188,21 +188,110 @@ async def test_an_uploaded_photograph_loses_its_gps(client: Any, conn: Any, redi
     assert stored.info.get("icc_profile") is None
 
 
-async def test_the_fifth_photograph_is_refused_with_the_photo_limit_code(client: Any, conn: Any, redis: Any, member: Any, store: Any) -> None:
-    """John's ruling, restated in D18: "Keep the existing 4-photo seller-upload cap." Nothing is
-    orphaned by the refusal — the fifth object is never written."""
+async def test_there_is_no_photograph_cap_and_the_seventh_is_stored_like_the_first(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any
+) -> None:
+    """A-SL20 (John, 2026-09-09): "render ALL images". D18's four-photograph cap is withdrawn —
+    the design's six slots are what it can CAPTION, not what a listing may hold — so the seventh
+    upload is a 201 with a row, an object and an entry in `listing.photos` like every other."""
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
     signed = auth_headers(cookies, headers)
-    for _ in range(4):
+    for _ in range(7):
         assert (await _upload_photo(client, listing_id, signed)).status_code == 201
 
-    refused = await _upload_photo(client, listing_id, signed)
-    assert refused.status_code == 409
-    assert refused.json() == {"error": {"code": "PHOTO_LIMIT", "message": "A listing may carry 4 photographs."}}
-    assert len(_photos(conn, listing_id)) == 4
-    assert len(_asset_rows(conn, listing_id)) == 4
-    assert len(store.list(f"listings/{listing_id}/photos/")) == 4
+    assert len(_photos(conn, listing_id)) == 7
+    assert len(_asset_rows(conn, listing_id)) == 7
+    assert len(store.list(f"listings/{listing_id}/photos/")) == 7
+
+
+async def test_a_caption_is_the_sellers_own_words_for_one_photograph(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any
+) -> None:
+    """A-SL20/A-SL22 (2): "have the user articulate what it is". The caption is stored on the
+    photograph's own row and comes back as the step-6 tile's name, in `listing.photos`' order."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    signed = auth_headers(cookies, headers)
+    asset_id = (await _upload_photo(client, listing_id, signed)).json()["id"]
+
+    response = await client.patch(f"/api/seller/listings/{listing_id}/assets/{asset_id}",
+                                  json={"caption": "  Reception, looking in  "}, headers=signed)
+    assert response.status_code == 200, response.text
+    assert response.json()["photos"] == [{"id": asset_id, "name": "Reception, looking in"}]
+    assert [a["caption"] for a in response.json()["assets"]] == ["Reception, looking in"]
+
+
+async def test_an_undescribed_photograph_is_named_by_nothing_at_all(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any
+) -> None:
+    """A-SL22 (2): "never a filename". `DSC_0431.jpg` says nothing about what a buyer is looking
+    at, so the tile's name is empty and the DESIGN's own slot caption at that position is what the
+    wizard renders (amendment A16.4)."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    signed = auth_headers(cookies, headers)
+    asset_id = (await _upload_photo(client, listing_id, signed, filename="DSC_0431.jpg")).json()["id"]
+
+    read = await client.get(f"/api/seller/listings/{listing_id}", headers=signed)
+    assert read.json()["photos"] == [{"id": asset_id, "name": ""}]
+
+
+async def test_a_blank_caption_clears_the_one_that_was_there(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any
+) -> None:
+    """The seller can take a description back: blank and null are the same intent, exactly as they
+    are for every OPTIONAL wizard field (A-SL18, Info)."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    signed = auth_headers(cookies, headers)
+    asset_id = (await _upload_photo(client, listing_id, signed)).json()["id"]
+    await client.patch(f"/api/seller/listings/{listing_id}/assets/{asset_id}",
+                       json={"caption": "Reception"}, headers=signed)
+
+    for blank in ("", None):
+        response = await client.patch(f"/api/seller/listings/{listing_id}/assets/{asset_id}",
+                                      json={"caption": blank}, headers=signed)
+        assert response.status_code == 200, response.text
+        assert response.json()["photos"] == [{"id": asset_id, "name": ""}]
+
+
+async def test_a_caption_is_refused_when_it_is_not_text_and_when_the_asset_is_not_this_listings(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any
+) -> None:
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    other_id = await _create(client, cookies, headers)
+    signed = auth_headers(cookies, headers)
+    asset_id = (await _upload_photo(client, listing_id, signed)).json()["id"]
+
+    refused = await client.patch(f"/api/seller/listings/{listing_id}/assets/{asset_id}",
+                                 json={"caption": 7}, headers=signed)
+    assert refused.status_code == 400
+    assert refused.json() == {"error": {"code": "BAD_REQUEST", "message": "caption must be text."}}
+
+    for path in (f"/api/seller/listings/{other_id}/assets/{asset_id}",
+                 f"/api/seller/listings/{listing_id}/assets/not-a-uuid",
+                 f"/api/seller/listings/{listing_id}/assets/{uuid4()}"):
+        missing = await client.patch(path, json={"caption": "x"}, headers=signed)
+        assert missing.status_code == 404, path
+        assert missing.json() == {"error": {"code": "NOT_FOUND", "message": "No such asset."}}
+
+
+async def test_captioning_a_document_is_refused_because_only_a_photograph_carries_one(
+    client: Any, conn: Any, redis: Any, member: Any, store: Any
+) -> None:
+    """The caption is what the design's photo slot would otherwise have said; a document row is
+    named by its own filename on the design's own tile and has no slot to stand in for."""
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    signed = auth_headers(cookies, headers)
+    doc_id = (await _upload_document(client, listing_id, signed)).json()["id"]
+
+    refused = await client.patch(f"/api/seller/listings/{listing_id}/assets/{doc_id}",
+                                 json={"caption": "x"}, headers=signed)
+    assert refused.status_code == 404
+    assert refused.json() == {"error": {"code": "NOT_FOUND", "message": "No such asset."}}
 
 
 async def test_a_photograph_that_is_not_an_image_is_refused(client: Any, conn: Any, redis: Any, member: Any, store: Any) -> None:
@@ -825,57 +914,93 @@ async def test_a_reorder_body_one_byte_over_the_json_limit_is_refused(client: An
 async def test_the_draft_read_carries_its_photographs_in_order_and_its_documents(
     client: Any, conn: Any, redis: Any, member: Any, store: Any
 ) -> None:
-    """D26: step 6's tiles are `listing.photos`' own order, named by the uploaded filename, and the
-    documents come back with the route that reads them back. `assets` is unchanged (SL3's contract);
-    these two are the ordered views of it the wizard renders."""
+    """Step 6's tiles are `listing.photos`' own order, named by the seller's own caption (A-SL20)
+    and by NOTHING until they write one (A-SL22 (2): never a filename), and the documents come back
+    with the route that reads them back — a document IS named by its filename, which is a true name
+    for a document. `assets` is unchanged (SL3's contract) but for the caption column; these two are
+    the ordered views of it the wizard renders."""
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
     signed = auth_headers(cookies, headers)
     first = (await _upload_photo(client, listing_id, signed, filename="front.jpg")).json()["id"]
     second = (await _upload_photo(client, listing_id, signed, filename="waiting-room.jpg")).json()["id"]
     document = (await _upload_document(client, listing_id, signed, filename="accounts.pdf")).json()["id"]
+    assert (await client.patch(f"/api/seller/listings/{listing_id}/assets/{second}",
+                               json={"caption": "Reception, looking in"}, headers=signed)).status_code == 200
     assert (await client.patch(f"/api/seller/listings/{listing_id}/photos",
                                json={"ids": [second, first]}, headers=signed)).status_code == 200
 
     body = (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()
-    assert body["photos"] == [{"id": second, "name": "waiting-room.jpg"},
-                              {"id": first, "name": "front.jpg"}]
+    assert body["photos"] == [{"id": second, "name": "Reception, looking in"},
+                              {"id": first, "name": ""}]
     assert body["documents"] == [{"id": document, "kind": "other", "name": "accounts.pdf",
                                   "content_type": "application/pdf", "byte_size": len(PDF),
+                                  "caption": None,
                                   "url": f"/api/seller/listings/{listing_id}/documents/{document}"}]
     assert [asset["id"] for asset in body["assets"]] == [first, second, document]
+    assert [asset["caption"] for asset in body["assets"]] == [None, "Reception, looking in", None]
 
 
 async def test_a_seed_listings_tiles_are_named_by_the_seed_caption(client: Any, conn: Any, redis: Any, member: Any) -> None:
-    """The other arm of D26's "the seed caption or the uploaded filename". A seed row belongs to
-    the demo seller on QA (D25), so Edit on one reads through this serialiser too — and its
-    `listing.photos` entries are relative paths that name no `listing_asset` row."""
+    """The other arm of the tile's name. A seed row belongs to the demo seller on QA (D25), so Edit
+    on one reads through this serialiser too — and its `listing.photos` entries are relative paths
+    that name no `listing_asset` row, so the committed inventory's caption is what says what the
+    picture shows."""
     account_id, cookies, headers = _seller(member)
-    photos = [f"1111_pet_hospital/{n}.webp" for n in (1, 2, 3, 4)]
-    listing_id = _seed_listing(conn, [*photos, "1111_pet_hospital/nope.webp"])
+    photos = [f"abc_animal_hospital/{n}.webp" for n in (1, 2, 3)]
+    listing_id = _seed_listing(conn, [*photos, "abc_animal_hospital/nope.webp"])
     with conn.cursor() as cur:
         cur.execute("UPDATE listing SET seller_id=%s WHERE id=%s", (account_id, listing_id))
 
     body = (await client.get(f"/api/seller/listings/{listing_id}", headers=auth_headers(cookies, headers))).json()
-    # The committed inventory's own captions, which A-L9 changed with the photographs themselves:
-    # the seed set is the six the design's photo slots select, so files 2-4 are the reception, the
-    # exam room and the treatment area rather than three more exteriors.
+    # The committed inventory's own captions, curated slot by slot against the photographs
+    # themselves (A-L10, merged from `main`).
     assert body["photos"] == [
-        {"id": "1111_pet_hospital/1.webp", "name": "Exterior — front view"},
-        {"id": "1111_pet_hospital/2.webp", "name": "Interior — reception"},
-        {"id": "1111_pet_hospital/3.webp", "name": "Interior — exam room"},
-        {"id": "1111_pet_hospital/4.webp", "name": "Interior — treatment area"},
-        # An entry the inventory does not name still renders as a tile, by its own file name.
-        {"id": "1111_pet_hospital/nope.webp", "name": "nope.webp"},
+        {"id": "abc_animal_hospital/1.webp", "name": "Exterior — front"},
+        {"id": "abc_animal_hospital/2.webp", "name": "Interior — reception"},
+        {"id": "abc_animal_hospital/3.webp", "name": "Interior — exam room 1"},
+        # An entry the inventory does not name is named by NOTHING (A-SL22 (2)): a file name is
+        # not a description, and the design's own slot caption at that position is what the
+        # wizard renders in its place (amendment A16.4).
+        {"id": "abc_animal_hospital/nope.webp", "name": ""},
     ]
     assert body["documents"] == []
+
+
+async def test_a_seed_slot_the_curation_left_empty_is_no_tile_at_all(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """A-L10 (merged from `main`) stores a JSON `null` for a slot no photograph truthfully fills.
+    There is nothing to show for it, so step 6 lists the photographs that exist and no blank tile —
+    and a reorder of such a row is refused, because an empty slot cannot be named in an id list."""
+    account_id, cookies, headers = _seller(member)
+    listing_id = _seed_listing(conn, ["abc_animal_hospital/1.webp", None, "abc_animal_hospital/3.webp"])
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET seller_id=%s WHERE id=%s", (account_id, listing_id))
+    signed = auth_headers(cookies, headers)
+
+    body = (await client.get(f"/api/seller/listings/{listing_id}", headers=signed)).json()
+    assert body["photos"] == [
+        {"id": "abc_animal_hospital/1.webp", "name": "Exterior — front"},
+        {"id": "abc_animal_hospital/3.webp", "name": "Interior — exam room 1"},
+    ]
+
+    refused = await client.patch(f"/api/seller/listings/{listing_id}/photos",
+                                 json={"ids": ["abc_animal_hospital/3.webp", "abc_animal_hospital/1.webp"]},
+                                 headers=signed)
+    assert refused.status_code == 400
+    assert refused.json()["error"]["message"] == "ids must be exactly this listing's photographs, in the new order."
 
 
 def test_the_seed_captions_are_read_from_the_committed_index() -> None:
     from app.api import seller_listings as SL
 
     captions = SL.seed_captions()
-    assert captions["1111_pet_hospital/1.webp"] == "Exterior — front view"
+    assert captions["abc_animal_hospital/1.webp"] == "Exterior — front"
+    # A-L10 leaves a slot with no truthful photograph EMPTY, and an empty slot has no file for a
+    # caption to be keyed by — `1111_pet_hospital` is one of the four that carry an exterior and
+    # nothing else, so five of its six slots are absent here rather than keyed by a null.
+    assert [k for k in captions if k.startswith("1111_pet_hospital/")] == ["1111_pet_hospital/1.webp"]
     assert SL.seed_captions() is captions, "read once per process, not once per draft"
 
 
@@ -899,6 +1024,7 @@ async def test_a_listing_id_that_is_not_a_uuid_is_a_404_on_every_asset_write(
         await _upload_photo(client, "not-a-uuid", signed),
         await _upload_document(client, "not-a-uuid", signed),
         await client.patch("/api/seller/listings/not-a-uuid/photos", json={"ids": []}, headers=signed),
+        await client.patch(f"/api/seller/listings/not-a-uuid/assets/{uuid4()}", json={"caption": "x"}, headers=signed),
         await client.delete(f"/api/seller/listings/not-a-uuid/assets/{uuid4()}", headers=signed),
     ):
         assert response.status_code == 404, response.text
@@ -928,9 +1054,10 @@ async def test_every_asset_write_on_a_published_listing_re_enters_review(
     client: Any, conn: Any, redis: Any, member: Any, store: Any
 ) -> None:
     """A-SL15 (1): assets are edits. John's ruling — "editing a published listing re-enters review
-    and removes it from the market until approved again" — covers adding, reordering and deleting a
-    photograph or a document, so each of the four writes applies D3 exactly as `patch_step` does,
-    in the same transaction, and writes the same audit row."""
+    and removes it from the market until approved again" — covers adding, reordering, CAPTIONING
+    and deleting a photograph or a document, so each of the five writes applies D3 exactly as
+    `patch_step` does, in the same transaction, and writes the same audit row. Captioning is an
+    edit for the plainest reason: the caption is what a buyer reads under the photograph."""
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
     signed = auth_headers(cookies, headers)
@@ -950,10 +1077,15 @@ async def test_every_asset_write_on_a_published_listing_re_enters_review(
     assert _status(conn, listing_id)[0] == "in_review"
 
     _republish(conn, listing_id)
+    assert (await client.patch(f"/api/seller/listings/{listing_id}/assets/{photo}",
+                               json={"caption": "Reception, looking in"}, headers=signed)).status_code == 200
+    assert _status(conn, listing_id)[0] == "in_review"
+
+    _republish(conn, listing_id)
     assert (await client.delete(f"/api/seller/listings/{listing_id}/assets/{photo}", headers=signed)).status_code == 204
     assert _status(conn, listing_id)[0] == "in_review"
 
-    assert _audit(conn, listing_id) == [("listing.edit", {"status": "published"}, {"status": "in_review"})] * 4
+    assert _audit(conn, listing_id) == [("listing.edit", {"status": "published"}, {"status": "in_review"})] * 5
 
 
 async def test_an_asset_write_on_a_draft_leaves_the_lifecycle_alone(

@@ -246,6 +246,8 @@ class Component extends DCLogic {
     if (this.props.startAnswerNote) this.setState({ answer: Object.assign({}, this.state.answer, { note: this.props.startAnswerNote }) });
     if (this.state.gate === "verify" && !this.state.gateToken) this.setState({ gate: "verify-expired" });
     else if (this.state.gate === "verify" && this.props.auth) this.props.auth.verify(this.state.gateToken).then(() => this.setState({ gate: "signin", gateToken: "", formNotice: "Your address is verified. Sign in to complete your access request." }), () => this.setState({ gate: "verify-expired", gateToken: "" }));
+    if (this.props.listings && me && me.state === "active" && (me.roles || []).indexOf("seller") > -1) this.props.listings.list().then((rows) => this.setState({ myListings: rows }), () => {});
+    if (this.props.startMyListings) this.setState({ myListings: this.props.startMyListings });
   }
 
   money(n) {
@@ -949,13 +951,21 @@ class Component extends DCLogic {
       in_review: ["In VIN Foundation review", "#003a70", "#deecf7", "#deecf7"],
       draft: ["Draft", "#494949", "#f5f5f5", "#d4dde5"],
       paused: ["Paused", "#003a70", "#ffffff", "#339dde"],
-      withdrawn: ["Withdrawn", "#494949", "#ffffff", "#494949"]
+      withdrawn: ["Withdrawn", "#494949", "#ffffff", "#494949"],
+      declined: ["Declined", "#494949", "#ffffff", "#494949"]
     };
     const m = map[status] || map.draft;
     return { label: m[0], style: "flex: none; font-size: 11.5px; font-weight: 500; padding: 5px 12px; border-radius: 999px; color: " + m[1] + "; background: " + m[2] + "; border: 1px solid " + m[3] + ";" };
   }
 
   setListingStatus(id, status) {
+    if (this.props.listings) {
+      const action = status === "paused" ? "pause" : status === "withdrawn" ? "withdraw" : "republish";
+      this.props.listings.setStatus(id, action).then(
+        () => this.props.listings.list().then((rows) => this.setState({ myListings: rows })),
+        (e) => this.setState({ wizErr: (e && e.message) || "That could not be changed." })
+      );
+    }
     this.setState((s) => ({ sellerListings: s.sellerListings.map((l) => (l.id === id ? Object.assign({}, l, { status, note: status === "paused" ? "Paused by you just now · hidden from search" : status === "withdrawn" ? "Withdrawn just now · no longer visible to buyers" : status === "published" ? "Live again · visible in search" : l.note }) : l)) }));
   }
 
@@ -1124,14 +1134,21 @@ class Component extends DCLogic {
       isDash: !isWizard, isWizard: isWizard,
       heading: isWizard ? "Create a Listing" : "My Practice Listings",
       sub: isWizard ? "Eight short steps. Nothing is visible to buyers until you submit and the VIN Foundation approves." : "Publish, pause or withdraw a listing, and answer the buyers who ask about it.",
-      listings: s.sellerListings.map((l) => {
+      listings: (s.myListings !== undefined ? s.myListings : s.sellerListings).map((l) => {
         const pill = this.statusPill(l.status);
         const actions = [];
-        if (l.status === "draft") actions.push({ label: "Continue", go: () => this.setState({ sellerView: "wizard", step: 1 }) });
-        else actions.push({ label: "Edit", go: () => this.setState({ sellerView: "wizard", step: 1 }) });
+        const openWizard = () => {
+          if (!this.props.listings) return this.setState({ sellerView: "wizard", step: 1 });
+          return this.props.listings.get(l.id).then(
+            (d) => this.setState((st) => ({ sellerView: "wizard", step: 1, wizErr: "", wizSubmitted: false, editingId: l.id, wizAssets: d.assets, w: Object.assign({}, st.w, d.w) })),
+            (e) => this.setState({ sellerView: "wizard", step: 1, wizErr: (e && e.message) || "That listing could not be opened." })
+          );
+        };
+        if (l.status === "draft") actions.push({ label: "Continue", go: openWizard });
+        else actions.push({ label: "Edit", go: openWizard });
         if (l.status === "published") {
           actions.push({ label: "Pause", go: () => this.setListingStatus(l.id, "paused") });
-          actions.push({ label: "View", go: () => this.setState({ screen: "detail", detailId: "p1" }) });
+          actions.push({ label: "View", go: () => this.setState({ screen: "detail", detailId: l.id || "p1" }) });
         }
         if (l.status === "paused") actions.push({ label: "Republish", go: () => this.setListingStatus(l.id, "published") });
         if (l.status !== "withdrawn" && l.status !== "draft") actions.push({ label: "Withdraw", go: () => this.setListingStatus(l.id, "withdrawn") });
@@ -1185,7 +1202,10 @@ class Component extends DCLogic {
     };
 
     const cfg = byStep[step] || byStep[1];
-    const uploads = [{ kind: "Photo", name: "Exterior.jpg" }, { kind: "Photo", name: "Lobby.jpg" }, { kind: "Photo", name: "Treatment.jpg" }, { kind: "PDF", name: "Floor plan.pdf" }].slice(0, 3 + (w.photos || 0));
+    const slots = this.photoSet({ id: "wiz", type: w.type, photos: [] });
+    const uploads = s.wizAssets
+      ? s.wizAssets.map((a, i) => ({ kind: a.kind, name: a.name || (slots[i] ? slots[i].caption : "Photo " + (i + 1)) }))
+      : [{ kind: "Photo", name: "Exterior.jpg" }, { kind: "Photo", name: "Lobby.jpg" }, { kind: "Photo", name: "Treatment.jpg" }, { kind: "PDF", name: "Floor plan.pdf" }].slice(0, 3 + (w.photos || 0));
 
     return {
       isForm: !s.wizSubmitted && step <= 7,
@@ -1198,7 +1218,13 @@ class Component extends DCLogic {
       toggles: cfg.toggles.map((t) => ({ label: t.label, help: t.help, on: !!w[t.key], toggle: this.setW(t.key) })),
       hasUpload: step === 6,
       uploads,
-      addPhoto: () => this.setState((st) => ({ w: Object.assign({}, st.w, { photos: Math.min((st.w.photos || 0) + 1, 1) }) })),
+      addPhoto: () => {
+        if (!this.props.listings || !s.editingId) return this.setState((st) => ({ w: Object.assign({}, st.w, { photos: Math.min((st.w.photos || 0) + 1, 1) }) }));
+        return this.props.listings.pick().then((file) => (file ? this.props.listings.upload(s.editingId, file).then(
+          (a) => this.props.listings.caption(s.editingId, a.id, this.props.listings.describe()).then((d) => this.setState({ wizAssets: d.assets, wizErr: "" })),
+          (e) => this.setState({ wizErr: (e && e.message) || "That file could not be uploaded." })
+        ) : null));
+      },
       error: !!s.wizErr, errorText: s.wizErr,
       progressLabel: "Step " + step + " of 8",
       barStyle: "height: 100%; width: " + Math.round((step / 8) * 100) + "%; background: var(--color-blue); transition: width 300ms var(--easing-out);",
@@ -1215,12 +1241,16 @@ class Component extends DCLogic {
         if (step === 1 && (!w.name || !w.est)) return this.setState({ wizErr: "Practice name and year established are needed before you continue." });
         if (step === 2 && (!w.city || !w.zip)) return this.setState({ wizErr: "A city and ZIP code are needed to place your practice on the map." });
         if (step === 3 && (!w.price || (!w.rev && !w.revBand))) return this.setState({ wizErr: "Enter an asking price and either an exact revenue figure or choose the range option." });
-        this.setState({ step: Math.min(8, step + 1), wizErr: "" });
+        if (!this.props.listings || !s.editingId) return this.setState({ step: Math.min(8, step + 1), wizErr: "" });
+        return this.props.listings.patch(s.editingId, step, w).then(
+          (d) => this.setState({ step: Math.min(8, step + 1), wizErr: "", wizAssets: d.assets }),
+          (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })
+        );
       },
       previewTitle: (w.type || "Small animal") + " practice — " + (w.city || "Your community"),
       previewRows: [
         { k: "Practice type", v: w.type || "Small animal" },
-        { k: "General location", v: (w.city || "\u2014") + (w.city ? ", TX" : "") },
+        { k: "General location", v: (w.city || "\u2014") + (w.city && w.state ? ", " + w.state : "") },
         { k: "Established", v: w.est || "\u2014" },
         { k: "Asking price", v: w.price ? "$" + w.price : "\u2014" },
         { k: "Gross revenue", v: w.rev ? (w.revBand ? "Range shown to buyers" : "$" + w.rev) : "\u2014" },
@@ -1228,12 +1258,14 @@ class Component extends DCLogic {
         { k: "Exam rooms", v: w.rooms || "\u2014" },
         { k: "Square feet", v: w.sqft || "\u2014" },
         { k: "Property", v: w.bldg === "Included" ? "Included in sale" : w.bldg === "Leased" ? "Leased" : "Available separately" },
-        { k: "Photos attached", v: String(uploads.length) }
+        { k: "Photos attached", v: String(uploads.filter((u) => u.kind === "Photo").length) }
       ],
       previewNote: w.anon
         ? "Practice name and street address are hidden. Buyers see the community and an approximate map pin until you approve their request."
         : "Practice name and address are visible to every approved buyer. Turn on generalized location in step 7 if you are still operating.",
-      submit: () => this.setState({ wizSubmitted: true, sellerListings: [{ id: "s" + Date.now(), title: ((w.type || "Small animal") + " practice — " + (w.city || "New listing")), meta: (w.price ? "$" + w.price : "Price to be set") + " · " + (w.docs || "?") + " doctors", status: "in_review", note: "Submitted just now · awaiting VIN Foundation review" }].concat(this.state.sellerListings) })
+      submit: () => (this.props.listings && s.editingId
+        ? this.props.listings.submit(s.editingId).then(() => this.props.listings.list().then((rows) => this.setState({ myListings: rows })), (e) => this.setState({ wizErr: (e && e.message) || "That could not be submitted." }))
+        : Promise.resolve()) && this.setState({ wizSubmitted: true, sellerListings: [{ id: "s" + Date.now(), title: ((w.type || "Small animal") + " practice — " + (w.city || "New listing")), meta: (w.price ? "$" + w.price : "Price to be set") + " · " + (w.docs || "?") + " doctors", status: "in_review", note: "Submitted just now · awaiting VIN Foundation review" }].concat(this.state.sellerListings) })
     };
   }
 

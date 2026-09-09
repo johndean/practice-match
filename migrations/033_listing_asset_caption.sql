@@ -1,0 +1,13 @@
+-- Seller listing lifecycle (controller amendments A-SL20 and A-SL22 (2)).
+--
+-- John's ruling, verbatim: "if the logic is trying to match and failing then surface all images
+-- uploaded and have the user articulate what it is and render ALL images". The design's photo
+-- slots carry FIXED captions chosen by practice type, so a photograph could only ever sit under a
+-- true caption by happening to show that slot's subject. The seller now says what each photograph
+-- shows, and that sentence travels with the photograph.
+--
+-- Nullable, and nullable on purpose: a photograph nobody has described has no caption, and the
+-- design's own slot name by position is what the wizard shows in its place (absent beats faked).
+-- The four-photograph cap this ruling withdrew lived in the API, not in this schema, so there is
+-- nothing here to relax.
+ALTER TABLE listing_asset ADD COLUMN caption text;

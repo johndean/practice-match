@@ -4,6 +4,7 @@ import { Component } from './logic.js';
 import MarketMapView from './components/MarketMapView.vue';
 import ImageSlot from './components/ImageSlot.vue';
 import { makeAuthAdapter } from './auth/adapter';
+import { makeListingsAdapter } from './listings/seller';
 import * as api from './auth/api';
 import { useMe } from './auth/me';
 import { useStateRouteSync } from './router/useStateRouteSync';
@@ -39,6 +40,14 @@ const props = defineProps({
   // note over the same prop seam `startNotice` uses. The app never passes it — it fetches the
   // real question — which is why the default is empty and renders nothing.
   startAnswerNote: { type: String, default: '' },
+  // A16.11 (A-SL17/A-SL22 (1)): the seller's own listings on load. The design's dashboard renders
+  // four Austin FIXTURES, and a real seller with none of their own must see the shell with no
+  // invented rows — a state the reference has no API to reach, so the oracle hands it the array
+  // directly through the same prop seam `startNotice` and `startAnswerNote` use. `null` is
+  // "nothing was handed over", which leaves `myListings` unset and the design's fixtures in
+  // place; `[]` is a real, empty answer. The app never passes it — it loads the seller's real
+  // listings in `componentDidMount` (A16.9).
+  startMyListings: { type: Array, default: null },
   // V3 C10: three named palettes — `distinct` (default), `cool`, `colorblind`.
   layerPalette: { type: String, default: 'distinct' },
   // A5.1 / A5.3: the real `/api/auth/*` client, as the prototype's `auth` adapter — the seam the
@@ -55,7 +64,17 @@ const props = defineProps({
   // `componentDidMount` can put the visitor where the account lifecycle says they belong.
   // `renderVals()` returns its own `me` (the header strings, from state), which wins in `v`
   // below — this prop is read by the prototype's bootstrap, not by the template.
-  me: { type: Object, default: () => useMe().me.value }
+  me: { type: Object, default: () => useMe().me.value },
+  // A16: the real /api/seller client, as the prototype's `listings` adapter — the seam the design's
+  // own Continue, Edit, Add files, Continue-to-next-step, Submit and Pause/Republish/Withdraw
+  // handlers call through. The reference and the Claude Design preview pass nothing and keep the
+  // design's fixture path, which is what keeps the two targets on the same pixels. Nothing in the
+  // template reads `listings`; only `logic.js` does.
+  //
+  // `src/listings/seller.ts`, not an object literal here, for the reason `auth` records: this file
+  // is copied verbatim into App.vue and sits outside the coverage gate, so the logic lives in a
+  // module with unit tests. It needs no `data-props` entry — the parity gate is one-directional.
+  listings: { type: Object, default: () => makeListingsAdapter() }
 });
 
 // The approved prototype logic runs verbatim; `state` is made reactive so that

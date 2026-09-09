@@ -123,6 +123,49 @@ export async function prepare(page: Page): Promise<void> {
       (route) => route.fulfill({ status: 200, contentType: 'application/json', body: designListingsBody() })
     );
   }
+  // ---------------------------------------------------------------------------------------
+  // A-SL2 / A-SL22 (1) — the seller and admin COLLECTIONS answer NO PAGE on the oracle.
+  //
+  // `seller-dash` and `admin-listings` are two of the thirteen frozen screens and their rows are
+  // the design's own fixtures: four Austin listings whose notes carry a view count and a request
+  // count no column supplies, and a fifth admin row whose "Flagged" pill names a status
+  // `listing.status` does not have and which D24 refuses to invent. That round trip is not
+  // constructible, so the app must render the DESIGN's rows on those two captures.
+  //
+  // An EMPTY page will not do it any more. Under A-SL22 (1) a loaded `[]` is a real answer and
+  // empties the dashboard — that ruling is the whole of the empty-dashboard state — so the only
+  // thing that leaves the design's fixtures in place is no page at all. This body has no `items`
+  // array, which is exactly A-L6.2 (1)'s ruled shape ("the design's fixtures stay whenever
+  // `items` is not an array"), and `src/listings/seller.ts`'s `list()` rejects on it, so
+  // `myListings` stays UNSET rather than empty.
+  //
+  // `seller-dash-empty` is the one state that wants a real page, and it registers its own route
+  // over this one before it navigates (`reach`, below) — Playwright matches the LAST registered
+  // handler first.
+  //
+  // The API path is proved elsewhere: pytest for the endpoints, vitest for the two mappings, and
+  // the seeded QA parity run against the real API with no stub armed.
+  //
+  // NEVER against a remote target, for the same reason the listings stub is not.
+  // ---------------------------------------------------------------------------------------
+  for (const href of unloadedCollectionStubUrls()) {
+    await page.route((url) => url.href === href || url.href.startsWith(`${href}?`),
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: '{"next_cursor": null}' }));
+  }
+}
+
+/** The two collection endpoints the oracle answers with no page, or `[]` on a remote target
+ *  (A-SL2, A-SL22 (1)). Pinned in harness.test.ts (review I4): an untested `if` is all that
+ *  stands between a stub and a QA parity run. */
+export function unloadedCollectionStubUrls(env: NodeJS.ProcessEnv = process.env): string[] {
+  if (env.PW_APP_URL) return [];
+  return ['/api/seller/listings', '/api/admin/listings'].map((path) => new URL(path, appOrigin(env)).href);
+}
+
+/** The body `seller-dash-empty` puts over the stub above: a REAL page with no listings on it,
+ *  which is what a seller who has never created one is answered (A-SL17). */
+export function sellerPageBody(rows: unknown[]): string {
+  return JSON.stringify({ items: rows, next_cursor: null });
 }
 
 /**
@@ -917,6 +960,10 @@ export interface ReachTarget {
   /** The reviewer's question on the applicant-answer card. The app fetches it; the reference is
    *  handed it through A9.1's `startAnswerNote` (A-S5) — there is no other way in. */
   note?: string;
+  /** The seller's own listings, loaded. The reference is handed them through A16.11's
+   *  `startMyListings`; the app is answered them by `GET /api/seller/listings`, over the
+   *  no-page stub `prepare()` arms. `[]` is the empty dashboard (A-SL17). */
+  myListings?: unknown[];
 }
 
 /**
@@ -1011,7 +1058,10 @@ export function referenceUrl(target: ReachTarget = {}): string {
     // A8.8b / A9.1: the two message props. Always named, so a notice or a note cannot leak from
     // one capture into the next.
     startNotice: target.notice ? NOTICES[target.notice] : '',
-    startAnswerNote: target.note ?? ''
+    startAnswerNote: target.note ?? '',
+    // A16.11b: `null` leaves `myListings` unset and the design's four fixtures rendering, which
+    // is every state but `seller-dash-empty`.
+    startMyListings: target.myListings ?? null
   }))}`;
 }
 
@@ -1088,6 +1138,13 @@ export async function reach(page: Page, target: ReachTarget = {}): Promise<void>
   if (driverFor(page.url()) === 'reference') {
     await page.goto(referenceUrl(target));
     return mounted(page);
+  }
+  // Registered BEFORE the navigation, because the load happens in `componentDidMount` — and
+  // registered last, so it wins over `prepare()`'s no-page stub for this one state.
+  if (target.myListings) {
+    const collection = new URL('/api/seller/listings', appOrigin()).href;
+    await page.route((url) => url.href === collection || url.href.startsWith(`${collection}?`),
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: sellerPageBody(target.myListings ?? []) }));
   }
   const kind = appTokenKind(target);
   const plan = appPlan(target, kind ? nextFixtureToken(kind) : '');

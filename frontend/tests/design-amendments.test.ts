@@ -103,11 +103,24 @@ describe('local design amendments (spec D15)', () => {
     // through the design's `stateOf` helper, and Community Context reaches the design's own
     // "Community data unavailable" card when D4 leaves the four figures null.
     'A12.8', 'A12.9', 'A12.10', 'A12.11',
+    // A16 — the seller wizard and dashboard read and write the real API (spec D23, controller
+    // amendments A-SL17/A-SL20/A-SL22). A13 and A14 are the dropdown branch's and A15 is the
+    // photograph hotfix's; the family id is derived from the tree at branch time (A-SL4), never
+    // typed from the plan, which is why this one is 16.
+    'A16.1', 'A16.2', 'A16.3', 'A16.4', 'A16.5', 'A16.6', 'A16.7', 'A16.8', 'A16.9', 'A16.10',
+    // A16.11a/b — the eighth declared prototype prop, `startMyListings`: A-SL17's empty
+    // dashboard is a state the design's fixtures cannot express, and this is the mechanism
+    // A8.8b and A9.1a established for exactly that.
+    'A16.11a', 'A16.11b',
+    // A16.12/A16.13 — the preview tells the truth about the draft behind it (A-SL22 (4)): the
+    // photograph count stops counting documents, and the location names the listing's own state
+    // rather than Texas (A12.8's ruled edit, in the one place the wizard repeats it).
+    'A16.12', 'A16.13',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(82);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(96);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -142,7 +155,7 @@ describe('local design amendments (spec D15)', () => {
     const amended = readFileSync(AMENDED, 'utf8');
     const attr = /<script type="text\/x-dc" data-dc-script[^>]*data-props="([^"]*)"/.exec(amended)!;
     const declared = JSON.parse(attr[1].replace(/&quot;/g, '"').replace(/&amp;/g, '&')) as Record<string, unknown>;
-    expect(Object.keys(declared)).toEqual(['$preview', 'prototypeBar', 'startScreen', 'startViewport', 'startGate', 'me', 'startNotice', 'startAnswerNote', 'layerPalette']);
+    expect(Object.keys(declared)).toEqual(['$preview', 'prototypeBar', 'startScreen', 'startViewport', 'startGate', 'me', 'startNotice', 'startAnswerNote', 'startMyListings', 'layerPalette']);
     // A8.8a widened the enum to every gate value the account screens add; the shape is A5.6's.
     expect(declared.startGate).toEqual({
       editor: 'enum',
@@ -160,6 +173,13 @@ describe('local design amendments (spec D15)', () => {
     // what keeps the 28 approved states on their pixels (an empty note renders nothing).
     expect(declared.startAnswerNote).toEqual({
       editor: 'text', default: '', tsType: 'string', section: 'Prototype', label: 'Applicant answer note on load'
+    });
+    // A16.11a (A-SL17/A-SL22 (1)): the seller's own listings, the reference's only way to the
+    // empty dashboard. `me`'s own `json` editor because the value is an array, and `null` —
+    // "nothing was handed over" — because an empty ARRAY is a real answer that empties the table,
+    // which is what keeps every other approved state on its pixels.
+    expect(declared.startMyListings).toEqual({
+      editor: 'json', default: null, tsType: 'object', section: 'Prototype', label: 'Seller listings on load'
     });
     // The pristine bundle declares none of the three — all exist only as local amendments.
     expect(pristine).not.toContain('startGate');

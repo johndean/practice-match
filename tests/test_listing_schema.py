@@ -152,6 +152,10 @@ EXPECTED_ASSET_COLUMNS: dict[str, tuple[str, bool]] = {
     "byte_size": ("bigint", False),
     "sha256": ("text", False),
     "storage_key": ("text", False),
+    # A-SL20 / A-SL22 (2), John 2026-09-09: "have the user articulate what it is". The seller's own
+    # words for THIS photograph, nullable because a photograph that has never been described has
+    # none — the design's fixed slot caption is what the wizard shows in its place, by position.
+    "caption": ("text", True),
     "created_at": ("timestamp with time zone", False),
 }
 

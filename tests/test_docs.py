@@ -677,7 +677,7 @@ def test_claude_md_does_not_claim_v2_byte_identity_after_the_launch_removal():
     assert "remains the **pre-V3 oracle**" in text
 
 
-def test_claude_md_counts_the_seven_prototype_props_and_says_which_are_read():
+def test_claude_md_counts_the_eight_prototype_props_and_says_which_are_read():
     """Review round 1, M5. The launch-removal section said "the four prototype props" after A5.7
     added a fifth, and described `prototypeBar` as one of the reference's ways into a state — but
     A6.4b removed the only expression that ever read it, so it is declared for the parity check in
@@ -688,15 +688,19 @@ def test_claude_md_counts_the_seven_prototype_props_and_says_which_are_read():
     the count was left at "five" after the enumeration in the same paragraph was widened to name
     both, so a green pin was actively blocking the correction. The name loop below now iterates all
     seven, not five, so a future prototype prop added to the design without a matching name here
-    fails this pin rather than passing it silently (I2's own secondary finding)."""
+    fails this pin rather than passing it silently (I2's own secondary finding) — which is exactly
+    what it did for the EIGHTH, `startMyListings` (A16.11a, controller amendment A-SL22 (1)): the
+    reference's only way to the empty seller dashboard A-SL17 added to the oracle."""
     text = (ROOT / "CLAUDE.md").read_text()
-    assert "All seven prototype props stay **declared**" in text
+    assert "All eight prototype props stay **declared**" in text
+    assert "All seven prototype props" not in text
     assert "All five prototype props" not in text
     assert "the four prototype props" not in text
     assert "`prototypeBar` is declared for that parity check alone" in text
-    # The seven, by name, in the section that lists them.
+    # The eight, by name, in the section that lists them.
     section = text.split("## Launch-removal list")[1]
-    for prop in ("prototypeBar", "startScreen", "startViewport", "startGate", "me", "startNotice", "startAnswerNote"):
+    for prop in ("prototypeBar", "startScreen", "startViewport", "startGate", "me", "startNotice",
+                 "startAnswerNote", "startMyListings"):
         assert f"`{prop}`" in section, prop
 
 

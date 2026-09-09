@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
+import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, unloadedCollectionStubUrls, sellerPageBody, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
 import { designListingsBody } from './design-listings.mjs';
 import { P } from '../src/logic.js';
 import type { Page } from '@playwright/test';
@@ -256,6 +256,34 @@ describe('the design-fixture listings stub (spec D6, review I4)', () => {
   });
 });
 
+// ---------------------------------------------------------------------------------------
+// A-SL2 / A-SL22 (1) — the two collection endpoints the oracle answers with NO page.
+//
+// Same rule as the D6 stub above and the same reason it is pinned (review I4): the `if` that
+// disarms it against a remote target is all that stands between the oracle's fixtures and a QA
+// parity run, and an untested `if` is how it comes back.
+// ---------------------------------------------------------------------------------------
+describe('the seller and admin collection stubs (A-SL2)', () => {
+  it('is disarmed for a remote target — there the real, seeded API answers', () => {
+    expect(unloadedCollectionStubUrls({ PW_APP_URL: 'https://qa.foundation.vin' } as NodeJS.ProcessEnv)).toEqual([]);
+    expect(unloadedCollectionStubUrls({ PW_APP_URL: 'https://qa.foundation.vin', PW_APP_PORT: '5473' } as NodeJS.ProcessEnv)).toEqual([]);
+  });
+
+  it('names both collections on the local app origin, on the port the run uses', () => {
+    expect(unloadedCollectionStubUrls({ PW_APP_PORT: '5473' } as NodeJS.ProcessEnv))
+      .toEqual(['http://localhost:5473/api/seller/listings', 'http://localhost:5473/api/admin/listings']);
+    expect(unloadedCollectionStubUrls({} as NodeJS.ProcessEnv))
+      .toEqual(['http://localhost:5173/api/seller/listings', 'http://localhost:5173/api/admin/listings']);
+  });
+
+  it('the empty-dashboard body is a REAL page with no rows on it (A-SL17)', () => {
+    // Not the same thing as the stub's `{"next_cursor": null}`: this one HAS an `items` array, so
+    // `list()` resolves and `myListings` becomes `[]` — which is what empties the table.
+    expect(JSON.parse(sellerPageBody([]))).toEqual({ items: [], next_cursor: null });
+    expect(JSON.parse(sellerPageBody([{ id: 'x' }]))).toEqual({ items: [{ id: 'x' }], next_cursor: null });
+  });
+});
+
 describe('appOrigin (A-I7.2)', () => {
   const ports = { app: 5173, ref: 4174, cs: 4175, api: 8017 };
   it('is the app project\'s own baseURL, locally and against a live deployment', () => {
@@ -433,14 +461,14 @@ describe('referenceUrl — the design\'s own props, injected per request (A-I8 /
   // carries, and `startNotice` is the one that decides whether the sign-in card shows a message.
   // It is always `''` until Task S5 gives `reach()` a `notice` option; naming it is what stops a
   // notice state, once S5 adds one, leaking into the next capture.
-  it('always serves the design at "/" and names all six prototype props on every request', () => {
+  it('always serves the design at "/" and names all seven injectable prototype props on every request', () => {
     const url = referenceUrl();
     expect(url.startsWith('/?props=')).toBe(true);
-    expect(props(url)).toEqual({ startScreen: 'gate', startGate: '', startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: '' });
+    expect(props(url)).toEqual({ startScreen: 'gate', startGate: '', startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: '', startMyListings: null });
   });
 
   it('names the screen and hands over that state\'s own account, for every member family', () => {
-    expect(props(referenceUrl({ screen: 'browse' }))).toEqual({ startScreen: 'browse', startGate: '', startViewport: 'desktop', me: PERSONAS.buyer, startNotice: '', startAnswerNote: '' });
+    expect(props(referenceUrl({ screen: 'browse' }))).toEqual({ startScreen: 'browse', startGate: '', startViewport: 'desktop', me: PERSONAS.buyer, startNotice: '', startAnswerNote: '', startMyListings: null });
     expect(props(referenceUrl({ screen: 'detail' })).me).toEqual(PERSONAS.buyer);
     expect(props(referenceUrl({ screen: 'requests' })).me).toEqual(PERSONAS.buyer);
     expect(props(referenceUrl({ screen: 'seller' }))).toMatchObject({ startScreen: 'seller', me: PERSONAS.seller });
@@ -933,7 +961,7 @@ describe('referenceUrl for the fifteen account states (A-S5)', () => {
 
   it('reaches the four form cards and the three status cards through startGate alone', () => {
     for (const gate of ['signup', 'forgot', 'reset', 'invite', 'verify-expired', 'reset-expired'] as const) {
-      expect(props(referenceUrl({ gate })), gate).toEqual({ startScreen: 'gate', startGate: gate, startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: '' });
+      expect(props(referenceUrl({ gate })), gate).toEqual({ startScreen: 'gate', startGate: gate, startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: '', startMyListings: null });
     }
   });
 
@@ -949,7 +977,7 @@ describe('referenceUrl for the fifteen account states (A-S5)', () => {
   // and the gate screen's header is driven by `auth` alone.
   it('withholds the account for the answer card, and carries the note through A9.1\'s prop', () => {
     const p = props(referenceUrl({ gate: 'answer', persona: 'needsReview', note: NEEDS_REVIEW_INFO_REQUEST }));
-    expect(p).toEqual({ startScreen: 'gate', startGate: 'answer', startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: NEEDS_REVIEW_INFO_REQUEST });
+    expect(p).toEqual({ startScreen: 'gate', startGate: 'answer', startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: NEEDS_REVIEW_INFO_REQUEST, startMyListings: null });
   });
 
   // The app captures this one SIGNED IN — a buyer who deep-linked a route their access does not
@@ -957,7 +985,7 @@ describe('referenceUrl for the fifteen account states (A-S5)', () => {
   // gate and lands on Browse). `startScreen` sets `auth`; `startGate` then puts it back on the
   // gate; and the design's own fixture identity is, letter for letter, `buyer@`'s computed label.
   it('buys the signed-in header for the unavailable card through startScreen, with no account', () => {
-    expect(props(referenceUrl({ gate: 'unavailable', persona: 'buyer' }))).toEqual({ startScreen: 'browse', startGate: 'unavailable', startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: '' });
+    expect(props(referenceUrl({ gate: 'unavailable', persona: 'buyer' }))).toEqual({ startScreen: 'browse', startGate: 'unavailable', startViewport: 'desktop', me: null, startNotice: '', startAnswerNote: '', startMyListings: null });
     expect(referenceScreen({ gate: 'unavailable', persona: 'buyer' })).toBe('browse');
     expect(referencePersona({ gate: 'unavailable', persona: 'buyer' })).toBeNull();
   });
@@ -972,7 +1000,7 @@ describe('referenceUrl for the fifteen account states (A-S5)', () => {
 
   it('drives the five notice states through startNotice, with the spec\'s own copy', () => {
     for (const key of Object.keys(NOTICES) as Array<keyof typeof NOTICES>) {
-      expect(props(referenceUrl({ gate: 'signin', notice: key })), key).toEqual({ startScreen: 'gate', startGate: 'signin', startViewport: 'desktop', me: null, startNotice: NOTICES[key], startAnswerNote: '' });
+      expect(props(referenceUrl({ gate: 'signin', notice: key })), key).toEqual({ startScreen: 'gate', startGate: 'signin', startViewport: 'desktop', me: null, startNotice: NOTICES[key], startAnswerNote: '', startMyListings: null });
     }
   });
 

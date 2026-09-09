@@ -50,7 +50,10 @@ def _jpeg(width: int, height: int, *, exif: bool = False) -> bytes:
 def test_the_constants_are_the_seed_pipelines_own() -> None:
     """A drift here silently changes what a seller's photograph becomes AND what the committed seed
     photographs would be re-encoded to."""
-    assert (encode.MAX_PHOTOS, encode.MAX_EDGE_PX, encode.MAX_BYTES) == (4, 1600, 250 * 1024)
+    assert (encode.MAX_EDGE_PX, encode.MAX_BYTES) == (1600, 250 * 1024)
+    # A-SL20 withdrew D18's four-photograph cap; the constant went with it, so nothing can
+    # quietly re-impose one from here.
+    assert not hasattr(encode, "MAX_PHOTOS")
     assert encode.QUALITY_LADDER == (82, 72, 62, 52, 44, 20)
     assert encode.FALLBACK_EDGE_PX == 1100
     assert encode.IMAGE_SUFFIXES == (".png", ".jpg", ".jpeg", ".webp")
