@@ -238,7 +238,8 @@ async def test_saving_a_published_listing_takes_it_off_the_market_at_once(client
     await client.patch(f"/api/seller/listings/{listing_id}?step=2", json={"city": "Cedar Park", "zip": "78613"}, headers=signed)
     await client.patch(f"/api/seller/listings/{listing_id}?step=3", json={"price": "1000000"}, headers=signed)
     with conn.cursor() as cur:
-        cur.execute("UPDATE listing SET status='published', state='TX', market='Austin, TX', area='Cedar Park' WHERE id=%s", (listing_id,))
+        cur.execute("UPDATE listing SET status='published', state='TX', market='Austin, TX', area='Cedar Park',"
+                    " sqft=3000 WHERE id=%s", (listing_id,))
     assert (await client.get(f"/api/listings/{listing_id}", headers=signed)).status_code == 200
 
     assert (await client.patch(f"/api/seller/listings/{listing_id}?step=4", json={"rooms": "6"}, headers=signed)).status_code == 200
@@ -269,7 +270,7 @@ async def test_a_published_edit_writes_one_audit_row_naming_no_permission(client
     listing_id = await _create(client, cookies, headers)
     with conn.cursor() as cur:
         cur.execute("UPDATE listing SET status='published', name='A', city='C', zip='7', type='Small animal',"
-                    " est=1998, price=1, state='TX', market='Austin, TX', area='C' WHERE id=%s", (listing_id,))
+                    " est=1998, price=1, sqft=3000, state='TX', market='Austin, TX', area='C' WHERE id=%s", (listing_id,))
     await client.patch(f"/api/seller/listings/{listing_id}?step=4", json={"rooms": "6"}, headers=auth_headers(cookies, headers))
     with conn.cursor() as cur:
         cur.execute("SELECT action, before, after FROM audit_log WHERE target_type='listing' AND target_id=%s", (str(listing_id),))
@@ -313,7 +314,7 @@ async def test_a_patch_drops_every_listings_cache_key_after_the_commit(client: A
     listing_id = await _create(client, cookies, headers)
     with conn.cursor() as cur:
         cur.execute("UPDATE listing SET status='published', name='A', city='C', zip='7',"
-                    " type='Small animal', est=1998, price=1, state='TX', market='Austin, TX',"
+                    " type='Small animal', est=1998, price=1, sqft=3000, state='TX', market='Austin, TX',"
                     " area='C' WHERE id=%s", (listing_id,))
     redis.set("listings:v1:::50", b'{"items": []}')
     redis.set("listings:v1:Austin, TX::50", b'{"items": []}')
@@ -634,7 +635,7 @@ async def test_blanking_a_required_field_on_a_submitted_listing_is_refused_not_a
     listing_id = await _create(client, cookies, headers)
     with conn.cursor() as cur:
         cur.execute("UPDATE listing SET name='A', city='C', zip='7', type='Small animal', est=1998,"
-                    " price=1, state='TX', market='Austin, TX', area='C', status=%s WHERE id=%s",
+                    " price=1, sqft=3000, state='TX', market='Austin, TX', area='C', status=%s WHERE id=%s",
                     (status, listing_id))
 
     response = await client.patch(f"/api/seller/listings/{listing_id}?step=1", json={"name": "   "},
@@ -829,14 +830,16 @@ async def test_the_create_rate_limit_is_per_account(client: Any, conn: Any, redi
 
 
 async def _submittable(client: Any, signed: dict[str, str], listing_id: str) -> None:
-    """The three steps the design's own client-side validation guards (logic.js:1215-1217), filled
-    in — the least a listing can carry and still be submitted."""
+    """The three steps the design's own client-side validation guards (logic.js:1215-1217), plus
+    the fourth `listing_submittable_ck`/`REQUIRED_TO_SUBMIT` now names (A-SL33 (1)) — the least a
+    listing can carry and still be submitted."""
     await client.patch(f"/api/seller/listings/{listing_id}?step=1",
                        json={"name": "Hill Country Animal Hospital", "type": "Small animal", "est": "1998"},
                        headers=signed)
     await client.patch(f"/api/seller/listings/{listing_id}?step=2", json={"city": "Cedar Park", "zip": "78613"},
                        headers=signed)
     await client.patch(f"/api/seller/listings/{listing_id}?step=3", json={"price": "1,450,000"}, headers=signed)
+    await client.patch(f"/api/seller/listings/{listing_id}?step=4", json={"sqft": "3000"}, headers=signed)
 
 
 async def _ready(client: Any, member: Any) -> tuple[str, dict[str, str]]:
@@ -913,6 +916,11 @@ async def test_submit_re_validates_the_three_rules_the_design_enforces_client_si
         422, "INCOMPLETE",
         "An exact revenue figure — or the range option — is needed before this listing can be submitted.")
     await client.patch(f"/api/seller/listings/{listing_id}?step=3", json={"rev": "2100000"}, headers=signed)
+    # A-SL33 (1): sqft joins the design's own three rules — not one of them, but the fourth
+    # `listing_publishable_ck` (034) now demands, named here rather than met as a database error
+    # once a reviewer tries to publish.
+    assert await _refusal() == (422, "INCOMPLETE", "Approximate square feet is needed before this listing can be submitted.")
+    await client.patch(f"/api/seller/listings/{listing_id}?step=4", json={"sqft": "3000"}, headers=signed)
     assert (await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)).status_code == 200
 
 
@@ -934,6 +942,33 @@ async def test_a_listing_with_no_type_is_refused_rather_than_meeting_the_check(
     assert response.json()["error"] == {
         "code": "INCOMPLETE", "message": "A practice type is needed before this listing can be submitted."}
     assert _status(conn, listing_id) == ("draft", None)
+
+
+# --- A-SL33 (1): the Browse-rendering crash on a published listing with no floor area -------------
+#
+# The SL8 review's Critical finding: `logic.js` calls `p.sqft.toLocaleString()` unconditionally at
+# six sites reachable from a published listing (desktop and mobile Browse, the detail screen), and
+# nothing anywhere required `sqft` before a listing could be published — not `listing_submittable_ck`
+# (030, submit's own guard), not `listing_publishable_ck` (030, the buyer-surface guard), and no
+# admin decide branch. Migration 034 widens `listing_publishable_ck`; this is the SUBMIT half of
+# the two-layer fix (`app/api/admin_listings.py::test_publish_also_requires_square_footage_...`
+# is the decide half) — a seller is told which field is missing, never left to meet a database
+# error when a reviewer later tries to publish.
+
+
+async def test_submit_also_requires_square_footage_named_in_the_envelope(client: Any, conn: Any, member: Any) -> None:
+    """`_ready()` now makes a genuinely submittable listing (A-SL33's fixture fix), so this proves
+    the refusal by CLEARING sqft first — `sqft` is in `OPTIONAL_NUMERIC`, exactly the same clearing
+    idiom a seller's own blank step-4 field uses."""
+    listing_id, signed = await _ready(client, member)
+    await client.patch(f"/api/seller/listings/{listing_id}?step=4", json={"sqft": ""}, headers=signed)
+    refused = await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)
+    assert refused.status_code == 422
+    assert refused.json()["error"] == {
+        "code": "INCOMPLETE", "message": "Approximate square feet is needed before this listing can be submitted."}
+    assert _status(conn, listing_id) == ("draft", None)
+    await client.patch(f"/api/seller/listings/{listing_id}?step=4", json={"sqft": "3000"}, headers=signed)
+    assert (await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)).status_code == 200
 
 
 @pytest.mark.parametrize("status", ["paused", "published", "withdrawn"])
@@ -1207,10 +1242,10 @@ async def test_an_edit_to_a_paused_listing_leaves_the_browse_cache_alone(
 
 _SEED_INSERT = """
 INSERT INTO listing (slug, name, street, city, state, zip, hours, status, location_disclosed,
-                     name_disclosed, area, type, market, est, price, source, seller_id,
+                     name_disclosed, area, type, market, est, price, sqft, source, seller_id,
                      photos, photo_captions)
 VALUES (%(slug)s, 'Demo Hospital', '1 Main St', 'Austin', 'TX', '78701', '24/7', %(status)s,
-        true, true, 'Austin', 'Small animal', 'Austin, TX', 1998, 1450000, 'seed', %(seller)s,
+        true, true, 'Austin', 'Small animal', 'Austin, TX', 1998, 1450000, 3000, 'seed', %(seller)s,
         %(photos)s::jsonb, %(photo_captions)s::jsonb)
 RETURNING id
 """
@@ -1783,6 +1818,47 @@ async def test_a_seeded_listings_out_of_vocabulary_ownership_round_trips_unchang
                                  json={"ownership": "Sole proprietor"}, headers=signed)
     assert changed.status_code == 200
     assert changed.json()["ownership"] == "Sole proprietor"
+
+
+async def test_an_out_of_vocabulary_facility_type_round_trips_unchanged_too(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """A-SL33 (4), fix round 1 on the SL8 review's Minor finding: `facility_type` (030) carries no
+    CHECK either, exactly like `ownership` — structurally exposed to the same real out-of-vocabulary
+    risk, not merely by the same direct-call unit test `ownership` already has. None of the eighteen
+    seeded hospitals populate it today (it is absent from `seeds/hospitals.json`'s schema), so this
+    is a hand-built row rather than a real seed's own prose — the absence is incidental, not
+    structural, and this proves the SAME three-way distinction ownership's own end-to-end test
+    proves, at the row level, not only through a synthetic `columns_for` call."""
+    _, cookies, headers = _seller(member)
+    signed = auth_headers(cookies, headers)
+    listing_id = await _create(client, cookies, headers)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET facility_type = 'Converted residence' WHERE id = %s", (listing_id,))
+
+    unchanged = await client.patch(f"/api/seller/listings/{listing_id}?step=5",
+                                   json={"facilityType": "Converted residence"}, headers=signed)
+    assert unchanged.status_code == 200, unchanged.text
+    assert unchanged.json()["facilityType"] == "Converted residence"
+    with conn.cursor() as cur:
+        cur.execute("SELECT facility_type FROM listing WHERE id=%s", (listing_id,))
+        assert cur.fetchone() == ("Converted residence",)
+
+    # A DIFFERENT out-of-vocabulary value is still refused, with the field's existing envelope code.
+    refused = await client.patch(f"/api/seller/listings/{listing_id}?step=5",
+                                 json={"facilityType": "Owner-occupied duplex"}, headers=signed)
+    assert refused.status_code == 400
+    assert refused.json()["error"]["code"] == "BAD_REQUEST"
+    assert refused.json()["error"]["message"] == "facilityType must be one of Standalone, Strip or plaza, Medical park, Other."
+    with conn.cursor() as cur:
+        cur.execute("SELECT facility_type FROM listing WHERE id=%s", (listing_id,))
+        assert cur.fetchone() == ("Converted residence",), "the refused write must not have touched the row"
+
+    # ...and a different IN-vocabulary value succeeds, exactly as before this ruling.
+    changed = await client.patch(f"/api/seller/listings/{listing_id}?step=5",
+                                 json={"facilityType": "Standalone"}, headers=signed)
+    assert changed.status_code == 200
+    assert changed.json()["facilityType"] == "Standalone"
 
 
 @pytest.mark.parametrize(("field", "column", "step", "allowed"), [

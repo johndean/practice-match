@@ -137,15 +137,31 @@ describe('the pill and the decision buttons, per listing status', () => {
     }
   });
 
-  it('offers the buttons the approved design shows for in-review and published rows', () => {
+  it('offers the buttons the approved design shows for in-review, published and paused rows', () => {
+    // A-SL33 (3), fix round 1 on the SL8 review's Important finding: "Edit" (published) and
+    // "Contact seller" (paused) are the design's own remaining buttons — no decision backs
+    // either, so both render as the design's own no-op, never dropped.
     expect(buttonsOf('in_review').actions.map((a) => [a.label, a.style])).toEqual([['Publish', BTN.primary], ['Reject', BTN.danger]]);
-    expect(buttonsOf('published').actions.map((a) => [a.label, a.style])).toEqual([['Unpublish', BTN.plain]]);
+    expect(buttonsOf('published').actions.map((a) => [a.label, a.style])).toEqual([['Unpublish', BTN.plain], ['Edit', BTN.plain]]);
+    expect(buttonsOf('paused').actions.map((a) => [a.label, a.style])).toEqual([['Contact seller', BTN.plain]]);
   });
 
-  it('offers no button on a status the design never wired one for (paused, draft, withdrawn, declined)', () => {
-    for (const status of ['paused', 'draft', 'withdrawn', 'declined']) {
+  it('offers no button on a status the design never pictured at all (draft, withdrawn, declined)', () => {
+    for (const status of ['draft', 'withdrawn', 'declined']) {
       expect(buttonsOf(status)).toMatchObject({ hasActions: false, actions: [] });
     }
+  });
+
+  // A-SL33 (3): the review's own point — a status-by-status literal like the two tests above can
+  // silently go stale if the design's own row ever changes. This pins the LIVE label set for every
+  // one of the three statuses `adminVals()` pictures directly against ITS OWN row, so a future
+  // edit that drops (or adds) a button fails here without anyone having to remember to update a
+  // hand-typed expectation.
+  it('the action label set for every status the design pictures matches adminVals()\'s own row, directly', () => {
+    const labelsOf = (row: Cell[]) => row[3].actions.map((a) => a.label);
+    expect(buttonsOf('in_review').actions.map((a) => a.label)).toEqual(labelsOf(DESIGN[0]));
+    expect(buttonsOf('published').actions.map((a) => a.label)).toEqual(labelsOf(DESIGN[2]));
+    expect(buttonsOf('paused').actions.map((a) => a.label)).toEqual(labelsOf(DESIGN[3]));
   });
 
   it('covers exactly the three statuses the design pictures, and no fourth', () => {

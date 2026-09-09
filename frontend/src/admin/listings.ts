@@ -85,14 +85,25 @@ export type Action = 'publish' | 'decline' | 'unpublish';
 /** `admin_listings.decide_listing` refuses `decline` with `NOTE_REQUIRED` when the reason is blank. */
 export const NOTE_REQUIRED: readonly Action[] = ["decline"];
 
-// The buttons the approved design shows, per status — a legal SUBSET of `DECISIONS`, not all of
-// it: the API also allows `publish` from `declined` and `paused`, which the design's own In
-// review / Published rows do not offer (its Paused row offers "Contact seller" instead, a no-op
-// the design has never wired — spec §14). A status with no entry here offers no button at all.
+// The WIRED buttons the approved design shows, per status — a legal SUBSET of `DECISIONS`, not
+// all of it: the API also allows `publish` from `declined` and `paused`, which the design's own
+// In review / Published rows do not offer. A status with no entry here offers no WIRED button.
 export const ACTIONS: Record<string, Action[]> = { "in_review": ["publish", "decline"], "published": ["unpublish"] };
 
 const LABEL: Record<Action, string> = { publish: 'Publish', decline: 'Reject', unpublish: 'Unpublish' };
 const TONE: Partial<Record<Action, string>> = { publish: 'primary', decline: 'danger' };
+
+// The design's own REMAINING buttons, per status — no `app/api/admin_listings.py` decision backs
+// either, so both stay the design's own no-op (A-SL33 (3), fix round 1 on the SL8 review's
+// Important finding: dropping them changed what the approved table renders — the brief's own
+// words are "wired… where a decision exists and left as the design's no-op where it does not",
+// and no controller amendment authorised narrowing that to "wired or absent"). Kept OUT of
+// `ACTIONS`/`Action` — and so out of the `NOTE_REQUIRED`/`DECISIONS` drift pin above — because
+// neither names a decision to check against; `listings.test.ts`'s own pin instead compares the
+// COMBINED label set, per status, against `adminVals()`'s own rows directly, so a future edit
+// cannot quietly drop either one without a design amendment.
+const NO_OP_LABELS: Record<string, readonly string[]> = { "published": ["Edit"], "paused": ["Contact seller"] };
+const noOp = (label: string): ActionButton => A(label, undefined, () => Promise.resolve());
 
 // `[label, tone]` for the three of `STATUSES` the design's own rows picture (its In review,
 // Published and Paused rows); `draft`, `withdrawn` and `declined` have no ruled label, so they
@@ -200,17 +211,22 @@ export function toListingRows(items: (ListingItem | DesignListingRow)[], ui: Lis
       ];
     }
     const [pill, tone] = PILLS[item.status] ?? [item.status, 'mute'];
-    const actions = ACTIONS[item.status];
     const title = item.city ? `${item.type || 'Small animal'} practice — ${item.city}` : 'Untitled listing';
     const figures: string[] = [item.price != null ? `${money(item.price)} asking` : 'Asking price not set'];
     if (item.rev != null) figures.push(`${money(item.rev)} revenue`);
     if (item.docs != null) figures.push(`${item.docs} ${item.docs === 1 ? 'doctor' : 'doctors'}`);
     if (item.bldg) figures.push(BLDG_SUB[item.bldg] ?? item.bldg.toLowerCase());
+    // Wired first, then the design's own no-ops — exactly the order its own fixture rows show
+    // them in ("Unpublish", "Edit"; "Contact seller" alone). Neither list existing is "no button".
+    const actions = [
+      ...(ACTIONS[item.status] ?? []).map((action) => A(LABEL[action], TONE[action], decision(item, action, ui))),
+      ...(NO_OP_LABELS[item.status] ?? []).map(noOp)
+    ];
     return [
       cell(title, item.submitted_at ? `Submitted ${formatDate(item.submitted_at)}` : null),
       cell(item.seller_name, figures.join(' · ')),
       cell(null, null, pill, tone),
-      cell(null, null, null, null, actions ? actions.map((action) => A(LABEL[action], TONE[action], decision(item, action, ui))) : null)
+      cell(null, null, null, null, actions.length ? actions : null)
     ];
   });
 }

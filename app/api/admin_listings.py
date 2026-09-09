@@ -219,13 +219,23 @@ async def decide_listing(listing_id: str, body: Decision, request: Request, prin
         return _error("NOT_FOUND", "No such listing.", 404)
     with closing(sync_conn()) as conn, conn:
         with conn.cursor() as cur:
-            cur.execute("SELECT status, name, state, seller_id FROM listing WHERE id = %s FOR UPDATE", (parsed,))
+            cur.execute("SELECT status, name, state, seller_id, sqft FROM listing WHERE id = %s FOR UPDATE", (parsed,))
             row = cur.fetchone()
             if row is None:
                 return _error("NOT_FOUND", "No such listing.", 404)
-            before, name, state, seller_id = row
+            before, name, state, seller_id, sqft = row
             if before not in allowed_from:
                 return _error("STATE", f"cannot {body.action} a listing in state {before}", 409)
+            # A-SL33 (1), fix round 1 on the SL8 review's Critical finding: `listing_publishable_ck`
+            # (034) now requires `sqft` on every row this decision publishes, because
+            # `frontend/src/logic.js` calls `p.sqft.toLocaleString()` with no guard at six sites
+            # Browse renders a practice from — a published listing with no floor area is a blank
+            # app the moment Browse next renders, not merely a blank field. Checked on EVERY
+            # publish, not only the first: unlike `state`/`market` (D12, never seller-editable once
+            # set), `sqft` is in `OPTIONAL_NUMERIC` and can be cleared by a later step-4 edit, so a
+            # REPUBLISH can meet the same missing field the first publish could have.
+            if body.action == "publish" and sqft is None:
+                return _error("FIELDS_REQUIRED", "square footage is required to publish this listing.", 422)
             first_publish = body.action == "publish" and state is None
             if first_publish and not (body.state.strip() and body.market.strip()):
                 # 030's publishable CHECK would refuse this anyway; answering it here means the

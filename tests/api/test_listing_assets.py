@@ -40,9 +40,9 @@ CSV = b"month,revenue\n2026-01,84000\n2026-02,91250\n"
 
 _SEED_INSERT = """
 INSERT INTO listing (slug, name, street, city, state, zip, hours, status, location_disclosed,
-                     name_disclosed, area, type, market, est, price, source, photos)
+                     name_disclosed, area, type, market, est, price, sqft, source, photos)
 VALUES (%(slug)s, 'Demo Hospital', '1 Main St', 'Austin', 'TX', '78701', '24/7', 'published',
-        true, true, 'Austin', 'Small animal', 'Austin, TX', 1998, 1450000, 'seed', %(photos)s::jsonb)
+        true, true, 'Austin', 'Small animal', 'Austin, TX', 1998, 1450000, 3000, 'seed', %(photos)s::jsonb)
 RETURNING id
 """
 
@@ -131,10 +131,12 @@ def _asset_rows(conn: Any, listing_id: str) -> list[tuple[Any, ...]]:
 
 def _publish(conn: Any, listing_id: str) -> None:
     """The draft, made publishable: 030's two CHECKs want the wizard's own fields plus the three
-    the reviewer supplies at the first publish (D12)."""
+    the reviewer supplies at the first publish (D12), and 034 (A-SL33 (1)) adds a fourth —
+    `sqft`, which `frontend/src/logic.js` dereferences unconditionally at every site Browse
+    renders a practice from."""
     with conn.cursor() as cur:
         cur.execute("UPDATE listing SET name='Hill Country Animal Hospital', city='Cedar Park', zip='78613',"
-                    " type='Small animal', est=1998, price=1450000, state='TX', market='Austin, TX',"
+                    " type='Small animal', est=1998, price=1450000, sqft=3000, state='TX', market='Austin, TX',"
                     " area='Cedar Park', status='published' WHERE id=%s", (listing_id,))
 
 

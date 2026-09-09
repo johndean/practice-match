@@ -1267,17 +1267,27 @@ INCOMPLETE_TAIL = "is needed before this listing can be submitted."
 
 
 def _complete_enough(row: dict[str, Any]) -> None:
-    """The three rules the design enforces before it will show step 8, said server-side.
+    """The design's own rules before it will show step 8, said server-side, plus a fourth this
+    endpoint adds on top (A-SL33 (1), fix round 1 on the SL8 review's Critical finding).
 
-    The compound third one is spelled out separately because it is a rule about a PAIR: "an asking
-    price and either an exact revenue figure or the range option" (logic.js:1217). `revBand` on
-    means `rev_disclosed` false, so "the range option is chosen" reads here as the flag being off.
+    The compound rule is spelled out separately because it is about a PAIR: "an asking price and
+    either an exact revenue figure or the range option" (logic.js:1217). `revBand` on means
+    `rev_disclosed` false, so "the range option is chosen" reads here as the flag being off.
+
+    `sqft` is checked LAST and is not one of the design's own three client-side rules — it is the
+    fourth `listing_publishable_ck` (034) now names, because `frontend/src/logic.js` calls
+    `p.sqft.toLocaleString()` with no guard at six sites Browse renders a practice from: a listing
+    published with no floor area is not a blank field, it is a blank app the moment Browse next
+    renders. Told here, in the envelope, rather than met as a database error when a reviewer later
+    publishes it.
     """
     for column, label in REQUIRED_TO_SUBMIT:
         if row[column] is None:
             raise Refusal("INCOMPLETE", f"{label} {INCOMPLETE_TAIL}", 422)
     if row["rev"] is None and row["rev_disclosed"]:
         raise Refusal("INCOMPLETE", f"An exact revenue figure — or the range option — {INCOMPLETE_TAIL}", 422)
+    if row["sqft"] is None:
+        raise Refusal("INCOMPLETE", f"Approximate square feet {INCOMPLETE_TAIL}", 422)
 
 
 def owner_email(conn: Any, principal: S.Principal) -> str:

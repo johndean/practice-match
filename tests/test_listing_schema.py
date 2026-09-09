@@ -216,18 +216,28 @@ def test_a_withdrawn_listing_may_also_be_empty_and_nothing_else_may(conn: Any) -
 
 
 def test_a_published_listing_must_carry_what_serialise_interpolates(conn: Any) -> None:
-    """`listing_publishable_ck` (D12). `serialise` builds the anonymised name from `area` and the
-    Browse market filter pages on `market`; `stateOf(market)` names the state on the detail."""
+    """`listing_publishable_ck` (D12, widened by 034 / A-SL33 (1)). `serialise` builds the
+    anonymised name from `area` and the Browse market filter pages on `market`; `stateOf(market)`
+    names the state on the detail — and `frontend/src/logic.js` calls `p.sqft.toLocaleString()`
+    unconditionally at every site that renders a practice from Browse's own list, so a published
+    row missing FLOOR AREA is exactly as broken as one missing its market, not merely incomplete."""
     submittable = ("A", "Cedar Park", "78613", "Small animal", 1998, 1_450_000)
     with conn.cursor() as cur, pytest.raises(psycopg2.errors.CheckViolation):
         cur.execute(
             "INSERT INTO listing (slug, source, status, name, city, zip, type, est, price)"
             " VALUES ('sl-nopublish','seller','published',%s,%s,%s,%s,%s,%s)", submittable
         )
-    with conn.cursor() as cur:
+    # state/market/area present, sqft still missing: also refused (A-SL33 (1) — the fourth
+    # requirement `p.sqft.toLocaleString()` needs, added beside the original three).
+    with conn.cursor() as cur, pytest.raises(psycopg2.errors.CheckViolation):
         cur.execute(
             "INSERT INTO listing (slug, source, status, name, city, zip, type, est, price, state, market, area)"
-            " VALUES ('sl-publish','seller','published',%s,%s,%s,%s,%s,%s,'TX','Austin, TX','Cedar Park')", submittable
+            " VALUES ('sl-nosqft','seller','published',%s,%s,%s,%s,%s,%s,'TX','Austin, TX','Cedar Park')", submittable
+        )
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO listing (slug, source, status, name, city, zip, type, est, price, state, market, area, sqft)"
+            " VALUES ('sl-publish','seller','published',%s,%s,%s,%s,%s,%s,'TX','Austin, TX','Cedar Park',3000)", submittable
         )
 
 

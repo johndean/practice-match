@@ -113,11 +113,14 @@ async def _staff(client: Any, member: Any) -> dict[str, str]:
 
 
 async def _submitted(client: Any, member: Any) -> tuple[str, dict[str, str]]:
-    """A seller's listing, complete and in review — what the queue exists to show."""
+    """A seller's listing, complete and in review — what the queue exists to show. Complete now
+    means `sqft` too (A-SL33 (1)): `REQUIRED_TO_SUBMIT` names it beside price, so a listing this
+    helper builds can also reach a real publish, which most of this module's tests go on to do."""
     listing_id, signed = await _draft(client, member)
     await client.patch(f"/api/seller/listings/{listing_id}?step=2",
                        json={"city": "Cedar Park", "zip": "78613"}, headers=signed)
     await client.patch(f"/api/seller/listings/{listing_id}?step=3", json={"price": "1450000"}, headers=signed)
+    await client.patch(f"/api/seller/listings/{listing_id}?step=4", json={"sqft": "3000"}, headers=signed)
     assert (await client.post(f"/api/seller/listings/{listing_id}/submit", headers=signed)).status_code == 200
     return listing_id, signed
 
@@ -236,6 +239,38 @@ async def test_publish_needs_state_and_market_on_the_first_publish_and_not_after
                               headers=staff)).status_code == 200
     again = await client.post(f"/api/admin/listings/{listing_id}/decide", json={"action": "publish"}, headers=staff)
     assert again.status_code == 200 and _row(conn, listing_id)[0] == "published"
+
+
+async def test_publish_also_requires_square_footage_named_in_the_envelope(client: Any, conn: Any, member: Any) -> None:
+    """A-SL33 (1): the SL8 review's Critical finding, fixed at the decide layer. `logic.js` calls
+    `p.sqft.toLocaleString()` with no guard at six sites Browse renders a practice from, so a
+    listing published with no floor area is not a blank field, it is a blank app the moment Browse
+    next renders. `_submitted()` now makes a genuinely publishable listing (A-SL33's fixture fix);
+    this proves the refusal by CLEARING sqft first, on BOTH a first publish and a republish — the
+    database CHECK (034) applies to every transition to 'published', not only the first, so the
+    friendly envelope check does too."""
+    listing_id, signed = await _submitted(client, member)
+    staff = await _staff(client, member)
+    await client.patch(f"/api/seller/listings/{listing_id}?step=4", json={"sqft": ""}, headers=signed)
+
+    refused = await client.post(f"/api/admin/listings/{listing_id}/decide",
+                                json={"action": "publish", "state": "TX", "market": "Austin, TX"}, headers=staff)
+    assert refused.status_code == 422 and refused.json()["error"]["code"] == "FIELDS_REQUIRED"
+    assert "square footage" in refused.json()["error"]["message"]
+    assert _row(conn, listing_id)[0] == "in_review", "the refused write must not have landed"
+
+    await client.patch(f"/api/seller/listings/{listing_id}?step=4", json={"sqft": "3000"}, headers=signed)
+    published = await client.post(f"/api/admin/listings/{listing_id}/decide",
+                                  json={"action": "publish", "state": "TX", "market": "Austin, TX"}, headers=staff)
+    assert published.status_code == 200 and _row(conn, listing_id)[0] == "published"
+
+    # A REPUBLISH — `state` is already set, so this is not the first-publish branch — is refused
+    # the same way if a later edit clears sqft again.
+    await client.post(f"/api/admin/listings/{listing_id}/decide", json={"action": "unpublish"}, headers=staff)
+    await client.patch(f"/api/seller/listings/{listing_id}?step=4", json={"sqft": ""}, headers=signed)
+    refused_again = await client.post(f"/api/admin/listings/{listing_id}/decide", json={"action": "publish"}, headers=staff)
+    assert refused_again.status_code == 422 and refused_again.json()["error"]["code"] == "FIELDS_REQUIRED"
+    assert _row(conn, listing_id)[0] == "in_review"
 
 
 async def test_publish_rewrites_the_slug_once_and_never_again(client: Any, conn: Any, member: Any) -> None:
@@ -364,8 +399,8 @@ async def test_a_seed_listing_with_no_owner_is_decided_without_a_mail(
     staff = await _staff(client, member)
     with conn.cursor() as cur:
         cur.execute("INSERT INTO listing (slug, name, city, state, zip, area, type, market, source,"
-                    " status, est, price) VALUES ('unowned','Unowned','Austin','TX','78701','Austin',"
-                    "'Small animal','Austin, TX','seed','in_review',2015,750000) RETURNING id")
+                    " status, est, price, sqft) VALUES ('unowned','Unowned','Austin','TX','78701','Austin',"
+                    "'Small animal','Austin, TX','seed','in_review',2015,750000,3000) RETURNING id")
         listing_id = str(cur.fetchone()[0])
     response = await client.post(f"/api/admin/listings/{listing_id}/decide", json={"action": "publish"}, headers=staff)
     assert response.status_code == 200 and _row(conn, listing_id)[0] == "published"
