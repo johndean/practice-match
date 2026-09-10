@@ -3633,10 +3633,15 @@ const A26_2: Amendment = {
     ''
   ].join('\n'),
   replace: [
-    '      // Each toolbar filter is a dropdown list in this design\'s own style, not the operating',
-    '      // system\'s popup: the same trigger + role="listbox" panel A13 gave the metro control',
-    '      // beside it. One .map() body, five instances, one state slot.',
     '      ].map((fl) => {',
+    '        // Each toolbar filter is a dropdown list in this design\'s own style, not the operating',
+    '        // system\'s popup: the same trigger + role="listbox" panel A13 gave the metro control',
+    '        // beside it. One .map() body, five instances, one state slot.',
+    '        //',
+    '        // The comment sits INSIDE the map body, not between the array rows and `].map(`:',
+    '        // `tests/seeds/test_hospitals_json.py`\'s `_BAR_BLOCK` reads the five option arrays',
+    '        // out of the design and requires `      ]` to follow the last row directly, and it',
+    '        // fails loudly rather than silently testing nothing when it does not.',
     '        const cur = s.f[fl.key];',
     '        const open = s.fMenu === fl.key;',
     '        // Math.max: a value `f` holds that this option list does not would give indexOf -1 and',
