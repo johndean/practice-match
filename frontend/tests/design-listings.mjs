@@ -69,7 +69,9 @@ export function toApiShape(p, i) {
     lng: p.lng ?? null,
     location_disclosed: true,
     photos: [],
-    photo_captions: []
+    photo_captions: [],
+    vets: null,
+    econ_k: null
   };
 }
 

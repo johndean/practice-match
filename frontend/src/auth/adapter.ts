@@ -57,7 +57,8 @@ export type AuthStore = Pick<MeStore, 'set' | 'clear'>;
 
 /** The listings loader, narrowed to what the adapter uses for re-reads on sign-in. */
 export interface ListingsLoader {
-  (fetchFn: typeof fetch, practices: Practice[], markets: Markets, url?: string): Promise<boolean>;
+  (fetchFn: typeof fetch, practices: Practice[], markets: Markets, url?: string,
+   vets?: Record<string, number>, econK?: Record<string, number>): Promise<boolean>;
 }
 
 export function makeAuthAdapter(
@@ -66,7 +67,11 @@ export function makeAuthAdapter(
   loadListings?: ListingsLoader,
   fetchFn?: typeof fetch,
   practices?: Practice[],
-  markets?: Markets
+  markets?: Markets,
+  // A-C26: the re-read must install the market figure maps too, or a member who signs in
+  // interactively gets fresh practices on stale Browse layers (0.1.15, the B7/B8 + L8 seam).
+  vets?: Record<string, number>,
+  econK?: Record<string, number>
 ): AuthAdapter {
   return {
     /**
@@ -86,10 +91,10 @@ export function makeAuthAdapter(
       // A-L14: Re-read listings only when all required parameters are available (not in tests
       // that don't care about listings, and not before mount when the bootstrap provides them).
       if (loadListings && fetchFn && practices && markets) {
-        const firstAttempt = await loadListings(fetchFn, practices, markets).catch(() => false);
+        const firstAttempt = await loadListings(fetchFn, practices, markets, undefined, vets, econK).catch(() => false);
         if (!firstAttempt) {
           // Retry once on failure.
-          const secondAttempt = await loadListings(fetchFn, practices, markets).catch(() => false);
+          const secondAttempt = await loadListings(fetchFn, practices, markets, undefined, vets, econK).catch(() => false);
           if (!secondAttempt) {
             // Both failed: clear the store and reject so the form shows the error and keeps
             // the member on the gate.

@@ -66,6 +66,7 @@ from fastapi.responses import JSONResponse, Response
 
 from app.auth.deps import require
 from app.cache import sync_redis
+from app.census.serve import community_rows
 from app.config import settings
 from app.db import sync_conn
 from app.storage import ObjectStore
@@ -243,7 +244,7 @@ def photo_file(photos: list[str | None], n: int) -> Path | None:
     return candidate
 
 
-def serialise(row: Mapping[str, Any], now: datetime) -> dict[str, Any]:
+def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any] | None = None) -> dict[str, Any]:
     """One database row as the JSON contract Task L6 maps, with both disclosure flags applied —
     see the module docstring: an undisclosed address loses its street, postcode, telephone number
     and point, an undisclosed name loses the name and the slug that spells it.
@@ -252,11 +253,30 @@ def serialise(row: Mapping[str, Any], now: datetime) -> dict[str, Any]:
     name and still show its address, point and telephone number — a buyer could then find the name
     in a search, and that is the seller's own choice under "Sellers control what buyers can see",
     not a leak to close here. Wave 2b's UI says so beside the two switches. Do not "fix" this by
-    making one flag imply the other."""
+    making one flag imply the other.
+
+    **Community data is optional (Task B7).** When provided (a CommunityRow from serve.community_rows),
+    the six fields are populated; absence means they remain null."""
     disclosed = bool(row["location_disclosed"])
     named = bool(row["name_disclosed"])
     listing_id = str(row["id"])
     photos = photo_list(row["photos"])
+
+    # Community context data (Task B7: six fields plus two Browse fields)
+    pop = None
+    growth = None
+    income = None
+    hh = None
+    vets = None
+    econ_k = None
+    if community is not None:
+        pop = community.get("pop")
+        growth = community.get("growth")
+        income = community.get("income")
+        hh = community.get("hh")
+        vets = community.get("vets")
+        econ_k = community.get("econ_k")
+
     return {
         "id": listing_id,
         "slug": row["slug"] if named else None,
@@ -274,12 +294,10 @@ def serialise(row: Mapping[str, Any], now: datetime) -> dict[str, Any]:
         "listed": relative_listed(row["listed_at"], now),
         "listed_at": row["listed_at"].isoformat(),
         "status": row["status"],
-        # D4: the community figures stay null until the Census plan supplies them. The UI then
-        # renders the design's own empty state for them — the dashed "Community data unavailable
-        # for this location" card — which is what amendments A12.10/A12.11 reach (final review I1;
-        # before them a null `pop` rendered the populated four-tile grid with every value blank,
-        # under the Census attribution). A12.6/A12.7 are why a null `growth`/`hh` does not throw.
-        "pop": None, "growth": None, "income": None, "hh": None,
+        # Task B7: Community Context figures from the market_metric table
+        "pop": pop, "growth": growth, "income": income, "hh": hh,
+        # Task B7: Two additional fields for Browse use
+        "vets": vets, "econ_k": econ_k,
         "note": row["note"], "staff": row["staff"], "services": row["services"],
         "facility": row["facility"], "ownership": row["ownership"],
         "lat": float(row["lat"]) if disclosed and row["lat"] is not None else None,
@@ -384,10 +402,26 @@ async def list_listings(request: Request) -> Response:
 
     with closing(sync_conn()) as conn, conn:
         rows = _rows(conn, sql, tuple(params))
-    now = datetime.now(UTC)
-    page, more = rows[:limit], len(rows) > limit
+        now = datetime.now(UTC)
+        page, more = rows[:limit], len(rows) > limit
+
+        # Task B7: Fetch community context data for the page in one batched query
+        page_ids = [str(row["id"]) for row in page]
+
+        # Fetch active vintages and registry for community_rows
+        with conn.cursor() as cur:
+            cur.execute("SELECT dataset_key, vintage FROM active_vintage")
+            active = {r[0]: r[1] for r in cur.fetchall()}
+
+            cur.execute("SELECT dataset_key, attribution_text, vintage, license_status, notes FROM dataset_registry")
+            assert cur.description is not None  # After execute(), description is never None
+            reg_cols = [d[0] for d in cur.description]
+            registry = {r[0]: dict(zip(reg_cols, r)) for r in cur.fetchall()}
+
+        community_data = community_rows(conn, page_ids, active=active, registry=registry)
+
     body = {
-        "items": [serialise(row, now) for row in page],
+        "items": [serialise(row, now, community=community_data.get(str(row["id"]))) for row in page],
         "next_cursor": encode_cursor(page[-1]["listed_at"], UUID(str(page[-1]["id"]))) if more else None,
     }
     payload = json.dumps(body)
@@ -432,7 +466,23 @@ async def get_listing(listing_id: str) -> Response:
         row = _published(conn, listing_id)
     if row is None:
         return _error("NOT_FOUND", "No such listing.", 404)
-    return JSONResponse(serialise(row, datetime.now(UTC)))
+
+    # Task B7: Fetch community context data for the single listing
+    now = datetime.now(UTC)
+    with closing(sync_conn()) as conn, conn:
+        # Fetch active vintages and registry for community_rows
+        with conn.cursor() as cur:
+            cur.execute("SELECT dataset_key, vintage FROM active_vintage")
+            active = {r[0]: r[1] for r in cur.fetchall()}
+
+            cur.execute("SELECT dataset_key, attribution_text, vintage, license_status, notes FROM dataset_registry")
+            assert cur.description is not None  # After execute(), description is never None
+            reg_cols = [d[0] for d in cur.description]
+            registry = {r[0]: dict(zip(reg_cols, r)) for r in cur.fetchall()}
+
+        community_data = community_rows(conn, [str(row["id"])], active=active, registry=registry)
+
+    return JSONResponse(serialise(row, now, community=community_data.get(str(row["id"]))))
 
 
 def _asset_bytes(conn: Any, listing_id: str, entry: str) -> bytes | None:

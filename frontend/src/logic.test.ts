@@ -1386,7 +1386,7 @@ describe('logic.js — the account screens (A7.3/A7.4, A8.1–A8.8)', () => {
       c3.setState({ auth: true, screen: 'detail', detailId: 'seed-1' });
       expect(c3.renderVals().d.demo.map((f: any) => [f.k, f.v, f.sub])).toEqual([
         ['Population', null, 'Community, 2023'],
-        ['Growth', '', 'Since 2015'],
+        ['Growth', '', ''],
         ['Median income', null, 'Household, 2023'],
         ['Households', '', 'In the community']
       ]);
@@ -3274,5 +3274,29 @@ describe('A19 — the photo lightbox', () => {
     expect(ours(add.mock.calls)).toHaveLength(3);
     expect(ours(remove.mock.calls)).toHaveLength(3);
     add.mockRestore(); remove.mockRestore();
+  });
+
+  // A21.3d — the detail's Growth row splits the API string to extract the vintage
+  describe('Growth row string splitting (A21.3d, Task B8)', () => {
+    it('extracts percentage and vintage from growth strings', () => {
+      const originalGrowth = P[0].growth;
+      c.setState({ auth: true, detailId: 'p1' });
+      const testCases = [
+        { growth: '+14.2% since 2015', expectedValue: '+14.2%', expectedSub: 'Since 2015' },
+        { growth: '+11.6% since 2018', expectedValue: '+11.6%', expectedSub: 'Since 2018' },
+        { growth: null, expectedValue: '', expectedSub: '' },
+        { growth: '+9%', expectedValue: '+9%', expectedSub: '' },
+      ];
+
+      for (const testCase of testCases) {
+        (P[0] as any).growth = testCase.growth;
+        c.setState({ detailId: 'p1' });
+        const detail = c.detail.call(c);
+        const growthRow = detail.demo.find((row: any) => row.k === 'Growth');
+        expect(growthRow.v, `Growth value for "${testCase.growth}"`).toBe(testCase.expectedValue);
+        expect(growthRow.sub, `Growth sub for "${testCase.growth}"`).toBe(testCase.expectedSub);
+      }
+      (P[0] as any).growth = originalGrowth;
+    });
   });
 });

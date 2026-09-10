@@ -415,6 +415,6 @@ describe('the logic.js port lists every normalisation it performs', () => {
   // — a port edit the \u00a73 list does not spell out is an undocumented hand edit, whatever the
   // drift test says.
   it('the Browse V3 spec \u00a73 spells out the export the listings loader needs (Seed Listings L6)', () => {
-    expect(readSpec(BROWSE_V3_SPEC)).toContain('export { Component, MARKETS, P };');
+    expect(readSpec(BROWSE_V3_SPEC)).toContain('export { Component, MARKETS, P, VETS, ECON_K };');
   });
 });

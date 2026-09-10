@@ -895,3 +895,73 @@ def test_photo_captions_pads_a_shorter_column_once_a_seller_has_spoken_too() -> 
                           asset_captions={"as-1": "Reception, looking in"}),
                      datetime(2026, 9, 6, tzinfo=UTC))
     assert body["photo_captions"] == ["Reception, looking in", ""]
+
+
+async def test_single_listing_carries_community_context(client: Any, conn: Any, member: Any) -> None:
+    """GET /api/listings/{id} returns pop, growth, income, hh, vets, econ_k when data available (Task B7)."""
+    from tests.census.listing_fixtures import make_listing
+
+    listing_id = make_listing(conn, city="Round Rock", state="TX")
+
+    # Seed community data
+    with conn.cursor() as cur:
+        # Set all datasets to cleared
+        cur.execute(
+            "UPDATE dataset_registry SET license_status = %s WHERE dataset_key IN (%s, %s, %s, %s)",
+            ("cleared", "acs5", "acs5_prior", "zbp", "cbp"),
+        )
+
+        # Seed place_geoid
+        cur.execute(
+            "UPDATE practice_location SET place_geoid = %s WHERE listing_id = %s",
+            ("06085", listing_id),
+        )
+
+        # Seed active_vintage
+        cur.execute(
+            "DELETE FROM active_vintage WHERE dataset_key IN (%s, %s, %s, %s)",
+            ("acs5", "acs5_prior", "zbp", "cbp"),
+        )
+        cur.execute(
+            "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES "
+            "(%s, %s, now(), %s), (%s, %s, now(), %s), (%s, %s, now(), %s), (%s, %s, now(), %s)",
+            ("acs5", "2019-2023", "test", "acs5_prior", "2014-2018", "test", "zbp", "2022", "test", "cbp", "2022", "test"),
+        )
+
+        # Seed market_metric rows
+        cur.execute(
+            "INSERT INTO market_metric "
+            "(listing_id, band, metric_key, vintage, value_num, unit, is_derived, "
+            "formula_version, moe, suppressed, suppress_reason, source_dataset, computed_at) "
+            "VALUES "
+            "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now()), "
+            "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now()), "
+            "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now()), "
+            "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now()), "
+            "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now()), "
+            "(%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())",
+            (
+                listing_id, "place", "population", "2019-2023", 142300, "count", False, None, 500, False, None, "acs5",
+                listing_id, "place", "households", "2019-2023", 55000, "count", False, None, 200, False, None, "acs5",
+                listing_id, "place", "median_hh_income", "2019-2023", 85000, "dollars", False, None, 2000, False, None, "acs5",
+                listing_id, "place", "population_growth_pct", "2019-2023", 5.5, "percent", True, None, 0.5, False, None, "acs5",
+                listing_id, "place", "establishments", "2022", 12, "count", False, None, 1, False, None, "zbp",
+                listing_id, "place", "revenue_per_establishment", "2022", 450000, "dollars", True, None, 50000, False, None, "cbp",
+            ),
+        )
+
+    # Get the single listing
+    _, cookies, headers = member()
+    auth = auth_headers(cookies, headers)
+
+    r = await client.get(f"/api/listings/{listing_id}", headers=auth)
+    assert r.status_code == 200, r.text
+    data = r.json()
+
+    # Assert community fields are populated
+    assert data["pop"] == "142,300"
+    assert data["hh"] == "55,000 households"
+    assert data["income"] == "$85,000"
+    assert data["growth"] == "+5.5% since 2018"
+    assert data["vets"] == 12
+    assert data["econ_k"] == 450
