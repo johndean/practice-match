@@ -3299,75 +3299,101 @@ describe('A19 — the photo lightbox', () => {
       (P[0] as any).growth = originalGrowth;
     });
   });
+});
 
-  // A23 — collapsing the Market data card must close both its menus
-  describe('Market data card collapse closes menus (A23, Task MD1)', () => {
-    it('toggleLegend closes both mdLayerMenu and mdCompareMenu when collapsing', () => {
-      c.setState({ auth: true, screen: 'browse', mdValue: 'income' });
+// ---------------------------------------------------------------------------------------
+// A23 — collapsing the Market data card closes both its menus (John, 2026-09-10, Task MD1:
+// "the collapse widget top left expand/collapse is disconnected to the drop down").
+//
+// Exactly ONE of the card's two menus escaped the collapse, and it is the one John reported:
+// the layer menu's panel (App.vue:475-476) is `position: absolute; left: 16px; top: 118px;
+// z-index: 620` and sits OUTSIDE both of the card's `v-if="v.md?.legendOpen"` templates
+// (:382-410 and :413-472, the card div closing at :411), so nothing unmounted it. The
+// comparison listbox never floated: its panel (:434-435) is nested inside the second
+// `legendOpen` template in normal flow (`margin-top: 6px`) and has always unmounted with the
+// card. `mdCompareMenu` is cleared all the same, for a weaker and different reason — a menu
+// left open in state reappears already-open when the card is expanded again, which is its own
+// surprise.
+//
+// The one edit is `toggleLegend`'s single `setState`, and it clears UNCONDITIONALLY: the same
+// call runs on expand as on collapse. The four quadrants below — {menu open, menu closed} ×
+// {collapsing, expanding} — are one `it` each, because Vitest abandons an `it` at its first
+// failed expect and cases sharing an `it` are unreachable under any single mutation.
+// ---------------------------------------------------------------------------------------
+describe('A23 — the Market data card collapse closes its menus (Task MD1)', () => {
+  /** The card's own render values, read AFTER the state under test is in place: `toggleLegend`
+   *  closes over the `s` of the `renderVals()` call that produced it. */
+  const md = () => {
+    c.setState({ auth: true, screen: 'browse', mdValue: 'income' });
+    return c.renderVals().md;
+  };
 
-      // Test case 1: both menus open, card expanded
-      c.setState({ mdLayerMenu: true, mdCompareMenu: true, mdLegendOff: false });
-      expect(c.state).toMatchObject({ mdLayerMenu: true, mdCompareMenu: true, mdLegendOff: false });
+  // Quadrant 1 — a menu is open and the card is EXPANDED; collapsing must clear it. This is the
+  // defect John reported, and the layer menu is the one that actually floated.
+  it('both menus open, card expanded → collapsing clears both (A23, quadrant 1)', () => {
+    c.setState({ mdLegendOff: false, mdLayerMenu: true, mdCompareMenu: true });
+    md().toggleLegend();
+    expect(c.state).toMatchObject({ mdLegendOff: true, mdLayerMenu: false, mdCompareMenu: false });
+  });
 
-      // Collapse the card
-      c.renderVals().md.toggleLegend();
-      expect(c.state, 'both menus close when card collapses').toMatchObject({
-        mdLegendOff: true,
-        mdLayerMenu: false,
-        mdCompareMenu: false
-      });
+  it('only the layer menu open, card expanded → collapsing clears it (A23, quadrant 1)', () => {
+    c.setState({ mdLegendOff: false, mdLayerMenu: true, mdCompareMenu: false });
+    md().toggleLegend();
+    expect(c.state).toMatchObject({ mdLegendOff: true, mdLayerMenu: false, mdCompareMenu: false });
+  });
 
-      // Test case 2: expand the card again, both menus should stay closed
-      c.renderVals().md.toggleLegend();
-      expect(c.state, 'menus stay closed when card expands again').toMatchObject({
-        mdLegendOff: false,
-        mdLayerMenu: false,
-        mdCompareMenu: false
-      });
+  it('only the compare menu open, card expanded → collapsing clears it (A23, quadrant 1)', () => {
+    c.setState({ mdLegendOff: false, mdLayerMenu: false, mdCompareMenu: true });
+    md().toggleLegend();
+    expect(c.state).toMatchObject({ mdLegendOff: true, mdLayerMenu: false, mdCompareMenu: false });
+  });
 
-      // Test case 3: only layer menu open
-      c.setState({ mdLayerMenu: true, mdCompareMenu: false, mdLegendOff: false });
-      c.renderVals().md.toggleLegend();
-      expect(c.state, 'layer menu closes when card collapses').toMatchObject({
-        mdLegendOff: true,
-        mdLayerMenu: false,
-        mdCompareMenu: false
-      });
+  // Quadrant 2 — both menus closed and the card COLLAPSED; expanding must not resurrect either.
+  it('both menus closed, card collapsed → expanding opens neither (A23, quadrant 2)', () => {
+    c.setState({ mdLegendOff: true, mdLayerMenu: false, mdCompareMenu: false });
+    md().toggleLegend();
+    expect(c.state).toMatchObject({ mdLegendOff: false, mdLayerMenu: false, mdCompareMenu: false });
+  });
 
-      // Test case 4: only compare menu open
-      c.setState({ mdLayerMenu: false, mdCompareMenu: true, mdLegendOff: false });
-      c.renderVals().md.toggleLegend();
-      expect(c.state, 'compare menu closes when card collapses').toMatchObject({
-        mdLegendOff: true,
-        mdLayerMenu: false,
-        mdCompareMenu: false
-      });
-    });
+  // Quadrant 3 — a menu is open and the card is COLLAPSED; expanding must clear it too. Nothing
+  // else pins this: a narrower implementation that clears on collapse only —
+  // `mdLayerMenu: s.mdLegendOff === true ? s.mdLayerMenu : false` — passes every quadrant above.
+  // The clear is unconditional, and this is the case that says so.
+  it('a menu open, card collapsed → EXPANDING clears it as well: the clear is unconditional (A23, quadrant 3)', () => {
+    c.setState({ mdLegendOff: true, mdLayerMenu: true, mdCompareMenu: true });
+    md().toggleLegend();
+    expect(c.state).toMatchObject({ mdLegendOff: false, mdLayerMenu: false, mdCompareMenu: false });
+  });
 
-    it('outside-click and Escape dismissals on layer menu still work', () => {
-      c.setState({ auth: true, screen: 'browse', mdValue: 'income' });
-      const md = c.renderVals().md;
+  // Quadrant 4 — both menus closed and the card EXPANDED; collapsing must not open either. The
+  // guard against `toggleLegend` copying `toggleLayerMenu`'s own idiom (logic.js:564,
+  // `mdLayerMenu: !s.mdLayerMenu`) instead of clearing.
+  it('both menus closed, card expanded → collapsing opens neither (A23, quadrant 4)', () => {
+    c.setState({ mdLegendOff: false, mdLayerMenu: false, mdCompareMenu: false });
+    md().toggleLegend();
+    expect(c.state).toMatchObject({ mdLegendOff: true, mdLayerMenu: false, mdCompareMenu: false });
+  });
 
-      // Open layer menu
-      md.toggleLayerMenu();
-      expect(c.state.mdLayerMenu).toBe(true);
+  // The design's own way of closing each menu, unchanged by A23 and characterised here so the
+  // amendment cannot quietly take it away. Note what is NOT here: neither menu has an Escape or
+  // an outside-click dismissal. `trackMenuDismiss` (logic.js:228-286) reads only `state.giveMenu`,
+  // `state.marketMenu` and `state.lightbox`, so A13's metro listbox and A14's Give menu have
+  // those affordances and these two do not. That gap is real, OUT OF SCOPE for A23 and owed a
+  // ruling from John — recorded at the end of the A-MD1 paragraph in
+  // docs/superpowers/plans/2026-09-08-metro-dropdown.md.
+  it('choosing a layer closes the layer menu (logic.js:580) — its only dismissal', () => {
+    const v = md();
+    v.toggleLayerMenu();
+    expect(c.state.mdLayerMenu).toBe(true);
+    c.renderVals().md.layerOptions[1].go();
+    expect(c.state.mdLayerMenu).toBe(false);
+  });
 
-      // Selecting a layer closes it
-      md.layerOptions[1].go();
-      expect(c.state.mdLayerMenu).toBe(false);
-    });
-
-    it('outside-click and Escape dismissals on compare menu still work', () => {
-      c.setState({ auth: true, screen: 'browse', mdValue: 'income' });
-      const md = c.renderVals().md;
-
-      // Open compare menu
-      md.toggleCompareMenu();
-      expect(c.state.mdCompareMenu).toBe(true);
-
-      // Selecting a metric closes it
-      md.compareOptions[1].go();
-      expect(c.state.mdCompareMenu).toBe(false);
-    });
+  it('choosing a comparison metric closes the compare menu (logic.js:626) — its only dismissal', () => {
+    const v = md();
+    v.toggleCompareMenu();
+    expect(c.state.mdCompareMenu).toBe(true);
+    c.renderVals().md.compareOptions[1].go();
+    expect(c.state.mdCompareMenu).toBe(false);
   });
 });

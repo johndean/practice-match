@@ -216,10 +216,12 @@ describe('local design amendments (spec D15)', () => {
     // "Preserve existing seed wording/detail"). One literal edit: the wizard step 1 ownership
     // select's ten options, combining the design's four with the seeds' own six phrasings.
     'A22',
-    // A23 — collapsing the Market data card leaves its two menus floating (John, 2026-09-10,
+    // A23 — collapsing the Market data card leaves its LAYER menu floating (John, 2026-09-10,
     // Task MD1: "the collapse widget top left expand/collapse is disconnected to the drop down").
-    // The card's collapsible region ends while the menus are absolutely positioned outside it.
-    // One literal edit: `toggleLegend` clears both mdLayerMenu and mdCompareMenu when it collapses.
+    // That panel is the one element absolutely positioned outside the card's collapsible region;
+    // the comparison listbox is inside it, in normal flow, and has always unmounted with the card.
+    // One literal edit: `toggleLegend` clears mdLayerMenu and mdCompareMenu unconditionally — on
+    // expand as well as collapse — so neither menu can come back open.
     'A23',
   ];
 

@@ -3081,15 +3081,21 @@ const A22: Amendment = {
 };
 
 /** A23 (John, 2026-09-10 — Task MD1: "the collapse widget top left expand/collapse is disconnected to the drop down"):
- *  collapsing the Market data card leaves its layer dropdown and comparison dropdown floating. The card's
- *  collapsible region ends while the two menus are absolutely positioned outside it, and `toggleLegend`
- *  flips only `mdLegendOff` instead of clearing both menus as well. The fix: `toggleLegend` clears both
- *  menus when collapsing, matching the design's own idiom where `insightOpen` gates the "What this means"
- *  panel on `s.mdLegendOff !== true`, which is why that panel behaves correctly. Clearing rather than
- *  merely hiding is deliberate: a menu that reappears already-open when the card is expanded again is its
- *  own surprise. */
+ *  collapsing the Market data card leaves its LAYER dropdown floating over the map with no card above it.
+ *  Exactly one of the card's two menus escapes the collapse, and it is the one John reported: the layer
+ *  menu's panel (`frontend/src/App.vue:475-476`) is `position: absolute; left: 16px; top: 118px;
+ *  z-index: 620` and sits OUTSIDE both of the card's `v-if="v.md?.legendOpen"` templates (`:382-410` and
+ *  `:413-472`, the card div closing at `:411`), so nothing unmounts it. The comparison listbox never
+ *  floated: its panel (`:434-435`) is nested inside the second `legendOpen` template in normal flow
+ *  (`margin-top: 6px`) and has always unmounted with the card. `toggleLegend` clears `mdCompareMenu` all
+ *  the same, for a weaker and different reason — a menu left open in state reappears already-open when
+ *  the card is expanded again, which is its own surprise — not because it escapes the card's region.
+ *  The clear is UNCONDITIONAL: the one `setState` runs on expand exactly as on collapse, so neither menu
+ *  can come back open in either direction (the four-quadrant characterisation in `logic.test.ts` pins
+ *  both). The fix mirrors the design's own idiom where `insightOpen` gates the "What this means" panel on
+ *  `s.mdLegendOff !== true`, which is why that panel behaves correctly. */
 const A23: Amendment = {
-  id: 'A23', date: '2026-09-10', ruling: 'collapsing the Market data card closes both its menus (Task MD1)',
+  id: 'A23', date: '2026-09-10', ruling: 'collapsing or expanding the Market data card closes both its menus (Task MD1)',
   find: 'toggleLegend: () => this.setState({ mdLegendOff: s.mdLegendOff !== true }),',
   replace: 'toggleLegend: () => this.setState({ mdLegendOff: s.mdLegendOff !== true, mdLayerMenu: false, mdCompareMenu: false }),',
   count: 1
