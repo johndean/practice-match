@@ -3275,4 +3275,26 @@ describe('A19 — the photo lightbox', () => {
     expect(ours(remove.mock.calls)).toHaveLength(3);
     add.mockRestore(); remove.mockRestore();
   });
+
+  // A21.3d — the detail's Growth row splits the API string to extract the vintage
+  describe('Growth row string splitting (A21.3d, Task B8)', () => {
+    it('extracts percentage and vintage from growth strings', () => {
+      c.setState({ auth: true, detailId: 'p1' });
+      const testCases = [
+        { growth: '+14.2% since 2015', expectedValue: '+14.2%', expectedSub: 'Since 2015' },
+        { growth: '+11.6% since 2018', expectedValue: '+11.6%', expectedSub: 'Since 2018' },
+        { growth: null, expectedValue: '', expectedSub: '' },
+        { growth: '+9%', expectedValue: '+9%', expectedSub: '' },
+      ];
+
+      for (const testCase of testCases) {
+        c.setState({ detailId: 'p1' });
+        const mockPractice = { ...P[0], growth: testCase.growth };
+        const detail = c.detail.call({ ...c, practiceName: c.practiceName.bind(c), stateOf: c.stateOf.bind(c), money: c.money.bind(c), heroSrc: c.heroSrc.bind(c), thumbSrc: c.thumbSrc.bind(c) }, mockPractice);
+        const growthRow = detail.demo.find((row: any) => row.k === 'Growth');
+        expect(growthRow.v, `Growth value for "${testCase.growth}"`).toBe(testCase.expectedValue);
+        expect(growthRow.sub, `Growth sub for "${testCase.growth}"`).toBe(testCase.expectedSub);
+      }
+    });
+  });
 });

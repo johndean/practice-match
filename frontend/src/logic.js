@@ -109,7 +109,7 @@ const VALUE_LAYERS = {
   pets: { label: "Estimated Pet Households", short: "Est. pet households", unit: "count", buckets: ["< 10K", "10K–25K", "25K–40K", "> 40K"], stops: [10000, 25000, 40000] },
   growth: { label: "Population Growth (ACS)", short: "Projected growth (5 yrs)", unit: "pct", buckets: ["< 10%", "10–20%", "20–35%", "> 35%"], stops: [10, 20, 35] },
   households: { label: "Households (ACS)", short: "Total households", unit: "count", buckets: ["< 10K", "10K–25K", "25K–45K", "> 45K"], stops: [10000, 25000, 45000] },
-  econ: { label: "Average Practice Revenue (CBP)", short: "Avg. revenue per practice", unit: "usd", buckets: ["< $450K", "$450–650K", "$650–900K", "> $900K"], stops: [450000, 650000, 900000] },
+  econ: { label: "Average Practice Payroll (CBP)", short: "Avg. payroll per practice", unit: "usd", buckets: ["< $450K", "$450–650K", "$650–900K", "> $900K"], stops: [450000, 650000, 900000] },
   competition: { label: "Veterinary Establishments (CBP)", short: "Vet establishments", unit: "count", buckets: ["1–2", "3–5", "6–9", "10+"], stops: [3, 6, 10] }
 };
 
@@ -712,7 +712,7 @@ class Component extends DCLogic {
       fillRows: [radioRow("none", "No shading", !valueLayer, null, () => this.setState({ mdValue: null }))].concat(
         enabled("income") ? [radioRow("income", "Median Household Income", valueLayer === "income", ramp("income")[3], setValue("income"))] : [],
         enabled("growth") ? [radioRow("growth", "Population Growth", valueLayer === "growth", ramp("growth")[3], setValue("growth"))] : [],
-        enabled("econ") ? [radioRow("econ", "Average Practice Revenue", valueLayer === "econ", ramp("econ")[3], setValue("econ"))] : []
+        enabled("econ") ? [radioRow("econ", "Average Practice Payroll", valueLayer === "econ", ramp("econ")[3], setValue("econ"))] : []
       ),
       // GROUP 2 — everything that can coexist with a fill and with each other.
       overlayRows: [
