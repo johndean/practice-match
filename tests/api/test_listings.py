@@ -513,11 +513,15 @@ def test_the_listings_routes_are_guarded_not_public(dist: Any) -> None:
     assert Depends(REQUIRE_MARKET_READ).dependency is REQUIRE_MARKET_READ
 
 
-async def test_a_seeded_database_serves_all_eighteen(client: Any, conn: Any, redis: Any, member: Any) -> None:
+async def test_a_seeded_database_serves_every_seeded_hospital(client: Any, conn: Any, redis: Any, member: Any) -> None:
     """The end-to-end shape: the real seeder, the real endpoint, the real photograph files.
 
     `conn` monkeypatches `settings.database_url` to the scratch database, so the seeder writes
-    to the same database this request reads."""
+    to the same database this request reads.
+
+    Twenty-nine since Task SD1 (John's eighteen of 2026-09-06 and his eleven Dallas rows of
+    2026-09-10). The count is read from the seed file rather than retyped: what this asserts is
+    that the endpoint serves every row the seeder wrote, whatever that number becomes."""
     from app.config import settings
     from scripts import seed_listings as SL
 
@@ -525,7 +529,7 @@ async def test_a_seeded_database_serves_all_eighteen(client: Any, conn: Any, red
     _, cookies, headers = member()
     r = await client.get("/api/listings?limit=200", headers=auth_headers(cookies, headers))
     items = r.json()["items"]
-    assert len(items) == 18
+    assert len(items) == len(SL.load_seed(SL.SEEDS_FILE)) == 29
     # Review m1: a list of six `null`s is TRUTHY, so `all(item["photos"] …)` stopped meaning
     # "every hospital has a photograph" the moment A-L10 made the slots nullable. Every seeded
     # listing must carry at least one real photograph — a card with none shows nothing at all.
@@ -740,21 +744,28 @@ async def test_a_hospital_with_eleven_photographs_serves_the_eleventh(
 async def test_every_seeded_hospital_serves_every_photograph_with_a_caption(
     client: Any, conn: Any, redis: Any, member: Any
 ) -> None:
-    """End to end against the real eighteen: no listing carries an empty slot any more, the two
-    lists are the same length row for row, and every caption is the supplier's own description."""
+    """End to end against every seeded hospital: no listing carries an empty slot any more, the
+    two lists are the same length row for row, and every caption is a real description — the
+    supplier's filename for John's eighteen, the content verification's own words for the
+    eleven Dallas rows (Task SD1)."""
     from app.config import settings
     from scripts import seed_listings as SL
 
     SL.seed(settings.database_url, reset=True)
     _, cookies, headers = member()
     items = (await client.get("/api/listings?limit=200", headers=auth_headers(cookies, headers))).json()["items"]
-    assert len(items) == 18
+    assert len(items) == len(SL.load_seed(SL.SEEDS_FILE)) == 29
     for item in items:
         assert len(item["photos"]) >= 6, item["name"]
         assert len(item["photo_captions"]) == len(item["photos"]), item["name"]
         assert all(p is not None for p in item["photos"]), item["name"]
         assert all(isinstance(c, str) and c for c in item["photo_captions"]), item["name"]
-    assert sum(len(item["photos"]) for item in items) == 195, "every photograph John supplied"
+    # 313 since Task SD1: 195 for John's eighteen and 118 of the 119 in his eleven Dallas
+    # folders — one refused for a third-party business name, recorded in
+    # seeds/hospitals/photos/descriptions.json. Read from the committed inventory, so what this
+    # asserts is that the endpoint serves exactly what the tree holds.
+    committed = sum(len(e) for e in json.loads(SL.PHOTO_INDEX.read_text())["hospitals"].values())
+    assert sum(len(item["photos"]) for item in items) == committed == 313
 
 
 # --- A-SL23 (0): one caption contract for seeds and sellers ------------------------------------
