@@ -2120,3 +2120,32 @@ def test_geocode_step_explains_why_seeder_does_not_do_it():
     assert "worker" in geocode_block.lower() or "listen" in geocode_block.lower(), (
         "geocode docs must explain why the seeder can't enqueue work"
     )
+
+
+def test_seeding_section_pins_the_geocode_requirement():
+    """Task B9: seeded hospitals are INSERTed directly, not created through the API, so nothing
+    enqueues their geocoding automatically. DEPLOY.md's seeding section must be pinned so this
+    requirement cannot be deleted or reworded away — an operator who runs the seeding script
+    must see the pointer to the geocode step and understand why it's needed.
+    
+    Pinned on command form (census_load.py geocode) and stable substrings explaining the
+    automatic/manual boundary (published vs geocod), scoped to the seeding section only."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    section = _section(text, "Seeding the demo hospitals (QA)")
+    
+    # The section must name the geocode command
+    assert "census_load.py geocode" in section, (
+        "seeding section must name the geocode command — "
+        "an operator cannot follow the pointer without seeing which step to run"
+    )
+    
+    # The section must say seeded rows don't get automatic geocoding (published is the status,
+    # geocod is the action that doesn't happen automatically for them)
+    assert "published" in section.lower(), (
+        "seeding section must say seeded rows are published directly — "
+        "the contrast with API-created rows is load-bearing"
+    )
+    assert "geocod" in section.lower(), (
+        "seeding section must mention geocoding — "
+        "the pointer to the manual step is only meaningful if it says why it's needed"
+    )
