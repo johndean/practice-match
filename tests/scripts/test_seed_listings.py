@@ -154,12 +154,14 @@ def test_photos_come_from_the_committed_inventory(scratch_dsn: str) -> None:
                 None if e["file"] is None else f"{slug}/{e['file']}" for e in index[slug]
             ], slug
             assert len(photos) >= 6, slug   # the design's six photo slots (A-L9), and then some
-    # …and A-L11 really did keep everything. 312 photographs since Task SD1: 195 for John's
-    # eighteen, and 117 of the 119 in his eleven Dallas folders — two refused, one for a
-    # third-party business name and one for a monument sign giving an address that is not the
-    # listing's, both recorded in seeds/hospitals/photos/descriptions.json.
+    # …and A-L11 really did keep everything. 313 photographs since Task SD1: 195 for John's
+    # eighteen, and 118 of the 119 in his eleven Dallas folders — ONE refused, for a
+    # third-party business name. The second refusal was RESTORED by ruling A-IDP-7 once John
+    # ruled that a rendered street number is part of the invented identity and is governed
+    # by SHOW / NOT_SHOW rather than by keeping the file out; both decisions are recorded in
+    # seeds/hospitals/photos/descriptions.json.
     #
-    # 333 POSITIONS hold those 312 photographs: the other 21 are captioned slots the composite
+    # 334 POSITIONS hold those 313 photographs: the other 21 are captioned slots the composite
     # rule leaves empty (fix round 1, C1) and reach the browser as JSON `null`, where the
     # design's own `photoSet` renders its placeholder. That is A-L10's empty slot, unchanged —
     # NOT a dropped photograph, which is what the second assertion below separates.
@@ -168,9 +170,9 @@ def test_photos_come_from_the_committed_inventory(scratch_dsn: str) -> None:
         empty = sum(1 for entries in index.values() for e in entries if e["file"] is None)
         assert int(cur.fetchone()[0]) == empty == 21, "the empty captioned slots C1 leaves"
         cur.execute("SELECT sum(jsonb_array_length(photos)) FROM listing")
-        assert int(cur.fetchone()[0]) == sum(len(e) for e in index.values()) == 333
+        assert int(cur.fetchone()[0]) == sum(len(e) for e in index.values()) == 334
         cur.execute("SELECT count(*) FROM listing, jsonb_array_elements(photos) e WHERE e <> 'null'")
-        assert int(cur.fetchone()[0]) == 312, "a photograph was dropped between tree and database"
+        assert int(cur.fetchone()[0]) == 313, "a photograph was dropped between tree and database"
 
 
 def test_photo_captions_are_written_in_step_with_the_photographs(scratch_dsn: str) -> None:

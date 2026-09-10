@@ -1388,9 +1388,24 @@
         "width": 372
       },
       {
+        "bytes": 39984,
+        "caption": "Four-panel sheet: a clipped hedge along the kerbed planting bed beside the paved forecourt, the dark monument sign on its stone-capped planter wall, an oak canopy against clear sky, and the top of a pale masonry wall",
+        "file": "10.webp",
+        "flags": [
+          "composite",
+          "own_street_number",
+          "address_not_this_listing"
+        ],
+        "height": 313,
+        "sha256": "4696819b63633c6c8d7176c9e34456466ca1ce96af199417f17ac6fea0459f38",
+        "slot": null,
+        "source": "alpha_dallas_05.png",
+        "width": 728
+      },
+      {
         "bytes": 24804,
         "caption": "Building corner signage beside downtown skyline street view",
-        "file": "10.webp",
+        "file": "11.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -1404,7 +1419,7 @@
       {
         "bytes": 36194,
         "caption": "Full building facade beside engraved dog artwork signage",
-        "file": "11.webp",
+        "file": "12.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -1418,7 +1433,7 @@
       {
         "bytes": 30222,
         "caption": "Sidewalk street view above reception desk with signage",
-        "file": "12.webp",
+        "file": "13.webp",
         "flags": [
           "own_business_name",
           "composite",
@@ -1433,7 +1448,7 @@
       {
         "bytes": 30374,
         "caption": "Stone wall, parked car, reception desk, and lobby art",
-        "file": "13.webp",
+        "file": "14.webp",
         "flags": [
           "composite",
           "vehicle_no_legible_plate"
@@ -1632,6 +1647,9 @@
         "bytes": 13004,
         "caption": "Navy front door and concrete steps flanked by potted plants",
         "file": "2.webp",
+        "flags": [
+          "own_street_number"
+        ],
         "height": 268,
         "sha256": "02f0f1538a161bf2b9ac2c392fed926c6557304a2f8aed840cf12a307fbd956e",
         "slot": "lobby",

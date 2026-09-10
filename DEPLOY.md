@@ -211,7 +211,7 @@ by a listing that belongs to NOBODY is a different thing and still stops the who
 below).
 
 **The photographs (A-L9, revised by A-L10, and by A-L11 on 2026-09-09).** **Every photograph John
-supplies is rendered — 312 of them today, 8 to 18 per hospital.** Positions **1-6** are the six
+supplies is rendered — 313 of them today, 8 to 18 per hospital.** Positions **1-6** are the six
 captioned slots the design's detail page renders (`photoSet(p)` in `Practice Match V3.dc.html`: an
 exterior plus five subjects chosen by practice type); everything after them is an extra tile,
 appended to the same grid by amendment A15 and counted by the docked panel's carousel. The caption
@@ -259,7 +259,7 @@ no bytes — it records the relative paths positionally, with a JSON `null` for 
 there, and the API sends `null` rather than a URL for it, so nothing requests it). Re-run
 `poetry run python scripts/prepare_photos.py` only when the source folders or the curation change;
 it needs Pillow (a dev dependency), prints `N files, M empty slots, K beyond the design's six
-slots` (312, 21 and 159 today), and is never part of a deploy.
+slots` (313, 21 and 160 today), and is never part of a deploy.
 A curation entry that names a hospital the seed file does not, lists slots that are not the
 practice type's list in order, names a file the folder does not hold, or uses one file for two
 slots stops the run with exit 2 before anything is written.
@@ -282,6 +282,44 @@ image, and they decide nothing about what is DISPLAYED. Every seed still default
 (A-IDP-4, corrected by A-IDP-6), and this seeder writes no column that says otherwise. A
 photograph nobody flagged carries no `flags` key at all, so the entries already committed for the
 eighteen do not move.
+
+**A rendered street number is part of the invented identity, not grounds to leave a photograph
+out.** John ruled on 2026-09-10, verbatim: *"the numbers are part of the hospital name and should
+be 'shown/not shown' too"*. So a number worn as signage in one of these images is governed by the
+listing's one `identifiable_content_visibility` switch and redacted under `NOT_SHOW` exactly as
+the name is — never withheld as a file (controller ruling A-IDP-7, which adds a `premises_number`
+regex class to the identifiability specification so the pipeline can detect it).
+`alpha_dallas_05.png` was refused earlier that day and is restored on this basis.
+`address_not_this_listing` is the seventh flag, added by the same ruling: an image rendering a
+COMPLETE street address — number and street name — that is not this listing's own. John's words
+reach the number, not the street name, so that residual is carried as a flag and as one open
+question rather than as a refusal.
+
+**No number in this set is a per-hospital fact.** Charlie's differs between its own renders
+(`_01` reads 1010, `_03` and `_11` end in a narrow stem) and Juliet's glass door reads 22113 where
+its keystone and pilaster read 2211; three of the eleven render no number at all. Each number is
+therefore a property of its individual image, recorded in `note` and **never** as data — no
+column, no constant, and no rewriting of a listing's `street` to match a sign.
+
+**The flags are the pipeline's expectation set, not decoration.** Each names the detector outcome
+the identifiability work is expected to produce on that image, which is what makes the eleven its
+first real fixture; the mapping is pinned both ways by
+`tests/seeds/test_photo_inventory.py::test_every_flag_names_the_detector_class_the_pipeline_must_produce`,
+so a new flag cannot be invented without deciding what the classifier must do with it. The flag
+names are deliberately **not** the spec's detector class names and must not be renamed to match:
+`own_business_name` and `own_street_number` assert PROVENANCE — that the identity is the
+listing's own invention — which no detector class can express, and which is why these images are
+in the set at all.
+
+| seed flag | expected detector outcome |
+|---|---|
+| `own_business_name` | identity match on field `name` (exact / substring / distinctive) |
+| `own_street_number` | regex class `premises_number` (A-IDP-7) |
+| `address_not_this_listing` | regex class `address` |
+| `civic_signage` | vision kind `signage`, expected NOT to identify the practice |
+| `vehicle_no_legible_plate` | vision kind `vehicle` |
+| `certificates_text_unreadable` | vision kind `document` |
+| `composite` | none — a slot-placement fact only |
 
 **Adding a folder without rewriting the ones already committed: `--merge`.** Without it a run with
 `--slugs` replaces the whole `index.json` with just those slugs — which is the right default,

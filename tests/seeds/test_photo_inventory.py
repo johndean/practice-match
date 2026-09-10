@@ -12,9 +12,9 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 PHOTOS = ROOT / "seeds" / "hospitals" / "photos"
 INDEX = PHOTOS / "index.json"
 CURATION = PHOTOS / "curation.json"
-# Deliberately BELOW what the per-file ceiling would allow (312 x 250 KB is 76 MB): the committed
-# set is 13.7 MB since Task SD1 (312 files — 195 for John's eighteen of 2026-09-06, where A-L10
-# kept 73 and A-L9 108, and 117 of the 119 in his eleven Dallas folders), so 24 MB stays a real
+# Deliberately BELOW what the per-file ceiling would allow (313 x 250 KB is 76 MB): the committed
+# set is 13.8 MB since Task SD1 (313 files — 195 for John's eighteen of 2026-09-06, where A-L10
+# kept 73 and A-L9 108, and 118 of the 119 in his eleven Dallas folders), so 24 MB stays a real
 # guard against a runaway rather than a restatement of MAX_BYTES. FILES, not entries: since
 # C1 an entry may be an EMPTY captioned slot, which weighs nothing.
 TOTAL_CEILING_BYTES = 24 * 1024 * 1024
@@ -124,7 +124,8 @@ ENTRIES_PER_HOSPITAL = {
     "yz_rural_animal_hospital": 11,
     # Task SD1: John's eleven Dallas folders. The count is photographs PLUS empty captioned
     # slots — six of Kilo's fifteen entries are its four empty slots and eleven photographs.
-    "alpha_dallas_veterinary_specialist_hospital": 13,
+    # Alpha is 14 since fix round 2 restored `alpha_dallas_05.png` (ruling A-IDP-7 §4.1).
+    "alpha_dallas_veterinary_specialist_hospital": 14,
     "beta_dallas_veterinary_hospital": 14,
     "charlie_dallas_animal_hospital": 14,
     "delta_dallas_animal_er_hospital": 13,
@@ -137,10 +138,11 @@ ENTRIES_PER_HOSPITAL = {
     "lima_dallas_fort_worth_veterinary_hospital": 11,
 }
 
-# The eleven's PHOTOGRAPHS, separately from their entries (C1). `alpha` shows 10 of the 12 its
-# folder holds — two are refused — and every other folder is complete.
+# The eleven's PHOTOGRAPHS, separately from their entries (C1). `alpha` shows 11 of the 12 its
+# folder holds — ONE is refused, since fix round 2 restored the other — and every other folder
+# is complete.
 PHOTOGRAPHS_PER_DALLAS_HOSPITAL = {
-    "alpha_dallas_veterinary_specialist_hospital": 10,
+    "alpha_dallas_veterinary_specialist_hospital": 11,
     "beta_dallas_veterinary_hospital": 11,
     "charlie_dallas_animal_hospital": 11,
     "delta_dallas_animal_er_hospital": 11,
@@ -164,12 +166,12 @@ def test_the_committed_set_is_every_photograph_john_supplied() -> None:
     assert {slug: len([e for e in inv[slug] if e["file"] is not None])
             for slug in PHOTOGRAPHS_PER_DALLAS_HOSPITAL} == PHOTOGRAPHS_PER_DALLAS_HOSPITAL
     filled = [e for entries in inv.values() for e in entries if e["file"] is not None]
-    assert len(filled) == 312, "a photograph was dropped"
-    # 333 positions for 312 photographs: the 21 captioned slots C1 leaves empty on the eleven.
-    assert sum(len(e) for e in inv.values()) == 333
+    assert len(filled) == 313, "a photograph was dropped"
+    # 334 positions for 313 photographs: the 21 captioned slots C1 leaves empty on the eleven.
+    assert sum(len(e) for e in inv.values()) == 334
     assert sum(1 for entries in inv.values() for e in entries if e["file"] is None) == 21
     beyond = [e for entries in inv.values() for e in entries if e["slot"] is None]
-    assert len(beyond) == 159, "the photographs past the design's six slots (A15.3 renders each)"
+    assert len(beyond) == 160, "the photographs past the design's six slots (A15.3 renders each)"
 
 
 def test_the_inventory_names_no_hospital_that_is_not_seeded() -> None:
@@ -258,16 +260,21 @@ DALLAS_SLUGS = frozenset({
     "juliet_dallas_animal_hospital", "kilo_dallas_fort_worth_veterinary_hospital",
     "lima_dallas_fort_worth_veterinary_hospital",
 })
-# The two photographs that are NOT encoded, and the rule each fell under. Named here so a re-run
-# of the pipeline that quietly encoded one would fail rather than pass. Both are Alpha's:
-# `..._11_...` shows a THIRD-PARTY business name ('COMPASSIONATE HEARTS'), and `..._05` is a
-# monument sign reading '4140 CEDAR SPRINGS ROAD', an address that is not this listing's
-# (controller ruling, 2026-09-10 — a photograph whose whole subject is a false location claim).
+# The ONE photograph that is not encoded, and the rule it fell under. Named here so a re-run of
+# the pipeline that quietly encoded it would fail rather than pass.
+# `alpha_dallas_11_individual_images.png` shows a THIRD-PARTY business name ('COMPASSIONATE
+# HEARTS') — not this listing's name and not a number, so John's ruling of 2026-09-10 does not
+# reach it, and a listing's visibility switch cannot consent to publishing somebody else's name.
+#
+# `alpha_dallas_05.png` was the second refusal and is RESTORED (ruling A-IDP-7 §4.1, on John's
+# ruling that a street number is part of the invented identity and is governed by SHOW /
+# NOT_SHOW rather than by refusal). Its monument carries no business name at all, and
+# "4140 CEDAR SPRINGS ROAD" is precisely what the specified `address` regex class already
+# matches, so it is filled under NOT_SHOW by the existing design.
 REFUSED = (
-    ("alpha_dallas_veterinary_specialist_hospital", "alpha_dallas_05.png"),
     ("alpha_dallas_veterinary_specialist_hospital", "alpha_dallas_11_individual_images.png"),
 )
-# What the source folders hold. `alpha` supplied 12; 10 are committed.
+# What the source folders hold. `alpha` supplied 12; 11 are committed.
 DALLAS_SOURCE_IMAGES = 119
 
 
@@ -302,15 +309,15 @@ def test_every_photograph_in_the_eleven_folders_is_accounted_for() -> None:
     assert encoded + len(refused) == supplied
 
 
-def test_the_refused_photographs_are_nowhere_in_the_committed_tree() -> None:
-    """Two, and only two, of the 119. `..._11_...` carries a THIRD-PARTY business name — wall
-    signage reading 'COMPASSIONATE HEARTS', which is not this hospital's own fictional name.
-    `..._05` is a monument sign reading '4140 CEDAR SPRINGS ROAD', an address that is not this
-    listing's 18770 Preston Rd, so the photograph's whole subject is a false location claim.
+def test_the_refused_photograph_is_nowhere_in_the_committed_tree() -> None:
+    """ONE of the 119, and it is the one class the pipeline structurally misses.
 
-    Its own name, its own street number above its own door, and the civic banner in a sibling
-    image are all encoded; that is the whole distinction, and these are the two images on the
-    wrong side of it."""
+    `..._11_...` carries a THIRD-PARTY business name — wall signage reading 'COMPASSIONATE
+    HEARTS', which is not this hospital's own fictional name and is not a number, so John's
+    ruling of 2026-09-10 does not reach it. `identifiable_content_visibility` is THIS listing's
+    consent switch and a listing cannot consent to publishing somebody else's name; and the
+    identity matcher builds its terms from this listing's own columns, so a third party's name
+    is exactly what neither it nor the regex classes can find."""
     for slug, name in REFUSED:
         assert name not in [e["source"] for e in inventory()[slug]], name
         entry = descriptions()[slug][name]
@@ -318,32 +325,95 @@ def test_the_refused_photographs_are_nowhere_in_the_committed_tree() -> None:
         assert isinstance(entry["refused"], str) and entry["refused"], name
     reasons = {name: str(descriptions()[slug][name]["refused"]) for slug, name in REFUSED}
     assert "COMPASSIONATE HEARTS" in reasons["alpha_dallas_11_individual_images.png"]
-    monument = reasons["alpha_dallas_05.png"]
-    assert "4140 CEDAR SPRINGS ROAD" in monument
-    # I1: the reason must not over-claim. Refusing the monument sign did NOT take "4140" off
-    # Alpha's page — two of its committed photographs still show it — and the record has to say
-    # so, or the next reader concludes a false-address claim was removed when it was not.
-    assert "WHAT THIS DOES NOT CLAIM" in monument
-    assert "alpha_dallas_12_individual_images.png.png" in monument
-    assert "alpha_dallas_02.png" in monument
 
 
-def test_every_other_street_number_is_still_encoded() -> None:
-    """The controller kept the class and refused one member of it: a number on a wall or above a
-    door, beside the listing's own fictional name, is part of the same invented signage and
-    names nobody. The flag stays on all of them so the identifiability work can re-cut the whole
-    class if John wants it."""
+def test_the_monument_sign_is_restored_and_governed_by_the_visibility_switch() -> None:
+    """A-IDP-7 §4.1, on John's ruling of 2026-09-10: "the numbers are part of the hospital name
+    and should be 'shown/not shown' too". `alpha_dallas_05.png` was refused earlier the same day
+    as a false location claim and is restored — a street number is part of the invented identity
+    and is governed by the listing's one visibility switch, not by keeping the file out.
+
+    It is encoded, described by someone who looked at it, and flagged three ways: `composite`
+    (so it never takes a captioned slot), `own_street_number` (the ruled class) and
+    `address_not_this_listing` (the residual John has not ruled on — Cedar Springs Road is a real
+    street and Alpha's anchor is 18770 Preston Rd, carried as open question Q-SD1-1)."""
+    slug, name = "alpha_dallas_veterinary_specialist_hospital", "alpha_dallas_05.png"
+    entry = descriptions()[slug][name]
+    assert "refused" not in entry, "the restoration did not remove the refusal"
+    assert entry["flags"] == ["composite", "own_street_number", "address_not_this_listing"]
+    placed = [e for e in inventory()[slug] if e["source"] == name]
+    assert len(placed) == 1, "the restored sheet is encoded exactly once"
+    # A composite never occupies one of the design's six captioned slots (C1), so the restoration
+    # lands past them and takes no slot from a single photograph.
+    assert placed[0]["slot"] is None, placed[0]
+    assert inventory()[slug].index(placed[0]) >= SLOT_COUNT
+    # The record quotes John and names the ruling, so the next reader is not left guessing why a
+    # refused image came back.
+    assert "shown/not shown" in str(entry["note"]) and "A-IDP-7" in str(entry["note"])
+
+
+def test_every_rendered_street_number_is_encoded_and_flagged_not_refused() -> None:
+    """John's ruling of 2026-09-10, verbatim: "the numbers are part of the hospital name and
+    should be 'shown/not shown' too". A number rendered into one of these photographs is part of
+    the invented identity, so NO image is kept out for carrying one — every one is encoded and
+    flagged, and the flag is the pipeline's expectation that `premises_number` will fire on it.
+
+    Fourteen: eleven the content verification reported, `charlie_dallas_11.png` from the fix
+    round 1 sweep, `charlie_dallas_03.png` from the fix round 2 sweep (its number's foot alone is
+    in frame), and `alpha_dallas_05.png`, restored by this ruling."""
     flagged = [(slug, str(e["source"])) for slug in sorted(DALLAS_SLUGS)
                for e in inventory()[slug] if "own_street_number" in e.get("flags", [])]
-    # 12 since the fix-round-1 sweep: eleven the content verification reported, plus
-    # charlie_dallas_11.png, whose porch post carries a legible number the verification missed
-    # and which was found by looking at all 119 images at full resolution.
-    assert len(flagged) == 12, flagged
-    assert "alpha_dallas_05.png" not in [name for _slug, name in flagged]
-    # I1: refusing Alpha's monument sign did NOT remove "4140" from Alpha's page, and the record
-    # must not imply it did. Two of Alpha's remaining photographs still show it, both flagged.
+    assert len(flagged) == 14, flagged
+    # The image the earlier ruling refused for carrying a number is now IN the set — the
+    # assertion is inverted deliberately, and it is the one that would catch a silent re-refusal.
+    assert "alpha_dallas_05.png" in [name for _slug, name in flagged]
+    # Alpha's three, in the order the regenerated inventory actually places them rather than a
+    # retyped list: the restored sheet is a composite, so it sorts after the captioned slots.
     alpha = [name for slug, name in flagged if slug.startswith("alpha_")]
-    assert alpha == ["alpha_dallas_12_individual_images.png.png", "alpha_dallas_02.png"], alpha
+    assert alpha == ["alpha_dallas_12_individual_images.png.png", "alpha_dallas_02.png",
+                     "alpha_dallas_05.png"], alpha
+
+
+# --- The mapping the seed flags owe the classifier (ruling A-IDP-7 §5.3) -----------------------
+#
+# The flag names are NOT the spec's detector classes and must not be renamed to match them: they
+# are different kinds of statement. The spec's classes are DETECTOR OUTPUTS (`REGEX_CLASSES`
+# keys, the vision `kind` enum) describing what a machine found. These flags are HUMAN FINDINGS
+# about a source image, and two of them — `own_business_name`, `own_street_number` — assert
+# PROVENANCE ("this identity is the listing's own invention"), which no detector class can
+# express and which is the whole reason these images stayed in the set at all.
+#
+# What is owed instead is this mapping: for each flag, the detector outcome the identifiability
+# pipeline is expected to produce on that image. That turns a flag from a note beside the
+# pipeline into a testable expectation of it, and the eleven Dallas hospitals into its first
+# real fixture.
+FLAG_TO_EXPECTED_DETECTOR_OUTCOME = {
+    "own_business_name": "identity match on field `name` (exact / substring / distinctive)",
+    "own_street_number": "regex class `premises_number` (SPEC:232 as amended by A-IDP-7)",
+    "address_not_this_listing": "regex class `address`",
+    "civic_signage": "vision kind `signage`, expected NOT to identify the practice",
+    "vehicle_no_legible_plate": "vision kind `vehicle`",
+    "certificates_text_unreadable": "vision kind `document`",
+    "composite": "none — a slot-placement fact only, never an identifiability finding",
+}
+
+
+def test_every_flag_names_the_detector_class_the_pipeline_must_produce() -> None:
+    """Pinned BOTH ways, which is the point: a new flag cannot be invented without deciding what
+    the classifier is expected to do with it, and a mapping entry cannot rot after its last use
+    disappears from the tree."""
+    in_use = {flag for entries in inventory().values() for e in entries
+              for flag in e.get("flags", [])}
+    # …and the refused entries' flags count too, when they have any: they are still findings.
+    in_use |= {flag for files in descriptions().values() for e in files.values()
+               for flag in e.get("flags", [])}
+    assert in_use == set(FLAG_TO_EXPECTED_DETECTOR_OUTCOME), (
+        sorted(in_use ^ set(FLAG_TO_EXPECTED_DETECTOR_OUTCOME))
+    )
+    assert len(FLAG_TO_EXPECTED_DETECTOR_OUTCOME) == 7
+    # `composite` is the one flag that is deliberately NOT an identifiability finding; saying so
+    # is what stops it being wired to a detector class later by someone tidying the table.
+    assert FLAG_TO_EXPECTED_DETECTOR_OUTCOME["composite"].startswith("none")
 
 
 def test_every_dallas_photograph_is_captioned_by_its_own_description() -> None:

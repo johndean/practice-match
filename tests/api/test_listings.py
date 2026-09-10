@@ -775,17 +775,18 @@ async def test_every_seeded_hospital_serves_every_photograph_with_a_caption(
                 assert caption == "", (item["name"], "an empty slot carries a caption")
             else:
                 assert isinstance(caption, str) and caption, (item["name"], url)
-    # 333 positions holding 312 photographs since fix round 1's C1: 195 for John's eighteen,
-    # 117 of the 119 in his eleven Dallas folders — two refused, one for a third-party business
-    # name and one for a monument sign giving an address that is not the listing's, both
-    # recorded in seeds/hospitals/photos/descriptions.json — and 21 empty captioned slots. Both
+    # 334 positions holding 313 photographs: 195 for John's eighteen, 118 of the 119 in his
+    # eleven Dallas folders — ONE refused, for a third-party business name; the second was
+    # restored by ruling A-IDP-7 once John ruled that a rendered street number is part of the
+    # invented identity and is governed by SHOW / NOT_SHOW rather than by refusal — and 21 empty
+    # captioned slots (fix round 1's C1: a composite never takes one of the design's six). Both
     # numbers are read from the committed inventory, so what this asserts is that the endpoint
     # serves exactly what the tree holds, positions AND photographs.
     inventory = json.loads(SL.PHOTO_INDEX.read_text())["hospitals"]
     committed = sum(len(e) for e in inventory.values())
-    assert sum(len(item["photos"]) for item in items) == committed == 333
+    assert sum(len(item["photos"]) for item in items) == committed == 334
     photographs = sum(1 for e in inventory.values() for x in e if x["file"] is not None)
-    assert sum(1 for i in items for p in i["photos"] if p is not None) == photographs == 312
+    assert sum(1 for i in items for p in i["photos"] if p is not None) == photographs == 313
 
 
 # --- A-SL23 (0): one caption contract for seeds and sellers ------------------------------------
