@@ -3060,6 +3060,14 @@ const A21_3c: Amendment = {
   count: 1
 };
 
+/** A21.3d — the detail's Growth row splits the API string to extract the vintage */
+const A21_3d: Amendment = {
+  id: 'A21.3d', date: '2026-09-10', ruling: 'the detail Growth row extracts its vintage from the API string, never hard-coded (controller amendment A-C29)',
+  find: '{ k: "Growth", v: (p.growth || "").replace(" since 2015", ""), sub: "Since 2015" }',
+  replace: '{ k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); return g.length > 1 ? "Since " + g[1] : ""; })() }',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -3087,7 +3095,6 @@ export function amendments(): Amendment[] {
     // A21 — market-data layers do not render absence as zero (controller amendment A-C28, 2026-09-10; Task B8 review).
     // A21.2 and A21.2b are REVERTED (amendment A-C29, 2026-09-10): the figure is payroll, not revenue;
     // the design's labels were correct, and the metric is merely misnamed in the database.
-    // A21.3 is completed (A-C29) to remove hard-coded years from three places in the design template;
-    // A21.3d (the detail's Growth row) is a manual edit to logic.js only: it splits the API's string.
-    A21_1, A21_1b, A21_3a, A21_3b, A21_3c];
+    // A21.3 is completed (A-C29) to remove hard-coded years from four places in the design template.
+    A21_1, A21_1b, A21_3a, A21_3b, A21_3c, A21_3d];
 }
