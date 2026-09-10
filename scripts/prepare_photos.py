@@ -270,7 +270,8 @@ def validate_curation(
 
 
 def slot_choices(
-    files: list[Path], slots: list[str], curated: dict[str, str | None] | None = None
+    files: list[Path], slots: list[str], curated: dict[str, str | None] | None = None,
+    composites: frozenset[str] = frozenset(),
 ) -> list[tuple[str, Path | None]]:
     """Which photograph BEST fits which of the design's slots, in SLOT order — one entry per
     slot, `None` where the selection placed nothing there.
@@ -287,6 +288,10 @@ def slot_choices(
 
     A `None` is no longer the last word (A-L11): `positions` below fills what is left from the
     rest of the folder, and only a folder thinner than the design's six slots leaves one empty.
+
+    `composites` is passed through to `keyword_choices` (R3-1). The curated arm needs no such
+    filter — `validate_curation` has already refused a map that names one — so the two arms
+    reach the same guarantee by their own routes.
     """
     if curated is not None:
         by_name = {src.name: src for src in files}
@@ -301,7 +306,7 @@ def slot_choices(
                 raise SeedDataError(f"{slot} names {name}, which the source folder does not hold")
             picked.append((slot, by_name[name]))
         return picked
-    chosen = dict(keyword_choices(files, slots))
+    chosen = dict(keyword_choices(files, slots, composites))
     return [(slot, chosen.get(slot)) for slot in slots]
 
 
@@ -326,10 +331,17 @@ def positions(
     a presentation it never contemplated for a contact sheet: absent beats faked, which is this
     project's first rule about the approved design.
 
-    The guarantee has TWO enforced halves, and both are code (fix round 3, NEW-1): the BACKFILL
-    below draws only from the single photographs, and `validate_curation` refuses a curation that
-    names a composite for a captioned slot. Before NEW-1 only the first half existed, so a
-    curated sheet reached the hero slot while three records said it could not.
+    The guarantee is UNCONDITIONAL, and it is code on every route into a captioned slot — there
+    are three, and each is closed where it is implemented:
+
+      * the CURATION — `validate_curation` refuses a map naming a composite for a slot (NEW-1);
+      * the KEYWORD path, taken by a slug the curation does not name — `keyword_choices` does
+        not consider a composite a candidate at all (R3-1);
+      * the BACKFILL below, which draws only from the single photographs (C1).
+
+    Each was added after a record claimed a guarantee the code did not give, and each time the
+    code was made to catch up rather than the sentence narrowed. Nothing is left that could put
+    a sheet under one of the design's six captions.
 
     The backfill is not a preference — when a folder runs out of singles its remaining captioned
     slots stay `None` and the design renders its own placeholder in each, which is the path
@@ -346,7 +358,7 @@ def positions(
     With NONE declared — John's eighteen of 2026-09-06, which have no descriptions file at all —
     every pick is `spare[0]` and this is the folder order it has always been.
     """
-    placed = slot_choices(files, slots, curated)
+    placed = slot_choices(files, slots, curated, composites)
     taken = {src for _slot, src in placed if src is not None}
     spare = [src for src in files if src not in taken]
     filled: list[tuple[str | None, Path | None]] = []
@@ -364,10 +376,20 @@ def positions(
     return filled
 
 
-def keyword_choices(files: list[Path], slots: list[str]) -> list[tuple[str, Path]]:
+def keyword_choices(
+    files: list[Path], slots: list[str], composites: frozenset[str] = frozenset()
+) -> list[tuple[str, Path]]:
     """A-L9's selection by filename keyword, in SLOT order — the path a slug the curation map
     does not name still takes. Never leaves a slot empty while a file is unused, which is exactly
     why it could not express "this folder has no truthful reception photograph" (A-L10).
+
+    **A COMPOSITE IS NOT A CANDIDATE HERE** (R3-1). This is the THIRD route to a captioned slot,
+    after the curation and the backfill, and it was the one the record forgot: a filename
+    keyword would place a two-panel sheet at `exterior` because the sheet happens to be named
+    for what its first panel shows. Excluded from the selection entirely, so it falls through to
+    `positions`' spare queue and takes a position past the sixth like every other sheet. The
+    exclusion is at the TOP of the function rather than at each of the three picks below,
+    because a filter applied per-arm is a filter somebody adds a fourth arm past.
 
     Keyword matches first, for every slot, and only then the fallbacks: filling an unmatched
     slot as soon as it is reached would let it swallow the very interior a later slot's keyword
@@ -379,6 +401,7 @@ def keyword_choices(files: list[Path], slots: list[str]) -> list[tuple[str, Path
     slot empty — three images can fill `exterior`, `lobby` and `kennel` — so the caller cannot
     recover the slot by counting.
     """
+    files = [src for src in files if src.name not in composites]
     described = {src: descriptor_of(src.name) for src in files}
     taken: set[Path] = set()
     chosen: dict[str, Path] = {}

@@ -1304,3 +1304,71 @@ def test_the_committed_curation_places_no_composite_in_any_captioned_slot() -> N
         if name is not None and "composite" in described.get(slug, {}).get(name, {}).get("flags", [])
     ]
     assert offenders == [], offenders
+
+
+# --- R3-1: the THIRD path a composite could reach a captioned slot by ------------------------
+#
+# `positions` guards the backfill and `validate_curation` guards the curation, and the record
+# said the guarantee had "two enforced halves". It had three paths: a slug with NO curation
+# entry takes `keyword_choices`, which selects by filename keyword and knew nothing about
+# composites. The reviewer put two sheets straight into `exterior` and `lobby` through it.
+#
+# Unreachable for the committed tree — every seeded slug is curated, and a test in ANOTHER
+# module happens to require `curation.json` and `seeds/hospitals.json` to name the same
+# hospitals — but a guarantee held up by a coincidence in a different file is not a guarantee.
+# Third time in this task that a record has been marginally wider than the code (C1, NEW-1, this),
+# and the third time the code catches up with the sentence rather than the sentence being
+# narrowed. The guarantee is now UNCONDITIONAL: no route places a composite in a captioned slot.
+
+
+def test_the_keyword_path_cannot_place_a_composite_in_a_captioned_slot(tmp_path: Path) -> None:
+    """The reviewer's own probe. A slug with NO curation entry, and two images whose filenames
+    the keyword matcher would place at `exterior` and `lobby` — both flagged `composite`. Before
+    R3-1 they took those two slots; now they take positions past the sixth and both slots stay
+    empty, because there is no single photograph in the folder to fill them."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_exterior_front.png", "06_interior_reception.png"])
+    described = {"cur": {
+        "01_exterior_front.png": {"description": "Two-panel exterior sheet",
+                                  "flags": ["composite"], "refused": None},
+        "06_interior_reception.png": {"description": "Four-panel interior sheet",
+                                      "flags": ["composite"], "refused": None}}}
+    index = PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"},
+                       descriptions=described)   # NO curation for this slug
+    assert [e["slot"] for e in index["cur"]] == [*PP.DEFAULT_SLOTS, None, None]
+    assert [e["file"] for e in index["cur"][:6]] == [None] * 6, "a sheet took a captioned slot"
+    # …and neither is dropped: A-L11 stands on this path too.
+    assert sorted(str(e["source"]) for e in index["cur"][6:]) == [
+        "01_exterior_front.png", "06_interior_reception.png",
+    ]
+
+
+def test_the_keyword_path_still_places_single_photographs_by_keyword(tmp_path: Path) -> None:
+    """A-L9 is not broken by the guard: an unflagged photograph is still selected by its
+    filename keyword, and only the sheet is held back."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_exterior_front.png", "06_interior_reception.png"])
+    index = PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"},
+                       descriptions={"cur": {
+                           "01_exterior_front.png": {"description": "A front", "flags": [],
+                                                     "refused": None},
+                           "06_interior_reception.png": {"description": "A sheet",
+                                                         "flags": ["composite"],
+                                                         "refused": None}}})
+    placed = {str(e["slot"]): e["source"] for e in index["cur"] if e["file"] is not None}
+    assert placed == {"exterior": "01_exterior_front.png", "None": "06_interior_reception.png"}
+
+
+def test_keyword_choices_itself_never_returns_a_composite(tmp_path: Path) -> None:
+    """The unit beneath the two above, so the guarantee is pinned where it is implemented and
+    not only where it is observed. Both the keyword arm and the unused-file fallback arm."""
+    root = tmp_path / "src"
+    folder = _folder(root, "cur", ["01_exterior_front.png", "04_interior_exam.png",
+                                   "08_interior_stub.png"])
+    files = PP.source_images(folder)
+    sheets = frozenset({"01_exterior_front.png", "08_interior_stub.png"})
+    chosen = PP.keyword_choices(files, list(PP.DEFAULT_SLOTS), sheets)
+    assert [src.name for _slot, src in chosen] == ["04_interior_exam.png"]
+    # With every file a composite the selection is empty rather than falling back to one.
+    assert PP.keyword_choices(files, list(PP.DEFAULT_SLOTS),
+                              frozenset(f.name for f in files)) == []

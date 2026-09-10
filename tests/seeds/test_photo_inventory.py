@@ -350,8 +350,11 @@ def test_the_monument_sign_is_restored_and_governed_by_the_visibility_switch() -
     `address_not_this_listing` (the residual John has not ruled on — Cedar Springs Road is a
     real street and Alpha's anchor is 18770 Preston Rd, carried as open question Q-SD1-1) and
     `vehicle_no_legible_plate`, added on a fresh look at the file (NEW-7): the monument panel
-    shows three vehicles, none with a legible plate, which is the condition nine other entries
-    already carry that flag for. The ruling's §5.1 list named three because it was written
+    shows SEVERAL vehicles in the car park behind the sign, none with a legible plate, which is
+    the condition nine other entries already carry that flag for. "Several" and not a count
+    (R3-1): I could defend three, a second reader read four clearly and a fifth probably, and
+    the flag is a boolean — so the record says the part that is certain and true rather than a
+    number two readers disagree about. The ruling's §5.1 list named three because it was written
     before anyone opened the image; a flag is a prediction about what the classifier will find,
     so leaving a vehicle unflagged would have been a prediction that is wrong."""
     slug, name = "alpha_dallas_veterinary_specialist_hospital", "alpha_dallas_05.png"
@@ -562,8 +565,11 @@ def test_the_committed_descriptions_are_real_sentences_not_filenames() -> None:
 LEGACY_ONLY_KEYS = frozenset({"quality"})
 
 #: Every key `scripts/prepare_photos.py` can write on a FILLED entry, derived from the pipeline
-#: rather than retyped (NEW-3). `encode` returns the six measured fields; `prepare` adds `slot`,
-#: and `described_over` adds `caption` (always) and `flags` (only when a flag was raised).
+#: rather than retyped (NEW-3). `encode` returns the identity of the file and its measurements;
+#: `prepare` adds `slot`; `described_over` overrides `caption` and adds `flags` when one was
+#: raised. NO COUNT IS STATED HERE ON PURPOSE (R3-1): the first version of this line said "the
+#: six measured fields" and `encode` returns seven — a hand-typed number inside the fix whose
+#: whole purpose was to end hand-typed numbers. The test below counts them from the source.
 PIPELINE_WRITES = frozenset({
     "file", "source", "caption", "bytes", "width", "height", "sha256",   # encode()
     "slot",                                                             # prepare()
