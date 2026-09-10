@@ -1947,6 +1947,30 @@ def test_the_seed_plan_records_a_l10_and_deploy_md_names_the_curation_file():
 # --- A-L11: every uploaded photograph renders, with its own description -----------------------
 
 
+def test_the_two_seeding_example_outputs_in_deploy_md_agree_with_each_other():
+    """Fix round 1, I3. The runbook shows two example runs one line apart — a first import and a
+    re-run — and the second still said "updated 18" when the first said "inserted 29". A count
+    change that moves one and not the other is exactly the drift this suite exists to catch, and
+    a reader who trusts the wrong line goes looking for eleven listings that never arrived.
+
+    All three numbers are DERIVED from the seed file, so this cannot be satisfied by editing one
+    line: the seeder inserts every row on a first run and updates every row on a re-run, so both
+    examples carry the same count, and `done - N listings` is that count too."""
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    section = deploy.split("## Seeding the demo hospitals (QA)", 1)[1].split("\n## ", 1)[0]
+    rows = len(json.loads((ROOT / "seeds" / "hospitals.json").read_text())["hospitals"])
+    assert rows == 29, "the seed file's row count moved; the runbook examples move with it"
+    first = f'"[seed] inserted {rows}, updated 0, removed 0, skipped 0 seller-owned"'
+    assert first in section, f"the first-run example is not {first}"
+    assert f'"[seed] done - {rows} listings"' in section
+    assert f'"inserted 0, updated {rows}, removed N, skipped S"' in section, (
+        "the re-run example disagrees with the first-run example"
+    )
+    # …and the --reset example in the same section, which is a delete of every row then an
+    # insert of every row.
+    assert f'"inserted {rows}, updated 0, removed {rows}, skipped 0 seller-owned"' in section
+
+
 def test_the_seed_plan_records_a_l11_and_deploy_md_says_every_image_renders():
     """A-L11 (John, 2026-09-09: "HAS FAILED and wiped out all the images … render ALL images").
     The same two documents of record as A-L10, for the hotfix that reverses its rule: the plan
@@ -1981,10 +2005,12 @@ def test_the_seed_plan_records_a_l11_and_deploy_md_says_every_image_renders():
     deploy = (ROOT / "DEPLOY.md").read_text()
     section = deploy.split("## Seeding the demo hospitals (QA)", 1)[1].split("\n## ", 1)[0]
     assert "A-L11" in section
-    committed = sum(
-        len(entries) for entries in
-        json.loads((ROOT / "seeds" / "hospitals" / "photos" / "index.json").read_text())["hospitals"].values()
-    )
+    inventory = json.loads(
+        (ROOT / "seeds" / "hospitals" / "photos" / "index.json").read_text())["hospitals"]
+    # PHOTOGRAPHS, not entries: since fix round 1's C1 an entry may be a captioned slot left
+    # empty because the folder's remaining images are all contact sheets, and the claim this
+    # pins is about images John supplied, not positions the API serves.
+    committed = sum(1 for entries in inventory.values() for e in entries if e["file"] is not None)
     # Read from the committed inventory rather than pinned as a literal (Task SD1 moved it from
     # 195 to 312 by adding John's eleven Dallas folders, and it will move again the next time he
     # supplies a folder). The CLAIM is what is pinned — "every image John supplies is rendered,

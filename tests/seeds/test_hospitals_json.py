@@ -662,3 +662,72 @@ def test_every_dallas_row_satisfies_the_listing_check_constraints() -> None:
             assert h[required] not in (None, ""), (h["slug"], required)
         for required in ("state", "market", "area", "sqft"):                    # publishable
             assert h[required] not in (None, ""), (h["slug"], required)
+
+
+# --- M5: the demo prose may not be falsified by the photographs on the same page ---------------
+#
+# `facility`, `bldg`, `sqft` and `est` are demo values John may edit at any time — but not while
+# the listing's own photographs say otherwise. A buyer reading "leased suite in a strip centre"
+# beside a photograph of a detached clapboard building on open ground learns that the copy is
+# not to be trusted, and that is a worse failure than a bland sentence.
+#
+# Five of the eleven were falsified by their own heroes and are corrected here; the other six
+# were opened and are consistent. The corrected phrases are pinned as VALUES, and the four
+# claims the photographs contradicted are pinned as FORBIDDEN so they cannot drift back in.
+
+FACILITY_CORRECTED_AGAINST_THE_PHOTOGRAPHS = {
+    # a pitched-roof building with a timber porch and a chimney — a converted house, not a shop
+    "charlie_dallas_animal_hospital":
+        "Converted house with a timber entrance porch on Fort Worth Avenue in Oak Cliff.",
+    # a detached single-storey building with its own car park and standing sign, not a floor
+    # of an office block (indigo_dallas_03/05/11 all show the whole building)
+    "indigo_dallas_animal_hospital":
+        "Detached single-storey building with its own car park and standing sign on North Central Expressway.",
+    # a standalone with a decorative mission parapet, not an end unit in a row
+    "juliet_dallas_animal_hospital":
+        "Standalone building with a decorative parapet on Ferguson Road.",
+    # a weathered detached building on its own fenced plot with a roadside pole sign
+    "kilo_dallas_fort_worth_veterinary_hospital":
+        "Detached single-storey building on its own fenced plot off South Buckner Boulevard, with a roadside pole sign.",
+}
+
+# What the photographs falsified. Substring, case-insensitive, across all eleven.
+FACILITY_CLAIMS_THE_PHOTOGRAPHS_REFUTE = ("strip centre", "storefront", "office building", "end unit")
+
+# FOXTROT IS THE COUNTER-EXAMPLE, and it is recorded because it nearly went the other way. Its
+# hero (`foxtrot_dallas_01.png`) is a single-storey gable and I first "corrected" its prose to
+# say so — but `foxtrot_dallas_03.png`, from the same folder, shows a clear upper row of windows
+# above the entrance canopy. "Two-storey" was never falsified; the HERO was unrepresentative.
+# The lesson, and the reason this comment is here rather than in a commit message: a facility
+# claim is checked against the WHOLE folder, never against position 1 alone.
+FOXTROT_IS_TWO_STOREY_IN_ITS_OWN_THIRD_PHOTOGRAPH = "foxtrot_dallas_03.png"
+
+
+def test_the_four_falsified_facility_descriptions_are_corrected() -> None:
+    rows = {str(h["slug"]): h for h in dallas_eleven()}
+    for slug, expected in FACILITY_CORRECTED_AGAINST_THE_PHOTOGRAPHS.items():
+        assert rows[slug]["facility"] == expected, slug
+
+
+def test_no_dallas_facility_makes_a_claim_its_own_photographs_refute() -> None:
+    """Pinned the other way round, so a future edit cannot quietly reintroduce one of the four."""
+    offenders = [(str(h["slug"]), claim) for h in dallas_eleven()
+                 for claim in FACILITY_CLAIMS_THE_PHOTOGRAPHS_REFUTE
+                 if claim in str(h["facility"]).lower()]
+    assert offenders == [], offenders
+
+
+def test_charlies_founding_year_is_the_one_painted_on_its_own_wall() -> None:
+    """Its hero photograph carries "EST. 2017" in the signage. A listing whose own building says
+    2017 while the field says 2002 is the same defect as the facility prose, one field along."""
+    charlie = next(h for h in dallas_eleven() if h["slug"] == "charlie_dallas_animal_hospital")
+    assert charlie["est"] == 2017
+
+
+def test_kilo_owns_the_detached_building_its_photographs_show() -> None:
+    """`bldg` moves with the prose: the photographs show a detached building on its own fenced
+    plot with a permanent pole sign and painted-on wall signage, which is not a leasehold suite.
+    `sqft` 2150 is consistent with the single-storey footprint and is unchanged."""
+    kilo = next(h for h in dallas_eleven() if h["slug"] == "kilo_dallas_fort_worth_veterinary_hospital")
+    assert kilo["bldg"] == "Included"
+    assert kilo["sqft"] == 2150

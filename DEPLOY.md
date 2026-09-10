@@ -240,9 +240,14 @@ slot.** It was written by looking at every source image, because John's filename
 describe their contents (one folder's `06_interior_reception.png` is a photograph of an exterior
 sign) and several files are sliced fragments of a collage sheet. For every slug it names it is
 authoritative for the slots it fills; a slot whose value is `null` has no truthful photograph in
-that folder, and since A-L11 one of the folder's other images fills it rather than the slot
-standing empty. A slot **stays empty** — where the design renders its own placeholder — only when a
-folder holds fewer images than the design has slots, which no seeded hospital does today.
+that folder, and since A-L11 one of the folder's other SINGLE photographs fills it rather than the
+slot standing empty. A slot **stays empty** — where the design renders its own placeholder — in two
+cases: a folder holding fewer images than the design has slots (which no seeded hospital does), and
+a folder whose remaining images are all multi-panel sheets. **A composite never occupies one of the
+six captioned slots, even when that leaves the slot empty** (Task SD1 fix round 1, C1): a sheet of
+six pictures is not "the reception area", and absent beats faked. Twenty-one slots across seven of
+the eleven Dallas hospitals are empty for that reason today. Nothing is dropped — every sheet still
+takes a position past the sixth, where amendment A15.3 renders it as a tile of its own.
 
 `scripts/prepare_photos.py` writes `seeds/hospitals/photos/<slug>/<k>.webp` — **the number is the
 position**, so positions 1-6 are the design's slots (`p.photos[i]` still fills slot `i`) and 7, 8, …
@@ -254,7 +259,7 @@ no bytes — it records the relative paths positionally, with a JSON `null` for 
 there, and the API sends `null` rather than a URL for it, so nothing requests it). Re-run
 `poetry run python scripts/prepare_photos.py` only when the source folders or the curation change;
 it needs Pillow (a dev dependency), prints `N files, M empty slots, K beyond the design's six
-slots`, and is never part of a deploy.
+slots` (312, 21 and 159 today), and is never part of a deploy.
 A curation entry that names a hospital the seed file does not, lists slots that are not the
 practice type's list in order, names a file the folder does not hold, or uses one file for two
 slots stops the run with exit 2 before anything is written.
@@ -309,7 +314,7 @@ railway status                                   # MUST print Project: Practice 
 DATABASE_URL="$(railway variable list --service PostGIS --environment QA --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["DATABASE_URL"])')" \
 ENVIRONMENT=qa poetry run python scripts/seed_listings.py   # the PostGIS service's DATABASE_URL is its PUBLIC url; a VAR=… prefix keeps it out of argv
 # first run:  "[seed] inserted 29, updated 0, removed 0, skipped 0 seller-owned" then "[seed] done - 29 listings"
-# a re-run:   "inserted 0, updated 18, removed N, skipped S" — N being the seed rows the file no longer
+# a re-run:   "inserted 0, updated 29, removed N, skipped S" — N being the seed rows the file no longer
 #             carries, which every import deletes; the existing rows keep their ids.
 ```
 

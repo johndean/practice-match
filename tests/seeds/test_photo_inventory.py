@@ -15,7 +15,8 @@ CURATION = PHOTOS / "curation.json"
 # Deliberately BELOW what the per-file ceiling would allow (312 x 250 KB is 76 MB): the committed
 # set is 13.7 MB since Task SD1 (312 files — 195 for John's eighteen of 2026-09-06, where A-L10
 # kept 73 and A-L9 108, and 117 of the 119 in his eleven Dallas folders), so 24 MB stays a real
-# guard against a runaway rather than a restatement of MAX_BYTES.
+# guard against a runaway rather than a restatement of MAX_BYTES. FILES, not entries: since
+# C1 an entry may be an EMPTY captioned slot, which weighs nothing.
 TOTAL_CEILING_BYTES = 24 * 1024 * 1024
 MAX_BYTES = 250 * 1024
 # The design renders six CAPTIONED photo slots per practice (A-L9). Since A-L11 that is not a cap:
@@ -95,11 +96,14 @@ def test_a_curated_photograph_sits_at_its_slots_own_position() -> None:
             assert entry["file"] == expected, (slug, position, entry["file"])
 
 
-# Every photograph in John's eighteen source folders, counted by folder. A-L9 kept 108 of them
-# (six per hospital) and A-L10 kept 73; A-L11 keeps all 195. Pinned per hospital rather than as a
-# total, because the total is what hid the loss John found: `def_veterinary_hospital` went from 9
-# to 3 and the sum still looked plausible.
-PHOTOGRAPHS_PER_HOSPITAL = {
+# ENTRIES per hospital — one per POSITION the API serves, which for John's eighteen is one per
+# photograph and for the eleven is the photographs PLUS the captioned slots C1 leaves empty.
+# A-L9 kept 108 of the eighteen's (six per hospital) and A-L10 kept 73; A-L11 keeps all 195.
+# Pinned per hospital rather than as a total, because the total is what hid the loss John found:
+# `def_veterinary_hospital` went from 9 to 3 and the sum still looked plausible.
+# `PHOTOGRAPHS_PER_DALLAS_HOSPITAL` below pins the eleven's FILE counts separately, so an empty
+# slot appearing where a photograph should be cannot hide inside an unchanged entry count.
+ENTRIES_PER_HOSPITAL = {
     "1111_pet_hospital": 10,
     "123_route66": 10,
     "2222_pet_hospital": 12,
@@ -118,8 +122,24 @@ PHOTOGRAPHS_PER_HOSPITAL = {
     "stu_veterinary_specialist_center": 10,
     "vwx_veterinary_hospital": 10,
     "yz_rural_animal_hospital": 11,
-    # Task SD1: John's eleven Dallas folders, 119 images. `alpha` shows 10 of its 12 — TWO are
-    # refused, see `test_the_refused_photographs_are_nowhere_in_the_committed_tree`.
+    # Task SD1: John's eleven Dallas folders. The count is photographs PLUS empty captioned
+    # slots — six of Kilo's fifteen entries are its four empty slots and eleven photographs.
+    "alpha_dallas_veterinary_specialist_hospital": 13,
+    "beta_dallas_veterinary_hospital": 14,
+    "charlie_dallas_animal_hospital": 14,
+    "delta_dallas_animal_er_hospital": 13,
+    "echo_dallas_animal_hospital": 14,
+    "foxtrot_dallas_animal_hospital": 10,
+    "hotel_dallas_animal_hospital": 13,
+    "indigo_dallas_animal_hospital": 10,
+    "juliet_dallas_animal_hospital": 11,
+    "kilo_dallas_fort_worth_veterinary_hospital": 15,
+    "lima_dallas_fort_worth_veterinary_hospital": 11,
+}
+
+# The eleven's PHOTOGRAPHS, separately from their entries (C1). `alpha` shows 10 of the 12 its
+# folder holds — two are refused — and every other folder is complete.
+PHOTOGRAPHS_PER_DALLAS_HOSPITAL = {
     "alpha_dallas_veterinary_specialist_hospital": 10,
     "beta_dallas_veterinary_hospital": 11,
     "charlie_dallas_animal_hospital": 11,
@@ -140,11 +160,16 @@ def test_the_committed_set_is_every_photograph_john_supplied() -> None:
     A-L10's 73-of-108 is superseded: the photographs with no by-eye match to one of the six fixed
     captions were dropped, which is the failure this hotfix exists to end."""
     inv = inventory()
-    assert {slug: len(entries) for slug, entries in inv.items()} == PHOTOGRAPHS_PER_HOSPITAL
+    assert {slug: len(entries) for slug, entries in inv.items()} == ENTRIES_PER_HOSPITAL
+    assert {slug: len([e for e in inv[slug] if e["file"] is not None])
+            for slug in PHOTOGRAPHS_PER_DALLAS_HOSPITAL} == PHOTOGRAPHS_PER_DALLAS_HOSPITAL
     filled = [e for entries in inv.values() for e in entries if e["file"] is not None]
-    assert (len(filled), sum(len(e) for e in inv.values())) == (312, 312), "a photograph was dropped"
+    assert len(filled) == 312, "a photograph was dropped"
+    # 333 positions for 312 photographs: the 21 captioned slots C1 leaves empty on the eleven.
+    assert sum(len(e) for e in inv.values()) == 333
+    assert sum(1 for entries in inv.values() for e in entries if e["file"] is None) == 21
     beyond = [e for entries in inv.values() for e in entries if e["slot"] is None]
-    assert len(beyond) == 138, "the photographs past the design's six slots (A15.3 renders each)"
+    assert len(beyond) == 159, "the photographs past the design's six slots (A15.3 renders each)"
 
 
 def test_the_inventory_names_no_hospital_that_is_not_seeded() -> None:
@@ -258,18 +283,23 @@ def test_the_descriptions_file_names_the_eleven_and_nobody_else() -> None:
 
 
 def test_every_photograph_in_the_eleven_folders_is_accounted_for() -> None:
-    """119 supplied, 118 encoded, 1 refused — and each of the 119 is named here, so a
-    photograph cannot go missing between the folder and the tree without this failing."""
+    """Every one of the 119 John supplied is NAMED here — encoded, or refused with a reason — so
+    a photograph cannot go missing between the folder and the tree without this failing.
+
+    The three numbers are DERIVED, not retyped (fix round 1, I2): supplied is the descriptions
+    file's own entry count, refused is how many of those carry a reason, and encoded is what the
+    inventory holds. A future refusal moves all three together and this docstring cannot go
+    stale, because it states no number at all."""
     described = descriptions()
-    assert sum(len(files) for files in described.values()) == DALLAS_SOURCE_IMAGES
+    supplied = sum(len(files) for files in described.values())
     refused = sorted((slug, name) for slug, files in described.items()
                      for name, entry in files.items() if entry.get("refused"))
+    encoded = sum(1 for slug in DALLAS_SLUGS for e in inventory()[slug] if e["file"] is not None)
+    assert supplied == DALLAS_SOURCE_IMAGES
     assert refused == sorted(REFUSED)
-    encoded = sum(len(entries) for slug, entries in inventory().items() if slug in DALLAS_SLUGS)
-    assert encoded == DESCRIPTIONS_SUPPLIED_MINUS_REFUSED == DALLAS_SOURCE_IMAGES - len(REFUSED)
-
-
-DESCRIPTIONS_SUPPLIED_MINUS_REFUSED = 117
+    # The identity, derived on both sides: everything supplied is either encoded or refused, and
+    # nothing is encoded that was not supplied.
+    assert encoded + len(refused) == supplied
 
 
 def test_the_refused_photographs_are_nowhere_in_the_committed_tree() -> None:
@@ -288,7 +318,14 @@ def test_the_refused_photographs_are_nowhere_in_the_committed_tree() -> None:
         assert isinstance(entry["refused"], str) and entry["refused"], name
     reasons = {name: str(descriptions()[slug][name]["refused"]) for slug, name in REFUSED}
     assert "COMPASSIONATE HEARTS" in reasons["alpha_dallas_11_individual_images.png"]
-    assert "4140 CEDAR SPRINGS ROAD" in reasons["alpha_dallas_05.png"]
+    monument = reasons["alpha_dallas_05.png"]
+    assert "4140 CEDAR SPRINGS ROAD" in monument
+    # I1: the reason must not over-claim. Refusing the monument sign did NOT take "4140" off
+    # Alpha's page — two of its committed photographs still show it — and the record has to say
+    # so, or the next reader concludes a false-address claim was removed when it was not.
+    assert "WHAT THIS DOES NOT CLAIM" in monument
+    assert "alpha_dallas_12_individual_images.png.png" in monument
+    assert "alpha_dallas_02.png" in monument
 
 
 def test_every_other_street_number_is_still_encoded() -> None:
@@ -298,8 +335,15 @@ def test_every_other_street_number_is_still_encoded() -> None:
     class if John wants it."""
     flagged = [(slug, str(e["source"])) for slug in sorted(DALLAS_SLUGS)
                for e in inventory()[slug] if "own_street_number" in e.get("flags", [])]
-    assert len(flagged) >= 8, flagged
+    # 12 since the fix-round-1 sweep: eleven the content verification reported, plus
+    # charlie_dallas_11.png, whose porch post carries a legible number the verification missed
+    # and which was found by looking at all 119 images at full resolution.
+    assert len(flagged) == 12, flagged
     assert "alpha_dallas_05.png" not in [name for _slug, name in flagged]
+    # I1: refusing Alpha's monument sign did NOT remove "4140" from Alpha's page, and the record
+    # must not imply it did. Two of Alpha's remaining photographs still show it, both flagged.
+    alpha = [name for slug, name in flagged if slug.startswith("alpha_")]
+    assert alpha == ["alpha_dallas_12_individual_images.png.png", "alpha_dallas_02.png"], alpha
 
 
 def test_every_dallas_photograph_is_captioned_by_its_own_description() -> None:
@@ -308,6 +352,8 @@ def test_every_dallas_photograph_is_captioned_by_its_own_description() -> None:
     described = descriptions()
     for slug in sorted(DALLAS_SLUGS):
         for entry in inventory()[slug]:
+            if entry["source"] is None:
+                continue   # a captioned slot C1 left empty holds no photograph to describe
             source = str(entry["source"])
             assert entry["caption"] == described[slug][source]["description"], (slug, source)
 
@@ -319,6 +365,8 @@ def test_every_flag_the_verification_raised_reached_the_inventory() -> None:
     described = descriptions()
     for slug in sorted(DALLAS_SLUGS):
         for entry in inventory()[slug]:
+            if entry["source"] is None:
+                continue
             expected = described[slug][str(entry["source"])].get("flags", [])
             assert entry.get("flags", []) == expected, (slug, entry["source"])
 
@@ -334,17 +382,48 @@ def test_a_photograph_nobody_flagged_carries_no_flags_key() -> None:
                 assert entry["flags"], (slug, entry["source"], "an empty flags list was written")
 
 
-def test_no_composite_is_the_hero_of_a_dallas_listing() -> None:
-    """Position 1 is `heroSrc` on the detail page and the Browse card. A multi-panel contact
-    sheet is not a hospital's front door, and most of these folders are sheets — the curation
-    refuses to place one in a slot and `positions` refuses to backfill one while a single
-    photograph is unused, so the two together have to leave a real photograph here."""
+def test_no_composite_occupies_any_of_the_designs_six_captioned_slots() -> None:
+    """C1, and the assertion whose absence let twenty-one of them drift in: position 1 alone was
+    pinned and positions 2 to 6 were not.
+
+    A sheet of six pictures is not "the reception area". The curation refuses to PLACE one in a
+    slot and `positions` refuses to BACKFILL one into a slot the curation left empty, even when
+    that leaves the slot null — so across all eleven hospitals and all six captioned positions
+    there must be none at all."""
     described = descriptions()
+    offenders = [
+        (slug, position, str(entry["slot"]), str(entry["source"]))
+        for slug in sorted(DALLAS_SLUGS)
+        for position, entry in enumerate(inventory()[slug][:SLOT_COUNT], start=1)
+        if entry["source"] is not None
+        and "composite" in described[slug][str(entry["source"])].get("flags", [])
+    ]
+    assert offenders == [], offenders
+
+
+def test_the_hero_of_every_dallas_listing_is_a_real_exterior_photograph() -> None:
+    """Position 1 is `heroSrc` on the detail page and the thumbnail source on the Browse card,
+    so it is the one captioned slot that may never be empty either — a listing whose hero is
+    null has no card. Every one of the eleven was curated an exterior at high or medium
+    confidence, so this holds by data and not by luck."""
     for slug in sorted(DALLAS_SLUGS):
         hero = inventory()[slug][0]
-        flags = described[slug][str(hero["source"])].get("flags", [])
-        assert "composite" not in flags, (slug, hero["source"])
         assert hero["slot"] == "exterior", (slug, hero["slot"])
+        assert hero["file"] is not None, (slug, "the hero slot is empty")
+
+
+def test_a_captioned_slot_left_empty_by_the_composite_rule_is_a_real_empty_slot() -> None:
+    """C1 creates empty captioned slots on seven of the eleven, and they must be A-L10's own
+    empty slot — the shape the design renders its placeholder for — rather than a third kind of
+    entry the API would have to learn about. Twenty-one of them, none past the sixth position."""
+    empty = [(slug, position, e)
+             for slug, entries in inventory().items()
+             for position, e in enumerate(entries, start=1) if e["file"] is None]
+    assert len(empty) == 21, [(s, p) for s, p, _ in empty]
+    for slug, position, entry in empty:
+        assert position <= SLOT_COUNT, (slug, position, "an empty entry past the captioned six")
+        assert entry == {"slot": entry["slot"], "file": None, "source": None, "caption": None}
+        assert slug in DALLAS_SLUGS, (slug, "one of John's eighteen grew an empty slot")
 
 
 def test_the_committed_descriptions_are_real_sentences_not_filenames() -> None:
@@ -358,3 +437,60 @@ def test_the_committed_descriptions_are_real_sentences_not_filenames() -> None:
             text = str(entry["description"])
             assert len(text.split()) >= 4, (slug, name, text)
             assert name.split(".")[0].replace("_", " ") not in text.lower(), (slug, name, text)
+
+
+# --- M2: index.json holds FOUR entry shapes, and one of them nothing writes any more ----------
+#
+# 1. LEGACY FILLED (195, John's eighteen): slot, file, source, caption, bytes, width, height,
+#    sha256 and `quality` — a field `scripts/prepare_photos.py::encode` stopped writing when the
+#    encoder moved to `app.media.encode` (spec 2026-09-08 D15). Their PIXELS are unchanged: a
+#    re-encode reproduces every sha256 byte for byte, which is how Task SD1 knew it was safe to
+#    add eleven folders with `--merge` instead of re-running all twenty-nine.
+# 2. DALLAS FILLED, UNFLAGGED (26): the same eight fields, no `quality`, no `flags`.
+# 3. DALLAS FILLED, FLAGGED (91): those eight plus `flags`.
+# 4. EMPTY CAPTIONED SLOT (21): slot, file, source, caption — all four but `slot` null (A-L10,
+#    and since C1 also every captioned slot whose folder had only sheets left).
+#
+# The hazard that makes this worth a test rather than a comment: a full run without `--merge`
+# would rewrite all twenty-nine slugs from the CURRENT encoder, and would therefore silently
+# drop `quality` from those 195 entries. Nothing reads it, so nothing would fail — the diff
+# would just be 195 quiet deletions in a generated file, which is precisely the shape of change
+# nobody reviews. This test makes the hazard visible at the moment it would be introduced.
+
+LEGACY_ONLY_KEYS = frozenset({"quality"})
+
+
+def test_a_full_re_run_would_drop_a_key_the_committed_entries_still_carry() -> None:
+    """Not a defect to fix — `quality` is dead and the eighteen's pixels are byte-identical — but
+    a fact the next operator must be told BEFORE they type `prepare_photos.py` with no `--slugs`.
+    If this ever fails because the set is empty, the hazard is gone and the whole block above
+    (and `--merge`'s reason for existing) can go with it."""
+    # What the pipeline writes today. Not asserted against the pipeline here — this module reads
+    # only committed files, by design (see its docstring: no source folders, no Pillow) — but
+    # pinned against it by `tests/scripts/test_prepare_photos.py::
+    # test_the_inventory_records_a_matching_sha256_and_dimensions`, which builds a real entry.
+    written = {"file", "source", "caption", "bytes", "width", "height", "sha256", "slot", "flags"}
+    committed = {key for entries in inventory().values() for e in entries for key in e}
+    stale = committed - written
+    assert stale == LEGACY_ONLY_KEYS, (
+        f"index.json carries {sorted(stale)}, which a full run of prepare_photos would drop; "
+        "re-run with --merge, or accept the deletion deliberately"
+    )
+    legacy = [e for entries in inventory().values() for e in entries if "quality" in e]
+    assert len(legacy) == 195, "the legacy shape is John's eighteen and nobody else"
+    assert {slug for slug, entries in inventory().items()
+            if any("quality" in e for e in entries)}.isdisjoint(DALLAS_SLUGS)
+
+
+def test_every_entry_is_one_of_the_four_shapes_and_nothing_else() -> None:
+    """Pinned as a closed set, both ways: a fifth shape appearing is either a pipeline change
+    nobody described or a hand-edit of a generated file, and both should stop here."""
+    base = {"slot", "file", "source", "caption"}
+    measured = base | {"bytes", "width", "height", "sha256"}
+    shapes = {frozenset(e) for entries in inventory().values() for e in entries}
+    assert shapes == {
+        frozenset(measured | {"quality"}),   # 1. legacy filled
+        frozenset(measured),                 # 2. Dallas filled, unflagged
+        frozenset(measured | {"flags"}),     # 3. Dallas filled, flagged
+        frozenset(base),                     # 4. empty captioned slot
+    }, sorted(sorted(shape) for shape in shapes)

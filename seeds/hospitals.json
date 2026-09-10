@@ -400,11 +400,11 @@
       "phone_is_fake": true, "address_is_real": true, "address_is_seed_anchor": true,
       "business_identity_is_fictional": true, "operating_hours_is_seed_data": true,
       "price": 1540000, "rev": 2260000, "docs": 4, "rooms": 6, "sqft": 4600, "bldg": "Leased",
-      "est": 2002, "listed_days_ago": 9,
+      "est": 2017, "listed_days_ago": 9,
       "note": "Demo listing seeded by the VIN Foundation.",
       "staff": "4 DVMs, 7 technicians, 5 support staff",
       "services": "Wellness, dentistry, soft-tissue surgery and in-house laboratory",
-      "facility": "Leased storefront on Fort Worth Avenue in Oak Cliff.",
+      "facility": "Converted house with a timber entrance porch on Fort Worth Avenue in Oak Cliff.",
       "ownership": "Sole proprietor (LLC)"
     },
     {
@@ -467,7 +467,7 @@
       "note": "Demo listing seeded by the VIN Foundation.",
       "staff": "8 DVMs, 15 technicians, 10 support staff",
       "services": "24-hour emergency, intensive care, CT and an on-site blood bank",
-      "facility": "Leased ground floor of an office building on North Central Expressway.",
+      "facility": "Detached single-storey building with its own car park and standing sign on North Central Expressway.",
       "ownership": "Four-doctor LLC"
     },
     {
@@ -530,7 +530,7 @@
       "note": "Demo listing seeded by the VIN Foundation.",
       "staff": "3 DVMs, 6 technicians, 4 support staff",
       "services": "Wellness, vaccination, dentistry and weekday evening appointments",
-      "facility": "Leased end unit in a Ferguson Road retail strip.",
+      "facility": "Standalone building with a decorative parapet on Ferguson Road.",
       "ownership": "Sole proprietor (S-corp)"
     },
     {
@@ -546,12 +546,12 @@
       "demo": true,
       "phone_is_fake": true, "address_is_real": true, "address_is_seed_anchor": true,
       "business_identity_is_fictional": true, "operating_hours_is_seed_data": true,
-      "price": 415000, "rev": 880000, "docs": 1, "rooms": 2, "sqft": 2150, "bldg": "Leased",
+      "price": 415000, "rev": 880000, "docs": 1, "rooms": 2, "sqft": 2150, "bldg": "Included",
       "est": 1989, "listed_days_ago": 33,
       "note": "Demo listing seeded by the VIN Foundation.",
       "staff": "1 DVM, 2 technicians, 1 support staff member",
       "services": "Wellness, vaccination and routine dentistry, by appointment",
-      "facility": "Leased suite in a South Buckner Boulevard strip centre.",
+      "facility": "Detached single-storey building on its own fenced plot off South Buckner Boulevard, with a roadside pole sign.",
       "ownership": "Sole proprietor"
     },
     {

@@ -1049,11 +1049,26 @@ def test_a_missing_descriptions_file_is_simply_no_descriptions(
 #     therefore DATA in the repository, not an operator deleting a file from a staging folder:
 #     the next person to run this reproduces the same set.
 #
-# (2) A COMPOSITE never fills one of the design's six captioned slots. A sheet of six pictures is
-#     not "the reception area". The curation already refuses to place one; this is the other half
-#     — the BACKFILL that fills an empty slot from the rest of the folder must reach for a single
-#     photograph first. With no composites declared (John's eighteen), the backfill is folder
-#     order exactly as before, which the characterisation case below pins.
+# (2) A COMPOSITE NEVER OCCUPIES ONE OF THE DESIGN'S SIX CAPTIONED SLOTS — not even when that
+#     leaves the slot EMPTY (controller ruling, SD1 fix round 1, C1: option (b), not (a)).
+#
+#     A sheet of six pictures, or a two-panel letterbox strip, is not "the reception area", and
+#     a square tile the design built for one photograph is a presentation it never contemplated
+#     for a contact sheet. Absent beats faked, which is the project's first rule about the
+#     approved design. So the rule has two halves and neither of them is "prefer a single":
+#     the curation refuses to PLACE a composite in a slot, and the BACKFILL that fills a slot
+#     the curation left empty draws only from the SINGLE photographs. When a slug runs out of
+#     singles, its remaining captioned slots STAY NULL and the design renders its own
+#     placeholder for them — which is what A-L10 built that path for.
+#
+#     Nothing is dropped: A-L11 is untouched. EVERY composite still reaches a position past the
+#     sixth, where amendment A15.3 gives it a tile of its own captioned with its own
+#     description. What changes is only WHICH position, never WHETHER.
+#
+#     With no composites declared — John's eighteen of 2026-09-06, which have no descriptions
+#     file at all — every pick is `spare[0]` and the backfill is folder order exactly as it has
+#     always been. The characterisation case below pins that, and their 195 committed entries
+#     are unmoved.
 
 
 def test_a_refused_photograph_is_never_encoded_and_the_reason_is_kept(
@@ -1086,8 +1101,9 @@ def test_load_descriptions_reads_a_refusal_and_tolerates_a_missing_description(
 
 def test_a_composite_never_backfills_one_of_the_designs_captioned_slots(tmp_path: Path) -> None:
     """Two images, six slots, the curation placing neither. The composite is FIRST in folder
-    order, so the old queue would have made it the exterior — the design's hero. It takes the
-    second slot instead, and the single photograph takes the first."""
+    order, so the plain queue would have made it the exterior — the design's hero. The single
+    takes the exterior instead, and the sheet does NOT slide into `lobby`: it takes a position
+    past the sixth (C1, option (b)) and `lobby` is left for the design's own placeholder."""
     root = tmp_path / "src"
     _folder(root, "cur", ["01_sheet.png", "02_single.png"])
     index = PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"},
@@ -1098,8 +1114,9 @@ def test_a_composite_never_backfills_one_of_the_designs_captioned_slots(tmp_path
                            "02_single.png": {"description": "Brick frontage",
                                              "flags": [], "refused": None}}})
     assert [(e["slot"], e["source"]) for e in index["cur"] if e["file"] is not None] == [
-        ("exterior", "02_single.png"), ("lobby", "01_sheet.png"),
+        ("exterior", "02_single.png"), (None, "01_sheet.png"),
     ]
+    assert [e["slot"] for e in index["cur"]] == [*PP.DEFAULT_SLOTS, None]
 
 
 def test_with_no_composites_declared_the_backfill_is_folder_order_exactly_as_before(
@@ -1116,9 +1133,13 @@ def test_with_no_composites_declared_the_backfill_is_folder_order_exactly_as_bef
     ]
 
 
-def test_a_composite_still_takes_a_position_past_the_designs_six_slots(tmp_path: Path) -> None:
-    """It is never DROPPED — A-L11 stands. It is only kept out of the six captioned slots, and
-    only while a single photograph is still unused."""
+def test_a_folder_of_nothing_but_composites_leaves_every_captioned_slot_empty(
+    tmp_path: Path
+) -> None:
+    """C1, the half option (a) got wrong. Seven contact sheets and no single photograph: the six
+    captioned slots stay NULL — the design renders its own placeholder in each — and all seven
+    sheets take positions of their own past the sixth, where A15.3 gives each a tile. Nothing is
+    dropped; everything is rendered; nothing is captioned by a slot that does not describe it."""
     root = tmp_path / "src"
     _folder(root, "cur", [f"0{n}_sheet.png" for n in range(1, 8)])
     index = PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"},
@@ -1126,8 +1147,48 @@ def test_a_composite_still_takes_a_position_past_the_designs_six_slots(tmp_path:
                        descriptions={"cur": {f"0{n}_sheet.png": {
                            "description": f"Sheet {n}", "flags": ["composite"], "refused": None}
                            for n in range(1, 8)}})
-    assert len([e for e in index["cur"] if e["file"] is not None]) == 7
-    assert [e["slot"] for e in index["cur"]] == [*PP.DEFAULT_SLOTS, None]
+    assert [e["slot"] for e in index["cur"]] == [*PP.DEFAULT_SLOTS, *[None] * 7]
+    assert [e["file"] for e in index["cur"][:6]] == [None] * 6, "a sheet took a captioned slot"
+    assert len([e for e in index["cur"] if e["file"] is not None]) == 7, "a sheet was dropped"
+    assert [e["source"] for e in index["cur"][6:]] == [f"0{n}_sheet.png" for n in range(1, 8)]
+
+
+def test_the_singles_fill_the_captioned_slots_and_the_composites_queue_behind_them(
+    tmp_path: Path
+) -> None:
+    """The mixed case, which is every one of John's eleven. Two singles and three sheets, six
+    slots: the two singles take the first two captioned slots in folder order, the other four
+    slots stay empty rather than taking a sheet, and the three sheets take positions 7, 8, 9."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_sheet.png", "02_single.png", "03_sheet.png", "04_single.png",
+                          "05_sheet.png"])
+    index = PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"},
+                       curation={"cur": dict.fromkeys(PP.DEFAULT_SLOTS)},
+                       descriptions={"cur": {
+                           name: {"description": name, "refused": None,
+                                  "flags": ["composite"] if "sheet" in name else []}
+                           for name in ("01_sheet.png", "02_single.png", "03_sheet.png",
+                                        "04_single.png", "05_sheet.png")}})
+    assert [(e["slot"], e["source"]) for e in index["cur"]] == [
+        ("exterior", "02_single.png"), ("lobby", "04_single.png"),
+        ("exam", None), ("treatment", None), ("surgery", None), ("kennel", None),
+        (None, "01_sheet.png"), (None, "03_sheet.png"), (None, "05_sheet.png"),
+    ]
+
+
+def test_an_empty_slot_left_by_the_composite_rule_carries_no_measured_fields(
+    tmp_path: Path
+) -> None:
+    """A slot a sheet was kept out of is the SAME empty slot A-L10 already defined: no bytes, no
+    caption, no source. It must not become a third shape of entry."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_sheet.png"])
+    index = PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"},
+                       curation={"cur": dict.fromkeys(PP.DEFAULT_SLOTS)},
+                       descriptions={"cur": {"01_sheet.png": {
+                           "description": "A sheet", "flags": ["composite"], "refused": None}}})
+    for entry in index["cur"][:6]:
+        assert entry == {"slot": entry["slot"], "file": None, "source": None, "caption": None}
 
 
 def test_a_description_entry_that_says_nothing_at_all_is_refused(tmp_path: Path) -> None:

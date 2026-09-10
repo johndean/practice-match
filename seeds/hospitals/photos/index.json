@@ -1328,9 +1328,27 @@
         "width": 1536
       },
       {
+        "caption": null,
+        "file": null,
+        "slot": "surgery",
+        "source": null
+      },
+      {
+        "caption": null,
+        "file": null,
+        "slot": "imaging",
+        "source": null
+      },
+      {
+        "caption": null,
+        "file": null,
+        "slot": "recovery",
+        "source": null
+      },
+      {
         "bytes": 44438,
         "caption": "Building facade with address number beside entrance monument sign",
-        "file": "4.webp",
+        "file": "7.webp",
         "flags": [
           "own_business_name",
           "own_street_number",
@@ -1338,41 +1356,41 @@
         ],
         "height": 368,
         "sha256": "73048fbc14ae5f0df6242ae24c97b1d13797976f6dc8c3f92673787c91ab5382",
-        "slot": "surgery",
+        "slot": null,
         "source": "alpha_dallas_02.png",
         "width": 856
       },
       {
         "bytes": 27398,
         "caption": "Entrance monument sign above a street lamp and trees",
-        "file": "5.webp",
+        "file": "8.webp",
         "flags": [
           "own_business_name",
           "composite"
         ],
         "height": 313,
         "sha256": "2fa5ac7ca2871e838956f09a3c566ab32dff2739a0c268d061a2755b98e38c10",
-        "slot": "imaging",
+        "slot": null,
         "source": "alpha_dallas_03.png",
         "width": 422
       },
       {
         "bytes": 22744,
         "caption": "Driveway pavement with tree canopy and distant skyscraper view",
-        "file": "6.webp",
+        "file": "9.webp",
         "flags": [
           "composite"
         ],
         "height": 313,
         "sha256": "f040b45d6c77ac9b3576bb4c116c207f51d9e9367e5dfbd097eea7b6c758cf15",
-        "slot": "recovery",
+        "slot": null,
         "source": "alpha_dallas_04.png",
         "width": 372
       },
       {
         "bytes": 24804,
         "caption": "Building corner signage beside downtown skyline street view",
-        "file": "7.webp",
+        "file": "10.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -1386,7 +1404,7 @@
       {
         "bytes": 36194,
         "caption": "Full building facade beside engraved dog artwork signage",
-        "file": "8.webp",
+        "file": "11.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -1400,7 +1418,7 @@
       {
         "bytes": 30222,
         "caption": "Sidewalk street view above reception desk with signage",
-        "file": "9.webp",
+        "file": "12.webp",
         "flags": [
           "own_business_name",
           "composite",
@@ -1415,7 +1433,7 @@
       {
         "bytes": 30374,
         "caption": "Stone wall, parked car, reception desk, and lobby art",
-        "file": "10.webp",
+        "file": "13.webp",
         "flags": [
           "composite",
           "vehicle_no_legible_plate"
@@ -1466,37 +1484,55 @@
         "width": 1536
       },
       {
+        "caption": null,
+        "file": null,
+        "slot": "surgery",
+        "source": null
+      },
+      {
+        "caption": null,
+        "file": null,
+        "slot": "imaging",
+        "source": null
+      },
+      {
+        "caption": null,
+        "file": null,
+        "slot": "recovery",
+        "source": null
+      },
+      {
         "bytes": 78896,
         "caption": "Downtown skyline banner beside entrance sign and landscaping",
-        "file": "4.webp",
+        "file": "7.webp",
         "flags": [
           "own_business_name",
           "composite"
         ],
         "height": 411,
         "sha256": "7363ccde5926134d6ca2a849029e7b3324bf3d84733254327896f81b98144576",
-        "slot": "surgery",
+        "slot": null,
         "source": "beta_dallas_02.png",
         "width": 909
       },
       {
         "bytes": 19848,
         "caption": "Entrance walkway and sidewalk beside illuminated hospital signage",
-        "file": "5.webp",
+        "file": "8.webp",
         "flags": [
           "own_business_name",
           "composite"
         ],
         "height": 288,
         "sha256": "984479b52bb1c1538bc780de88d6cb15025afa62f622cc2b2a936e68d9bff1a0",
-        "slot": "imaging",
+        "slot": null,
         "source": "beta_dallas_04.png",
         "width": 410
       },
       {
         "bytes": 41696,
         "caption": "Signage close-up above parking lot and entry handrail steps",
-        "file": "6.webp",
+        "file": "9.webp",
         "flags": [
           "own_business_name",
           "composite",
@@ -1504,14 +1540,14 @@
         ],
         "height": 288,
         "sha256": "bc7f66c7bfd26a0dd7988a652b332bf6f412f18b5567792206f7438e8a6b0b38",
-        "slot": "recovery",
+        "slot": null,
         "source": "beta_dallas_05.png",
         "width": 701
       },
       {
         "bytes": 13090,
         "caption": "Downtown skyline beside tree-framed building corner and small sign",
-        "file": "7.webp",
+        "file": "10.webp",
         "flags": [
           "composite"
         ],
@@ -1524,7 +1560,7 @@
       {
         "bytes": 42088,
         "caption": "Full exterior signage beside building corner and skyline view",
-        "file": "8.webp",
+        "file": "11.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -1538,7 +1574,7 @@
       {
         "bytes": 32612,
         "caption": "Street-level signage above reception desk with computer monitors",
-        "file": "9.webp",
+        "file": "12.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -1552,7 +1588,7 @@
       {
         "bytes": 33420,
         "caption": "Entrance area and monument sign above reception desk portraits",
-        "file": "10.webp",
+        "file": "13.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -1566,7 +1602,7 @@
       {
         "bytes": 48946,
         "caption": "Entrance steps, parking lot, waiting area, and services signage",
-        "file": "11.webp",
+        "file": "14.webp",
         "flags": [
           "composite"
         ],
@@ -1613,49 +1649,67 @@
         "width": 417
       },
       {
+        "caption": null,
+        "file": null,
+        "slot": "treatment",
+        "source": null
+      },
+      {
+        "caption": null,
+        "file": null,
+        "slot": "surgery",
+        "source": null
+      },
+      {
+        "caption": null,
+        "file": null,
+        "slot": "kennel",
+        "source": null
+      },
+      {
         "bytes": 36252,
         "caption": "Rooftop and gable wall with the downtown Dallas skyline behind",
-        "file": "4.webp",
+        "file": "7.webp",
         "flags": [
           "composite"
         ],
         "height": 461,
         "sha256": "2b37766d4094be6e179e47fce32cf6652b0a1d9fadf9a6f7949855d52ca5d4a8",
-        "slot": "treatment",
+        "slot": null,
         "source": "charlie_dallas_02.png",
         "width": 700
       },
       {
         "bytes": 37976,
         "caption": "Landscaping along the building beside a paved parking area",
-        "file": "5.webp",
+        "file": "8.webp",
         "flags": [
           "composite"
         ],
         "height": 268,
         "sha256": "b2551a56abe039a9d0a20136e398dc72528479815e0d41c7f74aec7ccc4f9f2c",
-        "slot": "surgery",
+        "slot": null,
         "source": "charlie_dallas_05.png",
         "width": 700
       },
       {
         "bytes": 12856,
         "caption": "Close-up of exterior wall signage reading Charlie Dallas Animal Hospital",
-        "file": "6.webp",
+        "file": "9.webp",
         "flags": [
           "own_business_name",
           "composite"
         ],
         "height": 245,
         "sha256": "fd3a1f2c6360f268558e7b8d13413f59dd5449954dca0053261decef6358b63b",
-        "slot": "kennel",
+        "slot": null,
         "source": "charlie_dallas_06.png",
         "width": 405
       },
       {
         "bytes": 30448,
         "caption": "Building side wall with utility wiring near a shaded gazebo",
-        "file": "7.webp",
+        "file": "10.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -1669,7 +1723,7 @@
       {
         "bytes": 39694,
         "caption": "Mature tree in front of the clinic with skyline behind",
-        "file": "8.webp",
+        "file": "11.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -1683,7 +1737,7 @@
       {
         "bytes": 28478,
         "caption": "Reception desk with Charlie Dallas Animal Hospital wall signage",
-        "file": "9.webp",
+        "file": "12.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -1697,7 +1751,7 @@
       {
         "bytes": 30386,
         "caption": "Collage of hallway art, a parking lot, and a waiting nook",
-        "file": "10.webp",
+        "file": "13.webp",
         "flags": [
           "composite"
         ],
@@ -1710,8 +1764,9 @@
       {
         "bytes": 56096,
         "caption": "Collage showing parking, a waiting bench, and an exam room",
-        "file": "11.webp",
+        "file": "14.webp",
         "flags": [
+          "own_street_number",
           "composite"
         ],
         "height": 541,
@@ -1867,36 +1922,48 @@
         "width": 1536
       },
       {
+        "caption": null,
+        "file": null,
+        "slot": "surgery",
+        "source": null
+      },
+      {
+        "caption": null,
+        "file": null,
+        "slot": "imaging",
+        "source": null
+      },
+      {
         "bytes": 42860,
         "caption": "Downtown Dallas skyline seen from the building's rooftop area",
-        "file": "5.webp",
+        "file": "7.webp",
         "flags": [
           "composite"
         ],
         "height": 483,
         "sha256": "6ac9a7dbfdc607156fda81aa29011e66e47e7f90547505ffdf7ce62c07d2b73d",
-        "slot": "surgery",
+        "slot": null,
         "source": "delta_dallas_02.png",
         "width": 735
       },
       {
         "bytes": 39140,
         "caption": "Accessible ramp beside a painted dog and cat mural",
-        "file": "6.webp",
+        "file": "8.webp",
         "flags": [
           "composite",
           "vehicle_no_legible_plate"
         ],
         "height": 276,
         "sha256": "86326170bee8addce32ee6b9ab8d2c967310e634f3ed1887e3285d514fb79b1c",
-        "slot": "imaging",
+        "slot": null,
         "source": "delta_dallas_05.png",
         "width": 735
       },
       {
         "bytes": 13428,
         "caption": "Building exterior corner beside a red hospital sign post",
-        "file": "7.webp",
+        "file": "9.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -1910,7 +1977,7 @@
       {
         "bytes": 24122,
         "caption": "Animal Emergency awning sign above the building entrance",
-        "file": "8.webp",
+        "file": "10.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -1924,7 +1991,7 @@
       {
         "bytes": 27918,
         "caption": "Reception desk with Delta Dallas Animal ER Hospital signage",
-        "file": "9.webp",
+        "file": "11.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -1938,7 +2005,7 @@
       {
         "bytes": 25826,
         "caption": "Collage of entrance signage, a waiting room, and supply counter",
-        "file": "10.webp",
+        "file": "12.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -1952,7 +2019,7 @@
       {
         "bytes": 49234,
         "caption": "Collage including a treatment room with surgical lighting equipment",
-        "file": "11.webp",
+        "file": "13.webp",
         "flags": [
           "composite",
           "vehicle_no_legible_plate"
@@ -2003,49 +2070,67 @@
         "width": 1536
       },
       {
+        "caption": null,
+        "file": null,
+        "slot": "treatment",
+        "source": null
+      },
+      {
+        "caption": null,
+        "file": null,
+        "slot": "surgery",
+        "source": null
+      },
+      {
+        "caption": null,
+        "file": null,
+        "slot": "kennel",
+        "source": null
+      },
+      {
         "bytes": 50802,
         "caption": "Rooftop view of the skyline beside a painted dog mural",
-        "file": "4.webp",
+        "file": "7.webp",
         "flags": [
           "composite"
         ],
         "height": 462,
         "sha256": "d69906aa5dd7cc69fae34547e395ad776de3090f8d399efbe8353ee2a04a7f7a",
-        "slot": "treatment",
+        "slot": null,
         "source": "echo_dallas_02.png",
         "width": 777
       },
       {
         "bytes": 19720,
         "caption": "Storefront entrance with a bench and cactus planters outside",
-        "file": "5.webp",
+        "file": "8.webp",
         "flags": [
           "composite",
           "vehicle_no_legible_plate"
         ],
         "height": 347,
         "sha256": "181829866b9817bdbddeee5c6a5e00b02e19748421949fa114374f9a7a7fa5c0",
-        "slot": "surgery",
+        "slot": null,
         "source": "echo_dallas_03.png",
         "width": 376
       },
       {
         "bytes": 19238,
         "caption": "Covered entrance with a wooden door and potted greenery",
-        "file": "6.webp",
+        "file": "9.webp",
         "flags": [
           "composite"
         ],
         "height": 347,
         "sha256": "0bef94cba7fdc17fba4f6a44a417f30e8bfb82bfcadec21e639ea65e7425ec5a",
-        "slot": "kennel",
+        "slot": null,
         "source": "echo_dallas_04.png",
         "width": 369
       },
       {
         "bytes": 43942,
         "caption": "Wall mural reading Echo Dallas Animal Hospital above a bench",
-        "file": "7.webp",
+        "file": "10.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -2059,7 +2144,7 @@
       {
         "bytes": 11654,
         "caption": "Roof eave detail beside tree branches seen through a window",
-        "file": "8.webp",
+        "file": "11.webp",
         "flags": [
           "composite"
         ],
@@ -2072,7 +2157,7 @@
       {
         "bytes": 13596,
         "caption": "Echo sign with the Dallas skyline behind the building",
-        "file": "9.webp",
+        "file": "12.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -2086,7 +2171,7 @@
       {
         "bytes": 30516,
         "caption": "Wall signage collage paired with interior pendant lighting",
-        "file": "10.webp",
+        "file": "13.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -2100,7 +2185,7 @@
       {
         "bytes": 33280,
         "caption": "Collage of porch seating, entrance walk, and framed dog art",
-        "file": "11.webp",
+        "file": "14.webp",
         "flags": [
           "composite"
         ],
@@ -2396,50 +2481,68 @@
         "width": 622
       },
       {
+        "caption": null,
+        "file": null,
+        "slot": "treatment",
+        "source": null
+      },
+      {
+        "caption": null,
+        "file": null,
+        "slot": "surgery",
+        "source": null
+      },
+      {
+        "caption": null,
+        "file": null,
+        "slot": "kennel",
+        "source": null
+      },
+      {
         "bytes": 55706,
         "caption": "Tree canopy and glimpse of covered courtyard",
-        "file": "4.webp",
+        "file": "7.webp",
         "flags": [
           "composite"
         ],
         "height": 255,
         "sha256": "6a3bdb3333d8c299c89f4b12ccad2ea13688b2994e0b821b723fcdf99707d493",
-        "slot": "treatment",
+        "slot": null,
         "source": "hotel_dallas_02.png",
         "width": 704
       },
       {
         "bytes": 45210,
         "caption": "Building exterior beside landscaped walkway path",
-        "file": "5.webp",
+        "file": "8.webp",
         "flags": [
           "own_business_name",
           "composite"
         ],
         "height": 216,
         "sha256": "c04ec4061a9e27107c70fa8938bfd2b3eeb80302b959b3739ce258b5ad060668",
-        "slot": "surgery",
+        "slot": null,
         "source": "hotel_dallas_03.png",
         "width": 704
       },
       {
         "bytes": 25248,
         "caption": "Entrance signage and side building with round emblem",
-        "file": "6.webp",
+        "file": "9.webp",
         "flags": [
           "own_business_name",
           "composite"
         ],
         "height": 139,
         "sha256": "80061b3265c809d2b02db0ccb531b59e7e4e13e5906e4f534ba20995dd832280",
-        "slot": "kennel",
+        "slot": null,
         "source": "hotel_dallas_04.png",
         "width": 704
       },
       {
         "bytes": 66592,
         "caption": "Entrance steps with outdoor signage and landscaping",
-        "file": "7.webp",
+        "file": "10.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -2453,7 +2556,7 @@
       {
         "bytes": 20696,
         "caption": "Reception nook with framed dog artwork",
-        "file": "8.webp",
+        "file": "11.webp",
         "flags": [
           "composite"
         ],
@@ -2466,7 +2569,7 @@
       {
         "bytes": 51156,
         "caption": "Lounge area with gallery wall and leather sofa",
-        "file": "9.webp",
+        "file": "12.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -2480,7 +2583,7 @@
       {
         "bytes": 250924,
         "caption": "Exterior view of building at dusk with signage",
-        "file": "10.webp",
+        "file": "13.webp",
         "flags": [
           "own_business_name",
           "own_street_number",
@@ -2881,63 +2984,87 @@
         "width": 400
       },
       {
+        "caption": null,
+        "file": null,
+        "slot": "exam",
+        "source": null
+      },
+      {
+        "caption": null,
+        "file": null,
+        "slot": "treatment",
+        "source": null
+      },
+      {
+        "caption": null,
+        "file": null,
+        "slot": "surgery",
+        "source": null
+      },
+      {
+        "caption": null,
+        "file": null,
+        "slot": "kennel",
+        "source": null
+      },
+      {
         "bytes": 79072,
         "caption": "Two views of building signage and a rear-parking notice",
-        "file": "3.webp",
+        "file": "7.webp",
         "flags": [
           "own_business_name",
           "composite"
         ],
         "height": 369,
         "sha256": "3e64e37c99e5f3399d829efa2c38bcf142b180819e22f99ec4956e0aff140471",
-        "slot": "exam",
+        "slot": null,
         "source": "kilo_dallas_02.png",
         "width": 1420
       },
       {
         "bytes": 22754,
         "caption": "Roadside placard and a cropped glimpse of sky and signage",
-        "file": "4.webp",
+        "file": "8.webp",
         "flags": [
           "own_business_name",
           "composite"
         ],
         "height": 290,
         "sha256": "edf5f75356d2bc3e0b8ae12b8aad5ec4be0eb39217396c0f498c30cb44283ff7",
-        "slot": "treatment",
+        "slot": null,
         "source": "kilo_dallas_03.png",
         "width": 400
       },
       {
         "bytes": 23166,
         "caption": "Porch entrance and two partial rooftop-against-sky views",
-        "file": "5.webp",
+        "file": "9.webp",
         "flags": [
           "composite"
         ],
         "height": 290,
         "sha256": "395c573a61f50b6a48bd38844ee030ee036882d275cc78878d46a099a3a3a7cf",
-        "slot": "surgery",
+        "slot": null,
         "source": "kilo_dallas_04.png",
         "width": 420
       },
       {
         "bytes": 64138,
         "caption": "Parking area beside the building with a directional sign",
-        "file": "6.webp",
+        "file": "10.webp",
         "flags": [
           "composite"
         ],
         "height": 290,
         "sha256": "df65242d9985a23350e41a60c937415a063f7ad4e708c42505d27e79aefd0636",
-        "slot": "kennel",
+        "slot": null,
         "source": "kilo_dallas_05.png",
         "width": 1214
       },
       {
         "bytes": 16264,
         "caption": "Roadside sign and a close-up of building wall lettering",
-        "file": "7.webp",
+        "file": "11.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -2951,7 +3078,7 @@
       {
         "bytes": 69888,
         "caption": "Building wall lettering and full facade with a parked vehicle",
-        "file": "8.webp",
+        "file": "12.webp",
         "flags": [
           "own_business_name",
           "composite",
@@ -2966,7 +3093,7 @@
       {
         "bytes": 55180,
         "caption": "Mailbox, waiting-room chairs and a hallway with the hospital sign",
-        "file": "9.webp",
+        "file": "13.webp",
         "flags": [
           "own_business_name",
           "own_street_number",
@@ -2981,7 +3108,7 @@
       {
         "bytes": 66094,
         "caption": "Grounds, front desk, treatment equipment and a kennel run",
-        "file": "10.webp",
+        "file": "14.webp",
         "flags": [
           "own_business_name",
           "composite"
@@ -2995,7 +3122,7 @@
       {
         "bytes": 173456,
         "caption": "Grounds, treatment rooms, office and exam-room signage",
-        "file": "11.webp",
+        "file": "15.webp",
         "flags": [
           "own_business_name",
           "composite",

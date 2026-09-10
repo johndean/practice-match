@@ -295,25 +295,42 @@ def positions(
     tile of its own, captioned with the supplier's own description.
 
     Nothing is dropped and nothing is duplicated: the spare queue is the folder minus what the
-    selection already placed, drained left to right. A slot is `None` only when that queue runs
-    out, i.e. when the folder holds fewer images than the design has slots.
+    selection already placed, drained left to right.
 
-    `composites` names the multi-panel sheets (Task SD1). A sheet of six pictures is not "the
-    reception area", so one never fills a CAPTIONED slot while a single photograph is still
-    unused — it is skipped over for the backfill and takes a position past the sixth instead,
-    where amendment A15.3 gives it a tile of its own. It is never dropped, and with every spare
-    a composite one still fills the slot rather than leaving it empty. With NONE declared — John's
-    eighteen of 2026-09-06 — every pick is `spare[0]`, which is the folder order this has always
-    used.
+    `composites` names the multi-panel sheets and contact sheets (Task SD1). **A COMPOSITE NEVER
+    OCCUPIES ONE OF THE DESIGN'S SIX CAPTIONED SLOTS — not even when that leaves the slot EMPTY**
+    (controller ruling, SD1 fix round 1, C1). A sheet of six pictures, or a two-panel letterbox
+    strip, is not "the reception area", and a square tile the design built for one photograph is
+    a presentation it never contemplated for a contact sheet: absent beats faked, which is this
+    project's first rule about the approved design. So the backfill above draws ONLY from the
+    single photographs, and it is not a preference — when a folder runs out of singles its
+    remaining captioned slots stay `None` and the design renders its own placeholder in each,
+    which is the path A-L10 built for exactly this.
+
+    A slot is therefore `None` in two cases now: the folder holds fewer images than the design
+    has slots (A-L10's original case), or every image the slots did not take is a composite.
+
+    **Nothing is dropped — A-L11 is untouched.** Every composite still becomes a position past
+    the sixth, where amendment A15.3 gives it a tile of its own captioned with its own
+    description. What this rule changes is only WHICH position a sheet takes, never WHETHER it
+    is rendered.
+
+    With NONE declared — John's eighteen of 2026-09-06, which have no descriptions file at all —
+    every pick is `spare[0]` and this is the folder order it has always been.
     """
     placed = slot_choices(files, slots, curated)
     taken = {src for _slot, src in placed if src is not None}
     spare = [src for src in files if src not in taken]
     filled: list[tuple[str | None, Path | None]] = []
     for slot, src in placed:
-        if src is None and spare:
-            src = next((s for s in spare if s.name not in composites), spare[0])
-            spare.remove(src)
+        if src is None:
+            # Only a SINGLE photograph may backfill a captioned slot. `None` when there is no
+            # single left, which leaves the slot empty rather than putting a sheet under a
+            # caption that cannot describe it.
+            single = next((s for s in spare if s.name not in composites), None)
+            if single is not None:
+                spare.remove(single)
+                src = single
         filled.append((slot, src))
     filled.extend((None, src) for src in spare)
     return filled
