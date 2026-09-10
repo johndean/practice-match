@@ -395,6 +395,26 @@ export const SCREENS: Screen[] = [
   // with — and addressed as a COMBOBOX, not a button, for A13's own reason (ARIA 1.2 supports
   // `aria-activedescendant` on `combobox`; `button` is not among the roles that carry it).
   { name: 'browse-filter-menu', steps: async (p) => { await browse(p); await p.getByRole('combobox', { name: 'Practice type' }).click(); await p.getByRole('listbox', { name: 'Practice type' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
+  // A26 Task F2 — the "More filters" popover, which had NO approved state of any kind before
+  // this: nothing in this file had ever clicked it, so the three `<select>`s under it appeared
+  // in no baseline PNG and in no DOM snapshot. That is why converting them moves not one
+  // committed pixel — and it is also the gap these two states close, because a ruled UI change
+  // with no oracle is a change nothing can regress against.
+  //
+  // TWO captures, and they are different things. The first is the popover with its three
+  // converted triggers CLOSED — the state the design has always had and nobody had ever
+  // photographed. The second is one of them OPEN, which is the state John's ruling is about: it
+  // is the proof that a panel inside a `z-index: 700` popover is now drawn by the page, where a
+  // native popup is an operating-system window and rendered above it. One capture per `.map()`
+  // body (the ruling's §4), so one of the three, not three.
+  //
+  // "Year established" is the FIRST of the three, so its panel opens over its two siblings
+  // rather than past the popover's own bottom edge. Addressed as a COMBOBOX for A13's own reason
+  // (ARIA 1.2 supports `aria-activedescendant` on `combobox`; `button` is not among the roles
+  // that carry it), and named by the caption the popover already shows — a `<label>` does not
+  // name a `<button>`, so A26.11 spells that caption again as the trigger's `aria-label`.
+  { name: 'browse-more-filters', steps: async (p) => { await browse(p); await click(p, 'More filters'); await p.getByRole('combobox', { name: 'Year established' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
+  { name: 'browse-more-filters-menu', steps: async (p) => { await browse(p); await click(p, 'More filters'); await p.getByRole('combobox', { name: 'Year established' }).click(); await p.getByRole('listbox', { name: 'Year established' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
 ];
 
 /**
