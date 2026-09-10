@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { MANIFEST_PATH, SNAPSHOT_DIR, UNCHANGED_SCREENS, hashBaselines } from './baseline-manifest.mjs';
+import { MANIFEST_PATH, SNAPSHOT_DIR, UNCHANGED_SCREENS, compare, hashBaselines, route } from './baseline-manifest.mjs';
 
 // Global Constraint (f) / spec D6 (option B, Task V13): the thirteen non-Browse screens. Local
 // design amendment A1 put V2's display typography back, so they hash to their V1-era V2 baselines
@@ -77,5 +77,47 @@ describe.skipIf(!canRun)(canRun ? 'unchanged-screen baseline manifest' : `unchan
 
   it('every frozen baseline still hashes to its recorded SHA-256', () => {
     expect(hashBaselines()).toEqual(manifest.screens);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// The script's OWN argument handling (2026-09-11). Task 1 of the neighbourhood-shading plan
+// found that `node tests/baseline-manifest.mjs --check` does not check: the module had no
+// argument parsing at all, so the flag was ignored, `writeManifest()` ran, and the process
+// exited 0. Every later step that ran `--check` and then the guard above was comparing the
+// manifest against the very PNGs it had just been rewritten from — always green, including
+// for a screen a code change had genuinely moved.
+//
+// The manifest is the leak detector for the thirteen screens the design must not move, and it
+// is regenerated ONLY to record a ruling. A flag that silently rewrites it is the one failure
+// this file exists to prevent, so the routing is pinned here: `--check` compares and refuses,
+// a write is explicit, and an argument nobody recognises is refused rather than falling
+// through to a write. Nothing about the ruled re-pin path changes.
+// ---------------------------------------------------------------------------------------
+describe('the manifest script refuses to rewrite the pin by accident', () => {
+  it('--check never writes', () => {
+    expect(route(['--check']).writes).toBe(false);
+  });
+
+  it('a bare invocation writes, which is the ruled re-pin path', () => {
+    expect(route([]).writes).toBe(true);
+  });
+
+  it('--write writes, so a re-pin can say so out loud', () => {
+    expect(route(['--write']).writes).toBe(true);
+  });
+
+  it('an argument nobody recognises is REFUSED, not treated as a write', () => {
+    expect(() => route(['--dry-run'])).toThrow(/unknown argument/i);
+    expect(() => route(['-c'])).toThrow(/unknown argument/i);
+  });
+
+  it('--check reports drift rather than hiding it', () => {
+    const clean = compare({ a: '1', b: '2' }, { a: '1', b: '2' });
+    expect(clean.moved).toEqual([]);
+    expect(clean.ok).toBe(true);
+    const drifted = compare({ a: '1', b: '2' }, { a: '1', b: 'CHANGED' });
+    expect(drifted.moved).toEqual(['b']);
+    expect(drifted.ok).toBe(false);
   });
 });
