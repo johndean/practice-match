@@ -584,54 +584,60 @@ def cmd_geocode(args: argparse.Namespace) -> int:
             print(f"[census_load] geocode refused: no such listing {args.listing}", file=sys.stderr)
             return 2
 
-        # Try to get the active tiger_cb vintage early, fail fast if missing
-        try:
-            with conn.cursor() as cur:
-                cur.execute("SELECT vintage FROM active_vintage WHERE dataset_key = 'tiger_cb'")
-                row = cur.fetchone()
-            if row is None:
-                print("[census_load] geocode refused: no active tiger_cb vintage — run census_load.py tiger and activate it", file=sys.stderr)
-                return 2
-        except psycopg2.Error as exc:
-            print(f"[census_load] database error: {type(exc).__name__}", file=sys.stderr)
-            return 3
+        # If there's nothing to geocode and we're not looking for a specific listing,
+        # we're done — no need to check vintage. This makes the command safely re-runnable
+        # during a live load (run repeatedly, skip completed listings, succeed when all done).
+        if not rows:
+            geocoded_count = 0
+        else:
+            # Try to get the active tiger_cb vintage early, fail fast if missing
+            try:
+                with conn.cursor() as cur:
+                    cur.execute("SELECT vintage FROM active_vintage WHERE dataset_key = 'tiger_cb'")
+                    row = cur.fetchone()
+                if row is None:
+                    print("[census_load] geocode refused: no active tiger_cb vintage — run census_load.py tiger and activate it", file=sys.stderr)
+                    return 2
+            except psycopg2.Error as exc:
+                print(f"[census_load] database error: {type(exc).__name__}", file=sys.stderr)
+                return 3
 
-        # Geocode each listing
-        geocoded_count = 0
-        import httpx
-        ua = f"PracticeMatch/{__import__('app.version', fromlist=['VERSION']).VERSION} (census-operator)"
-        with httpx.Client(headers={"User-Agent": ua}) as http:
-            gc = geocode.Geocoder(http, "https://geocoding.geo.census.gov/geocoder", ua)
-            for (listing_id,) in rows:
-                try:
-                    loc = geocode.resolve(conn, gc, listing_id)
-                    # Determine rung
-                    if loc.geo_precision == "rooftop":
-                        rung = "rooftop"
-                    elif loc.geo_precision == "tract":
-                        rung = "tract"
-                    elif loc.geo_precision == "zcta":
-                        rung = "zcta"
-                    elif loc.geo_precision == "place":
-                        rung = "place"
-                    elif loc.geo_precision == "county":
-                        rung = "county"
-                    else:
-                        rung = loc.geo_precision
-                    # Check if geocode_review was written (below rooftop)
-                    with conn.cursor() as cur:
-                        cur.execute("SELECT 1 FROM geocode_review WHERE listing_id = %s", (listing_id,))
-                        has_review = cur.fetchone() is not None
-                    review_str = "review row written" if has_review else "no review needed"
-                    print(f"  {listing_id}: {rung} ({review_str})")
-                    geocoded_count += 1
-                    # Build catchment and materialize
-                    geo_vintage = materialize.active_geo_vintage(conn)
-                    catchment.build(conn, listing_id, geo_vintage)
-                    materialize.materialize_listing(conn, redis, listing_id)
-                except geocode.GeocodeFailed as exc:
-                    print(f"  {listing_id}: geocoding failed: {exc}", file=sys.stderr)
-                    return 5
+            # Geocode each listing
+            geocoded_count = 0
+            import httpx
+            ua = f"PracticeMatch/{__import__('app.version', fromlist=['VERSION']).VERSION} (census-operator)"
+            with httpx.Client(headers={"User-Agent": ua}) as http:
+                gc = geocode.Geocoder(http, "https://geocoding.geo.census.gov/geocoder", ua)
+                for (listing_id,) in rows:
+                    try:
+                        loc = geocode.resolve(conn, gc, listing_id)
+                        # Determine rung
+                        if loc.geo_precision == "rooftop":
+                            rung = "rooftop"
+                        elif loc.geo_precision == "tract":
+                            rung = "tract"
+                        elif loc.geo_precision == "zcta":
+                            rung = "zcta"
+                        elif loc.geo_precision == "place":
+                            rung = "place"
+                        elif loc.geo_precision == "county":
+                            rung = "county"
+                        else:
+                            rung = loc.geo_precision
+                        # Check if geocode_review was written (below rooftop)
+                        with conn.cursor() as cur:
+                            cur.execute("SELECT 1 FROM geocode_review WHERE listing_id = %s", (listing_id,))
+                            has_review = cur.fetchone() is not None
+                        review_str = "review row written" if has_review else "no review needed"
+                        print(f"  {listing_id}: {rung} ({review_str})")
+                        geocoded_count += 1
+                        # Build catchment and materialize
+                        geo_vintage = materialize.active_geo_vintage(conn)
+                        catchment.build(conn, listing_id, geo_vintage)
+                        materialize.materialize_listing(conn, redis, listing_id)
+                    except geocode.GeocodeFailed as exc:
+                        print(f"  {listing_id}: geocoding failed: {exc}", file=sys.stderr)
+                        return 5
 
         print(f"[census_load] {geocoded_count} listing(s) geocoded")
         return 0
