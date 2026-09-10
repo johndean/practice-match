@@ -60,7 +60,14 @@ describe('logic.js is the design script block, ported verbatim', () => {
     // FOUR normalisations, and all four are now listed in the Browse V3 spec §3 (review M8):
     // the HEADER and FOOTER above, the asset rewrite, and `\n+$` → `\n` — the design's script
     // block ends with two newlines and the ported file with one.
-    const body = designScript(readFileSync(DC, 'utf8')).replace(/"assets\//g, '"/assets/').replace(/\n+$/, '\n');
+    // A21.3d is a fifth allowed difference: the detail's Growth row uses logic.js-only code to
+    // split the API's vintage-carrying string at " since ", extracting the percentage for the
+    // value and the year for the sub-line, instead of hard-coding both from the design.
+    let body = designScript(readFileSync(DC, 'utf8')).replace(/"assets\//g, '"/assets/').replace(/\n+$/, '\n');
+    body = body.replace(
+      '{ k: "Growth", v: (p.growth || "").replace(" since 2015", ""), sub: "Since 2015" }',
+      '{ k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); return g.length > 1 ? "Since " + g[1] : ""; })() }'
+    );
     expect(readFileSync(join(ROOT, 'src/logic.js'), 'utf8')).toBe(HEADER + body + FOOTER);
   });
 
@@ -74,7 +81,7 @@ describe('logic.js is the design script block, ported verbatim', () => {
     // too. Pinned as a fact, not a defect — it goes when the design reference drops it.
     expect((logic.match(/isBrowse/g) ?? []).length, 'isBrowse should appear exactly once — the reference\'s vestigial `isBrowse: false`').toBe(1);
     expect(logic).toContain('isBrowse: false');
-    for (const present of ['sheetOpen', 'openSheet', 'closeSheet', 'layerLabel', 'datasetRowStyle', 'layerPalette', 'Average Practice Revenue', 'Avg. revenue per practice']) {
+    for (const present of ['sheetOpen', 'openSheet', 'closeSheet', 'layerLabel', 'datasetRowStyle', 'layerPalette', 'Average Practice Payroll', 'Avg. payroll per practice']) {
       expect(logic, `logic.js is missing ${present}`).toContain(present);
     }
   });

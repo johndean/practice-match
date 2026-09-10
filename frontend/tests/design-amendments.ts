@@ -3117,6 +3117,6 @@ export function amendments(): Amendment[] {
     // A21.2 and A21.2b are REVERTED (amendment A-C29, 2026-09-10): the figure is payroll, not revenue;
     // the design's labels were correct, and the metric is merely misnamed in the database.
     // A21.3 is completed (A-C29) to remove hard-coded years from three places in the design template;
-    // A21.3d (the detail's Growth row) is applied separately after gen:app regenerates logic.js.
+    // A21.3d (the detail's Growth row) is a manual edit to logic.js only: it splits the API's string.
     A21_1, A21_1b, A21_3a, A21_3b, A21_3c];
 }
