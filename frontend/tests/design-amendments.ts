@@ -3520,7 +3520,7 @@ const A25_6: Amendment = {
  *  above every in-page `z-index`. No CSS reaches it; only replacing the element does.
  *
  *  The one thing A13 did not have to solve is multiplicity — it converted ONE control. A26's five
- *  (eight, once Task F2 adds the three inside the popover) are not five menus: they are ONE
+ *  (eight, with the three inside the popover Task F2 added) are not eight menus: they are TWO
  *  `.map()` body, so the family is one state slot, one open path, one set of closures and five
  *  instances. `Object.assign` semantics mean writing `fMenu` closes whichever sibling was open,
  *  so the invariant INSIDE the family is structural and there is nothing to forget; only the
@@ -3536,7 +3536,7 @@ const A25_6: Amendment = {
  *  says that `null` exists to prevent.
  *
  *  Task F1 converts the five on the toolbar (A26.10). The three inside the "More filters"
- *  popover are Task F2 and are still `<select>`s here.
+ *  popover were converted by Task F2, so the family's two `.map()` bodies are both done.
  */
 const A26 = {
   date: '2026-09-11',

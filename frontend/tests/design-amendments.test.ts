@@ -779,9 +779,10 @@ describe('local design amendments (spec D15)', () => {
   // idiom rather than authoring a second one: trigger + `role="listbox"` panel composed from the
   // Market data card's layer menu, anchored with the "More filters" popover's own pair.
   //
-  // Task F1 converts the FIVE toolbar filters (one `.map()` body, five instances, one state
-  // slot). The three inside the "More filters" popover are Task F2 and are still `<select>`s
-  // here, which is why the scope count below reads 3 and not yet the family's final 2.
+  // Task F1 converted the FIVE toolbar filters (one `.map()` body, five instances, one state
+  // slot); Task F2 converted the three inside the "More filters" popover (a second `.map()`
+  // body). Both are done, which is why the scope count below reads the family's final 2 — the
+  // results-rail sort control and the wizard's field loop, both ruled OUT and both left native.
   it('A26 introduces no new styling — every value is A13\'s, which is the design\'s own', () => {
     const amended = readFileSync(AMENDED, 'utf8');
     for (const decl of [
