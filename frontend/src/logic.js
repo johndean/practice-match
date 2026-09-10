@@ -161,7 +161,7 @@ const LAYER_META = {
   },
   growth: {
     title: "Population growth",
-    sub: "Change since 2015 · ACS population estimates",
+    sub: "Change · ACS population estimates",
     updated: "Updated: ACS 2023 release (Jan 2025)",
     source: "U.S. Census ACS population estimates, 2015–2023 · community level",
     means: "Growth describes how fast an area's population changed. Past growth is not a forecast.",
@@ -477,7 +477,7 @@ class Component extends DCLogic {
       { n: "1", title: "Demographics", blurb: "Population, households, income", src: "Census ACS 5-year", metric: "income", caption: "Median household income", layerName: "Median Household Income" },
       { n: "2", title: "Pet Ownership (Est.)", blurb: "Estimated pet households", src: "derived from ACS households", metric: "pets", caption: "Est. pet households", layerName: "Pet Ownership (est.)" },
       { n: "3", title: "Veterinary Competition", blurb: "Veterinary establishments", src: "Census CBP, NAICS 541940", metric: "vets", caption: "Number of vet establishments", layerName: "Veterinary Competition" },
-      { n: "4", title: "Population Growth", blurb: "Change since 2015", src: "Census ACS population estimates", metric: "growth", caption: "Growth since 2015", layerName: "Population Growth" },
+      { n: "4", title: "Population Growth", blurb: "Change", src: "Census ACS population estimates", metric: "growth", caption: "Growth", layerName: "Population Growth" },
       { n: "5", title: "Households", blurb: "Occupied housing units", src: "Census ACS 5-year", metric: "households", caption: "Total households", layerName: "Households" },
       { n: "6", title: "Avg. Practice Payroll", blurb: "Typical practice size proxy", help: "Total industry payroll ÷ number of practices — a proxy for how large the typical practice is. Not revenue, and not any one practice's figures.", src: "Census CBP payroll ÷ establishments", metric: "econ", caption: "Avg. payroll per practice", layerName: "Average Practice Profile" }
     ].map((c) => Object.assign({}, c, { on: enabled(c.metric) }));
@@ -1501,7 +1501,7 @@ class Component extends DCLogic {
       noDemo: p.id === "p8" || p.pop == null,
       demo: [
         { k: "Population", v: p.pop, sub: "Community, 2023" },
-        { k: "Growth", v: (p.growth || "").replace(" since 2015", ""), sub: "Since 2015" },
+        { k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); return g.length > 1 ? "Since " + g[1] : ""; })() },
         { k: "Median income", v: p.income, sub: "Household, 2023" },
         { k: "Households", v: (p.hh || "").replace(" households", ""), sub: "In the community" }
       ],

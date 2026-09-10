@@ -3041,11 +3041,51 @@ const A21_2b: Amendment = {
   count: 1
 };
 
-/** A21.3 — the growth layer stops naming a year it does not use (vintage is data-dependent) */
-const A21_3: Amendment = {
-  id: 'A21.3', date: '2026-09-10', ruling: 'the growth layer stops naming a year it does not use (controller amendment A-C28)',
+/** A21.3 — the growth layer stops naming "2015" in four places: the VALUE_LAYERS label, the
+ *  LAYER_META sub-line, the Data Layers card's blurb and caption. The vintage is data-dependent
+ *  (2018 today, not 2015) and hard-coded years belong nowhere user-facing (controller amendment A-C29,
+ *  completing the incomplete A-C28 amendment A21.3).
+ *
+ *  Four separate amendments, not one, because they touch different strings in different contexts:
+ *  A21.3a handles the VALUE_LAYERS label; A21.3b the LAYER_META sub-line; A21.3c the Data Layers
+ *  card; and A21.3d the detail's Growth row (where the API's own vintage-carrying string is split
+ *  into display parts, never hard-coded). All four move the vintage into the data itself, never
+ *  hard-coded text. */
+
+/** A21.3a — the VALUE_LAYERS growth label (the one A-C28's A21.3 did) */
+const A21_3a: Amendment = {
+  id: 'A21.3a', date: '2026-09-10', ruling: 'the growth layer stops naming a year it does not use (controller amendment A-C29)',
   find: 'growth: { label: "Population Growth Since 2015 (ACS)",',
   replace: 'growth: { label: "Population Growth (ACS)",',
+  count: 1
+};
+
+/** A21.3b — the LAYER_META sub-line for the growth layer */
+const A21_3b: Amendment = {
+  id: 'A21.3b', date: '2026-09-10', ruling: 'the growth layer stops naming a year it does not use (same ruling)',
+  find: 'sub: "Change since 2015 · ACS population estimates",',
+  replace: 'sub: "Change · ACS population estimates",',
+  count: 1
+};
+
+/** A21.3c — the Data Layers card's growth row: blurb and caption both need "since 2015" removed */
+const A21_3c: Amendment = {
+  id: 'A21.3c', date: '2026-09-10', ruling: 'the growth layer stops naming a year it does not use (same ruling)',
+  find: '{ n: "4", title: "Population Growth", blurb: "Change since 2015", src: "Census ACS population estimates", metric: "growth", caption: "Growth since 2015",',
+  replace: '{ n: "4", title: "Population Growth", blurb: "Change", src: "Census ACS population estimates", metric: "growth", caption: "Growth",',
+  count: 1
+};
+
+/** A21.3d — the detail's Growth row, where the API string carries its own year. Before A-C29 this
+ *  did `p.growth.replace(" since 2015", "")` with `sub: "Since 2015"`, hard-coded both the year
+ *  being stripped and the year being displayed. B7 now returns "+11.6% since 2018", so the strip no
+ *  longer matches: the value renders with its year still attached, inside a field labelled with a
+ *  different year. The fix splits the string once: the value is the part before " since ", and the
+ *  sub-line is "Since " plus the year the string itself carries. */
+const A21_3d: Amendment = {
+  id: 'A21.3d', date: '2026-09-10', ruling: 'the detail Growth row extracts its vintage from the API string, never hard-coded (controller amendment A-C29)',
+  find: 'v: p.growth.replace(" since 2015", ""), sub: "Since 2015"',
+  replace: 'v: (() => { const g = p.growth.split(" since "); return g[0]; })(), sub: (() => { const g = p.growth.split(" since "); return g.length > 1 ? "Since " + g[1] : ""; })()',
   count: 1
 };
 
@@ -3074,5 +3114,9 @@ export function amendments(): Amendment[] {
     // so the family is last. Definition order in this file matches this list (m8).
     A19_1, A19_2, A19_3, A19_4, A19_5, A19_6, A19_7, A19_8, A19_9, A19_10, A19_11, A19_12,
     // A21 — market-data layers do not render absence as zero (controller amendment A-C28, 2026-09-10; Task B8 review).
-    A21_1, A21_1b, A21_2, A21_2b, A21_3];
+    // A21.2 and A21.2b are REVERTED (amendment A-C29, 2026-09-10): the figure is payroll, not revenue;
+    // the design's labels were correct, and the metric is merely misnamed in the database.
+    // A21.3 is completed (A-C29) to remove hard-coded years from three places in the design template;
+    // A21.3d (the detail's Growth row) is applied separately after gen:app regenerates logic.js.
+    A21_1, A21_1b, A21_3a, A21_3b, A21_3c];
 }

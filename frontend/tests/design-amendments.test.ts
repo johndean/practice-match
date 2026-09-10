@@ -203,14 +203,15 @@ describe('local design amendments (spec D15)', () => {
     // match `go()`'s shape once A16.20a has already split it (see the amendment's own comment).
     'A19.1', 'A19.2', 'A19.3', 'A19.4', 'A19.5', 'A19.6', 'A19.7', 'A19.8', 'A19.9', 'A19.10', 'A19.11', 'A19.12',
     // A21 — the Browse map's veterinarian and economic layers read real API data without
-    // rendering missing data as zero (controller amendment A-C28, 2026-09-10). Five literal
-    // script edits: A21.1 removes the `|| 0` defaults so missing census figures become undefined
-    // in communities(); A21.1b completes the fix at the assembly point, skipping entries in
-    // marketVals when the raw value is null/undefined so they never reach the renderer; A21.2
-    // corrects the economic layer's label from "Payroll" to "Revenue" to match the API contract;
-    // A21.2b updates the menu radio button label to "Revenue" for consistency; A21.3 removes the
-    // hardcoded year from the growth layer's label, making it vintage-neutral.
-    'A21.1', 'A21.1b', 'A21.2', 'A21.2b', 'A21.3',
+    // rendering missing data as zero (controller amendment A-C28, 2026-09-10, controller amendment
+    // A-C29, 2026-09-10). Two literal script edits plus three template edits: A21.1 removes the
+    // `|| 0` defaults so missing census figures become undefined in communities(); A21.1b completes
+    // the fix at the assembly point, skipping entries in marketVals when the raw value is
+    // null/undefined so they never reach the renderer. A21.2 and A21.2b (reverted by A-C29: the
+    // figure is payroll, not revenue; the original labels were correct) are superseded by A21.3a/b/c
+    // which remove hardcoded years from three places (VALUE_LAYERS label, LAYER_META sub-line, and
+    // the Data Layers card row), making the vintage-dependent display match the data.
+    'A21.1', 'A21.1b', 'A21.3a', 'A21.3b', 'A21.3c',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {

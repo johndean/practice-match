@@ -302,7 +302,7 @@ only a new source for the same seven:
 | `income` | `communities[].income` | ACS median household income. |
 | `growth` | `communities[].growth` | Derived: two ACS vintages compared. Vintage statement: `ACS 2014–2018 → 2019–2023`. Gated on `acs5_prior` (see the licence-gates table above), not merely on the `acs5` stamp the row carries. |
 | `pets` | `communities[].pets` | Derived: households × 0.57, a national placeholder rate — not a licensed pet-ownership figure (that dataset is `blocked`; see `CLAUDE.md`). |
-| `econ` | `communities[].econ` | CBP payroll ÷ establishments, **county** level, already in **dollars** (not thousands — `ECON_K`'s own `×1000` scaling is no longer needed once real data replaces the fixture). |
+| `econ` | `communities[].econ` | Payroll per establishment in thousands of dollars (`CBP payroll ÷ establishments`), **county** level. The database column is historically named `revenue_per_establishment`, but the name is wrong; the figure is payroll, not revenue. |
 | `vets` | `communities[].vets` | The `establishments` figure: ZBP ZIP-code count aggregated to the community, or the labelled county-CBP fallback when ZBP has nothing usable. |
 
 `GET /api/listings/{id}/market`'s `metrics.*.value` carries the same underlying numbers,
