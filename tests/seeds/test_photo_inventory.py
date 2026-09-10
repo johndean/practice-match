@@ -12,10 +12,11 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 PHOTOS = ROOT / "seeds" / "hospitals" / "photos"
 INDEX = PHOTOS / "index.json"
 CURATION = PHOTOS / "curation.json"
-# Deliberately BELOW what the per-file ceiling would allow (195 x 250 KB is 48 MB): the committed
-# set is 7.4 MB since A-L11 (195 files — every photograph John supplied — where A-L10 kept 73 and
-# A-L9 108), so 18 MB stays a real guard against a runaway rather than a restatement of MAX_BYTES.
-TOTAL_CEILING_BYTES = 18 * 1024 * 1024
+# Deliberately BELOW what the per-file ceiling would allow (313 x 250 KB is 76 MB): the committed
+# set is 13.8 MB since Task SD1 (313 files — 195 for John's eighteen of 2026-09-06, where A-L10
+# kept 73 and A-L9 108, and 118 of the 119 in his eleven Dallas folders), so 24 MB stays a real
+# guard against a runaway rather than a restatement of MAX_BYTES.
+TOTAL_CEILING_BYTES = 24 * 1024 * 1024
 MAX_BYTES = 250 * 1024
 # The design renders six CAPTIONED photo slots per practice (A-L9). Since A-L11 that is not a cap:
 # amendment A15.3 renders a tile of its own for every photograph beyond the sixth.
@@ -117,6 +118,19 @@ PHOTOGRAPHS_PER_HOSPITAL = {
     "stu_veterinary_specialist_center": 10,
     "vwx_veterinary_hospital": 10,
     "yz_rural_animal_hospital": 11,
+    # Task SD1: John's eleven Dallas folders, 119 images. `alpha` shows 11 of its 12 — the
+    # twelfth is refused, see `test_the_refused_photograph_is_nowhere_in_the_committed_tree`.
+    "alpha_dallas_veterinary_specialist_hospital": 11,
+    "beta_dallas_veterinary_hospital": 11,
+    "charlie_dallas_animal_hospital": 11,
+    "delta_dallas_animal_er_hospital": 11,
+    "echo_dallas_animal_hospital": 11,
+    "foxtrot_dallas_animal_hospital": 10,
+    "hotel_dallas_animal_hospital": 10,
+    "indigo_dallas_animal_hospital": 10,
+    "juliet_dallas_animal_hospital": 11,
+    "kilo_dallas_fort_worth_veterinary_hospital": 11,
+    "lima_dallas_fort_worth_veterinary_hospital": 11,
 }
 
 
@@ -128,9 +142,9 @@ def test_the_committed_set_is_every_photograph_john_supplied() -> None:
     inv = inventory()
     assert {slug: len(entries) for slug, entries in inv.items()} == PHOTOGRAPHS_PER_HOSPITAL
     filled = [e for entries in inv.values() for e in entries if e["file"] is not None]
-    assert (len(filled), sum(len(e) for e in inv.values())) == (195, 195), "a photograph was dropped"
+    assert (len(filled), sum(len(e) for e in inv.values())) == (313, 313), "a photograph was dropped"
     beyond = [e for entries in inv.values() for e in entries if e["slot"] is None]
-    assert len(beyond) == 87, "the photographs past the design's six slots (A15.3 renders each)"
+    assert len(beyond) == 139, "the photographs past the design's six slots (A15.3 renders each)"
 
 
 def test_the_inventory_names_no_hospital_that_is_not_seeded() -> None:
@@ -197,3 +211,126 @@ def test_files_are_numbered_by_the_slot_they_fill() -> None:
 def test_the_committed_set_stays_under_the_size_ceiling() -> None:
     total = sum(p.stat().st_size for p in PHOTOS.rglob("*.webp"))
     assert total <= TOTAL_CEILING_BYTES, f"{total / 1024 / 1024:.1f} MB committed"
+
+
+# ======================================================================================
+# Task SD1 — John's eleven Dallas folders, their verified descriptions, the flags the content
+# verification raised, and the one photograph that was refused.
+#
+# These filenames (`alpha_dallas_01.png`) describe nothing, so every one of these photographs
+# carries a description produced by LOOKING at it. That description is the caption a buyer
+# reads (`photo_captions` -> `p.photoCaptions[i]`, amendment A15) — the design's six fixed slot
+# captions never speak for one of these, which is what makes the slot map safe even where a
+# folder of contact sheets left most slots to the backfill.
+# ======================================================================================
+
+DESCRIPTIONS = PHOTOS / "descriptions.json"
+DALLAS_SLUGS = frozenset({
+    "alpha_dallas_veterinary_specialist_hospital", "beta_dallas_veterinary_hospital",
+    "charlie_dallas_animal_hospital", "delta_dallas_animal_er_hospital",
+    "echo_dallas_animal_hospital", "indigo_dallas_animal_hospital",
+    "foxtrot_dallas_animal_hospital", "hotel_dallas_animal_hospital",
+    "juliet_dallas_animal_hospital", "kilo_dallas_fort_worth_veterinary_hospital",
+    "lima_dallas_fort_worth_veterinary_hospital",
+})
+# The one photograph that is NOT encoded, and the rule it fell under. Named here so a re-run of
+# the pipeline that quietly encoded it would fail rather than pass.
+REFUSED = ("alpha_dallas_veterinary_specialist_hospital", "alpha_dallas_11_individual_images.png")
+# What the source folders hold. `alpha` supplied 12; 11 are committed.
+DALLAS_SOURCE_IMAGES = 119
+
+
+def descriptions() -> dict[str, dict[str, dict[str, object]]]:
+    loaded = json.loads(DESCRIPTIONS.read_text(encoding="utf-8"))
+    return {slug: files for slug, files in loaded.items() if not slug.startswith("_")}
+
+
+def test_the_descriptions_file_names_the_eleven_and_nobody_else() -> None:
+    """Surgical: John's eighteen of 2026-09-06 have no entry here and keep the captions their
+    own descriptive filenames give them."""
+    assert set(descriptions()) == DALLAS_SLUGS
+
+
+def test_every_photograph_in_the_eleven_folders_is_accounted_for() -> None:
+    """119 supplied, 118 encoded, 1 refused — and each of the 119 is named here, so a
+    photograph cannot go missing between the folder and the tree without this failing."""
+    described = descriptions()
+    assert sum(len(files) for files in described.values()) == DALLAS_SOURCE_IMAGES
+    refused = [(slug, name) for slug, files in described.items()
+               for name, entry in files.items() if entry.get("refused")]
+    assert refused == [REFUSED]
+    encoded = sum(len(entries) for slug, entries in inventory().items() if slug in DALLAS_SLUGS)
+    assert encoded == DESCRIPTIONS_SUPPLIED_MINUS_REFUSED == DALLAS_SOURCE_IMAGES - 1
+
+
+DESCRIPTIONS_SUPPLIED_MINUS_REFUSED = 118
+
+
+def test_the_refused_photograph_is_nowhere_in_the_committed_tree() -> None:
+    """It is refused for a THIRD-PARTY business name — wall signage reading 'COMPASSIONATE
+    HEARTS', which is not this hospital's own fictional name. Its own name, its own street
+    number and the civic banner in a sibling image are all encoded; that is the whole
+    distinction, and this is the one image on the wrong side of it."""
+    slug, name = REFUSED
+    assert name not in [e["source"] for e in inventory()[slug]]
+    entry = descriptions()[slug][name]
+    assert "description" not in entry, "a photograph nobody may see is not described"
+    assert isinstance(entry["refused"], str) and "COMPASSIONATE HEARTS" in str(entry["refused"])
+
+
+def test_every_dallas_photograph_is_captioned_by_its_own_description() -> None:
+    """Not by `caption_of`'s reading of the filename, which for these says nothing at all, and
+    not by the design's fixed slot caption, which cannot describe a contact sheet."""
+    described = descriptions()
+    for slug in sorted(DALLAS_SLUGS):
+        for entry in inventory()[slug]:
+            source = str(entry["source"])
+            assert entry["caption"] == described[slug][source]["description"], (slug, source)
+
+
+def test_every_flag_the_verification_raised_reached_the_inventory() -> None:
+    """"Record, do not discard": the identifiability work (A-IDP-1..6, its own branch) reads
+    these rather than re-reading 119 images. Pinned BOTH ways — a flag in the descriptions file
+    is in the inventory, and a flag in the inventory came from the descriptions file."""
+    described = descriptions()
+    for slug in sorted(DALLAS_SLUGS):
+        for entry in inventory()[slug]:
+            expected = described[slug][str(entry["source"])].get("flags", [])
+            assert entry.get("flags", []) == expected, (slug, entry["source"])
+
+
+def test_a_photograph_nobody_flagged_carries_no_flags_key() -> None:
+    """Absent, not empty — which is why the 195 entries John's eighteen already committed did
+    not move when this task added a key to the schema."""
+    for slug, entries in inventory().items():
+        for entry in entries:
+            if slug not in DALLAS_SLUGS:
+                assert "flags" not in entry, (slug, entry["file"])
+            elif "flags" in entry:
+                assert entry["flags"], (slug, entry["source"], "an empty flags list was written")
+
+
+def test_no_composite_is_the_hero_of_a_dallas_listing() -> None:
+    """Position 1 is `heroSrc` on the detail page and the Browse card. A multi-panel contact
+    sheet is not a hospital's front door, and most of these folders are sheets — the curation
+    refuses to place one in a slot and `positions` refuses to backfill one while a single
+    photograph is unused, so the two together have to leave a real photograph here."""
+    described = descriptions()
+    for slug in sorted(DALLAS_SLUGS):
+        hero = inventory()[slug][0]
+        flags = described[slug][str(hero["source"])].get("flags", [])
+        assert "composite" not in flags, (slug, hero["source"])
+        assert hero["slot"] == "exterior", (slug, hero["slot"])
+
+
+def test_the_committed_descriptions_are_real_sentences_not_filenames() -> None:
+    """A guard against the failure this whole file exists to prevent: a description that is just
+    the filename with the underscores taken out describes nothing, and would mean the content
+    verification was skipped for that image."""
+    for slug, files in descriptions().items():
+        for name, entry in files.items():
+            if entry.get("refused"):
+                continue
+            text = str(entry["description"])
+            assert len(text.split()) >= 4, (slug, name, text)
+            assert name.split(".")[0].replace("_", " ") not in text.lower(), (slug, name, text)

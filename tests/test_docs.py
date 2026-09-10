@@ -1981,7 +1981,16 @@ def test_the_seed_plan_records_a_l11_and_deploy_md_says_every_image_renders():
     deploy = (ROOT / "DEPLOY.md").read_text()
     section = deploy.split("## Seeding the demo hospitals (QA)", 1)[1].split("\n## ", 1)[0]
     assert "A-L11" in section
-    assert "is rendered" in section and "195 of them today" in section, (
+    committed = sum(
+        len(entries) for entries in
+        json.loads((ROOT / "seeds" / "hospitals" / "photos" / "index.json").read_text())["hospitals"].values()
+    )
+    # Read from the committed inventory rather than pinned as a literal (Task SD1 moved it from
+    # 195 to 313 by adding John's eleven Dallas folders, and it will move again the next time he
+    # supplies a folder). The CLAIM is what is pinned — "every image John supplies is rendered,
+    # and here is how many that is" — and a runbook whose number has drifted from the tree is
+    # exactly the kind of stale figure this suite exists to catch.
+    assert "is rendered" in section and f"{committed} of them today" in section, (
         "the runbook does not say that every image John supplies is rendered, and how many that is"
     )
     # Hyphen-minus, deliberately: the runbook writes the range that way and RUF001 refuses an
