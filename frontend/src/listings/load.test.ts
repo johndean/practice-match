@@ -198,47 +198,63 @@ describe('applyListings', () => {
     expect(Object.keys(markets)).toEqual(['Austin, TX']);
   });
 
+  /** Task MP1. `applyListings` clears every design-fixture key from the two exported maps and
+   *  installs whatever the rows carry, and the four cases below used to leave that standing —
+   *  shared module state, mutated and never put back. Each mutation is undone in a `finally`
+   *  here, so the D6 round-trip case at the foot of this file snapshots the DESIGN's figures
+   *  rather than the leftovers of whichever case ran last. */
+  async function withMaps(body: (vets: Record<string, number>, econ: Record<string, number>) => void): Promise<void> {
+    const { VETS, ECON_K } = await import('../logic.js');
+    const vets = VETS as unknown as Record<string, number>;
+    const econ = ECON_K as unknown as Record<string, number>;
+    const vetsBefore = { ...vets };
+    const econBefore = { ...econ };
+    try {
+      body(vets, econ);
+    } finally {
+      for (const map of [vets, econ]) for (const k of Object.keys(map)) delete map[k];
+      Object.assign(vets, vetsBefore);
+      Object.assign(econ, econBefore);
+    }
+  }
+
   // B8: market-data maps VETS and ECON_K are installed from the API rows
   it('installs VETS and ECON_K from the API rows into the maps', async () => {
-    const { VETS, ECON_K } = await import('../logic.js');
-    const vetsMap = VETS as Record<string, number>;
-    const econMap = ECON_K as Record<string, number>;
+    await withMaps((vetsMap, econMap) => {
+      applyListings(
+        [
+          row({ id: 'api-1', vets: 7, econ_k: 685 }),
+          row({ id: 'api-2', vets: 3, econ_k: 450 })
+        ],
+        [],
+        {},
+        vetsMap,
+        econMap
+      );
 
-    applyListings(
-      [
-        row({ id: 'api-1', vets: 7, econ_k: 685 }),
-        row({ id: 'api-2', vets: 3, econ_k: 450 })
-      ],
-      [],
-      {},
-      vetsMap,
-      econMap
-    );
-
-    expect(vetsMap['api-1']).toBe(7);
-    expect(vetsMap['api-2']).toBe(3);
-    expect(econMap['api-1']).toBe(685);
-    expect(econMap['api-2']).toBe(450);
+      expect(vetsMap['api-1']).toBe(7);
+      expect(vetsMap['api-2']).toBe(3);
+      expect(econMap['api-1']).toBe(685);
+      expect(econMap['api-2']).toBe(450);
+    });
   });
 
   // B8: null values don't install keys
   it('does not install keys when vets or econ_k are null', async () => {
-    const { VETS, ECON_K } = await import('../logic.js');
-    const vetsMap = VETS as Record<string, number>;
-    const econMap = ECON_K as Record<string, number>;
+    await withMaps((vetsMap, econMap) => {
+      applyListings(
+        [
+          row({ id: 'api-null', vets: null, econ_k: null })
+        ],
+        [],
+        {},
+        vetsMap,
+        econMap
+      );
 
-    applyListings(
-      [
-        row({ id: 'api-null', vets: null, econ_k: null })
-      ],
-      [],
-      {},
-      vetsMap,
-      econMap
-    );
-
-    expect('api-null' in vetsMap).toBe(false);
-    expect('api-null' in econMap).toBe(false);
+      expect('api-null' in vetsMap).toBe(false);
+      expect('api-null' in econMap).toBe(false);
+    });
   });
 
   // B10 (D-C32): the label reaches the design under its own camel-case name, and a row that
@@ -254,41 +270,41 @@ describe('applyListings', () => {
   // design's own — which is exactly what the D6 stub sends — had its figures installed and then
   // deleted, and the panel had no establishment count for any design fixture.
   it('keeps a figure a row carries under a design-fixture id', async () => {
-    const { VETS, ECON_K } = await import('../logic.js');
-    const vetsMap = VETS as Record<string, number>;
-    const econMap = ECON_K as Record<string, number>;
+    await withMaps((vetsMap, econMap) => {
+      applyListings([row({ id: 'p1', vets: 8, econ_k: 612 })], [], {}, vetsMap, econMap);
 
-    applyListings([row({ id: 'p1', vets: 8, econ_k: 612 })], [], {}, vetsMap, econMap);
-
-    expect(vetsMap['p1']).toBe(8);
-    expect(econMap['p1']).toBe(612);
+      expect(vetsMap['p1']).toBe(8);
+      expect(econMap['p1']).toBe(612);
+    });
   });
 
   // B8: fixture keys are removed when API data is installed
   it('clears fixture keys from VETS and ECON_K when the API replaces P', async () => {
-    const { VETS, ECON_K } = await import('../logic.js');
-    const vetsMap = VETS as Record<string, number>;
-    const econMap = ECON_K as Record<string, number>;
+    await withMaps((vetsMap, econMap) => {
+      // The design's own p1 figure is in the map to begin with, which is what this case is
+      // about: it must be GONE once the API's rows replace it.
+      expect('p1' in vetsMap, 'the design fixture figure this case clears is not there to clear').toBe(true);
 
-    // Before calling applyListings, add a fixture key to verify it gets removed
-    vetsMap['fixture-test'] = 999;
-    econMap['fixture-test'] = 888;
+      // Before calling applyListings, add a fixture key to verify it gets removed
+      vetsMap['fixture-test'] = 999;
+      econMap['fixture-test'] = 888;
 
-    applyListings(
-      [row({ id: 'api-new', vets: 5, econ_k: 500 })],
-      [],
-      {},
-      vetsMap,
-      econMap
-    );
+      applyListings(
+        [row({ id: 'api-new', vets: 5, econ_k: 500 })],
+        [],
+        {},
+        vetsMap,
+        econMap
+      );
 
-    // The fixture keys should be gone after applyListings (even if they weren't in the original fixture list)
-    // and the API key should be there
-    expect(vetsMap['api-new']).toBe(5);
-    expect(econMap['api-new']).toBe(500);
-    // The known fixture keys should be removed
-    expect('p1' in vetsMap).toBe(false);
-    expect('p1' in econMap).toBe(false);
+      // The fixture keys should be gone after applyListings (even if they weren't in the original fixture list)
+      // and the API key should be there
+      expect(vetsMap['api-new']).toBe(5);
+      expect(econMap['api-new']).toBe(500);
+      // The known fixture keys should be removed
+      expect('p1' in vetsMap).toBe(false);
+      expect('p1' in econMap).toBe(false);
+    });
   });
 });
 
@@ -497,6 +513,14 @@ describe('the design-fixture stub round-trips exactly (spec D6)', () => {
     const { toApiShape } = await import('../../tests/design-listings.mjs');
     const vetsBefore = JSON.parse(JSON.stringify(VETS));
     const econBefore = JSON.parse(JSON.stringify(ECON_K));
+    // NOT A VACUOUS PASS (Task MP1). The `applyListings` cases above mutate these two exported
+    // maps in place and used to put nothing back, so by the time this case snapshotted `VETS` it
+    // held `{"api-1":7,"api-2":3,"fixture-test":999,"api-new":5}` and not one design figure — and
+    // `toApiShape` reads `VETS[p.id] ?? null` LIVE, so the stub then sent null for every row,
+    // `applyListings` installed nothing, and this case proved that an empty round trip changes
+    // nothing rather than proving the DESIGN's figures survive one.
+    expect(Object.keys(vetsBefore), 'VETS carries no design figure — an earlier case left it polluted').toContain('p1');
+    expect(Object.keys(econBefore), 'ECON_K carries no design figure — an earlier case left it polluted').toContain('p1');
     const practices = P as unknown as Practice[];
     applyListings(
       (practices.map(toApiShape) as unknown) as ApiListing[],

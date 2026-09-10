@@ -899,3 +899,88 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
     expect(errors).toEqual([]);
   });
 });
+
+// -------------------------------------------------------------------------------------------
+// Task MP1 — a published listing with no coordinates must not take the Browse map down with it.
+//
+// The failure this guards is a REAL-BROWSER one and cannot be seen anywhere else: `logic.js`
+// handed `[null, null]` to `engine.marker`, Leaflet 1.9.4's `toLatLng` returned `null` for it
+// (the array branch is gated on `typeof a[0] !== 'object'`, and `typeof null === 'object'`), and
+// `_setPos` read `.lat` off the null — `pageerror: Cannot read properties of null (reading
+// 'lat')`. ONE listing was enough: `drawPins`' `forEach` has no try/catch, so pin drawing
+// stopped there for every listing after it, and the poisoned layer re-threw from inside
+// Leaflet's own event loop on every later zoom pass.
+//
+// THIS TEST RUNS AGAINST THE VITE DEV SERVER (the `app` project's own target), where Vue's
+// development `logError` re-throws out of `flushJobs` and drops the rest of the scheduler queue,
+// so the whole screen stops responding — which is why the last assertion, that a results card
+// still opens the docked panel, is the one that would have caught this. QA and production serve
+// the production build, where Vue logs instead of re-throwing: there the same defect shows as
+// pins silently missing from the offending listing onward and broken zoom, not a dead screen.
+// -------------------------------------------------------------------------------------------
+test.describe('Task MP1 — a listing with no coordinates keeps its place and gets no pin', () => {
+  /** The design catalogue as `GET /api/listings` serves it, with `over` applied to the ONE row
+   *  whose id is `id` — the shape the endpoint produces for a published listing whose seller has
+   *  not disclosed its location (`location_disclosed` is `NOT NULL DEFAULT false`). */
+  async function serveOne(page: Page, id: string, over: Record<string, unknown>): Promise<void> {
+    const stub = listingsStubUrl();
+    expect(stub, 'this test overrides the D6 stub, and a live target has none to override').not.toBeNull();
+    const body = JSON.parse(designListingsBody()) as { items: Record<string, unknown>[]; next_cursor: null };
+    const target = body.items.filter((r) => r.id === id);
+    expect(target, `the design catalogue has no listing ${id}`).toHaveLength(1);
+    Object.assign(target[0], over);
+    await page.route(
+      (url) => matchesListings(url.href, stub as string),
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    );
+  }
+
+  const AUSTIN = ['Cedar Park', 'Round Rock', 'South Austin', 'Georgetown', 'Kyle', 'East Austin', 'Lakeway', 'Dripping Springs', 'Pflugerville'];
+
+  test('no page error, every located listing keeps its pin, and the screen still responds', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    // Cedar Park is the design's own first Austin listing and the one the results rail shows
+    // first, so it is drawn first: with the defect standing it poisoned every pin after it.
+    await serveOne(page, 'p1', { lat: null, lng: null, location_disclosed: false });
+
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+
+    // Eight pins, one per LOCATED Austin listing, and none of them is Cedar Park's.
+    const pins = page.locator('.leaflet-marker-icon');
+    await expect(pins).toHaveCount(AUSTIN.length - 1);
+    const titles = (await pins.evaluateAll((els) => els.map((e) => e.getAttribute('title') ?? ''))).join(' | ');
+    for (const area of AUSTIN.slice(1)) {
+      expect(titles, `${area}'s pin is missing — pin drawing stopped at the unlocated listing`).toContain(area);
+    }
+    expect(titles, 'a listing with no coordinates was drawn anyway').not.toContain('Cedar Park');
+
+    // …and it keeps its place in the results: same count, still in the rail.
+    await expect(page.getByText(`${AUSTIN.length} practices available`)).toBeVisible();
+
+    // THE ASSERTION THAT WOULD HAVE CAUGHT THIS. Under the dev build the pin throw re-throws out
+    // of Vue's scheduler and the screen stops responding, so a card click does nothing at all.
+    await page.getByText('Cedar Park').first().click();
+    const panel = page.locator('div.rf-scroll[style*="width: 366px"]');
+    await expect(panel.getByRole('button', { name: 'View full listing' })).toBeVisible();
+
+    // The drive-time ring's centre falls back to the metro centre rather than reaching
+    // `L.circle([null, null])`, so selecting the unlocated listing does not throw either.
+    await panel.getByRole('button', { name: 'View full listing' }).click();
+    await expect(page.getByRole('heading', { name: 'Community Context' })).toBeVisible();
+
+    expect(errors).toEqual([]);
+  });
+
+  // The control: with every coordinate present nothing is filtered, which is what keeps the
+  // approved states on their pixels.
+  test('…and with every coordinate present every listing is still pinned', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await expect(page.locator('.leaflet-marker-icon')).toHaveCount(AUSTIN.length);
+    expect(errors).toEqual([]);
+  });
+});
