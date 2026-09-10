@@ -1,0 +1,41 @@
+-- Task SD1 (John's Dallas table of 2026-09-10, and the provenance JSON he attached to it).
+--
+-- Eleven new seed hospitals whose STREET ADDRESSES ARE REAL and whose BUSINESS IDENTITIES ARE
+-- INVENTED. John supplied the second half of that sentence as data, not prose:
+--
+--   {"phone_is_fake": true, "address_is_real": true, "address_is_seed_anchor": true,
+--    "business_identity_is_fictional": true, "operating_hours_is_seed_data": true}
+--
+-- The addresses are real because that is what makes the Census market data resolve — which is
+-- the entire point of them — and a real building at 18770 Preston Rd may house a real and
+-- different business. This column is where the file says so to the database, so nobody
+-- downstream reverse-engineers the wrong conclusion from a mappable address.
+--
+-- DATA, NEVER UI. Nothing renders it: no badge, no banner. It exists so the Admin Data Sources
+-- drill-down and the seller controls can read it later, and inventing UI for it would break the
+-- project's first rule about the approved design.
+--
+-- ONE jsonb bag, not five boolean columns. `listing` holds sellers' own listings as well as
+-- these seeds, and "is the telephone number fake" is not a question with an answer for a real
+-- practice: five boolean columns would leave five permanent NULLs on every real row, while one
+-- `{}` says exactly what is true of it — no provenance claims are recorded. It also carries
+-- John's key names VERBATIM (the controller ruled only `address` → `street` and
+-- `postal_code` → `zip`, and nothing else renamed), and a sixth claim he adds later needs no
+-- migration. `scripts/seed_listings.py::PROVENANCE_KEYS` is the list the seeder carries, pinned
+-- against the seed file's own keys in both directions by
+-- `tests/scripts/test_seed_listings.py::test_the_provenance_keys_the_seeder_carries_are_the_ones_the_file_holds`.
+--
+-- NOT NULL DEFAULT '{}' for the same reason `photos` (016) and `photo_captions` (090) are: the
+-- absence of a claim is a statement, so every reader gets an object rather than a null to guard.
+-- Nothing is backfilled — the eighteen of 2026-09-06 make no provenance claim and the default is
+-- already the truth about them.
+--
+-- Numbered 091, not 064 or 035: `090`-`099` is the range reserved for PLATFORM AND HOTFIX
+-- migrations that land on `main` between releases (controller amendment A-C10, recorded in the
+-- Census plan's D14; `017`-`029`/`040`-`059` are Sub-project 3 Phase A, `030`-`039` the seller
+-- lifecycle, `040`-`049` image identifiability, `060`+ Phase B — whose next free number is
+-- `064`, claimed by the neighbourhood-shading spec's D-NS2 — and `080`-`089` the map engines).
+-- `090_listing_photo_captions.sql` is the only file in this range so far, so `091` is the next
+-- free number. This one depends on `016_listing.sql` and on nothing after it, so filename order
+-- — all `scripts/migrate.py` uses — is satisfied however the reserved ranges in between fill up.
+ALTER TABLE listing ADD COLUMN provenance jsonb NOT NULL DEFAULT '{}'::jsonb;

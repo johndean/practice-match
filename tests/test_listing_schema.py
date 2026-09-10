@@ -60,6 +60,13 @@ EXPECTED_COLUMNS: dict[str, tuple[str, bool]] = {
     # published listing off the market (D3) and by SL5's submit, and read back as SL5's outbox
     # idempotency key. Nullable — a draft has never been submitted.
     "submitted_at": ("timestamp with time zone", True),
+    # Task SD1 (`migrations/091_listing_provenance.sql`). What is real and what is invented about
+    # THIS row, in the supplier's own key names — a bag, not five columns, because the claims are
+    # John's seed-data vocabulary (`phone_is_fake`, `address_is_seed_anchor`, …) and mean nothing
+    # for a seller's own listing, which would carry five permanent NULLs instead of one honest
+    # `{}`. NOT NULL DEFAULT '{}': "no provenance claims recorded" is a statement, not a missing
+    # value, and every reader gets an object rather than a null to guard.
+    "provenance": ("jsonb", False),
 }
 
 
@@ -134,9 +141,9 @@ def test_defaults_are_what_the_seeder_relies_on(conn: Any) -> None:
             "INSERT INTO listing (slug, name, city, state, area, type, market, source)"
             " VALUES ('defaults','A','X','TX','X','Small animal','X, TX','seed')"
             " RETURNING id IS NOT NULL, status, location_disclosed, photos, listed_at IS NOT NULL,"
-            " created_at IS NOT NULL, updated_at IS NOT NULL"
+            " created_at IS NOT NULL, updated_at IS NOT NULL, provenance"
         )
-        assert cur.fetchone() == (True, "draft", False, [], True, True, True)
+        assert cur.fetchone() == (True, "draft", False, [], True, True, True, {})
 
 
 # --- Seller listing lifecycle (spec 2026-09-08, D2/D5/D10/D12/D20; migrations 030 + 031) ---

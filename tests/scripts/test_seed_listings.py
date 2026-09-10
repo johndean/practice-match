@@ -13,6 +13,18 @@ from scripts import seed_listings as SL
 ROOT = Path(__file__).resolve().parent.parent.parent
 
 
+# How many rows the seed file carries: John's eighteen of 2026-09-06 plus his eleven Dallas rows
+# of 2026-09-10 (Task SD1). READ from the file rather than retyped, because what this suite is
+# about is that the seeder writes every row the file holds — the size of each of John's two
+# tables is pinned in `tests/seeds/test_hospitals_json.py`, which is where that belongs. The
+# test immediately below stops this from degenerating into "assert whatever is there".
+SEED_COUNT = len(SL.load_seed(SL.SEEDS_FILE))
+
+
+def test_the_seed_file_holds_johns_eighteen_and_his_eleven_dallas_rows() -> None:
+    assert SEED_COUNT == 29
+
+
 def _count(dsn: str, where: str = "TRUE") -> int:
     with psycopg2.connect(dsn) as conn, conn.cursor() as cur:
         # `where` is always a literal written in this file — never a value from a request.
@@ -42,10 +54,10 @@ def _plant(dsn: str, slug: str, source: str, seller_id: str | None = None) -> No
         )
 
 
-def test_seed_writes_eighteen_published_seed_rows(scratch_dsn: str) -> None:
-    assert SL.seed(scratch_dsn) == 18
-    assert _count(scratch_dsn) == 18
-    assert _count(scratch_dsn, "source = 'seed' AND status = 'published'") == 18
+def test_seed_writes_every_row_of_the_seed_file_as_a_published_seed(scratch_dsn: str) -> None:
+    assert SL.seed(scratch_dsn) == SEED_COUNT
+    assert _count(scratch_dsn) == SEED_COUNT
+    assert _count(scratch_dsn, "source = 'seed' AND status = 'published'") == SEED_COUNT
 
 
 def test_seed_is_idempotent(scratch_dsn: str) -> None:
@@ -53,11 +65,11 @@ def test_seed_is_idempotent(scratch_dsn: str) -> None:
     with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
         cur.execute("SELECT id, created_at FROM listing ORDER BY slug")
         before = cur.fetchall()
-    assert SL.seed(scratch_dsn) == 18
+    assert SL.seed(scratch_dsn) == SEED_COUNT
     with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
         cur.execute("SELECT id, created_at FROM listing ORDER BY slug")
         after = cur.fetchall()
-    assert _count(scratch_dsn) == 18
+    assert _count(scratch_dsn) == SEED_COUNT
     assert after == before, "an upsert by slug must keep the same row, id and created_at"
     # A-L5: name_disclosed is written from each row's own JSON value, on every import.
     hospitals = {h["slug"]: h for h in SL.load_seed(SL.SEEDS_FILE)}
@@ -77,8 +89,8 @@ def test_reset_removes_seed_rows_but_never_seller_rows(scratch_dsn: str) -> None
             "INSERT INTO listing (slug, name, city, state, zip, area, type, market, source, status, est, price, sqft)"
             " VALUES ('sellers-own','Seller listing','Austin','TX','78701','Austin','Small animal','Austin, TX','seller','published',2015,750000,3000)"
         )
-    assert SL.seed(scratch_dsn, reset=True) == 18
-    assert _count(scratch_dsn, "source = 'seed'") == 18
+    assert SL.seed(scratch_dsn, reset=True) == SEED_COUNT
+    assert _count(scratch_dsn, "source = 'seed'") == SEED_COUNT
     assert _count(scratch_dsn, "source = 'seller'") == 1
 
 
@@ -174,9 +186,9 @@ def test_photo_captions_are_written_in_step_with_the_photographs(scratch_dsn: st
 def test_main_seeds_from_the_environment(scratch_dsn: str, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
     assert SL.main([]) == 0
-    assert _count(scratch_dsn) == 18
+    assert _count(scratch_dsn) == SEED_COUNT
     assert SL.main(["--reset"]) == 0
-    assert _count(scratch_dsn) == 18
+    assert _count(scratch_dsn) == SEED_COUNT
 
 
 def test_main_returns_two_without_a_database_url(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -401,25 +413,25 @@ def test_a_stale_seed_row_is_removed_by_a_plain_import(scratch_dsn: str) -> None
     --reset — otherwise QA keeps yesterday's hospitals beside today's."""
     _plant(scratch_dsn, "withdrawn-last-week", "seed")
     assert _count(scratch_dsn, "slug = 'withdrawn-last-week'") == 1
-    assert SL.seed(scratch_dsn) == 18
+    assert SL.seed(scratch_dsn) == SEED_COUNT
     assert _count(scratch_dsn, "slug = 'withdrawn-last-week'") == 0
-    assert _count(scratch_dsn, "source = 'seed'") == 18
+    assert _count(scratch_dsn, "source = 'seed'") == SEED_COUNT
 
 
 def test_a_non_seed_row_survives_a_plain_import(scratch_dsn: str) -> None:
     """A-L4, the other mode: `source` is constrained to 'seed' | 'seller' by
     migrations/016_listing.sql, so a seller's own listing is every non-seed row there can be."""
     _plant(scratch_dsn, "sellers-own", "seller")
-    assert SL.seed(scratch_dsn) == 18
+    assert SL.seed(scratch_dsn) == SEED_COUNT
     assert _count(scratch_dsn, "source = 'seller'") == 1
-    assert _count(scratch_dsn, "source = 'seed'") == 18
+    assert _count(scratch_dsn, "source = 'seed'") == SEED_COUNT
 
 
-def test_reset_on_an_empty_table_still_seeds_eighteen(scratch_dsn: str) -> None:
+def test_reset_on_an_empty_table_still_seeds_every_row(scratch_dsn: str) -> None:
     """A-L4: --reset is a full wipe of the seed rows and then the import — on a table that has
     none, it is simply the import."""
-    assert SL.seed(scratch_dsn, reset=True) == 18
-    assert _count(scratch_dsn, "source = 'seed' AND status = 'published'") == 18
+    assert SL.seed(scratch_dsn, reset=True) == SEED_COUNT
+    assert _count(scratch_dsn, "source = 'seed' AND status = 'published'") == SEED_COUNT
 
 
 def test_the_summary_line_reports_inserted_updated_and_removed(
@@ -428,11 +440,11 @@ def test_the_summary_line_reports_inserted_updated_and_removed(
     """A-L4: "the exit summary prints inserted / updated / removed counts"."""
     _plant(scratch_dsn, "withdrawn-last-week", "seed")
     SL.seed(scratch_dsn)
-    assert "[seed] inserted 18, updated 0, removed 1" in capsys.readouterr().out
+    assert f"[seed] inserted {SEED_COUNT}, updated 0, removed 1" in capsys.readouterr().out
     SL.seed(scratch_dsn)
-    assert "[seed] inserted 0, updated 18, removed 0" in capsys.readouterr().out
+    assert f"[seed] inserted 0, updated {SEED_COUNT}, removed 0" in capsys.readouterr().out
     SL.seed(scratch_dsn, reset=True)
-    assert "[seed] inserted 18, updated 0, removed 18" in capsys.readouterr().out
+    assert f"[seed] inserted {SEED_COUNT}, updated 0, removed {SEED_COUNT}" in capsys.readouterr().out
 
 
 def test_main_refuses_when_the_environment_is_not_declared(
@@ -480,7 +492,7 @@ def test_production_runs_when_the_operator_says_it_out_loud(
     monkeypatch.setenv("ENVIRONMENT", "production")
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
     assert SL.main(["--production"]) == 0
-    assert _count(scratch_dsn, "source = 'seed'") == 18
+    assert _count(scratch_dsn, "source = 'seed'") == SEED_COUNT
     assert "production" in capsys.readouterr().out.splitlines()[0].lower()
 
 
@@ -491,7 +503,7 @@ def test_the_production_flag_is_harmless_anywhere_else(
     monkeypatch.setenv("ENVIRONMENT", "qa")
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
     assert SL.main(["--production", "--reset"]) == 0
-    assert _count(scratch_dsn, "source = 'seed'") == 18
+    assert _count(scratch_dsn, "source = 'seed'") == SEED_COUNT
     assert "production" not in capsys.readouterr().out.lower()
 
 
@@ -570,20 +582,20 @@ def _owners(dsn: str) -> set[str | None]:
 
 def test_ownership_is_assigned_to_the_seller_persona_by_default(scratch_dsn: str) -> None:
     owner = _plant_account(scratch_dsn, SL.SEED_OWNER_EMAIL)
-    assert SL.seed(scratch_dsn) == 18
+    assert SL.seed(scratch_dsn) == SEED_COUNT
     assert _owners(scratch_dsn) == {owner}
-    assert _count(scratch_dsn, "source = 'seed' AND seller_id IS NOT NULL") == 18
+    assert _count(scratch_dsn, "source = 'seed' AND seller_id IS NOT NULL") == SEED_COUNT
 
 
 def test_ownership_is_re_asserted_on_a_re_seed(scratch_dsn: str) -> None:
     """`seller_id` is in the `DO UPDATE SET`, not only the insert list: the eighteen already exist
     on QA, so an ownership that only landed on an INSERT would never land at all."""
     owner = _plant_account(scratch_dsn, SL.SEED_OWNER_EMAIL)
-    assert SL.seed(scratch_dsn) == 18
+    assert SL.seed(scratch_dsn) == SEED_COUNT
     with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
         cur.execute("UPDATE listing SET seller_id = NULL WHERE source = 'seed'")
     assert _owners(scratch_dsn) == {None}
-    assert SL.seed(scratch_dsn) == 18
+    assert SL.seed(scratch_dsn) == SEED_COUNT
     assert _owners(scratch_dsn) == {owner}
 
 
@@ -635,7 +647,7 @@ def test_a_sellers_own_listing_is_still_never_touched(scratch_dsn: str) -> None:
     theirs = _plant_account(scratch_dsn, "a-real-seller@example.org")
     _plant(scratch_dsn, "sellers-own", "seller", seller_id=theirs)
     for reset in (False, True):
-        assert SL.seed(scratch_dsn, reset=reset) == 18
+        assert SL.seed(scratch_dsn, reset=reset) == SEED_COUNT
         with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
             cur.execute("SELECT name, seller_id, source FROM listing WHERE slug = 'sellers-own'")
             row = cur.fetchone()
@@ -651,12 +663,12 @@ def test_the_disclosure_backfill_holds_for_a_freshly_seeded_row(scratch_dsn: str
     file — and from the `DO UPDATE SET` too, or a re-seed would not put back a flag an
     experiment turned off."""
     all_four = "rev_disclosed AND documents_disclosed AND name_disclosed AND location_disclosed"
-    assert SL.seed(scratch_dsn) == 18
-    assert _count(scratch_dsn, f"source = 'seed' AND {all_four}") == 18
+    assert SL.seed(scratch_dsn) == SEED_COUNT
+    assert _count(scratch_dsn, f"source = 'seed' AND {all_four}") == SEED_COUNT
     with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
         cur.execute("UPDATE listing SET rev_disclosed = false, documents_disclosed = false")
-    assert SL.seed(scratch_dsn) == 18
-    assert _count(scratch_dsn, f"source = 'seed' AND {all_four}") == 18
+    assert SL.seed(scratch_dsn) == SEED_COUNT
+    assert _count(scratch_dsn, f"source = 'seed' AND {all_four}") == SEED_COUNT
 
 
 # --- Controller amendment A-SL21 (2026-09-09; the ruling on SL6's NEEDS_CONTEXT) -----------------
@@ -691,7 +703,7 @@ def _seeded_with_an_owner(dsn: str) -> tuple[str, str, str]:
     """The QA state this amendment is about: the eighteen imported and owned by the persona.
     Returns the owner id and two slugs — one the seller will edit, one they will not."""
     owner = _plant_account(dsn, SL.SEED_OWNER_EMAIL)
-    assert SL.seed(dsn) == 18
+    assert SL.seed(dsn) == SEED_COUNT
     slugs = sorted(str(h["slug"]) for h in SL.load_seed(SL.SEEDS_FILE))
     return owner, slugs[0], slugs[1]
 
@@ -705,7 +717,7 @@ def test_a_seller_edited_seed_listing_is_left_exactly_as_the_seller_left_it(scra
     _edit_as_a_seller(scratch_dsn, edited)
     before, sibling_before = _row_of(scratch_dsn, edited), _row_of(scratch_dsn, untouched)
 
-    assert SL.seed(scratch_dsn) == 18
+    assert SL.seed(scratch_dsn) == SEED_COUNT
 
     assert _row_of(scratch_dsn, edited) == before, "the seeder rewrote a listing the seller owns"
     assert _row_of(scratch_dsn, untouched) != sibling_before, "an untouched seed must still refresh"
@@ -741,10 +753,10 @@ def test_reset_keeps_a_seller_edited_seed_listing_and_its_assets(scratch_dsn: st
                     (edited,))
     before = _row_of(scratch_dsn, edited)
 
-    assert SL.seed(scratch_dsn, reset=True) == 18
+    assert SL.seed(scratch_dsn, reset=True) == SEED_COUNT
 
     assert _row_of(scratch_dsn, edited) == before
-    assert _count(scratch_dsn, "source = 'seed'") == 17
+    assert _count(scratch_dsn, "source = 'seed'") == SEED_COUNT - 1
     with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM listing_asset")
         assert cur.fetchone()[0] == 1, "the seller's upload was cascaded away by --reset"
@@ -762,3 +774,101 @@ def test_an_unowned_listing_on_a_seed_slug_is_still_the_exit_5_refusal(
     assert SL.main([]) == 5
     assert taken in capsys.readouterr().err
     assert _count(scratch_dsn, "source = 'seed'") == 0, "nothing was written"
+
+
+# ======================================================================================
+# Task SD1 — John's provenance reaches the database.
+#
+# CONTROLLER RULING: two of his key names are mapped onto the ones this file has held since
+# 2026-09-06 (`address` → `street`, `postal_code` → `zip`) and nothing else is renamed, so the
+# five booleans travel to the database under HIS OWN NAMES. They go into one `provenance` jsonb
+# column (migration 091), not five boolean columns, because `listing` also holds sellers' real
+# listings, for which "is the phone number fake" is not a fact with a value — an empty object
+# says "no provenance claims recorded" where five NULLs would say nothing at all.
+#
+# They are DATA, never UI: nothing renders them. They exist so the Admin Data Sources
+# drill-down and the seller controls can read them later, and so nobody reverse-engineers the
+# wrong conclusion from a real street address.
+# ======================================================================================
+
+JOHNS_PROVENANCE = {
+    "phone_is_fake": True,
+    "address_is_real": True,
+    "address_is_seed_anchor": True,
+    "business_identity_is_fictional": True,
+    "operating_hours_is_seed_data": True,
+}
+
+
+def _seed_rows_with_provenance() -> dict[str, dict[str, Any]]:
+    return {str(h["slug"]): dict(h) for h in SL.load_seed(SL.SEEDS_FILE)
+            if set(SL.PROVENANCE_KEYS) & set(h)}
+
+
+def test_the_provenance_keys_the_seeder_carries_are_the_ones_the_file_holds() -> None:
+    """Pinned BOTH ways (the idiom `tests/seeds/test_hospitals_json.py` uses for A-L2.2's
+    exclusions): the seeder's tuple is exactly the set of keys the seed file carries beyond the
+    2026-09-06 contract, so a sixth key John adds cannot be silently dropped on the floor and a
+    key nobody supplies cannot be silently invented.
+
+    The right-hand side is derived from the file — every key any row carries that is NOT one of
+    the columns `row_params` already maps — so it is not a second hand-typed copy of the tuple."""
+    # The three fields the seed file carries that are not in ROW_KEYS and are not provenance:
+    # `geocode` is the audit trail behind `lat`/`lng` and stays in the file, `demo` is the
+    # file's own marker, and `source` is written by the UPSERT as the literal 'seed'.
+    mapped = set(SL.ROW_KEYS) | {"geocode", "demo", "source"}
+    carried: set[str] = set()
+    for hospital in SL.load_seed(SL.SEEDS_FILE):
+        carried |= set(hospital) - mapped
+    assert set(SL.PROVENANCE_KEYS) == carried, sorted(set(SL.PROVENANCE_KEYS) ^ carried)
+    assert set(SL.PROVENANCE_KEYS) == set(JOHNS_PROVENANCE)
+
+
+def test_every_dallas_row_carries_johns_provenance_into_the_database(scratch_dsn: str) -> None:
+    assert SL.seed(scratch_dsn) == SEED_COUNT
+    expected = _seed_rows_with_provenance()
+    assert len(expected) == 11, sorted(expected)
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT slug, provenance FROM listing WHERE provenance <> '{}'::jsonb ORDER BY slug")
+        found = dict(cur.fetchall())
+    assert set(found) == set(expected)
+    for slug, claims in found.items():
+        assert claims == JOHNS_PROVENANCE, slug
+
+
+def test_a_row_that_makes_no_provenance_claim_stores_an_empty_object(scratch_dsn: str) -> None:
+    """The 2026-09-06 eighteen say nothing about their own provenance, and `{}` is how the
+    column says that — never NULL, so no reader has to guard one."""
+    SL.seed(scratch_dsn)
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM listing WHERE provenance = '{}'::jsonb")
+        assert int(cur.fetchone()[0]) == SEED_COUNT - 11
+        cur.execute("SELECT count(*) FROM listing WHERE provenance IS NULL")
+        assert int(cur.fetchone()[0]) == 0
+
+
+def test_the_provenance_survives_a_re_seed(scratch_dsn: str) -> None:
+    """It is in the `DO UPDATE SET` half as well as the insert — the same defect D22 and D25 hit
+    on QA, where a column that only landed on an INSERT never landed at all once the rows
+    existed. Proved by blanking it behind the seeder's back and re-importing."""
+    SL.seed(scratch_dsn)
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("UPDATE listing SET provenance = '{}'::jsonb WHERE source = 'seed'")
+    assert SL.seed(scratch_dsn) == SEED_COUNT
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM listing WHERE provenance <> '{}'::jsonb")
+        assert int(cur.fetchone()[0]) == 11
+
+
+def test_the_seeder_never_writes_show_for_an_identifiable_photograph(scratch_dsn: str) -> None:
+    """A-IDP-4 as corrected by A-IDP-6: every seed defaults to NOT SHOW. That work is on another
+    branch and owns its own column; this asserts only that Task SD1 does not pre-empt it — the
+    seeder writes no column whose name mentions `show`, and `provenance` carries no such key, so
+    nothing here can contradict the default whichever way that branch stores it."""
+    assert not [key for key in SL.ROW_KEYS if "show" in key.lower()]
+    assert not [key for key in SL.PROVENANCE_KEYS if "show" in key.lower()]
+    assert "show" not in SL.UPSERT.lower().replace("shown", "")
+    SL.seed(scratch_dsn)
+    with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
+        cur.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'listing'")
+        assert not [c for (c,) in cur.fetchall() if "show" in c.lower()]

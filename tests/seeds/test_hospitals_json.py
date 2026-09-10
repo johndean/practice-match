@@ -44,11 +44,26 @@ REQUIRED_KEYS = {
 
 
 def load() -> list[dict[str, object]]:
+    """EVERY seeded hospital: John's eighteen of 2026-09-06 and his eleven Dallas rows of
+    2026-09-10 (Task SD1). The two tables are separate contracts — different provenance, a
+    different `area` meaning and five extra fields on the newer one — so a test that is about
+    one of them says so through `johns_eighteen()` or `dallas_eleven()` below, and only a test
+    that is genuinely about EVERY seed row reads this."""
     data = json.loads(SEEDS.read_text(encoding="utf-8"))
     assert data["version"] == 1
     hospitals = data["hospitals"]
     assert isinstance(hospitals, list)
     return hospitals
+
+
+def johns_eighteen() -> list[dict[str, object]]:
+    """The 2026-09-06 table, in file order — everything Task SD1 did not add."""
+    return [h for h in load() if h["slug"] not in DALLAS_SLUGS]
+
+
+def dallas_eleven() -> list[dict[str, object]]:
+    """The 2026-09-10 Dallas table, in file order."""
+    return [h for h in load() if h["slug"] in DALLAS_SLUGS]
 
 
 def derived_type(name: str, hours: str) -> str:
@@ -61,39 +76,46 @@ def derived_type(name: str, hours: str) -> str:
 
 
 def test_there_are_exactly_eighteen_hospitals() -> None:
-    assert len(load()) == 18
+    assert len(johns_eighteen()) == 18
 
 
 def test_johns_table_is_reproduced_verbatim_and_in_order() -> None:
-    rows = load()
+    rows = johns_eighteen()
     got = tuple((h["name"], h["city"], h["state"], h["street"], h["zip"], h["phone"], h["hours"]) for h in rows)
     assert got == JOHNS_TABLE
 
 
 def test_every_hospital_carries_every_contracted_key() -> None:
-    for h in load():
+    for h in johns_eighteen():
         assert set(h) == REQUIRED_KEYS, (h["slug"], set(h) ^ REQUIRED_KEYS)
 
 
 def test_type_is_derived_exactly_as_d4_says() -> None:
-    for h in load():
+    for h in johns_eighteen():
         assert h["type"] == derived_type(str(h["name"]), str(h["hours"])), h["slug"]
 
 
 def test_the_derivation_produces_five_specialty_four_emergency_and_nine_small_animal() -> None:
     counts: dict[str, int] = {}
-    for h in load():
+    for h in johns_eighteen():
         counts[str(h["type"])] = counts.get(str(h["type"]), 0) + 1
     assert counts == {"Specialty": 5, "Emergency": 4, "Small animal": 9}
 
 
+# The two shapes John has written a fake number in: `(214) 555-0101` on the 2026-09-06 table and
+# `214-555-0101` on the 2026-09-10 Dallas one. Both are the 555-01xx block reserved for fiction;
+# neither is normalised, because his wording is the source of truth (A22's standing rule) and the
+# number is rendered as he typed it. Anchored, so `1555-0101` or a 555 buried mid-number fails.
+PHONE_SHAPES = re.compile(r"^(?:\(\d{3}\) |\d{3}-)555-01\d{2}$")
+
+
 def test_every_phone_is_a_555_number() -> None:
     for h in load():
-        assert " 555-" in str(h["phone"]), h["slug"]
+        assert PHONE_SHAPES.fullmatch(str(h["phone"])), (h["slug"], h["phone"])
 
 
 def test_area_and_market_are_derived_from_the_city_and_state() -> None:
-    for h in load():
+    for h in johns_eighteen():
         assert h["area"] == h["city"], h["slug"]
         assert h["market"] == f"{h['city']}, {h['state']}", h["slug"]
 
@@ -162,7 +184,7 @@ PHOTO_FOLDER_NAMES = frozenset(slug + PHOTO_SOURCE_SUFFIX for slug in PHOTO_FOLD
 
 
 def test_slugs_are_unique_and_name_the_photograph_folders() -> None:
-    slugs = [str(h["slug"]) for h in load()]
+    slugs = [str(h["slug"]) for h in johns_eighteen()]
     assert len(set(slugs)) == 18
     assert set(slugs) == PHOTO_FOLDER_SLUGS
     for slug in slugs:
@@ -214,7 +236,7 @@ def test_the_seed_file_reconstructs_the_spec_table_exactly() -> None:
             str(h["phone"]),
             str(h["hours"]),
         )
-        for h in load()
+        for h in johns_eighteen()
     ]
     assert rebuilt == _spec_table_rows()
 
@@ -327,8 +349,13 @@ def design_matches(hospital: dict[str, object], key: str, value: str) -> bool:
     raise AssertionError(f"the design grew a filter this test does not implement: {key}")
 
 
-def matching_slugs(key: str, value: str) -> list[str]:
-    return [str(h["slug"]) for h in load() if design_matches(h, key, value)]
+def matching_slugs(key: str, value: str,
+                   rows: list[dict[str, object]] | None = None) -> list[str]:
+    """A-L2's coverage claim is about JOHN'S EIGHTEEN — the set that was distributed to cover
+    every filter — so that is the default. Task SD1's eleven are passed in explicitly by the
+    one test that is about them."""
+    return [str(h["slug"]) for h in (johns_eighteen() if rows is None else rows)
+            if design_matches(h, key, value)]
 
 
 def test_the_design_still_declares_the_filters_this_test_covers() -> None:
@@ -351,6 +378,7 @@ def test_any_matches_all_eighteen_on_every_filter() -> None:
     for key, values in design_filter_options().items():
         assert "Any" in values, key
         assert len(matching_slugs(key, "Any")) == 18, key
+        assert len(matching_slugs(key, "Any", load())) == 29, key
 
 
 def test_johns_ruling_still_holds_no_hospital_is_mixed_or_large_animal() -> None:
@@ -360,6 +388,7 @@ def test_johns_ruling_still_holds_no_hospital_is_mixed_or_large_animal() -> None
     assert JOHNS_RULING == "they are all Small Animal"
     for key, value in sorted(EXCLUDED_OPTIONS):
         assert matching_slugs(key, value) == [], (key, value, "John ruled the eighteen carry no such practice")
+        assert matching_slugs(key, value, load()) == [], (key, value, "nor do the eleven")
 
 
 def test_the_excluded_options_are_exactly_the_two_john_named() -> None:
@@ -379,3 +408,257 @@ def test_at_least_one_hospital_is_in_the_designs_default_market() -> None:
         "no hospital is in the design's default market; frontend/src/logic.js reads "
         'MARKETS["Austin, TX"].center on every render and applyListings would have dropped it'
     )
+
+
+# ======================================================================================
+# Task SD1 — John's Dallas table of 2026-09-10, and the provenance he attached to it.
+#
+# Eleven more seed hospitals in the market the eighteen already carry. Three things make them
+# a SEPARATE contract from the 2026-09-06 table rather than eleven more rows of it:
+#
+#   * `area` is John's own "Area / market segment" column ("Far North / Preston corridor"),
+#     not the bare city the eighteen carry. It is the community label the design shows as the
+#     general location, and his segments are exactly that.
+#   * `type` is a CONTROLLER RULING per row, not D4's name-and-hours derivation: Beta is a
+#     specialty practice because John's own folder for it says so, and Indigo is an emergency
+#     hospital because it is open around the clock though its name says neither.
+#   * five provenance booleans record what is real and what is invented. They are DATA, never
+#     UI: nothing renders them, and the reason they exist is that a real street address may
+#     house a real and different business, so the file must say plainly that the address is a
+#     seed anchor and the business identity is fictional.
+#
+# John's JSON named `address` and `postal_code`; the file has held `street` and `zip` for
+# eighteen rows since 2026-09-06 and the loader reads those names, so the controller ruled the
+# two renamed and NOTHING ELSE. `seeds/hospitals.json`'s own `note` records the mapping, and
+# `test_the_note_records_the_field_mapping` below is what keeps it recorded.
+# ======================================================================================
+
+# (slug, name, area, street, zip, hours, phone) — John's table, verbatim, in his order. The en
+# dashes in "Mon\u2013Fri" and "Dallas\u2013Fort Worth" are written `\u2013` for the same reason
+# JOHNS_TABLE writes them that way: ruff's RUF001 has nothing to flag and the value is
+# byte-identical to what he sent.
+DALLAS_TABLE: tuple[tuple[str, str, str, str, str, str, str], ...] = (
+    ("alpha_dallas_veterinary_specialist_hospital", "Alpha Dallas Veterinary Specialist Hospital", "Far North / Preston corridor", "18770 Preston Rd", "75252", "Mon\u2013Fri 7:00 AM\u20136:00 PM; Sat 8:00 AM\u201312:00 PM; Sun closed", "214-555-0101"),
+    ("beta_dallas_veterinary_hospital", "Beta Dallas Veterinary Hospital", "North / Forest Lane", "3452 Forest Ln, Ste 100", "75234", "Mon\u2013Fri 8:00 AM\u20135:30 PM; Sat 8:00 AM\u201312:00 PM; Sun closed", "214-555-0102"),
+    ("charlie_dallas_animal_hospital", "Charlie Dallas Animal Hospital", "West Dallas / Oak Cliff", "1021 Fort Worth Ave", "75208", "Daily 8:00 AM\u20138:00 PM", "214-555-0103"),
+    ("delta_dallas_animal_er_hospital", "Delta Dallas Animal ER Hospital", "South Dallas", "2944 E Illinois Ave", "75216", "24 hours / 7 days", "214-555-0104"),
+    ("echo_dallas_animal_hospital", "Echo Dallas Animal Hospital", "Southwest Dallas", "3435 Marvin D. Love Fwy", "75224", "Mon\u2013Fri 8:00 AM\u20135:00 PM; Sat/Sun closed", "214-555-0105"),
+    ("indigo_dallas_animal_hospital", "Indigo Dallas Animal Hospital", "North/East / Central Expressway", "11333 N Central Expy", "75243", "24 hours / 7 days", "214-555-0106"),
+    ("foxtrot_dallas_animal_hospital", "Foxtrot Dallas Animal Hospital", "Highland Park / affluent central", "5075 McKinney Ave", "75205", "Mon\u2013Fri 8:00 AM\u20136:00 PM; Sat 8:00 AM\u201312:00 PM; Sun closed", "214-555-0107"),
+    ("hotel_dallas_animal_hospital", "Hotel Dallas Animal Hospital", "East Dallas / Lakewood", "6363 Richmond Ave", "75214", "Mon\u2013Fri 7:30 AM\u20136:00 PM; Sat 8:00 AM\u201312:00 PM; Sun closed", "214-555-0108"),
+    ("juliet_dallas_animal_hospital", "Juliet Dallas Animal Hospital", "East Dallas / Ferguson corridor", "8541 Ferguson Rd", "75228", "Mon 7:30 AM\u20138:00 PM; Tue 7:30 AM\u20136:00 PM; Wed 7:30 AM\u20136:00 PM; Thu 7:30 AM\u20138:00 PM; Fri 7:30 AM\u20136:00 PM; Sat 8:00 AM\u20132:00 PM; Sun closed", "214-555-0109"),
+    ("kilo_dallas_fort_worth_veterinary_hospital", "Kilo Dallas\u2013Fort Worth Veterinary Hospital", "Southeast / Buckner", "2247 S Buckner Blvd, Ste 110", "75227", "Mon\u2013Sat 10:00 AM\u20132:00 PM; Sun closed", "214-555-0110"),
+    ("lima_dallas_fort_worth_veterinary_hospital", "Lima Dallas\u2013Fort Worth Veterinary Hospital", "North Dallas / 75240", "13949 Peyton Dr", "75240", "Mon\u2013Fri 8:00 AM\u20135:30 PM; Sat 8:00 AM\u201312:00 PM; Sun closed", "214-555-0111"),
+)
+
+DALLAS_SLUGS = frozenset(row[0] for row in DALLAS_TABLE)
+
+# John numbered his table 0101…0110 and left the eleventh blank. The controller INFERRED
+# `214-555-0111` from that run and flagged it in the SD1 hand-back as an inference, not a fact.
+# Pinned here so the inference is visible in the code as well as in the report: if John supplies
+# a different number, this constant and the table above move together.
+LIMA_PHONE_IS_INFERRED = "214-555-0111"
+
+# CONTROLLER RULING (SD1 §1). Alpha is a specialist by name; Beta by John's own folder name
+# ("Beta Dallas Veterinary Hospital Specialty & Emergency Care"), which is his statement of what
+# it is; Delta is named ER and is open 24/7; Indigo is open 24/7. The other seven are small
+# animal. D4's derivation is NOT used here — it would read Beta and Indigo as small-animal
+# practices — so the map is written out and pinned instead.
+DALLAS_TYPES: dict[str, str] = {
+    "alpha_dallas_veterinary_specialist_hospital": "Specialty",
+    "beta_dallas_veterinary_hospital": "Specialty",
+    "charlie_dallas_animal_hospital": "Small animal",
+    "delta_dallas_animal_er_hospital": "Emergency",
+    "echo_dallas_animal_hospital": "Small animal",
+    "indigo_dallas_animal_hospital": "Emergency",
+    "foxtrot_dallas_animal_hospital": "Small animal",
+    "hotel_dallas_animal_hospital": "Small animal",
+    "juliet_dallas_animal_hospital": "Small animal",
+    "kilo_dallas_fort_worth_veterinary_hospital": "Small animal",
+    "lima_dallas_fort_worth_veterinary_hospital": "Small animal",
+}
+
+# John's provenance JSON, key for key. `address` and `postal_code` are the two the controller
+# mapped onto the file's existing `street` and `zip`; everything else is carried verbatim, and
+# these five are the new fields.
+PROVENANCE_KEYS = frozenset({
+    "phone_is_fake", "address_is_real", "address_is_seed_anchor",
+    "business_identity_is_fictional", "operating_hours_is_seed_data",
+})
+
+# The two renames, as the file's own `note` must state them.
+FIELD_MAPPING = (("address", "street"), ("postal_code", "zip"))
+
+# A22 (John, 2026-09-10, "Preserve existing seed wording/detail"), read from the amendment
+# itself rather than retyped: the wizard's ownership select carries exactly these ten, and a
+# seed row whose `ownership` is not one of them is a value no seller could ever re-select.
+AMENDMENTS_TS = ROOT / "frontend" / "tests" / "design-amendments.ts"
+_A22_REPLACE = re.compile(
+    r"id: 'A22'.*?replace: 'sel\(\"ownership\", \"Current ownership\", \[(.*?)\]\)'", re.DOTALL
+)
+
+
+def a22_ownership_options() -> tuple[str, ...]:
+    """The ten options amendment A22 puts in the wizard, read out of `design-amendments.ts`."""
+    match = _A22_REPLACE.search(AMENDMENTS_TS.read_text(encoding="utf-8"))
+    assert match is not None, "amendment A22 no longer declares the ownership select"
+    return tuple(re.findall(r'"([^"]+)"', match.group(1)))
+
+
+def test_a22_still_declares_the_ten_ownership_options_this_file_reads() -> None:
+    """The regex above found the amendment, and the amendment holds ten options. Without this
+    a restructured A22 would make `a22_ownership_options()` return an empty tuple and the
+    membership test below would pass by testing nothing."""
+    options = a22_ownership_options()
+    assert len(options) == 10, options
+    assert options[0] == "Sole proprietor" and options[-1] == "Other", options
+
+
+def test_there_are_exactly_eleven_dallas_hospitals() -> None:
+    assert len(dallas_eleven()) == 11
+
+
+def test_johns_dallas_table_is_reproduced_verbatim_and_in_order() -> None:
+    got = tuple(
+        (str(h["slug"]), str(h["name"]), str(h["area"]), str(h["street"]), str(h["zip"]),
+         str(h["hours"]), str(h["phone"]))
+        for h in dallas_eleven()
+    )
+    assert got == DALLAS_TABLE
+
+
+def test_limas_phone_is_the_inferred_one_and_is_recorded_as_inferred() -> None:
+    """John's numbering runs 0101…0110 in table order and Lima is the eleventh. The value is a
+    controller inference; this pins it so the inference cannot become invisible."""
+    lima = next(h for h in dallas_eleven() if h["slug"] == "lima_dallas_fort_worth_veterinary_hospital")
+    assert lima["phone"] == LIMA_PHONE_IS_INFERRED
+    assert DALLAS_TABLE[-1][6] == LIMA_PHONE_IS_INFERRED
+
+
+def test_every_dallas_row_is_in_dallas_texas() -> None:
+    for h in dallas_eleven():
+        assert (h["city"], h["state"], h["market"]) == ("Dallas", "TX", "Dallas, TX"), h["slug"]
+
+
+def test_the_dallas_area_is_johns_market_segment_not_the_bare_city() -> None:
+    """SD1 §1: `area` is his "Area / market segment" column. The eighteen's `area` is the bare
+    city and is NOT changed — it is not this task's — so the two conventions are pinned apart."""
+    for h in dallas_eleven():
+        assert h["area"] != h["city"], h["slug"]
+    assert all(h["area"] == h["city"] for h in johns_eighteen())
+
+
+def test_every_dallas_type_is_the_controllers_ruling() -> None:
+    for h in dallas_eleven():
+        assert h["type"] == DALLAS_TYPES[str(h["slug"])], h["slug"]
+
+
+def test_the_dallas_types_are_two_specialty_two_emergency_and_seven_small_animal() -> None:
+    counts: dict[str, int] = {}
+    for h in dallas_eleven():
+        counts[str(h["type"])] = counts.get(str(h["type"]), 0) + 1
+    assert counts == {"Specialty": 2, "Emergency": 2, "Small animal": 7}
+
+
+def test_no_dallas_type_is_outside_the_three_the_ruling_allows() -> None:
+    """SD1 §1: "one of `Emergency`, `Small animal`, `Specialty`, no others"."""
+    assert {str(h["type"]) for h in dallas_eleven()} <= {"Emergency", "Small animal", "Specialty"}
+
+
+def test_every_dallas_row_carries_the_eighteens_keys_plus_the_five_provenance_booleans() -> None:
+    for h in dallas_eleven():
+        assert set(h) == REQUIRED_KEYS | PROVENANCE_KEYS, (h["slug"], set(h) ^ (REQUIRED_KEYS | PROVENANCE_KEYS))
+
+
+def test_every_provenance_field_is_a_real_boolean_and_is_true() -> None:
+    """John's JSON is the shape for all eleven and every one of its five booleans is `true`.
+    `isinstance(..., bool)` matters: a truthy string would survive `is True`-less checks and
+    reach the database as text."""
+    for h in dallas_eleven():
+        for key in sorted(PROVENANCE_KEYS):
+            assert isinstance(h[key], bool), (h["slug"], key, type(h[key]).__name__)
+            assert h[key] is True, (h["slug"], key)
+
+
+def test_the_eighteen_did_not_gain_the_provenance_fields() -> None:
+    """Surgical diff: the eleven are a new contract, the eighteen are untouched."""
+    for h in johns_eighteen():
+        assert PROVENANCE_KEYS.isdisjoint(set(h)), h["slug"]
+
+
+def test_the_address_is_real_and_the_business_is_fictional_are_both_asserted() -> None:
+    """The pair that must never drift apart. A real street address with no statement that the
+    identity is invented is the reading John's ruling exists to prevent — a real building at
+    18770 Preston Rd may house a real and different business."""
+    for h in dallas_eleven():
+        assert h["address_is_real"] is True and h["business_identity_is_fictional"] is True, h["slug"]
+        assert h["address_is_seed_anchor"] is True, h["slug"]
+
+
+def test_the_note_records_the_field_mapping() -> None:
+    """CONTROLLER RULING: John's `address`/`postal_code` were mapped onto the file's existing
+    `street`/`zip` and nothing else was renamed. The file's own `note` says so, so the next
+    reader can see the JSON was mapped and not partially ignored."""
+    note = str(json.loads(SEEDS.read_text(encoding="utf-8"))["note"])
+    for johns_name, file_name in FIELD_MAPPING:
+        assert johns_name in note and file_name in note, (johns_name, file_name, note)
+
+
+def test_no_dallas_slug_collides_with_an_existing_one() -> None:
+    slugs = [str(h["slug"]) for h in load()]
+    assert len(set(slugs)) == len(slugs) == 29
+    assert set(slugs) & PHOTO_FOLDER_SLUGS == PHOTO_FOLDER_SLUGS
+    assert DALLAS_SLUGS.isdisjoint(PHOTO_FOLDER_SLUGS)
+
+
+def test_every_dallas_slug_is_the_ascii_snake_case_of_its_name() -> None:
+    """SD1 §1: snake_case, ASCII only, the en dash dropped — so "Kilo Dallas\u2013Fort Worth
+    Veterinary Hospital" is `kilo_dallas_fort_worth_veterinary_hospital`, with no `u2013` and
+    no double underscore where the dash was."""
+    for h in dallas_eleven():
+        slug = str(h["slug"])
+        assert slug.isascii() and re.fullmatch(r"[a-z0-9]+(?:_[a-z0-9]+)*", slug), slug
+        expected = re.sub(r"[^a-z0-9]+", "_", str(h["name"]).replace("\u2013", " ").lower()).strip("_")
+        assert slug == expected, (slug, expected)
+
+
+def test_every_dallas_ownership_is_one_of_a22s_ten() -> None:
+    allowed = set(a22_ownership_options())
+    for h in dallas_eleven():
+        assert h["ownership"] in allowed, (h["slug"], h["ownership"])
+
+
+def test_the_dallas_demo_values_are_varied_not_eleven_copies_of_one_row() -> None:
+    """SD1 §1: "make them plausible and VARIED — do not clone one row eleven times"."""
+    for field in ("price", "rev", "sqft", "est", "listed_days_ago", "staff", "services", "facility"):
+        values = [h[field] for h in dallas_eleven()]
+        assert len(set(map(str, values))) == 11, (field, values)
+
+
+def test_a_round_the_clock_hospital_is_bigger_than_a_five_day_practice() -> None:
+    """SD1 §1: "an emergency hospital open around the clock has more staff and more rooms than
+    a five-day small-animal practice". Pinned as the floor of the 24/7 rows against the ceiling
+    of the weekday-only ones, so the relationship survives an edit to any single row."""
+    day = {str(h["slug"]): h for h in dallas_eleven()}
+    round_clock = [h for h in day.values() if h["hours"] == "24 hours / 7 days"]
+    weekday_only = [h for h in day.values() if "Sat/Sun closed" in str(h["hours"])]
+    assert round_clock and weekday_only, "the hours strings no longer identify either group"
+    assert min(int(str(h["rooms"])) for h in round_clock) > max(int(str(h["rooms"])) for h in weekday_only)
+    assert min(int(str(h["docs"])) for h in round_clock) > max(int(str(h["docs"])) for h in weekday_only)
+
+
+def test_every_dallas_row_satisfies_the_listing_check_constraints() -> None:
+    """The bounds migrations 016, 030 and 034 impose, read here as data rather than by inserting:
+    `listing_status_check` and `listing_type_check` (016, widened by 030), `bldg`'s own CHECK
+    (016), `listing_submittable_ck` (030 — name, city, zip, type, est, price all present) and
+    `listing_publishable_ck` (030, widened by 034 — a published row needs state, market, area
+    AND sqft). `tests/scripts/test_seed_listings.py` proves the same eleven really insert."""
+    for h in dallas_eleven():
+        assert h["status"] in ("draft", "in_review", "published", "paused", "withdrawn", "declined"), h["slug"]
+        assert h["type"] in ("Small animal", "Mixed", "Large animal", "Emergency", "Specialty", "Other"), h["slug"]
+        assert h["bldg"] in ("Included", "Leased", "Separate"), h["slug"]
+        assert h["source"] in ("seed", "seller"), h["slug"]
+        for required in ("name", "city", "zip", "type", "est", "price"):        # submittable
+            assert h[required] not in (None, ""), (h["slug"], required)
+        for required in ("state", "market", "area", "sqft"):                    # publishable
+            assert h[required] not in (None, ""), (h["slug"], required)
