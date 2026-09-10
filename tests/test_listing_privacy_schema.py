@@ -271,7 +271,8 @@ def test_a_re_seed_upsert_of_a_published_seed_row_succeeds(conn: Any) -> None:
             " source, photos, updated_at)"
             " VALUES ('idp-reseed', %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s,"
             " %s, %s, %s, %s, %s::jsonb, now())"
-            " ON CONFLICT (slug) DO UPDATE SET status = EXCLUDED.status, name = EXCLUDED.name WHERE source = 'seed'",
+            " ON CONFLICT (slug) DO UPDATE SET status = EXCLUDED.status, name = EXCLUDED.name"
+                " WHERE listing.source = 'seed'",
             ("A", "X", "X", "TX", "X", "24/7", "published", True, True, "X", "Other", "X, TX", 1998, 100, 3000, "seed", json.dumps(["seed/1.webp"])),
         )
     # Verify it still exists and is still published
