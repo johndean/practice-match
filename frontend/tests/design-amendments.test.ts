@@ -240,11 +240,22 @@ describe('local design amendments (spec D15)', () => {
     // A25.6 — fix round 1, Important-1: `showDrive` had no coordinate term, so A25.2's restored
     // else-branch painted the drive-time ring around the metro centre for an unlocated listing.
     'A25.1', 'A25.2', 'A25.3', 'A25.4', 'A25.5', 'A25.6',
+    // A26 — the Browse filter bar's native <select>s become in-design dropdowns (John,
+    // 2026-09-11: "the dropdown 'more filters' is correct implementation while everything else on
+    // the filter bar is implemented incorrectly and not using the site design, this must be
+    // corrected"). The SECOND report about this toolbar row, so the family reuses A13's own idiom
+    // rather than a second one. Task F1's sixteen: A26.1 the four shared class members, A26.2 the
+    // `filters` map body, A26.4 the More-filters popover's parent edge, A26.5-A26.7 one branch
+    // each in the three dismissal closures A13.4/A13.8 already arm, A26.8a-f the six inbound
+    // cross-close edges, A26.9a-c go()'s three arms, A26.10 the markup. A26.3 and A26.11 (the
+    // three inside the popover) are Task F2 and are not in this list yet.
+    'A26.1', 'A26.2', 'A26.4', 'A26.5', 'A26.6', 'A26.7', 'A26.8a', 'A26.8b', 'A26.8c', 'A26.8d', 'A26.8e', 'A26.8f',
+    'A26.9a', 'A26.9b', 'A26.9c', 'A26.10',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(182);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(198);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -458,8 +469,18 @@ describe('local design amendments (spec D15)', () => {
     expect(amended, 'the options leave the tab order — focus stays on the combobox')
       .toContain('role="option" tabindex="-1"');
     expect(amended).not.toContain('onChange="{{ setMarket }}"');
-    // The five filter selects, the sort select and the wizard's stay native (scope, Q1).
-    expect((amended.match(/<select /g) ?? []).length, 'A13 changed a select outside its scope').toBe(4);
+    // A13's scope was "the five filter selects, the sort select and the wizard's stay native
+    // (Q1)". OVERRULED on 2026-09-11 in its first clause (family A26, John: "the dropdown 'more
+    // filters' is correct implementation while everything else on the filter bar is implemented
+    // incorrectly and not using the site design"), which converts the five and — in Task F2 — the
+    // three inside the More-filters popover, on this same idiom. The results-rail sort select
+    // becomes its own wired change (he ruled make it actually sort, not merely convert it) and
+    // the wizard's four field selects convert later as their own change, because `wizard-step-1`
+    // is one of the thirteen frozen hashes and A26 is deliberately a family in which none moves.
+    //
+    // So the count is the live scope statement, not A13's: FOUR before A26, THREE after Task F1
+    // (the five toolbar filters, one `<select >` tag for the loop), TWO after Task F2.
+    expect((amended.match(/<select /g) ?? []).length, 'a select changed outside the ruled scope').toBe(3);
   });
 
   // A14 (John, 2026-09-08: "the Give button must be identical to the https://vinfoundation.org/
@@ -489,15 +510,21 @@ describe('local design amendments (spec D15)', () => {
     // index, so its presence in the DESIGN is what makes the keyboard work on BOTH targets.
     expect(amended, 'the arrow keys must not focus inside a setState callback — the app has not rendered yet')
       .not.toContain('}, () => this.giveFocus(');
-    expect(amended).toContain('this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 });');
+    expect(amended).toContain('this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1, fMenu: null, fMenuAt: -1 });');
     // m7 (final review, ruled): the invariant runs in every direction now — Give's two open paths
     // close the other three menus, and each of the other three closes Give.
+    //
+    // WIDENED, NOT WITHDRAWN (A26, 2026-09-11). Each of these four open paths gained the filter
+    // dropdowns' two keys (A26.8a-e), because A26 put five more menus on the same screen and the
+    // invariant they encode is being EXTENDED. The strings stay byte-exact and stay pinned: a
+    // future edit that drops `giveMenu: false` from any of them still fails here, which is the
+    // only reason these lines exist.
     expect(amended, 'the nav toggle must close Give (A14.8)')
-      .toContain('toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false }),');
+      .toContain('toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false, fMenu: null, fMenuAt: -1 }),');
     expect(amended, 'the account toggle must close Give (A14.2)')
-      .toContain('toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false }),');
+      .toContain('toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false, fMenu: null, fMenuAt: -1 }),');
     expect(amended, 'the metro listbox must close Give (A13.2)')
-      .toContain('Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false }),');
+      .toContain('Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false, fMenu: null, fMenuAt: -1 }),');
     // m6 (final review, ruled): Home and End on the TRIGGER, guarded on the menu being open, the
     // way `marketMenuKeys` has them — the per-row handler already had them.
     expect(amended, 'Home and End must reach the Give trigger')
@@ -517,9 +544,11 @@ describe('local design amendments (spec D15)', () => {
     expect(amended, 'Tab out of the metro listbox must close it too').toContain('      if (!this.state.marketMenu) return;\n      const host = this._marketMenuEl;\n      if (host && host.contains(to)) return;\n      this.setState({ marketMenu: false, marketMenuAt: -1 });');
     // A13's own pointerdown closure, byte for byte, after every A14 edit to the function.
     expect(amended, 'A14 changed the metro menu\'s outside-click').toContain('      if (!this.state.marketMenu) return;\n      const host = this._marketMenuEl;\n      if (host && e.target && host.contains(e.target)) return;\n      this.setState({ marketMenu: false, marketMenuAt: -1 });');
-    // Six metro dismissal sites: A13.4's pointerdown and keydown, A13.8's focusout, A13.1's
-    // setMarket, and m7's two — Give's pointer open and its arrow open (A14.2).
-    expect((amended.match(/marketMenu: false, marketMenuAt: -1/g) ?? []).length, 'the metro menu is shut in exactly these six places').toBe(6);
+    // SEVEN metro dismissal sites. Six from A13/A14: A13.4's pointerdown and keydown, A13.8's
+    // focusout, A13.1's setMarket, and m7's two — Give's pointer open and its arrow open (A14.2).
+    // The seventh is A26's (2026-09-11): the filter dropdowns' ONE open path, A26.1's
+    // `openFilterMenu`, which is the whole family's outbound edge.
+    expect((amended.match(/marketMenu: false, marketMenuAt: -1/g) ?? []).length, 'the metro menu is shut in exactly these seven places').toBe(7);
   });
 
   // A14.6 + the ruling: "Self-host Montserrat 600 under the SIL Open Font Licence, scoped
@@ -741,7 +770,7 @@ describe('local design amendments (spec D15)', () => {
     expect((amended.match(/fMenu: key, fMenuAt: at/g) ?? []).length, 'a second open path would have to carry the edges by hand').toBe(1);
     // …and the six inbound edges (A26.8a-f), plus the popover parent (A26.4) and go()'s three
     // arms (A26.9). Ten places shut a filter dropdown; the family's own toggle is the eleventh.
-    expect((amended.match(/fMenu: null, fMenuAt: -1/g) ?? []).length, 'the filter dropdowns are shut in exactly these places').toBe(14);
+    expect((amended.match(/fMenu: null, fMenuAt: -1/g) ?? []).length, 'the filter dropdowns are shut in exactly these places').toBe(15);
   });
 
   it('A26 leaves Give\'s and the metro\'s three dismissal closures byte for byte (the A14.4 precedent)', () => {
@@ -760,14 +789,6 @@ describe('local design amendments (spec D15)', () => {
     // recorded rather than across the document (A13's rule, final review m5).
     expect(amended).not.toContain('document.getElementById');
     expect((amended.match(/this\._fMenuEls\[this\.state\.fMenu\]/g) ?? []).length, 'pointerdown and focusout').toBe(2);
-  });
-
-  // Scope, as a number. Two `<select >` tags remain after Task F2 (the results-rail sort, which
-  // John ruled on 2026-09-11 becomes its own wired change, and the wizard's field selects, which
-  // he ruled convert later). F1 has converted one of the family's two loops, so it reads 3 here.
-  it('A26 changed no <select> outside its scope', () => {
-    const amended = readFileSync(AMENDED, 'utf8');
-    expect((amended.match(/<select /g) ?? []).length, 'A26 changed a select outside its scope').toBe(3);
   });
 
   // D18 (John, 2026-09-07: "update across the application"). One occurrence in the pristine

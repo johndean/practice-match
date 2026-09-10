@@ -397,11 +397,22 @@
           </div>
           <div style="flex: 1; min-width: 12px;"></div>
           <sc-for list="{{ filters }}" as="fl" hint-placeholder-count="5">
-            <select value="{{ fl.value }}" onChange="{{ fl.set }}" style="{{ fl.style }}">
-              <sc-for list="{{ fl.options }}" as="o" hint-placeholder-count="3">
-                <option value="{{ o.v }}">{{ o.label }}</option>
-              </sc-for>
-            </select>
+            <div ref="{{ fl.hostRef }}" style="position: relative;">
+              <button onClick="{{ fl.toggle }}" onKeyDown="{{ fl.keys }}" role="combobox" aria-label="{{ fl.aria }}" aria-haspopup="listbox" aria-controls="{{ fl.listId }}" aria-expanded="{{ fl.open }}" aria-activedescendant="{{ fl.activeId }}" style="{{ fl.style }}">
+                <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ fl.triggerLabel }}</span>
+                <img src="assets/icons/sub-chevron.svg" alt="" width="14" height="14" style="{{ fl.caretStyle }}">
+              </button>
+              <sc-if value="{{ fl.open }}" hint-placeholder-val="{{ false }}">
+                <div role="listbox" aria-label="{{ fl.aria }}" id="{{ fl.listId }}" ref="{{ fl.panelRef }}" style="position: absolute; left: 0; top: 46px; z-index: 700; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;" class="rf-scroll">
+                  <sc-for list="{{ fl.options }}" as="o" hint-placeholder-count="3">
+                    <button onClick="{{ o.go }}" id="{{ o.optId }}" role="option" tabindex="-1" aria-selected="{{ o.selected }}" style="{{ o.rowStyle }}" style-hover="background: var(--vf-neutral);">
+                      <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ o.label }}</span>
+                      <img src="assets/icons/sub-check-filled.svg" alt="" width="11" height="11" style="{{ o.tickStyle }}">
+                    </button>
+                  </sc-for>
+                </div>
+              </sc-if>
+            </div>
           </sc-for>
           <div style="position: relative;">
             <button onClick="{{ toggleMore }}" style="{{ moreBtnStyle }}">
@@ -1943,6 +1954,10 @@ class Component extends DCLogic {
         const give = this._giveMenuEl;
         if (!(give && e.target && give.contains(e.target))) this.setState({ giveMenu: false });
       }
+      if (this.state.fMenu) {
+        const fh = this._fMenuEls[this.state.fMenu];
+        if (!(fh && e.target && fh.contains(e.target))) this.setState({ fMenu: null, fMenuAt: -1 });
+      }
       if (!this.state.marketMenu) return;
       const host = this._marketMenuEl;
       if (host && e.target && host.contains(e.target)) return;
@@ -1968,6 +1983,7 @@ class Component extends DCLogic {
         this.setState({ giveMenu: false });
         if (this._giveButtonEl) this._giveButtonEl.focus();
       }
+      if (this.state.fMenu) this.setState({ fMenu: null, fMenuAt: -1 });
       if (!this.state.marketMenu) return;
       this.setState({ marketMenu: false, marketMenuAt: -1 });
     };
@@ -1984,6 +2000,10 @@ class Component extends DCLogic {
       if (this.state.giveMenu) {
         const give = this._giveMenuEl;
         if (!(give && give.contains(to))) this.setState({ giveMenu: false });
+      }
+      if (this.state.fMenu) {
+        const fh = this._fMenuEls[this.state.fMenu];
+        if (!(fh && fh.contains(to))) this.setState({ fMenu: null, fMenuAt: -1 });
       }
       if (!this.state.marketMenu) return;
       const host = this._marketMenuEl;
@@ -2044,10 +2064,10 @@ class Component extends DCLogic {
   }
 
   go = (screen) => () => {
-    if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false });
-    if (!this.props.listings || this.state.sellerView !== "wizard" || !this.state.editingId) return this.setState({ screen, interest: "closed", userMenu: false, lightbox: null, lightboxFocus: false });
+    if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false, fMenu: null, fMenuAt: -1 });
+    if (!this.props.listings || this.state.sellerView !== "wizard" || !this.state.editingId) return this.setState({ screen, interest: "closed", userMenu: false, lightbox: null, lightboxFocus: false, fMenu: null, fMenuAt: -1 });
     return this.props.listings.patch(this.state.editingId, this.state.step, this.state.w, true).then(
-      (d) => this.setState({ screen, interest: "closed", userMenu: false, wizAssets: d.assets, wizErr: "", lightbox: null, lightboxFocus: false }),
+      (d) => this.setState({ screen, interest: "closed", userMenu: false, wizAssets: d.assets, wizErr: "", lightbox: null, lightboxFocus: false, fMenu: null, fMenuAt: -1 }),
       (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })
     );
   };
@@ -2090,6 +2110,44 @@ class Component extends DCLogic {
   moveMarketHighlight = (i) => {
     this.setState({ marketMenuAt: i });
     this.scrollMarketOption(i);
+  };
+
+  // Opening a filter dropdown. ONE open path for the whole family: the trigger and the arrow
+  // keys both come here, so the cross-menu invariant (final review m7) is written once rather
+  // than once per instance. Writing `fMenu` is what closes whichever sibling was open —
+  // Object.assign semantics — so inside the family there is nothing to forget; the four keys
+  // below are the only edges that leave it.
+  openFilterMenu = (key, at) => {
+    this.setState({ fMenu: key, fMenuAt: at, navMenu: false, userMenu: false, giveMenu: false, marketMenu: false, marketMenuAt: -1 });
+  };
+
+  // The filter choice. It calls the design's own setF, so the state transition and the 320 ms
+  // loading settle are the ones the <select>'s onChange had, to the byte.
+  setFilter = (key, v) => {
+    this.setF(key)(v);
+    this.setState({ fMenu: null, fMenuAt: -1 });
+    // The choice unmounts the row the pointer or the keyboard was on, so focus would land on
+    // <body>. A native select leaves the user on the control; so does this one.
+    const host = this._fMenuEls && this._fMenuEls[key];
+    const trigger = host && host.querySelector('button[aria-haspopup="listbox"]');
+    if (trigger) trigger.focus();
+  };
+
+  // Bringing a row into view, scoped to the dropdown that owns it. Both the arrow keys and the
+  // panel's own mount need this: one while the rows are already there, one at the moment they
+  // arrive. The row is resolved through the field this component recorded, not across the
+  // document — the ids are ones this component mints, as scrollMarketOption's are.
+  scrollFilterOption = (key, i) => {
+    const host = this._fMenuEls && this._fMenuEls[key];
+    const row = host && host.querySelector("#f-opt-" + key + "-" + i);
+    if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+  };
+
+  // Moving the keyboard highlight. The rows are all in the DOM while the panel is open, so the
+  // one being highlighted is scrolled into view here rather than after a re-render.
+  moveFilterHighlight = (key, i) => {
+    this.setState({ fMenuAt: i });
+    this.scrollFilterOption(key, i);
   };
 
   // ---- Browse Practices: map, market layers, results -------------------------------------------------
@@ -3349,14 +3407,14 @@ class Component extends DCLogic {
       navExpanded: !!s.auth && vw >= 1050,
       navCollapsed: !!s.auth && vw < 1050,
       navMenuOpen: !!s.navMenu,
-      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false }),
+      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false, fMenu: null, fMenuAt: -1 }),
       subBrandStyle: "width: 1px; height: 30px; background: var(--rf-line); display: " + (vw < 1050 ? "none" : "block") + ";",
       subBrandTextStyle: "font-family: var(--rf-display); font-size: 15px; font-weight: 800; letter-spacing: -.005em; color: var(--color-blue); white-space: nowrap; display: " +
         (vw < 1050 ? "none" : "block") + ";",
       identityStyle: "line-height: 1.25; display: " + (vw < 1180 ? "none" : "block") + ";",
       me: Object.assign({ email: s.email }, s.me),
       userMenuOpen: !!s.userMenu,
-      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false }),
+      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false, fMenu: null, fMenuAt: -1 }),
       // The Give control, measured on vinfoundation.org (John, 2026-09-08). The literals are
       // the live site's, not this design's tokens: #339dde is the idle pill, #07386f the
       // hover/open pill and the panel border and the row text, 10px the pill radius, 4.34px
@@ -3366,7 +3424,7 @@ class Component extends DCLogic {
       // KEYBOARD, and a stale one would drag a mouse user into the list on the next open.
       // `marketMenu` too (final review m7): the invariant is that opening one menu closes
       // the others, and Browse renders this control and the metro listbox on one screen.
-      toggleGiveMenu: () => this.setState({ giveMenu: !s.giveMenu, giveMenuAt: null, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 }),
+      toggleGiveMenu: () => this.setState({ giveMenu: !s.giveMenu, giveMenuAt: null, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1, fMenu: null, fMenuAt: -1 }),
       giveMenuRef: (el) => { this._giveMenuEl = el || null; },
       giveButtonRef: (el) => { this._giveButtonEl = el || null; },
       // The panel's own mount is the first moment its links exist, so it is where an arrow
@@ -3417,7 +3475,7 @@ class Component extends DCLogic {
         // Already-open: the panel is mounted, so focus moves here and now. Opening CANNOT do
         // that — the app's setState runs its callback synchronously (dc-logic.js) and Vue
         // has not rendered the panel yet, so the index is seeded and givePanelRef spends it.
-        this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 });
+        this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1, fMenu: null, fMenuAt: -1 });
       },
       signOut: () => (this.props.listings && s.sellerView === "wizard" && s.editingId
           ? this.props.listings.patch(s.editingId, s.step, s.w, true).catch(() => {})
@@ -3543,7 +3601,7 @@ class Component extends DCLogic {
       // review m7). The global pointerdown and focusout listeners covered a pointer and a
       // Tab; a pure-keyboard user could hold this listbox and the header's Give menu open
       // at once, and then shut both with one Escape.
-      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false }),
+      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false, fMenu: null, fMenuAt: -1 }),
       // On the TRIGGER, which is always rendered: a shut menu has no active descendant, and
       // null is what both renderers omit the attribute for (a string would spell a dead id).
       marketActiveId: s.marketMenu ? "market-opt-" + s.marketMenuAt : null,
@@ -3567,7 +3625,7 @@ class Component extends DCLogic {
         const at = s.marketMenuAt == null || s.marketMenuAt < 0 ? cur : s.marketMenuAt;
         if (e.key === "ArrowDown" || e.key === "ArrowUp") {
           e.preventDefault();
-          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur });
+          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur, fMenu: null, fMenuAt: -1 });
           return this.moveMarketHighlight((at + (e.key === "ArrowDown" ? 1 : keys.length - 1)) % keys.length);
         }
         if (!s.marketMenu) return;
@@ -3611,7 +3669,7 @@ class Component extends DCLogic {
         "; background: none; border: 0; border-radius: 6px; cursor: " + (this.activeFilterCount() ? "pointer" : "default") + ";",
       clearFilters: () => this.setState({ f: { type: "Any", price: "Any", revenue: "Any", doctors: "Any", building: "Any", est: "Any", ownership: "Any", sqft: "Any" } }),
       moreOpen: !!s.moreFilters,
-      toggleMore: () => this.setState({ moreFilters: !s.moreFilters }),
+      toggleMore: () => this.setState({ moreFilters: !s.moreFilters, fMenu: null, fMenuAt: -1 }),
       moreCount: ["est", "ownership", "sqft"].filter((k) => s.f[k] && s.f[k] !== "Any").length,
       hasMoreCount: ["est", "ownership", "sqft"].some((k) => s.f[k] && s.f[k] !== "Any"),
       moreBtnStyle: "display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 15px; font-size: 13px; font-weight: 500; border-radius: 6px; cursor: pointer; color: var(--vf-navy); background: " +
@@ -3634,14 +3692,76 @@ class Component extends DCLogic {
         { key: "revenue", options: [["Any", "Gross revenue: Any"], ["u1000", "Under $1M"], ["1000-2500", "$1M – $2.5M"], ["o2500", "$2.5M and up"]] },
         { key: "doctors", options: [["Any", "Doctors: Any"], ["1", "1 or more"], ["2", "2 or more"], ["4", "4 or more"]] },
         { key: "building", options: [["Any", "Property: Any"], ["Included", "Building included"], ["Separate", "Building available separately"], ["Leased", "Building leased"]] }
-      ].map((fl) => ({
-        value: s.f[fl.key],
-        set: this.setF(fl.key),
-        options: fl.options.map((o) => ({ v: o[0], label: o[1] })),
-        style: "height: 40px; padding: 0 13px; font-size: 13px; font-weight: 500; color: var(--color-navy); background: " +
-          (s.f[fl.key] === "Any" ? "var(--color-white)" : "var(--rf-band)") + "; border: 1px solid " +
-          (s.f[fl.key] === "Any" ? "var(--border-subtle)" : "var(--color-blue)") + "; border-radius: 6px; cursor: pointer;"
-      })),
+      // Each toolbar filter is a dropdown list in this design's own style, not the operating
+      // system's popup: the same trigger + role="listbox" panel A13 gave the metro control
+      // beside it. One .map() body, five instances, one state slot.
+      ].map((fl) => {
+        const cur = s.f[fl.key];
+        const open = s.fMenu === fl.key;
+        // Math.max: a value `f` holds that this option list does not would give indexOf -1 and
+        // index the array out of bounds — the guard marketMenuKeys carries for a dropped metro.
+        const sel = Math.max(0, fl.options.findIndex((o) => o[0] === cur));
+        const at = open && s.fMenuAt >= 0 ? s.fMenuAt : sel;
+        return {
+          // The accessible name, taken from the design's OWN first option — all five read
+          // "<name>: Any" — rather than authoring five new strings. A <select> with no <label>
+          // is named by nothing, and a <label> cannot name a <button>, so the trigger needs one.
+          aria: fl.options[0][1].split(":")[0],
+          open,
+          listId: "f-listbox-" + fl.key,
+          // On the TRIGGER, which is always rendered: a shut dropdown has no active descendant,
+          // and null is what both renderers omit the attribute for (a string would spell a dead
+          // id). Keyed on fl.key as well, so a sibling never claims another's highlight.
+          activeId: open ? "f-opt-" + fl.key + "-" + s.fMenuAt : null,
+          // What the closed <select> displayed: the current option's own label.
+          triggerLabel: fl.options[sel][1],
+          toggle: () => (open ? this.setState({ fMenu: null, fMenuAt: -1 }) : this.openFilterMenu(fl.key, sel)),
+          hostRef: (el) => { const m = this._fMenuEls || (this._fMenuEls = {}); m[fl.key] = el || null; },
+          // The panel's own mount is when the option rows first exist, so it is where OPENING
+          // scrolls the highlighted row into view — the arrow keys cannot, having seeded the
+          // highlight while the panel was still unrendered. Same callback-ref idiom the compare
+          // menu ships (md.compareMenuRef) and A13 reuses for marketPanelRef.
+          panelRef: (el) => { if (el) this.scrollFilterOption(fl.key, this.state.fMenuAt); },
+          keys: (e) => {
+            const n = fl.options.length;
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              e.preventDefault();
+              if (!open) return this.openFilterMenu(fl.key, sel);
+              return this.moveFilterHighlight(fl.key, (at + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
+            }
+            if (!open) return;
+            if (e.key === "Home" || e.key === "End") {
+              e.preventDefault();
+              return this.moveFilterHighlight(fl.key, e.key === "Home" ? 0 : n - 1);
+            }
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              return this.setFilter(fl.key, fl.options[at][0]);
+            }
+          },
+          // The <select>'s own box, byte for byte, plus the three declarations a label and a
+          // chevron need where the user agent used to draw its own arrow (V3:382's own trio).
+          style: "display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 13px; font-size: 13px; font-weight: 500; color: var(--color-navy); background: " +
+            (cur === "Any" ? "var(--color-white)" : "var(--rf-band)") + "; border: 1px solid " +
+            (cur === "Any" ? "var(--border-subtle)" : "var(--color-blue)") + "; border-radius: 6px; cursor: pointer;",
+          caretStyle: "flex: none; display: block; transition: transform 150ms var(--easing-out); transform: rotate(" +
+            (open ? "180deg" : "0deg") + ");",
+          options: fl.options.map((o, i) => {
+            const on = o[0] === cur;
+            const hi = open && s.fMenuAt === i;
+            return {
+              label: o[1], selected: on,
+              go: () => this.setFilter(fl.key, o[0]),
+              optId: "f-opt-" + fl.key + "-" + i,
+              rowStyle: "display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 8px; font-family: var(--rf-display); font-size: 13px; font-weight: " +
+                (on ? "800" : "500") + "; color: var(--vf-navy); background: " +
+                (on ? "var(--vf-accent-bg)" : hi ? "var(--vf-neutral)" : "none") + "; border: 0; border-radius: 6px; cursor: pointer;",
+              tickStyle: "flex: none; display: block; filter: brightness(0) saturate(100%) invert(23%) sepia(89%) saturate(1352%) hue-rotate(184deg) brightness(94%) contrast(101%); opacity: " +
+                (on ? "1" : "0") + ";"
+            };
+          })
+        };
+      }),
       results: list.map((p) => ({
         area: p.area, type: p.type, docs: p.docs, rooms: p.rooms, listed: p.listed,
         priceLabel: this.money(p.price),
