@@ -3124,6 +3124,32 @@ const A21_2e: Amendment = {
  *  ownership select widens from four options (the design's four) to ten, adding the seeds' own six
  *  phrasings alongside the design's four. The API's `OWNERSHIPS` tuple and the design's option
  *  array are identical and pinned two-way by pytest (step 1 of the task's own test cases). */
+/** A21.2f (Task B10, D-C31): compPer10k guards the .toFixed() call.
+ *  When per10k is undefined, compPer10k must be undefined, not throw. */
+const A21_2f: Amendment = {
+  id: 'A21.2f', date: '2026-09-10', ruling: 'compPer10k renders the ratio or undefined, never throws (Task B10, D-C31)',
+  find: '      compPer10k: per10k.toFixed(1),',
+  replace: '      compPer10k: (per10k !== undefined) ? per10k.toFixed(1) : undefined,',
+  count: 1
+};
+
+/** A21.2g (Task B10, D-C31): score and scoreLabel are omitted when inputs are missing.
+ *  A composite of unknowns is not a low score; it is not a score. */
+const A21_2g: Amendment = {
+  id: 'A21.2g', date: '2026-09-10', ruling: 'score and scoreLabel omitted when inputs missing (Task B10, D-C31)',
+  find: '      const score = Math.max(0, Math.min(100, Math.round(\n        40 * Math.min(c.income / 140000, 1) + 35 * Math.min(c.growth / 40, 1) + 25 * Math.max(0, 1 - per10k / 3)\n      )));\n      const tone = (v) => (v ? "var(--vf-navy)" : "#8d99a6");',
+  replace: '      const score = (per10k !== undefined && c.income !== undefined && c.growth !== undefined) ? Math.max(0, Math.min(100, Math.round(\n        40 * Math.min(c.income / 140000, 1) + 35 * Math.min(c.growth / 40, 1) + 25 * Math.max(0, 1 - per10k / 3)\n      ))) : undefined;\n      const tone = (v) => (v ? "var(--vf-navy)" : "#8d99a6");',
+  count: 1
+};
+
+/** A21.2h (Task B10, D-C31): scoreLabel renders only when score is defined. */
+const A21_2h: Amendment = {
+  id: 'A21.2h', date: '2026-09-10', ruling: 'scoreLabel rendered only when score defined (Task B10, D-C31)',
+  find: '      scoreLabel: score < 30 ? "Low" : score < 60 ? "Fair" : "Strong",',
+  replace: '      scoreLabel: (score !== undefined) ? (score < 30 ? "Low" : score < 60 ? "Fair" : "Strong") : undefined,',
+  count: 1
+};
+
 const A22: Amendment = {
   id: 'A22', date: '2026-09-10',
   ruling: 'Preserve existing seed wording/detail — widen the ownership dropdown to carry the seeds\' six phrasings beside the design\'s four (Task SL10)',
@@ -3159,7 +3185,7 @@ export function amendments(): Amendment[] {
     // A21 — market-data layers do not render absence as zero (A-C28); A21.2/A21.2b reverted (A-C29,
     // the figure is payroll); A21.3a–d take the year from the data instead of hard-coding 2015.
     // A21.2b-e handle the panel rendering when figures are undefined (Task B10, D-C31).
-    A21_1, A21_1b, A21_2b, A21_2c, A21_2d, A21_2e, A21_3a, A21_3b, A21_3c, A21_3d,
+    A21_1, A21_1b, A21_2b, A21_2c, A21_2d, A21_2e, A21_2f, A21_2g, A21_2h, A21_3a, A21_3b, A21_3c, A21_3d,
     // A22 — the ownership vocabulary widens to the seeds' own wording (2026-09-10, Task SL10).
     A22];
 }
