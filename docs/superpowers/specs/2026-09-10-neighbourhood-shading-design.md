@@ -535,9 +535,21 @@ And four more this spec's own boundaries require:
 
 ---
 
-## 14. Open questions
+## 14. Open questions — ALL THREE ANSWERED, 2026-09-10
 
-Three remain after the four rulings. None of them is manufactured — each is a place where the four rulings settle the behaviour and not the appearance, and each has a default that applies until John says otherwise.
+**None remain.** John ruled the two that were his on the evening of 2026-09-10; the controller ruled the third. The three paragraphs that follow record what was asked and what was decided, because a spec that quietly absorbs an answer loses the reasoning with it.
+
+**1. The no-data treatment — RULED (John): neutral grey, WITH a legend row.** A polygon with no usable figure is filled at the design's own `#e6e6e6` at the same `fillOpacity: 0.5` every other class uses, and the legend gains one row reading "No data". The polygon is always drawn and never omitted: a hole in the map reads as a boundary, not as an absence. Hatching was offered and not taken — it is the Census spec §2b's own alternative, but it would be new style vocabulary on a screen whose pixels are otherwise frozen, and the shared canvas renderer draws flat fills. Note the boundary this preserves: D-C36 still forbids greying a figure that WAS measured but whose margin is wide; grey means unmeasured, and only that.
+
+**2. The snapshot strip's footnote (A24.6) — RULED (John): name the boundary and its vintage.** The sentence becomes, verbatim: *"Community areas are Census ZIP Code Tabulation Areas (2023 boundaries); figures describe the area, not the practice."* It replaces "Community areas on the map are approximate — production draws Census ZCTA boundaries", which becomes false the day this ships. The vintage is in the copy deliberately, so a reader knows how current the boundaries are; the cost is that the sentence needs an edit when `tiger_cb` advances, and §6's vintage handling is where that edit is triggered from. The two rejected alternatives — dropping the vintage, and naming the geography per layer — are recorded because the second is not wrong, only redundant: the legend already names each layer's geography under D-C35.
+
+**3. Extending the amendment engine to a second bundle file (§9.2) — RULED (controller): extend it.** This is the first amendment that has to reach `MarketMapV3.jsx`, and the engine has only ever known the `.dc.html`. Add `file?: 'dc' | 'jsx'` to `Amendment`, add a frozen pristine twin `MarketMapV3.rev2.jsx`, and prove both files the way the one file is proved today — pristine plus amendments equals the amended file, byte for byte. The alternative was hand-editing an approved bundle file, which is the exact failure spec D15 exists to remove, and no argument for it survives that sentence. The recorded fallback, if the engine change is ever refused, stays as written: a new sibling component with the `x-import from=` attribute repointed by a `.dc.html` amendment.
+
+---
+
+## 14b. The questions as they were put (superseded, kept for the reasoning)
+
+Three remained after the four rulings. None of them is manufactured — each is a place where the four rulings settle the behaviour and not the appearance, and each has a default that applies until John says otherwise.
 
 1. **The no-data class's treatment, and whether the legend gains a row for it.** D-C36 rules that a *measured* figure is never greyed; it does not say how an *unmeasured* one looks, and the approved design has never drawn a no-data swatch. Census spec §2b says "hatched or neutral grey". *Default:* neutral grey at the design's own `#e6e6e6`, at the same `fillOpacity: 0.5` every other class uses, with one extra legend row labelled "No data". Hatching is not proposed: the shared canvas renderer draws flat fills, and a pattern fill would be new style vocabulary on a screen whose pixels are otherwise frozen.
 
