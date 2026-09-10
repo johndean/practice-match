@@ -1021,9 +1021,21 @@ def test_the_seed_captions_are_read_from_the_committed_index() -> None:
     # rendered and every one carries its OWN caption, so there is a key per FILE rather than per
     # filled slot. `1111_pet_hospital` was the A-L10 curation's starkest case — one exterior and
     # five empty slots — and now carries ten photographs, each with a caption of its own.
+    #
+    # `if photo["file"]` on the right-hand side, as `seed_captions` itself has (Task SD1 fix
+    # round 1, C1): an EMPTY captioned slot is back — a multi-panel contact sheet never occupies
+    # one of the design's six, even when that leaves it null — and it has no path for a caption
+    # to be keyed by. Without the filter this expected the key `"<slug>/None"`, which is the
+    # naive shape, not the contract. Twenty-one of the 333 positions are empty today.
     index = json.loads(SL.PHOTO_INDEX.read_text(encoding="utf-8"))
     for slug, photos in index["hospitals"].items():
-        assert [k for k in captions if k.startswith(f"{slug}/")] == [f"{slug}/{photo['file']}" for photo in photos]
+        assert [k for k in captions if k.startswith(f"{slug}/")] == [
+            f"{slug}/{photo['file']}" for photo in photos if photo["file"]
+        ]
+    # …and the empty slots really are there, so the filter above is doing work rather than
+    # describing a set that happens to be empty.
+    assert sum(1 for photos in index["hospitals"].values() for p in photos if not p["file"]) == 21
+    assert len(captions) == 312
     assert len([k for k in captions if k.startswith("1111_pet_hospital/")]) == 10
     assert captions["1111_pet_hospital/1.webp"] == "Exterior — entrance view"
     assert SL.seed_captions() is captions, "read once per process, not once per draft"
