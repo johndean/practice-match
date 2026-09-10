@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { AMENDED, type Amendment, LOCAL_AMENDMENTS_MD, PRISTINE, amendments, applyAmendments, deriveTypographyB, templateRegions, V2 } from './design-amendments';
+import { AMENDED, AMENDED_JSX, type Amendment, LOCAL_AMENDMENTS_MD, PRISTINE, PRISTINE_JSX, amendments, amendmentsFor, applyAmendments, deriveTypographyB, templateRegions, V2 } from './design-amendments';
 
 describe('local design amendments (spec D15)', () => {
   const pristine = readFileSync(PRISTINE, 'utf8');
@@ -11,6 +11,35 @@ describe('local design amendments (spec D15)', () => {
   // This hash changes only when a re-issued bundle lands (and then the amendments retire with it).
   it('the pristine Rev 2 copy is the bundle\'s file, untouched', () => {
     expect(createHash('sha256').update(readFileSync(PRISTINE)).digest('hex')).toBe('335753c3164c10b80f9779de637a2358f40cde5c22d9195cc0a79f06bcf4f01d');
+  });
+
+  // The bundle's SECOND amendable file (spec §9.2, ruled by the controller 2026-09-10 §14 Q3).
+  // A24 is the first amendment in the programme's history that has to reach a file other than
+  // the `.dc.html`, and the alternative — hand-editing an approved bundle file — is the exact
+  // failure mode spec D15 exists to remove. Same contract, same proof: a frozen pristine twin
+  // that is never edited, and byte equality with the amended file it plus its own amendments
+  // produce. This hash changes only when a re-issued bundle lands.
+  it('the pristine MarketMapV3 copy is the bundle\'s file, untouched', () => {
+    expect(createHash('sha256').update(readFileSync(PRISTINE_JSX)).digest('hex')).toBe('662e4105fd258b6380f1f66f6289629d999aa657b8dc5a4d1303be88e26c0adc');
+  });
+
+  it('the amended MarketMapV3.jsx is the pristine copy plus exactly the ruled edits', () => {
+    expect(applyAmendments(readFileSync(PRISTINE_JSX, 'utf8'), amendmentsFor('jsx'))).toBe(readFileSync(AMENDED_JSX, 'utf8'));
+  });
+
+  // The partition itself, both ways: every entry lands in exactly one file's list, an entry with
+  // no `file` is a `.dc.html` entry (which is what leaves all 182 pre-A24 entries — the 24 A1
+  // derives plus the 158 literal consts — unchanged), and
+  // the two partitions reassemble into the whole list in the original order.
+  it('amendmentsFor partitions the list by file, defaulting to the .dc.html', () => {
+    const all = amendments();
+    const dc = amendmentsFor('dc');
+    const jsx = amendmentsFor('jsx');
+    expect(dc.length + jsx.length, 'an amendment landed in neither partition, or in both').toBe(all.length);
+    expect(dc.every((a) => (a.file ?? 'dc') === 'dc')).toBe(true);
+    expect(jsx.every((a) => a.file === 'jsx')).toBe(true);
+    expect(dc.map((a) => a.id)).toEqual(all.filter((a) => a.file === undefined || a.file === 'dc').map((a) => a.id));
+    expect(all.filter((a) => a.file === undefined).length, 'every pre-A24 entry declares no file at all').toBeGreaterThan(150);
   });
   // The 24 elements V2 typed differently from V3 (measured in the V13 STOP reports and Step 5, 2026-09-07): 22 display headings, the
   // key-fact values `{{ m.v }}` (V2 set them uppercase .005em — one element in the template) and the 28 px mobile asking price
@@ -673,7 +702,7 @@ describe('local design amendments (spec D15)', () => {
   });
 
   it('the amended reference is the pristine Rev 2 file plus exactly the ruled edits', () => {
-    expect(applyAmendments(pristine, amendments())).toBe(readFileSync(AMENDED, 'utf8'));
+    expect(applyAmendments(pristine, amendmentsFor('dc'))).toBe(readFileSync(AMENDED, 'utf8'));
   });
   // D18 (John, 2026-09-07: "update across the application"). One occurrence in the pristine
   // file — the Insights-tab primary button of the docked panel (V3:705) opens the listing;
@@ -713,12 +742,19 @@ describe('local design amendments (spec D15)', () => {
   // as implemented: the count is measured at the point the amendment is APPLIED, in list order,
   // because A2.5's `find` is the text A2.4 produces and does not exist in the pristine file.
   it('every `find` occurs exactly `count` times at the point it is applied, in list order (spec D15)', () => {
-    let out = pristine;
-    for (const a of amendments()) {
-      expect(out.split(a.find).length - 1, `${a.id}: find count at the point of application`).toBe(a.count);
-      out = out.split(a.find).join(a.replace);
+    // Per FILE, since A24: `applyAmendments` walks one string, and an entry that edits
+    // MarketMapV3.jsx can never be counted against the .dc.html (it would read 0 and throw).
+    for (const [file, from, to] of [
+      ['dc', pristine, readFileSync(AMENDED, 'utf8')],
+      ['jsx', readFileSync(PRISTINE_JSX, 'utf8'), readFileSync(AMENDED_JSX, 'utf8')]
+    ] as const) {
+      let out = from;
+      for (const a of amendmentsFor(file)) {
+        expect(out.split(a.find).length - 1, `${a.id}: find count at the point of application`).toBe(a.count);
+        out = out.split(a.find).join(a.replace);
+      }
+      expect(out, `${file}: pristine + amendments is not the amended file`).toBe(to);
     }
-    expect(out).toBe(readFileSync(AMENDED, 'utf8'));
     // The ordering dependency itself, named: A2.5 matches A2.4's output, so it cannot be counted
     // against the pristine file and the two may never be reordered.
     const list = amendments();
