@@ -1,4 +1,4 @@
-import type { AreaStyle, BaseKind, CircleStyle, Handle, LatLng, MapEngine, MarkerOptions, MountOptions, RingStyle, TooltipSpec } from '../engine';
+import type { AreaFeature, AreaFeatureCollection, AreaStyle, BaseKind, CircleStyle, Handle, LatLng, MapEngine, MarkerOptions, MountOptions, RingStyle, TooltipSpec } from '../engine';
 import { BASEMAPS, LABEL_TILES, loadLeaflet } from '../../lib/leaflet.js';
 
 // Handed back by the handle-returning methods once the engine is destroyed: callers keep
@@ -46,8 +46,10 @@ export class LeafletMapEngine implements MapEngine {
     // The gray canvas carries almost no labels — Esri's matching reference layer supplies them.
     this.labels = L.tileLayer(LABEL_TILES, { maxZoom: 18, pane: 'shadowPane' });
     if (opts.basemap === 'map') this.labels.addTo(this.map);
-    // ONE canvas renderer per mount, shared by every mosaic cell (MarketMapV3.jsx:248). A
-    // renderer per rectangle is what makes a mosaic this dense unusable.
+    // ONE canvas renderer per mount, shared by every shaded area (MarketMapV3.jsx:248). A
+    // renderer per polygon is what made the 12,560-rectangle mosaic unusable, and the rule
+    // survives the mosaic: `geoJson` passes this same renderer to L.geoJSON, so every boundary
+    // polygon in a metro draws into one canvas.
     this.canvas = L.canvas({ padding: 0.3 });
     for (const g of opts.groups ?? []) this.group(g);
     this.setControls(opts);
@@ -89,6 +91,31 @@ export class LeafletMapEngine implements MapEngine {
     if (onClick) r.on('click', onClick);
     r.addTo(this.group(group));
     return { remove: () => r.remove(), openTooltip: () => r.openTooltip() };
+  }
+  // A24 (spec 2026-09-10; D-C34/D-C35): one L.geoJSON layer per fill layer, on the shared canvas
+  // renderer. `renderer` is set at the TOP level rather than only inside `style`, because that is
+  // the option L.GeoJSON forwards to each path it constructs (`geometryToLayer(geojson, options)`);
+  // the style function repeats it so a later `setStyle` cannot drop it.
+  geoJson(fc: AreaFeatureCollection, styleFor: (f: AreaFeature) => AreaStyle, group: string, tooltipFor?: (f: AreaFeature) => TooltipSpec, onClick?: (f: AreaFeature) => void): Handle {
+    if (this.destroyed) return NOOP_HANDLE;
+    const layer = this.L.geoJSON(fc, {
+      renderer: this.canvas,
+      style: (f: AreaFeature) => {
+        const s = styleFor(f);
+        return { renderer: this.canvas, stroke: s.stroke ?? false, fillColor: s.fillColor, fillOpacity: s.fillOpacity, interactive: s.interactive ?? true };
+      },
+      onEachFeature: (f: AreaFeature, l: { bindTooltip(html: string, opts: unknown): unknown; on(ev: string, cb: () => void): unknown }) => {
+        if (tooltipFor) { const t = tooltipFor(f); l.bindTooltip(t.html, tipOptions(t)); }
+        if (onClick) l.on('click', () => onClick(f));
+      }
+    });
+    layer.addTo(this.group(group));
+    // No `openTooltip` on this handle, deliberately: tooltips are bound on the CHILDREN by
+    // `onEachFeature`, never on the returned FeatureGroup, so `Layer.openTooltip`'s own
+    // `if (this._tooltip)` guard would find nothing and the call would silently do nothing.
+    // `Handle.openTooltip` is optional and `circle()` already omits it. A caller that needs a
+    // named polygon's tooltip has to ask for a capability rather than get a no-op.
+    return { remove: () => layer.remove() };
   }
   // C7 (MarketMapV3.jsx:230-235): one dashed, unfilled ring, not two filled circles.
   ring(center: LatLng, radiusM: number, s: RingStyle, group: string): Handle {
