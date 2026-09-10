@@ -255,12 +255,16 @@ describe('local design amendments (spec D15)', () => {
     // Not new scope: a defect against John's own 2026-09-08 m7 ruling, on three lines A26.8
     // is already editing, given their OWN ids so they can be lifted out without touching it.
     // Each reads A26.8a/A26.8b/A26.8e's output, so all three run after the family's own.
-    'A26.12', 'A26.13', 'A26.14',
+    // A26.15 is the fourth direction, found by the exhaustive pair enumeration rather than by
+    // reading: the metro listbox's ARROW open path closed none of the other three, where its
+    // click path closes all three after A26.14. A14 had to cover both of Give's paths for the
+    // same reason. Reads A26.8f's output, so it runs after it.
+    'A26.12', 'A26.13', 'A26.14', 'A26.15',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(201);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(202);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

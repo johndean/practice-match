@@ -1684,14 +1684,14 @@ class Component extends DCLogic {
       navExpanded: !!s.auth && vw >= 1050,
       navCollapsed: !!s.auth && vw < 1050,
       navMenuOpen: !!s.navMenu,
-      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false, fMenu: null, fMenuAt: -1 }),
+      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false, fMenu: null, fMenuAt: -1, marketMenu: false, marketMenuAt: -1 }),
       subBrandStyle: "width: 1px; height: 30px; background: var(--rf-line); display: " + (vw < 1050 ? "none" : "block") + ";",
       subBrandTextStyle: "font-family: var(--rf-display); font-size: 15px; font-weight: 800; letter-spacing: -.005em; color: var(--color-blue); white-space: nowrap; display: " +
         (vw < 1050 ? "none" : "block") + ";",
       identityStyle: "line-height: 1.25; display: " + (vw < 1180 ? "none" : "block") + ";",
       me: Object.assign({ email: s.email }, s.me),
       userMenuOpen: !!s.userMenu,
-      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false, fMenu: null, fMenuAt: -1 }),
+      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false, fMenu: null, fMenuAt: -1, navMenu: false, marketMenu: false, marketMenuAt: -1 }),
       // The Give control, measured on vinfoundation.org (John, 2026-09-08). The literals are
       // the live site's, not this design's tokens: #339dde is the idle pill, #07386f the
       // hover/open pill and the panel border and the row text, 10px the pill radius, 4.34px
@@ -1878,7 +1878,7 @@ class Component extends DCLogic {
       // review m7). The global pointerdown and focusout listeners covered a pointer and a
       // Tab; a pure-keyboard user could hold this listbox and the header's Give menu open
       // at once, and then shut both with one Escape.
-      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false, fMenu: null, fMenuAt: -1 }),
+      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false, fMenu: null, fMenuAt: -1, navMenu: false, userMenu: false }),
       // On the TRIGGER, which is always rendered: a shut menu has no active descendant, and
       // null is what both renderers omit the attribute for (a string would spell a dead id).
       marketActiveId: s.marketMenu ? "market-opt-" + s.marketMenuAt : null,
@@ -1902,7 +1902,7 @@ class Component extends DCLogic {
         const at = s.marketMenuAt == null || s.marketMenuAt < 0 ? cur : s.marketMenuAt;
         if (e.key === "ArrowDown" || e.key === "ArrowUp") {
           e.preventDefault();
-          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur, fMenu: null, fMenuAt: -1 });
+          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur, fMenu: null, fMenuAt: -1, navMenu: false, userMenu: false, giveMenu: false });
           return this.moveMarketHighlight((at + (e.key === "ArrowDown" ? 1 : keys.length - 1)) % keys.length);
         }
         if (!s.marketMenu) return;

@@ -3931,6 +3931,67 @@ const A26_10: Amendment = {
   count: 1
 };
 
+/** A26.12–A26.14 — John's 2026-09-08 m7 ruling, RESTORED (controller ruling on the A26 plan's
+ *  Q2, 2026-09-11). Its own three ids, on three lines A26.8 is already editing, so the widening
+ *  can be lifted out without touching the rest of the family.
+ *
+ *  m7 reads "opening any one of the four menus closes the other three", and three of the twelve
+ *  ordered directions among `navMenu`, `userMenu`, `giveMenu` and `marketMenu` were never
+ *  written: the account toggle closed neither the nav menu nor the metro listbox, the nav toggle
+ *  closed no metro listbox, and the metro trigger closed neither of the header's two. Give's own
+ *  six were complete, which is why the gap survived that review — and why it is a real defect and
+ *  not a theoretical one: Give and the metro listbox ALSO carry global pointerdown and focusout
+ *  dismissal (A13.4/A13.8), so their pointer paths were covered by accident, while `navMenu` and
+ *  `userMenu` have no outside-click, Escape or Tab dismissal of any kind. Two mouse clicks reach
+ *  it: open the account menu, click the metro trigger, and both stand open.
+ *
+ *  That wider menu-hygiene gap is reported as D-F2 and is NOT built here — it is its own piece of
+ *  work and this ruling does not authorise it. These three edits restore exactly the invariant
+ *  John already ruled on, and nothing else.
+ *
+ *  No pixel moves: each writes `false` over a flag that is already `false` in every approved
+ *  state, since no state opens two menus at once. */
+const A26_12: Amendment = {
+  id: 'A26.12', ...A26,
+  find: '      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false, fMenu: null, fMenuAt: -1 }),\n',
+  replace: '      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false, fMenu: null, fMenuAt: -1, marketMenu: false, marketMenuAt: -1 }),\n',
+  count: 1
+};
+
+const A26_13: Amendment = {
+  id: 'A26.13', ...A26,
+  find: '      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false, fMenu: null, fMenuAt: -1 }),\n',
+  replace: '      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false, fMenu: null, fMenuAt: -1, navMenu: false, marketMenu: false, marketMenuAt: -1 }),\n',
+  count: 1
+};
+
+const A26_14: Amendment = {
+  id: 'A26.14', ...A26,
+  find: '      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false, fMenu: null, fMenuAt: -1 }),\n',
+  replace: '      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false, fMenu: null, fMenuAt: -1, navMenu: false, userMenu: false }),\n',
+  count: 1
+};
+
+/** A26.15 — the fourth direction, found by the Q2 characterisation case rather than by reading.
+ *
+ *  A26.12–A26.14 fixed the three the A26 ruling's section 8 named, all of them PONTER paths. The
+ *  exhaustive enumeration of ordered pairs then failed on `nav then metro (arrow)`: the metro
+ *  listbox's ARROW-key open path (`marketMenuKeys`) closes none of the other three, where its
+ *  click path (`toggleMarketMenu`) closes all three after A26.14.
+ *
+ *  It is the same defect and the same ruling. A14's own m7 fix had to cover BOTH of Give's open
+ *  paths for exactly this reason, and m7's own comment names this user: "a pure-keyboard user
+ *  could hold this listbox and the header's Give menu open at once". The account menu has no
+ *  focusout dismissal (D-F2), so Shift+Tab from it to the metro trigger and one ArrowDown reaches
+ *  the state with a keyboard alone. Its own id, like A26.12–A26.14, and it changes no pixel: it
+ *  writes `false` over three flags that are already `false` in every approved state. */
+const A26_15: Amendment = {
+  id: 'A26.15', ...A26,
+  find: '          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur, fMenu: null, fMenuAt: -1 });\n',
+  replace: '          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur, fMenu: null, fMenuAt: -1, navMenu: false, userMenu: false, giveMenu: false });\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -3983,5 +4044,9 @@ export function amendments(): Amendment[] {
     // popover) are Task F2; A20 stays reserved by the image-identifiability plan and A24 by
     // the neighbourhood-shading spec.
     A26_1, A26_2, A26_4, A26_5, A26_6, A26_7, A26_8a, A26_8b, A26_8c, A26_8d, A26_8e, A26_8f,
-    A26_9a, A26_9b, A26_9c, A26_10];
+    A26_9a, A26_9b, A26_9c, A26_10,
+    // A26.12-A26.14 — the Q2 widening (controller ruling, 2026-09-11): John's own m7
+    // invariant, restored in the three directions that were never written. Each reads
+    // A26.8a/A26.8b/A26.8e's output, so all three run after the family's own entries.
+    A26_12, A26_13, A26_14, A26_15];
 }
