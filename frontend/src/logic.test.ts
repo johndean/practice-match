@@ -3299,4 +3299,75 @@ describe('A19 — the photo lightbox', () => {
       (P[0] as any).growth = originalGrowth;
     });
   });
+
+  // A23 — collapsing the Market data card must close both its menus
+  describe('Market data card collapse closes menus (A23, Task MD1)', () => {
+    it('toggleLegend closes both mdLayerMenu and mdCompareMenu when collapsing', () => {
+      c.setState({ auth: true, screen: 'browse', mdValue: 'income' });
+
+      // Test case 1: both menus open, card expanded
+      c.setState({ mdLayerMenu: true, mdCompareMenu: true, mdLegendOff: false });
+      expect(c.state).toMatchObject({ mdLayerMenu: true, mdCompareMenu: true, mdLegendOff: false });
+
+      // Collapse the card
+      c.renderVals().md.toggleLegend();
+      expect(c.state, 'both menus close when card collapses').toMatchObject({
+        mdLegendOff: true,
+        mdLayerMenu: false,
+        mdCompareMenu: false
+      });
+
+      // Test case 2: expand the card again, both menus should stay closed
+      c.renderVals().md.toggleLegend();
+      expect(c.state, 'menus stay closed when card expands again').toMatchObject({
+        mdLegendOff: false,
+        mdLayerMenu: false,
+        mdCompareMenu: false
+      });
+
+      // Test case 3: only layer menu open
+      c.setState({ mdLayerMenu: true, mdCompareMenu: false, mdLegendOff: false });
+      c.renderVals().md.toggleLegend();
+      expect(c.state, 'layer menu closes when card collapses').toMatchObject({
+        mdLegendOff: true,
+        mdLayerMenu: false,
+        mdCompareMenu: false
+      });
+
+      // Test case 4: only compare menu open
+      c.setState({ mdLayerMenu: false, mdCompareMenu: true, mdLegendOff: false });
+      c.renderVals().md.toggleLegend();
+      expect(c.state, 'compare menu closes when card collapses').toMatchObject({
+        mdLegendOff: true,
+        mdLayerMenu: false,
+        mdCompareMenu: false
+      });
+    });
+
+    it('outside-click and Escape dismissals on layer menu still work', () => {
+      c.setState({ auth: true, screen: 'browse', mdValue: 'income' });
+      const md = c.renderVals().md;
+
+      // Open layer menu
+      md.toggleLayerMenu();
+      expect(c.state.mdLayerMenu).toBe(true);
+
+      // Selecting a layer closes it
+      md.layerOptions[1].go();
+      expect(c.state.mdLayerMenu).toBe(false);
+    });
+
+    it('outside-click and Escape dismissals on compare menu still work', () => {
+      c.setState({ auth: true, screen: 'browse', mdValue: 'income' });
+      const md = c.renderVals().md;
+
+      // Open compare menu
+      md.toggleCompareMenu();
+      expect(c.state.mdCompareMenu).toBe(true);
+
+      // Selecting a metric closes it
+      md.compareOptions[1].go();
+      expect(c.state.mdCompareMenu).toBe(false);
+    });
+  });
 });

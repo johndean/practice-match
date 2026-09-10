@@ -688,7 +688,7 @@ class Component extends DCLogic {
       legendToggleLabel: s.mdLegendOff === true ? "Expand market layer panel" : "Collapse market layer panel",
       legendCaretStyle: "display: block; transition: transform 150ms var(--easing-out); transform: rotate(" +
         (s.mdLegendOff === true ? "180deg" : "0deg") + ");",
-      toggleLegend: () => this.setState({ mdLegendOff: s.mdLegendOff !== true }),
+      toggleLegend: () => this.setState({ mdLegendOff: s.mdLegendOff !== true, mdLayerMenu: false, mdCompareMenu: false }),
 
       legendBtnStyle: "display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; font-family: var(--rf-display); font-size: 12.5px; font-weight: 500; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,58,112,.14); color: " +
         (s.mdLegendOff !== true ? "var(--vf-navy)" : "var(--vf-text)") +

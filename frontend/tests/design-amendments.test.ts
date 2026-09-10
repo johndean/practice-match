@@ -216,11 +216,16 @@ describe('local design amendments (spec D15)', () => {
     // "Preserve existing seed wording/detail"). One literal edit: the wizard step 1 ownership
     // select's ten options, combining the design's four with the seeds' own six phrasings.
     'A22',
+    // A23 — collapsing the Market data card leaves its two menus floating (John, 2026-09-10,
+    // Task MD1: "the collapse widget top left expand/collapse is disconnected to the drop down").
+    // The card's collapsible region ends while the menus are absolutely positioned outside it.
+    // One literal edit: `toggleLegend` clears both mdLayerMenu and mdCompareMenu when it collapses.
+    'A23',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(151);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(152);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

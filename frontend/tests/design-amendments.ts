@@ -3080,6 +3080,21 @@ const A22: Amendment = {
   count: 1
 };
 
+/** A23 (John, 2026-09-10 — Task MD1: "the collapse widget top left expand/collapse is disconnected to the drop down"):
+ *  collapsing the Market data card leaves its layer dropdown and comparison dropdown floating. The card's
+ *  collapsible region ends while the two menus are absolutely positioned outside it, and `toggleLegend`
+ *  flips only `mdLegendOff` instead of clearing both menus as well. The fix: `toggleLegend` clears both
+ *  menus when collapsing, matching the design's own idiom where `insightOpen` gates the "What this means"
+ *  panel on `s.mdLegendOff !== true`, which is why that panel behaves correctly. Clearing rather than
+ *  merely hiding is deliberate: a menu that reappears already-open when the card is expanded again is its
+ *  own surprise. */
+const A23: Amendment = {
+  id: 'A23', date: '2026-09-10', ruling: 'collapsing the Market data card closes both its menus (Task MD1)',
+  find: 'toggleLegend: () => this.setState({ mdLegendOff: s.mdLegendOff !== true }),',
+  replace: 'toggleLegend: () => this.setState({ mdLegendOff: s.mdLegendOff !== true, mdLayerMenu: false, mdCompareMenu: false }),',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -3108,5 +3123,7 @@ export function amendments(): Amendment[] {
     // the figure is payroll); A21.3a–d take the year from the data instead of hard-coding 2015.
     A21_1, A21_1b, A21_3a, A21_3b, A21_3c, A21_3d,
     // A22 — the ownership vocabulary widens to the seeds' own wording (2026-09-10, Task SL10).
-    A22];
+    A22,
+    // A23 — collapsing the Market data card closes both its menus (2026-09-10, Task MD1).
+    A23];
 }
