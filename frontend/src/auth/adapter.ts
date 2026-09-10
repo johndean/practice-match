@@ -11,9 +11,15 @@
  * `can('page.browse', null)`, got false, and sent the member to the `unavailable` gate — which at
  * the time rendered an empty column, since the card A8.4 fills did not exist yet.
  * `main.ts`'s load-before-mount hid it from every reload path.
+ *
+ * A-L14: After an interactive sign-in, the adapter re-reads the listings catalogue so the member
+ * sees seeded practices instead of invented fixtures. If the read fails, it retries once; if the
+ * retry also fails, it clears the store and rejects with an error message that the design's
+ * sign-in card will display. The member stays on the gate and can retry by signing in again.
  */
 import type { ApplicationsMe, Status } from './api';
 import type { Me, MeStore } from './me';
+import type { Practice, Markets } from '../listings/load';
 
 /** The `/api/auth/*` client, narrowed to what the adapter uses — so a test can supply a fake
  *  object rather than mock the module (and so `src/auth/api.ts` stays free to grow). */
@@ -49,16 +55,55 @@ export interface AuthAdapter {
 /** The store, narrowed to the two writes the adapter performs. */
 export type AuthStore = Pick<MeStore, 'set' | 'clear'>;
 
-export function makeAuthAdapter(api: AuthApi, store: AuthStore): AuthAdapter {
+/** The listings loader, narrowed to what the adapter uses for re-reads on sign-in. */
+export interface ListingsLoader {
+  (fetchFn: typeof fetch, practices: Practice[], markets: Markets, url?: string,
+   vets?: Record<string, number>, econK?: Record<string, number>): Promise<boolean>;
+}
+
+export function makeAuthAdapter(
+  api: AuthApi,
+  store: AuthStore,
+  loadListings?: ListingsLoader,
+  fetchFn?: typeof fetch,
+  practices?: Practice[],
+  markets?: Markets,
+  // A-C26: the re-read must install the market figure maps too, or a member who signs in
+  // interactively gets fresh practices on stale Browse layers (0.1.15, the B7/B8 + L8 seam).
+  vets?: Record<string, number>,
+  econK?: Record<string, number>
+): AuthAdapter {
   return {
     /**
      * The ordering is the whole point: the store is written BEFORE this promise resolves, because
      * `logic.js`'s `.then` runs when it does and the very next `guard()` call reads the store.
      * The answer is still handed on — `logic.js` takes the header strings from it.
+     *
+     * A-L14: After the store write, re-read the listings catalogue so the member sees seeded
+     * practices instead of fixtures. If the read fails, retry once; if the retry also fails, clear
+     * the store and reject with an error message so the form's existing error handler keeps the
+     * member on the gate and shows the message.
      */
     signIn: async (email, password) => {
       const me = await api.signIn(email, password);
       store.set(me);
+
+      // A-L14: Re-read listings only when all required parameters are available (not in tests
+      // that don't care about listings, and not before mount when the bootstrap provides them).
+      if (loadListings && fetchFn && practices && markets) {
+        const firstAttempt = await loadListings(fetchFn, practices, markets, undefined, vets, econK).catch(() => false);
+        if (!firstAttempt) {
+          // Retry once on failure.
+          const secondAttempt = await loadListings(fetchFn, practices, markets, undefined, vets, econK).catch(() => false);
+          if (!secondAttempt) {
+            // Both failed: clear the store and reject so the form shows the error and keeps
+            // the member on the gate.
+            store.clear();
+            throw new Error('Signed in, but the listings could not be loaded. Please try again.');
+          }
+        }
+      }
+
       return me;
     },
     /**

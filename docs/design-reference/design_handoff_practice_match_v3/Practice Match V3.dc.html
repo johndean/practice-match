@@ -1809,7 +1809,7 @@ const PALETTES = {
 const VALUE_LAYERS = {
   income: { label: "Median Household Income (ACS)", short: "Median household income", unit: "usd", buckets: ["< $50K", "$50–75K", "$75–100K", "$100–150K", "> $150K"], stops: [50000, 75000, 100000, 150000] },
   pets: { label: "Estimated Pet Households", short: "Est. pet households", unit: "count", buckets: ["< 10K", "10K–25K", "25K–40K", "> 40K"], stops: [10000, 25000, 40000] },
-  growth: { label: "Population Growth Since 2015 (ACS)", short: "Projected growth (5 yrs)", unit: "pct", buckets: ["< 10%", "10–20%", "20–35%", "> 35%"], stops: [10, 20, 35] },
+  growth: { label: "Population Growth (ACS)", short: "Projected growth (5 yrs)", unit: "pct", buckets: ["< 10%", "10–20%", "20–35%", "> 35%"], stops: [10, 20, 35] },
   households: { label: "Households (ACS)", short: "Total households", unit: "count", buckets: ["< 10K", "10K–25K", "25K–45K", "> 45K"], stops: [10000, 25000, 45000] },
   econ: { label: "Average Practice Payroll (CBP)", short: "Avg. payroll per practice", unit: "usd", buckets: ["< $450K", "$450–650K", "$650–900K", "> $900K"], stops: [450000, 650000, 900000] },
   competition: { label: "Veterinary Establishments (CBP)", short: "Vet establishments", unit: "count", buckets: ["1–2", "3–5", "6–9", "10+"], stops: [3, 6, 10] }
@@ -1863,7 +1863,7 @@ const LAYER_META = {
   },
   growth: {
     title: "Population growth",
-    sub: "Change since 2015 · ACS population estimates",
+    sub: "Change · ACS population estimates",
     updated: "Updated: ACS 2023 release (Jan 2025)",
     source: "U.S. Census ACS population estimates, 2015–2023 · community level",
     means: "Growth describes how fast an area's population changed. Past growth is not a forecast.",
@@ -2093,8 +2093,8 @@ class Component extends DCLogic {
         pop: num(p.pop), hh: hh, income: num(p.income),
         growth: parseFloat(String(p.growth).replace(/[^0-9.\-]/g, "")) || 0,
         pets: Math.round(hh * 0.57),
-        econ: (ECON_K[p.id] || 0) * 1000,
-        vets: VETS[p.id] || 0
+        econ: ECON_K[p.id] != null ? ECON_K[p.id] * 1000 : undefined,
+        vets: VETS[p.id]
       };
     });
   }
@@ -2179,7 +2179,7 @@ class Component extends DCLogic {
       { n: "1", title: "Demographics", blurb: "Population, households, income", src: "Census ACS 5-year", metric: "income", caption: "Median household income", layerName: "Median Household Income" },
       { n: "2", title: "Pet Ownership (Est.)", blurb: "Estimated pet households", src: "derived from ACS households", metric: "pets", caption: "Est. pet households", layerName: "Pet Ownership (est.)" },
       { n: "3", title: "Veterinary Competition", blurb: "Veterinary establishments", src: "Census CBP, NAICS 541940", metric: "vets", caption: "Number of vet establishments", layerName: "Veterinary Competition" },
-      { n: "4", title: "Population Growth", blurb: "Change since 2015", src: "Census ACS population estimates", metric: "growth", caption: "Growth since 2015", layerName: "Population Growth" },
+      { n: "4", title: "Population Growth", blurb: "Change", src: "Census ACS population estimates", metric: "growth", caption: "Growth", layerName: "Population Growth" },
       { n: "5", title: "Households", blurb: "Occupied housing units", src: "Census ACS 5-year", metric: "households", caption: "Total households", layerName: "Households" },
       { n: "6", title: "Avg. Practice Payroll", blurb: "Typical practice size proxy", help: "Total industry payroll ÷ number of practices — a proxy for how large the typical practice is. Not revenue, and not any one practice's figures.", src: "Census CBP payroll ÷ establishments", metric: "econ", caption: "Avg. payroll per practice", layerName: "Average Practice Profile" }
     ].map((c) => Object.assign({}, c, { on: enabled(c.metric) }));
@@ -2214,6 +2214,7 @@ class Component extends DCLogic {
         const vals = {};
         ["income", "pets", "growth", "households", "econ", "competition"].forEach((k) => {
           const raw = k === "households" ? c.hh : k === "competition" ? c.vets : c[k];
+          if (raw == null) return;
           const b = this.bucket(k, raw);
           vals[k] = { t: b.t, color: b.color, label: this.fmtMetric(k, raw) };
         });
@@ -3077,7 +3078,7 @@ class Component extends DCLogic {
     const area = (key, label, hint) => ({ isText: false, isSelect: false, isArea: true, label, hint: hint || "", value: w[key], set: this.setW(key), hasHelp: false, help: "", wrapStyle: "display: flex; flex-direction: column; gap: 6px; grid-column: span 2;" });
 
     const byStep = {
-      1: { blurb: "Start with what the practice is. You can change any of this before you submit.", fields: [text("name", "Practice name (staff-facing only)", "Hill Country Animal Hospital", "Never shown to buyers until you approve a request."), sel("type", "Practice type", ["Small animal", "Mixed", "Large animal", "Emergency", "Specialty", "Other"]), text("est", "Year established", "1998"), sel("ownership", "Current ownership", ["Sole proprietor", "Two-doctor partnership", "Multi-doctor LLC", "Other"])], toggles: [] },
+      1: { blurb: "Start with what the practice is. You can change any of this before you submit.", fields: [text("name", "Practice name (staff-facing only)", "Hill Country Animal Hospital", "Never shown to buyers until you approve a request."), sel("type", "Practice type", ["Small animal", "Mixed", "Large animal", "Emergency", "Specialty", "Other"]), text("est", "Year established", "1998"), sel("ownership", "Current ownership", ["Sole proprietor", "Sole proprietor (LLC)", "Sole proprietor (S-corp)", "Two-doctor partnership", "Three-doctor LLC", "Four-doctor partnership", "Four-doctor LLC", "Five-doctor LLC", "Multi-doctor LLC", "Other"])], toggles: [] },
       2: { blurb: "Buyers search by location. You choose how precisely yours is shown.", fields: [text("city", "City or community", "Cedar Park"), text("zip", "ZIP code", "78613", "Used to place your practice on the map and to attach community data.")], toggles: [{ key: "anon", label: "Show only the community, not the street address", help: "Recommended while you are still operating. Buyers see \u201CCedar Park, TX\u201D and an approximate map pin." }] },
       3: { blurb: "Two numbers get a buyer to a decision. Everything else can wait for a conversation.", fields: [text("price", "Asking price", "1,450,000"), text("rev", "Gross revenue, most recent year", "2,100,000")], toggles: [{ key: "revBand", label: "Show revenue as a range instead of an exact figure", help: "Buyers see \u201C$2M \u2013 $2.5M\u201D. The exact figure is released only when you accept a request." }] },
       4: { blurb: "The practical picture: who works there and what you do.", fields: [text("docs", "Doctors (full-time equivalent)", "3"), text("rooms", "Exam rooms", "5"), text("sqft", "Approximate square feet", "4,200"), text("hours", "Hours", "Mon\u2013Fri 7:30\u20136, Sat 8\u20131"), area("desc", "Services offered", "Wellness, dentistry, soft-tissue surgery, in-house lab, digital radiography")], toggles: [] },
@@ -3202,7 +3203,7 @@ class Component extends DCLogic {
       noDemo: p.id === "p8" || p.pop == null,
       demo: [
         { k: "Population", v: p.pop, sub: "Community, 2023" },
-        { k: "Growth", v: (p.growth || "").replace(" since 2015", ""), sub: "Since 2015" },
+        { k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); return g.length > 1 ? "Since " + g[1] : ""; })() },
         { k: "Median income", v: p.income, sub: "Household, 2023" },
         { k: "Households", v: (p.hh || "").replace(" households", ""), sub: "In the community" }
       ],

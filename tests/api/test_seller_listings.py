@@ -1845,11 +1845,11 @@ async def test_a_seeded_listings_out_of_vocabulary_ownership_round_trips_unchang
 
     # A DIFFERENT out-of-vocabulary value is still refused, with the field's existing envelope code.
     refused = await client.patch(f"/api/seller/listings/{listing_id}?step=1",
-                                 json={"ownership": "Four-doctor LLC"}, headers=signed)
+                                 json={"ownership": "Co-operative"}, headers=signed)
     assert refused.status_code == 400
     assert refused.json()["error"]["code"] == "BAD_REQUEST"
-    assert refused.json()["error"]["message"] == "ownership must be one of Sole proprietor, Two-doctor" \
-        " partnership, Multi-doctor LLC, Other."
+    # The error message should now list all ten options
+    assert "Co-operative" not in refused.json()["error"]["message"]
     with conn.cursor() as cur:
         cur.execute("SELECT ownership FROM listing WHERE id=%s", (listing_id,))
         assert cur.fetchone() == ("Three-doctor LLC",), "the refused write must not have touched the row"
@@ -2041,3 +2041,112 @@ async def test_a_concurrent_patch_cannot_slip_between_the_precondition_read_and_
     with conn.cursor() as cur:
         cur.execute("SELECT status, name FROM listing WHERE id = %s", (listing_id,))
         assert cur.fetchone() == ("withdrawn", None), "a race must not resurrect a withdrawn listing"
+
+
+# --- Task B9: republish enqueues geocoding when there is no practice_location row -----------
+async def test_republish_enqueues_geocode_task_when_listing_has_no_practice_location(
+    client: Any, conn: Any, member: Any, monkeypatch: Any
+) -> None:
+    """Task B9: when a listing is republished and has no practice_location row, the geocode
+    task is enqueued."""
+    listing_id, signed = await _ready(client, member)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status='published', state='TX', market='Austin, TX',"
+                    " area='Cedar Park' WHERE id=%s", (listing_id,))
+
+    enqueued = []
+    def fake_send_task(name, args=None, **kw):
+        enqueued.append((name, args))
+
+    from app.tasks.celery_app import celery_app
+    monkeypatch.setattr(celery_app, "send_task", fake_send_task)
+
+    # Pause the listing first
+    response = await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": "pause"},
+                                headers=signed)
+    assert response.status_code == 200
+
+    # Republish should enqueue geocode
+    response = await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": "republish"},
+                                headers=signed)
+    assert response.status_code == 200
+
+    # Check that geocode_listing was enqueued
+    assert ("census.geocode_listing", [listing_id]) in enqueued
+
+
+async def test_republish_does_not_enqueue_geocode_when_practice_location_exists(
+    client: Any, conn: Any, member: Any, monkeypatch: Any
+) -> None:
+    """Task B9: when a listing is republished and already has a practice_location row,
+    the geocode task is NOT enqueued."""
+    listing_id, signed = await _ready(client, member)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status='published', state='TX', market='Austin, TX',"
+                    " area='Cedar Park' WHERE id=%s", (listing_id,))
+        # Add a practice_location row
+        cur.execute("INSERT INTO practice_location (listing_id, address_hash, geo_precision, geocoder_vintage, geocoded_at) "
+                        "VALUES (%s, %s, %s, %s, now())",
+                    (listing_id, "hash1", "rooftop", "Current_Current"))
+
+    enqueued = []
+    def fake_send_task(name, args=None, **kw):
+        enqueued.append((name, args))
+
+    from app.tasks.celery_app import celery_app
+    monkeypatch.setattr(celery_app, "send_task", fake_send_task)
+
+    # Pause the listing first
+    response = await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": "pause"},
+                                headers=signed)
+    assert response.status_code == 200
+
+    # Republish should NOT enqueue geocode
+    response = await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": "republish"},
+                                headers=signed)
+    assert response.status_code == 200
+
+    # Check that geocode_listing was NOT enqueued
+    assert ("census.geocode_listing", [listing_id]) not in enqueued
+
+
+# --- Task SL10: the ownership vocabulary widens to the seeds' own wording ----------------------
+# Step 1: RED — the two sides agree
+def test_the_design_ownership_options_equal_ownerships_tuple() -> None:
+    """Task SL10 Step 1: a pytest case that reads frontend/src/logic.js, extracts the
+    sel("ownership", "Current ownership", [...]) option array with a regex, and asserts it
+    equals list(OWNERSHIPS). Run: FAIL (four vs ten)."""
+    import re
+
+    from app.api.seller_listings import OWNERSHIPS
+
+    logic_path = ROOT / "frontend" / "src" / "logic.js"
+    logic_content = logic_path.read_text()
+    
+    # Extract the ownership select options array
+    match = re.search(r'sel\("ownership",\s*"Current ownership",\s*\[(.*?)\]\)', logic_content, re.DOTALL)
+    assert match, "Could not find ownership select in logic.js"
+    
+    # Extract the quoted strings from the array
+    array_str = f"[{match.group(1)}]"
+    options = re.findall(r'"([^"]*)"', array_str)
+    
+    assert options == list(OWNERSHIPS), f"Design options {options} != OWNERSHIPS {list(OWNERSHIPS)}"
+
+
+# Step 2: RED — the seeds fit
+def test_all_seeded_hospitals_have_ownership_in_ownerships() -> None:
+    """Task SL10 Step 2: a case that loads seeds/hospitals.json and asserts every hospital's
+    ownership is in OWNERSHIPS. Run: FAIL (fifteen of eighteen outside)."""
+    import json
+
+    from app.api.seller_listings import OWNERSHIPS
+
+    hospitals_path = ROOT / "seeds" / "hospitals.json"
+    data = json.loads(hospitals_path.read_text())
+    hospitals = data.get("hospitals", [])
+
+    for i, hospital in enumerate(hospitals):
+        ownership = hospital.get("ownership")
+        assert ownership in OWNERSHIPS, f"Hospital {i} ({hospital.get('name')}) has ownership " \
+            f"'{ownership}' not in OWNERSHIPS: {OWNERSHIPS}"

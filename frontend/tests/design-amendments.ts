@@ -3005,6 +3005,81 @@ const A19_12: Amendment = {
   count: 1
 };
 
+// A21 — market-data layers do not render absence as zero (controller amendment A-C28, 2026-09-10; Task B8 review).
+// Missing figures must be excluded from layers, not bucketed at zero, because a buyer reads zero as "nobody else practises here"
+// when we actually have no data. Absence is not zero.
+
+/** A21.1 — remove the `|| 0` defaults that rendered missing figures as zero; instead omit the entry entirely */
+const A21_1: Amendment = {
+  id: 'A21.1', date: '2026-09-10', ruling: 'a missing figure is omitted, never zeroed (controller amendment A-C28)',
+  find: '        econ: (ECON_K[p.id] || 0) * 1000,\n        vets: VETS[p.id] || 0',
+  replace: '        econ: ECON_K[p.id] != null ? ECON_K[p.id] * 1000 : undefined,\n        vets: VETS[p.id]',
+  count: 1
+};
+
+/** A21.1b — at the assembly point, skip metrics with null or undefined values instead of bucketing them */
+const A21_1b: Amendment = {
+  id: 'A21.1b', date: '2026-09-10', ruling: 'a missing figure is omitted, never zeroed (controller amendment A-C28)',
+  find: '        ["income", "pets", "growth", "households", "econ", "competition"].forEach((k) => {\n          const raw = k === "households" ? c.hh : k === "competition" ? c.vets : c[k];\n          const b = this.bucket(k, raw);',
+  replace: '        ["income", "pets", "growth", "households", "econ", "competition"].forEach((k) => {\n          const raw = k === "households" ? c.hh : k === "competition" ? c.vets : c[k];\n          if (raw == null) return;\n          const b = this.bucket(k, raw);',
+  count: 1
+};
+
+/** A21.3 — the growth layer stops naming "2015" in four places: the VALUE_LAYERS label, the
+ *  LAYER_META sub-line, the Data Layers card's blurb and caption. The vintage is data-dependent
+ *  (2018 today, not 2015) and hard-coded years belong nowhere user-facing (controller amendment A-C29,
+ *  completing the incomplete A-C28 amendment A21.3).
+ *
+ *  Four separate amendments, not one, because they touch different strings in different contexts:
+ *  A21.3a handles the VALUE_LAYERS label; A21.3b the LAYER_META sub-line; A21.3c the Data Layers
+ *  card; and A21.3d the detail's Growth row (where the API's own vintage-carrying string is split
+ *  into display parts, never hard-coded). All four move the vintage into the data itself, never
+ *  hard-coded text. */
+
+/** A21.3a — the VALUE_LAYERS growth label (the one A-C28's A21.3 did) */
+const A21_3a: Amendment = {
+  id: 'A21.3a', date: '2026-09-10', ruling: 'the growth layer stops naming a year it does not use (controller amendment A-C29)',
+  find: 'growth: { label: "Population Growth Since 2015 (ACS)",',
+  replace: 'growth: { label: "Population Growth (ACS)",',
+  count: 1
+};
+
+/** A21.3b — the LAYER_META sub-line for the growth layer */
+const A21_3b: Amendment = {
+  id: 'A21.3b', date: '2026-09-10', ruling: 'the growth layer stops naming a year it does not use (same ruling)',
+  find: 'sub: "Change since 2015 · ACS population estimates",',
+  replace: 'sub: "Change · ACS population estimates",',
+  count: 1
+};
+
+/** A21.3c — the Data Layers card's growth row: blurb and caption both need "since 2015" removed */
+const A21_3c: Amendment = {
+  id: 'A21.3c', date: '2026-09-10', ruling: 'the growth layer stops naming a year it does not use (same ruling)',
+  find: '{ n: "4", title: "Population Growth", blurb: "Change since 2015", src: "Census ACS population estimates", metric: "growth", caption: "Growth since 2015",',
+  replace: '{ n: "4", title: "Population Growth", blurb: "Change", src: "Census ACS population estimates", metric: "growth", caption: "Growth",',
+  count: 1
+};
+
+/** A21.3d — the detail's Growth row splits the API string to extract the vintage */
+const A21_3d: Amendment = {
+  id: 'A21.3d', date: '2026-09-10', ruling: 'the detail Growth row extracts its vintage from the API string, never hard-coded (controller amendment A-C29)',
+  find: '{ k: "Growth", v: (p.growth || "").replace(" since 2015", ""), sub: "Since 2015" },',
+  replace: '{ k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); return g.length > 1 ? "Since " + g[1] : ""; })() },',
+  count: 1
+};
+
+/** A22 (John, 2026-09-10 — Task SL10: "Preserve existing seed wording/detail"): the wizard's
+ *  ownership select widens from four options (the design's four) to ten, adding the seeds' own six
+ *  phrasings alongside the design's four. The API's `OWNERSHIPS` tuple and the design's option
+ *  array are identical and pinned two-way by pytest (step 1 of the task's own test cases). */
+const A22: Amendment = {
+  id: 'A22', date: '2026-09-10',
+  ruling: 'Preserve existing seed wording/detail — widen the ownership dropdown to carry the seeds\' six phrasings beside the design\'s four (Task SL10)',
+  find: 'sel("ownership", "Current ownership", ["Sole proprietor", "Two-doctor partnership", "Multi-doctor LLC", "Other"])',
+  replace: 'sel("ownership", "Current ownership", ["Sole proprietor", "Sole proprietor (LLC)", "Sole proprietor (S-corp)", "Two-doctor partnership", "Three-doctor LLC", "Four-doctor partnership", "Four-doctor LLC", "Five-doctor LLC", "Multi-doctor LLC", "Other"])',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -3028,5 +3103,10 @@ export function amendments(): Amendment[] {
     A18_1, A18_2,
     // A19 — the photo lightbox (2026-09-09). A19.9 reads A14.5's output and A19.10 reads A13.8's,
     // so the family is last. Definition order in this file matches this list (m8).
-    A19_1, A19_2, A19_3, A19_4, A19_5, A19_6, A19_7, A19_8, A19_9, A19_10, A19_11, A19_12];
+    A19_1, A19_2, A19_3, A19_4, A19_5, A19_6, A19_7, A19_8, A19_9, A19_10, A19_11, A19_12,
+    // A21 — market-data layers do not render absence as zero (A-C28); A21.2/A21.2b reverted (A-C29,
+    // the figure is payroll); A21.3a–d take the year from the data instead of hard-coding 2015.
+    A21_1, A21_1b, A21_3a, A21_3b, A21_3c, A21_3d,
+    // A22 — the ownership vocabulary widens to the seeds' own wording (2026-09-10, Task SL10).
+    A22];
 }

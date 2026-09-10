@@ -48,7 +48,7 @@ describe('logic.js is the design script block, ported verbatim', () => {
   // restructured. It is still the same single accepted edit point — the last line — and the
   // ported body above it stays byte-identical. Listed in the Browse V3 spec §3 with the other
   // three normalisations.
-  const FOOTER = '\nexport { Component, MARKETS, P };\n';
+  const FOOTER = '\nexport { Component, MARKETS, P, VETS, ECON_K };\n';
 
   function designScript(html: string): string {
     const open = /<script type="text\/x-dc" data-dc-script[^>]*>/.exec(html)!;

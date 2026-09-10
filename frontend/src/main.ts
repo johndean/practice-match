@@ -2,13 +2,15 @@ import { router } from './router/routes';
 import './styles/tokens.css';
 import './styles/global.css';
 import { useMe } from './auth/me';
+import { makeAuthAdapter } from './auth/adapter';
+import * as api from './auth/api';
 import { bootstrap } from './bootstrap';
 import { loadListings } from './listings/load';
 import type { Markets, Practice } from './listings/load';
 // The ported prototype's fixture arrays. They are JavaScript with no declarations of their own,
 // so each is cast once, here, at the single boundary where the two worlds meet; the shapes are
 // pinned by src/listings/load.test.ts and by the visual gate.
-import { MARKETS, P } from './logic.js';
+import { MARKETS, P, VETS, ECON_K } from './logic.js';
 
 // A5.4 / A-I8.1: `/api/config` and `/api/me` are read BEFORE the app mounts, so `App.vue`'s
 // `me` prop is populated on the first render and the approved prototype's `componentDidMount`
@@ -38,5 +40,21 @@ import { MARKETS, P } from './logic.js';
 // refuses top-level await outright.
 void Promise.all([
   useMe().load().catch(() => null),
-  loadListings(globalThis.fetch.bind(globalThis), P as unknown as Practice[], MARKETS as unknown as Markets).catch(() => null)
-]).then(() => bootstrap(router, '#app'));
+  loadListings(globalThis.fetch.bind(globalThis), P as unknown as Practice[], MARKETS as unknown as Markets, undefined, VETS as unknown as Record<string, number>, ECON_K as unknown as Record<string, number>).catch(() => null)
+]).then(() => {
+  // A-L14 + A-C26: the adapter re-reads the catalogue after an interactive sign-in, and it must
+  // install the SAME four things the boot read installs — practices, markets, and the two market
+  // figure maps. Handing it only the first two would refresh the listings while leaving the Browse
+  // layers on whatever was there before, which is the seam these two branches created (0.1.15).
+  const auth = makeAuthAdapter(
+    api,
+    useMe(),
+    loadListings,
+    globalThis.fetch.bind(globalThis),
+    P as unknown as Practice[],
+    MARKETS as unknown as Markets,
+    VETS as unknown as Record<string, number>,
+    ECON_K as unknown as Record<string, number>
+  );
+  return bootstrap(router, '#app', auth);
+});

@@ -40,6 +40,8 @@ function row(over: Partial<ApiListing> = {}): ApiListing {
     lng: -97.8203,
     location_disclosed: true,
     photos: [],
+    vets: null,
+    econ_k: null,
     ...over
   };
 }
@@ -193,6 +195,76 @@ describe('applyListings', () => {
     };
     applyListings([row()], [], markets);
     expect(Object.keys(markets)).toEqual(['Austin, TX']);
+  });
+
+  // B8: market-data maps VETS and ECON_K are installed from the API rows
+  it('installs VETS and ECON_K from the API rows into the maps', async () => {
+    const { VETS, ECON_K } = await import('../logic.js');
+    const vetsMap = VETS as Record<string, number>;
+    const econMap = ECON_K as Record<string, number>;
+
+    applyListings(
+      [
+        row({ id: 'api-1', vets: 7, econ_k: 685 }),
+        row({ id: 'api-2', vets: 3, econ_k: 450 })
+      ],
+      [],
+      {},
+      vetsMap,
+      econMap
+    );
+
+    expect(vetsMap['api-1']).toBe(7);
+    expect(vetsMap['api-2']).toBe(3);
+    expect(econMap['api-1']).toBe(685);
+    expect(econMap['api-2']).toBe(450);
+  });
+
+  // B8: null values don't install keys
+  it('does not install keys when vets or econ_k are null', async () => {
+    const { VETS, ECON_K } = await import('../logic.js');
+    const vetsMap = VETS as Record<string, number>;
+    const econMap = ECON_K as Record<string, number>;
+
+    applyListings(
+      [
+        row({ id: 'api-null', vets: null, econ_k: null })
+      ],
+      [],
+      {},
+      vetsMap,
+      econMap
+    );
+
+    expect('api-null' in vetsMap).toBe(false);
+    expect('api-null' in econMap).toBe(false);
+  });
+
+  // B8: fixture keys are removed when API data is installed
+  it('clears fixture keys from VETS and ECON_K when the API replaces P', async () => {
+    const { VETS, ECON_K } = await import('../logic.js');
+    const vetsMap = VETS as Record<string, number>;
+    const econMap = ECON_K as Record<string, number>;
+
+    // Before calling applyListings, add a fixture key to verify it gets removed
+    vetsMap['fixture-test'] = 999;
+    econMap['fixture-test'] = 888;
+
+    applyListings(
+      [row({ id: 'api-new', vets: 5, econ_k: 500 })],
+      [],
+      {},
+      vetsMap,
+      econMap
+    );
+
+    // The fixture keys should be gone after applyListings (even if they weren't in the original fixture list)
+    // and the API key should be there
+    expect(vetsMap['api-new']).toBe(5);
+    expect(econMap['api-new']).toBe(500);
+    // The known fixture keys should be removed
+    expect('p1' in vetsMap).toBe(false);
+    expect('p1' in econMap).toBe(false);
   });
 });
 

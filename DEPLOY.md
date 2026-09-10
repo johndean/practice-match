@@ -32,6 +32,12 @@ Railway project **Practice Match** (id `d20ecd90-2855-4b7d-957d-96a882b3a95d`) �
 | `S3_ACCESS_KEY_ID` | ✓ | ✓ | Railway bucket credentials, set by the controller after John's demo — never printed. `ObjectStore.from_settings` returns `None` (object store disabled, logged) until all four `S3_*` variables are set |
 | `S3_SECRET_ACCESS_KEY` | ✓ | ✓ | Same handling rule as `S3_ACCESS_KEY_ID` — never in git, chat, or CI |
 | `PERSONA_PASSWORD` | | | **Not read by any service.** `scripts/seed_persona.py` reads it from the shell, and only outside production: `PERSONA_PASSWORD=… ENVIRONMENT=qa poetry run python scripts/seed_persona.py`. Unset it and the script falls back to its own documented default (`scripts/seed_persona.py`'s `DEFAULT_PASSWORD`); held in the operator's macOS Keychain (service `practice-match-qa`, account `PERSONA_PASSWORD`; read with `security find-generic-password -a PERSONA_PASSWORD -s practice-match-qa -w` into a subprocess environment, never printed); read by no service; passed to the seed and the harness through the shell; never on production (A-S6.2, superseding A-S6.1) (Identity plan Task I5) |
+> **Setting a variable is not the same as the process seeing it.** `railway variable set … --skip-deploys`
+> writes the value but leaves the running container with its old environment, so a job started with
+> `railway ssh` afterwards still sees nothing. Either omit `--skip-deploys`, or run
+> `railway redeploy --service <svc> --environment <env> --yes` and re-check from inside the container
+> before relying on it (2026-09-10: the first Census load failed this way, silently, on all four `S3_*`).
+
 
 ## DNS (verbatim as Railway printed them — Task 8, 2026-09-06)
 
@@ -273,6 +279,11 @@ ENVIRONMENT=qa poetry run python scripts/seed_listings.py   # the PostGIS servic
 #             carries, which every import deletes; the eighteen keep their ids.
 ```
 
+The seeded hospitals are INSERTed directly as `published`, not created through the API, so they do not
+trigger the automatic geocoding that published listings go through — after seeding, run the
+`census_load.py geocode` step above (under "Census Phase A exit (QA)") to resolve their locations
+and build market figures.
+
 In-container (the `practice-match-cli` key on file):
 
 ```bash
@@ -356,16 +367,22 @@ railway status                                        # MUST print Project: Prac
 railway ssh --service worker --environment QA
 ```
 
+**`PYTHONPATH=/app` is required, and this is not optional or cosmetic.** Python puts the SCRIPT's
+own directory (`/app/scripts`) on `sys.path`, not the working directory, so a bare
+`python scripts/census_load.py …` inside the container dies immediately with
+`ModuleNotFoundError: No module named 'app'`. Every command below carries it. (Found on the first
+real load, 2026-09-10: the earlier form had never been run against a deployed container.)
+
 Inside that shell, the load order matters — TIGER first, because `zbp` refuses without the ZCTA
 boundaries TIGER writes to `geo_area`:
 
 ```bash
-python scripts/census_load.py tiger
-python scripts/census_load.py acs                     # all three ACS datasets: acs5, acs5_subject, acs5_prior
-python scripts/census_load.py cbp
-python scripts/census_load.py zbp
-python scripts/census_load.py qwi                      # resolves the latest published quarter, then trims to 20
-python scripts/census_load.py bds --year 2022
+env PYTHONPATH=/app python scripts/census_load.py tiger
+env PYTHONPATH=/app python scripts/census_load.py acs      # all three ACS datasets: acs5, acs5_subject, acs5_prior
+env PYTHONPATH=/app python scripts/census_load.py cbp
+env PYTHONPATH=/app python scripts/census_load.py zbp
+env PYTHONPATH=/app python scripts/census_load.py qwi      # resolves the latest published quarter, then trims to 20
+env PYTHONPATH=/app python scripts/census_load.py bds --year 2022
 ```
 
 Check each exit code against the shared scheme (`0` done · `2` refused before anything opened,
@@ -377,13 +394,29 @@ Then activate, one dataset at a time, each with its own reviewed note — `--for
 `--note` and John's word, never one without the other:
 
 ```bash
-python scripts/census_load.py activate tiger_cb      2023        --by john --note "…"
-python scripts/census_load.py activate acs5          "2019–2023" --by john --note "…"
-python scripts/census_load.py activate acs5_subject  "2019–2023" --by john --note "…"
-python scripts/census_load.py activate acs5_prior    "2014–2018" --by john --note "…"
-python scripts/census_load.py activate cbp           2022        --by john --note "…"
-python scripts/census_load.py activate zbp           2022        --by john --note "…"
+env PYTHONPATH=/app python scripts/census_load.py activate tiger_cb      2023        --by john --note "…"
+env PYTHONPATH=/app python scripts/census_load.py activate acs5          "2019–2023" --by john --note "…"
+env PYTHONPATH=/app python scripts/census_load.py activate acs5_subject  "2019–2023" --by john --note "…"
+env PYTHONPATH=/app python scripts/census_load.py activate acs5_prior    "2014–2018" --by john --note "…"
+env PYTHONPATH=/app python scripts/census_load.py activate cbp           2022        --by john --note "…"
+env PYTHONPATH=/app python scripts/census_load.py activate zbp           2022        --by john --note "…"
 ```
+
+Then geocode every listing to its practice location, building catchments and figures for display
+(figures need the active vintages first, so this step comes after `activate`):
+
+```bash
+env PYTHONPATH=/app python scripts/census_load.py geocode               # resolves every listing without a practice_location
+env PYTHONPATH=/app python scripts/census_load.py geocode --listing <id>  # resolve one specific listing by id
+env PYTHONPATH=/app python scripts/census_load.py geocode --force       # re-resolve listings that already have a location
+```
+
+The command is idempotent — it skips listings that already have a location and exits 0 when there is
+nothing to do, so it can be safely re-run repeatedly. The seeder does not enqueue this step itself:
+it is a bootstrapping tool that runs where no worker may be listening, and silently queueing work
+nothing will consume is worse than not queueing it. A listing published through the API automatically
+goes through this geocoding pipeline; seeded listings created via direct INSERT do not, which is why
+the manual step is needed after seeding.
 
 The vintage string must match what was ingested exactly, en dash included. `bds` and `qwi` have no
 `activate` step in this sequence — `qwi`'s vintage is `<year>Q<quarter>` and `bds`'s is the year;

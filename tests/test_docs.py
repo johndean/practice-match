@@ -1288,7 +1288,7 @@ def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
     number_words = {n: w for n, w in enumerate(
         ("Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
          "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen",
-         "Nineteen", "Twenty"))}
+         "Nineteen", "Twenty", "Twenty-one", "Twenty-two", "Twenty-three", "Twenty-four"))}
     assert family_count in number_words, f"no spelled-out word on hand for {family_count} families"
 
     claude = (ROOT / "CLAUDE.md").read_text()
@@ -2057,3 +2057,114 @@ def test_deploy_md_names_both_homes_of_a_photograph_s_caption():
     assert "listing.photo_captions" in text, "the seed home of a caption is undocumented"
     assert "listing_asset.caption" in text, "the seller home of a caption is undocumented"
     assert "never stored" not in text, "DEPLOY.md still says a caption is never stored"
+
+
+def test_every_documented_census_load_command_sets_pythonpath() -> None:
+    """2026-09-10, the first real load: a bare `python scripts/census_load.py …` dies inside the
+    container with ModuleNotFoundError, because Python puts the script's own directory on sys.path
+    and not the working directory. Every documented invocation must carry PYTHONPATH=/app, or the
+    runbook hands an operator a command that cannot work."""
+    deploy_md = (ROOT / "DEPLOY.md").read_text()
+    bare = re.findall(r"^\s*python scripts/census_load\.py", deploy_md, re.MULTILINE)
+    assert not bare, f"{len(bare)} documented census_load command(s) lack PYTHONPATH=/app"
+    assert "env PYTHONPATH=/app python scripts/census_load.py" in deploy_md
+
+
+def test_deploy_md_warns_that_skip_deploys_leaves_the_container_blind() -> None:
+    """2026-09-10: the four S3_* variables were set with --skip-deploys, so Railway held them while
+    the running worker still saw none of them and the load refused. The runbook must say so."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "--skip-deploys" in text
+    assert "railway redeploy" in text
+
+
+def test_census_load_sequence_includes_geocode_step_after_activate():
+    """Task B9: `census_load.py geocode` resolves listings to their practice locations, builds
+    catchments, and materializes market figures — it must appear in DEPLOY.md's Census load
+    sequence after the `activate` steps (figures need the active vintages first), so an operator
+    who follows the documented sequence gets complete market data, not incomplete rows."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    section = _section(text, "Census Phase A exit (QA)")
+
+    # The geocode step must appear after activate
+    geocode_idx = section.find("python scripts/census_load.py geocode")
+    activate_idx = section.rfind("python scripts/census_load.py activate")
+
+    assert geocode_idx > -1, "geocode step missing from Census Phase A exit section"
+    assert activate_idx > -1, "activate step missing from Census Phase A exit section"
+    assert geocode_idx > activate_idx, "geocode step must appear AFTER activate blocks"
+
+    # The geocode step must mention it resolves, builds catchments, and writes figures
+    # Check in the whole section since these concepts may appear in intro text or after the code block
+    assert "resolves" in section.lower(), "geocode docs must say it resolves addresses"
+    assert "catchment" in section.lower(), "geocode docs must mention catchments"
+    assert "re-runnable" in section.lower() or "idempotent" in section.lower(), (
+        "geocode docs must say it is re-runnable or idempotent"
+    )
+    # Check for the options: bare form, --listing <id>, --force
+    for flag in ("--listing", "--force"):
+        assert flag in section[geocode_idx:geocode_idx+500], f"geocode docs must document {flag}"
+
+
+def test_seeding_section_mentions_geocode_step_after_seeding():
+    """Task B9: seeded hospitals are INSERTed directly as published (not a transition), so
+    nothing enqueues their geocoding. DEPLOY.md's seeding section must point to the geocode
+    step so an operator who seeds the eighteen hospitals does not end up with no market data."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    section = _section(text, "Seeding the demo hospitals (QA)")
+    
+    assert "geocode" in section.lower(), (
+        "seeding section must mention the geocode step — seeded hospitals need it to get market figures"
+    )
+    assert "census_load.py geocode" in text, (
+        "DEPLOY.md must mention the geocode command to run after seeding"
+    )
+
+
+def test_geocode_step_explains_why_seeder_does_not_do_it():
+    """Task B9: the seeder is a bootstrapping tool that runs where no worker may be listening.
+    DEPLOY.md must say why the seeder does not enqueue geocoding itself, and contrast it with
+    the published-listing case where the API geocodes automatically."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    section = _section(text, "Census Phase A exit (QA)")
+    
+    # Find the geocode step explanation
+    geocode_start = section.find("geocode")
+    geocode_block = section[geocode_start:geocode_start+2000]
+    
+    # Must explain that it doesn't happen automatically for seeded listings
+    assert "bootstrapping" in geocode_block or "published" in geocode_block.lower(), (
+        "geocode docs must distinguish seeded listings from API-created ones"
+    )
+    assert "worker" in geocode_block.lower() or "listen" in geocode_block.lower(), (
+        "geocode docs must explain why the seeder can't enqueue work"
+    )
+
+
+def test_seeding_section_pins_the_geocode_requirement():
+    """Task B9: seeded hospitals are INSERTed directly, not created through the API, so nothing
+    enqueues their geocoding automatically. DEPLOY.md's seeding section must be pinned so this
+    requirement cannot be deleted or reworded away — an operator who runs the seeding script
+    must see the pointer to the geocode step and understand why it's needed.
+    
+    Pinned on command form (census_load.py geocode) and stable substrings explaining the
+    automatic/manual boundary (published vs geocod), scoped to the seeding section only."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    section = _section(text, "Seeding the demo hospitals (QA)")
+    
+    # The section must name the geocode command
+    assert "census_load.py geocode" in section, (
+        "seeding section must name the geocode command — "
+        "an operator cannot follow the pointer without seeing which step to run"
+    )
+    
+    # The section must say seeded rows don't get automatic geocoding (published is the status,
+    # geocod is the action that doesn't happen automatically for them)
+    assert "published" in section.lower(), (
+        "seeding section must say seeded rows are published directly — "
+        "the contrast with API-created rows is load-bearing"
+    )
+    assert "geocod" in section.lower(), (
+        "seeding section must mention geocoding — "
+        "the pointer to the manual step is only meaningful if it says why it's needed"
+    )

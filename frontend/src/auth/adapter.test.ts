@@ -84,6 +84,96 @@ describe('makeAuthAdapter (C1)', () => {
     expect(store.held).toBeNull();
   });
 
+  it('re-reads the listings catalogue after the store write (A-L14)', async () => {
+    const store = fakeStore();
+    const listingsCalls: string[] = [];
+    const practicesCopy: any[] = [{ id: 'fixture1' }];
+    const marketsCopy: any = { 'Austin, TX': { center: [0, 0], zoom: 10 } };
+
+    const fakeListingsLoader = async (fetchFn: typeof fetch, practices: any[], markets: any) => {
+      listingsCalls.push('loadListings');
+      // Simulate successful read that replaces practices
+      practices.length = 0;
+      practices.push({ id: 'real1' });
+      return true;
+    };
+
+    const adapter = makeAuthAdapter(
+      fakeApi({ signIn: () => Promise.resolve(ME) }),
+      store,
+      fakeListingsLoader as any,
+      fetch,
+      practicesCopy,
+      marketsCopy
+    );
+
+    const resolved = await adapter.signIn('buyer@practice-match.test', 'a-password');
+
+    // The store must be written before loadListings completes
+    expect(store.writes).toEqual(['set(buyer@practice-match.test)']);
+    expect(listingsCalls, 'listings were loaded after store write').toEqual(['loadListings']);
+    expect(resolved).toBe(ME);
+    expect(practicesCopy, 'practices replaced by real data').toEqual([{ id: 'real1' }]);
+  });
+
+  it('retries the listings read once on failure, and resolves if the retry succeeds (A-L14)', async () => {
+    const store = fakeStore();
+    const listingsCalls: number[] = [];
+    const practicesCopy: any[] = [{ id: 'fixture1' }];
+    const marketsCopy: any = { 'Austin, TX': { center: [0, 0], zoom: 10 } };
+
+    const fakeListingsLoader = async () => {
+      listingsCalls.push(listingsCalls.length);
+      // First call fails, second succeeds
+      if (listingsCalls.length === 1) return false;
+      return true;
+    };
+
+    const adapter = makeAuthAdapter(
+      fakeApi({ signIn: () => Promise.resolve(ME) }),
+      store,
+      fakeListingsLoader as any,
+      fetch,
+      practicesCopy,
+      marketsCopy
+    );
+
+    const resolved = await adapter.signIn('buyer@practice-match.test', 'a-password');
+
+    expect(listingsCalls, 'tried twice: initial attempt and one retry').toEqual([0, 1]);
+    expect(store.writes, 'store not cleared on successful retry').toEqual(['set(buyer@practice-match.test)']);
+    expect(resolved).toBe(ME);
+  });
+
+  it('clears the store and rejects on two consecutive failures (A-L14)', async () => {
+    const store = fakeStore();
+    const listingsCalls: number[] = [];
+    const practicesCopy: any[] = [{ id: 'fixture1' }];
+    const marketsCopy: any = { 'Austin, TX': { center: [0, 0], zoom: 10 } };
+
+    const fakeListingsLoader = async () => {
+      listingsCalls.push(listingsCalls.length);
+      return false; // Always fail
+    };
+
+    const adapter = makeAuthAdapter(
+      fakeApi({ signIn: () => Promise.resolve(ME) }),
+      store,
+      fakeListingsLoader as any,
+      fetch,
+      practicesCopy,
+      marketsCopy
+    );
+
+    await expect(adapter.signIn('buyer@practice-match.test', 'a-password'))
+      .rejects.toThrow('Signed in, but the listings could not be loaded. Please try again.');
+
+    expect(listingsCalls, 'tried twice: initial attempt and one retry').toEqual([0, 1]);
+    expect(store.writes, 'store set then cleared on both failures').toEqual(['set(buyer@practice-match.test)', 'clear()']);
+    expect(store.held, 'store is empty when rejection settles').toBeNull();
+    expect(practicesCopy, 'practices remain unchanged (never replaced by failed read)').toEqual([{ id: 'fixture1' }]);
+  });
+
   it('ends the session and then clears the store', async () => {
     const store = fakeStore();
     const calls: string[] = [];
@@ -112,6 +202,30 @@ describe('makeAuthAdapter (C1)', () => {
 
     expect(store.held, 'the store must not outlive the screen that named it').toBeNull();
     expect(store.writes).toEqual(['set(buyer@practice-match.test)', 'clear()']);
+  });
+
+  it('does not re-read listings when called without a loader (anonymous boot path, A-L14)', async () => {
+    const store = fakeStore();
+    const listingsCalls: number[] = [];
+
+    // Mock loader that tracks if it was called
+    const fakeListingsLoader = async () => {
+      listingsCalls.push(1);
+      return true;
+    };
+
+    // Create adapter without passing the loader (simulating boot path without listings)
+    const adapter = makeAuthAdapter(
+      fakeApi({ signIn: () => Promise.resolve(ME) }),
+      store
+      // No loadListings, fetchFn, practices, or markets — like the anonymous boot path
+    );
+
+    const resolved = await adapter.signIn('buyer@practice-match.test', 'a-password');
+
+    expect(listingsCalls, 'listings loader was not called').toEqual([]);
+    expect(store.writes).toEqual(['set(buyer@practice-match.test)']);
+    expect(resolved).toBe(ME);
   });
 });
 
