@@ -1345,6 +1345,308 @@ def test_cmd_materialize_returns_three_when_the_database_is_unreachable(monkeypa
 # which do -- so monkeypatching `census_load._conn` to hand back a connection whose cursor always
 # raises reaches every subcommand's first database statement uniformly, real or delegated.
 
+# --- geocode subcommand (Task B9) ---------------------------------------------------------------
+
+def test_cmd_geocode_resolves_listing_with_no_practice_location_row(scratch_dsn, monkeypatch, capsys):
+    """Task B9, case (a): a listing with no practice_location row is resolved, its catchment
+    built and its market_metric rows written. Assert all three exist afterwards with row counts."""
+    from tests.census.listing_fixtures import make_listing
+
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    conn = census_load._conn(scratch_dsn)
+    try:
+        lid = make_listing(conn)
+        # Seed geo_area and active_vintage
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, county_fips, parent_geo_id, geom, centroid) VALUES
+                     ('48491020355','140','2023','Census Tract 203.55','48','491','48491',
+                      ST_Multi(ST_GeomFromText('POLYGON((-97.9 30.5,-97.7 30.5,-97.7 30.6,-97.9 30.6,-97.9 30.5))',4269)),
+                      ST_SetSRID(ST_MakePoint(-97.8,30.55),4269)),
+                     ('78613','860','2023','ZCTA5 78613',NULL,NULL,NULL,
+                      ST_Multi(ST_GeomFromText('POLYGON((-97.9 30.5,-97.7 30.5,-97.7 30.6,-97.9 30.6,-97.9 30.5))',4269)),
+                      ST_SetSRID(ST_MakePoint(-97.8,30.55),4269)),
+                     ('4813552','160','2023','Cedar Park city','48',NULL,'48',
+                      ST_Multi(ST_GeomFromText('POLYGON((-97.9 30.5,-97.7 30.5,-97.7 30.6,-97.9 30.6,-97.9 30.5))',4269)),
+                      ST_SetSRID(ST_MakePoint(-97.8,30.55),4269))"""
+            )
+            cur.execute(
+                "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES (%s, %s, now(), %s)",
+                ("tiger_cb", "2023", "test"),
+            )
+            cur.execute(
+                "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES (%s, %s, now(), %s)",
+                ("acs5", "2019\u20132023", "test"),
+            )
+    finally:
+        conn.close()
+
+    # Skip the network call by mocking geocode.resolve to write to DB directly
+    from app.census import geocode as census_geocode
+
+    def mock_resolve(conn, gc, listing_id):
+        # Return Location as if geocode succeeded; resolve will write to DB
+        loc = census_geocode.Location(listing_id, "rooftop", 30.55, -97.8, "48491020355", "48491", "4813552", "78613", "12420")
+        # Write to practice_location directly
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO practice_location
+                     (listing_id, address_hash, point, tract_geoid, county_geoid, place_geoid, zcta_geoid, cbsa_geoid,
+                      geo_precision, geocoded_at, geocoder_vintage)
+                   VALUES (%s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 4269), %s, %s, %s, %s, %s, %s, now(), %s)
+                   ON CONFLICT (listing_id) DO UPDATE SET
+                     point = EXCLUDED.point, tract_geoid = EXCLUDED.tract_geoid, county_geoid = EXCLUDED.county_geoid,
+                     place_geoid = EXCLUDED.place_geoid, zcta_geoid = EXCLUDED.zcta_geoid, cbsa_geoid = EXCLUDED.cbsa_geoid,
+                     geo_precision = EXCLUDED.geo_precision, geocoded_at = now(), geocoder_vintage = EXCLUDED.geocoder_vintage""",
+                (listing_id, "hash1", loc.lng, loc.lat, loc.tract_geoid, loc.county_geoid, loc.place_geoid, loc.zcta_geoid, loc.cbsa_geoid, "rooftop", "Current_Current"),
+            )
+        return loc
+
+    monkeypatch.setattr(census_geocode, "resolve", mock_resolve)
+
+    assert census_load.main(["geocode", "--listing", lid]) == 0
+
+    # Verify practice_location, catchment, and market_metric rows exist
+    conn = census_load._conn(scratch_dsn)
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT geo_precision FROM practice_location WHERE listing_id=%s", (lid,))
+            assert cur.fetchone() is not None
+            cur.execute("SELECT COUNT(*) FROM practice_catchment WHERE listing_id=%s", (lid,))
+            catchment_count = cur.fetchone()[0]
+            assert catchment_count > 0
+            cur.execute("SELECT COUNT(*) FROM market_metric WHERE listing_id=%s", (lid,))
+            metric_count = cur.fetchone()[0]
+            assert metric_count > 0
+    finally:
+        conn.close()
+
+    out = capsys.readouterr().out
+    assert lid in out
+    assert "1 listing(s) geocoded" in out
+
+
+def test_cmd_geocode_skips_listing_with_practice_location_row(scratch_dsn, monkeypatch, capsys):
+    """Task B9, case (b): a listing that already has a practice_location row is SKIPPED and
+    the output says so."""
+    from tests.census.listing_fixtures import make_listing
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    conn = census_load._conn(scratch_dsn)
+    try:
+        lid = make_listing(conn)
+        with conn.cursor() as cur:
+            # Add a practice_location row
+            cur.execute(
+                "INSERT INTO practice_location (listing_id, address_hash, geo_precision, geocoder_vintage, geocoded_at) "
+                "VALUES (%s, %s, %s, %s, now())",
+                (lid, "hash1", "rooftop", "Current_Current"),
+            )
+    finally:
+        conn.close()
+
+    # Run with no argument - should skip this one
+    assert census_load.main(["geocode"]) == 0
+
+    out = capsys.readouterr().out
+    assert "0 listing(s) geocoded" in out
+
+
+def test_cmd_geocode_force_re_geocodes_existing_listing(scratch_dsn, monkeypatch, capsys):
+    """Task B9, case (c): --force re-resolves one that already has a practice_location row."""
+    from app.census import geocode as census_geocode
+    from tests.census.listing_fixtures import make_listing
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    conn = census_load._conn(scratch_dsn)
+    try:
+        lid = make_listing(conn)
+        with conn.cursor() as cur:
+            # Seed geo_area and active_vintage
+            cur.execute(
+                """INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, county_fips, parent_geo_id, geom, centroid) VALUES
+                     ('48491020355','140','2023','Census Tract 203.55','48','491','48491',
+                      ST_Multi(ST_GeomFromText('POLYGON((-97.9 30.5,-97.7 30.5,-97.7 30.6,-97.9 30.6,-97.9 30.5))',4269)),
+                      ST_SetSRID(ST_MakePoint(-97.8,30.55),4269))"""
+            )
+            cur.execute(
+                "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES (%s, %s, now(), %s)",
+                ("tiger_cb", "2023", "test"),
+            )
+            cur.execute(
+                "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES (%s, %s, now(), %s)",
+                ("acs5", "2019\u20132023", "test"),
+            )
+            # Add an existing practice_location row
+            cur.execute(
+                "INSERT INTO practice_location (listing_id, address_hash, geo_precision, geocoder_vintage, geocoded_at) "
+                "VALUES (%s, %s, %s, %s, now())",
+                (lid, "old_hash", "rooftop", "Current_Current"),
+            )
+    finally:
+        conn.close()
+
+    # Mock geocode.resolve to skip HTTP and write directly
+    def mock_resolve(conn, gc, listing_id):
+        loc = census_geocode.Location(listing_id, "rooftop", 30.55, -97.8, "48491020355", "48491", None, None, None)
+        with conn.cursor() as cur:
+            cur.execute(
+                """UPDATE practice_location SET point = ST_SetSRID(ST_MakePoint(%s, %s), 4269),
+                     tract_geoid = %s, county_geoid = %s, geo_precision = %s, geocoded_at = now()
+                   WHERE listing_id = %s""",
+                (loc.lng, loc.lat, loc.tract_geoid, loc.county_geoid, "rooftop", listing_id),
+            )
+        return loc
+
+    monkeypatch.setattr(census_geocode, "resolve", mock_resolve)
+
+    # Run with --force
+    assert census_load.main(["geocode", "--force"]) == 0
+
+    out = capsys.readouterr().out
+    assert "1 listing(s) geocoded" in out
+
+
+def test_cmd_geocode_refuses_when_tiger_cb_vintage_missing(scratch_dsn, monkeypatch, capsys):
+    """Task B9, case (d): tiger_cb has no active vintage → exit 2 with named reason and
+    nothing written."""
+    from tests.census.listing_fixtures import make_listing
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    conn = census_load._conn(scratch_dsn)
+    try:
+        lid = make_listing(conn)
+    finally:
+        conn.close()
+
+    assert census_load.main(["geocode", "--listing", lid]) == 2
+    err = capsys.readouterr().err
+    assert "tiger_cb" in err
+    assert "refused" in err
+
+
+def test_cmd_geocode_nothing_to_geocode_exits_zero(scratch_dsn, monkeypatch, capsys):
+    """Task B9: when geocode runs with no argument and every listing already has a
+    practice_location row (nothing to do), it exits 0, not 2. Success means 'nothing happened
+    that needed doing', not 'I refused to start'."""
+    from tests.census.listing_fixtures import make_listing
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    conn = census_load._conn(scratch_dsn)
+    try:
+        lid = make_listing(conn)
+        with conn.cursor() as cur:
+            # Add practice_location so there's nothing to geocode
+            cur.execute(
+                "INSERT INTO practice_location (listing_id, address_hash, geo_precision, geocoder_vintage, geocoded_at) "
+                "VALUES (%s, %s, %s, %s, now())",
+                (lid, "hash1", "rooftop", "Current_Current"),
+            )
+    finally:
+        conn.close()
+
+    # Run with no argument when everything is done
+    assert census_load.main(["geocode"]) == 0
+
+    out = capsys.readouterr().out
+    assert "0 listing(s) geocoded" in out
+
+
+def test_cmd_geocode_missing_listing_exits_two(scratch_dsn, monkeypatch, capsys):
+    """Task B9: a non-existent listing with --listing is exit 2, not a 404."""
+    from uuid import uuid4
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+
+    listing_id = str(uuid4())
+    assert census_load.main(["geocode", "--listing", listing_id]) == 2
+    err = capsys.readouterr().err
+    assert "refused" in err or "no such listing" in err
+
+
+def test_cmd_geocode_returns_two_without_a_database_url(monkeypatch, capsys):
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+
+    assert census_load.main(["geocode"]) == 2
+    assert "DATABASE_URL" in capsys.readouterr().err
+
+
+def test_cmd_geocode_returns_five_when_the_geocoder_cannot_resolve_a_listing(scratch_dsn, monkeypatch, capsys):
+    """Task B9: a listing the ladder cannot place at all stops the run with exit 5, naming the
+    listing, rather than leaving a half-geocoded inventory behind without saying so."""
+    from app.census import geocode as census_geocode
+    from tests.census.listing_fixtures import make_listing
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    conn = census_load._conn(scratch_dsn)
+    try:
+        lid = make_listing(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by)"
+                " VALUES (%s, %s, now(), %s) ON CONFLICT (dataset_key) DO NOTHING",
+                ("tiger_cb", "2023", "test"),
+            )
+    finally:
+        conn.close()
+
+    def refuse(conn, gc, listing_id):
+        raise census_geocode.GeocodeFailed("every rung of the ladder missed")
+
+    monkeypatch.setattr(census_geocode, "resolve", refuse)
+    assert census_load.main(["geocode", "--listing", lid]) == 5
+    err = capsys.readouterr().err
+    assert lid in err and "geocoding failed" in err
+
+
+def test_cmd_geocode_returns_two_when_the_active_vintage_lookup_raises(scratch_dsn, monkeypatch, capsys):
+    """Task B9: `materialize.active_geo_vintage` raises RuntimeError when no boundary vintage is
+    active. That is a refusal (exit 2) naming what to do, never an unhandled crash."""
+    from app.census import geocode as census_geocode
+    from app.census import materialize as census_materialize
+    from tests.census.listing_fixtures import make_listing
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    conn = census_load._conn(scratch_dsn)
+    try:
+        lid = make_listing(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by)"
+                " VALUES (%s, %s, now(), %s) ON CONFLICT (dataset_key) DO NOTHING",
+                ("tiger_cb", "2023", "test"),
+            )
+    finally:
+        conn.close()
+
+    def resolve_ok(conn, gc, listing_id):
+        loc = census_geocode.Location(listing_id, "rooftop", 30.55, -97.8, "48491020355", "48491", "4813552", "78613", "12420")
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO practice_location (listing_id, address_hash, point, geo_precision, geocoded_at, geocoder_vintage)"
+                " VALUES (%s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 4269), %s, now(), %s)"
+                " ON CONFLICT (listing_id) DO NOTHING",
+                (listing_id, "hash-vintage", loc.lng, loc.lat, "rooftop", "Current_Current"),
+            )
+        return loc
+
+    def no_vintage(conn):
+        raise RuntimeError("no active tiger_cb vintage")
+
+    monkeypatch.setattr(census_geocode, "resolve", resolve_ok)
+    monkeypatch.setattr(census_materialize, "active_geo_vintage", no_vintage)
+    assert census_load.main(["geocode", "--listing", lid]) == 2
+    assert "geocode refused" in capsys.readouterr().err
+
+
+def test_cmd_geocode_returns_three_when_the_database_is_unreachable(monkeypatch, capsys):
+    monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
+
+    assert census_load.main(["geocode"]) == 3
+    assert "database unreachable" in capsys.readouterr().err
+
+
 class _RaisingCursor:
     def __enter__(self):
         return self
@@ -1377,9 +1679,10 @@ class _RaisingConn:
         (["bds", "--year", "2022"], {"CENSUS_API_KEY": "the-key", "CENSUS_CONTACT_EMAIL": "tech@vinfoundation.example.org"}),
         (["qwi", "--year", "2024", "--quarter", "4"], {"CENSUS_API_KEY": "the-key", "CENSUS_CONTACT_EMAIL": "tech@vinfoundation.example.org"}),
         (["activate", "acs5", "2019\u20132023", "--by", "john"], {}),
+        (["geocode"], {}),
         (["materialize"], {}),
     ],
-    ids=["tiger", "acs", "cbp", "zbp", "bds", "qwi", "activate", "materialize"],
+    ids=["tiger", "acs", "cbp", "zbp", "bds", "qwi", "activate", "geocode", "materialize"],
 )
 def test_every_subcommand_closes_its_connection_and_returns_three_on_a_post_connect_database_error(argv, env, redis, monkeypatch, capsys):
     monkeypatch.setenv("DATABASE_URL", "postgresql://placeholder/placeholder")
