@@ -4232,6 +4232,206 @@ describe('A26 — the Browse filter dropdowns', () => {
 });
 
 // ---------------------------------------------------------------------------------------
+// A26 Task F2 — the three dropdowns inside the "More filters" popover (A26.3, A26.11).
+//
+// John called "More filters" the CORRECT implementation, so his words do not reach the three
+// under it — the user's experience does. A native `<select>`'s popup is an operating-system
+// window and renders above the popover's own `z-index: 700`, so converting only the toolbar
+// five would have put the dark menu he photographed on top of his own exemplar, one click
+// deeper, rather than removed it.
+//
+// The same `.map()` shape, the same state slot and the same class members as the five: three
+// more instances, no new machinery. What is characterised here is only what multiplicity
+// ACROSS the two loops adds — that the eight keys are disjoint, so one slot still identifies
+// exactly one dropdown; that `value:`'s `|| "Any"` guard (which the toolbar's map body never
+// had, because `f` is seeded with the five toolbar keys and NOT with these three) survives
+// into the trigger's label; and that the popover is these three's PARENT rather than their
+// peer, so it closes them without them closing it.
+// ---------------------------------------------------------------------------------------
+describe('A26 (F2) — the three dropdowns inside "More filters"', () => {
+  const KEYS = ['est', 'ownership', 'sqft'];
+  // A13's own unconditional teardown (M4): these cases arm real `document` listeners through
+  // `componentDidMount`, and unmounting only on the happy path leaves one bound to a dead
+  // component for the rest of the file the moment an assertion fails.
+  afterEach(() => { c.componentWillUnmount(); });
+
+  const more = () => c.renderVals().moreFilters;
+  const byKey = (k: string) => more()[KEYS.indexOf(k)];
+  const filters = () => c.renderVals().filters;
+
+  it('the three are dropdowns, closed, each keeping the design\'s own caption as its label', () => {
+    const mf = more();
+    expect(mf).toHaveLength(3);
+    expect(mf.map((m: any) => m.label)).toEqual(['Year established', 'Ownership structure', 'Facility size']);
+    expect(mf.map((m: any) => m.open)).toEqual([false, false, false]);
+    expect(mf.map((m: any) => m.listId)).toEqual(KEYS.map((k) => `f-listbox-${k}`));
+    expect(mf.map((m: any) => m.activeId)).toEqual([null, null, null]);
+    expect(mf[0].caretStyle).toContain('rotate(0deg)');
+  });
+
+  it('the `|| "Any"` guard survives: `f` never seeds these three, and the trigger still reads the design\'s first option', () => {
+    // The design's own state literal carries the FIVE toolbar keys and none of these three, so
+    // `s.f.est` is undefined on first render. The `<select>`'s render value guarded that with
+    // `|| "Any"`; the trigger label is derived from the same guarded value, so an unset filter
+    // shows the design's own first option rather than a blank box.
+    expect(c.state.f.est).toBeUndefined();
+    expect(more().map((m: any) => m.triggerLabel)).toEqual(['Any year', 'Any structure', 'Any size']);
+    expect(more().map((m: any) => m.options[0].selected)).toEqual([true, true, true]);
+  });
+
+  it('the trigger opens its own dropdown and seeds the highlight on the current choice', () => {
+    c.setF('ownership')('Sole');
+    byKey('ownership').toggle();
+    expect(c.state).toMatchObject({ fMenu: 'ownership', fMenuAt: 1 });
+    expect(byKey('ownership').open).toBe(true);
+    expect(byKey('ownership').activeId).toBe('f-opt-ownership-1');
+    expect(byKey('ownership').caretStyle).toContain('rotate(180deg)');
+    expect(byKey('est').open, 'a sibling must not open with it').toBe(false);
+  });
+
+  it('ONE slot across BOTH loops: the eight keys are disjoint, so opening either closes the other', () => {
+    filters()[0].toggle();
+    expect(c.state.fMenu).toBe('type');
+    byKey('sqft').toggle();
+    expect(c.state.fMenu).toBe('sqft');
+    expect(filters()[0].open, 'a toolbar dropdown stayed open behind a popover one').toBe(false);
+    filters()[2].toggle();
+    expect(c.state.fMenu).toBe('revenue');
+    expect(byKey('sqft').open, 'a popover dropdown stayed open behind a toolbar one').toBe(false);
+  });
+
+  it('the highlight is guarded by the key here too, so a stale index cannot paint on a sibling', () => {
+    byKey('est').toggle();
+    c.setState({ fMenuAt: 2 });
+    expect(byKey('est').options[2].rowStyle).toContain('background: var(--vf-neutral)');
+    expect(byKey('sqft').options[2].rowStyle).toContain('background: none');
+    expect(byKey('sqft').activeId).toBe(null);
+  });
+
+  it('choosing an option produces exactly the transition the <select>\'s onChange did', () => {
+    vi.useFakeTimers();
+    byKey('est').toggle();
+    byKey('est').options[1].go();
+    expect(c.state.f).toMatchObject({ est: 'pre1995' });
+    expect(c.state).toMatchObject({ loading: true, fMenu: null, fMenuAt: -1 });
+    vi.advanceTimersByTime(320);
+    expect(c.state.loading).toBe(false);
+    vi.useRealTimers();
+    expect(byKey('est').triggerLabel).toBe('Before 1995');
+    expect(byKey('est').options[1].selected).toBe(true);
+    // …and the popover's own count pill, which reads the same three keys, has moved with it.
+    expect(c.renderVals().moreCount).toBe(1);
+    expect(c.renderVals().hasMoreCount).toBe(true);
+  });
+
+  it('the keyboard set is the toolbar\'s: arrows walk and wrap, Home/End jump, Enter chooses, and a closed one is left to the button', () => {
+    const key = (k: string) => { const e = { key: k, preventDefault: vi.fn() }; byKey('sqft').keys(e); return e; };
+    expect(key('Home').preventDefault, 'a closed dropdown leaves Home to the button').not.toHaveBeenCalled();
+    expect(key('ArrowDown').preventDefault).toHaveBeenCalled();
+    expect(c.state).toMatchObject({ fMenu: 'sqft', fMenuAt: 0 });
+    key('ArrowUp'); expect(c.state.fMenuAt, 'four options, wrapping backwards from the first').toBe(3);
+    key('ArrowDown'); expect(c.state.fMenuAt).toBe(0);
+    key('End'); expect(c.state.fMenuAt).toBe(3);
+    key('Home'); expect(c.state.fMenuAt).toBe(0);
+    key('ArrowDown');
+    expect(key('Enter').preventDefault).toHaveBeenCalled();
+    expect(c.state.f.sqft).toBe('u3000');
+  });
+
+  it('the three shared dismissal closures reach these three as well — no fourth listener', () => {
+    const host = document.createElement('div');
+    const inside = document.createElement('button');
+    const away = document.createElement('button');
+    host.appendChild(inside);
+    document.body.appendChild(host);
+    document.body.appendChild(away);
+    try {
+      c.componentDidMount();
+      byKey('ownership').hostRef(host);
+      byKey('ownership').toggle();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      expect(c.state, 'Escape (A26.6)').toMatchObject({ fMenu: null, fMenuAt: -1 });
+      byKey('ownership').toggle();
+      inside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.fMenu, 'a pointerdown INSIDE its own wrapper is not outside it').toBe('ownership');
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state, 'outside click (A26.5)').toMatchObject({ fMenu: null, fMenuAt: -1 });
+      byKey('ownership').toggle();
+      inside.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
+      expect(c.state.fMenu, 'a window blur dismisses nothing (A19/A-LB3)').toBe('ownership');
+      inside.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: away }));
+      expect(c.state, 'Tab out (A26.7)').toMatchObject({ fMenu: null, fMenuAt: -1 });
+    } finally {
+      host.remove();
+      away.remove();
+    }
+  });
+
+  it('focus returns to the trigger after a choice, through this instance\'s own wrapper', () => {
+    const host = document.createElement('div');
+    const trigger = document.createElement('button');
+    trigger.setAttribute('aria-haspopup', 'listbox');
+    host.appendChild(trigger);
+    document.body.appendChild(host);
+    const spy = vi.spyOn(trigger, 'focus');
+    try {
+      byKey('sqft').hostRef(host);
+      byKey('sqft').toggle();
+      byKey('sqft').options[2].go();
+      expect(c.state.f.sqft).toBe('3000-5000');
+      expect(spy, 'the row it was on has just been unmounted').toHaveBeenCalled();
+    } finally {
+      host.remove();
+    }
+  });
+
+  it('the panel\'s own mount ref scrolls the highlight into view for these three too (A13/A14 C1)', () => {
+    const host = document.createElement('div');
+    const row = document.createElement('button');
+    row.id = 'f-opt-est-2';
+    host.appendChild(row);
+    document.body.appendChild(host);
+    const spy = vi.fn();
+    (row as unknown as { scrollIntoView: unknown }).scrollIntoView = spy;
+    try {
+      byKey('est').hostRef(host);
+      byKey('est').keys({ key: 'ArrowDown', preventDefault: vi.fn() });
+      c.setState({ fMenuAt: 2 });
+      byKey('est').panelRef(host);
+      expect(spy).toHaveBeenCalledWith({ block: 'nearest' });
+    } finally {
+      host.remove();
+    }
+  });
+
+  it('opening one of the three closes the four overlay menus, and leaves its own parent popover open', () => {
+    c.renderVals().toggleMore();
+    expect(c.state.moreFilters).toBe(true);
+    c.setState({ navMenu: true, userMenu: true, giveMenu: true, marketMenu: true, marketMenuAt: 2 });
+    byKey('est').toggle();
+    expect(c.state).toMatchObject({
+      fMenu: 'est', navMenu: false, userMenu: false, giveMenu: false, marketMenu: false, marketMenuAt: -1
+    });
+    expect(c.state.moreFilters, 'the popover is the PARENT of this dropdown, not a peer').toBe(true);
+  });
+
+  it('closing the popover cannot leave a child latched behind an unmounted parent (A26.4)', () => {
+    c.renderVals().toggleMore();
+    byKey('ownership').toggle();
+    expect(c.state).toMatchObject({ moreFilters: true, fMenu: 'ownership' });
+    c.renderVals().toggleMore();
+    expect(c.state).toMatchObject({ moreFilters: false, fMenu: null, fMenuAt: -1 });
+  });
+
+  it('navigating away cannot leave one of the three latched either (A26.9)', () => {
+    c.setState({ auth: true });
+    byKey('sqft').toggle();
+    c.go('browse')();
+    expect(c.state).toMatchObject({ screen: 'browse', fMenu: null, fMenuAt: -1 });
+  });
+});
+
+// ---------------------------------------------------------------------------------------
 // A26.12–A26.14 — John's 2026-09-08 m7 ruling, restored (controller ruling on the A26 plan's
 // Q2, 2026-09-11): "opening any one of the four menus closes the other three."
 //

@@ -3520,7 +3520,7 @@ const A25_6: Amendment = {
  *  above every in-page `z-index`. No CSS reaches it; only replacing the element does.
  *
  *  The one thing A13 did not have to solve is multiplicity — it converted ONE control. A26's five
- *  (eight, once Task F2 adds the three inside the popover) are not five menus: they are ONE
+ *  (eight, with the three inside the popover Task F2 added) are not eight menus: they are TWO
  *  `.map()` body, so the family is one state slot, one open path, one set of closures and five
  *  instances. `Object.assign` semantics mean writing `fMenu` closes whichever sibling was open,
  *  so the invariant INSIDE the family is structural and there is nothing to forget; only the
@@ -3536,7 +3536,7 @@ const A25_6: Amendment = {
  *  says that `null` exists to prevent.
  *
  *  Task F1 converts the five on the toolbar (A26.10). The three inside the "More filters"
- *  popover are Task F2 and are still `<select>`s here.
+ *  popover were converted by Task F2, so the family's two `.map()` bodies are both done.
  */
 const A26 = {
   date: '2026-09-11',
@@ -3707,6 +3707,125 @@ const A26_2: Amendment = {
     '          style: "display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 13px; font-size: 13px; font-weight: 500; color: var(--color-navy); background: " +',
     '            (cur === "Any" ? "var(--color-white)" : "var(--rf-band)") + "; border: 1px solid " +',
     '            (cur === "Any" ? "var(--border-subtle)" : "var(--color-blue)") + "; border-radius: 6px; cursor: pointer;",',
+    '          caretStyle: "flex: none; display: block; transition: transform 150ms var(--easing-out); transform: rotate(" +',
+    '            (open ? "180deg" : "0deg") + ");",',
+    '          options: fl.options.map((o, i) => {',
+    '            const on = o[0] === cur;',
+    '            const hi = open && s.fMenuAt === i;',
+    '            return {',
+    '              label: o[1], selected: on,',
+    '              go: () => this.setFilter(fl.key, o[0]),',
+    '              optId: "f-opt-" + fl.key + "-" + i,',
+    '              rowStyle: "display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 8px; font-family: var(--rf-display); font-size: 13px; font-weight: " +',
+    '                (on ? "800" : "500") + "; color: var(--vf-navy); background: " +',
+    '                (on ? "var(--vf-accent-bg)" : hi ? "var(--vf-neutral)" : "none") + "; border: 0; border-radius: 6px; cursor: pointer;",',
+    '              tickStyle: "flex: none; display: block; filter: brightness(0) saturate(100%) invert(23%) sepia(89%) saturate(1352%) hue-rotate(184deg) brightness(94%) contrast(101%); opacity: " +',
+    '                (on ? "1" : "0") + ";"',
+    '            };',
+    '          })',
+    '        };',
+    '      }),',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A26.3 — the `moreFilters:` map body, Task F2. The three ARRAY LITERALS above it are untouched:
+ *  the keys, the option values and every one of the design's own labels are exactly as approved.
+ *
+ *  John called "More filters" the CORRECT implementation, so his words do not reach the three
+ *  under it — the user's experience does. A `<select>`'s popup is an OPERATING SYSTEM window and
+ *  renders above this popover's own `z-index: 700`, so converting only the toolbar five would
+ *  have put the dark menu he photographed on top of his own exemplar, one click deeper, rather
+ *  than removed it. They are also the cheapest three in the tree: no approved state had ever
+ *  clicked "More filters", so no committed pixel moves — and that missing oracle is itself the
+ *  gap this task closes (`browse-more-filters`, `browse-more-filters-menu`).
+ *
+ *  Key for key on A26.2, because it IS A26.2's loop with three instances instead of five: one
+ *  state slot, one open path, one set of closures, no new machinery. The eight filter keys are
+ *  disjoint (`est`/`ownership`/`sqft` against `type`/`price`/`revenue`/`doctors`/`building`), so
+ *  `fMenu` still names exactly one dropdown across BOTH loops and the invariant stays structural.
+ *
+ *  Two things differ, and both are the design's own. `label:` stays — it is the caption the
+ *  popover renders above the field — and it also NAMES the trigger, because a `<label>` does not
+ *  name a `<button>` (a button takes its accessible name from its own contents before the host
+ *  language's label), so the string is spelled again as an `aria-label` rather than an `aria:`
+ *  key being invented as A26.2 had to. And `cur` keeps the `|| "Any"` guard the `<select>`'s
+ *  `value:` carried and the toolbar's does not: the design's state literal seeds the five toolbar
+ *  keys and none of these three, so `s.f.est` is undefined on first render and the trigger would
+ *  otherwise open on a blank box.
+ *
+ *  The `<select>`'s three orphaned render keys go with it under the bundle's own dead-code rule,
+ *  exactly as A13.6/A13.7 and A26.2 dropped theirs: `value:` fed `value="{{ mf.value }}"`, `set:`
+ *  fed `onChange="{{ mf.set }}"`, and the rows' `v:` fed `<option value="{{ o.v }}">`. After
+ *  A26.11 the template holds none of the three. `setF` itself is untouched and is still what
+ *  `setFilter` calls. */
+const A26_3: Amendment = {
+  id: 'A26.3', ...A26,
+  find: [
+    '      ].map((fl) => ({',
+    '        label: fl.label,',
+    '        value: s.f[fl.key] || "Any",',
+    '        set: this.setF(fl.key),',
+    '        options: fl.options.map((o) => ({ v: o[0], label: o[1] }))',
+    '      })),',
+    ''
+  ].join('\n'),
+  replace: [
+    '      ].map((fl) => {',
+    '        // Each additional filter is a dropdown list in this design\'s own style, not the',
+    '        // operating system\'s popup: the SAME trigger + role="listbox" panel A26.2 gives the',
+    '        // five on the toolbar, and the same state slot — the eight filter keys are disjoint,',
+    '        // so `fMenu` still names exactly one dropdown across both loops.',
+    '        //',
+    '        // The comment sits INSIDE the map body, not between the array rows and `].map(`:',
+    '        // `tests/seeds/test_hospitals_json.py`\'s `_MORE_BLOCK` reads the three option arrays',
+    '        // out of the design and requires `      ]` to follow the last row directly, and it',
+    '        // fails loudly rather than silently testing nothing when it does not. A26.2 learned',
+    '        // that on its sibling `_BAR_BLOCK`.',
+    '        const cur = s.f[fl.key] || "Any";',
+    '        const open = s.fMenu === fl.key;',
+    '        // Math.max: a value `f` holds that this option list does not would give indexOf -1 and',
+    '        // index the array out of bounds — the guard marketMenuKeys carries for a dropped metro.',
+    '        const sel = Math.max(0, fl.options.findIndex((o) => o[0] === cur));',
+    '        const at = open && s.fMenuAt >= 0 ? s.fMenuAt : sel;',
+    '        return {',
+    '          // The popover\'s own caption, unchanged — and it is the trigger\'s accessible name',
+    '          // too: a <label> does not name a <button>, which takes its name from its own',
+    '          // contents first, so the same string is spelled again rather than a new one invented.',
+    '          label: fl.label,',
+    '          open,',
+    '          listId: "f-listbox-" + fl.key,',
+    '          // On the TRIGGER, which is always rendered: a shut dropdown has no active descendant,',
+    '          // and null is what both renderers omit the attribute for (a string would spell a dead',
+    '          // id). Keyed on fl.key as well, so a sibling never claims another\'s highlight.',
+    '          activeId: open ? "f-opt-" + fl.key + "-" + s.fMenuAt : null,',
+    '          // What the closed <select> displayed. `cur` keeps the design\'s own `|| "Any"` guard:',
+    '          // the state literal seeds the five TOOLBAR keys and none of these three.',
+    '          triggerLabel: fl.options[sel][1],',
+    '          toggle: () => (open ? this.setState({ fMenu: null, fMenuAt: -1 }) : this.openFilterMenu(fl.key, sel)),',
+    '          hostRef: (el) => { const m = this._fMenuEls || (this._fMenuEls = {}); m[fl.key] = el || null; },',
+    '          // The panel\'s own mount is when the option rows first exist, so it is where OPENING',
+    '          // scrolls the highlighted row into view — the arrow keys cannot, having seeded the',
+    '          // highlight while the panel was still unrendered (A13/A14 review round 1, C1).',
+    '          panelRef: (el) => { if (el) this.scrollFilterOption(fl.key, this.state.fMenuAt); },',
+    '          keys: (e) => {',
+    '            const n = fl.options.length;',
+    '            if (e.key === "ArrowDown" || e.key === "ArrowUp") {',
+    '              e.preventDefault();',
+    '              if (!open) return this.openFilterMenu(fl.key, sel);',
+    '              return this.moveFilterHighlight(fl.key, (at + (e.key === "ArrowDown" ? 1 : n - 1)) % n);',
+    '            }',
+    '            if (!open) return;',
+    '            if (e.key === "Home" || e.key === "End") {',
+    '              e.preventDefault();',
+    '              return this.moveFilterHighlight(fl.key, e.key === "Home" ? 0 : n - 1);',
+    '            }',
+    '            if (e.key === "Enter" || e.key === " ") {',
+    '              e.preventDefault();',
+    '              return this.setFilter(fl.key, fl.options[at][0]);',
+    '            }',
+    '          },',
     '          caretStyle: "flex: none; display: block; transition: transform 150ms var(--easing-out); transform: rotate(" +',
     '            (open ? "180deg" : "0deg") + ");",',
     '          options: fl.options.map((o, i) => {',
@@ -3953,6 +4072,72 @@ const A26_10: Amendment = {
   count: 1
 };
 
+/** A26.11 — the markup for the three inside the "More filters" popover, Task F2. A26.10's shape
+ *  per instance, dropped into the design's own `<label>` without disturbing it: the caption
+ *  `<span>` is byte-unchanged and the `<select>` becomes the layer menu's trigger and its panel,
+ *  wrapped in the `position: relative` div the popover's own parent already uses so the panel can
+ *  anchor beneath the field.
+ *
+ *  The trigger carries `width: 100%`, which the popover's own "Done" button carries and is
+ *  therefore the design's own declaration. It is load-bearing rather than decorative: the
+ *  `<select>` was a flex item of the column `<label>` and stretched to the popover's width by
+ *  `align-items: stretch`, while a button inside the new wrapper is not a flex item and would
+ *  shrink-wrap — and A26.16's `min-width: 100%` resolves against that wrapper, so a trigger
+ *  narrower than its wrapper would leave the panel wider than the trigger, which is the opposite
+ *  of what John ruled.
+ *
+ *  `aria-label` is `mf.label`, the caption the popover already shows. A `<label>` does not name a
+ *  `<button>` — a button's accessible name is computed from its own contents before the host
+ *  language's label is consulted — so without it the trigger would be named by its current
+ *  option, exactly the problem A26.2 fixed for the unlabelled five. It is also what keeps
+ *  `screens.ts`'s `layerTrigger` (`button[aria-haspopup="listbox"]:not([aria-label])`) pointing
+ *  at the Market data card's two.
+ *
+ *  Clicking the caption still reaches the control, as it did with the `<select>`: a `<label>`'s
+ *  activation behaviour forwards to its first labelable descendant, and does nothing for a click
+ *  that lands on an interactive descendant — so an option row's own click is not forwarded. */
+const A26_11: Amendment = {
+  id: 'A26.11', ...A26,
+  find: [
+    '                  <sc-for list="{{ moreFilters }}" as="mf" hint-placeholder-count="3">',
+    '                    <label style="display: flex; flex-direction: column; gap: 5px;">',
+    '                      <span style="font-size: 12px; font-weight: 500; color: var(--vf-text);">{{ mf.label }}</span>',
+    '                      <select value="{{ mf.value }}" onChange="{{ mf.set }}" style="height: 38px; padding: 0 10px; font-size: 13px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">',
+    '                        <sc-for list="{{ mf.options }}" as="o" hint-placeholder-count="3">',
+    '                          <option value="{{ o.v }}">{{ o.label }}</option>',
+    '                        </sc-for>',
+    '                      </select>',
+    '                    </label>',
+    '                  </sc-for>',
+    ''
+  ].join('\n'),
+  replace: [
+    '                  <sc-for list="{{ moreFilters }}" as="mf" hint-placeholder-count="3">',
+    '                    <label style="display: flex; flex-direction: column; gap: 5px;">',
+    '                      <span style="font-size: 12px; font-weight: 500; color: var(--vf-text);">{{ mf.label }}</span>',
+    '                      <div ref="{{ mf.hostRef }}" style="position: relative;">',
+    '                        <button onClick="{{ mf.toggle }}" onKeyDown="{{ mf.keys }}" role="combobox" aria-label="{{ mf.label }}" aria-haspopup="listbox" aria-controls="{{ mf.listId }}" aria-expanded="{{ mf.open }}" aria-activedescendant="{{ mf.activeId }}" style="display: inline-flex; align-items: center; gap: 8px; width: 100%; height: 38px; padding: 0 10px; font-size: 13px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">',
+    '                          <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ mf.triggerLabel }}</span>',
+    '                          <img src="assets/icons/sub-chevron.svg" alt="" width="14" height="14" style="{{ mf.caretStyle }}">',
+    '                        </button>',
+    '                        <sc-if value="{{ mf.open }}" hint-placeholder-val="{{ false }}">',
+    '                          <div role="listbox" aria-label="{{ mf.label }}" id="{{ mf.listId }}" ref="{{ mf.panelRef }}" style="position: absolute; left: 0; top: 46px; z-index: 700; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;" class="rf-scroll">',
+    '                            <sc-for list="{{ mf.options }}" as="o" hint-placeholder-count="3">',
+    '                              <button onClick="{{ o.go }}" id="{{ o.optId }}" role="option" tabindex="-1" aria-selected="{{ o.selected }}" style="{{ o.rowStyle }}" style-hover="background: var(--vf-neutral);">',
+    '                                <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ o.label }}</span>',
+    '                                <img src="assets/icons/sub-check-filled.svg" alt="" width="11" height="11" style="{{ o.tickStyle }}">',
+    '                              </button>',
+    '                            </sc-for>',
+    '                          </div>',
+    '                        </sc-if>',
+    '                      </div>',
+    '                    </label>',
+    '                  </sc-for>',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
 /** A26.12–A26.14 — John's 2026-09-08 m7 ruling, RESTORED (controller ruling on the A26 plan's
  *  Q2, 2026-09-11). Its own three ids, on three lines A26.8 is already editing, so the widening
  *  can be lifted out without touching the rest of the family.
@@ -4014,6 +4199,48 @@ const A26_15: Amendment = {
   count: 1
 };
 
+/** A26.16 — the panel takes the width of the trigger that opened it (John, 2026-09-11, Task F1b).
+ *  Its OWN ruling and therefore its own id, and it edits BOTH panels in one entry (count: 2), so
+ *  Task F2's three are born with the width rather than acquiring it in a third pass.
+ *
+ *  Task F1's review measured the newly approved `browse-filter-menu` capture: the Practice type
+ *  trigger is 155 px and its panel 153 px, so the panel's right edge sat 2 px INSIDE the button
+ *  that opened it. It is structural rather than per-control — the row's chrome is 4 px narrower
+ *  than the trigger's and the widest row claws about 2 px back — so four of the five sat ~2 px
+ *  narrow and Property inverted, opening far wider than its 129 px collapsed trigger. The family
+ *  had no consistent panel-to-trigger relationship at all.
+ *
+ *  Why this needed a ruling rather than a default: A26.10's panel string is A13's metro panel
+ *  string with `width: 300px` DELETED and nothing else changed, so "the design is silent here"
+ *  was never the honest description — and the design is not silent. Six of six absolutely
+ *  positioned menu panels in the pristine bundle carry a width (account 208 px, the other header
+ *  menu 236 px, More filters 262 px, the layer menu 300 px, A13's listbox 300 px, A14's Give
+ *  panel `width: max-content; min-width: 130px`); the compare menu has none only because it is in
+ *  normal flow and fills its trigger by construction. A13 additionally pins its panel and its
+ *  field to the same 300 px deliberately, so their edges land together — the design's own stated
+ *  intent for this exact idiom.
+ *
+ *  The mechanism invents no number for any of the eight controls: each trigger already sits in a
+ *  `position: relative` wrapper with its panel absolutely positioned inside it, so `min-width:
+ *  100%` resolves against the wrapper — the trigger — and makes the panel at least as wide as it.
+ *  It is a NEW declaration, and this family's own gate otherwise requires every declaration to
+ *  appear in the pristine bundle; John's ruling makes it the SECOND named exception, after the
+ *  More-filters anchoring pair. `design-amendments.test.ts` retires the two
+ *  `not.toContain('min-width: 100%')` trip-wires Task F1 left for exactly this moment and asserts
+ *  instead that the declaration is on these two panels and nowhere else.
+ *
+ *  Rejected, and why: A14's `width: max-content; min-width: <px>` would mean inventing eight
+ *  numbers; one shared fixed width would mean choosing for the longest option across all eight
+ *  and leaving seven panels wider than they need to be. A13's metro panel keeps its own measured
+ *  300 px and is untouched here — its `find` carries `width: 300px` and this one does not. */
+const A26_16: Amendment = {
+  id: 'A26.16', date: '2026-09-11',
+  ruling: 'the panel takes the width of the trigger that opened it, so their edges line up',
+  find: 'top: 46px; z-index: 700; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;',
+  replace: 'top: 46px; z-index: 700; min-width: 100%; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;',
+  count: 2
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -4062,13 +4289,17 @@ export function amendments(): Amendment[] {
     // 2026-09-11), on A13's own idiom. Task F1 converts the five on the toolbar; A26.5-A26.7
     // read A13.8's and A19's output in the three shared dismissal closures, and A26.8c/A26.8d
     // read A14.2's, so the family is appended last as every family is. Definition order in
-    // this file matches this list (m8). A26.3 and A26.11 (the three inside the More filters
-    // popover) are Task F2; A20 stays reserved by the image-identifiability plan and A24 by
-    // the neighbourhood-shading spec.
-    A26_1, A26_2, A26_4, A26_5, A26_6, A26_7, A26_8a, A26_8b, A26_8c, A26_8d, A26_8e, A26_8f,
-    A26_9a, A26_9b, A26_9c, A26_10,
+    // this file matches this list (m8). A26.3 and A26.11 are Task F2 — the three inside the
+    // "More filters" popover, on the same idiom and the same state slot; A20 stays reserved by
+    // the image-identifiability plan and A24 by the neighbourhood-shading spec.
+    A26_1, A26_2, A26_3, A26_4, A26_5, A26_6, A26_7, A26_8a, A26_8b, A26_8c, A26_8d, A26_8e, A26_8f,
+    A26_9a, A26_9b, A26_9c, A26_10, A26_11,
     // A26.12-A26.14 — the Q2 widening (controller ruling, 2026-09-11): John's own m7
     // invariant, restored in the three directions that were never written. Each reads
     // A26.8a/A26.8b/A26.8e's output, so all three run after the family's own entries.
-    A26_12, A26_13, A26_14, A26_15];
+    A26_12, A26_13, A26_14, A26_15,
+    // A26.16 — the panel width (John, 2026-09-11, Task F1b): "the panel takes the width of the
+    // trigger that opened it, so their edges line up." Its `find` is A26.10's and A26.11's own
+    // output — the panel style string they share — so it is applied last, and once, for both.
+    A26_16];
 }

@@ -1957,12 +1957,78 @@ class Component extends DCLogic {
         { key: "est", label: "Year established", options: [["Any", "Any year"], ["pre1995", "Before 1995"], ["1995-2010", "1995 – 2010"], ["post2010", "After 2010"]] },
         { key: "ownership", label: "Ownership structure", options: [["Any", "Any structure"], ["Sole", "Sole proprietor"], ["Multi", "Partnership or multi-doctor"]] },
         { key: "sqft", label: "Facility size", options: [["Any", "Any size"], ["u3000", "Under 3,000 sq ft"], ["3000-5000", "3,000 – 5,000 sq ft"], ["o5000", "Over 5,000 sq ft"]] }
-      ].map((fl) => ({
-        label: fl.label,
-        value: s.f[fl.key] || "Any",
-        set: this.setF(fl.key),
-        options: fl.options.map((o) => ({ v: o[0], label: o[1] }))
-      })),
+      ].map((fl) => {
+        // Each additional filter is a dropdown list in this design's own style, not the
+        // operating system's popup: the SAME trigger + role="listbox" panel A26.2 gives the
+        // five on the toolbar, and the same state slot — the eight filter keys are disjoint,
+        // so `fMenu` still names exactly one dropdown across both loops.
+        //
+        // The comment sits INSIDE the map body, not between the array rows and `].map(`:
+        // `tests/seeds/test_hospitals_json.py`'s `_MORE_BLOCK` reads the three option arrays
+        // out of the design and requires `      ]` to follow the last row directly, and it
+        // fails loudly rather than silently testing nothing when it does not. A26.2 learned
+        // that on its sibling `_BAR_BLOCK`.
+        const cur = s.f[fl.key] || "Any";
+        const open = s.fMenu === fl.key;
+        // Math.max: a value `f` holds that this option list does not would give indexOf -1 and
+        // index the array out of bounds — the guard marketMenuKeys carries for a dropped metro.
+        const sel = Math.max(0, fl.options.findIndex((o) => o[0] === cur));
+        const at = open && s.fMenuAt >= 0 ? s.fMenuAt : sel;
+        return {
+          // The popover's own caption, unchanged — and it is the trigger's accessible name
+          // too: a <label> does not name a <button>, which takes its name from its own
+          // contents first, so the same string is spelled again rather than a new one invented.
+          label: fl.label,
+          open,
+          listId: "f-listbox-" + fl.key,
+          // On the TRIGGER, which is always rendered: a shut dropdown has no active descendant,
+          // and null is what both renderers omit the attribute for (a string would spell a dead
+          // id). Keyed on fl.key as well, so a sibling never claims another's highlight.
+          activeId: open ? "f-opt-" + fl.key + "-" + s.fMenuAt : null,
+          // What the closed <select> displayed. `cur` keeps the design's own `|| "Any"` guard:
+          // the state literal seeds the five TOOLBAR keys and none of these three.
+          triggerLabel: fl.options[sel][1],
+          toggle: () => (open ? this.setState({ fMenu: null, fMenuAt: -1 }) : this.openFilterMenu(fl.key, sel)),
+          hostRef: (el) => { const m = this._fMenuEls || (this._fMenuEls = {}); m[fl.key] = el || null; },
+          // The panel's own mount is when the option rows first exist, so it is where OPENING
+          // scrolls the highlighted row into view — the arrow keys cannot, having seeded the
+          // highlight while the panel was still unrendered (A13/A14 review round 1, C1).
+          panelRef: (el) => { if (el) this.scrollFilterOption(fl.key, this.state.fMenuAt); },
+          keys: (e) => {
+            const n = fl.options.length;
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              e.preventDefault();
+              if (!open) return this.openFilterMenu(fl.key, sel);
+              return this.moveFilterHighlight(fl.key, (at + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
+            }
+            if (!open) return;
+            if (e.key === "Home" || e.key === "End") {
+              e.preventDefault();
+              return this.moveFilterHighlight(fl.key, e.key === "Home" ? 0 : n - 1);
+            }
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              return this.setFilter(fl.key, fl.options[at][0]);
+            }
+          },
+          caretStyle: "flex: none; display: block; transition: transform 150ms var(--easing-out); transform: rotate(" +
+            (open ? "180deg" : "0deg") + ");",
+          options: fl.options.map((o, i) => {
+            const on = o[0] === cur;
+            const hi = open && s.fMenuAt === i;
+            return {
+              label: o[1], selected: on,
+              go: () => this.setFilter(fl.key, o[0]),
+              optId: "f-opt-" + fl.key + "-" + i,
+              rowStyle: "display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 8px; font-family: var(--rf-display); font-size: 13px; font-weight: " +
+                (on ? "800" : "500") + "; color: var(--vf-navy); background: " +
+                (on ? "var(--vf-accent-bg)" : hi ? "var(--vf-neutral)" : "none") + "; border: 0; border-radius: 6px; cursor: pointer;",
+              tickStyle: "flex: none; display: block; filter: brightness(0) saturate(100%) invert(23%) sepia(89%) saturate(1352%) hue-rotate(184deg) brightness(94%) contrast(101%); opacity: " +
+                (on ? "1" : "0") + ";"
+            };
+          })
+        };
+      }),
       filters: [
         { key: "type", options: [["Any", "Practice type: Any"], ["Small animal", "Small animal"], ["Mixed", "Mixed"], ["Large animal", "Large animal"], ["Emergency", "Emergency"], ["Specialty", "Specialty"]] },
         { key: "price", options: [["Any", "Asking price: Any"], ["u500", "Under $500K"], ["500-1000", "$500K – $1M"], ["1000-2000", "$1M – $2M"], ["o2000", "$2M and up"]] },

@@ -332,7 +332,7 @@
                 <img src="/assets/icons/sub-chevron.svg" alt width="14" height="14" :style="fl?.caretStyle">
               </button>
               <template v-if="fl?.open">
-                <div class="rf-scroll" role="listbox" :aria-label="fl?.aria" :id="fl?.listId" :ref="fl?.panelRef" style="position: absolute; left: 0; top: 46px; z-index: 700; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;">
+                <div class="rf-scroll" role="listbox" :aria-label="fl?.aria" :id="fl?.listId" :ref="fl?.panelRef" style="position: absolute; left: 0; top: 46px; z-index: 700; min-width: 100%; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;">
                   <template v-for="(o, $index) in __arr(fl?.options)" :key="$index">
                     <button class="sch7" @click="o?.go" :id="o?.optId" role="option" tabindex="-1" :aria-selected="o?.selected" :style="o?.rowStyle">
                       <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><span v-if="__s(o?.label) !== null" class="sc-interp">{{ __s(o?.label) }}</span></span>
@@ -357,11 +357,22 @@
                   <template v-for="(mf, $index) in __arr(v.moreFilters)" :key="$index">
                     <label style="display: flex; flex-direction: column; gap: 5px;">
                       <span style="font-size: 12px; font-weight: 500; color: var(--vf-text);"><span v-if="__s(mf?.label) !== null" class="sc-interp">{{ __s(mf?.label) }}</span></span>
-                      <select :value="(mf?.value) ?? ''" @change="mf?.set" style="height: 38px; padding: 0 10px; font-size: 13px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">
-                        <template v-for="(o, $index) in __arr(mf?.options)" :key="$index">
-                          <option :value="(o?.v) ?? ''"><span v-if="__s(o?.label) !== null" class="sc-interp">{{ __s(o?.label) }}</span></option>
+                      <div :ref="mf?.hostRef" style="position: relative;">
+                        <button @click="mf?.toggle" @keydown="mf?.keys" role="combobox" :aria-label="mf?.label" aria-haspopup="listbox" :aria-controls="mf?.listId" :aria-expanded="mf?.open" :aria-activedescendant="mf?.activeId" style="display: inline-flex; align-items: center; gap: 8px; width: 100%; height: 38px; padding: 0 10px; font-size: 13px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">
+                          <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><span v-if="__s(mf?.triggerLabel) !== null" class="sc-interp">{{ __s(mf?.triggerLabel) }}</span></span>
+                          <img src="/assets/icons/sub-chevron.svg" alt width="14" height="14" :style="mf?.caretStyle">
+                        </button>
+                        <template v-if="mf?.open">
+                          <div class="rf-scroll" role="listbox" :aria-label="mf?.label" :id="mf?.listId" :ref="mf?.panelRef" style="position: absolute; left: 0; top: 46px; z-index: 700; min-width: 100%; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;">
+                            <template v-for="(o, $index) in __arr(mf?.options)" :key="$index">
+                              <button class="sch7" @click="o?.go" :id="o?.optId" role="option" tabindex="-1" :aria-selected="o?.selected" :style="o?.rowStyle">
+                                <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><span v-if="__s(o?.label) !== null" class="sc-interp">{{ __s(o?.label) }}</span></span>
+                                <img src="/assets/icons/sub-check-filled.svg" alt width="11" height="11" :style="o?.tickStyle">
+                              </button>
+                            </template>
+                          </div>
                         </template>
-                      </select>
+                      </div>
                     </label>
                   </template>
                 </div>
