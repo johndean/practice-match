@@ -3462,6 +3462,27 @@ const A25_5: Amendment = {
   count: 1
 };
 
+/** A25.6 — fix round 1, Important-1 (controller ruling, 2026-09-10: "no point, no ring"). The
+ *  FOURTH leg into the same trap, and the only one that asserts something false rather than
+ *  omitting something true.
+ *
+ *  `showDrive` is `!!sel` with no coordinate term, and `MarketMapView.vue:91` draws the C7
+ *  drive-time ring on `showDrive && driveCenter`. Before A25.2, selecting an unlocated listing
+ *  reached `engine.ring([null, null], 16000, …)` — `L.circle`, the same `toLatLng` — and threw,
+ *  so no ring was ever painted. A25.2 gave the expression its own else-branch back, which made
+ *  that branch PAINTABLE for the first time: a 16 km dashed "roughly ten minutes' drive" circle
+ *  centred on the middle of Austin, around a place the practice is not.
+ *
+ *  A missing pin omits; this fabricates. `showDrive` takes the same finite-coordinate test the
+ *  pin list uses, and nothing else changes — no substitute copy, no note, no empty state, and a
+ *  located listing's ring is untouched (a characterisation case pins both directions). */
+const A25_6: Amendment = {
+  id: 'A25.6', date: '2026-09-10', ruling: 'no point, no ring — the drive-time ring is not painted around the metro for a listing whose location is withheld (Task MP1, fix round 1)',
+  find: '      showDrive: !!sel,',
+  replace: '      showDrive: !!(sel && Number.isFinite(sel.lat) && Number.isFinite(sel.lng)),',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -3505,5 +3526,5 @@ export function amendments(): Amendment[] {
     // A25.5 reads A21.4a's output, so the family is last. Definition order in this file matches
     // this list (m8). A20 is reserved by the image-identifiability plan and A24 by the
     // neighbourhood-shading spec, both in flight; A25 is the next free id in the ledger.
-    A25_1, A25_2, A25_3, A25_4, A25_5];
+    A25_1, A25_2, A25_3, A25_4, A25_5, A25_6];
 }

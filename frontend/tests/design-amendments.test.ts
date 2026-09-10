@@ -237,12 +237,14 @@ describe('local design amendments (spec D15)', () => {
     // last-resort community object standing in zeros for absent figures; A25.5 gives the panel
     // the `p8` term A21.4a dropped, so it and the detail agree. A20 is reserved by the
     // image-identifiability plan and A24 by the neighbourhood-shading spec, both in flight.
-    'A25.1', 'A25.2', 'A25.3', 'A25.4', 'A25.5',
+    // A25.6 — fix round 1, Important-1: `showDrive` had no coordinate term, so A25.2's restored
+    // else-branch painted the drive-time ring around the metro centre for an unlocated listing.
+    'A25.1', 'A25.2', 'A25.3', 'A25.4', 'A25.5', 'A25.6',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(181);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(182);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

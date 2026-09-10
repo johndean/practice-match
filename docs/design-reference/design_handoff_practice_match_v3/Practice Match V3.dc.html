@@ -2416,7 +2416,7 @@ class Component extends DCLogic {
         return !!valueLayer && !s.mdInsightOff && s.mdLegendOff !== true && !s.mdCompareOpen && mapW >= 810;
       })(),
       dismissInsight: () => this.setState({ mdInsightOff: true }),
-      showDrive: !!sel,
+      showDrive: !!(sel && Number.isFinite(sel.lat) && Number.isFinite(sel.lng)),
       recenterKey: s.mdRecenter || 0,
       resetView: () => this.setState({ mdSel: null, mdRecenter: (s.mdRecenter || 0) + 1 }),
       selectArea: (name) => this.setState({ mdArea: name }),

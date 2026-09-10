@@ -3780,8 +3780,40 @@ describe('A25 — a listing with no coordinates keeps its place and gets no pin 
     const before = c.marketVals(c.filtered());
     at([p], null, null, () => {
       const md = c.marketVals(c.filtered());
+      // The premise, asserted rather than assumed (fix round 1, Minor-3): the MAP's list really
+      // did lose the unlocated community. Without this the case only discriminates because
+      // dropping one of nine values happens to move a median.
+      expect(md.communities.length, 'the map list did not shrink, so this control proves nothing')
+        .toBeLessThan(c.communities().length);
       expect(md.stripCards.map((s: any) => s.value)).toEqual(before.stripCards.map((s: any) => s.value));
     });
+  });
+
+  // Fix round 1, Important-1 (controller ruling, 2026-09-10: "no point, no ring"). `showDrive` is
+  // `!!sel` with no coordinate term, and `MarketMapView.vue:91` draws the C7 drive-time ring on
+  // `showDrive && driveCenter`. Before A25.2 that path threw inside `L.circle([null, null])` and
+  // no ring ever appeared; after it the else-branch became PAINTABLE, so selecting an unlocated
+  // listing drew a 16 km dashed "roughly ten minutes' drive" circle around the middle of Austin.
+  // That is worse than the missing pin it replaced: a missing pin omits, a ring centred on a
+  // place the practice is not ASSERTS something false. A25.6 gives `showDrive` the same
+  // finite-coordinate test the pin list uses.
+  it('A25.6 — no point, no ring: showDrive is false when the selection has no point', () => {
+    const p = austin()[0];
+    at([p], null, null, () => {
+      c.setState({ mdSel: p.id });
+      const md = c.marketVals(c.filtered());
+      expect(md.showDrive, 'a 16 km drive-time ring was painted around the metro centre').toBe(false);
+      // …and A25.2's fallback is still what it was: the ring is off, not aimed somewhere else.
+      expect(md.driveCenter).toEqual(MARKETS[AUSTIN].center);
+    });
+  });
+
+  it('A25.6 — …and a selection that HAS a point still gets its ring, on its own point', () => {
+    const p = austin()[0];
+    c.setState({ mdSel: p.id });
+    const md = c.marketVals(c.filtered());
+    expect(md.showDrive).toBe(true);
+    expect(md.driveCenter).toEqual([p.lat, p.lng]);
   });
 
   // ---- the two panel defects closed in the same task ---------------------------------------
