@@ -1128,3 +1128,14 @@ def test_a_composite_still_takes_a_position_past_the_designs_six_slots(tmp_path:
                            for n in range(1, 8)}})
     assert len([e for e in index["cur"] if e["file"] is not None]) == 7
     assert [e["slot"] for e in index["cur"]] == [*PP.DEFAULT_SLOTS, None]
+
+
+def test_a_description_entry_that_says_nothing_at_all_is_refused(tmp_path: Path) -> None:
+    """Neither a description nor a refusal is not a third state — it is a typo that would reach
+    the inventory as a `null` caption, in a slot whose filename fallback has just been
+    overridden out. Named with its slug and its file, where the operator can act on it."""
+    path = tmp_path / "descriptions.json"
+    path.write_text(json.dumps({"demo": {"x.png": {"flags": ["composite"]}}}), encoding="utf-8")
+    with pytest.raises(PP.SeedDataError) as exc:
+        PP.load_descriptions(path)
+    assert "demo" in str(exc.value) and "x.png" in str(exc.value)

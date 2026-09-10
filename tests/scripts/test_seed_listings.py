@@ -154,12 +154,16 @@ def test_photos_come_from_the_committed_inventory(scratch_dsn: str) -> None:
                 None if e["file"] is None else f"{slug}/{e['file']}" for e in index[slug]
             ], slug
             assert len(photos) >= 6, slug   # the design's six photo slots (A-L9), and then some
-    # …and A-L11 really did keep everything: 195 photographs, not one empty slot among them.
+    # …and A-L11 really did keep everything: every photograph, not one empty slot among
+    # them. 313 since Task SD1 (195 for John's eighteen, and 118 of the 119 in his eleven
+    # Dallas folders — one refused for a third-party business name, recorded in
+    # seeds/hospitals/photos/descriptions.json). The inventory's own total is the left-hand
+    # side, so what this asserts is that the DATABASE holds exactly what the tree does.
     with psycopg2.connect(scratch_dsn) as conn, conn.cursor() as cur:
         cur.execute("SELECT count(*) FROM listing, jsonb_array_elements(photos) e WHERE e = 'null'")
         assert int(cur.fetchone()[0]) == 0, "A-L11 drops no photograph and leaves no slot empty"
         cur.execute("SELECT sum(jsonb_array_length(photos)) FROM listing")
-        assert int(cur.fetchone()[0]) == 195
+        assert int(cur.fetchone()[0]) == sum(len(e) for e in index.values()) == 313
 
 
 def test_photo_captions_are_written_in_step_with_the_photographs(scratch_dsn: str) -> None:

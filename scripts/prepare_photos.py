@@ -199,7 +199,7 @@ def load_descriptions(path: Path) -> dict[str, dict[str, dict[str, Any]]]:
         return {}
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-        return {
+        loaded = {
             str(slug): {
                 str(name): {
                     "description": None if entry.get("description") is None else str(entry["description"]),
@@ -213,6 +213,15 @@ def load_descriptions(path: Path) -> dict[str, dict[str, dict[str, Any]]]:
         }
     except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
         raise SeedDataError(f"{path}: {type(exc).__name__}") from None
+    # An entry that neither describes the photograph nor refuses it says nothing at all, and
+    # would reach the inventory as a `null` caption where the design expects the filename
+    # fallback it has just been overridden out of. Refused here, where the operator can see
+    # which file it is, rather than as a null three files downstream.
+    for slug, photographs in loaded.items():
+        for name, entry in photographs.items():
+            if entry["description"] is None and entry["refused"] is None:
+                raise SeedDataError(f"{slug}: {name} has neither a description nor a refusal")
+    return loaded
 
 
 def validate_curation(curation: dict[str, dict[str, str | None]], types: dict[str, str]) -> None:
@@ -433,9 +442,13 @@ def described_over(described: dict[str, dict[str, Any]], src: Path) -> dict[str,
 
     `flags` is ABSENT rather than empty when nothing was raised: the 195 entries already
     committed for those eighteen must not move, and `entry.get("flags", [])` reads the same
-    either way."""
+    either way.
+
+    A REFUSED entry never reaches this: `prepare` drops those source files before the slots are
+    chosen, and `load_descriptions` has already refused an entry that is neither described nor
+    refused — so `entry["description"]` here is always a real description."""
     entry = described.get(src.name)
-    if entry is None or entry["description"] is None:
+    if entry is None:
         return {}
     over: dict[str, Any] = {"caption": entry["description"]}
     if entry["flags"]:
