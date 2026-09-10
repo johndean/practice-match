@@ -3080,6 +3080,27 @@ const A22: Amendment = {
   count: 1
 };
 
+/** A23 (John, 2026-09-10 — Task MD1: "the collapse widget top left expand/collapse is disconnected to the drop down"):
+ *  collapsing the Market data card leaves its LAYER dropdown floating over the map with no card above it.
+ *  Exactly one of the card's two menus escapes the collapse, and it is the one John reported: the layer
+ *  menu's panel (`frontend/src/App.vue:475-476`) is `position: absolute; left: 16px; top: 118px;
+ *  z-index: 620` and sits OUTSIDE both of the card's `v-if="v.md?.legendOpen"` templates (`:382-410` and
+ *  `:413-472`, the card div closing at `:411`), so nothing unmounts it. The comparison listbox never
+ *  floated: its panel (`:434-435`) is nested inside the second `legendOpen` template in normal flow
+ *  (`margin-top: 6px`) and has always unmounted with the card. `toggleLegend` clears `mdCompareMenu` all
+ *  the same, for a weaker and different reason — a menu left open in state reappears already-open when
+ *  the card is expanded again, which is its own surprise — not because it escapes the card's region.
+ *  The clear is UNCONDITIONAL: the one `setState` runs on expand exactly as on collapse, so neither menu
+ *  can come back open in either direction (the four-quadrant characterisation in `logic.test.ts` pins
+ *  both). The fix mirrors the design's own idiom where `insightOpen` gates the "What this means" panel on
+ *  `s.mdLegendOff !== true`, which is why that panel behaves correctly. */
+const A23: Amendment = {
+  id: 'A23', date: '2026-09-10', ruling: 'collapsing or expanding the Market data card closes both its menus (Task MD1)',
+  find: 'toggleLegend: () => this.setState({ mdLegendOff: s.mdLegendOff !== true }),',
+  replace: 'toggleLegend: () => this.setState({ mdLegendOff: s.mdLegendOff !== true, mdLayerMenu: false, mdCompareMenu: false }),',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -3108,5 +3129,7 @@ export function amendments(): Amendment[] {
     // the figure is payroll); A21.3a–d take the year from the data instead of hard-coding 2015.
     A21_1, A21_1b, A21_3a, A21_3b, A21_3c, A21_3d,
     // A22 — the ownership vocabulary widens to the seeds' own wording (2026-09-10, Task SL10).
-    A22];
+    A22,
+    // A23 — collapsing the Market data card closes both its menus (2026-09-10, Task MD1).
+    A23];
 }
