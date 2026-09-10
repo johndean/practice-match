@@ -5,7 +5,7 @@ describe('logic.js characterisation — Task B10: undefined metrics', () => {
   it('marketPanel with all undefined metrics does not throw, render undefined/NaN, or show competition/score', () => {
     const component = new Component();
     component.props = { auth: null };
-    component.state = { mdTab: 'insights' };
+    component.state = Object.assign({}, component.state, { mdTab: 'insights', mdPhoto: 0 });
 
     const emptyComm = {
       pop: undefined,
@@ -46,13 +46,13 @@ describe('logic.js characterisation — Task B10: undefined metrics', () => {
   it('marketPanel with full figures renders all competition and score fields', () => {
     const component = new Component();
     component.props = { auth: null };
-    component.state = { mdTab: 'insights' };
+    component.state = Object.assign({}, component.state, { mdTab: 'insights', mdPhoto: 0 });
 
     const fullComm = {
-      pop: '100000',
-      growth: '+2.0% since 2020',
-      income: '75000',
-      hh: '50000',
+      pop: 100000,
+      growth: 2.0,
+      income: 75000,
+      hh: 50000,
       vets: 25,
       econ_k: 500,
     };
@@ -69,7 +69,7 @@ describe('logic.js characterisation — Task B10: undefined metrics', () => {
     expect(panel.compLevel).toBeDefined();
     expect(panel.compLevel).not.toContain('undefined');
     expect(panel.score).toBeDefined();
-    expect(typeof panel.score).toBe('number');
+    expect(typeof panel.score).toBe('string');
     expect(panel.scoreLabel).toBeDefined();
     expect(panel.scoreLabel).not.toBe('undefined');
   });

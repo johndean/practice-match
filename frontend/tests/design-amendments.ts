@@ -3120,6 +3120,39 @@ const A21_2e: Amendment = {
   count: 1
 };
 
+/** A21.2i–A21.2l (Task B10, D-C31): the last four readers of a figure that may be absent. The
+ *  guards at the derivation are not enough — every place the value is CONSUMED has to say
+ *  nothing rather than say "undefined". Hand-editing logic.js for these was tried and reverted:
+ *  the design carries them, so the reference and the app stay identical (A-C29's lesson). */
+const A21_2i: Amendment = {
+  id: 'A21.2i', date: '2026-09-10', ruling: 'an absent pet-household estimate renders nothing, not "undefined" (Task B10, D-C31)',
+  find: '{ v: this.fmtMetric("households", c.pets), k: "Est. Pet Households", sub: "derived estimate" }',
+  replace: '{ v: (c.pets !== undefined) ? this.fmtMetric("households", c.pets) : undefined, k: "Est. Pet Households", sub: "derived estimate" }',
+  count: 1
+};
+
+const A21_2j: Amendment = {
+  id: 'A21.2j', date: '2026-09-10', ruling: 'no competition figure, no verdict — never "undefined Competition" (Task B10, D-C31)',
+  find: 'compLevel: compLevel + " Competition",',
+  replace: 'compLevel: (compLevel !== undefined) ? compLevel + " Competition" : undefined,',
+  count: 1
+};
+
+const A21_2k: Amendment = {
+  id: 'A21.2k', date: '2026-09-10', ruling: 'no score, no number in the ring (Task B10, D-C31)',
+  find: 'score: String(score),',
+  replace: 'score: (score !== undefined) ? String(score) : undefined,',
+  count: 1
+};
+
+const A21_2l: Amendment = {
+  id: 'A21.2l', date: '2026-09-10', ruling: 'no score, no ring — a conic gradient of undefined is a broken circle (Task B10, D-C31)',
+  find: 'scoreRing: "width: 46px; height: 46px; border-radius: 999px; display: grid; place-items: center; background: conic-gradient(#4c9a6a " +\n        score + "%, #e6ecf1 0); font-family: var(--rf-display);",',
+  replace: 'scoreRing: (score === undefined) ? undefined : "width: 46px; height: 46px; border-radius: 999px; display: grid; place-items: center; background: conic-gradient(#4c9a6a " +\n        score + "%, #e6ecf1 0); font-family: var(--rf-display);",',
+  count: 1
+};
+
+
 /** A22 (John, 2026-09-10 — Task SL10: "Preserve existing seed wording/detail"): the wizard's
  *  ownership select widens from four options (the design's four) to ten, adding the seeds' own six
  *  phrasings alongside the design's four. The API's `OWNERSHIPS` tuple and the design's option
@@ -3136,17 +3169,17 @@ const A21_2f: Amendment = {
 /** A21.2g (Task B10, D-C31): score and scoreLabel are omitted when inputs are missing.
  *  A composite of unknowns is not a low score; it is not a score. */
 const A21_2g: Amendment = {
-  id: 'A21.2g', date: '2026-09-10', ruling: 'score and scoreLabel omitted when inputs missing (Task B10, D-C31)',
-  find: '      const score = Math.max(0, Math.min(100, Math.round(\n        40 * Math.min(c.income / 140000, 1) + 35 * Math.min(c.growth / 40, 1) + 25 * Math.max(0, 1 - per10k / 3)\n      )));\n      const tone = (v) => (v ? "var(--vf-navy)" : "#8d99a6");',
-  replace: '      const score = (per10k !== undefined && c.income !== undefined && c.growth !== undefined) ? Math.max(0, Math.min(100, Math.round(\n        40 * Math.min(c.income / 140000, 1) + 35 * Math.min(c.growth / 40, 1) + 25 * Math.max(0, 1 - per10k / 3)\n      ))) : undefined;\n      const tone = (v) => (v ? "var(--vf-navy)" : "#8d99a6");',
+  id: 'A21.2g', date: '2026-09-10', ruling: 'a composite of unknowns is not a low score; it is not a score (Task B10, D-C31)',
+  find: 'const score = Math.max(0, Math.min(100, Math.round(\n      40 * Math.min(c.income / 140000, 1) + 35 * Math.min(c.growth / 40, 1) + 25 * Math.max(0, 1 - per10k / 3)\n    )));',
+  replace: 'const score = (c.income === undefined || c.growth === undefined || per10k === undefined) ? undefined : Math.max(0, Math.min(100, Math.round(\n      40 * Math.min(c.income / 140000, 1) + 35 * Math.min(c.growth / 40, 1) + 25 * Math.max(0, 1 - per10k / 3)\n    )));',
   count: 1
 };
 
 /** A21.2h (Task B10, D-C31): scoreLabel renders only when score is defined. */
 const A21_2h: Amendment = {
-  id: 'A21.2h', date: '2026-09-10', ruling: 'scoreLabel rendered only when score defined (Task B10, D-C31)',
-  find: '      scoreLabel: score < 30 ? "Low" : score < 60 ? "Fair" : "Strong",',
-  replace: '      scoreLabel: (score !== undefined) ? (score < 30 ? "Low" : score < 60 ? "Fair" : "Strong") : undefined,',
+  id: 'A21.2h', date: '2026-09-10', ruling: 'no score, no label — the ring says nothing rather than "Challenging" (Task B10, D-C31)',
+  find: 'scoreLabel: score >= 75 ? "Attractive" : score >= 55 ? "Balanced" : "Challenging",',
+  replace: 'scoreLabel: score === undefined ? undefined : score >= 75 ? "Attractive" : score >= 55 ? "Balanced" : "Challenging",',
   count: 1
 };
 
@@ -3185,7 +3218,7 @@ export function amendments(): Amendment[] {
     // A21 — market-data layers do not render absence as zero (A-C28); A21.2/A21.2b reverted (A-C29,
     // the figure is payroll); A21.3a–d take the year from the data instead of hard-coding 2015.
     // A21.2b-e handle the panel rendering when figures are undefined (Task B10, D-C31).
-    A21_1, A21_1b, A21_2b, A21_2c, A21_2d, A21_2e, A21_2f, A21_2g, A21_2h, A21_3a, A21_3b, A21_3c, A21_3d,
+    A21_1, A21_1b, A21_2b, A21_2c, A21_2d, A21_2e, A21_2f, A21_2g, A21_2h, A21_3a, A21_3b, A21_3c, A21_3d, A21_2i, A21_2j, A21_2k, A21_2l,
     // A22 — the ownership vocabulary widens to the seeds' own wording (2026-09-10, Task SL10).
     A22];
 }

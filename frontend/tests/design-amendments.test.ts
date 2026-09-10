@@ -209,10 +209,11 @@ describe('local design amendments (spec D15)', () => {
     // in marketVals when the raw value is null/undefined so they never reach the renderer. A21.2b-e
     // fix the docked panel's derivative values when figures are missing. A21.2f-h complete the fix
     // at the READERS: compPer10k guards .toFixed(), score/scoreLabel omit when inputs missing.
+    // A21.2i-l complete the fix at RENDERING: c.pets, compLevel, score, scoreRing omit undefined.
     // A21.3a/b/c/d remove hardcoded years from four places (VALUE_LAYERS label, LAYER_META
     // sub-line, Data Layers card row, and the detail Growth row), making the vintage-dependent
     // display match the data.
-    'A21.1', 'A21.1b', 'A21.2b', 'A21.2c', 'A21.2d', 'A21.2e', 'A21.2f', 'A21.2g', 'A21.2h', 'A21.3a', 'A21.3b', 'A21.3c', 'A21.3d',
+    'A21.1', 'A21.1b', 'A21.2b', 'A21.2c', 'A21.2d', 'A21.2e', 'A21.2f', 'A21.2g', 'A21.2h', 'A21.3a', 'A21.3b', 'A21.3c', 'A21.3d', 'A21.2i', 'A21.2j', 'A21.2k', 'A21.2l',
     // A22 — the ownership vocabulary widens to the seeds' own wording (John, 2026-09-10, Task SL10:
     // "Preserve existing seed wording/detail"). One literal edit: the wizard step 1 ownership
     // select's ten options, combining the design's four with the seeds' own six phrasings.
@@ -221,7 +222,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(151);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(162);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

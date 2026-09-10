@@ -2694,7 +2694,7 @@ class Component extends DCLogic {
     const incomeIdx = c.income ? Math.round(((c.income - incomeNat) / incomeNat) * 100) : undefined;
     const compLevel = (per10k !== undefined && per10k < 1.4) ? "Low" : (per10k !== undefined && per10k < 2.2) ? "Moderate" : (per10k !== undefined) ? "High" : undefined;
     const compFill = (per10k !== undefined && per10k < 1.4) ? 1 : (per10k !== undefined && per10k < 2.2) ? 2 : (per10k !== undefined) ? 3 : 0;
-    const score = Math.max(0, Math.min(100, Math.round(
+    const score = (c.income === undefined || c.growth === undefined || per10k === undefined) ? undefined : Math.max(0, Math.min(100, Math.round(
       40 * Math.min(c.income / 140000, 1) + 35 * Math.min(c.growth / 40, 1) + 25 * Math.max(0, 1 - per10k / 3)
     )));
     const tone = (v) => (v ? "var(--vf-navy)" : "#8d99a6");
@@ -2750,11 +2750,11 @@ class Component extends DCLogic {
         { v: (c.pop !== undefined) ? this.fmtMetric("households", c.pop) : undefined, k: "Population", sub: (c.growth !== undefined && c.growth > 0 ? "+" : "") + (c.growth !== undefined ? c.growth.toFixed(1) : "") + "% (5 yrs)" },
         { v: (c.hh !== undefined) ? this.fmtMetric("households", c.hh) : undefined, k: "Households", sub: "ACS 5-year" },
         { v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined && incomeIdx > 0 ? "+" : "") + (incomeIdx !== undefined ? incomeIdx : "") + "% vs US" },
-        { v: this.fmtMetric("households", c.pets), k: "Est. Pet Households", sub: "derived estimate" }
+        { v: (c.pets !== undefined) ? this.fmtMetric("households", c.pets) : undefined, k: "Est. Pet Households", sub: "derived estimate" }
       ],
       compEstab: (c.vets !== undefined) ? String(c.vets) : undefined,
-      compPer10k: per10k.toFixed(1),
-      compLevel: compLevel + " Competition",
+      compPer10k: (per10k !== undefined) ? per10k.toFixed(1) : undefined,
+      compLevel: (compLevel !== undefined) ? compLevel + " Competition" : undefined,
       compBars: [1, 2, 3].map((i) => ({
         style: "flex: 1; height: 8px; border-radius: 2px; background: " + (i <= compFill ? "#4c9a6a" : "#dbe4ea") + ";"
       })),
@@ -2768,9 +2768,9 @@ class Component extends DCLogic {
         iconStyle: "font-family: var(--rf-display); font-size: 15px; font-weight: 800; color: " + tone(t.on) + ";",
         labelStyle: "font-family: var(--rf-display); font-size: 13px; font-weight: 500; color: " + tone(t.on) + "; margin-top: 4px;"
       })),
-      score: String(score),
-      scoreLabel: score >= 75 ? "Attractive" : score >= 55 ? "Balanced" : "Challenging",
-      scoreRing: "width: 46px; height: 46px; border-radius: 999px; display: grid; place-items: center; background: conic-gradient(#4c9a6a " +
+      score: (score !== undefined) ? String(score) : undefined,
+      scoreLabel: score === undefined ? undefined : score >= 75 ? "Attractive" : score >= 55 ? "Balanced" : "Challenging",
+      scoreRing: (score === undefined) ? undefined : "width: 46px; height: 46px; border-radius: 999px; display: grid; place-items: center; background: conic-gradient(#4c9a6a " +
         score + "%, #e6ecf1 0); font-family: var(--rf-display);",
       openListing: () => this.setState({ screen: "detail", detailId: sel.id })
     };
