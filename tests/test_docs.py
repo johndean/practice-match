@@ -1947,6 +1947,50 @@ def test_the_seed_plan_records_a_l10_and_deploy_md_names_the_curation_file():
 # --- A-L11: every uploaded photograph renders, with its own description -----------------------
 
 
+def test_deploy_mds_pipeline_output_figures_are_the_ones_the_tree_holds():
+    """NEW-5. The runbook quotes `prepare_photos.py`'s own summary line — "N files, M empty
+    slots, K beyond the design's six slots" — with the three numbers of the day beside it. All
+    three were hand-maintained and two of them had already moved once. Derived from the
+    committed inventory here, so the runbook cannot quote a run nobody could reproduce."""
+    inventory = json.loads(
+        (ROOT / "seeds" / "hospitals" / "photos" / "index.json").read_text())["hospitals"]
+    files = sum(1 for entries in inventory.values() for e in entries if e["file"] is not None)
+    empty = sum(1 for entries in inventory.values() for e in entries if e["file"] is None)
+    beyond = sum(1 for entries in inventory.values() for e in entries if e["slot"] is None)
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    section = deploy.split("## Seeding the demo hospitals (QA)", 1)[1].split("\n## ", 1)[0]
+    assert f"({files}, {empty} and {beyond} today)" in section, (
+        f"the runbook's pipeline figures are not ({files}, {empty} and {beyond}) — "
+        "re-read them off scripts/prepare_photos.py's summary line"
+    )
+
+
+def test_the_flag_to_detector_mapping_in_deploy_md_is_the_one_the_tests_pin():
+    """NEW-6. The §5.3 mapping now exists twice — as a table in DEPLOY.md and as a dict in
+    `tests/seeds/test_photo_inventory.py` — agreeing today, in different words, with nothing
+    tying them. That is the class of defect I3 fixed for the seeding examples one section up,
+    so it gets the same treatment: the KEYS are pinned to each other, both ways.
+
+    Only the keys. The right-hand column is prose for a human and a spec reference for a
+    machine, and forcing them to the same string would make the table worse to read for no gain
+    — but a flag added to one and not the other is exactly the drift that matters, because the
+    dict is what the pipeline will be held to."""
+    import re
+
+    from tests.seeds.test_photo_inventory import (
+        FLAG_TO_EXPECTED_DETECTOR_OUTCOME,
+    )
+
+    deploy = (ROOT / "DEPLOY.md").read_text()
+    section = deploy.split("| seed flag | expected detector outcome |", 1)[1].split("\n\n", 1)[0]
+    documented = set(re.findall(r"^\| `(\w+)` \|", section, re.MULTILINE))
+    assert documented == set(FLAG_TO_EXPECTED_DETECTOR_OUTCOME), sorted(
+        documented ^ set(FLAG_TO_EXPECTED_DETECTOR_OUTCOME)
+    )
+    # …and the table is not empty because the split found nothing.
+    assert len(documented) == 7, sorted(documented)
+
+
 def test_the_two_seeding_example_outputs_in_deploy_md_agree_with_each_other():
     """Fix round 1, I3. The runbook shows two example runs one line apart — a first import and a
     re-run — and the second still said "updated 18" when the first said "inserted 29". A count
@@ -2011,11 +2055,12 @@ def test_the_seed_plan_records_a_l11_and_deploy_md_says_every_image_renders():
     # empty because the folder's remaining images are all contact sheets, and the claim this
     # pins is about images John supplied, not positions the API serves.
     committed = sum(1 for entries in inventory.values() for e in entries if e["file"] is not None)
-    # Read from the committed inventory rather than pinned as a literal (Task SD1 moved it from
-    # 195 to 312 by adding John's eleven Dallas folders, and it will move again the next time he
-    # supplies a folder). The CLAIM is what is pinned — "every image John supplies is rendered,
-    # and here is how many that is" — and a runbook whose number has drifted from the tree is
-    # exactly the kind of stale figure this suite exists to catch.
+    # Read from the committed inventory rather than pinned as a literal — Task SD1 moved it by
+    # adding John's eleven Dallas folders, and it will move again the next time he supplies one,
+    # so this comment deliberately names NO number (NEW-5: it said "195 to 312" when the tree
+    # held 313, which is the very drift the derivation exists to prevent, reappearing in the
+    # comment that explains the derivation). The CLAIM is what is pinned — "every image John
+    # supplies is rendered, and here is how many that is".
     assert "is rendered" in section and f"{committed} of them today" in section, (
         "the runbook does not say that every image John supplies is rendered, and how many that is"
     )

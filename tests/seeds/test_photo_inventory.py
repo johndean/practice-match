@@ -157,21 +157,33 @@ PHOTOGRAPHS_PER_DALLAS_HOSPITAL = {
 
 
 def test_the_committed_set_is_every_photograph_john_supplied() -> None:
-    """The measured outcome of A-L11 (John, 2026-09-09: "render ALL images"), pinned: 195 files,
-    one per source image, and NOT ONE empty slot — every folder holds more than the design's six.
-    A-L10's 73-of-108 is superseded: the photographs with no by-eye match to one of the six fixed
-    captions were dropped, which is the failure this hotfix exists to end."""
+    """The measured outcome of A-L11 (John, 2026-09-09: "render ALL images"), pinned: ONE FILE
+    PER SOURCE IMAGE, for every image John supplied that was not refused.
+
+    A-L10's 73-of-108 is superseded: the photographs with no by-eye match to one of the six
+    fixed captions were dropped, which is the failure that hotfix exists to end.
+
+    NEW-4: this docstring used to say "not one empty slot", three lines above an assertion
+    counting twenty-one of them. A-L11's claim was never that no slot is empty — it is that no
+    PHOTOGRAPH is dropped, and the two came apart when C1 ruled that a contact sheet may not
+    occupy a captioned slot even when that leaves it null. The four assertions below say the
+    thing that is actually true: every supplied photograph is committed, the positions exceed
+    the photographs by exactly the empty slots, and nothing is empty past the captioned six."""
     inv = inventory()
     assert {slug: len(entries) for slug, entries in inv.items()} == ENTRIES_PER_HOSPITAL
     assert {slug: len([e for e in inv[slug] if e["file"] is not None])
             for slug in PHOTOGRAPHS_PER_DALLAS_HOSPITAL} == PHOTOGRAPHS_PER_DALLAS_HOSPITAL
     filled = [e for entries in inv.values() for e in entries if e["file"] is not None]
     assert len(filled) == 313, "a photograph was dropped"
-    # 334 positions for 313 photographs: the 21 captioned slots C1 leaves empty on the eleven.
-    assert sum(len(e) for e in inv.values()) == 334
-    assert sum(1 for entries in inv.values() for e in entries if e["file"] is None) == 21
+    positions = sum(len(e) for e in inv.values())
+    empty = sum(1 for entries in inv.values() for e in entries if e["file"] is None)
+    # The identity, rather than three independent literals: every position is a photograph or an
+    # empty captioned slot, and there is no third thing.
+    assert (positions, empty) == (334, 21)
+    assert positions == len(filled) + empty
     beyond = [e for entries in inv.values() for e in entries if e["slot"] is None]
     assert len(beyond) == 160, "the photographs past the design's six slots (A15.3 renders each)"
+    assert all(e["file"] is not None for e in beyond), "an empty entry past the captioned six"
 
 
 def test_the_inventory_names_no_hospital_that_is_not_seeded() -> None:
@@ -333,14 +345,20 @@ def test_the_monument_sign_is_restored_and_governed_by_the_visibility_switch() -
     as a false location claim and is restored — a street number is part of the invented identity
     and is governed by the listing's one visibility switch, not by keeping the file out.
 
-    It is encoded, described by someone who looked at it, and flagged three ways: `composite`
-    (so it never takes a captioned slot), `own_street_number` (the ruled class) and
-    `address_not_this_listing` (the residual John has not ruled on — Cedar Springs Road is a real
-    street and Alpha's anchor is 18770 Preston Rd, carried as open question Q-SD1-1)."""
+    It is encoded, described by someone who looked at it, and flagged FOUR ways: `composite`
+    (so it never takes a captioned slot), `own_street_number` (the ruled class),
+    `address_not_this_listing` (the residual John has not ruled on — Cedar Springs Road is a
+    real street and Alpha's anchor is 18770 Preston Rd, carried as open question Q-SD1-1) and
+    `vehicle_no_legible_plate`, added on a fresh look at the file (NEW-7): the monument panel
+    shows three vehicles, none with a legible plate, which is the condition nine other entries
+    already carry that flag for. The ruling's §5.1 list named three because it was written
+    before anyone opened the image; a flag is a prediction about what the classifier will find,
+    so leaving a vehicle unflagged would have been a prediction that is wrong."""
     slug, name = "alpha_dallas_veterinary_specialist_hospital", "alpha_dallas_05.png"
     entry = descriptions()[slug][name]
     assert "refused" not in entry, "the restoration did not remove the refusal"
-    assert entry["flags"] == ["composite", "own_street_number", "address_not_this_listing"]
+    assert entry["flags"] == ["composite", "own_street_number", "address_not_this_listing",
+                              "vehicle_no_legible_plate"]
     placed = [e for e in inventory()[slug] if e["source"] == name]
     assert len(placed) == 1, "the restored sheet is encoded exactly once"
     # A composite never occupies one of the design's six captioned slots (C1), so the restoration
@@ -471,15 +489,25 @@ def test_no_composite_occupies_any_of_the_designs_six_captioned_slots() -> None:
     assert offenders == [], offenders
 
 
-def test_the_hero_of_every_dallas_listing_is_a_real_exterior_photograph() -> None:
+def test_the_hero_of_every_seeded_listing_is_a_real_exterior_photograph() -> None:
     """Position 1 is `heroSrc` on the detail page and the thumbnail source on the Browse card,
-    so it is the one captioned slot that may never be empty either — a listing whose hero is
-    null has no card. Every one of the eleven was curated an exterior at high or medium
-    confidence, so this holds by data and not by luck."""
-    for slug in sorted(DALLAS_SLUGS):
-        hero = inventory()[slug][0]
+    so it is the one captioned slot that may never be empty — a listing whose hero is null has
+    no card at all.
+
+    NEW-10: this used to iterate `DALLAS_SLUGS`, a frozen list of eleven, which made it blind to
+    exactly the case C1 created. A twelfth folder of nothing but contact sheets would leave
+    position 1 null — the composite rule forbids a sheet there and there would be no single to
+    take it — and would ship a Browse card with no thumbnail with every gate green. It now
+    iterates EVERY seeded hospital, so the guard arrives with the folder rather than with
+    somebody remembering to widen a constant."""
+    inv = inventory()
+    assert set(inv) == set(seed_slugs()), "the inventory and the seed file name different rows"
+    for slug in sorted(inv):
+        hero = inv[slug][0]
         assert hero["slot"] == "exterior", (slug, hero["slot"])
-        assert hero["file"] is not None, (slug, "the hero slot is empty")
+        assert hero["file"] is not None, (
+            slug, "position 1 is null — this listing would render a card with no thumbnail"
+        )
 
 
 def test_a_captioned_slot_left_empty_by_the_composite_rule_is_a_real_empty_slot() -> None:
@@ -511,15 +539,19 @@ def test_the_committed_descriptions_are_real_sentences_not_filenames() -> None:
 
 # --- M2: index.json holds FOUR entry shapes, and one of them nothing writes any more ----------
 #
-# 1. LEGACY FILLED (195, John's eighteen): slot, file, source, caption, bytes, width, height,
+# 1. LEGACY FILLED (John's eighteen): slot, file, source, caption, bytes, width, height,
 #    sha256 and `quality` — a field `scripts/prepare_photos.py::encode` stopped writing when the
 #    encoder moved to `app.media.encode` (spec 2026-09-08 D15). Their PIXELS are unchanged: a
 #    re-encode reproduces every sha256 byte for byte, which is how Task SD1 knew it was safe to
 #    add eleven folders with `--merge` instead of re-running all twenty-nine.
-# 2. DALLAS FILLED, UNFLAGGED (26): the same eight fields, no `quality`, no `flags`.
-# 3. DALLAS FILLED, FLAGGED (91): those eight plus `flags`.
-# 4. EMPTY CAPTIONED SLOT (21): slot, file, source, caption — all four but `slot` null (A-L10,
-#    and since C1 also every captioned slot whose folder had only sheets left).
+# 2. DALLAS FILLED, UNFLAGGED: the same eight fields, no `quality`, no `flags`.
+# 3. DALLAS FILLED, FLAGGED: those eight plus `flags`.
+# 4. EMPTY CAPTIONED SLOT: slot, file, source, caption — all four, with `file` null (A-L10, and
+#    since C1 also every captioned slot whose folder had only sheets left).
+#
+# The population of each shape is COUNTED from the tree by the test below rather than written
+# here (fix round 3, NEW-2): the four numbers in this block went stale within one round of being
+# typed, twice, and a comment nobody can execute is the wrong place for a measurement.
 #
 # The hazard that makes this worth a test rather than a comment: a full run without `--merge`
 # would rewrite all twenty-nine slugs from the CURRENT encoder, and would therefore silently
@@ -529,17 +561,69 @@ def test_the_committed_descriptions_are_real_sentences_not_filenames() -> None:
 
 LEGACY_ONLY_KEYS = frozenset({"quality"})
 
+#: Every key `scripts/prepare_photos.py` can write on a FILLED entry, derived from the pipeline
+#: rather than retyped (NEW-3). `encode` returns the six measured fields; `prepare` adds `slot`,
+#: and `described_over` adds `caption` (always) and `flags` (only when a flag was raised).
+PIPELINE_WRITES = frozenset({
+    "file", "source", "caption", "bytes", "width", "height", "sha256",   # encode()
+    "slot",                                                             # prepare()
+    "flags",                                                            # described_over()
+})
+
+
+def _returned_keys(function: object) -> set[str]:
+    """The string keys of every dict literal `function` RETURNS, read from its syntax tree.
+
+    A membership scan (`f'"{k}":' in source`) is not a pin — it answers "is each key I already
+    know about present", which stays green when the pipeline grows a key nobody listed. That was
+    the first version of this check and a mutation probe walked straight through it. Parsing the
+    return statements answers the question that matters: what does this function ACTUALLY emit."""
+    import ast
+    import inspect
+    import textwrap
+
+    tree = ast.parse(textwrap.dedent(inspect.getsource(function)))  # type: ignore[arg-type]
+    keys: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Return) and isinstance(node.value, ast.Dict):
+            for key in node.value.keys:
+                if isinstance(key, ast.Constant) and isinstance(key.value, str):
+                    keys.add(key.value)
+    return keys
+
+
+def test_the_key_set_this_module_pins_is_the_one_the_pipeline_actually_writes() -> None:
+    """NEW-3's real pin, BOTH WAYS. `encode` is the only place a measured field is minted, so
+    its return literal is the authority: a key added to the pipeline fails here rather than
+    silently widening what `test_a_full_re_run_would_drop_a_key…` will tolerate, and a key
+    removed fails here too."""
+    import scripts.prepare_photos as PP
+
+    assert _returned_keys(PP.encode) == PIPELINE_WRITES - {"slot", "flags"}
+    # `slot` and `flags` are added AROUND `encode`, not by it. `described_over` builds its dict
+    # incrementally rather than returning a literal, so it is checked by CALLING it — which is
+    # the stronger check anyway, because it pins the conditional `flags` key to the condition.
+    described = {"x.png": {"description": "A front", "flags": [], "refused": None},
+                 "y.png": {"description": "A sheet", "flags": ["composite"], "refused": None}}
+    assert set(PP.described_over(described, Path("x.png"))) == {"caption"}
+    assert set(PP.described_over(described, Path("y.png"))) == {"caption", "flags"}
+    assert PP.described_over(described, Path("absent.png")) == {}
+    # …and `slot` is on every filled entry the pipeline has ever written, which closes the union.
+    assert all("slot" in e for entries in inventory().values() for e in entries)
+
 
 def test_a_full_re_run_would_drop_a_key_the_committed_entries_still_carry() -> None:
     """Not a defect to fix — `quality` is dead and the eighteen's pixels are byte-identical — but
     a fact the next operator must be told BEFORE they type `prepare_photos.py` with no `--slugs`.
     If this ever fails because the set is empty, the hazard is gone and the whole block above
     (and `--merge`'s reason for existing) can go with it."""
-    # What the pipeline writes today. Not asserted against the pipeline here — this module reads
-    # only committed files, by design (see its docstring: no source folders, no Pillow) — but
-    # pinned against it by `tests/scripts/test_prepare_photos.py::
-    # test_the_inventory_records_a_matching_sha256_and_dimensions`, which builds a real entry.
-    written = {"file", "source", "caption", "bytes", "width", "height", "sha256", "slot", "flags"}
+    # What the pipeline writes today. NEW-3: the old cross-reference here named a test that
+    # checks a sha256 and two dimensions, not the KEY SET, so this set was pinned by nothing and
+    # a pipeline that started writing a ninth key would have gone unnoticed. It is now read from
+    # the pipeline itself — `encode`'s measured fields, plus the two `prepare` adds — so the two
+    # cannot drift. This module still opens no image: it reads a function's declared output, not
+    # a file on disk.
+    written = PIPELINE_WRITES
     committed = {key for entries in inventory().values() for e in entries for key in e}
     stale = committed - written
     assert stale == LEGACY_ONLY_KEYS, (
@@ -554,13 +638,31 @@ def test_a_full_re_run_would_drop_a_key_the_committed_entries_still_carry() -> N
 
 def test_every_entry_is_one_of_the_four_shapes_and_nothing_else() -> None:
     """Pinned as a closed set, both ways: a fifth shape appearing is either a pipeline change
-    nobody described or a hand-edit of a generated file, and both should stop here."""
+    nobody described or a hand-edit of a generated file, and both should stop here.
+
+    The four shapes are named; their POPULATIONS are counted from the tree and only their
+    relationships are asserted (NEW-2). Four hand-written counts in the comment above went stale
+    twice in two rounds, and the invariants below are what those numbers were standing in for."""
     base = {"slot", "file", "source", "caption"}
     measured = base | {"bytes", "width", "height", "sha256"}
-    shapes = {frozenset(e) for entries in inventory().values() for e in entries}
-    assert shapes == {
-        frozenset(measured | {"quality"}),   # 1. legacy filled
-        frozenset(measured),                 # 2. Dallas filled, unflagged
-        frozenset(measured | {"flags"}),     # 3. Dallas filled, flagged
-        frozenset(base),                     # 4. empty captioned slot
-    }, sorted(sorted(shape) for shape in shapes)
+    shapes = {
+        "legacy filled": frozenset(measured | {"quality"}),
+        "Dallas filled, unflagged": frozenset(measured),
+        "Dallas filled, flagged": frozenset(measured | {"flags"}),
+        "empty captioned slot": frozenset(base),
+    }
+    found: dict[frozenset[str], int] = {}
+    for entries in inventory().values():
+        for entry in entries:
+            found[frozenset(entry)] = found.get(frozenset(entry), 0) + 1
+    assert set(found) == set(shapes.values()), sorted(sorted(s) for s in found)
+    counted = {name: found[keys] for name, keys in shapes.items()}
+    # The relationships the counts existed to express, each derived from the other tests' own
+    # constants rather than from a fifth copy of the same numbers.
+    assert counted["legacy filled"] == sum(
+        n for slug, n in ENTRIES_PER_HOSPITAL.items() if slug not in DALLAS_SLUGS
+    ) == 195
+    assert counted["empty captioned slot"] == 21
+    assert (counted["Dallas filled, unflagged"] + counted["Dallas filled, flagged"]
+            == sum(PHOTOGRAPHS_PER_DALLAS_HOSPITAL.values()))
+    assert sum(counted.values()) == sum(len(e) for e in inventory().values())

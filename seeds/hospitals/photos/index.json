@@ -1394,7 +1394,8 @@
         "flags": [
           "composite",
           "own_street_number",
-          "address_not_this_listing"
+          "address_not_this_listing",
+          "vehicle_no_legible_plate"
         ],
         "height": 313,
         "sha256": "4696819b63633c6c8d7176c9e34456466ca1ce96af199417f17ac6fea0459f38",

@@ -671,9 +671,11 @@ def test_every_dallas_row_satisfies_the_listing_check_constraints() -> None:
 # beside a photograph of a detached clapboard building on open ground learns that the copy is
 # not to be trusted, and that is a worse failure than a bland sentence.
 #
-# Five of the eleven were falsified by their own heroes and are corrected here; the other six
-# were opened and are consistent. The corrected phrases are pinned as VALUES, and the four
-# claims the photographs contradicted are pinned as FORBIDDEN so they cannot drift back in.
+# The corrections are pinned as VALUES below and the refuted claims as FORBIDDEN, and the two
+# counts are DERIVED from those tables rather than written in this comment (NEW-9): the sentence
+# here said "five" after the Foxtrot revert left four, which is the third stale hand-count this
+# task has produced. Every one of the eleven was opened; the ones not in the table were opened
+# and found consistent.
 
 FACILITY_CORRECTED_AGAINST_THE_PHOTOGRAPHS = {
     # a pitched-roof building with a timber porch and a chimney — a converted house, not a shop
@@ -703,10 +705,18 @@ FACILITY_CLAIMS_THE_PHOTOGRAPHS_REFUTE = ("strip centre", "storefront", "office 
 FOXTROT_IS_TWO_STOREY_IN_ITS_OWN_THIRD_PHOTOGRAPH = "foxtrot_dallas_03.png"
 
 
-def test_the_four_falsified_facility_descriptions_are_corrected() -> None:
+def test_the_falsified_facility_descriptions_are_corrected() -> None:
     rows = {str(h["slug"]): h for h in dallas_eleven()}
     for slug, expected in FACILITY_CORRECTED_AGAINST_THE_PHOTOGRAPHS.items():
         assert rows[slug]["facility"] == expected, slug
+    # Derived, so no prose anywhere has to carry the number (NEW-9): four corrected, seven left
+    # alone, eleven opened. Foxtrot is deliberately NOT in the table — see the counter-example
+    # above — and a fifth correction arriving without this count moving would be a table someone
+    # edited without reading why the fourth left it.
+    assert len(FACILITY_CORRECTED_AGAINST_THE_PHOTOGRAPHS) == 4
+    assert set(FACILITY_CORRECTED_AGAINST_THE_PHOTOGRAPHS) <= DALLAS_SLUGS
+    assert "foxtrot_dallas_animal_hospital" not in FACILITY_CORRECTED_AGAINST_THE_PHOTOGRAPHS
+    assert len(DALLAS_SLUGS - set(FACILITY_CORRECTED_AGAINST_THE_PHOTOGRAPHS)) == 7
 
 
 def test_no_dallas_facility_makes_a_claim_its_own_photographs_refute() -> None:

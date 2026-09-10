@@ -1200,3 +1200,107 @@ def test_a_description_entry_that_says_nothing_at_all_is_refused(tmp_path: Path)
     with pytest.raises(PP.SeedDataError) as exc:
         PP.load_descriptions(path)
     assert "demo" in str(exc.value) and "x.png" in str(exc.value)
+
+
+# --- NEW-1: the curation cannot place a composite in a captioned slot either ------------------
+#
+# The re-review's required fix, and the same defect as C1 in a new location: `positions()` keeps
+# a sheet out of the BACKFILL, and three records said "the curation refuses to place one" — but
+# nothing refused it. A curation naming a contact sheet for `exterior` put it in the design's
+# HERO slot with no gate failing. The guarantee is now made true in code rather than asserted in
+# prose: `validate_curation` refuses the map, before a byte is written, naming the slug, the slot
+# and the file.
+#
+# `validate_curation` rather than a silent divert in `positions()`: a curated composite is an
+# AUTHORING mistake in a committed file, and the three sentences say the curation refuses it.
+# Diverting would make the sentences true and the mistake invisible.
+
+
+def _sheet_curation(tmp_path: Path, slot: str) -> tuple[Path, dict, dict]:
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_sheet.png", "02_single.png"])
+    curated = dict.fromkeys(PP.DEFAULT_SLOTS)
+    curated[slot] = "01_sheet.png"
+    described = {"cur": {
+        "01_sheet.png": {"description": "Six-panel contact sheet", "flags": ["composite"],
+                         "refused": None},
+        "02_single.png": {"description": "Brick frontage", "flags": [], "refused": None}}}
+    return root, {"cur": curated}, described
+
+
+@pytest.mark.parametrize("slot", ["exterior", "kennel"])
+def test_a_curation_that_places_a_composite_in_a_captioned_slot_is_refused(
+    tmp_path: Path, slot: str
+) -> None:
+    """Both ends of the captioned band: `exterior` is the hero the reviewer demonstrated, and
+    `kennel` is the sixth, so the refusal is not an off-by-one on the first slot alone."""
+    root, curation, described = _sheet_curation(tmp_path, slot)
+    with pytest.raises(PP.SeedDataError) as exc:
+        PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"},
+                   curation=curation, descriptions=described)
+    message = str(exc.value)
+    assert "cur" in message and slot in message and "01_sheet.png" in message, message
+
+
+def test_the_refusal_happens_before_a_single_byte_is_written(tmp_path: Path) -> None:
+    """`validate_curation`'s own promise — "before a single file is written" — extended to this
+    check. A run that refuses leaves no half-written tree for the next run to merge."""
+    root, curation, described = _sheet_curation(tmp_path, "exterior")
+    out = tmp_path / "out"
+    with pytest.raises(PP.SeedDataError):
+        PP.prepare(root, out, ["cur"], {"cur": "Small animal"},
+                   curation=curation, descriptions=described)
+    assert not (out / "cur").exists() and not (out / "index.json").exists()
+
+
+def test_the_whole_map_is_checked_not_only_the_slugs_this_run_processes(tmp_path: Path) -> None:
+    """The shape `validate_curation`'s other three checks already have (review i2): a curated
+    composite in a slug this run is not touching is still a defect in the file being committed,
+    so a hand re-run of one hospital cannot launder it."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_single.png"])
+    curation = {"cur": dict.fromkeys(PP.DEFAULT_SLOTS),
+                "other": {**dict.fromkeys(PP.DEFAULT_SLOTS), "lobby": "99_sheet.png"}}
+    described = {"cur": {"01_single.png": {"description": "A front", "flags": [], "refused": None}},
+                 "other": {"99_sheet.png": {"description": "A sheet", "flags": ["composite"],
+                                            "refused": None}}}
+    with pytest.raises(PP.SeedDataError) as exc:
+        PP.prepare(root, tmp_path / "out", ["cur"],
+                   {"cur": "Small animal", "other": "Small animal"},
+                   curation=curation, descriptions=described)
+    assert "other" in str(exc.value) and "99_sheet.png" in str(exc.value)
+
+
+def test_a_curated_single_photograph_is_still_placed_normally(tmp_path: Path) -> None:
+    """The refusal must not have made the curation useless: a SINGLE photograph curated for a
+    captioned slot goes exactly where the map says, which is A-L10's whole point."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_sheet.png", "02_single.png"])
+    curated = dict.fromkeys(PP.DEFAULT_SLOTS)
+    curated["exam"] = "02_single.png"
+    index = PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"},
+                       curation={"cur": curated},
+                       descriptions={"cur": {
+                           "01_sheet.png": {"description": "A sheet", "flags": ["composite"],
+                                            "refused": None},
+                           "02_single.png": {"description": "A front", "flags": [],
+                                             "refused": None}}})
+    placed = next(e for e in index["cur"] if e["source"] == "02_single.png")
+    assert placed["slot"] == "exam"
+    # …and the sheet is still rendered, past the captioned six.
+    sheet = next(e for e in index["cur"] if e["source"] == "01_sheet.png")
+    assert sheet["slot"] is None
+
+
+def test_the_committed_curation_places_no_composite_in_any_captioned_slot() -> None:
+    """The mutation probe, against the real committed data: every file the curation names must be
+    a single photograph. This is what would have caught the defect on the day it was written."""
+    curation = PP.load_curation(PP.CURATION_FILE)
+    described = PP.load_descriptions(PP.DESCRIPTIONS_FILE)
+    offenders = [
+        (slug, slot, name)
+        for slug, slots in curation.items()
+        for slot, name in slots.items()
+        if name is not None and "composite" in described.get(slug, {}).get(name, {}).get("flags", [])
+    ]
+    assert offenders == [], offenders

@@ -224,7 +224,10 @@ def load_descriptions(path: Path) -> dict[str, dict[str, dict[str, Any]]]:
     return loaded
 
 
-def validate_curation(curation: dict[str, dict[str, str | None]], types: dict[str, str]) -> None:
+def validate_curation(
+    curation: dict[str, dict[str, str | None]], types: dict[str, str],
+    composites: dict[str, frozenset[str]] | None = None,
+) -> None:
     """Refuse a map that cannot mean what it says, before a single file is written.
 
     The slot keys are read POSITIONALLY — slot `k` becomes `<k>.webp` and fills the design's slot
@@ -234,7 +237,20 @@ def validate_curation(curation: dict[str, dict[str, str | None]], types: dict[st
     curated for two slots means two captions of which at least one is false — checked here, over
     the whole map, rather than per slug (review i2), so a hand re-run of one hospital still
     refuses a duplicate introduced for another. Only the missing-file check is left to
-    `slot_choices`, because it is the one that needs the source folders."""
+    `slot_choices`, because it is the one that needs the source folders.
+
+    **A CURATED COMPOSITE IS REFUSED HERE** (SD1 fix round 3, NEW-1). `positions` keeps a
+    multi-panel sheet out of the BACKFILL, and three records claimed the curation refuses to
+    place one — but nothing did, so a map naming a sheet for `exterior` put a contact sheet in
+    the design's hero slot with no gate failing. That is C1's defect in a new location: a record
+    asserting a guarantee the code does not give. The guarantee is now the code's.
+
+    Refused rather than diverted: a curated composite is an AUTHORING mistake in a committed
+    file, and diverting it to `spare` would make the sentences true while making the mistake
+    invisible. `composites` is slug -> the source filenames flagged `composite`; absent, this
+    check does nothing, which is what keeps every caller that has no descriptions file working
+    (John's eighteen of 2026-09-06 declare none)."""
+    flagged = composites or {}
     for slug, slots in curation.items():
         if slug not in types:
             raise SeedDataError(f"{slug} is curated but seeds/hospitals.json does not name it")
@@ -245,6 +261,12 @@ def validate_curation(curation: dict[str, dict[str, str | None]], types: dict[st
         repeated = sorted({name for name in named if named.count(name) > 1})
         if repeated:
             raise SeedDataError(f"{slug}: {', '.join(repeated)} curated for more than one slot")
+        for slot, name in slots.items():
+            if name is not None and name in flagged.get(slug, frozenset()):
+                raise SeedDataError(
+                    f"{slug}: {name} is a composite and is curated for the captioned slot"
+                    f" {slot} — a multi-panel sheet never occupies one of the design's six"
+                )
 
 
 def slot_choices(
@@ -302,10 +324,16 @@ def positions(
     (controller ruling, SD1 fix round 1, C1). A sheet of six pictures, or a two-panel letterbox
     strip, is not "the reception area", and a square tile the design built for one photograph is
     a presentation it never contemplated for a contact sheet: absent beats faked, which is this
-    project's first rule about the approved design. So the backfill above draws ONLY from the
-    single photographs, and it is not a preference — when a folder runs out of singles its
-    remaining captioned slots stay `None` and the design renders its own placeholder in each,
-    which is the path A-L10 built for exactly this.
+    project's first rule about the approved design.
+
+    The guarantee has TWO enforced halves, and both are code (fix round 3, NEW-1): the BACKFILL
+    below draws only from the single photographs, and `validate_curation` refuses a curation that
+    names a composite for a captioned slot. Before NEW-1 only the first half existed, so a
+    curated sheet reached the hero slot while three records said it could not.
+
+    The backfill is not a preference — when a folder runs out of singles its remaining captioned
+    slots stay `None` and the design renders its own placeholder in each, which is the path
+    A-L10 built for exactly this.
 
     A slot is therefore `None` in two cases now: the folder holds fewer images than the design
     has slots (A-L10's original case), or every image the slots did not take is a composite.
@@ -489,9 +517,16 @@ def prepare(
     folder is too thin to fill writes nothing and records nulls."""
     curated_all = curation if curation is not None else {}
     described_all = descriptions if descriptions is not None else {}
+    # slug -> the source files flagged `composite`, over the WHOLE descriptions map. Computed
+    # once here rather than per slug, because `validate_curation` checks the whole curation and
+    # the per-slug loop below reuses the same answer.
+    composites_by_slug = {
+        slug: frozenset(name for name, entry in files.items() if "composite" in entry["flags"])
+        for slug, files in described_all.items()
+    }
     # Before a single byte is written, and over the WHOLE map rather than the slugs asked for: a
     # typo in an entry this run does not touch is still a defect in the file being committed.
-    validate_curation(curated_all, types)
+    validate_curation(curated_all, types, composites_by_slug)
     # `merge` (Task SD1): keep the slugs this run is not processing exactly as they were
     # committed. Eleven folders were added to a tree that already held eighteen, and re-encoding
     # those eighteen is both wasteful and a diff nobody asked for. Off by default, so a full run
@@ -516,9 +551,7 @@ def prepare(
         described = described_all.get(slug, {})
         held = {src.name for src in source_images(folder)}
         refused = {name for name, entry in described.items() if entry["refused"] is not None}
-        composites = frozenset(
-            name for name, entry in described.items() if "composite" in entry["flags"]
-        )
+        composites = composites_by_slug.get(slug, frozenset())
         # The same care `slot_choices` takes with the curation, and for the same reason: a
         # description keyed to a filename the folder does not hold is a typo that would silently
         # caption nothing at all, and the slug is the operator's only way to find it.
