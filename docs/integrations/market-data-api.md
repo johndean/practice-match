@@ -297,7 +297,7 @@ only a new source for the same seven:
 
 | Field | Comes from | Notes |
 |---|---|---|
-| `pop` | `communities[].pop` | ACS population estimate, `place` band by default. |
+| `pop` | `communities[].pop` | ACS population estimate. The `place` band where that band has figures, the `drive_10` band where it has none — see "Which band a listing's figures come from" below. |
 | `hh` | `communities[].hh` | ACS households. |
 | `income` | `communities[].income` | ACS median household income. |
 | `growth` | `communities[].growth` | Derived: two ACS vintages compared. Vintage statement: `ACS 2014–2018 → 2019–2023`. Gated on `acs5_prior` (see the licence-gates table above), not merely on the `acs5` stamp the row carries. |
@@ -310,6 +310,35 @@ unformatted, for the detail page's market report; `metrics.income_index_vs_us`,
 `metrics.vets_per_10k_households` and the still-unpublished `opportunity_score` (with its
 `components`) are the three figures the design's `marketPanel()` fixture (`incomeNat = 75149`,
 `per10k`, `score`) sketched without a real source.
+
+### Which band a listing's figures come from (`community_label`, Task B10 / D-C32)
+
+`app/census/serve.py::community_rows` builds the seven fields above from the `place` band first.
+**The fallback is decided on FIGURES, not on row presence.** If all six figures come out null —
+the listing has no `place` row at all, every place row is `suppressed`, or every place row is
+stamped with a dataset the VIN Foundation has not cleared — the row is built again from the
+`drive_10` band. `drive_20` is never a fallback: a wider area served under a narrower heading
+would be a reading the data does not support.
+
+`GET /api/listings` and `GET /api/listings/{id}` therefore carry one more field:
+
+| Field | Value | Meaning |
+|---|---|---|
+| `community_label` | `null` | The figures came from the listing's own community (the `place` band), or there are no figures at all. The design names that community from the listing's own `area`, and its wording stands unchanged. |
+| `community_label` | `"Within 10 minutes of the practice"` | The `place` band had no figures and the `drive_10` band answered. The frontend MUST render this label wherever it names the area — a buyer is never shown a drive-time catchment disguised as a named city. |
+
+There is no geoid lookup and none is wanted: the label exists solely to OVERRIDE the design's own
+wording when the figures did not come from the community it names.
+
+The listing this exists for is the Orlando specialist centre. It geocoded ROOFTOP like every other
+seeded hospital and its address is not wrong in any way, but it sits in unincorporated Orange
+County where the Census has no `place`, so it has no `place`-band row — and complete `drive_10`
+figures that describe its market perfectly well.
+
+Where neither band has figures every field is `null`, including `community_label`, and the
+frontend reaches the design's own "Community data unavailable" card. **A figure the database does
+not have is `null` in the payload — never `0`, never `""`** (D-C31: a missing figure is omitted,
+never zeroed), because `null` is the only value the frontend's own guards read as absence.
 
 ## Copy rules (spec §8/§12/§14) the frontend must honour when wiring this up
 
@@ -402,11 +431,13 @@ is still pending:
   does the feed become its own task? Unanswered as of this document — no Phase B task touched it.
 * **Task B7 implements `GET /api/listings`'s Community Context strings.** John ruled (2026-09-08,
   Q2 / A-C1 (2)) that `app/api/listings.py::serialise` would format `pop`/`growth`/`income`/`hh`
-  from `market_metric` at the `place` band, in the design's existing string spelling (`"81,900"`,
+  from `market_metric`, in the design's existing string spelling (`"81,900"`,
   `"+14.2% since 2015"`, …), plus two additional numeric fields `vets` and `econ_k` for Browse use.
   Task B7 implements this: the listing list (`GET /api/listings`) and detail (`GET /api/listings/{id}`)
   routes now carry all six fields populated when data is available, null when unavailable (dataset
-  not cleared, value suppressed, or no `market_metric` rows for the listing).
+  not cleared, value suppressed, or no `market_metric` rows for the listing). Task B10 adds the
+  band fallback and the seventh field, `community_label`, that says which band answered — see
+  "Which band a listing's figures come from" above.
 * **`opportunity_score` is computed, stored, and withheld** until the VIN Foundation signs off on
   its weights (A-C1 (9)) — not a defect, a standing decision this document is not the place to
   revisit.

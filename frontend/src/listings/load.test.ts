@@ -42,6 +42,7 @@ function row(over: Partial<ApiListing> = {}): ApiListing {
     photos: [],
     vets: null,
     econ_k: null,
+    community_label: null,
     ...over
   };
 }
@@ -238,6 +239,29 @@ describe('applyListings', () => {
 
     expect('api-null' in vetsMap).toBe(false);
     expect('api-null' in econMap).toBe(false);
+  });
+
+  // B10 (D-C32): the label reaches the design under its own camel-case name, and a row that
+  // carries none leaves the key ABSENT — `p.communityLabel || "…"` is how the design falls back
+  // to its own wording, and a present-but-undefined key is a difference the D6 round-trip sees.
+  it('carries community_label as communityLabel, and omits the key when the API sent none', () => {
+    expect(toPractice(row({ community_label: 'Within 10 minutes of the practice' })).communityLabel)
+      .toBe('Within 10 minutes of the practice');
+    expect('communityLabel' in toPractice(row({ community_label: null }))).toBe(false);
+  });
+
+  // B10: the CLEAR runs before the INSTALL. It used to run after, so a row whose id is one of the
+  // design's own — which is exactly what the D6 stub sends — had its figures installed and then
+  // deleted, and the panel had no establishment count for any design fixture.
+  it('keeps a figure a row carries under a design-fixture id', async () => {
+    const { VETS, ECON_K } = await import('../logic.js');
+    const vetsMap = VETS as Record<string, number>;
+    const econMap = ECON_K as Record<string, number>;
+
+    applyListings([row({ id: 'p1', vets: 8, econ_k: 612 })], [], {}, vetsMap, econMap);
+
+    expect(vetsMap['p1']).toBe(8);
+    expect(econMap['p1']).toBe(612);
   });
 
   // B8: fixture keys are removed when API data is installed
@@ -462,6 +486,27 @@ describe('the design-fixture stub round-trips exactly (spec D6)', () => {
     for (const [i, p] of (P as unknown as Practice[]).entries()) {
       expect(toPractice(toApiShape(p, i) as ApiListing)).toEqual(p);
     }
+  });
+
+  // B10: the stub sends `vets` and `econ_k` too. B7 added both fields to the endpoint and this
+  // stub kept answering `null` for each, so the app under test installed nothing and cleared the
+  // design's own fixture keys — the docked panel's Competitive Landscape row then went blank
+  // against a reference that shows "8 Veterinary Establishments", and the pixel gate said so.
+  it('every design market-data figure survives toApiShape → applyListings unchanged', async () => {
+    const { ECON_K, MARKETS, P, VETS } = await import('../logic.js');
+    const { toApiShape } = await import('../../tests/design-listings.mjs');
+    const vetsBefore = JSON.parse(JSON.stringify(VETS));
+    const econBefore = JSON.parse(JSON.stringify(ECON_K));
+    const practices = P as unknown as Practice[];
+    applyListings(
+      (practices.map(toApiShape) as unknown) as ApiListing[],
+      practices,
+      MARKETS as unknown as Markets,
+      VETS as unknown as Record<string, number>,
+      ECON_K as unknown as Record<string, number>
+    );
+    expect(VETS).toEqual(vetsBefore);
+    expect(ECON_K).toEqual(econBefore);
   });
 
   it('the design’s market centres survive applyListings unchanged', async () => {

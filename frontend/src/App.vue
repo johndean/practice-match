@@ -689,7 +689,8 @@
 
               <template v-if="v.md?.panel?.isInsights">
                 <div style="padding: 16px;">
-                  <div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy);">Market Overview (10 min drive)</div>
+                  <template v-if="v.md?.panel?.hasDemo">
+                  <div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy);"><span v-if="__s(v.md?.panel?.overviewTitle) !== null" class="sc-interp">{{ __s(v.md?.panel?.overviewTitle) }}</span></div>
                   <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 9px;">
                     <template v-for="(o, $index) in __arr(v.md?.panel?.overviewTiles)" :key="$index">
                       <div style="padding: 9px 7px; border: 1px solid #e6e6e6; border-radius: 6px; text-align: center;">
@@ -744,10 +745,19 @@
                     </div>
                   </div>
 
+                  </template>
+                  <template v-if="v.md?.panel?.noDemo">
+                    <div style="padding: 22px; background: var(--color-off-white); border: 1px dashed var(--border-subtle); border-radius: 10px;">
+                      <div style="font-size: 14px; font-weight: 500; color: var(--color-navy);">Community data unavailable for this location</div>
+                      <p style="font-size: 13px; line-height: 1.6; color: #494949; margin: 6px 0 0; max-width: 60ch;">The Census geography for this address has not been matched yet. Everything else on this listing is seller-provided and unaffected.</p>
+                    </div>
+                  </template>
                   <button class="sch8" @click="v.md?.panel?.openListing" style="display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%; height: 44px; margin-top: 16px; font-family: var(--rf-display); font-size: 13.5px; font-weight: 500; color: var(--vf-white); background: var(--vf-accent); border: 0; border-radius: 6px; cursor: pointer;">
                     View full listing<img src="/assets/icons/navigate-arrow.svg" alt width="12" height="12" style="transform: rotate(180deg); filter: brightness(0) invert(1);">
                   </button>
-                  <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">Drive-time figures are approximated from a straight-line catchment around the practice. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>
+                  <template v-if="v.md?.panel?.hasDemo">
+                    <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">Drive-time figures are approximated from a straight-line catchment around the practice. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>
+                  </template>
                 </div>
               </template>
 
@@ -923,7 +933,7 @@
                       </div>
                     </template>
                   </div>
-                  <p style="font-size: 12px; line-height: 1.6; color: var(--color-steel); margin: 14px 0 0;">Source: U.S. Census Bureau, American Community Survey 2023 5-year estimates (public domain, attribution requested). Figures describe the community around the practice, not the practice itself.</p>
+                  <p style="font-size: 12px; line-height: 1.6; color: var(--color-steel); margin: 14px 0 0;">Source: U.S. Census Bureau, American Community Survey 2023 5-year estimates (public domain, attribution requested). <span v-if="__s(v.d?.demoScope) !== null" class="sc-interp">{{ __s(v.d?.demoScope) }}</span></p>
                 </div>
               </template>
               <template v-if="v.d?.noDemo">

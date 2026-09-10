@@ -965,3 +965,130 @@ async def test_single_listing_carries_community_context(client: Any, conn: Any, 
     assert data["growth"] == "+5.5% since 2018"
     assert data["vets"] == 12
     assert data["econ_k"] == 450
+
+
+# ---------------------------------------------------------------------------------------------
+# Task B10 / D-C32 — `community_label` reaches the buyer through BOTH read routes, and a figure
+# the database does not have is null in the payload: never 0, never "".
+# ---------------------------------------------------------------------------------------------
+
+def _seed_drive_10_only(conn: Any, listing_id: str) -> None:
+    """The Orlando shape: no `place` row, a complete `drive_10` band."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE dataset_registry SET license_status = %s WHERE dataset_key IN (%s, %s, %s, %s)",
+            ("cleared", "acs5", "acs5_prior", "zbp", "cbp"),
+        )
+        cur.execute(
+            "DELETE FROM active_vintage WHERE dataset_key IN (%s, %s, %s, %s)",
+            ("acs5", "acs5_prior", "zbp", "cbp"),
+        )
+        cur.execute(
+            "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES "
+            "(%s, %s, now(), %s), (%s, %s, now(), %s), (%s, %s, now(), %s), (%s, %s, now(), %s)",
+            ("acs5", "2019-2023", "test", "acs5_prior", "2014-2018", "test", "zbp", "2022", "test", "cbp", "2022", "test"),
+        )
+        for key, vintage, value, dataset in (
+            ("population", "2019-2023", 167997, "acs5"),
+            ("households", "2019-2023", 59588, "acs5"),
+            ("median_hh_income", "2019-2023", 69780, "acs5"),
+            ("population_growth_pct", "2019-2023", 9.0, "acs5"),
+            ("establishments", "2022", 10.8, "zbp"),
+            ("revenue_per_establishment", "2022", 512000, "cbp"),
+        ):
+            cur.execute(
+                "INSERT INTO market_metric "
+                "(listing_id, band, metric_key, vintage, value_num, unit, is_derived, "
+                "formula_version, moe, suppressed, suppress_reason, source_dataset, computed_at) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())",
+                (listing_id, "drive_10", key, vintage, value, "count", False, None, 1, False, None, dataset),
+            )
+
+
+async def test_the_single_route_carries_the_drive_time_label(client: Any, conn: Any, member: Any) -> None:
+    """D-C32: a listing with no `place`-band figures is served its `drive_10` band AND the label
+    that says so, so the buyer is never shown a drive-time area disguised as a named city."""
+    from tests.census.listing_fixtures import make_listing
+
+    listing_id = make_listing(conn, city="Orlando", state="FL", zip="32819")
+    _seed_drive_10_only(conn, listing_id)
+
+    _, cookies, headers = member()
+    r = await client.get(f"/api/listings/{listing_id}", headers=auth_headers(cookies, headers))
+    assert r.status_code == 200, r.text
+    data = r.json()
+
+    assert data["community_label"] == "Within 10 minutes of the practice"
+    assert data["pop"] == "167,997"
+    assert data["hh"] == "59,588 households"
+
+
+async def test_the_list_route_carries_the_drive_time_label_too(client: Any, conn: Any, member: Any) -> None:
+    """The same row through `GET /api/listings` — the docked panel reads the list, not the detail."""
+    from tests.census.listing_fixtures import make_listing
+
+    listing_id = make_listing(conn, city="Orlando", state="FL", zip="32819")
+    _seed_drive_10_only(conn, listing_id)
+
+    _, cookies, headers = member()
+    r = await client.get("/api/listings?limit=200", headers=auth_headers(cookies, headers))
+    assert r.status_code == 200, r.text
+    item = next(i for i in r.json()["items"] if i["id"] == listing_id)
+
+    assert item["community_label"] == "Within 10 minutes of the practice"
+    assert item["pop"] == "167,997"
+
+
+async def test_a_listing_with_no_figures_is_null_everywhere_never_zero(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """D-C31 at the payload boundary: where the database has no figure the JSON carries `null` —
+    not `0`, not `""`, not a label. The frontend's `p.pop != null` guard is what turns that into
+    the design's own "Community data unavailable" card, and a zero would defeat it."""
+    from tests.census.listing_fixtures import make_listing
+
+    listing_id = make_listing(conn, city="Cedar Park", state="TX")
+
+    _, cookies, headers = member()
+    auth = auth_headers(cookies, headers)
+
+    single = (await client.get(f"/api/listings/{listing_id}", headers=auth)).json()
+    listed = next(
+        i for i in (await client.get("/api/listings?limit=200", headers=auth)).json()["items"]
+        if i["id"] == listing_id
+    )
+    for payload in (single, listed):
+        for field in ("pop", "growth", "income", "hh", "vets", "econ_k", "community_label"):
+            assert payload[field] is None, field
+
+
+def test_serialise_carries_the_community_label_and_never_invents_one() -> None:
+    """`serialise` is the one place a row becomes a payload: it passes the label straight through
+    and emits `None` — never `""` — when `community_rows` handed it nothing."""
+    row = {
+        "id": uuid4(), "slug": "s", "name": "N", "name_disclosed": True, "location_disclosed": True,
+        "rev_disclosed": True, "market": "Orlando, FL", "area": "Orlando", "type": "Small animal",
+        "city": "Orlando", "state": "FL", "street": "1 Main St", "zip": "32819", "phone": None,
+        "hours": None, "price": 1, "rev": 1, "docs": 1, "rooms": 1, "sqft": 1, "bldg": "Included",
+        "est": 2001, "listed_at": datetime(2026, 9, 1, tzinfo=UTC), "status": "published",
+        "note": None, "staff": None, "services": None, "facility": None, "ownership": None,
+        "lat": None, "lng": None, "photos": [], "photo_captions": [], "asset_captions": {},
+    }
+    now = datetime(2026, 9, 6, tzinfo=UTC)
+
+    labelled = serialise(row, now, community={
+        "pop": "167,997", "growth": None, "income": None, "hh": None, "vets": None,
+        "econ_k": None, "label": "Within 10 minutes of the practice",
+    })
+    assert labelled["community_label"] == "Within 10 minutes of the practice"
+    assert labelled["growth"] is None
+
+    unlabelled = serialise(row, now, community={
+        "pop": "167,997", "growth": None, "income": None, "hh": None, "vets": None,
+        "econ_k": None, "label": None,
+    })
+    assert unlabelled["community_label"] is None
+
+    absent = serialise(row, now)
+    for field in ("pop", "growth", "income", "hh", "vets", "econ_k", "community_label"):
+        assert absent[field] is None, field

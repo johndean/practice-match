@@ -83,6 +83,12 @@ export interface ApiListing {
   vets: number | null;
   // B8: annual payroll per establishment in $thousands from Census CBP, or null if unavailable
   econ_k: number | null;
+  // B10 (D-C32): which area the six Community Context figures above describe. `null` means the
+  // listing's own community (the Census `place` band), which is the wording the design already
+  // uses; `"Within 10 minutes of the practice"` means the place band had no figures and the
+  // `drive_10` band answered. The design renders it wherever it names the area, so a buyer is
+  // never shown a drive-time catchment disguised as a named city.
+  community_label: string | null;
 }
 
 export interface Practice {
@@ -114,6 +120,10 @@ export interface Practice {
   name?: string;
   photos?: (string | null)[];
   photoCaptions?: (string | null)[];
+  // B10 (D-C32): the API's `community_label`, under the design's own camel-case naming. Absent —
+  // never `undefined` as a present key — when the figures came from the listing's own community,
+  // which is what makes the design's `p.communityLabel || "…"` fall back to its own wording.
+  communityLabel?: string;
 }
 
 export type Markets = Record<string, { center: [number, number]; zoom: number }>;
@@ -171,6 +181,10 @@ export function toPractice(row: ApiListing): Practice {
   // that predates `090_listing_photo_captions.sql` sends no `photo_captions` at all, and the
   // design's own fixed slot captions are the right answer for such a row.
   if (row.photo_captions && row.photo_captions.length > 0) p.photoCaptions = row.photo_captions;
+  // B10 (D-C32): `!= null`, the same rule as `name` above — a row that omits the key entirely
+  // must not set `p.communityLabel = undefined`, which would be a key the design's `||` chain
+  // then has to absorb, and a difference the D6 round-trip identity would see.
+  if (row.community_label != null) p.communityLabel = row.community_label;
   return p;
 }
 
@@ -196,8 +210,14 @@ export function centroid(practices: Practice[], market: string): [number, number
  * selector never offers an empty one.
  *
  * B8: also install the market-data maps VETS and ECON_K from the API rows, and clear any
- * fixture keys that were there before. A null figure installs no key—the design's logic.js
- * default handler (VETS[p.id] || 0) renders 0 for a missing key.
+ * fixture keys that were there before. A null figure installs no key, and `communities()` then
+ * yields `undefined` for it — never 0 (A21.1/A21.1c, D-C31: a missing figure is omitted, never
+ * zeroed).
+ *
+ * B10: the CLEAR runs BEFORE the install, not after. The design's own fixture ids are exactly
+ * what the D6 stub sends back (`tests/design-listings.mjs`), so clearing afterwards deleted every
+ * figure the page had just installed and the docked panel had no establishment count for any
+ * design fixture. On a seeded environment the ids are uuids and the two orders are equivalent.
  */
 export function applyListings(
   rows: ApiListing[],
@@ -210,13 +230,7 @@ export function applyListings(
 
   // B8: map every row BEFORE clearing anything, so a malformed row leaves the fixtures standing
   if (vets && econ_k) {
-    // Install API vets and econ_k (only non-null values get keys)
-    for (const row of rows) {
-      if (row.vets != null) vets[row.id] = row.vets;
-      if (row.econ_k != null) econ_k[row.id] = row.econ_k;
-    }
-
-    // Clear fixture keys (p1…p9, c1…c4, o1…o4, g1…g4)
+    // Clear fixture keys (p1…p9, c1…c4, o1…o4, g1…g4) FIRST — see the note above.
     const fixtureIds = ['p1', 'p2', 'p3', 'p4', 'p5', 'p6', 'p7', 'p8', 'p9',
                         'c1', 'c2', 'c3', 'c4',
                         'o1', 'o2', 'o3', 'o4',
@@ -224,6 +238,12 @@ export function applyListings(
     for (const id of fixtureIds) {
       delete vets[id];
       delete econ_k[id];
+    }
+
+    // Install API vets and econ_k (only non-null values get keys)
+    for (const row of rows) {
+      if (row.vets != null) vets[row.id] = row.vets;
+      if (row.econ_k != null) econ_k[row.id] = row.econ_k;
     }
   }
 
