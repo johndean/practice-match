@@ -231,7 +231,7 @@ describe('local design amendments (spec D15)', () => {
     // expand as well as collapse — so neither menu can come back open.
     'A23',
     // A25 — Task MP1 (John, 2026-09-10): "a listing with no coordinates keeps its place in the
-    // results and does not get a pin." Five literal script edits: A25.1 the pin list, A25.2 the
+    // results and does not get a pin." Six literal script edits: A25.1 the pin list, A25.2 the
     // drive-ring centre and A25.3 the map's community list all skip a listing with no finite
     // point (the three legs into Leaflet's `toLatLng(null)`); A25.4 stops the panel's
     // last-resort community object standing in zeros for absent figures; A25.5 gives the panel

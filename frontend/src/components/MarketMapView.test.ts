@@ -242,8 +242,9 @@ describe('MarketMapView — redraw order', () => {
 // compares them (`communities` by identity, the rest by value).
 //
 // A pin or card SELECTION still rebuilds the mosaic, and that cost is the DESIGN's, not the
-// port's: selecting moves `driveCenter` (`sel ? [sel.lat, sel.lng] : cfg.center`,
-// logic.js:382) and `showDrive` (`!!sel`, :578), so React re-runs its area effect too. What
+// port's: selecting moves `driveCenter` (logic.js:508) and `showDrive` (:707), so React
+// re-runs its area effect too. Since amendment A25 both carry a finite-coordinate test, so a
+// selection with no point moves neither and the rebuild is skipped. What
 // no longer happens is a full 12,560-rectangle rebuild on a trigger that leaves all five
 // untouched — `practices` and `activeId` (logic.js:361, `s.mdSel`) are the two deps the
 // superset added.

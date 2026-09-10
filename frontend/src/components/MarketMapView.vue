@@ -149,8 +149,10 @@ function drawPins() {
 // end of the shared panes, and a skipped overlay has not moved at all.
 //
 // A pin or card SELECTION still rebuilds the mosaic and that cost is the DESIGN's: selecting
-// moves `driveCenter` (`sel ? [sel.lat, sel.lng] : cfg.center`, logic.js:382) and `showDrive`
-// (`!!sel`, :578), so the reference re-runs its area effect too. What no longer rebuilds
+// moves `driveCenter` (logic.js:508) and `showDrive` (:707), so the reference re-runs its area
+// effect too. Both now carry amendment A25's finite-coordinate test, so selecting a listing
+// whose seller withheld the location moves NEITHER — the mosaic rebuild is correctly skipped
+// and only the pins redraw. What no longer rebuilds
 // 12,560 rectangles is a trigger that leaves all five untouched — `practices` and `activeId`
 // (`s.mdSel`, logic.js:361) are the two the superset added (review I1, ruling 2026-09-07).
 let lastArea = null;

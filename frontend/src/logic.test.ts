@@ -3694,11 +3694,15 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
 // later listing, and the poisoned layer re-threw from inside Leaflet's own event loop on every
 // zoom pass.
 //
-// John's ruling: the listing KEEPS ITS PLACE in the results and does not get a pin. The three
+// John's ruling: the listing KEEPS ITS PLACE in the results and does not get a pin. The four
 // production edits, each named on the case that fails without it:
 //   A25.1  `practices:` filters to listings with a finite point   (the pin list)
 //   A25.2  `driveCenter` falls back to the metro centre           (the second leg into Leaflet)
 //   A25.3  `communities:` filters the same way                    (the mosaic's own bbox)
+//   A25.6  `showDrive` takes the same test                        (fix round 1: A25.2 restored
+//          the else-branch, which made the drive-time ring paintable around the metro centre
+//          for a listing whose seller withheld the location — a false statement, not an
+//          omission. No point, no ring.)
 // -------------------------------------------------------------------------------------------
 describe('A25 — a listing with no coordinates keeps its place and gets no pin (Task MP1)', () => {
   const AUSTIN = 'Austin, TX';
