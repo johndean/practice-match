@@ -2086,7 +2086,7 @@ async def test_republish_does_not_enqueue_geocode_when_practice_location_exists(
                     " area='Cedar Park' WHERE id=%s", (listing_id,))
         # Add a practice_location row
         cur.execute("INSERT INTO practice_location (listing_id, address_hash, geo_precision, geocoder_vintage, geocoded_at) "
-                        "VALUES (%s, %s, %s, %s, now()),",
+                        "VALUES (%s, %s, %s, %s, now())",
                     (listing_id, "hash1", "rooftop", "Current_Current"))
 
     enqueued = []
