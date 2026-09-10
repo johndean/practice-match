@@ -3068,6 +3068,58 @@ const A21_3d: Amendment = {
   count: 1
 };
 
+/** A21.2 (controller amendment A-C32, D-C32 ruling, Task B10): the docked panel fallback.
+ *  When a listing has no place-band figures, it uses drive_10; when it has neither, the card
+ *  says "Community data unavailable". The fallback label travels with the row from serve.py,
+ *  and the panel reads it as `c.label`.
+ *
+ *  This amendment is REVERTED (controller amendment A-C29): the economic figure IS payroll
+ *  per establishment, not revenue; the metric is merely misnamed `revenue_per_establishment` in the
+ *  database, and the design's original labels "Average Practice Payroll (CBP)" / "Avg. payroll per
+ *  practice" were correct. The naming stays in the database for schema stability; no code changes. */
+
+/** A21.2b (Task B10, D-C31): the panel's fallback renders no undefined/NaN.
+ *  When there are no figures for a listing, the panel should render nothing for competition,
+ *  income index, and growth indicators, never a verdict based on undefined data. The `per10k`
+ *  ratio becomes undefined when households or vets is undefined; the verdict and bars are only
+ *  rendered when per10k is a number. */
+const A21_2b: Amendment = {
+  id: 'A21.2b', date: '2026-09-10', ruling: 'render no verdict, NaN or undefined for listings without figures (Task B10, D-C31)',
+  find: '    const per10k = c.hh ? (c.vets / (c.hh / 10000)) : 0;\n    const incomeNat = 75149; // ACS 2023 U.S. median household income\n    const incomeIdx = Math.round(((c.income - incomeNat) / incomeNat) * 100);\n    const compLevel = per10k < 1.4 ? "Low" : per10k < 2.2 ? "Moderate" : "High";\n    const compFill = per10k < 1.4 ? 1 : per10k < 2.2 ? 2 : 3;',
+  replace: '    const per10k = (c.hh && c.vets) ? (c.vets / (c.hh / 10000)) : undefined;\n    const incomeNat = 75149; // ACS 2023 U.S. median household income\n    const incomeIdx = c.income ? Math.round(((c.income - incomeNat) / incomeNat) * 100) : undefined;\n    const compLevel = (per10k !== undefined && per10k < 1.4) ? "Low" : (per10k !== undefined && per10k < 2.2) ? "Moderate" : (per10k !== undefined) ? "High" : undefined;\n    const compFill = (per10k !== undefined && per10k < 1.4) ? 1 : (per10k !== undefined && per10k < 2.2) ? 2 : (per10k !== undefined) ? 3 : 0;',
+  count: 1
+};
+
+/** A21.2c (Task B10, D-C31): compEstab renders the vets count or nothing.
+ *  When c.vets is undefined, compEstab must be undefined, not "undefined". */
+const A21_2c: Amendment = {
+  id: 'A21.2c', date: '2026-09-10', ruling: 'compEstab renders vets count or nothing, never "undefined" (Task B10, D-C31)',
+  find: '      compEstab: String(c.vets),',
+  replace: '      compEstab: (c.vets !== undefined) ? String(c.vets) : undefined,',
+  count: 1
+};
+
+/** A21.2d (Task B10, D-C31): overviewTiles renders only populated tiles.
+ *  When c.pop, c.hh, c.income, c.growth or c.econ are undefined, the corresponding tile
+ *  should not render a value at all. The fourth tile (pets) is left undefined in the fixture
+ *  anyway; the amendment only changes the conditional for the others. */
+const A21_2d: Amendment = {
+  id: 'A21.2d', date: '2026-09-10', ruling: 'overviewTiles renders only populated tiles (Task B10, D-C31)',
+  find: 'overviewTiles: [\n        { v: this.fmtMetric("households", c.pop), k: "Population", sub: (c.growth > 0 ? "+" : "") + c.growth.toFixed(1) + "% (5 yrs)" },\n        { v: this.fmtMetric("households", c.hh), k: "Households", sub: "ACS 5-year" },\n        { v: "$" + Math.round(c.income / 1000) + "K", k: "Median Income", sub: (incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US" },\n        { v: this.fmtMetric("households", c.pets), k: "Est. Pet Households", sub: "derived estimate" }\n      ],',
+  replace: 'overviewTiles: [\n        { v: (c.pop !== undefined) ? this.fmtMetric("households", c.pop) : undefined, k: "Population", sub: (c.growth !== undefined && c.growth > 0 ? "+" : "") + (c.growth !== undefined ? c.growth.toFixed(1) : "") + "% (5 yrs)" },\n        { v: (c.hh !== undefined) ? this.fmtMetric("households", c.hh) : undefined, k: "Households", sub: "ACS 5-year" },\n        { v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined && incomeIdx > 0 ? "+" : "") + (incomeIdx !== undefined ? incomeIdx : "") + "% vs US" },\n        { v: this.fmtMetric("households", c.pets), k: "Est. Pet Households", sub: "derived estimate" }\n      ],',
+  count: 1
+};
+
+/** A21.2e (Task B10, D-C31): oppTiles checks for undefined before rendering.
+ *  The third tile checks c.econ (payroll per establishment). All three should only show
+ *  their verdict and "on" status when their metric is defined and passes the threshold. */
+const A21_2e: Amendment = {
+  id: 'A21.2e', date: '2026-09-10', ruling: 'oppTiles renders verdicts only when metrics are defined (Task B10, D-C31)',
+  find: 'oppTiles: [\n        { icon: "$", label: incomeIdx > 25 ? "High" : incomeIdx > 0 ? "Above avg." : "Median", sub: "Affluence", on: incomeIdx > 0 },\n        { icon: "↗", label: c.growth > 20 ? "Strong" : c.growth > 8 ? "Steady" : "Flat", sub: "Population Growth", on: c.growth > 8 },\n        { icon: "⌂", label: c.econ > 650000 ? "Strong" : c.econ > 450000 ? "Typical" : "Lean", sub: "Sector Payroll", on: c.econ > 450000 },',
+  replace: 'oppTiles: [\n        { icon: "$", label: (incomeIdx !== undefined) ? (incomeIdx > 25 ? "High" : incomeIdx > 0 ? "Above avg." : "Median") : "", sub: "Affluence", on: (incomeIdx !== undefined) && incomeIdx > 0 },\n        { icon: "↗", label: (c.growth !== undefined) ? (c.growth > 20 ? "Strong" : c.growth > 8 ? "Steady" : "Flat") : "", sub: "Population Growth", on: (c.growth !== undefined) && c.growth > 8 },\n        { icon: "⌂", label: (c.econ !== undefined) ? (c.econ > 650000 ? "Strong" : c.econ > 450000 ? "Typical" : "Lean") : "", sub: "Sector Payroll", on: (c.econ !== undefined) && c.econ > 450000 },',
+  count: 1
+};
+
 /** A22 (John, 2026-09-10 — Task SL10: "Preserve existing seed wording/detail"): the wizard's
  *  ownership select widens from four options (the design's four) to ten, adding the seeds' own six
  *  phrasings alongside the design's four. The API's `OWNERSHIPS` tuple and the design's option
@@ -3106,7 +3158,8 @@ export function amendments(): Amendment[] {
     A19_1, A19_2, A19_3, A19_4, A19_5, A19_6, A19_7, A19_8, A19_9, A19_10, A19_11, A19_12,
     // A21 — market-data layers do not render absence as zero (A-C28); A21.2/A21.2b reverted (A-C29,
     // the figure is payroll); A21.3a–d take the year from the data instead of hard-coding 2015.
-    A21_1, A21_1b, A21_3a, A21_3b, A21_3c, A21_3d,
+    // A21.2b-e handle the panel rendering when figures are undefined (Task B10, D-C31).
+    A21_1, A21_1b, A21_2b, A21_2c, A21_2d, A21_2e, A21_3a, A21_3b, A21_3c, A21_3d,
     // A22 — the ownership vocabulary widens to the seeds' own wording (2026-09-10, Task SL10).
     A22];
 }

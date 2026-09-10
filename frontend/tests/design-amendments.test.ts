@@ -204,14 +204,16 @@ describe('local design amendments (spec D15)', () => {
     'A19.1', 'A19.2', 'A19.3', 'A19.4', 'A19.5', 'A19.6', 'A19.7', 'A19.8', 'A19.9', 'A19.10', 'A19.11', 'A19.12',
     // A21 — the Browse map's veterinarian and economic layers read real API data without
     // rendering missing data as zero (controller amendment A-C28, 2026-09-10, controller amendment
-    // A-C29, 2026-09-10). Two literal script edits plus three template edits: A21.1 removes the
-    // `|| 0` defaults so missing census figures become undefined in communities(); A21.1b completes
-    // the fix at the assembly point, skipping entries in marketVals when the raw value is
-    // null/undefined so they never reach the renderer. A21.2 and A21.2b (reverted by A-C29: the
-    // figure is payroll, not revenue; the original labels were correct) are superseded by A21.3a/b/c
-    // which remove hardcoded years from three places (VALUE_LAYERS label, LAYER_META sub-line, and
-    // the Data Layers card row), making the vintage-dependent display match the data.
-    'A21.1', 'A21.1b', 'A21.3a', 'A21.3b', 'A21.3c', 'A21.3d',
+    // A-C29, 2026-09-10). A21.1 removes the `|| 0` defaults so missing census figures become
+    // undefined in communities(); A21.1b completes the fix at the assembly point, skipping entries
+    // in marketVals when the raw value is null/undefined so they never reach the renderer. A21.2b-e
+    // (Task B10, D-C31) fix the docked panel's rendering of undefined/NaN values when a listing has
+    // no census figures: per10k, incomeIdx, compLevel/compFill become undefined when metrics are
+    // missing; compEstab, overviewTiles and oppTiles all check for undefined before rendering.
+    // A21.3a/b/c/d remove hardcoded years from four places (VALUE_LAYERS label, LAYER_META
+    // sub-line, Data Layers card row, and the detail Growth row), making the vintage-dependent
+    // display match the data.
+    'A21.1', 'A21.1b', 'A21.2b', 'A21.2c', 'A21.2d', 'A21.2e', 'A21.3a', 'A21.3b', 'A21.3c', 'A21.3d',
     // A22 — the ownership vocabulary widens to the seeds' own wording (John, 2026-09-10, Task SL10:
     // "Preserve existing seed wording/detail"). One literal edit: the wizard step 1 ownership
     // select's ten options, combining the design's four with the seeds' own six phrasings.

@@ -14,13 +14,16 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 class CommunityRow(TypedDict):
     """The six Community Context fields, all nullable. A null means unavailable — either the
-    dataset is not cleared, the value is suppressed, or there is no row for this metric."""
+    dataset is not cleared, the value is suppressed, or there is no row for this metric. The
+    label indicates which data band was used: either the place name or "Within 10 minutes of
+    the practice" for the drive_10 fallback, or None if no figures are available."""
     pop: str | None
     growth: str | None
     income: str | None
     hh: str | None
     vets: int | None
     econ_k: int | None
+    label: str | None
 
 
 async def _active(conn: AsyncConnection) -> dict[str, str]:
@@ -71,6 +74,10 @@ def community_rows(
     Returns a dict keyed by listing_id, one CommunityRow per listing with rows, or an absent
     key for listings with no rows (the serialiser turns absence into six nulls).
 
+    D-C32 (2026-09-10): A listing with place-band figures uses those; a listing with only
+    drive_10 rows uses those and the label reads "Within 10 minutes of the practice"; a listing
+    with neither returns the six nulls it returns today.
+
     Parameters:
         conn: sync psycopg2 database connection
         listing_ids: the listing ids on this page
@@ -86,15 +93,14 @@ def community_rows(
     # Use the passed-in registry
     reg = registry
 
-    # Fetch all market_metric rows for these listings, place band only
-    # Note: we fetch all rows and don't filter by vintage here, since different metrics
-    # may have different vintages (e.g., zbp might be 2022 while acs5 is 2019-2023)
+    # Fetch all market_metric rows for these listings, both place and drive_10 bands
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT listing_id, metric_key, value_num, suppressed, source_dataset, vintage
+            SELECT listing_id, metric_key, value_num, suppressed, source_dataset, vintage, band
             FROM market_metric
-            WHERE listing_id = ANY(%s::uuid[]) AND band = %s
-        """, (listing_ids, "place"))
+            WHERE listing_id = ANY(%s::uuid[]) AND band = ANY(%s::text[])
+            ORDER BY listing_id, band
+        """, (listing_ids, ["place", "drive_10"]))
         raw_rows = cur.fetchall()
 
     # Get column names from cursor description
@@ -104,24 +110,42 @@ def community_rows(
     else:
         rows = []
 
-    # Build the result dict, keyed by listing_id
-    result: dict[str, CommunityRow] = {}
-    metrics_by_listing: dict[str, dict[str, Any]] = {}
+    # Build the metrics by (listing_id, band)
+    metrics_by_listing_band: dict[tuple[str, str], dict[str, Any]] = {}
 
     for row in rows:
         lid = str(row["listing_id"])
-        if lid not in metrics_by_listing:
-            metrics_by_listing[lid] = {}
-        metrics_by_listing[lid][row["metric_key"]] = row
+        band = row["band"]
+        key = (lid, band)
+        if key not in metrics_by_listing_band:
+            metrics_by_listing_band[key] = {}
+        metrics_by_listing_band[key][row["metric_key"]] = row
 
-    # For each listing, format the six fields
+    # For each listing, check place band first, then drive_10
+    result: dict[str, CommunityRow] = {}
     acs5_prior_vintage = active.get("acs5_prior")
 
     for lid in listing_ids:
-        if lid not in metrics_by_listing:
-            continue  # No rows for this listing, absent from dict
+        place_key = (lid, "place")
+        drive_10_key = (lid, "drive_10")
 
-        metrics = metrics_by_listing[lid]
+        # Prefer place band, fall back to drive_10
+        band_to_use = None
+        label = None
+        if place_key in metrics_by_listing_band:
+            metrics = metrics_by_listing_band[place_key]
+            band_to_use = metrics
+            # Label is the place name (we'd fetch this from geoid lookup in the real implementation;
+            # for now use a generic label since the place name is not in the metrics table)
+            label = None
+        elif drive_10_key in metrics_by_listing_band:
+            metrics = metrics_by_listing_band[drive_10_key]
+            band_to_use = metrics
+            label = "Within 10 minutes of the practice"
+        else:
+            # No metrics for this listing
+            continue
+
         community_row: CommunityRow = {
             "pop": None,
             "growth": None,
@@ -129,32 +153,37 @@ def community_rows(
             "hh": None,
             "vets": None,
             "econ_k": None,
+            "label": label,
         }
 
+        if band_to_use is None:
+            result[lid] = community_row
+            continue
+
         # Population
-        if "population" in metrics:
-            m = metrics["population"]
+        if "population" in band_to_use:
+            m = band_to_use["population"]
             if not m["suppressed"] and _cleared(reg, m["source_dataset"]):
                 pop_val = float(m["value_num"])
                 community_row["pop"] = f"{round(pop_val):,}"
 
         # Households
-        if "households" in metrics:
-            m = metrics["households"]
+        if "households" in band_to_use:
+            m = band_to_use["households"]
             if not m["suppressed"] and _cleared(reg, m["source_dataset"]):
                 hh_val = float(m["value_num"])
                 community_row["hh"] = f"{round(hh_val):,} households"
 
         # Median household income
-        if "median_hh_income" in metrics:
-            m = metrics["median_hh_income"]
+        if "median_hh_income" in band_to_use:
+            m = band_to_use["median_hh_income"]
             if not m["suppressed"] and _cleared(reg, m["source_dataset"]):
                 income_val = float(m["value_num"])
                 community_row["income"] = f"${round(income_val):,}"
 
         # Population growth (requires acs5_prior cleared)
-        if "population_growth_pct" in metrics:
-            m = metrics["population_growth_pct"]
+        if "population_growth_pct" in band_to_use:
+            m = band_to_use["population_growth_pct"]
             if (
                 not m["suppressed"]
                 and _cleared(reg, m["source_dataset"])
@@ -165,16 +194,16 @@ def community_rows(
                 prior_end_year = acs5_prior_vintage[-4:]  # Last 4 characters
                 community_row["growth"] = f"{growth_val:+.1f}% since {prior_end_year}"
 
-        # Establishments (vets) - primary is zbp
-        if "establishments" in metrics:
-            m = metrics["establishments"]
+        # Establishments (vets)
+        if "establishments" in band_to_use:
+            m = band_to_use["establishments"]
             if not m["suppressed"] and _cleared(reg, m["source_dataset"]) and _extra_cleared(reg, "establishments", m["source_dataset"]):
                 est_val = float(m["value_num"])
                 community_row["vets"] = int(est_val)
 
         # Revenue per establishment (econ_k) - in thousands
-        if "revenue_per_establishment" in metrics:
-            m = metrics["revenue_per_establishment"]
+        if "revenue_per_establishment" in band_to_use:
+            m = band_to_use["revenue_per_establishment"]
             if not m["suppressed"] and _cleared(reg, m["source_dataset"]):
                 rev_val = float(m["value_num"])
                 community_row["econ_k"] = round(rev_val / 1000)

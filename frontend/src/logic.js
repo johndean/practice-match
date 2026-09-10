@@ -1,5 +1,3 @@
-// Ported verbatim from the approved prototype 'Practice Match V3.dc.html'.
-// Do not restyle or restructure: every value here is design-approved.
 import { DCLogic } from './dc-logic.js';
 
 const P = [
@@ -860,9 +858,9 @@ class Component extends DCLogic {
   photoSet(p) {
     // Real photographs supplied for a specific practice, keyed by slot id.
     const SRC = {
-      "ph-p2-exterior": "/assets/photos/round-rock-exterior-street.webp",
-      "ph-p2-exterior2": "/assets/photos/round-rock-exterior-side.webp",
-      "ph-p2-exterior3": "/assets/photos/round-rock-exterior-parking.jpeg"
+      "ph-p2-exterior": "assets/photos/round-rock-exterior-street.webp",
+      "ph-p2-exterior2": "assets/photos/round-rock-exterior-side.webp",
+      "ph-p2-exterior3": "assets/photos/round-rock-exterior-parking.jpeg"
     };
     if (p.id === "p2") {
       const name = this.practiceName(p);
@@ -909,12 +907,12 @@ class Component extends DCLogic {
   }
 
   heroSrc(p) {
-    return (p.photos && p.photos[0]) || (p.id === "p2" ? "/assets/photos/round-rock-exterior-street.webp" : "");
+    return (p.photos && p.photos[0]) || (p.id === "p2" ? "assets/photos/round-rock-exterior-street.webp" : "");
   }
 
   // Thumbnail-safe variant: reads at small sizes where the wide street view does not.
   thumbSrc(p) {
-    return (p.photos && (p.photos[1] || p.photos[0])) || (p.id === "p2" ? "/assets/photos/round-rock-exterior-parking.jpeg" : "");
+    return (p.photos && (p.photos[1] || p.photos[0])) || (p.id === "p2" ? "assets/photos/round-rock-exterior-parking.jpeg" : "");
   }
 
   practiceName(p) {
@@ -987,11 +985,11 @@ class Component extends DCLogic {
   marketPanel(sel, selComm, comms, market) {
     const s = this.state;
     const c = selComm || comms[0] || { pop: 0, hh: 0, income: 0, growth: 0, pets: 0, vets: 0 };
-    const per10k = c.hh ? (c.vets / (c.hh / 10000)) : 0;
+    const per10k = (c.hh && c.vets) ? (c.vets / (c.hh / 10000)) : undefined;
     const incomeNat = 75149; // ACS 2023 U.S. median household income
-    const incomeIdx = Math.round(((c.income - incomeNat) / incomeNat) * 100);
-    const compLevel = per10k < 1.4 ? "Low" : per10k < 2.2 ? "Moderate" : "High";
-    const compFill = per10k < 1.4 ? 1 : per10k < 2.2 ? 2 : 3;
+    const incomeIdx = c.income ? Math.round(((c.income - incomeNat) / incomeNat) * 100) : undefined;
+    const compLevel = (per10k !== undefined && per10k < 1.4) ? "Low" : (per10k !== undefined && per10k < 2.2) ? "Moderate" : (per10k !== undefined) ? "High" : undefined;
+    const compFill = (per10k !== undefined && per10k < 1.4) ? 1 : (per10k !== undefined && per10k < 2.2) ? 2 : (per10k !== undefined) ? 3 : 0;
     const score = Math.max(0, Math.min(100, Math.round(
       40 * Math.min(c.income / 140000, 1) + 35 * Math.min(c.growth / 40, 1) + 25 * Math.max(0, 1 - per10k / 3)
     )));
@@ -1045,21 +1043,21 @@ class Component extends DCLogic {
       otherTitle: ({ overview: "Overview", financials: "Financials", property: "Property", contact: "Contact" })[s.mdTab] || "Overview",
       goInsights: () => this.setState({ mdTab: "insights" }),
       overviewTiles: [
-        { v: this.fmtMetric("households", c.pop), k: "Population", sub: (c.growth > 0 ? "+" : "") + c.growth.toFixed(1) + "% (5 yrs)" },
-        { v: this.fmtMetric("households", c.hh), k: "Households", sub: "ACS 5-year" },
-        { v: "$" + Math.round(c.income / 1000) + "K", k: "Median Income", sub: (incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US" },
+        { v: (c.pop !== undefined) ? this.fmtMetric("households", c.pop) : undefined, k: "Population", sub: (c.growth !== undefined && c.growth > 0 ? "+" : "") + (c.growth !== undefined ? c.growth.toFixed(1) : "") + "% (5 yrs)" },
+        { v: (c.hh !== undefined) ? this.fmtMetric("households", c.hh) : undefined, k: "Households", sub: "ACS 5-year" },
+        { v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined && incomeIdx > 0 ? "+" : "") + (incomeIdx !== undefined ? incomeIdx : "") + "% vs US" },
         { v: this.fmtMetric("households", c.pets), k: "Est. Pet Households", sub: "derived estimate" }
       ],
-      compEstab: String(c.vets),
+      compEstab: (c.vets !== undefined) ? String(c.vets) : undefined,
       compPer10k: per10k.toFixed(1),
       compLevel: compLevel + " Competition",
       compBars: [1, 2, 3].map((i) => ({
         style: "flex: 1; height: 8px; border-radius: 2px; background: " + (i <= compFill ? "#4c9a6a" : "#dbe4ea") + ";"
       })),
       oppTiles: [
-        { icon: "$", label: incomeIdx > 25 ? "High" : incomeIdx > 0 ? "Above avg." : "Median", sub: "Affluence", on: incomeIdx > 0 },
-        { icon: "↗", label: c.growth > 20 ? "Strong" : c.growth > 8 ? "Steady" : "Flat", sub: "Population Growth", on: c.growth > 8 },
-        { icon: "⌂", label: c.econ > 650000 ? "Strong" : c.econ > 450000 ? "Typical" : "Lean", sub: "Sector Payroll", on: c.econ > 450000 },
+        { icon: "$", label: (incomeIdx !== undefined) ? (incomeIdx > 25 ? "High" : incomeIdx > 0 ? "Above avg." : "Median") : "", sub: "Affluence", on: (incomeIdx !== undefined) && incomeIdx > 0 },
+        { icon: "↗", label: (c.growth !== undefined) ? (c.growth > 20 ? "Strong" : c.growth > 8 ? "Steady" : "Flat") : "", sub: "Population Growth", on: (c.growth !== undefined) && c.growth > 8 },
+        { icon: "⌂", label: (c.econ !== undefined) ? (c.econ > 650000 ? "Strong" : c.econ > 450000 ? "Typical" : "Lean") : "", sub: "Sector Payroll", on: (c.econ !== undefined) && c.econ > 450000 },
         { icon: "", label: "", sub: "", on: false }
       ].slice(0, 3).map((t) => ({
         icon: t.icon, label: t.label, sub: t.sub,
@@ -2027,5 +2025,6 @@ class Component extends DCLogic {
     };
   }
 }
+
 
 export { Component, MARKETS, P, VETS, ECON_K };
