@@ -230,11 +230,21 @@ describe('local design amendments (spec D15)', () => {
     // One literal edit: `toggleLegend` clears mdLayerMenu and mdCompareMenu unconditionally — on
     // expand as well as collapse — so neither menu can come back open.
     'A23',
+    // A25 — Task MP1 (John, 2026-09-10): "a listing with no coordinates keeps its place in the
+    // results and does not get a pin." Six literal script edits: A25.1 the pin list, A25.2 the
+    // drive-ring centre and A25.3 the map's community list all skip a listing with no finite
+    // point (the three legs into Leaflet's `toLatLng(null)`); A25.4 stops the panel's
+    // last-resort community object standing in zeros for absent figures; A25.5 gives the panel
+    // the `p8` term A21.4a dropped, so it and the detail agree. A20 is reserved by the
+    // image-identifiability plan and A24 by the neighbourhood-shading spec, both in flight.
+    // A25.6 — fix round 1, Important-1: `showDrive` had no coordinate term, so A25.2's restored
+    // else-branch painted the drive-time ring around the metro centre for an unlocated listing.
+    'A25.1', 'A25.2', 'A25.3', 'A25.4', 'A25.5', 'A25.6',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(176);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(182);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -813,7 +823,11 @@ describe('local design amendments (spec D15)', () => {
     for (const row of md.split('\n')) {
       const id = /^\|\s*(A[\w.]+)\s*\|/.exec(row)?.[1];
       if (id === undefined) continue;
-      const cited = [...row.matchAll(/V3:(\d+)/g)].map((c) => Number(c[1]));
+      // BOTH ENDS of a range, not only the first number (Task MP1). `V3:1974–1969` and
+      // `V3:2613-2431` both stood in this file with an end left behind by an earlier
+      // re-map, and both passed: the pattern stopped at the first number, so the half of
+      // the citation a reader uses to find the END of a multi-line edit was never measured.
+      const cited = [...row.matchAll(/V3:(\d+)(?:[\u2013-](\d+))?/g)].flatMap((c) => [Number(c[1]), ...(c[2] ? [Number(c[2])] : [])]);
       if (cited.length === 0) continue;
       const own = id === 'A1' ? list.filter((a) => a.id.startsWith('A1.')) : list.filter((a) => a.id === id);
       expect(own.length, `${id}: the row cites a V3 line but no amendment carries that id`).toBeGreaterThan(0);

@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Component, ECON_K, P, VETS } from './logic.js';
+import { Component, ECON_K, MARKETS, P, VETS } from './logic.js';
 import { STEP_FIELDS, makeListingsAdapter } from './listings/seller';
 
 let c: any;
@@ -3680,5 +3680,179 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
         expect(r.bStyle).toContain('background:');
       }
     });
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// A25 — Task MP1. A published listing whose seller has not disclosed its location is served
+// `lat: null, lng: null` (`app/api/listings.py`'s `serialise`; `location_disclosed` defaults
+// FALSE in `migrations/016_listing.sql`, so the nulls are the default, not an edge case). It
+// reached `engine.marker([p.lat, p.lng], …)` unguarded, and Leaflet 1.9.4's `toLatLng` returns
+// `null` for `[null, null]` — the array branch is gated on `typeof a[0] !== 'object'` and
+// `typeof null === 'object'` — so `Marker._latlng` was null and `_setPos` read `.lat` off it.
+// One listing was enough: the `forEach` has no try/catch, so pin drawing stopped there for every
+// later listing, and the poisoned layer re-threw from inside Leaflet's own event loop on every
+// zoom pass.
+//
+// John's ruling: the listing KEEPS ITS PLACE in the results and does not get a pin. The four
+// production edits, each named on the case that fails without it:
+//   A25.1  `practices:` filters to listings with a finite point   (the pin list)
+//   A25.2  `driveCenter` falls back to the metro centre           (the second leg into Leaflet)
+//   A25.3  `communities:` filters the same way                    (the mosaic's own bbox)
+//   A25.6  `showDrive` takes the same test                        (fix round 1: A25.2 restored
+//          the else-branch, which made the drive-time ring paintable around the metro centre
+//          for a listing whose seller withheld the location — a false statement, not an
+//          omission. No point, no ring.)
+// -------------------------------------------------------------------------------------------
+describe('A25 — a listing with no coordinates keeps its place and gets no pin (Task MP1)', () => {
+  const AUSTIN = 'Austin, TX';
+  const austin = () => (P as unknown as Record<string, unknown>[]).filter((x) => x.market === AUSTIN && x.status === 'published');
+
+  /** Run `body` with `targets`' coordinates set to `lat`/`lng` — the row `GET /api/listings`
+   *  serves for a published listing whose location is undisclosed. Everything is put back
+   *  afterwards, so the fixtures the rest of this file characterises are untouched. */
+  function at(targets: Record<string, unknown>[], lat: unknown, lng: unknown, body: () => void): void {
+    const saved = targets.map((t) => ({ t, lat: t.lat, lng: t.lng }));
+    for (const t of targets) { t.lat = lat; t.lng = lng; }
+    try { body(); } finally { for (const s of saved) { s.t.lat = s.lat; s.t.lng = s.lng; } }
+  }
+
+  it('A25.1 — the pin list drops it, and the rail, the count and the order keep it', () => {
+    const p = austin()[0];
+    const before = c.marketVals(c.filtered());
+    at([p], null, null, () => {
+      const md = c.marketVals(c.filtered());
+      // The map skips it: not at [0, 0], not at the metro centre, not at all.
+      expect(md.practices.map((x: any) => x.id)).not.toContain(p.id);
+      expect(md.practices).toHaveLength(before.practices.length - 1);
+      for (const pin of md.practices) {
+        expect(Number.isFinite(pin.lat), `pin ${pin.id} carries a non-finite lat`).toBe(true);
+        expect(Number.isFinite(pin.lng), `pin ${pin.id} carries a non-finite lng`).toBe(true);
+      }
+      // …and the rail does not: same rows, same order, same count, same headline.
+      expect(md.mdResults.map((r: any) => r.name)).toEqual(before.mdResults.map((r: any) => r.name));
+      expect(md.mdHeadline).toBe(before.mdHeadline);
+      expect(md.showingLabel).toBe(before.showingLabel);
+    });
+  });
+
+  it('A25.1 — a NaN or an undefined point is skipped too, not only a null', () => {
+    const p = austin()[0];
+    for (const [lat, lng] of [[NaN, NaN], [undefined, undefined], [30.5, null]] as [unknown, unknown][]) {
+      at([p], lat, lng, () => {
+        expect(c.marketVals(c.filtered()).practices.map((x: any) => x.id)).not.toContain(p.id);
+      });
+    }
+  });
+
+  it('A25.2 — driveCenter falls back to the metro centre when the selection has no point', () => {
+    const p = austin()[0];
+    at([p], null, null, () => {
+      c.setState({ mdSel: p.id });
+      const md = c.marketVals(c.filtered());
+      expect(md.driveCenter).toEqual(MARKETS[AUSTIN].center);
+      expect(md.driveCenter).not.toEqual([null, null]);
+    });
+  });
+
+  it('A25.2 — …and is still the selection’s own point when it has one', () => {
+    const p = austin()[0];
+    c.setState({ mdSel: p.id });
+    expect(c.marketVals(c.filtered()).driveCenter).toEqual([p.lat, p.lng]);
+  });
+
+  it('A25.3 — the map’s community list drops it, so the mosaic bbox stays the metro’s', () => {
+    const p = austin()[0];
+    const before = c.marketVals(c.filtered());
+    const box = (comms: any[]) => [Math.min(...comms.map((x) => x.lat)), Math.max(...comms.map((x) => x.lat)),
+      Math.min(...comms.map((x) => x.lng)), Math.max(...comms.map((x) => x.lng))];
+    at([p], null, null, () => {
+      const md = c.marketVals(c.filtered());
+      expect(md.communities.map((x: any) => x.name)).not.toContain(p.area);
+      expect(md.communities).toHaveLength(before.communities.length - 1);
+      // `mosaicBbox` is Math.min/Math.max over these lats and lngs, and `null` coerces to 0:
+      // one unlocated community stretched the metro box to the equator and the prime meridian,
+      // which is 100 million mosaic cells — a hung tab, not a missing shape.
+      const [minLat, maxLat, minLng, maxLng] = box(md.communities);
+      expect(minLat).toBeGreaterThan(29); expect(maxLat).toBeLessThan(31);
+      expect(minLng).toBeLessThan(-97); expect(maxLng).toBeLessThan(-97);
+    });
+  });
+
+  it('A25.3 — …and the strip cards still count its figures, because a figure is not a point', () => {
+    const p = austin()[0];
+    const before = c.marketVals(c.filtered());
+    at([p], null, null, () => {
+      const md = c.marketVals(c.filtered());
+      // The premise, asserted rather than assumed (fix round 1, Minor-3): the MAP's list really
+      // did lose the unlocated community. Without this the case only discriminates because
+      // dropping one of nine values happens to move a median.
+      expect(md.communities.length, 'the map list did not shrink, so this control proves nothing')
+        .toBeLessThan(c.communities().length);
+      expect(md.stripCards.map((s: any) => s.value)).toEqual(before.stripCards.map((s: any) => s.value));
+    });
+  });
+
+  // Fix round 1, Important-1 (controller ruling, 2026-09-10: "no point, no ring"). `showDrive` is
+  // `!!sel` with no coordinate term, and `MarketMapView.vue:91` draws the C7 drive-time ring on
+  // `showDrive && driveCenter`. Before A25.2 that path threw inside `L.circle([null, null])` and
+  // no ring ever appeared; after it the else-branch became PAINTABLE, so selecting an unlocated
+  // listing drew a 16 km dashed "roughly ten minutes' drive" circle around the middle of Austin.
+  // That is worse than the missing pin it replaced: a missing pin omits, a ring centred on a
+  // place the practice is not ASSERTS something false. A25.6 gives `showDrive` the same
+  // finite-coordinate test the pin list uses.
+  it('A25.6 — no point, no ring: showDrive is false when the selection has no point', () => {
+    const p = austin()[0];
+    at([p], null, null, () => {
+      c.setState({ mdSel: p.id });
+      const md = c.marketVals(c.filtered());
+      expect(md.showDrive, 'a 16 km drive-time ring was painted around the metro centre').toBe(false);
+      // …and A25.2's fallback is still what it was: the ring is off, not aimed somewhere else.
+      expect(md.driveCenter).toEqual(MARKETS[AUSTIN].center);
+    });
+  });
+
+  it('A25.6 — …and a selection that HAS a point still gets its ring, on its own point', () => {
+    const p = austin()[0];
+    c.setState({ mdSel: p.id });
+    const md = c.marketVals(c.filtered());
+    expect(md.showDrive).toBe(true);
+    expect(md.driveCenter).toEqual([p.lat, p.lng]);
+  });
+
+  // ---- the two panel defects closed in the same task ---------------------------------------
+
+  it('A25.4 — the panel’s last-resort community renders nothing, never a zero (D-C31)', () => {
+    const sel = austin()[0];
+    // Reached with no community of its own AND an empty community list: the one place left in
+    // the panel where a zero stood in for an absence.
+    const panel = c.marketPanel(sel, null, [], AUSTIN);
+    expect(panel.overviewTiles).toEqual([
+      { v: undefined, k: 'Population', sub: undefined },
+      { v: undefined, k: 'Households', sub: 'ACS 5-year' },
+      { v: undefined, k: 'Median Income', sub: undefined },
+      { v: undefined, k: 'Est. Pet Households', sub: 'derived estimate' }
+    ]);
+    expect(panel.compEstab).toBeUndefined();
+    expect(panel.oppTiles.map((t: any) => t.label)).toEqual(['', '', '']);
+  });
+
+  it('A25.5 — the panel and the detail agree about p8, the design’s own unavailable fixture', () => {
+    const p8 = (P as unknown as Record<string, unknown>[]).filter((x) => x.id === 'p8')[0];
+    const comms = c.communities();
+    const panel = c.marketPanel(p8, comms.filter((x: any) => x.id === 'p8')[0], comms, AUSTIN);
+    c.setState({ detailId: 'p8' });
+    const detail = c.detail();
+    expect(detail.hasDemo, 'the design’s own fixture for "Community data unavailable"').toBe(false);
+    expect(panel.hasDemo, 'the panel showed a full profile for the listing whose detail says the data is unavailable').toBe(detail.hasDemo);
+    expect(panel.noDemo).toBe(detail.noDemo);
+  });
+
+  it('A25.5 — …and every other design fixture still shows its figures on both', () => {
+    const comms = c.communities();
+    for (const p of austin().filter((x) => x.id !== 'p8')) {
+      const panel = c.marketPanel(p, comms.filter((x: any) => x.id === p.id)[0], comms, AUSTIN);
+      expect(panel.hasDemo, `the panel hid ${p.id}'s figures`).toBe(true);
+    }
   });
 });

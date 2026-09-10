@@ -505,10 +505,10 @@ class Component extends DCLogic {
       })(),
       mapCenter: cfg.center,
       mapZoom: cfg.zoom,
-      driveCenter: sel ? [sel.lat, sel.lng] : cfg.center,
+      driveCenter: (sel && Number.isFinite(sel.lat) && Number.isFinite(sel.lng)) ? [sel.lat, sel.lng] : cfg.center,
       layers,
       valueLayer,
-      communities: comms.map((c) => {
+      communities: comms.filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lng)).map((c) => {
         const vals = {};
         ["income", "pets", "growth", "households", "econ", "competition"].forEach((k) => {
           const raw = k === "households" ? c.hh : k === "competition" ? c.vets : c[k];
@@ -522,7 +522,7 @@ class Component extends DCLogic {
           sourceNote: valueLayer ? LAYER_META[valueLayer].source : ""
         };
       }),
-      practices: list.map((p) => ({
+      practices: list.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng)).map((p) => ({
         id: p.id, lat: p.lat, lng: p.lng,
         priceLabel: this.money(p.price),
         name: this.practiceName(p),
@@ -704,7 +704,7 @@ class Component extends DCLogic {
         return !!valueLayer && !s.mdInsightOff && s.mdLegendOff !== true && !s.mdCompareOpen && mapW >= 810;
       })(),
       dismissInsight: () => this.setState({ mdInsightOff: true }),
-      showDrive: !!sel,
+      showDrive: !!(sel && Number.isFinite(sel.lat) && Number.isFinite(sel.lng)),
       recenterKey: s.mdRecenter || 0,
       resetView: () => this.setState({ mdSel: null, mdRecenter: (s.mdRecenter || 0) + 1 }),
       selectArea: (name) => this.setState({ mdArea: name }),
@@ -987,7 +987,7 @@ class Component extends DCLogic {
 
   marketPanel(sel, selComm, comms, market) {
     const s = this.state;
-    const c = selComm || comms[0] || { pop: 0, hh: 0, income: 0, growth: 0, pets: 0, vets: 0 };
+    const c = selComm || comms[0] || { pop: undefined, hh: undefined, income: undefined, growth: undefined, pets: undefined, vets: undefined };
     const per10k = (c.hh && c.vets) ? (c.vets / (c.hh / 10000)) : undefined;
     const incomeNat = 75149; // ACS 2023 U.S. median household income
     const incomeIdx = c.income ? Math.round(((c.income - incomeNat) / incomeNat) * 100) : undefined;
@@ -1041,8 +1041,8 @@ class Component extends DCLogic {
           ((s.mdTab || "insights") === t.key ? "var(--vf-navy)" : "var(--vf-text)") + "; border-bottom: 2px solid " +
           ((s.mdTab || "insights") === t.key ? "var(--vf-accent)" : "transparent") + ";"
       })),
-      hasDemo: sel.pop != null,
-      noDemo: sel.pop == null,
+      hasDemo: sel.id !== "p8" && sel.pop != null,
+      noDemo: sel.id === "p8" || sel.pop == null,
       overviewTitle: sel.communityLabel || "Market Overview (10 min drive)",
       isInsights: (s.mdTab || "insights") === "insights",
       isOther: (s.mdTab || "insights") !== "insights",
