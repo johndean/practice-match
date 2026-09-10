@@ -513,11 +513,15 @@ def test_the_listings_routes_are_guarded_not_public(dist: Any) -> None:
     assert Depends(REQUIRE_MARKET_READ).dependency is REQUIRE_MARKET_READ
 
 
-async def test_a_seeded_database_serves_all_eighteen(client: Any, conn: Any, redis: Any, member: Any) -> None:
+async def test_a_seeded_database_serves_every_seeded_hospital(client: Any, conn: Any, redis: Any, member: Any) -> None:
     """The end-to-end shape: the real seeder, the real endpoint, the real photograph files.
 
     `conn` monkeypatches `settings.database_url` to the scratch database, so the seeder writes
-    to the same database this request reads."""
+    to the same database this request reads.
+
+    Twenty-nine since Task SD1 (John's eighteen of 2026-09-06 and his eleven Dallas rows of
+    2026-09-10). The count is read from the seed file rather than retyped: what this asserts is
+    that the endpoint serves every row the seeder wrote, whatever that number becomes."""
     from app.config import settings
     from scripts import seed_listings as SL
 
@@ -525,7 +529,7 @@ async def test_a_seeded_database_serves_all_eighteen(client: Any, conn: Any, red
     _, cookies, headers = member()
     r = await client.get("/api/listings?limit=200", headers=auth_headers(cookies, headers))
     items = r.json()["items"]
-    assert len(items) == 18
+    assert len(items) == len(SL.load_seed(SL.SEEDS_FILE)) == 29
     # Review m1: a list of six `null`s is TRUTHY, so `all(item["photos"] …)` stopped meaning
     # "every hospital has a photograph" the moment A-L10 made the slots nullable. Every seeded
     # listing must carry at least one real photograph — a card with none shows nothing at all.
@@ -740,21 +744,49 @@ async def test_a_hospital_with_eleven_photographs_serves_the_eleventh(
 async def test_every_seeded_hospital_serves_every_photograph_with_a_caption(
     client: Any, conn: Any, redis: Any, member: Any
 ) -> None:
-    """End to end against the real eighteen: no listing carries an empty slot any more, the two
-    lists are the same length row for row, and every caption is the supplier's own description."""
+    """End to end against every seeded hospital: the two lists are the same length row for row,
+    every photograph carries a real description — the supplier's filename for John's eighteen,
+    the content verification's own words for the eleven Dallas rows (Task SD1) — and an EMPTY
+    captioned slot is served as a matched pair of nulls rather than as a URL with no caption or
+    a caption with no URL.
+
+    Seven of the eleven carry empty slots since fix round 1's C1: a multi-panel contact sheet
+    never occupies one of the design's six captioned positions, even when that leaves the
+    position null, and the design renders its own placeholder there."""
     from app.config import settings
     from scripts import seed_listings as SL
 
     SL.seed(settings.database_url, reset=True)
     _, cookies, headers = member()
     items = (await client.get("/api/listings?limit=200", headers=auth_headers(cookies, headers))).json()["items"]
-    assert len(items) == 18
+    assert len(items) == len(SL.load_seed(SL.SEEDS_FILE)) == 29
     for item in items:
         assert len(item["photos"]) >= 6, item["name"]
         assert len(item["photo_captions"]) == len(item["photos"]), item["name"]
-        assert all(p is not None for p in item["photos"]), item["name"]
-        assert all(isinstance(c, str) and c for c in item["photo_captions"]), item["name"]
-    assert sum(len(item["photos"]) for item in items) == 195, "every photograph John supplied"
+        assert any(p is not None for p in item["photos"]), item["name"]
+        # Index for index: a photograph carries a real description, and an empty captioned slot
+        # carries `""` — the ONE ruled way this API says "nobody has described this one"
+        # (`photo_captions`, A-SL26 (2)), which `photoSet` reads as falsey and renders the
+        # design's own fixed slot caption for. The zip is what makes this stronger than two
+        # independent counts: it catches a caption that has slid one position against its
+        # photograph, which is the defect A-L10 exists to prevent.
+        for url, caption in zip(item["photos"], item["photo_captions"], strict=True):
+            if url is None:
+                assert caption == "", (item["name"], "an empty slot carries a caption")
+            else:
+                assert isinstance(caption, str) and caption, (item["name"], url)
+    # 334 positions holding 313 photographs: 195 for John's eighteen, 118 of the 119 in his
+    # eleven Dallas folders — ONE refused, for a third-party business name; the second was
+    # restored by ruling A-IDP-7 once John ruled that a rendered street number is part of the
+    # invented identity and is governed by SHOW / NOT_SHOW rather than by refusal — and 21 empty
+    # captioned slots (fix round 1's C1: a composite never takes one of the design's six). Both
+    # numbers are read from the committed inventory, so what this asserts is that the endpoint
+    # serves exactly what the tree holds, positions AND photographs.
+    inventory = json.loads(SL.PHOTO_INDEX.read_text())["hospitals"]
+    committed = sum(len(e) for e in inventory.values())
+    assert sum(len(item["photos"]) for item in items) == committed == 334
+    photographs = sum(1 for e in inventory.values() for x in e if x["file"] is not None)
+    assert sum(1 for i in items for p in i["photos"] if p is not None) == photographs == 313
 
 
 # --- A-SL23 (0): one caption contract for seeds and sellers ------------------------------------

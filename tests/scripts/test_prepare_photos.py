@@ -639,10 +639,28 @@ def test_the_committed_curation_names_every_seeded_hospital_in_its_types_slot_or
     assert set(curation) == set(PP.seed_slugs())
     for slug, slots in curation.items():
         assert list(slots) == list(PP.slots_for(types[slug])), slug
-    filled = sum(1 for slots in curation.values() for name in slots.values() if name is not None)
-    assert (filled, sum(len(slots) for slots in curation.values())) == (73, 108), (
+    # Counted per TABLE, not as one total (Task SD1): A-L10's claim is about John's eighteen of
+    # 2026-09-06 and the plan record states it as 73 of 108. The eleven Dallas hospitals of
+    # 2026-09-10 are a separate verification with a stricter rule — a slot is filled only by a
+    # SINGLE photograph named at high or medium confidence, never by a multi-panel sheet — and
+    # most of those folders are sheets, so 22 of their 66 slots are filled and the rest are
+    # backfilled in folder order by `positions`, each under its OWN description (amendment A15).
+    # By NATO letter, not by "_dallas_": `6666_dallas_veterinary_specialist_hospital` is one of
+    # John's eighteen and is in Dallas too.
+    dallas = {slug for slug in curation
+              if slug.split("_", 1)[0] in {"alpha", "beta", "charlie", "delta", "echo", "foxtrot",
+                                           "hotel", "indigo", "juliet", "kilo", "lima"}}
+    assert len(dallas) == 11, sorted(dallas)
+
+    def counted(slugs: set[str]) -> tuple[int, int]:
+        chosen = {slug: slots for slug, slots in curation.items() if slug in slugs}
+        return (sum(1 for slots in chosen.values() for name in slots.values() if name is not None),
+                sum(len(slots) for slots in chosen.values()))
+
+    assert counted(set(curation) - dallas) == (73, 108), (
         "A-L10's content-verified count moved; the plan record says 73 of 108"
     )
+    assert counted(dallas) == (22, 66), "Task SD1's content-verified count moved"
 
 
 def test_a_curated_slug_numbers_its_files_by_slot_position(tmp_path: Path) -> None:
@@ -843,3 +861,514 @@ def test_main_reports_the_photographs_beyond_the_designs_six(
     assert PP.main(["--source", str(source), "--out", str(tmp_path / "out"),
                     "--slugs", "demo_hospital"]) == 0
     assert "8 files, 0 empty slots, 2 beyond the design's six slots" in capsys.readouterr().out
+
+
+# ======================================================================================
+# Task SD1 — a photograph's OWN description, the flags the content verification raised on it,
+# and a run that adds a folder without rewriting the ones already committed.
+#
+# John's Dallas filenames are `alpha_dallas_01.png`: they say nothing at all about what the
+# image shows, so `caption_of` cannot describe them and the keyword path cannot slot them.
+# A separate content verification read all 119 and produced, per image, a description, a
+# best-fit slot and a confidence. Two committed files carry its answers:
+#
+#   curation.json     — slot → filename, as A-L10 already defines it. A photograph fills a slot
+#                       ONLY where the verification named that slot at high or medium
+#                       confidence; everything else keeps folder order in the remaining
+#                       positions, which amendment A15.3 renders as tiles of their own.
+#   descriptions.json — filename → {description, flags}. The description is the photograph's
+#                       OWN caption (`photo_captions` → `p.photoCaptions[i]`, amendment A15), so
+#                       no photograph is ever captioned by a slot that does not describe it.
+#
+# `flags` is the content verification's own note about identifiable content, carried through to
+# the committed inventory so the image-identifiability pipeline (A-IDP-1..6, another branch) has
+# it when it runs. Carrying it is NOT publishing it: those seeds default to NOT SHOW, and
+# nothing here decides what is displayed. A flag is ABSENT rather than empty where nothing was
+# raised, so the 195 entries the eighteen already committed do not move.
+# ======================================================================================
+
+
+def _described(tmp_path: Path) -> Path:
+    path = tmp_path / "descriptions.json"
+    path.write_text(json.dumps({
+        "_comment": "why this file exists",
+        "demo": {
+            "01_exterior_front.png": {
+                "description": "Brick single-storey clinic behind a low hedge",
+                "flags": ["own_business_name"],
+            },
+            "04_interior_exam.png": {"description": "Stainless exam table under a window"},
+        },
+    }), encoding="utf-8")
+    return path
+
+
+def test_load_descriptions_reads_the_map_and_ignores_the_underscore_keys(tmp_path: Path) -> None:
+    loaded = PP.load_descriptions(_described(tmp_path))
+    assert set(loaded) == {"demo"}
+    assert loaded["demo"]["01_exterior_front.png"] == {
+        "description": "Brick single-storey clinic behind a low hedge",
+        "flags": ["own_business_name"], "refused": None,
+    }
+    assert loaded["demo"]["04_interior_exam.png"] == {
+        "description": "Stainless exam table under a window", "flags": [], "refused": None,
+    }
+
+
+def test_a_described_photograph_is_captioned_by_its_description_not_its_filename(
+    source: Path, tmp_path: Path
+) -> None:
+    """The whole point: `caption_of("01_exterior_front.png")` would say "Exterior — front",
+    which happens to be true here and says nothing at all for `alpha_dallas_01.png`."""
+    index = PP.prepare(source, tmp_path / "out", ["demo_hospital"], {},
+                       descriptions={"demo_hospital": {
+                           "01_exterior_front.png": {"description": "Brick clinic behind a hedge",
+                                                     "flags": [], "refused": None}}})
+    exterior = next(e for e in index["demo_hospital"] if e["source"] == "01_exterior_front.png")
+    assert exterior["caption"] == "Brick clinic behind a hedge"
+
+
+def test_a_photograph_nobody_described_keeps_the_filename_caption(
+    source: Path, tmp_path: Path
+) -> None:
+    """The eighteen have no descriptions file at all and must be unaffected; within the eleven,
+    a photograph the verification skipped falls back the same way."""
+    index = PP.prepare(source, tmp_path / "out", ["demo_hospital"], {},
+                       descriptions={"demo_hospital": {
+                           "01_exterior_front.png": {"description": "Brick clinic", "flags": [], "refused": None}}})
+    other = next(e for e in index["demo_hospital"] if e["source"] == "04_interior_exam.png")
+    assert other["caption"] == PP.caption_of("04_interior_exam.png")
+
+
+def test_a_flagged_photograph_carries_its_flags_into_the_inventory(
+    source: Path, tmp_path: Path
+) -> None:
+    index = PP.prepare(source, tmp_path / "out", ["demo_hospital"], {},
+                       descriptions={"demo_hospital": {
+                           "01_exterior_front.png": {"description": "Signed frontage",
+                                                     "flags": ["own_business_name", "own_street_number"], "refused": None}}})
+    exterior = next(e for e in index["demo_hospital"] if e["source"] == "01_exterior_front.png")
+    assert exterior["flags"] == ["own_business_name", "own_street_number"]
+
+
+def test_an_unflagged_photograph_carries_no_flags_key_at_all(source: Path, tmp_path: Path) -> None:
+    """Absent, not empty: the 195 entries already committed for John's eighteen must not move,
+    and `{}.get("flags", [])` is what the identifiability pipeline reads either way."""
+    index = PP.prepare(source, tmp_path / "out", ["demo_hospital"], {},
+                       descriptions={"demo_hospital": {
+                           "01_exterior_front.png": {"description": "Brick clinic", "flags": [], "refused": None}}})
+    for entry in index["demo_hospital"]:
+        assert "flags" not in entry, entry["source"]
+
+
+def test_a_described_file_the_folder_does_not_hold_is_refused(source: Path, tmp_path: Path) -> None:
+    """The same care `slot_choices` takes with the curation: a description keyed to a filename
+    that is not there is a typo that would silently caption nothing, and it names the slug."""
+    with pytest.raises(PP.SeedDataError) as exc:
+        PP.prepare(source, tmp_path / "out", ["demo_hospital"], {},
+                   descriptions={"demo_hospital": {"99_not_here.png": {"description": "x", "flags": [], "refused": None}}})
+    assert "demo_hospital" in str(exc.value) and "99_not_here.png" in str(exc.value)
+
+
+def test_merge_keeps_the_slugs_this_run_did_not_process(source: Path, tmp_path: Path) -> None:
+    """Task SD1's operational need: eleven folders are added to a tree that already holds
+    eighteen, and re-encoding the eighteen is both wasteful and a diff nobody asked for. With
+    `--merge` a narrow run REPLACES its own slugs and leaves every other one exactly as it was."""
+    out = tmp_path / "photos"
+    PP.prepare(source, out, ["demo_hospital"], {})
+    before = json.loads((out / "index.json").read_text(encoding="utf-8"))["hospitals"]["demo_hospital"]
+    second = tmp_path / "src2"
+    (second / "other_individual_images").mkdir(parents=True)
+    _flat(second / "other_individual_images" / "01_exterior_front.png", (300, 200))
+    index = PP.prepare(second, out, ["other"], {}, merge=True)
+    assert set(index) == {"demo_hospital", "other"}
+    written = json.loads((out / "index.json").read_text(encoding="utf-8"))["hospitals"]
+    assert written["demo_hospital"] == before, "merge rewrote a slug this run never touched"
+    assert (out / "demo_hospital" / "1.webp").exists()
+
+
+def test_without_merge_a_narrow_run_still_replaces_the_whole_index(
+    source: Path, tmp_path: Path
+) -> None:
+    """Characterisation of the behaviour that has always been there, pinned so `merge` cannot
+    become the silent default: without the flag the index is exactly this run's slugs."""
+    out = tmp_path / "photos"
+    PP.prepare(source, out, ["demo_hospital"], {})
+    second = tmp_path / "src3"
+    (second / "other_individual_images").mkdir(parents=True)
+    _flat(second / "other_individual_images" / "01_exterior_front.png", (300, 200))
+    index = PP.prepare(second, out, ["other"], {})
+    assert set(index) == {"other"}
+    assert set(json.loads((out / "index.json").read_text(encoding="utf-8"))["hospitals"]) == {"other"}
+
+
+def test_merge_on_a_tree_with_no_index_yet_simply_starts_empty(source: Path, tmp_path: Path) -> None:
+    index = PP.prepare(source, tmp_path / "fresh", ["demo_hospital"], {}, merge=True)
+    assert set(index) == {"demo_hospital"}
+
+
+def test_main_merges_when_asked_and_reads_the_committed_descriptions(
+    source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    out = tmp_path / "photos"
+    assert PP.main(["--source", str(source), "--out", str(out), "--slugs", "demo_hospital"]) == 0
+    second = tmp_path / "src4"
+    (second / "other_individual_images").mkdir(parents=True)
+    _flat(second / "other_individual_images" / "01_exterior_front.png", (300, 200))
+    monkeypatch.setattr(PP, "DESCRIPTIONS_FILE", _described(tmp_path))
+    assert PP.main(["--source", str(second), "--out", str(out), "--slugs", "other", "--merge"]) == 0
+    written = json.loads((out / "index.json").read_text(encoding="utf-8"))["hospitals"]
+    assert set(written) == {"demo_hospital", "other"}
+
+
+def test_main_returns_two_when_the_descriptions_file_is_unusable(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    bad = tmp_path / "descriptions.json"
+    bad.write_text("{not json", encoding="utf-8")
+    monkeypatch.setattr(PP, "DESCRIPTIONS_FILE", bad)
+    assert PP.main(["--source", str(tmp_path), "--out", str(tmp_path / "out"), "--slugs", "nope"]) == 2
+
+
+def test_a_missing_descriptions_file_is_simply_no_descriptions(
+    source: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """John's eighteen have none and must keep working: absent is "nobody described these",
+    not an error."""
+    monkeypatch.setattr(PP, "DESCRIPTIONS_FILE", tmp_path / "nowhere.json")
+    assert PP.main(["--source", str(source), "--out", str(tmp_path / "out"),
+                    "--slugs", "demo_hospital"]) == 0
+
+
+# --- Task SD1, the two rules the content verification's answers imposed on the pipeline ---------
+#
+# (1) A photograph the verification REFUSED is never encoded, and the file says why. A-L11's
+#     "nothing John supplies is ever dropped" is about the pipeline silently losing images to a
+#     filename it could not match — it was never a licence to publish an image carrying a THIRD
+#     PARTY's business name, a legible licence plate or an identifiable face. A refusal is
+#     therefore DATA in the repository, not an operator deleting a file from a staging folder:
+#     the next person to run this reproduces the same set.
+#
+# (2) A COMPOSITE NEVER OCCUPIES ONE OF THE DESIGN'S SIX CAPTIONED SLOTS — not even when that
+#     leaves the slot EMPTY (controller ruling, SD1 fix round 1, C1: option (b), not (a)).
+#
+#     A sheet of six pictures, or a two-panel letterbox strip, is not "the reception area", and
+#     a square tile the design built for one photograph is a presentation it never contemplated
+#     for a contact sheet. Absent beats faked, which is the project's first rule about the
+#     approved design. So the rule has two halves and neither of them is "prefer a single":
+#     the curation refuses to PLACE a composite in a slot, and the BACKFILL that fills a slot
+#     the curation left empty draws only from the SINGLE photographs. When a slug runs out of
+#     singles, its remaining captioned slots STAY NULL and the design renders its own
+#     placeholder for them — which is what A-L10 built that path for.
+#
+#     Nothing is dropped: A-L11 is untouched. EVERY composite still reaches a position past the
+#     sixth, where amendment A15.3 gives it a tile of its own captioned with its own
+#     description. What changes is only WHICH position, never WHETHER.
+#
+#     With no composites declared — John's eighteen of 2026-09-06, which have no descriptions
+#     file at all — every pick is `spare[0]` and the backfill is folder order exactly as it has
+#     always been. The characterisation case below pins that, and their 195 committed entries
+#     are unmoved.
+
+
+def test_a_refused_photograph_is_never_encoded_and_the_reason_is_kept(
+    source: Path, tmp_path: Path
+) -> None:
+    out = tmp_path / "out"
+    described = {"demo_hospital": {
+        "02_exterior_side.jpg": {"description": None, "flags": [],
+                                 "refused": "wall signage names a third party"}}}
+    index = PP.prepare(source, out, ["demo_hospital"], {}, descriptions=described)
+    assert "02_exterior_side.jpg" not in [e["source"] for e in index["demo_hospital"]]
+    assert not any(e["source"] == "02_exterior_side.jpg" for e in index["demo_hospital"])
+    # …and the seven that remain are all there: a refusal removes one photograph, not the folder.
+    assert len([e for e in index["demo_hospital"] if e["file"] is not None]) == 7
+
+
+def test_load_descriptions_reads_a_refusal_and_tolerates_a_missing_description(
+    tmp_path: Path
+) -> None:
+    path = tmp_path / "descriptions.json"
+    path.write_text(json.dumps({
+        "demo": {"x.png": {"refused": "third-party business name"},
+                 "y.png": {"description": "A lobby", "note": "the verifier's own sentence"}},
+    }), encoding="utf-8")
+    loaded = PP.load_descriptions(path)
+    assert loaded["demo"]["x.png"]["refused"] == "third-party business name"
+    assert loaded["demo"]["x.png"]["description"] is None
+    assert loaded["demo"]["y.png"] == {"description": "A lobby", "flags": [], "refused": None}
+
+
+def test_a_composite_never_backfills_one_of_the_designs_captioned_slots(tmp_path: Path) -> None:
+    """Two images, six slots, the curation placing neither. The composite is FIRST in folder
+    order, so the plain queue would have made it the exterior — the design's hero. The single
+    takes the exterior instead, and the sheet does NOT slide into `lobby`: it takes a position
+    past the sixth (C1, option (b)) and `lobby` is left for the design's own placeholder."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_sheet.png", "02_single.png"])
+    index = PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"},
+                       curation={"cur": dict.fromkeys(PP.DEFAULT_SLOTS)},
+                       descriptions={"cur": {
+                           "01_sheet.png": {"description": "Six-panel contact sheet",
+                                            "flags": ["composite"], "refused": None},
+                           "02_single.png": {"description": "Brick frontage",
+                                             "flags": [], "refused": None}}})
+    assert [(e["slot"], e["source"]) for e in index["cur"] if e["file"] is not None] == [
+        ("exterior", "02_single.png"), (None, "01_sheet.png"),
+    ]
+    assert [e["slot"] for e in index["cur"]] == [*PP.DEFAULT_SLOTS, None]
+
+
+def test_with_no_composites_declared_the_backfill_is_folder_order_exactly_as_before(
+    tmp_path: Path
+) -> None:
+    """Characterisation: John's eighteen declare no composites, so their backfill must not move.
+    Same two files, no flags — the first in folder order is the exterior again."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_sheet.png", "02_single.png"])
+    index = PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"},
+                       curation={"cur": dict.fromkeys(PP.DEFAULT_SLOTS)})
+    assert [(e["slot"], e["source"]) for e in index["cur"] if e["file"] is not None] == [
+        ("exterior", "01_sheet.png"), ("lobby", "02_single.png"),
+    ]
+
+
+def test_a_folder_of_nothing_but_composites_leaves_every_captioned_slot_empty(
+    tmp_path: Path
+) -> None:
+    """C1, the half option (a) got wrong. Seven contact sheets and no single photograph: the six
+    captioned slots stay NULL — the design renders its own placeholder in each — and all seven
+    sheets take positions of their own past the sixth, where A15.3 gives each a tile. Nothing is
+    dropped; everything is rendered; nothing is captioned by a slot that does not describe it."""
+    root = tmp_path / "src"
+    _folder(root, "cur", [f"0{n}_sheet.png" for n in range(1, 8)])
+    index = PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"},
+                       curation={"cur": dict.fromkeys(PP.DEFAULT_SLOTS)},
+                       descriptions={"cur": {f"0{n}_sheet.png": {
+                           "description": f"Sheet {n}", "flags": ["composite"], "refused": None}
+                           for n in range(1, 8)}})
+    assert [e["slot"] for e in index["cur"]] == [*PP.DEFAULT_SLOTS, *[None] * 7]
+    assert [e["file"] for e in index["cur"][:6]] == [None] * 6, "a sheet took a captioned slot"
+    assert len([e for e in index["cur"] if e["file"] is not None]) == 7, "a sheet was dropped"
+    assert [e["source"] for e in index["cur"][6:]] == [f"0{n}_sheet.png" for n in range(1, 8)]
+
+
+def test_the_singles_fill_the_captioned_slots_and_the_composites_queue_behind_them(
+    tmp_path: Path
+) -> None:
+    """The mixed case, which is every one of John's eleven. Two singles and three sheets, six
+    slots: the two singles take the first two captioned slots in folder order, the other four
+    slots stay empty rather than taking a sheet, and the three sheets take positions 7, 8, 9."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_sheet.png", "02_single.png", "03_sheet.png", "04_single.png",
+                          "05_sheet.png"])
+    index = PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"},
+                       curation={"cur": dict.fromkeys(PP.DEFAULT_SLOTS)},
+                       descriptions={"cur": {
+                           name: {"description": name, "refused": None,
+                                  "flags": ["composite"] if "sheet" in name else []}
+                           for name in ("01_sheet.png", "02_single.png", "03_sheet.png",
+                                        "04_single.png", "05_sheet.png")}})
+    assert [(e["slot"], e["source"]) for e in index["cur"]] == [
+        ("exterior", "02_single.png"), ("lobby", "04_single.png"),
+        ("exam", None), ("treatment", None), ("surgery", None), ("kennel", None),
+        (None, "01_sheet.png"), (None, "03_sheet.png"), (None, "05_sheet.png"),
+    ]
+
+
+def test_an_empty_slot_left_by_the_composite_rule_carries_no_measured_fields(
+    tmp_path: Path
+) -> None:
+    """A slot a sheet was kept out of is the SAME empty slot A-L10 already defined: no bytes, no
+    caption, no source. It must not become a third shape of entry."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_sheet.png"])
+    index = PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"},
+                       curation={"cur": dict.fromkeys(PP.DEFAULT_SLOTS)},
+                       descriptions={"cur": {"01_sheet.png": {
+                           "description": "A sheet", "flags": ["composite"], "refused": None}}})
+    for entry in index["cur"][:6]:
+        assert entry == {"slot": entry["slot"], "file": None, "source": None, "caption": None}
+
+
+def test_a_description_entry_that_says_nothing_at_all_is_refused(tmp_path: Path) -> None:
+    """Neither a description nor a refusal is not a third state — it is a typo that would reach
+    the inventory as a `null` caption, in a slot whose filename fallback has just been
+    overridden out. Named with its slug and its file, where the operator can act on it."""
+    path = tmp_path / "descriptions.json"
+    path.write_text(json.dumps({"demo": {"x.png": {"flags": ["composite"]}}}), encoding="utf-8")
+    with pytest.raises(PP.SeedDataError) as exc:
+        PP.load_descriptions(path)
+    assert "demo" in str(exc.value) and "x.png" in str(exc.value)
+
+
+# --- NEW-1: the curation cannot place a composite in a captioned slot either ------------------
+#
+# The re-review's required fix, and the same defect as C1 in a new location: `positions()` keeps
+# a sheet out of the BACKFILL, and three records said "the curation refuses to place one" — but
+# nothing refused it. A curation naming a contact sheet for `exterior` put it in the design's
+# HERO slot with no gate failing. The guarantee is now made true in code rather than asserted in
+# prose: `validate_curation` refuses the map, before a byte is written, naming the slug, the slot
+# and the file.
+#
+# `validate_curation` rather than a silent divert in `positions()`: a curated composite is an
+# AUTHORING mistake in a committed file, and the three sentences say the curation refuses it.
+# Diverting would make the sentences true and the mistake invisible.
+
+
+def _sheet_curation(tmp_path: Path, slot: str) -> tuple[Path, dict, dict]:
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_sheet.png", "02_single.png"])
+    curated = dict.fromkeys(PP.DEFAULT_SLOTS)
+    curated[slot] = "01_sheet.png"
+    described = {"cur": {
+        "01_sheet.png": {"description": "Six-panel contact sheet", "flags": ["composite"],
+                         "refused": None},
+        "02_single.png": {"description": "Brick frontage", "flags": [], "refused": None}}}
+    return root, {"cur": curated}, described
+
+
+@pytest.mark.parametrize("slot", ["exterior", "kennel"])
+def test_a_curation_that_places_a_composite_in_a_captioned_slot_is_refused(
+    tmp_path: Path, slot: str
+) -> None:
+    """Both ends of the captioned band: `exterior` is the hero the reviewer demonstrated, and
+    `kennel` is the sixth, so the refusal is not an off-by-one on the first slot alone."""
+    root, curation, described = _sheet_curation(tmp_path, slot)
+    with pytest.raises(PP.SeedDataError) as exc:
+        PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"},
+                   curation=curation, descriptions=described)
+    message = str(exc.value)
+    assert "cur" in message and slot in message and "01_sheet.png" in message, message
+
+
+def test_the_refusal_happens_before_a_single_byte_is_written(tmp_path: Path) -> None:
+    """`validate_curation`'s own promise — "before a single file is written" — extended to this
+    check. A run that refuses leaves no half-written tree for the next run to merge."""
+    root, curation, described = _sheet_curation(tmp_path, "exterior")
+    out = tmp_path / "out"
+    with pytest.raises(PP.SeedDataError):
+        PP.prepare(root, out, ["cur"], {"cur": "Small animal"},
+                   curation=curation, descriptions=described)
+    assert not (out / "cur").exists() and not (out / "index.json").exists()
+
+
+def test_the_whole_map_is_checked_not_only_the_slugs_this_run_processes(tmp_path: Path) -> None:
+    """The shape `validate_curation`'s other three checks already have (review i2): a curated
+    composite in a slug this run is not touching is still a defect in the file being committed,
+    so a hand re-run of one hospital cannot launder it."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_single.png"])
+    curation = {"cur": dict.fromkeys(PP.DEFAULT_SLOTS),
+                "other": {**dict.fromkeys(PP.DEFAULT_SLOTS), "lobby": "99_sheet.png"}}
+    described = {"cur": {"01_single.png": {"description": "A front", "flags": [], "refused": None}},
+                 "other": {"99_sheet.png": {"description": "A sheet", "flags": ["composite"],
+                                            "refused": None}}}
+    with pytest.raises(PP.SeedDataError) as exc:
+        PP.prepare(root, tmp_path / "out", ["cur"],
+                   {"cur": "Small animal", "other": "Small animal"},
+                   curation=curation, descriptions=described)
+    assert "other" in str(exc.value) and "99_sheet.png" in str(exc.value)
+
+
+def test_a_curated_single_photograph_is_still_placed_normally(tmp_path: Path) -> None:
+    """The refusal must not have made the curation useless: a SINGLE photograph curated for a
+    captioned slot goes exactly where the map says, which is A-L10's whole point."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_sheet.png", "02_single.png"])
+    curated = dict.fromkeys(PP.DEFAULT_SLOTS)
+    curated["exam"] = "02_single.png"
+    index = PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"},
+                       curation={"cur": curated},
+                       descriptions={"cur": {
+                           "01_sheet.png": {"description": "A sheet", "flags": ["composite"],
+                                            "refused": None},
+                           "02_single.png": {"description": "A front", "flags": [],
+                                             "refused": None}}})
+    placed = next(e for e in index["cur"] if e["source"] == "02_single.png")
+    assert placed["slot"] == "exam"
+    # …and the sheet is still rendered, past the captioned six.
+    sheet = next(e for e in index["cur"] if e["source"] == "01_sheet.png")
+    assert sheet["slot"] is None
+
+
+def test_the_committed_curation_places_no_composite_in_any_captioned_slot() -> None:
+    """The mutation probe, against the real committed data: every file the curation names must be
+    a single photograph. This is what would have caught the defect on the day it was written."""
+    curation = PP.load_curation(PP.CURATION_FILE)
+    described = PP.load_descriptions(PP.DESCRIPTIONS_FILE)
+    offenders = [
+        (slug, slot, name)
+        for slug, slots in curation.items()
+        for slot, name in slots.items()
+        if name is not None and "composite" in described.get(slug, {}).get(name, {}).get("flags", [])
+    ]
+    assert offenders == [], offenders
+
+
+# --- R3-1: the THIRD path a composite could reach a captioned slot by ------------------------
+#
+# `positions` guards the backfill and `validate_curation` guards the curation, and the record
+# said the guarantee had "two enforced halves". It had three paths: a slug with NO curation
+# entry takes `keyword_choices`, which selects by filename keyword and knew nothing about
+# composites. The reviewer put two sheets straight into `exterior` and `lobby` through it.
+#
+# Unreachable for the committed tree — every seeded slug is curated, and a test in ANOTHER
+# module happens to require `curation.json` and `seeds/hospitals.json` to name the same
+# hospitals — but a guarantee held up by a coincidence in a different file is not a guarantee.
+# Third time in this task that a record has been marginally wider than the code (C1, NEW-1, this),
+# and the third time the code catches up with the sentence rather than the sentence being
+# narrowed. The guarantee is now UNCONDITIONAL: no route places a composite in a captioned slot.
+
+
+def test_the_keyword_path_cannot_place_a_composite_in_a_captioned_slot(tmp_path: Path) -> None:
+    """The reviewer's own probe. A slug with NO curation entry, and two images whose filenames
+    the keyword matcher would place at `exterior` and `lobby` — both flagged `composite`. Before
+    R3-1 they took those two slots; now they take positions past the sixth and both slots stay
+    empty, because there is no single photograph in the folder to fill them."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_exterior_front.png", "06_interior_reception.png"])
+    described = {"cur": {
+        "01_exterior_front.png": {"description": "Two-panel exterior sheet",
+                                  "flags": ["composite"], "refused": None},
+        "06_interior_reception.png": {"description": "Four-panel interior sheet",
+                                      "flags": ["composite"], "refused": None}}}
+    index = PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"},
+                       descriptions=described)   # NO curation for this slug
+    assert [e["slot"] for e in index["cur"]] == [*PP.DEFAULT_SLOTS, None, None]
+    assert [e["file"] for e in index["cur"][:6]] == [None] * 6, "a sheet took a captioned slot"
+    # …and neither is dropped: A-L11 stands on this path too.
+    assert sorted(str(e["source"]) for e in index["cur"][6:]) == [
+        "01_exterior_front.png", "06_interior_reception.png",
+    ]
+
+
+def test_the_keyword_path_still_places_single_photographs_by_keyword(tmp_path: Path) -> None:
+    """A-L9 is not broken by the guard: an unflagged photograph is still selected by its
+    filename keyword, and only the sheet is held back."""
+    root = tmp_path / "src"
+    _folder(root, "cur", ["01_exterior_front.png", "06_interior_reception.png"])
+    index = PP.prepare(root, tmp_path / "out", ["cur"], {"cur": "Small animal"},
+                       descriptions={"cur": {
+                           "01_exterior_front.png": {"description": "A front", "flags": [],
+                                                     "refused": None},
+                           "06_interior_reception.png": {"description": "A sheet",
+                                                         "flags": ["composite"],
+                                                         "refused": None}}})
+    placed = {str(e["slot"]): e["source"] for e in index["cur"] if e["file"] is not None}
+    assert placed == {"exterior": "01_exterior_front.png", "None": "06_interior_reception.png"}
+
+
+def test_keyword_choices_itself_never_returns_a_composite(tmp_path: Path) -> None:
+    """The unit beneath the two above, so the guarantee is pinned where it is implemented and
+    not only where it is observed. Both the keyword arm and the unused-file fallback arm."""
+    root = tmp_path / "src"
+    folder = _folder(root, "cur", ["01_exterior_front.png", "04_interior_exam.png",
+                                   "08_interior_stub.png"])
+    files = PP.source_images(folder)
+    sheets = frozenset({"01_exterior_front.png", "08_interior_stub.png"})
+    chosen = PP.keyword_choices(files, list(PP.DEFAULT_SLOTS), sheets)
+    assert [src.name for _slot, src in chosen] == ["04_interior_exam.png"]
+    # With every file a composite the selection is empty rather than falling back to one.
+    assert PP.keyword_choices(files, list(PP.DEFAULT_SLOTS),
+                              frozenset(f.name for f in files)) == []

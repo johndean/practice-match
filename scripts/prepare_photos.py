@@ -33,7 +33,6 @@ import hashlib
 import json
 import shutil
 import sys
-from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -63,6 +62,15 @@ DEFAULT_SOURCE = Path.home() / "Downloads" / "VIN FOUNDATION" / "Hospital images
 DEFAULT_OUT = ROOT / "seeds" / "hospitals" / "photos"
 FOLDER_SUFFIX = "_individual_images"
 CURATION_FILE = DEFAULT_OUT / "curation.json"
+# Task SD1. One description per SOURCE photograph, and whatever the content verification flagged
+# on it. Separate from `curation.json` because the two answer different questions: the curation
+# says which photograph belongs in which of the design's six captioned SLOTS, this says what each
+# photograph actually SHOWS. John's Dallas filenames (`alpha_dallas_01.png`) say neither, so
+# `caption_of` has nothing to read and A-L9's keyword path has nothing to match — the words have
+# to come from somewhere, and the somewhere is a human (or a verified reader) looking at the
+# image. Absent is not an error: John's eighteen of 2026-09-06 predate this file and their
+# captions still come from their own descriptive filenames.
+DESCRIPTIONS_FILE = DEFAULT_OUT / "descriptions.json"
 
 
 class SeedDataError(Exception):
@@ -161,7 +169,65 @@ def load_curation(path: Path) -> dict[str, dict[str, str | None]]:
     }
 
 
-def validate_curation(curation: dict[str, dict[str, str | None]], types: dict[str, str]) -> None:
+def load_descriptions(path: Path) -> dict[str, dict[str, dict[str, Any]]]:
+    """slug -> source filename -> {"description": str|None, "flags": list[str], "refused": str|None}.
+
+    `refused` is a REASON, and a photograph carrying one is never encoded (Task SD1). A-L11's
+    "nothing John supplies is ever dropped" is about the pipeline silently losing an image to a
+    filename it could not match; it was never a licence to publish one carrying a THIRD PARTY's
+    business name, a legible licence plate or an identifiable face. Keeping the refusal here, in
+    the repository, is what makes the committed set reproducible — the alternative, an operator
+    quietly leaving a file out of a staging folder, leaves no trace at all. `description` is
+    absent on a refused entry, because nothing describes a photograph nobody may see.
+
+    Any other key the file carries — `note`, the content verification's own sentence — is kept in
+    the FILE as the record and is not read by the pipeline.
+
+    A MISSING file is `{}`, not an error (John's eighteen have none and must keep working); a
+    malformed one is a `SeedDataError`, which `main()` turns into exit 2 the way it does for the
+    curation. Keys beginning with `_` are the file's own commentary, exactly as in
+    `load_curation`. `flags` defaults to the empty list, so an entry may carry a description
+    alone.
+
+    **`flags` is carried, not acted on.** It is what the content verification noted about
+    identifiable content in the image — the listing's own fictional name rendered on a sign, its
+    own street number, a composite sheet rather than a single photograph. Recording it here is
+    how the image-identifiability work (A-IDP-1..6, another branch) inherits the finding instead
+    of having to re-read 119 images; it decides nothing about what is DISPLAYED, and every seed
+    still defaults to NOT SHOW."""
+    if not path.exists():
+        return {}
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        loaded = {
+            str(slug): {
+                str(name): {
+                    "description": None if entry.get("description") is None else str(entry["description"]),
+                    "flags": [str(flag) for flag in entry.get("flags", [])],
+                    "refused": None if entry.get("refused") is None else str(entry["refused"]),
+                }
+                for name, entry in photographs.items()
+            }
+            for slug, photographs in raw.items()
+            if not str(slug).startswith("_")
+        }
+    except (OSError, ValueError, KeyError, TypeError, AttributeError) as exc:
+        raise SeedDataError(f"{path}: {type(exc).__name__}") from None
+    # An entry that neither describes the photograph nor refuses it says nothing at all, and
+    # would reach the inventory as a `null` caption where the design expects the filename
+    # fallback it has just been overridden out of. Refused here, where the operator can see
+    # which file it is, rather than as a null three files downstream.
+    for slug, photographs in loaded.items():
+        for name, entry in photographs.items():
+            if entry["description"] is None and entry["refused"] is None:
+                raise SeedDataError(f"{slug}: {name} has neither a description nor a refusal")
+    return loaded
+
+
+def validate_curation(
+    curation: dict[str, dict[str, str | None]], types: dict[str, str],
+    composites: dict[str, frozenset[str]] | None = None,
+) -> None:
     """Refuse a map that cannot mean what it says, before a single file is written.
 
     The slot keys are read POSITIONALLY — slot `k` becomes `<k>.webp` and fills the design's slot
@@ -171,7 +237,20 @@ def validate_curation(curation: dict[str, dict[str, str | None]], types: dict[st
     curated for two slots means two captions of which at least one is false — checked here, over
     the whole map, rather than per slug (review i2), so a hand re-run of one hospital still
     refuses a duplicate introduced for another. Only the missing-file check is left to
-    `slot_choices`, because it is the one that needs the source folders."""
+    `slot_choices`, because it is the one that needs the source folders.
+
+    **A CURATED COMPOSITE IS REFUSED HERE** (SD1 fix round 3, NEW-1). `positions` keeps a
+    multi-panel sheet out of the BACKFILL, and three records claimed the curation refuses to
+    place one — but nothing did, so a map naming a sheet for `exterior` put a contact sheet in
+    the design's hero slot with no gate failing. That is C1's defect in a new location: a record
+    asserting a guarantee the code does not give. The guarantee is now the code's.
+
+    Refused rather than diverted: a curated composite is an AUTHORING mistake in a committed
+    file, and diverting it to `spare` would make the sentences true while making the mistake
+    invisible. `composites` is slug -> the source filenames flagged `composite`; absent, this
+    check does nothing, which is what keeps every caller that has no descriptions file working
+    (John's eighteen of 2026-09-06 declare none)."""
+    flagged = composites or {}
     for slug, slots in curation.items():
         if slug not in types:
             raise SeedDataError(f"{slug} is curated but seeds/hospitals.json does not name it")
@@ -182,10 +261,17 @@ def validate_curation(curation: dict[str, dict[str, str | None]], types: dict[st
         repeated = sorted({name for name in named if named.count(name) > 1})
         if repeated:
             raise SeedDataError(f"{slug}: {', '.join(repeated)} curated for more than one slot")
+        for slot, name in slots.items():
+            if name is not None and name in flagged.get(slug, frozenset()):
+                raise SeedDataError(
+                    f"{slug}: {name} is a composite and is curated for the captioned slot"
+                    f" {slot} — a multi-panel sheet never occupies one of the design's six"
+                )
 
 
 def slot_choices(
-    files: list[Path], slots: list[str], curated: dict[str, str | None] | None = None
+    files: list[Path], slots: list[str], curated: dict[str, str | None] | None = None,
+    composites: frozenset[str] = frozenset(),
 ) -> list[tuple[str, Path | None]]:
     """Which photograph BEST fits which of the design's slots, in SLOT order — one entry per
     slot, `None` where the selection placed nothing there.
@@ -202,6 +288,10 @@ def slot_choices(
 
     A `None` is no longer the last word (A-L11): `positions` below fills what is left from the
     rest of the folder, and only a folder thinner than the design's six slots leaves one empty.
+
+    `composites` is passed through to `keyword_choices` (R3-1). The curated arm needs no such
+    filter — `validate_curation` has already refused a map that names one — so the two arms
+    reach the same guarantee by their own routes.
     """
     if curated is not None:
         by_name = {src.name: src for src in files}
@@ -216,12 +306,13 @@ def slot_choices(
                 raise SeedDataError(f"{slot} names {name}, which the source folder does not hold")
             picked.append((slot, by_name[name]))
         return picked
-    chosen = dict(keyword_choices(files, slots))
+    chosen = dict(keyword_choices(files, slots, composites))
     return [(slot, chosen.get(slot)) for slot in slots]
 
 
 def positions(
-    files: list[Path], slots: list[str], curated: dict[str, str | None] | None = None
+    files: list[Path], slots: list[str], curated: dict[str, str | None] | None = None,
+    composites: frozenset[str] = frozenset(),
 ) -> list[tuple[str | None, Path | None]]:
     """Every photograph of the folder, in the order the API serves it (A-L11).
 
@@ -231,25 +322,74 @@ def positions(
     tile of its own, captioned with the supplier's own description.
 
     Nothing is dropped and nothing is duplicated: the spare queue is the folder minus what the
-    selection already placed, drained left to right. A slot is `None` only when that queue runs
-    out, i.e. when the folder holds fewer images than the design has slots.
+    selection already placed, drained left to right.
+
+    `composites` names the multi-panel sheets and contact sheets (Task SD1). **A COMPOSITE NEVER
+    OCCUPIES ONE OF THE DESIGN'S SIX CAPTIONED SLOTS — not even when that leaves the slot EMPTY**
+    (controller ruling, SD1 fix round 1, C1). A sheet of six pictures, or a two-panel letterbox
+    strip, is not "the reception area", and a square tile the design built for one photograph is
+    a presentation it never contemplated for a contact sheet: absent beats faked, which is this
+    project's first rule about the approved design.
+
+    The guarantee is UNCONDITIONAL, and it is code on every route into a captioned slot — there
+    are three, and each is closed where it is implemented:
+
+      * the CURATION — `validate_curation` refuses a map naming a composite for a slot (NEW-1);
+      * the KEYWORD path, taken by a slug the curation does not name — `keyword_choices` does
+        not consider a composite a candidate at all (R3-1);
+      * the BACKFILL below, which draws only from the single photographs (C1).
+
+    Each was added after a record claimed a guarantee the code did not give, and each time the
+    code was made to catch up rather than the sentence narrowed. Nothing is left that could put
+    a sheet under one of the design's six captions.
+
+    The backfill is not a preference — when a folder runs out of singles its remaining captioned
+    slots stay `None` and the design renders its own placeholder in each, which is the path
+    A-L10 built for exactly this.
+
+    A slot is therefore `None` in two cases now: the folder holds fewer images than the design
+    has slots (A-L10's original case), or every image the slots did not take is a composite.
+
+    **Nothing is dropped — A-L11 is untouched.** Every composite still becomes a position past
+    the sixth, where amendment A15.3 gives it a tile of its own captioned with its own
+    description. What this rule changes is only WHICH position a sheet takes, never WHETHER it
+    is rendered.
+
+    With NONE declared — John's eighteen of 2026-09-06, which have no descriptions file at all —
+    every pick is `spare[0]` and this is the folder order it has always been.
     """
-    placed = slot_choices(files, slots, curated)
+    placed = slot_choices(files, slots, curated, composites)
     taken = {src for _slot, src in placed if src is not None}
-    spare = deque(src for src in files if src not in taken)
+    spare = [src for src in files if src not in taken]
     filled: list[tuple[str | None, Path | None]] = []
     for slot, src in placed:
-        if src is None and spare:
-            src = spare.popleft()
+        if src is None:
+            # Only a SINGLE photograph may backfill a captioned slot. `None` when there is no
+            # single left, which leaves the slot empty rather than putting a sheet under a
+            # caption that cannot describe it.
+            single = next((s for s in spare if s.name not in composites), None)
+            if single is not None:
+                spare.remove(single)
+                src = single
         filled.append((slot, src))
     filled.extend((None, src) for src in spare)
     return filled
 
 
-def keyword_choices(files: list[Path], slots: list[str]) -> list[tuple[str, Path]]:
+def keyword_choices(
+    files: list[Path], slots: list[str], composites: frozenset[str] = frozenset()
+) -> list[tuple[str, Path]]:
     """A-L9's selection by filename keyword, in SLOT order — the path a slug the curation map
     does not name still takes. Never leaves a slot empty while a file is unused, which is exactly
     why it could not express "this folder has no truthful reception photograph" (A-L10).
+
+    **A COMPOSITE IS NOT A CANDIDATE HERE** (R3-1). This is the THIRD route to a captioned slot,
+    after the curation and the backfill, and it was the one the record forgot: a filename
+    keyword would place a two-panel sheet at `exterior` because the sheet happens to be named
+    for what its first panel shows. Excluded from the selection entirely, so it falls through to
+    `positions`' spare queue and takes a position past the sixth like every other sheet. The
+    exclusion is at the TOP of the function rather than at each of the three picks below,
+    because a filter applied per-arm is a filter somebody adds a fourth arm past.
 
     Keyword matches first, for every slot, and only then the fallbacks: filling an unmatched
     slot as soon as it is reached would let it swallow the very interior a later slot's keyword
@@ -261,6 +401,7 @@ def keyword_choices(files: list[Path], slots: list[str]) -> list[tuple[str, Path
     slot empty — three images can fill `exterior`, `lobby` and `kennel` — so the caller cannot
     recover the slot by counting.
     """
+    files = [src for src in files if src.name not in composites]
     described = {src: descriptor_of(src.name) for src in files}
     taken: set[Path] = set()
     chosen: dict[str, Path] = {}
@@ -358,9 +499,36 @@ def encode(src: Path, dest: Path) -> dict[str, Any]:
     }
 
 
+def described_over(described: dict[str, dict[str, Any]], src: Path) -> dict[str, Any]:
+    """What this photograph's own verified description overrides on its inventory entry.
+
+    The CAPTION is the description where one exists — the design's six slot captions are fixed
+    per practice type and cannot describe a seventh photograph at all, and a filename that reads
+    `alpha_dallas_01.png` cannot describe a first one (amendment A15, `photo_captions` ->
+    `p.photoCaptions[i]`). With no description the entry keeps `caption_of`'s reading of the
+    filename, which is all John's eighteen have ever had.
+
+    `flags` is ABSENT rather than empty when nothing was raised: the 195 entries already
+    committed for those eighteen must not move, and `entry.get("flags", [])` reads the same
+    either way.
+
+    A REFUSED entry never reaches this: `prepare` drops those source files before the slots are
+    chosen, and `load_descriptions` has already refused an entry that is neither described nor
+    refused — so `entry["description"]` here is always a real description."""
+    entry = described.get(src.name)
+    if entry is None:
+        return {}
+    over: dict[str, Any] = {"caption": entry["description"]}
+    if entry["flags"]:
+        over["flags"] = list(entry["flags"])
+    return over
+
+
 def prepare(
     source_root: Path, out_root: Path, slugs: list[str], types: dict[str, str],
     curation: dict[str, dict[str, str | None]] | None = None,
+    descriptions: dict[str, dict[str, dict[str, Any]]] | None = None,
+    merge: bool = False,
 ) -> dict[str, list[dict[str, Any]]]:
     """Encode EVERY photograph of every slug's folder (A-L11) — `types` maps a slug to the
     practice type that chooses its slot list, `curation` is the content-verified map (A-L10) that
@@ -371,10 +539,25 @@ def prepare(
     in the middle is empty, and positions 7, 8, … are the photographs beyond them. A slot the
     folder is too thin to fill writes nothing and records nulls."""
     curated_all = curation if curation is not None else {}
+    described_all = descriptions if descriptions is not None else {}
+    # slug -> the source files flagged `composite`, over the WHOLE descriptions map. Computed
+    # once here rather than per slug, because `validate_curation` checks the whole curation and
+    # the per-slug loop below reuses the same answer.
+    composites_by_slug = {
+        slug: frozenset(name for name, entry in files.items() if "composite" in entry["flags"])
+        for slug, files in described_all.items()
+    }
     # Before a single byte is written, and over the WHOLE map rather than the slugs asked for: a
     # typo in an entry this run does not touch is still a defect in the file being committed.
-    validate_curation(curated_all, types)
+    validate_curation(curated_all, types, composites_by_slug)
+    # `merge` (Task SD1): keep the slugs this run is not processing exactly as they were
+    # committed. Eleven folders were added to a tree that already held eighteen, and re-encoding
+    # those eighteen is both wasteful and a diff nobody asked for. Off by default, so a full run
+    # still means "the index is exactly what I just produced" — a slug quietly surviving a
+    # removal from seeds/hospitals.json is the failure this default guards against.
     index: dict[str, list[dict[str, Any]]] = {}
+    if merge and (out_root / "index.json").exists():
+        index = dict(json.loads((out_root / "index.json").read_text(encoding="utf-8"))["hospitals"])
     for slug in slugs:
         # `--slugs` reaches this straight from argv, and the rmtree below is driven by it: a slug
         # of `../..` would delete outside `seeds/hospitals/photos` (final review M2). Refused
@@ -388,16 +571,27 @@ def prepare(
         destination = out_root / slug
         if destination.exists():
             shutil.rmtree(destination)  # a re-run must not leave a stale Nth file behind
+        described = described_all.get(slug, {})
+        held = {src.name for src in source_images(folder)}
+        refused = {name for name, entry in described.items() if entry["refused"] is not None}
+        composites = composites_by_slug.get(slug, frozenset())
+        # The same care `slot_choices` takes with the curation, and for the same reason: a
+        # description keyed to a filename the folder does not hold is a typo that would silently
+        # caption nothing at all, and the slug is the operator's only way to find it.
+        for name in sorted(set(described) - held):
+            raise SeedDataError(f"{slug}: {name} is described but the source folder does not hold it")
         try:
             choices = positions(
-                source_images(folder), list(slots_for(types.get(slug, ""))), curated_all.get(slug)
+                [src for src in source_images(folder) if src.name not in refused],
+                list(slots_for(types.get(slug, ""))), curated_all.get(slug), composites,
             )
         except SeedDataError as exc:
             # The slug is the operator's only way to find the entry to fix, and `slot_choices`
             # never sees it.
             raise SeedDataError(f"{slug}: {exc}") from exc
         index[slug] = [
-            {**encode(src, destination / f"{n}.webp"), "slot": slot} if src is not None
+            {**encode(src, destination / f"{n}.webp"), "slot": slot, **described_over(described, src)}
+            if src is not None
             else {"slot": slot, "file": None, "source": None, "caption": None}
             for n, (slot, src) in enumerate(choices, start=1)
         ]
@@ -430,12 +624,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--source", type=Path, default=DEFAULT_SOURCE)
     parser.add_argument("--out", type=Path, default=DEFAULT_OUT)
     parser.add_argument("--slugs", nargs="*", default=None)
+    parser.add_argument("--merge", action="store_true",
+                        help="keep the slugs this run does not process (Task SD1)")
     args = parser.parse_args(argv)
     slugs = args.slugs if args.slugs else seed_slugs()
     types = seed_types()
     try:
         curation = load_curation(CURATION_FILE)
-        index = prepare(args.source, args.out, list(slugs), types, curation)
+        descriptions = load_descriptions(DESCRIPTIONS_FILE)
+        index = prepare(args.source, args.out, list(slugs), types, curation, descriptions,
+                        merge=args.merge)
     except (FileNotFoundError, RuntimeError, SeedDataError) as exc:
         print(f"[photos] {exc}", file=sys.stderr)
         return 2
