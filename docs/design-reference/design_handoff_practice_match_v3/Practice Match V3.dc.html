@@ -3203,7 +3203,7 @@ class Component extends DCLogic {
       noDemo: p.id === "p8" || p.pop == null,
       demo: [
         { k: "Population", v: p.pop, sub: "Community, 2023" },
-        { k: "Growth", v: (p.growth || "").replace(" since 2015", ""), sub: "Since 2015" },
+        { k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); return g.length > 1 ? "Since " + g[1] : ""; })() },
         { k: "Median income", v: p.income, sub: "Household, 2023" },
         { k: "Households", v: (p.hh || "").replace(" households", ""), sub: "In the community" }
       ],

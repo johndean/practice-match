@@ -3063,8 +3063,8 @@ const A21_3c: Amendment = {
 /** A21.3d — the detail's Growth row splits the API string to extract the vintage */
 const A21_3d: Amendment = {
   id: 'A21.3d', date: '2026-09-10', ruling: 'the detail Growth row extracts its vintage from the API string, never hard-coded (controller amendment A-C29)',
-  find: '{ k: "Growth", v: (p.growth || "").replace(" since 2015", ""), sub: "Since 2015" }',
-  replace: '{ k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); return g.length > 1 ? "Since " + g[1] : ""; })() }',
+  find: '{ k: "Growth", v: (p.growth || "").replace(" since 2015", ""), sub: "Since 2015" },',
+  replace: '{ k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); return g.length > 1 ? "Since " + g[1] : ""; })() },',
   count: 1
 };
 
