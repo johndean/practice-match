@@ -1350,13 +1350,8 @@ def test_cmd_materialize_returns_three_when_the_database_is_unreachable(monkeypa
 def test_cmd_geocode_resolves_listing_with_no_practice_location_row(scratch_dsn, monkeypatch, capsys):
     """Task B9, case (a): a listing with no practice_location row is resolved, its catchment
     built and its market_metric rows written. Assert all three exist afterwards with row counts."""
-    import json
-    from pathlib import Path
-    import httpx
     from tests.census.listing_fixtures import make_listing
 
-    FIX = Path(__file__).parent.parent / "census" / "fixtures"
-    MATCH = json.loads((FIX / "geocoder_match.json").read_text())
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
     conn = census_load._conn(scratch_dsn)
@@ -1382,14 +1377,13 @@ def test_cmd_geocode_resolves_listing_with_no_practice_location_row(scratch_dsn,
             )
             cur.execute(
                 "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES (%s, %s, now(), %s)",
-                ("acs5", "2019–2023", "test"),
+                ("acs5", "2019\u20132023", "test"),
             )
     finally:
         conn.close()
 
     # Skip the network call by mocking geocode.resolve to write to DB directly
     from app.census import geocode as census_geocode
-    real_resolve = census_geocode.resolve
 
     def mock_resolve(conn, gc, listing_id):
         # Return Location as if geocode succeeded; resolve will write to DB
@@ -1482,7 +1476,7 @@ def test_cmd_geocode_force_re_geocodes_existing_listing(scratch_dsn, monkeypatch
             )
             cur.execute(
                 "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES (%s, %s, now(), %s)",
-                ("acs5", "2019–2023", "test"),
+                ("acs5", "2019\u20132023", "test"),
             )
             # Add an existing practice_location row
             cur.execute(
@@ -1581,8 +1575,8 @@ def test_cmd_geocode_returns_two_without_a_database_url(monkeypatch, capsys):
 def test_cmd_geocode_returns_five_when_the_geocoder_cannot_resolve_a_listing(scratch_dsn, monkeypatch, capsys):
     """Task B9: a listing the ladder cannot place at all stops the run with exit 5, naming the
     listing, rather than leaving a half-geocoded inventory behind without saying so."""
-    from tests.census.listing_fixtures import make_listing
     from app.census import geocode as census_geocode
+    from tests.census.listing_fixtures import make_listing
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
     conn = census_load._conn(scratch_dsn)
@@ -1609,9 +1603,9 @@ def test_cmd_geocode_returns_five_when_the_geocoder_cannot_resolve_a_listing(scr
 def test_cmd_geocode_returns_two_when_the_active_vintage_lookup_raises(scratch_dsn, monkeypatch, capsys):
     """Task B9: `materialize.active_geo_vintage` raises RuntimeError when no boundary vintage is
     active. That is a refusal (exit 2) naming what to do, never an unhandled crash."""
-    from tests.census.listing_fixtures import make_listing
     from app.census import geocode as census_geocode
     from app.census import materialize as census_materialize
+    from tests.census.listing_fixtures import make_listing
 
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
     conn = census_load._conn(scratch_dsn)

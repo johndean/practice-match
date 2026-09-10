@@ -287,11 +287,10 @@ async def decide_listing(listing_id: str, body: Decision, request: Request, prin
     drop_list_cache(sync_redis())
     # Task B9: enqueue geocoding when publishing (publish moves to published status)
     if body.action == "publish":
-        with closing(sync_conn()) as conn2, conn2:
-            with conn2.cursor() as cur:
-                cur.execute("SELECT 1 FROM practice_location WHERE listing_id = %s", (parsed,))
-                if cur.fetchone() is None:
-                    celery_app.send_task("census.geocode_listing", args=[str(parsed)])
+        with closing(sync_conn()) as conn2, conn2, conn2.cursor() as cur:
+            cur.execute("SELECT 1 FROM practice_location WHERE listing_id = %s", (parsed,))
+            if cur.fetchone() is None:
+                celery_app.send_task("census.geocode_listing", args=[str(parsed)])
     return JSONResponse(payload)
 
 

@@ -645,7 +645,7 @@ async def test_publish_enqueues_geocode_task_when_listing_has_no_practice_locati
     """Task B9: when a listing is published and has no practice_location row, the geocode
     task is enqueued."""
     listing_id, _signed = await _submitted(client, member)
-    account_id, cookies, headers = member(roles=("admin",), email="al-admin@example.org")
+    _account, cookies, headers = member(roles=("admin",), email="al-admin@example.org")
     admin = auth_headers(cookies, headers)
 
     enqueued = []
@@ -676,7 +676,7 @@ async def test_publish_does_not_enqueue_geocode_when_practice_location_exists(
                         "VALUES (%s, %s, %s, %s, now())",
                     (listing_id, "hash1", "rooftop", "Current_Current"))
 
-    account_id, cookies, headers = member(roles=("admin",), email="al-admin@example.org")
+    _account, cookies, headers = member(roles=("admin",), email="al-admin@example.org")
     admin = auth_headers(cookies, headers)
 
     enqueued = []
