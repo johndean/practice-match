@@ -2059,6 +2059,25 @@ def test_deploy_md_names_both_homes_of_a_photograph_s_caption():
     assert "never stored" not in text, "DEPLOY.md still says a caption is never stored"
 
 
+def test_every_documented_census_load_command_sets_pythonpath() -> None:
+    """2026-09-10, the first real load: a bare `python scripts/census_load.py …` dies inside the
+    container with ModuleNotFoundError, because Python puts the script's own directory on sys.path
+    and not the working directory. Every documented invocation must carry PYTHONPATH=/app, or the
+    runbook hands an operator a command that cannot work."""
+    deploy_md = (ROOT / "DEPLOY.md").read_text()
+    bare = re.findall(r"^\s*python scripts/census_load\.py", deploy_md, re.MULTILINE)
+    assert not bare, f"{len(bare)} documented census_load command(s) lack PYTHONPATH=/app"
+    assert "env PYTHONPATH=/app python scripts/census_load.py" in deploy_md
+
+
+def test_deploy_md_warns_that_skip_deploys_leaves_the_container_blind() -> None:
+    """2026-09-10: the four S3_* variables were set with --skip-deploys, so Railway held them while
+    the running worker still saw none of them and the load refused. The runbook must say so."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    assert "--skip-deploys" in text
+    assert "railway redeploy" in text
+
+
 def test_census_load_sequence_includes_geocode_step_after_activate():
     """Task B9: `census_load.py geocode` resolves listings to their practice locations, builds
     catchments, and materializes market figures — it must appear in DEPLOY.md's Census load
