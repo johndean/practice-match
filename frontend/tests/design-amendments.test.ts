@@ -675,6 +675,101 @@ describe('local design amendments (spec D15)', () => {
   it('the amended reference is the pristine Rev 2 file plus exactly the ruled edits', () => {
     expect(applyAmendments(pristine, amendments())).toBe(readFileSync(AMENDED, 'utf8'));
   });
+
+  // A26 (John, 2026-09-11: "the dropdown 'more filters' is correct implementation while
+  // everything else on the filter bar is implemented incorrectly and not using the site design,
+  // this must be corrected"). The SECOND report about this toolbar row — the metro picker
+  // immediately to their left was the first, ruled A13 on 2026-09-08 — so A26 reuses A13's own
+  // idiom rather than authoring a second one: trigger + `role="listbox"` panel composed from the
+  // Market data card's layer menu, anchored with the "More filters" popover's own pair.
+  //
+  // Task F1 converts the FIVE toolbar filters (one `.map()` body, five instances, one state
+  // slot). The three inside the "More filters" popover are Task F2 and are still `<select>`s
+  // here, which is why the scope count below reads 3 and not yet the family's final 2.
+  it('A26 introduces no new styling — every value is A13\'s, which is the design\'s own', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    for (const decl of [
+      'display: inline-flex; align-items: center; gap: 8px;',              // More filters button, V3:382
+      'height: 40px; padding: 0 13px; font-size: 13px; font-weight: 500; color: var(--color-navy); background: ',  // the <select> A26 replaces
+      'font-family: var(--rf-display); font-size: 13px; font-weight: ',    // rowStyle, layer menu
+      'background: var(--vf-accent-bg)',                                   // selected row
+      'background: var(--vf-neutral)',                                     // hover / highlight
+      'transition: transform 150ms var(--easing-out); transform: rotate(', // caret
+      'box-shadow: 0 6px 20px rgba(0,58,112,.16)',                         // More filters panel
+      'top: 46px; z-index: 700',                                           // More filters anchoring
+      'max-height: 232px; overflow-y: auto',                               // compare menu
+      'position: relative;',                                               // the More filters wrapper
+      'flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;'
+    ]) {
+      expect(pristine, `${decl} is not the design's own`).toContain(decl);
+    }
+    // The panel carries NO width declaration of its own: it shrink-wraps its widest row, because
+    // the eight dropdowns are eight different widths and `min-width: 100%` appears nowhere in the
+    // pristine bundle. Asserted so a later hand adds a measured width rather than an invented one.
+    expect(pristine).not.toContain('min-width: 100%');
+    expect(amended).not.toContain('min-width: 100%');
+  });
+
+  it('A26 turns the five toolbar filters into labelled comboboxes with listbox panels', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    // The operating system's popup is gone from the five: no <select> in the `filters` loop.
+    expect(pristine).toContain('<select value="{{ fl.value }}" onChange="{{ fl.set }}" style="{{ fl.style }}">');
+    expect(amended).not.toContain('onChange="{{ fl.set }}"');
+    // A13's own attribute chain, per instance: `role="combobox"` (ARIA 1.2 — the role that
+    // supports `aria-activedescendant`, which `button` does not; final review I1), an
+    // `aria-label` on every trigger, `aria-controls` to the panel by id, and `tabindex="-1"` on
+    // the rows so focus stays on the element that holds the highlight.
+    expect(amended).toContain('role="combobox" aria-label="{{ fl.aria }}" aria-haspopup="listbox" aria-controls="{{ fl.listId }}" aria-expanded="{{ fl.open }}" aria-activedescendant="{{ fl.activeId }}"');
+    expect(amended).toContain('<div role="listbox" aria-label="{{ fl.aria }}" id="{{ fl.listId }}" ref="{{ fl.panelRef }}"');
+    expect(amended, 'aria-activedescendant must sit on the focused trigger, never on the panel')
+      .not.toContain('<div role="listbox" aria-label="{{ fl.aria }}" aria-activedescendant=');
+    expect((amended.match(/role="option" tabindex="-1"/g) ?? []).length, 'A13\'s row and A26\'s').toBe(2);
+
+    // Collateral 2 (`screens.ts:59`): `layerTrigger` is
+    // `button[aria-haspopup="listbox"]:not([aria-label])`, so the five new triggers are excluded
+    // from `.first()`/`.nth(1)` ONLY because each carries an aria-label. Every listbox trigger in
+    // the design that is NOT one of the Market data card's two must be labelled.
+    const triggers = [...amended.matchAll(/<button[^>]*aria-haspopup="listbox"[^>]*>/g)].map((m) => m[0]);
+    expect(triggers.length, 'the metro trigger, the layer trigger, the compare trigger and A26\'s').toBe(4);
+    expect(triggers.filter((t) => !t.includes('aria-label')).length, 'the Market data card\'s two, which screens.ts addresses by exclusion').toBe(2);
+  });
+
+  it('A26 writes ONE open path, so the cross-menu invariant is structural inside the family', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    // One `openFilterMenu`, and it is the only place the family names the four overlay menus.
+    expect(amended).toContain('  openFilterMenu = (key, at) => {\n    this.setState({ fMenu: key, fMenuAt: at, navMenu: false, userMenu: false, giveMenu: false, marketMenu: false, marketMenuAt: -1 });\n  };');
+    expect((amended.match(/fMenu: key, fMenuAt: at/g) ?? []).length, 'a second open path would have to carry the edges by hand').toBe(1);
+    // …and the six inbound edges (A26.8a-f), plus the popover parent (A26.4) and go()'s three
+    // arms (A26.9). Ten places shut a filter dropdown; the family's own toggle is the eleventh.
+    expect((amended.match(/fMenu: null, fMenuAt: -1/g) ?? []).length, 'the filter dropdowns are shut in exactly these places').toBe(14);
+  });
+
+  it('A26 leaves Give\'s and the metro\'s three dismissal closures byte for byte (the A14.4 precedent)', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    // The new branch goes AFTER Give's and BEFORE the metro's — the metro branch's guard is an
+    // early `return`, so a branch appended after it would be dead while its menu is closed.
+    // Both existing branches keep their own bytes, which is what A14.4 proved for A13's.
+    expect(amended, 'A26 changed the metro menu\'s outside-click').toContain('      if (!this.state.marketMenu) return;\n      const host = this._marketMenuEl;\n      if (host && e.target && host.contains(e.target)) return;\n      this.setState({ marketMenu: false, marketMenuAt: -1 });');
+    expect(amended, 'A26 changed the metro menu\'s Tab dismissal').toContain('      if (!this.state.marketMenu) return;\n      const host = this._marketMenuEl;\n      if (host && host.contains(to)) return;\n      this.setState({ marketMenu: false, marketMenuAt: -1 });');
+    expect(amended, 'A26 changed Give\'s pointerdown').toContain('      if (this.state.giveMenu) {\n        const give = this._giveMenuEl;\n        if (!(give && e.target && give.contains(e.target))) this.setState({ giveMenu: false });\n      }');
+    expect(amended, 'A26 changed Give\'s Escape').toContain('      if (this.state.giveMenu) {\n        this.setState({ giveMenu: false });\n        if (this._giveButtonEl) this._giveButtonEl.focus();\n      }');
+    expect(amended, 'A26 changed Give\'s focusout').toContain('      if (this.state.giveMenu) {\n        const give = this._giveMenuEl;\n        if (!(give && give.contains(to))) this.setState({ giveMenu: false });\n      }');
+    // No new listener: the three closures A13.4/A13.8 armed are still the only ones.
+    expect((amended.match(/document\.addEventListener/g) ?? []).length).toBe(3);
+    // The family's own three branches, each resolving its host through the field the component
+    // recorded rather than across the document (A13's rule, final review m5).
+    expect(amended).not.toContain('document.getElementById');
+    expect((amended.match(/this\._fMenuEls\[this\.state\.fMenu\]/g) ?? []).length, 'pointerdown and focusout').toBe(2);
+  });
+
+  // Scope, as a number. Two `<select >` tags remain after Task F2 (the results-rail sort, which
+  // John ruled on 2026-09-11 becomes its own wired change, and the wizard's field selects, which
+  // he ruled convert later). F1 has converted one of the family's two loops, so it reads 3 here.
+  it('A26 changed no <select> outside its scope', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    expect((amended.match(/<select /g) ?? []).length, 'A26 changed a select outside its scope').toBe(3);
+  });
+
   // D18 (John, 2026-09-07: "update across the application"). One occurrence in the pristine
   // file — the Insights-tab primary button of the docked panel (V3:705) opens the listing;
   // its label was wrong. The other tabs' "Open full listing" (V3:717) is unified by A11
