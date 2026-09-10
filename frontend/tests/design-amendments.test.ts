@@ -251,11 +251,16 @@ describe('local design amendments (spec D15)', () => {
     // three inside the popover) are Task F2 and are not in this list yet.
     'A26.1', 'A26.2', 'A26.4', 'A26.5', 'A26.6', 'A26.7', 'A26.8a', 'A26.8b', 'A26.8c', 'A26.8d', 'A26.8e', 'A26.8f',
     'A26.9a', 'A26.9b', 'A26.9c', 'A26.10',
+    // A26.12-A26.14 — the Q2 widening (controller ruling on the A26 plan's Q2, 2026-09-11).
+    // Not new scope: a defect against John's own 2026-09-08 m7 ruling, on three lines A26.8
+    // is already editing, given their OWN ids so they can be lifted out without touching it.
+    // Each reads A26.8a/A26.8b/A26.8e's output, so all three run after the family's own.
+    'A26.12', 'A26.13', 'A26.14',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(198);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(201);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -519,12 +524,23 @@ describe('local design amendments (spec D15)', () => {
     // invariant they encode is being EXTENDED. The strings stay byte-exact and stay pinned: a
     // future edit that drops `giveMenu: false` from any of them still fails here, which is the
     // only reason these lines exist.
-    expect(amended, 'the nav toggle must close Give (A14.8)')
-      .toContain('toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false, fMenu: null, fMenuAt: -1 }),');
-    expect(amended, 'the account toggle must close Give (A14.2)')
-      .toContain('toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false, fMenu: null, fMenuAt: -1 }),');
-    expect(amended, 'the metro listbox must close Give (A13.2)')
-      .toContain('Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false, fMenu: null, fMenuAt: -1 }),');
+    //
+    // WIDENED A SECOND TIME by A26.12-A26.14 (controller ruling on the A26 plan's Q2, 2026-09-11).
+    // m7 says "opening any one of the FOUR menus closes the other three", and three of the six
+    // directions among nav/account/metro were never written: the account toggle closed neither
+    // the nav menu nor the metro listbox, the nav toggle closed no metro listbox, and the metro
+    // trigger closed neither of the header's two. Give's own six were complete, which is why the
+    // gap survived — Give and the metro also have global pointerdown/focusout dismissal, while
+    // `navMenu` and `userMenu` have none of any kind (D-F2, reported and NOT built here), so a
+    // pointer could hold the account menu open beside a freshly opened metro listbox with two
+    // clicks. A26 was already editing all three lines; the widening carries its own ids so it
+    // can be lifted out without touching A26.8.
+    expect(amended, 'the nav toggle must close Give (A14.8) and the metro listbox (A26.12)')
+      .toContain('toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false, fMenu: null, fMenuAt: -1, marketMenu: false, marketMenuAt: -1 }),');
+    expect(amended, 'the account toggle must close Give (A14.2), the nav menu and the metro listbox (A26.13)')
+      .toContain('toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false, fMenu: null, fMenuAt: -1, navMenu: false, marketMenu: false, marketMenuAt: -1 }),');
+    expect(amended, 'the metro listbox must close Give (A13.2) and the header\'s two menus (A26.14)')
+      .toContain('Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false, fMenu: null, fMenuAt: -1, navMenu: false, userMenu: false }),');
     // m6 (final review, ruled): Home and End on the TRIGGER, guarded on the menu being open, the
     // way `marketMenuKeys` has them — the per-row handler already had them.
     expect(amended, 'Home and End must reach the Give trigger')
@@ -544,11 +560,13 @@ describe('local design amendments (spec D15)', () => {
     expect(amended, 'Tab out of the metro listbox must close it too').toContain('      if (!this.state.marketMenu) return;\n      const host = this._marketMenuEl;\n      if (host && host.contains(to)) return;\n      this.setState({ marketMenu: false, marketMenuAt: -1 });');
     // A13's own pointerdown closure, byte for byte, after every A14 edit to the function.
     expect(amended, 'A14 changed the metro menu\'s outside-click').toContain('      if (!this.state.marketMenu) return;\n      const host = this._marketMenuEl;\n      if (host && e.target && host.contains(e.target)) return;\n      this.setState({ marketMenu: false, marketMenuAt: -1 });');
-    // SEVEN metro dismissal sites. Six from A13/A14: A13.4's pointerdown and keydown, A13.8's
+    // NINE metro dismissal sites. Six from A13/A14: A13.4's pointerdown and keydown, A13.8's
     // focusout, A13.1's setMarket, and m7's two — Give's pointer open and its arrow open (A14.2).
     // The seventh is A26's (2026-09-11): the filter dropdowns' ONE open path, A26.1's
-    // `openFilterMenu`, which is the whole family's outbound edge.
-    expect((amended.match(/marketMenu: false, marketMenuAt: -1/g) ?? []).length, 'the metro menu is shut in exactly these seven places').toBe(7);
+    // `openFilterMenu`, which is the whole family's outbound edge. The eighth and ninth are the
+    // Q2 widening — A26.12's nav toggle and A26.13's account toggle, the two m7 directions that
+    // were never written.
+    expect((amended.match(/marketMenu: false, marketMenuAt: -1/g) ?? []).length, 'the metro menu is shut in exactly these nine places').toBe(9);
   });
 
   // A14.6 + the ruling: "Self-host Montserrat 600 under the SIL Open Font Licence, scoped

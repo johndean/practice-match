@@ -4230,3 +4230,82 @@ describe('A26 — the Browse filter dropdowns', () => {
     });
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A26.12–A26.14 — John's 2026-09-08 m7 ruling, restored (controller ruling on the A26 plan's
+// Q2, 2026-09-11): "opening any one of the four menus closes the other three."
+//
+// Three of the twelve ordered directions among the four were never written. Give's own six
+// were, which is why the gap survived a final review: Give and the metro listbox also carry
+// global pointerdown/focusout dismissal, so their pointer paths were covered by accident,
+// while `navMenu` and `userMenu` have no outside-click, Escape or Tab dismissal of any kind
+// (D-F2 — reported, and deliberately NOT built here). Two mouse clicks reached the defect:
+// open the account menu, click the metro trigger, and both stand open.
+//
+// The case below is exhaustive rather than three regression cases, because "at most one" is
+// the invariant and enumerating the pairs is the only way to say so. A26's own five are proved
+// by their `describe` above; this is the four the ruling names.
+// ---------------------------------------------------------------------------------------
+describe('A26 (Q2) — opening any one of the four menus closes the other three (m7, restored)', () => {
+  afterEach(() => { c.componentWillUnmount(); });
+
+  /** The four m7 menus, each with its own open path and its own "is it open" reader. The metro
+   *  and Give each have a SECOND open path (the arrow keys), and both are included: A14's own
+   *  m7 fix had to cover both of Give's, so the same is asked of the other three. */
+  const MENUS: [string, (v: any) => void, (s: any) => boolean][] = [
+    ['nav', (v) => v.toggleNavMenu(), (s) => !!s.navMenu],
+    ['account', (v) => v.toggleUserMenu(), (s) => !!s.userMenu],
+    ['Give (click)', (v) => v.toggleGiveMenu(), (s) => !!s.giveMenu],
+    ['Give (arrow)', (v) => v.giveMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() }), (s) => !!s.giveMenu],
+    ['metro (click)', (v) => v.toggleMarketMenu(), (s) => !!s.marketMenu],
+    ['metro (arrow)', (v) => v.marketMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() }), (s) => !!s.marketMenu]
+  ];
+
+  it('every ordered pair of open paths leaves exactly one menu open', () => {
+    const menuOf = (n: string) => n.replace(/ \(.*\)$/, '');
+    let pairs = 0;
+    for (const [firstName, openFirst, firstIsOpen] of MENUS) {
+      for (const [secondName, openSecond, secondIsOpen] of MENUS) {
+        // Same menu twice is the design's own TOGGLE contract, not a cross-close: the second
+        // click shuts it, and the arrow keys on an already-open menu only move the highlight.
+        if (menuOf(firstName) === menuOf(secondName)) continue;
+        pairs++;
+        c = new Component({});
+        openFirst(c.renderVals());
+        expect(firstIsOpen(c.state), `${firstName} did not open`).toBe(true);
+        openSecond(c.renderVals());
+        expect(secondIsOpen(c.state), `${secondName} did not open after ${firstName}`).toBe(true);
+        const open = MENUS.filter(([, , isOpen]) => isOpen(c.state)).map(([n]) => n);
+        // Give's two paths and the metro's two each read the same flag, so "one menu open" is
+        // "at most two NAMES open, and both of them the same menu".
+        const distinct = new Set(open.map((n) => n.replace(/ \(.*\)$/, '')));
+        expect([...distinct], `${firstName} then ${secondName}: more than one menu is open`).toHaveLength(1);
+      }
+    }
+    // Not a vacuous pass: six open paths over four menus (nav 1, account 1, Give 2, metro 2),
+    // every ordered pair whose two paths belong to different menus — 26 of the 36.
+    expect(pairs, 'the pair enumeration stopped matching').toBe(26);
+  });
+
+  it('and the highlight goes with the menu it belonged to, never left behind', () => {
+    c.renderVals().toggleMarketMenu();
+    expect(c.state.marketMenuAt).toBe(0);
+    c.renderVals().toggleUserMenu();
+    expect(c.state, 'A26.13').toMatchObject({ userMenu: true, marketMenu: false, marketMenuAt: -1 });
+    c.renderVals().toggleMarketMenu();
+    c.renderVals().toggleNavMenu();
+    expect(c.state, 'A26.12').toMatchObject({ navMenu: true, marketMenu: false, marketMenuAt: -1 });
+  });
+
+  it('the two directions John\'s ruling named, each reachable with two mouse clicks', () => {
+    // The account menu, then the metro trigger (the A26 ruling's section 8, verbatim).
+    c.renderVals().toggleUserMenu();
+    c.renderVals().toggleMarketMenu();
+    expect(c.state, 'A26.14: the metro trigger left the account menu open').toMatchObject({ marketMenu: true, userMenu: false });
+    // The collapsed-header nav menu, then the metro trigger — the same, at header-1000.
+    c = new Component({});
+    c.renderVals().toggleNavMenu();
+    c.renderVals().toggleMarketMenu();
+    expect(c.state, 'A26.14: the metro trigger left the nav menu open').toMatchObject({ marketMenu: true, navMenu: false });
+  });
+});
