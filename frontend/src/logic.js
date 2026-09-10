@@ -385,12 +385,12 @@ class Component extends DCLogic {
   communities() {
     const market = this.state.market || "Austin, TX";
     return P.filter((p) => p.market === market && p.status === "published").map((p) => {
-      const hh = num(p.hh);
+      const hh = p.hh != null ? num(p.hh) : undefined;
       return {
         id: p.id, name: p.area, lat: p.lat, lng: p.lng,
-        pop: num(p.pop), hh: hh, income: num(p.income),
-        growth: parseFloat(String(p.growth).replace(/[^0-9.\-]/g, "")) || 0,
-        pets: Math.round(hh * 0.57),
+        pop: p.pop != null ? num(p.pop) : undefined, hh: hh, income: p.income != null ? num(p.income) : undefined,
+        growth: p.growth != null ? (parseFloat(String(p.growth).replace(/[^0-9.\-]/g, "")) || 0) : undefined,
+        pets: hh !== undefined ? Math.round(hh * 0.57) : undefined,
         econ: ECON_K[p.id] != null ? ECON_K[p.id] * 1000 : undefined,
         vets: VETS[p.id]
       };
@@ -639,14 +639,16 @@ class Component extends DCLogic {
       compareKeyB: "flex: none; width: 26px; height: 9px; border-radius: 2px; border: 1px solid rgba(0,58,112,.14); background: linear-gradient(to right, " + (s.mdCompare ? ramp(s.mdCompare).join(", ") : "transparent, transparent") + ");",
       compareRows: (!s.mdCompare || !valueLayer || s.mdCompare === valueLayer) ? [] : comms.slice(0, 6).map((c) => {
         const raw = (k) => (k === "households" ? c.hh : k === "competition" ? c.vets : c[k]);
-        const ta = this.bucket(valueLayer, num(raw(valueLayer))).t;
-        const tb = this.bucket(s.mdCompare, num(raw(s.mdCompare))).t;
-        const fillA = this.bucket(valueLayer, num(raw(valueLayer))).color;
-        const fillB = this.bucket(s.mdCompare, num(raw(s.mdCompare))).color;
+        const bar = (k) => {
+          const v = raw(k);
+          if (v == null) return undefined;
+          const b = this.bucket(k, num(v));
+          return "display: block; height: 7px; border-radius: 2px; border: 1px solid rgba(0,58,112,.14); width: " + Math.round(8 + b.t * 92) + "%; background: " + b.color + ";";
+        };
         return {
           name: c.name,
-          aStyle: "display: block; height: 7px; border-radius: 2px; border: 1px solid rgba(0,58,112,.14); width: " + Math.round(8 + ta * 92) + "%; background: " + fillA + ";",
-          bStyle: "display: block; height: 7px; border-radius: 2px; border: 1px solid rgba(0,58,112,.14); width: " + Math.round(8 + tb * 92) + "%; background: " + fillB + ";"
+          aStyle: bar(valueLayer),
+          bStyle: bar(s.mdCompare)
         };
       }),
 
@@ -829,14 +831,13 @@ class Component extends DCLogic {
           const meta = LAYER_META[k];
           const cfg = VALUE_LAYERS[k];
           const on = valueLayer === k;
-          const vals = comms.map((c) => {
-            const raw = k === "households" ? c.hh : k === "competition" ? c.vets : c[k];
-            return { raw: num(raw), t: this.bucket(k, num(raw)).t };
-          });
-          const mid = vals.map((v) => v.raw).sort((a, b) => a - b)[Math.floor(vals.length / 2)] || 0;
+          const vals = comms.map((c) => (k === "households" ? c.hh : k === "competition" ? c.vets : c[k]))
+            .filter((raw) => raw != null)
+            .map((raw) => ({ raw: num(raw), t: this.bucket(k, num(raw)).t }));
+          const mid = vals.length ? vals.map((v) => v.raw).sort((a, b) => a - b)[Math.floor(vals.length / 2)] : undefined;
           return {
             title: meta.title,
-            value: this.fmtMetric(k, mid),
+            value: (mid !== undefined) ? this.fmtMetric(k, mid) : undefined,
             valueNote: "metro median",
             src: meta.source,
             bars: vals.slice(0, 7).map((v) => ({
@@ -1040,20 +1041,23 @@ class Component extends DCLogic {
           ((s.mdTab || "insights") === t.key ? "var(--vf-navy)" : "var(--vf-text)") + "; border-bottom: 2px solid " +
           ((s.mdTab || "insights") === t.key ? "var(--vf-accent)" : "transparent") + ";"
       })),
+      hasDemo: sel.pop != null,
+      noDemo: sel.pop == null,
+      overviewTitle: sel.communityLabel || "Market Overview (10 min drive)",
       isInsights: (s.mdTab || "insights") === "insights",
       isOther: (s.mdTab || "insights") !== "insights",
       otherTitle: ({ overview: "Overview", financials: "Financials", property: "Property", contact: "Contact" })[s.mdTab] || "Overview",
       goInsights: () => this.setState({ mdTab: "insights" }),
       overviewTiles: [
-        { v: (c.pop !== undefined) ? this.fmtMetric("households", c.pop) : undefined, k: "Population", sub: (c.growth !== undefined && c.growth > 0 ? "+" : "") + (c.growth !== undefined ? c.growth.toFixed(1) : "") + "% (5 yrs)" },
+        { v: (c.pop !== undefined) ? this.fmtMetric("households", c.pop) : undefined, k: "Population", sub: (c.growth !== undefined) ? ((c.growth > 0 ? "+" : "") + c.growth.toFixed(1) + "% (5 yrs)") : undefined },
         { v: (c.hh !== undefined) ? this.fmtMetric("households", c.hh) : undefined, k: "Households", sub: "ACS 5-year" },
-        { v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined && incomeIdx > 0 ? "+" : "") + (incomeIdx !== undefined ? incomeIdx : "") + "% vs US" },
+        { v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined) ? ((incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US") : undefined },
         { v: (c.pets !== undefined) ? this.fmtMetric("households", c.pets) : undefined, k: "Est. Pet Households", sub: "derived estimate" }
       ],
       compEstab: (c.vets !== undefined) ? String(c.vets) : undefined,
       compPer10k: (per10k !== undefined) ? per10k.toFixed(1) : undefined,
       compLevel: (compLevel !== undefined) ? compLevel + " Competition" : undefined,
-      compBars: [1, 2, 3].map((i) => ({
+      compBars: (per10k === undefined) ? [] : [1, 2, 3].map((i) => ({
         style: "flex: 1; height: 8px; border-radius: 2px; background: " + (i <= compFill ? "#4c9a6a" : "#dbe4ea") + ";"
       })),
       oppTiles: [
@@ -1499,11 +1503,12 @@ class Component extends DCLogic {
         (unlocked ? "You have been granted access to the full financial packet." : "Documents marked locked open only with seller approval."),
       hasDemo: p.id !== "p8" && p.pop != null,
       noDemo: p.id === "p8" || p.pop == null,
+      demoScope: "Figures describe " + (p.communityLabel ? "the area " + p.communityLabel.charAt(0).toLowerCase() + p.communityLabel.slice(1) : "the community around the practice") + ", not the practice itself.",
       demo: [
-        { k: "Population", v: p.pop, sub: "Community, 2023" },
+        { k: "Population", v: p.pop, sub: p.communityLabel || "Community, 2023" },
         { k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); return g.length > 1 ? "Since " + g[1] : ""; })() },
         { k: "Median income", v: p.income, sub: "Household, 2023" },
-        { k: "Households", v: (p.hh || "").replace(" households", ""), sub: "In the community" }
+        { k: "Households", v: (p.hh || "").replace(" households", ""), sub: p.communityLabel || "In the community" }
       ],
       keyFacts: [
         { k: "Gross revenue", v: this.money(p.rev) + " (seller-stated)" },

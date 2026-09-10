@@ -3100,13 +3100,14 @@ const A21_2c: Amendment = {
 };
 
 /** A21.2d (Task B10, D-C31): overviewTiles renders only populated tiles.
- *  When c.pop, c.hh, c.income, c.growth or c.econ are undefined, the corresponding tile
- *  should not render a value at all. The fourth tile (pets) is left undefined in the fixture
- *  anyway; the amendment only changes the conditional for the others. */
+ *  When c.pop, c.hh or c.income is undefined the tile renders no value, and — since the fix
+ *  round of 2026-09-10 — no SUB-LINE either: the sub-lines were built by concatenation, so an
+ *  absent growth or income index left the unit behind and the tile read a bare "% (5 yrs)" or
+ *  "% vs US" (F-2). The fourth tile (pets) is left verbatim here and guarded by A21.2i. */
 const A21_2d: Amendment = {
   id: 'A21.2d', date: '2026-09-10', ruling: 'overviewTiles renders only populated tiles (Task B10, D-C31)',
   find: 'overviewTiles: [\n        { v: this.fmtMetric("households", c.pop), k: "Population", sub: (c.growth > 0 ? "+" : "") + c.growth.toFixed(1) + "% (5 yrs)" },\n        { v: this.fmtMetric("households", c.hh), k: "Households", sub: "ACS 5-year" },\n        { v: "$" + Math.round(c.income / 1000) + "K", k: "Median Income", sub: (incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US" },\n        { v: this.fmtMetric("households", c.pets), k: "Est. Pet Households", sub: "derived estimate" }\n      ],',
-  replace: 'overviewTiles: [\n        { v: (c.pop !== undefined) ? this.fmtMetric("households", c.pop) : undefined, k: "Population", sub: (c.growth !== undefined && c.growth > 0 ? "+" : "") + (c.growth !== undefined ? c.growth.toFixed(1) : "") + "% (5 yrs)" },\n        { v: (c.hh !== undefined) ? this.fmtMetric("households", c.hh) : undefined, k: "Households", sub: "ACS 5-year" },\n        { v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined && incomeIdx > 0 ? "+" : "") + (incomeIdx !== undefined ? incomeIdx : "") + "% vs US" },\n        { v: this.fmtMetric("households", c.pets), k: "Est. Pet Households", sub: "derived estimate" }\n      ],',
+  replace: 'overviewTiles: [\n        { v: (c.pop !== undefined) ? this.fmtMetric("households", c.pop) : undefined, k: "Population", sub: (c.growth !== undefined) ? ((c.growth > 0 ? "+" : "") + c.growth.toFixed(1) + "% (5 yrs)") : undefined },\n        { v: (c.hh !== undefined) ? this.fmtMetric("households", c.hh) : undefined, k: "Households", sub: "ACS 5-year" },\n        { v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined) ? ((incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US") : undefined },\n        { v: this.fmtMetric("households", c.pets), k: "Est. Pet Households", sub: "derived estimate" }\n      ],',
   count: 1
 };
 
@@ -3149,6 +3150,156 @@ const A21_2l: Amendment = {
   id: 'A21.2l', date: '2026-09-10', ruling: 'no score, no ring — a conic gradient of undefined is a broken circle (Task B10, D-C31)',
   find: 'scoreRing: "width: 46px; height: 46px; border-radius: 999px; display: grid; place-items: center; background: conic-gradient(#4c9a6a " +\n        score + "%, #e6ecf1 0); font-family: var(--rf-display);",',
   replace: 'scoreRing: (score === undefined) ? undefined : "width: 46px; height: 46px; border-radius: 999px; display: grid; place-items: center; background: conic-gradient(#4c9a6a " +\n        score + "%, #e6ecf1 0); font-family: var(--rf-display);",',
+  count: 1
+};
+
+
+/** A21.1c / A21.2m–A21.2p / A21.4a–A21.4d / A21.5a–A21.5d (Task B10, D-C31 and D-C32,
+ *  2026-09-10) — the docked panel stops fabricating, and the card says which area it describes.
+ *
+ *  THE ROOT CAUSE the earlier A21.2 entries could not reach. `communities()` coerced every
+ *  absent figure to zero (`num()` returns 0 for null, and `parseFloat(...) || 0` did the same for
+ *  growth), so every guard that asks `!== undefined` was satisfied by a 0 and the panel rendered
+ *  "0" Population, "0.0% (5 yrs)", "$0K" Median Income and a "Flat" growth verdict for a listing
+ *  we have no figures for. A21.1c fixes it at the source, which is what makes the guards live.
+ *  D-C31: where a figure is absent the UI renders NOTHING — never zero, never "undefined", never
+ *  NaN, and never a verdict derived from a missing figure. A bar drawn at minimum height is a
+ *  reading, not an absence, so the competition bars, the strip-card bars and the compare bars are
+ *  omitted rather than drawn at their floor.
+ *
+ *  D-C32: a listing with no `place`-band FIGURES falls back to its `drive_10` band, and the card
+ *  SAYS SO — `community_label` travels with the row from `app/census/serve.py` and the design
+ *  reads it as `p.communityLabel`. Where the label is absent every string is the design's own,
+ *  byte for byte, which is what keeps the approved states on their pixels: the design's own
+ *  fixtures carry no `communityLabel` key at all. */
+
+/** A21.1c — `communities()` yields `undefined`, not 0, for an absent figure. A21.1 did this for
+ *  `econ` and `vets`; the other five expressions kept their coercion. `num()` itself is untouched
+ *  — it is read elsewhere — and a figure that IS present keeps exactly the parse it had, so a
+ *  fixture practice produces the same numbers it always did. */
+const A21_1c: Amendment = {
+  id: 'A21.1c', date: '2026-09-10', ruling: 'a missing figure is omitted, never zeroed (D-C31, Task B10)',
+  find: '      const hh = num(p.hh);\n      return {\n        id: p.id, name: p.area, lat: p.lat, lng: p.lng,\n        pop: num(p.pop), hh: hh, income: num(p.income),\n        growth: parseFloat(String(p.growth).replace(/[^0-9.\\-]/g, "")) || 0,\n        pets: Math.round(hh * 0.57),',
+  replace: '      const hh = p.hh != null ? num(p.hh) : undefined;\n      return {\n        id: p.id, name: p.area, lat: p.lat, lng: p.lng,\n        pop: p.pop != null ? num(p.pop) : undefined, hh: hh, income: p.income != null ? num(p.income) : undefined,\n        growth: p.growth != null ? (parseFloat(String(p.growth).replace(/[^0-9.\\-]/g, "")) || 0) : undefined,\n        pets: hh !== undefined ? Math.round(hh * 0.57) : undefined,',
+  count: 1
+};
+
+/** A21.2m — no competition figure, no bars. Three bars painted at the floor read as "the lowest
+ *  competition there is", which is a reading of data we do not have. */
+const A21_2m: Amendment = {
+  id: 'A21.2m', date: '2026-09-10', ruling: 'three bars at the floor are a reading, not an absence (D-C31, Task B10)',
+  find: '      compBars: [1, 2, 3].map((i) => ({',
+  replace: '      compBars: (per10k === undefined) ? [] : [1, 2, 3].map((i) => ({',
+  count: 1
+};
+
+/** A21.2n — the Market data strip cards take their median over the DEFINED values only. `num(raw)`
+ *  turned every absent figure into a 0, so six cards printed `$0K` / `0` / `+0.0%` under the words
+ *  "metro median". A metro where nobody has that figure now yields `undefined`, and no bars. */
+const A21_2n: Amendment = {
+  id: 'A21.2n', date: '2026-09-10', ruling: 'a metro median is the median of what we know, never of zeros we invented (D-C31, Task B10)',
+  find: '          const vals = comms.map((c) => {\n            const raw = k === "households" ? c.hh : k === "competition" ? c.vets : c[k];\n            return { raw: num(raw), t: this.bucket(k, num(raw)).t };\n          });\n          const mid = vals.map((v) => v.raw).sort((a, b) => a - b)[Math.floor(vals.length / 2)] || 0;',
+  replace: '          const vals = comms.map((c) => (k === "households" ? c.hh : k === "competition" ? c.vets : c[k]))\n            .filter((raw) => raw != null)\n            .map((raw) => ({ raw: num(raw), t: this.bucket(k, num(raw)).t }));\n          const mid = vals.length ? vals.map((v) => v.raw).sort((a, b) => a - b)[Math.floor(vals.length / 2)] : undefined;',
+  count: 1
+};
+
+/** A21.2o — and the card then keeps its title, source and link and renders no value (controller
+ *  ruling on F-6). `bars` needs no guard: `vals` is empty when `mid` is undefined. */
+const A21_2o: Amendment = {
+  id: 'A21.2o', date: '2026-09-10', ruling: 'a strip card with no figure keeps its title, source and link and shows no value (D-C31, Task B10)',
+  find: '            value: this.fmtMetric(k, mid),',
+  replace: '            value: (mid !== undefined) ? this.fmtMetric(k, mid) : undefined,',
+  count: 1
+};
+
+/** A21.2p — the Compare rows: a community with no figure for a layer carries no bar for it. The
+ *  two bars were drawn from `num(raw)`, so an absent figure became a minimum-width bar — the same
+ *  false reading A21.2m removes from the competition row. One `bar(k)` helper replaces the four
+ *  `bucket()` calls and returns the design's own style string byte for byte when the figure is
+ *  there, `undefined` when it is not. */
+const A21_2p: Amendment = {
+  id: 'A21.2p', date: '2026-09-10', ruling: 'a compare row with no figure carries no bar (D-C31, Task B10)',
+  find: '        const raw = (k) => (k === "households" ? c.hh : k === "competition" ? c.vets : c[k]);\n        const ta = this.bucket(valueLayer, num(raw(valueLayer))).t;\n        const tb = this.bucket(s.mdCompare, num(raw(s.mdCompare))).t;\n        const fillA = this.bucket(valueLayer, num(raw(valueLayer))).color;\n        const fillB = this.bucket(s.mdCompare, num(raw(s.mdCompare))).color;\n        return {\n          name: c.name,\n          aStyle: "display: block; height: 7px; border-radius: 2px; border: 1px solid rgba(0,58,112,.14); width: " + Math.round(8 + ta * 92) + "%; background: " + fillA + ";",\n          bStyle: "display: block; height: 7px; border-radius: 2px; border: 1px solid rgba(0,58,112,.14); width: " + Math.round(8 + tb * 92) + "%; background: " + fillB + ";"\n        };',
+  replace: '        const raw = (k) => (k === "households" ? c.hh : k === "competition" ? c.vets : c[k]);\n        const bar = (k) => {\n          const v = raw(k);\n          if (v == null) return undefined;\n          const b = this.bucket(k, num(v));\n          return "display: block; height: 7px; border-radius: 2px; border: 1px solid rgba(0,58,112,.14); width: " + Math.round(8 + b.t * 92) + "%; background: " + b.color + ";";\n        };\n        return {\n          name: c.name,\n          aStyle: bar(valueLayer),\n          bStyle: bar(s.mdCompare)\n        };',
+  count: 1
+};
+
+/** A21.4a — the panel gains the detail's own `hasDemo`/`noDemo` pair, keyed on `p.pop != null`
+ *  exactly as A12.10/A12.11 keyed the detail's, plus the Insights heading D-C32 needs. */
+const A21_4a: Amendment = {
+  id: 'A21.4a', date: '2026-09-10', ruling: 'a listing with no figures reaches the design’s own "Community data unavailable" card on the panel too (D-C31, A-C31 (2))',
+  find: '      isInsights: (s.mdTab || "insights") === "insights",',
+  replace: '      hasDemo: sel.pop != null,\n      noDemo: sel.pop == null,\n      overviewTitle: sel.communityLabel || "Market Overview (10 min drive)",\n      isInsights: (s.mdTab || "insights") === "insights",',
+  count: 1
+};
+
+/** A21.4b — the Insights tab body opens the `hasDemo` branch. */
+const A21_4b: Amendment = {
+  id: 'A21.4b', date: '2026-09-10', ruling: 'a listing with no figures reaches the design’s own "Community data unavailable" card on the panel too (same ruling)',
+  find: '              <sc-if value="{{ md.panel.isInsights }}" hint-placeholder-val="{{ true }}">\n                <div style="padding: 16px;">\n',
+  replace: '              <sc-if value="{{ md.panel.isInsights }}" hint-placeholder-val="{{ true }}">\n                <div style="padding: 16px;">\n                  <sc-if value="{{ md.panel.hasDemo }}" hint-placeholder-val="{{ true }}">\n',
+  count: 1
+};
+
+/** A21.4c — …and closes it before the CTA, with the design’s OWN unavailable card between. The
+ *  markup is the detail’s, element for element (V3:884-888): no second card is invented. The
+ *  "View full listing" button stays outside both branches, because navigation is not data. */
+const A21_4c: Amendment = {
+  id: 'A21.4c', date: '2026-09-10', ruling: 'a listing with no figures reaches the design’s own "Community data unavailable" card on the panel too (same ruling)',
+  find: '\n                  <button onClick="{{ md.panel.openListing }}" style="display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%; height: 44px; margin-top: 16px; font-family: var(--rf-display); font-size: 13.5px; font-weight: 500; color: var(--vf-white); background: var(--vf-accent); border: 0; border-radius: 6px; cursor: pointer;" style-hover="background: var(--vf-navy);">',
+  replace: '\n                  </sc-if>\n                  <sc-if value="{{ md.panel.noDemo }}" hint-placeholder-val="{{ false }}">\n                    <div style="padding: 22px; background: var(--color-off-white); border: 1px dashed var(--border-subtle); border-radius: 10px;">\n                      <div style="font-size: 14px; font-weight: 500; color: var(--color-navy);">Community data unavailable for this location</div>\n                      <p style="font-size: 13px; line-height: 1.6; color: #494949; margin: 6px 0 0; max-width: 60ch;">The Census geography for this address has not been matched yet. Everything else on this listing is seller-provided and unaffected.</p>\n                    </div>\n                  </sc-if>\n                  <button onClick="{{ md.panel.openListing }}" style="display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%; height: 44px; margin-top: 16px; font-family: var(--rf-display); font-size: 13.5px; font-weight: 500; color: var(--vf-white); background: var(--vf-accent); border: 0; border-radius: 6px; cursor: pointer;" style-hover="background: var(--vf-navy);">',
+  count: 1
+};
+
+/** A21.4d — the footnote describes figures, so it goes with them. */
+const A21_4d: Amendment = {
+  id: 'A21.4d', date: '2026-09-10', ruling: 'a listing with no figures reaches the design’s own "Community data unavailable" card on the panel too (same ruling)',
+  find: '                  <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">Drive-time figures are approximated from a straight-line catchment around the practice. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>',
+  replace: '                  <sc-if value="{{ md.panel.hasDemo }}" hint-placeholder-val="{{ true }}">\n                    <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">Drive-time figures are approximated from a straight-line catchment around the practice. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>\n                  </sc-if>',
+  count: 1
+};
+
+/** A21.5a — the panel’s Insights heading names the area its figures describe. With no label it
+ *  is the design’s own "Market Overview (10 min drive)", byte for byte. */
+const A21_5a: Amendment = {
+  id: 'A21.5a', date: '2026-09-10', ruling: 'a buyer is never shown a drive-time area disguised as a named city (D-C32)',
+  find: '<div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy);">Market Overview (10 min drive)</div>',
+  replace: '<div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy);">{{ md.panel.overviewTitle }}</div>',
+  count: 1
+};
+
+/** A21.5b — the detail’s Community Context card: the attribution sentence and the Population
+ *  tile’s sub-line both name the area. `demoScope` lower-cases the label’s first letter so the
+ *  sentence reads "Figures describe the area within 10 minutes of the practice, not the practice
+ *  itself."; with no label it is the design’s own sentence, byte for byte. */
+const A21_5b: Amendment = {
+  id: 'A21.5b', date: '2026-09-10', ruling: 'a buyer is never shown a drive-time area disguised as a named city (same ruling)',
+  find: '      demo: [\n        { k: "Population", v: p.pop, sub: "Community, 2023" },',
+  replace: '      demoScope: "Figures describe " + (p.communityLabel ? "the area " + p.communityLabel.charAt(0).toLowerCase() + p.communityLabel.slice(1) : "the community around the practice") + ", not the practice itself.",\n      demo: [\n        { k: "Population", v: p.pop, sub: p.communityLabel || "Community, 2023" },',
+  count: 1
+};
+
+/** A21.5c — …and the Households tile’s sub-line, the other one that says "the community".
+ *
+ *  CHAINED, like A21.3d on A12.6: the `find` is A12.7's whole `replace`, not the pristine row, so
+ *  it does not occur in the pristine bundle at all. It has to be: A12.7 already rewrote this row
+ *  (`p.hh.replace(…)` → `(p.hh || "").replace(…)`), and a `find` that took only the `sub:` clause
+ *  would leave A12.7's own output unreachable from `LOCAL_AMENDMENTS.md`'s V3-line check, which
+ *  follows the chain by asking which later `find` swallowed an amendment's `replace` WHOLE. */
+const A21_5c: Amendment = {
+  id: 'A21.5c', date: '2026-09-10', ruling: 'a buyer is never shown a drive-time area disguised as a named city (same ruling)',
+  find: '{ k: "Households", v: (p.hh || "").replace(" households", ""), sub: "In the community" }',
+  replace: '{ k: "Households", v: (p.hh || "").replace(" households", ""), sub: p.communityLabel || "In the community" }',
+  count: 1
+};
+
+/** A21.5d — the attribution paragraph reads `demoScope`. The Census attribution itself is legally
+ *  load-bearing and is untouched: only the trailing sentence, which describes the AREA, moves into
+ *  the data. */
+const A21_5d: Amendment = {
+  id: 'A21.5d', date: '2026-09-10', ruling: 'a buyer is never shown a drive-time area disguised as a named city (same ruling)',
+  find: 'attribution requested). Figures describe the community around the practice, not the practice itself.</p>',
+  replace: 'attribution requested). {{ d.demoScope }}</p>',
   count: 1
 };
 
@@ -3219,6 +3370,13 @@ export function amendments(): Amendment[] {
     // the figure is payroll); A21.3a–d take the year from the data instead of hard-coding 2015.
     // A21.2b-e handle the panel rendering when figures are undefined (Task B10, D-C31).
     A21_1, A21_1b, A21_2b, A21_2c, A21_2d, A21_2e, A21_2f, A21_2g, A21_2h, A21_3a, A21_3b, A21_3c, A21_3d, A21_2i, A21_2j, A21_2k, A21_2l,
+    // Task B10 (D-C31/D-C32, 2026-09-10). A21.1c is the root cause the entries above could not
+    // reach: `communities()` zeroed every absent figure, so every `!== undefined` guard was
+    // satisfied by a 0. A21.2m–A21.2p omit the three families of bars and the strip-card median
+    // that were drawn from those zeros; A21.4a–A21.4d put the design's own unavailable card on the
+    // panel; A21.5a–A21.5d name the area the figures describe when the API says it is not the
+    // listing's own community. A21.5c runs after A12.7, whose replace preserves its `find`.
+    A21_1c, A21_2m, A21_2n, A21_2o, A21_2p, A21_4a, A21_4b, A21_4c, A21_4d, A21_5a, A21_5b, A21_5c, A21_5d,
     // A22 — the ownership vocabulary widens to the seeds' own wording (2026-09-10, Task SL10).
     A22];
 }

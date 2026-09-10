@@ -79,3 +79,42 @@ describe('logic.js is the design script block, ported verbatim', () => {
     }
   });
 });
+
+// ------------------------------------------------------------------------------------------
+// Task B10 (D-C31/D-C32) — the four TEMPLATE amendments this task adds. A script guard can be
+// proved by a unit test on the render values; a template one cannot: reverting A21.5a leaves
+// `overviewTitle` computed and simply stops rendering it, and the DOM oracle cannot see it
+// either, because the reference and the app are generated from the SAME amended design and
+// would move together. A mutation probe on the generated template is the only gate that fails,
+// so these are pins on `App.vue` itself.
+// ------------------------------------------------------------------------------------------
+describe('the docked panel and the detail card say which area their figures describe (D-C32)', () => {
+  const appVue = readFileSync(join(ROOT, 'src/App.vue'), 'utf8');
+
+  it('A21.5a: the panel’s Insights heading is data, never a hard-coded drive band', () => {
+    expect(appVue).toContain('{{ __s(v.md?.panel?.overviewTitle) }}');
+    expect(appVue, 'the heading is hard-coded again').not.toContain('>Market Overview (10 min drive)<');
+  });
+
+  it('A21.5d: the detail’s attribution sentence is data, and the Census attribution is untouched', () => {
+    expect(appVue).toContain('{{ __s(v.d?.demoScope) }}');
+    expect(appVue).not.toContain('attribution requested). Figures describe the community around the practice');
+    // Legally load-bearing (spec §12) and not part of the sentence that moved.
+    expect(appVue).toContain('Source: U.S. Census Bureau, American Community Survey 2023 5-year estimates (public domain, attribution requested).');
+  });
+
+  it('A21.4b/c/d: the panel reaches the DESIGN’S OWN unavailable card, and no second one exists', () => {
+    expect(appVue).toContain('v-if="v.md?.panel?.hasDemo"');
+    expect(appVue).toContain('v-if="v.md?.panel?.noDemo"');
+    // Twice and only twice: the detail's card and the panel's, the same markup (A-C31 (2):
+    // "do not invent a second unavailable card").
+    expect((appVue.match(/Community data unavailable for this location/g) ?? []).length).toBe(2);
+    expect((appVue.match(/The Census geography for this address has not been matched yet\./g) ?? []).length).toBe(2);
+    // The "View full listing" CTA stays OUTSIDE both branches — navigation is not data — and the
+    // footnote that describes the figures stays inside `hasDemo` with them.
+    const insights = appVue.slice(appVue.indexOf('v-if="v.md?.panel?.isInsights"'), appVue.indexOf('v-if="v.md?.panel?.isOther"'));
+    expect((insights.match(/v-if="v\.md\?\.panel\?\.hasDemo"/g) ?? []).length).toBe(2);
+    expect(insights.indexOf('v-if="v.md?.panel?.noDemo"')).toBeLessThan(insights.indexOf('View full listing'));
+    expect(insights.indexOf('View full listing')).toBeLessThan(insights.indexOf('Drive-time figures are approximated'));
+  });
+});

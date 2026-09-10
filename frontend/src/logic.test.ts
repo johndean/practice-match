@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Component, P } from './logic.js';
+import { Component, ECON_K, P, VETS } from './logic.js';
 import { STEP_FIELDS, makeListingsAdapter } from './listings/seller';
 
 let c: any;
@@ -3297,6 +3297,291 @@ describe('A19 — the photo lightbox', () => {
         expect(growthRow.sub, `Growth sub for "${testCase.growth}"`).toBe(testCase.expectedSub);
       }
       (P[0] as any).growth = originalGrowth;
+    });
+  });
+});
+
+// ------------------------------------------------------------------------------------------
+// Task B10 — the docked panel stops fabricating (D-C31), and the card says which area it
+// describes (D-C32).
+//
+// F-9: these cases live HERE, in the characterisation suite, and their fixtures are
+// `communities()`' OWN output rather than a hand-written object. The round before this one wrote
+// `{ pop: 100000, …, econ_k: 500 }` for its "full figures" case — `marketPanel` reads `c.econ`,
+// not `c.econ_k`, and never sees `pets` at all — so the "full" case exercised the same absent
+// branches the "empty" one did and could not tell them apart.
+//
+// F-8: every case asserts the CONTENT of what is rendered, not the absence of a substring. A
+// mutation probe on the previous round reverted all eleven guards one at a time and caught ten:
+// the three `oppTiles` survived, because with the guard removed they read `Median` / `Flat` /
+// `Lean` — no "undefined", no "NaN", and `on` false for all three, so every assertion still held.
+// `toEqual(['', '', ''])` on the labels is what catches it.
+// ------------------------------------------------------------------------------------------
+describe('A21 — a figure the API does not have renders as nothing, never as zero (Task B10)', () => {
+  const AUSTIN = 'Austin, TX';
+  const austin = () => (P as unknown as Record<string, unknown>[]).filter((x) => x.market === AUSTIN && x.status === 'published');
+
+  /** Run `body` with the four community strings and the two market-data figures REMOVED from
+   *  `targets` — which is exactly the row `GET /api/listings` serves for a listing the Census
+   *  cannot describe (six nulls, `community_label` null). Everything is put back afterwards, so
+   *  the fixtures the rest of this file characterises are untouched. */
+  function without(targets: Record<string, unknown>[], body: () => void): void {
+    const vets = VETS as unknown as Record<string, number>;
+    const econ = ECON_K as unknown as Record<string, number>;
+    const saved = targets.map((t) => ({
+      t, pop: t.pop, growth: t.growth, income: t.income, hh: t.hh,
+      v: vets[t.id as string], e: econ[t.id as string]
+    }));
+    for (const t of targets) {
+      t.pop = null; t.growth = null; t.income = null; t.hh = null;
+      delete vets[t.id as string];
+      delete econ[t.id as string];
+    }
+    try { body(); } finally {
+      for (const s of saved) {
+        s.t.pop = s.pop; s.t.growth = s.growth; s.t.income = s.income; s.t.hh = s.hh;
+        if (s.v !== undefined) vets[s.t.id as string] = s.v;
+        if (s.e !== undefined) econ[s.t.id as string] = s.e;
+      }
+    }
+  }
+
+  const commFor = (id: string) => c.communities().filter((x: any) => x.id === id)[0];
+  const panelFor = (listing: any) => c.marketPanel(listing, commFor(listing.id), c.communities(), AUSTIN);
+
+  // ---- F-1, the root cause -----------------------------------------------------------------
+
+  it('communities() yields undefined — not 0 — for every figure the API did not send (A21.1c)', () => {
+    const p = austin()[0];
+    without([p], () => {
+      const comm = commFor(p.id as string);
+      expect(comm).toMatchObject({ id: p.id, name: p.area });
+      for (const k of ['pop', 'hh', 'income', 'growth', 'pets', 'econ', 'vets']) {
+        expect(comm[k], `communities().${k} for a listing with no figures`).toBeUndefined();
+      }
+    });
+  });
+
+  it('…and keeps every figure it did send, parsed exactly as the design parsed it', () => {
+    const comm = commFor(austin()[0].id as string);
+    for (const k of ['pop', 'hh', 'income', 'growth', 'pets', 'econ', 'vets']) {
+      expect(typeof comm[k], `communities().${k} for a listing with figures`).toBe('number');
+    }
+    // The design's own arithmetic, unchanged: pets is 57 % of households, econ is thousands.
+    expect(comm.pets).toBe(Math.round(comm.hh * 0.57));
+  });
+
+  // ---- F-2/F-3/F-8, the panel's Insights tab -----------------------------------------------
+
+  it('the four overview tiles carry no value and no dangling unit (A21.2d, F-2)', () => {
+    const p = austin()[0];
+    without([p], () => {
+      expect(panelFor(p).overviewTiles).toEqual([
+        { v: undefined, k: 'Population', sub: undefined },
+        { v: undefined, k: 'Households', sub: 'ACS 5-year' },
+        { v: undefined, k: 'Median Income', sub: undefined },
+        { v: undefined, k: 'Est. Pet Households', sub: 'derived estimate' }
+      ]);
+    });
+  });
+
+  it('…and carry the design’s own values and sub-lines when the figures are there', () => {
+    const tiles = panelFor(austin()[0]).overviewTiles;
+    expect(tiles.map((t: any) => t.k)).toEqual(['Population', 'Households', 'Median Income', 'Est. Pet Households']);
+    for (const t of tiles) {
+      expect(typeof t.v).toBe('string');
+      expect(t.v).not.toContain('undefined');
+      expect(t.v).not.toContain('NaN');
+      expect(typeof t.sub).toBe('string');
+    }
+    expect(tiles[0].sub).toMatch(/^[+-]?\d+\.\d% \(5 yrs\)$/);
+    expect(tiles[2].sub).toMatch(/^[+-]?\d+% vs US$/);
+  });
+
+  it('the competition row shows no count, no ratio, no verdict and NO BARS (A21.2c/f/j/m, F-3)', () => {
+    const p = austin()[0];
+    without([p], () => {
+      const panel = panelFor(p);
+      expect(panel.compEstab).toBeUndefined();
+      expect(panel.compPer10k).toBeUndefined();
+      expect(panel.compLevel).toBeUndefined();
+      // Three bars painted at the floor are a reading, not an absence.
+      expect(panel.compBars).toEqual([]);
+    });
+  });
+
+  it('…and shows all three, with three bars, when the figures are there', () => {
+    const panel = panelFor(austin()[0]);
+    expect(panel.compEstab).toMatch(/^\d+$/);
+    expect(panel.compPer10k).toMatch(/^\d+\.\d$/);
+    expect(panel.compLevel).toMatch(/^(Low|Moderate|High) Competition$/);
+    expect(panel.compBars).toHaveLength(3);
+  });
+
+  // F-8's own case: the guard the mutation probe could not catch. With A21.2e reverted these
+  // three labels read 'Median', 'Flat' and 'Lean' — no "undefined", no "NaN", `on` false for all
+  // three — so only an assertion on the CONTENT fails.
+  it('the three opportunity tiles carry NO verdict — not "Median", not "Flat", not "Lean" (A21.2e)', () => {
+    const p = austin()[0];
+    without([p], () => {
+      const tiles = panelFor(p).oppTiles;
+      expect(tiles.map((t: any) => t.label)).toEqual(['', '', '']);
+      expect(tiles.map((t: any) => t.sub)).toEqual(['Affluence', 'Population Growth', 'Sector Payroll']);
+      // …and every one of them is drawn in the design's own "off" grey, not its navy.
+      expect(tiles.map((t: any) => t.labelStyle.includes('#8d99a6'))).toEqual([true, true, true]);
+    });
+  });
+
+  it('…and carry one of the design’s own verdicts when the figures are there', () => {
+    const tiles = panelFor(austin()[0]).oppTiles;
+    expect(tiles.map((t: any) => t.label)).toEqual([
+      expect.stringMatching(/^(High|Above avg\.|Median)$/),
+      expect.stringMatching(/^(Strong|Steady|Flat)$/),
+      expect.stringMatching(/^(Strong|Typical|Lean)$/)
+    ]);
+  });
+
+  it('the opportunity score is omitted entirely — a composite of unknowns is not a score (A21.2g/h/k/l)', () => {
+    const p = austin()[0];
+    without([p], () => {
+      const panel = panelFor(p);
+      expect(panel.score).toBeUndefined();
+      expect(panel.scoreLabel).toBeUndefined();
+      expect(panel.scoreRing).toBeUndefined();
+    });
+    const full = panelFor(austin()[0]);
+    expect(full.score).toMatch(/^\d+$/);
+    expect(full.scoreLabel).toMatch(/^(Attractive|Balanced|Challenging)$/);
+    expect(full.scoreRing).toContain('conic-gradient');
+  });
+
+  it('nothing the panel renders is ever "undefined", "NaN" or a zeroed figure', () => {
+    const p = austin()[0];
+    without([p], () => {
+      // The whole object, because these four can never be a static label of the design's own.
+      const rendered = JSON.stringify(panelFor(p));
+      for (const banned of ['undefined', 'NaN', '$0K', '0.0%', '% (5 yrs)', '% vs US']) {
+        expect(rendered, `the panel renders "${banned}" for a listing with no figures`).not.toContain(banned);
+      }
+    });
+  });
+
+  it('…and no verdict of any kind reaches a field the panel INTERPOLATES', () => {
+    const p = austin()[0];
+    without([p], () => {
+      const panel = panelFor(p);
+      // Exactly the fields `App.vue` renders as data on the Insights tab. Static labels — the
+      // tiles' `k`, the opportunity tiles' `sub`, the words "Median Income" among them — are not
+      // in this list, which is why the previous round's whole-object substring scan was both a
+      // false positive on "Median" and blind to the `oppTiles` verdicts it was written to catch.
+      const interpolated = [
+        ...panel.overviewTiles.flatMap((t: any) => [t.v, t.sub]),
+        ...panel.oppTiles.map((t: any) => t.label),
+        panel.compEstab, panel.compPer10k, panel.compLevel, panel.score, panel.scoreLabel
+      ].filter((x: unknown) => x !== undefined && x !== '');
+      // Two static sub-lines survive: they describe the SOURCE, not a figure.
+      expect(interpolated).toEqual(['ACS 5-year', 'derived estimate']);
+    });
+  });
+
+  // ---- F-4, the panel reaches the design's own unavailable card ----------------------------
+
+  it('the panel reaches the design’s own "Community data unavailable" card (A21.4a, A-C31 (2))', () => {
+    const p = austin()[0];
+    without([p], () => {
+      expect(panelFor(p).hasDemo).toBe(false);
+      expect(panelFor(p).noDemo).toBe(true);
+    });
+    expect(panelFor(austin()[0]).hasDemo).toBe(true);
+    expect(panelFor(austin()[0]).noDemo).toBe(false);
+  });
+
+  // ---- F-5, the card says which area it describes (D-C32) ----------------------------------
+
+  it('the panel’s Insights heading names the fallback area, and the design’s own wording otherwise (A21.5a)', () => {
+    const p = austin()[0];
+    expect(panelFor(p).overviewTitle).toBe('Market Overview (10 min drive)');
+    (p as any).communityLabel = 'Within 10 minutes of the practice';
+    try {
+      expect(panelFor(p).overviewTitle).toBe('Within 10 minutes of the practice');
+    } finally { delete (p as any).communityLabel; }
+  });
+
+  it('the detail’s Community Context names the fallback area in all three places (A21.5b/c/d)', () => {
+    const p = austin()[0];
+    c.setState({ auth: true, detailId: p.id });
+    const before = c.detail();
+    expect(before.demo[0].sub).toBe('Community, 2023');
+    expect(before.demo[3].sub).toBe('In the community');
+    expect(before.demoScope).toBe('Figures describe the community around the practice, not the practice itself.');
+
+    (p as any).communityLabel = 'Within 10 minutes of the practice';
+    try {
+      const after = c.detail();
+      expect(after.demo[0].sub).toBe('Within 10 minutes of the practice');
+      expect(after.demo[3].sub).toBe('Within 10 minutes of the practice');
+      expect(after.demoScope).toBe('Figures describe the area within 10 minutes of the practice, not the practice itself.');
+      // The Census attribution itself is legally load-bearing and is not part of this sentence.
+      expect(after.demoScope).not.toContain('Census');
+    } finally { delete (p as any).communityLabel; }
+  });
+
+  // ---- F-6, the Market data strip cards ----------------------------------------------------
+
+  it('a strip card whose metro has no figure keeps its title, source and link and shows no value (A21.2n/o)', () => {
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN });
+    without(austin(), () => {
+      const cards = c.renderVals().md.stripCards;
+      expect(cards.length).toBeGreaterThan(0);
+      for (const card of cards) {
+        expect(card.value, `${card.title} still prints a median of zeros`).toBeUndefined();
+        expect(card.bars, `${card.title} still draws bars from zeros`).toEqual([]);
+        expect(card.title.length).toBeGreaterThan(0);
+        expect(card.src.length).toBeGreaterThan(0);
+        expect(card.linkLabel.length).toBeGreaterThan(0);
+        expect(card.valueNote).toBe('metro median');
+      }
+    });
+  });
+
+  it('…and prints the metro median over the DEFINED values only when some are missing', () => {
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN });
+    const all = c.renderVals().md.stripCards;
+    const households = all.filter((x: any) => x.title === 'Households')[0];
+    const nine = austin();
+    // Drop the two lowest-household communities: a median over nine becomes a median over seven,
+    // and the old `num(raw)` coercion would instead have pushed two ZEROS to the bottom of the
+    // sort and moved the median the other way.
+    const byHh = nine.slice().sort((a, b) => Number(String(a.hh).replace(/[^0-9]/g, '')) - Number(String(b.hh).replace(/[^0-9]/g, '')));
+    without(byHh.slice(0, 2), () => {
+      const card = c.renderVals().md.stripCards.filter((x: any) => x.title === 'Households')[0];
+      expect(card.bars, 'one bar per community that HAS the figure').toHaveLength(7);
+      expect(card.value).not.toBe(households.value);
+      expect(card.value).not.toContain('0K0');
+    });
+  });
+
+  // ---- F-7, the Compare rows ---------------------------------------------------------------
+
+  it('a compare row for a community with no figure carries no bar (A21.2p)', () => {
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdValue: 'income', mdCompare: 'growth' });
+    const before = c.renderVals().md.compareRows;
+    expect(before.length).toBeGreaterThan(1);
+    for (const r of before) {
+      expect(r.aStyle).toContain('background:');
+      expect(r.bStyle).toContain('background:');
+    }
+    const p = austin()[0];
+    without([p], () => {
+      const rows = c.renderVals().md.compareRows;
+      const mine = rows.filter((r: any) => r.name === p.area)[0];
+      expect(mine.aStyle, 'a minimum-width bar drawn from a zero implies a lowest reading').toBeUndefined();
+      expect(mine.bStyle).toBeUndefined();
+      // …and every other row is untouched.
+      for (const r of rows.filter((x: any) => x.name !== p.area)) {
+        expect(r.aStyle).toContain('background:');
+        expect(r.bStyle).toContain('background:');
+      }
     });
   });
 });
