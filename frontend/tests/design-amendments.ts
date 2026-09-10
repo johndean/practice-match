@@ -4,10 +4,20 @@ import { fileURLToPath } from 'node:url';
 const V3_DIR = new URL('../../docs/design-reference/design_handoff_practice_match_v3/', import.meta.url);
 export const PRISTINE = fileURLToPath(new URL('Practice Match V3.rev2.dc.html', V3_DIR));
 export const AMENDED = fileURLToPath(new URL('Practice Match V3.dc.html', V3_DIR));
+// The bundle's second amendable file (spec §9.2; controller ruling 2026-09-10 §14 Q3). A24 is the
+// first family that has to reach `MarketMapV3.jsx` — the component that draws the shading — and
+// the engine had only ever known the `.dc.html`. Same contract on both: a frozen pristine twin
+// that is never edited, plus the ruled edits, equals the amended file byte for byte.
+export const PRISTINE_JSX = fileURLToPath(new URL('MarketMapV3.rev2.jsx', V3_DIR));
+export const AMENDED_JSX = fileURLToPath(new URL('MarketMapV3.jsx', V3_DIR));
 export const V2 = fileURLToPath(new URL('../../docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html', import.meta.url));
 export const LOCAL_AMENDMENTS_MD = fileURLToPath(new URL('LOCAL_AMENDMENTS.md', V3_DIR));
 
-export type Amendment = { id: string; date: string; ruling: string; find: string; replace: string; count: number; text?: string };
+/** Which bundle file an amendment edits. Absent means `'dc'`, so every entry written before A24
+ *  is unchanged and the field never has to be back-filled. */
+export type AmendmentFile = 'dc' | 'jsx';
+
+export type Amendment = { id: string; date: string; ruling: string; find: string; replace: string; count: number; text?: string; file?: AmendmentFile };
 
 /** The template region: everything outside <script>…</script> and <style>…</style>. A1 must never touch a script. */
 export function templateRegions(html: string): Array<[number, number]> {
@@ -73,6 +83,13 @@ export function applyAmendments(html: string, list: Amendment[]): string {
     out = out.split(a.find).join(a.replace);
   }
   return out;
+}
+
+/** The entries that edit one bundle file, in `amendments()`' own order. `applyAmendments` counts
+ *  every `find` at the point it is applied, so the partition has to preserve order: an entry whose
+ *  `find` is an earlier entry's output is only correct where that earlier entry has already run. */
+export function amendmentsFor(file: AmendmentFile): Amendment[] {
+  return amendments().filter((a) => (a.file ?? 'dc') === file);
 }
 
 /** A2 — the mobile practice card opens the detail (spec D17, John: "resolve this"). A literal, not
