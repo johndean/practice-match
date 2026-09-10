@@ -3289,14 +3289,14 @@ describe('A19 — the photo lightbox', () => {
       ];
 
       for (const testCase of testCases) {
-        P[0].growth = testCase.growth;
+        (P[0] as any).growth = testCase.growth;
         c.setState({ detailId: 'p1' });
         const detail = c.detail.call(c);
         const growthRow = detail.demo.find((row: any) => row.k === 'Growth');
         expect(growthRow.v, `Growth value for "${testCase.growth}"`).toBe(testCase.expectedValue);
         expect(growthRow.sub, `Growth sub for "${testCase.growth}"`).toBe(testCase.expectedSub);
       }
-      P[0].growth = originalGrowth;
+      (P[0] as any).growth = originalGrowth;
     });
   });
 });

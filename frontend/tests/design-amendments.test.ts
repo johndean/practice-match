@@ -211,12 +211,12 @@ describe('local design amendments (spec D15)', () => {
     // figure is payroll, not revenue; the original labels were correct) are superseded by A21.3a/b/c
     // which remove hardcoded years from three places (VALUE_LAYERS label, LAYER_META sub-line, and
     // the Data Layers card row), making the vintage-dependent display match the data.
-    'A21.1', 'A21.1b', 'A21.3a', 'A21.3b', 'A21.3c',
+    'A21.1', 'A21.1b', 'A21.3a', 'A21.3b', 'A21.3c', 'A21.3d',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(149);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(150);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
