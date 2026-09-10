@@ -1578,6 +1578,74 @@ def test_cmd_geocode_returns_two_without_a_database_url(monkeypatch, capsys):
     assert "DATABASE_URL" in capsys.readouterr().err
 
 
+def test_cmd_geocode_returns_five_when_the_geocoder_cannot_resolve_a_listing(scratch_dsn, monkeypatch, capsys):
+    """Task B9: a listing the ladder cannot place at all stops the run with exit 5, naming the
+    listing, rather than leaving a half-geocoded inventory behind without saying so."""
+    from tests.census.listing_fixtures import make_listing
+    from app.census import geocode as census_geocode
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    conn = census_load._conn(scratch_dsn)
+    try:
+        lid = make_listing(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by)"
+                " VALUES (%s, %s, now(), %s) ON CONFLICT (dataset_key) DO NOTHING",
+                ("tiger_cb", "2023", "test"),
+            )
+    finally:
+        conn.close()
+
+    def refuse(conn, gc, listing_id):
+        raise census_geocode.GeocodeFailed("every rung of the ladder missed")
+
+    monkeypatch.setattr(census_geocode, "resolve", refuse)
+    assert census_load.main(["geocode", "--listing", lid]) == 5
+    err = capsys.readouterr().err
+    assert lid in err and "geocoding failed" in err
+
+
+def test_cmd_geocode_returns_two_when_the_active_vintage_lookup_raises(scratch_dsn, monkeypatch, capsys):
+    """Task B9: `materialize.active_geo_vintage` raises RuntimeError when no boundary vintage is
+    active. That is a refusal (exit 2) naming what to do, never an unhandled crash."""
+    from tests.census.listing_fixtures import make_listing
+    from app.census import geocode as census_geocode
+    from app.census import materialize as census_materialize
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    conn = census_load._conn(scratch_dsn)
+    try:
+        lid = make_listing(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by)"
+                " VALUES (%s, %s, now(), %s) ON CONFLICT (dataset_key) DO NOTHING",
+                ("tiger_cb", "2023", "test"),
+            )
+    finally:
+        conn.close()
+
+    def resolve_ok(conn, gc, listing_id):
+        loc = census_geocode.Location(listing_id, "rooftop", 30.55, -97.8, "48491020355", "48491", "4813552", "78613", "12420")
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO practice_location (listing_id, address_hash, point, geo_precision, geocoded_at, geocoder_vintage)"
+                " VALUES (%s, %s, ST_SetSRID(ST_MakePoint(%s, %s), 4269), %s, now(), %s)"
+                " ON CONFLICT (listing_id) DO NOTHING",
+                (listing_id, "hash-vintage", loc.lng, loc.lat, "rooftop", "Current_Current"),
+            )
+        return loc
+
+    def no_vintage(conn):
+        raise RuntimeError("no active tiger_cb vintage")
+
+    monkeypatch.setattr(census_geocode, "resolve", resolve_ok)
+    monkeypatch.setattr(census_materialize, "active_geo_vintage", no_vintage)
+    assert census_load.main(["geocode", "--listing", lid]) == 2
+    assert "geocode refused" in capsys.readouterr().err
+
+
 def test_cmd_geocode_returns_three_when_the_database_is_unreachable(monkeypatch, capsys):
     monkeypatch.setenv("DATABASE_URL", "postgresql://nobody@127.0.0.1:1/none")
 

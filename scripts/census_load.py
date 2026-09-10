@@ -590,17 +590,17 @@ def cmd_geocode(args: argparse.Namespace) -> int:
         if not rows:
             geocoded_count = 0
         else:
-            # Try to get the active tiger_cb vintage early, fail fast if missing
-            try:
-                with conn.cursor() as cur:
-                    cur.execute("SELECT vintage FROM active_vintage WHERE dataset_key = 'tiger_cb'")
-                    row = cur.fetchone()
-                if row is None:
-                    print("[census_load] geocode refused: no active tiger_cb vintage — run census_load.py tiger and activate it", file=sys.stderr)
-                    return 2
-            except psycopg2.Error as exc:
-                print(f"[census_load] database error: {type(exc).__name__}", file=sys.stderr)
-                return 3
+            # Fail fast when no boundary vintage is active: the resolver and the catchment build
+            # both need it, and refusing here names what to run instead of dying deeper in.
+            # A database error on this SELECT falls to the function's own `except psycopg2.Error`
+            # below, which returns 3 — a second handler here would be the same code twice, and
+            # the parameterised guard test already proves 3 for a post-connect error (round 5).
+            with conn.cursor() as cur:
+                cur.execute("SELECT vintage FROM active_vintage WHERE dataset_key = 'tiger_cb'")
+                row = cur.fetchone()
+            if row is None:
+                print("[census_load] geocode refused: no active tiger_cb vintage — run census_load.py tiger and activate it", file=sys.stderr)
+                return 2
 
             # Geocode each listing
             geocoded_count = 0
@@ -612,18 +612,10 @@ def cmd_geocode(args: argparse.Namespace) -> int:
                     try:
                         loc = geocode.resolve(conn, gc, listing_id)
                         # Determine rung
-                        if loc.geo_precision == "rooftop":
-                            rung = "rooftop"
-                        elif loc.geo_precision == "tract":
-                            rung = "tract"
-                        elif loc.geo_precision == "zcta":
-                            rung = "zcta"
-                        elif loc.geo_precision == "place":
-                            rung = "place"
-                        elif loc.geo_precision == "county":
-                            rung = "county"
-                        else:
-                            rung = loc.geo_precision
+                        # The ladder's rung IS the precision the resolver recorded; an if/elif
+                        # chain that re-states each name would be an identity function with five
+                        # branches nothing can distinguish (controller, B9 round 5).
+                        rung = loc.geo_precision
                         # Check if geocode_review was written (below rooftop)
                         with conn.cursor() as cur:
                             cur.execute("SELECT 1 FROM geocode_review WHERE listing_id = %s", (listing_id,))
