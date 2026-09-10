@@ -2,8 +2,15 @@ export type LatLng = [number, number];
 export type BaseKind = 'map' | 'satellite';
 export interface MountOptions { center: LatLng; zoom: number; basemap: BaseKind; zoomControl?: 'bottomright' | false; scaleControl?: boolean; groups?: string[] }
 export interface CircleStyle { fillColor: string; fillOpacity: number; stroke?: boolean; interactive?: boolean }
-/** V3's community mosaic cell (C5): a filled, strokeless rectangle on the shared canvas renderer. */
+/** A shaded area: a filled, strokeless polygon on the shared canvas renderer. Was V3's mosaic
+ *  CELL until A24 (spec 2026-09-10); it is now a real Census boundary polygon, and the style
+ *  contract did not have to change for that. */
 export interface AreaStyle { fillColor: string; fillOpacity: number; stroke?: boolean; interactive?: boolean }
+/** One boundary polygon as the API and the design's own fixture both spell it — RFC 7946, with
+ *  whatever foreign members the caller's `styleFor`/`tooltipFor` read out of `properties`. The
+ *  geometry is passed to Leaflet untouched; nothing in this layer inspects it. */
+export interface AreaFeature { type: 'Feature'; id?: string | number; properties: Record<string, unknown>; geometry: { type: string; coordinates: unknown } }
+export interface AreaFeatureCollection { type: 'FeatureCollection'; features: AreaFeature[] }
 /** V3 needs two tooltip shapes the hard-coded one could not express: the sticky `rf-tip` on a
  *  mosaic cell, and the persistent `rf-callout` above a selected practice pin (C5, C6). */
 export interface TooltipSpec { html: string; sticky?: boolean; permanent?: boolean; direction?: 'top' | 'bottom'; offset?: [number, number]; className?: string; opacity?: number }
@@ -31,6 +38,7 @@ export interface MapEngine {
   setBase(kind: BaseKind): void;
   circle(center: LatLng, radiusM: number, style: CircleStyle, group: string): Handle;
   rectangle(bounds: [LatLng, LatLng], style: AreaStyle, group: string, tooltip?: TooltipSpec, onClick?: () => void): Handle;
+  geoJson(fc: AreaFeatureCollection, styleFor: (f: AreaFeature) => AreaStyle, group: string, tooltipFor?: (f: AreaFeature) => TooltipSpec, onClick?: (f: AreaFeature) => void): Handle;
   ring(center: LatLng, radiusM: number, style: RingStyle, group: string): Handle;
   marker(pos: LatLng, opts: MarkerOptions, group: string): Handle;
   panInside(pos: LatLng, padding: [number, number]): void;

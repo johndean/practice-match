@@ -29,6 +29,18 @@ export function installLeafletStub(): LeafletStub {
     layerGroup: rec('layerGroup', () => new FakeGroup()),
     circle: rec('circle', (center: unknown, options: unknown) => Object.assign(new FakeLayer(), { center, options })),
     rectangle: rec('rectangle', (bounds: unknown, options: unknown) => Object.assign(new FakeLayer(), { bounds, options })),
+    // L.geoJSON constructs one path per feature and hands each to `onEachFeature`, which is where
+    // MarketMapView's tooltip and click handler are bound — so the fake has to construct them too,
+    // or a per-feature binding would be untestable.
+    geoJSON: rec('geoJSON', (data: { features?: unknown[] }, options: { onEachFeature?: (f: unknown, l: unknown) => void }) => {
+      const group = Object.assign(new FakeLayer(), { data, options, features: [] as FakeLayer[] });
+      for (const f of data?.features ?? []) {
+        const child = new FakeLayer();
+        group.features.push(child);
+        options?.onEachFeature?.(f, child);
+      }
+      return group;
+    }),
     canvas: rec('canvas', (o: unknown) => (canvas = { renderer: 'canvas', options: o })),
     divIcon: rec('divIcon', (o: unknown) => ({ icon: o })),
     marker: rec('marker', (pos: unknown, options: unknown) => Object.assign(new FakeLayer(), { pos, options })),
