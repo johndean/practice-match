@@ -271,6 +271,11 @@ ENVIRONMENT=qa poetry run python scripts/seed_listings.py   # the PostGIS servic
 #             carries, which every import deletes; the eighteen keep their ids.
 ```
 
+The seeded hospitals are INSERTed directly as `published`, not created through the API, so they do not
+trigger the automatic geocoding that published listings go through — after seeding, run the
+`census_load.py geocode` step above (under "Census Phase A exit (QA)") to resolve their locations
+and build market figures.
+
 In-container (the `practice-match-cli` key on file):
 
 ```bash
@@ -382,6 +387,22 @@ python scripts/census_load.py activate acs5_prior    "2014–2018" --by john --n
 python scripts/census_load.py activate cbp           2022        --by john --note "…"
 python scripts/census_load.py activate zbp           2022        --by john --note "…"
 ```
+
+Then geocode every listing to its practice location, building catchments and figures for display
+(figures need the active vintages first, so this step comes after `activate`):
+
+```bash
+python scripts/census_load.py geocode               # resolves every listing without a practice_location
+python scripts/census_load.py geocode --listing <id>  # resolve one specific listing by id
+python scripts/census_load.py geocode --force       # re-resolve listings that already have a location
+```
+
+The command is idempotent — it skips listings that already have a location and exits 0 when there is
+nothing to do, so it can be safely re-run repeatedly. The seeder does not enqueue this step itself:
+it is a bootstrapping tool that runs where no worker may be listening, and silently queueing work
+nothing will consume is worse than not queueing it. A listing published through the API automatically
+goes through this geocoding pipeline; seeded listings created via direct INSERT do not, which is why
+the manual step is needed after seeding.
 
 The vintage string must match what was ingested exactly, en dash included. `bds` and `qwi` have no
 `activate` step in this sequence — `qwi`'s vintage is `<year>Q<quarter>` and `bds`'s is the year;
