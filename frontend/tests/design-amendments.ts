@@ -3025,22 +3025,6 @@ const A21_1b: Amendment = {
   count: 1
 };
 
-/** A21.2 — correct the economic layer label: B7 sends revenue per establishment, not payroll */
-const A21_2: Amendment = {
-  id: 'A21.2', date: '2026-09-10', ruling: 'the economic layer says what the number is (controller amendment A-C28)',
-  find: 'econ: { label: "Average Practice Payroll (CBP)", short: "Avg. payroll per practice",',
-  replace: 'econ: { label: "Average Practice Revenue (CBP)", short: "Avg. revenue per practice",',
-  count: 1
-};
-
-/** A21.2b — correct the radio button label: matches the layer label now */
-const A21_2b: Amendment = {
-  id: 'A21.2b', date: '2026-09-10', ruling: 'the economic layer says what the number is (controller amendment A-C28)',
-  find: 'radioRow("econ", "Average Practice Payroll", valueLayer === "econ",',
-  replace: 'radioRow("econ", "Average Practice Revenue", valueLayer === "econ",',
-  count: 1
-};
-
 /** A21.3 — the growth layer stops naming "2015" in four places: the VALUE_LAYERS label, the
  *  LAYER_META sub-line, the Data Layers card's blurb and caption. The vintage is data-dependent
  *  (2018 today, not 2015) and hard-coded years belong nowhere user-facing (controller amendment A-C29,
@@ -3073,19 +3057,6 @@ const A21_3c: Amendment = {
   id: 'A21.3c', date: '2026-09-10', ruling: 'the growth layer stops naming a year it does not use (same ruling)',
   find: '{ n: "4", title: "Population Growth", blurb: "Change since 2015", src: "Census ACS population estimates", metric: "growth", caption: "Growth since 2015",',
   replace: '{ n: "4", title: "Population Growth", blurb: "Change", src: "Census ACS population estimates", metric: "growth", caption: "Growth",',
-  count: 1
-};
-
-/** A21.3d — the detail's Growth row, where the API string carries its own year. Before A-C29 this
- *  did `p.growth.replace(" since 2015", "")` with `sub: "Since 2015"`, hard-coded both the year
- *  being stripped and the year being displayed. B7 now returns "+11.6% since 2018", so the strip no
- *  longer matches: the value renders with its year still attached, inside a field labelled with a
- *  different year. The fix splits the string once: the value is the part before " since ", and the
- *  sub-line is "Since " plus the year the string itself carries. */
-const A21_3d: Amendment = {
-  id: 'A21.3d', date: '2026-09-10', ruling: 'the detail Growth row extracts its vintage from the API string, never hard-coded (controller amendment A-C29)',
-  find: 'v: p.growth.replace(" since 2015", ""), sub: "Since 2015"',
-  replace: 'v: (() => { const g = p.growth.split(" since "); return g[0]; })(), sub: (() => { const g = p.growth.split(" since "); return g.length > 1 ? "Since " + g[1] : ""; })()',
   count: 1
 };
 
