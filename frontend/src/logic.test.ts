@@ -3856,3 +3856,456 @@ describe('A25 — a listing with no coordinates keeps its place and gets no pin 
     }
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A26 — the Browse filter bar's five native <select>s become in-design dropdowns (John,
+// 2026-09-11: "the dropdown 'more filters' is correct implementation while everything else on
+// the filter bar is implemented incorrectly and not using the site design, this must be
+// corrected"). The SECOND report about this toolbar row: the metro picker immediately to their
+// left was the first, fixed as A13, whose idiom this family reuses rather than inventing a
+// second one.
+//
+// Where A13 converted ONE control, A26 converts five in one `.map()` body, so the unit under
+// characterisation is the loop, not the instance: one state slot (`fMenu`/`fMenuAt`), one open
+// path, one set of closures, five instances. The cases below are A13's own
+// (logic.test.ts:2153-2573) applied to that shape, plus the two things multiplicity adds — that
+// a highlight can never paint on a sibling, and that opening one instance closes the others.
+// ---------------------------------------------------------------------------------------
+describe('A26 — the Browse filter dropdowns', () => {
+  const KEYS = ['type', 'price', 'revenue', 'doctors', 'building'];
+  // A13's own unconditional teardown (M4, review round 1): the cases here arm real `document`
+  // listeners through `componentDidMount`, and unmounting only on the happy path leaves one bound
+  // to a dead component for the rest of the FILE the moment an assertion fails.
+  afterEach(() => { c.componentWillUnmount(); });
+
+  const filters = () => c.renderVals().filters;
+  const byKey = (k: string) => filters()[KEYS.indexOf(k)];
+
+  it('the five toolbar filters are dropdowns, closed, each labelled and showing its own choice', () => {
+    const fl = filters();
+    expect(fl).toHaveLength(5);
+    expect(fl.map((f: any) => f.aria)).toEqual(['Practice type', 'Asking price', 'Gross revenue', 'Doctors', 'Property']);
+    expect(fl.map((f: any) => f.open)).toEqual([false, false, false, false, false]);
+    expect(fl.map((f: any) => f.triggerLabel)).toEqual([
+      'Practice type: Any', 'Asking price: Any', 'Gross revenue: Any', 'Doctors: Any', 'Property: Any'
+    ]);
+    expect(fl.map((f: any) => f.listId)).toEqual(KEYS.map((k) => `f-listbox-${k}`));
+    // A13's rule (V3 marketActiveId): a shut menu has no active descendant, and null is what
+    // both renderers omit the attribute for — a string would spell a dead id.
+    expect(fl.map((f: any) => f.activeId)).toEqual([null, null, null, null, null]);
+    expect(fl[0].caretStyle).toContain('rotate(0deg)');
+  });
+
+  it('the trigger reproduces the <select>\'s own box, plus only what a label and a chevron need', () => {
+    const style = filters()[0].style;
+    // Every declaration the <select> carried (V3 `filters[].style`), byte for byte…
+    expect(style).toContain('height: 40px; padding: 0 13px; font-size: 13px; font-weight: 500; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;');
+    // …and the three the OS popup never needed because it drew its own arrow.
+    expect(style.startsWith('display: inline-flex; align-items: center; gap: 8px; ')).toBe(true);
+    // The chosen-value box is the design's own second state, unchanged.
+    c.setF('type')('Mixed');
+    expect(byKey('type').style).toContain('background: var(--rf-band)');
+    expect(byKey('type').style).toContain('border: 1px solid var(--color-blue)');
+  });
+
+  it('the trigger opens its own dropdown and seeds the highlight on the current choice', () => {
+    filters()[0].toggle();
+    expect(c.state).toMatchObject({ fMenu: 'type', fMenuAt: 0 });
+    const fl = byKey('type');
+    expect(fl.open).toBe(true);
+    expect(fl.caretStyle).toContain('rotate(180deg)');
+    expect(fl.activeId).toBe('f-opt-type-0');
+    expect(byKey('price').open, 'a sibling must not open with it').toBe(false);
+  });
+
+  it('the trigger closes it again (the design\'s own toggle contract)', () => {
+    filters()[0].toggle();
+    byKey('type').toggle();
+    expect(c.state).toMatchObject({ fMenu: null, fMenuAt: -1 });
+  });
+
+  it('one slot: opening a second dropdown closes the first, with nothing to forget', () => {
+    filters()[0].toggle();
+    byKey('revenue').toggle();
+    expect(c.state.fMenu).toBe('revenue');
+    expect(byKey('type').open).toBe(false);
+    expect(byKey('revenue').open).toBe(true);
+  });
+
+  it('the highlight is guarded by the key, so a stale index can never paint on a sibling', () => {
+    filters()[3].toggle();                     // Doctors, four options
+    c.setState({ fMenuAt: 3 });
+    expect(byKey('doctors').options[3].rowStyle).toContain('background: var(--vf-neutral)');
+    // The same index on a CLOSED sibling paints nothing — `hi` is keyed on fMenu, not on the index
+    expect(byKey('revenue').options[3].rowStyle).toContain('background: none');
+    expect(byKey('revenue').activeId).toBe(null);
+  });
+
+  it('the selected row is accented, the highlighted row takes the design\'s hover grey, the rest are plain', () => {
+    filters()[1].toggle();                     // Asking price
+    c.setState({ fMenuAt: 2 });
+    const rows = byKey('price').options;
+    expect(rows[0].rowStyle).toContain('background: var(--vf-accent-bg)');
+    expect(rows[0].rowStyle).toContain('font-weight: 800');
+    expect(rows[2].rowStyle).toContain('background: var(--vf-neutral)');
+    expect(rows[1].rowStyle).toContain('background: none');
+    expect(rows[0].tickStyle).toContain('opacity: 1');
+    expect(rows[1].tickStyle).toContain('opacity: 0');
+    expect(rows.map((r: any) => r.optId)).toEqual([0, 1, 2, 3, 4].map((i) => `f-opt-price-${i}`));
+  });
+
+  it('choosing an option produces exactly the transition the <select>\'s onChange did', () => {
+    vi.useFakeTimers();
+    filters()[1].toggle();
+    byKey('price').options[2].go();
+    expect(c.state.f).toMatchObject({ price: '500-1000' });
+    expect(c.state).toMatchObject({ loading: true, fMenu: null, fMenuAt: -1 });
+    vi.advanceTimersByTime(320);
+    expect(c.state.loading).toBe(false);
+    vi.useRealTimers();
+    // …and the trigger now says what the closed <select> would have displayed.
+    expect(byKey('price').triggerLabel).toBe('$500K – $1M');
+    expect(byKey('price').options[2].selected).toBe(true);
+    // the rail reads `f` — the contract the <select> had
+    expect(c.renderVals().resultHeadline).toBe(c.renderVals().resultHeadline);
+    expect(c.activeFilterCount()).toBe(1);
+  });
+
+  it('setF still accepts a change EVENT, so the design\'s own setter contract is untouched', () => {
+    c.setF('doctors')({ target: { value: '2' } });
+    expect(c.state.f.doctors).toBe('2');
+    expect(byKey('doctors').triggerLabel).toBe('2 or more');
+  });
+
+  it('ArrowDown opens a closed dropdown, then walks and wraps; ArrowUp wraps the other way', () => {
+    const key = (k: string) => { const e = { key: k, preventDefault: vi.fn() }; byKey('doctors').keys(e); return e; };
+    expect(key('ArrowDown').preventDefault).toHaveBeenCalled();
+    expect(c.state).toMatchObject({ fMenu: 'doctors', fMenuAt: 0 });
+    key('ArrowDown'); expect(c.state.fMenuAt).toBe(1);
+    key('ArrowDown'); key('ArrowDown'); key('ArrowDown'); expect(c.state.fMenuAt).toBe(0);
+    key('ArrowUp'); expect(c.state.fMenuAt).toBe(3);
+  });
+
+  it('Home and End jump to the ends, and do nothing while the dropdown is closed', () => {
+    const key = (k: string) => { const e = { key: k, preventDefault: vi.fn() }; byKey('type').keys(e); return e; };
+    expect(key('End').preventDefault).not.toHaveBeenCalled();
+    expect(c.state.fMenu).toBeFalsy();
+    byKey('type').toggle();
+    key('End'); expect(c.state.fMenuAt).toBe(5);
+    key('Home'); expect(c.state.fMenuAt).toBe(0);
+  });
+
+  it('Enter and Space choose the highlighted option; a closed dropdown leaves both to the button', () => {
+    const key = (k: string) => { const e = { key: k, preventDefault: vi.fn() }; byKey('building').keys(e); return e; };
+    expect(key('Enter').preventDefault).not.toHaveBeenCalled();   // closed: the native click opens it
+    expect(key('Tab').preventDefault).not.toHaveBeenCalled();     // an unhandled key is left alone
+    byKey('building').toggle();
+    key('ArrowDown');
+    expect(key('Enter').preventDefault).toHaveBeenCalled();
+    expect(c.state.f.building).toBe('Included');
+    // Reopening seeds the highlight on the option just chosen, so Space takes that one.
+    byKey('building').toggle();
+    expect(c.state.fMenuAt).toBe(1);
+    expect(key(' ').preventDefault).toHaveBeenCalled();
+    expect(c.state.f.building).toBe('Included');
+  });
+
+  it('Escape closes it; a keydown that is not Escape, and one while closed, do not', () => {
+    c.componentDidMount();
+    filters()[0].toggle();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }));
+    expect(c.state.fMenu).toBe('type');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(c.state).toMatchObject({ fMenu: null, fMenuAt: -1 });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));  // no-op, and no throw
+    expect(c.state.fMenu).toBe(null);
+  });
+
+  it('a pointerdown outside closes it; one inside its own wrapper does not', () => {
+    const host = document.createElement('div');
+    const inside = document.createElement('button');
+    host.appendChild(inside);
+    document.body.appendChild(host);
+    try {
+      c.componentDidMount();
+      byKey('type').hostRef(host);
+      // A13's M3: a pointerdown while every dropdown is CLOSED takes the handler's early exit.
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.fMenu).toBeFalsy();
+      byKey('type').toggle();
+      inside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.fMenu).toBe('type');
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state).toMatchObject({ fMenu: null, fMenuAt: -1 });
+      // …and with no node recorded, an outside click still closes rather than throwing
+      byKey('type').hostRef(null);
+      byKey('type').toggle();
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.fMenu).toBe(null);
+    } finally {
+      host.remove();
+    }
+  });
+
+  it('Tab out closes it, and a window blur (null relatedTarget) does not', () => {
+    const host = document.createElement('div');
+    const inside = document.createElement('button');
+    const away = document.createElement('button');
+    host.appendChild(inside);
+    document.body.appendChild(host);
+    document.body.appendChild(away);
+    try {
+      c.componentDidMount();
+      byKey('price').hostRef(host);
+      byKey('price').toggle();
+      inside.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
+      expect(c.state.fMenu, 'a window blur dismisses nothing (A19/A-LB3)').toBe('price');
+      inside.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: inside }));
+      expect(c.state.fMenu, 'a move INSIDE the control is not a move out of it').toBe('price');
+      inside.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: away }));
+      expect(c.state).toMatchObject({ fMenu: null, fMenuAt: -1 });
+    } finally {
+      host.remove();
+      away.remove();
+    }
+  });
+
+  describe('focus returns to the trigger after a choice', () => {
+    const field = () => {
+      const host = document.createElement('div');
+      const trigger = document.createElement('button');
+      trigger.setAttribute('aria-haspopup', 'listbox');
+      host.appendChild(trigger);
+      document.body.appendChild(host);
+      return { host, spy: vi.spyOn(trigger, 'focus') };
+    };
+
+    it('after a mouse choice on an option row', () => {
+      const { host, spy } = field();
+      try {
+        byKey('revenue').hostRef(host);
+        byKey('revenue').toggle();
+        byKey('revenue').options[1].go();
+        expect(c.state.f.revenue).toBe('u1000');
+        expect(spy, 'the row it was on has just been unmounted').toHaveBeenCalled();
+      } finally {
+        host.remove();
+      }
+    });
+
+    it('after Enter on the keyboard', () => {
+      const { host, spy } = field();
+      try {
+        byKey('revenue').hostRef(host);
+        byKey('revenue').toggle();
+        byKey('revenue').keys({ key: 'ArrowDown', preventDefault: vi.fn() });
+        byKey('revenue').keys({ key: 'Enter', preventDefault: vi.fn() });
+        expect(c.state.f.revenue).toBe('u1000');
+        expect(spy).toHaveBeenCalled();
+      } finally {
+        host.remove();
+      }
+    });
+
+    it('and copes with no wrapper recorded, and with one that holds no trigger', () => {
+      byKey('revenue').options[2].go();                 // no ref yet — must not throw
+      expect(c.state.f.revenue).toBe('1000-2500');
+      const bare = document.createElement('div');
+      document.body.appendChild(bare);
+      try {
+        byKey('revenue').hostRef(bare);
+        byKey('revenue').options[3].go();
+        expect(c.state.f.revenue).toBe('o2500');
+      } finally {
+        bare.remove();
+      }
+    });
+  });
+
+  describe('the panel\'s own mount ref scrolls the highlight into view (A13/A14 C1)', () => {
+    it('spends the index the arrow keys seeded, which a setState callback could not', () => {
+      const host = document.createElement('div');
+      const row = document.createElement('button');
+      row.id = 'f-opt-type-3';
+      host.appendChild(row);
+      document.body.appendChild(host);
+      const spy = vi.fn();
+      (row as unknown as { scrollIntoView: unknown }).scrollIntoView = spy;
+      try {
+        byKey('type').hostRef(host);
+        byKey('type').keys({ key: 'ArrowDown', preventDefault: vi.fn() });
+        c.setState({ fMenuAt: 3 });
+        byKey('type').panelRef(host);
+        expect(spy).toHaveBeenCalledWith({ block: 'nearest' });
+      } finally {
+        host.remove();
+      }
+    });
+
+    it('and does nothing on unmount, on a row that cannot scroll, or with no wrapper', () => {
+      expect(() => byKey('type').panelRef(null)).not.toThrow();
+      const host = document.createElement('div');
+      const row = document.createElement('button');
+      row.id = 'f-opt-type-0';
+      host.appendChild(row);
+      document.body.appendChild(host);
+      try {
+        (row as unknown as { scrollIntoView: unknown }).scrollIntoView = undefined;
+        byKey('type').hostRef(host);
+        expect(() => byKey('type').panelRef(host)).not.toThrow();
+        byKey('type').hostRef(null);
+        expect(() => c.scrollFilterOption('type', 0)).not.toThrow();
+      } finally {
+        host.remove();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // The edges that cross the family boundary. Inside the family the invariant is structural
+  // (one slot), so only these need writing down.
+  // ---------------------------------------------------------------------------------------
+  describe('the cross-menu edges', () => {
+    it('opening a filter dropdown closes the four overlay menus m7 governs', () => {
+      c.setState({ navMenu: true, userMenu: true, giveMenu: true, marketMenu: true, marketMenuAt: 2 });
+      filters()[0].toggle();
+      expect(c.state).toMatchObject({
+        fMenu: 'type', navMenu: false, userMenu: false, giveMenu: false, marketMenu: false, marketMenuAt: -1
+      });
+    });
+
+    it('…and so does opening one with an arrow key, which is the family\'s SAME open path', () => {
+      c.setState({ giveMenu: true, marketMenu: true, marketMenuAt: 2 });
+      byKey('price').keys({ key: 'ArrowUp', preventDefault: vi.fn() });
+      expect(c.state).toMatchObject({ fMenu: 'price', giveMenu: false, marketMenu: false, marketMenuAt: -1 });
+    });
+
+    it('each of the six existing open paths closes an open filter dropdown', () => {
+      const v = () => c.renderVals();
+      const open = () => { filters()[0].toggle(); expect(c.state.fMenu).toBe('type'); };
+      for (const [name, fire] of [
+        ['toggleNavMenu', () => v().toggleNavMenu()],
+        ['toggleUserMenu', () => v().toggleUserMenu()],
+        ['toggleGiveMenu', () => v().toggleGiveMenu()],
+        ['the Give arrow-open', () => v().giveMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() })],
+        ['toggleMarketMenu', () => v().toggleMarketMenu()],
+        ['the metro arrow-open', () => v().marketMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() })]
+      ] as [string, () => void][]) {
+        c.setState({ navMenu: false, userMenu: false, giveMenu: false, marketMenu: false });
+        open();
+        fire();
+        expect(c.state, `${name} left a filter dropdown latched`).toMatchObject({ fMenu: null, fMenuAt: -1 });
+      }
+    });
+
+    it('the More-filters popover is the parent, not a peer: its toggle shuts a dropdown in both directions', () => {
+      filters()[0].toggle();
+      c.renderVals().toggleMore();                       // opening the popover shuts the toolbar dropdown
+      expect(c.state).toMatchObject({ moreFilters: true, fMenu: null, fMenuAt: -1 });
+      filters()[0].toggle();
+      c.renderVals().toggleMore();                       // and closing it cannot leave a child latched
+      expect(c.state).toMatchObject({ moreFilters: false, fMenu: null, fMenuAt: -1 });
+    });
+
+    it('navigating away cannot leave a dropdown latched, on any of go()\'s three arms', () => {
+      c.setState({ auth: false });
+      filters()[0].toggle();
+      c.go('browse')();                                   // arm 1: signed out
+      expect(c.state).toMatchObject({ screen: 'gate', fMenu: null, fMenuAt: -1 });
+      c.setState({ auth: true });
+      filters()[0].toggle();
+      c.go('browse')();                                   // arm 2: no wizard draft to save
+      expect(c.state).toMatchObject({ screen: 'browse', fMenu: null, fMenuAt: -1 });
+    });
+
+    it('…including go()\'s third arm, the one that saves a wizard step first', async () => {
+      const patch = vi.fn().mockResolvedValue({ assets: [] });
+      const w: any = new Component({ listings: { patch } });
+      w.setState({ auth: true, sellerView: 'wizard', editingId: 'L1', step: 2 });
+      w.renderVals().filters[0].toggle();
+      expect(w.state.fMenu).toBe('type');
+      await w.go('browse')();
+      expect(patch).toHaveBeenCalled();
+      expect(w.state).toMatchObject({ screen: 'browse', fMenu: null, fMenuAt: -1 });
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A26.12–A26.14 — John's 2026-09-08 m7 ruling, restored (controller ruling on the A26 plan's
+// Q2, 2026-09-11): "opening any one of the four menus closes the other three."
+//
+// Three of the twelve ordered directions among the four were never written. Give's own six
+// were, which is why the gap survived a final review: Give and the metro listbox also carry
+// global pointerdown/focusout dismissal, so their pointer paths were covered by accident,
+// while `navMenu` and `userMenu` have no outside-click, Escape or Tab dismissal of any kind
+// (D-F2 — reported, and deliberately NOT built here). Two mouse clicks reached the defect:
+// open the account menu, click the metro trigger, and both stand open.
+//
+// The case below is exhaustive rather than three regression cases, because "at most one" is
+// the invariant and enumerating the pairs is the only way to say so. A26's own five are proved
+// by their `describe` above; this is the four the ruling names.
+// ---------------------------------------------------------------------------------------
+describe('A26 (Q2) — opening any one of the four menus closes the other three (m7, restored)', () => {
+  afterEach(() => { c.componentWillUnmount(); });
+
+  /** The four m7 menus, each with its own open path and its own "is it open" reader. The metro
+   *  and Give each have a SECOND open path (the arrow keys), and both are included: A14's own
+   *  m7 fix had to cover both of Give's, so the same is asked of the other three. */
+  const MENUS: [string, (v: any) => void, (s: any) => boolean][] = [
+    ['nav', (v) => v.toggleNavMenu(), (s) => !!s.navMenu],
+    ['account', (v) => v.toggleUserMenu(), (s) => !!s.userMenu],
+    ['Give (click)', (v) => v.toggleGiveMenu(), (s) => !!s.giveMenu],
+    ['Give (arrow)', (v) => v.giveMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() }), (s) => !!s.giveMenu],
+    ['metro (click)', (v) => v.toggleMarketMenu(), (s) => !!s.marketMenu],
+    ['metro (arrow)', (v) => v.marketMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() }), (s) => !!s.marketMenu]
+  ];
+
+  it('every ordered pair of open paths leaves exactly one menu open', () => {
+    const menuOf = (n: string) => n.replace(/ \(.*\)$/, '');
+    let pairs = 0;
+    for (const [firstName, openFirst, firstIsOpen] of MENUS) {
+      for (const [secondName, openSecond, secondIsOpen] of MENUS) {
+        // Same menu twice is the design's own TOGGLE contract, not a cross-close: the second
+        // click shuts it, and the arrow keys on an already-open menu only move the highlight.
+        if (menuOf(firstName) === menuOf(secondName)) continue;
+        pairs++;
+        c = new Component({});
+        openFirst(c.renderVals());
+        expect(firstIsOpen(c.state), `${firstName} did not open`).toBe(true);
+        openSecond(c.renderVals());
+        expect(secondIsOpen(c.state), `${secondName} did not open after ${firstName}`).toBe(true);
+        const open = MENUS.filter(([, , isOpen]) => isOpen(c.state)).map(([n]) => n);
+        // Give's two paths and the metro's two each read the same flag, so "one menu open" is
+        // "at most two NAMES open, and both of them the same menu".
+        const distinct = new Set(open.map((n) => n.replace(/ \(.*\)$/, '')));
+        expect([...distinct], `${firstName} then ${secondName}: more than one menu is open`).toHaveLength(1);
+      }
+    }
+    // Not a vacuous pass: six open paths over four menus (nav 1, account 1, Give 2, metro 2),
+    // every ordered pair whose two paths belong to different menus — 26 of the 36.
+    expect(pairs, 'the pair enumeration stopped matching').toBe(26);
+  });
+
+  it('and the highlight goes with the menu it belonged to, never left behind', () => {
+    c.renderVals().toggleMarketMenu();
+    expect(c.state.marketMenuAt).toBe(0);
+    c.renderVals().toggleUserMenu();
+    expect(c.state, 'A26.13').toMatchObject({ userMenu: true, marketMenu: false, marketMenuAt: -1 });
+    c.renderVals().toggleMarketMenu();
+    c.renderVals().toggleNavMenu();
+    expect(c.state, 'A26.12').toMatchObject({ navMenu: true, marketMenu: false, marketMenuAt: -1 });
+  });
+
+  it('the two directions John\'s ruling named, each reachable with two mouse clicks', () => {
+    // The account menu, then the metro trigger (the A26 ruling's section 8, verbatim).
+    c.renderVals().toggleUserMenu();
+    c.renderVals().toggleMarketMenu();
+    expect(c.state, 'A26.14: the metro trigger left the account menu open').toMatchObject({ marketMenu: true, userMenu: false });
+    // The collapsed-header nav menu, then the metro trigger — the same, at header-1000.
+    c = new Component({});
+    c.renderVals().toggleNavMenu();
+    c.renderVals().toggleMarketMenu();
+    expect(c.state, 'A26.14: the metro trigger left the nav menu open').toMatchObject({ marketMenu: true, navMenu: false });
+  });
+});

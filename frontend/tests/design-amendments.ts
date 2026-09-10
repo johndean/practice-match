@@ -3500,6 +3500,520 @@ const A25_6: Amendment = {
   count: 1
 };
 
+/** A26 — the Browse filter bar's native `<select>`s become dropdowns in this design's own style
+ *  (John, 2026-09-11: "the dropdown 'more filters' is correct implementation while everything
+ *  else on the filter bar is implemented incorrectly and not using the site design, this must be
+ *  corrected").
+ *
+ *  This is the SECOND report about this toolbar row. On 2026-09-08 he made the identical
+ *  complaint about the metro picker sitting immediately to the left of these five, and it was
+ *  fixed as A13; A13's scope note left "the five filter selects" native, and that clause is what
+ *  he has now overruled. So A26 reuses A13's idiom verbatim rather than authoring a second one:
+ *  a trigger plus a `role="listbox"` panel composed from the Market data card's layer menu,
+ *  anchored with the "More filters" popover's own `top: 46px; z-index: 700` and
+ *  `box-shadow: 0 6px 20px rgba(0,58,112,.16)`, rows carrying the generated hover class the
+ *  layer-menu and compare-menu rows already get. Every declaration is one the pristine bundle
+ *  already carries — asserted, declaration by declaration, in `design-amendments.test.ts`.
+ *
+ *  A `<select>`'s popup is drawn by the OPERATING SYSTEM, not by the page: on macOS Chromium it
+ *  is the dark menu in his screenshots, it ignores every declaration in `fl.style`, and it renders
+ *  above every in-page `z-index`. No CSS reaches it; only replacing the element does.
+ *
+ *  The one thing A13 did not have to solve is multiplicity — it converted ONE control. A26's five
+ *  (eight, once Task F2 adds the three inside the popover) are not five menus: they are ONE
+ *  `.map()` body, so the family is one state slot, one open path, one set of closures and five
+ *  instances. `Object.assign` semantics mean writing `fMenu` closes whichever sibling was open,
+ *  so the invariant INSIDE the family is structural and there is nothing to forget; only the
+ *  edges across the family boundary are written by hand, and they are named in A26.4/A26.8/A26.9.
+ *
+ *  Two keys, both minted by their first `setState` exactly as `marketMenu`/`marketMenuAt`,
+ *  `giveMenu`, `navMenu`, `userMenu`, `moreFilters`, `mdLayerMenu` and `mdCompareMenu` are —
+ *  none of those is in the state literal either: `fMenu` (null, or the open dropdown's own filter
+ *  key) and `fMenuAt` (a rendered highlight in A13's shape, guarded BY THE KEY so a stale index
+ *  can never paint on a sibling). It is not shared with `giveMenuAt`, which is an unrendered
+ *  one-shot focus token with a `null` sentinel; sharing the slot was measured to drop a mouse
+ *  user on "Dr. Sophia Yin Memorial Fund", the exact defect the comment at V3's `givePanelRef`
+ *  says that `null` exists to prevent.
+ *
+ *  Task F1 converts the five on the toolbar (A26.10). The three inside the "More filters"
+ *  popover are Task F2 and are still `<select>`s here.
+ */
+const A26 = {
+  date: '2026-09-11',
+  ruling: 'the dropdown "more filters" is correct implementation while everything else on the filter bar is implemented incorrectly and not using the site design, this must be corrected'
+};
+
+/** A26.1 — four class members beside `setMarket`, so the five instances share one implementation
+ *  of everything that is not per-instance. Anchored on `moveMarketHighlight`, A13.1's own last
+ *  member, which is where the metro dropdown's machinery already lives.
+ *
+ *  `openFilterMenu` is the family's ONE open path, and the only place it names the four overlay
+ *  menus John's m7 ruling governs — the toggle and the arrow key both call it, so the six
+ *  cross-close keys are written once rather than once per instance. `setFilter` is the choice:
+ *  it calls the design's OWN `setF` (V3:1907), so the 320 ms loading settle and the filter
+ *  transition are byte-for-byte the ones the `<select>`'s `onChange` had, and then shuts the
+ *  panel and returns focus the way `setMarket` does. `scrollFilterOption` and
+ *  `moveFilterHighlight` are A13.1's two, taking the instance's key as their first argument. */
+const A26_1: Amendment = {
+  id: 'A26.1', ...A26,
+  find: [
+    '  moveMarketHighlight = (i) => {',
+    '    this.setState({ marketMenuAt: i });',
+    '    this.scrollMarketOption(i);',
+    '  };',
+    ''
+  ].join('\n'),
+  replace: [
+    '  moveMarketHighlight = (i) => {',
+    '    this.setState({ marketMenuAt: i });',
+    '    this.scrollMarketOption(i);',
+    '  };',
+    '',
+    '  // Opening a filter dropdown. ONE open path for the whole family: the trigger and the arrow',
+    '  // keys both come here, so the cross-menu invariant (final review m7) is written once rather',
+    '  // than once per instance. Writing `fMenu` is what closes whichever sibling was open —',
+    '  // Object.assign semantics — so inside the family there is nothing to forget; the four keys',
+    '  // below are the only edges that leave it.',
+    '  openFilterMenu = (key, at) => {',
+    '    this.setState({ fMenu: key, fMenuAt: at, navMenu: false, userMenu: false, giveMenu: false, marketMenu: false, marketMenuAt: -1 });',
+    '  };',
+    '',
+    '  // The filter choice. It calls the design\'s own setF, so the state transition and the 320 ms',
+    '  // loading settle are the ones the <select>\'s onChange had, to the byte.',
+    '  setFilter = (key, v) => {',
+    '    this.setF(key)(v);',
+    '    this.setState({ fMenu: null, fMenuAt: -1 });',
+    '    // The choice unmounts the row the pointer or the keyboard was on, so focus would land on',
+    '    // <body>. A native select leaves the user on the control; so does this one.',
+    '    const host = this._fMenuEls && this._fMenuEls[key];',
+    '    const trigger = host && host.querySelector(\'button[aria-haspopup="listbox"]\');',
+    '    if (trigger) trigger.focus();',
+    '  };',
+    '',
+    '  // Bringing a row into view, scoped to the dropdown that owns it. Both the arrow keys and the',
+    '  // panel\'s own mount need this: one while the rows are already there, one at the moment they',
+    '  // arrive. The row is resolved through the field this component recorded, not across the',
+    '  // document — the ids are ones this component mints, as scrollMarketOption\'s are.',
+    '  scrollFilterOption = (key, i) => {',
+    '    const host = this._fMenuEls && this._fMenuEls[key];',
+    '    const row = host && host.querySelector("#f-opt-" + key + "-" + i);',
+    '    if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });',
+    '  };',
+    '',
+    '  // Moving the keyboard highlight. The rows are all in the DOM while the panel is open, so the',
+    '  // one being highlighted is scrolled into view here rather than after a re-render.',
+    '  moveFilterHighlight = (key, i) => {',
+    '    this.setState({ fMenuAt: i });',
+    '    this.scrollFilterOption(key, i);',
+    '  };',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A26.2 — the `filters:` map body. The five ARRAY LITERALS above it are untouched: the keys, the
+ *  option values and every one of the design's own labels are exactly as approved. Only the
+ *  `.map()` that turns each into render values changes, key for key on A13.2's metro menu —
+ *  `open` <-> `marketMenuOpen`, `toggle` <-> `toggleMarketMenu`, `caretStyle` <->
+ *  `marketCaretStyle`, `triggerLabel` <-> `marketTriggerLabel`, `hostRef` <-> `marketMenuRef`,
+ *  `panelRef` <-> `marketPanelRef`, `keys` <-> `marketMenuKeys`, and `rowStyle`/`tickStyle`
+ *  verbatim.
+ *
+ *  `style` is the `<select>`'s own string with three declarations prefixed — `display:
+ *  inline-flex; align-items: center; gap: 8px;`, which the "More filters" button in the same row
+ *  already carries — because a `<button>` has to lay out a label and a chevron where the
+ *  `<select>` had the user agent draw its own arrow. Nothing else about the closed box changes.
+ *
+ *  `aria` is derived from the design's OWN first option (all five read "<name>: Any") rather than
+ *  authoring five new strings. It is required, not cosmetic: today these five have no `<label>`
+ *  and no `aria-label`, and a `<label>` cannot name a `<button>` anyway; and `screens.ts`'s
+ *  `layerTrigger` addresses the Market data card's two listbox triggers as the UNLABELLED ones,
+ *  so an unlabelled trigger here would break `browse-layer-menu` and `browse-compare-open`.
+ *
+ *  The `<select>`'s two orphaned render keys go with it under the bundle's own dead-code rule,
+ *  exactly as A13.6/A13.7 dropped `market:` and `v: m`: `value:` fed `value="{{ fl.value }}"`
+ *  and `v:` fed `<option value="{{ o.v }}">`, and after A26.10 the template holds neither. Both
+ *  choices go through `setFilter(fl.key, …)`, which closes over the value itself. `set:` goes the
+ *  same way — `onChange="{{ fl.set }}"` was its only reader — while `setF` itself, and its
+ *  event-or-value line, are untouched and still what `setFilter` calls. */
+const A26_2: Amendment = {
+  id: 'A26.2', ...A26,
+  find: [
+    '      ].map((fl) => ({',
+    '        value: s.f[fl.key],',
+    '        set: this.setF(fl.key),',
+    '        options: fl.options.map((o) => ({ v: o[0], label: o[1] })),',
+    '        style: "height: 40px; padding: 0 13px; font-size: 13px; font-weight: 500; color: var(--color-navy); background: " +',
+    '          (s.f[fl.key] === "Any" ? "var(--color-white)" : "var(--rf-band)") + "; border: 1px solid " +',
+    '          (s.f[fl.key] === "Any" ? "var(--border-subtle)" : "var(--color-blue)") + "; border-radius: 6px; cursor: pointer;"',
+    '      })),',
+    ''
+  ].join('\n'),
+  replace: [
+    '      ].map((fl) => {',
+    '        // Each toolbar filter is a dropdown list in this design\'s own style, not the operating',
+    '        // system\'s popup: the same trigger + role="listbox" panel A13 gave the metro control',
+    '        // beside it. One .map() body, five instances, one state slot.',
+    '        //',
+    '        // The comment sits INSIDE the map body, not between the array rows and `].map(`:',
+    '        // `tests/seeds/test_hospitals_json.py`\'s `_BAR_BLOCK` reads the five option arrays',
+    '        // out of the design and requires `      ]` to follow the last row directly, and it',
+    '        // fails loudly rather than silently testing nothing when it does not.',
+    '        const cur = s.f[fl.key];',
+    '        const open = s.fMenu === fl.key;',
+    '        // Math.max: a value `f` holds that this option list does not would give indexOf -1 and',
+    '        // index the array out of bounds — the guard marketMenuKeys carries for a dropped metro.',
+    '        const sel = Math.max(0, fl.options.findIndex((o) => o[0] === cur));',
+    '        const at = open && s.fMenuAt >= 0 ? s.fMenuAt : sel;',
+    '        return {',
+    '          // The accessible name, taken from the design\'s OWN first option — all five read',
+    '          // "<name>: Any" — rather than authoring five new strings. A <select> with no <label>',
+    '          // is named by nothing, and a <label> cannot name a <button>, so the trigger needs one.',
+    '          aria: fl.options[0][1].split(":")[0],',
+    '          open,',
+    '          listId: "f-listbox-" + fl.key,',
+    '          // On the TRIGGER, which is always rendered: a shut dropdown has no active descendant,',
+    '          // and null is what both renderers omit the attribute for (a string would spell a dead',
+    '          // id). Keyed on fl.key as well, so a sibling never claims another\'s highlight.',
+    '          activeId: open ? "f-opt-" + fl.key + "-" + s.fMenuAt : null,',
+    '          // What the closed <select> displayed: the current option\'s own label.',
+    '          triggerLabel: fl.options[sel][1],',
+    '          toggle: () => (open ? this.setState({ fMenu: null, fMenuAt: -1 }) : this.openFilterMenu(fl.key, sel)),',
+    '          hostRef: (el) => { const m = this._fMenuEls || (this._fMenuEls = {}); m[fl.key] = el || null; },',
+    '          // The panel\'s own mount is when the option rows first exist, so it is where OPENING',
+    '          // scrolls the highlighted row into view — the arrow keys cannot, having seeded the',
+    '          // highlight while the panel was still unrendered. Same callback-ref idiom the compare',
+    '          // menu ships (md.compareMenuRef) and A13 reuses for marketPanelRef.',
+    '          panelRef: (el) => { if (el) this.scrollFilterOption(fl.key, this.state.fMenuAt); },',
+    '          keys: (e) => {',
+    '            const n = fl.options.length;',
+    '            if (e.key === "ArrowDown" || e.key === "ArrowUp") {',
+    '              e.preventDefault();',
+    '              if (!open) return this.openFilterMenu(fl.key, sel);',
+    '              return this.moveFilterHighlight(fl.key, (at + (e.key === "ArrowDown" ? 1 : n - 1)) % n);',
+    '            }',
+    '            if (!open) return;',
+    '            if (e.key === "Home" || e.key === "End") {',
+    '              e.preventDefault();',
+    '              return this.moveFilterHighlight(fl.key, e.key === "Home" ? 0 : n - 1);',
+    '            }',
+    '            if (e.key === "Enter" || e.key === " ") {',
+    '              e.preventDefault();',
+    '              return this.setFilter(fl.key, fl.options[at][0]);',
+    '            }',
+    '          },',
+    '          // The <select>\'s own box, byte for byte, plus the three declarations a label and a',
+    '          // chevron need where the user agent used to draw its own arrow (V3:382\'s own trio).',
+    '          style: "display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 13px; font-size: 13px; font-weight: 500; color: var(--color-navy); background: " +',
+    '            (cur === "Any" ? "var(--color-white)" : "var(--rf-band)") + "; border: 1px solid " +',
+    '            (cur === "Any" ? "var(--border-subtle)" : "var(--color-blue)") + "; border-radius: 6px; cursor: pointer;",',
+    '          caretStyle: "flex: none; display: block; transition: transform 150ms var(--easing-out); transform: rotate(" +',
+    '            (open ? "180deg" : "0deg") + ");",',
+    '          options: fl.options.map((o, i) => {',
+    '            const on = o[0] === cur;',
+    '            const hi = open && s.fMenuAt === i;',
+    '            return {',
+    '              label: o[1], selected: on,',
+    '              go: () => this.setFilter(fl.key, o[0]),',
+    '              optId: "f-opt-" + fl.key + "-" + i,',
+    '              rowStyle: "display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 8px; font-family: var(--rf-display); font-size: 13px; font-weight: " +',
+    '                (on ? "800" : "500") + "; color: var(--vf-navy); background: " +',
+    '                (on ? "var(--vf-accent-bg)" : hi ? "var(--vf-neutral)" : "none") + "; border: 0; border-radius: 6px; cursor: pointer;",',
+    '              tickStyle: "flex: none; display: block; filter: brightness(0) saturate(100%) invert(23%) sepia(89%) saturate(1352%) hue-rotate(184deg) brightness(94%) contrast(101%); opacity: " +',
+    '                (on ? "1" : "0") + ";"',
+    '            };',
+    '          })',
+    '        };',
+    '      }),',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A26.4 — the "More filters" popover is the three inner dropdowns' PARENT, not their peer, so it
+ *  is not one of the cross-close edges: opening one of the three inside it must not close it. Its
+ *  own toggle instead clears the family's keys unconditionally, which is one edit covering both
+ *  needed directions — closing the popover shuts any dropdown inside it, so a child cannot latch
+ *  behind an unmounted parent, and opening the popover shuts a toolbar dropdown. (Task F2 adds
+ *  the three; the second direction is live from F1, the first from F2.) */
+const A26_4: Amendment = {
+  id: 'A26.4', ...A26,
+  find: '      toggleMore: () => this.setState({ moreFilters: !s.moreFilters }),\n',
+  replace: '      toggleMore: () => this.setState({ moreFilters: !s.moreFilters, fMenu: null, fMenuAt: -1 }),\n',
+  count: 1
+};
+
+/** A26.5 — outside-click, in `trackMenuDismiss`'s existing shared `pointerdown` closure. No new
+ *  listener: A13.4 armed this one and A19 already shares it.
+ *
+ *  PLACEMENT. The ruling asks for the branch "after the existing ones", and it is placed after
+ *  Give's and BEFORE the metro's, because the metro branch's guard is an early `return` — a
+ *  branch appended after it would be dead whenever the metro menu is closed, which is almost
+ *  always. Both existing branches keep their own bytes, which is the invariant A14.4 established
+ *  and `design-amendments.test.ts` pins for each of the five. The host is resolved through the
+ *  keyed collection this component records (A14's `_giveItemEls` idiom), never across the
+ *  document — A13's deliberate rule (final review m5). */
+const A26_5: Amendment = {
+  id: 'A26.5', ...A26,
+  find: [
+    '      if (this.state.giveMenu) {',
+    '        const give = this._giveMenuEl;',
+    '        if (!(give && e.target && give.contains(e.target))) this.setState({ giveMenu: false });',
+    '      }',
+    '      if (!this.state.marketMenu) return;',
+    ''
+  ].join('\n'),
+  replace: [
+    '      if (this.state.giveMenu) {',
+    '        const give = this._giveMenuEl;',
+    '        if (!(give && e.target && give.contains(e.target))) this.setState({ giveMenu: false });',
+    '      }',
+    '      if (this.state.fMenu) {',
+    '        const fh = this._fMenuEls[this.state.fMenu];',
+    '        if (!(fh && e.target && fh.contains(e.target))) this.setState({ fMenu: null, fMenuAt: -1 });',
+    '      }',
+    '      if (!this.state.marketMenu) return;',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A26.6 — Escape, in the same function's shared `keydown` closure, in the same position and for
+ *  the same reason. No focus return is needed and none is written: the option rows carry
+ *  `tabindex="-1"` (A13.3), so focus never leaves the trigger, which is exactly why A13's own
+ *  Escape branch does not return focus either where A14's Give branch has to. */
+const A26_6: Amendment = {
+  id: 'A26.6', ...A26,
+  find: [
+    '      if (this.state.giveMenu) {',
+    '        this.setState({ giveMenu: false });',
+    '        if (this._giveButtonEl) this._giveButtonEl.focus();',
+    '      }',
+    '      if (!this.state.marketMenu) return;',
+    ''
+  ].join('\n'),
+  replace: [
+    '      if (this.state.giveMenu) {',
+    '        this.setState({ giveMenu: false });',
+    '        if (this._giveButtonEl) this._giveButtonEl.focus();',
+    '      }',
+    '      if (this.state.fMenu) this.setState({ fMenu: null, fMenuAt: -1 });',
+    '      if (!this.state.marketMenu) return;',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A26.7 — Tab out, in the same function's shared `focusout` closure, in the same position. The
+ *  window-blur rule above it (a null `relatedTarget` dismisses nothing — A19, A-LB3) is the
+ *  closure's own early return and covers this branch unchanged. */
+const A26_7: Amendment = {
+  id: 'A26.7', ...A26,
+  find: [
+    '      if (this.state.giveMenu) {',
+    '        const give = this._giveMenuEl;',
+    '        if (!(give && give.contains(to))) this.setState({ giveMenu: false });',
+    '      }',
+    '      if (!this.state.marketMenu) return;',
+    ''
+  ].join('\n'),
+  replace: [
+    '      if (this.state.giveMenu) {',
+    '        const give = this._giveMenuEl;',
+    '        if (!(give && give.contains(to))) this.setState({ giveMenu: false });',
+    '      }',
+    '      if (this.state.fMenu) {',
+    '        const fh = this._fMenuEls[this.state.fMenu];',
+    '        if (!(fh && fh.contains(to))) this.setState({ fMenu: null, fMenuAt: -1 });',
+    '      }',
+    '      if (!this.state.marketMenu) return;',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A26.8a–A26.8f — the six inbound cross-close edges. Each existing menu open path gains the
+ *  family's two keys, so opening any other menu shuts an open filter dropdown. The four overlay
+ *  menus' own OUTBOUND edge is written once, in A26.1's `openFilterMenu`. */
+const A26_8a: Amendment = {
+  id: 'A26.8a', ...A26,
+  find: '      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false }),\n',
+  replace: '      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false, fMenu: null, fMenuAt: -1 }),\n',
+  count: 1
+};
+
+const A26_8b: Amendment = {
+  id: 'A26.8b', ...A26,
+  find: '      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false }),\n',
+  replace: '      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false, fMenu: null, fMenuAt: -1 }),\n',
+  count: 1
+};
+
+const A26_8c: Amendment = {
+  id: 'A26.8c', ...A26,
+  find: '      toggleGiveMenu: () => this.setState({ giveMenu: !s.giveMenu, giveMenuAt: null, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 }),\n',
+  replace: '      toggleGiveMenu: () => this.setState({ giveMenu: !s.giveMenu, giveMenuAt: null, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1, fMenu: null, fMenuAt: -1 }),\n',
+  count: 1
+};
+
+const A26_8d: Amendment = {
+  id: 'A26.8d', ...A26,
+  find: '        this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 });\n',
+  replace: '        this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1, fMenu: null, fMenuAt: -1 });\n',
+  count: 1
+};
+
+const A26_8e: Amendment = {
+  id: 'A26.8e', ...A26,
+  find: '      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false }),\n',
+  replace: '      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false, fMenu: null, fMenuAt: -1 }),\n',
+  count: 1
+};
+
+const A26_8f: Amendment = {
+  id: 'A26.8f', ...A26,
+  find: '          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur });\n',
+  replace: '          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur, fMenu: null, fMenuAt: -1 });\n',
+  count: 1
+};
+
+/** A26.9 — `go()`'s three arms clear the family's keys, so navigating away cannot leave a panel
+ *  latched over the next screen. This matters because the design's existing menu keys DO latch —
+ *  `go("detail")` after opening the metro listbox leaves `marketMenu: true` — and A26 declines to
+ *  ship a ninth instance of a known defect while also declining to fix the existing ones here
+ *  (reported separately as D-F2, which is not authorised by this ruling). */
+const A26_9a: Amendment = {
+  id: 'A26.9a', ...A26,
+  find: '    if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false });\n',
+  replace: '    if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false, fMenu: null, fMenuAt: -1 });\n',
+  count: 1
+};
+
+const A26_9b: Amendment = {
+  id: 'A26.9b', ...A26,
+  find: '    if (!this.props.listings || this.state.sellerView !== "wizard" || !this.state.editingId) return this.setState({ screen, interest: "closed", userMenu: false, lightbox: null, lightboxFocus: false });\n',
+  replace: '    if (!this.props.listings || this.state.sellerView !== "wizard" || !this.state.editingId) return this.setState({ screen, interest: "closed", userMenu: false, lightbox: null, lightboxFocus: false, fMenu: null, fMenuAt: -1 });\n',
+  count: 1
+};
+
+const A26_9c: Amendment = {
+  id: 'A26.9c', ...A26,
+  find: '      (d) => this.setState({ screen, interest: "closed", userMenu: false, wizAssets: d.assets, wizErr: "", lightbox: null, lightboxFocus: false }),\n',
+  replace: '      (d) => this.setState({ screen, interest: "closed", userMenu: false, wizAssets: d.assets, wizErr: "", lightbox: null, lightboxFocus: false, fMenu: null, fMenuAt: -1 }),\n',
+  count: 1
+};
+
+/** A26.10 — the markup for the five. A13.3's shape, per instance: the `<select>` becomes the
+ *  layer menu's trigger and its panel, wrapped in the `position: relative` div the "More filters"
+ *  control in this same row already uses so the panel can anchor beneath the field. Each row
+ *  carries an `id` and the TRIGGER carries `aria-activedescendant`, because the focused element
+ *  is the only place a screen reader reads it and focus stays on the trigger throughout; the
+ *  trigger is `role="combobox"` (ARIA 1.2 supports `aria-activedescendant` on `combobox`, not on
+ *  `button` — A13's final review I1) and the rows carry `tabindex="-1"`, the other half of the
+ *  same pattern.
+ *
+ *  The panel carries NO width declaration. A13's metro panel is `width: 300px` because its field
+ *  is `min-width: 300px`; these five are five different widths, `min-width: 100%` appears nowhere
+ *  in the pristine bundle, and an absolutely positioned box with no width shrink-wraps its widest
+ *  row — which is always at least the current label, since the label IS one of the rows. Absent
+ *  beats invented. */
+const A26_10: Amendment = {
+  id: 'A26.10', ...A26,
+  find: [
+    '          <sc-for list="{{ filters }}" as="fl" hint-placeholder-count="5">',
+    '            <select value="{{ fl.value }}" onChange="{{ fl.set }}" style="{{ fl.style }}">',
+    '              <sc-for list="{{ fl.options }}" as="o" hint-placeholder-count="3">',
+    '                <option value="{{ o.v }}">{{ o.label }}</option>',
+    '              </sc-for>',
+    '            </select>',
+    '          </sc-for>',
+    ''
+  ].join('\n'),
+  replace: [
+    '          <sc-for list="{{ filters }}" as="fl" hint-placeholder-count="5">',
+    '            <div ref="{{ fl.hostRef }}" style="position: relative;">',
+    '              <button onClick="{{ fl.toggle }}" onKeyDown="{{ fl.keys }}" role="combobox" aria-label="{{ fl.aria }}" aria-haspopup="listbox" aria-controls="{{ fl.listId }}" aria-expanded="{{ fl.open }}" aria-activedescendant="{{ fl.activeId }}" style="{{ fl.style }}">',
+    '                <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ fl.triggerLabel }}</span>',
+    '                <img src="assets/icons/sub-chevron.svg" alt="" width="14" height="14" style="{{ fl.caretStyle }}">',
+    '              </button>',
+    '              <sc-if value="{{ fl.open }}" hint-placeholder-val="{{ false }}">',
+    '                <div role="listbox" aria-label="{{ fl.aria }}" id="{{ fl.listId }}" ref="{{ fl.panelRef }}" style="position: absolute; left: 0; top: 46px; z-index: 700; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;" class="rf-scroll">',
+    '                  <sc-for list="{{ fl.options }}" as="o" hint-placeholder-count="3">',
+    '                    <button onClick="{{ o.go }}" id="{{ o.optId }}" role="option" tabindex="-1" aria-selected="{{ o.selected }}" style="{{ o.rowStyle }}" style-hover="background: var(--vf-neutral);">',
+    '                      <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ o.label }}</span>',
+    '                      <img src="assets/icons/sub-check-filled.svg" alt="" width="11" height="11" style="{{ o.tickStyle }}">',
+    '                    </button>',
+    '                  </sc-for>',
+    '                </div>',
+    '              </sc-if>',
+    '            </div>',
+    '          </sc-for>',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A26.12–A26.14 — John's 2026-09-08 m7 ruling, RESTORED (controller ruling on the A26 plan's
+ *  Q2, 2026-09-11). Its own three ids, on three lines A26.8 is already editing, so the widening
+ *  can be lifted out without touching the rest of the family.
+ *
+ *  m7 reads "opening any one of the four menus closes the other three", and three of the twelve
+ *  ordered directions among `navMenu`, `userMenu`, `giveMenu` and `marketMenu` were never
+ *  written: the account toggle closed neither the nav menu nor the metro listbox, the nav toggle
+ *  closed no metro listbox, and the metro trigger closed neither of the header's two. Give's own
+ *  six were complete, which is why the gap survived that review — and why it is a real defect and
+ *  not a theoretical one: Give and the metro listbox ALSO carry global pointerdown and focusout
+ *  dismissal (A13.4/A13.8), so their pointer paths were covered by accident, while `navMenu` and
+ *  `userMenu` have no outside-click, Escape or Tab dismissal of any kind. Two mouse clicks reach
+ *  it: open the account menu, click the metro trigger, and both stand open.
+ *
+ *  That wider menu-hygiene gap is reported as D-F2 and is NOT built here — it is its own piece of
+ *  work and this ruling does not authorise it. These three edits restore exactly the invariant
+ *  John already ruled on, and nothing else.
+ *
+ *  No pixel moves: each writes `false` over a flag that is already `false` in every approved
+ *  state, since no state opens two menus at once. */
+const A26_12: Amendment = {
+  id: 'A26.12', ...A26,
+  find: '      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false, fMenu: null, fMenuAt: -1 }),\n',
+  replace: '      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false, fMenu: null, fMenuAt: -1, marketMenu: false, marketMenuAt: -1 }),\n',
+  count: 1
+};
+
+const A26_13: Amendment = {
+  id: 'A26.13', ...A26,
+  find: '      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false, fMenu: null, fMenuAt: -1 }),\n',
+  replace: '      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false, fMenu: null, fMenuAt: -1, navMenu: false, marketMenu: false, marketMenuAt: -1 }),\n',
+  count: 1
+};
+
+const A26_14: Amendment = {
+  id: 'A26.14', ...A26,
+  find: '      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false, fMenu: null, fMenuAt: -1 }),\n',
+  replace: '      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false, fMenu: null, fMenuAt: -1, navMenu: false, userMenu: false }),\n',
+  count: 1
+};
+
+/** A26.15 — the fourth direction, found by the Q2 characterisation case rather than by reading.
+ *
+ *  A26.12–A26.14 fixed the three the A26 ruling's section 8 named, all of them PONTER paths. The
+ *  exhaustive enumeration of ordered pairs then failed on `nav then metro (arrow)`: the metro
+ *  listbox's ARROW-key open path (`marketMenuKeys`) closes none of the other three, where its
+ *  click path (`toggleMarketMenu`) closes all three after A26.14.
+ *
+ *  It is the same defect and the same ruling. A14's own m7 fix had to cover BOTH of Give's open
+ *  paths for exactly this reason, and m7's own comment names this user: "a pure-keyboard user
+ *  could hold this listbox and the header's Give menu open at once". The account menu has no
+ *  focusout dismissal (D-F2), so Shift+Tab from it to the metro trigger and one ArrowDown reaches
+ *  the state with a keyboard alone. Its own id, like A26.12–A26.14, and it changes no pixel: it
+ *  writes `false` over three flags that are already `false` in every approved state. */
+const A26_15: Amendment = {
+  id: 'A26.15', ...A26,
+  find: '          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur, fMenu: null, fMenuAt: -1 });\n',
+  replace: '          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur, fMenu: null, fMenuAt: -1, navMenu: false, userMenu: false, giveMenu: false });\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -3543,5 +4057,18 @@ export function amendments(): Amendment[] {
     // A25.5 reads A21.4a's output, so the family is last. Definition order in this file matches
     // this list (m8). A20 is reserved by the image-identifiability plan and A24 by the
     // neighbourhood-shading spec, both in flight; A25 is the next free id in the ledger.
-    A25_1, A25_2, A25_3, A25_4, A25_5, A25_6];
+    A25_1, A25_2, A25_3, A25_4, A25_5, A25_6,
+    // A26 — the Browse filter bar's native <select>s become in-design dropdowns (John,
+    // 2026-09-11), on A13's own idiom. Task F1 converts the five on the toolbar; A26.5-A26.7
+    // read A13.8's and A19's output in the three shared dismissal closures, and A26.8c/A26.8d
+    // read A14.2's, so the family is appended last as every family is. Definition order in
+    // this file matches this list (m8). A26.3 and A26.11 (the three inside the More filters
+    // popover) are Task F2; A20 stays reserved by the image-identifiability plan and A24 by
+    // the neighbourhood-shading spec.
+    A26_1, A26_2, A26_4, A26_5, A26_6, A26_7, A26_8a, A26_8b, A26_8c, A26_8d, A26_8e, A26_8f,
+    A26_9a, A26_9b, A26_9c, A26_10,
+    // A26.12-A26.14 — the Q2 widening (controller ruling, 2026-09-11): John's own m7
+    // invariant, restored in the three directions that were never written. Each reads
+    // A26.8a/A26.8b/A26.8e's output, so all three run after the family's own entries.
+    A26_12, A26_13, A26_14, A26_15];
 }
