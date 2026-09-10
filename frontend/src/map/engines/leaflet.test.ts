@@ -606,7 +606,7 @@ describe('LeafletMapEngine — V3 area shading, tooltip specs and panInside', ()
       (f) => ({ html: f.properties.tip as string, sticky: true, className: 'rf-tip' }),
       (f) => { clicked.push(f.properties.geo_id as string); }
     );
-    const layer = layerGroups(stub)[0].added[0] as { features: unknown[]; tooltipOpened?: number };
+    const layer = layerGroups(stub)[0].added[0] as { features: unknown[] };
     const children = layer.features as { tooltip?: { text: string; opts: unknown }; on_click?: () => void }[];
     expect(children).toHaveLength(2);
     for (const [i, child] of children.entries()) {
@@ -615,8 +615,11 @@ describe('LeafletMapEngine — V3 area shading, tooltip specs and panInside', ()
       child.on_click!();
     }
     expect(clicked).toEqual(['78704', '78745']);
-    handle.openTooltip!();                        // the handle acts on ITS layer, as rectangle's does
-    expect(layer.tooltipOpened).toBe(1);
+    // NO `openTooltip` on this handle, and that is the point: tooltips are bound on the CHILDREN
+    // by `onEachFeature`, never on the returned FeatureGroup, so calling it would have found no
+    // `_tooltip` and done nothing while this test went green over it. `Handle.openTooltip` is
+    // optional and `circle()` already omits it.
+    expect(handle.openTooltip, 'a no-op member is worse than an absent one').toBeUndefined();
     handle.remove();
     expect((stub.map.added as { added?: unknown[] }[]).some((g) => (g.added ?? []).length > 0), 'the layer survived remove()').toBe(false);
   });

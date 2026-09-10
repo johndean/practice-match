@@ -110,7 +110,12 @@ export class LeafletMapEngine implements MapEngine {
       }
     });
     layer.addTo(this.group(group));
-    return { remove: () => layer.remove(), openTooltip: () => layer.openTooltip() };
+    // No `openTooltip` on this handle, deliberately: tooltips are bound on the CHILDREN by
+    // `onEachFeature`, never on the returned FeatureGroup, so `Layer.openTooltip`'s own
+    // `if (this._tooltip)` guard would find nothing and the call would silently do nothing.
+    // `Handle.openTooltip` is optional and `circle()` already omits it. A caller that needs a
+    // named polygon's tooltip has to ask for a capability rather than get a no-op.
+    return { remove: () => layer.remove() };
   }
   // C7 (MarketMapV3.jsx:230-235): one dashed, unfilled ring, not two filled circles.
   ring(center: LatLng, radiusM: number, s: RingStyle, group: string): Handle {
