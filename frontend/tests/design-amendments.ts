@@ -3363,6 +3363,105 @@ const A23: Amendment = {
   count: 1
 };
 
+/* ------------------------------------------------------------------------------------------
+ * A25 — Task MP1 (John's ruling, 2026-09-10): "a listing with no coordinates keeps its place in
+ * the results and does not get a pin."
+ *
+ * `app/api/listings.py`'s `serialise` emits `lat`/`lng` as null whenever `location_disclosed`
+ * is false, and `migrations/016_listing.sql` declares that column `NOT NULL DEFAULT false` — so
+ * the nulls are the DEFAULT, not an edge case. `load.ts` carries them through unchanged (its own
+ * `centroid()` already filters unlocated practices, which is the codebase saying it knows they
+ * exist), and the design handed them straight to Leaflet.
+ *
+ * Leaflet 1.9.4's `toLatLng([null, null])` returns `null`: the array branch is gated on
+ * `typeof a[0] !== 'object'` and `typeof null === 'object'`, so it falls through. `Marker._latlng`
+ * is then null and `_setPos(map.latLngToLayerPoint(null))` reads `.lat` off it — measured in real
+ * Chromium as `pageerror: Cannot read properties of null (reading 'lat')`, no pins. ONE listing
+ * was enough: `drawPins`' `forEach` has no try/catch, so pin drawing stopped there for every
+ * later listing, and `LayerGroup.addLayer` had already stored the marker before `map.addLayer`
+ * threw, so the poisoned layer re-threw from inside Leaflet's own event loop on every later zoom
+ * pass. Under the Vite dev server Vue's `logError` re-throws out of `flushJobs` and the screen
+ * stops responding; the production build logs instead, so QA and production lose the pins from
+ * that listing onward and break zoom.
+ *
+ * The listing itself is real — a buyer may open it, request access and read it — and the missing
+ * point is the seller's own choice, so it stays in the rail, the count, the sort and the filters
+ * and only the MAP skips it. Nothing is drawn at [0, 0] and nothing at the metro centre: the
+ * design has no treatment for "somewhere in this metro" and inventing one is out of scope.
+ * ------------------------------------------------------------------------------------------ */
+
+/** A25.1 — the pin list. `Number.isFinite` rather than `!= null` because `NaN` reaches
+ *  `toLatLng` intact and produces the same broken marker one step further on. */
+const A25_1: Amendment = {
+  id: 'A25.1', date: '2026-09-10', ruling: 'a listing with no coordinates keeps its place in the results and does not get a pin (Task MP1)',
+  find: '      practices: list.map((p) => ({',
+  replace: '      practices: list.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng)).map((p) => ({',
+  count: 1
+};
+
+/** A25.2 — the second leg into the same trap: the drive-time ring's centre. `MarketMapView`
+ *  guards on `props.driveCenter` being truthy, and `[null, null]` is an array, so it passed —
+ *  `engine.ring([null, null], …)` is `L.circle`, which calls the same `toLatLng`. The fallback
+ *  is the expression's OWN else-branch (the metro centre); no new centre is invented. */
+const A25_2: Amendment = {
+  id: 'A25.2', date: '2026-09-10', ruling: 'a listing with no coordinates keeps its place in the results and does not get a pin (Task MP1)',
+  find: '      driveCenter: sel ? [sel.lat, sel.lng] : cfg.center,',
+  replace: '      driveCenter: (sel && Number.isFinite(sel.lat) && Number.isFinite(sel.lng)) ? [sel.lat, sel.lng] : cfg.center,',
+  count: 1
+};
+
+/** A25.3 — the third leg, and the worst of them. The map's community list is what
+ *  `mosaicBbox` takes `Math.min`/`Math.max` over, and `null` coerces to 0: measured on the real
+ *  producer, one unlocated Austin community stretched the metro box from [29.86, -98.24] to
+ *  [-0.13, 0.15], which is 100,482,513 mosaic cells to iterate — a hung tab, not a missing
+ *  shape. A community with no centroid cannot be shaded, so it leaves the MAP's list.
+ *
+ *  Only the map's list. `comms` itself is untouched, so the Market data strip cards still take
+ *  their metro medians over the listing's figures and the docked panel still reads its own
+ *  community: a figure is not a point, and A21.2n's rule (median of what we know) is unchanged. */
+const A25_3: Amendment = {
+  id: 'A25.3', date: '2026-09-10', ruling: 'a listing with no coordinates keeps its place in the results and does not get a pin (Task MP1)',
+  find: '      communities: comms.map((c) => {',
+  replace: '      communities: comms.filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lng)).map((c) => {',
+  count: 1
+};
+
+/** A25.4 — the last place in the docked panel where a zero stood in for an absence, and the one
+ *  A21.1c/A21.2* could not reach: `marketPanel`'s last-resort community object, taken when the
+ *  selection has no community of its own AND the market has no communities at all. Measured on
+ *  the real producer it rendered "0" Population, "0.0% (5 yrs)", "$0K" Median Income, "0"
+ *  Veterinary Establishments and a "Flat" growth verdict — exactly the fabrication D-C31 rules
+ *  out. The arm is KEPT rather than removed (it is the guard that stops the panel throwing on an
+ *  empty market) and its values become `undefined`, which every A21 guard downstream already
+ *  reads as "we have no figure". */
+const A25_4: Amendment = {
+  id: 'A25.4', date: '2026-09-10', ruling: 'a missing figure is omitted, never zeroed — the panel’s last-resort community too (D-C31, Task MP1)',
+  find: '    const c = selComm || comms[0] || { pop: 0, hh: 0, income: 0, growth: 0, pets: 0, vets: 0 };',
+  replace: '    const c = selComm || comms[0] || { pop: undefined, hh: undefined, income: undefined, growth: undefined, pets: undefined, vets: undefined };',
+  count: 1
+};
+
+/** A25.5 — the panel and the detail disagreed about p8. The detail reads
+ *  `p.id !== "p8" && p.pop != null` (the design's own first term, which A12.10 widened); A21.4a
+ *  ported the idiom to the panel and dropped that first term, so the DESIGN's own fixture for
+ *  "Community data unavailable" showed a full profile in the docked panel and the unavailable
+ *  card on the detail behind it.
+ *
+ *  The p8 term is what is kept, on both, rather than dropped from both: p8 carries `pop`,
+ *  `growth`, `income` and `hh` in the fixture, so the id test is the DESIGN's deliberate way of
+ *  demonstrating the unavailable state, and removing it would delete that demonstration. It can
+ *  only ever be true of a design fixture — a real listing's id is a uuid — so nothing the API
+ *  serves is affected either way.
+ *
+ *  Applied after A21.4a, whose output is this `find`. No approved state opens the panel on p8
+ *  (`browse-market-panel` and `interest-modal` use Cedar Park and Round Rock), so no pixel moves. */
+const A25_5: Amendment = {
+  id: 'A25.5', date: '2026-09-10', ruling: 'the docked panel and the detail must not disagree about whether a listing has community data (Task MP1)',
+  find: '      hasDemo: sel.pop != null,\n      noDemo: sel.pop == null,',
+  replace: '      hasDemo: sel.id !== "p8" && sel.pop != null,\n      noDemo: sel.id === "p8" || sel.pop == null,',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -3401,5 +3500,10 @@ export function amendments(): Amendment[] {
     // A22 — the ownership vocabulary widens to the seeds' own wording (2026-09-10, Task SL10).
     A22,
     // A23 — collapsing the Market data card closes both its menus (2026-09-10, Task MD1).
-    A23];
+    A23,
+    // A25 — a listing with no coordinates keeps its place and gets no pin (2026-09-10, Task MP1).
+    // A25.5 reads A21.4a's output, so the family is last. Definition order in this file matches
+    // this list (m8). A20 is reserved by the image-identifiability plan and A24 by the
+    // neighbourhood-shading spec, both in flight; A25 is the next free id in the ledger.
+    A25_1, A25_2, A25_3, A25_4, A25_5];
 }
