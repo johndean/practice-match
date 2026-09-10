@@ -1986,7 +1986,7 @@ def test_the_seed_plan_records_a_l11_and_deploy_md_says_every_image_renders():
         json.loads((ROOT / "seeds" / "hospitals" / "photos" / "index.json").read_text())["hospitals"].values()
     )
     # Read from the committed inventory rather than pinned as a literal (Task SD1 moved it from
-    # 195 to 313 by adding John's eleven Dallas folders, and it will move again the next time he
+    # 195 to 312 by adding John's eleven Dallas folders, and it will move again the next time he
     # supplies a folder). The CLAIM is what is pinned — "every image John supplies is rendered,
     # and here is how many that is" — and a runbook whose number has drifted from the tree is
     # exactly the kind of stale figure this suite exists to catch.

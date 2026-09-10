@@ -211,7 +211,7 @@ by a listing that belongs to NOBODY is a different thing and still stops the who
 below).
 
 **The photographs (A-L9, revised by A-L10, and by A-L11 on 2026-09-09).** **Every photograph John
-supplies is rendered — 313 of them today, 8 to 18 per hospital.** Positions **1-6** are the six
+supplies is rendered — 312 of them today, 8 to 18 per hospital.** Positions **1-6** are the six
 captioned slots the design's detail page renders (`photoSet(p)` in `Practice Match V3.dc.html`: an
 exterior plus five subjects chosen by practice type); everything after them is an extra tile,
 appended to the same grid by amendment A15 and counted by the docked panel's carousel. The caption

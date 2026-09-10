@@ -12,9 +12,9 @@ ROOT = Path(__file__).resolve().parent.parent.parent
 PHOTOS = ROOT / "seeds" / "hospitals" / "photos"
 INDEX = PHOTOS / "index.json"
 CURATION = PHOTOS / "curation.json"
-# Deliberately BELOW what the per-file ceiling would allow (313 x 250 KB is 76 MB): the committed
-# set is 13.8 MB since Task SD1 (313 files — 195 for John's eighteen of 2026-09-06, where A-L10
-# kept 73 and A-L9 108, and 118 of the 119 in his eleven Dallas folders), so 24 MB stays a real
+# Deliberately BELOW what the per-file ceiling would allow (312 x 250 KB is 76 MB): the committed
+# set is 13.7 MB since Task SD1 (312 files — 195 for John's eighteen of 2026-09-06, where A-L10
+# kept 73 and A-L9 108, and 117 of the 119 in his eleven Dallas folders), so 24 MB stays a real
 # guard against a runaway rather than a restatement of MAX_BYTES.
 TOTAL_CEILING_BYTES = 24 * 1024 * 1024
 MAX_BYTES = 250 * 1024
@@ -118,9 +118,9 @@ PHOTOGRAPHS_PER_HOSPITAL = {
     "stu_veterinary_specialist_center": 10,
     "vwx_veterinary_hospital": 10,
     "yz_rural_animal_hospital": 11,
-    # Task SD1: John's eleven Dallas folders, 119 images. `alpha` shows 11 of its 12 — the
-    # twelfth is refused, see `test_the_refused_photograph_is_nowhere_in_the_committed_tree`.
-    "alpha_dallas_veterinary_specialist_hospital": 11,
+    # Task SD1: John's eleven Dallas folders, 119 images. `alpha` shows 10 of its 12 — TWO are
+    # refused, see `test_the_refused_photographs_are_nowhere_in_the_committed_tree`.
+    "alpha_dallas_veterinary_specialist_hospital": 10,
     "beta_dallas_veterinary_hospital": 11,
     "charlie_dallas_animal_hospital": 11,
     "delta_dallas_animal_er_hospital": 11,
@@ -142,9 +142,9 @@ def test_the_committed_set_is_every_photograph_john_supplied() -> None:
     inv = inventory()
     assert {slug: len(entries) for slug, entries in inv.items()} == PHOTOGRAPHS_PER_HOSPITAL
     filled = [e for entries in inv.values() for e in entries if e["file"] is not None]
-    assert (len(filled), sum(len(e) for e in inv.values())) == (313, 313), "a photograph was dropped"
+    assert (len(filled), sum(len(e) for e in inv.values())) == (312, 312), "a photograph was dropped"
     beyond = [e for entries in inv.values() for e in entries if e["slot"] is None]
-    assert len(beyond) == 139, "the photographs past the design's six slots (A15.3 renders each)"
+    assert len(beyond) == 138, "the photographs past the design's six slots (A15.3 renders each)"
 
 
 def test_the_inventory_names_no_hospital_that_is_not_seeded() -> None:
@@ -233,10 +233,16 @@ DALLAS_SLUGS = frozenset({
     "juliet_dallas_animal_hospital", "kilo_dallas_fort_worth_veterinary_hospital",
     "lima_dallas_fort_worth_veterinary_hospital",
 })
-# The one photograph that is NOT encoded, and the rule it fell under. Named here so a re-run of
-# the pipeline that quietly encoded it would fail rather than pass.
-REFUSED = ("alpha_dallas_veterinary_specialist_hospital", "alpha_dallas_11_individual_images.png")
-# What the source folders hold. `alpha` supplied 12; 11 are committed.
+# The two photographs that are NOT encoded, and the rule each fell under. Named here so a re-run
+# of the pipeline that quietly encoded one would fail rather than pass. Both are Alpha's:
+# `..._11_...` shows a THIRD-PARTY business name ('COMPASSIONATE HEARTS'), and `..._05` is a
+# monument sign reading '4140 CEDAR SPRINGS ROAD', an address that is not this listing's
+# (controller ruling, 2026-09-10 — a photograph whose whole subject is a false location claim).
+REFUSED = (
+    ("alpha_dallas_veterinary_specialist_hospital", "alpha_dallas_05.png"),
+    ("alpha_dallas_veterinary_specialist_hospital", "alpha_dallas_11_individual_images.png"),
+)
+# What the source folders hold. `alpha` supplied 12; 10 are committed.
 DALLAS_SOURCE_IMAGES = 119
 
 
@@ -256,26 +262,44 @@ def test_every_photograph_in_the_eleven_folders_is_accounted_for() -> None:
     photograph cannot go missing between the folder and the tree without this failing."""
     described = descriptions()
     assert sum(len(files) for files in described.values()) == DALLAS_SOURCE_IMAGES
-    refused = [(slug, name) for slug, files in described.items()
-               for name, entry in files.items() if entry.get("refused")]
-    assert refused == [REFUSED]
+    refused = sorted((slug, name) for slug, files in described.items()
+                     for name, entry in files.items() if entry.get("refused"))
+    assert refused == sorted(REFUSED)
     encoded = sum(len(entries) for slug, entries in inventory().items() if slug in DALLAS_SLUGS)
-    assert encoded == DESCRIPTIONS_SUPPLIED_MINUS_REFUSED == DALLAS_SOURCE_IMAGES - 1
+    assert encoded == DESCRIPTIONS_SUPPLIED_MINUS_REFUSED == DALLAS_SOURCE_IMAGES - len(REFUSED)
 
 
-DESCRIPTIONS_SUPPLIED_MINUS_REFUSED = 118
+DESCRIPTIONS_SUPPLIED_MINUS_REFUSED = 117
 
 
-def test_the_refused_photograph_is_nowhere_in_the_committed_tree() -> None:
-    """It is refused for a THIRD-PARTY business name — wall signage reading 'COMPASSIONATE
-    HEARTS', which is not this hospital's own fictional name. Its own name, its own street
-    number and the civic banner in a sibling image are all encoded; that is the whole
-    distinction, and this is the one image on the wrong side of it."""
-    slug, name = REFUSED
-    assert name not in [e["source"] for e in inventory()[slug]]
-    entry = descriptions()[slug][name]
-    assert "description" not in entry, "a photograph nobody may see is not described"
-    assert isinstance(entry["refused"], str) and "COMPASSIONATE HEARTS" in str(entry["refused"])
+def test_the_refused_photographs_are_nowhere_in_the_committed_tree() -> None:
+    """Two, and only two, of the 119. `..._11_...` carries a THIRD-PARTY business name — wall
+    signage reading 'COMPASSIONATE HEARTS', which is not this hospital's own fictional name.
+    `..._05` is a monument sign reading '4140 CEDAR SPRINGS ROAD', an address that is not this
+    listing's 18770 Preston Rd, so the photograph's whole subject is a false location claim.
+
+    Its own name, its own street number above its own door, and the civic banner in a sibling
+    image are all encoded; that is the whole distinction, and these are the two images on the
+    wrong side of it."""
+    for slug, name in REFUSED:
+        assert name not in [e["source"] for e in inventory()[slug]], name
+        entry = descriptions()[slug][name]
+        assert "description" not in entry, "a photograph nobody may see is not described"
+        assert isinstance(entry["refused"], str) and entry["refused"], name
+    reasons = {name: str(descriptions()[slug][name]["refused"]) for slug, name in REFUSED}
+    assert "COMPASSIONATE HEARTS" in reasons["alpha_dallas_11_individual_images.png"]
+    assert "4140 CEDAR SPRINGS ROAD" in reasons["alpha_dallas_05.png"]
+
+
+def test_every_other_street_number_is_still_encoded() -> None:
+    """The controller kept the class and refused one member of it: a number on a wall or above a
+    door, beside the listing's own fictional name, is part of the same invented signage and
+    names nobody. The flag stays on all of them so the identifiability work can re-cut the whole
+    class if John wants it."""
+    flagged = [(slug, str(e["source"])) for slug in sorted(DALLAS_SLUGS)
+               for e in inventory()[slug] if "own_street_number" in e.get("flags", [])]
+    assert len(flagged) >= 8, flagged
+    assert "alpha_dallas_05.png" not in [name for _slug, name in flagged]
 
 
 def test_every_dallas_photograph_is_captioned_by_its_own_description() -> None:

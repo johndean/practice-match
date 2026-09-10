@@ -52,9 +52,9 @@ COPY scripts/ ./scripts/
 # The twenty-nine demo hospitals and their photographs (spec 2026-09-06 D3/D7; Task SD1 added
 # eleven in Dallas on 2026-09-10): the `seed` role reads seeds/hospitals.json in-container, and
 # GET /api/listings/{id}/photos/{n} serves the committed WebP files from seeds/hospitals/photos/.
-# ~13.9 MiB (317 files, of which 313 are photographs — since A-L11 every image John supplies is
-# rendered, the design's six captioned slots first and the rest as tiles of their own; one of
-# the 119 Dallas images is deliberately not encoded, see seeds/hospitals/photos/descriptions.json).
+# ~13.9 MiB (316 files, of which 312 are photographs — since A-L11 every image John supplies is
+# rendered, the design's six captioned slots first and the rest as tiles of their own; two of
+# the 119 Dallas images are deliberately not encoded, see seeds/hospitals/photos/descriptions.json).
 COPY seeds/ ./seeds/
 COPY --from=frontend-build /work/frontend/dist/ ./frontend/dist/
 COPY --from=coming-soon-build /work/coming-soon/dist/ ./coming-soon/dist/

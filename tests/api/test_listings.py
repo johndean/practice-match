@@ -760,12 +760,13 @@ async def test_every_seeded_hospital_serves_every_photograph_with_a_caption(
         assert len(item["photo_captions"]) == len(item["photos"]), item["name"]
         assert all(p is not None for p in item["photos"]), item["name"]
         assert all(isinstance(c, str) and c for c in item["photo_captions"]), item["name"]
-    # 313 since Task SD1: 195 for John's eighteen and 118 of the 119 in his eleven Dallas
-    # folders — one refused for a third-party business name, recorded in
+    # 312 since Task SD1: 195 for John's eighteen and 117 of the 119 in his eleven Dallas
+    # folders — two refused, one for a third-party business name and one for a monument sign
+    # giving an address that is not the listing's, both recorded in
     # seeds/hospitals/photos/descriptions.json. Read from the committed inventory, so what this
     # asserts is that the endpoint serves exactly what the tree holds.
     committed = sum(len(e) for e in json.loads(SL.PHOTO_INDEX.read_text())["hospitals"].values())
-    assert sum(len(item["photos"]) for item in items) == committed == 313
+    assert sum(len(item["photos"]) for item in items) == committed == 312
 
 
 # --- A-SL23 (0): one caption contract for seeds and sellers ------------------------------------
