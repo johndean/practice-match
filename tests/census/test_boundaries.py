@@ -363,3 +363,39 @@ async def test_layers_gains_a_shading_member_on_the_three_fills_and_null_on_the_
     for key in ("pets", "households", "competition", "practices", "drive_10", "drive_20"):
         assert layers[key]["shading"] is None, key
     assert layers["income"]["geo_level"] == "place|catchment", "the panel's geography must not move"
+
+
+def test_the_shaded_layers_and_the_writers_LAYERS_are_one_truth() -> None:
+    """`app.census.geo_metric.LAYERS` (Task 8, the only writer of `geo_metric`) and this module's
+    `SHADING` + `BOUNDARY_METRIC` (Task 9, the only reader) spell the same three facts twice —
+    metric_key, summary_level, and the dataset the rows are STAMPED with. Task 8's own report
+    flagged that nothing pinned them; this is that pin, closed in the merge rather than after it.
+
+    The failure it stops is SILENT, which is why a pin and not a comment: let the two drift and the
+    endpoint reads level "860" for a metric the writer materialised at "160", finds nothing, and
+    returns a well-formed EMPTY FeatureCollection — a map with no shading, no error, and no log
+    line. Two spellings of one truth is this project's most-repeated defect class.
+
+    Deliberately OUT of scope: `market.LAYERS["growth"]["dataset_key"]` is `acs5_prior`, which is
+    the LICENCE gate's key, not the stamp. The rows are stamped `acs5` and `acs5_prior` is carried
+    in the writer's own fourth element ("also gated on"). Pinning those two together would assert a
+    falsehood — they are different questions about the same layer, as D-NS15 is for `geo_level`.
+    """
+    writer = {metric: (level, source) for metric, level, source, _also_gated_on in geo_metric.LAYERS}
+    assert len(writer) == len(geo_metric.LAYERS), "a metric_key is spelled twice in geo_metric.LAYERS"
+    assert writer, "vacuous: the writer declares no layers at all"
+
+    assert set(market.SHADING) == set(market.BOUNDARY_METRIC), (
+        "every shaded layer needs both a geography (SHADING) and a metric (BOUNDARY_METRIC); "
+        f"SHADING-only={set(market.SHADING) - set(market.BOUNDARY_METRIC)}, "
+        f"BOUNDARY_METRIC-only={set(market.BOUNDARY_METRIC) - set(market.SHADING)}"
+    )
+    reader = {
+        market.BOUNDARY_METRIC[layer][0]: (market.SHADING[layer]["summary_level"], market.BOUNDARY_METRIC[layer][1])
+        for layer in market.SHADING
+    }
+    assert len(reader) == len(market.SHADING), "two shaded layers claim the same metric_key"
+
+    # Two-way by construction: dict equality names a layer either side is missing AND a fact either
+    # side spells differently, in one assertion.
+    assert reader == writer, "the boundary endpoint and the geo_metric writer disagree"
