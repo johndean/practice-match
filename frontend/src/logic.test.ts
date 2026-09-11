@@ -4794,3 +4794,182 @@ describe('A24 — real boundary polygons', () => {
     expect(band(15)).toBe(band(200));
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A24.14-A24.18 — the `market` adapter. The seam A16 and A17 established, keyed on adapter
+// PRESENCE and never on data (A16.1's shape, A-SL23 (2)). The design's own fixture is the
+// AUSTIN metro carrying the design's own nine figures, so the one thing that must never happen
+// is it being drawn over a real metro: every arm below ends either on the API's polygons or on
+// none, and never on `areaSet`.
+// ---------------------------------------------------------------------------------------
+describe('A24 — the market adapter', () => {
+  const FC = (ids: string[]) => ({
+    type: 'FeatureCollection',
+    features: ids.map((id) => ({
+      type: 'Feature', id,
+      properties: { geo_id: id, name: id.toUpperCase(), value: 60000, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false },
+      geometry: null
+    }))
+  });
+  const adapter = (areas: Record<string, unknown>) => ({ boundaries: () => Promise.resolve(areas) });
+  const drawn = (comp: any) => comp.marketVals(P).areas.features.map((f: any) => f.properties.geo_id);
+
+  it("with an adapter present the map draws the API's polygons and NEVER the design's fixture", async () => {
+    const api = { income: FC(['x']) };
+    const comp: any = new Component({ market: adapter(api) });
+    comp.componentDidMount();
+    await Promise.resolve();
+    expect(comp.state.mdAreas).toBe(api);
+    expect(drawn(comp)).toEqual(['x']);
+  });
+
+  it('an EMPTY answer empties the map — it does not fall back to the fixture', async () => {
+    const comp: any = new Component({ market: adapter({}) });
+    comp.componentDidMount();
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual([]);
+  });
+
+  it('a REFUSED load empties the map too, and the rejection arm exists', async () => {
+    const comp: any = new Component({ market: { boundaries: () => Promise.reject(new Error('404')) } });
+    comp.componentDidMount();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(comp.state.mdAreas).toEqual({});
+    expect(drawn(comp)).toEqual([]);
+  });
+
+  it("with NO adapter the design's own fixture path runs, untouched", () => {
+    const comp: any = new Component({});
+    comp.componentDidMount();
+    expect(comp.state.mdAreas).toBeNull();
+    expect(comp.marketVals(P).areas.features.length).toBeGreaterThan(0);
+  });
+
+  it('changing the metro reloads the polygons for the metro chosen', async () => {
+    const asked: string[] = [];
+    const comp: any = new Component({ market: { boundaries: (n: string) => { asked.push(n); return Promise.resolve({}); } } });
+    comp.componentDidMount();
+    comp.setMarket('Sacramento, CA');
+    expect(asked).toEqual(['Austin, TX', 'Sacramento, CA']);
+  });
+
+  it("a metro change CLEARS the previous metro's polygons before it asks, so no city is ever drawn over another", async () => {
+    let settle: (v: unknown) => void = () => {};
+    const comp: any = new Component({ market: { boundaries: () => new Promise((r) => { settle = r; }) } });
+    comp.componentDidMount();
+    settle({ income: FC(['austin'] ) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['austin']);
+    comp.setMarket('Sacramento, CA');
+    expect(comp.state.mdAreas, 'Austin is off the map the instant Sacramento is asked for').toBeNull();
+    expect(drawn(comp)).toEqual([]);
+    settle({ income: FC(['sacramento']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['sacramento']);
+  });
+
+  it('an answer for a market the member has already left is DISCARDED, however late it lands', async () => {
+    const pending: ((v: unknown) => void)[] = [];
+    const comp: any = new Component({ market: { boundaries: () => new Promise((r) => pending.push(r)) } });
+    comp.componentDidMount();          // asks for Austin
+    comp.setMarket('Sacramento, CA');  // asks for Sacramento
+    pending[1]({ income: FC(['sacramento']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['sacramento']);
+    // Austin's answer arrives second. Last-write-wins would strand Austin's outlines over
+    // Sacramento's map indefinitely; the guard drops it instead.
+    pending[0]({ income: FC(['austin']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['sacramento']);
+  });
+
+  it("a late REJECTION for a market already left does not empty the market the member is on", async () => {
+    const pending: { reject: (e: unknown) => void }[] = [];
+    const comp: any = new Component({ market: { boundaries: () => new Promise((_r, reject) => pending.push({ reject })) } });
+    comp.componentDidMount();
+    comp.setMarket('Sacramento, CA');
+    pending[1].reject(new Error('nope'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(comp.state.mdAreas).toEqual({});
+    pending[0].reject(new Error('Austin, late'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(comp.state.mdAreas, "Austin's refusal is not Sacramento's") .toEqual({});
+  });
+
+  // -----------------------------------------------------------------------------------
+  // The three states Task 9's payload distinguishes, rendered. These property dicts are
+  // `app/api/market._boundary_feature`'s own output, transcribed from the route (commit
+  // `c466415`) rather than imagined: `value` is null BOTH when the geography has no row and
+  // when its row is suppressed, and the two are told apart by `suppressed`/`suppress_reason`
+  // on the same dict. `band_ambiguous` is orthogonal to both — the value is KEPT and a caveat
+  // is added, never greyed (D-C36: "greying a measured figure is its own false statement").
+  // -----------------------------------------------------------------------------------
+  it('renders no-data, suppressed and band-ambiguous as three different things', () => {
+    const props = [
+      { geo_id: 'none', name: 'No row', value: null, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false },
+      { geo_id: 'nomoe', name: 'No margin', value: null, moe: null, suppressed: true, suppress_reason: 'no_moe', band_ambiguous: false },
+      { geo_id: 'highmoe', name: 'Wide margin', value: null, moe: 40000, suppressed: true, suppress_reason: 'high_moe', band_ambiguous: false },
+      { geo_id: 'cascade', name: 'Cascaded', value: null, moe: null, suppressed: true, suppress_reason: 'input_suppressed', band_ambiguous: false },
+      { geo_id: 'flag', name: 'Withheld', value: null, moe: null, suppressed: true, suppress_reason: 'source_flag', band_ambiguous: false },
+      { geo_id: 'amb', name: 'Ambiguous', value: 92150, moe: 6420, suppressed: false, suppress_reason: null, band_ambiguous: true },
+      { geo_id: 'plain', name: 'Measured', value: 92150, moe: 1200, suppressed: false, suppress_reason: null, band_ambiguous: false }
+    ];
+    const comp: any = new Component({});
+    const out = comp.areaVals({ type: 'FeatureCollection', features: props.map((p) => ({ type: 'Feature', id: p.geo_id, properties: p, geometry: null })) }, 'income');
+    const by = Object.fromEntries(out.features.map((f: any) => [f.properties.geo_id, f.properties]));
+
+    // Every unmeasured polygon is DRAWN — never omitted, because a hole on a choropleth reads
+    // as a park, a lake or the edge of the market (D-NS16).
+    expect(out.features).toHaveLength(props.length);
+
+    // One neutral class for all five unmeasured states, and a DIFFERENT sentence for each fact.
+    const grey = by.none.color;
+    for (const id of ['none', 'nomoe', 'highmoe', 'cascade', 'flag']) {
+      expect(by[id].color, `${id} must take the no-data class`).toBe(grey);
+      expect(by[id].label).toBe('No data');
+    }
+    expect(by.none.tip).toContain('No data for this area');
+    // The three imprecision reasons share the contract's own wording; `input_suppressed` is a
+    // cascade from a figure suppressed for imprecision, so it reads as imprecision too. It is
+    // also unreachable on this endpoint today — only `median_hh_income` is suppressed here
+    // (D-NS17) and `_suppression` emits `no_moe`/`high_moe` alone.
+    for (const id of ['nomoe', 'highmoe', 'cascade']) {
+      expect(by[id].tip).toContain('Estimate too imprecise to show at this geography');
+    }
+    expect(by.flag.tip).toContain('Not published for this county');
+    expect(by.flag.tip).not.toContain('Estimate too imprecise');
+
+    // Band-ambiguous is NOT greyed: the figure stands, and the caveat rides beside it.
+    expect(by.amb.color).not.toBe(grey);
+    expect(by.amb.color).toBe(by.plain.color);
+    expect(by.amb.label).toBe('$92K');
+    expect(by.amb.tip).toContain('this margin spans two legend bands');
+    expect(by.plain.tip).not.toContain('spans two legend bands');
+  });
+
+  it("a blocked or disabled layer arrives with no features, so nothing of it is ever painted", async () => {
+    // Verified against the route, not assumed: `app/api/market.py` fills `rows` only when
+    // `state == "enabled"`, so a licence-blocked layer answers `features: []` with a
+    // `blocked_reason`. "Blocked datasets never ship" therefore holds without the design
+    // reading `state` at all — and if that ever changes, this case is where it shows.
+    const comp: any = new Component({ market: { boundaries: () => Promise.resolve({
+      income: { type: 'FeatureCollection', state: 'blocked', blocked_reason: 'licence refused', features: [] }
+    }) } });
+    comp.componentDidMount();
+    await Promise.resolve();
+    expect(comp.marketVals(P).areas.features).toEqual([]);
+  });
+
+  it('a layer the API did not answer for draws nothing rather than the fixture for that layer', async () => {
+    const comp: any = new Component({ market: adapter({ income: FC(['x']) }) });
+    comp.componentDidMount();
+    await Promise.resolve();
+    comp.state.mdValue = 'growth';
+    expect(comp.marketVals(P).areas.features).toEqual([]);
+    comp.state.mdValue = 'income';
+    expect(drawn(comp)).toEqual(['x']);
+  });
+});

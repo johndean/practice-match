@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { designAdminListingsBody } from './design-admin-listings.mjs';
+import { designBoundariesBody, designMarketsBody } from './design-boundaries.mjs';
 import { designListingsBody } from './design-listings.mjs';
 import { designSellerPageBody } from './design-seller-listings.mjs';
 import { designWizardDraftBody } from './design-wizard-draft.mjs';
@@ -202,6 +203,43 @@ export async function prepare(page: Page): Promise<void> {
       status: 200, contentType: 'application/json', body: designWizardDraftBody(WIZARD_LISTING_ID)
     }));
   }
+  // ---------------------------------------------------------------------------------------
+  // A24.14-A24.18 — the boundary layer. Thirteen approved states mount a map and, with the
+  // `market` adapter present, the app draws what the API answered and nothing else — so the
+  // oracle answers with the DESIGN's own polygons, derived from `areaSet` by
+  // design-boundaries.mjs, never hand-copied, so the two targets cannot diverge. The adapter
+  // resolves a metro by NAME through `/api/markets` first, so both routes are needed.
+  //
+  // NEVER against a remote target, for the same reason the listings stub is not: there the real,
+  // seeded API answers, and stubbing it would hide the very thing the QA parity run exists to
+  // check.
+  // ---------------------------------------------------------------------------------------
+  const markets = marketsStubUrl();
+  if (markets !== null) {
+    await page.route((url) => url.href === markets, (route) => route.fulfill({
+      status: 200, contentType: 'application/json', body: designMarketsBody()
+    }));
+    await page.route(
+      (url) => url.origin === new URL(markets).origin && url.pathname.startsWith('/api/markets/') && url.pathname.endsWith('/boundaries'),
+      (route) => route.fulfill({
+        status: 200, contentType: 'application/geo+json',
+        body: designBoundariesBody(new URL(route.request().url()).searchParams.get('layer') ?? 'income')
+      })
+    );
+  }
+}
+
+/** `null` for a REMOTE target (`PW_APP_URL`): there the real, seeded API answers, and stubbing it
+ *  would hide the very thing the QA parity run exists to check — the same rule `listingsStubUrl`
+ *  and `collectionStubUrls` already follow, and pinned in harness.test.ts for the same reason.
+ *  `marketsStubUrl` guards BOTH boundary routes: the adapter cannot reach `/boundaries` without
+ *  resolving a metro through the catalogue first. */
+export function marketsStubUrl(env: NodeJS.ProcessEnv = process.env): string | null {
+  return env.PW_APP_URL ? null : new URL('/api/markets', appOrigin(env)).href;
+}
+
+export function boundariesStubUrl(env: NodeJS.ProcessEnv = process.env): string | null {
+  return env.PW_APP_URL ? null : new URL('/api/markets/12420/boundaries', appOrigin(env)).href;
 }
 
 /** The two collection endpoints the oracle answers itself, or `[]` on a remote target

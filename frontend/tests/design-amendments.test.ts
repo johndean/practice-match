@@ -322,6 +322,9 @@ describe('local design amendments (spec D15)', () => {
     // still be one colour, so the breaks move in the same change that makes them visible.
     'A24.1', 'A24.2', 'A24.3', 'A24.4', 'A24.5', 'A24.6a', 'A24.6b', 'A24.7', 'A24.8a', 'A24.8b',
     'A24.13',
+    // Task 10 -- the adapter path. The plan allotted it A24.13-A24.17; D-C46 took A24.13
+    // inside Task 4, so these are A24.14-A24.18 and the family totals twenty.
+    'A24.14', 'A24.15', 'A24.16', 'A24.17', 'A24.18',
     'A24.9', 'A24.10', 'A24.11', 'A24.12',
   ];
 
@@ -377,6 +380,33 @@ describe('local design amendments (spec D15)', () => {
     expect(amended.split('value="{{ md.active.hasGeo }}"')).toHaveLength(3);
   });
 
+  it('A24.14-A24.18 wire the map to the API on adapter presence, never on data', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    // A16.1's exact shape (A-SL23 (2)): with the adapter present the map draws what the API
+    // answered or NOTHING, and never the design's fixture, whatever the API answered.
+    expect(amended).toContain('areas: this.areaVals(this.props.market ? ((s.mdAreas || {})[valueLayer] || { type: "FeatureCollection", features: [] }) : this.areaSet(valueLayer), valueLayer),');
+    expect(amended).toContain('mdAreas: null,');
+    // One loader, with the rejection arm every adapter path in this design keeps forgetting
+    // (A16.17's own lesson): a refused load empties the map, it does not restore the fixture.
+    expect(amended).toContain('loadAreas(market) {');
+    expect(amended).toContain('if (mine()) this.setState({ mdAreas: {} });');
+    // It clears before it asks, so a metro change cannot leave the previous metro's polygons
+    // painted over the new metro's view; and it ignores an answer for a market the member has
+    // since left, so two fetches resolving out of order cannot strand the wrong metro's
+    // boundaries on screen. Both are "draw what the API answered for what you are looking at".
+    expect(amended).toContain('this.setState({ mdAreas: null });');
+    expect(amended).toContain('const mine = () => (this.state.market || "Austin, TX") === asked;');
+    // Two call sites and exactly two: the bootstrap, and a change of metro.
+    expect(amended.split('this.loadAreas(')).toHaveLength(3);   // exactly two call sites
+    expect(amended.split('loadAreas(market) {')).toHaveLength(2); // and exactly one definition
+    // NO new prototype prop: the reference reaches the fixture path by having no adapter at all,
+    // exactly as it does for `listings` and `adminListings`. `market` is an app-only prop, so it
+    // must NOT appear in the design's declared `data-props` (which `app-generated.test.ts`
+    // requires app.setup.js to mirror).
+    const props = /data-props="([^"]*)"/.exec(amended)![1].replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+    expect(Object.keys(JSON.parse(props))).not.toContain('market');
+  });
+
   it('A24.13 re-scales the growth breaks onto real ACS data, with a band below zero (D-C46)', () => {
     const amended = readFileSync(AMENDED, 'utf8');
 
@@ -402,7 +432,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(237);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(242);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
