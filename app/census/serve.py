@@ -306,9 +306,21 @@ def community_rows(
         # An approximate median is SHOWN with the word beside it, never blanked — a catchment
         # median is a household-weighted average of the tract medians inside the ring rather than
         # a published Census figure, which is exactly what `is_derived` records.
+        #
+        # The guard is the SERVED ROW's own `is_derived`, never the band the area group came
+        # from (fix round 1, finding 5). It was `label is not None` — true of every approximate
+        # median the pipeline produces today, since `materialize.py` derives the catchment median
+        # and reads the place median straight from the ACS — but that is a coincidence of the
+        # producer, not what makes a figure approximate, and an approximate PLACE median would
+        # have lost the qualifier in silence. The contract's copy rule has no band condition in
+        # it: "`median_hh_income.approximate: true` → render 'approximate' beside the value"
+        # (`docs/integrations/market-data-api.md`).
+        #
+        # With no label there is no area to name, so the note is the qualifier alone: the tile has
+        # one sub-line and it says the number is approximate and nothing it cannot support.
         income_note = None
-        if label is not None and area["income"] is not None and area_metrics["median_hh_income"]["is_derived"]:
-            income_note = f"{label} · approximate"
+        if area["income"] is not None and area_metrics["median_hh_income"]["is_derived"]:
+            income_note = f"{label} · approximate" if label is not None else "Approximate"
 
         # Growth and payroll are byte-identical in every band by construction, so "whichever band
         # carries it" is a choice between two copies of one number — but the GEOGRAPHY it was

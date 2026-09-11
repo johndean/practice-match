@@ -893,3 +893,35 @@ def test_a_listing_with_neither_band_carries_no_scope_and_no_income_note(conn):
         "vets": None, "econ_k": None, "label": None,
         "growth_scope": None, "income_note": None,
     }
+
+
+def test_a_derived_place_median_carries_the_qualifier_too(conn):
+    """Fix round 1, finding 5. The qualifier follows the SERVED ROW's own `is_derived`, never the
+    band the area group came from.
+
+    `income_note` used to be gated on `label is not None` — on the group having come from the
+    catchment — which is true of every approximate median the pipeline produces TODAY
+    (`materialize.py` derives the catchment median and reads the place median straight from the
+    ACS) but is not what makes a figure approximate. An approximate place median would have lost
+    the qualifier silently, and the contract's copy rule has no band condition in it:
+    "`median_hh_income.approximate: true` → render 'approximate' beside the value"
+    (`docs/integrations/market-data-api.md`).
+
+    With no label there is no area to name, so the note is the qualifier alone — the tile's one
+    sub-line says the number is approximate and nothing it cannot support."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    derived_place = tuple(
+        ("median_hh_income", "2019-2023", 67760, "dollars", True, None, None, False, None, "acs5")
+        if m[0] == "median_hh_income" else m
+        for m in _PLACE_SIX
+    )
+    _seed_band(conn, listing_id, "place", metrics=derived_place)
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["label"] is None
+    assert row["income"] == "$67,760"
+    assert row["income_note"] == "Approximate"
+
