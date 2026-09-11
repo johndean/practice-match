@@ -905,6 +905,39 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
     expect(errors).toEqual([]);
   });
 
+  // D-C48 (John, 2026-09-11, on the whole-branch review). A27.7's ONE sub-line above the grid
+  // describes the AREA figures, and the Population tile's sub-line is not one of them — it is
+  // GROWTH, which the API measures at place-or-county and serves with its own `growth_scope`. So
+  // the panel printed a city number under a ring caption on 28 of 29 QA listings.
+  //
+  // Its oracle is here, beside A27.7's, for the same measured reason: the design's own fixtures
+  // carry no `growthScope`, `design-listings.mjs` sends `growth_scope: null`, and the reference
+  // has no way to be handed one without editing approved fixture data or declaring a ninth
+  // prototype prop. The assertion is therefore on the RENDERED DOM under a stubbed API.
+  test('the panel\'s Population tile names the geography its growth figure came from', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    const LABEL = 'Within about 5 miles of the practice';
+    await serveListings(page, { community_label: LABEL, growth_scope: 'Dallas' });
+    const panel = await openPanel(page);
+
+    const tile = await panel.evaluate((root) => {
+      const label = Array.from(root.querySelectorAll('div')).find((d) => (d.textContent || '').trim() === 'Population');
+      const box = label && (label.parentElement as HTMLElement | null);
+      return box && (box.textContent || '').trim();
+    });
+    expect(tile, 'the panel has no Population tile').toBeTruthy();
+    // The figure and its period lead, the geography follows, joined by the design's own middot —
+    // the idiom of the detail card's Growth tile (A27.2) and of `income_note` (A27.1).
+    expect(tile, 'the Population tile\'s growth sub-line names no geography')
+      .toMatch(/[+-]\d+\.\d% \(5 yrs\) \u00b7 Dallas/);
+    // The heading's own sub-line still says what the AREA figures describe, and says it once.
+    await expect(panel.getByText('Market Overview', { exact: true })).toBeVisible();
+    expect((await panel.innerText()).split(LABEL).length - 1,
+      'the ring caption is stated more than once on the Insights tab').toBe(1);
+    expect(errors).toEqual([]);
+  });
+
   // …and with no label the wording is the design's own, which is what keeps the approved states
   // on their pixels: the D6 stub sends `community_label: null` for every fixture.
   test('with no label the design\'s own wording stands, byte for byte', async ({ page }) => {
