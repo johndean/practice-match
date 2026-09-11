@@ -49,6 +49,10 @@ celery_app.conf.beat_schedule.update({
     # loads above. `census.backfill_listing` (the per-listing, on-demand counterpart) has no
     # beat entry -- it runs once, right after a listing is geocoded, never on a schedule.
     "materialize-nightly": {"task": "census.materialize_metrics", "schedule": crontab(minute=0, hour=3)},
+    # D-NS9: the polygon table, half an hour after the listing table. The two are independent --
+    # neither reads the other's rows -- and the stagger keeps two heavy read-only passes over
+    # acs_measure off one database at the same moment. Never on the request path (spec §10).
+    "geo-metric-nightly": {"task": "census.materialize_geo_metrics", "schedule": crontab(minute=30, hour=3)},
 })
 
 

@@ -371,6 +371,29 @@ def materialize_metrics() -> dict[str, object]:
         conn.close()
 
 
+def materialize_geo_metrics() -> dict[str, object]:
+    """Nightly job (D-NS9): rebuilds `geo_metric` for every geography in a `market_state` state,
+    at the three ruled levels, from whatever vintages are currently active. Like
+    `materialize_metrics` it does no Census I/O at all -- only local aggregation over `geo_area`,
+    `acs_measure` and `cbp_industry` -- so it needs no `CENSUS_API_KEY`/`CENSUS_CONTACT_EMAIL`
+    gate and no `_NotReady` handling, and a missing active vintage is left to fail the task
+    visibly rather than being folded into a success-shaped result (A-C18 (3)).
+
+    This is the ONLY caller of `app.census.geo_metric.materialize_geo` anywhere under `app/`, and
+    `tests/census/test_geo_metric.py::
+    test_the_writer_is_reached_from_the_nightly_task_alone_and_never_from_the_request_path` is
+    what keeps it that way: spec §10's hard rule is that the request path never reaches a Census
+    write."""
+    from app.cache import sync_redis
+    from app.census import geo_metric
+
+    conn = _conn()
+    try:
+        return {"metrics": geo_metric.materialize_geo(conn, sync_redis())}
+    finally:
+        conn.close()
+
+
 def backfill_listing(listing_id: str) -> dict[str, object]:
     """Runs once for a single listing right after it is geocoded (spec §7): rebuilds its
     catchments at the active `tiger_cb` vintage, then materialises its `market_metric` rows.
@@ -406,4 +429,7 @@ geocode_listing_task = celery_app.task(name="census.geocode_listing")(geocode_li
 
 # Phase B, B4: backfill_listing_task and materialize_metrics_task register here.
 materialize_metrics_task = celery_app.task(name="census.materialize_metrics")(materialize_metrics)
+
+# Neighbourhood shading (spec 2026-09-10, D-NS9): the polygon table's own nightly writer.
+materialize_geo_metrics_task = celery_app.task(name="census.materialize_geo_metrics")(materialize_geo_metrics)
 backfill_listing_task = celery_app.task(name="census.backfill_listing")(backfill_listing)
