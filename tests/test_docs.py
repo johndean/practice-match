@@ -305,7 +305,11 @@ def test_claude_md_literal_edit_clauses_count_each_family_s_own_entries():
     # script or template edits" and A4's "three more families of literal edits" — put six and four
     # words between the number and the noun, so the same adjacency rule that keeps them out of
     # `clause_re` keeps them out of this.
-    loose_count_re = re.compile(rf"\b(?:{number}|\d+)\b(?:\s+[\w’'-]+){{0,3}}\s+(?:edits?|entries)\b", re.IGNORECASE)
+    # The class carries the typographic apostrophe as the escape \u2019 rather than the literal
+    # character: ruff's RUF001/RUF003 flag the raw glyph as ambiguous and this file is linted by
+    # `quality.yml`. Migrations 062 and 063 write their en dash the same way. The class still
+    # matches a possessive spelled with either apostrophe, which is the whole reason it is here.
+    loose_count_re = re.compile(rf"\b(?:{number}|\d+)\b(?:\s+[\w\u2019'-]+){{0,3}}\s+(?:edits?|entries)\b", re.IGNORECASE)
 
     # A21, exempt with a reason rather than by widening the regex until it passes. Its clause is
     # "Task B10 … adds thirteen more A21 entries", a PARTIAL count: thirteen on top of the entries

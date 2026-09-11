@@ -398,7 +398,11 @@ def community_rows(
         if growth is not None:
             source = drive_metrics if drive["growth"] is not None else place_metrics
             level = (source["population_growth_pct"]["inputs"] or {}).get("geo_level")
-            name = names.get((lid, level))
+            # `inputs` is jsonb, so `geo_level` arrives as Any and may be absent or null —
+            # `names` is keyed (listing_id, level) with a str level. A non-str level names no
+            # geography, which is the same answer as an unresolvable geoid: no scope, and the
+            # card says nothing rather than something it cannot support.
+            name = names.get((lid, level)) if isinstance(level, str) else None
             if name is not None:
                 # TIGER's place `NAME` drops the legal descriptor ("Dallas"); its county
                 # `NAMELSAD` keeps it ("Orange County"). D-C38's option text read "City of
