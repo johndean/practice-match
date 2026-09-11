@@ -1,6 +1,7 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
-import { appOrigin, booted, click, firstMapPaintBudgetMs, listingsStubUrl, matchesListings, personaCredentials, personaSignIn, personaSignOut, prepare, reach, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
+import { appOrigin, booted, click, expectApiStatus, firstMapPaintBudgetMs, listingsStubUrl, matchesListings, personaCredentials, personaSignIn, personaSignOut, prepare, reach, settleExpectedApiFailures, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
 import { designListingsBody } from './design-listings.mjs';
+import { designBoundariesBody } from './design-boundaries.mjs';
 import { SCREENS } from './screens';
 
 // `/reset?token=abc` (review fix round 1, Minor 8): the bare five paths above prove the routes
@@ -1099,5 +1100,123 @@ test.describe('Task MP1 — a listing with no coordinates keeps its place and ge
     await waitMap(page);
     await expect(page.locator('.leaflet-marker-icon')).toHaveCount(AUSTIN.length);
     expect(errors).toEqual([]);
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// Task 10 (A24.14–A24.18) — what a member sees when the boundary route cannot answer.
+//
+// The rule is "the app draws what the API answered, or nothing at all", and nothing at all is
+// exactly the blank screen that made this a fire once already: Task 4 reached QA on its own and
+// the map read as empty. So the degradation is PHOTOGRAPHED here rather than asserted in prose.
+// It cannot be an approved visual state — the reference receives no adapter and always draws the
+// design's fixture, so there is no oracle to compare a failed load against; this is the same
+// mechanism A16's and A17's adapter-failure paths are covered by.
+//
+// Two facts, together: the shading is gone (the design's Austin fixture is NOT drawn over a real
+// metro, which is the honesty half), and everything else on the map still is — the basemap, the
+// practice pins with their price callouts, and the results rail. `drawOverlay` paints the C7
+// drive ring before it reaches the polygon layer and `drawPins()` is a separate call, which is
+// why an empty overlay costs the member nothing but the colour.
+// -------------------------------------------------------------------------------------------
+test.describe('A24 — the boundary route is absent, and the map degrades rather than dying', () => {
+  /** Painted pixels on the Leaflet overlay pane's shared canvas — the polygon layer's own
+   *  surface, read the way the mobile shading smoke above reads it. */
+  const paintedOverlay = (page: Page) => page.evaluate(() => {
+    const c = document.querySelector('.leaflet-overlay-pane canvas') as HTMLCanvasElement | null;
+    if (!c) return 0;
+    const px = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 3; i < px.length; i += 4) if (px[i] > 0) n++;
+    return n;
+  });
+
+  /** The adapter asks for all three fill layers in one `Promise.all`, so a refused route logs
+   *  exactly three 4xx console lines and each one has to be armed. `prepare()`'s own gate still
+   *  fails the test on anything else — a page error, or a fourth request nobody expected. */
+  async function browseWith(page: Page, status: number): Promise<void> {
+    await prepare(page);
+    // The refusal is HELD until the allowances are armed, rather than raced against a timer:
+    // `expectApiStatus` needs a page that has already navigated, and the three requests are made
+    // at mount — so nothing may be DELIVERED before `release()`, which runs after arming.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    // Registered AFTER prepare()'s own route, and Playwright matches the LAST handler first.
+    await page.route(
+      (url) => url.pathname.startsWith('/api/markets/') && url.pathname.endsWith('/boundaries'),
+      async (route) => {
+        await held;
+        await route.fulfill({ status, contentType: 'application/json', body: '{"error":{"code":"NOT_FOUND","message":"no such route"}}' });
+      }
+    );
+    await signInAs(page, 'design', '/browse');
+    for (let i = 0; i < 3; i++) expectApiStatus(page, status);
+    release();
+    await waitMap(page);
+    await settleExpectedApiFailures(page);
+    await page.waitForTimeout(400);
+  }
+
+  test("a 404 leaves the map unshaded — and never falls back to the design's own Austin fixture", async ({ page }) => {
+    await browseWith(page, 404);
+    expect(await paintedOverlay(page), 'the polygon layer drew something after a refused load — the fixture must not stand in').toBe(0);
+    // Everything the member still has. The pins are the proof the map is alive, not blank.
+    await expect(page.locator('.leaflet-marker-pane .leaflet-marker-icon').first()).toBeVisible();
+    expect(await page.locator('.leaflet-marker-pane .leaflet-marker-icon').count()).toBeGreaterThan(1);
+    await expect(page.locator('.leaflet-container').first()).toBeVisible();
+    // …and the results rail, the filters and the detail path are untouched.
+    await expect(page.getByText('Cedar Park').first()).toBeVisible();
+  });
+
+  test('a refusal the member cannot fix — 401 — degrades the same way, not differently', async ({ page }) => {
+    await browseWith(page, 401);
+    expect(await paintedOverlay(page)).toBe(0);
+    await expect(page.locator('.leaflet-marker-pane .leaflet-marker-icon').first()).toBeVisible();
+    await expect(page.getByText('Cedar Park').first()).toBeVisible();
+  });
+
+  test('the route present but holding NO values paints real outlines in the design\'s own No data grey', async ({ page }) => {
+    // The state QA is in until `geo_metric` is filled, and the one this whole design gained a
+    // neutral swatch for (D-NS16): a polygon with no value is DRAWN, never omitted, because a
+    // hole on a choropleth reads as a park, a lake or the edge of the market. So an unloaded
+    // pipeline degrades inside the design's own vocabulary rather than as an empty map.
+    await prepare(page);
+    await page.route(
+      (url) => url.pathname.startsWith('/api/markets/') && url.pathname.endsWith('/boundaries'),
+      (route) => {
+        const layer = new URL(route.request().url()).searchParams.get('layer') ?? 'income';
+        const body = JSON.parse(designBoundariesBody(layer)) as { features: { properties: Record<string, unknown> }[] };
+        for (const f of body.features) f.properties.value = null;
+        route.fulfill({ status: 200, contentType: 'application/geo+json', body: JSON.stringify(body) });
+      }
+    );
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await page.waitForTimeout(400);
+    // Painted, and painted in ONE colour — `#e6e6e6` at fillOpacity .5 over Leaflet's #ddd
+    // ground, which is what the transparent tile stub leaves showing.
+    const shades = await page.evaluate(() => {
+      const c = document.querySelector('.leaflet-overlay-pane canvas') as HTMLCanvasElement | null;
+      if (!c) return [];
+      const px = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+      const seen = new Set<string>();
+      for (let i = 0; i < px.length; i += 4) if (px[i + 3] > 0) seen.add(`${px[i]},${px[i + 1]},${px[i + 2]}`);
+      return [...seen];
+    });
+    expect(shades.length, 'nothing was drawn — a value-less polygon must still be drawn (D-NS16)').toBeGreaterThan(0);
+    // (0xe6 + 221) / 2 = 223 on every channel. Anti-aliased polygon edges add near neighbours,
+    // so the assertion is that every painted shade is GREY — no ramp colour anywhere.
+    for (const s of shades) {
+      const [r, g, b] = s.split(',').map(Number);
+      expect(Math.abs(r - g) + Math.abs(g - b), `a non-grey shade ${s} was painted for a value-less polygon`).toBeLessThanOrEqual(2);
+    }
+  });
+
+  test('and with the route answering, the same page DOES paint polygons — so the two above measure the route, not the canvas', async ({ page }) => {
+    await prepare(page);
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await page.waitForTimeout(400);
+    expect(await paintedOverlay(page), 'the control case must paint, or "0" above proves nothing').toBeGreaterThan(0);
   });
 });

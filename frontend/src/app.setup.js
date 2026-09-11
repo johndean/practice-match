@@ -6,6 +6,7 @@ import ImageSlot from './components/ImageSlot.vue';
 import { makeAdminListingsAdapter } from './admin/listings';
 import { makeAuthAdapter } from './auth/adapter';
 import { makeListingsAdapter } from './listings/seller';
+import { makeMarketAdapter } from './market/boundaries';
 import * as api from './auth/api';
 import { useMe } from './auth/me';
 import { useStateRouteSync } from './router/useStateRouteSync';
@@ -86,7 +87,16 @@ const props = defineProps({
   // file is copied verbatim into App.vue and sits outside the coverage gate, so the logic lives
   // in a module with unit tests. It needs no `data-props` entry — the parity gate is
   // one-directional.
-  adminListings: { type: Object, default: () => makeAdminListingsAdapter() }
+  adminListings: { type: Object, default: () => makeAdminListingsAdapter() },
+  // A24: the real /api/markets client, as the prototype's `market` adapter — the seam the
+  // design's own script branches on. With it present the Browse map draws the polygons the API
+  // answered or NONE at all, whatever it answered; with no adapter — the reference server and
+  // the Claude Design preview — the design's own boundary fixture is drawn instead, which is what
+  // keeps both targets on the same pixels. Nothing in the template reads `market`; only logic.js
+  // does. Built by the factory in `src/market/boundaries.ts`, not an object literal here, for the
+  // reason `auth` records: this file is copied verbatim into App.vue and sits outside the
+  // coverage gate. It needs no `data-props` entry — the parity gate is one-directional.
+  market: { type: Object, default: () => makeMarketAdapter() }
 });
 
 // The approved prototype logic runs verbatim; `state` is made reactive so that

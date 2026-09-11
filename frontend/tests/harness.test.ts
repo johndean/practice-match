@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
-import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, collectionStubUrls, collectionStubBody, newListingBody, draftStubUrl, isDraftStepUrl, submitStubUrl, WIZARD_LISTING_ID, sellerPageBody, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
+import { BLANK_GIF, DECLINED_FIELDS, FIXTURE_TOKENS, FIXTURE_TOKEN_COUNT, FIXTURE_TOKEN_PREFIX, MEMO_FILE, NEEDS_REVIEW_INFO_REQUEST, NOTICES, PERSONAS, PERSONA_DEFAULT_PASSWORD, PERSONA_EMAIL, PERSONA_INVITE_PASSWORD, PERSONA_RESET_PASSWORD, appOrigin, appPlan, appTokenKind, assertExpectedApiFailuresObserved, consumeExpectedApiFailure, credentialsFor, driverFor, expectApiStatus, expiredFixtureToken, firstMapPaintBudgetMs, fixtureToken, forgetPersonaSession, isExpectedApiFailure, memoFileIsRotated, memoFileRead, memoFileCounter, memoFileRotate, memoFileSetCounter, memoFileUpdate, personaCredentials, personaFor, personaSession, personaSessionMemo, personaSessionMemos, isStaleMemoFile, isExpectedSignInFailure401, listingsStubUrl, matchesListings, marketsStubUrl, boundariesStubUrl, collectionStubUrls, collectionStubBody, newListingBody, draftStubUrl, isDraftStepUrl, submitStubUrl, WIZARD_LISTING_ID, sellerPageBody, referenceMe, referenceOrigin, referencePersona, referenceScreen, referenceUrl, runId, THROWAWAY_EMAIL_PATTERN, throwawayEmail } from './harness';
 import { designAdminListingRows, designAdminListingsBody } from './design-admin-listings.mjs';
+import { designAreaSet, designBoundariesBody, designMarketsBody } from './design-boundaries.mjs';
 import { designListingsBody } from './design-listings.mjs';
 import { designSellerPageBody, designSellerRows } from './design-seller-listings.mjs';
 import { designWizardDraftBody, designWizardTiles } from './design-wizard-draft.mjs';
@@ -267,6 +268,55 @@ describe('the design-fixture listings stub (spec D6, review I4)', () => {
 // disarms it against a remote target is all that stands between the oracle's fixtures and a QA
 // parity run, and an untested `if` is how it comes back.
 // ---------------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------------------
+// A24.14-A24.18 — the boundary stubs. Same rule as the two above and the same reason it is
+// pinned: the `if` that disarms them against a remote target is all that stands between the
+// design's own polygons and a QA parity run whose whole purpose is to see the REAL ones.
+// ---------------------------------------------------------------------------------------
+describe('the boundary stubs (A24.14-A24.18)', () => {
+  it('are disarmed against a remote target', () => {
+    expect(marketsStubUrl({ PW_APP_URL: 'https://qa.foundation.vin' } as NodeJS.ProcessEnv)).toBeNull();
+    expect(boundariesStubUrl({ PW_APP_URL: 'https://qa.foundation.vin' } as NodeJS.ProcessEnv)).toBeNull();
+    expect(marketsStubUrl({ PW_APP_URL: 'https://qa.foundation.vin', PW_APP_PORT: '5473' } as NodeJS.ProcessEnv)).toBeNull();
+    expect(boundariesStubUrl({ PW_APP_URL: 'https://qa.foundation.vin', PW_APP_PORT: '5473' } as NodeJS.ProcessEnv)).toBeNull();
+  });
+
+  it('name both routes on the local app origin, on the port the run uses', () => {
+    expect(marketsStubUrl({ PW_APP_PORT: '5473' } as NodeJS.ProcessEnv)).toBe('http://localhost:5473/api/markets');
+    expect(marketsStubUrl({} as NodeJS.ProcessEnv)).toBe('http://localhost:5173/api/markets');
+    expect(boundariesStubUrl({ PW_APP_PORT: '5473' } as NodeJS.ProcessEnv)).toBe('http://localhost:5473/api/markets/12420/boundaries');
+  });
+
+  it('answer the DESIGN\'s own polygons, derived from areaSet and never hand-copied', () => {
+    for (const layer of ['income', 'growth', 'econ'] as const) {
+      const body = JSON.parse(designBoundariesBody(layer));
+      const own = designAreaSet(layer);
+      expect(body.type).toBe('FeatureCollection');
+      expect(body.layer).toBe(layer);
+      expect(body.features).toEqual(own.features);
+      expect(body.features.length, 'the design draws polygons at every fill geography').toBeGreaterThan(0);
+      // Every property the adapter's `BoundaryProperties` names, and nothing missing.
+      expect(Object.keys(body.features[0].properties).sort())
+        .toEqual(['band_ambiguous', 'geo_id', 'moe', 'name', 'suppress_reason', 'suppressed', 'value']);
+    }
+    // The three geographies D-C35 ruled, named the way the endpoint names them.
+    expect(JSON.parse(designBoundariesBody('income')).summary_level).toBe('860');
+    expect(JSON.parse(designBoundariesBody('growth')).summary_level).toBe('160');
+    expect(JSON.parse(designBoundariesBody('econ')).summary_level).toBe('050');
+    // An unknown layer cannot fabricate a collection: it answers income's, as the design's own
+    // default layer, rather than a FeatureCollection with no features that would read as "this
+    // metro has no boundaries".
+    expect(JSON.parse(designBoundariesBody('nonsense')).layer).toBe('income');
+  });
+
+  it('answer a market catalogue the adapter can resolve the design\'s own metro by NAME in', () => {
+    const rows = JSON.parse(designMarketsBody()) as { cbsa_geoid: string; name: string }[];
+    expect(rows.map((r) => r.name)).toContain('Austin, TX');
+    expect(rows.find((r) => r.name === 'Austin, TX')!.cbsa_geoid).toBe('12420');
+    expect(rows.every((r) => /^\d{5}$/.test(r.cbsa_geoid)), 'every row carries a CBSA-shaped geoid').toBe(true);
+  });
+});
+
 describe('the seller and admin collection stubs (A-SL2, A-SL23 (2))', () => {
   it('is disarmed for a remote target — there the real, seeded API answers', () => {
     expect(collectionStubUrls({ PW_APP_URL: 'https://qa.foundation.vin' } as NodeJS.ProcessEnv)).toEqual([]);

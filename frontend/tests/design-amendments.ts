@@ -4847,6 +4847,80 @@ const A24_13: Amendment = {
   count: 1
 };
 
+/** A24.14-A24.18 -- the ADAPTER path (Task 10). The seam A16 and A17 established, a fourth time:
+ *  an app-only prop the reference never receives, and a ternary keyed on adapter PRESENCE rather
+ *  than on data (A16.1's exact shape, A-SL23 (2)). With `props.market` present the map draws the
+ *  polygons the API answered or NONE at all, whatever it answered, and never the design's own
+ *  fixture -- the design's fixture is the AUSTIN metro with the design's own nine figures assigned
+ *  to it, so falling back to it over a real metro would draw the wrong city's boundaries carrying
+ *  numbers nobody measured. The reference and the Claude Design preview pass no adapter, so every
+ *  one of these five is inert there and both targets keep Task 4's pixels.
+ *
+ *  The plan allotted this task ids A24.13-A24.17; D-C46 took A24.13 inside Task 4, so the five
+ *  are A24.14-A24.18 and family A24 totals twenty, exactly as the plan's arithmetic says.
+ *
+ *  What a member sees when the API cannot answer is written down in `src/market/boundaries.ts`:
+ *  the shading is empty and nothing else is, because `MarketMapView.drawOverlay` paints the C7
+ *  drive-time ring before it reaches the polygon layer and `drawPins()` is a separate call. */
+const A24_14: Amendment = {
+  id: 'A24.14', ...NS,
+  find: '    adminTab: "users", sellerView: "dash",\n',
+  replace: '    mdAreas: null,\n    adminTab: "users", sellerView: "dash",\n',
+  count: 1
+};
+
+/** A24.15 -- the ONE loader (A16.17's lesson: every adapter path in this design shares one, and
+ *  the rejection arm is the thing callers keep forgetting). Three properties beyond the plan's
+ *  specimen, each because the alternative puts a FALSE map on screen rather than an empty one:
+ *
+ *  1. It CLEARS `mdAreas` before it asks. Without that, changing metro leaves the previous
+ *     metro's polygons painted over the new metro's view until the answer lands -- real outlines,
+ *     real figures, wrong city.
+ *  2. It ignores an answer for a market the member has since left. Two fetches can resolve out of
+ *     order, and last-write-wins would then leave the wrong metro's boundaries on screen
+ *     indefinitely rather than transiently.
+ *  3. A refused or empty load EMPTIES the map. It never restores the design's fixture, because a
+ *     member must not be shown boundaries that are not the ones the API holds (A-SL23 (2)). */
+const A24_15: Amendment = {
+  id: 'A24.15', ...NS,
+  find: '  componentDidMount() {\n',
+  replace: '  loadAreas(market) {\n'
+    + '    if (!this.props.market) return;\n'
+    + '    const asked = market || "Austin, TX";\n'
+    + '    const mine = () => (this.state.market || "Austin, TX") === asked;\n'
+    + '    this.setState({ mdAreas: null });\n'
+    + '    this.props.market.boundaries(asked).then(\n'
+    + '      (areas) => { if (mine()) this.setState({ mdAreas: areas }); },\n'
+    + '      () => { if (mine()) this.setState({ mdAreas: {} }); }\n'
+    + '    );\n'
+    + '  }\n'
+    + '\n'
+    + '  componentDidMount() {\n',
+  count: 1
+};
+
+const A24_16: Amendment = {
+  id: 'A24.16', ...NS,
+  find: '      areas: this.areaVals(this.areaSet(valueLayer), valueLayer),\n',
+  replace: '      areas: this.areaVals(this.props.market ? ((s.mdAreas || {})[valueLayer] || { type: "FeatureCollection", features: [] }) : this.areaSet(valueLayer), valueLayer),\n',
+  count: 1
+};
+
+const A24_17: Amendment = {
+  id: 'A24.17', ...NS,
+  find: '    if (this.props.adminListings && me && me.state === "active" && (me.roles || []).some((r) => r === "staff" || r === "admin")) this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] }));\n',
+  replace: '    if (this.props.adminListings && me && me.state === "active" && (me.roles || []).some((r) => r === "staff" || r === "admin")) this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] }));\n'
+    + '    this.loadAreas(this.state.market);\n',
+  count: 1
+};
+
+const A24_18: Amendment = {
+  id: 'A24.18', ...NS,
+  find: '  setMarket = (e) => {\n    const v = e && e.target ? e.target.value : e;\n',
+  replace: '  setMarket = (e) => {\n    const v = e && e.target ? e.target.value : e;\n    this.loadAreas(v);\n',
+  count: 1
+};
+
 const A24_9: Amendment = {
   id: 'A24.9', ...NS, file: 'jsx',
   find: '// GEOMETRY NOTE: the prototype has no ZCTA boundary file, so community areas are\n// approximated as Voronoi cells around each community\'s centroid, clipped to the metro\n// bounding box. Cells are contiguous and non-overlapping, which is what a choropleth\n// requires, but they are NOT real Census boundaries — the UI labels them "approximate\n// community areas". Production must load tiger_cb ZCTA polygons per the Census Data\n// Source Specification and drop this approximation.\n',
@@ -4997,5 +5071,9 @@ export function amendments(): Amendment[] {
     // `amendmentsFor` partitions them, so their position here only decides their
     // order among themselves.
     A24_1, A24_2, A24_3, A24_4, A24_5, A24_6a, A24_6b, A24_7, A24_8a, A24_8b, A24_13,
+    // A24.14-A24.18 -- the adapter path (Task 10). A24.14 reads A24.1's own output and A24.16
+    // reads A24.4's, so they run after the family's first pass. Definition order in this file
+    // matches this list (m8).
+    A24_14, A24_15, A24_16, A24_17, A24_18,
     A24_9, A24_10, A24_11, A24_12];
 }

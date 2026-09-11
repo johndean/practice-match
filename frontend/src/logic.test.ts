@@ -4794,3 +4794,118 @@ describe('A24 — real boundary polygons', () => {
     expect(band(15)).toBe(band(200));
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A24.14-A24.18 — the `market` adapter. The seam A16 and A17 established, keyed on adapter
+// PRESENCE and never on data (A16.1's shape, A-SL23 (2)). The design's own fixture is the
+// AUSTIN metro carrying the design's own nine figures, so the one thing that must never happen
+// is it being drawn over a real metro: every arm below ends either on the API's polygons or on
+// none, and never on `areaSet`.
+// ---------------------------------------------------------------------------------------
+describe('A24 — the market adapter', () => {
+  const FC = (ids: string[]) => ({
+    type: 'FeatureCollection',
+    features: ids.map((id) => ({
+      type: 'Feature', id,
+      properties: { geo_id: id, name: id.toUpperCase(), value: 60000, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false },
+      geometry: null
+    }))
+  });
+  const adapter = (areas: Record<string, unknown>) => ({ boundaries: () => Promise.resolve(areas) });
+  const drawn = (comp: any) => comp.marketVals(P).areas.features.map((f: any) => f.properties.geo_id);
+
+  it("with an adapter present the map draws the API's polygons and NEVER the design's fixture", async () => {
+    const api = { income: FC(['x']) };
+    const comp: any = new Component({ market: adapter(api) });
+    comp.componentDidMount();
+    await Promise.resolve();
+    expect(comp.state.mdAreas).toBe(api);
+    expect(drawn(comp)).toEqual(['x']);
+  });
+
+  it('an EMPTY answer empties the map — it does not fall back to the fixture', async () => {
+    const comp: any = new Component({ market: adapter({}) });
+    comp.componentDidMount();
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual([]);
+  });
+
+  it('a REFUSED load empties the map too, and the rejection arm exists', async () => {
+    const comp: any = new Component({ market: { boundaries: () => Promise.reject(new Error('404')) } });
+    comp.componentDidMount();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(comp.state.mdAreas).toEqual({});
+    expect(drawn(comp)).toEqual([]);
+  });
+
+  it("with NO adapter the design's own fixture path runs, untouched", () => {
+    const comp: any = new Component({});
+    comp.componentDidMount();
+    expect(comp.state.mdAreas).toBeNull();
+    expect(comp.marketVals(P).areas.features.length).toBeGreaterThan(0);
+  });
+
+  it('changing the metro reloads the polygons for the metro chosen', async () => {
+    const asked: string[] = [];
+    const comp: any = new Component({ market: { boundaries: (n: string) => { asked.push(n); return Promise.resolve({}); } } });
+    comp.componentDidMount();
+    comp.setMarket('Sacramento, CA');
+    expect(asked).toEqual(['Austin, TX', 'Sacramento, CA']);
+  });
+
+  it("a metro change CLEARS the previous metro's polygons before it asks, so no city is ever drawn over another", async () => {
+    let settle: (v: unknown) => void = () => {};
+    const comp: any = new Component({ market: { boundaries: () => new Promise((r) => { settle = r; }) } });
+    comp.componentDidMount();
+    settle({ income: FC(['austin'] ) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['austin']);
+    comp.setMarket('Sacramento, CA');
+    expect(comp.state.mdAreas, 'Austin is off the map the instant Sacramento is asked for').toBeNull();
+    expect(drawn(comp)).toEqual([]);
+    settle({ income: FC(['sacramento']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['sacramento']);
+  });
+
+  it('an answer for a market the member has already left is DISCARDED, however late it lands', async () => {
+    const pending: ((v: unknown) => void)[] = [];
+    const comp: any = new Component({ market: { boundaries: () => new Promise((r) => pending.push(r)) } });
+    comp.componentDidMount();          // asks for Austin
+    comp.setMarket('Sacramento, CA');  // asks for Sacramento
+    pending[1]({ income: FC(['sacramento']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['sacramento']);
+    // Austin's answer arrives second. Last-write-wins would strand Austin's outlines over
+    // Sacramento's map indefinitely; the guard drops it instead.
+    pending[0]({ income: FC(['austin']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['sacramento']);
+  });
+
+  it("a late REJECTION for a market already left does not empty the market the member is on", async () => {
+    const pending: { reject: (e: unknown) => void }[] = [];
+    const comp: any = new Component({ market: { boundaries: () => new Promise((_r, reject) => pending.push({ reject })) } });
+    comp.componentDidMount();
+    comp.setMarket('Sacramento, CA');
+    pending[1].reject(new Error('nope'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(comp.state.mdAreas).toEqual({});
+    pending[0].reject(new Error('Austin, late'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(comp.state.mdAreas, "Austin's refusal is not Sacramento's") .toEqual({});
+  });
+
+  it('a layer the API did not answer for draws nothing rather than the fixture for that layer', async () => {
+    const comp: any = new Component({ market: adapter({ income: FC(['x']) }) });
+    comp.componentDidMount();
+    await Promise.resolve();
+    comp.state.mdValue = 'growth';
+    expect(comp.marketVals(P).areas.features).toEqual([]);
+    comp.state.mdValue = 'income';
+    expect(drawn(comp)).toEqual(['x']);
+  });
+});
