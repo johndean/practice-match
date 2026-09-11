@@ -925,3 +925,92 @@ def test_a_derived_place_median_carries_the_qualifier_too(conn):
     assert row["income"] == "$67,760"
     assert row["income_note"] == "Approximate"
 
+
+# ---------------------------------------------------------------------------------------------
+# Fix round 1, finding 3 — the shape of the suppression rule, which is ASYMMETRIC in two ways
+# that were both deliberate, both documented in `_AREA_KEYS`, and neither tested.
+#
+# `from_catchment = any(drive[k] is not None for k in _AREA_KEYS)` where `_AREA_KEYS` is
+# `("pop", "hh", "income", "vets")`. So:
+#
+#   (a) `vets` is OFF-CARD — the Community Context card never renders it; it feeds the Browse
+#       competition layer — and it is still a vote. An off-card figure can therefore decide which
+#       band the three ON-CARD figures are read from.
+#   (b) Once the group comes from the catchment it comes from the catchment WHOLE. A figure the
+#       catchment suppresses is null even where the place band has it, because one `label`
+#       describes the whole group and a group drawn half from each band would put a city figure
+#       under a ring caption — the very defect D-C38 exists to remove.
+#
+# Together they have one consequence worth naming: a listing whose place band is fully populated
+# can reach the design's own "Community data unavailable" card, if the catchment suppresses
+# everything except the one figure the card never shows.
+# ---------------------------------------------------------------------------------------------
+
+
+def _suppressing(metrics, *keys):
+    """`metrics` with the NAMED rows marked suppressed. `_seed_band`'s own `suppressed=True` is
+    all-or-nothing; the two shapes below are partial by nature."""
+    return tuple(
+        (m[0], m[1], m[2], m[3], m[4], m[5], m[6], True, "high_moe", m[9]) if m[0] in keys else m
+        for m in metrics
+    )
+
+
+def test_an_off_card_figure_decides_the_on_card_group_s_band(conn):
+    """(a), and the consequence it carries. The catchment suppresses every figure but
+    `establishments` — the `vets` count, which this card never renders — and that one off-card
+    figure is enough to move the whole area group to the catchment. The three ON-CARD figures are
+    then the catchment's own, which is to say null, while the place band's complete ACS figures
+    go unread: a populated card becomes the design's "Community data unavailable" card.
+
+    This is the rule working as ruled, not a defect — `vets` is one of `_AREA_KEYS` because it
+    describes the same area as the other three and a group split across bands is the thing D-C38
+    forbids. It is pinned here because nothing else pins it, and a later reader deciding to drop
+    `vets` from `_AREA_KEYS` should have to do it deliberately."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _seed_band(conn, listing_id, "drive_10", metrics=_suppressing(
+        _CATCHMENT_SIX, "population", "households", "median_hh_income",
+        "population_growth_pct", "revenue_per_establishment",
+    ))
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    # The off-card figure is the only one the catchment kept, and it carried the vote.
+    assert row["vets"] == 41
+    assert row["label"] == _BAND_LABEL
+    # The three the card renders are the catchment's, which is to say absent — NOT the place's
+    # 1,299,553 / 528,038 households / $67,760, which is what the card showed before D-C38.
+    assert row["pop"] is None
+    assert row["hh"] is None
+    assert row["income"] is None
+    # Growth and payroll are not area figures, so they still answer from whichever band has them.
+    assert row["growth"] == "-1.5% since 2018"
+    assert row["econ_k"] == 512
+
+
+def test_a_figure_the_catchment_suppresses_is_never_backfilled_from_the_place(conn):
+    """(b). The catchment has population and households and suppresses the median; the place band
+    has all three. The median is NULL — never the place's $67,760 read in beside two catchment
+    figures under one caption that says "within about 5 miles of the practice".
+
+    `_AREA_KEYS`'s own comment is the rule: "A figure the chosen band does not have is null …; it
+    is never backfilled from the other band." A per-figure backfill here would put a city median
+    under a ring caption, which is the defect D-C38 exists to remove, one tile further along."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _seed_band(conn, listing_id, "drive_10", metrics=_suppressing(_CATCHMENT_SIX, "median_hh_income"))
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["label"] == _BAND_LABEL
+    assert row["pop"] == "369,569"
+    assert row["hh"] == "181,745 households"
+    assert row["income"] is None
+    assert row["income"] != "$67,760"
+    # No median, no note: the qualifier belongs to a figure that is shown.
+    assert row["income_note"] is None
