@@ -1091,7 +1091,13 @@ describe('local design amendments (spec D15)', () => {
       const later = list.slice(list.indexOf(a) + 1).find((b) => b.find.includes(a.replace));
       return later ? outputOf(later) : trimmed(a.replace);
     };
+    // H3 (controller, 2026-09-11): this loop used to `expect(...).toBe(true)` inline, so the
+    // FIRST stale citation threw and the run stopped there — correct (it went red), but it
+    // named one of however many were actually stale and left a reader to conclude there was
+    // only one. Every citation is still checked, and every stale one is collected, so a single
+    // run names all of them.
     let checked = 0;
+    const stale: string[] = [];
     for (const row of md.split('\n')) {
       const id = /^\|\s*(A[\w.]+)\s*\|/.exec(row)?.[1];
       if (id === undefined) continue;
@@ -1107,13 +1113,13 @@ describe('local design amendments (spec D15)', () => {
       expect(output.length, `${id}: a removal amendment puts nothing at a line, so its row may not cite one`).toBeGreaterThan(0);
       for (const n of cited) {
         const window = [n - 1, n, n + 1].map((k) => fileLines[k - 1] ?? '');
-        expect(
-          window.some((line) => output.some((piece) => line.includes(piece))),
-          `${id}: V3:${n} is stale — that line of the amended design holds none of this amendment's text`
-        ).toBe(true);
+        if (!window.some((line) => output.some((piece) => line.includes(piece)))) {
+          stale.push(`${id}: V3:${n} is stale — that line of the amended design holds none of this amendment's text`);
+        }
         checked++;
       }
     }
+    expect(stale, `${stale.length} stale citation(s) found`).toEqual([]);
     // Not a vacuous pass: the parser must actually have found the rows and their citations.
     expect(checked, 'no V3 citation was checked — the row or citation pattern stopped matching').toBeGreaterThan(20);
   });
