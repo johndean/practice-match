@@ -535,6 +535,29 @@ def _seed_band(conn, listing_id, band, *, suppressed=False, source_dataset=None,
             )
 
 
+def _ring(metrics=_SIX):
+    """`metrics` with the median shaped the way a CATCHMENT median actually comes out of the
+    pipeline: `is_derived` TRUE and no MOE.
+
+    Minor, whole-branch review 2026-09-11, the class commit `0154d54` set out to remove — stub
+    only values the API can emit. `_SIX` carries a published median (`is_derived=False`, a real
+    MOE), which is the PLACE shape: `materialize.py`'s `_band_inputs` returns `income_is_approx`
+    FALSE only on the `place` branch and hard-codes TRUE with a null MOE for every catchment,
+    because a ring median is a household-weighted average of the tract medians inside it and
+    never a published figure. So `_SIX` seeded into `drive_10` described a row the pipeline
+    cannot write, and a test asserting `income_note is None` off it was pinning a state
+    production can never reach — and would have obstructed a correct change to `serve.py`.
+
+    The two tests that pin the qualifier's INDEPENDENCE from the band still pass their own
+    explicit tuples and are untouched: `serve.py` reads the served row's own `is_derived` on
+    purpose, so that an approximate PLACE median — which the producer does not make today — could
+    not lose the word in silence."""
+    return tuple(
+        (m[0], m[1], m[2], m[3], True, m[5], None, m[7], m[8], m[9]) if m[0] == "median_hh_income" else m
+        for m in metrics
+    )
+
+
 def _clear_all(conn):
     with conn.cursor() as cur:
         cur.execute(
@@ -566,7 +589,7 @@ def test_a_listing_with_no_place_rows_falls_back_to_drive_10_and_says_so(conn):
     before; only the label's WORDING moves, under D-C39."""
     listing_id = make_listing(conn, city="Orlando", state="FL", zip="32819")
     _clear_all(conn)
-    _seed_band(conn, listing_id, "drive_10")
+    _seed_band(conn, listing_id, "drive_10", metrics=_ring())
 
     active, registry = _seed_active_and_registry(conn)
     row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
@@ -575,6 +598,8 @@ def test_a_listing_with_no_place_rows_falls_back_to_drive_10_and_says_so(conn):
     assert row["pop"] == "167,997"
     assert row["hh"] == "59,588 households"
     assert row["income"] == "$69,780"
+    # A ring median is always approximate, so the card always says so beside it.
+    assert row["income_note"] == f"{_BAND_LABEL} \u00b7 approximate"
     assert row["growth"] == "+9.0% since 2018"
     assert row["vets"] == 10
     assert row["econ_k"] == 512
@@ -587,7 +612,7 @@ def test_place_rows_that_are_all_suppressed_fall_back_to_drive_10(conn):
     listing_id = make_listing(conn, city="Orlando", state="FL", zip="32819")
     _clear_all(conn)
     _seed_band(conn, listing_id, "place", suppressed=True)
-    _seed_band(conn, listing_id, "drive_10")
+    _seed_band(conn, listing_id, "drive_10", metrics=_ring())
 
     active, registry = _seed_active_and_registry(conn)
     row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
@@ -595,9 +620,11 @@ def test_place_rows_that_are_all_suppressed_fall_back_to_drive_10(conn):
     assert row["label"] == _BAND_LABEL
     assert row["pop"] == "167,997"
     assert row["vets"] == 10
-    # `_SIX`'s median is seeded place-shaped (`is_derived=False`) in BOTH bands, so no qualifier
-    # is added — the note follows the figure's own row, never the band it was read from.
-    assert row["income_note"] is None
+    # The served row is the ring's, and a ring median is derived, so the qualifier is there. The
+    # note follows the FIGURE'S OWN row rather than the band it was read from, which is a
+    # distinction the two tests further down pin on their own explicit tuples; this fixture is no
+    # longer the place to make it, because it made it with a row the pipeline cannot write.
+    assert row["income_note"] == f"{_BAND_LABEL} \u00b7 approximate"
 
 
 def test_place_rows_from_an_uncleared_dataset_fall_back_to_drive_10(conn):
@@ -606,7 +633,7 @@ def test_place_rows_from_an_uncleared_dataset_fall_back_to_drive_10(conn):
     listing_id = make_listing(conn, city="Orlando", state="FL", zip="32819")
     _clear_all(conn)
     _seed_band(conn, listing_id, "place", source_dataset="acs5")
-    _seed_band(conn, listing_id, "drive_10")
+    _seed_band(conn, listing_id, "drive_10", metrics=_ring())
     with conn.cursor() as cur:
         # `drive_10`'s establishments/payroll rows stay on zbp/cbp, which remain cleared.
         cur.execute(

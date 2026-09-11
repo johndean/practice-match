@@ -2204,7 +2204,7 @@ class Component extends DCLogic {
     const comms = this.communities();
     const valueLayer = s.mdValue === undefined ? "income" : s.mdValue;
     const layers = Object.assign(
-      { practices: true, competition: true, households: false, pets: false },
+      { competition: true, households: false, pets: false },
       s.mdLayers || {}
     );
     const sel = s.mdSel ? P.filter((x) => x.id === s.mdSel)[0] : null;

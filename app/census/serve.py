@@ -185,6 +185,15 @@ BAND_LABEL = "Within about 5 miles of the practice"
 # drawn half from the ring and half from the city would put a city figure under a ring caption —
 # the very defect D-C38 exists to remove. A figure the chosen band does not have is null, which is
 # what the design's own guards read as absence; it is never backfilled from the other band.
+#
+# `vets` BELONGS HERE, and the whole-branch review's minor asked it to be confirmed rather than
+# assumed. It is measured over the BAND'S OWN footprint, not at a fixed geography: `_competition`
+# is called once per band with that band's ZCTA weights — `_PLACE_ZCTA_SQL` for the place,
+# `practice_catchment` for the ring — and weights the ZBP ZIP-code counts by them, so the figure
+# describes the same area the other three do. `geo_level: "zcta"` in its `inputs` records the
+# LEVEL the counts were read at, not the area they were aggregated to. The contract document says
+# the same in its own words ("`pop`, `hh`, `income`, `vets` … These vary by band"), and
+# `test_an_off_card_figure_decides_the_on_card_group_s_band` pins the consequence deliberately.
 _AREA_KEYS = ("pop", "hh", "income", "vets")
 
 _SCOPE_NAME_SQL = """

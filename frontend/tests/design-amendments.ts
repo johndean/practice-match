@@ -4573,6 +4573,28 @@ const A28_8: Amendment = {
   count: 1
 };
 
+/** A28.9 (controller amendment, 2026-09-11, whole-branch review). THE LAST ORPHAN THE DELETION
+ *  LEFT, under the rule D-C45 already applied to the four helpers — not a new product decision,
+ *  and the same rule John has ruled the shape of twice (A2.2-A2.5 for `browseSel`, A13.6-A13.7
+ *  for the `<select>` render values).
+ *
+ *  A28.2-A28.4 deleted `overlayRows` and the `drive5`/`drive10` flags. `overlayRows`'s own row
+ *  `layerRow("practices", "Practice Listings", !!layers.practices, ...)` was the ONLY reader of
+ *  the `practices` default in this literal: `SYMBOL_KEYS` is `["pets", "households",
+ *  "competition"]`, so `activeSymbols` never asks for it, and the one other place `layers` is
+ *  spread (`patch.mdLayers = Object.assign({}, layers, { competition: false })`) copies the key
+ *  forward without reading it. `md.practices` — the pin list the map component is handed — is a
+ *  different declaration entirely and is untouched.
+ *
+ *  The other three defaults STAY: `competition`, `households` and `pets` are exactly
+ *  `SYMBOL_KEYS`, and each is read on every render. */
+const A28_9: Amendment = {
+  id: 'A28.9', date: '2026-09-11', ruling: 'the orphans are deleted under the bundle\'s own dead-code rule (D-C44/D-C45)',
+  find: '      { practices: true, competition: true, households: false, pets: false },',
+  replace: '      { competition: true, households: false, pets: false },',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -4658,5 +4680,7 @@ export function amendments(): Amendment[] {
     // appended last as every family is, and definition order in this file matches this list
     // (m8). A20 stays reserved by the image-identifiability plan and A24 by the
     // neighbourhood-shading spec, so A28 is the next free id in the ledger after A27.
-    A28_1, A28_2, A28_3, A28_4, A28_5, A28_6, A28_7, A28_8];
+    // A28.9 (whole-branch review, 2026-09-11) is the last orphan the same deletion left: the
+    // `practices` layer default, whose only reader was A28.2's own deleted row.
+    A28_1, A28_2, A28_3, A28_4, A28_5, A28_6, A28_7, A28_8, A28_9];
 }

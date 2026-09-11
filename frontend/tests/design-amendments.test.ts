@@ -310,12 +310,12 @@ describe('local design amendments (spec D15)', () => {
     // A28.1 is the first entry that edits `MarketMapV3.jsx` (`file: 'jsx'`); A28.2-A28.4 delete
     // the legacy panel's orphan rows and the two state flags those rows were the only reader of.
     // A28.5-A28.8 (controller amendment D-C45) delete the four helpers those rows called.
-    'A28.1', 'A28.2', 'A28.3', 'A28.4', 'A28.5', 'A28.6', 'A28.7', 'A28.8',
+    'A28.1', 'A28.2', 'A28.3', 'A28.4', 'A28.5', 'A28.6', 'A28.7', 'A28.8', 'A28.9',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(221);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(222);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -1159,9 +1159,15 @@ describe('local design amendments (spec D15)', () => {
     }
     // The point of the deletion, in John's own terms: no "drive time" string is left anywhere.
     expect(amended, 'a "drive time" string survives in the design').not.toContain('drive time');
-    // The four LIVE members of the layer defaults stay, in the design's own order — A28.4 took
-    // the two the deleted rows were the sole reader of and nothing else.
-    expect(amended).toContain('{ practices: true, competition: true, households: false, pets: false },');
+    // The LIVE members of the layer defaults stay, in the design's own order. A28.4 took the two
+    // flags the deleted rows were the sole reader of; A28.9 (whole-branch review, 2026-09-11)
+    // then took `practices`, the third — `SYMBOL_KEYS` is `["pets", "households", "competition"]`
+    // and A28.2's own deleted `layerRow("practices", …)` was the only thing that ever read it.
+    // What is left is exactly `SYMBOL_KEYS`, which `activeSymbols` reads on every render.
+    expect(pristine, 'the pristine bundle no longer carries the practices default A28.9 removes')
+      .toContain('{ practices: true, drive5: true, drive10: true, competition: true, households: false, pets: false },');
+    expect(amended).toContain('{ competition: true, households: false, pets: false },');
+    expect(amended, 'A28.9 left the orphaned practices default in the design').not.toContain('practices: true');
   });
 
   // D-C45 (controller amendment, 2026-09-11): the four helpers A28.2/A28.3's deleted rows were

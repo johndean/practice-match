@@ -488,7 +488,11 @@ export const SCREENS: Screen[] = [
     // state exists to photograph leaves the baseline in silence. This is the assertion that
     // fails instead. It runs on the reference and the app alike, before the capture, and changes
     // nothing about it.
-    await expect(p.getByText(STRIP_FOOTNOTE).first()).toBeInViewport();
+    // `{ ratio: 1 }`, not the default (minor, whole-branch review 2026-09-11): bare
+    // `toBeInViewport()` passes at ANY intersection above zero, so a sentence clipped to its last
+    // two words still satisfied it and the state would go on photographing a truncated footnote.
+    // The whole element has to be in the frame, which is what this capture exists to prove.
+    await expect(p.getByText(STRIP_FOOTNOTE).first()).toBeInViewport({ ratio: 1 });
     await p.waitForTimeout(400);
   } },
 ];
