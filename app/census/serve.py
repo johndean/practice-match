@@ -7,9 +7,12 @@ single source of truth so both `market.py`'s panel and the listing card read the
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, TypedDict
 
 from sqlalchemy.ext.asyncio import AsyncConnection
+
+log = logging.getLogger(__name__)
 
 
 class CommunityRow(TypedDict):
@@ -187,13 +190,13 @@ _AREA_KEYS = ("pop", "hh", "income", "vets")
 _SCOPE_NAME_SQL = """
     SELECT pl.listing_id, 'place', g.name
       FROM practice_location pl
-      JOIN geo_area g ON g.geo_id = pl.place_geoid AND g.summary_level = '160' AND g.vintage = %s
-     WHERE pl.listing_id = ANY(%s::uuid[])
+      LEFT JOIN geo_area g ON g.geo_id = pl.place_geoid AND g.summary_level = '160' AND g.vintage = %s
+     WHERE pl.listing_id = ANY(%s::uuid[]) AND pl.place_geoid IS NOT NULL
     UNION ALL
     SELECT pl.listing_id, 'county', g.name
       FROM practice_location pl
-      JOIN geo_area g ON g.geo_id = pl.county_geoid AND g.summary_level = '050' AND g.vintage = %s
-     WHERE pl.listing_id = ANY(%s::uuid[])
+      LEFT JOIN geo_area g ON g.geo_id = pl.county_geoid AND g.summary_level = '050' AND g.vintage = %s
+     WHERE pl.listing_id = ANY(%s::uuid[]) AND pl.county_geoid IS NOT NULL
 """
 
 
@@ -213,12 +216,44 @@ def _scope_names(conn: Any, listing_ids: list[str], geo_vintage: str | None) -> 
     as a listing that was never geocoded.
 
     The two summary levels are LITERALS in the SQL, so the tag beside each name ('place',
-    'county') is the level it was actually read at, not a re-derivation of it."""
+    'county') is the level it was actually read at, not a re-derivation of it.
+
+    I4 (whole-branch review, 2026-09-11) — A GEOID THE ACTIVE EDITION CANNOT RESOLVE IS AUDIBLE.
+    `practice_location` carries no vintage column: its geoids were resolved by the Census
+    geocoder at whatever boundary edition was current then. Activate a `tiger_cb` whose
+    `geo_area` rows are not loaded — a refresh whose ingest has not run, or ran partially — and
+    the join matches nothing for EVERY listing at once, so every growth sub-line loses its
+    geography while the card goes on saying the figures came from a ring: D-C38's defect
+    restored silently, fleet-wide. This docstring used to call that "the same answer as a listing
+    that was never geocoded". It is not the same answer, and the two are separated here.
+
+    The separation is in the QUERY, not in a second one: `LEFT JOIN` with the geoid's own
+    `IS NOT NULL` in the `WHERE`, so a row comes back for every listing that HAS a geoid and its
+    `name` is null exactly when the active edition could not name it. Same two-branch UNION, same
+    index descent, one query per page.
+
+    The page keeps SERVING and the fault becomes audible rather than fatal. C2 removed exactly
+    this class of thing — a data-ops condition taking the listings page down — and reinstating it
+    for a missing sub-line would be worse than the defect it reports. The join stays pinned to
+    the active vintage because `geo_area` holds several editions and a place's NAME can change
+    between them (annexation, renaming): dropping the term would name the area from an arbitrary
+    edition, which is a wrong answer where a null is an absent one."""
     names: dict[tuple[str, str], str] = {}
+    unresolved = 0
     with conn.cursor() as cur:
         cur.execute(_SCOPE_NAME_SQL, (geo_vintage, listing_ids, geo_vintage, listing_ids))
         for lid, level, name in cur.fetchall():
+            if name is None:
+                unresolved += 1
+                continue
             names[(str(lid), level)] = name
+    if unresolved:
+        log.warning(
+            "census: %d geocoded geoid(s) across %d listing(s) have no geo_area name at the "
+            "active tiger_cb vintage %r; those listings serve their growth figure with no "
+            "geography named beside it. Load the boundary edition or roll tiger_cb back.",
+            unresolved, len(listing_ids), geo_vintage,
+        )
     return names
 
 

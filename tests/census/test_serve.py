@@ -4,6 +4,8 @@ per page and the same gate logic market.py uses to decide what a buyer may see.
 """
 from __future__ import annotations
 
+import logging
+
 from app.census.serve import BAND_LABEL, community_rows
 from tests.census.listing_fixtures import make_listing
 
@@ -728,8 +730,11 @@ def _seed_geography(conn, listing_id, *, place_geoid=None, place_name=None, coun
             "VALUES (%s, 'h', %s, %s, 'rooftop', now(), 'Current_Current')",
             (listing_id, county_geoid, place_geoid),
         )
+        # A `geo_area` row only where the caller gave a NAME. A geoid with no name is the
+        # "geocoded, but the active boundary edition does not resolve it" case (I4) — the row is
+        # deliberately absent, not present with a null name, which `geo_area.name` forbids.
         for geo_id, level, name in ((place_geoid, "160", place_name), (county_geoid, "050", county_name)):
-            if geo_id is not None:
+            if geo_id is not None and name is not None:
                 cur.execute(
                     "INSERT INTO geo_area (geo_id, summary_level, vintage, name) VALUES (%s, %s, '2023', %s)",
                     (geo_id, level, name),
@@ -1114,3 +1119,121 @@ def test_a_null_catchment_figure_does_not_vote_the_area_group_to_the_catchment(c
     assert row["pop"] == "1,299,553"
     assert row["income"] == "$67,760"
     assert row["vets"] == 250
+
+
+# ---------------------------------------------------------------------------------------------
+# I4 (whole-branch review, 2026-09-11) — a scope that goes null FLEET-WIDE, and says nothing.
+#
+# `_scope_names` joins `geo_area` on the CURRENT `active_vintage.tiger_cb`, and
+# `practice_location` carries no vintage column: its geoids were resolved by the Census geocoder
+# at whatever edition was current then. Activate a `tiger_cb` whose `geo_area` rows are not
+# loaded — or not loaded yet — and the join matches nothing for EVERY listing at once. Every
+# growth sub-line loses its geography while the card goes on saying the figures came from a ring,
+# which is the D-C38 defect restored silently and everywhere.
+#
+# `_scope_names`'s own docstring made the conflation explicit: "a database with no active
+# `tiger_cb` matches no row and names nothing, which is the same answer as a listing that was
+# never geocoded." It is not the same answer. One is a listing the geocoder could not place; the
+# other is an operations fault that has just blanked the whole fleet.
+#
+# RULED HERE (implementer, justified in the fix report): the page keeps serving and the fault
+# becomes AUDIBLE, rather than the page failing. C2 one finding up removed exactly this class of
+# thing — a data-ops condition taking the listings page down — and reinstating it for a missing
+# sub-line would be worse than the defect. The join stays pinned to the active vintage, because
+# `geo_area` holds several editions and a place's NAME can change between them (annexation,
+# renaming), so dropping the term would name the area from an arbitrary edition.
+#
+# The two states are separated in the QUERY, not by a second one: `LEFT JOIN` with the geoid's
+# own `IS NOT NULL` in the WHERE, so a row comes back for every listing that HAS a geoid and its
+# `name` is null exactly when the active vintage could not resolve it. Same two-branch UNION,
+# same index descent, same one query per page.
+# ---------------------------------------------------------------------------------------------
+
+
+def _roll_tiger_forward(conn, vintage="2024"):
+    """Activate a `tiger_cb` edition whose `geo_area` rows are not loaded — the shape of a
+    boundary refresh whose ingest has not run, or has run partially."""
+    with conn.cursor() as cur:
+        cur.execute("DELETE FROM active_vintage WHERE dataset_key = 'tiger_cb'")
+        cur.execute(
+            "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) "
+            "VALUES ('tiger_cb', %s, now(), 'test')", (vintage,),
+        )
+
+
+def test_a_tiger_roll_forward_that_blanks_every_scope_says_so_in_the_log(conn, caplog):
+    """The fleet-wide case. The listing is geocoded, its place is named at the edition that was
+    current, and the active edition has no rows at all: the scope goes null and the log names the
+    vintage and the count, so the condition cannot be mistaken for "these listings were never
+    geocoded"."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_geography(conn, listing_id, place_geoid="4819000", place_name="Dallas", county_geoid="48113", county_name="Dallas County")
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _set_geo_level(conn, listing_id, "population_growth_pct", "place")
+    _roll_tiger_forward(conn)
+
+    active, registry = _seed_active_and_registry(conn)
+    with caplog.at_level(logging.WARNING, logger="app.census.serve"):
+        row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    # The figure still serves; only the name it would have been qualified by is gone.
+    assert row["growth"] == "-1.5% since 2018"
+    assert row["growth_scope"] is None
+    assert len(caplog.records) == 1
+    message = caplog.records[0].getMessage()
+    assert "2024" in message, f"the warning does not name the active tiger_cb vintage: {message!r}"
+    assert "2" in message, f"the warning does not count the geoids it could not resolve: {message!r}"
+
+
+def test_a_listing_that_was_never_geocoded_is_silent(conn, caplog):
+    """The other half of the conflation, and the reason the warning has to be earned rather than
+    fired whenever a scope is null: a listing with no `practice_location` row has no geoid to
+    resolve, so there is nothing to warn about and a page of them must not shout."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _set_geo_level(conn, listing_id, "population_growth_pct", "place")
+
+    active, registry = _seed_active_and_registry(conn)
+    with caplog.at_level(logging.WARNING, logger="app.census.serve"):
+        row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["growth_scope"] is None
+    assert caplog.records == []
+
+
+def test_a_resolved_page_is_silent(conn, caplog):
+    """The healthy path warns about nothing — proved here so the assertions above cannot be
+    satisfied by a warning that fires unconditionally."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_geography(conn, listing_id, place_geoid="4819000", place_name="Dallas", county_geoid="48113", county_name="Dallas County")
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _set_geo_level(conn, listing_id, "population_growth_pct", "place")
+
+    active, registry = _seed_active_and_registry(conn)
+    with caplog.at_level(logging.WARNING, logger="app.census.serve"):
+        row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["growth_scope"] == "Dallas"
+    assert caplog.records == []
+
+
+def test_one_listing_whose_place_alone_is_unnamed_still_warns(conn, caplog):
+    """The warning counts GEOIDS, not listings: this one resolves its county and not its place,
+    which is a partial boundary ingest rather than a fleet-wide blanking, and is worth the same
+    sentence. The county name is still served."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_geography(conn, listing_id, place_geoid="4819000", county_geoid="48113", county_name="Dallas County")
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _set_geo_level(conn, listing_id, "population_growth_pct", "county")
+
+    active, registry = _seed_active_and_registry(conn)
+    with caplog.at_level(logging.WARNING, logger="app.census.serve"):
+        row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["growth_scope"] == "Dallas County"
+    assert len(caplog.records) == 1
+    assert "2023" in caplog.records[0].getMessage()
