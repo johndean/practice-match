@@ -309,12 +309,13 @@ describe('local design amendments (spec D15)', () => {
     // A28 — the ring is drawn at the distance the card names (John, 2026-09-11, ruling D-C44).
     // A28.1 is the first entry that edits `MarketMapV3.jsx` (`file: 'jsx'`); A28.2-A28.4 delete
     // the legacy panel's orphan rows and the two state flags those rows were the only reader of.
-    'A28.1', 'A28.2', 'A28.3', 'A28.4',
+    // A28.5-A28.8 (controller amendment D-C45) delete the four helpers those rows called.
+    'A28.1', 'A28.2', 'A28.3', 'A28.4', 'A28.5', 'A28.6', 'A28.7', 'A28.8',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(216);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(220);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -1161,11 +1162,26 @@ describe('local design amendments (spec D15)', () => {
     // The four LIVE members of the layer defaults stay, in the design's own order — A28.4 took
     // the two the deleted rows were the sole reader of and nothing else.
     expect(amended).toContain('{ practices: true, competition: true, households: false, pets: false },');
-    // …and the helpers those rows called are NOT deleted: the ruling names the rows and the
-    // flags, so removing their callers is a separate change and a separate ruling.
-    for (const kept of ['const layerRow = ', 'const radioRow = ', 'const setValue = ', 'const setLayer = ']) {
-      expect(amended, `A28 widened its own scope and removed ${kept.trim()}`).toContain(kept);
+  });
+
+  // D-C45 (controller amendment, 2026-09-11): the four helpers A28.2/A28.3's deleted rows were
+  // the only callers of go too, under the same dead-code rule. Both directions again — the
+  // pristine bundle still declares all four (so the removal assertion is not vacuous) and the
+  // amended design declares none of them.
+  it('A28.5-A28.8 delete the helpers those rows called, the last piece of the same dead code', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    for (const gone of ['const layerRow = ', 'const radioRow = ', 'const setValue = ', 'const setLayer = ']) {
+      expect(pristine, `the pristine bundle no longer declares ${gone.trim()}`).toContain(gone);
+      expect(amended, `A28.5-A28.8 left ${gone.trim()} in the design`).not.toContain(gone);
     }
+    // Each deletion took its own trailing blank line, so no double-blank or orphaned separator
+    // is left behind: `minLng` and the footer-card switch that used to sit three declarations
+    // away are now adjacent, with exactly the one blank line the design had between them.
+    expect(amended).toContain(
+      '    const minLng = Math.min.apply(null, lngs) - pad, maxLng = Math.max.apply(null, lngs) + pad;\n'
+      + '\n'
+      + '    // A footer card is the SOURCE switch for its dataset: off means the dataset\n'
+    );
   });
 
   it('LOCAL_AMENDMENTS.md carries exactly one table row per amendment id (A1 collapsed to one)', () => {

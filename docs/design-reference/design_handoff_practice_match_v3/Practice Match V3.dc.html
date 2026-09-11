@@ -2221,28 +2221,6 @@ class Component extends DCLogic {
     const minLat = Math.min.apply(null, lats) - pad, maxLat = Math.max.apply(null, lats) + pad;
     const minLng = Math.min.apply(null, lngs) - pad, maxLng = Math.max.apply(null, lngs) + pad;
 
-    const layerRow = (key, label, on, color, toggle) => ({
-      label, on,
-      toggle,
-      boxStyle: "flex: none; width: 17px; height: 17px; border-radius: 3px; display: grid; place-items: center; border: 1.5px solid " +
-        (on ? color : "#c4ccd6") + "; background: " + (on ? color : "var(--vf-white)") + ";",
-      tickStyle: "display: block; opacity: " + (on ? "1" : "0") + ";",
-      textStyle: "font-size: 13px; font-weight: " + (on ? "500" : "400") + "; color: " + (on ? "var(--vf-navy)" : "var(--vf-text)") + ";"
-    });
-
-    const radioRow = (key, label, on, color, toggle) => ({
-      label, on, toggle,
-      boxStyle: "flex: none; width: 15px; height: 15px; border-radius: 999px; display: grid; place-items: center; border: 1.5px solid " +
-        (on ? "var(--vf-navy)" : "#c3d4e2") + "; background: var(--vf-white);",
-      dotStyle: "width: 7px; height: 7px; border-radius: 999px; background: var(--vf-navy); opacity: " + (on ? "1" : "0") + ";",
-      swatchStyle: "flex: none; width: 12px; height: 12px; border-radius: 2px; background: " + (color || "transparent") +
-        "; opacity: " + (color ? (on ? "1" : ".4") : "0") + ";",
-      labelStyle: "font-size: 12.5px; font-weight: " + (on ? "500" : "400") + "; color: " + (on ? "var(--vf-navy)" : "var(--vf-text)") + ";"
-    });
-
-    const setValue = (k) => () => this.setState({ mdValue: s.mdValue === k ? null : k });
-    const setLayer = (k) => () => this.setState({ mdLayers: Object.assign({}, layers, { [k]: !layers[k] }) });
-
     // A footer card is the SOURCE switch for its dataset: off means the dataset
     // is not in play at all, so its row leaves the Data Layers widget.
     const off = s.mdOff || {};

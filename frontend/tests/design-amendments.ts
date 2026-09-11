@@ -4501,6 +4501,46 @@ const A28_4: Amendment = {
   count: 1
 };
 
+/** A28.5-A28.8 (controller amendment D-C45, 2026-09-11). THE HELPERS THE DELETION ORPHANED.
+ *  D-C44 deleted the legacy panel's rows (`fillRows`, `overlayRows`) and the two state flags
+ *  those rows were the sole reader of, but left the four helpers that BUILT the rows standing —
+ *  the ruling named the rows and the flags and nothing else, and the D-C44 implementer added a
+ *  case asserting the four were still present so that leaving them would read as a decision
+ *  rather than an oversight. This closes it: `radioRow`, `layerRow`, `setValue` and `setLayer`
+ *  are re-measured (as the brief required before deleting) and each occurs exactly ONCE in
+ *  `logic.js` and once in the amended design — its own declaration — and ZERO times in
+ *  `App.vue`. Same rule as A2.3-A2.5 and A13.6-A13.7: one entry per helper, in the file's own
+ *  order, each entry taking its own trailing blank line so the block that follows (`s.mdOff`'s
+ *  footer-card switch) ends up separated from `minLng` by exactly the one blank line the design
+ *  had before any of GROUP 1/GROUP 2 existed. */
+const A28_5: Amendment = {
+  id: 'A28.5', date: '2026-09-11', ruling: 'the helpers the deletion orphaned go too (controller amendment D-C45)',
+  find: '    const layerRow = (key, label, on, color, toggle) => ({\n      label, on,\n      toggle,\n      boxStyle: "flex: none; width: 17px; height: 17px; border-radius: 3px; display: grid; place-items: center; border: 1.5px solid " +\n        (on ? color : "#c4ccd6") + "; background: " + (on ? color : "var(--vf-white)") + ";",\n      tickStyle: "display: block; opacity: " + (on ? "1" : "0") + ";",\n      textStyle: "font-size: 13px; font-weight: " + (on ? "500" : "400") + "; color: " + (on ? "var(--vf-navy)" : "var(--vf-text)") + ";"\n    });\n\n',
+  replace: '',
+  count: 1
+};
+
+const A28_6: Amendment = {
+  id: 'A28.6', date: '2026-09-11', ruling: 'the helpers the deletion orphaned go too (same amendment)',
+  find: '    const radioRow = (key, label, on, color, toggle) => ({\n      label, on, toggle,\n      boxStyle: "flex: none; width: 15px; height: 15px; border-radius: 999px; display: grid; place-items: center; border: 1.5px solid " +\n        (on ? "var(--vf-navy)" : "#c3d4e2") + "; background: var(--vf-white);",\n      dotStyle: "width: 7px; height: 7px; border-radius: 999px; background: var(--vf-navy); opacity: " + (on ? "1" : "0") + ";",\n      swatchStyle: "flex: none; width: 12px; height: 12px; border-radius: 2px; background: " + (color || "transparent") +\n        "; opacity: " + (color ? (on ? "1" : ".4") : "0") + ";",\n      labelStyle: "font-size: 12.5px; font-weight: " + (on ? "500" : "400") + "; color: " + (on ? "var(--vf-navy)" : "var(--vf-text)") + ";"\n    });\n\n',
+  replace: '',
+  count: 1
+};
+
+const A28_7: Amendment = {
+  id: 'A28.7', date: '2026-09-11', ruling: 'the helpers the deletion orphaned go too (same amendment)',
+  find: '    const setValue = (k) => () => this.setState({ mdValue: s.mdValue === k ? null : k });\n',
+  replace: '',
+  count: 1
+};
+
+const A28_8: Amendment = {
+  id: 'A28.8', date: '2026-09-11', ruling: 'the helpers the deletion orphaned go too (same amendment)',
+  find: '    const setLayer = (k) => () => this.setState({ mdLayers: Object.assign({}, layers, { [k]: !layers[k] }) });\n\n',
+  replace: '',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -4575,10 +4615,12 @@ export function amendments(): Amendment[] {
     // A28.1 is the FIRST entry in the programme's history that edits `MarketMapV3.jsx` rather
     // than the `.dc.html` (`file: 'jsx'`, the partition spec §9.2 added for A24); A28.2-A28.4
     // delete the legacy panel's orphan rows and the two state flags those rows were the only
-    // reader of, under the bundle's own dead-code rule. None of the four reads an earlier
-    // entry's output — every `find` occurs in the pristine file — but the family is appended
-    // last as every family is, and definition order in this file matches this list (m8). A20
-    // stays reserved by the image-identifiability plan and A24 by the neighbourhood-shading
-    // spec, so A28 is the next free id in the ledger after A27.
-    A28_1, A28_2, A28_3, A28_4];
+    // reader of, under the bundle's own dead-code rule. A28.5-A28.8 (controller amendment
+    // D-C45) finish it: the four helpers those rows called (`layerRow`, `radioRow`, `setValue`,
+    // `setLayer`) are unreferenced now too, and go under the same rule. None of the eight reads
+    // an earlier entry's output — every `find` occurs in the pristine file — but the family is
+    // appended last as every family is, and definition order in this file matches this list
+    // (m8). A20 stays reserved by the image-identifiability plan and A24 by the
+    // neighbourhood-shading spec, so A28 is the next free id in the ledger after A27.
+    A28_1, A28_2, A28_3, A28_4, A28_5, A28_6, A28_7, A28_8];
 }
