@@ -481,6 +481,14 @@ export const SCREENS: Screen[] = [
     await click(p, 'Expand all six layers');
     await p.getByText(STRIP_FOOTNOTE).first().waitFor({ state: 'visible' });
     await stripFootnoteInFrame(p);
+    // H2 (the fix-round re-review's own one-liner). `stripFootnoteInFrame` proves the note lies
+    // inside the PANEL's box, which is not the same as inside the VIEWPORT — and the pixel gate
+    // cannot tell the difference: if someone later drops that scroll, BOTH targets reset
+    // identically, the comparison still passes at `maxDiffPixels: 0`, and the one sentence this
+    // state exists to photograph leaves the baseline in silence. This is the assertion that
+    // fails instead. It runs on the reference and the app alike, before the capture, and changes
+    // nothing about it.
+    await expect(p.getByText(STRIP_FOOTNOTE).first()).toBeInViewport();
     await p.waitForTimeout(400);
   } },
 ];
