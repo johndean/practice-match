@@ -3640,6 +3640,43 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     } finally { delete (p as any).communityLabel; }
   });
 
+  it('the panel’s Population tile names the geography its GROWTH sub-line came from (A27.8, D-C48)', () => {
+    // D-C48 (John, 2026-09-11, on the whole-branch review). A27.7 puts ONE geography sub-line
+    // above the whole four-tile grid, and the Population tile's sub-line is not a population
+    // figure at all — it is GROWTH, which is place-level (`serve.py`'s `growth_scope`) and reads
+    // −1.5% for the whole of Dallas. So a city number sat under a caption describing a ring on
+    // 28 of 29 QA listings: the defect D-C38 removed, one card over. John ruled it is named on
+    // the tile, the way the detail card's own Growth tile already names it (A27.2).
+    const p = austin()[0];
+    // The design's own fixtures carry no `growthScope`, so the null branch is the design's own
+    // sub-line byte for byte — which is what keeps every approved Browse state where it is.
+    const withoutScope = panelFor(p).overviewTiles[0].sub;
+    expect(withoutScope).toMatch(/^[+-]?\d+\.\d% \(5 yrs\)$/);
+    const value = panelFor(p).overviewTiles[0].v;
+
+    (p as any).growthScope = 'Dallas';
+    try {
+      expect(panelFor(p).overviewTiles[0].sub).toBe(withoutScope + ' \u00b7 Dallas');
+      // The VALUE is the ring's population and is untouched: D-C48 labels the sub-line, it
+      // changes no figure. And the three tiles the heading sub-line DOES describe keep theirs.
+      expect(panelFor(p).overviewTiles[0].v).toBe(value);
+      expect(panelFor(p).overviewTiles[1].sub).toBe('ACS 5-year');
+      expect(panelFor(p).overviewTiles[3].sub).toBe('derived estimate');
+    } finally { delete (p as any).growthScope; }
+  });
+
+  it('…and a Population tile with no growth figure names nothing, scope or no scope (A27.8)', () => {
+    // A21.2d's own rule, which D-C48 must not weaken: no figure, no sub-line. A geography with
+    // no number beside it is a caption for something that is not there.
+    const p = austin()[0];
+    (p as any).growthScope = 'Dallas';
+    try {
+      without([p], () => {
+        expect(panelFor(p).overviewTiles[0].sub).toBe(undefined);
+      });
+    } finally { delete (p as any).growthScope; }
+  });
+
   it('the detail’s Community Context names the area in all three places (A21.5b/c/d)', () => {
     const p = austin()[0];
     c.setState({ auth: true, detailId: p.id });

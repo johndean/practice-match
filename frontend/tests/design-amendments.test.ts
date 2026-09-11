@@ -305,7 +305,7 @@ describe('local design amendments (spec D15)', () => {
     'A27.1', 'A27.2', 'A27.3', 'A27.4', 'A27.5',
     // D-C42 (John, 2026-09-11): the Insights heading keeps its name and the geography moves to a
     // sub-line beneath it. A27.6 reads A27.3's output and A27.7 A21.5a's, so both come after them.
-    'A27.6', 'A27.7',
+    'A27.6', 'A27.7', 'A27.8',
     // A28 — the ring is drawn at the distance the card names (John, 2026-09-11, ruling D-C44).
     // A28.1 is the first entry that edits `MarketMapV3.jsx` (`file: 'jsx'`); A28.2-A28.4 delete
     // the legacy panel's orphan rows and the two state flags those rows were the only reader of.
@@ -315,7 +315,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(220);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(221);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

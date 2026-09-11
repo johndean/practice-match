@@ -4414,6 +4414,38 @@ const A27_7: Amendment = {
   count: 1
 };
 
+/** A27.8 (John, 2026-09-11 — ruling D-C48, on the whole-branch review of this branch). THE
+ *  DOCKED PANEL'S POPULATION TILE NAMES THE GEOGRAPHY ITS OWN SUB-LINE CAME FROM.
+ *
+ *  A27.7 places ONE geography sub-line above the whole four-tile grid, and three of the four
+ *  tiles are the area group it describes. The fourth is not: the Population tile's SUB-LINE is
+ *  not a population figure at all — it is GROWTH, which `serve.py` measures at place-or-county
+ *  and serves with its own `growth_scope`, and which reads −1.5% for the whole of Dallas. So the
+ *  panel printed a city number under a caption describing a ring, on 28 of 29 QA listings: the
+ *  defect D-C38 removed, one card over, live in front of the stakeholder.
+ *
+ *  John ruled it is named ON THE TILE, so the heading's sub-line honestly covers only the
+ *  figures it describes. The idiom is the detail card's own Growth tile (A27.2) and the API's own
+ *  `income_note` (A27.1): the design's ` · ` joins a figure to the thing that qualifies it. The
+ *  figure and its period lead and the geography follows, because unlike A27.2's sub-line — where
+ *  the whole line is a qualifier and the scope opens it — this line BEGINS with the number.
+ *
+ *  CHAINED on A21.2d, whose `replace` this `find` is part of: A21.2d already rewrote this tile
+ *  to render nothing rather than a dangling unit where the API sent no growth. That guard is
+ *  what the new term sits inside, so no figure still means no sub-line — a geography with no
+ *  number beside it is a caption for something that is not there.
+ *
+ *  `sel` is the panel's own selected listing, already read four lines above for `hasDemo`; the
+ *  scope is the LISTING's (`growth_scope`), not the community row's, because growth cannot vary
+ *  by band (plan D12) and the community object carries no name. The design's own fixtures carry
+ *  no `growthScope`, so the guard is falsey and every approved state keeps its pixels. */
+const A27_8: Amendment = {
+  id: 'A27.8', date: '2026-09-11', ruling: 'the panel\'s Population tile names the geography its growth sub-line was measured at (D-C48)',
+  find: 'k: "Population", sub: (c.growth !== undefined) ? ((c.growth > 0 ? "+" : "") + c.growth.toFixed(1) + "% (5 yrs)") : undefined },',
+  replace: 'k: "Population", sub: (c.growth !== undefined) ? ((c.growth > 0 ? "+" : "") + c.growth.toFixed(1) + "% (5 yrs)" + (sel.growthScope ? " \u00b7 " + sel.growthScope : "")) : undefined },',
+  count: 1
+};
+
 /** A28.1 (John, 2026-09-11 — ruling D-C44). THE RING IS DRAWN AT THE DISTANCE THE CARD NAMES.
  *  `MarketMapV3.jsx:230-234` draws the C7 drive-time ring at `radius: 16000, color: "#003a70"`,
  *  and D-C38 gives the Community Context card the sentence "Within about 5 miles of the
@@ -4611,6 +4643,10 @@ export function amendments(): Amendment[] {
     // D-C42 (John, 2026-09-11): the Insights heading keeps its name and the geography moves to a
     // sub-line. A27.6 reads A27.3's output and A27.7 A21.5a's, so both run after them.
     A27_6, A27_7,
+    // D-C48 (John, 2026-09-11, on the whole-branch review): the Population tile's sub-line is
+    // growth, which is place-level, so it names its own geography rather than being covered by
+    // A27.7's ring caption. Chained on A21.2d, which runs far earlier.
+    A27_8,
     // A28 — the ring is drawn at the distance the card names (John, 2026-09-11, ruling D-C44).
     // A28.1 is the FIRST entry in the programme's history that edits `MarketMapV3.jsx` rather
     // than the `.dc.html` (`file: 'jsx'`, the partition spec §9.2 added for A24); A28.2-A28.4
