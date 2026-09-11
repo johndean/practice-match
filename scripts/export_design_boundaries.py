@@ -39,14 +39,14 @@ tolerance and the cap are the plan's own ruled numbers.
     reason -- and a reviewer cannot tell that drift from a real change. Treat the COMMITTED bytes as
     the artefact; regenerate only for a deliberate, ruled reason (a new vintage, a new metro).
 
-(2) THE COARSENING THE CAP FORCED COSTS VALIDITY. Invalid polygons among the 165, by tolerance:
-    unsimplified 0 · 0.005 -> 1 · 0.010 -> 5 · 0.015 -> 6 (self-intersections and holes outside
-    their shell). No polygon is dropped and none has empty coordinates at any of these, so the
-    plan's "a coarser fixture is still correct" holds for COMPLETENESS but not for validity. The
-    pixel gates stay honest either way -- the reference and the app are fed this same fixture, so a
-    self-intersection renders identically on both sides -- but if the controller would rather have
-    one invalid polygon than five, the lever is `MAX_FIXTURE_BYTES` (0.005 needs ~155 KB), not this
-    function.
+(2) THE COARSENING THE CAP FORCED COST VALIDITY, AND D-C49 RULED THE REPAIR. Invalid polygons among
+    the 165, by tolerance: unsimplified 0 · 0.005 -> 1 · 0.010 -> 5 · 0.015 -> 6 (self-intersections
+    and holes that end up outside their shell). Halving the tolerance leaves 1 but needs ~155 KB
+    against a 120 KB cap, so John ruled on 2026-09-11: coarsen as committed, then REPAIR. Measured
+    after `ST_MakeValid` on the real fixture: 0 of 165 invalid, exactly those 5 polygons changed and
+    the other 160 byte-identical, worst case 1.41 % of a polygon's area and 52 m of its centroid --
+    against a coarsening that already moves one ZCTA's area by 110 % and its centroid by 931 m, so
+    the repair is nowhere near the dominant source of drift here. The cap is.
 """
 from __future__ import annotations
 
@@ -70,9 +70,26 @@ MAX_FIXTURE_BYTES = 120_000
 # the metro boundary belongs to its neighbour, and an intersects test would drag a ring of
 # half-outside polygons into a fixture whose whole job is to be small. The CBSA row is joined at
 # the SAME vintage as the geography, never at a hard-coded one.
+#
+# COARSEN, THEN REPAIR (D-C49, John, 2026-09-11). `ST_SimplifyPreserveTopology` at this tolerance
+# leaves 5 of the Austin fixture's 165 polygons INVALID -- self-intersections, and holes that end
+# up outside their shell -- and halving the tolerance leaves 1 but needs ~155 KB against a 120 KB
+# cap. The ruling is to keep the tolerance and repair the output. Measured on the real fixture
+# after `ST_MakeValid`: 0 of 165 invalid, exactly those 5 polygons changed and the other 160
+# byte-identical, worst case 1.41 % of a polygon's area and 52 m of its centroid -- against a
+# coarsening that already moves one ZCTA's area by 110 % and its centroid by 931 m. The repair is
+# therefore nowhere near the dominant source of drift in this fixture; the cap is.
+#
+# `ST_CollectionExtract(..., 3)` is the explicit handling the type change needs, not decoration:
+# `ST_MakeValid` answers a spike with a GEOMETRYCOLLECTION of the polygon AND the dangling line,
+# and a GeoJSON `GeometryCollection` would reach `L.geoJSON` on both targets and draw that line as
+# a stroke the design has no class for. Extracting the areal parts leaves a geometry that is
+# already a Polygon or a MultiPolygon untouched, so the fixture's type mix moves only where a
+# repair really did split a polygon (142/23 -> 139/26) and its payload grows by 18 bytes.
 _SQL = """
 SELECT g.summary_level, g.geo_id, g.name,
-       ST_AsGeoJSON(ST_SimplifyPreserveTopology(ST_Transform(g.geom, 4326), %(tol)s), 5) AS geometry,
+       ST_AsGeoJSON(ST_CollectionExtract(
+           ST_MakeValid(ST_SimplifyPreserveTopology(ST_Transform(g.geom, 4326), %(tol)s)), 3), 5) AS geometry,
        ST_Y(ST_Transform(g.centroid, 4326)) AS lat,
        ST_X(ST_Transform(g.centroid, 4326)) AS lng
   FROM geo_area g

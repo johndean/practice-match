@@ -156,3 +156,70 @@ def test_the_main_guard_is_covered(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(SystemExit) as exc:
         runpy.run_path(str(ROOT / "scripts" / "export_design_boundaries.py"), run_name="__main__")
     assert exc.value.code == 2
+
+
+# --- D-C49 (John, 2026-09-11): coarsen as committed, then REPAIR -------------------------------
+# Task 3 measured that `ST_SimplifyPreserveTopology` at the committed 0.010 leaves 5 of the Austin
+# fixture's 165 polygons geometrically invalid (self-intersections, and holes that end up outside
+# their shell), and that halving the tolerance leaves 1 but needs ~155 KB against a 120 KB cap.
+# John ruled: keep the tolerance, repair the output. Measured after the repair on the real fixture:
+# 0 of 165 invalid, 5 polygons changed and the other 160 byte-identical, worst-case drift on a
+# repaired polygon 1.41 % of its area and 52 m of its centroid — against a coarsening that already
+# moves one ZCTA's area by 110 % and its centroid by 931 m, so the repair does not materially move
+# an outline. `ST_CollectionExtract(…, 3)` is not decoration: `ST_MakeValid` answers a spike with a
+# GEOMETRYCOLLECTION of polygons AND lines, and a GeoJSON `GeometryCollection` in the fixture would
+# reach `L.geoJSON` on both targets. Extracting the areal parts is the explicit handling; it leaves
+# a geometry that is already a Polygon or a MultiPolygon alone, which is why the fixture's type mix
+# barely moves (142/23 → 139/26) and its payload grows by 18 bytes.
+
+_HOLE_OUTSIDE_SHELL = (
+    "POLYGON((-97.8 30.2,-97.7 30.2,-97.7 30.3,-97.8 30.3,-97.8 30.2),"
+    "(-97.65 30.22,-97.62 30.22,-97.62 30.25,-97.65 30.25,-97.65 30.22))"
+)
+_SPIKE = "POLYGON((-97.8 30.2,-97.6 30.2,-97.6 30.4,-97.8 30.4,-97.8 30.2,-97.4 30.6,-97.8 30.2))"
+
+
+def _postgis_verdict(conn: psycopg2.extensions.connection, geometry: dict[str, object]) -> tuple[bool, str]:
+    """Ask PostGIS what it makes of the geometry the fixture actually carries — the round trip is
+    the point: this is the JSON a browser will hand to `L.geoJSON`, not an intermediate."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT ST_IsValid(g), GeometryType(g) FROM (SELECT ST_GeomFromGeoJSON(%s) AS g) s",
+            (json.dumps(geometry),),
+        )
+        valid, geom_type = cur.fetchone()
+    return bool(valid), str(geom_type)
+
+
+def test_a_polygon_simplification_leaves_invalid_is_repaired_before_it_is_exported(conn: psycopg2.extensions.connection) -> None:
+    _geo(conn, "12420", "310", "Austin-Round Rock-San Marcos, TX Metro Area", _METRO)
+    _geo(conn, "78704", "860", "ZCTA5 78704", _HOLE_OUTSIDE_SHELL)
+
+    feature = EB.export(conn, EB.DESIGN_CBSA, "2023")["860"]["features"][0]
+    valid, geom_type = _postgis_verdict(conn, feature["geometry"])
+    assert valid, "an invalid polygon reached the fixture — D-C49 ruled the repair, not a tolerance change"
+    assert geom_type == "MULTIPOLYGON", "repairing a hole that lies outside its shell splits it into parts"
+
+
+def test_a_repair_that_yields_a_geometry_collection_exports_only_its_polygons(conn: psycopg2.extensions.connection) -> None:
+    """`ST_MakeValid` answers a spike with a GEOMETRYCOLLECTION — the polygon AND the dangling line.
+    A `GeometryCollection` is legal GeoJSON and `L.geoJSON` would draw the line as a stroke the
+    design has no class for, so the areal parts are extracted explicitly rather than trusted."""
+    _geo(conn, "12420", "310", "Austin-Round Rock-San Marcos, TX Metro Area", _METRO)
+    _geo(conn, "78704", "860", "ZCTA5 78704", _SPIKE)
+
+    feature = EB.export(conn, EB.DESIGN_CBSA, "2023")["860"]["features"][0]
+    valid, geom_type = _postgis_verdict(conn, feature["geometry"])
+    assert valid
+    assert geom_type == "MULTIPOLYGON", f"a {geom_type} reached the fixture"
+    assert feature["geometry"]["type"] == "MultiPolygon"
+
+
+def test_every_exported_geometry_is_areal_and_non_empty(world: psycopg2.extensions.connection) -> None:
+    """The invariant the two cases above are instances of, asserted over the whole export: nothing
+    but a Polygon or a MultiPolygon, and never an empty one — an empty geometry is a hole in a
+    choropleth, which reads as a boundary rather than as an absence (D-NS16's whole argument)."""
+    for collection in EB.export(world, EB.DESIGN_CBSA, "2023").values():
+        for feature in collection["features"]:
+            assert feature["geometry"]["type"] in ("Polygon", "MultiPolygon")
+            assert feature["geometry"]["coordinates"], f"{feature['id']} exported empty coordinates"
