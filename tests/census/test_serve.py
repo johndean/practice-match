@@ -266,6 +266,8 @@ def test_community_rows_missing_listing_is_six_nulls_and_no_label(conn):
     assert rows[listing_id_2] == {
         "pop": None, "growth": None, "income": None, "hh": None,
         "vets": None, "econ_k": None, "label": None,
+        # D-C38: a row that names no figure names no geography either.
+        "growth_scope": None, "income_note": None,
     }
 
 
@@ -555,7 +557,11 @@ def test_a_place_band_listing_carries_no_label(conn):
 
 def test_a_listing_with_no_place_rows_falls_back_to_drive_10_and_says_so(conn):
     """The Orlando shape: no `place` row at all (unincorporated county, no Census place), complete
-    `drive_10` figures. The figures are served and the card is told which area they describe."""
+    `drive_10` figures. The figures are served and the card is told which area they describe.
+
+    §8 of the D-C38 brief: if this listing's card changes at all beyond the Growth tile's new
+    sub-line, the implementation is wrong. The six figures below are the ones it was served
+    before; only the label's WORDING moves, under D-C39."""
     listing_id = make_listing(conn, city="Orlando", state="FL", zip="32819")
     _clear_all(conn)
     _seed_band(conn, listing_id, "drive_10")
@@ -563,7 +569,7 @@ def test_a_listing_with_no_place_rows_falls_back_to_drive_10_and_says_so(conn):
     active, registry = _seed_active_and_registry(conn)
     row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
 
-    assert row["label"] == "Within 10 minutes of the practice"
+    assert row["label"] == _BAND_LABEL
     assert row["pop"] == "167,997"
     assert row["hh"] == "59,588 households"
     assert row["income"] == "$69,780"
@@ -573,8 +579,9 @@ def test_a_listing_with_no_place_rows_falls_back_to_drive_10_and_says_so(conn):
 
 
 def test_place_rows_that_are_all_suppressed_fall_back_to_drive_10(conn):
-    """B-2: the fallback is decided on FIGURES, not on row presence. Place rows exist here, and
-    every one of them is suppressed, so the place band yields nothing and `drive_10` answers."""
+    """B-2, and still true under D-C38: the choice is decided on FIGURES, not on row presence.
+    Place rows exist here, and every one of them is suppressed, so the place band yields no area
+    figure and the catchment answers."""
     listing_id = make_listing(conn, city="Orlando", state="FL", zip="32819")
     _clear_all(conn)
     _seed_band(conn, listing_id, "place", suppressed=True)
@@ -583,9 +590,12 @@ def test_place_rows_that_are_all_suppressed_fall_back_to_drive_10(conn):
     active, registry = _seed_active_and_registry(conn)
     row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
 
-    assert row["label"] == "Within 10 minutes of the practice"
+    assert row["label"] == _BAND_LABEL
     assert row["pop"] == "167,997"
     assert row["vets"] == 10
+    # `_SIX`'s median is seeded place-shaped (`is_derived=False`) in BOTH bands, so no qualifier
+    # is added — the note follows the figure's own row, never the band it was read from.
+    assert row["income_note"] is None
 
 
 def test_place_rows_from_an_uncleared_dataset_fall_back_to_drive_10(conn):
@@ -610,8 +620,9 @@ def test_place_rows_from_an_uncleared_dataset_fall_back_to_drive_10(conn):
     row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
 
     # acs5 is uncleared, so the four ACS figures are null in BOTH bands — but the drive_10 band
-    # still carries the two CBP/ZBP figures, which is what makes it the band to use.
-    assert row["label"] == "Within 10 minutes of the practice"
+    # still carries the two CBP/ZBP figures, and `vets` is one of the four area figures, which is
+    # what makes the catchment the band the area group is read from.
+    assert row["label"] == _BAND_LABEL
     assert row["vets"] == 10
     assert row["econ_k"] == 512
     assert row["pop"] is None
@@ -629,6 +640,7 @@ def test_a_listing_with_neither_band_is_six_nulls_and_no_label(conn):
     assert result[listing_id] == {
         "pop": None, "growth": None, "income": None, "hh": None,
         "vets": None, "econ_k": None, "label": None,
+        "growth_scope": None, "income_note": None,
     }
 
 
@@ -646,3 +658,214 @@ def test_a_drive_20_only_listing_reaches_no_figures(conn):
     assert row["label"] is None
     assert row["pop"] is None
     assert row["vets"] is None
+
+
+# ---------------------------------------------------------------------------------------------
+# D-C38 / D-C39 (John, 2026-09-11) — per-figure geography. Each figure is served at its own
+# honest geography and the row NAMES it, per tile.
+#
+# The defect this replaces: all twelve Dallas listings sat inside one Census place, so the
+# place-preferred rule served all twelve the City of Dallas — the same four numbers under twelve
+# different neighbourhood headings — while their own catchment figures were already materialised
+# and unreachable by any screen.
+#
+# What changes, and what does NOT:
+#   * The three AREA figures (population, households, median income) and the off-card `vets` come
+#     from the catchment band, with `place` as the fallback. They move as ONE GROUP, because one
+#     `label` describes all of them and a group half-drawn from each band would put a city figure
+#     under a catchment caption — the very defect being fixed.
+#   * `growth` keeps its place-or-county geography (D12: `materialize.py` computes it once, OUTSIDE
+#     the band loop) and `growth_scope` NAMES that geography, so the tile stops implying it
+#     describes the ring beside it.
+#   * `econ_k` keeps county.
+#   * D-C39: the ring is described by DISTANCE, not by time. It is an 8 km straight-line buffer
+#     (spec §8), not a routed drive time, and true isochrones are still open for V1 (spec §15).
+#
+# `_SIX` CANNOT TELL THE BANDS APART — it seeds identical values in both (`_seed_band`), which is
+# why no test above could see the flip. The two tuples below differ in every area figure, and
+# `_CATCHMENT_SIX`'s median is the shape the pipeline actually produces for a ring: `is_derived`
+# with no MOE (`materialize.py:210`, `:241` — a catchment median is a household-weighted average
+# of tract medians, never a published one, and can never be suppressed).
+# ---------------------------------------------------------------------------------------------
+
+_BAND_LABEL = "Within about 5 miles of the practice"
+
+# The City of Dallas, as every one of its twelve listings was served before D-C38.
+_PLACE_SIX = (
+    ("population", "2019-2023", 1299553, "count", False, None, 500, False, None, "acs5"),
+    ("households", "2019-2023", 528038, "count", False, None, 200, False, None, "acs5"),
+    ("median_hh_income", "2019-2023", 67760, "dollars", False, None, 2000, False, None, "acs5"),
+    ("population_growth_pct", "2019-2023", -1.5, "percent", True, None, 0.5, False, None, "acs5"),
+    ("establishments", "2022", 250, "count", False, None, 1, False, None, "zbp"),
+    ("revenue_per_establishment", "2022", 512000, "dollars", True, None, 50000, False, None, "cbp"),
+)
+
+# Foxtrot's own ring — "Highland Park / affluent central", the listing John was shown.
+_CATCHMENT_SIX = (
+    ("population", "2019-2023", 369569, "count", False, None, 500, False, None, "acs5"),
+    ("households", "2019-2023", 181745, "count", False, None, 200, False, None, "acs5"),
+    ("median_hh_income", "2019-2023", 109548, "dollars", True, None, None, False, None, "acs5"),
+    ("population_growth_pct", "2019-2023", -1.5, "percent", True, None, 0.5, False, None, "acs5"),
+    ("establishments", "2022", 41, "count", False, None, 1, False, None, "zbp"),
+    ("revenue_per_establishment", "2022", 512000, "dollars", True, None, 50000, False, None, "cbp"),
+)
+
+
+def _seed_geography(conn, listing_id, *, place_geoid=None, place_name=None, county_geoid=None, county_name=None):
+    """The listing's geocoded place and county, and the `geo_area` rows that NAME them.
+
+    D-C38 supersedes `serve.py`'s own "There is no geoid lookup and none is wanted": the Growth
+    tile needs the name of the geography its figure was measured at, which is
+    `practice_location.place_geoid` joined to `geo_area.name` at summary level 160 (or
+    `county_geoid` at 050). `tiger_cb`'s active vintage is what picks the boundary edition, the
+    same vintage `materialize.py` builds catchments against."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO practice_location (listing_id, address_hash, county_geoid, place_geoid, geo_precision, geocoded_at, geocoder_vintage) "
+            "VALUES (%s, 'h', %s, %s, 'rooftop', now(), 'Current_Current')",
+            (listing_id, county_geoid, place_geoid),
+        )
+        for geo_id, level, name in ((place_geoid, "160", place_name), (county_geoid, "050", county_name)):
+            if geo_id is not None:
+                cur.execute(
+                    "INSERT INTO geo_area (geo_id, summary_level, vintage, name) VALUES (%s, %s, '2023', %s)",
+                    (geo_id, level, name),
+                )
+        cur.execute("DELETE FROM active_vintage WHERE dataset_key = 'tiger_cb'")
+        cur.execute("INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES ('tiger_cb', '2023', now(), 'test')")
+
+
+def _set_geo_level(conn, listing_id, metric_key, geo_level):
+    """Stamp one metric's own `inputs->>'geo_level'`, in every band — which is exactly what
+    `materialize.py` does for growth (`ctx.growth_inputs`, written into all three bands) and for
+    payroll (`"geo_level": "county"`). The fixtures above seed no `inputs` at all, so a row
+    without this stamp is the "growth exists but names no geography" case."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE market_metric SET inputs = jsonb_build_object('geo_level', %s) WHERE listing_id = %s AND metric_key = %s",
+            (geo_level, listing_id, metric_key),
+        )
+
+
+def test_the_area_figures_come_from_the_catchment_band_when_both_bands_have_them(conn):
+    """D-C38, and the gate the D-C32 suite never had: BOTH bands are seeded, with DIFFERENT
+    figures, and the row must be able to say which one each figure came from.
+
+    Population, households, median income and `vets` are the practice's own ring. Growth and
+    payroll are identical in both bands by construction, so they are served unchanged."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _seed_band(conn, listing_id, "drive_10", metrics=_CATCHMENT_SIX)
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["pop"] == "369,569"
+    assert row["hh"] == "181,745 households"
+    assert row["income"] == "$109,548"
+    assert row["vets"] == 41
+    assert row["label"] == _BAND_LABEL
+    assert row["growth"] == "-1.5% since 2018"
+    assert row["econ_k"] == 512
+
+
+def test_a_catchment_median_carries_the_approximate_qualifier(conn):
+    """A ring median is a household-weighted average of the tract medians inside it, never a
+    published figure — `materialize.py` stamps it `is_derived` with no MOE, and it can never be
+    suppressed. The contract has always said an approximate median renders the word beside the
+    value (`docs/integrations/market-data-api.md`); until D-C38 the card had no way to."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _seed_band(conn, listing_id, "drive_10", metrics=_CATCHMENT_SIX)
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["income_note"] == f"{_BAND_LABEL} · approximate"
+
+
+def test_a_place_band_median_is_published_and_carries_no_qualifier(conn):
+    """The other arm: a place median IS published by the Census, so nothing is added to it and
+    the design's own "Household, 2023" sub-line stands byte for byte."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["income"] == "$67,760"
+    assert row["label"] is None
+    assert row["income_note"] is None
+
+
+def test_growth_keeps_its_place_geography_and_the_row_names_it(conn):
+    """D-C38's whole point on the Growth tile: the figure stays the City of Dallas — it exists at
+    no finer geography until the 2010->2020 tract crosswalk is loaded (a registered Phase C
+    deferral) — and `growth_scope` says so, beside a population that IS the ring's."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_geography(conn, listing_id, place_geoid="4819000", place_name="Dallas", county_geoid="48113", county_name="Dallas County")
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _seed_band(conn, listing_id, "drive_10", metrics=_CATCHMENT_SIX)
+    _set_geo_level(conn, listing_id, "population_growth_pct", "place")
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["pop"] == "369,569"
+    assert row["growth"] == "-1.5% since 2018"
+    assert row["growth_scope"] == "City of Dallas"
+
+
+def test_a_county_level_growth_figure_is_named_as_its_county(conn):
+    """The Orlando shape. Its growth row is the only county-level one on QA, because the practice
+    sits in unincorporated Orange County where the Census has no place — `materialize.py` falls
+    from level 160 to 050 and stamps `geo_level: "county"`. Until now that figure was pooled in
+    silence; it is named."""
+    listing_id = make_listing(conn, city="Orlando", state="FL", zip="32819")
+    _clear_all(conn)
+    _seed_geography(conn, listing_id, county_geoid="12095", county_name="Orange County")
+    _seed_band(conn, listing_id, "drive_10", metrics=_CATCHMENT_SIX)
+    _set_geo_level(conn, listing_id, "population_growth_pct", "county")
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["label"] == _BAND_LABEL
+    assert row["growth"] == "-1.5% since 2018"
+    assert row["growth_scope"] == "Orange County"
+
+
+def test_a_growth_figure_whose_geography_has_no_name_carries_no_scope(conn):
+    """D-C31's rule applied to the new field: where the join has nothing to say the row says
+    nothing, and the Growth tile keeps A21.3d's own "Since <year>" sub-line unchanged. Reached
+    two ways here — no `practice_location` row at all, and no `geo_area` name behind one."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _set_geo_level(conn, listing_id, "population_growth_pct", "place")
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["growth"] == "-1.5% since 2018"
+    assert row["growth_scope"] is None
+
+
+def test_a_listing_with_neither_band_carries_no_scope_and_no_income_note(conn):
+    """§8: a per-figure rule makes an all-null row RARER; it must not make it unreachable. The
+    design's own "Community data unavailable" card is still what this reaches."""
+    listing_id = make_listing(conn, city="Cedar Park", state="TX")
+    _clear_all(conn)
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row == {
+        "pop": None, "growth": None, "income": None, "hh": None,
+        "vets": None, "econ_k": None, "label": None,
+        "growth_scope": None, "income_note": None,
+    }

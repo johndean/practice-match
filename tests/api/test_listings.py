@@ -1020,21 +1020,39 @@ def _seed_drive_10_only(conn: Any, listing_id: str) -> None:
             "(%s, %s, now(), %s), (%s, %s, now(), %s), (%s, %s, now(), %s), (%s, %s, now(), %s)",
             ("acs5", "2019-2023", "test", "acs5_prior", "2014-2018", "test", "zbp", "2022", "test", "cbp", "2022", "test"),
         )
-        for key, vintage, value, dataset in (
-            ("population", "2019-2023", 167997, "acs5"),
-            ("households", "2019-2023", 59588, "acs5"),
-            ("median_hh_income", "2019-2023", 69780, "acs5"),
-            ("population_growth_pct", "2019-2023", 9.0, "acs5"),
-            ("establishments", "2022", 10.8, "zbp"),
-            ("revenue_per_establishment", "2022", 512000, "cbp"),
+        # D-C38: `median_hh_income` is seeded the way the pipeline actually writes a ring median —
+        # `is_derived=True` with NO margin of error, because it is a household-weighted average of
+        # the tract medians inside the buffer rather than a published Census figure
+        # (`materialize.py`), and a catchment median can therefore never be suppressed. The old
+        # fixture seeded every row `is_derived=False, moe=1` — place-shaped rows wearing a drive
+        # label — so nothing here could see the approximate qualifier the contract has always
+        # asked for. `population_growth_pct` carries its own `geo_level`, which is what the Growth
+        # tile names: Orlando's is the county, because the practice sits in unincorporated Orange
+        # County where the Census has no place at all.
+        for key, vintage, value, dataset, derived, moe, inputs in (
+            ("population", "2019-2023", 167997, "acs5", False, 1, None),
+            ("households", "2019-2023", 59588, "acs5", False, 1, None),
+            ("median_hh_income", "2019-2023", 69780, "acs5", True, None, None),
+            ("population_growth_pct", "2019-2023", 9.0, "acs5", True, 1, '{"geo_level": "county"}'),
+            ("establishments", "2022", 10.8, "zbp", False, 1, None),
+            ("revenue_per_establishment", "2022", 512000, "cbp", False, 1, None),
         ):
             cur.execute(
                 "INSERT INTO market_metric "
                 "(listing_id, band, metric_key, vintage, value_num, unit, is_derived, "
-                "formula_version, moe, suppressed, suppress_reason, source_dataset, computed_at) "
-                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())",
-                (listing_id, "drive_10", key, vintage, value, "count", False, None, 1, False, None, dataset),
+                "formula_version, moe, suppressed, suppress_reason, source_dataset, computed_at, inputs) "
+                "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now(), %s)",
+                (listing_id, "drive_10", key, vintage, value, "count", derived, None, moe, False, None, dataset, inputs),
             )
+        cur.execute(
+            "INSERT INTO practice_location (listing_id, address_hash, county_geoid, geo_precision, geocoded_at, geocoder_vintage) "
+            "VALUES (%s, 'h', '12095', 'rooftop', now(), 'Current_Current') "
+            "ON CONFLICT (listing_id) DO UPDATE SET county_geoid = EXCLUDED.county_geoid",
+            (listing_id,),
+        )
+        cur.execute("INSERT INTO geo_area (geo_id, summary_level, vintage, name) VALUES ('12095', '050', '2023', 'Orange County')")
+        cur.execute("DELETE FROM active_vintage WHERE dataset_key = 'tiger_cb'")
+        cur.execute("INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES ('tiger_cb', '2023', now(), 'test')")
 
 
 async def test_the_single_route_carries_the_drive_time_label(client: Any, conn: Any, member: Any) -> None:
@@ -1050,9 +1068,16 @@ async def test_the_single_route_carries_the_drive_time_label(client: Any, conn: 
     assert r.status_code == 200, r.text
     data = r.json()
 
-    assert data["community_label"] == "Within 10 minutes of the practice"
+    # D-C39: the ring is described by DISTANCE. It is an 8 km straight-line buffer (spec §8), not
+    # a routed drive time, and true isochrones are still open for V1 (spec §15).
+    assert data["community_label"] == "Within about 5 miles of the practice"
     assert data["pop"] == "167,997"
     assert data["hh"] == "59,588 households"
+    # D-C38, per-figure: the median is the ring's and says it is approximate; the growth figure is
+    # the COUNTY's and says that instead, because growth exists at no finer geography until the
+    # tract crosswalk lands.
+    assert data["income_note"] == "Within about 5 miles of the practice · approximate"
+    assert data["growth_scope"] == "Orange County"
 
 
 async def test_the_list_route_carries_the_drive_time_label_too(client: Any, conn: Any, member: Any) -> None:
@@ -1067,8 +1092,10 @@ async def test_the_list_route_carries_the_drive_time_label_too(client: Any, conn
     assert r.status_code == 200, r.text
     item = next(i for i in r.json()["items"] if i["id"] == listing_id)
 
-    assert item["community_label"] == "Within 10 minutes of the practice"
+    assert item["community_label"] == "Within about 5 miles of the practice"
     assert item["pop"] == "167,997"
+    assert item["income_note"] == "Within about 5 miles of the practice · approximate"
+    assert item["growth_scope"] == "Orange County"
 
 
 async def test_a_listing_with_no_figures_is_null_everywhere_never_zero(
@@ -1090,7 +1117,7 @@ async def test_a_listing_with_no_figures_is_null_everywhere_never_zero(
         if i["id"] == listing_id
     )
     for payload in (single, listed):
-        for field in ("pop", "growth", "income", "hh", "vets", "econ_k", "community_label"):
+        for field in ("pop", "growth", "income", "hh", "vets", "econ_k", "community_label", "growth_scope", "income_note"):
             assert payload[field] is None, field
 
 
@@ -1109,18 +1136,24 @@ def test_serialise_carries_the_community_label_and_never_invents_one() -> None:
     now = datetime(2026, 9, 6, tzinfo=UTC)
 
     labelled = serialise(row, now, community={
-        "pop": "167,997", "growth": None, "income": None, "hh": None, "vets": None,
-        "econ_k": None, "label": "Within 10 minutes of the practice",
+        "pop": "167,997", "growth": "+9.0% since 2018", "income": "$69,780", "hh": None, "vets": None,
+        "econ_k": None, "label": "Within about 5 miles of the practice",
+        "growth_scope": "Orange County", "income_note": "Within about 5 miles of the practice \u00b7 approximate",
     })
-    assert labelled["community_label"] == "Within 10 minutes of the practice"
-    assert labelled["growth"] is None
+    assert labelled["community_label"] == "Within about 5 miles of the practice"
+    # D-C38: the two per-figure fields pass through the same way — one place, no invention.
+    assert labelled["growth_scope"] == "Orange County"
+    assert labelled["income_note"] == "Within about 5 miles of the practice \u00b7 approximate"
+    assert labelled["hh"] is None
 
     unlabelled = serialise(row, now, community={
         "pop": "167,997", "growth": None, "income": None, "hh": None, "vets": None,
-        "econ_k": None, "label": None,
+        "econ_k": None, "label": None, "growth_scope": None, "income_note": None,
     })
     assert unlabelled["community_label"] is None
+    assert unlabelled["growth_scope"] is None
+    assert unlabelled["income_note"] is None
 
     absent = serialise(row, now)
-    for field in ("pop", "growth", "income", "hh", "vets", "econ_k", "community_label"):
+    for field in ("pop", "growth", "income", "hh", "vets", "econ_k", "community_label", "growth_scope", "income_note"):
         assert absent[field] is None, field

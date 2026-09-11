@@ -132,7 +132,7 @@ PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
     # a page of listings in one batch, filtering by listing_id array and band. The query should use
     # `market_metric_lookup_idx (listing_id, band, vintage)` for efficient lookup.
     "community_rows": (
-        "EXPLAIN (FORMAT JSON) SELECT listing_id, metric_key, value_num, suppressed, source_dataset, vintage "
+        "EXPLAIN (FORMAT JSON) SELECT listing_id, metric_key, value_num, suppressed, source_dataset, vintage, is_derived, inputs "
         + "FROM market_metric WHERE listing_id = ANY(%s::uuid[]) AND band = %s",
         (_COMMUNITY_ROWS_LISTING_IDS, "place"),
     ),

@@ -297,7 +297,7 @@ only a new source for the same seven:
 
 | Field | Comes from | Notes |
 |---|---|---|
-| `pop` | `communities[].pop` | ACS population estimate. The `place` band where that band has figures, the `drive_10` band where it has none — see "Which band a listing's figures come from" below. |
+| `pop` | `communities[].pop` | ACS population estimate. The catchment band where that band has figures, the `place` band where it has none — see "Which band a listing's figures come from" below. |
 | `hh` | `communities[].hh` | ACS households. |
 | `income` | `communities[].income` | ACS median household income. |
 | `growth` | `communities[].growth` | Derived: two ACS vintages compared. Vintage statement: `ACS 2014–2018 → 2019–2023`. Gated on `acs5_prior` (see the licence-gates table above), not merely on the `acs5` stamp the row carries. |
@@ -311,41 +311,75 @@ unformatted, for the detail page's market report; `metrics.income_index_vs_us`,
 `components`) are the three figures the design's `marketPanel()` fixture (`incomeNat = 75149`,
 `per10k`, `score`) sketched without a real source.
 
-### Which band a listing's figures come from (`community_label`, Task B10 / D-C32)
+### Which band a listing's figures come from (`community_label`, Task B10 / D-C32, D-C38, D-C39)
 
-`app/census/serve.py::community_rows` builds the seven fields above from the `place` band first.
-**The fallback is decided on FIGURES, not on row presence.** If all six figures come out null —
-the listing has no `place` row at all, every place row is `suppressed`, or every place row is
-stamped with a dataset the VIN Foundation has not cleared — the row is built again from the
-`drive_10` band. `drive_20` is never a fallback: a wider area served under a narrower heading
-would be a reading the data does not support.
+`app/census/serve.py::community_rows` serves **each figure at its own honest geography, and the
+card names it, per tile** (D-C38, John, 2026-09-11). This supersedes the whole-row rule D-C32
+shipped: that rule built the row from the `place` band first and consulted `drive_10` only when
+all six figures came out null. It was written for one condition — the Orlando listing below — and
+was never asked what it does to a listing INSIDE a large city. All twelve Dallas listings sit in
+one Census place, so all twelve were served the City of Dallas: one median household income,
+$67,760, on twelve cards headed with twelve different neighbourhoods, while each practice's own
+catchment figures sat materialised in `market_metric` and unreachable by any screen.
 
-`GET /api/listings` and `GET /api/listings/{id}` therefore carry one more field:
+The rule now, figure by figure:
+
+| Figure | Geography served | Why |
+|---|---|---|
+| `pop`, `hh`, `income`, `vets` | the catchment band, with `place` as the fallback | These vary by band, and the catchment is the finer reading. They move as **one group**: one `community_label` describes all of them, so a group drawn half from the ring and half from the city would put a city figure under a ring caption — the defect being fixed. A figure the chosen band does not have is `null`; it is never backfilled from the other band. |
+| `growth` | `place`, or `county` where the listing has no place | `population_growth_pct` **cannot vary by band at all.** `app/census/materialize.py` computes it once per listing, outside the band loop, and writes that one value into all three bands (plan D12). Its resolution below place-or-county waits on the 2010→2020 tract crosswalk, a registered Phase C deferral. |
+| `econ` (`econ_k`) | `county`, always | `materialize.py` always writes the county CBP row, identically in all three bands. |
+
+**The choice of band for the area group is decided on FIGURES, not on row presence** — a place
+band that yields nothing (no rows, every row `suppressed`, or every row stamped with a dataset
+the VIN Foundation has not cleared) is indistinguishable from no place at all to the buyer.
+`drive_20` is never a fallback: a wider area served under a narrower heading would be a reading
+the data does not support.
+
+`GET /api/listings` and `GET /api/listings/{id}` therefore carry three more fields:
 
 | Field | Value | Meaning |
 |---|---|---|
-| `community_label` | `null` | The figures came from the listing's own community (the `place` band), or there are no figures at all. The design names that community from the listing's own `area`, and its wording stands unchanged. |
-| `community_label` | `"Within 10 minutes of the practice"` | The `place` band had no figures and the `drive_10` band answered. The frontend MUST render this label wherever it names the area — a buyer is never shown a drive-time catchment disguised as a named city. |
+| `community_label` | `null` | The area figures came from the listing's own community (the `place` band), or there are no figures at all. The design names that community from the listing's own `area`, and its wording stands unchanged. |
+| `community_label` | `"Within about 5 miles of the practice"` | The area figures came from the catchment band. The frontend MUST render this label wherever it names the area — a buyer is never shown a catchment disguised as a named city. |
+| `growth_scope` | e.g. `"City of Dallas"`, `"Orange County"` | The geography the GROWTH figure was measured at, which `community_label` does not describe. The frontend renders it on the Growth tile's own sub-line, so the figure stops implying it describes the ring beside it. `null` where the geography has no name to give. |
+| `income_note` | e.g. `"Within about 5 miles of the practice · approximate"` | Replaces the median-income tile's sub-line when that median is an approximation — a catchment median is a household-weighted average of the tract medians inside the ring rather than a published Census figure, and can never be suppressed. `null` for a published place median, and the design's own sub-line then stands. |
 
-There is no geoid lookup and none is wanted: the label exists solely to OVERRIDE the design's own
-wording when the figures did not come from the community it names.
+**The ring is described by DISTANCE, not by time** (D-C39). The band is an 8 km straight-line
+buffer from the practice point (spec §8: "straight-line buffers of 8 km (≈10 min) and 16 km
+(≈20 min) from the practice point, labeled as approximations"), not a routed drive time, and spec
+§15 still lists true drive-time isochrones as **open** for V1. "About 5 miles" is what the
+geometry supports; "10 minutes" was a reading of it.
 
-The listing this exists for is the Orlando specialist centre. It geocoded ROOFTOP like every other
-seeded hospital and its address is not wrong in any way, but it sits in unincorporated Orange
-County where the Census has no `place`, so it has no `place`-band row — and complete `drive_10`
-figures that describe its market perfectly well.
+`growth_scope` needs a geoid lookup, and the lookup is deliberate: this document used to say
+"There is no geoid lookup and none is wanted", which D-C38 supersedes. The name comes from
+`practice_location.place_geoid` joined to `geo_area.name` at summary level `160`, or
+`county_geoid` at `050`, on the active `tiger_cb` vintage — one batched query for a whole page,
+never one per row. TIGER's place `NAME` drops the legal descriptor ("Dallas") while its county
+`NAMELSAD` keeps it ("Orange County"), which is why the place name takes the "City of" prefix and
+the county name is already complete.
 
-Where neither band has figures every field is `null`, including `community_label`, and the
-frontend reaches the design's own "Community data unavailable" card. **A figure the database does
-not have is `null` in the payload — never `0`, never `""`** (D-C31: a missing figure is omitted,
-never zeroed), because `null` is the only value the frontend's own guards read as absence.
+The listing D-C32 was written for is the Orlando specialist centre. It geocoded ROOFTOP like every
+other seeded hospital and its address is not wrong in any way, but it sits in unincorporated
+Orange County where the Census has no `place`, so it has no `place`-band row — and complete
+`drive_10` figures that describe its market perfectly well. It is also the one listing whose
+growth figure is county-level rather than place-level, which `growth_scope` now says out loud
+instead of pooling it in silence.
+
+Where neither band has figures every field is `null`, including all three above, and the frontend
+reaches the design's own "Community data unavailable" card. A per-figure rule makes that row
+RARER; it does not make it unreachable. **A figure the database does not have is `null` in the
+payload — never `0`, never `""`** (D-C31: a missing figure is omitted, never zeroed), because
+`null` is the only value the frontend's own guards read as absence.
 
 ## Copy rules (spec §8/§12/§14) the frontend must honour when wiring this up
 
 * Every figure shown carries its dataset and vintage — `attribution[]` at the response level,
   `metrics[].vintage`/`source_dataset` per figure.
 * `is_derived: true` → render as "derived estimate", never presented as a raw Census number.
-* `median_hh_income.approximate: true` → render "approximate" beside the value.
+* `median_hh_income.approximate: true` → render "approximate" beside the value. On the listing
+  card this arrives pre-composed as `income_note` (D-C38), because the card's tile has one
+  sub-line and it has to carry the area and the qualifier together.
 * `suppressed: true` → render "Estimate too imprecise to show at this geography", never a blank or
   a zero.
 * `geo_precision != "rooftop"` → render "approximate community data" near the map pin.
