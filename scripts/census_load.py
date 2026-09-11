@@ -194,7 +194,7 @@ def cmd_acs(args: argparse.Namespace) -> int:
 
         for ds_key in args.dataset:
             try:
-                n = acs.load(conn, factory, ds_key, states)
+                n = acs.load(conn, factory, ds_key, states, levels=args.levels)
             except PermissionError as exc:
                 # A licence-gated dataset (spec §1: `unresolved`/`blocked` never ingested) is a
                 # refusal, not a download failure -- exit 2, "refused before anything is opened"
@@ -660,6 +660,8 @@ def main(argv: list[str] | None = None) -> int:
     a = sub.add_parser("acs", help="load ACS detailed/subject/prior tables for every market_state state")
     a.add_argument("--dataset", nargs="+", default=["acs5", "acs5_subject", "acs5_prior"], choices=sorted(acs.VARIABLES),
                     help="dataset_registry keys to load (default: all three ACS datasets)")
+    a.add_argument("--levels", nargs="+", default=None,
+                    help="restrict to these ACS summary levels (e.g. 860 for ZCTAs alone); default is every geography")
     a.set_defaults(fn=cmd_acs)
     c = sub.add_parser("cbp", help="load County Business Patterns (county-level competition benchmark) for every market_state state")
     c.set_defaults(fn=cmd_cbp)

@@ -36,7 +36,7 @@ CONTACT = "tech@vinfoundation.example.org"
 def test_census_tasks_are_registered():
     for name in ["census.load_tiger", "census.load_acs", "census.load_cbp", "census.load_zbp",
                  "census.load_qwi", "census.load_bds", "census.license_audit",
-                 "census.materialize_metrics", "census.backfill_listing"]:
+                 "census.materialize_metrics", "census.materialize_geo_metrics", "census.backfill_listing"]:
         assert name in celery_app.tasks, name
 
 
@@ -44,11 +44,11 @@ def test_census_task_functions_are_registered_under_their_stable_names():
     assert (
         CT.load_tiger_task.name, CT.load_acs_task.name, CT.load_cbp_task.name, CT.load_zbp_task.name,
         CT.load_qwi_task.name, CT.load_bds_task.name, CT.license_audit_task.name,
-        CT.materialize_metrics_task.name, CT.backfill_listing_task.name,
+        CT.materialize_metrics_task.name, CT.materialize_geo_metrics_task.name, CT.backfill_listing_task.name,
     ) == (
         "census.load_tiger", "census.load_acs", "census.load_cbp", "census.load_zbp",
         "census.load_qwi", "census.load_bds", "census.license_audit",
-        "census.materialize_metrics", "census.backfill_listing",
+        "census.materialize_metrics", "census.materialize_geo_metrics", "census.backfill_listing",
     )
 
 
@@ -57,6 +57,7 @@ def test_beat_schedules_only_the_automatic_cadences():
     assert beat["qwi-quarterly"]["task"] == "census.load_qwi"
     assert beat["license-audit-quarterly"]["task"] == "census.license_audit"
     assert beat["materialize-nightly"]["task"] == "census.materialize_metrics"
+    assert beat["geo-metric-nightly"]["task"] == "census.materialize_geo_metrics"
     scheduled_tasks = {v["task"] for v in beat.values()}
     # manual approval (spec §9); census.load_zbp is a manual-trigger-only task too (A-C8 (8) / i1:
     # ZBP is annual and John-approved per load, exactly like acs/cbp/bds -- no beat entry is due).
@@ -72,6 +73,16 @@ def test_beat_schedules_only_the_automatic_cadences():
 def test_materialize_nightly_runs_at_0300_utc():
     sched = celery_app.conf.beat_schedule["materialize-nightly"]["schedule"]
     assert sched.hour == {3} and sched.minute == {0}
+
+
+def test_geo_metric_nightly_runs_at_0330_utc():
+    """D-NS9: half an hour after `materialize-nightly`'s 03:00. The two are independent (neither
+    reads the other's table) and the stagger keeps two heavy read-only passes over `acs_measure`
+    off one database at the same moment. This entry is the ONLY door to the writer -- see
+    `tests/census/test_geo_metric.py::
+    test_the_writer_is_reached_from_the_nightly_task_alone_and_never_from_the_request_path`."""
+    sched = celery_app.conf.beat_schedule["geo-metric-nightly"]["schedule"]
+    assert sched.hour == {3} and sched.minute == {30}
 
 
 def test_beat_merged_the_mail_pipelines_own_entries_survive():
@@ -649,6 +660,25 @@ def test_materialize_metrics_delegates_to_materialize_all_and_reports_the_listin
 
     assert result == {"listings": 2}
     assert captured["conn"] is not None and captured["redis"] is not None
+
+
+def test_materialize_geo_metrics_rebuilds_the_polygon_table(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`app/tasks/census.py`'s wrapper, in `materialize_metrics`' own shape: no Census I/O, so no
+    key gate and no `_NotReady` handling -- a missing active vintage is a real configuration error
+    and is left to raise (A-C18 (3)). The connection is closed whatever happens, which is what
+    `closed` pins."""
+    closed: list[bool] = []
+
+    class _Conn:
+        def close(self) -> None:
+            closed.append(True)
+
+    monkeypatch.setattr(CT, "_conn", lambda: _Conn())
+    # An arbitrary count, deliberately NOT the "~130 ZCTAs" of D-C34: this case proves pass-through,
+    # and the real figure is 88 by centroid / 113 by intersects and is derived, never coded to.
+    monkeypatch.setattr("app.census.geo_metric.materialize_geo", lambda conn, redis: {"median_hh_income": 7})
+    assert CT.materialize_geo_metrics() == {"metrics": {"median_hh_income": 7}}
+    assert closed == [True]
 
 
 # ---- backfill_listing -------------------------------------------------------------------------
