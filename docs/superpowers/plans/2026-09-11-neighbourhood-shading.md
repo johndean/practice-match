@@ -216,7 +216,7 @@ check("CLAUDE.md's approved-state sentence matches screens.ts, once",
 check("A24 is unclaimed (this plan's family)", amd.count("id: 'A24") == 0)
 check("migration slot 064 is unclaimed",
       not list((root / "migrations").glob("064_*.sql")),
-      "next free: " + sorted(p.name for p in (root / "migrations").glob("*.sql"))[-1])
+      "last migration on disk: " + sorted(p.name for p in (root / "migrations").glob("*.sql"))[-1])
 
 # --- PRISTINE TWINS: the only safe literals in this block ----------------------------------
 B = root / "docs/design-reference/design_handoff_practice_match_v3"
