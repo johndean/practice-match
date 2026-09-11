@@ -290,10 +290,38 @@ def test_claude_md_literal_edit_clauses_count_each_family_s_own_entries():
     # them.
     no_clause = {"1", "2", "3", "4", "5", "6", "7", "9", "10", "11", "21", "22", "26"}
 
+    # H1 (the fix-round re-review's own finding, 2026-09-11). `no_clause` was read as "this family
+    # states no count"; what the scan actually proved was "this family states no count THE REGEX
+    # ABOVE CAN READ" — the same silence moved one line down. The re-reviewer measured it: inserting
+    # `Sixteen literal in-place edits.` into A26's block left every assertion here green, because
+    # `clause_re` requires "literal edits" to be adjacent and that wording separates them. A
+    # declared clause-free family is therefore also checked to state NO count at all: any number —
+    # spelled out or in digits — within three words of `edits`/`entries`. `clause_re` stays the
+    # strict reader (it is what a count is COMPARED against); this one only asks whether a count is
+    # being stated, so it is deliberately the looser of the two and never reads a value.
+    #
+    # Calibrated against the file rather than guessed: at three words it fires on A21's clause
+    # alone. The two GROUP descriptors the docstring above names — A1's "three families are literal
+    # script or template edits" and A4's "three more families of literal edits" — put six and four
+    # words between the number and the noun, so the same adjacency rule that keeps them out of
+    # `clause_re` keeps them out of this.
+    loose_count_re = re.compile(rf"\b(?:{number}|\d+)\b(?:\s+[\w’'-]+){{0,3}}\s+(?:edits?|entries)\b", re.IGNORECASE)
+
+    # A21, exempt with a reason rather than by widening the regex until it passes. Its clause is
+    # "Task B10 … adds thirteen more A21 entries", a PARTIAL count: thirteen on top of the entries
+    # A-C28/A-C29 had already added, never the family's total. There is nothing in
+    # `design-amendments.ts` for it to be compared with — the family has 30 entries and the
+    # sentence is true — so no scan can check it, and pretending otherwise would mean either a
+    # wrong assertion or a regex bent to make a true sentence readable. It is the only family in
+    # the file that states its count that way.
+    partial_count = {"21"}
+
+    spans: dict[str, list[str]] = {}
     checked = []
     for i, marker in enumerate(markers):
         family = marker.group(1)
         end = markers[i + 1].start() if i + 1 < len(markers) else len(claude)
+        spans.setdefault(family, []).append(claude[marker.start():end])
         clauses = clause_re.findall(claude[marker.start():end])
         if not clauses:
             continue
@@ -323,6 +351,25 @@ def test_claude_md_literal_edit_clauses_count_each_family_s_own_entries():
         f"A{', A'.join(stale)} is declared in `no_clause` but now carries a readable literal-count "
         "clause; drop it from the declaration so the count is gated."
     )
+
+    # H1: every declared clause-free family genuinely states no count.
+    for family in sorted(no_clause, key=int):
+        found = sorted({m.group(0) for span in spans.get(family, []) for m in loose_count_re.finditer(span)})
+        if family in partial_count:
+            # The exemption cannot go stale in the other direction either: if A21's partial count
+            # ever leaves the prose, this says so instead of quietly protecting nothing.
+            assert found, (
+                f"A{family} is exempted from the clause-free scan as a PARTIAL count, and its block "
+                "no longer states one. Drop it from `partial_count` — the exemption is now dead."
+            )
+            continue
+        assert found == [], (
+            f"A{family} is declared in `no_clause` — no per-family count — but its block states "
+            f"{found}. Either the clause is real, in which case word it so `clause_re` reads it "
+            f"and drop A{family} from `no_clause` so the number is checked, or it is a group "
+            "descriptor that has drifted next to a count noun. A count nothing compares against "
+            "is the hole this scan closes."
+        )
 
 
 def test_ci_workflow_installs_no_ad_hoc_tooling():
