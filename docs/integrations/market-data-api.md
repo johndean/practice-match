@@ -342,7 +342,7 @@ the data does not support.
 |---|---|---|
 | `community_label` | `null` | The area figures came from the listing's own community (the `place` band), or there are no figures at all. The design names that community from the listing's own `area`, and its wording stands unchanged. |
 | `community_label` | `"Within about 5 miles of the practice"` | The area figures came from the catchment band. The frontend MUST render this label wherever it names the area — a buyer is never shown a catchment disguised as a named city. |
-| `growth_scope` | e.g. `"City of Dallas"`, `"Orange County"` | The geography the GROWTH figure was measured at, which `community_label` does not describe. The frontend renders it on the Growth tile's own sub-line, so the figure stops implying it describes the ring beside it. `null` where the geography has no name to give. |
+| `growth_scope` | e.g. `"Dallas"`, `"Orange County"` | The geography the GROWTH figure was measured at, which `community_label` does not describe. The frontend renders it on the Growth tile's own sub-line, so the figure stops implying it describes the ring beside it. `null` where the geography has no name to give. |
 | `income_note` | e.g. `"Within about 5 miles of the practice · approximate"` | Replaces the median-income tile's sub-line when that median is an approximation — a catchment median is a household-weighted average of the tract medians inside the ring rather than a published Census figure, and can never be suppressed. `null` for a published place median, and the design's own sub-line then stands. |
 
 **The ring is described by DISTANCE, not by time** (D-C39). The band is an 8 km straight-line
@@ -356,8 +356,12 @@ geometry supports; "10 minutes" was a reading of it.
 `practice_location.place_geoid` joined to `geo_area.name` at summary level `160`, or
 `county_geoid` at `050`, on the active `tiger_cb` vintage — one batched query for a whole page,
 never one per row. TIGER's place `NAME` drops the legal descriptor ("Dallas") while its county
-`NAMELSAD` keeps it ("Orange County"), which is why the place name takes the "City of" prefix and
-the county name is already complete.
+`NAMELSAD` keeps it ("Orange County"). The API serves each name EXACTLY as TIGER gives it and
+composes no prefix of its own: summary level 160 covers Census designated places as well as
+incorporated ones, so a composed "City of " would have rendered "City of Florin" — a CDP that is
+not a city — on the tile whose whole purpose is to say truthfully where its number came from
+(the controller's ruling on the implementer's own concern, 2026-09-11). A consumer must not
+synthesise a descriptor in front of one either.
 
 The listing D-C32 was written for is the Orlando specialist centre. It geocoded ROOFTOP like every
 other seeded hospital and its address is not wrong in any way, but it sits in unincorporated

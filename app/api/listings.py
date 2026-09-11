@@ -308,7 +308,9 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         # Task B10: Label indicating which data band was used for fallback
         "community_label": community_label,
         # D-C38: where the two figures the label does NOT describe come from. `growth_scope` names
-        # growth's own place-or-county geography ("City of Dallas", "Orange County"), because that
+        # growth's own place-or-county geography with the name TIGER itself gives ("Dallas",
+        # "Orange County" — no composed "City of " prefix: level 160 covers designated places
+        # too, and a CDP is not a city), because that
         # figure exists at no finer geography until the 2010->2020 tract crosswalk is loaded;
         # `income_note` replaces the median tile's sub-line when that median is an approximation
         # rather than a published Census figure. Both `null` when there is nothing to say.

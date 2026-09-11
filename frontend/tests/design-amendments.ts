@@ -4279,9 +4279,12 @@ const A26_16: Amendment = {
  *  A27.3 is the ONE entry whose null branch does change, and deliberately: the design's own
  *  "Market Overview (10 min drive)" is the false sentence D-C39 names, so there is no null branch
  *  to preserve — it is the thing being corrected. A27.4 is the same. The third such sentence,
- *  the Browse "Market data" card's "Figures describe the community around each practice…"
- *  (`App.vue`), is NOT touched here: it is guarded by no amendment at all and D-C39 names two
- *  sentences, not three. Flagged as its own ruling, not silently widened. */
+ *  the Browse "Market data" card's "Figures describe the community around each practice…",
+ *  IS corrected too, as A27.5 — its own id and its own ruling, not a silent widening of A27.4:
+ *  the figures it describes are the ones this release moves to the catchment, so leaving it
+ *  would have made it false by this release's own act. It sits inside the strip behind
+ *  `md.stripOpen`, which no approved state opened until `browse-market-strip` was appended
+ *  to `screens.ts` in the same release (D-C40). */
 
 /** A27.1 — the Median income tile's sub-line. The design hard-codes "Household, 2023", and
  *  A21.5b/A21.5c deliberately took only the two sub-lines that said "the community" — so this was

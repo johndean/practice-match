@@ -90,8 +90,9 @@ export interface ApiListing {
   // renders it wherever it names the area, so a buyer is never shown a catchment disguised as a
   // named city.
   community_label: string | null;
-  // D-C38 (John, 2026-09-11): the geography the GROWTH figure was measured at — "City of Dallas",
-  // "Orange County" — which `community_label` does NOT describe. `population_growth_pct` cannot
+  // D-C38 (John, 2026-09-11): the geography the GROWTH figure was measured at, named exactly as
+  // TIGER names it — "Dallas", "Orange County", never a composed "City of " prefix — which
+  // `community_label` does NOT describe. `population_growth_pct` cannot
   // vary by band at all (the pipeline computes it once per listing and writes that one value into
   // all three bands, plan D12), so the Growth tile keeps the city-or-county figure and its own
   // sub-line names it. `null` where the geography has no name to give, and the design's own
