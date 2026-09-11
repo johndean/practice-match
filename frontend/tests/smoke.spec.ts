@@ -228,9 +228,10 @@ test.describe('mobile: the same map, market data in a sheet', () => {
     expect(Math.round(box.width)).toBeLessThanOrEqual(392);
   });
 
-  test('the Map tab shows community mosaic shading', async ({ page }) => {
+  test('the Map tab shows community boundary shading', async ({ page }) => {
     await mobileMap(page);
-    // The mosaic is drawn on the engine's shared L.canvas renderer, so "shading is showing"
+    // The polygons are drawn on the engine's shared L.canvas renderer (A24.12 passes it to
+    // L.geoJSON exactly as the mosaic passed it to L.rectangle), so "shading is showing"
     // means that canvas has painted pixels. Nothing is drawn from a cross-origin image, so
     // the canvas is untainted and readable.
     const painted = await page.evaluate(() => {
@@ -241,7 +242,7 @@ test.describe('mobile: the same map, market data in a sheet', () => {
       for (let i = 3; i < px.length; i += 4) if (px[i] > 0) n++;
       return n;
     });
-    expect(painted, 'no canvas in the Leaflet overlay pane — the mosaic never drew').toBeGreaterThan(0);
+    expect(painted, 'no canvas in the Leaflet overlay pane — the boundary layer never drew').toBeGreaterThan(0);
   });
 
   test('the key does not overlap the + / − cluster: elementFromPoint on each button returns the button', async ({ page }) => {
@@ -399,7 +400,7 @@ test.describe('mobile: the same map, market data in a sheet', () => {
   //
   // A selection moves `driveCenter` (`sel ? [sel.lat, sel.lng] : cfg.center`, logic.js:382)
   // and `showDrive` (`!!sel`, :578), which are two of the five deps of MarketMapV3.jsx's own
-  // area effect (`:268`), so the community mosaic really is rebuilt on the second tap. That
+  // area effect (`:268`), so the polygon layer really is rebuilt on the second tap. That
   // is the DESIGN's redraw cost on a 390×800 frame, not an over-trigger the port added:
   // MarketMapView.vue gates the overlay rebuild on exactly those five. The first tap is an
   // unmeasured warm-up, and it is a DIFFERENT pin from the second — tapping the same pin

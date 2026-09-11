@@ -4509,3 +4509,158 @@ describe('A26 (Q2) — opening any one of the four menus closes the other three 
     expect(c.state, 'A26.14: the metro trigger left the nav menu open').toMatchObject({ marketMenu: true, navMenu: false });
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A24 — real Census boundary polygons (John's rulings D-C34–D-C37, 2026-09-10) and D-C46's
+// re-scaled growth breaks (2026-09-11). Every branch the amendment adds to the design's script
+// is characterised here; `logic.js` itself is never hand-edited.
+// ---------------------------------------------------------------------------------------
+describe('A24 — real boundary polygons', () => {
+  const fc = (features: unknown[]) => ({ type: 'FeatureCollection', features });
+  const feat = (props: Record<string, unknown>) => ({
+    type: 'Feature', geometry: null,
+    properties: { geo_id: 'g', name: 'g', value: null, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false, ...props }
+  });
+
+  it('areaSet gives every polygon the value of the NEAREST community, at the ruled geography', () => {
+    const set = c.areaSet('income');
+    expect(set.features.length, 'the design fixture has no ZCTA features').toBeGreaterThan(0);
+    for (const f of set.features) {
+      expect(f.properties.geo_id).toBe(f.id);
+      expect(f.properties.moe).toBeNull();
+      expect(f.properties.suppressed).toBe(false);
+      expect(f.properties.band_ambiguous).toBe(false);
+      expect(f.geometry).toBeTruthy();
+    }
+    // Every design community carries an income, so no ZCTA comes out null on this layer.
+    expect(set.features.every((f: any) => typeof f.properties.value === 'number')).toBe(true);
+    // The three geographies are D-C35's, and each layer reads its OWN level — `growth` sees the
+    // places and `econ` the counties, so a layer promoted into a finer slot fails here.
+    expect(c.areaSet('growth').features.length).toBe(c.state.areas['160'].features.length);
+    expect(c.areaSet('econ').features.length).toBe(c.state.areas['050'].features.length);
+    expect(set.features.length).toBe(c.state.areas['860'].features.length);
+  });
+
+  it('areaSet returns an empty collection for a layer with no geography — the three symbol layers', () => {
+    for (const k of ['pets', 'households', 'competition']) expect(c.areaSet(k).features).toEqual([]);
+    expect(c.areaSet(null).features).toEqual([]);
+    expect(c.areaSet(undefined).features).toEqual([]);
+  });
+
+  // The nearest-community rule itself, on a fixture whose answer is knowable: two communities,
+  // one far away, so every polygon must take the near one's figure.
+  it('areaSet measures to the community centroid with the mosaic\'s own cos(lat) scaling', () => {
+    const near = { id: 'n', name: 'Near', lat: 30.31, lng: -97.75, income: 111111 };
+    const far = { id: 'f', name: 'Far', lat: 45.0, lng: -120.0, income: 222222 };
+    c.communities = () => [far, near];
+    expect(new Set(c.areaSet('income').features.map((f: any) => f.properties.value))).toEqual(new Set([111111]));
+    // A community with no usable point is skipped, exactly as A25 skips it for a pin.
+    c.communities = () => [{ id: 'x', name: 'X', lat: null, lng: null, income: 9 }];
+    expect(c.areaSet('income').features.every((f: any) => f.properties.value === null)).toBe(true);
+  });
+
+  // Global Constraint (c), and a real trap: `num()` strips every character but digits and a dot,
+  // so `num(-5.1)` is `5.1`. Routing a growth figure through it would paint a DECLINING place as
+  // a growing one — silently, and only for the sign that D-C46 exists to make visible.
+  it('a negative growth figure keeps its sign all the way to the fill', () => {
+    c.communities = () => [{ id: 'd', name: 'Declining', lat: 30.31, lng: -97.75, growth: -5.1 }];
+    const set = c.areaSet('growth');
+    expect(set.features[0].properties.value).toBe(-5.1);
+    const out = c.areaVals(set, 'growth');
+    expect(out.features[0].properties.label).toBe('-5.1%');
+    expect(out.features[0].properties.color, 'a decline took a growth band').toBe(c.bucket('growth', -5.1).color);
+    expect(out.features[0].properties.color).not.toBe(c.bucket('growth', 5.1).color);
+  });
+
+  it('areaVals colours a measured value through bucket() and labels it through fmtMetric()', () => {
+    const out = c.areaVals(fc([feat({ geo_id: '78704', name: 'ZCTA5 78704', value: 92150, moe: 6420 })]), 'income');
+    expect(out.features[0].properties.color).toBe(c.bucket('income', 92150).color);
+    expect(out.features[0].properties.label).toBe(c.fmtMetric('income', 92150));
+    expect(out.features[0].properties.tip).toContain('ZCTA5 78704');
+    expect(out.features[0].id).toBe('78704');
+    // Nothing but a FeatureCollection is required of the caller: an absent one is empty, not a throw.
+    expect(c.areaVals(null, 'income').features).toEqual([]);
+    expect(c.areaVals({}, 'income').features).toEqual([]);
+  });
+
+  // Global Constraint (c) again: the producer's sentinel, measured rather than assumed. A MISSING
+  // value is `value: null` with `suppressed: false` — that is what `_suppression(None, None)`
+  // returns and what the endpoint will serialise — so a guard on `suppressed` alone would paint a
+  // null as a measured figure.
+  it('a null value takes the no-data class even though it is not suppressed', () => {
+    const out = c.areaVals(fc([feat({ geo_id: '78745', name: 'ZCTA5 78745', value: null })]), 'income');
+    expect(out.features[0].properties.color).toBe('#e6e6e6');
+    expect(out.features[0].properties.label).toBe('No data');
+    expect(out.features[0].properties.tip).toContain('No data for this area');
+    // …and so does a SUPPRESSED value, which is a different state and the same class.
+    const sup = c.areaVals(fc([feat({ value: 92150, suppressed: true, suppress_reason: 'high_moe' })]), 'income');
+    expect(sup.features[0].properties.color).toBe('#e6e6e6');
+    expect(sup.features[0].properties.suppressed).toBe(true);
+    expect(sup.features[0].properties.suppressReason).toBe('high_moe');
+  });
+
+  it('the honesty lines are the contract\'s own wording, one per case', () => {
+    const tip = (props: Record<string, unknown>, layer = 'income') =>
+      c.areaVals(fc([feat(props)]), layer).features[0].properties.tip;
+    expect(tip({ value: 1, suppressed: true, suppress_reason: 'no_moe' })).toContain('Estimate too imprecise to show at this geography');
+    expect(tip({ value: 1, suppressed: true, suppress_reason: 'high_moe' })).toContain('Estimate too imprecise to show at this geography');
+    expect(tip({ value: 1, suppressed: true, suppress_reason: 'source_flag' })).toContain('Not published for this county');
+    expect(tip({ value: null })).toContain('No data for this area');
+    expect(tip({ value: 92150, moe: 6420, band_ambiguous: true })).toContain('this margin spans two legend bands.');
+    expect(tip({ value: 92150, moe: 6420, band_ambiguous: false })).not.toContain('spans two legend bands');
+    expect(tip({ value: 12.4 }, 'growth')).toContain('No combined margin of error is published.');
+    expect(tip({ value: 640000 }, 'econ')).toContain('a census of establishments, not a sample');
+    // The tip's own shape, once: every line the reference's literal carries, in order, so a
+    // trimmed inline style is caught here rather than only by a pixel that nothing captures.
+    expect(tip({ value: 92150, moe: 6420 }).startsWith('<div style="font-family:ProximaNova,Arial,Helvetica,sans-serif;min-width:150px">')).toBe(true);
+    expect(tip({ value: 92150, moe: 6420 })).toContain('<div style="font-size:10.5px;color:#494949;margin-top:4px">\u00b1 $6K</div>');
+  });
+
+  it('the legend names the geography and gains a No data row, for the three fill layers only', () => {
+    for (const [layer, label] of [['income', 'ZIP Code Tabulation Area'], ['growth', 'Place (city/town)'], ['econ', 'County']] as const) {
+      c.state.mdValue = layer;
+      const active = c.marketVals(P).active;
+      expect(active.hasGeo).toBe(true);
+      expect(active.geoLine).toBe(label);
+      expect(active.ramp[active.ramp.length - 1]).toEqual({ style: 'flex: 1; height: 9px; background: #e6e6e6;', label: 'No data' });
+      // …and exactly one such row, appended, with the design's own classes ahead of it.
+      expect(active.ramp.filter((r: { label: string }) => r.label === 'No data')).toHaveLength(1);
+    }
+    c.state.mdValue = 'households';
+    const symbols = c.marketVals(P).active;
+    expect(symbols.hasGeo).toBe(false);
+    expect(symbols.geoLine).toBe('');
+    expect(symbols.ramp.some((r: { label: string }) => r.label === 'No data')).toBe(false);
+    // "No shading — practices only": no ramp at all, so no no-data row either.
+    c.state.mdValue = null;
+    const none = c.marketVals(P).active;
+    expect(none.hasGeo).toBe(false);
+    expect(none.ramp).toEqual([]);
+  });
+
+  it('md.areas is the drawable collection, taken through areaVals for the active layer', () => {
+    c.state.mdValue = 'income';
+    const md = c.marketVals(P);
+    expect(md.areas.type).toBe('FeatureCollection');
+    expect(md.areas.features.length).toBe(c.state.areas['860'].features.length);
+    for (const f of md.areas.features) {
+      expect(typeof f.properties.color).toBe('string');
+      expect(typeof f.properties.tip).toBe('string');
+    }
+    // A symbol layer hands the map nothing to shade — the polygons are for fills only.
+    c.state.mdValue = 'pets';
+    expect(c.marketVals(P).areas.features).toEqual([]);
+  });
+
+  // D-C46 (John, 2026-09-11). Measured against ACS 2014-2018 -> 2019-2023 place populations; the
+  // band below zero is the ruling's own point, so it is asserted as a band and not as a label.
+  it('A24.13 — the growth breaks carry a band below zero, and a decline never shares a class with growth', () => {
+    const band = (v: number) => c.bucket('growth', v).color;
+    expect(band(-12)).toBe(band(-0.1));
+    expect(band(-0.1), 'a decline is in the same class as a 9 % rise — D-C46\'s own defect').not.toBe(band(9));
+    // Four distinct classes over the real range, which is what "still all one colour" was about.
+    expect(new Set([band(-5), band(2), band(9), band(24)]).size).toBe(4);
+    expect(band(0), 'zero is growth, not decline: the stop is inclusive upward').toBe(band(4.9));
+    expect(band(15)).toBe(band(200));
+  });
+});

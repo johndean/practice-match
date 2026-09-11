@@ -24,7 +24,7 @@ test.skip(
 //
 // The pixel gate compares the app against a baseline generated from the reference through
 // the SAME harness, so anything that blinds both targets at once is invisible to it: that is
-// exactly how an opaque basemap-tile stub hid the C5/C7 community mosaic under the Esri label
+// exactly how an opaque basemap-tile stub hid the community boundary shading under the Esri label
 // tiles (MarketMapV3.jsx:190 puts them in `shadowPane`, above the overlay pane) while all 27
 // states passed at maxDiffPixels: 0. harness.test.ts guards the tile's bytes; this guards the
 // thing the bytes are for — that the shading actually reaches the screen.
@@ -32,8 +32,12 @@ test.skip(
 // It asserts against the design's own palette, not a remembered colour: `PALETTES.distinct`
 // is the default (logic.js:276) and `browse` opens on "Median household income", so the map
 // must contain at least one pixel of the `distinct.income` ramp as the map composites it —
-// fillOpacity 0.5 (MarketMapV3.jsx:252-256) over Leaflet's #ddd ground, which is what shows
-// through the transparent tile stub. ±1 per channel absorbs the compositor's rounding.
+// fillOpacity 0.5 (A24.12) over Leaflet's #ddd ground, which is what shows through the
+// transparent tile stub. ±1 per channel absorbs the compositor's rounding.
+//
+// A24 changed WHAT is drawn — real Census boundary polygons through one `L.geoJSON` layer
+// instead of 12,560 `L.rectangle` grid cells — and changed nothing about this guard's method
+// or its purpose. It is still the one guard the pixel gate cannot replace.
 // ---------------------------------------------------------------------------------------
 
 /** Well inside the map, clear of the market column and the floating legend/insight card. */
@@ -43,7 +47,7 @@ const INCOME_RAMP = ['#e6f2e8', '#c2e0cd', '#a8d5b5', '#4c9a6a', '#1b6b3a'];
 /** Leaflet's own container background, visible because the stubbed tiles are transparent. */
 const GROUND = 221;
 
-async function expectMosaicShading(page: Page): Promise<void> {
+async function expectBoundaryShading(page: Page): Promise<void> {
   const shot = (await page.screenshot({ clip: MAP_SAMPLE, animations: 'disabled', caret: 'hide', scale: 'css' })).toString('base64');
   // Decoded in the page: the browser owns a PNG decoder, so the test needs no image library.
   const hits = await page.evaluate(async ({ b64, ramp, ground }) => {
@@ -89,7 +93,7 @@ test.describe('visual parity with the approved design', () => {
       await settle(page);
       await expect(page).toHaveScreenshot(`${s.name}.png`, { fullPage: true });
       // Runs after the comparison, so it can never perturb the compared capture.
-      if (s.name === 'browse') await expectMosaicShading(page);
+      if (s.name === 'browse') await expectBoundaryShading(page);
     });
   }
 });

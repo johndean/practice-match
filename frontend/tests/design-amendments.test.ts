@@ -297,11 +297,98 @@ describe('local design amendments (spec D15)', () => {
     // edits BOTH panels in one entry (count: 2) — which is how F2's three are born with the
     // width instead of acquiring it in a third pass.
     'A26.16',
+    // A24 — real Census boundary polygons replace the grid mosaic (2026-09-10; John's rulings
+    // D-C34–D-C37, spec 2026-09-10-neighbourhood-shading-design.md). Numerically before A25/A26
+    // and applied after them: A24 was reserved by the ledger's own A25.1 row while those two
+    // families were written and merged, so every A24 `find` is measured against the file they
+    // leave behind. The four `.jsx` entries are the first amendments in the programme's history
+    // to reach a bundle file other than the `.dc.html`; `amendmentsFor` partitions them and each
+    // file is proved on its own. A24.13 is the same family's OTHER ruling, D-C46 (John,
+    // 2026-09-11): real polygons drawn on class breaks that cannot represent real data would
+    // still be one colour, so the breaks move in the same change that makes them visible.
+    'A24.1', 'A24.2', 'A24.3', 'A24.4', 'A24.5', 'A24.6a', 'A24.6b', 'A24.7', 'A24.8a', 'A24.8b',
+    'A24.13',
+    'A24.9', 'A24.10', 'A24.11', 'A24.12',
   ];
+
+  it('A24 draws real boundary polygons, at the three ruled geographies, through the design\'s own bucket()', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    const jsx = readFileSync(AMENDED_JSX, 'utf8');
+
+    // D-C35's three geographies and their legend labels, and nothing wider: the three symbol
+    // layers are not in either map.
+    expect(amended).toContain('const AREA_LEVEL = { income: "860", growth: "160", econ: "050" };');
+    expect(amended).toContain('const AREA_LABEL = { income: "ZIP Code Tabulation Area", growth: "Place (city/town)", econ: "County" };');
+    for (const k of ['pets', 'households', 'competition']) {
+      expect(amended, `${k} must not gain a geography — D-C35 keeps it a graduated symbol`).not.toContain(`AREA_LEVEL = { ${k}`);
+    }
+
+    // D-NS16 (John, 2026-09-10): the no-data class is the design's own --border-subtle value and
+    // the legend gains one row reading exactly "No data".
+    expect(amended).toContain('const NO_DATA_FILL = "#e6e6e6";');
+    expect(amended).toContain('const NO_DATA_LABEL = "No data";');
+
+    // The one door (spec §2.2): every polygon's colour comes from the design's own bucket() and
+    // its label from the design's own fmtMetric(), so the fill and the legend cannot disagree.
+    expect(amended).toContain('const b = shown ? this.bucket(layer, p.value) : null;');
+    expect(amended).toContain('label: shown ? this.fmtMetric(layer, p.value) : NO_DATA_LABEL,');
+
+    // The tip is built ONCE, in the script, and both renderers bind it — the design and the port
+    // used to build it twice and keep the two in step by hand.
+    expect(amended.split('Estimate too imprecise to show at this geography')).toHaveLength(2);
+    expect(jsx).not.toContain('Estimate too imprecise');
+    expect(jsx).toContain('l.bindTooltip(f.properties.tip, { sticky: true, className: "rf-tip" });');
+
+    // The grid is gone from the reference, name and all.
+    expect(jsx).not.toContain('mosaicCells');
+    expect(jsx).not.toContain('0.0055');
+    expect(jsx).not.toContain('GEOMETRY NOTE');
+    expect(jsx).toContain('// GEOMETRY: real Census boundary polygons, handed in as `areas`');
+    // `voronoiCells`/`clipPolygon` were dead before this change and are left alone: the bundle's
+    // dead-code rule applies to orphans a change CREATES (A2.3, A13.6), not to pre-existing ones.
+    expect(jsx).toContain('function voronoiCells(sites, bbox) {');
+
+    // Both maps are handed the polygons, and `communities` stays passed — the fixture's figures
+    // are derived from it, so it is not dead.
+    expect(amended.split('areas="{{ md.areas }}"')).toHaveLength(3);
+    expect(amended.split('communities="{{ md.communities }}"')).toHaveLength(3);
+
+    // The footnote John ruled on, byte for byte (§14 Q2), and the sentence it replaced is gone.
+    expect(amended).toContain('Community areas are Census ZIP Code Tabulation Areas (2023 boundaries); figures describe the area, not the practice.');
+    expect(amended).not.toContain('production draws Census ZCTA boundaries');
+
+    // The legend names the geography, on the desktop panel and in the phone sheet, and nowhere
+    // introduces a style the design does not already carry.
+    expect(amended.split('{{ md.active.geoLine }}')).toHaveLength(3);
+    expect(amended.split('value="{{ md.active.hasGeo }}"')).toHaveLength(3);
+  });
+
+  it('A24.13 re-scales the growth breaks onto real ACS data, with a band below zero (D-C46)', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+
+    // D-C46 (John, 2026-09-11). The published stops were [10, 20, 35] with no band below zero, so
+    // a place that LOST population was painted the same colour as one that grew 9 %, and — measured
+    // against ACS 2014-2018 → 2019-2023 place populations, which is exactly what
+    // `app.census.metrics.population_growth_pct` computes — 79.9 % of US places of 10,000 people or
+    // more landed in the single bottom bucket. The new breaks are the tertiles of the non-declining
+    // half of that distribution (+3.3 / +8.8 nationally, +4.8 / +13.5 across Texas metro places),
+    // rounded to numbers a legend can carry; 30.5 % of those places are declining and now read as
+    // declining.
+    expect(amended).toContain('buckets: ["Declining", "0–5%", "5–15%", "> 15%"], stops: [0, 5, 15] }');
+    expect(amended, 'the un-scaled stops must be gone, not merely joined').not.toContain('stops: [10, 20, 35]');
+    expect(amended).not.toContain('buckets: ["< 10%", "10–20%", "20–35%", "> 35%"]');
+
+    // D-C36 froze the OTHER two fill layers' bands, and this ruling does not reach them.
+    expect(amended).toContain('stops: [50000, 75000, 100000, 150000]');
+    expect(amended).toContain('stops: [450000, 650000, 900000]');
+    // Four buckets, because the growth ramp carries exactly four colours in all three palettes —
+    // a fifth class would mean inventing a colour the design does not have.
+    for (const pal of ['#efe6dd', '#e6f2e8', '#e8f1e3']) expect(amended).toContain(pal);
+  });
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(205);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(220);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

@@ -386,7 +386,7 @@
         <div style="flex: 1; display: flex; min-height: 300px; border-bottom: 1px solid #e6e6e6; overflow-x: auto;">
 
           <div style="flex: 1 1 460px; position: relative; min-width: 300px; overflow: hidden;">
-            <div class="sc-host-x" style="display: contents"><MarketMapView :on-basemap="v.md?.setBasemap" :practices="v.md?.practices" :communities="v.md?.communities" :active-layer="v.md?.activeLayer" :basemap="v.md?.basemap" :active-id="v.md?.activeId" :on-select="v.md?.selectFromMap" :on-area="v.md?.selectArea" :center="v.md?.mapCenter" :zoom="v.md?.mapZoom" :drive-center="v.md?.driveCenter" :show-drive="v.md?.showDrive" :resize-key="v.md?.resizeKey" :recenter-key="v.md?.recenterKey"></MarketMapView></div>
+            <div class="sc-host-x" style="display: contents"><MarketMapView :on-basemap="v.md?.setBasemap" :practices="v.md?.practices" :communities="v.md?.communities" :areas="v.md?.areas" :active-layer="v.md?.activeLayer" :basemap="v.md?.basemap" :active-id="v.md?.activeId" :on-select="v.md?.selectFromMap" :on-area="v.md?.selectArea" :center="v.md?.mapCenter" :zoom="v.md?.mapZoom" :drive-center="v.md?.driveCenter" :show-drive="v.md?.showDrive" :resize-key="v.md?.resizeKey" :recenter-key="v.md?.recenterKey"></MarketMapView></div>
 
             
             <div class="rf-scroll" style="position: absolute; left: 16px; top: 16px; bottom: 72px; z-index: 600; width: 300px; min-height: 0; overflow-y: auto; overflow-x: visible; padding-right: 2px;">
@@ -426,6 +426,9 @@
                       </div>
                     </template>
 
+                    <template v-if="v.md?.active?.hasGeo">
+                      <div style="margin-top: 11px; font-size: 10.5px; line-height: 1.55; color: #767676;"><span v-if="__s(v.md?.active?.geoLine) !== null" class="sc-interp">{{ __s(v.md?.active?.geoLine) }}</span></div>
+                    </template>
                     <div style="margin-top: 11px; font-size: 10.5px; line-height: 1.55; color: #767676;"><span v-if="__s(v.md?.active?.sourceLine) !== null" class="sc-interp">{{ __s(v.md?.active?.sourceLine) }}</span></div>
                     <div style="font-size: 10.5px; line-height: 1.55; color: #767676;"><span v-if="__s(v.md?.active?.updatedLine) !== null" class="sc-interp">{{ __s(v.md?.active?.updatedLine) }}</span></div>
                   </div>
@@ -831,7 +834,7 @@
                   </div>
                 </template>
               </div>
-              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">Figures describe the community around each practice, not the practice itself. Pet-household counts and average practice payroll are derived estimates, not observed values. Community areas on the map are approximate — production draws Census ZCTA boundaries.</p>
+              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">Figures describe the community around each practice, not the practice itself. Pet-household counts and average practice payroll are derived estimates, not observed values. Community areas are Census ZIP Code Tabulation Areas (2023 boundaries); figures describe the area, not the practice.</p>
             </div>
           </template>
 
@@ -1433,7 +1436,7 @@
 
         <template v-if="v.mob?.isMap">
           <div style="flex: 1; position: relative; min-height: 0;">
-            <div class="sc-host-x" style="display: contents"><MarketMapView :practices="v.md?.practices" :communities="v.md?.communities" :active-layer="v.md?.activeLayer" :basemap="v.md?.basemap" :active-id="v.md?.activeId" :on-select="v.mob?.selectMarker" :on-area="v.md?.selectArea" :center="v.md?.mapCenter" :zoom="v.mob?.zoom" :drive-center="v.md?.driveCenter" :show-drive="v.md?.showDrive" :resize-key="v.mob?.resizeKey"></MarketMapView></div>
+            <div class="sc-host-x" style="display: contents"><MarketMapView :practices="v.md?.practices" :communities="v.md?.communities" :areas="v.md?.areas" :active-layer="v.md?.activeLayer" :basemap="v.md?.basemap" :active-id="v.md?.activeId" :on-select="v.mob?.selectMarker" :on-area="v.md?.selectArea" :center="v.md?.mapCenter" :zoom="v.mob?.zoom" :drive-center="v.md?.driveCenter" :show-drive="v.md?.showDrive" :resize-key="v.mob?.resizeKey"></MarketMapView></div>
 
             
             <div style="position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 520; display: flex; align-items: center; gap: 8px;">
@@ -1499,6 +1502,9 @@
                             <div style="flex: 1; font-size: 9.5px; color: var(--vf-text); text-align: center;"><span v-if="__s(r?.label) !== null" class="sc-interp">{{ __s(r?.label) }}</span></div>
                           </template>
                         </div>
+                        <template v-if="v.md?.active?.hasGeo">
+                          <div style="margin-top: 10px; font-size: 10.5px; line-height: 1.55; color: #767676;"><span v-if="__s(v.md?.active?.geoLine) !== null" class="sc-interp">{{ __s(v.md?.active?.geoLine) }}</span></div>
+                        </template>
                         <div style="margin-top: 10px; font-size: 10.5px; line-height: 1.55; color: #767676;"><span v-if="__s(v.md?.active?.sourceLine) !== null" class="sc-interp">{{ __s(v.md?.active?.sourceLine) }}</span></div>
                         <div style="font-size: 10.5px; line-height: 1.55; color: #767676;"><span v-if="__s(v.md?.active?.updatedLine) !== null" class="sc-interp">{{ __s(v.md?.active?.updatedLine) }}</span></div>
                       </div>

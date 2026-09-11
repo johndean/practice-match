@@ -1,12 +1,12 @@
 // Market Data map, V3. One active area layer drawn as a true choropleth, plus small
 // practice markers. No bubble encodings: area data shades an area, point data is a point.
 //
-// GEOMETRY NOTE: the prototype has no ZCTA boundary file, so community areas are
-// approximated as Voronoi cells around each community's centroid, clipped to the metro
-// bounding box. Cells are contiguous and non-overlapping, which is what a choropleth
-// requires, but they are NOT real Census boundaries — the UI labels them "approximate
-// community areas". Production must load tiger_cb ZCTA polygons per the Census Data
-// Source Specification and drop this approximation.
+// GEOMETRY: real Census boundary polygons, handed in as `areas` - one GeoJSON
+// FeatureCollection for the active fill layer, each feature already carrying the colour
+// `bucket()` chose and the tooltip `areaVals()` built, so this component classes nothing
+// and formats nothing. The approximation this file used to draw (grid cells nearest each
+// community's centroid, clipped to the metro bounding box) is gone: amendment A24, spec
+// 2026-09-10, John's rulings D-C34-D-C37 of 2026-09-10.
 
 const LEAFLET_CSS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css";
 const LEAFLET_JS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js";
@@ -48,32 +48,6 @@ const BASEMAPS = {
 };
 const LABEL_TILES =
   "https://server.arcgisonline.com/ArcGIS/rest/services/Canvas/World_Light_Gray_Reference/MapServer/tile/{z}/{y}/{x}";
-
-// ---- Fine-grained mosaic ---------------------------------------------------
-// Each cell is assigned the class of its nearest community centroid, which yields crisp
-// finite boundaries rather than overlapping discs. This is spatial ASSIGNMENT of existing
-// community data, not interpolation, and not new data — production replaces it with real
-// ZCTA polygons (tiger_cb) per the Census Data Source Specification.
-function mosaicCells(sites, bbox, step) {
-  const out = [];
-  for (let lat = bbox.minLat; lat < bbox.maxLat; lat += step) {
-    for (let lng = bbox.minLng; lng < bbox.maxLng; lng += step) {
-      const cLat = lat + step / 2, cLng = lng + step / 2;
-      let best = null, bestD = Infinity;
-      for (let i = 0; i < sites.length; i++) {
-        const s = sites[i];
-        const dLat = s.lat - cLat;
-        const dLng = (s.lng - cLng) * Math.cos((cLat * Math.PI) / 180);
-        const d = dLat * dLat + dLng * dLng;
-        if (d < bestD) { bestD = d; best = s; }
-      }
-      // Drop cells too far from every community rather than shading empty country.
-      if (!best || bestD > 0.016) continue;
-      out.push({ site: best, bounds: [[lat, lng], [lat + step, lng + step]] });
-    }
-  }
-  return out;
-}
 
 // ---- Voronoi via half-plane clipping (Sutherland–Hodgman) -------------------
 function clipPolygon(poly, a, b) {
@@ -155,6 +129,7 @@ function MarketMapV3(props) {
   const {
     practices = [],
     communities = [],
+    areas = null,
     activeLayer = null,
     basemap = "map",
     onBasemap,
@@ -234,41 +209,18 @@ function MarketMapV3(props) {
       }).addTo(g);
     }
 
-    if (!activeLayer || !communities.length) return;
-
-    const lats = communities.map((c) => c.lat);
-    const lngs = communities.map((c) => c.lng);
-    const bbox = {
-      minLat: Math.min.apply(null, lats) - 0.13,
-      maxLat: Math.max.apply(null, lats) + 0.13,
-      minLng: Math.min.apply(null, lngs) - 0.15,
-      maxLng: Math.max.apply(null, lngs) + 0.15
-    };
+    if (!activeLayer || !areas || !areas.features.length) return;
 
     const canvas = L.canvas({ padding: 0.3 });
-    mosaicCells(communities, bbox, 0.0055).forEach(({ site, bounds }) => {
-      const v = site.values[activeLayer];
-      if (v == null) return;
-      L.rectangle(bounds, {
-        renderer: canvas,
-        stroke: false,
-        fillColor: v.color,
-        fillOpacity: 0.5,
-        interactive: true
-      })
-        .bindTooltip(
-          '<div style="font-family:ProximaNova,Arial,Helvetica,sans-serif;min-width:150px">' +
-            '<div style="font-size:12.5px;font-weight:800;color:#003a70">' + site.name + "</div>" +
-            '<div style="font-size:11px;color:#494949;margin-top:3px">' + (site.metricName || "") + "</div>" +
-            '<div style="font-size:15px;font-weight:800;color:#003a70;margin-top:1px">' + v.label + "</div>" +
-            '<div style="font-size:10px;color:#767676;margin-top:5px">' + (site.sourceNote || "") + "</div>" +
-          "</div>",
-          { sticky: true, className: "rf-tip" }
-        )
-        .on("click", () => onArea && onArea(site.name))
-        .addTo(g);
-    });
-  }, [communities, activeLayer, showDrive, driveCenter && driveCenter[0], status]);
+    L.geoJSON(areas, {
+      renderer: canvas,
+      style: (f) => ({ renderer: canvas, stroke: false, fillColor: f.properties.color, fillOpacity: 0.5, interactive: true }),
+      onEachFeature: (f, l) => {
+        l.bindTooltip(f.properties.tip, { sticky: true, className: "rf-tip" });
+        l.on("click", () => onArea && onArea(f.properties.name));
+      }
+    }).addTo(g);
+  }, [areas, communities, activeLayer, showDrive, driveCenter && driveCenter[0], status]);
 
   React.useEffect(() => {
     const L = window.L;

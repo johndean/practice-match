@@ -84,7 +84,10 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
 
   it('the census plan documents V3 rendering, the payroll label, the reserved word and the migration range', () => {
     const md = read(CENSUS);
-    expect(md).toContain('community mosaic shading');
+    expect(md).toContain('community boundary shading');
+    // A24 (2026-09-10/11): the grid is gone from the product, so it is gone from this plan's
+    // rendering table too — the table is the artefact a reviewer audits coverage from.
+    expect(md, 'the grid is gone from the product and from this plan').not.toContain('| Median Household Income (`income`) | community mosaic shading');
     expect(md).toContain('Average Practice Payroll');
     expect(md).toContain('Avg. payroll per practice');
     expect(md).not.toMatch(/community bubble `dot\(/);
@@ -93,7 +96,7 @@ describe('cross-plan deltas (Browse V3 spec §6)', () => {
     expect(md).not.toContain("dot(size, 'rgba(120,86,190,.75)')");
     expect(md).not.toMatch(/\|\s*(community )?bubble/);
     expect(md).toContain('`practicePin(label, selected)`');
-    expect(md).toContain('| Veterinary Competition (`competition`) | community mosaic shading');
+    expect(md).toContain('| Veterinary Competition (`competition`) | graduated symbols at the listing point (D-C35)');
     // `016` is the Seed Listings plan's listing table, so the census range starts at `017`.
     expect(md).toContain('migrations/017_census_registry.sql');
     expect(md).not.toContain('migrations/016_census_registry.sql');

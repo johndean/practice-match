@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { DESIGN_AREAS_LITERAL } from './design-boundary-fixture';
 
 const V3_DIR = new URL('../../docs/design-reference/design_handoff_practice_match_v3/', import.meta.url);
 export const PRISTINE = fileURLToPath(new URL('Practice Match V3.rev2.dc.html', V3_DIR));
@@ -4241,6 +4242,308 @@ const A26_16: Amendment = {
   count: 2
 };
 
+// A24 -- real Census boundary polygons (John's rulings D-C34-D-C37 of 2026-09-10; spec
+// docs/superpowers/specs/2026-09-10-neighbourhood-shading-design.md). Eleven `.dc.html` entries and
+// four in `MarketMapV3.jsx`, the first family in the programme's history to reach a bundle file
+// other than the `.dc.html` (controller ruling, §14 Q3). A24.1's payload is GENERATED --
+// scripts/export_design_boundaries.py -- so the design carries real geometry and not one hand-typed
+// coordinate. A24.13 is the family's OTHER ruling, D-C46, and rides here because it moves the same
+// Browse captures.
+//
+// PUNCTUATION: measured, the pristine `.dc.html` carries only — → © · – ÷ … ≈ − ‹ › ↗ ⌂ outside
+// ASCII and the pristine `.jsx` only — – …. No `replace` below introduces a character outside
+// those sets — an apostrophe in an inserted comment is the straight one the bundle's own comments
+// use. (`±` in A24.3's tip is the one addition, and it is unreachable on the design's fixture
+// path: `areaSet` always writes `moe: null`, so no approved state can render it. It exists for the
+// API path Task 10 wires.)
+const NS = {
+  date: '2026-09-10',
+  ruling: 'the data is not to the granular level required at neighborhood level — right now it’s just a blob over the whole city and misses the entire point of what is required and the required level of detail and data per neighborhood required to make a decision to buy a practice'
+};
+
+const A24_1: Amendment = {
+  id: 'A24.1', ...NS,
+  find: '    adminTab: "users", sellerView: "dash",\n',
+  replace: '    areas: ' + DESIGN_AREAS_LITERAL + ',\n'
+    + '    adminTab: "users", sellerView: "dash",\n',
+  count: 1
+};
+
+const A24_2: Amendment = {
+  id: 'A24.2', ...NS,
+  find: 'const FILL_KEYS = ["income", "growth", "econ"];\n',
+  replace: 'const FILL_KEYS = ["income", "growth", "econ"];\n'
+    + '// A24 (D-C35): each fill layer draws at the geography its figure is honest at, and the\n'
+    + '// legend names it. `pets`, `households` and `competition` stay graduated symbols at the\n'
+    + '// listing point - city-scale class breaks on small areas produce a picture with no\n'
+    + '// information, and `households` first `< 10K` bucket would swallow essentially every one.\n'
+    + 'const AREA_LEVEL = { income: "860", growth: "160", econ: "050" };\n'
+    + 'const AREA_LABEL = { income: "ZIP Code Tabulation Area", growth: "Place (city/town)", econ: "County" };\n'
+    + '// D-NS16 (John, 2026-09-10): a polygon with no usable figure is drawn in a neutral class\n'
+    + '// and never omitted - a hole in a choropleth reads as a boundary, not as an absence. The\n'
+    + '// colour is the design\'s own --border-subtle value at the same fillOpacity every other\n'
+    + '// class uses, so this adds no style vocabulary. Grey means UNMEASURED and only that: a\n'
+    + '// figure that WAS measured but whose margin spans a band is shown with its value (D-C36).\n'
+    + 'const NO_DATA_FILL = "#e6e6e6";\n'
+    + 'const NO_DATA_LABEL = "No data";\n',
+  count: 1
+};
+
+const A24_3: Amendment = {
+  id: 'A24.3', ...NS,
+  find: '  communities() {\n',
+  replace: '  // A24 (spec 9.4): the design\'s own boundary fixture, given the design\'s own figures.\n'
+    + '  // Each polygon takes the value of the NEAREST community centroid - the one line of\n'
+    + '  // `mosaicCells` that survives ("spatial ASSIGNMENT of existing community data, not\n'
+    + '  // interpolation, and not new data"), applied to real Census boundaries instead of grid\n'
+    + '  // cells, with longitude scaled by cos(lat) exactly as the mosaic scaled it.\n'
+    + '  //\n'
+    + '  // The value is taken as it comes and is NOT put through `num()`: that helper strips\n'
+    + '  // everything but digits and a dot, so `num(-5.1)` is `5.1` - it would turn a declining\n'
+    + '  // area into a growing one. Invisible until now, because every one of the design\'s own\n'
+    + '  // nine communities grows; A24.13 (D-C46) makes a negative growth a first-class value.\n'
+    + '  areaSet(layer) {\n'
+    + '    const src = (this.state.areas || {})[AREA_LEVEL[layer]];\n'
+    + '    if (!src) return { type: "FeatureCollection", features: [] };\n'
+    + '    const comms = this.communities().filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lng));\n'
+    + '    return {\n'
+    + '      type: "FeatureCollection",\n'
+    + '      features: src.features.map((f) => {\n'
+    + '        const p = f.properties;\n'
+    + '        let best = null, bestD = Infinity;\n'
+    + '        for (let i = 0; i < comms.length; i++) {\n'
+    + '          const s = comms[i];\n'
+    + '          const dLat = s.lat - p.c[0];\n'
+    + '          const dLng = (s.lng - p.c[1]) * Math.cos((p.c[0] * Math.PI) / 180);\n'
+    + '          const d = dLat * dLat + dLng * dLng;\n'
+    + '          if (d < bestD) { bestD = d; best = s; }\n'
+    + '        }\n'
+    + '        const raw = best ? best[layer] : undefined;\n'
+    + '        return {\n'
+    + '          type: "Feature", id: p.geo_id, geometry: f.geometry,\n'
+    + '          properties: {\n'
+    + '            geo_id: p.geo_id, name: p.name,\n'
+    + '            value: (raw === undefined || raw === null) ? null : raw,\n'
+    + '            moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false\n'
+    + '          }\n'
+    + '        };\n'
+    + '      })\n'
+    + '    };\n'
+    + '  }\n'
+    + '\n'
+    + '  // The ONE door every polygon enters by, whichever side produced it (spec 2.2): the\n'
+    + '  // colour is `bucket()`s and the label is `fmtMetric()`s, so the fill and the legend\n'
+    + '  // cannot disagree. A value that is absent OR suppressed takes the no-data class; a value\n'
+    + '  // that is present takes its band even when its margin spans one (D-C36).\n'
+    + '  areaVals(fc, layer) {\n'
+    + '    const feats = (fc && fc.features) || [];\n'
+    + '    return {\n'
+    + '      type: "FeatureCollection",\n'
+    + '      features: feats.map((f) => {\n'
+    + '        const p = f.properties;\n'
+    + '        const shown = p.value !== null && p.value !== undefined && !p.suppressed;\n'
+    + '        const b = shown ? this.bucket(layer, p.value) : null;\n'
+    + '        return {\n'
+    + '          type: "Feature", id: p.geo_id, geometry: f.geometry,\n'
+    + '          properties: {\n'
+    + '            geo_id: p.geo_id, name: p.name, value: p.value, moe: p.moe,\n'
+    + '            suppressed: !!p.suppressed, suppressReason: p.suppress_reason || null,\n'
+    + '            ambiguous: !!p.band_ambiguous,\n'
+    + '            color: shown ? b.color : NO_DATA_FILL,\n'
+    + '            label: shown ? this.fmtMetric(layer, p.value) : NO_DATA_LABEL,\n'
+    + '            tip: this.areaTip(p, layer, shown)\n'
+    + '          }\n'
+    + '        };\n'
+    + '      })\n'
+    + '    };\n'
+    + '  }\n'
+    + '\n'
+    + '  // The hover tip, built ONCE. Every honesty line is the wording the market-data contract\n'
+    + '  // already mandates, so the map says what the docked panel says. `growth` and `econ` carry\n'
+    + '  // no published margin (D-NS17) and say why rather than being greyed.\n'
+    + '  areaTip(p, layer, shown) {\n'
+    + '    const meta = LAYER_META[layer] || {};\n'
+    + '    const absent = p.suppressed\n'
+    + '      ? (p.suppress_reason === "source_flag" ? "Not published for this county" : "Estimate too imprecise to show at this geography")\n'
+    + '      : "No data for this area";\n'
+    + '    const margin = (p.moe !== null && p.moe !== undefined)\n'
+    + '      ? "\u00b1 " + this.fmtMetric(layer, p.moe) + (p.band_ambiguous ? " \u2014 this margin spans two legend bands." : "")\n'
+    + '      : (layer === "growth"\n'
+    + '          ? "Derived from two ACS 5-year periods. No combined margin of error is published."\n'
+    + '          : layer === "econ"\n'
+    + '            ? "Payroll per establishment (NAICS 541940), county level. County Business Patterns is a census of establishments, not a sample; no margin of error applies."\n'
+    + '            : "");\n'
+    + '    return \'<div style="font-family:ProximaNova,Arial,Helvetica,sans-serif;min-width:150px">\' +\n'
+    + '      \'<div style="font-size:12.5px;font-weight:800;color:#003a70">\' + p.name + "</div>" +\n'
+    + '      \'<div style="font-size:11px;color:#494949;margin-top:3px">\' + (meta.title || "") + "</div>" +\n'
+    + '      \'<div style="font-size:15px;font-weight:800;color:#003a70;margin-top:1px">\' + (shown ? this.fmtMetric(layer, p.value) : NO_DATA_LABEL) + "</div>" +\n'
+    + '      \'<div style="font-size:10.5px;color:#494949;margin-top:4px">\' + (shown ? margin : absent) + "</div>" +\n'
+    + '      \'<div style="font-size:10px;color:#767676;margin-top:5px">\' + (meta.source || "") + "</div>" +\n'
+    + '    "</div>";\n'
+    + '  }\n'
+    + '\n'
+    + '  communities() {\n',
+  count: 1
+};
+
+const A24_4: Amendment = {
+  id: 'A24.4', ...NS,
+  find: '      communities: comms.filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lng)).map((c) => {\n',
+  replace: '      areas: this.areaVals(this.areaSet(valueLayer), valueLayer),\n'
+    + '      communities: comms.filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lng)).map((c) => {\n',
+  count: 1
+};
+
+const A24_5: Amendment = {
+  id: 'A24.5', ...NS,
+  find: '          hasRamp: !!valueLayer,\n'
+    + '          ramp: valueLayer\n'
+    + '            ? ramp(valueLayer).map((c, i) => ({\n'
+    + '                style: "flex: 1; height: 9px; background: " + c + ";",\n'
+    + '                label: cfg.buckets[i]\n'
+    + '              }))\n'
+    + '            : []\n',
+  replace: '          hasRamp: !!valueLayer,\n'
+    + '          hasGeo: FILL_KEYS.indexOf(valueLayer) > -1,\n'
+    + '          geoLine: AREA_LABEL[valueLayer] || "",\n'
+    + '          ramp: valueLayer\n'
+    + '            ? ramp(valueLayer).map((c, i) => ({\n'
+    + '                style: "flex: 1; height: 9px; background: " + c + ";",\n'
+    + '                label: cfg.buckets[i]\n'
+    + '              })).concat(FILL_KEYS.indexOf(valueLayer) > -1\n'
+    + '                ? [{ style: "flex: 1; height: 9px; background: " + NO_DATA_FILL + ";", label: NO_DATA_LABEL }]\n'
+    + '                : [])\n'
+    + '            : []\n',
+  count: 1
+};
+
+const A24_6a: Amendment = {
+  id: 'A24.6a', ...NS,
+  find: ' practices="{{ md.practices }}" communities="{{ md.communities }}" active-layer="{{ md.activeLayer }}" basemap="{{ md.basemap }}" active-id="{{ md.activeId }}" on-select="{{ md.selectFromMap }}"',
+  replace: ' practices="{{ md.practices }}" communities="{{ md.communities }}" areas="{{ md.areas }}" active-layer="{{ md.activeLayer }}" basemap="{{ md.basemap }}" active-id="{{ md.activeId }}" on-select="{{ md.selectFromMap }}"',
+  count: 1
+};
+
+const A24_6b: Amendment = {
+  id: 'A24.6b', ...NS,
+  find: ' practices="{{ md.practices }}" communities="{{ md.communities }}" active-layer="{{ md.activeLayer }}" basemap="{{ md.basemap }}" active-id="{{ md.activeId }}" on-select="{{ mob.selectMarker }}"',
+  replace: ' practices="{{ md.practices }}" communities="{{ md.communities }}" areas="{{ md.areas }}" active-layer="{{ md.activeLayer }}" basemap="{{ md.basemap }}" active-id="{{ md.activeId }}" on-select="{{ mob.selectMarker }}"',
+  count: 1
+};
+
+const A24_7: Amendment = {
+  id: 'A24.7', ...NS,
+  find: 'Community areas on the map are approximate — production draws Census ZCTA boundaries.',
+  replace: 'Community areas are Census ZIP Code Tabulation Areas (2023 boundaries); figures describe the area, not the practice.',
+  count: 1
+};
+
+const A24_8a: Amendment = {
+  id: 'A24.8a', ...NS,
+  find: '                    <div style="margin-top: 11px; font-size: 10.5px; line-height: 1.55; color: #767676;">{{ md.active.sourceLine }}</div>\n',
+  replace: '                    <sc-if value="{{ md.active.hasGeo }}" hint-placeholder-val="{{ true }}">\n'
+    + '                      <div style="margin-top: 11px; font-size: 10.5px; line-height: 1.55; color: #767676;">{{ md.active.geoLine }}</div>\n'
+    + '                    </sc-if>\n'
+    + '                    <div style="margin-top: 11px; font-size: 10.5px; line-height: 1.55; color: #767676;">{{ md.active.sourceLine }}</div>\n',
+  count: 1
+};
+
+const A24_8b: Amendment = {
+  id: 'A24.8b', ...NS,
+  find: '                        <div style="margin-top: 10px; font-size: 10.5px; line-height: 1.55; color: #767676;">{{ md.active.sourceLine }}</div>\n',
+  replace: '                        <sc-if value="{{ md.active.hasGeo }}" hint-placeholder-val="{{ true }}">\n'
+    + '                          <div style="margin-top: 10px; font-size: 10.5px; line-height: 1.55; color: #767676;">{{ md.active.geoLine }}</div>\n'
+    + '                        </sc-if>\n'
+    + '                        <div style="margin-top: 10px; font-size: 10.5px; line-height: 1.55; color: #767676;">{{ md.active.sourceLine }}</div>\n',
+  count: 1
+};
+
+/** A24.13 -- D-C46 (John, 2026-09-11), the family's other ruling and the reason it rides in this
+ *  change: real polygons drawn on class breaks that cannot represent real data are still one
+ *  colour, and the complaint this whole stream answers would have survived A24.
+ *
+ *  MEASURED, not invented. ACS 5-year place populations, 2014-2018 against 2019-2023 -- exactly the
+ *  pair `app.census.metrics.population_growth_pct` divides -- read from the Census Bureau's keyless
+ *  summary files for all 50 states, DC and Puerto Rico: 29,232 places carry both vintages.
+ *
+ *    universe                        declining   [10,20,35] bottom bucket
+ *    US places, all                    47.1 %          70.5 %
+ *    US places >= 10,000 people        30.5 %          79.9 %
+ *    Texas places inside a CBSA        43.6 %          63.1 %
+ *    Austin CBSA (the design's metro)  13.8 %          32.3 %
+ *
+ *  So the published breaks put four places in five into ONE class, and a place that LOST population
+ *  was painted the same colour as one that grew 9 %. The new stops are the tertiles of the
+ *  non-declining half of that distribution -- +3.3 / +8.8 nationally, +4.8 / +13.5 across Texas
+ *  metro places, +6.6 / +22.6 over all US places -- rounded to numbers a 10.5 px legend can carry.
+ *  On [0, 5, 15] the four classes take 30.5 / 32.3 / 25.3 / 11.9 % of US places over 10,000 people
+ *  and 27.0 / 24.7 / 27.4 / 20.9 % of Texas metro places that size.
+ *
+ *  FOUR buckets, not five: the growth ramp has exactly four colours in all three palettes, and a
+ *  fifth class would mean inventing a colour the design does not have. The below-zero swatch is
+ *  therefore the ramp's own first colour, and it is labelled "Declining" rather than "< 0%" because
+ *  the ruling is that a declining area READS as declining. */
+const A24_13: Amendment = {
+  id: 'A24.13',
+  date: '2026-09-11',
+  ruling: 'D-C46 (John, 2026-09-11): the growth class breaks are re-scaled to real ACS data, with a band below zero, so a declining area reads as declining rather than as the bottom of a growth scale',
+  find: '  growth: { label: "Population Growth (ACS)", short: "Projected growth (5 yrs)", unit: "pct", buckets: ["< 10%", "10\u201320%", "20\u201335%", "> 35%"], stops: [10, 20, 35] },\n',
+  replace: '  growth: { label: "Population Growth (ACS)", short: "Projected growth (5 yrs)", unit: "pct", buckets: ["Declining", "0\u20135%", "5\u201315%", "> 15%"], stops: [0, 5, 15] },\n',
+  count: 1
+};
+
+const A24_9: Amendment = {
+  id: 'A24.9', ...NS, file: 'jsx',
+  find: '// GEOMETRY NOTE: the prototype has no ZCTA boundary file, so community areas are\n// approximated as Voronoi cells around each community\'s centroid, clipped to the metro\n// bounding box. Cells are contiguous and non-overlapping, which is what a choropleth\n// requires, but they are NOT real Census boundaries — the UI labels them "approximate\n// community areas". Production must load tiger_cb ZCTA polygons per the Census Data\n// Source Specification and drop this approximation.\n',
+  replace: '// GEOMETRY: real Census boundary polygons, handed in as `areas` - one GeoJSON\n'
+    + '// FeatureCollection for the active fill layer, each feature already carrying the colour\n'
+    + '// `bucket()` chose and the tooltip `areaVals()` built, so this component classes nothing\n'
+    + '// and formats nothing. The approximation this file used to draw (grid cells nearest each\n'
+    + '// community\'s centroid, clipped to the metro bounding box) is gone: amendment A24, spec\n'
+    + '// 2026-09-10, John\'s rulings D-C34-D-C37 of 2026-09-10.\n',
+  count: 1
+};
+
+/** A24.10 -- `mosaicCells` and its comment, deleted outright under the bundle's own dead-code rule
+ *  (spec D8/D12, as A2.3-A2.5 and A13.6-A13.7 applied it): A24.12 removes its only caller. The
+ *  `find` is the pristine file's own bytes, printed rather than transcribed -- 26 lines, not the 23
+ *  the plan predicted, which is exactly why it is derived and not typed. */
+const A24_10: Amendment = {
+  id: 'A24.10', ...NS, file: 'jsx',
+  find: '// ---- Fine-grained mosaic ---------------------------------------------------\n// Each cell is assigned the class of its nearest community centroid, which yields crisp\n// finite boundaries rather than overlapping discs. This is spatial ASSIGNMENT of existing\n// community data, not interpolation, and not new data — production replaces it with real\n// ZCTA polygons (tiger_cb) per the Census Data Source Specification.\nfunction mosaicCells(sites, bbox, step) {\n  const out = [];\n  for (let lat = bbox.minLat; lat < bbox.maxLat; lat += step) {\n    for (let lng = bbox.minLng; lng < bbox.maxLng; lng += step) {\n      const cLat = lat + step / 2, cLng = lng + step / 2;\n      let best = null, bestD = Infinity;\n      for (let i = 0; i < sites.length; i++) {\n        const s = sites[i];\n        const dLat = s.lat - cLat;\n        const dLng = (s.lng - cLng) * Math.cos((cLat * Math.PI) / 180);\n        const d = dLat * dLat + dLng * dLng;\n        if (d < bestD) { bestD = d; best = s; }\n      }\n      // Drop cells too far from every community rather than shading empty country.\n      if (!best || bestD > 0.016) continue;\n      out.push({ site: best, bounds: [[lat, lng], [lat + step, lng + step]] });\n    }\n  }\n  return out;\n}\n\n',
+  replace: '',
+  count: 1
+};
+
+const A24_11: Amendment = {
+  id: 'A24.11', ...NS, file: 'jsx',
+  find: '    communities = [],\n',
+  replace: '    communities = [],\n    areas = null,\n',
+  count: 1
+};
+
+/** A24.12 -- the area effect draws `props.areas` through `L.geoJSON` on the SAME shared canvas
+ *  renderer the mosaic used, so `leaflet.ts:49-50`'s note ("ONE canvas renderer per mount") outlives
+ *  the mosaic. 35 lines replaced; the drive-time ring above them is outside the `find` and is
+ *  untouched. */
+const A24_12: Amendment = {
+  id: 'A24.12', ...NS, file: 'jsx',
+  find: '    if (!activeLayer || !communities.length) return;\n\n    const lats = communities.map((c) => c.lat);\n    const lngs = communities.map((c) => c.lng);\n    const bbox = {\n      minLat: Math.min.apply(null, lats) - 0.13,\n      maxLat: Math.max.apply(null, lats) + 0.13,\n      minLng: Math.min.apply(null, lngs) - 0.15,\n      maxLng: Math.max.apply(null, lngs) + 0.15\n    };\n\n    const canvas = L.canvas({ padding: 0.3 });\n    mosaicCells(communities, bbox, 0.0055).forEach(({ site, bounds }) => {\n      const v = site.values[activeLayer];\n      if (v == null) return;\n      L.rectangle(bounds, {\n        renderer: canvas,\n        stroke: false,\n        fillColor: v.color,\n        fillOpacity: 0.5,\n        interactive: true\n      })\n        .bindTooltip(\n          \'<div style="font-family:ProximaNova,Arial,Helvetica,sans-serif;min-width:150px">\' +\n            \'<div style="font-size:12.5px;font-weight:800;color:#003a70">\' + site.name + "</div>" +\n            \'<div style="font-size:11px;color:#494949;margin-top:3px">\' + (site.metricName || "") + "</div>" +\n            \'<div style="font-size:15px;font-weight:800;color:#003a70;margin-top:1px">\' + v.label + "</div>" +\n            \'<div style="font-size:10px;color:#767676;margin-top:5px">\' + (site.sourceNote || "") + "</div>" +\n          "</div>",\n          { sticky: true, className: "rf-tip" }\n        )\n        .on("click", () => onArea && onArea(site.name))\n        .addTo(g);\n    });\n  }, [communities, activeLayer, showDrive, driveCenter && driveCenter[0], status]);\n',
+  replace: '    if (!activeLayer || !areas || !areas.features.length) return;\n'
+    + '\n'
+    + '    const canvas = L.canvas({ padding: 0.3 });\n'
+    + '    L.geoJSON(areas, {\n'
+    + '      renderer: canvas,\n'
+    + '      style: (f) => ({ renderer: canvas, stroke: false, fillColor: f.properties.color, fillOpacity: 0.5, interactive: true }),\n'
+    + '      onEachFeature: (f, l) => {\n'
+    + '        l.bindTooltip(f.properties.tip, { sticky: true, className: "rf-tip" });\n'
+    + '        l.on("click", () => onArea && onArea(f.properties.name));\n'
+    + '      }\n'
+    + '    }).addTo(g);\n'
+    + '  }, [areas, communities, activeLayer, showDrive, driveCenter && driveCenter[0], status]);\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -4301,5 +4604,15 @@ export function amendments(): Amendment[] {
     // A26.16 — the panel width (John, 2026-09-11, Task F1b): "the panel takes the width of the
     // trigger that opened it, so their edges line up." Its `find` is A26.10's and A26.11's own
     // output — the panel style string they share — so it is applied last, and once, for both.
-    A26_16];
+    A26_16,
+    // A24 -- real Census boundary polygons (2026-09-10, John's D-C34-D-C37) and the
+    // growth breaks that make them readable (A24.13, D-C46, 2026-09-11). Numerically
+    // before A25 and A26 and applied after both: A24 was RESERVED by the ledger's own
+    // A25.1 row while those two families were written and merged, so every A24 `find`
+    // is measured against the file they leave behind. Definition order in this file
+    // matches this list (m8). The four `MarketMapV3.jsx` entries sit last;
+    // `amendmentsFor` partitions them, so their position here only decides their
+    // order among themselves.
+    A24_1, A24_2, A24_3, A24_4, A24_5, A24_6a, A24_6b, A24_7, A24_8a, A24_8b, A24_13,
+    A24_9, A24_10, A24_11, A24_12];
 }
