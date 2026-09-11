@@ -1014,3 +1014,100 @@ def test_a_figure_the_catchment_suppresses_is_never_backfilled_from_the_place(co
     assert row["income"] != "$67,760"
     # No median, no note: the qualifier belongs to a figure that is shown.
     assert row["income_note"] is None
+
+
+# ---------------------------------------------------------------------------------------------
+# C2 (whole-branch review, 2026-09-11) — a row whose `value_num` is NULL.
+#
+# `market_metric.value_num` is NULLABLE (`migrations/061_census_listing_tables.sql:34`) and
+# `suppressed` is `NOT NULL DEFAULT false` (`:40`), and the pipeline writes exactly that pair:
+# `_suppression(None, moe)` returns `(False, None)` on purpose — "A missing value has nothing to
+# suppress: there is no row content to falsely read as certain" (`materialize.py:105-107`) — and
+# `materialize.py:239-244` emits the row regardless of whether the ACS answered.
+#
+# So a NULL value reaches `_figures` behind BOTH of its guards, and `float(None)` raised
+# `TypeError: float() argument must be a string or a real number, not 'NoneType'` out of the
+# listings serialiser: a 500 on the whole page, not one blank tile.
+#
+# A null figure is ABSENT, not an error. D-C31's rule governs it — "a missing figure is omitted,
+# never zeroed" — and `_figures`'s own docstring already promises the answer: "A figure that is
+# absent is None". The row's existence was never the claim; the value is.
+#
+# This branch did not create the bug, it widened it: at base only one band was evaluated unless
+# the other yielded nothing, and this branch evaluates BOTH for EVERY listing (`serve.py:290-291`),
+# so a single unanswered figure in either band took the page down.
+# ---------------------------------------------------------------------------------------------
+
+
+def _nulling(metrics, *keys):
+    """`metrics` with the NAMED rows carrying no value — `value_num` NULL, no MOE, and
+    `suppressed` FALSE, which is the exact row `materialize.py` writes for a figure the Census
+    did not answer."""
+    return tuple(
+        (m[0], m[1], None, m[3], m[4], m[5], None, False, None, m[9]) if m[0] in keys else m
+        for m in metrics
+    )
+
+
+def test_every_figure_with_a_null_value_is_absent_rather_than_a_500(conn):
+    """All six rows present, all six unanswered. Before the guard this raised `TypeError:
+    float() argument must be a string or a real number, not 'NoneType'` on the first of them."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_nulling(
+        _SIX, "population", "households", "median_hh_income",
+        "population_growth_pct", "establishments", "revenue_per_establishment",
+    ))
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["pop"] is None
+    assert row["hh"] is None
+    assert row["income"] is None
+    assert row["growth"] is None
+    assert row["vets"] is None
+    assert row["econ_k"] is None
+    # No figure came from the catchment, so nothing overrides the design's own wording, and the
+    # growth scope names a geography no figure was measured at.
+    assert row["label"] is None
+    assert row["growth_scope"] is None
+    assert row["income_note"] is None
+
+
+def test_a_null_figure_is_absent_on_its_own_and_leaves_the_other_five_standing(conn):
+    """`_figures`'s "Every figure is independent" holds for an unanswered value exactly as it
+    holds for a suppressed one: the population is absent and the other five are served."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_nulling(_SIX, "population"))
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["pop"] is None
+    assert row["hh"] == "59,588 households"
+    assert row["income"] == "$69,780"
+    assert row["growth"] == "+9.0% since 2018"
+    assert row["vets"] == 10
+    assert row["econ_k"] == 512
+
+
+def test_a_null_catchment_figure_does_not_vote_the_area_group_to_the_catchment(conn):
+    """The band choice reads FIGURES, and an unanswered value is not one. The catchment's four
+    area rows are all present and all unanswered, so the place band — which has them — answers,
+    and the card keeps its own community's wording."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _seed_band(conn, listing_id, "drive_10", metrics=_nulling(
+        _CATCHMENT_SIX, "population", "households", "median_hh_income", "establishments",
+    ))
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["label"] is None
+    assert row["pop"] == "1,299,553"
+    assert row["income"] == "$67,760"
+    assert row["vets"] == 250

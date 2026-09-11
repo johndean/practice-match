@@ -87,6 +87,29 @@ def _extra_cleared(reg: dict[str, dict[str, Any]], metric_key: str, source_datas
     return True
 
 
+def _servable(m: dict[str, Any], reg: dict[str, dict[str, Any]]) -> bool:
+    """Whether a `market_metric` row carries a figure a buyer may be shown: it has a VALUE, that
+    value is not suppressed, and the dataset that produced it is licence-cleared.
+
+    The value term is the one the six call sites below kept forgetting (C2, whole-branch review
+    2026-09-11). `market_metric.value_num` is NULLABLE and `suppressed` is `NOT NULL DEFAULT
+    false` (`migrations/061_census_listing_tables.sql:34,40`), and the pipeline writes exactly
+    that pair on purpose: `_suppression(None, moe)` returns `(False, None)` because "a missing
+    value has nothing to suppress" (`materialize.py:105-107`), and `materialize.py:239-244` emits
+    the row whether or not the ACS answered. So a null value cleared both of the old guards and
+    reached `float(None)`, which raised `TypeError` out of the listings serialiser — a 500 on the
+    whole page rather than one blank tile.
+
+    An unanswered figure is ABSENT, not an error: D-C31's rule ("a missing figure is omitted,
+    never zeroed") and `_figures`'s own promise below, "A figure that is absent is None". The
+    three terms live here, once, so a seventh figure cannot be added with two of them."""
+    return (
+        m["value_num"] is not None
+        and not m["suppressed"]
+        and _cleared(reg, m["source_dataset"])
+    )
+
+
 def _figures(
     metrics: dict[str, Any],
     reg: dict[str, dict[str, Any]],
@@ -105,27 +128,26 @@ def _figures(
     # Population
     if "population" in metrics:
         m = metrics["population"]
-        if not m["suppressed"] and _cleared(reg, m["source_dataset"]):
+        if _servable(m, reg):
             figures["pop"] = f"{round(float(m['value_num'])):,}"
 
     # Households
     if "households" in metrics:
         m = metrics["households"]
-        if not m["suppressed"] and _cleared(reg, m["source_dataset"]):
+        if _servable(m, reg):
             figures["hh"] = f"{round(float(m['value_num'])):,} households"
 
     # Median household income
     if "median_hh_income" in metrics:
         m = metrics["median_hh_income"]
-        if not m["suppressed"] and _cleared(reg, m["source_dataset"]):
+        if _servable(m, reg):
             figures["income"] = f"${round(float(m['value_num'])):,}"
 
     # Population growth (requires acs5_prior cleared, and an active acs5_prior vintage to name)
     if "population_growth_pct" in metrics:
         m = metrics["population_growth_pct"]
         if (
-            not m["suppressed"]
-            and _cleared(reg, m["source_dataset"])
+            _servable(m, reg)
             and _extra_cleared(reg, "population_growth_pct", m["source_dataset"])
             and acs5_prior_vintage
         ):
@@ -135,14 +157,14 @@ def _figures(
     # Establishments (vets)
     if "establishments" in metrics:
         m = metrics["establishments"]
-        if not m["suppressed"] and _cleared(reg, m["source_dataset"]) and _extra_cleared(reg, "establishments", m["source_dataset"]):
+        if _servable(m, reg) and _extra_cleared(reg, "establishments", m["source_dataset"]):
             figures["vets"] = int(float(m["value_num"]))
 
     # Payroll per establishment (econ_k) - in thousands. The column is historically named
     # `revenue_per_establishment`; the figure is payroll, not revenue (amendment A-C29).
     if "revenue_per_establishment" in metrics:
         m = metrics["revenue_per_establishment"]
-        if not m["suppressed"] and _cleared(reg, m["source_dataset"]):
+        if _servable(m, reg):
             figures["econ_k"] = round(float(m["value_num"]) / 1000)
 
     return figures
