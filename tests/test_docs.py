@@ -1230,6 +1230,12 @@ LISTING_WRITERS = {
         "UPDATE **OF status** — does not fire at all.",
     "tests/perf/test_query_plans.py":
         "query-plan fixtures inserted directly with their status; no INSERT arm.",
+    "tests/privacy/conftest.py":
+        "the privacy suites' own builder (Task P3). `make_listing` INSERTs a `draft` row and never "
+        "writes `status` again; `make_row` appends the asset id to `photos` with an `UPDATE listing "
+        "SET photos`, which the trigger — BEFORE UPDATE **OF status** — does not fire on. No row it "
+        "makes ever moves into `published`, because the state machine it builds rows for is tested "
+        "on `listing_asset_privacy` alone.",
     "tests/scripts/test_seed_listings.py":
         "the seeder's own suite: it inserts directly, and its two visibility cases (A-IDP-4 (1)) "
         "use `draft` rows precisely so the gate is not what they are measuring.",
