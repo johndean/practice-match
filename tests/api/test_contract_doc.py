@@ -148,3 +148,30 @@ def test_contract_doc_names_every_community_field_the_listing_serialiser_emits()
         "docs/integrations/market-data-api.md names no field for these keys of "
         f"GET /api/listings: {', '.join(missing)}"
     )
+
+
+def test_contract_doc_states_the_boundary_caps_and_geographies_the_code_enforces() -> None:
+    """A hand-maintained number in a document is a defect waiting to happen: every figure below is
+    read off `app.api.market` rather than typed here, so the document cannot drift from the caps
+    the route really applies (plan Global Constraint (i))."""
+    from app.api import market
+
+    text = DOC.read_text(encoding="utf-8")
+    assert f"`MAX_BBOX_DEG = {market.MAX_BBOX_DEG}`" in text
+    assert f"`MAX_FEATURES = {market.MAX_FEATURES}`" in text
+    assert f"`MAX_BODY_BYTES = {market.MAX_BODY_BYTES:_}`" in text
+    assert f"`BOUNDARY_TTL = {market.BOUNDARY_TTL}`" in text
+    for layer, shading in market.SHADING.items():
+        assert f'"{layer}"' in text or f"`{layer}`" in text, layer
+        assert f'"summary_level": "{shading["summary_level"]}"' in text, layer
+        assert shading["label"] in text, layer
+    # The two properties §6 turns on, by name: a document that stops naming them is a contract
+    # Task 10 can implement the no-data swatch wrongly against.
+    for prop in ("suppress_reason", "band_ambiguous", "values_without_geometry"):
+        assert f"`{prop}`" in text, prop
+    # /api/layers' own sample must show the new member on every layer, shaded or not: an
+    # integration contract whose example payload is missing a field is one Task 10 codes without.
+    sample = text.split("## `GET /api/layers`", 1)[1].split("```", 2)[1]
+    assert sample.count('"shading"') == 9, "every layer in the /api/layers sample must show the member"
+    assert sample.count('"shading": null') == 6, "the six unshaded layers must each show shading: null"
+    assert '`shading` is the geography the MAP paints' in text

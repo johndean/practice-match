@@ -64,11 +64,13 @@ task brief's own "Corrections to the brief" list); the point is to not rediscove
 """
 from __future__ import annotations
 
+import gzip
 import json
+import logging
 from typing import Any, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.engine import RowMapping
@@ -77,9 +79,13 @@ from app.auth.deps import require
 from app.cache import sync_redis
 from app.census import gate
 from app.census import metrics as M
+from app.census.bands import band_ambiguous
+from app.census.geo_metric import GEO_VERSION_KEY
 from app.census.serve import _active, _extra_cleared, _registry
 from app.db import engine
 from app.tasks.celery_app import celery_app
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
@@ -90,6 +96,63 @@ PANEL_TTL = 86400
 BACKFILL_DEDUPE_TTL = 600
 BANDS: tuple[str, ...] = ("place", "drive_10", "drive_20")
 DEFAULT_BLOCKED_REASON = "Licence not cleared."
+
+BOUNDARY_TTL = 86400
+# D-NS12. The caps are chosen against the GEOGRAPHY, not against a load test: the Austin metro's
+# own envelope is roughly 1.0 deg x 0.9 deg, and 4 deg on a side covers any single CBSA in the six
+# states with room to spare while refusing a state. MAX_FEATURES sits above the largest plausible
+# single-metro ZCTA count and below the 6,884 tracts a whole-Texas box returns (9.2 MB, and there
+# was no bound anywhere in app/ before this route).
+MAX_BBOX_DEG = 4.0
+MAX_FEATURES = 4000
+MAX_BODY_BYTES = 2_000_000
+
+# D-C35's three geographies, and the label the legend prints. A NEW member on /api/layers rather
+# than a change to `geo_level`: `income`'s geo_level is "place|catchment" and describes the
+# PANEL's geography — the docked panel and the map answer different questions about the same
+# layer (D-NS15).
+SHADING: dict[str, dict[str, str]] = {
+    "income": {"summary_level": "860", "label": "ZIP Code Tabulation Area"},
+    "growth": {"summary_level": "160", "label": "Place (city/town)"},
+    "econ": {"summary_level": "050", "label": "County"},
+}
+# layer -> (metric_key, the dataset its geo_metric rows are STAMPED with, whose active vintage is
+# therefore the value vintage).
+BOUNDARY_METRIC: dict[str, tuple[str, str]] = {
+    "income": ("median_hh_income", "acs5"),
+    "growth": ("population_growth_pct", "acs5"),
+    "econ": ("revenue_per_establishment", "cbp"),
+}
+
+# D-NS11. Three things about it are deliberate. `ST_Transform(g.geom, 4326)` is required, not
+# decorative: geo_area.geom is geometry(MultiPolygon, 4269) and GeoJSON is WGS84. The `6` is
+# measured to be a NO-OP -- cb_500k already carries six or fewer decimals -- and is kept as an
+# explicit ceiling. And the envelope is transformed INTO 4269 rather than the geometry column out
+# of it, so the geo_area_geom_gix GiST index is usable on the predicate (an Austin z11 tract
+# viewport: 49.8 ms).
+_BOUNDARY_SQL = """
+SELECT g.geo_id, g.name, m.value_num, m.moe, m.suppressed, m.suppress_reason,
+       ST_AsGeoJSON(ST_Transform(g.geom, 4326), 6) AS geometry
+  FROM geo_area g
+  LEFT JOIN geo_metric m
+    ON m.geo_id = g.geo_id AND m.summary_level = g.summary_level
+   AND m.metric_key = :metric AND m.vintage = :value_vintage
+ WHERE g.summary_level = :level AND g.vintage = :geo_vintage
+   AND ST_Intersects(g.geom, ST_Transform(ST_MakeEnvelope(:w, :s, :e, :n, 4326), 4269))
+ ORDER BY g.geo_id
+"""
+
+# §7, the other direction: a value whose geography the boundary vintage no longer carries. The
+# writer never invents a shape and the endpoint never silently loses a row. Deliberately NOT
+# narrowed by the bbox: "values whose geography is not in this viewport" would be non-zero on
+# every zoomed request and would mean nothing. This counts values with no `geo_area` row at that
+# level and vintage AT ALL, which is what §7's "a boundary vintage that has moved out from under
+# the values" actually describes.
+_ORPHAN_SQL = """
+SELECT count(*) FROM geo_metric m
+ WHERE m.summary_level = :level AND m.metric_key = :metric AND m.vintage = :value_vintage
+   AND NOT EXISTS (SELECT 1 FROM geo_area g WHERE g.geo_id = m.geo_id AND g.summary_level = :level AND g.vintage = :geo_vintage)
+"""
 
 # The three-valued state B6's contract settled on, keyed off `dataset_registry.license_status`
 # (migration 017's own CHECK constraint admits exactly these three strings).
@@ -138,6 +201,22 @@ def _resolve_band(band: str | None, default: str) -> str | None:
     something that is not one of `BANDS` at all, which the route turns into decision A5's 422."""
     b = band or default
     return b if b in BANDS else None
+
+
+def _parse_bbox(raw: str) -> tuple[float, float, float, float] | None:
+    """`minLng,minLat,maxLng,maxLat`, or `None` when it is not four numbers in that order. Parsed
+    by hand rather than through `Query(ge=…)` so a bad value gets decision A5's envelope, which is
+    the shape `_resolve_band` already uses for BAD_BAND."""
+    parts = raw.split(",")
+    if len(parts) != 4:
+        return None
+    try:
+        w, s, e, n = (float(p) for p in parts)
+    except ValueError:
+        return None
+    if e <= w or n <= s:
+        return None
+    return w, s, e, n
 
 
 def _is_uuid(value: str) -> bool:
@@ -191,6 +270,10 @@ async def layers() -> Response:
             "key": layer["key"], "label": layer["label"], "dataset_key": ds,
             "source_label": reg[ds]["attribution_text"] if ds else None,
             "vintage": vintage, "geo_level": layer.get("geo_level", "place|catchment" if ds else None),
+            # D-NS15: the geography the MAP shades this layer at, or null where it is not shaded at
+            # all (the three graduated-symbol layers, `practices` and the two drive rings). A new
+            # member, never a change to `geo_level` above, which describes the docked PANEL.
+            "shading": SHADING.get(layer["key"]),
             "state": state, "is_derived": layer["is_derived"], "caveat": layer["caveat"],
         }
         if blocked_reason is not None:
@@ -293,6 +376,118 @@ async def communities(cbsa: str, band: str | None = Query(None)) -> Response:
         "band": b, "vintage": act.get("acs5"), "attribution": [reg[k]["attribution_text"] for k in sorted(used)],
         "communities": list(by.values()),
     })
+
+
+@router.get("/markets/{cbsa}/boundaries", dependencies=[Depends(REQUIRE_MARKET_READ)])
+async def boundaries(cbsa: str, request: Request, layer: str | None = Query(None), bbox: str | None = Query(None)) -> Response:
+    """Real Census boundary polygons for one metro and one shaded layer (D-C34 through D-C37).
+
+    Served as a member-gated ENDPOINT rather than CDN tiles: `MARKET_DATA_PUBLIC` is false so
+    tiles would have to be member-gated anyway, and spec §10's "30 days, immutable" CDN row
+    directly contradicts §11's "the layer disappears within one minute" the moment a tile carries
+    values rather than only geometry. One route inside the existing `market:gate:v` cache key
+    honours both."""
+    if layer not in SHADING:
+        return _error("BAD_LAYER", "layer must be one of ('income', 'growth', 'econ')", 422)
+    box: tuple[float, float, float, float] | None = None
+    if bbox is not None:
+        box = _parse_bbox(bbox)
+        if box is None:
+            return _error("BAD_BBOX", "bbox must be minLng,minLat,maxLng,maxLat with maxima above minima", 422)
+        if box[2] - box[0] > MAX_BBOX_DEG or box[3] - box[1] > MAX_BBOX_DEG:
+            return _error("BBOX_TOO_LARGE", f"bbox spans {box[2] - box[0]:.2f} x {box[3] - box[1]:.2f} degrees; the cap is {MAX_BBOX_DEG} on either axis", 422)
+
+    metric_key, source = BOUNDARY_METRIC[layer]
+    r = sync_redis()
+    geo_version = cast("bytes | str | None", r.get(GEO_VERSION_KEY))
+    async with engine().connect() as conn:
+        act, reg = await _active(conn), await _registry(conn)
+        geo_vintage, value_vintage = act.get("tiger_cb"), act.get(source)
+        key = (f"boundaries:{cbsa}:{layer}:{geo_vintage}:{value_vintage}:g{gate.version(r)}"
+               f":m{int(geo_version) if geo_version else 0}:b{bbox or 'metro'}")
+        cached = cast("bytes | None", r.get(key))
+        if cached is not None:
+            return _geojson(cached, request, "hit")
+        metro = (await conn.execute(text(
+            "SELECT ST_XMin(geom), ST_YMin(geom), ST_XMax(geom), ST_YMax(geom) FROM geo_area "
+            "WHERE geo_id = :cbsa AND summary_level = '310' AND vintage = :gv"), {"cbsa": cbsa, "gv": geo_vintage})).first()
+        if metro is None:
+            return _error("NOT_FOUND", "No such metro.", 404)
+        if box is None:
+            box = (float(metro[0]), float(metro[1]), float(metro[2]), float(metro[3]))
+        entry = next(l for l in LAYERS if l["key"] == layer)
+        state, blocked_reason = _layer_state(reg, entry["dataset_key"])
+        # Belt as well as braces, and legally load-bearing: `_layer_state` reads the layer
+        # CATALOGUE's dataset (growth's is `acs5_prior`), while the rows themselves are stamped
+        # with `source` — so a withdrawn `acs5` licence would otherwise leave growth enabled.
+        if state == "enabled" and not (_cleared(reg, source) and _extra_cleared(reg, metric_key, source)):
+            state = "disabled"
+        rows: list[RowMapping] = []
+        orphans = 0
+        if state == "enabled":
+            params = {"metric": metric_key, "value_vintage": value_vintage, "level": SHADING[layer]["summary_level"],
+                      "geo_vintage": geo_vintage, "w": box[0], "s": box[1], "e": box[2], "n": box[3]}
+            rows = list((await conn.execute(text(_BOUNDARY_SQL), params)).mappings().all())
+            orphans = int((await conn.execute(text(_ORPHAN_SQL), params)).scalar_one())
+    if len(rows) > MAX_FEATURES:
+        return _error("AREA_TOO_LARGE", f"{len(rows)} features in this area; the cap is {MAX_FEATURES}. Zoom in or pass a smaller bbox.", 422)
+    if orphans:
+        # A non-zero count on a metro that has previously reported zero is how a boundary vintage
+        # that has moved out from under the values announces itself (R4).
+        log.warning("boundaries: %d %s values at level %s have no %s geometry", orphans, value_vintage, SHADING[layer]["summary_level"], geo_vintage)
+
+    used = sorted({source} | ({"acs5_prior"} if metric_key == "population_growth_pct" else set()))
+    body: dict[str, Any] = {
+        "type": "FeatureCollection", "cbsa_geoid": cbsa, "layer": layer, "metric_key": metric_key,
+        "summary_level": SHADING[layer]["summary_level"], "geo_label": SHADING[layer]["label"],
+        "unit": "usd" if layer in ("income", "econ") else "pct", "state": state,
+        "boundary_vintage": geo_vintage, "value_vintage": value_vintage, "source_dataset": source,
+        # Read from dataset_registry, never composed here: attribution is legally load-bearing and
+        # a terms change must be one UPDATE rather than a redeploy. Boundaries first — the map
+        # carries the geometry's attribution beside the values' (Census spec §2b).
+        "attribution": [reg["tiger_cb"]["attribution_text"]] + [reg[k]["attribution_text"] for k in used],
+        "values_without_geometry": orphans,
+        "features": [_boundary_feature(row, layer) for row in rows],
+    }
+    if blocked_reason is not None:
+        body["blocked_reason"] = blocked_reason
+    raw = json.dumps(body).encode("utf-8")
+    if len(raw) > MAX_BODY_BYTES:
+        return _error("AREA_TOO_LARGE", f"{len(raw)} bytes in this area; the cap is {MAX_BODY_BYTES}. Zoom in or pass a smaller bbox.", 422)
+    packed = gzip.compress(raw)
+    r.set(key, packed, ex=BOUNDARY_TTL)
+    return _geojson(packed, request, "miss")
+
+
+def _boundary_feature(row: RowMapping, layer: str) -> dict[str, Any]:
+    """One polygon. `value` is `None` both when the geography has no row at all and when its row
+    is suppressed, and the two are told apart by `suppressed`/`suppress_reason` — the client draws
+    both in the no-data class but says something different about each (§6)."""
+    value = None if row["value_num"] is None else float(row["value_num"])
+    moe = None if row["moe"] is None else float(row["moe"])
+    return {
+        "type": "Feature", "id": row["geo_id"],
+        "properties": {
+            "geo_id": row["geo_id"], "name": row["name"],
+            "value": None if row["suppressed"] else value, "moe": moe,
+            "suppressed": bool(row["suppressed"]), "suppress_reason": row["suppress_reason"],
+            # Only `income` can be band-ambiguous: growth and econ carry no published margin
+            # (D-NS17), so `band_ambiguous` is False for them by construction, not by omission.
+            "band_ambiguous": layer == "income" and band_ambiguous(value, moe),
+        },
+        "geometry": json.loads(row["geometry"]),
+    }
+
+
+def _geojson(packed: bytes, request: Request, cache: str) -> Response:
+    """D-NS14: gzip in the HANDLER, and the COMPRESSED bytes are what Redis holds, so a cache hit
+    costs no second compression. No global `GZipMiddleware`: that would change every response in
+    the application, including the ones carrying `x-cache` and the four security headers
+    `SecurityHeadersMiddleware` puts on EVERY answer, which is far wider than the ask."""
+    headers = {"x-cache": cache, "Vary": "Accept-Encoding"}
+    if "gzip" in request.headers.get("accept-encoding", ""):
+        return Response(packed, media_type="application/geo+json", headers={**headers, "Content-Encoding": "gzip"})
+    return Response(gzip.decompress(packed), media_type="application/geo+json", headers=headers)
 
 
 _PANEL_SQL = """
