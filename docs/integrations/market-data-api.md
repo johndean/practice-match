@@ -19,11 +19,12 @@ of truth and the surrounding sentences as commentary.
 | GET | `/api/layers` | `market.read` |
 | GET | `/api/markets` | `market.read` |
 | GET | `/api/markets/{cbsa}/communities` | `market.read` |
+| GET | `/api/markets/{cbsa}/boundaries` | `market.read` |
 | GET | `/api/listings/{listing_id}/market` | `market.read` |
 | GET | `/api/admin/data-sources` | `data_sources.read` (staff/admin) |
 | POST | `/api/admin/data-sources/{dataset_key}/license` | `licence.decide` (admin, re-authenticated within 10 minutes) |
 
-**Mounted only while `SITE_MODE=app`.** All six routes live inside `app/main.py`'s `if
+**Mounted only while `SITE_MODE=app`.** All seven routes live inside `app/main.py`'s `if
 settings.site_mode == "app":` block, the same gate `admin_users_router`/`listings_router` sit
 behind. Production runs `coming_soon` until launch (`CLAUDE.md`), so on production today every one
 of these paths 404s through `not_found_router`, exactly like every other member or admin surface —
@@ -54,23 +55,27 @@ still LISTED (so the UI can render it as unavailable), just never carries data:
 [
   { "key": "income", "label": "Median Household Income", "dataset_key": "acs5",
     "source_label": "Source: U.S. Census Bureau, American Community Survey 5-Year Estimates, 2019–2023",
-    "vintage": "2019–2023", "geo_level": "place|catchment", "state": "enabled",
-    "is_derived": false, "caveat": null },
-  { "key": "pets", "label": "Pet Ownership (est.)", "dataset_key": "acs5", "state": "enabled",
+    "vintage": "2019–2023", "geo_level": "place|catchment",
+    "shading": { "summary_level": "860", "label": "ZIP Code Tabulation Area" },
+    "state": "enabled", "is_derived": false, "caveat": null },
+  { "key": "pets", "label": "Pet Ownership (est.)", "dataset_key": "acs5", "shading": null, "state": "enabled",
     "is_derived": true, "caveat": "Derived estimate: households × 0.57 (national placeholder rate until a licensed regional rate is cleared)." },
   { "key": "growth", "label": "Population Growth", "dataset_key": "acs5_prior",
-    "vintage": "2014–2018 → 2019–2023", "geo_level": "place", "state": "enabled", "is_derived": true,
+    "vintage": "2014–2018 → 2019–2023", "geo_level": "place",
+    "shading": { "summary_level": "160", "label": "Place (city/town)" },
+    "state": "enabled", "is_derived": true,
     "caveat": "Change between two ACS 5-year periods, measured for the listing's city/CDP." },
-  { "key": "households", "label": "Households", "dataset_key": "acs5", "state": "enabled", "is_derived": false, "caveat": null },
+  { "key": "households", "label": "Households", "dataset_key": "acs5", "shading": null, "state": "enabled", "is_derived": false, "caveat": null },
   { "key": "econ", "label": "Average Practice Payroll", "dataset_key": "cbp", "geo_level": "county",
+    "shading": { "summary_level": "050", "label": "County" },
     "state": "enabled", "is_derived": true,
     "caveat": "Payroll per establishment (NAICS 541940), not revenue; county level." },
   { "key": "competition", "label": "Veterinary Competition", "dataset_key": "zbp", "geo_level": "zcta",
-    "state": "blocked", "blocked_reason": "Counsel declined the terms.", "is_derived": false,
+    "shading": null, "state": "blocked", "blocked_reason": "Counsel declined the terms.", "is_derived": false,
     "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. ZIP-code counts aggregated to the community." },
-  { "key": "practices", "label": "Practice Listings", "dataset_key": null, "state": "enabled", "is_derived": false, "caveat": null },
-  { "key": "drive_10", "label": "5–10 min drive time", "dataset_key": null, "state": "enabled", "is_derived": true, "caveat": "Straight-line 8 km approximation of drive time." },
-  { "key": "drive_20", "label": "10–20 min drive time", "dataset_key": null, "state": "enabled", "is_derived": true, "caveat": "Straight-line 16 km approximation of drive time." }
+  { "key": "practices", "label": "Practice Listings", "dataset_key": null, "shading": null, "state": "enabled", "is_derived": false, "caveat": null },
+  { "key": "drive_10", "label": "5–10 min drive time", "dataset_key": null, "shading": null, "state": "enabled", "is_derived": true, "caveat": "Straight-line 8 km approximation of drive time." },
+  { "key": "drive_20", "label": "10–20 min drive time", "dataset_key": null, "shading": null, "state": "enabled", "is_derived": true, "caveat": "Straight-line 16 km approximation of drive time." }
 ]
 ```
 
@@ -83,10 +88,105 @@ not yet cleared" (`disabled`) is not the same as "off because the licence was re
 (`blocked`) — the first can still change, the second is a standing decision until an admin revisits
 it. `practices`/`drive_10`/`drive_20` carry no `dataset_key` at all and are always `enabled`.
 
+**`shading` is the geography the MAP paints this layer at, and is never the same field as
+`geo_level`** (D-NS15). `geo_level` describes the docked PANEL's geography — `income`'s is
+`"place|catchment"` — and the panel and the map answer different questions about the same layer.
+Only the three fill layers carry a `shading` object; the three graduated-symbol layers, `practices`
+and the two drive rings carry `"shading": null`. `GET /api/markets/{cbsa}/boundaries` below serves
+the polygons at exactly the `summary_level` named here.
+
 A licence decision on `/api/admin/data-sources/{key}/license` is reflected here within 60 seconds
 (spec §11): `app.census.gate`'s Redis counter is bumped on every decision and rides inside the
 market-payload cache key below, so a stale answer cannot outlive the decision by more than the
 gate's own TTL.
+
+## `GET /api/markets/{cbsa}/boundaries?layer=income|growth|econ[&bbox=minLng,minLat,maxLng,maxLat]`
+
+The shaded map layer: real Census boundary polygons joined to `geo_metric`, one geography per
+layer (John's rulings D-C34–D-C37, 2026-09-10). `income` draws ZIP Code Tabulation Areas
+(`"summary_level": "860"`), `growth` draws Place (city/town) (`"summary_level": "160"`), `econ`
+draws County (`"summary_level": "050"`). **No layer is ever painted at a geography finer than its
+figure is honest at** — spec §6's standing rule, "Never silently promote a county figure into a
+tract-labeled slot", applied to the map. The three graduated-symbol layers (`pets`, `households`,
+`competition`) are not shaded and are not served here; `/api/layers` names each layer's own
+geography in its `shading` member, or `null` where it has none.
+
+One GeoJSON `FeatureCollection` with foreign members (RFC 7946 permits them; `L.geoJSON` ignores
+what it does not know):
+
+```json
+{
+  "type": "FeatureCollection",
+  "cbsa_geoid": "12420", "layer": "income", "metric_key": "median_hh_income",
+  "summary_level": "860", "geo_label": "ZIP Code Tabulation Area", "unit": "usd",
+  "state": "enabled", "boundary_vintage": "2023", "value_vintage": "2019–2023",
+  "source_dataset": "acs5",
+  "attribution": ["Boundaries: U.S. Census Bureau, TIGER/Line Cartographic Boundary Files 2023",
+                  "Source: U.S. Census Bureau, American Community Survey 5-Year Estimates, 2019–2023"],
+  "values_without_geometry": 0,
+  "features": [
+    { "type": "Feature", "id": "78704",
+      "properties": { "geo_id": "78704", "name": "ZCTA5 78704",
+                      "value": 92150, "moe": 6420,
+                      "suppressed": false, "suppress_reason": null, "band_ambiguous": false },
+      "geometry": { "type": "MultiPolygon", "coordinates": [] } }
+  ]
+}
+```
+
+Every feature's `properties` carries exactly those seven keys — `geo_id`, `name`, `value`, `moe`,
+`suppressed`, `suppress_reason`, `band_ambiguous` — on every polygon, whatever its state. Nothing
+is omitted to signal an absence; an absence is a value.
+
+**Two vintages, named separately.** `tiger_cb` is a bare year and `acs5` is an en-dashed range;
+they advance on different calendars and are not interchangeable. A geography present in one and
+not the other is handled in both directions: **geometry with no value** is returned with
+`"value": null, "suppressed": false, "suppress_reason": null` and drawn in the no-data class —
+never omitted, because a hole in a choropleth reads as a boundary; **a value with no geometry** is
+dropped from `features` (there is nothing to draw) and counted in `values_without_geometry`, which
+is logged on every cache miss. That counter is deliberately NOT narrowed by `bbox` — it counts
+values with no `geo_area` row at that level and vintage AT ALL, since "values whose geography is
+not in this viewport" would be non-zero on every zoomed request and would mean nothing. A non-zero
+count on a metro that has previously reported zero means a boundary vintage has moved out from
+under the values.
+
+**`value` is `null` in two different cases and the client must tell them apart.** A geography with
+no row at all is `value: null` with `suppressed: false` and `suppress_reason: null`; a suppressed
+one is `value: null` with `suppressed: true` and a `suppress_reason` of `no_moe`, `high_moe`,
+`input_suppressed` or `source_flag`. Both are drawn in the same neutral class; they say different
+things, and a client that guards on `suppressed` alone paints the first as measured.
+`band_ambiguous` is `true` when the margin of error spans a legend stop — that polygon keeps its
+value and takes a caveat, and is **never** greyed. Only `income` can carry either state: `growth`
+and `econ` are published with no margin at all (a difference of two ACS periods, and a census of
+establishments rather than a sample), so both are `false` on those layers by construction rather
+than by omission.
+
+**Bounds.** `bbox` is optional and defaults to the metro's own envelope at summary level `310`.
+`MAX_BBOX_DEG = 4.0` degrees on either axis, `MAX_FEATURES = 4000`, `MAX_BODY_BYTES = 2_000_000`
+uncompressed; a breach is `422` with `{"error": {"code": "BBOX_TOO_LARGE" | "AREA_TOO_LARGE",
+"message": …}}`. A bbox that is not four ordered numbers is `422 BAD_BBOX`; a layer that is not one
+of the three is `422 BAD_LAYER`; an unknown metro is `404 NOT_FOUND`. For scale: an Austin metro
+(`12420`) income response carries **88 ZCTAs**, two orders of magnitude inside `MAX_FEATURES`.
+
+**Licence.** A layer whose dataset is not `cleared` answers `200` with `"features": []` and
+`"state": "disabled"` or `"blocked"` (+ `blocked_reason`) — never a `403`, because `/api/layers`
+already lists a blocked layer so the UI can render it as unavailable, and a map that 403s cannot
+draw that state. No figure from an uncleared dataset reaches the wire in any of those states. The
+gate is checked twice over: against the layer catalogue's own `dataset_key`, and against the
+dataset the rows are STAMPED with — which differ for `growth`, whose catalogue entry names
+`acs5_prior` while its rows carry `acs5`, so either licence moving turns the layer off (see the
+licence-gates table below). The response is cached for `BOUNDARY_TTL = 86400` seconds under a key
+carrying `gate.version()`, so a licence decision makes every cached body unreachable in the same
+instant (§11's one-minute ceiling), and the nightly writer's own version counter, so a rewrite
+that changes values without moving a vintage does too. The key also carries the `bbox`, so two
+viewports of one metro cannot collide.
+
+**Compression is applied by the handler**, not by a global middleware, and the compressed bytes
+are what the cache holds: `Content-Encoding: gzip` with `Vary: Accept-Encoding` when the request
+accepted it, the same JSON otherwise. Every answer carries `x-cache: hit|miss`. **Geometry is
+never simplified on the request path** — `ST_SimplifyPreserveTopology` measured five to eight
+times the cost of the query itself; if a future geography needs it, the simplified geometry is
+materialised by the nightly job, once per vintage.
 
 ## `GET /api/markets`
 
@@ -387,6 +487,10 @@ payload — never `0`, never `""`** (D-C31: a missing figure is omitted, never z
 * `suppressed: true` → render "Estimate too imprecise to show at this geography", never a blank or
   a zero.
 * `geo_precision != "rooftop"` → render "approximate community data" near the map pin.
+* On the map, `value: null` with `suppressed: false` is the no-data class with "No data for this
+  area"; `suppressed: true` is the same class with the suppression wording above; `band_ambiguous`
+  `true` renders the value plus "this margin spans two legend bands" — never grey, because greying
+  a measured figure is its own false statement.
 * `opportunity_score`, on the day it is approved for publication, always renders with its three
   `components` and never immediately beside the asking price (spec §14) — there is nothing to wire
   today, since the key never arrives.
