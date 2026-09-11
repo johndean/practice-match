@@ -1090,7 +1090,7 @@ class Component extends DCLogic {
       })),
       hasDemo: sel.id !== "p8" && sel.pop != null,
       noDemo: sel.id === "p8" || sel.pop == null,
-      overviewTitle: sel.communityLabel || "Market Overview (10 min drive)",
+      overviewTitle: sel.communityLabel || "Market Overview",
       isInsights: (s.mdTab || "insights") === "insights",
       isOther: (s.mdTab || "insights") !== "insights",
       otherTitle: ({ overview: "Overview", financials: "Financials", property: "Property", contact: "Contact" })[s.mdTab] || "Overview",
@@ -1553,8 +1553,8 @@ class Component extends DCLogic {
       demoScope: "Figures describe " + (p.communityLabel ? "the area " + p.communityLabel.charAt(0).toLowerCase() + p.communityLabel.slice(1) : "the community around the practice") + ", not the practice itself.",
       demo: [
         { k: "Population", v: p.pop, sub: p.communityLabel || "Community, 2023" },
-        { k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); return g.length > 1 ? "Since " + g[1] : ""; })() },
-        { k: "Median income", v: p.income, sub: "Household, 2023" },
+        { k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); const y = g.length > 1 ? g[1] : ""; if (!p.growthScope) return y ? "Since " + y : ""; return y ? p.growthScope + " · since " + y : p.growthScope; })() },
+        { k: "Median income", v: p.income, sub: p.incomeNote || "Household, 2023" },
         { k: "Households", v: (p.hh || "").replace(" households", ""), sub: p.communityLabel || "In the community" }
       ],
       keyFacts: [

@@ -852,7 +852,7 @@
                     View full listing<img src="assets/icons/navigate-arrow.svg" alt="" width="12" height="12" style="transform: rotate(180deg); filter: brightness(0) invert(1);">
                   </button>
                   <sc-if value="{{ md.panel.hasDemo }}" hint-placeholder-val="{{ true }}">
-                    <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">Drive-time figures are approximated from a straight-line catchment around the practice. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>
+                    <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">A catchment figure is a straight-line area of about 5 miles around the practice, not a driving route. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>
                   </sc-if>
                 </div>
               </sc-if>
@@ -2824,7 +2824,7 @@ class Component extends DCLogic {
       })),
       hasDemo: sel.id !== "p8" && sel.pop != null,
       noDemo: sel.id === "p8" || sel.pop == null,
-      overviewTitle: sel.communityLabel || "Market Overview (10 min drive)",
+      overviewTitle: sel.communityLabel || "Market Overview",
       isInsights: (s.mdTab || "insights") === "insights",
       isOther: (s.mdTab || "insights") !== "insights",
       otherTitle: ({ overview: "Overview", financials: "Financials", property: "Property", contact: "Contact" })[s.mdTab] || "Overview",
@@ -3287,8 +3287,8 @@ class Component extends DCLogic {
       demoScope: "Figures describe " + (p.communityLabel ? "the area " + p.communityLabel.charAt(0).toLowerCase() + p.communityLabel.slice(1) : "the community around the practice") + ", not the practice itself.",
       demo: [
         { k: "Population", v: p.pop, sub: p.communityLabel || "Community, 2023" },
-        { k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); return g.length > 1 ? "Since " + g[1] : ""; })() },
-        { k: "Median income", v: p.income, sub: "Household, 2023" },
+        { k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); const y = g.length > 1 ? g[1] : ""; if (!p.growthScope) return y ? "Since " + y : ""; return y ? p.growthScope + " · since " + y : p.growthScope; })() },
+        { k: "Median income", v: p.income, sub: p.incomeNote || "Household, 2023" },
         { k: "Households", v: (p.hh || "").replace(" households", ""), sub: p.communityLabel || "In the community" }
       ],
       keyFacts: [

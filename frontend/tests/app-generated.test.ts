@@ -158,6 +158,9 @@ describe('the docked panel and the detail card say which area their figures desc
     const insights = appVue.slice(appVue.indexOf('v-if="v.md?.panel?.isInsights"'), appVue.indexOf('v-if="v.md?.panel?.isOther"'));
     expect((insights.match(/v-if="v\.md\?\.panel\?\.hasDemo"/g) ?? []).length).toBe(2);
     expect(insights.indexOf('v-if="v.md?.panel?.noDemo"')).toBeLessThan(insights.indexOf('View full listing'));
-    expect(insights.indexOf('View full listing')).toBeLessThan(insights.indexOf('Drive-time figures are approximated'));
+    // A27.4 (D-C39) corrected the footnote's first sentence: the band is a straight-line
+    // catchment, never a drive time. Its place in the order is what this line measures.
+    expect(insights.indexOf('View full listing')).toBeLessThan(insights.indexOf('A catchment figure is a straight-line area'));
+    expect(appVue, 'the corrected footnote must not come back as a drive time').not.toContain('Drive-time figures are approximated');
   });
 });

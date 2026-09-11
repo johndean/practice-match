@@ -297,11 +297,17 @@ describe('local design amendments (spec D15)', () => {
     // edits BOTH panels in one entry (count: 2) — which is how F2's three are born with the
     // width instead of acquiring it in a third pass.
     'A26.16',
+    // A27 — per-figure geography on the Community Context card (John, 2026-09-11, D-C38/D-C39).
+    // A27.1 and A27.2 give the Median income and Growth tiles their own sub-lines; A27.3 and
+    // A27.4 correct the two live sentences on the docked panel that describe the band as a drive
+    // time when it is an 8 km straight-line buffer. A27.2/A27.3/A27.4 read A21.3d's, A21.4a's and
+    // A21.4d's output, so the family is appended last.
+    'A27.1', 'A27.2', 'A27.3', 'A27.4',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(205);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(209);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

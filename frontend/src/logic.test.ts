@@ -3595,16 +3595,19 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
 
   // ---- F-5, the card says which area it describes (D-C32) ----------------------------------
 
-  it('the panel’s Insights heading names the fallback area, and the design’s own wording otherwise (A21.5a)', () => {
+  it('the panel’s Insights heading names the area, and the design’s own two words otherwise (A21.5a, A27.3)', () => {
     const p = austin()[0];
-    expect(panelFor(p).overviewTitle).toBe('Market Overview (10 min drive)');
-    (p as any).communityLabel = 'Within 10 minutes of the practice';
+    // A27.3 (D-C39): the default loses the parenthetical it could not support. The band is an
+    // 8 km straight-line buffer, not a routed drive time, and this heading sat over PLACE-band
+    // figures on all but one listing.
+    expect(panelFor(p).overviewTitle).toBe('Market Overview');
+    (p as any).communityLabel = 'Within about 5 miles of the practice';
     try {
-      expect(panelFor(p).overviewTitle).toBe('Within 10 minutes of the practice');
+      expect(panelFor(p).overviewTitle).toBe('Within about 5 miles of the practice');
     } finally { delete (p as any).communityLabel; }
   });
 
-  it('the detail’s Community Context names the fallback area in all three places (A21.5b/c/d)', () => {
+  it('the detail’s Community Context names the area in all three places (A21.5b/c/d)', () => {
     const p = austin()[0];
     c.setState({ auth: true, detailId: p.id });
     const before = c.detail();
@@ -3612,15 +3615,64 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     expect(before.demo[3].sub).toBe('In the community');
     expect(before.demoScope).toBe('Figures describe the community around the practice, not the practice itself.');
 
-    (p as any).communityLabel = 'Within 10 minutes of the practice';
+    (p as any).communityLabel = 'Within about 5 miles of the practice';
     try {
       const after = c.detail();
-      expect(after.demo[0].sub).toBe('Within 10 minutes of the practice');
-      expect(after.demo[3].sub).toBe('Within 10 minutes of the practice');
-      expect(after.demoScope).toBe('Figures describe the area within 10 minutes of the practice, not the practice itself.');
+      expect(after.demo[0].sub).toBe('Within about 5 miles of the practice');
+      expect(after.demo[3].sub).toBe('Within about 5 miles of the practice');
+      expect(after.demoScope).toBe('Figures describe the area within about 5 miles of the practice, not the practice itself.');
       // The Census attribution itself is legally load-bearing and is not part of this sentence.
       expect(after.demoScope).not.toContain('Census');
     } finally { delete (p as any).communityLabel; }
+  });
+
+  // ---- D-C38, per-figure geography: the two tiles A21.5b/c could not reach ------------------
+  //
+  // THE HONEST MEASURE, which these cases exist to hold: only THREE of the card's four tiles gain
+  // neighbourhood detail. Population, Households and Median income follow the catchment; the
+  // Growth tile keeps its city-or-county figure and gains an honest label and nothing else,
+  // because `population_growth_pct` cannot vary below place-or-county until the 2010->2020 tract
+  // crosswalk is loaded. Nothing here is "per-neighbourhood market data".
+
+  it('the Growth tile names the geography its own figure was measured at (A27.2)', () => {
+    const p = austin()[0];
+    c.setState({ auth: true, detailId: p.id });
+    // The design's own fixtures carry no `growthScope`, so the null branch is A21.3d's output
+    // unchanged — which is what keeps `detail` on its frozen hash.
+    expect(c.detail().demo[1].sub).toBe('Since 2015');
+
+    (p as any).growthScope = 'City of Dallas';
+    try {
+      expect(c.detail().demo[1].sub).toBe('City of Dallas \u00b7 since 2015');
+      // The VALUE is untouched: D-C38 labels this figure, it does not change it.
+      expect(c.detail().demo[1].v).toBe(c.detail().demo[1].v);
+    } finally { delete (p as any).growthScope; }
+  });
+
+  it('…and a growth figure with no vintage still names its geography, alone (A27.2)', () => {
+    const p = austin()[0];
+    const growth = (p as any).growth;
+    c.setState({ auth: true, detailId: p.id });
+    (p as any).growth = '+1.2%';
+    try {
+      // A21.3d renders "" for a figure that carries no " since " — the sub-line must not become
+      // "City of Dallas · since " with nothing after it.
+      expect(c.detail().demo[1].sub).toBe('');
+      (p as any).growthScope = 'Orange County';
+      expect(c.detail().demo[1].sub).toBe('Orange County');
+      delete (p as any).growthScope;
+    } finally { (p as any).growth = growth; }
+  });
+
+  it('the Median income tile carries the approximate qualifier when the API sends one (A27.1)', () => {
+    const p = austin()[0];
+    c.setState({ auth: true, detailId: p.id });
+    expect(c.detail().demo[2].sub).toBe('Household, 2023');
+
+    (p as any).incomeNote = 'Within about 5 miles of the practice \u00b7 approximate';
+    try {
+      expect(c.detail().demo[2].sub).toBe('Within about 5 miles of the practice \u00b7 approximate');
+    } finally { delete (p as any).incomeNote; }
   });
 
   // ---- F-6, the Market data strip cards ----------------------------------------------------

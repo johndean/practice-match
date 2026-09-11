@@ -4241,6 +4241,103 @@ const A26_16: Amendment = {
   count: 2
 };
 
+/** A27 (John, 2026-09-11 — rulings D-C38 and D-C39). PER-FIGURE GEOGRAPHY on the Community
+ *  Context card, and the ring described by DISTANCE rather than by time.
+ *
+ *  What John was shown: a Dallas practice headed "Specialty practice — Highland Park / affluent
+ *  central" whose card read the same four numbers as every other Dallas listing, South Dallas
+ *  included — median income $67,760 on all twelve — because all twelve sit inside one Census
+ *  place and `serve.py` served the place band to every one of them. He chose the option in which
+ *  EACH TILE NAMES WHERE ITS OWN NUMBER COMES FROM, against the cheaper one that relabels every
+ *  tile uniformly, and the reason he rejected that one is worth keeping: it moves the defect one
+ *  tile over rather than fixing it, because the Growth number would still be the whole City of
+ *  Dallas under a caption saying otherwise.
+ *
+ *  THE HONEST MEASURE, which no comment here may soften: three of the card's four tiles gain
+ *  neighbourhood detail. The fourth gains an honest label and nothing more — `population_growth_pct`
+ *  cannot vary below place-or-county until the 2010->2020 tract crosswalk is loaded, a registered
+ *  Phase C deferral (`materialize.py` computes it once per listing OUTSIDE the band loop and
+ *  writes that one value into all three bands, plan D12). On the Browse map two of the three fill
+ *  layers still paint one flat colour per city or county. This is not "per-neighbourhood market
+ *  data" and may not be described as such.
+ *
+ *  D-C39: the band is an 8 km straight-line buffer from the practice point (spec §8), not a
+ *  routed drive time, and spec §15 still lists true drive-time isochrones as OPEN for V1. So the
+ *  card says "within about 5 miles of the practice", and the two live sentences that said
+ *  otherwise over PLACE-band figures — the docked panel's Insights heading and its footnote — are
+ *  corrected in the same release rather than left to contradict it. He took the largest of the
+ *  three wording options knowingly, and it touches approved copy: A27.3 and A27.4 re-base the
+ *  Browse states that render the panel. None of `baseline-manifest.json`'s thirteen frozen hashes
+ *  is a Browse capture, and none of them moves.
+ *
+ *  THE NULL BRANCH OF EVERY ENTRY IS BYTE-IDENTICAL IN WHAT IT RENDERS — the A21.5 pattern
+ *  (`design-amendments.ts`'s A21.5b/A21.5c), and the reason no approved state outside those two
+ *  Browse captures moves: `frontend/tests/design-listings.mjs` sends `null` for `growth_scope` and
+ *  `income_note` exactly as it sends it for `community_label`, so the reference, the app and every
+ *  baseline take the design's own literal.
+ *
+ *  A27.3 is the ONE entry whose null branch does change, and deliberately: the design's own
+ *  "Market Overview (10 min drive)" is the false sentence D-C39 names, so there is no null branch
+ *  to preserve — it is the thing being corrected. A27.4 is the same. The third such sentence,
+ *  the Browse "Market data" card's "Figures describe the community around each practice…"
+ *  (`App.vue`), is NOT touched here: it is guarded by no amendment at all and D-C39 names two
+ *  sentences, not three. Flagged as its own ruling, not silently widened. */
+
+/** A27.1 — the Median income tile's sub-line. The design hard-codes "Household, 2023", and
+ *  A21.5b/A21.5c deliberately took only the two sub-lines that said "the community" — so this was
+ *  the one area figure on the card whose caption could not follow its own geography. With no note
+ *  the design's literal stands, byte for byte. */
+const A27_1: Amendment = {
+  id: 'A27.1', date: '2026-09-11', ruling: 'each tile names where its own number comes from, and a ring median says it is approximate (D-C38)',
+  find: '{ k: "Median income", v: p.income, sub: "Household, 2023" },',
+  replace: '{ k: "Median income", v: p.income, sub: p.incomeNote || "Household, 2023" },',
+  count: 1
+};
+
+/** A27.2 — the Growth tile's sub-line, which is where D-C38 actually lands: the figure stays the
+ *  city's or the county's and the caption SAYS so, beside a population that is the ring's.
+ *
+ *  CHAINED on A21.3d, like A21.5c on A12.7: the `find` is A21.3d's whole `replace`, not the
+ *  pristine row, because A21.3d already rewrote this row to take the vintage from the API's own
+ *  string instead of hard-coding 2015. The null branch returns exactly what A21.3d returns —
+ *  "Since <year>", or "" where the API sent no vintage — so a listing with no named geography
+ *  renders the same bytes it does today. */
+const A27_2: Amendment = {
+  id: 'A27.2', date: '2026-09-11', ruling: 'growth keeps its city-or-county figure and its own sub-line says so (D-C38)',
+  find: '{ k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); return g.length > 1 ? "Since " + g[1] : ""; })() },',
+  replace: '{ k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); const y = g.length > 1 ? g[1] : ""; if (!p.growthScope) return y ? "Since " + y : ""; return y ? p.growthScope + " · since " + y : p.growthScope; })() },',
+  count: 1
+};
+
+/** A27.3 — the docked panel's Insights heading. D-C39 names this sentence: it reads "Market
+ *  Overview (10 min drive)" over PLACE-band figures on 28 of 29 listings today, and the band it
+ *  names is not a drive time even on the one listing it describes. The parenthetical goes and the
+ *  design's own two words stay; `communityLabel` still overrides the whole heading when the
+ *  figures came from the catchment, which is A21.5a's mechanism unchanged.
+ *
+ *  CHAINED on A21.4a, which introduced the line. */
+const A27_3: Amendment = {
+  id: 'A27.3', date: '2026-09-11', ruling: 'the ring is described by distance, not by time, and the sentences that said otherwise are corrected in the same release (D-C39)',
+  find: 'overviewTitle: sel.communityLabel || "Market Overview (10 min drive)",',
+  replace: 'overviewTitle: sel.communityLabel || "Market Overview",',
+  count: 1
+};
+
+/** A27.4 — the docked panel's footnote, the second sentence D-C39 names. "Drive-time figures are
+ *  approximated from a straight-line catchment around the practice" is two claims, and the first
+ *  is false: there is no drive time anywhere in the pipeline. The straight-line catchment IS the
+ *  measurement, so the corrected sentence keeps it and says how far it reaches. The other two
+ *  sentences in the paragraph are untouched, byte for byte.
+ *
+ *  CHAINED on A21.4d, which wrapped this paragraph in the `hasDemo` branch. */
+const A27_4: Amendment = {
+  id: 'A27.4', date: '2026-09-11', ruling: 'the ring is described by distance, not by time, and the sentences that said otherwise are corrected in the same release (same ruling)',
+  find: 'Drive-time figures are approximated from a straight-line catchment around the practice. ',
+  replace: 'A catchment figure is a straight-line area of about 5 miles around the practice, not a driving route. ',
+  count: 1
+};
+
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -4301,5 +4398,11 @@ export function amendments(): Amendment[] {
     // A26.16 — the panel width (John, 2026-09-11, Task F1b): "the panel takes the width of the
     // trigger that opened it, so their edges line up." Its `find` is A26.10's and A26.11's own
     // output — the panel style string they share — so it is applied last, and once, for both.
-    A26_16];
+    A26_16,
+    // A27 — per-figure geography on the Community Context card (John, 2026-09-11, D-C38/D-C39).
+    // A27.2 reads A21.3d's output, A27.3 A21.4a's and A27.4 A21.4d's, so the family is appended
+    // last as every family is. Definition order in this file matches this list (m8). A20 stays
+    // reserved by the image-identifiability plan and A24 by the neighbourhood-shading spec, so
+    // A27 is the next free id in the ledger after A26.
+    A27_1, A27_2, A27_3, A27_4];
 }
