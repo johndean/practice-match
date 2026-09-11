@@ -1288,7 +1288,12 @@ def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
     number_words = {n: w for n, w in enumerate(
         ("Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
          "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen",
-         "Nineteen", "Twenty", "Twenty-one", "Twenty-two", "Twenty-three", "Twenty-four"))}
+         "Nineteen", "Twenty", "Twenty-one", "Twenty-two", "Twenty-three", "Twenty-four",
+         # A27 (2026-09-11) made twenty-five families and the tuple stopped at "Twenty-four", so
+         # this assertion failed on its own vocabulary before it compared CLAUDE.md -- the same
+         # way A18 did at "Fifteen". Extended past the next few reservations (A20, A24) so the
+         # vocabulary is not the thing that fails next.
+         "Twenty-five", "Twenty-six", "Twenty-seven", "Twenty-eight", "Twenty-nine", "Thirty"))}
     assert family_count in number_words, f"no spelled-out word on hand for {family_count} families"
 
     claude = (ROOT / "CLAUDE.md").read_text()
