@@ -8,11 +8,13 @@ created and fully migrated one, at ~2 s each, until the session template landed)
 a `conn`-bound fixture would still add a database per test to a 3.5 s file for no benefit. Tests
 that need a scratch database ask for `conn` (or `member`, which does) themselves.
 """
+import io
 import sys
 
 import httpx
 import pytest
 from httpx import ASGITransport
+from PIL import Image
 
 from app import db
 from app.auth import passwords as P
@@ -91,3 +93,47 @@ def member(conn, redis):
         raw = S.create(conn, redis, aid, "203.0.113.5", "pytest")
         return aid, {"pm_session": raw, "pm_csrf": "csrf-1"}, {"X-CSRF-Token": "csrf-1", "Origin": ORIGIN}
     return make
+
+
+@pytest.fixture
+def seller(member):
+    """A signed-in seller's request headers: the Cookie header plus the CSRF pair, ready to pass as
+    `headers=seller`. Three personas rather than one `member(...)` call per test, because every
+    suite from Task P2 on needs the same three and a per-test call would mint a new account (and a
+    new rate-limit bucket) each time."""
+    _account_id, cookies, headers = member(roles=("buyer", "seller"), email="idp-seller@example.org")
+    return auth_headers(cookies, headers)
+
+
+@pytest.fixture
+def buyer(member):
+    _account_id, cookies, headers = member(roles=("buyer",), email="idp-buyer@example.org")
+    return auth_headers(cookies, headers)
+
+
+@pytest.fixture
+def admin(member):
+    _account_id, cookies, headers = member(roles=("buyer", "admin"), email="idp-admin@example.org")
+    return auth_headers(cookies, headers)
+
+
+def _jpeg_bytes(width: int = 240, height: int = 180) -> bytes:
+    """`test_listing_assets.py::_jpeg`'s bytes, reachable from every suite. Deterministic: the
+    upload tests compare `store.get(original)` to this value byte for byte."""
+    image = Image.new("RGB", (width, height), (120, 30, 30))
+    buffer = io.BytesIO()
+    image.save(buffer, "JPEG")
+    return buffer.getvalue()
+
+
+def _png_bytes(width: int = 240, height: int = 180) -> bytes:
+    buffer = io.BytesIO()
+    Image.new("RGB", (width, height), (30, 120, 30)).save(buffer, "PNG")
+    return buffer.getvalue()
+
+
+async def _draft(client, headers) -> str:
+    """A fresh draft listing, as `test_listing_assets.py::_create` makes one."""
+    response = await client.post("/api/seller/listings", headers=headers)
+    assert response.status_code == 201, response.text
+    return str(response.json()["id"])

@@ -412,11 +412,23 @@ refused with `503 STORAGE_UNAVAILABLE` rather than crashing — a developer's ma
 environment still serves every READ (the seed hospitals' photographs come off disk and
 need none of this) while only the WRITES stop.
 
-Keys are `listings/<listing id>/photos/<asset id>.webp` for a photograph — every upload is
-re-encoded to WebP with its metadata stripped (D15) — and `listings/<listing id>/documents/<asset
-id><suffix>` for a floor plan, a financial packet or any other document, `<suffix>` being the
-uploaded file's own extension. An asset is written once (`put_immutable`'s never-overwrite
-guarantee) and deleted at most once; nothing under `listings/` is ever mutated in place.
+A photograph's asset id is a DIRECTORY, not a filename (spec 2026-09-09 C.2, Task P2), holding up
+to three objects built by `app/privacy/__init__.py`'s own key functions:
+
+* `listings/<listing id>/photos/<asset id>/original.<ext>` — the bytes exactly as uploaded,
+  `<ext>` chosen by the file's MAGIC BYTES and cross-checked against the declared Content-Type.
+  Directive 13: never overwritten, and reachable by the owner and the reviewer alone.
+* `listings/<listing id>/photos/<asset id>/display.webp` — the re-encoded, metadata-stripped WebP
+  (D15). This is the key `listing_asset.storage_key` names, so it is what the buyer photo route
+  serves today.
+* `listings/<listing id>/photos/<asset id>/redacted.webp` — written by the media worker once the
+  identifiability pipeline has a derivative to write; absent until then.
+
+A document is still one key, `listings/<listing id>/documents/<asset id><suffix>`, `<suffix>` being
+the uploaded file's own extension. An asset is written once and deleted at most once — a delete
+removes every object under the photograph's prefix — and nothing under `listings/` is mutated in
+place except `redacted.webp`, which the worker regenerates and which buyers address by its content
+hash so a stale URL is never a stale image.
 
 The seed demo hospitals' own photographs are **not** in this bucket at all (D26): they are
 committed under `seeds/hospitals/photos/`, already in the image, and served straight off disk by

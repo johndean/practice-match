@@ -26,9 +26,9 @@ def _no_stray_network():
     """No test in the whole suite may open a real socket to anything but this machine (A-SL18 (5),
     review Info-4).
 
-    `tests/api/test_listing_assets.py::_intercepted_by_moto` guards the `store` fixture's OWN
-    endpoint alone — it says nothing about a test that repoints `settings.s3_*` after `store`
-    yields, or builds an `ObjectStore` directly, so it stays (it also asserts something this guard
+    `_intercepted_by_moto` below (this file's own since Task P2 Step 0) guards the `store`
+    fixture's OWN endpoint alone — it says nothing about a test that repoints `settings.s3_*` after
+    `store` yields, or builds an `ObjectStore` directly, so it stays (it also asserts something this guard
     cannot: that the CONFIGURED endpoint string looks like an AWS host, independent of whether any
     request is ever made). This fixture is the suite-wide backstop the review's Info-4 asked for:
     session-scoped and autouse, so every test is covered without asking for it by name.
@@ -57,6 +57,68 @@ def _no_stray_network():
     patch.setattr(socket.socket, "connect", guarded_connect)
     yield
     patch.undo()
+
+
+import boto3
+from moto import mock_aws
+
+from app.config import settings as _settings
+from app.storage import ObjectStore
+
+#: The fake bucket every suite in this repository shares (Task P2 Step 0). Moved here VERBATIM
+#: from `tests/api/test_listing_assets.py`, which owned it alone until the image-identifiability
+#: pipeline gave `tests/tasks/`, `tests/media/` and `tests/privacy/` a bucket of their own to need.
+BUCKET = "pm-test"
+ENDPOINT = "https://s3.amazonaws.com"
+
+
+def _intercepted_by_moto(endpoint: str) -> bool:
+    """Whether moto 5 will intercept a request to `endpoint`, asserting rather than reporting.
+
+    A-SL16 M4: moto matches the request URL, so a bucket endpoint from the fleet ESCAPES `mock_aws`
+    and makes a real HTTPS call — which is what happened the first time this fixture was written.
+    The credentials are dummies, so such a call would fail rather than reach a real bucket; a test
+    suite that can talk to the internet is still not a test suite."""
+    assert endpoint.endswith(".amazonaws.com"), (
+        f"{endpoint} escapes moto's interceptor; the fake bucket must be an AWS-shaped host")
+    return True
+
+
+@pytest.fixture
+def store(monkeypatch):
+    """A moto bucket, reached through the real `ObjectStore.from_settings`."""
+    _intercepted_by_moto(ENDPOINT)
+    with mock_aws():
+        boto3.client("s3", region_name="us-east-1").create_bucket(Bucket=BUCKET)
+        for name, value in (("s3_endpoint_url", ENDPOINT), ("s3_bucket", BUCKET),
+                            ("s3_access_key_id", "AKIA"), ("s3_secret_access_key", "secret")):
+            monkeypatch.setattr(_settings, name, value)
+        _intercepted_by_moto(str(_settings.s3_endpoint_url))
+        yield ObjectStore.from_settings(_settings)
+
+
+@pytest.fixture(autouse=True)
+def published_tasks(monkeypatch):
+    """Every Celery message the suite publishes, recorded instead of sent — and the list, so a test
+    can assert on it by asking for this fixture by name.
+
+    Task P2 made `celery_app.send_task` UNCONDITIONAL on the photograph upload path (one
+    `media.process_photo` per upload, after the commit), where the three publishes that existed
+    before it were all conditional and reached by a handful of tests that each patched `send_task`
+    themselves. Without this, some thirty upload tests would publish to a REAL broker — celery's
+    redis transport spends twenty seconds retrying when none is listening, and when one IS
+    listening the suite quietly fills a queue nothing drains. `_no_stray_network` above cannot see
+    it: the broker is `localhost`, which that guard allows on purpose.
+
+    A recorder rather than a refusal: a publish is legitimate behaviour and several tests assert it
+    happens. A test that wants to observe one patches `send_task` itself, as this suite already
+    does in five places, and its own patch wins for the length of that test."""
+    from app.tasks.celery_app import celery_app
+
+    published: list[tuple[str, object]] = []
+    monkeypatch.setattr(celery_app, "send_task",
+                        lambda name, args=None, **kwargs: published.append((name, args)))
+    return published
 
 
 @pytest.fixture

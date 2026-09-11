@@ -1271,14 +1271,30 @@ def test_every_writer_of_a_listing_row_declares_how_it_meets_the_publish_gate():
 def test_deploy_md_documents_the_object_storage_layout():
     """SL9 Step 2's docs sweep: the four `S3_*` rows (SL2) say what the credentials are, not what
     the bucket holds. An operator diagnosing a photo or a document that failed to load needs the
-    key scheme, read from `upload_photo`'s own key-building expression rather than retyped, so a
-    changed prefix fails this test instead of leaving a stale runbook."""
+    key scheme, read from the key builders themselves rather than retyped, so a changed prefix
+    fails this test instead of leaving a stale runbook."""
     deploy = (ROOT / "DEPLOY.md").read_text()
     assert "## Object storage" in deploy
     section = deploy.split("## Object storage", 1)[1].split("\n## ", 1)[0]
-    seller = (ROOT / "app" / "api" / "seller_listings.py").read_text()
-    key_expr = re.search(r'key = f"([^"]+)"', seller)
-    assert key_expr, "app/api/seller_listings.py no longer builds the asset key the way this test reads"
+    # The key scheme moved out of `upload_photo` and into `app/privacy/__init__.py` in Task P2,
+    # when a photograph's asset id became a DIRECTORY holding three objects (spec 2026-09-09 C.2).
+    # Read from those builders rather than retyped, for the reason the docstring gives: each one's
+    # object name is lifted out of its own `return`, and the WHOLE key it builds — prefix and all —
+    # has to be in the runbook, so renaming an object or moving the prefix fails here.
+    keys = (ROOT / "app" / "privacy" / "__init__.py").read_text()
+    prefix_expr = re.search(r'def photo_prefix.*?\n    return f"([^"]+)"', keys, re.DOTALL)
+    assert prefix_expr, "app/privacy/__init__.py no longer builds the photo prefix the way this test reads"
+    documented = (prefix_expr.group(1)
+                  .replace("{listing_id}", "<listing id>").replace("{asset_id}", "<asset id>"))
+    built = {}
+    for builder in ("original_key", "display_key", "redacted_key"):
+        expr = re.search(rf'def {builder}.*?\n    return f"\{{photo_prefix\(listing_id, asset_id\)\}}([^"]+)"',
+                         keys, re.DOTALL)
+        assert expr, f"app/privacy/__init__.py no longer builds {builder} the way this test reads"
+        built[builder] = documented + expr.group(1).replace("{ext}", ".<ext>")
+    assert len(set(built.values())) == 3, f"two of the three photo keys are the same string: {built}"
+    for builder, key in built.items():
+        assert key in section, f"DEPLOY.md's Object storage section does not carry {builder}'s key `{key}`"
     variables_section = deploy.split("## Variables", 1)[1].split("\n## ", 1)[0]
     bucket_row = re.search(r"`S3_BUCKET`.*", variables_section)
     assert bucket_row, "DEPLOY.md's Variables table no longer has an S3_BUCKET row to cross-check against"

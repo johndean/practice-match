@@ -35,13 +35,14 @@ from __future__ import annotations
 
 import json
 import re
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable
 from contextlib import closing
 from datetime import UTC, datetime
 from functools import lru_cache
 from typing import Annotated, Any, cast
 from uuid import UUID, uuid4
 
+import anyio
 from botocore.exceptions import BotoCoreError, ClientError
 from fastapi import APIRouter, Depends, Request
 from fastapi.responses import JSONResponse, Response
@@ -71,6 +72,8 @@ from app.config import settings
 from app.db import sync_conn
 from app.mail.outbox import enqueue
 from app.media.encode import encode_webp, sha256_hex
+from app.privacy import PHOTO_EXT, PROCESSING_VERSION, display_key, original_key, photo_prefix
+from app.privacy import record as privacy_record
 from app.storage import ObjectStore
 from app.tasks.celery_app import celery_app
 
@@ -667,6 +670,13 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
 # — which a URL minted an hour ago cannot express (D15 reason 1).
 PHOTO_TYPES = ("image/jpeg", "image/png", "image/webp")
 MAX_PHOTO_BYTES = 15 * 1024 * 1024
+#: The magic bytes of the three photo types, checked against the DECLARED Content-Type (spec
+#: 2026-09-09 C.5 step 0). `PHOTO_TYPES` alone let through "anything Pillow can open, labelled
+#: jpeg/png/webp"; this is the document route's own `_sniffed` rule applied to photographs.
+PHOTO_MAGIC: tuple[tuple[bytes, str, str], ...] = (
+    (b"\xff\xd8\xff", "image/jpeg", ".jpg"),
+    (b"\x89PNG\r\n\x1a\n", "image/png", ".png"),
+)
 # D18/Q3, John's ruled default: PDF, CSV and XLSX. The design names a spreadsheet ("Equipment list ·
 # Spreadsheet", logic.js:1290) and only ever shows the badges "Photo" and "PDF", so CSV and XLSX are
 # badged with the uppercased extension — a new VALUE in an existing slot, not new markup.
@@ -787,6 +797,19 @@ def _sniffed(content_type: str, data: bytes) -> bool:
     return True
 
 
+def _sniffed_photo(data: bytes, declared: str) -> str | None:
+    """The extension `original.*` takes, or None when the bytes and the header disagree.
+
+    `_sniffed` above is the document route's; a photograph's types have their own magic numbers and
+    WebP's is a RIFF container whose fourcc sits at byte 8, which no `startswith` can express."""
+    if data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return PHOTO_EXT["image/webp"] if declared == "image/webp" else None
+    for magic, content_type, suffix in PHOTO_MAGIC:
+        if data.startswith(magic):
+            return suffix if declared == content_type else None
+    return None
+
+
 def _too_large(limit: int) -> str:
     return f"The file is larger than {limit // (1024 * 1024)} MB."
 
@@ -883,8 +906,13 @@ async def _json_body(request: Request) -> dict[str, Any]:
 
 
 def _insert_asset(conn: Any, listing_id: UUID, kind: str, name: str, content_type: str,
-                  data: bytes, digest: str, suffix: str) -> tuple[UUID, str]:
+                  data: bytes, digest: str, key_for: Callable[[UUID], str]) -> tuple[UUID, str]:
     """One row, written once, with its final key — the (asset id, storage key) pair.
+
+    The KEY comes from the caller (Task P2): a photograph's asset uuid is now a DIRECTORY holding
+    three objects (spec 2026-09-09 C.2) while a document's is still a filename, and a `suffix`
+    argument cannot express both. The document route passes the string it built before, so no
+    document key moves.
 
     The id is minted HERE rather than by the table's default (A-SL16 M1): a placeholder
     `storage_key` would hold an entry in a table-wide UNIQUE index for the length of the whole
@@ -895,7 +923,7 @@ def _insert_asset(conn: Any, listing_id: UUID, kind: str, name: str, content_typ
     object that was never written is a broken listing, while an object with no row is a few
     kilobytes nothing reads. Fail in the direction that leaves the database honest."""
     asset_id = uuid4()
-    key = f"listings/{listing_id}/{'photos' if kind == 'photo' else 'documents'}/{asset_id}{suffix}"
+    key = key_for(asset_id)
     with conn.cursor() as cur:
         cur.execute("INSERT INTO listing_asset (id, listing_id, kind, name, content_type, byte_size,"
                     " sha256, storage_key) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
@@ -923,6 +951,27 @@ def _drop_object(store: ObjectStore, key: str) -> None:
         raise Refusal("STORAGE_UNAVAILABLE", "Object storage is unavailable; try again.", 503) from exc
 
 
+def _listed(store: ObjectStore, prefix: str) -> list[str]:
+    """Every key under `prefix`, with a bucket outage as a refusal rather than a 500 — `_put` and
+    `_drop_object`'s own shape (A-SL16 M2)."""
+    try:
+        return store.list(prefix)
+    except (BotoCoreError, ClientError) as exc:
+        raise Refusal("STORAGE_UNAVAILABLE", "Object storage is unavailable; try again.", 503) from exc
+
+
+def _exists(store: ObjectStore, key: str) -> bool:
+    """`store.exists`, with a bucket outage as the same 503 the rest of this module raises.
+
+    `ObjectStore.exists` returns False for a 404 and RE-RAISES every other `ClientError`
+    (`app/storage.py`), so the upload's immutability guard would answer 500 on a bucket blip
+    without this. Same shape as `_put` and `_drop_object`, for the same reason (A-SL16 M2)."""
+    try:
+        return store.exists(key)
+    except (BotoCoreError, ClientError) as exc:
+        raise Refusal("STORAGE_UNAVAILABLE", "Object storage is unavailable; try again.", 503) from exc
+
+
 def _fetch(store: ObjectStore, key: str) -> bytes | None:
     try:
         return store.get(key)
@@ -936,17 +985,31 @@ def _asset_payload(asset_id: UUID, kind: str, name: str, content_type: str, size
 
 @router.post("/listings/{listing_id}/photos", status_code=201)
 async def upload_photo(listing_id: str, request: Request, principal: Owner) -> Response:
-    """One photograph, re-encoded to WebP with every metadatum stripped (D15).
+    """One photograph: the original as received, the normalised display derivative, a privacy row
+    and one message (spec 2026-09-09 C.5 step 0).
 
-    Stripping is the point, not tidiness: a phone photograph carries GPS EXIF, and a listing whose
-    location is undisclosed must not ship its coordinates inside a picture (A10.2, "Sellers control
-    what buyers can see")."""
+    Stripping metadata is still the point for the DISPLAY object — a phone photograph carries GPS
+    EXIF and a listing whose location is undisclosed must not ship its coordinates inside a picture
+    (A10.2, "Sellers control what buyers can see"). The ORIGINAL is kept because directive 13 says
+    "NEVER overwrite the original", and it is reachable by exactly two handler bodies (the owner's
+    and the reviewer's) and by nothing else."""
     hit(sync_redis(), "listing:upload", str(principal.account_id), *LISTING_UPLOAD)
+    started: tuple[UUID, int] | None = None
     try:
         store = store_for_request()
         name, content_type, data, _fields = await _upload_bytes(request, MAX_PHOTO_BYTES)
         if content_type not in PHOTO_TYPES:
             raise Refusal("UNSUPPORTED_TYPE", f"A photograph must be one of {', '.join(PHOTO_TYPES)}.", 415)
+        ext = _sniffed_photo(data, content_type)
+        if ext is None:
+            raise Refusal("BAD_IMAGE", "That file could not be read as a photograph.", 422)
+        # A thread, because `encode_webp` is a LANCZOS resize plus up to six WebP encodes at
+        # method=6 and this handler is `async def` -- inline it blocks the event loop for every
+        # other request. `anyio` is a main dependency (`app/auth/passwords.py`'s precedent).
+        encoded = await anyio.to_thread.run_sync(encode_webp, data)
+        if encoded is None:
+            raise Refusal("BAD_IMAGE", "That file could not be read as a photograph.", 422)
+        webp, digest = encoded
         with closing(sync_conn()) as conn, conn:
             row = locked_row(conn, listing_id, principal)
             _writable(row)
@@ -956,12 +1019,15 @@ async def upload_photo(listing_id: str, request: Request, principal: Owner) -> R
             # hold, and a hospital with nine photographs showed three. Every upload is stored and
             # every stored photograph is listed; the wizard names the ones past the design's slots
             # by the seller's own caption.
-            encoded = encode_webp(data)
-            if encoded is None:
-                raise Refusal("BAD_IMAGE", "That file could not be read as a photograph.", 422)
-            webp, digest = encoded
-            asset_id, key = _insert_asset(conn, row["id"], "photo", name, "image/webp", webp, digest, ".webp")
+            asset_id, key = _insert_asset(conn, row["id"], "photo", name, "image/webp", webp, digest,
+                                          lambda a: display_key(row["id"], a))
+            source_key = original_key(row["id"], asset_id, ext)
+            if _exists(store, source_key):
+                raise Refusal("STORAGE_CONFLICT", "That photograph has already been stored.", 409)
+            _put(store, source_key, data, content_type)
             _put(store, key, webp, "image/webp")
+            privacy_record.insert(conn, asset_id=asset_id, listing_id=row["id"],
+                                  original_storage_key=source_key, version=PROCESSING_VERSION)
             with conn.cursor() as cur:
                 cur.execute("UPDATE listing SET photos = %s::jsonb, updated_at = now()"
                             " WHERE id = %s AND seller_id = %s",
@@ -969,10 +1035,16 @@ async def upload_photo(listing_id: str, request: Request, principal: Owner) -> R
             claim_from_seed(conn, row, principal)
             on_market = take_off_market(conn, row, principal, request)
             payload = _asset_payload(asset_id, "photo", name, "image/webp", len(webp))
+            started = (asset_id, PROCESSING_VERSION)
     except Refusal as exc:
         return _refused(exc)
     if on_market:
         drop_list_cache(sync_redis())
+    # AFTER the commit (spec C.5 step 0): a task published inside the transaction could be taken by
+    # a prefork child before the row it names exists. `started` is None on no path that reaches
+    # here -- the `except` above returns -- and mypy needs the narrowing said out loud.
+    assert started is not None
+    privacy_record.enqueue_processing(*started)
     return JSONResponse(payload, status_code=201)
 
 
@@ -1146,7 +1218,12 @@ async def delete_asset(listing_id: str, asset_id: str, request: Request, princip
             if found is None:
                 raise Refusal("NOT_FOUND", "No such asset.", 404)
             key, kind = found
-            _drop_object(store, key)
+            # All three (spec 2026-09-09 C.2): original, display and -- once the worker has written
+            # it -- redacted. Listed by PREFIX rather than assembled from the row, so a derivative
+            # the row does not name (a regeneration interrupted between the put and the UPDATE)
+            # goes with it. A document still has exactly one key.
+            for gone in (_listed(store, photo_prefix(row["id"], parsed)) if kind == "photo" else [key]):
+                _drop_object(store, gone)
             with conn.cursor() as cur:
                 cur.execute("DELETE FROM listing_asset WHERE id = %s AND listing_id = %s", (parsed, row["id"]))
             if kind == "photo":
@@ -1195,8 +1272,10 @@ async def upload_document(listing_id: str, request: Request, principal: Owner) -
                 held = cast("tuple[int]", cur.fetchone())[0]
             if held >= MAX_DOCUMENTS:
                 raise Refusal("DOCUMENT_LIMIT", f"A listing may carry {MAX_DOCUMENTS} documents.", 409)
+            suffix = DOCUMENT_TYPES[content_type]
             asset_id, key = _insert_asset(conn, row["id"], kind, name, content_type, data,
-                                          sha256_hex(data), DOCUMENT_TYPES[content_type])
+                                          sha256_hex(data),
+                                          lambda a: f"listings/{row['id']}/documents/{a}{suffix}")
             _put(store, key, data, content_type)
             claim_from_seed(conn, row, principal)
             on_market = take_off_market(conn, row, principal, request)
