@@ -484,8 +484,9 @@ env PYTHONPATH=/app python scripts/census_load.py activate zbp           2022   
 > "Dallas", "Orange County" — by joining each listing's stored `place_geoid`/`county_geoid` to
 > `geo_area` **at the currently active `tiger_cb` vintage**. `practice_location` carries no vintage
 > of its own, so a listing geocoded against one edition may hold a geoid the next edition does not
-> define. The API keeps serving (a page that fails is worse than a name that is missing — the same
-> ruling that removed the `float(None)` 500), and says so in the api log:
+> define. The listings route still answers 200 and the card still renders — a page that fails is
+> worse than a name that is missing, the same ruling that removed the `float(None)` 500 — and the
+> api log says so:
 >
 > ```bash
 > railway logs --service api --environment <env> --lines 200 | grep "no geo_area name at the active tiger_cb vintage"
