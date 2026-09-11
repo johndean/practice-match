@@ -55,7 +55,7 @@ Every task's requirements implicitly include this section. Values are copied ver
 - **(g) `frontend/tests/baseline-manifest.json`'s THIRTEEN frozen hashes must not move.** `mobile-list`, `mobile-detail`, `detail`, `requests`, `seller-dash`, `wizard-step-1`, `wizard-step-7`, `wizard-preview`, `wizard-done`, `admin-users`, `admin-listings`, `admin-requests`, `admin-data-sources`. **Not one of them mounts a map.** A moved hash means the change leaked outside Browse: stop with NEEDS_CONTEXT, do not re-pin. The only two mechanisms that have ever legitimately moved a frozen hash are a ruled removal from every screen (A6) and a ruled change to the shared header (A14); nothing here is either.
 - **(h) Playwright ports and databases never collide across worktrees.** Every task that runs Playwright exports `PW_APP_PORT=5583 PW_REF_PORT=5584 PW_CS_PORT=5585 PW_API_PORT=8157` explicitly and `lsof`s them first. pytest and Playwright never share a database: pytest clones per test from a template (`tests/conftest.py::scratch_dsn`) off `DATABASE_URL`, and `frontend/tests/targets.ts:126` runs `migrate.py` + `reset_rate_limits.py` + `seed_persona.py` + `seed_listings.py` against whatever `DATABASE_URL` names. This worktree's is `practice_match_shading` and its Redis index is `/10`; siblings hold `/0`, `/3`, `/7`, `/8`, `/9` and ports 5473-5475/8047, 5503-5505/8347, 5513-5515/8357, 5573-5575/8147.
 - **(i) A hand-maintained number in a comment or a document is a defect waiting to happen.** Where a figure can be derived from the tree, derive it. `tests/test_docs.py` already pins CLAUDE.md's amendment counts and approved-state count against `design-amendments.ts` and `screens.ts`; every new document claim in this plan gets its own drift test in the same file or in `frontend/tests/`.
-- **(j) The design's published bands are unchanged (D-C36).** `income` `stops: [50000, 75000, 100000, 150000]`, buckets `< $50K`, `$50–75K`, `$75–100K`, `$100–150K`, `> $150K`. `growth` `stops: [10, 20, 35]`, buckets `< 10%`, `10–20%`, `20–35%`, `> 35%`. `econ` `stops: [450000, 650000, 900000]`, buckets `< $450K`, `$450–650K`, `$650–900K`, `> $900K`. Labels: `Median Household Income (ACS)`, `Population Growth (ACS)`, `Average Practice Payroll (CBP)`.
+- **(j) The design's published bands are unchanged (D-C36) — except `growth`, SUPERSEDED for that one layer by D-C46 (John, 2026-09-11), applied in Task 4 as amendment A24.13.** `income` `stops: [50000, 75000, 100000, 150000]`, buckets `< $50K`, `$50–75K`, `$75–100K`, `$100–150K`, `> $150K`. `growth` **was** `stops: [10, 20, 35]`, buckets `< 10%`, `10–20%`, `20–35%`, `> 35%`; it **is now** `stops: [0, 5, 15]`, buckets `Declining`, `0–5%`, `5–15%`, `> 15%`. Why the freeze had to give: those stops cannot represent data that runs roughly −5 % to +15 %, and there was no band below zero at all, so Task 4 would have shipped real Census polygons that are still one colour and the complaint this whole stream exists to answer would have survived it. Measured against ACS 2014–2018 against 2019–2023 place populations — the exact pair `population_growth_pct` divides, read from the Census Bureau's keyless summary files, 29,232 places — `[10, 20, 35]` put **79.9 %** of US places of 10,000 people or more into ONE bucket, while **30.5 %** of them were declining with no band to say so. The new stops are the tertiles of the non-declining half of that distribution, rounded to legend-readable numbers. `income` and `econ` stay frozen under D-C36; this ruling does not reach them. `econ` `stops: [450000, 650000, 900000]`, buckets `< $450K`, `$450–650K`, `$650–900K`, `> $900K`. Labels: `Median Household Income (ACS)`, `Population Growth (ACS)`, `Average Practice Payroll (CBP)`.
 - **(k) The three geographies are D-C35's, and no layer is ever promoted into a finer slot.** `income` → summary level `'860'`, label `ZIP Code Tabulation Area`. `growth` → `'160'`, label `Place (city/town)`. `econ` → `'050'`, label `County`. The three graduated-symbol layers (`pets`, `households`, `competition`) are NOT moved onto polygons.
 - **(l) The no-data class is the design's own `#e6e6e6` at `fillOpacity: 0.5`, always drawn, never omitted** (D-NS16, ruled by John 2026-09-10 §14 Q1), with one extra legend row reading exactly `No data`. Grey means UNMEASURED and only that: a figure that WAS measured but whose margin spans a legend band is shown with its value and a caveat, never greyed (D-C36).
 - **(m) The snapshot strip's footnote becomes, verbatim** (John, 2026-09-10 §14 Q2): `Community areas are Census ZIP Code Tabulation Areas (2023 boundaries); figures describe the area, not the practice.`
@@ -133,10 +133,12 @@ Sequencing after slice (a) follows the spec: values (b), read path (c), map wiri
 >    `deriveTypographyB` and never appears as a literal id, which is exactly how
 >    `tests/test_docs.py` counts it).
 > 2. **The per-task deltas, which are properties of the work and therefore stable:** Task 4 adds
->    **+14** entries (and +14 ledger rows, +1 family); Task 10 adds **+5**; Tasks 3, 5–9 and 11 add
->    **0**. Total for family A24: **19 entries** — note the File Map row for
+>    **+15** entries (and +15 ledger rows, +1 family); Task 10 adds **+5**; Tasks 3, 5–9 and 11 add
+>    **0**. Total for family A24: **20 entries** — note the File Map row for
 >    `design-amendments.ts` says "the sixteen A24 entries", which is wrong on the plan's own
->    arithmetic (158→172→177) and should read nineteen.
+>    arithmetic (158→172→177). **Task 4 MEASURED +15, not the +14 this line first carried:** D-C46
+>    (John, 2026-09-11) was moved into that task and is one more literal, `A24.13`, so the family is
+>    twenty and not nineteen. Derive it from `design-amendments.ts`; never copy any of the three.
 > 3. **No task adds an approved state.** `screens.ts` keeps whatever count it has when the task
 >    starts; Task 11's "stays at 49 entries" is to be read as "stays at `SCREENS.length`".
 > 4. **The release version is `next free patch in MERGE order`**, never a number written here.
@@ -250,11 +252,11 @@ now read their targets off the run above rather than off a literal:
 
 | | Task 4 target | Task 10 target |
 |---|---|---|
-| literals | `literals + 14` | `literals + 19` |
-| entries / `toHaveLength(N)` | `entries + 14` | `entries + 19` |
-| ledger rows | `rows + 14` | `rows + 19` |
+| literals | `literals + 15` | `literals + 20` |
+| entries / `toHaveLength(N)` | `entries + 15` | `entries + 20` |
+| ledger rows | `rows + 15` | `rows + 20` |
 | families | `families + 1` (A24 is new) | unchanged |
-| CLAUDE.md | `<word(families+1)> families, <entries+14> entries` and `A1's 24 derived edits plus <literals+14> literals`, **both twice** | same sentences at `+19` |
+| CLAUDE.md | `<word(families+1)> families, <entries+15> entries` and `A1's 24 derived edits plus <literals+15> literals`, **both twice** | same sentences at `+20` |
 | `screens.ts` | unchanged | unchanged |
 
 For orientation only — **not to be asserted**: on `main` at `ec79594` that reads Task 4 → 195 literals /
@@ -310,7 +312,7 @@ A gate log must show `N passed`. A seconds-long "green" e2e run is the API web s
 
 | File | Kind | Responsibility | Task |
 |---|---|---|---|
-| `frontend/tests/design-amendments.ts` | modify | `AmendmentFile`, `Amendment.file`, `PRISTINE_JSX`/`AMENDED_JSX`, `amendmentsFor()`; then the **nineteen** A24 entries (14 in Task 4, 5 in Task 10 — A-NS5 corrected this from "sixteen", which the plan's own 158→172→177 arithmetic contradicted) | 1, 4, 10 |
+| `frontend/tests/design-amendments.ts` | modify | `AmendmentFile`, `Amendment.file`, `PRISTINE_JSX`/`AMENDED_JSX`, `amendmentsFor()`; then the **twenty** A24 entries (15 in Task 4, 5 in Task 10 — A-NS5 corrected this from "sixteen"; Task 4 then MEASURED fifteen rather than fourteen, because D-C46 moved into it as A24.13) | 1, 4, 10 |
 | `frontend/scripts/apply-amendments.ts` | modify | writes BOTH outputs, partitioned by `file` | 1 |
 | `frontend/tests/design-amendments.test.ts` | modify | the jsx pristine hash, both byte equalities, per-file count walk; then A24's ids and cases | 1, 4, 10 |
 | `frontend/tests/reference-bundle.test.ts` | modify | `MarketMapV3.rev2.jsx` joins the required-file list | 1 |
@@ -1265,18 +1267,22 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 The design draws the shading itself, so the app and the reference must move in the same commit or every Browse state fails and no tolerance can be relaxed to make it pass. Fourteen amendment entries — nine in `Practice Match V3.dc.html`, four in `MarketMapV3.jsx`, and one that is two template edits — plus the Vue port's own swap, plus the deletion of `mosaic.js` and its nine cases.
 
-**Re-basing states: THIRTEEN, and exactly thirteen.** A state re-bases if and only if it mounts a map, and `MarketMapView` is mounted in exactly two places (`App.vue:367`, the desktop Browse column; `App.vue:1414`, the phone frame's map tab):
+**Re-basing states: DERIVE THE SET, do not copy the count.** A state re-bases if and only if it mounts a map, and `MarketMapView` is mounted in exactly two places (the desktop Browse column and the phone frame's map tab — find the lines, they move).
+
+> **MEASURED IN TASK 4, 2026-09-11: SIXTEEN, not the thirteen written below.** The rule is right and the count was stale: A26 (the filter-bar dropdowns, merged after this plan was cut) added `browse-filter-menu`, `browse-more-filters` and `browse-more-filters-menu`, all three of them DESKTOP BROWSE captures that therefore mount the map. Predicted sixteen before running the generator and measured sixteen, the same set, by hashing every baseline before and after — exactly the class of stale literal A-NS5 rewrote the Preconditions block for.
 
 | Re-basing | Why |
 |---|---|
-| `browse`, `browse-layer-menu`, `browse-compare-open`, `browse-legend-collapsed`, `browse-layers-open`, `browse-market-panel`, `browse-metro-menu`, `header-give-menu`, `browse-panel-lightbox`, `header-1100`, `header-1000` | the desktop Browse map (11) |
+| `browse`, `browse-layer-menu`, `browse-compare-open`, `browse-legend-collapsed`, `browse-layers-open`, `browse-market-panel`, `browse-metro-menu`, `browse-filter-menu`, `browse-more-filters`, `browse-more-filters-menu`, `header-give-menu`, `browse-panel-lightbox`, `header-1100`, `header-1000` | the desktop Browse map (14) |
 | `mobile-map`, `mobile-sheet` | the phone frame's map (2) |
 
 `interest-modal`, `detail`, `detail-lightbox` and `detail-lightbox-next` pass THROUGH Browse on their way but capture the detail screen, where the map is unmounted; they must not move. `mobile-detail` calls `waitMap` on its way to the detail screen for the same reason and must not move either — which makes it the sharpest single check in the set, because it is both frozen and map-adjacent.
 
 **The invariant: `frontend/tests/baseline-manifest.json`'s thirteen frozen hashes must not move.** Not one of them mounts a map. A moved hash means the change leaked outside Browse: **stop with NEEDS_CONTEXT and do not re-pin**.
 
-**Counts after this task — REWRITTEN AS DELTAS by A-NS5, because every absolute here had rotted.** Run the Preconditions script FIRST and read `literals`, `entries`, `rows`, `families` off it; this task's targets are `literals + 14`, `entries + 14`, `rows + 14`, `families + 1` (A24 is a new family). `frontend/tests/design-amendments.test.ts` reads `toHaveLength(entries + 14)`, and `CLAUDE.md` must contain exactly `<word(families + 1)> families, <entries + 14> entries` and `A1's 24 derived edits plus <literals + 14> literals` — **both strings appear twice in that file**. For orientation only, not to be asserted: on `main` at `ec79594` that is 195 literals / 219 entries / 196 rows / `Twenty-five families`; once `feat/card-geography` merges it is 210 / 234 / 211 / `Twenty-seven families`.
+**Counts after this task — REWRITTEN AS DELTAS by A-NS5, because every absolute here had rotted.** Run the Preconditions script FIRST and read `literals`, `entries`, `rows`, `families` off it; this task's targets are `literals + 15`, `entries + 15`, `rows + 15`, `families + 1` (A24 is a new family). `frontend/tests/design-amendments.test.ts` reads `toHaveLength(entries + 15)`, and `CLAUDE.md` must contain exactly `<word(families + 1)> families, <entries + 15> entries` and `A1's 24 derived edits plus <literals + 15> literals` — **both strings appear twice in that file**. For orientation only, not to be asserted: on `main` at `ec79594` that is 195 literals / 219 entries / 196 rows / `Twenty-five families`; once `feat/card-geography` merges it is 210 / 234 / 211 / `Twenty-seven families`.
+
+> **MEASURED IN TASK 4, 2026-09-11: the delta is +15, not +14.** D-C46 (John, 2026-09-11) was moved into this task deliberately — it moves the same Browse captures — and is one more literal, `A24.13`. On `main` at `ec79594` plus this branch that reads **196 literals / 220 entries / 197 rows / `Twenty-five families`**. Derive it; do not copy it.
 
 > **⚠ A-NS5 correction.** This paragraph used to say "`tests/test_docs.py`'s `number_words` already runs to `"Twenty-four"` — no edit needed there." **That is false.** The tuple stops at `"Twenty-four"` (indices 0..24) and `main` is at exactly twenty-four families, so A24 makes twenty-five and `test_claude_md_amendment_family_and_entry_counts_match_design_amendments` fails on `assert family_count in number_words` — on its own vocabulary, before it ever looks at CLAUDE.md. **Task 4 must extend the tuple**, unless `feat/card-geography` merged first: it hit the same wall at A27 and already extended it to thirty-three words. Check, do not assume — the Preconditions script prints this as a `[Task 4]` line.
 
@@ -1958,7 +1964,7 @@ and at `:396-408`, the repaint-budget test's rationale: `the community mosaic re
 
 Append fourteen rows to `docs/design-reference/design_handoff_practice_match_v3/LOCAL_AMENDMENTS.md`, in apply order (A24.1 … A24.12), each quoting `NS.ruling` **byte for byte** in the third column — `every LOCAL_AMENDMENTS.md row quotes its amendment's ruling verbatim` compares that cell to `a.ruling` exactly. The fourth column is free prose; write what the entry changes and why. **Cite `V3:<line>` only for the nine `.dc.html` entries** and recompute every citation after `gen:design` (Step 14); the four jsx rows cite `MarketMapV3.jsx:<line>` instead, which the citation test's `/V3:(\d+)/` pattern deliberately cannot match — there is a `.` between `V3` and the colon.
 
-In `CLAUDE.md`, add the A24 clause to the "Source of truth for the UI" paragraph (both copies of that paragraph carry the family list; A24's clause goes after A23's), and update the two derived sentences to `<word(families + 1)> families, <entries + 14> entries` and `A1's 24 derived edits plus <literals + 14> literals` — **in both places each**. (A-NS5: the plan named the old and new strings literally — `Twenty-three families, 182 entries` → `Twenty-four families, 196 entries` — and all four are stale. Read the current sentence out of CLAUDE.md and add the delta; `tests/test_docs.py` is what proves it.)
+In `CLAUDE.md`, add the A24 clause to the "Source of truth for the UI" paragraph (both copies of that paragraph carry the family list; A24's clause goes after A23's), and update the two derived sentences to `<word(families + 1)> families, <entries + 15> entries` and `A1's 24 derived edits plus <literals + 15> literals` — **in both places each**. (A-NS5: the plan named the old and new strings literally — `Twenty-three families, 182 entries` → `Twenty-four families, 196 entries` — and all four are stale. Read the current sentence out of CLAUDE.md and add the delta; `tests/test_docs.py` is what proves it.)
 
 - [ ] **Step 13: Characterise the new script branches in vitest**
 
