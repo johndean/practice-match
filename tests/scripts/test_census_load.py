@@ -314,7 +314,7 @@ def test_cmd_acs_queries_market_state_and_prints_measure_counts(scratch_dsn, mon
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     captured: dict = {}
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         captured.setdefault("dataset_keys", []).append(dataset_key)
         captured["states"] = list(states)
         return {"acs5": 100, "acs5_subject": 10, "acs5_prior": 50}[dataset_key]
@@ -337,7 +337,7 @@ def test_cmd_acs_accepts_a_dataset_override(scratch_dsn, monkeypatch):
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     captured: dict = {}
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         captured.setdefault("dataset_keys", []).append(dataset_key)
         return 1
 
@@ -371,7 +371,7 @@ def test_cmd_acs_builds_the_client_factory_from_the_required_key_and_contact_nev
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "distinctive-contact@vinfoundation.example.org")
     captured: dict = {}
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         client = client_factory(object())  # CensusClient's constructor never inspects `ds`
         captured["api_key"] = client.api_key
         captured["contact"] = client.contact
@@ -400,7 +400,7 @@ def test_cmd_acs_leaves_the_archive_disabled_without_s3_settings(scratch_dsn, mo
     monkeypatch.setattr(settings, "s3_secret_access_key", None)
     captured: dict = {}
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         captured["archive"] = client_factory(object()).archive
         return 0
 
@@ -424,7 +424,7 @@ def test_cmd_acs_passes_a_real_archive_once_s3_settings_are_configured(scratch_d
     monkeypatch.setattr(settings, "s3_secret_access_key", "secretkey")
     captured: dict = {}
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         captured["archive"] = client_factory(object()).archive
         return 0
 
@@ -480,7 +480,7 @@ def test_cmd_acs_returns_four_when_a_dataset_download_fails(scratch_dsn, monkeyp
     monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         raise CensusHTTPError(500, "https://api.census.gov/data/2023/acs/acs5?key=SECRET")
 
     monkeypatch.setattr(census_acs, "load", fake_load)
@@ -497,7 +497,7 @@ def test_cmd_acs_returns_five_when_a_dataset_fails_validation(scratch_dsn, monke
     monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         raise VariableMissing(["B19013_001E"])
 
     monkeypatch.setattr(census_acs, "load", fake_load)
@@ -517,7 +517,7 @@ def test_cmd_acs_returns_two_when_a_dataset_is_licence_gated(scratch_dsn, monkey
     monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         raise PermissionError(f"{dataset_key} is blocked; loads are refused (spec §1 licensing gate)")
 
     monkeypatch.setattr(census_acs, "load", fake_load)
@@ -525,6 +525,68 @@ def test_cmd_acs_returns_two_when_a_dataset_is_licence_gated(scratch_dsn, monkey
     assert census_load.main(["acs", "--dataset", "acs5"]) == 2
     err = capsys.readouterr().err
     assert "acs5" in err and "refused" in err
+
+
+# --- acs --levels (Task 6, D-NS4) -------------------------------------------------------------
+
+def test_cmd_acs_passes_a_levels_filter_through(scratch_dsn, monkeypatch):
+    """The CLI's own half of D-NS4: `census_load.py acs --levels 860` loads the one level, so the
+    ZCTA pull can be run on its own instead of re-running six geographies for six states."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    captured: dict = {}
+
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
+        captured["levels"] = levels
+        return 1
+
+    monkeypatch.setattr(census_acs, "load", fake_load)
+
+    assert census_load.main(["acs", "--dataset", "acs5", "--levels", "860"]) == 0
+
+    assert captured["levels"] == ["860"]
+
+
+def test_cmd_acs_accepts_more_than_one_level(scratch_dsn, monkeypatch):
+    """`nargs="+"`: the flag is a list, so an operator can reload two geographies together."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    captured: dict = {}
+
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
+        captured["levels"] = levels
+        return 1
+
+    monkeypatch.setattr(census_acs, "load", fake_load)
+
+    assert census_load.main(["acs", "--dataset", "acs5", "--levels", "860", "160"]) == 0
+
+    assert captured["levels"] == ["860", "160"]
+
+
+def test_cmd_acs_defaults_to_every_level(scratch_dsn, monkeypatch):
+    """Omitting the flag must leave the existing load exactly as it was: `levels=None`, which is
+    `acs.load`'s "every geography" arm (`tests/census/test_acs.py
+    ::test_load_without_a_levels_filter_still_fetches_every_geography` proves what that arm does)."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    captured: dict = {}
+
+    # `**kwargs`, not `levels=None`: a fake with its own default would report `None` whether or
+    # not `cmd_acs` passed the argument at all, which is a gate that cannot fail. This one sees
+    # exactly what was handed over.
+    def fake_load(conn, client_factory, dataset_key, states, **kwargs):
+        captured["kwargs"] = kwargs
+        return 1
+
+    monkeypatch.setattr(census_acs, "load", fake_load)
+
+    assert census_load.main(["acs", "--dataset", "acs5"]) == 0
+
+    assert captured["kwargs"] == {"levels": None}
 
 
 # --- cbp/zbp/bds subcommands (Task A6) --------------------------------------------------------

@@ -94,8 +94,9 @@ def _full_state_handler():
             return httpx.Response(200, json=FIX)
         # every other geography: one row with the same columns, minimal
         hdr = FIX[0][:-3] + (["state", "county"] if "county:*" in str(r.url) else ["state", "place"] if "place" in str(r.url)
-                              else ["state"] if "for=state" in str(r.url) else ["metropolitan statistical area/micropolitan statistical area"] if "metropolitan" in str(r.url) else ["us"])
-        vals = ["X", "10", "1", "5", "1", "50000", "100", "30000", "40.0", "3", "6"] + (["48", "001"] if len(hdr) == 13 and hdr[-1] == "county" else ["48", "00001"] if hdr[-1] == "place" else ["48"] if hdr[-1] == "state" else ["12420"] if "metropolitan" in hdr[-1] else ["1"])
+                              else ["state"] if "for=state" in str(r.url) else ["zip code tabulation area"] if "tabulation" in str(r.url)
+                              else ["metropolitan statistical area/micropolitan statistical area"] if "metropolitan" in str(r.url) else ["us"])
+        vals = ["X", "10", "1", "5", "1", "50000", "100", "30000", "40.0", "3", "6"] + (["48", "001"] if len(hdr) == 13 and hdr[-1] == "county" else ["48", "00001"] if hdr[-1] == "place" else ["48"] if hdr[-1] == "state" else ["78704"] if "tabulation" in hdr[-1] else ["12420"] if "metropolitan" in hdr[-1] else ["1"])
         return httpx.Response(200, json=[hdr, vals])
     return handler
 
@@ -165,3 +166,117 @@ def test_load_aborts_and_records_the_run_when_a_response_is_missing_a_variable(c
         assert cur.fetchone()[0] == "aborted"
         cur.execute("SELECT count(*) FROM acs_measure")
         assert cur.fetchone()[0] == 0
+
+
+# --- D-NS4: ZCTA income is LOADED, never aggregated from tracts -------------------------------
+# `metrics.weighted_median` is a household-weighted average of tract medians: it has no combined
+# margin of error by construction, so a figure derived that way could never fail the CV test, and
+# shading a metro's ZCTAs with values that can never be suppressed would hollow out D-C36, whose
+# entire point is that the margin of error is shown and measured. So summary level `860` is
+# loaded, not aggregated.
+
+# The identifier columns each geography's own rows carry, keyed by the `for=` clause
+# `GEOGRAPHIES` builds -- `geoid()` assembles the geo_id out of exactly these.
+_IDENTIFIERS = {
+    "tract:*": {"state": "48", "county": "453", "tract": "000101"},
+    "place:*": {"state": "48", "place": "05000"},
+    "county:*": {"state": "48", "county": "453"},
+    "zip code tabulation area:*": {"zip code tabulation area": "78704"},
+    "metropolitan statistical area/micropolitan statistical area:*": {
+        "metropolitan statistical area/micropolitan statistical area": "12420"},
+    "us:1": {"us": "1"},
+}
+# One plausible row of acs5 values, in `VARIABLES["acs5"]` order, so the median household income
+# and ITS OWN margin can be read back out of `acs_measure`.
+_VALUES = ["31000", "120", "14000", "60", "92150", "6420", "51000", "34.1", "5200", "15500"]
+
+
+def _recording_factory(seen):
+    """A real `CensusClient` over `httpx.MockTransport` -- the shape every other load test in this
+    file uses -- recording the `for=`/`in=` pair of every request as the CLIENT built it, rather
+    than the argument `load()` handed over, and answering each geography with one row carrying
+    that geography's own identifier columns."""
+    def handler(request: httpx.Request) -> httpx.Response:
+        for_, in_ = request.url.params["for"], request.url.params.get("in")
+        seen.append((for_, in_))
+        ids = _IDENTIFIERS.get(for_, {"state": for_.split(":")[1]})   # `for=state:48` names itself
+        header = ["NAME", *acs.VARIABLES["acs5"], *ids]
+        return httpx.Response(200, json=[header, ["A place", *_VALUES, *ids.values()]])
+
+    def factory(ds):
+        return CensusClient("K", ds, None, transport=httpx.MockTransport(handler), contact=CONTACT)
+
+    return factory
+
+
+def test_geographies_carries_the_zcta_level_once_nationally():
+    """Checked against the Census API's own geography list for the active acs5 vintage
+    (`https://api.census.gov/data/2023/acs/acs5/geography.json`, which needs no key): the level is
+    named `zip code tabulation area`, geoLevelDisplay `860`, and carries NO `requires` entry -- so
+    the query is national. Issuing it per state would be six identical national pulls."""
+    g = acs.GEOGRAPHIES(["48", "06"])
+    zcta = [x for x in g if x.summary_level == "860"]
+    assert len(zcta) == 1, "ZCTAs are not nested inside states in the ACS 5-year API for this vintage"
+    assert zcta[0].for_ == "zip code tabulation area:*" == f"{acs.ZCTA_COL}:*"
+    assert zcta[0].in_ is None
+    # The six levels that were already there are untouched: three per state, in order...
+    assert [x.summary_level for x in g if x.in_ is not None] == ["140", "160", "050", "140", "160", "050"]
+    # ...and the national ones keep their order, with 860 ahead of the two that were already there.
+    assert [x.summary_level for x in g if x.in_ is None] == ["040", "040", "860", "310", "010"]
+
+
+def test_geoid_builds_a_zcta_id_from_the_apis_own_column_name():
+    assert acs.geoid({"zip code tabulation area": "78704"}, "860") == "78704"
+    with pytest.raises(ValueError, match="zip code tabulation area"):
+        acs.geoid({"state": "48"}, "860")
+    with pytest.raises(ValueError, match="999"):
+        acs.geoid({}, "999")
+
+
+def test_load_with_a_levels_filter_fetches_that_level_alone_and_still_records_an_ingest_run(conn):
+    """`--levels 860` exists so the ZCTA level can be loaded on its own rather than re-running all
+    six geographies for six states -- a national ZCTA pull is the largest single ACS page this
+    pipeline issues. The run is recorded in `ingest_run` exactly as any other."""
+    seen: list[tuple[str, str | None]] = []
+
+    written = acs.load(conn, _recording_factory(seen), "acs5", ["48", "06"], levels=["860"])
+
+    assert seen == [("zip code tabulation area:*", None)], "a level filter must not fetch the other geographies"
+    assert written > 0
+    with conn.cursor() as cur:
+        cur.execute("SELECT geo_id, summary_level FROM acs_measure WHERE variable = 'B19013_001E'")
+        assert cur.fetchall() == [("78704", "860")]
+        cur.execute("SELECT estimate, moe FROM acs_measure WHERE geo_id = '78704' AND variable = 'B19013_001E'")
+        assert cur.fetchone() == (92150, 6420)   # the published estimate and ITS OWN margin, as loaded
+        cur.execute("SELECT status, rows_written, request_count FROM ingest_run WHERE dataset_key='acs5' ORDER BY id DESC LIMIT 1")
+        status, rows, requests = cur.fetchone()
+    assert status == "succeeded" and rows == written
+    assert requests == len(seen)   # derived from what was actually fetched, never a number typed here
+
+
+def test_load_without_a_levels_filter_still_fetches_every_geography(conn):
+    """The filter must not change the existing load when it is omitted. Proved by reading the
+    geography list back out of `GEOGRAPHIES` -- order and all -- rather than by asserting a count
+    typed into this test, which would pass a load that fetched the right NUMBER of wrong things."""
+    seen: list[tuple[str, str | None]] = []
+
+    acs.load(conn, _recording_factory(seen), "acs5", ["48"])
+
+    assert seen == [(g.for_, g.in_) for g in acs.GEOGRAPHIES(["48"])]
+    assert ("zip code tabulation area:*", None) in seen
+
+
+def test_load_with_a_levels_filter_that_matches_nothing_fetches_nothing(conn):
+    """The empty arm of the same branch. A filter that names a level `GEOGRAPHIES` does not carry
+    -- an operator's typo -- fetches nothing, writes nothing, and still leaves a `succeeded` run
+    behind saying so; `census_load.py` prints its `0 measures`, so the typo announces itself."""
+    seen: list[tuple[str, str | None]] = []
+
+    written = acs.load(conn, _recording_factory(seen), "acs5", ["48"], levels=["150"])
+
+    assert seen == [] and written == 0
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM acs_measure")
+        assert cur.fetchone()[0] == 0
+        cur.execute("SELECT status, rows_written FROM ingest_run WHERE dataset_key='acs5' ORDER BY id DESC LIMIT 1")
+        assert cur.fetchone() == ("succeeded", 0)
