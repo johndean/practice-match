@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 //
 // The one thing about MarketMapView that no other test can see: the ORDER in which the
-// overlay (V3's community mosaic rectangles and the dashed drive-time ring) and the practice
+// overlay (A24's community boundary polygons and the dashed drive-time ring) and the practice
 // pins are redrawn. Leaflet gives every marker `z-index = pos.y + zIndexOffset`, so two
 // layers can tie and DOM order in the shared panes decides which paints on top — and a layer
 // group's layers move to the end of their pane every time the group is cleared and refilled.
@@ -25,7 +25,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
 import { FakeMap, installLeafletStub, type LeafletStub } from '../map/testing/leaflet-stub';
-import { MOSAIC_STEP, mosaicBbox, mosaicCells } from '../map/mosaic.js';
 import MarketMapView from './MarketMapView.vue';
 
 // Hoisted above every import by vitest. `loadLeaflet` hands back whatever the stub installed
@@ -55,29 +54,56 @@ const community = (i: number) => ({
 const communities = (n: number) => Array.from({ length: n }, (_, i) => community(i));
 const practices = (n: number, priceLabel = '$1.45M') =>
   Array.from({ length: n }, (_, i) => ({ id: `p${i}`, lat: 30.31 + i / 100, lng: -97.75 + i / 100, priceLabel }));
-// V3 shades one rectangle per MOSAIC CELL, so the overlay's cardinality is the mosaic's and
-// not the community count. mosaic.js is the production geometry (covered by its own tests),
-// so the expectation stays a statement about the CURRENT communities rather than a number
-// pinned to one fixture shape.
-const cellCount = (n: number) => mosaicCells(communities(n), mosaicBbox(communities(n)), MOSAIC_STEP).length;
+// A24: the overlay is ONE L.geoJSON layer carrying one path per feature, not one rectangle per
+// grid cell, so its cardinality is the FeatureCollection's. Fixtures are still BUILT rather than
+// fixed — every assertion below holds for any number of features — and the per-feature properties
+// are exactly what `logic.js`'s `areaVals` puts there: the colour `bucket()` chose, the label
+// `fmtMetric()` wrote and the tip `areaTip()` built. This component classes nothing and formats
+// nothing, which is the whole point of the amendment.
+const AREA_FILL = '#4c9a6a';
+const areaFeature = (i: number, over: Record<string, unknown> = {}) => ({
+  type: 'Feature' as const,
+  id: `z${i}`,
+  properties: {
+    geo_id: `z${i}`, name: `Community ${i}`, value: 90000 + i, moe: null, suppressed: false,
+    suppressReason: null, ambiguous: false, color: AREA_FILL, label: `$${90 + i}K`,
+    tip: `<b>Community ${i}</b>`, ...over
+  },
+  geometry: {
+    type: 'Polygon',
+    coordinates: [[[-97.8 + i / 100, 30.2], [-97.7 + i / 100, 30.2], [-97.7 + i / 100, 30.3], [-97.8 + i / 100, 30.2]]]
+  }
+});
+const areas = (n: number, over: Record<string, unknown> = {}) =>
+  ({ type: 'FeatureCollection' as const, features: Array.from({ length: n }, (_, i) => areaFeature(i, over)) });
 
-// V3 tells the two draws apart by the Leaflet factory each uses: the overlay is rectangles
-// and circles, the pins are divIcon markers.
+// V3 tells the two draws apart by the Leaflet factory each uses: the overlay is one geoJSON
+// layer and (when a listing is selected) the dashed drive-time circle, the pins are divIcon
+// markers.
 function drawOrder(stub: LeafletStub, from: number): string[] {
   return stub.calls
     .slice(from)
-    .filter((c) => c.fn === 'rectangle' || c.fn === 'circle' || c.fn === 'divIcon')
+    .filter((c) => c.fn === 'geoJSON' || c.fn === 'circle' || c.fn === 'divIcon')
     .map((c) => (c.fn === 'divIcon' ? 'pins' : 'overlay'));
 }
 
+// The paths L.geoJSON built inside the overlay's one boundary layer — where `onEachFeature`
+// bound the tooltip and the click, so this is where a per-feature binding is observable.
+type AreaChild = { tooltip?: { text: string; opts: unknown }; on_click?: () => void };
+const areaChildren = (g: StubGroup): AreaChild[] =>
+  ((g.added.find((l) => (l as { data?: unknown }).data !== undefined) as unknown as { features?: AreaChild[] })?.features ?? []);
+const geoCalls = (stub: LeafletStub) => stub.calls.filter((c) => c.fn === 'geoJSON');
+const featureCount = (stub: LeafletStub, nth = 0) =>
+  ((geoCalls(stub)[nth]?.args[0] as { features: unknown[] } | undefined)?.features ?? []).length;
+
 // The two layer groups are identified by ROLE — which production renderer filled them —
-// never by construction order. In V3 the overlay group holds mosaic RECTANGLES and the
+// never by construction order. In V3 the overlay group holds the A24 boundary layer and the
 // dashed drive-time circle; the pins group holds practice markers.
-type StubLayer = { seq: number; bounds?: unknown; options?: { radius?: number; icon?: { icon?: { html?: string } } } };
+type StubLayer = { seq: number; data?: unknown; options?: { radius?: number; icon?: { icon?: { html?: string } } } };
 type StubGroup = { clearLayers?: unknown; added: StubLayer[] };
 
 const roleOf = (l: StubLayer): 'overlay' | 'pins' => {
-  if (l.bounds !== undefined) return 'overlay';                 // a mosaic L.rectangle
+  if (l.data !== undefined) return 'overlay';                   // the L.geoJSON boundary layer
   if (typeof l.options?.radius === 'number') return 'overlay';  // the dashed drive-time ring
   return 'pins';
 };
@@ -99,16 +125,22 @@ function layerGroups(stub: LeafletStub) {
 // every `addTo()`, so it records the order Leaflet's shared markerPane actually saw.
 const attachSeqs = (g: StubGroup) => g.added.map((l) => l.seq);
 
-async function mounted(n = { communities: 2, practices: 1 }) {
+// `extra` is merged into the props, so a case that wants a different FeatureCollection (or no
+// layer at all) keeps every other case's call shape. The default hands one polygon per community,
+// which is what `areaSet` does on the design's own fixture — one feature per Census area, each
+// taking the nearest community's figure — so a count written as "n communities" still reads.
+async function mounted(n = { communities: 2, practices: 1 }, extra: Record<string, unknown> = {}) {
   const stub = installLeafletStub();
   const wrapper = mount(MarketMapView, {
     props: {
       practices: practices(n.practices),
       communities: communities(n.communities),
+      areas: areas(n.communities),
       activeLayer: 'income',
       showDrive: false,
       center: [30.31, -97.75],
-      zoom: 10
+      zoom: 10,
+      ...extra
     }
   });
   // MarketMapView reaches its engine through a DYNAMIC import (map/create.ts). A single
@@ -148,7 +180,7 @@ describe('MarketMapView — redraw order', () => {
     // attached before every pin. `practices` is not one of the reference's five area-effect
     // deps, so since the I1 ruling (2026-09-07) the overlay is NOT rebuilt here — it simply
     // stays where it is, and refilling the pins group moves the pins to the end of the shared
-    // panes on their own. Before that ruling this same trigger rebuilt all 12,560 rectangles.
+    // panes on their own. Before that ruling this same trigger rebuilt the whole overlay.
     expectOverlayBeforePins(stub);
 
     // The same invariant read off the divIcon stream, stated semantically rather than as a
@@ -156,7 +188,7 @@ describe('MarketMapView — redraw order', () => {
     // (two communities, one practice) into the expectation, so adding a third community
     // would have failed a test about ORDER for a reason that has nothing to do with order.
     const order = drawOrder(stub, from);
-    expect(order, 'a pins-only change rebuilt the mosaic — the reference\'s area effect would not have').not.toContain('overlay');
+    expect(order, 'a pins-only change rebuilt the boundary layer — the reference\'s area effect would not have').not.toContain('overlay');
     expect(order).toContain('pins');
     expect(order.slice(order.indexOf('pins')), 'an overlay was drawn after the first pin').not.toContain('overlay');
   });
@@ -178,7 +210,8 @@ describe('MarketMapView — redraw order', () => {
       expectOverlayBeforePins(stub); // and after a pins-only prop change
       // Both groups really were rebuilt (cleared and refilled), not merely appended to.
       const { overlay, pins } = layerGroups(stub);
-      expect(attachSeqs(overlay)).toHaveLength(cellCount(n.communities));
+      expect(attachSeqs(overlay), 'the overlay is ONE geoJSON layer, however many features it carries').toHaveLength(1);
+      expect(featureCount(stub)).toBe(n.communities);
       expect(attachSeqs(pins)).toHaveLength(n.practices);
     });
   }
@@ -188,7 +221,7 @@ describe('MarketMapView — redraw order', () => {
   // mirror of MarketMapV3.jsx's area effect → pin effect) demonstrated both:
   //
   //   1. an OVERLAY-ONLY trigger (`activeLayer`, `communities`, a drive-time toggle) fires
-  //      only the overlay watcher, so the mosaic rectangles are re-attached to the shared
+  //      only the overlay watcher, so the boundary layer is re-attached to the shared
   //      panes AFTER the untouched pins and paint on top of them — overlay seq 12,13
   //      against a pin still at 11. Declaration order cannot help: the other watcher never
   //      ran at all;
@@ -204,6 +237,7 @@ describe('MarketMapView — redraw order', () => {
       props: {
         practices: practices(2),
         communities: communities(3),
+        areas: areas(3),
         activeLayer: 'income',
         showDrive: false,
         center: [30.31, -97.75],
@@ -217,16 +251,18 @@ describe('MarketMapView — redraw order', () => {
     await wrapper.setProps({ activeLayer: 'density' }); // touches nothing on the pins side
     expectOverlayBeforePins(stub);
     const { overlay, pins } = layerGroups(stub);
-    expect(attachSeqs(overlay)).toHaveLength(cellCount(3)); // rebuilt…
-    expect(attachSeqs(pins)).toHaveLength(2);               // …and so were the pins, after them
+    expect(attachSeqs(overlay)).toHaveLength(1);   // rebuilt…
+    expect(geoCalls(stub)).toHaveLength(2);        // …twice in all: once at mount, once now
+    expect(attachSeqs(pins)).toHaveLength(2);      // …and so were the pins, after them
   });
 
   it('holds the order when the trigger is a community change rather than a practice change', async () => {
     const { stub, wrapper } = await mounted({ communities: 2, practices: 3 });
-    await wrapper.setProps({ communities: communities(4) });
+    await wrapper.setProps({ communities: communities(4), areas: areas(4) });
     expectOverlayBeforePins(stub);
     const { overlay, pins } = layerGroups(stub);
-    expect(attachSeqs(overlay)).toHaveLength(cellCount(4)); // the mosaic of the NEW communities
+    expect(attachSeqs(overlay)).toHaveLength(1);
+    expect(featureCount(stub, geoCalls(stub).length - 1), 'the polygons of the NEW data').toBe(4);
     expect(attachSeqs(pins)).toHaveLength(3);
   });
 });
@@ -241,40 +277,40 @@ describe('MarketMapView — redraw order', () => {
 // the overlay REBUILD is gated on the reference's own five instead, compared the way React
 // compares them (`communities` by identity, the rest by value).
 //
-// A pin or card SELECTION still rebuilds the mosaic, and that cost is the DESIGN's, not the
-// port's: selecting moves `driveCenter` (logic.js:508) and `showDrive` (:707), so React
+// A pin or card SELECTION still rebuilds the boundary layer, and that cost is the DESIGN's, not
+// the port's: selecting moves `driveCenter` (logic.js:508) and `showDrive` (:707), so React
 // re-runs its area effect too. Since amendment A25 both carry a finite-coordinate test, so a
-// selection with no point moves neither and the rebuild is skipped. What
-// no longer happens is a full 12,560-rectangle rebuild on a trigger that leaves all five
-// untouched — `practices` and `activeId` (logic.js:361, `s.mdSel`) are the two deps the
-// superset added.
+// selection with no point moves neither and the rebuild is skipped. What no longer happens is a
+// full overlay rebuild on a trigger that leaves all six untouched — `practices` and `activeId`
+// (logic.js:361, `s.mdSel`) are the two deps the superset added. A24 made `areas` the sixth.
 // ---------------------------------------------------------------------------------------
 describe('MarketMapView — the overlay redraws on the reference\'s five area deps, and only those', () => {
-  it('rebuilds no mosaic rectangle when only activeId changes, and redraws the pins with the new selection', async () => {
+  it('rebuilds no boundary layer when only activeId changes, and redraws the pins with the new selection', async () => {
     const stub = installLeafletStub();
     const ps = practices(3);
     const wrapper = mount(MarketMapView, {
       props: {
-        practices: ps, communities: communities(4), activeLayer: 'income',
+        practices: ps, communities: communities(4), areas: areas(4), activeLayer: 'income',
         showDrive: false, center: [30.31, -97.75], zoom: 10
       }
     });
     await vi.waitUntil(() => wrapper.find('button[aria-label="Zoom in"]').exists(), { timeout: 5000, interval: 1 });
     await flushPromises();
-    const rectsAtMount = stub.calls.filter((c) => c.fn === 'rectangle').length;
-    expect(rectsAtMount, 'the fixture never shaded a mosaic, so it cannot show one being skipped').toBe(cellCount(4));
+    const drawsAtMount = geoCalls(stub).length;
+    expect(drawsAtMount, 'the fixture never shaded anything, so it cannot show a draw being skipped').toBe(1);
+    expect(featureCount(stub)).toBe(4);
     const overlayAtMount = attachSeqs(layerGroups(stub).overlay);
     const from = stub.calls.length;
 
     await wrapper.setProps({ activeId: ps[2].id });
 
-    const rebuilt = stub.calls.filter((c) => c.fn === 'rectangle').length - rectsAtMount;
-    expect(rebuilt, `an activeId-only change rebuilt ${rebuilt} mosaic rectangles; the reference's area effect would have drawn none`).toBe(0);
+    const rebuilt = geoCalls(stub).length - drawsAtMount;
+    expect(rebuilt, `an activeId-only change rebuilt the boundary layer ${rebuilt} time(s); the reference's area effect would have drawn none`).toBe(0);
     // A SKIP, not a silent loss: the same layer objects are still on the map (`seq` is
     // stamped once per addTo, so an identical seq list is the same attachments), with the
     // pins re-added after them.
     const { overlay, pins } = layerGroups(stub);
-    expect(attachSeqs(overlay), 'the mosaic left the map — it was cleared and not refilled').toEqual(overlayAtMount);
+    expect(attachSeqs(overlay), 'the boundary layer left the map — it was cleared and not refilled').toEqual(overlayAtMount);
     expect(drawOrder(stub, from), 'the pins did not redraw for the new selection').toEqual(['pins', 'pins', 'pins']);
     expectOverlayBeforePins(stub);
     expect((pins.added[2] as unknown as { options: { zIndexOffset: number } }).options.zIndexOffset).toBe(1000);
@@ -284,21 +320,21 @@ describe('MarketMapView — the overlay redraws on the reference\'s five area de
     const stub = installLeafletStub();
     const wrapper = mount(MarketMapView, {
       props: {
-        practices: practices(2), communities: communities(4), activeLayer: 'income',
+        practices: practices(2), communities: communities(4), areas: areas(4), activeLayer: 'income',
         showDrive: true, driveCenter: [30.4, -97.6], center: [30.31, -97.75], zoom: 10
       }
     });
     await vi.waitUntil(() => wrapper.find('button[aria-label="Zoom in"]').exists(), { timeout: 5000, interval: 1 });
     await flushPromises();
-    const rectsAtMount = stub.calls.filter((c) => c.fn === 'rectangle').length;
+    const drawsAtMount = geoCalls(stub).length;
     const from = stub.calls.length;
 
     await wrapper.setProps({ driveCenter: [30.9, -97.1] });
 
     expect(
-      stub.calls.filter((c) => c.fn === 'rectangle').length - rectsAtMount,
-      'driveCenter moved and the mosaic did not redraw — the gate is skipping one of the reference\'s own five deps'
-    ).toBe(cellCount(4));
+      geoCalls(stub).length - drawsAtMount,
+      'driveCenter moved and the boundary layer did not redraw — the gate is skipping one of the reference\'s own deps'
+    ).toBe(1);
     const order = drawOrder(stub, from);
     expect(order).toContain('overlay');
     expect(order).toContain('pins');
@@ -320,7 +356,8 @@ describe('MarketMapView — group identification is by role, not creation order'
     const { stub } = await mounted({ communities: 3, practices: 2 });
     const { overlay, pins } = layerGroups(stub);
 
-    expect(overlay.added).toHaveLength(cellCount(3));
+    expect(overlay.added).toHaveLength(1);
+    expect(featureCount(stub)).toBe(3);
     expect(new Set(overlay.added.map(roleOf))).toEqual(new Set(['overlay']));
     expect(pins.added.map(roleOf)).toEqual(['pins', 'pins']);
     expect(overlay).not.toBe(pins);
@@ -403,7 +440,7 @@ describe('MarketMapView — onMounted guards and error handling', () => {
 
     // The merged watcher (communities is one of its deps) fires now, while `engine` is still
     // null — loadLeaflet() is gated open, so onMounted's await never resumed.
-    await wrapper.setProps({ communities: communities(3) });
+    await wrapper.setProps({ communities: communities(3), areas: areas(3) });
     expect(stub.calls.filter((c) => c.fn === 'marker'), 'nothing should draw before the engine exists').toHaveLength(0);
 
     release();
@@ -417,30 +454,40 @@ describe('MarketMapView — onMounted guards and error handling', () => {
 });
 
 describe('MarketMapView — active-layer data gaps', () => {
-  it('skips a community missing a value for the active layer, drawing nothing for it', async () => {
+  // A24 moved the decision: a polygon with no figure is no longer DROPPED by this component, it
+  // is DRAWN in the no-data class `logic.js` chose (D-NS16 — "a hole in a choropleth reads as a
+  // boundary, not as an absence"). So the assertion moves with it: this component must forward
+  // whatever colour the feature carries and invent nothing, including the grey one.
+  it('draws a feature with no value in the no-data class rather than omitting it', async () => {
     const stub = installLeafletStub();
-    const noIncomeData = { ...community(5), values: { density: community(5).values.density } }; // no `income` key
-    const sites = [community(0), noIncomeData];
+    const fc = {
+      type: 'FeatureCollection' as const,
+      features: [
+        areaFeature(0),
+        areaFeature(5, { value: null, label: 'No data', color: '#e6e6e6', tip: '<b>Community 5</b>No data for this area' })
+      ]
+    };
     const wrapper = mount(MarketMapView, {
       props: {
-        practices: practices(1), communities: sites,
+        practices: practices(1), communities: communities(2), areas: fc,
         activeLayer: 'income', center: [30.31, -97.75], zoom: 10
       }
     });
     await vi.waitUntil(() => wrapper.find('button[aria-label="Zoom in"]').exists(), { timeout: 5000, interval: 1 });
     await flushPromises();
 
+    // Both polygons are drawn — the count is the discriminating half of this case.
+    expect(featureCount(stub)).toBe(2);
+    const styleFor = geoCalls(stub)[0].args[1] as { style: (f: unknown) => { fillColor: string; fillOpacity: number } };
+    expect(styleFor.style(fc.features[0]).fillColor).toBe(AREA_FILL);
+    expect(styleFor.style(fc.features[1]).fillColor, 'the no-data class was not forwarded').toBe('#e6e6e6');
+    // …at the SAME fillOpacity every other class uses, which is what makes it a class and not a
+    // hole (A24.2's own comment).
+    expect(styleFor.style(fc.features[1]).fillOpacity).toBe(styleFor.style(fc.features[0]).fillOpacity);
+
     const { overlay } = layerGroups(stub);
-    // Only community(0) has an `income` value, so every shaded cell is one of ITS cells: the
-    // cells the mosaic assigned to the other community are dropped, not shaded with a
-    // missing value (a `v == null` cell would have drawn as `undefined`-coloured).
-    const tips = overlay.added.map((l) => (l as unknown as { tooltip: { text: string } }).tooltip.text);
-    expect(tips.length).toBeGreaterThan(0);
-    expect(tips.every((t) => t.includes('Community 0'))).toBe(true);
-    expect(tips.some((t) => t.includes('Community 5'))).toBe(false);
-    // …and strictly fewer than the mosaic's own cell count, which is the discriminating proof
-    // that cells really were skipped rather than reassigned to the community that has data.
-    expect(tips.length).toBeLessThan(mosaicCells(sites, mosaicBbox(sites), MOSAIC_STEP).length);
+    const tips = areaChildren(overlay).map((c) => c.tooltip!.text);
+    expect(tips.some((t) => t.includes('Community 5'))).toBe(true);
   });
 });
 
@@ -546,7 +593,7 @@ describe('MarketMapView — test isolation (no import-order or real-Leaflet coup
 });
 
 // ---------------------------------------------------------------------------------------
-// V3 (Rev 2). C5 community mosaic shading, C6 pins + persistent callout + panInside,
+// V3 (Rev 2). A24 community boundary shading, C6 pins + persistent callout + panInside,
 // C7 the single dashed drive-time ring, C11 no scale control, C13 onBasemap gates the tabs.
 // ---------------------------------------------------------------------------------------
 describe('MarketMapView — the V3 map', () => {
@@ -565,7 +612,7 @@ describe('MarketMapView — the V3 map', () => {
   const NO_LATLNG = null as unknown as unknown[];
 
   const v3Props = (over: Record<string, unknown> = {}) => ({
-    practices: practices(3), communities: communities(4), activeLayer: 'income', basemap: 'map',
+    practices: practices(3), communities: communities(4), areas: areas(4), activeLayer: 'income', basemap: 'map',
     activeId: NO_ID, onSelect: NO_FN, onArea: NO_FN, center: [30.31, -97.75], zoom: 10,
     driveCenter: NO_LATLNG, showDrive: false, resizeKey: '', recenterKey: 0, ...over
   });
@@ -579,77 +626,91 @@ describe('MarketMapView — the V3 map', () => {
     expect(stub.calls.filter((c) => c.fn === 'control.zoom')).toHaveLength(0);
   });
 
-  it('shades one mosaic cell per community cell for the active layer, on the shared canvas renderer', async () => {
+  it('shades one polygon per feature for the active layer, on the shared canvas renderer', async () => {
     const stub = installLeafletStub();
     mount(MarketMapView, { props: v3Props() });
     await flushPromises();
-    const rects = stub.calls.filter((c) => c.fn === 'rectangle');
-    // Exactly one rectangle per mosaic cell, built ONCE — `toBeGreaterThan(0)` could not tell
-    // one draw from two, which is how the double draw at mount hid (M2).
-    expect(rects).toHaveLength(cellCount(4));
+    // ONE L.geoJSON layer carrying one path per feature, built ONCE — `toBeGreaterThan(0)` could
+    // not tell one draw from two, which is how the double draw at mount hid (M2).
+    expect(geoCalls(stub)).toHaveLength(1);
+    expect(featureCount(stub)).toBe(4);
+    // The shared canvas renderer outlives the mosaic (leaflet.ts:49-53): one per mount, passed to
+    // L.geoJSON, so every boundary polygon in a metro draws into the same canvas.
     expect(stub.calls.filter((c) => c.fn === 'canvas')).toHaveLength(1);
-    for (const r of rects) {
-      expect((r.args[1] as { renderer: unknown; fillOpacity: number; stroke: boolean }).renderer).toBe(stub.canvas);
-      expect((r.args[1] as { fillOpacity: number }).fillOpacity).toBe(0.5);
-      expect((r.args[1] as { stroke: boolean }).stroke).toBe(false);
-      expect((r.args[1] as { fillColor: string }).fillColor).toBe('#4c9a6a');
+    const opts = geoCalls(stub)[0].args[1] as { renderer: unknown; style: (f: unknown) => Record<string, unknown> };
+    expect(opts.renderer).toBe(stub.canvas);
+    for (const f of areas(4).features) {
+      const s = opts.style(f);
+      expect(s.renderer).toBe(stub.canvas);
+      expect(s.fillOpacity).toBe(0.5);
+      expect(s.stroke).toBe(false);
+      expect(s.fillColor).toBe(AREA_FILL);
       // M1: a non-interactive Path takes no pointer events, so the rf-tip would never open
-      // and the cell click would never fire — the README acceptance criterion, in one word.
-      expect((r.args[1] as { interactive: boolean }).interactive).toBe(true);
+      // and the polygon click would never fire — the README acceptance criterion, in one word.
+      expect(s.interactive).toBe(true);
     }
   });
 
-  it('draws nothing when no layer is active, and re-shades when the active layer changes', async () => {
+  it('draws nothing when no layer is active, nothing when the collection is empty or absent, and re-shades when the layer changes', async () => {
     const stub = installLeafletStub();
     const w = mount(MarketMapView, { props: v3Props({ activeLayer: null }) });
     await flushPromises();
-    expect(stub.calls.filter((c) => c.fn === 'rectangle')).toHaveLength(0);
+    expect(geoCalls(stub)).toHaveLength(0);
     await w.setProps({ activeLayer: 'income' });
     await flushPromises();
-    expect(stub.calls.filter((c) => c.fn === 'rectangle').length).toBeGreaterThan(0);
-  });
+    expect(geoCalls(stub).length).toBeGreaterThan(0);
 
-  it('skips a community with no value for the active layer rather than shading it', async () => {
-    const stub = installLeafletStub();
-    const blank = { name: 'Blank', lat: 30.5, lng: -97.8, values: {} };
-    mount(MarketMapView, { props: v3Props({ communities: [...communities(2), blank], activeLayer: 'density' }) });
+    const empty = installLeafletStub();
+    mount(MarketMapView, { props: v3Props({ areas: areas(0) }) });
     await flushPromises();
-    for (const r of stub.calls.filter((c) => c.fn === 'rectangle')) {
-      expect((r.args[1] as { fillColor: string }).fillColor).toBe('#2f7d55');
-    }
-  });
+    expect(geoCalls(empty), 'an empty FeatureCollection drew a layer with no paths in it').toHaveLength(0);
 
-  it('binds the sticky rf-tip carrying name, metric name, value and source note', async () => {
-    const stub = installLeafletStub();
-    mount(MarketMapView, {
-      props: v3Props({ communities: [{ name: 'Cedar Park', lat: 30.5, lng: -97.8, metricName: 'Median household income', sourceNote: 'ACS 2019–2023', values: { income: { t: 0.5, label: '$118,400', color: '#4c9a6a' } } }] })
-    });
+    const none = installLeafletStub();
+    mount(MarketMapView, { props: v3Props({ areas: null }) });
     await flushPromises();
-    const overlay = layerGroups(stub).overlay;
-    const tip = (overlay.added[0] as unknown as { tooltip: { text: string; opts: unknown } }).tooltip;
-    expect(tip.opts).toEqual({ sticky: true, className: 'rf-tip' });
-    // L6: the WHOLE string, against the reference's literal (MarketMapV3.jsx:256-264). Four
-    // substrings left the tip's own inline styles unguarded — `min-width:150px → 140px` used
-    // to survive — and tooltips are absent from V9's DOM oracle, so nothing else would notice.
-    expect(tip.text).toBe(
-      '<div style="font-family:ProximaNova,Arial,Helvetica,sans-serif;min-width:150px">' +
-        '<div style="font-size:12.5px;font-weight:800;color:#003a70">Cedar Park</div>' +
-        '<div style="font-size:11px;color:#494949;margin-top:3px">Median household income</div>' +
-        '<div style="font-size:15px;font-weight:800;color:#003a70;margin-top:1px">$118,400</div>' +
-        '<div style="font-size:10px;color:#767676;margin-top:5px">ACS 2019–2023</div>' +
-      '</div>'
-    );
+    expect(geoCalls(none)).toHaveLength(0);
   });
 
-  it('clicking a mosaic cell reports its community through onArea', async () => {
+  it('forwards each feature\'s own colour and never picks one itself', async () => {
+    const stub = installLeafletStub();
+    const fc = {
+      type: 'FeatureCollection' as const,
+      features: [areaFeature(0, { color: '#2f7d55' }), areaFeature(1, { color: '#1b6b3a' })]
+    };
+    mount(MarketMapView, { props: v3Props({ areas: fc }) });
+    await flushPromises();
+    const style = (geoCalls(stub)[0].args[1] as { style: (f: unknown) => { fillColor: string } }).style;
+    expect(fc.features.map((f) => style(f).fillColor)).toEqual(['#2f7d55', '#1b6b3a']);
+  });
+
+  it('binds the sticky rf-tip logic.js built, verbatim, and invents no string of its own', async () => {
+    const stub = installLeafletStub();
+    // The tip is now built ONCE, in `logic.js`'s `areaTip` (A24.3), and this component binds it —
+    // the two hand-kept copies that used to drift are one. L6's concern is unchanged and is now
+    // met by construction: the WHOLE string is the feature's, so an inline style cannot be
+    // trimmed here without the design's own oracle seeing it.
+    const tip = '<div style="font-family:ProximaNova,Arial,Helvetica,sans-serif;min-width:150px">'
+      + '<div style="font-size:12.5px;font-weight:800;color:#003a70">ZCTA5 78704</div>'
+      + '<div style="font-size:11px;color:#494949;margin-top:3px">Median household income</div>'
+      + '<div style="font-size:15px;font-weight:800;color:#003a70;margin-top:1px">$118,400</div>'
+      + '<div style="font-size:10.5px;color:#494949;margin-top:4px">± $6K</div>'
+      + '<div style="font-size:10px;color:#767676;margin-top:5px">ACS 2019–2023</div>'
+      + '</div>';
+    mount(MarketMapView, { props: v3Props({ areas: { type: 'FeatureCollection', features: [areaFeature(0, { name: 'ZCTA5 78704', tip })] } }) });
+    await flushPromises();
+    const child = areaChildren(layerGroups(stub).overlay)[0];
+    expect(child.tooltip!.opts).toEqual({ sticky: true, className: 'rf-tip' });
+    expect(child.tooltip!.text).toBe(tip);
+  });
+
+  it('clicking a polygon reports its area name through onArea', async () => {
     const stub = installLeafletStub();
     const seen: string[] = [];
     mount(MarketMapView, {
-      props: v3Props({ communities: [{ name: 'Cedar Park', lat: 30.5, lng: -97.8, values: { income: { t: 0.5, label: '$118K', color: '#4c9a6a' } } }], onArea: (n: string) => seen.push(n) })
+      props: v3Props({ areas: { type: 'FeatureCollection', features: [areaFeature(0, { name: 'Cedar Park' })] }, onArea: (n: string) => seen.push(n) })
     });
     await flushPromises();
-    const overlay = layerGroups(stub).overlay;
-    (overlay.added[0] as unknown as { on_click: () => void }).on_click();
+    areaChildren(layerGroups(stub).overlay)[0].on_click!();
     expect(seen).toEqual(['Cedar Park']);
   });
 
@@ -728,9 +789,10 @@ describe('MarketMapView — the V3 map', () => {
     await flushPromises();
     // MarketMapV3.jsx's effects run at mount, bail on `!mapRef.current`, and run once when
     // status flips. The port's merged watcher has `status` among its deps and does the same:
-    // onMounted must NOT also call drawOverlay()/drawPins() itself, or every layer — ~2 000
-    // canvas rectangles here — is built twice on a screen V10 mounts on a 390 px phone.
-    expect(stub.calls.filter((c) => c.fn === 'rectangle')).toHaveLength(cellCount(4));
+    // onMounted must NOT also call drawOverlay()/drawPins() itself, or every layer — a whole
+    // metro of boundary polygons here — is built twice on a screen V10 mounts on a 390 px phone.
+    expect(geoCalls(stub)).toHaveLength(1);
+    expect(featureCount(stub)).toBe(4);
     expect(stub.calls.filter((c) => c.fn === 'circle')).toHaveLength(1);
     expect(stub.calls.filter((c) => c.fn === 'marker')).toHaveLength(1);
     expect((stub.map as unknown as { pannedInsideCount: number }).pannedInsideCount).toBe(1);
@@ -795,12 +857,11 @@ describe('MarketMapView — the V3 map', () => {
     w.unmount();
   });
 
-  it('a mosaic cell click is inert when onArea is absent, and the basemap tabs vanish when onBasemap is withdrawn', async () => {
+  it('a polygon click is inert when onArea is absent, and the basemap tabs vanish when onBasemap is withdrawn', async () => {
     const stub = installLeafletStub();
     const w = mount(MarketMapView, { props: v3Props({ onBasemap: () => {}, onArea: null }) });
     await flushPromises();
-    const overlay = layerGroups(stub).overlay;
-    expect(() => (overlay.added[0] as unknown as { on_click: () => void }).on_click()).not.toThrow();
+    expect(() => areaChildren(layerGroups(stub).overlay)[0].on_click!()).not.toThrow();
     await w.setProps({ onBasemap: NO_FN });
     expect(w.findAll('button[aria-pressed]')).toHaveLength(0);
   });

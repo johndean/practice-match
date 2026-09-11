@@ -31,7 +31,11 @@ REQUIRED_CI_COMMANDS = (
     # A4 (2026-09-09): scripts/census_load.py joins the same line the moment it exists
     # (A-C0 P8) — `test_ci_strict_mypy_covers_every_python_script` derives the requirement from
     # the scripts/ directory itself, but this substring is a literal pin and has to move by hand.
-    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py tests/e2e/api_under_test.py --strict",
+    # Shading Task 3 (2026-09-11): scripts/export_design_boundaries.py joins it, and it cost a
+    # second red run to learn that this line carries TWO pins that disagree about maintenance —
+    # the derived one above demands every scripts/*.py be present, this literal one demands an
+    # exact adjacency. Adding a script means editing the workflow AND this string, always both.
+    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py tests/e2e/api_under_test.py --strict",
     "poetry run pytest -q -W error",
     # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
     # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
@@ -1360,6 +1364,24 @@ def test_runbook_names_the_five_account_routes():
     assert missing == [], f"docs/RUNBOOK-identity.md does not name these account routes: {missing}"
 
 
+# The spelled-out family count CLAUDE.md's "Source of truth" paragraph uses. Module level, not a
+# local, so the case below can prove it maps each number to its OWN word without copying it.
+#
+# THIS TUPLE HAS RUN OUT THREE TIMES, and each time the count test failed on its own vocabulary
+# before it ever compared a string: A18 (2026-09-09) made sixteen families and it stopped at
+# "Fifteen"; `feat/card-geography` hit it at A27; and A24 — real Census boundary polygons,
+# 2026-09-11 — makes TWENTY-FIVE against a tuple that stopped at "Twenty-four". It now runs to
+# thirty-nine, which is roughly a year of families at the current rate. When it runs out again,
+# extend it: an index error here is never evidence about CLAUDE.md.
+NUMBER_WORDS = {n: w for n, w in enumerate(
+    ("Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
+     "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen",
+     "Nineteen", "Twenty", "Twenty-one", "Twenty-two", "Twenty-three", "Twenty-four",
+     "Twenty-five", "Twenty-six", "Twenty-seven", "Twenty-eight", "Twenty-nine", "Thirty",
+     "Thirty-one", "Thirty-two", "Thirty-three", "Thirty-four", "Thirty-five", "Thirty-six",
+     "Thirty-seven", "Thirty-eight", "Thirty-nine"))}
+
+
 def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
     """The merge of this branch's account-screen amendments (A8, A9) with `main`'s A10/A11 grew
     both the family count and the entry count `CLAUDE.md`'s "Source of truth" paragraph states by
@@ -1389,23 +1411,55 @@ def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
     a1_count = int(a1_match.group(1))
     entry_count = literal_count + a1_count
 
-    number_words = {n: w for n, w in enumerate(
-        ("Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
-         "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen",
-         "Nineteen", "Twenty", "Twenty-one", "Twenty-two", "Twenty-three", "Twenty-four",
-         # A27 (2026-09-11) made twenty-five families and the tuple stopped at "Twenty-four", so
-         # this assertion failed on its own vocabulary before it compared CLAUDE.md -- the same
-         # way A18 did at "Fifteen". Extended past the next few reservations (A20, A24) so the
-         # vocabulary is not the thing that fails next.
-         "Twenty-five", "Twenty-six", "Twenty-seven", "Twenty-eight", "Twenty-nine", "Thirty"))}
-    assert family_count in number_words, f"no spelled-out word on hand for {family_count} families"
+    assert family_count in NUMBER_WORDS, f"no spelled-out word on hand for {family_count} families"
 
     claude = (ROOT / "CLAUDE.md").read_text()
-    assert f"{number_words[family_count]} families, {entry_count} entries" in claude, (
+    assert f"{NUMBER_WORDS[family_count]} families, {entry_count} entries" in claude, (
         f"CLAUDE.md's family/entry count sentence does not match design-amendments.ts: "
         f"{family_count} families, {entry_count} entries ({a1_count} derived + {literal_count} literals)"
     )
     assert f"A1's {a1_count} derived edits plus {literal_count} literals" in claude
+
+
+def test_the_family_count_sentence_still_discriminates_after_the_vocabulary_was_extended():
+    """A vocabulary fix can hide a gate that stopped checking anything, and this tuple has now been
+    extended three times (A18, A27, A24). Extending it makes `family_count in NUMBER_WORDS` pass
+    again by construction — so this proves the ASSERTION ABOVE IT still fails on a wrong word and a
+    wrong number, rather than merely passing because CLAUDE.md contains the phrase "families".
+
+    Perturbation, not inspection: the neighbouring word and the neighbouring count are built from
+    the same derivation the gate uses and looked for in the real CLAUDE.md."""
+    ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
+    literal_families = re.findall(r"id: 'A(\d+)", ts)
+    family_count = len({int(n) for n in literal_families}) + 1
+    a1_count = int(re.search(r"Array\.from\(\{ length: (\d+) \}, \(_, i\) => `A1\.\$\{i \+ 1\}`\)",
+                             (ROOT / "frontend" / "tests" / "design-amendments.test.ts").read_text()).group(1))
+    entry_count = literal_families and len(literal_families) + a1_count
+
+    claude = (ROOT / "CLAUDE.md").read_text()
+    right = f"{NUMBER_WORDS[family_count]} families, {entry_count} entries"
+    assert right in claude, "the gate's own subject is missing — fix the count test, not this one"
+
+    # The word one short and one long, and the entry count one either side. Every one of these is
+    # what the sentence would read if the family were miscounted or an entry were lost, and none
+    # of them may be findable in CLAUDE.md.
+    for wrong in (
+        f"{NUMBER_WORDS[family_count - 1]} families, {entry_count} entries",
+        f"{NUMBER_WORDS[family_count + 1]} families, {entry_count} entries",
+        f"{NUMBER_WORDS[family_count]} families, {entry_count - 1} entries",
+        f"{NUMBER_WORDS[family_count]} families, {entry_count + 1} entries",
+    ):
+        assert wrong not in claude, f"the family/entry gate does not discriminate: {wrong!r} is also in CLAUDE.md"
+
+    # And the vocabulary really is a mapping from a number to its OWN word, in order, with no
+    # duplicate — a tuple extended by pasting the wrong run of words would still satisfy the `in`
+    # check the gate makes, and would then put the wrong word in a sentence nobody re-reads.
+    assert list(NUMBER_WORDS) == list(range(len(NUMBER_WORDS)))
+    assert len(set(NUMBER_WORDS.values())) == len(NUMBER_WORDS)
+    assert (NUMBER_WORDS[0], NUMBER_WORDS[13], NUMBER_WORDS[20], NUMBER_WORDS[25], NUMBER_WORDS[30]) == (
+        "Zero", "Thirteen", "Twenty", "Twenty-five", "Thirty")
+    # Headroom, so the NEXT family is not blocked on this tuple the way A18, A24 and A27 were.
+    assert len(NUMBER_WORDS) > family_count + 1, "extend NUMBER_WORDS before the next family needs it"
 
 
 def test_local_amendments_row_count_matches_design_amendments():
