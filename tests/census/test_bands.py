@@ -83,6 +83,26 @@ def test_the_design_income_stops_equal_the_band_constants() -> None:
     assert b and len(b.group(1).split(",")) == len(bands.INCOME_STOPS) + 1
 
 
+def test_band_index_keeps_the_minus_sign_on_a_break_that_has_a_band_below_zero() -> None:
+    """`band_index` takes its `stops` as a parameter, and the design now has a break with a band
+    BELOW ZERO: D-C46 re-scaled `growth` to `[0, 5, 15]`, whose bottom bucket is labelled
+    "Declining", because the frozen `[10, 20, 35]` had no band a decline could land in at all.
+
+    So the one arithmetic this function must not do is the one `logic.js`'s `num()` does: strip the
+    minus sign, which turns every decline into a growth band. Nothing routes growth through here
+    today (D-NS17 bands only `income`), but the parameter invites it, and a decline reaching band 0
+    is what makes that safe. Derived from the design rather than retyped, so a ruling that
+    supersedes D-C46 moves this case with it."""
+    layers = _value_layers()
+    m = re.search(r"growth:\s*\{[^}]*?stops:\s*\[([^\]]*)\]", layers)
+    assert m, "VALUE_LAYERS.growth no longer declares `stops`"
+    growth = tuple(int(s) for s in m.group(1).split(","))
+    assert bands.band_index(growth[0] - 1, growth) == 0      # below the first stop: the bottom band
+    assert bands.band_index(growth[0], growth) == 1          # right-open, exactly as for income
+    assert bands.band_ambiguous(growth[0] - 1, 0.5, growth) is False
+    assert bands.band_ambiguous(growth[0] - 1, 2, growth) is True
+
+
 def test_the_designs_bucket_rule_is_still_the_one_band_index_reimplements() -> None:
     """The stops are only half of a band: the COMPARISON decides which side of a stop a value
     falls. `band_index` reimplements the design's `bucket` in Python because the server has no
