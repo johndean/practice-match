@@ -307,6 +307,19 @@ describe('the boundary stubs (A24.14-A24.18)', () => {
     // default layer, rather than a FeatureCollection with no features that would read as "this
     // metro has no boundaries".
     expect(JSON.parse(designBoundariesBody('nonsense')).layer).toBe('income');
+    // Every foreign member `app/api/market.py` sends, and no other (commit `c466415`).
+    // `blocked_reason` is the one conditional member and is absent on an enabled layer.
+    expect(Object.keys(JSON.parse(designBoundariesBody('income'))).sort()).toEqual([
+      'attribution', 'boundary_vintage', 'cbsa_geoid', 'features', 'geo_label', 'layer',
+      'metric_key', 'source_dataset', 'state', 'summary_level', 'type', 'unit',
+      'value_vintage', 'values_without_geometry'
+    ]);
+    // Attribution is read from `dataset_registry`, never composed, and the route puts the
+    // BOUNDARY string first — so growth, which spans two ACS vintages, carries three.
+    expect(JSON.parse(designBoundariesBody('income')).attribution[0]).toBe('Boundaries: U.S. Census Bureau, TIGER/Line Cartographic Boundary Files 2023');
+    expect(JSON.parse(designBoundariesBody('growth')).attribution).toHaveLength(3);
+    expect(JSON.parse(designBoundariesBody('econ')).attribution[1]).toContain('County Business Patterns');
+    expect(JSON.parse(designBoundariesBody('econ')).source_dataset).toBe('cbp');
   });
 
   it('answer a market catalogue the adapter can resolve the design\'s own metro by NAME in', () => {

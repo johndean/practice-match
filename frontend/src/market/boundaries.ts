@@ -25,7 +25,18 @@
  * environment before Task 9's endpoint does.**
  */
 const LIST_URL = '/api/markets';
-const TIMEOUT_MS = 8000;
+
+/**
+ * Sized against the MEASURED payload, not the fixture (Task 9's report): 88 Austin ZCTAs are
+ * 53.3 KB raw / 10.5 KB gzipped at the committed fixture's 0.010 degree simplification, and a real
+ * cb_500k TIGER load extrapolates to roughly 190-400 KB raw / 40-90 KB gzipped per layer. The
+ * three fill layers are read in one `Promise.all`, so they share the connection and the worst
+ * realistic case is about 270 KB gzipped arriving together - four seconds on a 500 kbit/s link
+ * before the server has done anything. An 8-second deadline would abort that and leave a member on
+ * an unshaded map, which is the exact outcome this whole task exists to avoid; 20 still bounds the
+ * request, so nothing hangs for ever.
+ */
+const TIMEOUT_MS = 20000;
 
 export const FILL_LAYERS = ['income', 'growth', 'econ'] as const;
 

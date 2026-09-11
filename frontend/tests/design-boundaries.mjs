@@ -24,6 +24,22 @@ const LEVEL = { income: '860', growth: '160', econ: '050' };
 const LABEL = { income: 'ZIP Code Tabulation Area', growth: 'Place (city/town)', econ: 'County' };
 const METRIC = { income: 'median_hh_income', growth: 'population_growth_pct', econ: 'revenue_per_establishment' };
 
+// `dataset_registry.attribution_text`, verbatim from `migrations/017_census_registry.sql` — the
+// strings `app/api/market.py` reads out of the registry and never composes, because attribution is
+// legally load-bearing. Boundaries first, then the value datasets sorted, exactly as the route
+// assembles them (`[tiger_cb] + sorted({source} | {acs5_prior} if growth)`), so `growth` carries
+// three and the other two carry two. Nothing in the app reads these; the oracle carries them so
+// that Task 11's parity run compares the same SHAPE the live route sends.
+const TIGER = 'Boundaries: U.S. Census Bureau, TIGER/Line Cartographic Boundary Files 2023';
+const ACS5 = 'Source: U.S. Census Bureau, American Community Survey 5-Year Estimates, 2019\u20132023';
+const ACS5_PRIOR = 'Source: U.S. Census Bureau, American Community Survey 5-Year Estimates, 2014\u20132018';
+const CBP = 'Source: U.S. Census Bureau, County Business Patterns, 2022';
+const ATTRIBUTION = {
+  income: [TIGER, ACS5],
+  growth: [TIGER, ACS5, ACS5_PRIOR],
+  econ: [TIGER, CBP]
+};
+
 /** That collection in the endpoint's own shape. `state`, the two vintages and the attribution are
  *  the values the real endpoint sends for a cleared layer; the FEATURES are the design's. */
 export function designBoundariesBody(layer) {
@@ -36,7 +52,7 @@ export function designBoundariesBody(layer) {
     unit: key === 'growth' ? 'pct' : 'usd', state: 'enabled',
     boundary_vintage: '2023', value_vintage: key === 'econ' ? '2022' : '2019–2023',
     source_dataset: key === 'econ' ? 'cbp' : 'acs5',
-    attribution: ['Boundaries: U.S. Census Bureau, TIGER/Line Cartographic Boundary Files 2023'],
+    attribution: ATTRIBUTION[key],
     values_without_geometry: 0,
     features: set.features
   });
