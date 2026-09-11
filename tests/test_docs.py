@@ -1434,15 +1434,46 @@ def test_claude_md_amendment_paragraph_has_a_prose_section_for_every_family():
     Family identifiers are read from `design-amendments.ts`'s own literal ids (`id: 'A<n>...'`) —
     the same source the family/entry-count test above reads — never hand-typed here: for every
     distinct family number found there, CLAUDE.md must carry that family's own bold marker,
-    `**A<n>**`, opening a prose section."""
+    `**A<n>**`, opening a prose section.
+
+    I1 (whole-branch review, 2026-09-11) — CHECKED PER COPY, and the copies must AGREE.
+    CLAUDE.md carries its ~35 KB amendment paragraph TWICE, on two adjacent lines, and the two
+    copies had silently diverged: one documented A22 and omitted A21, the other documented A21
+    and omitted A22. Every doc gate stayed green because every one of them — this test included,
+    and the literal-edit clause scan, and the family/entry-count sentence check — read the WHOLE
+    FILE, so the UNION of the two copies satisfied all of them. The reviewer proved it by
+    deleting A27's entire 6,672-character section from one copy only and watching all 99 doc
+    gates pass.
+
+    A union is not a document. Each copy is read on its own here, and then the copies are
+    required to be byte-identical, which is the invariant that makes every OTHER whole-file
+    substring check in this module honest again: where the copies agree, the union IS each copy.
+    A second paragraph that deliberately says something different is not a copy and must not be
+    written in the amendment ledger's own shape."""
     claude = (ROOT / "CLAUDE.md").read_text()
     ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
     literal_families = sorted({int(n) for n in re.findall(r"id: 'A(\d+)", ts)})
     assert literal_families, "frontend/tests/design-amendments.ts: no literal amendment ids found (id: 'A<n>...)"
-    missing = [f"A{n}" for n in literal_families if not re.search(rf"\*\*A{n}\*\*", claude)]
-    assert missing == [], (
-        "CLAUDE.md's amendment paragraph carries no prose section (no **A<n>** marker) for: "
-        f"{', '.join(missing)}"
+
+    # A copy of the amendment paragraph is any line carrying at least one family marker. Found by
+    # the marker rather than by an opening phrase, so a copy cannot escape by being re-worded.
+    copies = [line for line in claude.splitlines() if re.search(r"\*\*A\d+\*\*", line)]
+    assert copies, "CLAUDE.md carries no amendment paragraph at all (no **A<n>** marker anywhere)"
+
+    for i, copy in enumerate(copies, start=1):
+        missing = [f"A{n}" for n in literal_families if not re.search(rf"\*\*A{n}\*\*", copy)]
+        assert missing == [], (
+            f"copy {i} of {len(copies)} of CLAUDE.md's amendment paragraph carries no prose "
+            f"section (no **A<n>** marker) for: {', '.join(missing)}"
+        )
+
+    distinct = sorted(set(copies), key=copies.index)
+    assert len(distinct) == 1, (
+        f"CLAUDE.md carries {len(copies)} copies of the amendment paragraph and "
+        f"{len(distinct)} of them differ. They must be byte-identical: every other gate in this "
+        "module reads the whole file, so a disagreement between copies is invisible to all of "
+        "them. First divergence at character "
+        f"{next(j for j in range(max(map(len, distinct))) if len({d[j:j + 1] for d in distinct}) > 1)}."
     )
 
 
