@@ -1188,6 +1188,86 @@ def test_deploy_md_documents_how_to_seed_qa():
     assert "not a failed import" in section
 
 
+#: Every file that WRITES the `listing` table, and how it satisfies migration `042`'s publish gate
+#: (`listing_publish_photos_ready`, which fires BEFORE UPDATE OF status on the transition into
+#: `published` — A-IDP-6). Controller amendment A-IDP-3 (1): the plan asserted in prose that there
+#: were "exactly three" such writers and a fourth was found by reading; a count stated in prose is
+#: enforced by nothing. This enumerates instead, and it is pinned BOTH ways below, so the fifth
+#: writer cannot be missed the way the fourth was — whoever adds it has to say here how the row it
+#: publishes reaches the gate ready, which is where the `identifiable_content_visibility` decision
+#: is recorded.
+LISTING_WRITERS = {
+    "app/api/admin_listings.py":
+        "the reviewer's decide route — the ONE production transition into `published`. Every "
+        "photograph it carries is a seller upload with a privacy row (Task P2), so the gate is met "
+        "by the pipeline, never by a visibility value written here.",
+    "app/api/seller_listings.py":
+        "the wizard's own writes. None of them sets `status = 'published'`: submit writes "
+        "`in_review`, and `take_off_market` moves a published row OFF the market (A-SL15), so no "
+        "statement in this module can fire the gate.",
+    "scripts/seed_listings.py":
+        "the demo hospitals' UPSERT, which INSERTs directly as `published`. The gate has no INSERT "
+        "arm (A-IDP-6), and the seeds take `040`'s `NOT_SHOW` default (A-IDP-4 (1)) — their path "
+        "photographs are hidden at delivery, not at publication.",
+    "tests/api/test_admin_listings.py":
+        "review-queue fixtures with no photographs; a listing with an empty `photos` array has "
+        "nothing for the gate's predicate to find.",
+    "tests/api/test_listing_assets.py":
+        "`_SEED_INSERT` inserts as `published` (no INSERT arm); `_publish` and `_republish` write a "
+        "SELLER_CONFIRMED privacy row with a derivative for every uploaded photograph BEFORE they "
+        "move the row into `published`.",
+    "tests/api/test_listings.py":
+        "its module-level template inserts seed rows directly as `published` — the fourth writer "
+        "A-IDP-3 (1) found, and the reason this map exists. No INSERT arm, so no refusal.",
+    "tests/api/test_seller_listings.py":
+        "two shapes. `_SEED_INSERT` inserts a seed row carrying PATH photographs directly as "
+        "`published` — no INSERT arm (A-IDP-6) — while every row its UPDATEs move into `published` "
+        "is a wizard draft with an empty `photos` array, so the predicate finds nothing to refuse.",
+    "tests/census/listing_fixtures.py":
+        "geocoding fixtures inserted directly with their status; no INSERT arm.",
+    "tests/census/test_market_api.py":
+        "sets `location_disclosed` on an existing row and never `status`, so the trigger — BEFORE "
+        "UPDATE **OF status** — does not fire at all.",
+    "tests/perf/test_query_plans.py":
+        "query-plan fixtures inserted directly with their status; no INSERT arm.",
+    "tests/scripts/test_seed_listings.py":
+        "the seeder's own suite: it inserts directly, and its two visibility cases (A-IDP-4 (1)) "
+        "use `draft` rows precisely so the gate is not what they are measuring.",
+    "tests/test_listing_privacy_schema.py":
+        "the gate's OWN suite — it drives the trigger on purpose, from both sides, which is why "
+        "the enumeration below excludes nothing and this file is simply declared.",
+    "tests/test_listing_schema.py":
+        "`016`/`030`'s column and CHECK contract, inserted directly; no INSERT arm.",
+}
+
+
+def test_every_writer_of_a_listing_row_declares_how_it_meets_the_publish_gate():
+    """Controller amendment A-IDP-3 (1), and the pin P1 Step 6b owed and did not leave behind.
+
+    Migration `042` refuses a listing that moves into `published` while a photograph of its is not
+    ready, so every writer of the table is a writer that has to have thought about it — including
+    the ones that reach it only by inserting a row that is already published, which A-IDP-6 then
+    exempted. Pinned BOTH ways: a file that stops writing the table has to leave this map, and a
+    file that starts writing it cannot be added without recording, here, how the row it writes
+    reaches the gate ready. That is where a new writer's `identifiable_content_visibility` decision
+    gets made, rather than in a prose count that enforces nothing."""
+    # THIS file is skipped: the pattern below occurs in it as the pattern, and a docs-and-drift
+    # suite that takes no `conn` fixture writes no table. Every other file is scanned.
+    write = re.compile(r"INSERT INTO listing[ (\n]|UPDATE listing SET")
+    found = {
+        str(path.relative_to(ROOT))
+        for root in ("app", "scripts", "tests")
+        for path in (ROOT / root).rglob("*.py")
+        if path != Path(__file__).resolve() and write.search(path.read_text())
+    }
+    assert found == set(LISTING_WRITERS), (
+        f"undeclared writers of the listing table: {sorted(found - set(LISTING_WRITERS))}; "
+        f"declared but no longer writing it: {sorted(set(LISTING_WRITERS) - found)}"
+    )
+    for path, disposition in LISTING_WRITERS.items():
+        assert len(disposition) > 40, f"{path}'s disposition says nothing useful"
+
+
 def test_deploy_md_documents_the_object_storage_layout():
     """SL9 Step 2's docs sweep: the four `S3_*` rows (SL2) say what the credentials are, not what
     the bucket holds. An operator diagnosing a photo or a document that failed to load needs the
