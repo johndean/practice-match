@@ -1055,9 +1055,13 @@ def _seed_drive_10_only(conn: Any, listing_id: str) -> None:
         cur.execute("INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES ('tiger_cb', '2023', now(), 'test')")
 
 
-async def test_the_single_route_carries_the_drive_time_label(client: Any, conn: Any, member: Any) -> None:
+async def test_the_single_route_carries_the_catchment_label(client: Any, conn: Any, member: Any) -> None:
     """D-C32: a listing with no `place`-band figures is served its `drive_10` band AND the label
-    that says so, so the buyer is never shown a drive-time area disguised as a named city."""
+    that says so, so the buyer is never shown a catchment disguised as a named city.
+
+    The name said "drive time label" until D-C39 retired the phrase: there is no drive time
+    anywhere in the pipeline. `drive_10` is the BAND's column value (`migrations/061`), which this
+    fixture still seeds by name; what the label describes is an 8 km straight-line catchment."""
     from tests.census.listing_fixtures import make_listing
 
     listing_id = make_listing(conn, city="Orlando", state="FL", zip="32819")
@@ -1080,7 +1084,7 @@ async def test_the_single_route_carries_the_drive_time_label(client: Any, conn: 
     assert data["growth_scope"] == "Orange County"
 
 
-async def test_the_list_route_carries_the_drive_time_label_too(client: Any, conn: Any, member: Any) -> None:
+async def test_the_list_route_carries_the_catchment_label_too(client: Any, conn: Any, member: Any) -> None:
     """The same row through `GET /api/listings` — the docked panel reads the list, not the detail."""
     from tests.census.listing_fixtures import make_listing
 
