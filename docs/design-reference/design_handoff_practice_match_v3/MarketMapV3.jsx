@@ -229,7 +229,7 @@ function MarketMapV3(props) {
 
     if (showDrive && driveCenter) {
       L.circle(driveCenter, {
-        radius: 16000, color: "#003a70", weight: 1.5, dashArray: "4 4",
+        radius: 8000, color: "#003a70", weight: 1.5, dashArray: "4 4",
         fill: false, interactive: false
       }).addTo(g);
     }

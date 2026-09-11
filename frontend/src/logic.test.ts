@@ -124,6 +124,29 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     expect(v).toHaveProperty('isBrowse', false);
   });
 
+  // A28.2-A28.4 (John, 2026-09-11, ruling D-C44), the same dead-code rule again — this time on
+  // orphans the DESIGN itself left behind rather than ones an amendment created. `layerHelp`,
+  // `fillRows` and `overlayRows` were V3's "GROUP 1 / GROUP 2" rows for the panel V3 replaced
+  // with `md.layerChoices`, retained by the design's own comment as legacy and read by no
+  // template on either target; `drive5`/`drive10` were layer-default flags only those rows read.
+  // Deleting them removes the last "drive time" strings in the product (D-C39's real target).
+  it('marketVals no longer exposes the legacy panel\'s orphan rows (A28.2-A28.4)', () => {
+    const md = c.marketVals(c.filtered());
+    expect(md).not.toHaveProperty('layerHelp');
+    expect(md).not.toHaveProperty('fillRows');
+    expect(md).not.toHaveProperty('overlayRows');
+    // …and nothing the family did not name went with them: the compact control V3 made
+    // canonical, and the legend the design still draws, are untouched.
+    expect(md).toHaveProperty('layerChoices');
+    expect(md).toHaveProperty('legend');
+    // A28.4: the two drive-band flags leave the defaults and the four LIVE members stay, with
+    // their values. Read through `symbols` — `SYMBOL_KEYS.filter((k) => layers[k] && ...)` — which
+    // is what actually consumes them, so all three of `pets: false`, `households: false` and
+    // `competition: true` are pinned by one literal. (`practices`, the fourth, is not a symbol
+    // key; the design reads it only from the deleted row, and it stays in the defaults.)
+    expect(md.symbols, 'A28.4 changed a layer default it was not given').toEqual(['competition']);
+  });
+
   // A2.5 (zero-gaps review, same dead-code rule as A2.3: a dead handler is dead code). The
   // top-level `selectMarker` A2.4 trimmed is never wired to any template prop — App.vue's
   // only `on-select` binding is `v.mob?.selectMarker`, the mobileVals one (`logic.js:972`) —
@@ -3864,16 +3887,19 @@ describe('A25 — a listing with no coordinates keeps its place and gets no pin 
   // `!!sel` with no coordinate term, and `MarketMapView.vue:91` draws the C7 drive-time ring on
   // `showDrive && driveCenter`. Before A25.2 that path threw inside `L.circle([null, null])` and
   // no ring ever appeared; after it the else-branch became PAINTABLE, so selecting an unlocated
-  // listing drew a 16 km dashed "roughly ten minutes' drive" circle around the middle of Austin.
-  // That is worse than the missing pin it replaced: a missing pin omits, a ring centred on a
-  // place the practice is not ASSERTS something false. A25.6 gives `showDrive` the same
-  // finite-coordinate test the pin list uses.
+  // listing drew a dashed circle around the middle of Austin. That is worse than the missing pin
+  // it replaced: a missing pin omits, a ring centred on a place the practice is not ASSERTS
+  // something false. A25.6 gives `showDrive` the same finite-coordinate test the pin list uses.
+  //
+  // A28.1 (D-C44, 2026-09-11) moved that circle from 16 km to 8 km and changed nothing here: the
+  // discriminator is the BOOLEAN, not the radius, so this case is as live after the ruling as
+  // before it — verified by perturbation, `showDrive: !!sel` still fails it.
   it('A25.6 — no point, no ring: showDrive is false when the selection has no point', () => {
     const p = austin()[0];
     at([p], null, null, () => {
       c.setState({ mdSel: p.id });
       const md = c.marketVals(c.filtered());
-      expect(md.showDrive, 'a 16 km drive-time ring was painted around the metro centre').toBe(false);
+      expect(md.showDrive, 'an 8 km drive-time ring was painted around the metro centre').toBe(false);
       // …and A25.2's fallback is still what it was: the ring is off, not aimed somewhere else.
       expect(md.driveCenter).toEqual(MARKETS[AUSTIN].center);
     });

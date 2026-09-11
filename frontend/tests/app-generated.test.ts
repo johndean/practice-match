@@ -66,7 +66,13 @@ describe('logic.js is the design script block, ported verbatim', () => {
 
   it('carries V3\'s market-data shape and none of V2\'s Listings tab', () => {
     const logic = readFileSync(join(ROOT, 'src/logic.js'), 'utf8');
-    for (const gone of ['browseMode', 'browseToggle', 'hasPeek']) {
+    // A28.2-A28.4 (John, 2026-09-11, ruling D-C44) append the legacy panel's own orphans to this
+    // list: `layerHelp`, `fillRows`, `overlayRows` and the two drive-band layer-default flags the
+    // deleted rows were the sole reader of. They are here rather than only in
+    // `design-amendments.test.ts` because that suite asserts on the DESIGN and this one asserts
+    // on the PORT — a hand edit that put any of them back into `logic.js` alone would fail the
+    // byte-parity case above, and this names what it was.
+    for (const gone of ['browseMode', 'browseToggle', 'hasPeek', 'fillRows', 'overlayRows', 'layerHelp', 'drive5', 'drive10']) {
       expect(logic, `logic.js still carries ${gone}`).not.toContain(gone);
     }
     // README §7, risk register: the V3 reference still declares a vestigial `isBrowse: false`
@@ -93,9 +99,12 @@ describe('logic.js is the design script block, ported verbatim', () => {
   //     so one unlocated community stretches it to the equator, which is precisely the failure
   //     A25.3 measured in the mosaic's own bbox (100,482,513 cells).
   //
-  // NEITHER IS DELETED. Deleting them is an unruled edit to the approved design, and the
-  // bundle's dead-code rule has only ever been applied to orphans an amendment itself created
-  // (A2.3-A2.5, A13.6-A13.7). They are INERT ONLY BECAUSE NO TEMPLATE CONSUMES THEM, and that —
+  // NEITHER IS DELETED. Deleting them is an unruled edit to the approved design. The bundle's
+  // dead-code rule had only ever been applied to orphans an amendment itself created (A2.3-A2.5,
+  // A13.6-A13.7) until A28.2-A28.4 (John, 2026-09-11, ruling D-C44) applied it to the legacy
+  // panel's own pre-existing orphans — and that widening is the point: it took a RULING, named
+  // the identifiers, and was measured one by one. These two are not in it. They are INERT ONLY
+  // BECAUSE NO TEMPLATE CONSUMES THEM, and that —
   // not their existence — is what this case pins, in the same spirit as the reference's
   // vestigial `isBrowse: false` above: as facts, not defects. The day either is wired to a
   // template this fails, and whoever wires it is made to give it A25.1's finite-coordinate test

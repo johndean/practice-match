@@ -306,11 +306,15 @@ describe('local design amendments (spec D15)', () => {
     // D-C42 (John, 2026-09-11): the Insights heading keeps its name and the geography moves to a
     // sub-line beneath it. A27.6 reads A27.3's output and A27.7 A21.5a's, so both come after them.
     'A27.6', 'A27.7',
+    // A28 — the ring is drawn at the distance the card names (John, 2026-09-11, ruling D-C44).
+    // A28.1 is the first entry that edits `MarketMapV3.jsx` (`file: 'jsx'`); A28.2-A28.4 delete
+    // the legacy panel's orphan rows and the two state flags those rows were the only reader of.
+    'A28.1', 'A28.2', 'A28.3', 'A28.4',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(212);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(216);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -1112,6 +1116,50 @@ describe('local design amendments (spec D15)', () => {
     }
     // Not a vacuous pass: the parser must actually have found the rows and their citations.
     expect(checked, 'no V3 citation was checked — the row or citation pattern stopped matching').toBeGreaterThan(20);
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // A28 (John, 2026-09-11, ruling D-C44). Two parts, one change: the ring is drawn at the
+  // distance the Community Context card names, and the legacy panel's orphans go.
+  //
+  // The family is asserted on the OUTPUT of both bundle files, and both directions are measured:
+  // the PRISTINE bundle must still carry what A28 removes, or the removal assertions would pass
+  // against a file that never had them and this case would protect nothing.
+  // ---------------------------------------------------------------------------------------
+  it('A28.1 draws the ring at the 8 000 m band the card names, in V2\'s own colour for it', () => {
+    const jsx = readFileSync(AMENDED_JSX, 'utf8');
+    const pristineJsx = readFileSync(PRISTINE_JSX, 'utf8');
+    // The pristine file is the mash-up D-C44 describes: V2's FAR radius in V2's NEAR colour.
+    expect(pristineJsx, 'the pristine bundle no longer carries the 16 000 m ring A28.1 corrects')
+      .toContain('radius: 16000, color: "#003a70"');
+    expect(jsx).toContain('radius: 8000, color: "#003a70", weight: 1.5, dashArray: "4 4"');
+    expect(jsx, 'the ten-mile radius is still drawn somewhere in the component').not.toContain('16000');
+    // Only the radius moved: the rest of the declaration, and the finite-point test A25.6 gave
+    // `showDrive` (in the .dc.html, not here), are untouched.
+    expect(jsx).toContain('fill: false, interactive: false');
+    expect(jsx.split('L.circle(').length - 1, 'A28.1 added or removed a circle').toBe(pristineJsx.split('L.circle(').length - 1);
+    // A28.1 is the only jsx entry, and it is the first one the programme has ever had.
+    expect(amendmentsFor('jsx').map((a) => a.id)).toEqual(['A28.1']);
+  });
+
+  it('A28.2-A28.4 delete the legacy panel\'s orphans, and the last "drive time" strings with them', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    for (const gone of ['fillRows', 'overlayRows', 'layerHelp', 'drive5', 'drive10', 'GROUP 1 —', 'GROUP 2 —']) {
+      // Both directions: the pristine bundle HAS it (so the assertion below is not vacuous) and
+      // the amended design does not.
+      expect(pristine, `the pristine bundle no longer carries ${gone}`).toContain(gone);
+      expect(amended, `A28 left ${gone} in the design`).not.toContain(gone);
+    }
+    // The point of the deletion, in John's own terms: no "drive time" string is left anywhere.
+    expect(amended, 'a "drive time" string survives in the design').not.toContain('drive time');
+    // The four LIVE members of the layer defaults stay, in the design's own order — A28.4 took
+    // the two the deleted rows were the sole reader of and nothing else.
+    expect(amended).toContain('{ practices: true, competition: true, households: false, pets: false },');
+    // …and the helpers those rows called are NOT deleted: the ruling names the rows and the
+    // flags, so removing their callers is a separate change and a separate ruling.
+    for (const kept of ['const layerRow = ', 'const radioRow = ', 'const setValue = ', 'const setLayer = ']) {
+      expect(amended, `A28 widened its own scope and removed ${kept.trim()}`).toContain(kept);
+    }
   });
 
   it('LOCAL_AMENDMENTS.md carries exactly one table row per amendment id (A1 collapsed to one)', () => {

@@ -4414,6 +4414,93 @@ const A27_7: Amendment = {
   count: 1
 };
 
+/** A28.1 (John, 2026-09-11 — ruling D-C44). THE RING IS DRAWN AT THE DISTANCE THE CARD NAMES.
+ *  `MarketMapV3.jsx:230-234` draws the C7 drive-time ring at `radius: 16000, color: "#003a70"`,
+ *  and D-C38 gives the Community Context card the sentence "Within about 5 miles of the
+ *  practice" — so a buyer reads one distance and is shown a circle twice its size, on every
+ *  listing with a point.
+ *
+ *  Neither number is invented. V2 drew TWO rings
+ *  (`design_handoff_practice_match_v2/MarketMap.jsx:160-169`): `drive10` at 16 000 m in
+ *  `#339dde` and `drive5` at 8 000 m in `#003a70`. V3 replaced the panel that toggled them,
+ *  kept ONE hard-coded ring, and kept the FAR radius in the NEAR ring's colour — a mash-up of
+ *  V2's two rings rather than either of them. 8 000 m is the band the card describes, the band
+ *  D-C38 serves the area figures from, and the band `#003a70` already belongs to, so the number
+ *  and the colour agree for the first time since the V3 panel rewrite.
+ *
+ *  The FIRST amendment in the programme's history to edit `MarketMapV3.jsx` — `file: 'jsx'`, the
+ *  partition spec §9.2 put in place for A24. No visible control is added: John was offered V2's
+ *  two toggleable rings, composed into V3's own "Market data layers" drawer, and chose against
+ *  it. A25.6's "no point, no ring" is untouched — the radius moves, the finite-point test that
+ *  decides whether anything is drawn at all does not. */
+const A28_1: Amendment = {
+  id: 'A28.1', date: '2026-09-11', file: 'jsx',
+  ruling: 'the ring is drawn at the distance the card names — 8 000 m, keeping #003a70 (D-C44)',
+  find: '        radius: 16000, color: "#003a70", weight: 1.5, dashArray: "4 4",',
+  replace: '        radius: 8000, color: "#003a70", weight: 1.5, dashArray: "4 4",',
+  count: 1
+};
+
+/** A28.2 (same ruling). THE LEGACY PANEL'S GROUP 1 ROWS, deleted under the bundle's own
+ *  dead-code rule — the rule that removed the `browseSel` orphans (A2.3-A2.5) and the two
+ *  `<select>` render-value orphans A13 left behind (A13.6-A13.7).
+ *
+ *  `layerHelp` and `fillRows` are read by NO template on either target: each occurs exactly once
+ *  in the amended design — its own declaration — and zero times in the template region, and
+ *  `grep fillRows frontend/src/App.vue` is empty. The design says so itself on the line this
+ *  entry deletes with them: "GROUP 1 — retained for the legacy panel; the compact control above
+ *  is canonical." V3 replaced that panel with `md.layerChoices` ("Market data layers · select
+ *  any or all"), which is what `browse-layers-open` photographs. */
+const A28_2: Amendment = {
+  id: 'A28.2', date: '2026-09-11', ruling: 'the orphans are deleted under the bundle\'s own dead-code rule (D-C44)',
+  find: '      // GROUP 1 — retained for the legacy panel; the compact control above is canonical.\n'
+    + '      layerHelp: "Area shading: rates and medians shade the whole community, so only one can show at a time — two fills blend into a colour that means nothing. Overlays: counts drawn as sized circles, which stack freely on each other and on the shading.",\n'
+    + '      fillRows: [radioRow("none", "No shading", !valueLayer, null, () => this.setState({ mdValue: null }))].concat(\n'
+    + '        enabled("income") ? [radioRow("income", "Median Household Income", valueLayer === "income", ramp("income")[3], setValue("income"))] : [],\n'
+    + '        enabled("growth") ? [radioRow("growth", "Population Growth", valueLayer === "growth", ramp("growth")[3], setValue("growth"))] : [],\n'
+    + '        enabled("econ") ? [radioRow("econ", "Average Practice Payroll", valueLayer === "econ", ramp("econ")[3], setValue("econ"))] : []\n'
+    + '      ),\n',
+  replace: '',
+  count: 1
+};
+
+/** A28.3 (same ruling). THE LEGACY PANEL'S GROUP 2 ROWS, on the same rule and the same
+ *  measurement: `overlayRows` occurs exactly once in the amended design, its own declaration,
+ *  and zero times in the template region; `grep overlayRows frontend/src/App.vue` is empty.
+ *
+ *  This is the entry that removes the LAST "drive time" strings in the product — "5–10 min drive
+ *  time" and "10–20 min drive time", two rows nothing renders. A27.3/A27.4/A27.5 corrected every
+ *  sentence a member can actually read; these two were all that was left, which is what D-C39 was
+ *  reaching for and could not name correctly. */
+const A28_3: Amendment = {
+  id: 'A28.3', date: '2026-09-11', ruling: 'the orphans are deleted under the bundle\'s own dead-code rule (same ruling)',
+  find: '      // GROUP 2 — everything that can coexist with a fill and with each other.\n'
+    + '      overlayRows: [\n'
+    + '        layerRow("practices", "Practice Listings", !!layers.practices, "#003a70", setLayer("practices")),\n'
+    + '        layerRow("drive5", "5–10 min drive time", !!layers.drive5, "#003a70", setLayer("drive5")),\n'
+    + '        layerRow("drive10", "10–20 min drive time", !!layers.drive10, "#339dde", setLayer("drive10"))\n'
+    + '      ].concat(\n'
+    + '        enabled("households") ? [layerRow("households", "Households", !!layers.households, ramp("households")[3], setLayer("households"))] : [],\n'
+    + '        enabled("pets") ? [layerRow("pets", "Estimated Pet Households", !!layers.pets, ramp("pets")[3], setLayer("pets"))] : [],\n'
+    + '        enabled("vets") ? [layerRow("competition", "Veterinary Establishments", !!layers.competition, ramp("competition")[3], setLayer("competition"))] : []\n'
+    + '      ),\n',
+  replace: '',
+  count: 1
+};
+
+/** A28.4 (same ruling). THE TWO DRIVE-BAND STATE FLAGS. `drive5` and `drive10` are the only two
+ *  members of `marketVals`'s layer defaults that A28.3's rows were the sole reader of: the other
+ *  four are live — `practices`, `households`, `pets` and `competition` are what `SYMBOL_KEYS`
+ *  filters `activeSymbols` by (`logic.js`), and `competition` is written by the Data Layers
+ *  card's own source switch. Deleting the two that nothing reads leaves those four exactly as
+ *  they are, including their order. */
+const A28_4: Amendment = {
+  id: 'A28.4', date: '2026-09-11', ruling: 'the drive5/drive10 state flags go with the rows that were their only reader (same ruling)',
+  find: '      { practices: true, drive5: true, drive10: true, competition: true, households: false, pets: false },',
+  replace: '      { practices: true, competition: true, households: false, pets: false },',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -4483,5 +4570,15 @@ export function amendments(): Amendment[] {
     A27_1, A27_2, A27_3, A27_4, A27_5,
     // D-C42 (John, 2026-09-11): the Insights heading keeps its name and the geography moves to a
     // sub-line. A27.6 reads A27.3's output and A27.7 A21.5a's, so both run after them.
-    A27_6, A27_7];
+    A27_6, A27_7,
+    // A28 — the ring is drawn at the distance the card names (John, 2026-09-11, ruling D-C44).
+    // A28.1 is the FIRST entry in the programme's history that edits `MarketMapV3.jsx` rather
+    // than the `.dc.html` (`file: 'jsx'`, the partition spec §9.2 added for A24); A28.2-A28.4
+    // delete the legacy panel's orphan rows and the two state flags those rows were the only
+    // reader of, under the bundle's own dead-code rule. None of the four reads an earlier
+    // entry's output — every `find` occurs in the pristine file — but the family is appended
+    // last as every family is, and definition order in this file matches this list (m8). A20
+    // stays reserved by the image-identifiability plan and A24 by the neighbourhood-shading
+    // spec, so A28 is the next free id in the ledger after A27.
+    A28_1, A28_2, A28_3, A28_4];
 }

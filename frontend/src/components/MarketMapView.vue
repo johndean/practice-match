@@ -89,7 +89,7 @@ function drawOverlay() {
   if (!engine) return;
   engine.clear('overlay');
   if (props.showDrive && props.driveCenter) {
-    engine.ring(props.driveCenter, 16000, { color: '#003a70', weight: 1.5, dashArray: '4 4', fill: false, interactive: false }, 'overlay');
+    engine.ring(props.driveCenter, 8000, { color: '#003a70', weight: 1.5, dashArray: '4 4', fill: false, interactive: false }, 'overlay');
   }
   if (!props.activeLayer || !props.communities.length) return;
   const bbox = mosaicBbox(props.communities);
