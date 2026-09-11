@@ -1288,7 +1288,12 @@ def test_claude_md_amendment_family_and_entry_counts_match_design_amendments():
     number_words = {n: w for n, w in enumerate(
         ("Zero", "One", "Two", "Three", "Four", "Five", "Six", "Seven", "Eight", "Nine", "Ten",
          "Eleven", "Twelve", "Thirteen", "Fourteen", "Fifteen", "Sixteen", "Seventeen", "Eighteen",
-         "Nineteen", "Twenty", "Twenty-one", "Twenty-two", "Twenty-three", "Twenty-four"))}
+         "Nineteen", "Twenty", "Twenty-one", "Twenty-two", "Twenty-three", "Twenty-four",
+         # A29 (D-F1, 2026-09-11) made twenty-five families and the tuple stopped at "Twenty-four",
+         # exactly as A18 found it stopped at "Fifteen". It runs to Thirty now, which covers the two
+         # ids reserved by plans in flight (A20 image-identifiability, A24 neighbourhood-shading)
+         # and the two the card-geography branch is carrying (A27, A28).
+         "Twenty-five", "Twenty-six", "Twenty-seven", "Twenty-eight", "Twenty-nine", "Thirty"))}
     assert family_count in number_words, f"no spelled-out word on hand for {family_count} families"
 
     claude = (ROOT / "CLAUDE.md").read_text()

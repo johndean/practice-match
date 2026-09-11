@@ -1043,8 +1043,10 @@ describe('local design amendments (spec D15)', () => {
     expect(amended).toContain('  openFilterMenu = (key, at) => {\n    this.setState({ fMenu: key, fMenuAt: at, navMenu: false, userMenu: false, giveMenu: false, marketMenu: false, marketMenuAt: -1 });\n  };');
     expect((amended.match(/fMenu: key, fMenuAt: at/g) ?? []).length, 'a second open path would have to carry the edges by hand').toBe(1);
     // …and the six inbound edges (A26.8a-f), plus the popover parent (A26.4) and go()'s three
-    // arms (A26.9). Ten places shut a filter dropdown; the family's own toggle is the eleventh.
-    expect((amended.match(/fMenu: null, fMenuAt: -1/g) ?? []).length, 'the filter dropdowns are shut in exactly these places').toBe(16);
+    // arms (A26.9). Ten places shut a filter dropdown; the family's own two toggles are the
+    // eleventh and twelfth, and A29's sort control — the third instance of the SAME slot — adds
+    // its own toggle and its own choice, which is the whole of what A29 writes here.
+    expect((amended.match(/fMenu: null, fMenuAt: -1/g) ?? []).length, 'the dropdowns on Browse are shut in exactly these places').toBe(18);
   });
 
   it('A26 leaves Give\'s and the metro\'s three dismissal closures byte for byte (the A14.4 precedent)', () => {

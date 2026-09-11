@@ -4531,15 +4531,18 @@ describe('A29 — the results-rail sort control (D-F1)', () => {
   afterEach(() => { c.componentWillUnmount(); });
 
   const sort = () => c.renderVals().md.sort;
-  const railIds = () => c.renderVals().md.mdResults.map((r: any) => r.id);
+  // The rail's rows carry no `id` of their own — the design's card reads `photoId`, which is
+  // minted from it — so the order is read back through that rather than a key being added.
+  const railIds = () => c.renderVals().md.mdResults.map((r: any) => r.photoId.replace(/^ph-|-exterior$/g, ''));
   const ids = (p: any[]) => p.map((x) => x.id);
 
-  // The design's own fixture, read rather than retyped: nine published Austin practices, in the
+  // The design's own fixture, read rather than retyped: the published Austin practices, in the
   // order the array declares them, which is the order the API also serves (ORDER BY listed_at
   // DESC, id DESC — app/api/listings.py).
-  const SOURCE = ids(P.filter((p: any) => p.status === 'published' && p.market === 'Austin, TX'));
-  const BY_PRICE = ids([...P].filter((p: any) => p.status === 'published').sort((a: any, b: any) => a.price - b.price));
-  const BY_REV = ids([...P].filter((p: any) => p.status === 'published').sort((a: any, b: any) => b.rev - a.rev));
+  const AUSTIN = P.filter((p: any) => p.status === 'published' && p.market === 'Austin, TX');
+  const SOURCE = ids(AUSTIN);
+  const BY_PRICE = ids([...AUSTIN].sort((a: any, b: any) => a.price - b.price));
+  const BY_REV = ids([...AUSTIN].sort((a: any, b: any) => b.rev - a.rev));
 
   it('the option list is the design\'s own three <option> labels, in the design\'s own order', () => {
     expect(sort().options.map((o: any) => o.label)).toEqual([
@@ -4586,7 +4589,7 @@ describe('A29 — the results-rail sort control (D-F1)', () => {
     expect(railIds()).toEqual(BY_PRICE);
     expect(railIds(), 'a comparator that did nothing would leave the source order').not.toEqual(SOURCE);
     expect(railIds(), 'a reversed comparator would give the other end').not.toEqual([...BY_PRICE].reverse());
-    const prices = c.renderVals().md.mdResults.map((r: any) => P.filter((p: any) => p.id === r.id)[0].price);
+    const prices = railIds().map((id: string) => AUSTIN.filter((p: any) => p.id === id)[0].price);
     expect(prices).toEqual([...prices].sort((a: number, b: number) => a - b));
   });
 
@@ -4595,7 +4598,7 @@ describe('A29 — the results-rail sort control (D-F1)', () => {
     expect(railIds()).toEqual(BY_REV);
     expect(railIds(), 'a comparator that did nothing would leave the source order').not.toEqual(SOURCE);
     expect(railIds(), 'a reversed comparator would give the other end').not.toEqual([...BY_REV].reverse());
-    const revs = c.renderVals().md.mdResults.map((r: any) => P.filter((p: any) => p.id === r.id)[0].rev);
+    const revs = railIds().map((id: string) => AUSTIN.filter((p: any) => p.id === id)[0].rev);
     expect(revs).toEqual([...revs].sort((a: number, b: number) => b - a));
   });
 
@@ -4617,7 +4620,7 @@ describe('A29 — the results-rail sort control (D-F1)', () => {
     expect(v.options[0].tickStyle).toContain('opacity: 0');
     // One sorted list, not two: the rail, the map's own marker list and the count all read it.
     expect(c.renderVals().markers.map((m: any) => m.id)).toEqual(BY_REV);
-    expect(c.renderVals().md.mdHeadline).toBe('9 practices available');
+    expect(c.renderVals().md.mdHeadline).toBe(`${AUSTIN.length} practices available`);
   });
 
   it('the sort reorders the results and never changes WHICH results there are', () => {
@@ -4633,10 +4636,7 @@ describe('A29 — the results-rail sort control (D-F1)', () => {
   it('it sorts what the filters left, not the whole market', () => {
     c.setF('type')('Mixed');
     c.setSort('Price: low to high');
-    const filtered = ids(P.filter((p: any) => p.status === 'published' && p.type === 'Mixed'))
-      .map((id) => P.filter((p: any) => p.id === id)[0])
-      .sort((a: any, b: any) => a.price - b.price)
-      .map((p: any) => p.id);
+    const filtered = ids([...AUSTIN].filter((p: any) => p.type === 'Mixed').sort((a: any, b: any) => a.price - b.price));
     expect(railIds()).toEqual(filtered);
     expect(railIds().length).toBeLessThan(SOURCE.length);
   });
@@ -4645,28 +4645,28 @@ describe('A29 — the results-rail sort control (D-F1)', () => {
   // price the API left null must not be sorted to the CHEAPEST end of the rail, which is a
   // reading of a figure nobody has.
   it('a listing with no figure sorts last in BOTH directions, never to an end it has not earned', () => {
-    const nulled = P.map((p: any) => (p.id === 'p4' ? { ...p, price: null, rev: null } : p));
+    const nulled = AUSTIN.map((p: any) => (p.id === 'p4' ? { ...p, price: null, rev: null } : p));
     const s = (label: string) => {
       c.setSort(label);
-      return c.sortResults(nulled).map((p: any) => p.id);
+      return ids(c.sortResults(nulled));
     };
-    expect(s('Price: low to high')[8], 'a null price is not the cheapest').toBe('p4');
-    expect(s('Revenue: high to low')[8], 'a null revenue is not the largest').toBe('p4');
+    expect(s('Price: low to high').slice(-1), 'a null price is not the cheapest').toEqual(['p4']);
+    expect(s('Revenue: high to low').slice(-1), 'a null revenue is not the largest').toEqual(['p4']);
     // …and two of them keep the order they arrived in (Array.prototype.sort is stable), rather
     // than being shuffled against each other by a comparator that has nothing to compare.
-    const two = P.map((p: any) => (p.id === 'p4' || p.id === 'p2' ? { ...p, price: null } : p));
+    const two = AUSTIN.map((p: any) => (p.id === 'p4' || p.id === 'p2' ? { ...p, price: null } : p));
     c.setSort('Price: low to high');
-    expect(c.sortResults(two).map((p: any) => p.id).slice(-2)).toEqual(['p2', 'p4']);
+    expect(ids(c.sortResults(two)).slice(-2)).toEqual(['p2', 'p4']);
   });
 
   it('and NaN is treated as absent too, the way A25 read a coordinate', () => {
     c.setSort('Price: low to high');
-    const bad = P.map((p: any) => (p.id === 'p1' ? { ...p, price: NaN } : p));
-    expect(c.sortResults(bad).map((p: any) => p.id)[8]).toBe('p1');
+    const bad = AUSTIN.map((p: any) => (p.id === 'p1' ? { ...p, price: NaN } : p));
+    expect(ids(c.sortResults(bad)).slice(-1)).toEqual(['p1']);
   });
 
   it('sortResults returns the list itself under the identity order, and never mutates its input', () => {
-    const input = P.slice(0, 4);
+    const input = AUSTIN.slice(0, 4);
     const snapshot = ids(input);
     expect(c.sortResults(input), 'no comparator, no copy').toBe(input);
     c.setSort('Price: low to high');
@@ -4861,7 +4861,7 @@ describe('A29 — the results-rail sort control (D-F1)', () => {
       ['toggleMarketMenu', () => v().toggleMarketMenu()],
       ['the metro arrow-open', () => v().marketMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() })]
     ] as [string, () => void][]) {
-      c.setState({ navMenu: false, userMenu: false, giveMenu: false, marketMenu: false });
+      c.setState({ navMenu: false, userMenu: false, giveMenu: false, marketMenu: false, fMenu: null, fMenuAt: -1 });
       sort().toggle();
       expect(c.state.fMenu).toBe('sort');
       fire();

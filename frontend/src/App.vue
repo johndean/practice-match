@@ -594,11 +594,22 @@
                 <div style="font-family: var(--rf-display); font-size: 20px; font-weight: 800; letter-spacing: .02em; color: var(--vf-navy); line-height: 1.2; text-transform: uppercase;"><span v-if="__s(v.md?.mdHeadline) !== null" class="sc-interp">{{ __s(v.md?.mdHeadline) }}</span></div>
                 <div style="font-size: 12.5px; color: var(--vf-text); margin-top: 3px;"><span v-if="__s(v.md?.mdSubline) !== null" class="sc-interp">{{ __s(v.md?.mdSubline) }}</span></div>
               </div>
-              <select style="flex: none; height: 34px; padding: 0 9px; font-size: 12.5px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">
-                <option>Newest first</option>
-                <option>Price: low to high</option>
-                <option>Revenue: high to low</option>
-              </select>
+              <div :ref="v.md?.sort?.hostRef" style="position: relative; flex: none;">
+                <button @click="v.md?.sort?.toggle" @keydown="v.md?.sort?.keys" role="combobox" :aria-label="v.md?.sort?.aria" aria-haspopup="listbox" :aria-controls="v.md?.sort?.listId" :aria-expanded="v.md?.sort?.open" :aria-activedescendant="v.md?.sort?.activeId" style="display: inline-flex; align-items: center; gap: 8px; flex: none; height: 34px; padding: 0 9px; font-size: 12.5px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">
+                  <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><span v-if="__s(v.md?.sort?.triggerLabel) !== null" class="sc-interp">{{ __s(v.md?.sort?.triggerLabel) }}</span></span>
+                  <img src="/assets/icons/sub-chevron.svg" alt width="14" height="14" :style="v.md?.sort?.caretStyle">
+                </button>
+                <template v-if="v.md?.sort?.open">
+                  <div class="rf-scroll" role="listbox" :aria-label="v.md?.sort?.aria" :id="v.md?.sort?.listId" :ref="v.md?.sort?.panelRef" style="position: absolute; right: 0; top: 40px; z-index: 700; min-width: 100%; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;">
+                    <template v-for="(o, $index) in __arr(v.md?.sort?.options)" :key="$index">
+                      <button class="sch7" @click="o?.go" :id="o?.optId" role="option" tabindex="-1" :aria-selected="o?.selected" :style="o?.rowStyle">
+                        <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><span v-if="__s(o?.label) !== null" class="sc-interp">{{ __s(o?.label) }}</span></span>
+                        <img src="/assets/icons/sub-check-filled.svg" alt width="11" height="11" :style="o?.tickStyle">
+                      </button>
+                    </template>
+                  </div>
+                </template>
+              </div>
             </div>
             <div style="display: flex; flex-direction: column; gap: 10px; padding: 0 16px 20px;">
               <template v-for="(r, $index) in __arr(v.md?.mdResults)" :key="$index">

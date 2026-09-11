@@ -188,6 +188,18 @@ const LAYER_META = {
 
 const num = (s) => (s == null ? 0 : Number(String(s).replace(/[^0-9.]/g, "")) || 0);
 
+// D-F1 — the results-rail sort orders. The three LABELS are the design's own <option> text,
+// verbatim and in its own order; each names the field it reads and the direction it reads it in.
+// "Newest first" is the order the rows ARRIVE in rather than a comparator: the API serves this
+// list ORDER BY listed_at DESC, id DESC, and a practice carries `listed` only as a human phrase
+// ("3 days ago"), never as a sortable instant.
+const SORT_ORDERS = {
+  "Newest first": null,
+  "Price: low to high": { of: (p) => p.price, dir: 1 },
+  "Revenue: high to low": { of: (p) => p.rev, dir: -1 }
+};
+const SORT_LABELS = Object.keys(SORT_ORDERS);
+
 // SUBSTITUTIONS — the VIN icon set ships no heart or check glyph. Per the design system's
 // iconography rule (no unicode glyphs as icons) these are closest-match filled silhouettes
 // matched to the set's heavy/filled weight. Swap in authentic assets when VIN provides them.
@@ -425,6 +437,39 @@ class Component extends DCLogic {
   moveFilterHighlight = (key, i) => {
     this.setState({ fMenuAt: i });
     this.scrollFilterOption(key, i);
+  };
+
+  // D-F1 — the chosen results order, applied once, at the one place renderVals() produces the
+  // list, so the rail, the map's marker list and the count cannot disagree about it. The
+  // identity order returns the list itself: no comparator, no copy, nothing reordered.
+  //
+  // A missing figure is not a zero (A21, A25): a listing the API served `price: null` sorts
+  // LAST in both directions rather than to the cheapest end, which would be a reading of a
+  // figure nobody has. Number.isFinite, not `!= null`, because a NaN is absent too.
+  // Array.prototype.sort is stable, so listings that share a rank keep the order they arrived
+  // in — which is the API's own newest-first.
+  sortResults = (list) => {
+    const ord = SORT_ORDERS[this.state.sort || SORT_LABELS[0]];
+    if (!ord) return list;
+    return list.slice().sort((a, b) => {
+      const av = ord.of(a), bv = ord.of(b);
+      if (!Number.isFinite(av)) return Number.isFinite(bv) ? 1 : 0;
+      if (!Number.isFinite(bv)) return -1;
+      return ord.dir * (av - bv);
+    });
+  };
+
+  // The sort choice, in A26.1's setFilter shape minus setF: a sort is not a filter. It changes
+  // the ORDER of the results and never which of them there are, so `f` is untouched and
+  // activeFilterCount() cannot count it; and there is no 320 ms loading settle, because these
+  // rows are already on screen and a skeleton would hide the one thing the member asked to see.
+  setSort = (v) => {
+    this.setState({ sort: v, fMenu: null, fMenuAt: -1 });
+    // The choice unmounts the row the pointer or the keyboard was on, so focus would land on
+    // <body>. A native select leaves the user on the control; so does this one.
+    const host = this._fMenuEls && this._fMenuEls.sort;
+    const trigger = host && host.querySelector('button[aria-haspopup="listbox"]');
+    if (trigger) trigger.focus();
   };
 
   // ---- Browse Practices: map, market layers, results -------------------------------------------------
@@ -810,6 +855,75 @@ class Component extends DCLogic {
           };
         })
       },
+      // D-F1 — the results-rail sort control: a dropdown list in this design's own style, not
+      // the operating system's popup, AND wired. A26's own machinery used a third time rather
+      // than a second idiom: one state slot (fMenu/fMenuAt), one open path (openFilterMenu), one
+      // set of dismissal closures. "sort" is disjoint from the eight filter keys, so the slot
+      // still names exactly one open dropdown on Browse and every cross-menu edge A26 wrote
+      // already covers this one — there is nothing new here to forget.
+      sort: (() => {
+        const cur = s.sort || SORT_LABELS[0];
+        const open = s.fMenu === "sort";
+        // Math.max: an order `sort` holds that this list does not would give indexOf -1 and
+        // index the array out of bounds — the guard A26.2 and marketMenuKeys both carry.
+        const sel = Math.max(0, SORT_LABELS.indexOf(cur));
+        const at = open && s.fMenuAt >= 0 ? s.fMenuAt : sel;
+        return {
+          // A new accessible name, as A13 minted "Metro area": this control's first option
+          // names a value ("Newest first"), not a control, so A26.2's derivation has nothing
+          // to read. A <select> with no <label> is named by nothing, and a <label> cannot name
+          // a <button>, so the trigger needs one.
+          aria: "Sort results",
+          open,
+          listId: "f-listbox-sort",
+          // On the TRIGGER, which is always rendered: a shut dropdown has no active descendant,
+          // and null is what both renderers omit the attribute for (a string would spell a dead
+          // id). Keyed on "sort" as well, so a filter dropdown never claims this highlight.
+          activeId: open ? "f-opt-sort-" + s.fMenuAt : null,
+          // What the closed <select> displayed: it carried no `value`, so the browser showed
+          // its FIRST option, and this shows the same one until the member chooses another.
+          triggerLabel: cur,
+          toggle: () => (open ? this.setState({ fMenu: null, fMenuAt: -1 }) : this.openFilterMenu("sort", sel)),
+          hostRef: (el) => { const m = this._fMenuEls || (this._fMenuEls = {}); m.sort = el || null; },
+          // The panel's own mount is when the option rows first exist, so it is where OPENING
+          // scrolls the highlighted row into view — the arrow keys cannot, having seeded the
+          // highlight while the panel was still unrendered (A13/A14 review round 1, C1).
+          panelRef: (el) => { if (el) this.scrollFilterOption("sort", this.state.fMenuAt); },
+          keys: (e) => {
+            const n = SORT_LABELS.length;
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              e.preventDefault();
+              if (!open) return this.openFilterMenu("sort", sel);
+              return this.moveFilterHighlight("sort", (at + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
+            }
+            if (!open) return;
+            if (e.key === "Home" || e.key === "End") {
+              e.preventDefault();
+              return this.moveFilterHighlight("sort", e.key === "Home" ? 0 : n - 1);
+            }
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              return this.setSort(SORT_LABELS[at]);
+            }
+          },
+          caretStyle: "flex: none; display: block; transition: transform 150ms var(--easing-out); transform: rotate(" +
+            (open ? "180deg" : "0deg") + ");",
+          options: SORT_LABELS.map((label, i) => {
+            const on = label === cur;
+            const hi = open && s.fMenuAt === i;
+            return {
+              label, selected: on,
+              go: () => this.setSort(label),
+              optId: "f-opt-sort-" + i,
+              rowStyle: "display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 8px; font-family: var(--rf-display); font-size: 13px; font-weight: " +
+                (on ? "800" : "500") + "; color: var(--vf-navy); background: " +
+                (on ? "var(--vf-accent-bg)" : hi ? "var(--vf-neutral)" : "none") + "; border: 0; border-radius: 6px; cursor: pointer;",
+              tickStyle: "flex: none; display: block; filter: brightness(0) saturate(100%) invert(23%) sepia(89%) saturate(1352%) hue-rotate(184deg) brightness(94%) contrast(101%); opacity: " +
+                (on ? "1" : "0") + ";"
+            };
+          })
+        };
+      })(),
       mdHeadline: list.length + (list.length === 1 ? " practice available" : " practices available"),
       mdSubline: market + " metro · within 20 miles",
       mdResults: list.map((p) => {
@@ -1614,7 +1728,7 @@ class Component extends DCLogic {
 
   renderVals() {
     const s = this.state;
-    const list = this.filtered();
+    const list = this.sortResults(this.filtered());
     const vw = s.vw || (typeof window !== "undefined" ? window.innerWidth : 1440);
     const nav = [
       { key: "browse", label: "Browse Practices" },

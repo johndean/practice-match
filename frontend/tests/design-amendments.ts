@@ -4241,6 +4241,299 @@ const A26_16: Amendment = {
   count: 2
 };
 
+/** A29 — the results-rail sort control (defect D-F1; John, 2026-09-11: "Make it actually sort").
+ *
+ *  The ninth and last native `<select>` on Browse, and the only one that was BROKEN as well as
+ *  out-of-design. A13's Q1 left it native; A26's ruling kept it out of that family's scope in the
+ *  same words — "the results-rail sort select becomes its own change, WIRED as well as converted"
+ *  — so this is that change, and it has two halves.
+ *
+ *  PART 1, the conversion, is A26's own machinery used a THIRD time rather than a second idiom:
+ *  one state slot (`fMenu`/`fMenuAt`), one open path (`openFilterMenu`), one set of dismissal
+ *  closures, one `_fMenuEls` map. `"sort"` is disjoint from the eight filter keys, so the slot
+ *  still names exactly one open dropdown on Browse — which is why this family writes NOT ONE new
+ *  cross-close line: A26.4–A26.9 and A26.12–A26.15 already close it from every direction, and
+ *  `openFilterMenu` already closes the four overlay menus from here. `logic.test.ts` proves that
+ *  by enumerating all 82 ordered pairs of the ten open paths on the screen rather than by naming
+ *  the directions somebody thought of, which is what the previous four attempts at m7 each did.
+ *
+ *  PART 2, the wiring, is `sortResults`, applied once at the one place `renderVals()` produces
+ *  the list, so the rail, the map's marker list and the count can never disagree about the order.
+ *
+ *  The panel is anchored `right: 0` — the design's own declaration, four times in the pristine
+ *  bundle — rather than `left: 0` as the eight toolbar panels are, because this trigger sits at
+ *  the RIGHT edge of a `justify-content: space-between` row inside `railStyle`'s `overflow-y:
+ *  auto` scroller: a panel growing rightwards from a `left: 0` origin would be clipped by the
+ *  rail (a box with `overflow-y: auto` and `overflow-x: visible` computes overflow-x to `auto`).
+ *
+ *  `top: 40px` is the one number this family derives rather than copies. The eight A26 panels are
+ *  `top: 46px` beneath 40 px triggers — a 6 px gap; this trigger is the design's own `height:
+ *  34px`, so the same gap is 40. Both terms are the pristine bundle's own and the arithmetic is
+ *  asserted from them in `design-amendments.test.ts` rather than written down as a constant.
+ */
+const A29 = {
+  date: '2026-09-11',
+  ruling: 'the results-rail sort control is the design\'s own dropdown, and it must actually sort'
+};
+
+/** A29.1 — the three orders, beside the design's own `num` helper, where the module's other
+ *  lookup tables live. The LABELS are the design's own `<option>` text, verbatim and in its own
+ *  order, so the option list is read off the design rather than authored.
+ *
+ *  "Newest first" is `null` — the order the rows ARRIVE in, not a comparator. The API serves this
+ *  list `ORDER BY listed_at DESC, id DESC` (`app/api/listings.py`) and a practice carries `listed`
+ *  only as a human phrase ("3 days ago"), never as a sortable instant, so newest-first IS the
+ *  source order. It is also what keeps every approved Browse capture: the `<select>` carried no
+ *  `value`, so the browser displayed its FIRST option, and the converted trigger displays the same
+ *  one over the same rail. */
+const A29_1: Amendment = {
+  id: 'A29.1', ...A29,
+  find: 'const num = (s) => (s == null ? 0 : Number(String(s).replace(/[^0-9.]/g, "")) || 0);\n',
+  replace: [
+    'const num = (s) => (s == null ? 0 : Number(String(s).replace(/[^0-9.]/g, "")) || 0);',
+    '',
+    '// D-F1 — the results-rail sort orders. The three LABELS are the design\'s own <option> text,',
+    '// verbatim and in its own order; each names the field it reads and the direction it reads it in.',
+    '// "Newest first" is the order the rows ARRIVE in rather than a comparator: the API serves this',
+    '// list ORDER BY listed_at DESC, id DESC, and a practice carries `listed` only as a human phrase',
+    '// ("3 days ago"), never as a sortable instant.',
+    'const SORT_ORDERS = {',
+    '  "Newest first": null,',
+    '  "Price: low to high": { of: (p) => p.price, dir: 1 },',
+    '  "Revenue: high to low": { of: (p) => p.rev, dir: -1 }',
+    '};',
+    'const SORT_LABELS = Object.keys(SORT_ORDERS);',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A29.2 — two class members, beside A26.1's own last one, which is where this idiom's machinery
+ *  already lives. Nothing else is added: the open path, the highlight movement, the row scrolling
+ *  and all three dismissal closures are A26's and are reused as they stand.
+ *
+ *  `sortResults` returns the list UNCHANGED under the identity order — the same array, not a copy
+ *  — so the default path allocates nothing and cannot reorder anything. Under a real order it
+ *  copies before sorting, because `filtered()`'s array is the one every other render value reads.
+ *
+ *  A missing figure is not a zero (A21, A25): a listing the API served `price: null` sorts LAST in
+ *  both directions rather than to the cheapest end, which would be a reading of a figure nobody
+ *  has. `Number.isFinite`, not `!= null`, because a `NaN` is absent too — A25's own distinction.
+ *
+ *  `setSort` is A26.1's `setFilter` minus `setF`. A sort is not a filter: it changes the ORDER of
+ *  the results, never which of them there are, so `f` is untouched and `activeFilterCount()`
+ *  cannot count it. There is deliberately no 320 ms loading settle either — `setF` and `setMarket`
+ *  both settle because they change WHICH listings are shown, while these rows are already on
+ *  screen and a skeleton would hide the one thing the member asked to see. */
+const A29_2: Amendment = {
+  id: 'A29.2', ...A29,
+  find: [
+    '  moveFilterHighlight = (key, i) => {',
+    '    this.setState({ fMenuAt: i });',
+    '    this.scrollFilterOption(key, i);',
+    '  };',
+    ''
+  ].join('\n'),
+  replace: [
+    '  moveFilterHighlight = (key, i) => {',
+    '    this.setState({ fMenuAt: i });',
+    '    this.scrollFilterOption(key, i);',
+    '  };',
+    '',
+    '  // D-F1 — the chosen results order, applied once, at the one place renderVals() produces the',
+    '  // list, so the rail, the map\'s marker list and the count cannot disagree about it. The',
+    '  // identity order returns the list itself: no comparator, no copy, nothing reordered.',
+    '  //',
+    '  // A missing figure is not a zero (A21, A25): a listing the API served `price: null` sorts',
+    '  // LAST in both directions rather than to the cheapest end, which would be a reading of a',
+    '  // figure nobody has. Number.isFinite, not `!= null`, because a NaN is absent too.',
+    '  // Array.prototype.sort is stable, so listings that share a rank keep the order they arrived',
+    '  // in — which is the API\'s own newest-first.',
+    '  sortResults = (list) => {',
+    '    const ord = SORT_ORDERS[this.state.sort || SORT_LABELS[0]];',
+    '    if (!ord) return list;',
+    '    return list.slice().sort((a, b) => {',
+    '      const av = ord.of(a), bv = ord.of(b);',
+    '      if (!Number.isFinite(av)) return Number.isFinite(bv) ? 1 : 0;',
+    '      if (!Number.isFinite(bv)) return -1;',
+    '      return ord.dir * (av - bv);',
+    '    });',
+    '  };',
+    '',
+    '  // The sort choice, in A26.1\'s setFilter shape minus setF: a sort is not a filter. It changes',
+    '  // the ORDER of the results and never which of them there are, so `f` is untouched and',
+    '  // activeFilterCount() cannot count it; and there is no 320 ms loading settle, because these',
+    '  // rows are already on screen and a skeleton would hide the one thing the member asked to see.',
+    '  setSort = (v) => {',
+    '    this.setState({ sort: v, fMenu: null, fMenuAt: -1 });',
+    '    // The choice unmounts the row the pointer or the keyboard was on, so focus would land on',
+    '    // <body>. A native select leaves the user on the control; so does this one.',
+    '    const host = this._fMenuEls && this._fMenuEls.sort;',
+    '    const trigger = host && host.querySelector(\'button[aria-haspopup="listbox"]\');',
+    '    if (trigger) trigger.focus();',
+    '  };',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A29.3 — the render values, in `marketVals`, immediately above the rail heading the control
+ *  sits beside. Key for key on A26.2's map body, with three differences and no fourth:
+ *
+ *  * `aria` is a new string, "Sort results". A26.2 derived its five from the design's own first
+ *    options ("<name>: Any"); this control's first option is "Newest first", which names a value
+ *    and not a control, and the design has no other word for it — `grep -c Sort` on the pristine
+ *    bundle is 0. A13 minted "Metro area" the same way and for the same reason. A `<label>`
+ *    cannot name a `<button>`, and `screens.ts`'s `layerTrigger` addresses the Market data card's
+ *    two triggers as the UNLABELLED ones, so an unlabelled trigger here would break two states.
+ *  * there is no `style:` key. A26.2 needed one because the five toolbar triggers paint a chosen
+ *    state; this one is a single static string and therefore lives in the markup, exactly where
+ *    A26.11 put the More-filters triggers' own static style.
+ *  * `setSort` replaces `setFilter`, for the reason in A29.2's comment.
+ *
+ *  The `<select>`'s own dead render keys are not deleted because it never had any: it carried no
+ *  `value`, no `onChange` and no option array — which is the defect, not an omission here. */
+const A29_3: Amendment = {
+  id: 'A29.3', ...A29,
+  find: '      mdHeadline: list.length + (list.length === 1 ? " practice available" : " practices available"),\n',
+  replace: [
+    '      // D-F1 — the results-rail sort control: a dropdown list in this design\'s own style, not',
+    '      // the operating system\'s popup, AND wired. A26\'s own machinery used a third time rather',
+    '      // than a second idiom: one state slot (fMenu/fMenuAt), one open path (openFilterMenu), one',
+    '      // set of dismissal closures. "sort" is disjoint from the eight filter keys, so the slot',
+    '      // still names exactly one open dropdown on Browse and every cross-menu edge A26 wrote',
+    '      // already covers this one — there is nothing new here to forget.',
+    '      sort: (() => {',
+    '        const cur = s.sort || SORT_LABELS[0];',
+    '        const open = s.fMenu === "sort";',
+    '        // Math.max: an order `sort` holds that this list does not would give indexOf -1 and',
+    '        // index the array out of bounds — the guard A26.2 and marketMenuKeys both carry.',
+    '        const sel = Math.max(0, SORT_LABELS.indexOf(cur));',
+    '        const at = open && s.fMenuAt >= 0 ? s.fMenuAt : sel;',
+    '        return {',
+    '          // A new accessible name, as A13 minted "Metro area": this control\'s first option',
+    '          // names a value ("Newest first"), not a control, so A26.2\'s derivation has nothing',
+    '          // to read. A <select> with no <label> is named by nothing, and a <label> cannot name',
+    '          // a <button>, so the trigger needs one.',
+    '          aria: "Sort results",',
+    '          open,',
+    '          listId: "f-listbox-sort",',
+    '          // On the TRIGGER, which is always rendered: a shut dropdown has no active descendant,',
+    '          // and null is what both renderers omit the attribute for (a string would spell a dead',
+    '          // id). Keyed on "sort" as well, so a filter dropdown never claims this highlight.',
+    '          activeId: open ? "f-opt-sort-" + s.fMenuAt : null,',
+    '          // What the closed <select> displayed: it carried no `value`, so the browser showed',
+    '          // its FIRST option, and this shows the same one until the member chooses another.',
+    '          triggerLabel: cur,',
+    '          toggle: () => (open ? this.setState({ fMenu: null, fMenuAt: -1 }) : this.openFilterMenu("sort", sel)),',
+    '          hostRef: (el) => { const m = this._fMenuEls || (this._fMenuEls = {}); m.sort = el || null; },',
+    '          // The panel\'s own mount is when the option rows first exist, so it is where OPENING',
+    '          // scrolls the highlighted row into view — the arrow keys cannot, having seeded the',
+    '          // highlight while the panel was still unrendered (A13/A14 review round 1, C1).',
+    '          panelRef: (el) => { if (el) this.scrollFilterOption("sort", this.state.fMenuAt); },',
+    '          keys: (e) => {',
+    '            const n = SORT_LABELS.length;',
+    '            if (e.key === "ArrowDown" || e.key === "ArrowUp") {',
+    '              e.preventDefault();',
+    '              if (!open) return this.openFilterMenu("sort", sel);',
+    '              return this.moveFilterHighlight("sort", (at + (e.key === "ArrowDown" ? 1 : n - 1)) % n);',
+    '            }',
+    '            if (!open) return;',
+    '            if (e.key === "Home" || e.key === "End") {',
+    '              e.preventDefault();',
+    '              return this.moveFilterHighlight("sort", e.key === "Home" ? 0 : n - 1);',
+    '            }',
+    '            if (e.key === "Enter" || e.key === " ") {',
+    '              e.preventDefault();',
+    '              return this.setSort(SORT_LABELS[at]);',
+    '            }',
+    '          },',
+    '          caretStyle: "flex: none; display: block; transition: transform 150ms var(--easing-out); transform: rotate(" +',
+    '            (open ? "180deg" : "0deg") + ");",',
+    '          options: SORT_LABELS.map((label, i) => {',
+    '            const on = label === cur;',
+    '            const hi = open && s.fMenuAt === i;',
+    '            return {',
+    '              label, selected: on,',
+    '              go: () => this.setSort(label),',
+    '              optId: "f-opt-sort-" + i,',
+    '              rowStyle: "display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 8px; font-family: var(--rf-display); font-size: 13px; font-weight: " +',
+    '                (on ? "800" : "500") + "; color: var(--vf-navy); background: " +',
+    '                (on ? "var(--vf-accent-bg)" : hi ? "var(--vf-neutral)" : "none") + "; border: 0; border-radius: 6px; cursor: pointer;",',
+    '              tickStyle: "flex: none; display: block; filter: brightness(0) saturate(100%) invert(23%) sepia(89%) saturate(1352%) hue-rotate(184deg) brightness(94%) contrast(101%); opacity: " +',
+    '                (on ? "1" : "0") + ";"',
+    '            };',
+    '          })',
+    '        };',
+    '      })(),',
+    '      mdHeadline: list.length + (list.length === 1 ? " practice available" : " practices available"),',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A29.4 — the wiring, one line. `renderVals()` is the single place the results list is produced
+ *  and the only caller of `filtered()`, so sorting here is what makes the rail, the map's marker
+ *  list, the mobile list and the count one ordered list rather than four opinions.
+ *
+ *  `filtered()` itself is untouched: what is shown and in what order are two questions, and
+ *  `activeFilterCount()` reads the same `f` it always did. */
+const A29_4: Amendment = {
+  id: 'A29.4', ...A29,
+  find: '    const list = this.filtered();\n',
+  replace: '    const list = this.sortResults(this.filtered());\n',
+  count: 1
+};
+
+/** A29.5 — the markup. A26.10's shape, with the three differences A29.3's comment names plus the
+ *  two anchoring ones:
+ *
+ *  * the wrapper carries `flex: none` beside `position: relative`, because the `<select>` it
+ *    replaces was a `flex: none` item of a `justify-content: space-between` row and the wrapper is
+ *    now that item. Both declarations are the design's own — one from the `<select>`, one from
+ *    the "More filters" control.
+ *  * the panel is `right: 0` (pristine, four occurrences) rather than `left: 0`, because the
+ *    trigger sits at the right edge of that row inside `railStyle`'s `overflow-y: auto` scroller:
+ *    a panel growing rightwards from `left: 0` would be clipped, since a box with `overflow-y:
+ *    auto` and `overflow-x: visible` computes overflow-x to `auto`.
+ *  * `top: 40px`, the family's 6 px gap under this trigger's own `height: 34px`, where the eight
+ *    A26 panels are `top: 46px` under 40 px triggers. Both terms are pristine's.
+ *
+ *  Everything else is A26.10 byte for byte, A26.16's `min-width: 100%` included — John's ruling
+ *  that the panel takes the width of the trigger that opened it, which is why the trigger's own
+ *  static style goes on the button rather than being widened or centred. */
+const A29_5: Amendment = {
+  id: 'A29.5', ...A29,
+  find: [
+    '              <select style="flex: none; height: 34px; padding: 0 9px; font-size: 12.5px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">',
+    '                <option>Newest first</option>',
+    '                <option>Price: low to high</option>',
+    '                <option>Revenue: high to low</option>',
+    '              </select>',
+    ''
+  ].join('\n'),
+  replace: [
+    '              <div ref="{{ md.sort.hostRef }}" style="position: relative; flex: none;">',
+    '                <button onClick="{{ md.sort.toggle }}" onKeyDown="{{ md.sort.keys }}" role="combobox" aria-label="{{ md.sort.aria }}" aria-haspopup="listbox" aria-controls="{{ md.sort.listId }}" aria-expanded="{{ md.sort.open }}" aria-activedescendant="{{ md.sort.activeId }}" style="display: inline-flex; align-items: center; gap: 8px; flex: none; height: 34px; padding: 0 9px; font-size: 12.5px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">',
+    '                  <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ md.sort.triggerLabel }}</span>',
+    '                  <img src="assets/icons/sub-chevron.svg" alt="" width="14" height="14" style="{{ md.sort.caretStyle }}">',
+    '                </button>',
+    '                <sc-if value="{{ md.sort.open }}" hint-placeholder-val="{{ false }}">',
+    '                  <div role="listbox" aria-label="{{ md.sort.aria }}" id="{{ md.sort.listId }}" ref="{{ md.sort.panelRef }}" style="position: absolute; right: 0; top: 40px; z-index: 700; min-width: 100%; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;" class="rf-scroll">',
+    '                    <sc-for list="{{ md.sort.options }}" as="o" hint-placeholder-count="3">',
+    '                      <button onClick="{{ o.go }}" id="{{ o.optId }}" role="option" tabindex="-1" aria-selected="{{ o.selected }}" style="{{ o.rowStyle }}" style-hover="background: var(--vf-neutral);">',
+    '                        <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ o.label }}</span>',
+    '                        <img src="assets/icons/sub-check-filled.svg" alt="" width="11" height="11" style="{{ o.tickStyle }}">',
+    '                      </button>',
+    '                    </sc-for>',
+    '                  </div>',
+    '                </sc-if>',
+    '              </div>',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -4301,5 +4594,12 @@ export function amendments(): Amendment[] {
     // A26.16 — the panel width (John, 2026-09-11, Task F1b): "the panel takes the width of the
     // trigger that opened it, so their edges line up." Its `find` is A26.10's and A26.11's own
     // output — the panel style string they share — so it is applied last, and once, for both.
-    A26_16];
+    A26_16,
+    // A29 — the results-rail sort control (defect D-F1; John, 2026-09-11: "Make it actually
+    // sort"). APPENDED, as every family is: A29.2 reads A26.1's output and A29.3 sits in the
+    // `md` render values A21/A25 already edit, so it runs after both. Definition order in this
+    // file matches this list (m8). A20 stays reserved by the image-identifiability plan, A24 by
+    // the neighbourhood-shading spec, and A27/A28 by the card-geography branch — A29 is the next
+    // free id in the ledger.
+    A29_1, A29_2, A29_3, A29_4, A29_5];
 }
