@@ -4,7 +4,7 @@ per page and the same gate logic market.py uses to decide what a buyer may see.
 """
 from __future__ import annotations
 
-from app.census.serve import community_rows
+from app.census.serve import BAND_LABEL, community_rows
 from tests.census.listing_fixtures import make_listing
 
 
@@ -688,7 +688,10 @@ def test_a_drive_20_only_listing_reaches_no_figures(conn):
 # of tract medians, never a published one, and can never be suppressed).
 # ---------------------------------------------------------------------------------------------
 
-_BAND_LABEL = "Within about 5 miles of the practice"
+# IMPORTED, never re-typed (I3, whole-branch review 2026-09-11). A copy here would go on
+# asserting the old sentence after `serve.py`'s own moved, which is the drift these tests exist
+# to catch; `tests/census/test_band_distance.py` links that sentence to the band radius in turn.
+_BAND_LABEL = BAND_LABEL
 
 # The City of Dallas, as every one of its twelve listings was served before D-C38.
 _PLACE_SIX = (
