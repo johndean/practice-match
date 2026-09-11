@@ -97,7 +97,7 @@ grep -c "id: 'A24" frontend/tests/design-amendments.ts                     # 0  
 grep -c "^| A" docs/design-reference/design_handoff_practice_match_v3/LOCAL_AMENDMENTS.md   # 159
 grep -n "Twenty-three families, 182 entries" CLAUDE.md                     # present, twice
 grep -n "A1's 24 derived edits plus 158 literals" CLAUDE.md                # present, twice
-grep -n "the 52 approved states" CLAUDE.md                                 # present, once
+grep -n "the 53 approved states" CLAUDE.md                                 # present, once (52 until D-C40 appended `browse-market-strip`, 2026-09-11)
 grep -c "^\s*{ name: '" frontend/tests/screens.ts                          # 49
 grep -n "toHaveLength(182)" frontend/tests/design-amendments.test.ts       # present
 ls migrations/ | tail -3                                                   # 062…, 063…, 090…  (064 is free)
@@ -200,7 +200,7 @@ A gate log must show `N passed`. A seconds-long "green" e2e run is the API web s
 
 ## Task 1: The two-file amendment engine — R1's kill condition, measured, with zero pixels moved
 
-The largest single line item in this work is the zero-pixel gate, and the thing that could invalidate every other estimate is whether the D15 amendment engine can reach a bundle file other than the `.dc.html` at all. This task answers that and nothing else: the engine grows `file?: 'dc' | 'jsx'`, `MarketMapV3.jsx` gains a frozen pristine twin, and `npm run gen:design` writes both files. The jsx amendment list is **empty**, which is the point — the proof wanted is that the machinery round-trips a file it has never touched, byte for byte, and that all 52 approved states and all 13 frozen hashes are exactly where they were.
+The largest single line item in this work is the zero-pixel gate, and the thing that could invalidate every other estimate is whether the D15 amendment engine can reach a bundle file other than the `.dc.html` at all. This task answers that and nothing else: the engine grows `file?: 'dc' | 'jsx'`, `MarketMapV3.jsx` gains a frozen pristine twin, and `npm run gen:design` writes both files. The jsx amendment list is **empty**, which is the point — the proof wanted is that the machinery round-trips a file it has never touched, byte for byte, and that all 53 approved states and all 13 frozen hashes are exactly where they were. (52 until 2026-09-11, when D-C40 appended `browse-market-strip` so A27.5's corrected sentence had an oracle; read the count from `screens.ts`, never from this line.)
 
 **Re-basing states: NONE.** Nothing in the design changes. **`baseline-manifest.json`'s thirteen frozen hashes must not move**, and neither may any of the 49 baselines.
 
