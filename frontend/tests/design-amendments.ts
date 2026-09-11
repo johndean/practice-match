@@ -4337,6 +4337,21 @@ const A27_4: Amendment = {
   count: 1
 };
 
+/** A27.5 (controller ruling on the implementer's own concern, 2026-09-11). D-C39 named TWO
+ *  sentences that describe the ring by time; the implementer found a THIRD and, correctly,
+ *  did not widen its own scope. The Browse "Market data" card says "Figures describe the
+ *  community around each practice" — which was already loose over place-band figures and
+ *  becomes plainly wrong once D-C38 serves most of them from the catchment. Leaving it would
+ *  have shipped a change that fixes two false sentences and makes a third one worse in the
+ *  same release. "Area" is true whichever band answered, which is why it is the word chosen
+ *  over naming either geography here: this sentence covers every listing on the screen at
+ *  once, and they no longer all come from the same band. */
+const A27_5: Amendment = {
+  id: 'A27.5', date: '2026-09-11', ruling: 'the third sentence that described the figures as the community is corrected too (D-C39, extended on the implementer\'s report)',
+  find: 'Figures describe the community around each practice, not the practice itself. ',
+  replace: 'Figures describe the area around each practice, not the practice itself. ',
+  count: 1
+};
 
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
@@ -4404,5 +4419,5 @@ export function amendments(): Amendment[] {
     // last as every family is. Definition order in this file matches this list (m8). A20 stays
     // reserved by the image-identifiability plan and A24 by the neighbourhood-shading spec, so
     // A27 is the next free id in the ledger after A26.
-    A27_1, A27_2, A27_3, A27_4];
+    A27_1, A27_2, A27_3, A27_4, A27_5];
 }

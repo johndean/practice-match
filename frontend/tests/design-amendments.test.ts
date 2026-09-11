@@ -302,12 +302,12 @@ describe('local design amendments (spec D15)', () => {
     // A27.4 correct the two live sentences on the docked panel that describe the band as a drive
     // time when it is an 8 km straight-line buffer. A27.2/A27.3/A27.4 read A21.3d's, A21.4a's and
     // A21.4d's output, so the family is appended last.
-    'A27.1', 'A27.2', 'A27.3', 'A27.4',
+    'A27.1', 'A27.2', 'A27.3', 'A27.4', 'A27.5',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(209);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(210);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

@@ -23,7 +23,7 @@ class CommunityRow(TypedDict):
       * `label` names the area the three AREA figures (`pop`, `hh`, `income`) and the off-card
         `vets` describe. `BAND_LABEL` when they came from the catchment band; None when they came
         from the listing's own Census place, which is the wording the design already uses.
-      * `growth_scope` names the geography the GROWTH figure was measured at — "City of Dallas",
+      * `growth_scope` names the geography the GROWTH figure was measured at — "Dallas",
         "Orange County" — because growth exists at no finer geography than place-or-county until
         the 2010->2020 tract crosswalk is loaded (D12, a registered Phase C deferral), and a
         city figure under a catchment caption is the defect D-C38 exists to remove.
@@ -322,11 +322,21 @@ def community_rows(
             level = (source["population_growth_pct"]["inputs"] or {}).get("geo_level")
             name = names.get((lid, level))
             if name is not None:
-                # TIGER's place `NAME` drops the legal descriptor ("Dallas"); its county `NAMELSAD`
-                # keeps it ("Orange County"). D-C38's ruled copy is "City of Dallas · since 2018"
-                # beside "Orange County · since 2018", so the place name takes the prefix and the
-                # county name is already complete.
-                growth_scope = f"City of {name}" if level == "place" else name
+                # TIGER's place `NAME` drops the legal descriptor ("Dallas"); its county
+                # `NAMELSAD` keeps it ("Orange County"). D-C38's option text read "City of
+                # Dallas", and composing that prefix was the first implementation — but the
+                # descriptor is not ours to invent: `app/census/tiger.py:102` loads level 160
+                # from `NAME`, so a census-designated place comes through as "Florin" and the
+                # composed string would read "City of Florin", which Florin is not. The
+                # Sacramento listings resolve to exactly that.
+                #
+                # Controller ruling on the implementer's own concern (2026-09-11): use the name
+                # TIGER gives and prefix nothing. "Dallas · since 2018" and "Florin · since 2018"
+                # both say where the figure was measured, which is what John ruled, without
+                # asserting a legal status the data does not carry. Loading `NAMELSAD` for level
+                # 160 would give the true descriptor and is the better long answer; it needs a
+                # TIGER re-ingest and is not this change.
+                growth_scope = name
 
         result[lid] = {
             "pop": area["pop"],

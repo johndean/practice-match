@@ -802,9 +802,15 @@ def test_a_place_band_median_is_published_and_carries_no_qualifier(conn):
 
 
 def test_growth_keeps_its_place_geography_and_the_row_names_it(conn):
-    """D-C38's whole point on the Growth tile: the figure stays the City of Dallas — it exists at
-    no finer geography until the 2010->2020 tract crosswalk is loaded (a registered Phase C
-    deferral) — and `growth_scope` says so, beside a population that IS the ring's."""
+    """D-C38's whole point on the Growth tile: the figure stays the city's — it exists at no
+    finer geography until the 2010->2020 tract crosswalk is loaded (a registered Phase C
+    deferral) — and `growth_scope` says so, beside a population that IS the ring's.
+
+    The scope is TIGER's own place NAME with nothing prefixed. The first implementation composed
+    "City of " + name, matching D-C38's option text, and that is wrong for a census-designated
+    place: `app/census/tiger.py:102` loads level 160 from `NAME`, which carries no legal
+    descriptor, so Florin — which the Sacramento listings resolve to — would have been labelled
+    "City of Florin". Ruled 2026-09-11: name what TIGER gives and invent no descriptor."""
     listing_id = make_listing(conn, city="Dallas", state="TX")
     _clear_all(conn)
     _seed_geography(conn, listing_id, place_geoid="4819000", place_name="Dallas", county_geoid="48113", county_name="Dallas County")
@@ -817,7 +823,25 @@ def test_growth_keeps_its_place_geography_and_the_row_names_it(conn):
 
     assert row["pop"] == "369,569"
     assert row["growth"] == "-1.5% since 2018"
-    assert row["growth_scope"] == "City of Dallas"
+    assert row["growth_scope"] == "Dallas"
+
+
+def test_a_census_designated_place_is_not_called_a_city(conn):
+    """The case that made the composed prefix wrong. TIGER's level-160 `NAME` is bare, so a CDP
+    arrives as "Florin" and any "City of " prefix states a legal status it does not have. The
+    Sacramento listings resolve to exactly this. Reverting to a composed prefix fails here."""
+    listing_id = make_listing(conn, city="Sacramento", state="CA")
+    _clear_all(conn)
+    _seed_geography(conn, listing_id, place_geoid="0624638", place_name="Florin", county_geoid="06067", county_name="Sacramento County")
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _seed_band(conn, listing_id, "drive_10", metrics=_CATCHMENT_SIX)
+    _set_geo_level(conn, listing_id, "population_growth_pct", "place")
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["growth_scope"] == "Florin"
+    assert "City of" not in (row["growth_scope"] or "")
 
 
 def test_a_county_level_growth_figure_is_named_as_its_county(conn):
