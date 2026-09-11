@@ -3595,15 +3595,25 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
 
   // ---- F-5, the card says which area it describes (D-C32) ----------------------------------
 
-  it('the panel’s Insights heading names the area, and the design’s own two words otherwise (A21.5a, A27.3)', () => {
+  it('the panel’s Insights heading KEEPS its name and the area goes to its own sub-line (A27.6, D-C42)', () => {
     const p = austin()[0];
     // A27.3 (D-C39): the default loses the parenthetical it could not support. The band is an
     // 8 km straight-line buffer, not a routed drive time, and this heading sat over PLACE-band
     // figures on all but one listing.
+    //
+    // A27.6 (D-C42, John, 2026-09-11): and the heading is now that default ALWAYS. A21.5a let
+    // `communityLabel` REPLACE it, so on QA — where D-C38 gives 28 of 29 listings a label — the
+    // words "Market Overview" appeared nowhere and A27.3's own correction was invisible. The
+    // geography moves to a sub-line beneath the heading, which is what every other place on this
+    // card already does with it (A21.5b, A21.5c, A27.1, A27.2).
     expect(panelFor(p).overviewTitle).toBe('Market Overview');
+    expect(panelFor(p).hasOverviewScope).toBe(false);
+    expect(panelFor(p).overviewScope).toBe('');
     (p as any).communityLabel = 'Within about 5 miles of the practice';
     try {
-      expect(panelFor(p).overviewTitle).toBe('Within about 5 miles of the practice');
+      expect(panelFor(p).overviewTitle, 'the label replaced the heading again').toBe('Market Overview');
+      expect(panelFor(p).hasOverviewScope).toBe(true);
+      expect(panelFor(p).overviewScope).toBe('Within about 5 miles of the practice');
     } finally { delete (p as any).communityLabel; }
   });
 

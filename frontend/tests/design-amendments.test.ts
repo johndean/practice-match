@@ -303,11 +303,14 @@ describe('local design amendments (spec D15)', () => {
     // time when it is an 8 km straight-line buffer. A27.2/A27.3/A27.4 read A21.3d's, A21.4a's and
     // A21.4d's output, so the family is appended last.
     'A27.1', 'A27.2', 'A27.3', 'A27.4', 'A27.5',
+    // D-C42 (John, 2026-09-11): the Insights heading keeps its name and the geography moves to a
+    // sub-line beneath it. A27.6 reads A27.3's output and A27.7 A21.5a's, so both come after them.
+    'A27.6', 'A27.7',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(210);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(212);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

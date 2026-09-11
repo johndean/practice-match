@@ -4356,6 +4356,64 @@ const A27_5: Amendment = {
   count: 1
 };
 
+/** A27.6 (John, 2026-09-11 — ruling D-C42). THE HEADING KEEPS ITS NAME; THE GEOGRAPHY GOES TO A
+ *  SUB-LINE. A21.5a let `communityLabel` REPLACE the docked panel's Insights heading, and D-C38
+ *  gives 28 of 29 QA listings a label — so on QA the heading read "Within about 5 miles of the
+ *  practice" and the words "Market Overview" appeared NOWHERE. A27.3's own correction was
+ *  invisible for the same reason: the default it corrected was never reached. The cost was named
+ *  in the ruling that produced Option C, as a cost of the Option B John REJECTED; it landed under
+ *  Option C too and had never been put to him. It was, and he ruled: the section gets its name
+ *  back and the label moves beneath it.
+ *
+ *  He took the reasoning that this is the card's OWN established idiom — A21.5b, A21.5c, A27.1
+ *  and A27.2 all put the geography on a sub-line under the value it describes, and the heading
+ *  was the only place on the card where the label replaced the thing it was meant to qualify.
+ *
+ *  CHAINED on A27.3, whose `replace` this `find` is, exactly as A27.2 chains on A21.3d and A21.5c
+ *  on A12.7. A21.5a's own edit — the template interpolation — STAYS: it is what put a render value
+ *  in the heading at all, and the heading is still data. What is retired is its BEHAVIOUR, the
+ *  `||` that let the label stand in for the title, and it is retired by a later entry rather than
+ *  by editing an earlier one's `find`/`replace`.
+ *
+ *  `hasOverviewScope` is a boolean because the design's own way to omit an element is `sc-if` over
+ *  one (A21.4a's `hasDemo`/`noDemo`, this same panel). With no label the sub-line is not in the
+ *  DOM and the heading is A27.3's literal byte for byte, which is what keeps every approved state
+ *  and all thirteen frozen hashes where they are. */
+const A27_6: Amendment = {
+  id: 'A27.6', date: '2026-09-11', ruling: 'the Insights heading keeps its name and the geography moves to its own sub-line beneath it (D-C42)',
+  find: 'overviewTitle: sel.communityLabel || "Market Overview",',
+  replace: 'overviewTitle: "Market Overview",\n      hasOverviewScope: !!sel.communityLabel,\n      overviewScope: sel.communityLabel || "",',
+  count: 1
+};
+
+/** A27.7 — the sub-line itself, beneath the heading A27.6 gave back its name.
+ *
+ *  COMPOSED FROM THE DESIGN'S OWN ELEMENT, not invented: the declaration is the docked panel's
+ *  own `md.panel.place` line — `font-size: 12.5px; color: var(--vf-text); margin-top: 2px;` —
+ *  which sits eight lines above this one in the same panel, under `md.panel.name`, and is the
+ *  design's only existing heading-and-geography pair: a title in the display face with the place
+ *  it describes on a quieter line directly beneath. It occurs exactly once in the pristine bundle,
+ *  so nothing else can be picked up by mistake. Type, colour and spacing are taken whole; none of
+ *  the three is chosen here.
+ *
+ *  Rejected, and why: the overview tiles' own sub-line (`9.5px`, `var(--vf-accent)`) qualifies a
+ *  FIGURE and is accent-coloured for it, and the footnote's `10.5px` closes the section rather
+ *  than opening one. Neither is a heading's sub-line; the place line is.
+ *
+ *  CHAINED on A21.5a, whose `replace` this `find` is — the interpolation A21.5a introduced. The
+ *  `sc-if` carries `hint-placeholder-val="{{ false }}"` for the same reason A21.4c's `noDemo`
+ *  branch does: the design's own fixtures carry no `communityLabel`, so the branch the Claude
+ *  Design preview should show is the one without it. */
+const A27_7: Amendment = {
+  id: 'A27.7', date: '2026-09-11', ruling: 'the Insights heading keeps its name and the geography moves to its own sub-line beneath it (same ruling)',
+  find: '<div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy);">{{ md.panel.overviewTitle }}</div>',
+  replace: '<div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy);">{{ md.panel.overviewTitle }}</div>\n'
+    + '                  <sc-if value="{{ md.panel.hasOverviewScope }}" hint-placeholder-val="{{ false }}">\n'
+    + '                    <div style="font-size: 12.5px; color: var(--vf-text); margin-top: 2px;">{{ md.panel.overviewScope }}</div>\n'
+    + '                  </sc-if>',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -4422,5 +4480,8 @@ export function amendments(): Amendment[] {
     // last as every family is. Definition order in this file matches this list (m8). A20 stays
     // reserved by the image-identifiability plan and A24 by the neighbourhood-shading spec, so
     // A27 is the next free id in the ledger after A26.
-    A27_1, A27_2, A27_3, A27_4, A27_5];
+    A27_1, A27_2, A27_3, A27_4, A27_5,
+    // D-C42 (John, 2026-09-11): the Insights heading keeps its name and the geography moves to a
+    // sub-line. A27.6 reads A27.3's output and A27.7 A21.5a's, so both run after them.
+    A27_6, A27_7];
 }

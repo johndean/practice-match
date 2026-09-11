@@ -713,6 +713,9 @@
                 <div style="padding: 16px;">
                   <template v-if="v.md?.panel?.hasDemo">
                   <div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy);"><span v-if="__s(v.md?.panel?.overviewTitle) !== null" class="sc-interp">{{ __s(v.md?.panel?.overviewTitle) }}</span></div>
+                  <template v-if="v.md?.panel?.hasOverviewScope">
+                    <div style="font-size: 12.5px; color: var(--vf-text); margin-top: 2px;"><span v-if="__s(v.md?.panel?.overviewScope) !== null" class="sc-interp">{{ __s(v.md?.panel?.overviewScope) }}</span></div>
+                  </template>
                   <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 9px;">
                     <template v-for="(o, $index) in __arr(v.md?.panel?.overviewTiles)" :key="$index">
                       <div style="padding: 9px 7px; border: 1px solid #e6e6e6; border-radius: 6px; text-align: center;">

@@ -869,7 +869,27 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
     const panel = await openPanel(page);
 
     await expect(panel.getByText(LABEL)).toBeVisible();
-    await expect(panel.getByText('Market Overview')).toHaveCount(0);
+    // D-C42 (John, 2026-09-11). The heading KEEPS its name and the geography renders on its own
+    // sub-line beneath it — A21.5a let the label replace the heading, and D-C38 gives 28 of 29 QA
+    // listings a label, so "Market Overview" appeared nowhere on QA and A27.3's own correction
+    // was invisible.
+    //
+    // THIS IS THE ONLY ORACLE THE LABELLED PATH HAS, and it is here rather than in `screens.ts`
+    // by measurement: the design's own fixtures carry no `communityLabel`, `design-listings.mjs`
+    // sends `community_label: null`, and the REFERENCE has no way to be handed one — its listings
+    // are `logic.js`'s own `P`, and reaching it would mean either editing the approved fixture
+    // data or declaring a ninth prototype prop, neither of which this ruling authorises. So the
+    // assertion is on the RENDERED DOM, not the payload: the sub-line is the heading's own next
+    // element sibling, it carries the label, and it is set in the design's place-line 12.5px.
+    await expect(panel.getByText('Market Overview', { exact: true })).toBeVisible();
+    const beneath = await panel.evaluate((root) => {
+      const heading = Array.from(root.querySelectorAll('div')).find((d) => (d.textContent || '').trim() === 'Market Overview');
+      const next = heading && (heading.nextElementSibling as HTMLElement | null);
+      return { heading: Boolean(heading), text: next && (next.textContent || '').trim(), size: next && getComputedStyle(next).fontSize };
+    });
+    expect(beneath.heading, 'the panel has no "Market Overview" heading — the label replaced it again').toBe(true);
+    expect(beneath.text, 'the geography is not on the line directly beneath the heading').toBe(LABEL);
+    expect(beneath.size, 'the sub-line is not the design\'s own place-line type').toBe('12.5px');
     // The figures themselves are the design's own and still render.
     await expect(panel.getByText('Veterinary Establishments')).toBeVisible();
 
@@ -896,6 +916,15 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
     // never computed.
     await expect(panel.getByText('Market Overview').first()).toBeVisible();
     await expect(panel.getByText('10 min drive')).toHaveCount(0);
+    // A27.7 (D-C42): and with no label there is no sub-line ELEMENT at all — an empty one would
+    // still take its `margin-top` and move every approved Browse capture. The heading's next
+    // sibling is the overview tiles grid, exactly as the design has it.
+    const beneath = await panel.evaluate((root) => {
+      const heading = Array.from(root.querySelectorAll('div')).find((d) => (d.textContent || '').trim() === 'Market Overview');
+      const next = heading && (heading.nextElementSibling as HTMLElement | null);
+      return next && (next.textContent || '').trim();
+    });
+    expect(beneath, 'a sub-line was rendered for a listing the API sent no community_label for').toContain('Population');
     // A27.4: and its footnote, the second sentence D-C39 names.
     await expect(panel.getByText('A catchment figure is a straight-line area of about 5 miles around the practice, not a driving route.').first()).toBeVisible();
     await expect(panel.getByText('Drive-time figures are approximated')).toHaveCount(0);

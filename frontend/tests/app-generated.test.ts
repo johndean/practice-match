@@ -163,4 +163,30 @@ describe('the docked panel and the detail card say which area their figures desc
     expect(insights.indexOf('View full listing')).toBeLessThan(insights.indexOf('A catchment figure is a straight-line area'));
     expect(appVue, 'the corrected footnote must not come back as a drive time').not.toContain('Drive-time figures are approximated');
   });
+
+  // D-C42 (John, 2026-09-11). The sub-line A27.7 puts under the heading is a TEMPLATE amendment,
+  // so it is pinned here for the reason the four above are: the reference and the app are
+  // generated from the same amended design and would lose it together, leaving the DOM oracle and
+  // the pixel gate both green. Reverting A27.7 leaves `overviewScope` computed and rendered
+  // nowhere, which is exactly the shape A21.5a's own pin was written for.
+  it('A27.7: the geography is a sub-line UNDER the heading, and the heading is still data', () => {
+    const insights = appVue.slice(appVue.indexOf('v-if="v.md?.panel?.isInsights"'), appVue.indexOf('v-if="v.md?.panel?.isOther"'));
+    // The heading interpolation A21.5a introduced is untouched — A27.6 retired its BEHAVIOUR,
+    // not its markup.
+    expect(insights).toContain('{{ __s(v.md?.panel?.overviewTitle) }}');
+    // …and the label now renders beneath it, in its own element, gated so that a listing with no
+    // label has no element at all rather than an empty one.
+    expect(insights, 'the sub-line is not rendered anywhere on the Insights tab').toContain('{{ __s(v.md?.panel?.overviewScope) }}');
+    expect(insights).toContain('v-if="v.md?.panel?.hasOverviewScope"');
+    expect(
+      insights.indexOf('{{ __s(v.md?.panel?.overviewTitle) }}'),
+      'the geography is not BENEATH the heading'
+    ).toBeLessThan(insights.indexOf('{{ __s(v.md?.panel?.overviewScope) }}'));
+    // …and it is above the tiles it describes, not appended after the section.
+    expect(insights.indexOf('{{ __s(v.md?.panel?.overviewScope) }}'))
+      .toBeLessThan(insights.indexOf('v-for="(o, $index) in __arr(v.md?.panel?.overviewTiles)"'));
+    // The design's own place line, taken whole — A27.7 invents no type, colour or spacing. Twice
+    // in the file and only twice: `md.panel.place` and this one.
+    expect((appVue.match(/font-size: 12\.5px; color: var\(--vf-text\); margin-top: 2px;/g) ?? []).length).toBe(2);
+  });
 });
