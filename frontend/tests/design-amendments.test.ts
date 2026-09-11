@@ -809,8 +809,14 @@ describe('local design amendments (spec D15)', () => {
     // Practice type trigger is 155 px and its panel 153 px, four of the five sat ~2 px inside the
     // button that opened them, and Property inverted and opened far wider than its collapsed
     // trigger. "The design is silent here" was never the honest description either — the panel
-    // string is A13's metro panel with `width: 300px` DELETED, and six of six absolutely
-    // positioned menu panels in the pristine bundle carry a width.
+    // string is A13's metro panel with `width: 300px` DELETED, and FOUR of the four absolutely
+    // positioned menu panels the PRISTINE bundle itself carries have a fixed pixel width
+    // (account 208, the other header menu 236, More filters 262, the layer menu 300). The
+    // controller's ruling said "six of six ... in the pristine bundle" and counted A13's listbox
+    // and A14's Give panel among them; both are AMENDMENTS. A commit of 2026-09-11 claimed that
+    // error was "corrected in place" and corrected one of its three copies — this is another.
+    // The point survives unchanged: the design does not leave panel widths open, it fixes them,
+    // and pristine contains no `max-content` anywhere.
     //
     // So `min-width: 100%` is the SECOND named exception to "every declaration must already
     // appear in the pristine bundle", after the More-filters anchoring pair above. It invents no
