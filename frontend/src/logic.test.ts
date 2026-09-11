@@ -3640,12 +3640,17 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     // The design's own fixtures carry no `growthScope`, so the null branch is A21.3d's output
     // unchanged — which is what keeps `detail` on its frozen hash.
     expect(c.detail().demo[1].sub).toBe('Since 2015');
+    // Read BEFORE the scope arrives. `expect(x).toBe(x)` was the assertion here and it compared
+    // the post-change value with itself — a tautology no change to A27.2 could ever fail.
+    const valueWithoutScope = c.detail().demo[1].v;
 
-    (p as any).growthScope = 'City of Dallas';
+    // 'Dallas', the name TIGER itself gives (D-C41). The API composes no "City of " prefix, so a
+    // fixture carrying one asserts a value the backend cannot emit.
+    (p as any).growthScope = 'Dallas';
     try {
-      expect(c.detail().demo[1].sub).toBe('City of Dallas \u00b7 since 2015');
+      expect(c.detail().demo[1].sub).toBe('Dallas \u00b7 since 2015');
       // The VALUE is untouched: D-C38 labels this figure, it does not change it.
-      expect(c.detail().demo[1].v).toBe(c.detail().demo[1].v);
+      expect(c.detail().demo[1].v).toBe(valueWithoutScope);
     } finally { delete (p as any).growthScope; }
   });
 
@@ -3656,7 +3661,7 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     (p as any).growth = '+1.2%';
     try {
       // A21.3d renders "" for a figure that carries no " since " — the sub-line must not become
-      // "City of Dallas · since " with nothing after it.
+      // "Dallas · since " with nothing after it.
       expect(c.detail().demo[1].sub).toBe('');
       (p as any).growthScope = 'Orange County';
       expect(c.detail().demo[1].sub).toBe('Orange County');

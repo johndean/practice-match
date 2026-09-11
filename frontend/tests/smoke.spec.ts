@@ -928,7 +928,7 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
     const LABEL = 'Within about 5 miles of the practice';
     await serveListings(page, {
       community_label: LABEL,
-      growth_scope: 'City of Dallas',
+      growth_scope: 'Dallas',
       income_note: `${LABEL} \u00b7 approximate`,
     });
     const panel = await openPanel(page);
@@ -942,10 +942,13 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
     await expect(detail.getByText(`${LABEL} \u00b7 approximate`).first()).toBeVisible();
     await expect(detail.getByText('Household, 2023')).toHaveCount(0);
     // Growth: NOT the ring. The city, said out loud, beside the vintage A21.3d takes from the
-    // API's own string. `exact` on the negative: `getByText` matches by case-insensitive
-    // SUBSTRING, so a bare 'Since 2015' would match the new sub-line's own tail and the
-    // assertion would say the opposite of what it means.
-    await expect(detail.getByText('City of Dallas \u00b7 since 2015').first()).toBeVisible();
+    // API's own string. The stub is 'Dallas', the name TIGER itself gives (D-C41): the API
+    // composes no "City of " prefix, so a fixture carrying one asserts a value the backend
+    // cannot emit — which is the reading that made the prefix look composed in the first place.
+    // `exact` on the negative: `getByText` matches by case-insensitive SUBSTRING, so a bare
+    // 'Since 2015' would match the new sub-line's own tail and the assertion would say the
+    // opposite of what it means.
+    await expect(detail.getByText('Dallas \u00b7 since 2015').first()).toBeVisible();
     await expect(detail.getByText('Since 2015', { exact: true })).toHaveCount(0);
     expect(errors).toEqual([]);
   });

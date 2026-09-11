@@ -274,7 +274,7 @@ describe('applyListings', () => {
   // design's own literals — and `detail` is one of the thirteen frozen screens, so a key that
   // arrived as anything but absent would move its hash.
   it('carries growth_scope and income_note under the design\'s own names, and omits each when the API sent none', () => {
-    expect(toPractice(row({ growth_scope: 'City of Dallas' })).growthScope).toBe('City of Dallas');
+    expect(toPractice(row({ growth_scope: 'Dallas' })).growthScope).toBe('Dallas');
     expect(toPractice(row({ income_note: 'Within about 5 miles of the practice \u00b7 approximate' })).incomeNote)
       .toBe('Within about 5 miles of the practice \u00b7 approximate');
     expect('growthScope' in toPractice(row({ growth_scope: null }))).toBe(false);
