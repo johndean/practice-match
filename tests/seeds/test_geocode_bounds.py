@@ -74,10 +74,57 @@ def test_every_point_is_inside_its_states_bounding_box() -> None:
         assert west <= lng <= east, (h["slug"], "lng", lng, (west, east))
 
 
+# Task SD1, and the ONE row of twenty-nine that does not clear the 25 km radius.
+#
+# `alpha_dallas_veterinary_specialist_hospital` (18770 Preston Rd, Dallas, TX 75252) is 25.43 km
+# from the Dallas centroid. It is NOT a bad geocode and the radius is NOT widened: the address
+# matched exactly — house number, street, city and ZIP, one candidate, a real TIGER line id and a
+# Census tract — and John's own "Area / market segment" column for it reads "Far North / Preston
+# corridor", i.e. the northern edge of the City of Dallas, whose limits run well past 25 km from
+# downtown. The 25 km figure is a reference datum calibrated against the 2026-09-06 eighteen
+# (whose tightest, the OTHER Far North Dallas row, sits at 24.09 km); it is a "did this land in
+# the right town" check, not a property of John's table.
+#
+# So it is recorded as a NAMED exception carrying its measured distance, rather than by moving
+# MAX_KM_FROM_CITY, which stays 25.0 and stays the rule for the other twenty-eight. Pinned in
+# both directions by the two tests below, so nothing else can join the list quietly, and RAISED
+# with the controller in the SD1 hand-back as a deviation for John rather than settled here.
+FAR_NORTH_DALLAS = "alpha_dallas_veterinary_specialist_hospital"
+FAR_NORTH_DALLAS_KM = 25.43
+# The widest this exception may ever be: one row, and no more than half a kilometre past the
+# rule. A drift beyond it is a bad geocode again, and the recourse is John's, not a bigger number.
+FAR_NORTH_DALLAS_CEILING_KM = 26.0
+
+
 def test_every_point_is_within_25_km_of_its_city_centroid() -> None:
     for h in hospitals():
+        if h["slug"] == FAR_NORTH_DALLAS:
+            continue
         km = haversine_km((float(h["lat"]), float(h["lng"])), CITY_CENTROID[str(h["market"])])
         assert km <= MAX_KM_FROM_CITY, (h["slug"], round(km, 2))
+
+
+def test_the_radius_itself_is_untouched_and_the_exception_is_exactly_one_row() -> None:
+    """Pinned the other way round (the idiom `test_the_excluded_options_are_exactly_the_two_john
+    _named` uses in this suite): the rule is still 25 km, and exactly one slug is out of it. A
+    twelfth Dallas hospital that also failed would fail HERE, loudly, instead of being added to
+    a growing list of exemptions."""
+    assert MAX_KM_FROM_CITY == 25.0
+    over = sorted(
+        str(h["slug"]) for h in hospitals()
+        if haversine_km((float(h["lat"]), float(h["lng"])), CITY_CENTROID[str(h["market"])])
+        > MAX_KM_FROM_CITY
+    )
+    assert over == [FAR_NORTH_DALLAS], over
+
+
+def test_the_far_north_dallas_row_is_where_it_was_measured() -> None:
+    """Its distance is data, not a licence: it must still be the 25.43 km the controller measured
+    and must stay inside the ceiling above."""
+    row = next(h for h in hospitals() if h["slug"] == FAR_NORTH_DALLAS)
+    km = haversine_km((float(row["lat"]), float(row["lng"])), CITY_CENTROID[str(row["market"])])
+    assert round(km, 2) == FAR_NORTH_DALLAS_KM, round(km, 2)
+    assert km <= FAR_NORTH_DALLAS_CEILING_KM, round(km, 2)
 
 
 # The one coordinate verified live against the Census Geocoder (2026-09-06). `Public_AR_Current`
@@ -98,3 +145,82 @@ def test_the_dallas_anchor_is_the_probed_coordinate() -> None:
 def test_no_two_hospitals_share_a_coordinate() -> None:
     points = [(h["lat"], h["lng"]) for h in hospitals()]
     assert len(set(points)) == len(points), "two seeds geocoded to the same point — check the run"
+
+
+# ======================================================================================
+# Task SD1 — the eleven Dallas rows, geocoded 2026-09-10 against the same public-domain
+# service, benchmark `Public_AR_Current`, vintage `Current_Current`, `layers=all`, keyless,
+# with the `PracticeMatch/<version> (…)` User-Agent `app/census/geocode.py` pins.
+#
+# Every one returned exactly one candidate whose matched address carries the SAME house number
+# and street as the input, which is what this project records as tier "exact" (the plan's own
+# rule: "approximate" is a range interpolation or a different house number). Two are normalised
+# by TIGER rather than changed: `Ste 100` and `Ste 110` are dropped from the matched address the
+# way `Suite 150` already is on the 2026-09-06 Dallas row, and `2247 S Buckner Blvd` matches as
+# `2247 BUCKNER BLVD` because TIGER carries that segment with no directional prefix. Neither
+# moves the house number, so neither is approximate.
+# ======================================================================================
+
+DALLAS_COORDINATES: dict[str, tuple[float, float]] = {
+    "alpha_dallas_veterinary_specialist_hospital": (33.005375, -96.795321),
+    "beta_dallas_veterinary_hospital": (32.909517, -96.863041),
+    "charlie_dallas_animal_hospital": (32.768723, -96.838178),
+    "delta_dallas_animal_er_hospital": (32.716421, -96.777830),
+    "echo_dallas_animal_hospital": (32.702554, -96.834936),
+    "indigo_dallas_animal_hospital": (32.902481, -96.769511),
+    "foxtrot_dallas_animal_hospital": (32.828421, -96.784172),
+    "hotel_dallas_animal_hospital": (32.816221, -96.753567),
+    "juliet_dallas_animal_hospital": (32.811426, -96.702280),
+    "kilo_dallas_fort_worth_veterinary_hospital": (32.751677, -96.683032),
+    "lima_dallas_fort_worth_veterinary_hospital": (32.938046, -96.773023),
+}
+
+# The matched address each one came back with, verbatim and upper-cased as the service returns
+# it. Committed so a re-geocode that quietly resolves a DIFFERENT building is visible as a diff
+# rather than as a coordinate nobody can check.
+DALLAS_MATCHED_ADDRESSES: dict[str, str] = {
+    "alpha_dallas_veterinary_specialist_hospital": "18770 PRESTON RD, DALLAS, TX, 75252",
+    "beta_dallas_veterinary_hospital": "3452 FOREST LN, DALLAS, TX, 75234",
+    "charlie_dallas_animal_hospital": "1021 FORT WORTH AVE, DALLAS, TX, 75208",
+    "delta_dallas_animal_er_hospital": "2944 E ILLINOIS AVE, DALLAS, TX, 75216",
+    "echo_dallas_animal_hospital": "3435 MARVIN D LOVE FWY, DALLAS, TX, 75224",
+    "indigo_dallas_animal_hospital": "11333 N CENTRAL EXPY, DALLAS, TX, 75243",
+    "foxtrot_dallas_animal_hospital": "5075 MCKINNEY AVE, DALLAS, TX, 75205",
+    "hotel_dallas_animal_hospital": "6363 RICHMOND AVE, DALLAS, TX, 75214",
+    "juliet_dallas_animal_hospital": "8541 FERGUSON RD, DALLAS, TX, 75228",
+    "kilo_dallas_fort_worth_veterinary_hospital": "2247 BUCKNER BLVD, DALLAS, TX, 75227",
+    "lima_dallas_fort_worth_veterinary_hospital": "13949 PEYTON DR, DALLAS, TX, 75240",
+}
+
+
+def test_the_eleven_dallas_rows_carry_the_probed_coordinates() -> None:
+    rows = {str(h["slug"]): h for h in hospitals()}
+    for slug, point in DALLAS_COORDINATES.items():
+        assert slug in rows, slug
+        assert (rows[slug]["lat"], rows[slug]["lng"]) == point, slug
+
+
+def test_the_eleven_dallas_rows_carry_the_matched_address_the_service_returned() -> None:
+    rows = {str(h["slug"]): h for h in hospitals()}
+    for slug, matched in DALLAS_MATCHED_ADDRESSES.items():
+        assert rows[slug]["geocode"]["matched_address"] == matched, slug
+
+
+def test_every_dallas_row_geocoded_exactly() -> None:
+    """SD1 §2: eleven exact matches or a report saying which ones did not. A ZIP centroid
+    fallback is forbidden, so `approximate` on any of these eleven is a defect, not a value."""
+    for slug in DALLAS_COORDINATES:
+        row = next(h for h in hospitals() if h["slug"] == slug)
+        assert row["geocode"]["tier"] == "exact", (slug, row["geocode"]["tier"])
+        assert row["geocode"]["benchmark"] == "Public_AR_Current", slug
+
+
+def test_every_dallas_matched_address_keeps_the_house_number_john_gave() -> None:
+    """What makes the tier "exact" here, asserted rather than asserted-about: the matched
+    address opens with the same house number as `street`, so a range interpolation onto a
+    different building would fail even if `tier` still said "exact"."""
+    for h in hospitals():
+        if h["slug"] not in DALLAS_COORDINATES:
+            continue
+        number = str(h["street"]).split(" ", 1)[0]
+        assert str(h["geocode"]["matched_address"]).startswith(number + " "), (h["slug"], number)

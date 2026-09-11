@@ -1,5 +1,6 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
-import { appOrigin, booted, click, firstMapPaintBudgetMs, personaCredentials, personaSignIn, personaSignOut, prepare, reach, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
+import { appOrigin, booted, click, firstMapPaintBudgetMs, listingsStubUrl, matchesListings, personaCredentials, personaSignIn, personaSignOut, prepare, reach, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
+import { designListingsBody } from './design-listings.mjs';
 import { SCREENS } from './screens';
 
 // `/reset?token=abc` (review fix round 1, Minor 8): the bare five paths above prove the routes
@@ -734,5 +735,252 @@ test.describe('harness: the /api proxy preserves the Host header (A-I7.2)', () =
       // so this neither repeats it nor masks its failure.
       if (cookies && signOutStatus === undefined) await personaSignOut(cookies);
     }
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// Task B10, A-C31 (4) — "The test that proves it is an end-to-end one, not a unit test. A unit
+// test may accompany it; it may not replace it."
+//
+// Every unit test in this repository was green while the docked panel read "0" Population,
+// "0.0% (5 yrs)", "$0K" Median Income, "0" Est. Pet Households and a "Flat" growth verdict for
+// a listing the Census has no figures for. Nothing could see it: no unit test ever RENDERED the
+// panel against such a listing, and the pixel oracle only ever sees the design's own fixtures,
+// every one of which HAS figures. This does — the real app, in a real browser, through the
+// design's own card click.
+//
+// It answers `/api/listings` with the design's OWN twenty-one practices and their six community
+// fields NULLED, which is exactly the row `app/api/listings.py::serialise` serves for a listing
+// `market_metric` has nothing for. Registering a route over `prepare()`'s D6 stub is the
+// harness's own sanctioned pattern — `seller-dash-empty` does it, and Playwright matches the
+// LAST registered handler first.
+//
+// WHY NOT THE REAL API, which is where the brief expected this to live. `listing-flows.spec.ts`
+// runs the real one against the real database, and it cannot host this test today: a published
+// listing with NO COORDINATES freezes the whole Browse screen. `serialise` nulls `lat`/`lng` for
+// a listing whose seller has not disclosed the location (Wave 2b's default) and for one the
+// geocoder could not place; `md.practices` carries the nulls; `MarketMapView` calls
+// `engine.marker([null, null])`; Leaflet's `toLatLng([null, null])` returns `null` (its array
+// branch is guarded by `typeof a[0] !== "object"`, and `typeof null === "object"`) and it then
+// reads `.lat` off that null. The throw escapes Vue's post-flush queue and NOTHING renders
+// afterwards — measured: after it, a results-card click and a Compare click both change no DOM
+// at all. That defect is real, it is not Task B10's, and it is reported to the controller rather
+// than fixed here or written a test against.
+// ---------------------------------------------------------------------------------------
+test.describe('Task B10 — the docked panel renders nothing where the Census has nothing (D-C31/D-C32)', () => {
+  const BANNED = ['undefined', 'NaN', '$0K', '0.0%', 'Flat', 'Lean', 'Median', 'Challenging'];
+
+  /** The design catalogue as `GET /api/listings` serves it, with `over` applied to every row. */
+  async function serveListings(page: Page, over: Record<string, unknown>): Promise<void> {
+    const stub = listingsStubUrl();
+    expect(stub, 'this test overrides the D6 stub, and a live target has none to override').not.toBeNull();
+    const body = JSON.parse(designListingsBody()) as { items: Record<string, unknown>[]; next_cursor: null };
+    for (const item of body.items) Object.assign(item, over);
+    await page.route(
+      (url) => matchesListings(url.href, stub as string),
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    );
+  }
+
+  const NO_FIGURES = { pop: null, growth: null, income: null, hh: null, vets: null, econ_k: null, community_label: null };
+
+  /** Cedar Park's docked panel, opened the way `browse-market-panel` opens it: a card click. */
+  async function openPanel(page: Page) {
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await page.getByText('Cedar Park').first().click();
+    const panel = page.locator('div.rf-scroll[style*="width: 366px"]');
+    await panel.getByRole('button', { name: 'View full listing' }).waitFor({ state: 'visible' });
+    return panel;
+  }
+
+  test('no figure, no zero, no verdict and no bars — and the design\'s own unavailable card instead', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    await serveListings(page, NO_FIGURES);
+    const panel = await openPanel(page);
+
+    const text = (await panel.innerText()).replace(/\s+/g, ' ');
+    for (const banned of BANNED) {
+      expect(text, `the docked panel renders "${banned}" for a listing with no community figures`)
+        .not.toContain(banned);
+    }
+    // A bar drawn at its floor is a reading, not an absence: the competition row and the score
+    // ring are not in the DOM at all, and neither are the four overview tiles.
+    await expect(panel.getByText('Veterinary Establishments')).toHaveCount(0);
+    await expect(panel.getByText('per 10k households')).toHaveCount(0);
+    await expect(panel.getByText('Overall Score')).toHaveCount(0);
+    await expect(panel.locator('[style*="conic-gradient"]')).toHaveCount(0);
+
+    // A-C31 (2): the DESIGN'S OWN unavailable treatment, and the listing is still reachable.
+    await expect(panel.getByText('Community data unavailable for this location')).toBeVisible();
+    await expect(panel.getByText('The Census geography for this address has not been matched yet.')).toBeVisible();
+    await expect(panel.getByRole('button', { name: 'View full listing' })).toBeVisible();
+
+    // …and the detail behind it says the same rather than a grid of blanks.
+    await panel.getByRole('button', { name: 'View full listing' }).click();
+    await expect(page.getByText('Community data unavailable for this location')).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  // THE ROOT-CAUSE CASE, and the one that can only be seen here. The test above shows the
+  // unavailable card, which hides the whole Insights body — so it stays green even with A21.1c
+  // reverted (measured). This one keeps `pop`, so `hasDemo` is TRUE and every tile, every bar
+  // and every verdict is rendered against figures the API did not send: exactly the state the
+  // eighteen seeded hospitals were in when the panel read "0" Households, "$0K" Median Income
+  // and "Flat" Population Growth. Revert A21.1c and this test fails on those very strings.
+  test('a listing with SOME figures shows those and fabricates none of the rest', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    await serveListings(page, { growth: null, income: null, hh: null, vets: null, econ_k: null, community_label: null });
+    const panel = await openPanel(page);
+
+    // "Median Income" is the design's own STATIC tile label and is always on this screen — the
+    // banned word is the affluence VERDICT, so the label is neutralised before the scan rather
+    // than the word being dropped from the list (the same false positive the unit suite hit).
+    const text = (await panel.innerText()).replace(/\s+/g, ' ').replace(/Median Income/g, '[tile label]');
+    // The one figure the API DID send is on the screen…
+    await expect(panel.getByText('Population', { exact: true })).toBeVisible();
+    expect(text, 'the Insights body must be rendered for this case to prove anything').toContain('Market Overview');
+    // …and nothing else is invented around it: no zero, no NaN, and none of the nine verdicts
+    // the three opportunity tiles and the score ring choose between.
+    for (const banned of [...BANNED, 'Above avg.', 'Steady', 'Strong', 'Typical', 'Attractive', 'Balanced', 'Competition']) {
+      expect(text, `the docked panel renders "${banned}" beside the one figure it does have`)
+        .not.toContain(banned);
+    }
+    // No dangling units where a sub-line's figure is absent (F-2).
+    expect(text).not.toContain('% (5 yrs)');
+    expect(text).not.toContain('% vs US');
+    // No competition row, no bars, no score (F-3).
+    await expect(panel.getByText('per 10k households')).toBeVisible();       // the design's label stays
+    await expect(panel.locator('[style*="conic-gradient"]')).toHaveCount(0); // the ring does not
+    expect(errors).toEqual([]);
+  });
+
+  // D-C32: the same figures, but the API says they came from the drive-time band, not the
+  // community. Nothing may present a drive-time catchment as a named city.
+  test('the fallback label reaches every place that names the area, and nothing else moves', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    const LABEL = 'Within 10 minutes of the practice';
+    await serveListings(page, { community_label: LABEL });
+    const panel = await openPanel(page);
+
+    await expect(panel.getByText(LABEL)).toBeVisible();
+    await expect(panel.getByText('Market Overview (10 min drive)')).toHaveCount(0);
+    // The figures themselves are the design's own and still render.
+    await expect(panel.getByText('Veterinary Establishments')).toBeVisible();
+
+    await panel.getByRole('button', { name: 'View full listing' }).click();
+    const detail = page.getByRole('heading', { name: 'Community Context' }).locator('xpath=..');
+    // The two sub-lines that used to name "the community" now name the area the figures describe.
+    await expect(detail.getByText(LABEL).first()).toBeVisible();
+    await expect(detail.getByText('Community, 2023')).toHaveCount(0);
+    await expect(detail.getByText('In the community')).toHaveCount(0);
+    await expect(detail.getByText(`Figures describe the area within 10 minutes of the practice, not the practice itself.`)).toBeVisible();
+    // The Census attribution is legally load-bearing and is not part of the sentence that moved.
+    await expect(detail.getByText('Source: U.S. Census Bureau, American Community Survey 2023 5-year estimates (public domain, attribution requested).')).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  // …and with no label the wording is the design's own, which is what keeps the approved states
+  // on their pixels: the D6 stub sends `community_label: null` for every fixture.
+  test('with no label the design\'s own wording stands, byte for byte', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    const panel = await openPanel(page);
+    await expect(panel.getByText('Market Overview (10 min drive)')).toBeVisible();
+
+    await panel.getByRole('button', { name: 'View full listing' }).click();
+    const detail = page.getByRole('heading', { name: 'Community Context' }).locator('xpath=..');
+    await expect(detail.getByText('Community, 2023')).toBeVisible();
+    await expect(detail.getByText('In the community')).toBeVisible();
+    await expect(detail.getByText('Figures describe the community around the practice, not the practice itself.')).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// Task MP1 — a published listing with no coordinates must not take the Browse map down with it.
+//
+// The failure this guards is a REAL-BROWSER one and cannot be seen anywhere else: `logic.js`
+// handed `[null, null]` to `engine.marker`, Leaflet 1.9.4's `toLatLng` returned `null` for it
+// (the array branch is gated on `typeof a[0] !== 'object'`, and `typeof null === 'object'`), and
+// `_setPos` read `.lat` off the null — `pageerror: Cannot read properties of null (reading
+// 'lat')`. ONE listing was enough: `drawPins`' `forEach` has no try/catch, so pin drawing
+// stopped there for every listing after it, and the poisoned layer re-threw from inside
+// Leaflet's own event loop on every later zoom pass.
+//
+// THIS TEST RUNS AGAINST THE VITE DEV SERVER (the `app` project's own target), where Vue's
+// development `logError` re-throws out of `flushJobs` and drops the rest of the scheduler queue,
+// so the whole screen stops responding — which is why the last assertion, that a results card
+// still opens the docked panel, is the one that would have caught this. QA and production serve
+// the production build, where Vue logs instead of re-throwing: there the same defect shows as
+// pins silently missing from the offending listing onward and broken zoom, not a dead screen.
+// -------------------------------------------------------------------------------------------
+test.describe('Task MP1 — a listing with no coordinates keeps its place and gets no pin', () => {
+  /** The design catalogue as `GET /api/listings` serves it, with `over` applied to the ONE row
+   *  whose id is `id` — the shape the endpoint produces for a published listing whose seller has
+   *  not disclosed its location (`location_disclosed` is `NOT NULL DEFAULT false`). */
+  async function serveOne(page: Page, id: string, over: Record<string, unknown>): Promise<void> {
+    const stub = listingsStubUrl();
+    expect(stub, 'this test overrides the D6 stub, and a live target has none to override').not.toBeNull();
+    const body = JSON.parse(designListingsBody()) as { items: Record<string, unknown>[]; next_cursor: null };
+    const target = body.items.filter((r) => r.id === id);
+    expect(target, `the design catalogue has no listing ${id}`).toHaveLength(1);
+    Object.assign(target[0], over);
+    await page.route(
+      (url) => matchesListings(url.href, stub as string),
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    );
+  }
+
+  const AUSTIN = ['Cedar Park', 'Round Rock', 'South Austin', 'Georgetown', 'Kyle', 'East Austin', 'Lakeway', 'Dripping Springs', 'Pflugerville'];
+
+  test('no page error, every located listing keeps its pin, and the screen still responds', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    // Cedar Park is the design's own first Austin listing and the one the results rail shows
+    // first, so it is drawn first: with the defect standing it poisoned every pin after it.
+    await serveOne(page, 'p1', { lat: null, lng: null, location_disclosed: false });
+
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+
+    // Eight pins, one per LOCATED Austin listing, and none of them is Cedar Park's.
+    const pins = page.locator('.leaflet-marker-icon');
+    await expect(pins).toHaveCount(AUSTIN.length - 1);
+    const titles = (await pins.evaluateAll((els) => els.map((e) => e.getAttribute('title') ?? ''))).join(' | ');
+    for (const area of AUSTIN.slice(1)) {
+      expect(titles, `${area}'s pin is missing — pin drawing stopped at the unlocated listing`).toContain(area);
+    }
+    expect(titles, 'a listing with no coordinates was drawn anyway').not.toContain('Cedar Park');
+
+    // …and it keeps its place in the results: same count, still in the rail.
+    await expect(page.getByText(`${AUSTIN.length} practices available`)).toBeVisible();
+
+    // THE ASSERTION THAT WOULD HAVE CAUGHT THIS. Under the dev build the pin throw re-throws out
+    // of Vue's scheduler and the screen stops responding, so a card click does nothing at all.
+    await page.getByText('Cedar Park').first().click();
+    const panel = page.locator('div.rf-scroll[style*="width: 366px"]');
+    await expect(panel.getByRole('button', { name: 'View full listing' })).toBeVisible();
+
+    // The drive-time ring's centre falls back to the metro centre rather than reaching
+    // `L.circle([null, null])`, so selecting the unlocated listing does not throw either.
+    await panel.getByRole('button', { name: 'View full listing' }).click();
+    await expect(page.getByRole('heading', { name: 'Community Context' })).toBeVisible();
+
+    expect(errors).toEqual([]);
+  });
+
+  // The control: with every coordinate present nothing is filtered, which is what keeps the
+  // approved states on their pixels.
+  test('…and with every coordinate present every listing is still pinned', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await expect(page.locator('.leaflet-marker-icon')).toHaveCount(AUSTIN.length);
+    expect(errors).toEqual([]);
   });
 });

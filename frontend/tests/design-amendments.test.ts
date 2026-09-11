@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { AMENDED, type Amendment, LOCAL_AMENDMENTS_MD, PRISTINE, amendments, applyAmendments, deriveTypographyB, templateRegions, V2 } from './design-amendments';
+import { AMENDED, AMENDED_JSX, type Amendment, LOCAL_AMENDMENTS_MD, PRISTINE, PRISTINE_JSX, amendments, amendmentsFor, applyAmendments, deriveTypographyB, templateRegions, V2 } from './design-amendments';
 
 describe('local design amendments (spec D15)', () => {
   const pristine = readFileSync(PRISTINE, 'utf8');
@@ -11,6 +11,35 @@ describe('local design amendments (spec D15)', () => {
   // This hash changes only when a re-issued bundle lands (and then the amendments retire with it).
   it('the pristine Rev 2 copy is the bundle\'s file, untouched', () => {
     expect(createHash('sha256').update(readFileSync(PRISTINE)).digest('hex')).toBe('335753c3164c10b80f9779de637a2358f40cde5c22d9195cc0a79f06bcf4f01d');
+  });
+
+  // The bundle's SECOND amendable file (spec §9.2, ruled by the controller 2026-09-10 §14 Q3).
+  // A24 is the first amendment in the programme's history that has to reach a file other than
+  // the `.dc.html`, and the alternative — hand-editing an approved bundle file — is the exact
+  // failure mode spec D15 exists to remove. Same contract, same proof: a frozen pristine twin
+  // that is never edited, and byte equality with the amended file it plus its own amendments
+  // produce. This hash changes only when a re-issued bundle lands.
+  it('the pristine MarketMapV3 copy is the bundle\'s file, untouched', () => {
+    expect(createHash('sha256').update(readFileSync(PRISTINE_JSX)).digest('hex')).toBe('662e4105fd258b6380f1f66f6289629d999aa657b8dc5a4d1303be88e26c0adc');
+  });
+
+  it('the amended MarketMapV3.jsx is the pristine copy plus exactly the ruled edits', () => {
+    expect(applyAmendments(readFileSync(PRISTINE_JSX, 'utf8'), amendmentsFor('jsx'))).toBe(readFileSync(AMENDED_JSX, 'utf8'));
+  });
+
+  // The partition itself, both ways: every entry lands in exactly one file's list, an entry with
+  // no `file` is a `.dc.html` entry (which is what leaves all 182 pre-A24 entries — the 24 A1
+  // derives plus the 158 literal consts — unchanged), and
+  // the two partitions reassemble into the whole list in the original order.
+  it('amendmentsFor partitions the list by file, defaulting to the .dc.html', () => {
+    const all = amendments();
+    const dc = amendmentsFor('dc');
+    const jsx = amendmentsFor('jsx');
+    expect(dc.length + jsx.length, 'an amendment landed in neither partition, or in both').toBe(all.length);
+    expect(dc.every((a) => (a.file ?? 'dc') === 'dc')).toBe(true);
+    expect(jsx.every((a) => a.file === 'jsx')).toBe(true);
+    expect(dc.map((a) => a.id)).toEqual(all.filter((a) => a.file === undefined || a.file === 'dc').map((a) => a.id));
+    expect(all.filter((a) => a.file === undefined).length, 'every pre-A24 entry declares no file at all').toBeGreaterThan(150);
   });
   // The 24 elements V2 typed differently from V3 (measured in the V13 STOP reports and Step 5, 2026-09-07): 22 display headings, the
   // key-fact values `{{ m.v }}` (V2 set them uppercase .005em — one element in the template) and the 28 px mobile asking price
@@ -204,23 +233,75 @@ describe('local design amendments (spec D15)', () => {
     'A19.1', 'A19.2', 'A19.3', 'A19.4', 'A19.5', 'A19.6', 'A19.7', 'A19.8', 'A19.9', 'A19.10', 'A19.11', 'A19.12',
     // A21 — the Browse map's veterinarian and economic layers read real API data without
     // rendering missing data as zero (controller amendment A-C28, 2026-09-10, controller amendment
-    // A-C29, 2026-09-10). Two literal script edits plus three template edits: A21.1 removes the
-    // `|| 0` defaults so missing census figures become undefined in communities(); A21.1b completes
-    // the fix at the assembly point, skipping entries in marketVals when the raw value is
-    // null/undefined so they never reach the renderer. A21.2 and A21.2b (reverted by A-C29: the
-    // figure is payroll, not revenue; the original labels were correct) are superseded by A21.3a/b/c
-    // which remove hardcoded years from three places (VALUE_LAYERS label, LAYER_META sub-line, and
-    // the Data Layers card row), making the vintage-dependent display match the data.
-    'A21.1', 'A21.1b', 'A21.3a', 'A21.3b', 'A21.3c', 'A21.3d',
+    // A-C29, 2026-09-10). A21.1 removes the `|| 0` defaults so missing census figures become
+    // undefined in communities(); A21.1b completes the fix at the assembly point, skipping entries
+    // in marketVals when the raw value is null/undefined so they never reach the renderer. A21.2b-e
+    // fix the docked panel's derivative values when figures are missing. A21.2f-h complete the fix
+    // at the READERS: compPer10k guards .toFixed(), score/scoreLabel omit when inputs missing.
+    // A21.2i-l complete the fix at RENDERING: c.pets, compLevel, score, scoreRing omit undefined.
+    // A21.3a/b/c/d remove hardcoded years from four places (VALUE_LAYERS label, LAYER_META
+    // sub-line, Data Layers card row, and the detail Growth row), making the vintage-dependent
+    // display match the data.
+    'A21.1', 'A21.1b', 'A21.2b', 'A21.2c', 'A21.2d', 'A21.2e', 'A21.2f', 'A21.2g', 'A21.2h', 'A21.3a', 'A21.3b', 'A21.3c', 'A21.3d', 'A21.2i', 'A21.2j', 'A21.2k', 'A21.2l',
+    // Task B10 (D-C31/D-C32, 2026-09-10): A21.1c is the root cause — `communities()` zeroed every
+    // absent figure, so every guard above was satisfied by a 0. A21.2m-p omit the bars and the
+    // strip-card median drawn from those zeros; A21.4a-d put the design's own "Community data
+    // unavailable" card on the docked panel; A21.5a-d name the area the figures describe.
+    'A21.1c', 'A21.2m', 'A21.2n', 'A21.2o', 'A21.2p', 'A21.4a', 'A21.4b', 'A21.4c', 'A21.4d', 'A21.5a', 'A21.5b', 'A21.5c', 'A21.5d',
     // A22 — the ownership vocabulary widens to the seeds' own wording (John, 2026-09-10, Task SL10:
     // "Preserve existing seed wording/detail"). One literal edit: the wizard step 1 ownership
     // select's ten options, combining the design's four with the seeds' own six phrasings.
     'A22',
+    // A23 — collapsing the Market data card leaves its LAYER menu floating (John, 2026-09-10,
+    // Task MD1: "the collapse widget top left expand/collapse is disconnected to the drop down").
+    // That panel is the one element absolutely positioned outside the card's collapsible region;
+    // the comparison listbox is inside it, in normal flow, and has always unmounted with the card.
+    // One literal edit: `toggleLegend` clears mdLayerMenu and mdCompareMenu unconditionally — on
+    // expand as well as collapse — so neither menu can come back open.
+    'A23',
+    // A25 — Task MP1 (John, 2026-09-10): "a listing with no coordinates keeps its place in the
+    // results and does not get a pin." Six literal script edits: A25.1 the pin list, A25.2 the
+    // drive-ring centre and A25.3 the map's community list all skip a listing with no finite
+    // point (the three legs into Leaflet's `toLatLng(null)`); A25.4 stops the panel's
+    // last-resort community object standing in zeros for absent figures; A25.5 gives the panel
+    // the `p8` term A21.4a dropped, so it and the detail agree. A20 is reserved by the
+    // image-identifiability plan and A24 by the neighbourhood-shading spec, both in flight.
+    // A25.6 — fix round 1, Important-1: `showDrive` had no coordinate term, so A25.2's restored
+    // else-branch painted the drive-time ring around the metro centre for an unlocated listing.
+    'A25.1', 'A25.2', 'A25.3', 'A25.4', 'A25.5', 'A25.6',
+    // A26 — the Browse filter bar's native <select>s become in-design dropdowns (John,
+    // 2026-09-11: "the dropdown 'more filters' is correct implementation while everything else on
+    // the filter bar is implemented incorrectly and not using the site design, this must be
+    // corrected"). The SECOND report about this toolbar row, so the family reuses A13's own idiom
+    // rather than a second one. Task F1's sixteen: A26.1 the four shared class members, A26.2 the
+    // `filters` map body, A26.4 the More-filters popover's parent edge, A26.5-A26.7 one branch
+    // each in the three dismissal closures A13.4/A13.8 already arm, A26.8a-f the six inbound
+    // cross-close edges, A26.9a-c go()'s three arms, A26.10 the markup. Task F2 adds the two
+    // that convert the three inside the "More filters" popover on the same idiom and the same
+    // state slot — A26.3 the `moreFilters` map body, beside A26.2's, and A26.11 the markup,
+    // beside A26.10's.
+    'A26.1', 'A26.2', 'A26.3', 'A26.4', 'A26.5', 'A26.6', 'A26.7', 'A26.8a', 'A26.8b', 'A26.8c', 'A26.8d', 'A26.8e', 'A26.8f',
+    'A26.9a', 'A26.9b', 'A26.9c', 'A26.10', 'A26.11',
+    // A26.12-A26.14 — the Q2 widening (controller ruling on the A26 plan's Q2, 2026-09-11).
+    // Not new scope: a defect against John's own 2026-09-08 m7 ruling, on three lines A26.8
+    // is already editing, given their OWN ids so they can be lifted out without touching it.
+    // Each reads A26.8a/A26.8b/A26.8e's output, so all three run after the family's own.
+    // A26.15 is the fourth direction, found by the exhaustive pair enumeration rather than by
+    // reading: the metro listbox's ARROW open path closed none of the other three, where its
+    // click path closes all three after A26.14. A14 had to cover both of Give's paths for the
+    // same reason. Reads A26.8f's output, so it runs after it.
+    'A26.12', 'A26.13', 'A26.14', 'A26.15',
+    // A26.16 — the panel width (John, 2026-09-11, Task F1b): "the panel takes the width of the
+    // trigger that opened it, so their edges line up." Its own id and its own ruling, because it
+    // is its own ruling; it reads A26.10's and A26.11's output, so it is applied last and it
+    // edits BOTH panels in one entry (count: 2) — which is how F2's three are born with the
+    // width instead of acquiring it in a third pass.
+    'A26.16',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(151);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(205);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -434,8 +515,26 @@ describe('local design amendments (spec D15)', () => {
     expect(amended, 'the options leave the tab order — focus stays on the combobox')
       .toContain('role="option" tabindex="-1"');
     expect(amended).not.toContain('onChange="{{ setMarket }}"');
-    // The five filter selects, the sort select and the wizard's stay native (scope, Q1).
-    expect((amended.match(/<select /g) ?? []).length, 'A13 changed a select outside its scope').toBe(4);
+    // A13's scope was "the five filter selects, the sort select and the wizard's stay native
+    // (Q1)". OVERRULED on 2026-09-11 in its first clause (family A26, John: "the dropdown 'more
+    // filters' is correct implementation while everything else on the filter bar is implemented
+    // incorrectly and not using the site design"), which converts the five and — in Task F2 — the
+    // three inside the More-filters popover, on this same idiom. The results-rail sort select
+    // becomes its own wired change (he ruled make it actually sort, not merely convert it) and
+    // the wizard's four field selects convert later as their own change, because `wizard-step-1`
+    // is one of the thirteen frozen hashes and A26 is deliberately a family in which none moves.
+    //
+    // So the count is the live scope statement, not A13's, and not a stale literal: the amended
+    // design holds exactly TWO `<select >` tags now that Task F2 has converted the popover's
+    // loop as well — the results-rail sort control and the wizard's field-select loop, one tag
+    // each, and each left native by a ruling of its own. It was four before A26 and three
+    // between F1 and F2. The floor is two: converting either of those two here would be scope
+    // this family does not have.
+    expect((amended.match(/<select /g) ?? []).length, 'a select changed outside the ruled scope').toBe(2);
+    expect(amended, 'the results-rail sort control stays native (D-F1: it must be WIRED as well as converted)')
+      .toContain('<select style="flex: none; height: 34px; padding: 0 9px;');
+    expect(amended, 'the wizard\'s field selects stay native (wizard-step-1 is a frozen hash)')
+      .toContain('<select value="{{ fd.value }}" onChange="{{ fd.set }}"');
   });
 
   // A14 (John, 2026-09-08: "the Give button must be identical to the https://vinfoundation.org/
@@ -465,15 +564,32 @@ describe('local design amendments (spec D15)', () => {
     // index, so its presence in the DESIGN is what makes the keyboard work on BOTH targets.
     expect(amended, 'the arrow keys must not focus inside a setState callback — the app has not rendered yet')
       .not.toContain('}, () => this.giveFocus(');
-    expect(amended).toContain('this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 });');
+    expect(amended).toContain('this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1, fMenu: null, fMenuAt: -1 });');
     // m7 (final review, ruled): the invariant runs in every direction now — Give's two open paths
     // close the other three menus, and each of the other three closes Give.
-    expect(amended, 'the nav toggle must close Give (A14.8)')
-      .toContain('toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false }),');
-    expect(amended, 'the account toggle must close Give (A14.2)')
-      .toContain('toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false }),');
-    expect(amended, 'the metro listbox must close Give (A13.2)')
-      .toContain('Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false }),');
+    //
+    // WIDENED, NOT WITHDRAWN (A26, 2026-09-11). Each of these four open paths gained the filter
+    // dropdowns' two keys (A26.8a-e), because A26 put five more menus on the same screen and the
+    // invariant they encode is being EXTENDED. The strings stay byte-exact and stay pinned: a
+    // future edit that drops `giveMenu: false` from any of them still fails here, which is the
+    // only reason these lines exist.
+    //
+    // WIDENED A SECOND TIME by A26.12-A26.14 (controller ruling on the A26 plan's Q2, 2026-09-11).
+    // m7 says "opening any one of the FOUR menus closes the other three", and three of the six
+    // directions among nav/account/metro were never written: the account toggle closed neither
+    // the nav menu nor the metro listbox, the nav toggle closed no metro listbox, and the metro
+    // trigger closed neither of the header's two. Give's own six were complete, which is why the
+    // gap survived — Give and the metro also have global pointerdown/focusout dismissal, while
+    // `navMenu` and `userMenu` have none of any kind (D-F2, reported and NOT built here), so a
+    // pointer could hold the account menu open beside a freshly opened metro listbox with two
+    // clicks. A26 was already editing all three lines; the widening carries its own ids so it
+    // can be lifted out without touching A26.8.
+    expect(amended, 'the nav toggle must close Give (A14.8) and the metro listbox (A26.12)')
+      .toContain('toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false, fMenu: null, fMenuAt: -1, marketMenu: false, marketMenuAt: -1 }),');
+    expect(amended, 'the account toggle must close Give (A14.2), the nav menu and the metro listbox (A26.13)')
+      .toContain('toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false, fMenu: null, fMenuAt: -1, navMenu: false, marketMenu: false, marketMenuAt: -1 }),');
+    expect(amended, 'the metro listbox must close Give (A13.2) and the header\'s two menus (A26.14)')
+      .toContain('Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false, fMenu: null, fMenuAt: -1, navMenu: false, userMenu: false }),');
     // m6 (final review, ruled): Home and End on the TRIGGER, guarded on the menu being open, the
     // way `marketMenuKeys` has them — the per-row handler already had them.
     expect(amended, 'Home and End must reach the Give trigger')
@@ -493,9 +609,13 @@ describe('local design amendments (spec D15)', () => {
     expect(amended, 'Tab out of the metro listbox must close it too').toContain('      if (!this.state.marketMenu) return;\n      const host = this._marketMenuEl;\n      if (host && host.contains(to)) return;\n      this.setState({ marketMenu: false, marketMenuAt: -1 });');
     // A13's own pointerdown closure, byte for byte, after every A14 edit to the function.
     expect(amended, 'A14 changed the metro menu\'s outside-click').toContain('      if (!this.state.marketMenu) return;\n      const host = this._marketMenuEl;\n      if (host && e.target && host.contains(e.target)) return;\n      this.setState({ marketMenu: false, marketMenuAt: -1 });');
-    // Six metro dismissal sites: A13.4's pointerdown and keydown, A13.8's focusout, A13.1's
-    // setMarket, and m7's two — Give's pointer open and its arrow open (A14.2).
-    expect((amended.match(/marketMenu: false, marketMenuAt: -1/g) ?? []).length, 'the metro menu is shut in exactly these six places').toBe(6);
+    // NINE metro dismissal sites. Six from A13/A14: A13.4's pointerdown and keydown, A13.8's
+    // focusout, A13.1's setMarket, and m7's two — Give's pointer open and its arrow open (A14.2).
+    // The seventh is A26's (2026-09-11): the filter dropdowns' ONE open path, A26.1's
+    // `openFilterMenu`, which is the whole family's outbound edge. The eighth and ninth are the
+    // Q2 widening — A26.12's nav toggle and A26.13's account toggle, the two m7 directions that
+    // were never written.
+    expect((amended.match(/marketMenu: false, marketMenuAt: -1/g) ?? []).length, 'the metro menu is shut in exactly these nine places').toBe(9);
   });
 
   // A14.6 + the ruling: "Self-host Montserrat 600 under the SIL Open Font Licence, scoped
@@ -649,8 +769,164 @@ describe('local design amendments (spec D15)', () => {
   });
 
   it('the amended reference is the pristine Rev 2 file plus exactly the ruled edits', () => {
-    expect(applyAmendments(pristine, amendments())).toBe(readFileSync(AMENDED, 'utf8'));
+    expect(applyAmendments(pristine, amendmentsFor('dc'))).toBe(readFileSync(AMENDED, 'utf8'));
   });
+
+  // A26 (John, 2026-09-11: "the dropdown 'more filters' is correct implementation while
+  // everything else on the filter bar is implemented incorrectly and not using the site design,
+  // this must be corrected"). The SECOND report about this toolbar row — the metro picker
+  // immediately to their left was the first, ruled A13 on 2026-09-08 — so A26 reuses A13's own
+  // idiom rather than authoring a second one: trigger + `role="listbox"` panel composed from the
+  // Market data card's layer menu, anchored with the "More filters" popover's own pair.
+  //
+  // Task F1 converted the FIVE toolbar filters (one `.map()` body, five instances, one state
+  // slot); Task F2 converted the three inside the "More filters" popover (a second `.map()`
+  // body). Both are done, which is why the scope count below reads the family's final 2 — the
+  // results-rail sort control and the wizard's field loop, both ruled OUT and both left native.
+  it('A26 introduces no new styling — every value is A13\'s, which is the design\'s own', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    for (const decl of [
+      'display: inline-flex; align-items: center; gap: 8px;',              // More filters button, V3:382
+      'height: 40px; padding: 0 13px; font-size: 13px; font-weight: 500; color: var(--color-navy); background: ',  // the <select> A26 replaces
+      'font-family: var(--rf-display); font-size: 13px; font-weight: ',    // rowStyle, layer menu
+      'background: var(--vf-accent-bg)',                                   // selected row
+      'background: var(--vf-neutral)',                                     // hover / highlight
+      'transition: transform 150ms var(--easing-out); transform: rotate(', // caret
+      'box-shadow: 0 6px 20px rgba(0,58,112,.16)',                         // More filters panel
+      'top: 46px; z-index: 700',                                           // More filters anchoring
+      'max-height: 232px; overflow-y: auto',                               // compare menu
+      'position: relative;',                                               // the More filters wrapper
+      'flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;'
+    ]) {
+      expect(pristine, `${decl} is not the design's own`).toContain(decl);
+    }
+    // A26.16 — the panel width (John, 2026-09-11, Task F1b): "the panel takes the width of the
+    // trigger that opened it, so their edges line up."
+    //
+    // Task F1 shipped the panel with no width at all and left two `not.toContain` trip-wires
+    // here — one on the pristine file, one on the amended — precisely so a later hand had to get
+    // this RULED rather than add a number quietly. F1's review then measured the capture: the
+    // Practice type trigger is 155 px and its panel 153 px, four of the five sat ~2 px inside the
+    // button that opened them, and Property inverted and opened far wider than its collapsed
+    // trigger. "The design is silent here" was never the honest description either — the panel
+    // string is A13's metro panel with `width: 300px` DELETED, and FOUR of the four absolutely
+    // positioned menu panels the PRISTINE bundle itself carries have a fixed pixel width
+    // (account 208, the other header menu 236, More filters 262, the layer menu 300). The
+    // controller's ruling said "six of six ... in the pristine bundle" and counted A13's listbox
+    // and A14's Give panel among them; both are AMENDMENTS. A commit of 2026-09-11 claimed that
+    // error was "corrected in place" and corrected one of its three copies — this is another.
+    // The point survives unchanged: the design does not leave panel widths open, it fixes them,
+    // and pristine contains no `max-content` anywhere.
+    //
+    // So `min-width: 100%` is the SECOND named exception to "every declaration must already
+    // appear in the pristine bundle", after the More-filters anchoring pair above. It invents no
+    // number for any of the eight controls: it resolves against the `position: relative` wrapper,
+    // which IS the trigger. A trip-wire that has become false is worse than none, so the pair is
+    // INVERTED rather than deleted — the declaration must sit on this family's two listbox panels
+    // and nowhere else, so the exception cannot spread to a third element by accident.
+    expect(pristine, 'min-width: 100% is a RULED exception, not the design\'s own — it must stay absent here').not.toContain('min-width: 100%');
+    const widthed = amended.split('\n').filter((l) => l.includes('min-width: 100%')).map((l) => l.trim());
+    expect(widthed.length, 'A26.16 applies to the two A26 panels and to nothing else').toBe(2);
+    for (const line of widthed) expect(line.startsWith('<div role="listbox" '), line).toBe(true);
+    expect(widthed[0], 'the toolbar five (A26.10)').toContain('id="{{ fl.listId }}" ref="{{ fl.panelRef }}"');
+    expect(widthed[1], 'the three inside More filters (A26.11)').toContain('id="{{ mf.listId }}" ref="{{ mf.panelRef }}"');
+    // …and A13's metro panel keeps the width the design measured for it, rather than being
+    // quietly swept into the new rule: its field is `min-width: 300px` and its panel 300 px, and
+    // pinning the two together is the design's own stated intent for this idiom.
+    expect(amended, 'A13\'s metro panel must keep its own 300 px')
+      .toContain('id="metro-listbox" ref="{{ marketPanelRef }}" style="position: absolute; left: 0; top: 46px; z-index: 700; width: 300px; padding: 4px;');
+  });
+
+  it('A26 turns the five toolbar filters into labelled comboboxes with listbox panels', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    // The operating system's popup is gone from the five: no <select> in the `filters` loop.
+    expect(pristine).toContain('<select value="{{ fl.value }}" onChange="{{ fl.set }}" style="{{ fl.style }}">');
+    expect(amended).not.toContain('onChange="{{ fl.set }}"');
+    // A13's own attribute chain, per instance: `role="combobox"` (ARIA 1.2 — the role that
+    // supports `aria-activedescendant`, which `button` does not; final review I1), an
+    // `aria-label` on every trigger, `aria-controls` to the panel by id, and `tabindex="-1"` on
+    // the rows so focus stays on the element that holds the highlight.
+    expect(amended).toContain('role="combobox" aria-label="{{ fl.aria }}" aria-haspopup="listbox" aria-controls="{{ fl.listId }}" aria-expanded="{{ fl.open }}" aria-activedescendant="{{ fl.activeId }}"');
+    expect(amended).toContain('<div role="listbox" aria-label="{{ fl.aria }}" id="{{ fl.listId }}" ref="{{ fl.panelRef }}"');
+    expect(amended, 'aria-activedescendant must sit on the focused trigger, never on the panel')
+      .not.toContain('<div role="listbox" aria-label="{{ fl.aria }}" aria-activedescendant=');
+    expect((amended.match(/role="option" tabindex="-1"/g) ?? []).length, 'A13\'s row, A26.10\'s and A26.11\'s').toBe(3);
+
+    // Collateral 2 (`screens.ts:59`): `layerTrigger` is
+    // `button[aria-haspopup="listbox"]:not([aria-label])`, so the five new triggers are excluded
+    // from `.first()`/`.nth(1)` ONLY because each carries an aria-label. Every listbox trigger in
+    // the design that is NOT one of the Market data card's two must be labelled.
+    const triggers = [...amended.matchAll(/<button[^>]*aria-haspopup="listbox"[^>]*>/g)].map((m) => m[0]);
+    expect(triggers.length, 'the metro trigger, the layer trigger, the compare trigger and A26\'s two').toBe(5);
+    expect(triggers.filter((t) => !t.includes('aria-label')).length, 'the Market data card\'s two, which screens.ts addresses by exclusion').toBe(2);
+  });
+
+  // Task F2 — the three inside the "More filters" popover (A26.3 and A26.11). John called this
+  // control the CORRECT implementation, so his words do not cover the three under it; the user's
+  // experience does. A native `<select>`'s popup is an operating-system window and renders above
+  // the popover's own `z-index: 700`, so converting only the toolbar five would have relocated
+  // the dark menu he photographed one click deeper — on top of his own exemplar — rather than
+  // removed it. They are also the cheapest three in the tree: no approved state had ever clicked
+  // "More filters", so no committed pixel moves and the popover gains its first oracle here.
+  it('A26 turns the three inside "More filters" into labelled comboboxes too', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    expect(pristine).toContain('<select value="{{ mf.value }}" onChange="{{ mf.set }}"');
+    expect(amended, 'the operating system\'s popup is gone from the popover as well').not.toContain('onChange="{{ mf.set }}"');
+    // The design's own visible caption stays exactly where it was — and it also NAMES the
+    // trigger. A `<label>` does not name a `<button>`: a button's accessible name is computed
+    // from its own contents before the host language's label is consulted, so the caption is
+    // spelled again as an `aria-label` rather than a new render key being authored for it.
+    expect(amended).toContain('<span style="font-size: 12px; font-weight: 500; color: var(--vf-text);">{{ mf.label }}</span>');
+    expect(amended).toContain('role="combobox" aria-label="{{ mf.label }}" aria-haspopup="listbox" aria-controls="{{ mf.listId }}" aria-expanded="{{ mf.open }}" aria-activedescendant="{{ mf.activeId }}"');
+    expect(amended).toContain('<div role="listbox" aria-label="{{ mf.label }}" id="{{ mf.listId }}" ref="{{ mf.panelRef }}"');
+    expect(amended, 'aria-activedescendant must sit on the focused trigger, never on the panel')
+      .not.toContain('<div role="listbox" aria-label="{{ mf.label }}" aria-activedescendant=');
+    // The trigger fills the popover's column exactly as the `<select>` did. The `<select>` was a
+    // flex item of the `<label>` and stretched; a button inside the new `position: relative`
+    // wrapper is not one, so it is told to fill it — with the popover's own declaration, which
+    // its "Done" button already carries. Every other declaration is the `<select>`'s, byte for
+    // byte, plus the three a label and a chevron need where the user agent drew its own arrow.
+    expect(pristine, 'width: 100% is not the design\'s own').toContain('width: 100%');
+    expect(amended).toContain('style="display: inline-flex; align-items: center; gap: 8px; width: 100%; height: 38px; padding: 0 10px; font-size: 13px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;"');
+    // The `<select>`'s orphaned render keys go with it under the bundle's own dead-code rule,
+    // exactly as A13.6/A13.7 and A26.2 dropped theirs: `value:` fed `value="{{ mf.value }}"`,
+    // `set:` fed `onChange="{{ mf.set }}"`, and the option rows' `v:` fed `<option value>`.
+    for (const dead of ['{{ mf.value }}', '{{ mf.set }}']) expect(amended, `${dead} has no reader left`).not.toContain(dead);
+    expect(amended, 'the moreFilters options no longer mint an <option> value').not.toContain('        value: s.f[fl.key] || "Any",');
+    // …and the popover's own parent edge (A26.4) still reaches them: `toggleMore` clears the
+    // family's keys unconditionally, which closes a child with its parent AND a toolbar
+    // dropdown when the parent opens.
+    expect(amended).toContain('toggleMore: () => this.setState({ moreFilters: !s.moreFilters, fMenu: null, fMenuAt: -1 }),');
+  });
+
+  it('A26 writes ONE open path, so the cross-menu invariant is structural inside the family', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    // One `openFilterMenu`, and it is the only place the family names the four overlay menus.
+    expect(amended).toContain('  openFilterMenu = (key, at) => {\n    this.setState({ fMenu: key, fMenuAt: at, navMenu: false, userMenu: false, giveMenu: false, marketMenu: false, marketMenuAt: -1 });\n  };');
+    expect((amended.match(/fMenu: key, fMenuAt: at/g) ?? []).length, 'a second open path would have to carry the edges by hand').toBe(1);
+    // …and the six inbound edges (A26.8a-f), plus the popover parent (A26.4) and go()'s three
+    // arms (A26.9). Ten places shut a filter dropdown; the family's own toggle is the eleventh.
+    expect((amended.match(/fMenu: null, fMenuAt: -1/g) ?? []).length, 'the filter dropdowns are shut in exactly these places').toBe(16);
+  });
+
+  it('A26 leaves Give\'s and the metro\'s three dismissal closures byte for byte (the A14.4 precedent)', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    // The new branch goes AFTER Give's and BEFORE the metro's — the metro branch's guard is an
+    // early `return`, so a branch appended after it would be dead while its menu is closed.
+    // Both existing branches keep their own bytes, which is what A14.4 proved for A13's.
+    expect(amended, 'A26 changed the metro menu\'s outside-click').toContain('      if (!this.state.marketMenu) return;\n      const host = this._marketMenuEl;\n      if (host && e.target && host.contains(e.target)) return;\n      this.setState({ marketMenu: false, marketMenuAt: -1 });');
+    expect(amended, 'A26 changed the metro menu\'s Tab dismissal').toContain('      if (!this.state.marketMenu) return;\n      const host = this._marketMenuEl;\n      if (host && host.contains(to)) return;\n      this.setState({ marketMenu: false, marketMenuAt: -1 });');
+    expect(amended, 'A26 changed Give\'s pointerdown').toContain('      if (this.state.giveMenu) {\n        const give = this._giveMenuEl;\n        if (!(give && e.target && give.contains(e.target))) this.setState({ giveMenu: false });\n      }');
+    expect(amended, 'A26 changed Give\'s Escape').toContain('      if (this.state.giveMenu) {\n        this.setState({ giveMenu: false });\n        if (this._giveButtonEl) this._giveButtonEl.focus();\n      }');
+    expect(amended, 'A26 changed Give\'s focusout').toContain('      if (this.state.giveMenu) {\n        const give = this._giveMenuEl;\n        if (!(give && give.contains(to))) this.setState({ giveMenu: false });\n      }');
+    // No new listener: the three closures A13.4/A13.8 armed are still the only ones.
+    expect((amended.match(/document\.addEventListener/g) ?? []).length).toBe(3);
+    // The family's own three branches, each resolving its host through the field the component
+    // recorded rather than across the document (A13's rule, final review m5).
+    expect(amended).not.toContain('document.getElementById');
+    expect((amended.match(/this\._fMenuEls\[this\.state\.fMenu\]/g) ?? []).length, 'pointerdown and focusout').toBe(2);
+  });
+
   // D18 (John, 2026-09-07: "update across the application"). One occurrence in the pristine
   // file — the Insights-tab primary button of the docked panel (V3:705) opens the listing;
   // its label was wrong. The other tabs' "Open full listing" (V3:717) is unified by A11
@@ -689,12 +965,19 @@ describe('local design amendments (spec D15)', () => {
   // as implemented: the count is measured at the point the amendment is APPLIED, in list order,
   // because A2.5's `find` is the text A2.4 produces and does not exist in the pristine file.
   it('every `find` occurs exactly `count` times at the point it is applied, in list order (spec D15)', () => {
-    let out = pristine;
-    for (const a of amendments()) {
-      expect(out.split(a.find).length - 1, `${a.id}: find count at the point of application`).toBe(a.count);
-      out = out.split(a.find).join(a.replace);
+    // Per FILE, since A24: `applyAmendments` walks one string, and an entry that edits
+    // MarketMapV3.jsx can never be counted against the .dc.html (it would read 0 and throw).
+    for (const [file, from, to] of [
+      ['dc', pristine, readFileSync(AMENDED, 'utf8')],
+      ['jsx', readFileSync(PRISTINE_JSX, 'utf8'), readFileSync(AMENDED_JSX, 'utf8')]
+    ] as const) {
+      let out = from;
+      for (const a of amendmentsFor(file)) {
+        expect(out.split(a.find).length - 1, `${a.id}: find count at the point of application`).toBe(a.count);
+        out = out.split(a.find).join(a.replace);
+      }
+      expect(out, `${file}: pristine + amendments is not the amended file`).toBe(to);
     }
-    expect(out).toBe(readFileSync(AMENDED, 'utf8'));
     // The ordering dependency itself, named: A2.5 matches A2.4's output, so it cannot be counted
     // against the pristine file and the two may never be reordered.
     const list = amendments();
@@ -799,7 +1082,11 @@ describe('local design amendments (spec D15)', () => {
     for (const row of md.split('\n')) {
       const id = /^\|\s*(A[\w.]+)\s*\|/.exec(row)?.[1];
       if (id === undefined) continue;
-      const cited = [...row.matchAll(/V3:(\d+)/g)].map((c) => Number(c[1]));
+      // BOTH ENDS of a range, not only the first number (Task MP1). `V3:1974–1969` and
+      // `V3:2613-2431` both stood in this file with an end left behind by an earlier
+      // re-map, and both passed: the pattern stopped at the first number, so the half of
+      // the citation a reader uses to find the END of a multi-line edit was never measured.
+      const cited = [...row.matchAll(/V3:(\d+)(?:[\u2013-](\d+))?/g)].flatMap((c) => [Number(c[1]), ...(c[2] ? [Number(c[2])] : [])]);
       if (cited.length === 0) continue;
       const own = id === 'A1' ? list.filter((a) => a.id.startsWith('A1.')) : list.filter((a) => a.id === id);
       expect(own.length, `${id}: the row cites a V3 line but no amendment carries that id`).toBeGreaterThan(0);

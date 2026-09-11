@@ -1,0 +1,207 @@
+- generic [ref=f1e3]:
+  - generic [ref=f1e4]:
+    - banner [ref=f1e5]:
+      - generic [ref=f1e6] [cursor=pointer]:
+        - img "VIN Foundation" [ref=f1e7]
+        - generic [ref=f1e9]: Practice Match
+      - navigation [ref=f1e10]:
+        - generic [ref=f1e11]:
+          - button "Browse Practices" [ref=f1e12] [cursor=pointer]
+          - button "My Requests" [ref=f1e13] [cursor=pointer]
+          - button "List a Practice" [ref=f1e14] [cursor=pointer]
+          - button "VIN Foundation Admin" [ref=f1e15] [cursor=pointer]
+        - button [ref=f1e17] [cursor=pointer]
+        - button "RM Dr. Rachel Mendes VIN Foundation admin · StartUp Club" [ref=f1e22] [cursor=pointer]:
+          - generic [ref=f1e23]: RM
+          - generic [ref=f1e25]:
+            - generic [ref=f1e26]: Dr. Rachel Mendes
+            - generic [ref=f1e27]: VIN Foundation admin · StartUp Club
+    - generic [ref=f1e28]:
+      - generic [ref=f1e30]:
+        - button "Back to results" [ref=f1e31] [cursor=pointer]
+        - heading "Small animal practice — Round Rock" [level=1] [ref=f1e32]
+        - generic [ref=f1e33]:
+          - generic [ref=f1e34]: Round Rock, TX · Established 2006
+          - generic [ref=f1e36]: Listed 1 week ago
+          - generic [ref=f1e37]: Accepting inquiries
+      - generic [ref=f1e38]:
+        - generic [ref=f1e39]:
+          - generic [ref=f1e40]:
+            - generic [ref=f1e41]:
+              - generic [ref=f1e42]:
+                - 'button "Expand photo: Exterior — street view" [active] [ref=f1e46] [cursor=pointer]'
+                - generic [ref=f1e47]:
+                  - generic [ref=f1e48]: "1"
+                  - generic [ref=f1e49]: Exterior — street view
+              - generic [ref=f1e50]:
+                - 'button "Expand photo: Exterior — side elevation" [ref=f1e54] [cursor=pointer]'
+                - generic [ref=f1e55]:
+                  - generic [ref=f1e56]: "2"
+                  - generic [ref=f1e57]: Exterior — side elevation
+              - generic [ref=f1e58]:
+                - 'button "Expand photo: Exterior — parking and signage" [ref=f1e62] [cursor=pointer]'
+                - generic [ref=f1e63]:
+                  - generic [ref=f1e64]: "3"
+                  - generic [ref=f1e65]: Exterior — parking and signage
+              - generic [ref=f1e66]:
+                - generic [ref=f1e67]: Round Rock Veterinary Clinic — Reception and waiting
+                - generic [ref=f1e76]:
+                  - generic [ref=f1e77]: "4"
+                  - generic [ref=f1e78]: Reception and waiting
+              - generic [ref=f1e79]:
+                - generic [ref=f1e80]: Round Rock Veterinary Clinic — Exam room
+                - generic [ref=f1e89]:
+                  - generic [ref=f1e90]: "5"
+                  - generic [ref=f1e91]: Exam room
+              - generic [ref=f1e92]:
+                - generic [ref=f1e93]: Round Rock Veterinary Clinic — Treatment area
+                - generic [ref=f1e102]:
+                  - generic [ref=f1e103]: "6"
+                  - generic [ref=f1e104]: Treatment area
+            - paragraph [ref=f1e105]: Six views per practice, all photographed at the same location. Drop a photo onto any frame to fill it; each frame belongs to this practice only.
+          - generic [ref=f1e106]:
+            - heading "Overview" [level=2] [ref=f1e107]
+            - paragraph [ref=f1e109]: Relocating out of state. Lease assignable through 2031.
+            - generic [ref=f1e110]:
+              - generic [ref=f1e111]:
+                - generic [ref=f1e112]: Practice type
+                - generic [ref=f1e113]: Small animal
+              - generic [ref=f1e114]:
+                - generic [ref=f1e115]: General location
+                - generic [ref=f1e116]: Round Rock, TX
+              - generic [ref=f1e117]:
+                - generic [ref=f1e118]: Established
+                - generic [ref=f1e119]: "2006"
+              - generic [ref=f1e120]:
+                - generic [ref=f1e121]: Ownership structure
+                - generic [ref=f1e122]: Sole proprietor (LLC)
+          - generic [ref=f1e123]:
+            - heading "Financial Snapshot" [level=2] [ref=f1e124]
+            - generic [ref=f1e126]:
+              - generic [ref=f1e127]:
+                - generic [ref=f1e128]: Asking price
+                - generic [ref=f1e129]: $980K
+              - generic [ref=f1e130]:
+                - generic [ref=f1e131]: Gross revenue (most recent year)
+                - generic [ref=f1e132]: $1.45M
+              - generic [ref=f1e133]:
+                - generic [ref=f1e134]: Revenue disclosure
+                - generic [ref=f1e135]: Exact figure released
+              - generic [ref=f1e136]:
+                - generic [ref=f1e137]: Real estate
+                - generic [ref=f1e138]: Leased — assignable
+            - generic [ref=f1e139]: All figures on this listing are provided by the seller and have not been reviewed or verified by the VIN Foundation. Ask for the financial packet before relying on any number here.
+          - generic [ref=f1e141]:
+            - heading "The Practice" [level=2] [ref=f1e142]
+            - paragraph [ref=f1e144]: Wellness, surgery, dentistry, boarding.
+            - generic [ref=f1e145]:
+              - generic [ref=f1e146]:
+                - generic [ref=f1e147]: Doctors
+                - generic [ref=f1e148]: 2 FTE
+              - generic [ref=f1e149]:
+                - generic [ref=f1e150]: Support team
+                - generic [ref=f1e151]: 2 DVMs, 3 technicians, 4 support staff
+              - generic [ref=f1e152]:
+                - generic [ref=f1e153]: Exam rooms
+                - generic [ref=f1e154]: "4"
+              - generic [ref=f1e155]:
+                - generic [ref=f1e156]: Hours
+                - generic [ref=f1e157]: Mon–Sat 8–6
+          - generic [ref=f1e158]:
+            - heading "Property" [level=2] [ref=f1e159]
+            - paragraph [ref=f1e161]: End unit in a retail plaza with dedicated parking.
+            - generic [ref=f1e162]:
+              - generic [ref=f1e163]:
+                - generic [ref=f1e164]: Building status
+                - generic [ref=f1e165]: Leased — assignable
+              - generic [ref=f1e166]:
+                - generic [ref=f1e167]: Facility type
+                - generic [ref=f1e168]: Leased suite
+              - generic [ref=f1e169]:
+                - generic [ref=f1e170]: Approximate square feet
+                - generic [ref=f1e171]: 3,100
+              - generic [ref=f1e172]:
+                - generic [ref=f1e173]: Parking
+                - generic [ref=f1e174]: On-site
+          - generic [ref=f1e175]:
+            - heading "Photos and Documents" [level=2] [ref=f1e176]
+            - generic [ref=f1e178]:
+              - generic [ref=f1e179]:
+                - generic [ref=f1e182]:
+                  - generic [ref=f1e183]: Exterior and interior photos
+                  - generic [ref=f1e184]: 9 images · seller-provided
+                - generic [ref=f1e185]: Open to approved members
+              - generic [ref=f1e186]:
+                - generic [ref=f1e189]:
+                  - generic [ref=f1e190]: Floor plan
+                  - generic [ref=f1e191]: PDF · 1 page
+                - generic [ref=f1e192]: Locked — seller approval
+              - generic [ref=f1e193]:
+                - generic [ref=f1e196]:
+                  - generic [ref=f1e197]: Three-year financial summary
+                  - generic [ref=f1e198]: PDF · seller-prepared, unverified
+                - generic [ref=f1e199]: Locked — seller approval
+              - generic [ref=f1e200]:
+                - generic [ref=f1e203]:
+                  - generic [ref=f1e204]: Equipment list
+                  - generic [ref=f1e205]: Spreadsheet · seller-provided
+                - generic [ref=f1e206]: Locked — seller approval
+          - generic [ref=f1e207]:
+            - heading "Community Context" [level=2] [ref=f1e208]
+            - generic [ref=f1e210]:
+              - generic [ref=f1e211]:
+                - generic [ref=f1e212]:
+                  - generic [ref=f1e213]: Population
+                  - generic [ref=f1e214]: 126,400
+                  - generic [ref=f1e215]: Community, 2023
+                - generic [ref=f1e216]:
+                  - generic [ref=f1e217]: Growth
+                  - generic [ref=f1e218]: +21.8%
+                  - generic [ref=f1e219]: Since 2015
+                - generic [ref=f1e220]:
+                  - generic [ref=f1e221]: Median income
+                  - generic [ref=f1e222]: $104,700
+                  - generic [ref=f1e223]: Household, 2023
+                - generic [ref=f1e224]:
+                  - generic [ref=f1e225]: Households
+                  - generic [ref=f1e226]: 44,100
+                  - generic [ref=f1e227]: In the community
+              - paragraph [ref=f1e228]: "Source: U.S. Census Bureau, American Community Survey 2023 5-year estimates (public domain, attribution requested). Figures describe the community around the practice, not the practice itself."
+        - generic [ref=f1e229]:
+          - generic [ref=f1e230]:
+            - generic [ref=f1e231]:
+              - generic [ref=f1e232]: Asking price
+              - generic [ref=f1e233]: $980K
+              - generic [ref=f1e234]: Practice only. leased — assignable.
+            - generic [ref=f1e235]:
+              - generic [ref=f1e236]:
+                - generic [ref=f1e237]:
+                  - generic [ref=f1e238]: Gross revenue
+                  - generic [ref=f1e239]: $1.45M (seller-stated)
+                - generic [ref=f1e240]:
+                  - generic [ref=f1e241]: Doctors
+                  - generic [ref=f1e242]: 2 full-time equivalent
+                - generic [ref=f1e243]:
+                  - generic [ref=f1e244]: Exam rooms
+                  - generic [ref=f1e245]: "4"
+                - generic [ref=f1e246]:
+                  - generic [ref=f1e247]: Square feet
+                  - generic [ref=f1e248]: 3,100
+                - generic [ref=f1e249]:
+                  - generic [ref=f1e250]: Property
+                  - generic [ref=f1e251]: Leased — assignable
+              - button "I'm interested" [ref=f1e252] [cursor=pointer]
+              - button "Save listing" [ref=f1e253] [cursor=pointer]
+              - paragraph [ref=f1e254]: Your name, credentials and license state are shared with the seller when you express interest. Nothing else is disclosed.
+          - generic [ref=f1e255]:
+            - generic [ref=f1e256]: Seller disclosure
+            - paragraph [ref=f1e258]: This seller is still operating the practice. Street address, practice name and staff names stay hidden until they approve your request. Documents marked locked open only with seller approval.
+  - dialog "Photograph 1 of 3" [ref=f1e260]:
+    - img "Exterior — street view" [ref=f1e261]
+    - button "Close photo" [ref=f1e262] [cursor=pointer]
+    - generic:
+      - button "Previous photo" [ref=f1e263] [cursor=pointer]
+      - button "Next photo" [ref=f1e264] [cursor=pointer]
+    - generic:
+      - generic [ref=f1e265]: 1/3
+      - generic [ref=f1e266]: Exterior — street view

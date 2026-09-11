@@ -181,7 +181,7 @@ for i in 1 2 3 4 5 6; do curl -sS -o /dev/null -w "%{http_code} " -X POST -H 'Co
 
 ## Seeding the demo hospitals (QA)
 
-The eighteen demo hospitals (`seeds/hospitals.json`, spec 2026-09-06 D7) are loaded by
+The twenty-nine demo hospitals (`seeds/hospitals.json`) are loaded by
 `scripts/seed_listings.py`, which ships in the image together with `seeds/`. It is idempotent —
 an upsert by `slug`, so the rows keep their ids and their photo URLs stay valid; the only columns
 a re-run moves are `updated_at` and `listed_at`, the latter being
@@ -194,13 +194,13 @@ never on production without John's go — against `ENVIRONMENT=production` the s
 unless the operator says it out loud with `--production`, exactly as `scripts/bootstrap_admin.py`
 does; with the flag, the run's first line of output names the environment it is writing to.
 
-Run `scripts/seed_persona.py` **first**: the eighteen are assigned to
+Run `scripts/seed_persona.py` **first**: they are assigned to
 `seller@practice-match.test` at seed time (spec 2026-09-08 D25), and if that account does not
 exist yet the import still succeeds with `seller_id` NULL and says so on stdout. `--owner <email>`
 overrides the default and `--no-owner` seeds unowned; on production the default is not applied at
 all unless `--owner` is passed.
 
-**A listing the seller has edited is never re-seeded (A-SL21, 2026-09-09).** The eighteen belong to
+**A listing the seller has edited is never re-seeded (A-SL21, 2026-09-09).** They belong to
 `seller@practice-match.test`, so they open in the seller's own wizard — and the first seller write of
 any kind (a wizard step saved, a photograph added, reordered or deleted, a document uploaded, submit,
 pause, republish or withdraw) flips that row's `source` from `seed` to `seller`, in the same
@@ -213,7 +213,7 @@ by a listing that belongs to NOBODY is a different thing and still stops the who
 below).
 
 **The photographs (A-L9, revised by A-L10, and by A-L11 on 2026-09-09).** **Every photograph John
-supplies is rendered — 195 of them today, 8 to 18 per hospital.** Positions **1-6** are the six
+supplies is rendered — 313 of them today, 8 to 18 per hospital.** Positions **1-6** are the six
 captioned slots the design's detail page renders (`photoSet(p)` in `Practice Match V3.dc.html`: an
 exterior plus five subjects chosen by practice type); everything after them is an extra tile,
 appended to the same grid by amendment A15 and counted by the docked panel's carousel. The caption
@@ -242,9 +242,14 @@ slot.** It was written by looking at every source image, because John's filename
 describe their contents (one folder's `06_interior_reception.png` is a photograph of an exterior
 sign) and several files are sliced fragments of a collage sheet. For every slug it names it is
 authoritative for the slots it fills; a slot whose value is `null` has no truthful photograph in
-that folder, and since A-L11 one of the folder's other images fills it rather than the slot
-standing empty. A slot **stays empty** — where the design renders its own placeholder — only when a
-folder holds fewer images than the design has slots, which no seeded hospital does today.
+that folder, and since A-L11 one of the folder's other SINGLE photographs fills it rather than the
+slot standing empty. A slot **stays empty** — where the design renders its own placeholder — in two
+cases: a folder holding fewer images than the design has slots (which no seeded hospital does), and
+a folder whose remaining images are all multi-panel sheets. **A composite never occupies one of the
+six captioned slots, even when that leaves the slot empty** (Task SD1 fix round 1, C1): a sheet of
+six pictures is not "the reception area", and absent beats faked. Twenty-one slots across seven of
+the eleven Dallas hospitals are empty for that reason today. Nothing is dropped — every sheet still
+takes a position past the sixth, where amendment A15.3 renders it as a tile of its own.
 
 `scripts/prepare_photos.py` writes `seeds/hospitals/photos/<slug>/<k>.webp` — **the number is the
 position**, so positions 1-6 are the design's slots (`p.photos[i]` still fills slot `i`) and 7, 8, …
@@ -256,10 +261,84 @@ no bytes — it records the relative paths positionally, with a JSON `null` for 
 there, and the API sends `null` rather than a URL for it, so nothing requests it). Re-run
 `poetry run python scripts/prepare_photos.py` only when the source folders or the curation change;
 it needs Pillow (a dev dependency), prints `N files, M empty slots, K beyond the design's six
-slots`, and is never part of a deploy.
+slots` (313, 21 and 160 today), and is never part of a deploy.
 A curation entry that names a hospital the seed file does not, lists slots that are not the
 practice type's list in order, names a file the folder does not hold, or uses one file for two
 slots stops the run with exit 2 before anything is written.
+
+**`seeds/hospitals/photos/descriptions.json` is where a photograph's own words come from when its
+filename has none (Task SD1, 2026-09-10).** John's eleven Dallas folders are named
+`alpha_dallas_01.png`: the filename says nothing about the picture, so `caption_of` has nothing to
+read and the keyword path has nothing to match. This file carries, per source filename, the
+description a reader produced by LOOKING at the image, and `prepare_photos.py` writes it as that
+photograph's `caption` in `index.json` — which becomes `listing.photo_captions` and then
+`p.photoCaptions[i]` (amendment A15). A photograph with no entry here keeps the filename caption,
+which is what John's eighteen of 2026-09-06 have always had, so the file is optional: absent means
+"nobody described these", not an error. An entry naming a file the folder does not hold stops the
+run with exit 2, exactly as a curation entry does.
+
+Each entry may also carry `flags` — what the content verification noted about identifiable content
+in that image. They are **recorded, never acted on here**: they reach `index.json` so the image
+identifiability work (A-IDP-1..6, its own branch) inherits the finding instead of re-reading every
+image, and they decide nothing about what is DISPLAYED. Every seed still defaults to NOT SHOW
+(A-IDP-4, corrected by A-IDP-6), and this seeder writes no column that says otherwise. A
+photograph nobody flagged carries no `flags` key at all, so the entries already committed for the
+eighteen do not move.
+
+**A rendered street number is part of the invented identity, not grounds to leave a photograph
+out.** John ruled on 2026-09-10, verbatim: *"the numbers are part of the hospital name and should
+be 'shown/not shown' too"*. So a number worn as signage in one of these images is governed by the
+listing's one `identifiable_content_visibility` switch and redacted under `NOT_SHOW` exactly as
+the name is — never withheld as a file (controller ruling A-IDP-7, which adds a `premises_number`
+regex class to the identifiability specification so the pipeline can detect it).
+`alpha_dallas_05.png` was refused earlier that day and is restored on this basis.
+`address_not_this_listing` is the seventh flag, added by the same ruling: an image rendering a
+COMPLETE street address — number and street name — that is not this listing's own. John's words
+reach the number, not the street name, so that residual is carried as a flag and as one open
+question rather than as a refusal.
+
+**No number in this set is a per-hospital fact.** Charlie's differs between its own renders
+(`_01` reads 1010, `_03` and `_11` end in a narrow stem) and Juliet's glass door reads 22113 where
+its keystone and pilaster read 2211; three of the eleven render no number at all. Each number is
+therefore a property of its individual image, recorded in `note` and **never** as data — no
+column, no constant, and no rewriting of a listing's `street` to match a sign.
+
+**The flags are the pipeline's expectation set, not decoration.** Each names the detector outcome
+the identifiability work is expected to produce on that image, which is what makes the eleven its
+first real fixture; the mapping is pinned both ways by
+`tests/seeds/test_photo_inventory.py::test_every_flag_names_the_detector_class_the_pipeline_must_produce`,
+so a new flag cannot be invented without deciding what the classifier must do with it. The flag
+names are deliberately **not** the spec's detector class names and must not be renamed to match:
+`own_business_name` and `own_street_number` assert PROVENANCE — that the identity is the
+listing's own invention — which no detector class can express, and which is why these images are
+in the set at all.
+
+| seed flag | expected detector outcome |
+|---|---|
+| `own_business_name` | identity match on field `name` (exact / substring / distinctive) |
+| `own_street_number` | regex class `premises_number` (A-IDP-7) |
+| `address_not_this_listing` | regex class `address` |
+| `civic_signage` | vision kind `signage`, expected NOT to identify the practice |
+| `vehicle_no_legible_plate` | vision kind `vehicle` |
+| `certificates_text_unreadable` | vision kind `document` |
+| `composite` | none — a slot-placement fact only |
+
+**Adding a folder without rewriting the ones already committed: `--merge`.** Without it a run with
+`--slugs` replaces the whole `index.json` with just those slugs — which is the right default,
+because it is what makes a slug removed from `seeds/hospitals.json` disappear from the inventory
+too. With `--merge` the run replaces its own slugs and leaves every other one byte for byte as it
+was, which is how the eleven Dallas folders were added to the eighteen's tree without re-encoding
+195 files:
+
+```bash
+poetry run python scripts/prepare_photos.py --source <staged folders> --merge \
+  --slugs alpha_dallas_veterinary_specialist_hospital ...   # eleven slugs
+```
+
+Stage COPIES of John's folders under `<source>/<slug>_individual_images/` and run against those:
+nothing under `~/Downloads` is ever modified, moved, renamed or deleted, and his own folder names
+do not match the slugs (one has a trailing space; two spell "Dallas-Fort Worth" with a hyphen where
+the seed file has an en dash).
 
 **How it is actually run (A-L7 (3)):** locally, against the QA PostGIS service's public URL, with
 `ENVIRONMENT=qa` and that URL handed to the process in its environment and never printed (the
@@ -274,9 +353,9 @@ around; the script, its idempotency and its output lines are identical either wa
 railway status                                   # MUST print Project: Practice Match
 DATABASE_URL="$(railway variable list --service PostGIS --environment QA --json | python3 -c 'import json,sys; print(json.load(sys.stdin)["DATABASE_URL"])')" \
 ENVIRONMENT=qa poetry run python scripts/seed_listings.py   # the PostGIS service's DATABASE_URL is its PUBLIC url; a VAR=… prefix keeps it out of argv
-# first run:  "[seed] inserted 18, updated 0, removed 0, skipped 0 seller-owned" then "[seed] done - 18 listings"
-# a re-run:   "inserted 0, updated 18, removed N, skipped S" — N being the seed rows the file no longer
-#             carries, which every import deletes; the eighteen keep their ids.
+# first run:  "[seed] inserted 29, updated 0, removed 0, skipped 0 seller-owned" then "[seed] done - 29 listings"
+# a re-run:   "inserted 0, updated 29, removed N, skipped S" — N being the seed rows the file no longer
+#             carries, which every import deletes; the existing rows keep their ids.
 ```
 
 The seeded hospitals are INSERTed directly as `published`, not created through the API, so they do not
@@ -296,7 +375,7 @@ Only when fresh ids are actually wanted — it invalidates deep links and photo 
 A-L4 it buys nothing the plain import does not:
 
 ```bash
-python scripts/seed_listings.py --reset          # "inserted 18, updated 0, removed 18, skipped 0 seller-owned"
+python scripts/seed_listings.py --reset          # "inserted 29, updated 0, removed 29, skipped 0 seller-owned"
 ```
 
 And on production, with John's go and only then (`ENVIRONMENT` is already `production` inside
@@ -321,16 +400,16 @@ one-off Railway service command. `python -m scripts.seed_listings` works too, fr
 
 `GET /api/listings` caches each page in Redis for 60 s and the seeder does not invalidate it, so
 after a re-seed the list refreshes within a minute (Task L5, A-L5.1) — a browse that still shows
-the previous eighteen straight after a seed is that cache, not a failed import.
+the previous rows straight after a seed is that cache, not a failed import.
 
 ## Object storage
 
-The seller's own photographs and documents — never the eighteen seed hospitals' — live in the
+The seller's own photographs and documents — never the seed hospitals' — live in the
 already-approved bucket `practice-match-data`, one per environment (Railway buckets are
 environment-scoped, no `-qa`/`-prod` suffix; see the four `S3_*` rows above for the credentials).
 `ObjectStore.from_settings` returns `None` until all four are set, and every seller upload is then
 refused with `503 STORAGE_UNAVAILABLE` rather than crashing — a developer's machine or a fresh
-environment still serves every READ (the eighteen seed hospitals' photographs come off disk and
+environment still serves every READ (the seed hospitals' photographs come off disk and
 need none of this) while only the WRITES stop.
 
 Keys are `listings/<listing id>/photos/<asset id>.webp` for a photograph — every upload is
@@ -339,7 +418,7 @@ id><suffix>` for a floor plan, a financial packet or any other document, `<suffi
 uploaded file's own extension. An asset is written once (`put_immutable`'s never-overwrite
 guarantee) and deleted at most once; nothing under `listings/` is ever mutated in place.
 
-The eighteen demo hospitals' own photographs are **not** in this bucket at all (D26): they are
+The seed demo hospitals' own photographs are **not** in this bucket at all (D26): they are
 committed under `seeds/hospitals/photos/`, already in the image, and served straight off disk by
 the same guarded route a seller's own photograph is served by — object storage holds only what a
 seller has uploaded.

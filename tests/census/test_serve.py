@@ -229,8 +229,10 @@ def test_community_rows_suppressed_population_nulls_only_pop(conn):
     assert row["hh"] == "55,000 households"  # not suppressed
 
 
-def test_community_rows_missing_listing_omitted_from_dict(conn):
-    """Two listing ids, one with rows and one without -> the second is absent from the dict."""
+def test_community_rows_missing_listing_is_six_nulls_and_no_label(conn):
+    """Two listing ids, one with rows and one without -> the second carries six nulls and no
+    label (Task B10, D-C32), which is what puts the design's own "Community data unavailable"
+    card on the screen instead of a grid of blanks."""
     listing_id_1 = make_listing(conn, city="Round Rock")
     listing_id_2 = make_listing(conn, city="Cedar Park")
 
@@ -261,7 +263,10 @@ def test_community_rows_missing_listing_omitted_from_dict(conn):
     rows = community_rows(conn, [listing_id_1, listing_id_2], active=active, registry=registry)
 
     assert listing_id_1 in rows
-    assert listing_id_2 not in rows  # Missing from dict, not present with nulls
+    assert rows[listing_id_2] == {
+        "pop": None, "growth": None, "income": None, "hh": None,
+        "vets": None, "econ_k": None, "label": None,
+    }
 
 
 def test_community_rows_missing_metrics_returns_nulls(conn):
@@ -477,3 +482,167 @@ def test_community_rows_revenue_per_establishment_suppressed_nulls_econ_k(conn):
 
     row = rows[listing_id]
     assert row["econ_k"] is None  # revenue_per_establishment suppressed
+
+
+# ---------------------------------------------------------------------------------------------
+# Task B10 / D-C32 — the drive-time fallback, and the card says which area it describes.
+#
+# The listing this exists for is the Orlando specialist centre: it geocoded ROOFTOP like every
+# other seeded hospital and its address is not wrong in any way, but it sits in unincorporated
+# Orange County where the Census has no `place`, so it has no `place`-band row at all. It does
+# have complete `drive_10` figures, and a buyer may see them — provided the card says so, which
+# is what `label` carries.
+#
+# The fallback is decided on FIGURES, never on row presence (B-2): a listing whose place rows are
+# all suppressed, or whose place rows come from a dataset the VIN Foundation has not cleared,
+# yields six nulls at the place band and must still reach its complete `drive_10` band.
+# ---------------------------------------------------------------------------------------------
+
+_SIX = (
+    ("population", "2019-2023", 167997, "count", False, None, 500, False, None, "acs5"),
+    ("households", "2019-2023", 59588, "count", False, None, 200, False, None, "acs5"),
+    ("median_hh_income", "2019-2023", 69780, "dollars", False, None, 2000, False, None, "acs5"),
+    ("population_growth_pct", "2019-2023", 9.0, "percent", True, None, 0.5, False, None, "acs5"),
+    ("establishments", "2022", 10.8, "count", False, None, 1, False, None, "zbp"),
+    ("revenue_per_establishment", "2022", 512000, "dollars", True, None, 50000, False, None, "cbp"),
+)
+
+_METRIC_INSERT = (
+    "INSERT INTO market_metric "
+    "(listing_id, band, metric_key, vintage, value_num, unit, is_derived, "
+    "formula_version, moe, suppressed, suppress_reason, source_dataset, computed_at) "
+    "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, now())"
+)
+
+
+def _seed_band(conn, listing_id, band, *, suppressed=False, source_dataset=None, metrics=_SIX):
+    """Seed one band's six figures for `listing_id`, optionally all suppressed or all stamped
+    with a dataset the caller has left uncleared."""
+    with conn.cursor() as cur:
+        for key, vintage, value, unit, derived, formula, moe, supp, reason, dataset in metrics:
+            cur.execute(
+                _METRIC_INSERT,
+                (
+                    listing_id, band, key, vintage, value, unit, derived, formula, moe,
+                    True if suppressed else supp,
+                    "high_moe" if suppressed else reason,
+                    source_dataset or dataset,
+                ),
+            )
+
+
+def _clear_all(conn):
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE dataset_registry SET license_status = %s WHERE dataset_key IN (%s, %s, %s, %s)",
+            ("cleared", "acs5", "acs5_prior", "zbp", "cbp"),
+        )
+
+
+def test_a_place_band_listing_carries_no_label(conn):
+    """D-C32: the label exists only to OVERRIDE the design's own wording. A listing whose figures
+    came from its own community keeps that wording, so the label is None."""
+    listing_id = make_listing(conn, city="Round Rock", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place")
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["label"] is None
+    assert row["pop"] == "167,997"
+
+
+def test_a_listing_with_no_place_rows_falls_back_to_drive_10_and_says_so(conn):
+    """The Orlando shape: no `place` row at all (unincorporated county, no Census place), complete
+    `drive_10` figures. The figures are served and the card is told which area they describe."""
+    listing_id = make_listing(conn, city="Orlando", state="FL", zip="32819")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "drive_10")
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["label"] == "Within 10 minutes of the practice"
+    assert row["pop"] == "167,997"
+    assert row["hh"] == "59,588 households"
+    assert row["income"] == "$69,780"
+    assert row["growth"] == "+9.0% since 2018"
+    assert row["vets"] == 10
+    assert row["econ_k"] == 512
+
+
+def test_place_rows_that_are_all_suppressed_fall_back_to_drive_10(conn):
+    """B-2: the fallback is decided on FIGURES, not on row presence. Place rows exist here, and
+    every one of them is suppressed, so the place band yields nothing and `drive_10` answers."""
+    listing_id = make_listing(conn, city="Orlando", state="FL", zip="32819")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", suppressed=True)
+    _seed_band(conn, listing_id, "drive_10")
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["label"] == "Within 10 minutes of the practice"
+    assert row["pop"] == "167,997"
+    assert row["vets"] == 10
+
+
+def test_place_rows_from_an_uncleared_dataset_fall_back_to_drive_10(conn):
+    """The licence-gate case, and it is not hypothetical: place rows stamped with a dataset the
+    VIN Foundation has not cleared are six nulls, and the complete `drive_10` band answers."""
+    listing_id = make_listing(conn, city="Orlando", state="FL", zip="32819")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", source_dataset="acs5")
+    _seed_band(conn, listing_id, "drive_10")
+    with conn.cursor() as cur:
+        # `drive_10`'s establishments/payroll rows stay on zbp/cbp, which remain cleared.
+        cur.execute(
+            "UPDATE market_metric SET source_dataset = %s WHERE listing_id = %s AND band = %s",
+            ("acs5", listing_id, "place"),
+        )
+        cur.execute(
+            "UPDATE dataset_registry SET license_status = %s WHERE dataset_key = %s",
+            ("unresolved", "acs5"),
+        )
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    # acs5 is uncleared, so the four ACS figures are null in BOTH bands — but the drive_10 band
+    # still carries the two CBP/ZBP figures, which is what makes it the band to use.
+    assert row["label"] == "Within 10 minutes of the practice"
+    assert row["vets"] == 10
+    assert row["econ_k"] == 512
+    assert row["pop"] is None
+
+
+def test_a_listing_with_neither_band_is_six_nulls_and_no_label(conn):
+    """D-C32's third case: no figures anywhere. Six nulls and no label, so the frontend reaches
+    the design's own "Community data unavailable" card."""
+    listing_id = make_listing(conn, city="Cedar Park", state="TX")
+    _clear_all(conn)
+
+    active, registry = _seed_active_and_registry(conn)
+    result = community_rows(conn, [listing_id], active=active, registry=registry)
+
+    assert result[listing_id] == {
+        "pop": None, "growth": None, "income": None, "hh": None,
+        "vets": None, "econ_k": None, "label": None,
+    }
+
+
+def test_a_drive_20_only_listing_reaches_no_figures(conn):
+    """`drive_20` is not a fallback D-C32 sanctions: only `place` and `drive_10` are read, so a
+    listing with nothing but a 20-minute band is the unavailable card, never a wider area served
+    under a narrower heading."""
+    listing_id = make_listing(conn, city="Cedar Park", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "drive_20")
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert row["label"] is None
+    assert row["pop"] is None
+    assert row["vets"] is None

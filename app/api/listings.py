@@ -262,13 +262,14 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
     listing_id = str(row["id"])
     photos = photo_list(row["photos"])
 
-    # Community context data (Task B7: six fields plus two Browse fields)
+    # Community context data (Task B7: six fields plus two Browse fields, Task B10: label for fallback)
     pop = None
     growth = None
     income = None
     hh = None
     vets = None
     econ_k = None
+    community_label = None
     if community is not None:
         pop = community.get("pop")
         growth = community.get("growth")
@@ -276,6 +277,7 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         hh = community.get("hh")
         vets = community.get("vets")
         econ_k = community.get("econ_k")
+        community_label = community.get("label")
 
     return {
         "id": listing_id,
@@ -298,6 +300,8 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         "pop": pop, "growth": growth, "income": income, "hh": hh,
         # Task B7: Two additional fields for Browse use
         "vets": vets, "econ_k": econ_k,
+        # Task B10: Label indicating which data band was used for fallback
+        "community_label": community_label,
         "note": row["note"], "staff": row["staff"], "services": row["services"],
         "facility": row["facility"], "ownership": row["ownership"],
         "lat": float(row["lat"]) if disclosed and row["lat"] is not None else None,

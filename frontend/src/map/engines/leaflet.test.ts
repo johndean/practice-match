@@ -559,4 +559,76 @@ describe('LeafletMapEngine — V3 area shading, tooltip specs and panInside', ()
     engine.rectangle([[1, 2], [3, 4]], { fillColor: '#000', fillOpacity: 1 }, 'overlay');
     expect((stub2.calls.find((c) => c.fn === 'rectangle')!.args[1] as { renderer: unknown }).renderer).toBe(stub2.canvas);
   });
+
+  // A24 (spec 2026-09-10, D-C34/D-C37): the mosaic's rectangles become one L.geoJSON layer of
+  // real Census boundary polygons. The renderer is the load-bearing part — `leaflet.ts`'s own
+  // note, "ONE canvas renderer per mount, shared by every mosaic cell. A renderer per rectangle
+  // is what makes a mosaic this dense unusable" — survives the mosaic, so it is asserted here
+  // the way it is asserted for `rectangle`.
+  const fc = {
+    type: 'FeatureCollection' as const,
+    features: [
+      { type: 'Feature' as const, id: '78704', properties: { geo_id: '78704', color: '#4c9a6a', tip: '<b>78704</b>' }, geometry: { type: 'Polygon', coordinates: [[[-97.8, 30.2], [-97.7, 30.2], [-97.7, 30.3], [-97.8, 30.2]]] } },
+      { type: 'Feature' as const, id: '78745', properties: { geo_id: '78745', color: '#e6e6e6', tip: '<b>78745</b>' }, geometry: { type: 'Polygon', coordinates: [[[-97.9, 30.1], [-97.8, 30.1], [-97.8, 30.2], [-97.9, 30.1]]] } }
+    ]
+  };
+  const style = (f: { properties: Record<string, unknown> }) => ({ fillColor: f.properties.color as string, fillOpacity: 0.5, stroke: false, interactive: true });
+  // The layer itself, read back the way the rectangle cases above read theirs: out of the NAMED
+  // layer group, which is the only place a handle-returning method attaches.
+  const layerGroups = (stub: { map: { added: unknown[] } }) =>
+    (stub.map.added as { clearLayers?: unknown; added: unknown[] }[]).filter((g) => g.clearLayers);
+
+  it('geoJson draws the collection on the SHARED canvas renderer, in the named group', async () => {
+    const { engine, stub } = await mounted();
+    engine.geoJson(fc, style, 'overlay');
+    const call = stub.calls.find((c) => c.fn === 'geoJSON')!;
+    expect(call, 'geoJson did not reach L.geoJSON').toBeDefined();
+    expect(call.args[0]).toBe(fc);
+    expect((call.args[1] as { renderer: unknown }).renderer, 'a renderer per layer is what made the mosaic unusable').toBe(stub.canvas);
+    // The style function is forwarded, not pre-applied: Leaflet calls it per feature.
+    expect((call.args[1] as { style: (f: unknown) => unknown }).style(fc.features[0])).toEqual({ renderer: stub.canvas, stroke: false, fillColor: '#4c9a6a', fillOpacity: 0.5, interactive: true });
+    expect((call.args[1] as { style: (f: unknown) => unknown }).style(fc.features[1])).toEqual({ renderer: stub.canvas, stroke: false, fillColor: '#e6e6e6', fillOpacity: 0.5, interactive: true });
+    // …and it defaults exactly as `rectangle` does: a style naming neither draws strokeless and
+    // interactive, so a caller that only knows a colour gets the mosaic cell's own behaviour.
+    engine.geoJson(fc, () => ({ fillColor: '#000', fillOpacity: 1 }), 'overlay');
+    const bare = stub.calls.filter((c) => c.fn === 'geoJSON')[1].args[1] as { style: (f: unknown) => unknown };
+    expect(bare.style(fc.features[0])).toEqual({ renderer: stub.canvas, stroke: false, fillColor: '#000', fillOpacity: 1, interactive: true });
+    const groups = layerGroups(stub);
+    expect(groups[0].added).toHaveLength(2);      // 'overlay' — one layer per call
+    expect(groups[1].added).toHaveLength(0);      // 'pins' untouched
+  });
+
+  it('geoJson binds a tooltip and a click handler PER FEATURE, and Handle.remove() removes the layer', async () => {
+    const { engine, stub } = await mounted();
+    const clicked: string[] = [];
+    const handle = engine.geoJson(
+      fc, style, 'overlay',
+      (f) => ({ html: f.properties.tip as string, sticky: true, className: 'rf-tip' }),
+      (f) => { clicked.push(f.properties.geo_id as string); }
+    );
+    const layer = layerGroups(stub)[0].added[0] as { features: unknown[] };
+    const children = layer.features as { tooltip?: { text: string; opts: unknown }; on_click?: () => void }[];
+    expect(children).toHaveLength(2);
+    for (const [i, child] of children.entries()) {
+      expect(child.tooltip!.text).toBe(fc.features[i].properties.tip);
+      expect(child.tooltip!.opts).toEqual({ sticky: true, className: 'rf-tip' });
+      child.on_click!();
+    }
+    expect(clicked).toEqual(['78704', '78745']);
+    // NO `openTooltip` on this handle, and that is the point: tooltips are bound on the CHILDREN
+    // by `onEachFeature`, never on the returned FeatureGroup, so calling it would have found no
+    // `_tooltip` and done nothing while this test went green over it. `Handle.openTooltip` is
+    // optional and `circle()` already omits it.
+    expect(handle.openTooltip, 'a no-op member is worse than an absent one').toBeUndefined();
+    handle.remove();
+    expect((stub.map.added as { added?: unknown[] }[]).some((g) => (g.added ?? []).length > 0), 'the layer survived remove()').toBe(false);
+  });
+
+  it('geoJson is inert after destroy(), like every other handle-returning method', async () => {
+    const { engine, stub } = await mounted();
+    engine.destroy();
+    const before = stub.calls.length;
+    expect(() => engine.geoJson(fc, style, 'overlay').remove()).not.toThrow();
+    expect(stub.calls.length, 'a destroyed engine still reached Leaflet').toBe(before);
+  });
 });

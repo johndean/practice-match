@@ -22,7 +22,7 @@ describe('the V3 design reference bundle', () => {
   // Task V13 added the local-amendment pair (spec D15): the pristine Rev 2 file the bundle
   // shipped, frozen as `.rev2` and never edited, and the human-readable amendment log beside it.
   it('carries the authority file, the frozen pristine copy, the amendment log, the ported component and the four handoff documents', () => {
-    for (const f of ['Practice Match V3.dc.html', 'Practice Match V3.rev2.dc.html', 'LOCAL_AMENDMENTS.md', 'MarketMapV3.jsx', 'README.md', 'CHANGE_LOG.md', 'DEAD_CODE_CHECKLIST.md', 'FILE_INDEX.md', 'support.js', 'image-slot.js', 'Census Data Source Specification.dc.html']) {
+    for (const f of ['Practice Match V3.dc.html', 'Practice Match V3.rev2.dc.html', 'LOCAL_AMENDMENTS.md', 'MarketMapV3.jsx', 'MarketMapV3.rev2.jsx', 'README.md', 'CHANGE_LOG.md', 'DEAD_CODE_CHECKLIST.md', 'FILE_INDEX.md', 'support.js', 'image-slot.js', 'Census Data Source Specification.dc.html']) {
       expect(statSync(join(V3, f)).isFile(), `${f} is missing from the V3 bundle`).toBe(true);
     }
   });

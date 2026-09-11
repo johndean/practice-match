@@ -20,9 +20,16 @@
  * TypeScript and is imported by the test suite from the same module.
  */
 import { readFileSync, writeFileSync } from 'node:fs';
-import { AMENDED, PRISTINE, amendments, applyAmendments } from '../tests/design-amendments';
+import { AMENDED, AMENDED_JSX, PRISTINE, PRISTINE_JSX, amendments, amendmentsFor, applyAmendments } from '../tests/design-amendments';
 
-const list = amendments();
-const out = applyAmendments(readFileSync(PRISTINE, 'utf8'), list);
-writeFileSync(AMENDED, out);
-console.log(`wrote ${AMENDED}\n  ${list.length} amendments applied, ${out.length} bytes`);
+// Both bundle files, partitioned by each entry's own `file` (spec §9.2; controller ruling
+// 2026-09-10 §14 Q3). An entry with no `file` is a `.dc.html` entry, so this is a no-op for every
+// amendment written before A24 — and a jsx list that is EMPTY still rewrites MarketMapV3.jsx from
+// its pristine twin, which is the round-trip proof `design-amendments.test.ts` measures.
+for (const [pristine, amended, file] of [[PRISTINE, AMENDED, 'dc'], [PRISTINE_JSX, AMENDED_JSX, 'jsx']] as const) {
+  const list = amendmentsFor(file);
+  const out = applyAmendments(readFileSync(pristine, 'utf8'), list);
+  writeFileSync(amended, out);
+  console.log(`wrote ${amended}\n  ${list.length} amendments applied, ${out.length} bytes`);
+}
+console.log(`${amendments().length} amendments in total`);

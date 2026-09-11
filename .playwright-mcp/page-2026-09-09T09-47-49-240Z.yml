@@ -1,0 +1,329 @@
+- generic [ref=e4]:
+  - banner [ref=e5]:
+    - generic [ref=e6] [cursor=pointer]:
+      - img "VIN Foundation" [ref=e7]
+      - generic [ref=e9]: Practice Match
+    - navigation [ref=e10]:
+      - generic [ref=e65]:
+        - button "Browse Practices" [ref=e66] [cursor=pointer]
+        - button "My Requests" [ref=e67] [cursor=pointer]
+        - button "List a Practice" [ref=e68] [cursor=pointer]
+        - button "VIN Foundation Admin" [ref=e69] [cursor=pointer]
+      - button [ref=e13] [cursor=pointer]
+      - button "RM Dr. Rachel Mendes VIN Foundation admin · StartUp Club" [ref=e71] [cursor=pointer]:
+        - generic [ref=e72]: RM
+        - generic [ref=e74]:
+          - generic [ref=e75]: Dr. Rachel Mendes
+          - generic [ref=e76]: VIN Foundation admin · StartUp Club
+  - generic [ref=e77]:
+    - generic [ref=e78]:
+      - combobox "Metro area" [ref=e80] [cursor=pointer]:
+        - generic [ref=e81]: Austin, TX metro
+      - combobox [ref=e82] [cursor=pointer]:
+        - option [selected]
+        - option
+        - option
+        - option
+        - option
+        - option
+      - combobox [ref=e83] [cursor=pointer]:
+        - option [selected]
+        - option
+        - option
+        - option
+        - option
+      - combobox [ref=e84] [cursor=pointer]:
+        - option [selected]
+        - option
+        - option
+        - option
+      - combobox [ref=e85] [cursor=pointer]:
+        - option [selected]
+        - option
+        - option
+        - option
+      - combobox [ref=e86] [cursor=pointer]:
+        - option [selected]
+        - option
+        - option
+        - option
+      - button "More filters" [ref=e88] [cursor=pointer]
+      - button "Clear all" [ref=e89]
+    - generic [ref=e90]:
+      - generic [ref=e91]:
+        - generic [ref=e93]:
+          - generic [ref=e94]:
+            - generic:
+              - generic:
+                - button "$1.45M" [ref=e96] [cursor=pointer]
+                - button "$980K" [ref=e100] [cursor=pointer]
+                - button "$2.35M" [ref=e104] [cursor=pointer]
+                - button "$610K" [ref=e108] [cursor=pointer]
+                - button "$1.18M" [ref=e112] [cursor=pointer]
+                - button "$3.10M" [ref=e116] [cursor=pointer]
+                - button "$1.75M" [ref=e120] [cursor=pointer]
+                - button "$720K" [ref=e124] [cursor=pointer]
+                - button "$2.65M" [ref=e128] [cursor=pointer]
+            - generic [ref=e132]:
+              - link "Leaflet" [ref=e133] [cursor=pointer]:
+                - /url: https://leafletjs.com
+              - text: "| Tiles © Esri"
+          - generic [ref=e139]:
+            - generic [ref=e140]:
+              - button "Map" [pressed] [ref=e141] [cursor=pointer]
+              - button "Satellite" [ref=e142] [cursor=pointer]
+            - generic [ref=e144]:
+              - button "Zoom in" [ref=e145] [cursor=pointer]: +
+              - button "Zoom out" [ref=e147] [cursor=pointer]: −
+        - generic [ref=e148]:
+          - generic [ref=e149]:
+            - generic [ref=e150]:
+              - generic [ref=e151]: Market data
+              - button "Collapse market layer panel" [expanded] [ref=e152] [cursor=pointer]
+            - generic [ref=e153]:
+              - button "Median household income" [ref=e155] [cursor=pointer]
+              - generic [ref=e164]:
+                - generic [ref=e165]: < $50K
+                - generic [ref=e166]: $50–75K
+                - generic [ref=e167]: $75–100K
+                - generic [ref=e168]: $100–150K
+                - generic [ref=e169]: "> $150K"
+              - generic [ref=e170]: "Source: U.S. Census ACS 5-year estimates (2023) · community level"
+              - generic [ref=e171]: "Updated: ACS 2023 release (Jan 2025)"
+          - button "Compare (optional)" [ref=e173] [cursor=pointer]:
+            - generic [ref=e174]: Compare
+            - generic [ref=e175]: (optional)
+        - generic [ref=e176]:
+          - generic [ref=e177]:
+            - generic [ref=e179]: What this means
+            - button "Dismiss interpretation" [ref=e180] [cursor=pointer]
+          - paragraph [ref=e181]: Higher-income areas may support stronger demand, but income alone does not indicate practice performance.
+          - generic [ref=e182]:
+            - generic [ref=e183]: Why it matters
+            - paragraph [ref=e184]: Household income can correlate with pet care spending and service mix, helping you identify attractive markets to explore further.
+          - generic [ref=e185]:
+            - generic [ref=e186]: "Source: U.S. Census ACS 5-year estimates (2023)"
+            - link "Learn more →" [ref=e187] [cursor=pointer]:
+              - /url: "#sources"
+        - generic [ref=e188]:
+          - generic [ref=e189]:
+            - button "Reset view" [ref=e190] [cursor=pointer]
+            - button "Legend" [ref=e191] [cursor=pointer]
+          - button "Layers 6 of 6" [ref=e193] [cursor=pointer]:
+            - generic [ref=e194]: Layers
+            - generic [ref=e195]: 6 of 6
+      - generic [ref=e196]:
+        - generic [ref=e197]:
+          - generic [ref=e198]:
+            - generic [ref=e199]: 9 practices available
+            - generic [ref=e200]: Austin, TX metro · within 20 miles
+          - combobox [ref=e201] [cursor=pointer]:
+            - option "Newest first" [selected]
+            - 'option "Price: low to high"'
+            - 'option "Revenue: high to low"'
+        - generic [ref=e202]:
+          - generic [ref=e203] [cursor=pointer]:
+            - generic [ref=e204]: Exterior
+            - generic [ref=e207]:
+              - generic [ref=e208]:
+                - generic [ref=e209]: SMALL ANIMAL
+                - generic [ref=e210]:
+                  - generic [ref=e211]: $1.45M
+                  - button "Save practice" [ref=e212]
+              - generic [ref=e213]: Cedar Park Animal Hospital
+              - generic [ref=e214]: Cedar Park, TX
+              - generic [ref=e215]:
+                - generic [ref=e217]:
+                  - generic [ref=e218]: $2.10M
+                  - text: revenue
+                - generic [ref=e220]:
+                  - generic [ref=e221]: "3"
+                  - text: doctors
+                - generic [ref=e223]:
+                  - generic [ref=e224]: 4,200
+                  - text: sq ft
+          - generic [ref=e229] [cursor=pointer]:
+            - generic [ref=e230]:
+              - generic [ref=e231]: SMALL ANIMAL
+              - generic [ref=e232]:
+                - generic [ref=e233]: $980K
+                - button "Save practice" [ref=e234]
+            - generic [ref=e235]: Round Rock Veterinary Clinic
+            - generic [ref=e236]: Round Rock, TX
+            - generic [ref=e237]:
+              - generic [ref=e239]:
+                - generic [ref=e240]: $1.45M
+                - text: revenue
+              - generic [ref=e242]:
+                - generic [ref=e243]: "2"
+                - text: doctors
+              - generic [ref=e245]:
+                - generic [ref=e246]: 3,100
+                - text: sq ft
+          - generic [ref=e247] [cursor=pointer]:
+            - generic [ref=e248]: Exterior
+            - generic [ref=e251]:
+              - generic [ref=e252]:
+                - generic [ref=e253]: MIXED
+                - generic [ref=e254]:
+                  - generic [ref=e255]: $2.35M
+                  - button "Save practice" [ref=e256]
+              - generic [ref=e257]: South Austin Pet Hospital
+              - generic [ref=e258]: South Austin, TX
+              - generic [ref=e259]:
+                - generic [ref=e261]:
+                  - generic [ref=e262]: $3.20M
+                  - text: revenue
+                - generic [ref=e264]:
+                  - generic [ref=e265]: "5"
+                  - text: doctors
+                - generic [ref=e267]:
+                  - generic [ref=e268]: 6,800
+                  - text: sq ft
+          - generic [ref=e269] [cursor=pointer]:
+            - generic [ref=e270]: Exterior
+            - generic [ref=e273]:
+              - generic [ref=e274]:
+                - generic [ref=e275]: SMALL ANIMAL
+                - generic [ref=e276]:
+                  - generic [ref=e277]: $610K
+                  - button "Save practice" [ref=e278]
+              - generic [ref=e279]: Georgetown Animal Care
+              - generic [ref=e280]: Georgetown, TX
+              - generic [ref=e281]:
+                - generic [ref=e283]:
+                  - generic [ref=e284]: $890K
+                  - text: revenue
+                - generic [ref=e286]:
+                  - generic [ref=e287]: "1"
+                  - text: doctor
+                - generic [ref=e289]:
+                  - generic [ref=e290]: 2,400
+                  - text: sq ft
+          - generic [ref=e291] [cursor=pointer]:
+            - generic [ref=e292]: Exterior
+            - generic [ref=e295]:
+              - generic [ref=e296]:
+                - generic [ref=e297]: MIXED
+                - generic [ref=e298]:
+                  - generic [ref=e299]: $1.18M
+                  - button "Save practice" [ref=e300]
+              - generic [ref=e301]: Kyle Family Veterinary
+              - generic [ref=e302]: Kyle, TX
+              - generic [ref=e303]:
+                - generic [ref=e305]:
+                  - generic [ref=e306]: $1.72M
+                  - text: revenue
+                - generic [ref=e308]:
+                  - generic [ref=e309]: "2"
+                  - text: doctors
+                - generic [ref=e311]:
+                  - generic [ref=e312]: 3,600
+                  - text: sq ft
+          - generic [ref=e313] [cursor=pointer]:
+            - generic [ref=e314]: Exterior
+            - generic [ref=e317]:
+              - generic [ref=e318]:
+                - generic [ref=e319]: EMERGENCY
+                - generic [ref=e320]:
+                  - generic [ref=e321]: $3.10M
+                  - button "Save practice" [ref=e322]
+              - generic [ref=e323]: East Austin Emergency Vet
+              - generic [ref=e324]: East Austin, TX
+              - generic [ref=e325]:
+                - generic [ref=e327]:
+                  - generic [ref=e328]: $4.60M
+                  - text: revenue
+                - generic [ref=e330]:
+                  - generic [ref=e331]: "7"
+                  - text: doctors
+                - generic [ref=e333]:
+                  - generic [ref=e334]: 8,200
+                  - text: sq ft
+          - generic [ref=e335] [cursor=pointer]:
+            - generic [ref=e336]: Exterior
+            - generic [ref=e339]:
+              - generic [ref=e340]:
+                - generic [ref=e341]: SMALL ANIMAL
+                - generic [ref=e342]:
+                  - generic [ref=e343]: $1.75M
+                  - button "Save practice" [ref=e344]
+              - generic [ref=e345]: Lakeway Animal Clinic
+              - generic [ref=e346]: Lakeway, TX
+              - generic [ref=e347]:
+                - generic [ref=e349]:
+                  - generic [ref=e350]: $2.40M
+                  - text: revenue
+                - generic [ref=e352]:
+                  - generic [ref=e353]: "3"
+                  - text: doctors
+                - generic [ref=e355]:
+                  - generic [ref=e356]: 5,100
+                  - text: sq ft
+          - generic [ref=e357] [cursor=pointer]:
+            - generic [ref=e358]: Exterior
+            - generic [ref=e361]:
+              - generic [ref=e362]:
+                - generic [ref=e363]: LARGE ANIMAL
+                - generic [ref=e364]:
+                  - generic [ref=e365]: $720K
+                  - button "Save practice" [ref=e366]
+              - generic [ref=e367]: Dripping Springs Equine
+              - generic [ref=e368]: Dripping Springs, TX
+              - generic [ref=e369]:
+                - generic [ref=e371]:
+                  - generic [ref=e372]: $1.05M
+                  - text: revenue
+                - generic [ref=e374]:
+                  - generic [ref=e375]: "2"
+                  - text: doctors
+                - generic [ref=e377]:
+                  - generic [ref=e378]: 2,800
+                  - text: sq ft
+          - generic [ref=e379] [cursor=pointer]:
+            - generic [ref=e380]: Exterior
+            - generic [ref=e383]:
+              - generic [ref=e384]:
+                - generic [ref=e385]: SPECIALTY
+                - generic [ref=e386]:
+                  - generic [ref=e387]: $2.65M
+                  - button "Save practice" [ref=e388]
+              - generic [ref=e389]: Pflugerville Veterinary Specialists
+              - generic [ref=e390]: Pflugerville, TX
+              - generic [ref=e391]:
+                - generic [ref=e393]:
+                  - generic [ref=e394]: $3.80M
+                  - text: revenue
+                - generic [ref=e396]:
+                  - generic [ref=e397]: "6"
+                  - text: doctors
+                - generic [ref=e399]:
+                  - generic [ref=e400]: 7,400
+                  - text: sq ft
+          - generic [ref=e401]:
+            - generic [ref=e402]: Showing 1–5 of 9 practices
+            - generic [ref=e403]:
+              - button "Previous page" [ref=e404] [cursor=pointer]:
+                - generic [ref=e405]: ‹
+              - button "Page 1" [ref=e406] [cursor=pointer]:
+                - generic [ref=e407]: "1"
+              - button "Page 2" [ref=e408] [cursor=pointer]:
+                - generic [ref=e409]: "2"
+              - button "Next page" [ref=e410] [cursor=pointer]:
+                - generic [ref=e411]: ›
+    - generic [ref=e412]:
+      - button "Market snapshot 6 indicators · Census-sourced Expand all six layers" [ref=e413] [cursor=pointer]:
+        - generic [ref=e414]: Market snapshot
+        - generic [ref=e415]: 6 indicators · Census-sourced
+        - generic [ref=e416]: Expand all six layers
+      - generic [ref=e418]:
+        - generic [ref=e419]:
+          - text: "Sources: U.S. Census Bureau (ACS, CBP) and derived pet-household estimates."
+          - link "Methodology" [ref=e420] [cursor=pointer]:
+            - /url: "#sources"
+        - generic [ref=e421]:
+          - generic [ref=e422]: Basemap & imagery © Esri
+          - link "Terms" [ref=e423] [cursor=pointer]:
+            - /url: "#terms"
+          - link "Privacy" [ref=e424] [cursor=pointer]:
+            - /url: "#privacy"

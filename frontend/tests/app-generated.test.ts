@@ -78,4 +78,86 @@ describe('logic.js is the design script block, ported verbatim', () => {
       expect(logic, `logic.js is missing ${present}`).toContain(present);
     }
   });
+
+  // ------------------------------------------------------------------------------------------
+  // Task MP1, fix round 1 (Minor-2). TWO FURTHER COPIES OF THE NULL-COORDINATE HAZARD, shipped
+  // deliberately. Both are the DESIGN'S OWN pre-existing dead code — not residue of any
+  // amendment — and both build a coordinate pair, or a bounding box over coordinates, with no
+  // finite-point test of the kind A25 gave the three live readers:
+  //
+  //   * `mob.markers` (V3:3665) — `list.map((p) => ({ id, lat, lng, priceLabel }))`, the mobile
+  //     map's own marker list. `[null, null]` here would reach Leaflet's `toLatLng` exactly as
+  //     `md.practices` did.
+  //   * `marketVals`'s `minLat`/`maxLat`/`minLng`/`maxLng` (V3:2151-2152) — a padded metro
+  //     bounding box over the communities' coordinates. `Math.min.apply(null, [null, …])` is 0,
+  //     so one unlocated community stretches it to the equator, which is precisely the failure
+  //     A25.3 measured in the mosaic's own bbox (100,482,513 cells).
+  //
+  // NEITHER IS DELETED. Deleting them is an unruled edit to the approved design, and the
+  // bundle's dead-code rule has only ever been applied to orphans an amendment itself created
+  // (A2.3-A2.5, A13.6-A13.7). They are INERT ONLY BECAUSE NO TEMPLATE CONSUMES THEM, and that —
+  // not their existence — is what this case pins, in the same spirit as the reference's
+  // vestigial `isBrowse: false` above: as facts, not defects. The day either is wired to a
+  // template this fails, and whoever wires it is made to give it A25.1's finite-coordinate test
+  // first. Asserted on the generated `App.vue` AND on the design's own template, so it covers
+  // the reference (the oracle) as well as the app.
+  // ------------------------------------------------------------------------------------------
+  it('the design\'s two unread coordinate readers are still unread (Task MP1, Minor-2)', () => {
+    const logic = readFileSync(join(ROOT, 'src/logic.js'), 'utf8');
+    const appVue = readFileSync(join(ROOT, 'src/App.vue'), 'utf8');
+    const designTemplate = extractTemplate(readFileSync(DC, 'utf8'));
+
+    // 1. `mob.markers`: declared exactly once, in the shape that carries raw coordinates, and
+    //    read by no template on either side. The phone frame's map is a `<MarketMapView>` fed
+    //    `v.md?.practices`, which A25.1 filters.
+    expect((logic.match(/markers:/g) ?? []).length, 'markers is declared more than once').toBe(1);
+    expect(logic).toContain('markers: list.map((p) => ({ id: p.id, lat: p.lat, lng: p.lng,');
+    expect(appVue, 'mob.markers now reaches a template, carrying unfiltered coordinates').not.toContain('markers');
+    expect(designTemplate, 'the design\'s own template now reads markers, carrying unfiltered coordinates').not.toContain('markers');
+
+    // 2. The metro bounding box: each local appears exactly once — its own declaration — so
+    //    nothing reads it. A second occurrence of any of the four is a reader.
+    for (const name of ['minLat', 'maxLat', 'minLng', 'maxLng']) {
+      expect((logic.match(new RegExp(name, 'g')) ?? []).length, `${name} has a reader now`).toBe(1);
+    }
+  });
+});
+
+// ------------------------------------------------------------------------------------------
+// Task B10 (D-C31/D-C32) — the four TEMPLATE amendments this task adds. A script guard can be
+// proved by a unit test on the render values; a template one cannot: reverting A21.5a leaves
+// `overviewTitle` computed and simply stops rendering it, and the DOM oracle cannot see it
+// either, because the reference and the app are generated from the SAME amended design and
+// would move together. A mutation probe on the generated template is the only gate that fails,
+// so these are pins on `App.vue` itself.
+// ------------------------------------------------------------------------------------------
+describe('the docked panel and the detail card say which area their figures describe (D-C32)', () => {
+  const appVue = readFileSync(join(ROOT, 'src/App.vue'), 'utf8');
+
+  it('A21.5a: the panel’s Insights heading is data, never a hard-coded drive band', () => {
+    expect(appVue).toContain('{{ __s(v.md?.panel?.overviewTitle) }}');
+    expect(appVue, 'the heading is hard-coded again').not.toContain('>Market Overview (10 min drive)<');
+  });
+
+  it('A21.5d: the detail’s attribution sentence is data, and the Census attribution is untouched', () => {
+    expect(appVue).toContain('{{ __s(v.d?.demoScope) }}');
+    expect(appVue).not.toContain('attribution requested). Figures describe the community around the practice');
+    // Legally load-bearing (spec §12) and not part of the sentence that moved.
+    expect(appVue).toContain('Source: U.S. Census Bureau, American Community Survey 2023 5-year estimates (public domain, attribution requested).');
+  });
+
+  it('A21.4b/c/d: the panel reaches the DESIGN’S OWN unavailable card, and no second one exists', () => {
+    expect(appVue).toContain('v-if="v.md?.panel?.hasDemo"');
+    expect(appVue).toContain('v-if="v.md?.panel?.noDemo"');
+    // Twice and only twice: the detail's card and the panel's, the same markup (A-C31 (2):
+    // "do not invent a second unavailable card").
+    expect((appVue.match(/Community data unavailable for this location/g) ?? []).length).toBe(2);
+    expect((appVue.match(/The Census geography for this address has not been matched yet\./g) ?? []).length).toBe(2);
+    // The "View full listing" CTA stays OUTSIDE both branches — navigation is not data — and the
+    // footnote that describes the figures stays inside `hasDemo` with them.
+    const insights = appVue.slice(appVue.indexOf('v-if="v.md?.panel?.isInsights"'), appVue.indexOf('v-if="v.md?.panel?.isOther"'));
+    expect((insights.match(/v-if="v\.md\?\.panel\?\.hasDemo"/g) ?? []).length).toBe(2);
+    expect(insights.indexOf('v-if="v.md?.panel?.noDemo"')).toBeLessThan(insights.indexOf('View full listing'));
+    expect(insights.indexOf('View full listing')).toBeLessThan(insights.indexOf('Drive-time figures are approximated'));
+  });
 });

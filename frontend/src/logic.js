@@ -231,6 +231,10 @@ class Component extends DCLogic {
         const give = this._giveMenuEl;
         if (!(give && e.target && give.contains(e.target))) this.setState({ giveMenu: false });
       }
+      if (this.state.fMenu) {
+        const fh = this._fMenuEls[this.state.fMenu];
+        if (!(fh && e.target && fh.contains(e.target))) this.setState({ fMenu: null, fMenuAt: -1 });
+      }
       if (!this.state.marketMenu) return;
       const host = this._marketMenuEl;
       if (host && e.target && host.contains(e.target)) return;
@@ -256,6 +260,7 @@ class Component extends DCLogic {
         this.setState({ giveMenu: false });
         if (this._giveButtonEl) this._giveButtonEl.focus();
       }
+      if (this.state.fMenu) this.setState({ fMenu: null, fMenuAt: -1 });
       if (!this.state.marketMenu) return;
       this.setState({ marketMenu: false, marketMenuAt: -1 });
     };
@@ -272,6 +277,10 @@ class Component extends DCLogic {
       if (this.state.giveMenu) {
         const give = this._giveMenuEl;
         if (!(give && give.contains(to))) this.setState({ giveMenu: false });
+      }
+      if (this.state.fMenu) {
+        const fh = this._fMenuEls[this.state.fMenu];
+        if (!(fh && fh.contains(to))) this.setState({ fMenu: null, fMenuAt: -1 });
       }
       if (!this.state.marketMenu) return;
       const host = this._marketMenuEl;
@@ -332,10 +341,10 @@ class Component extends DCLogic {
   }
 
   go = (screen) => () => {
-    if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false });
-    if (!this.props.listings || this.state.sellerView !== "wizard" || !this.state.editingId) return this.setState({ screen, interest: "closed", userMenu: false, lightbox: null, lightboxFocus: false });
+    if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false, fMenu: null, fMenuAt: -1 });
+    if (!this.props.listings || this.state.sellerView !== "wizard" || !this.state.editingId) return this.setState({ screen, interest: "closed", userMenu: false, lightbox: null, lightboxFocus: false, fMenu: null, fMenuAt: -1 });
     return this.props.listings.patch(this.state.editingId, this.state.step, this.state.w, true).then(
-      (d) => this.setState({ screen, interest: "closed", userMenu: false, wizAssets: d.assets, wizErr: "", lightbox: null, lightboxFocus: false }),
+      (d) => this.setState({ screen, interest: "closed", userMenu: false, wizAssets: d.assets, wizErr: "", lightbox: null, lightboxFocus: false, fMenu: null, fMenuAt: -1 }),
       (e) => this.setState({ wizErr: (e && e.message) || "That could not be saved." })
     );
   };
@@ -380,17 +389,55 @@ class Component extends DCLogic {
     this.scrollMarketOption(i);
   };
 
+  // Opening a filter dropdown. ONE open path for the whole family: the trigger and the arrow
+  // keys both come here, so the cross-menu invariant (final review m7) is written once rather
+  // than once per instance. Writing `fMenu` is what closes whichever sibling was open —
+  // Object.assign semantics — so inside the family there is nothing to forget; the four keys
+  // below are the only edges that leave it.
+  openFilterMenu = (key, at) => {
+    this.setState({ fMenu: key, fMenuAt: at, navMenu: false, userMenu: false, giveMenu: false, marketMenu: false, marketMenuAt: -1 });
+  };
+
+  // The filter choice. It calls the design's own setF, so the state transition and the 320 ms
+  // loading settle are the ones the <select>'s onChange had, to the byte.
+  setFilter = (key, v) => {
+    this.setF(key)(v);
+    this.setState({ fMenu: null, fMenuAt: -1 });
+    // The choice unmounts the row the pointer or the keyboard was on, so focus would land on
+    // <body>. A native select leaves the user on the control; so does this one.
+    const host = this._fMenuEls && this._fMenuEls[key];
+    const trigger = host && host.querySelector('button[aria-haspopup="listbox"]');
+    if (trigger) trigger.focus();
+  };
+
+  // Bringing a row into view, scoped to the dropdown that owns it. Both the arrow keys and the
+  // panel's own mount need this: one while the rows are already there, one at the moment they
+  // arrive. The row is resolved through the field this component recorded, not across the
+  // document — the ids are ones this component mints, as scrollMarketOption's are.
+  scrollFilterOption = (key, i) => {
+    const host = this._fMenuEls && this._fMenuEls[key];
+    const row = host && host.querySelector("#f-opt-" + key + "-" + i);
+    if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });
+  };
+
+  // Moving the keyboard highlight. The rows are all in the DOM while the panel is open, so the
+  // one being highlighted is scrolled into view here rather than after a re-render.
+  moveFilterHighlight = (key, i) => {
+    this.setState({ fMenuAt: i });
+    this.scrollFilterOption(key, i);
+  };
+
   // ---- Browse Practices: map, market layers, results -------------------------------------------------
 
   communities() {
     const market = this.state.market || "Austin, TX";
     return P.filter((p) => p.market === market && p.status === "published").map((p) => {
-      const hh = num(p.hh);
+      const hh = p.hh != null ? num(p.hh) : undefined;
       return {
         id: p.id, name: p.area, lat: p.lat, lng: p.lng,
-        pop: num(p.pop), hh: hh, income: num(p.income),
-        growth: parseFloat(String(p.growth).replace(/[^0-9.\-]/g, "")) || 0,
-        pets: Math.round(hh * 0.57),
+        pop: p.pop != null ? num(p.pop) : undefined, hh: hh, income: p.income != null ? num(p.income) : undefined,
+        growth: p.growth != null ? (parseFloat(String(p.growth).replace(/[^0-9.\-]/g, "")) || 0) : undefined,
+        pets: hh !== undefined ? Math.round(hh * 0.57) : undefined,
         econ: ECON_K[p.id] != null ? ECON_K[p.id] * 1000 : undefined,
         vets: VETS[p.id]
       };
@@ -505,10 +552,10 @@ class Component extends DCLogic {
       })(),
       mapCenter: cfg.center,
       mapZoom: cfg.zoom,
-      driveCenter: sel ? [sel.lat, sel.lng] : cfg.center,
+      driveCenter: (sel && Number.isFinite(sel.lat) && Number.isFinite(sel.lng)) ? [sel.lat, sel.lng] : cfg.center,
       layers,
       valueLayer,
-      communities: comms.map((c) => {
+      communities: comms.filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lng)).map((c) => {
         const vals = {};
         ["income", "pets", "growth", "households", "econ", "competition"].forEach((k) => {
           const raw = k === "households" ? c.hh : k === "competition" ? c.vets : c[k];
@@ -522,7 +569,7 @@ class Component extends DCLogic {
           sourceNote: valueLayer ? LAYER_META[valueLayer].source : ""
         };
       }),
-      practices: list.map((p) => ({
+      practices: list.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng)).map((p) => ({
         id: p.id, lat: p.lat, lng: p.lng,
         priceLabel: this.money(p.price),
         name: this.practiceName(p),
@@ -639,14 +686,16 @@ class Component extends DCLogic {
       compareKeyB: "flex: none; width: 26px; height: 9px; border-radius: 2px; border: 1px solid rgba(0,58,112,.14); background: linear-gradient(to right, " + (s.mdCompare ? ramp(s.mdCompare).join(", ") : "transparent, transparent") + ");",
       compareRows: (!s.mdCompare || !valueLayer || s.mdCompare === valueLayer) ? [] : comms.slice(0, 6).map((c) => {
         const raw = (k) => (k === "households" ? c.hh : k === "competition" ? c.vets : c[k]);
-        const ta = this.bucket(valueLayer, num(raw(valueLayer))).t;
-        const tb = this.bucket(s.mdCompare, num(raw(s.mdCompare))).t;
-        const fillA = this.bucket(valueLayer, num(raw(valueLayer))).color;
-        const fillB = this.bucket(s.mdCompare, num(raw(s.mdCompare))).color;
+        const bar = (k) => {
+          const v = raw(k);
+          if (v == null) return undefined;
+          const b = this.bucket(k, num(v));
+          return "display: block; height: 7px; border-radius: 2px; border: 1px solid rgba(0,58,112,.14); width: " + Math.round(8 + b.t * 92) + "%; background: " + b.color + ";";
+        };
         return {
           name: c.name,
-          aStyle: "display: block; height: 7px; border-radius: 2px; border: 1px solid rgba(0,58,112,.14); width: " + Math.round(8 + ta * 92) + "%; background: " + fillA + ";",
-          bStyle: "display: block; height: 7px; border-radius: 2px; border: 1px solid rgba(0,58,112,.14); width: " + Math.round(8 + tb * 92) + "%; background: " + fillB + ";"
+          aStyle: bar(valueLayer),
+          bStyle: bar(s.mdCompare)
         };
       }),
 
@@ -688,7 +737,7 @@ class Component extends DCLogic {
       legendToggleLabel: s.mdLegendOff === true ? "Expand market layer panel" : "Collapse market layer panel",
       legendCaretStyle: "display: block; transition: transform 150ms var(--easing-out); transform: rotate(" +
         (s.mdLegendOff === true ? "180deg" : "0deg") + ");",
-      toggleLegend: () => this.setState({ mdLegendOff: s.mdLegendOff !== true }),
+      toggleLegend: () => this.setState({ mdLegendOff: s.mdLegendOff !== true, mdLayerMenu: false, mdCompareMenu: false }),
 
       legendBtnStyle: "display: inline-flex; align-items: center; gap: 7px; height: 36px; padding: 0 14px; font-family: var(--rf-display); font-size: 12.5px; font-weight: 500; white-space: nowrap; box-shadow: 0 2px 8px rgba(0,58,112,.14); color: " +
         (s.mdLegendOff !== true ? "var(--vf-navy)" : "var(--vf-text)") +
@@ -702,7 +751,7 @@ class Component extends DCLogic {
         return !!valueLayer && !s.mdInsightOff && s.mdLegendOff !== true && !s.mdCompareOpen && mapW >= 810;
       })(),
       dismissInsight: () => this.setState({ mdInsightOff: true }),
-      showDrive: !!sel,
+      showDrive: !!(sel && Number.isFinite(sel.lat) && Number.isFinite(sel.lng)),
       recenterKey: s.mdRecenter || 0,
       resetView: () => this.setState({ mdSel: null, mdRecenter: (s.mdRecenter || 0) + 1 }),
       selectArea: (name) => this.setState({ mdArea: name }),
@@ -829,14 +878,13 @@ class Component extends DCLogic {
           const meta = LAYER_META[k];
           const cfg = VALUE_LAYERS[k];
           const on = valueLayer === k;
-          const vals = comms.map((c) => {
-            const raw = k === "households" ? c.hh : k === "competition" ? c.vets : c[k];
-            return { raw: num(raw), t: this.bucket(k, num(raw)).t };
-          });
-          const mid = vals.map((v) => v.raw).sort((a, b) => a - b)[Math.floor(vals.length / 2)] || 0;
+          const vals = comms.map((c) => (k === "households" ? c.hh : k === "competition" ? c.vets : c[k]))
+            .filter((raw) => raw != null)
+            .map((raw) => ({ raw: num(raw), t: this.bucket(k, num(raw)).t }));
+          const mid = vals.length ? vals.map((v) => v.raw).sort((a, b) => a - b)[Math.floor(vals.length / 2)] : undefined;
           return {
             title: meta.title,
-            value: this.fmtMetric(k, mid),
+            value: (mid !== undefined) ? this.fmtMetric(k, mid) : undefined,
             valueNote: "metro median",
             src: meta.source,
             bars: vals.slice(0, 7).map((v) => ({
@@ -986,13 +1034,13 @@ class Component extends DCLogic {
 
   marketPanel(sel, selComm, comms, market) {
     const s = this.state;
-    const c = selComm || comms[0] || { pop: 0, hh: 0, income: 0, growth: 0, pets: 0, vets: 0 };
-    const per10k = c.hh ? (c.vets / (c.hh / 10000)) : 0;
+    const c = selComm || comms[0] || { pop: undefined, hh: undefined, income: undefined, growth: undefined, pets: undefined, vets: undefined };
+    const per10k = (c.hh && c.vets) ? (c.vets / (c.hh / 10000)) : undefined;
     const incomeNat = 75149; // ACS 2023 U.S. median household income
-    const incomeIdx = Math.round(((c.income - incomeNat) / incomeNat) * 100);
-    const compLevel = per10k < 1.4 ? "Low" : per10k < 2.2 ? "Moderate" : "High";
-    const compFill = per10k < 1.4 ? 1 : per10k < 2.2 ? 2 : 3;
-    const score = Math.max(0, Math.min(100, Math.round(
+    const incomeIdx = c.income ? Math.round(((c.income - incomeNat) / incomeNat) * 100) : undefined;
+    const compLevel = (per10k !== undefined && per10k < 1.4) ? "Low" : (per10k !== undefined && per10k < 2.2) ? "Moderate" : (per10k !== undefined) ? "High" : undefined;
+    const compFill = (per10k !== undefined && per10k < 1.4) ? 1 : (per10k !== undefined && per10k < 2.2) ? 2 : (per10k !== undefined) ? 3 : 0;
+    const score = (c.income === undefined || c.growth === undefined || per10k === undefined) ? undefined : Math.max(0, Math.min(100, Math.round(
       40 * Math.min(c.income / 140000, 1) + 35 * Math.min(c.growth / 40, 1) + 25 * Math.max(0, 1 - per10k / 3)
     )));
     const tone = (v) => (v ? "var(--vf-navy)" : "#8d99a6");
@@ -1040,35 +1088,38 @@ class Component extends DCLogic {
           ((s.mdTab || "insights") === t.key ? "var(--vf-navy)" : "var(--vf-text)") + "; border-bottom: 2px solid " +
           ((s.mdTab || "insights") === t.key ? "var(--vf-accent)" : "transparent") + ";"
       })),
+      hasDemo: sel.id !== "p8" && sel.pop != null,
+      noDemo: sel.id === "p8" || sel.pop == null,
+      overviewTitle: sel.communityLabel || "Market Overview (10 min drive)",
       isInsights: (s.mdTab || "insights") === "insights",
       isOther: (s.mdTab || "insights") !== "insights",
       otherTitle: ({ overview: "Overview", financials: "Financials", property: "Property", contact: "Contact" })[s.mdTab] || "Overview",
       goInsights: () => this.setState({ mdTab: "insights" }),
       overviewTiles: [
-        { v: this.fmtMetric("households", c.pop), k: "Population", sub: (c.growth > 0 ? "+" : "") + c.growth.toFixed(1) + "% (5 yrs)" },
-        { v: this.fmtMetric("households", c.hh), k: "Households", sub: "ACS 5-year" },
-        { v: "$" + Math.round(c.income / 1000) + "K", k: "Median Income", sub: (incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US" },
-        { v: this.fmtMetric("households", c.pets), k: "Est. Pet Households", sub: "derived estimate" }
+        { v: (c.pop !== undefined) ? this.fmtMetric("households", c.pop) : undefined, k: "Population", sub: (c.growth !== undefined) ? ((c.growth > 0 ? "+" : "") + c.growth.toFixed(1) + "% (5 yrs)") : undefined },
+        { v: (c.hh !== undefined) ? this.fmtMetric("households", c.hh) : undefined, k: "Households", sub: "ACS 5-year" },
+        { v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined) ? ((incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US") : undefined },
+        { v: (c.pets !== undefined) ? this.fmtMetric("households", c.pets) : undefined, k: "Est. Pet Households", sub: "derived estimate" }
       ],
-      compEstab: String(c.vets),
-      compPer10k: per10k.toFixed(1),
-      compLevel: compLevel + " Competition",
-      compBars: [1, 2, 3].map((i) => ({
+      compEstab: (c.vets !== undefined) ? String(c.vets) : undefined,
+      compPer10k: (per10k !== undefined) ? per10k.toFixed(1) : undefined,
+      compLevel: (compLevel !== undefined) ? compLevel + " Competition" : undefined,
+      compBars: (per10k === undefined) ? [] : [1, 2, 3].map((i) => ({
         style: "flex: 1; height: 8px; border-radius: 2px; background: " + (i <= compFill ? "#4c9a6a" : "#dbe4ea") + ";"
       })),
       oppTiles: [
-        { icon: "$", label: incomeIdx > 25 ? "High" : incomeIdx > 0 ? "Above avg." : "Median", sub: "Affluence", on: incomeIdx > 0 },
-        { icon: "↗", label: c.growth > 20 ? "Strong" : c.growth > 8 ? "Steady" : "Flat", sub: "Population Growth", on: c.growth > 8 },
-        { icon: "⌂", label: c.econ > 650000 ? "Strong" : c.econ > 450000 ? "Typical" : "Lean", sub: "Sector Payroll", on: c.econ > 450000 },
+        { icon: "$", label: (incomeIdx !== undefined) ? (incomeIdx > 25 ? "High" : incomeIdx > 0 ? "Above avg." : "Median") : "", sub: "Affluence", on: (incomeIdx !== undefined) && incomeIdx > 0 },
+        { icon: "↗", label: (c.growth !== undefined) ? (c.growth > 20 ? "Strong" : c.growth > 8 ? "Steady" : "Flat") : "", sub: "Population Growth", on: (c.growth !== undefined) && c.growth > 8 },
+        { icon: "⌂", label: (c.econ !== undefined) ? (c.econ > 650000 ? "Strong" : c.econ > 450000 ? "Typical" : "Lean") : "", sub: "Sector Payroll", on: (c.econ !== undefined) && c.econ > 450000 },
         { icon: "", label: "", sub: "", on: false }
       ].slice(0, 3).map((t) => ({
         icon: t.icon, label: t.label, sub: t.sub,
         iconStyle: "font-family: var(--rf-display); font-size: 15px; font-weight: 800; color: " + tone(t.on) + ";",
         labelStyle: "font-family: var(--rf-display); font-size: 13px; font-weight: 500; color: " + tone(t.on) + "; margin-top: 4px;"
       })),
-      score: String(score),
-      scoreLabel: score >= 75 ? "Attractive" : score >= 55 ? "Balanced" : "Challenging",
-      scoreRing: "width: 46px; height: 46px; border-radius: 999px; display: grid; place-items: center; background: conic-gradient(#4c9a6a " +
+      score: (score !== undefined) ? String(score) : undefined,
+      scoreLabel: score === undefined ? undefined : score >= 75 ? "Attractive" : score >= 55 ? "Balanced" : "Challenging",
+      scoreRing: (score === undefined) ? undefined : "width: 46px; height: 46px; border-radius: 999px; display: grid; place-items: center; background: conic-gradient(#4c9a6a " +
         score + "%, #e6ecf1 0); font-family: var(--rf-display);",
       openListing: () => this.setState({ screen: "detail", detailId: sel.id })
     };
@@ -1499,11 +1550,12 @@ class Component extends DCLogic {
         (unlocked ? "You have been granted access to the full financial packet." : "Documents marked locked open only with seller approval."),
       hasDemo: p.id !== "p8" && p.pop != null,
       noDemo: p.id === "p8" || p.pop == null,
+      demoScope: "Figures describe " + (p.communityLabel ? "the area " + p.communityLabel.charAt(0).toLowerCase() + p.communityLabel.slice(1) : "the community around the practice") + ", not the practice itself.",
       demo: [
-        { k: "Population", v: p.pop, sub: "Community, 2023" },
+        { k: "Population", v: p.pop, sub: p.communityLabel || "Community, 2023" },
         { k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); return g.length > 1 ? "Since " + g[1] : ""; })() },
         { k: "Median income", v: p.income, sub: "Household, 2023" },
-        { k: "Households", v: (p.hh || "").replace(" households", ""), sub: "In the community" }
+        { k: "Households", v: (p.hh || "").replace(" households", ""), sub: p.communityLabel || "In the community" }
       ],
       keyFacts: [
         { k: "Gross revenue", v: this.money(p.rev) + " (seller-stated)" },
@@ -1632,14 +1684,14 @@ class Component extends DCLogic {
       navExpanded: !!s.auth && vw >= 1050,
       navCollapsed: !!s.auth && vw < 1050,
       navMenuOpen: !!s.navMenu,
-      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false }),
+      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false, fMenu: null, fMenuAt: -1, marketMenu: false, marketMenuAt: -1 }),
       subBrandStyle: "width: 1px; height: 30px; background: var(--rf-line); display: " + (vw < 1050 ? "none" : "block") + ";",
       subBrandTextStyle: "font-family: var(--rf-display); font-size: 15px; font-weight: 800; letter-spacing: -.005em; color: var(--color-blue); white-space: nowrap; display: " +
         (vw < 1050 ? "none" : "block") + ";",
       identityStyle: "line-height: 1.25; display: " + (vw < 1180 ? "none" : "block") + ";",
       me: Object.assign({ email: s.email }, s.me),
       userMenuOpen: !!s.userMenu,
-      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false }),
+      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false, fMenu: null, fMenuAt: -1, navMenu: false, marketMenu: false, marketMenuAt: -1 }),
       // The Give control, measured on vinfoundation.org (John, 2026-09-08). The literals are
       // the live site's, not this design's tokens: #339dde is the idle pill, #07386f the
       // hover/open pill and the panel border and the row text, 10px the pill radius, 4.34px
@@ -1649,7 +1701,7 @@ class Component extends DCLogic {
       // KEYBOARD, and a stale one would drag a mouse user into the list on the next open.
       // `marketMenu` too (final review m7): the invariant is that opening one menu closes
       // the others, and Browse renders this control and the metro listbox on one screen.
-      toggleGiveMenu: () => this.setState({ giveMenu: !s.giveMenu, giveMenuAt: null, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 }),
+      toggleGiveMenu: () => this.setState({ giveMenu: !s.giveMenu, giveMenuAt: null, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1, fMenu: null, fMenuAt: -1 }),
       giveMenuRef: (el) => { this._giveMenuEl = el || null; },
       giveButtonRef: (el) => { this._giveButtonEl = el || null; },
       // The panel's own mount is the first moment its links exist, so it is where an arrow
@@ -1700,7 +1752,7 @@ class Component extends DCLogic {
         // Already-open: the panel is mounted, so focus moves here and now. Opening CANNOT do
         // that — the app's setState runs its callback synchronously (dc-logic.js) and Vue
         // has not rendered the panel yet, so the index is seeded and givePanelRef spends it.
-        this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 });
+        this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1, fMenu: null, fMenuAt: -1 });
       },
       signOut: () => (this.props.listings && s.sellerView === "wizard" && s.editingId
           ? this.props.listings.patch(s.editingId, s.step, s.w, true).catch(() => {})
@@ -1826,7 +1878,7 @@ class Component extends DCLogic {
       // review m7). The global pointerdown and focusout listeners covered a pointer and a
       // Tab; a pure-keyboard user could hold this listbox and the header's Give menu open
       // at once, and then shut both with one Escape.
-      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false }),
+      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false, fMenu: null, fMenuAt: -1, navMenu: false, userMenu: false }),
       // On the TRIGGER, which is always rendered: a shut menu has no active descendant, and
       // null is what both renderers omit the attribute for (a string would spell a dead id).
       marketActiveId: s.marketMenu ? "market-opt-" + s.marketMenuAt : null,
@@ -1850,7 +1902,7 @@ class Component extends DCLogic {
         const at = s.marketMenuAt == null || s.marketMenuAt < 0 ? cur : s.marketMenuAt;
         if (e.key === "ArrowDown" || e.key === "ArrowUp") {
           e.preventDefault();
-          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur });
+          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur, fMenu: null, fMenuAt: -1, navMenu: false, userMenu: false, giveMenu: false });
           return this.moveMarketHighlight((at + (e.key === "ArrowDown" ? 1 : keys.length - 1)) % keys.length);
         }
         if (!s.marketMenu) return;
@@ -1894,7 +1946,7 @@ class Component extends DCLogic {
         "; background: none; border: 0; border-radius: 6px; cursor: " + (this.activeFilterCount() ? "pointer" : "default") + ";",
       clearFilters: () => this.setState({ f: { type: "Any", price: "Any", revenue: "Any", doctors: "Any", building: "Any", est: "Any", ownership: "Any", sqft: "Any" } }),
       moreOpen: !!s.moreFilters,
-      toggleMore: () => this.setState({ moreFilters: !s.moreFilters }),
+      toggleMore: () => this.setState({ moreFilters: !s.moreFilters, fMenu: null, fMenuAt: -1 }),
       moreCount: ["est", "ownership", "sqft"].filter((k) => s.f[k] && s.f[k] !== "Any").length,
       hasMoreCount: ["est", "ownership", "sqft"].some((k) => s.f[k] && s.f[k] !== "Any"),
       moreBtnStyle: "display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 15px; font-size: 13px; font-weight: 500; border-radius: 6px; cursor: pointer; color: var(--vf-navy); background: " +
@@ -1905,26 +1957,159 @@ class Component extends DCLogic {
         { key: "est", label: "Year established", options: [["Any", "Any year"], ["pre1995", "Before 1995"], ["1995-2010", "1995 – 2010"], ["post2010", "After 2010"]] },
         { key: "ownership", label: "Ownership structure", options: [["Any", "Any structure"], ["Sole", "Sole proprietor"], ["Multi", "Partnership or multi-doctor"]] },
         { key: "sqft", label: "Facility size", options: [["Any", "Any size"], ["u3000", "Under 3,000 sq ft"], ["3000-5000", "3,000 – 5,000 sq ft"], ["o5000", "Over 5,000 sq ft"]] }
-      ].map((fl) => ({
-        label: fl.label,
-        value: s.f[fl.key] || "Any",
-        set: this.setF(fl.key),
-        options: fl.options.map((o) => ({ v: o[0], label: o[1] }))
-      })),
+      ].map((fl) => {
+        // Each additional filter is a dropdown list in this design's own style, not the
+        // operating system's popup: the SAME trigger + role="listbox" panel A26.2 gives the
+        // five on the toolbar, and the same state slot — the eight filter keys are disjoint,
+        // so `fMenu` still names exactly one dropdown across both loops.
+        //
+        // The comment sits INSIDE the map body, not between the array rows and `].map(`:
+        // `tests/seeds/test_hospitals_json.py`'s `_MORE_BLOCK` reads the three option arrays
+        // out of the design and requires `      ]` to follow the last row directly, and it
+        // fails loudly rather than silently testing nothing when it does not. A26.2 learned
+        // that on its sibling `_BAR_BLOCK`.
+        const cur = s.f[fl.key] || "Any";
+        const open = s.fMenu === fl.key;
+        // Math.max: a value `f` holds that this option list does not would give indexOf -1 and
+        // index the array out of bounds — the guard marketMenuKeys carries for a dropped metro.
+        const sel = Math.max(0, fl.options.findIndex((o) => o[0] === cur));
+        const at = open && s.fMenuAt >= 0 ? s.fMenuAt : sel;
+        return {
+          // The popover's own caption, unchanged — and it is the trigger's accessible name
+          // too: a <label> does not name a <button>, which takes its name from its own
+          // contents first, so the same string is spelled again rather than a new one invented.
+          label: fl.label,
+          open,
+          listId: "f-listbox-" + fl.key,
+          // On the TRIGGER, which is always rendered: a shut dropdown has no active descendant,
+          // and null is what both renderers omit the attribute for (a string would spell a dead
+          // id). Keyed on fl.key as well, so a sibling never claims another's highlight.
+          activeId: open ? "f-opt-" + fl.key + "-" + s.fMenuAt : null,
+          // What the closed <select> displayed. `cur` keeps the design's own `|| "Any"` guard:
+          // the state literal seeds the five TOOLBAR keys and none of these three.
+          triggerLabel: fl.options[sel][1],
+          toggle: () => (open ? this.setState({ fMenu: null, fMenuAt: -1 }) : this.openFilterMenu(fl.key, sel)),
+          hostRef: (el) => { const m = this._fMenuEls || (this._fMenuEls = {}); m[fl.key] = el || null; },
+          // The panel's own mount is when the option rows first exist, so it is where OPENING
+          // scrolls the highlighted row into view — the arrow keys cannot, having seeded the
+          // highlight while the panel was still unrendered (A13/A14 review round 1, C1).
+          panelRef: (el) => { if (el) this.scrollFilterOption(fl.key, this.state.fMenuAt); },
+          keys: (e) => {
+            const n = fl.options.length;
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              e.preventDefault();
+              if (!open) return this.openFilterMenu(fl.key, sel);
+              return this.moveFilterHighlight(fl.key, (at + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
+            }
+            if (!open) return;
+            if (e.key === "Home" || e.key === "End") {
+              e.preventDefault();
+              return this.moveFilterHighlight(fl.key, e.key === "Home" ? 0 : n - 1);
+            }
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              return this.setFilter(fl.key, fl.options[at][0]);
+            }
+          },
+          caretStyle: "flex: none; display: block; transition: transform 150ms var(--easing-out); transform: rotate(" +
+            (open ? "180deg" : "0deg") + ");",
+          options: fl.options.map((o, i) => {
+            const on = o[0] === cur;
+            const hi = open && s.fMenuAt === i;
+            return {
+              label: o[1], selected: on,
+              go: () => this.setFilter(fl.key, o[0]),
+              optId: "f-opt-" + fl.key + "-" + i,
+              rowStyle: "display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 8px; font-family: var(--rf-display); font-size: 13px; font-weight: " +
+                (on ? "800" : "500") + "; color: var(--vf-navy); background: " +
+                (on ? "var(--vf-accent-bg)" : hi ? "var(--vf-neutral)" : "none") + "; border: 0; border-radius: 6px; cursor: pointer;",
+              tickStyle: "flex: none; display: block; filter: brightness(0) saturate(100%) invert(23%) sepia(89%) saturate(1352%) hue-rotate(184deg) brightness(94%) contrast(101%); opacity: " +
+                (on ? "1" : "0") + ";"
+            };
+          })
+        };
+      }),
       filters: [
         { key: "type", options: [["Any", "Practice type: Any"], ["Small animal", "Small animal"], ["Mixed", "Mixed"], ["Large animal", "Large animal"], ["Emergency", "Emergency"], ["Specialty", "Specialty"]] },
         { key: "price", options: [["Any", "Asking price: Any"], ["u500", "Under $500K"], ["500-1000", "$500K – $1M"], ["1000-2000", "$1M – $2M"], ["o2000", "$2M and up"]] },
         { key: "revenue", options: [["Any", "Gross revenue: Any"], ["u1000", "Under $1M"], ["1000-2500", "$1M – $2.5M"], ["o2500", "$2.5M and up"]] },
         { key: "doctors", options: [["Any", "Doctors: Any"], ["1", "1 or more"], ["2", "2 or more"], ["4", "4 or more"]] },
         { key: "building", options: [["Any", "Property: Any"], ["Included", "Building included"], ["Separate", "Building available separately"], ["Leased", "Building leased"]] }
-      ].map((fl) => ({
-        value: s.f[fl.key],
-        set: this.setF(fl.key),
-        options: fl.options.map((o) => ({ v: o[0], label: o[1] })),
-        style: "height: 40px; padding: 0 13px; font-size: 13px; font-weight: 500; color: var(--color-navy); background: " +
-          (s.f[fl.key] === "Any" ? "var(--color-white)" : "var(--rf-band)") + "; border: 1px solid " +
-          (s.f[fl.key] === "Any" ? "var(--border-subtle)" : "var(--color-blue)") + "; border-radius: 6px; cursor: pointer;"
-      })),
+      ].map((fl) => {
+        // Each toolbar filter is a dropdown list in this design's own style, not the operating
+        // system's popup: the same trigger + role="listbox" panel A13 gave the metro control
+        // beside it. One .map() body, five instances, one state slot.
+        //
+        // The comment sits INSIDE the map body, not between the array rows and `].map(`:
+        // `tests/seeds/test_hospitals_json.py`'s `_BAR_BLOCK` reads the five option arrays
+        // out of the design and requires `      ]` to follow the last row directly, and it
+        // fails loudly rather than silently testing nothing when it does not.
+        const cur = s.f[fl.key];
+        const open = s.fMenu === fl.key;
+        // Math.max: a value `f` holds that this option list does not would give indexOf -1 and
+        // index the array out of bounds — the guard marketMenuKeys carries for a dropped metro.
+        const sel = Math.max(0, fl.options.findIndex((o) => o[0] === cur));
+        const at = open && s.fMenuAt >= 0 ? s.fMenuAt : sel;
+        return {
+          // The accessible name, taken from the design's OWN first option — all five read
+          // "<name>: Any" — rather than authoring five new strings. A <select> with no <label>
+          // is named by nothing, and a <label> cannot name a <button>, so the trigger needs one.
+          aria: fl.options[0][1].split(":")[0],
+          open,
+          listId: "f-listbox-" + fl.key,
+          // On the TRIGGER, which is always rendered: a shut dropdown has no active descendant,
+          // and null is what both renderers omit the attribute for (a string would spell a dead
+          // id). Keyed on fl.key as well, so a sibling never claims another's highlight.
+          activeId: open ? "f-opt-" + fl.key + "-" + s.fMenuAt : null,
+          // What the closed <select> displayed: the current option's own label.
+          triggerLabel: fl.options[sel][1],
+          toggle: () => (open ? this.setState({ fMenu: null, fMenuAt: -1 }) : this.openFilterMenu(fl.key, sel)),
+          hostRef: (el) => { const m = this._fMenuEls || (this._fMenuEls = {}); m[fl.key] = el || null; },
+          // The panel's own mount is when the option rows first exist, so it is where OPENING
+          // scrolls the highlighted row into view — the arrow keys cannot, having seeded the
+          // highlight while the panel was still unrendered. Same callback-ref idiom the compare
+          // menu ships (md.compareMenuRef) and A13 reuses for marketPanelRef.
+          panelRef: (el) => { if (el) this.scrollFilterOption(fl.key, this.state.fMenuAt); },
+          keys: (e) => {
+            const n = fl.options.length;
+            if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+              e.preventDefault();
+              if (!open) return this.openFilterMenu(fl.key, sel);
+              return this.moveFilterHighlight(fl.key, (at + (e.key === "ArrowDown" ? 1 : n - 1)) % n);
+            }
+            if (!open) return;
+            if (e.key === "Home" || e.key === "End") {
+              e.preventDefault();
+              return this.moveFilterHighlight(fl.key, e.key === "Home" ? 0 : n - 1);
+            }
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              return this.setFilter(fl.key, fl.options[at][0]);
+            }
+          },
+          // The <select>'s own box, byte for byte, plus the three declarations a label and a
+          // chevron need where the user agent used to draw its own arrow (V3:382's own trio).
+          style: "display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 13px; font-size: 13px; font-weight: 500; color: var(--color-navy); background: " +
+            (cur === "Any" ? "var(--color-white)" : "var(--rf-band)") + "; border: 1px solid " +
+            (cur === "Any" ? "var(--border-subtle)" : "var(--color-blue)") + "; border-radius: 6px; cursor: pointer;",
+          caretStyle: "flex: none; display: block; transition: transform 150ms var(--easing-out); transform: rotate(" +
+            (open ? "180deg" : "0deg") + ");",
+          options: fl.options.map((o, i) => {
+            const on = o[0] === cur;
+            const hi = open && s.fMenuAt === i;
+            return {
+              label: o[1], selected: on,
+              go: () => this.setFilter(fl.key, o[0]),
+              optId: "f-opt-" + fl.key + "-" + i,
+              rowStyle: "display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 8px; font-family: var(--rf-display); font-size: 13px; font-weight: " +
+                (on ? "800" : "500") + "; color: var(--vf-navy); background: " +
+                (on ? "var(--vf-accent-bg)" : hi ? "var(--vf-neutral)" : "none") + "; border: 0; border-radius: 6px; cursor: pointer;",
+              tickStyle: "flex: none; display: block; filter: brightness(0) saturate(100%) invert(23%) sepia(89%) saturate(1352%) hue-rotate(184deg) brightness(94%) contrast(101%); opacity: " +
+                (on ? "1" : "0") + ";"
+            };
+          })
+        };
+      }),
       results: list.map((p) => ({
         area: p.area, type: p.type, docs: p.docs, rooms: p.rooms, listed: p.listed,
         priceLabel: this.money(p.price),

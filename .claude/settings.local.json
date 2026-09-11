@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(docker compose *)",
+      "Bash(npm run *)",
+      "Bash(PGPASSWORD=pm_dev_pw psql -h localhost -p 5433 -U pm -d practice_match_censusb -c \"SELECT name FROM schema_migrations ORDER BY name;\")"
+    ]
+  }
+}

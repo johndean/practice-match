@@ -117,7 +117,7 @@ INSERT INTO listing (
   slug, name, street, city, state, zip, phone, hours, status, location_disclosed, name_disclosed,
   rev_disclosed, documents_disclosed, seller_id,
   geom, area, type, market, price, rev, docs, rooms, sqft, bldg, est, listed_at,
-  note, staff, services, facility, ownership, photos, photo_captions, source, updated_at
+  note, staff, services, facility, ownership, photos, photo_captions, provenance, source, updated_at
 ) VALUES (
   %(slug)s, %(name)s, %(street)s, %(city)s, %(state)s, %(zip)s, %(phone)s, %(hours)s,
   %(status)s, %(location_disclosed)s, %(name_disclosed)s,
@@ -126,7 +126,7 @@ INSERT INTO listing (
   %(area)s, %(type)s, %(market)s, %(price)s, %(rev)s, %(docs)s, %(rooms)s, %(sqft)s,
   %(bldg)s, %(est)s, now() - make_interval(days => %(listed_days_ago)s),
   %(note)s, %(staff)s, %(services)s, %(facility)s, %(ownership)s,
-  %(photos)s::jsonb, %(photo_captions)s::jsonb, 'seed', now()
+  %(photos)s::jsonb, %(photo_captions)s::jsonb, %(provenance)s::jsonb, 'seed', now()
 )
 ON CONFLICT (slug) DO UPDATE SET
   name = EXCLUDED.name, street = EXCLUDED.street, city = EXCLUDED.city, state = EXCLUDED.state,
@@ -142,7 +142,10 @@ ON CONFLICT (slug) DO UPDATE SET
   est = EXCLUDED.est, listed_at = EXCLUDED.listed_at, note = EXCLUDED.note,
   staff = EXCLUDED.staff, services = EXCLUDED.services, facility = EXCLUDED.facility,
   ownership = EXCLUDED.ownership, photos = EXCLUDED.photos,
-  photo_captions = EXCLUDED.photo_captions, updated_at = now()
+  photo_captions = EXCLUDED.photo_captions,
+  -- Task SD1, on the UPDATE half for the same reason D22 and D25 are: these rows already exist
+  -- on QA, so a column that only landed on an INSERT would never land at all.
+  provenance = EXCLUDED.provenance, updated_at = now()
 WHERE listing.source = 'seed'
 """
 
@@ -233,22 +236,60 @@ def photo_captions(slug: str, index: dict[str, Any]) -> list[str | None]:
         raise SeedDataError(f"{slug}: photo inventory entry is unusable ({type(exc).__name__})") from None
 
 
+#: Every field of a seed row that becomes a column of its own. A module constant rather than a
+#: local, because `PROVENANCE_KEYS` below is pinned against "everything the seed file carries
+#: that is NOT one of these" and a second hand-typed copy would defeat that.
+ROW_KEYS = (
+    "slug", "name", "street", "city", "state", "zip", "phone", "hours", "status",
+    "location_disclosed", "name_disclosed", "rev_disclosed", "documents_disclosed",
+    "lat", "lng", "area", "type", "market",
+    "price", "rev", "docs", "rooms", "sqft", "bldg", "est", "listed_days_ago", "note",
+    "staff", "services", "facility", "ownership",
+)
+
+#: Task SD1 (John's Dallas table of 2026-09-10). What is REAL about a seed row and what is
+#: INVENTED, in John's own key names — he supplied this shape and the controller ruled that only
+#: `address` and `postal_code` are mapped onto this file's long-standing `street` and `zip`, and
+#: that nothing else is renamed. They travel together into one `provenance` jsonb column
+#: (`migrations/091_listing_provenance.sql`); a row that names none of them stores `{}`, which is
+#: the honest answer for a seller's own listing and for the eighteen of 2026-09-06.
+#:
+#: DATA, NEVER UI. Nothing renders them. They exist so the Admin Data Sources drill-down and the
+#: seller controls can read them later, and so nobody reads a real, mappable street address as
+#: evidence that the business at it is the one named here — it is not, and
+#: `address_is_seed_anchor` is how the row says so.
+#:
+#: Pinned against the seed file in BOTH directions by `tests/scripts/test_seed_listings.py::
+#: test_the_provenance_keys_the_seeder_carries_are_the_ones_the_file_holds`, so a sixth claim
+#: John adds cannot be dropped in silence and one nobody supplies cannot be invented here.
+PROVENANCE_KEYS = (
+    "phone_is_fake",
+    "address_is_real",
+    "address_is_seed_anchor",
+    "business_identity_is_fictional",
+    "operating_hours_is_seed_data",
+)
+
+
+def provenance_of(hospital: dict[str, Any]) -> dict[str, Any]:
+    """The provenance claims THIS row actually makes, in `PROVENANCE_KEYS` order.
+
+    Absent is not false: a row that says nothing about whether its telephone number is invented
+    gets `{}` — "no provenance claims recorded" — rather than five `false`s asserting that its
+    address is not real and its identity is not fictional, which would be a claim nobody made."""
+    return {key: hospital[key] for key in PROVENANCE_KEYS if key in hospital}
+
+
 def row_params(
     hospital: dict[str, Any], photos: list[str | None], captions: list[str | None]
 ) -> dict[str, Any]:
-    keys = (
-        "slug", "name", "street", "city", "state", "zip", "phone", "hours", "status",
-        "location_disclosed", "name_disclosed", "rev_disclosed", "documents_disclosed",
-        "lat", "lng", "area", "type", "market",
-        "price", "rev", "docs", "rooms", "sqft", "bldg", "est", "listed_days_ago", "note",
-        "staff", "services", "facility", "ownership",
-    )
     try:
-        params: dict[str, Any] = {key: hospital[key] for key in keys}
+        params: dict[str, Any] = {key: hospital[key] for key in ROW_KEYS}
     except KeyError as exc:
         raise SeedDataError(f"{hospital.get('slug', '?')}: missing {exc}") from None
     params["photos"] = json.dumps(photos)
     params["photo_captions"] = json.dumps(captions)
+    params["provenance"] = json.dumps(provenance_of(hospital))
     return params
 
 

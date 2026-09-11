@@ -4,10 +4,20 @@ import { fileURLToPath } from 'node:url';
 const V3_DIR = new URL('../../docs/design-reference/design_handoff_practice_match_v3/', import.meta.url);
 export const PRISTINE = fileURLToPath(new URL('Practice Match V3.rev2.dc.html', V3_DIR));
 export const AMENDED = fileURLToPath(new URL('Practice Match V3.dc.html', V3_DIR));
+// The bundle's second amendable file (spec §9.2; controller ruling 2026-09-10 §14 Q3). A24 is the
+// first family that has to reach `MarketMapV3.jsx` — the component that draws the shading — and
+// the engine had only ever known the `.dc.html`. Same contract on both: a frozen pristine twin
+// that is never edited, plus the ruled edits, equals the amended file byte for byte.
+export const PRISTINE_JSX = fileURLToPath(new URL('MarketMapV3.rev2.jsx', V3_DIR));
+export const AMENDED_JSX = fileURLToPath(new URL('MarketMapV3.jsx', V3_DIR));
 export const V2 = fileURLToPath(new URL('../../docs/design-reference/design_handoff_practice_match_v2/Practice Match V2.dc.html', import.meta.url));
 export const LOCAL_AMENDMENTS_MD = fileURLToPath(new URL('LOCAL_AMENDMENTS.md', V3_DIR));
 
-export type Amendment = { id: string; date: string; ruling: string; find: string; replace: string; count: number; text?: string };
+/** Which bundle file an amendment edits. Absent means `'dc'`, so every entry written before A24
+ *  is unchanged and the field never has to be back-filled. */
+export type AmendmentFile = 'dc' | 'jsx';
+
+export type Amendment = { id: string; date: string; ruling: string; find: string; replace: string; count: number; text?: string; file?: AmendmentFile };
 
 /** The template region: everything outside <script>…</script> and <style>…</style>. A1 must never touch a script. */
 export function templateRegions(html: string): Array<[number, number]> {
@@ -73,6 +83,13 @@ export function applyAmendments(html: string, list: Amendment[]): string {
     out = out.split(a.find).join(a.replace);
   }
   return out;
+}
+
+/** The entries that edit one bundle file, in `amendments()`' own order. `applyAmendments` counts
+ *  every `find` at the point it is applied, so the partition has to preserve order: an entry whose
+ *  `find` is an earlier entry's output is only correct where that earlier entry has already run. */
+export function amendmentsFor(file: AmendmentFile): Amendment[] {
+  return amendments().filter((a) => (a.file ?? 'dc') === file);
 }
 
 /** A2 — the mobile practice card opens the detail (spec D17, John: "resolve this"). A literal, not
@@ -3068,16 +3085,1160 @@ const A21_3d: Amendment = {
   count: 1
 };
 
+/** A21.2 (controller amendment A-C32, D-C32 ruling, Task B10): the docked panel fallback.
+ *  When a listing has no place-band figures, it uses drive_10; when it has neither, the card
+ *  says "Community data unavailable". The fallback label travels with the row from serve.py,
+ *  and the panel reads it as `c.label`.
+ *
+ *  This amendment is REVERTED (controller amendment A-C29): the economic figure IS payroll
+ *  per establishment, not revenue; the metric is merely misnamed `revenue_per_establishment` in the
+ *  database, and the design's original labels "Average Practice Payroll (CBP)" / "Avg. payroll per
+ *  practice" were correct. The naming stays in the database for schema stability; no code changes. */
+
+/** A21.2b (Task B10, D-C31): the panel's fallback renders no undefined/NaN.
+ *  When there are no figures for a listing, the panel should render nothing for competition,
+ *  income index, and growth indicators, never a verdict based on undefined data. The `per10k`
+ *  ratio becomes undefined when households or vets is undefined; the verdict and bars are only
+ *  rendered when per10k is a number. */
+const A21_2b: Amendment = {
+  id: 'A21.2b', date: '2026-09-10', ruling: 'render no verdict, NaN or undefined for listings without figures (Task B10, D-C31)',
+  find: '    const per10k = c.hh ? (c.vets / (c.hh / 10000)) : 0;\n    const incomeNat = 75149; // ACS 2023 U.S. median household income\n    const incomeIdx = Math.round(((c.income - incomeNat) / incomeNat) * 100);\n    const compLevel = per10k < 1.4 ? "Low" : per10k < 2.2 ? "Moderate" : "High";\n    const compFill = per10k < 1.4 ? 1 : per10k < 2.2 ? 2 : 3;',
+  replace: '    const per10k = (c.hh && c.vets) ? (c.vets / (c.hh / 10000)) : undefined;\n    const incomeNat = 75149; // ACS 2023 U.S. median household income\n    const incomeIdx = c.income ? Math.round(((c.income - incomeNat) / incomeNat) * 100) : undefined;\n    const compLevel = (per10k !== undefined && per10k < 1.4) ? "Low" : (per10k !== undefined && per10k < 2.2) ? "Moderate" : (per10k !== undefined) ? "High" : undefined;\n    const compFill = (per10k !== undefined && per10k < 1.4) ? 1 : (per10k !== undefined && per10k < 2.2) ? 2 : (per10k !== undefined) ? 3 : 0;',
+  count: 1
+};
+
+/** A21.2c (Task B10, D-C31): compEstab renders the vets count or nothing.
+ *  When c.vets is undefined, compEstab must be undefined, not "undefined". */
+const A21_2c: Amendment = {
+  id: 'A21.2c', date: '2026-09-10', ruling: 'compEstab renders vets count or nothing, never "undefined" (Task B10, D-C31)',
+  find: '      compEstab: String(c.vets),',
+  replace: '      compEstab: (c.vets !== undefined) ? String(c.vets) : undefined,',
+  count: 1
+};
+
+/** A21.2d (Task B10, D-C31): overviewTiles renders only populated tiles.
+ *  When c.pop, c.hh or c.income is undefined the tile renders no value, and — since the fix
+ *  round of 2026-09-10 — no SUB-LINE either: the sub-lines were built by concatenation, so an
+ *  absent growth or income index left the unit behind and the tile read a bare "% (5 yrs)" or
+ *  "% vs US" (F-2). The fourth tile (pets) is left verbatim here and guarded by A21.2i. */
+const A21_2d: Amendment = {
+  id: 'A21.2d', date: '2026-09-10', ruling: 'overviewTiles renders only populated tiles (Task B10, D-C31)',
+  find: 'overviewTiles: [\n        { v: this.fmtMetric("households", c.pop), k: "Population", sub: (c.growth > 0 ? "+" : "") + c.growth.toFixed(1) + "% (5 yrs)" },\n        { v: this.fmtMetric("households", c.hh), k: "Households", sub: "ACS 5-year" },\n        { v: "$" + Math.round(c.income / 1000) + "K", k: "Median Income", sub: (incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US" },\n        { v: this.fmtMetric("households", c.pets), k: "Est. Pet Households", sub: "derived estimate" }\n      ],',
+  replace: 'overviewTiles: [\n        { v: (c.pop !== undefined) ? this.fmtMetric("households", c.pop) : undefined, k: "Population", sub: (c.growth !== undefined) ? ((c.growth > 0 ? "+" : "") + c.growth.toFixed(1) + "% (5 yrs)") : undefined },\n        { v: (c.hh !== undefined) ? this.fmtMetric("households", c.hh) : undefined, k: "Households", sub: "ACS 5-year" },\n        { v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined) ? ((incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US") : undefined },\n        { v: this.fmtMetric("households", c.pets), k: "Est. Pet Households", sub: "derived estimate" }\n      ],',
+  count: 1
+};
+
+/** A21.2e (Task B10, D-C31): oppTiles checks for undefined before rendering.
+ *  The third tile checks c.econ (payroll per establishment). All three should only show
+ *  their verdict and "on" status when their metric is defined and passes the threshold. */
+const A21_2e: Amendment = {
+  id: 'A21.2e', date: '2026-09-10', ruling: 'oppTiles renders verdicts only when metrics are defined (Task B10, D-C31)',
+  find: 'oppTiles: [\n        { icon: "$", label: incomeIdx > 25 ? "High" : incomeIdx > 0 ? "Above avg." : "Median", sub: "Affluence", on: incomeIdx > 0 },\n        { icon: "↗", label: c.growth > 20 ? "Strong" : c.growth > 8 ? "Steady" : "Flat", sub: "Population Growth", on: c.growth > 8 },\n        { icon: "⌂", label: c.econ > 650000 ? "Strong" : c.econ > 450000 ? "Typical" : "Lean", sub: "Sector Payroll", on: c.econ > 450000 },',
+  replace: 'oppTiles: [\n        { icon: "$", label: (incomeIdx !== undefined) ? (incomeIdx > 25 ? "High" : incomeIdx > 0 ? "Above avg." : "Median") : "", sub: "Affluence", on: (incomeIdx !== undefined) && incomeIdx > 0 },\n        { icon: "↗", label: (c.growth !== undefined) ? (c.growth > 20 ? "Strong" : c.growth > 8 ? "Steady" : "Flat") : "", sub: "Population Growth", on: (c.growth !== undefined) && c.growth > 8 },\n        { icon: "⌂", label: (c.econ !== undefined) ? (c.econ > 650000 ? "Strong" : c.econ > 450000 ? "Typical" : "Lean") : "", sub: "Sector Payroll", on: (c.econ !== undefined) && c.econ > 450000 },',
+  count: 1
+};
+
+/** A21.2i–A21.2l (Task B10, D-C31): the last four readers of a figure that may be absent. The
+ *  guards at the derivation are not enough — every place the value is CONSUMED has to say
+ *  nothing rather than say "undefined". Hand-editing logic.js for these was tried and reverted:
+ *  the design carries them, so the reference and the app stay identical (A-C29's lesson). */
+const A21_2i: Amendment = {
+  id: 'A21.2i', date: '2026-09-10', ruling: 'an absent pet-household estimate renders nothing, not "undefined" (Task B10, D-C31)',
+  find: '{ v: this.fmtMetric("households", c.pets), k: "Est. Pet Households", sub: "derived estimate" }',
+  replace: '{ v: (c.pets !== undefined) ? this.fmtMetric("households", c.pets) : undefined, k: "Est. Pet Households", sub: "derived estimate" }',
+  count: 1
+};
+
+const A21_2j: Amendment = {
+  id: 'A21.2j', date: '2026-09-10', ruling: 'no competition figure, no verdict — never "undefined Competition" (Task B10, D-C31)',
+  find: 'compLevel: compLevel + " Competition",',
+  replace: 'compLevel: (compLevel !== undefined) ? compLevel + " Competition" : undefined,',
+  count: 1
+};
+
+const A21_2k: Amendment = {
+  id: 'A21.2k', date: '2026-09-10', ruling: 'no score, no number in the ring (Task B10, D-C31)',
+  find: 'score: String(score),',
+  replace: 'score: (score !== undefined) ? String(score) : undefined,',
+  count: 1
+};
+
+const A21_2l: Amendment = {
+  id: 'A21.2l', date: '2026-09-10', ruling: 'no score, no ring — a conic gradient of undefined is a broken circle (Task B10, D-C31)',
+  find: 'scoreRing: "width: 46px; height: 46px; border-radius: 999px; display: grid; place-items: center; background: conic-gradient(#4c9a6a " +\n        score + "%, #e6ecf1 0); font-family: var(--rf-display);",',
+  replace: 'scoreRing: (score === undefined) ? undefined : "width: 46px; height: 46px; border-radius: 999px; display: grid; place-items: center; background: conic-gradient(#4c9a6a " +\n        score + "%, #e6ecf1 0); font-family: var(--rf-display);",',
+  count: 1
+};
+
+
+/** A21.1c / A21.2m–A21.2p / A21.4a–A21.4d / A21.5a–A21.5d (Task B10, D-C31 and D-C32,
+ *  2026-09-10) — the docked panel stops fabricating, and the card says which area it describes.
+ *
+ *  THE ROOT CAUSE the earlier A21.2 entries could not reach. `communities()` coerced every
+ *  absent figure to zero (`num()` returns 0 for null, and `parseFloat(...) || 0` did the same for
+ *  growth), so every guard that asks `!== undefined` was satisfied by a 0 and the panel rendered
+ *  "0" Population, "0.0% (5 yrs)", "$0K" Median Income and a "Flat" growth verdict for a listing
+ *  we have no figures for. A21.1c fixes it at the source, which is what makes the guards live.
+ *  D-C31: where a figure is absent the UI renders NOTHING — never zero, never "undefined", never
+ *  NaN, and never a verdict derived from a missing figure. A bar drawn at minimum height is a
+ *  reading, not an absence, so the competition bars, the strip-card bars and the compare bars are
+ *  omitted rather than drawn at their floor.
+ *
+ *  D-C32: a listing with no `place`-band FIGURES falls back to its `drive_10` band, and the card
+ *  SAYS SO — `community_label` travels with the row from `app/census/serve.py` and the design
+ *  reads it as `p.communityLabel`. Where the label is absent every string is the design's own,
+ *  byte for byte, which is what keeps the approved states on their pixels: the design's own
+ *  fixtures carry no `communityLabel` key at all. */
+
+/** A21.1c — `communities()` yields `undefined`, not 0, for an absent figure. A21.1 did this for
+ *  `econ` and `vets`; the other five expressions kept their coercion. `num()` itself is untouched
+ *  — it is read elsewhere — and a figure that IS present keeps exactly the parse it had, so a
+ *  fixture practice produces the same numbers it always did. */
+const A21_1c: Amendment = {
+  id: 'A21.1c', date: '2026-09-10', ruling: 'a missing figure is omitted, never zeroed (D-C31, Task B10)',
+  find: '      const hh = num(p.hh);\n      return {\n        id: p.id, name: p.area, lat: p.lat, lng: p.lng,\n        pop: num(p.pop), hh: hh, income: num(p.income),\n        growth: parseFloat(String(p.growth).replace(/[^0-9.\\-]/g, "")) || 0,\n        pets: Math.round(hh * 0.57),',
+  replace: '      const hh = p.hh != null ? num(p.hh) : undefined;\n      return {\n        id: p.id, name: p.area, lat: p.lat, lng: p.lng,\n        pop: p.pop != null ? num(p.pop) : undefined, hh: hh, income: p.income != null ? num(p.income) : undefined,\n        growth: p.growth != null ? (parseFloat(String(p.growth).replace(/[^0-9.\\-]/g, "")) || 0) : undefined,\n        pets: hh !== undefined ? Math.round(hh * 0.57) : undefined,',
+  count: 1
+};
+
+/** A21.2m — no competition figure, no bars. Three bars painted at the floor read as "the lowest
+ *  competition there is", which is a reading of data we do not have. */
+const A21_2m: Amendment = {
+  id: 'A21.2m', date: '2026-09-10', ruling: 'three bars at the floor are a reading, not an absence (D-C31, Task B10)',
+  find: '      compBars: [1, 2, 3].map((i) => ({',
+  replace: '      compBars: (per10k === undefined) ? [] : [1, 2, 3].map((i) => ({',
+  count: 1
+};
+
+/** A21.2n — the Market data strip cards take their median over the DEFINED values only. `num(raw)`
+ *  turned every absent figure into a 0, so six cards printed `$0K` / `0` / `+0.0%` under the words
+ *  "metro median". A metro where nobody has that figure now yields `undefined`, and no bars. */
+const A21_2n: Amendment = {
+  id: 'A21.2n', date: '2026-09-10', ruling: 'a metro median is the median of what we know, never of zeros we invented (D-C31, Task B10)',
+  find: '          const vals = comms.map((c) => {\n            const raw = k === "households" ? c.hh : k === "competition" ? c.vets : c[k];\n            return { raw: num(raw), t: this.bucket(k, num(raw)).t };\n          });\n          const mid = vals.map((v) => v.raw).sort((a, b) => a - b)[Math.floor(vals.length / 2)] || 0;',
+  replace: '          const vals = comms.map((c) => (k === "households" ? c.hh : k === "competition" ? c.vets : c[k]))\n            .filter((raw) => raw != null)\n            .map((raw) => ({ raw: num(raw), t: this.bucket(k, num(raw)).t }));\n          const mid = vals.length ? vals.map((v) => v.raw).sort((a, b) => a - b)[Math.floor(vals.length / 2)] : undefined;',
+  count: 1
+};
+
+/** A21.2o — and the card then keeps its title, source and link and renders no value (controller
+ *  ruling on F-6). `bars` needs no guard: `vals` is empty when `mid` is undefined. */
+const A21_2o: Amendment = {
+  id: 'A21.2o', date: '2026-09-10', ruling: 'a strip card with no figure keeps its title, source and link and shows no value (D-C31, Task B10)',
+  find: '            value: this.fmtMetric(k, mid),',
+  replace: '            value: (mid !== undefined) ? this.fmtMetric(k, mid) : undefined,',
+  count: 1
+};
+
+/** A21.2p — the Compare rows: a community with no figure for a layer carries no bar for it. The
+ *  two bars were drawn from `num(raw)`, so an absent figure became a minimum-width bar — the same
+ *  false reading A21.2m removes from the competition row. One `bar(k)` helper replaces the four
+ *  `bucket()` calls and returns the design's own style string byte for byte when the figure is
+ *  there, `undefined` when it is not. */
+const A21_2p: Amendment = {
+  id: 'A21.2p', date: '2026-09-10', ruling: 'a compare row with no figure carries no bar (D-C31, Task B10)',
+  find: '        const raw = (k) => (k === "households" ? c.hh : k === "competition" ? c.vets : c[k]);\n        const ta = this.bucket(valueLayer, num(raw(valueLayer))).t;\n        const tb = this.bucket(s.mdCompare, num(raw(s.mdCompare))).t;\n        const fillA = this.bucket(valueLayer, num(raw(valueLayer))).color;\n        const fillB = this.bucket(s.mdCompare, num(raw(s.mdCompare))).color;\n        return {\n          name: c.name,\n          aStyle: "display: block; height: 7px; border-radius: 2px; border: 1px solid rgba(0,58,112,.14); width: " + Math.round(8 + ta * 92) + "%; background: " + fillA + ";",\n          bStyle: "display: block; height: 7px; border-radius: 2px; border: 1px solid rgba(0,58,112,.14); width: " + Math.round(8 + tb * 92) + "%; background: " + fillB + ";"\n        };',
+  replace: '        const raw = (k) => (k === "households" ? c.hh : k === "competition" ? c.vets : c[k]);\n        const bar = (k) => {\n          const v = raw(k);\n          if (v == null) return undefined;\n          const b = this.bucket(k, num(v));\n          return "display: block; height: 7px; border-radius: 2px; border: 1px solid rgba(0,58,112,.14); width: " + Math.round(8 + b.t * 92) + "%; background: " + b.color + ";";\n        };\n        return {\n          name: c.name,\n          aStyle: bar(valueLayer),\n          bStyle: bar(s.mdCompare)\n        };',
+  count: 1
+};
+
+/** A21.4a — the panel gains the detail's own `hasDemo`/`noDemo` pair, keyed on `p.pop != null`
+ *  exactly as A12.10/A12.11 keyed the detail's, plus the Insights heading D-C32 needs. */
+const A21_4a: Amendment = {
+  id: 'A21.4a', date: '2026-09-10', ruling: 'a listing with no figures reaches the design’s own "Community data unavailable" card on the panel too (D-C31, A-C31 (2))',
+  find: '      isInsights: (s.mdTab || "insights") === "insights",',
+  replace: '      hasDemo: sel.pop != null,\n      noDemo: sel.pop == null,\n      overviewTitle: sel.communityLabel || "Market Overview (10 min drive)",\n      isInsights: (s.mdTab || "insights") === "insights",',
+  count: 1
+};
+
+/** A21.4b — the Insights tab body opens the `hasDemo` branch. */
+const A21_4b: Amendment = {
+  id: 'A21.4b', date: '2026-09-10', ruling: 'a listing with no figures reaches the design’s own "Community data unavailable" card on the panel too (same ruling)',
+  find: '              <sc-if value="{{ md.panel.isInsights }}" hint-placeholder-val="{{ true }}">\n                <div style="padding: 16px;">\n',
+  replace: '              <sc-if value="{{ md.panel.isInsights }}" hint-placeholder-val="{{ true }}">\n                <div style="padding: 16px;">\n                  <sc-if value="{{ md.panel.hasDemo }}" hint-placeholder-val="{{ true }}">\n',
+  count: 1
+};
+
+/** A21.4c — …and closes it before the CTA, with the design’s OWN unavailable card between. The
+ *  markup is the detail’s, element for element (V3:884-888): no second card is invented. The
+ *  "View full listing" button stays outside both branches, because navigation is not data. */
+const A21_4c: Amendment = {
+  id: 'A21.4c', date: '2026-09-10', ruling: 'a listing with no figures reaches the design’s own "Community data unavailable" card on the panel too (same ruling)',
+  find: '\n                  <button onClick="{{ md.panel.openListing }}" style="display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%; height: 44px; margin-top: 16px; font-family: var(--rf-display); font-size: 13.5px; font-weight: 500; color: var(--vf-white); background: var(--vf-accent); border: 0; border-radius: 6px; cursor: pointer;" style-hover="background: var(--vf-navy);">',
+  replace: '\n                  </sc-if>\n                  <sc-if value="{{ md.panel.noDemo }}" hint-placeholder-val="{{ false }}">\n                    <div style="padding: 22px; background: var(--color-off-white); border: 1px dashed var(--border-subtle); border-radius: 10px;">\n                      <div style="font-size: 14px; font-weight: 500; color: var(--color-navy);">Community data unavailable for this location</div>\n                      <p style="font-size: 13px; line-height: 1.6; color: #494949; margin: 6px 0 0; max-width: 60ch;">The Census geography for this address has not been matched yet. Everything else on this listing is seller-provided and unaffected.</p>\n                    </div>\n                  </sc-if>\n                  <button onClick="{{ md.panel.openListing }}" style="display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%; height: 44px; margin-top: 16px; font-family: var(--rf-display); font-size: 13.5px; font-weight: 500; color: var(--vf-white); background: var(--vf-accent); border: 0; border-radius: 6px; cursor: pointer;" style-hover="background: var(--vf-navy);">',
+  count: 1
+};
+
+/** A21.4d — the footnote describes figures, so it goes with them. */
+const A21_4d: Amendment = {
+  id: 'A21.4d', date: '2026-09-10', ruling: 'a listing with no figures reaches the design’s own "Community data unavailable" card on the panel too (same ruling)',
+  find: '                  <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">Drive-time figures are approximated from a straight-line catchment around the practice. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>',
+  replace: '                  <sc-if value="{{ md.panel.hasDemo }}" hint-placeholder-val="{{ true }}">\n                    <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">Drive-time figures are approximated from a straight-line catchment around the practice. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>\n                  </sc-if>',
+  count: 1
+};
+
+/** A21.5a — the panel’s Insights heading names the area its figures describe. With no label it
+ *  is the design’s own "Market Overview (10 min drive)", byte for byte. */
+const A21_5a: Amendment = {
+  id: 'A21.5a', date: '2026-09-10', ruling: 'a buyer is never shown a drive-time area disguised as a named city (D-C32)',
+  find: '<div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy);">Market Overview (10 min drive)</div>',
+  replace: '<div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy);">{{ md.panel.overviewTitle }}</div>',
+  count: 1
+};
+
+/** A21.5b — the detail’s Community Context card: the attribution sentence and the Population
+ *  tile’s sub-line both name the area. `demoScope` lower-cases the label’s first letter so the
+ *  sentence reads "Figures describe the area within 10 minutes of the practice, not the practice
+ *  itself."; with no label it is the design’s own sentence, byte for byte. */
+const A21_5b: Amendment = {
+  id: 'A21.5b', date: '2026-09-10', ruling: 'a buyer is never shown a drive-time area disguised as a named city (same ruling)',
+  find: '      demo: [\n        { k: "Population", v: p.pop, sub: "Community, 2023" },',
+  replace: '      demoScope: "Figures describe " + (p.communityLabel ? "the area " + p.communityLabel.charAt(0).toLowerCase() + p.communityLabel.slice(1) : "the community around the practice") + ", not the practice itself.",\n      demo: [\n        { k: "Population", v: p.pop, sub: p.communityLabel || "Community, 2023" },',
+  count: 1
+};
+
+/** A21.5c — …and the Households tile’s sub-line, the other one that says "the community".
+ *
+ *  CHAINED, like A21.3d on A12.6: the `find` is A12.7's whole `replace`, not the pristine row, so
+ *  it does not occur in the pristine bundle at all. It has to be: A12.7 already rewrote this row
+ *  (`p.hh.replace(…)` → `(p.hh || "").replace(…)`), and a `find` that took only the `sub:` clause
+ *  would leave A12.7's own output unreachable from `LOCAL_AMENDMENTS.md`'s V3-line check, which
+ *  follows the chain by asking which later `find` swallowed an amendment's `replace` WHOLE. */
+const A21_5c: Amendment = {
+  id: 'A21.5c', date: '2026-09-10', ruling: 'a buyer is never shown a drive-time area disguised as a named city (same ruling)',
+  find: '{ k: "Households", v: (p.hh || "").replace(" households", ""), sub: "In the community" }',
+  replace: '{ k: "Households", v: (p.hh || "").replace(" households", ""), sub: p.communityLabel || "In the community" }',
+  count: 1
+};
+
+/** A21.5d — the attribution paragraph reads `demoScope`. The Census attribution itself is legally
+ *  load-bearing and is untouched: only the trailing sentence, which describes the AREA, moves into
+ *  the data. */
+const A21_5d: Amendment = {
+  id: 'A21.5d', date: '2026-09-10', ruling: 'a buyer is never shown a drive-time area disguised as a named city (same ruling)',
+  find: 'attribution requested). Figures describe the community around the practice, not the practice itself.</p>',
+  replace: 'attribution requested). {{ d.demoScope }}</p>',
+  count: 1
+};
+
+
 /** A22 (John, 2026-09-10 — Task SL10: "Preserve existing seed wording/detail"): the wizard's
  *  ownership select widens from four options (the design's four) to ten, adding the seeds' own six
  *  phrasings alongside the design's four. The API's `OWNERSHIPS` tuple and the design's option
  *  array are identical and pinned two-way by pytest (step 1 of the task's own test cases). */
+/** A21.2f (Task B10, D-C31): compPer10k guards the .toFixed() call.
+ *  When per10k is undefined, compPer10k must be undefined, not throw. */
+const A21_2f: Amendment = {
+  id: 'A21.2f', date: '2026-09-10', ruling: 'compPer10k renders the ratio or undefined, never throws (Task B10, D-C31)',
+  find: '      compPer10k: per10k.toFixed(1),',
+  replace: '      compPer10k: (per10k !== undefined) ? per10k.toFixed(1) : undefined,',
+  count: 1
+};
+
+/** A21.2g (Task B10, D-C31): score and scoreLabel are omitted when inputs are missing.
+ *  A composite of unknowns is not a low score; it is not a score. */
+const A21_2g: Amendment = {
+  id: 'A21.2g', date: '2026-09-10', ruling: 'a composite of unknowns is not a low score; it is not a score (Task B10, D-C31)',
+  find: 'const score = Math.max(0, Math.min(100, Math.round(\n      40 * Math.min(c.income / 140000, 1) + 35 * Math.min(c.growth / 40, 1) + 25 * Math.max(0, 1 - per10k / 3)\n    )));',
+  replace: 'const score = (c.income === undefined || c.growth === undefined || per10k === undefined) ? undefined : Math.max(0, Math.min(100, Math.round(\n      40 * Math.min(c.income / 140000, 1) + 35 * Math.min(c.growth / 40, 1) + 25 * Math.max(0, 1 - per10k / 3)\n    )));',
+  count: 1
+};
+
+/** A21.2h (Task B10, D-C31): scoreLabel renders only when score is defined. */
+const A21_2h: Amendment = {
+  id: 'A21.2h', date: '2026-09-10', ruling: 'no score, no label — the ring says nothing rather than "Challenging" (Task B10, D-C31)',
+  find: 'scoreLabel: score >= 75 ? "Attractive" : score >= 55 ? "Balanced" : "Challenging",',
+  replace: 'scoreLabel: score === undefined ? undefined : score >= 75 ? "Attractive" : score >= 55 ? "Balanced" : "Challenging",',
+  count: 1
+};
+
 const A22: Amendment = {
   id: 'A22', date: '2026-09-10',
   ruling: 'Preserve existing seed wording/detail — widen the ownership dropdown to carry the seeds\' six phrasings beside the design\'s four (Task SL10)',
   find: 'sel("ownership", "Current ownership", ["Sole proprietor", "Two-doctor partnership", "Multi-doctor LLC", "Other"])',
   replace: 'sel("ownership", "Current ownership", ["Sole proprietor", "Sole proprietor (LLC)", "Sole proprietor (S-corp)", "Two-doctor partnership", "Three-doctor LLC", "Four-doctor partnership", "Four-doctor LLC", "Five-doctor LLC", "Multi-doctor LLC", "Other"])',
   count: 1
+};
+
+/** A23 (John, 2026-09-10 — Task MD1: "the collapse widget top left expand/collapse is disconnected to the drop down"):
+ *  collapsing the Market data card leaves its LAYER dropdown floating over the map with no card above it.
+ *  Exactly one of the card's two menus escapes the collapse, and it is the one John reported: the layer
+ *  menu's panel (`frontend/src/App.vue:475-476`) is `position: absolute; left: 16px; top: 118px;
+ *  z-index: 620` and sits OUTSIDE both of the card's `v-if="v.md?.legendOpen"` templates (`:382-410` and
+ *  `:413-472`, the card div closing at `:411`), so nothing unmounts it. The comparison listbox never
+ *  floated: its panel (`:434-435`) is nested inside the second `legendOpen` template in normal flow
+ *  (`margin-top: 6px`) and has always unmounted with the card. `toggleLegend` clears `mdCompareMenu` all
+ *  the same, for a weaker and different reason — a menu left open in state reappears already-open when
+ *  the card is expanded again, which is its own surprise — not because it escapes the card's region.
+ *  The clear is UNCONDITIONAL: the one `setState` runs on expand exactly as on collapse, so neither menu
+ *  can come back open in either direction (the four-quadrant characterisation in `logic.test.ts` pins
+ *  both). The fix mirrors the design's own idiom where `insightOpen` gates the "What this means" panel on
+ *  `s.mdLegendOff !== true`, which is why that panel behaves correctly. */
+const A23: Amendment = {
+  id: 'A23', date: '2026-09-10', ruling: 'collapsing or expanding the Market data card closes both its menus (Task MD1)',
+  find: 'toggleLegend: () => this.setState({ mdLegendOff: s.mdLegendOff !== true }),',
+  replace: 'toggleLegend: () => this.setState({ mdLegendOff: s.mdLegendOff !== true, mdLayerMenu: false, mdCompareMenu: false }),',
+  count: 1
+};
+
+/* ------------------------------------------------------------------------------------------
+ * A25 — Task MP1 (John's ruling, 2026-09-10): "a listing with no coordinates keeps its place in
+ * the results and does not get a pin."
+ *
+ * `app/api/listings.py`'s `serialise` emits `lat`/`lng` as null whenever `location_disclosed`
+ * is false, and `migrations/016_listing.sql` declares that column `NOT NULL DEFAULT false` — so
+ * the nulls are the DEFAULT, not an edge case. `load.ts` carries them through unchanged (its own
+ * `centroid()` already filters unlocated practices, which is the codebase saying it knows they
+ * exist), and the design handed them straight to Leaflet.
+ *
+ * Leaflet 1.9.4's `toLatLng([null, null])` returns `null`: the array branch is gated on
+ * `typeof a[0] !== 'object'` and `typeof null === 'object'`, so it falls through. `Marker._latlng`
+ * is then null and `_setPos(map.latLngToLayerPoint(null))` reads `.lat` off it — measured in real
+ * Chromium as `pageerror: Cannot read properties of null (reading 'lat')`, no pins. ONE listing
+ * was enough: `drawPins`' `forEach` has no try/catch, so pin drawing stopped there for every
+ * later listing, and `LayerGroup.addLayer` had already stored the marker before `map.addLayer`
+ * threw, so the poisoned layer re-threw from inside Leaflet's own event loop on every later zoom
+ * pass. Under the Vite dev server Vue's `logError` re-throws out of `flushJobs` and the screen
+ * stops responding; the production build logs instead, so QA and production lose the pins from
+ * that listing onward and break zoom.
+ *
+ * The listing itself is real — a buyer may open it, request access and read it — and the missing
+ * point is the seller's own choice, so it stays in the rail, the count, the sort and the filters
+ * and only the MAP skips it. Nothing is drawn at [0, 0] and nothing at the metro centre: the
+ * design has no treatment for "somewhere in this metro" and inventing one is out of scope.
+ * ------------------------------------------------------------------------------------------ */
+
+/** A25.1 — the pin list. `Number.isFinite` rather than `!= null` because `NaN` reaches
+ *  `toLatLng` intact and produces the same broken marker one step further on. */
+const A25_1: Amendment = {
+  id: 'A25.1', date: '2026-09-10', ruling: 'a listing with no coordinates keeps its place in the results and does not get a pin (Task MP1)',
+  find: '      practices: list.map((p) => ({',
+  replace: '      practices: list.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng)).map((p) => ({',
+  count: 1
+};
+
+/** A25.2 — the second leg into the same trap: the drive-time ring's centre. `MarketMapView`
+ *  guards on `props.driveCenter` being truthy, and `[null, null]` is an array, so it passed —
+ *  `engine.ring([null, null], …)` is `L.circle`, which calls the same `toLatLng`. The fallback
+ *  is the expression's OWN else-branch (the metro centre); no new centre is invented. */
+const A25_2: Amendment = {
+  id: 'A25.2', date: '2026-09-10', ruling: 'a listing with no coordinates keeps its place in the results and does not get a pin (Task MP1)',
+  find: '      driveCenter: sel ? [sel.lat, sel.lng] : cfg.center,',
+  replace: '      driveCenter: (sel && Number.isFinite(sel.lat) && Number.isFinite(sel.lng)) ? [sel.lat, sel.lng] : cfg.center,',
+  count: 1
+};
+
+/** A25.3 — the third leg, and the worst of them. The map's community list is what
+ *  `mosaicBbox` takes `Math.min`/`Math.max` over, and `null` coerces to 0: measured on the real
+ *  producer, one unlocated Austin community stretched the metro box from [29.86, -98.24] to
+ *  [-0.13, 0.15], which is 100,482,513 mosaic cells to iterate — a hung tab, not a missing
+ *  shape. A community with no centroid cannot be shaded, so it leaves the MAP's list.
+ *
+ *  Only the map's list. `comms` itself is untouched, so the Market data strip cards still take
+ *  their metro medians over the listing's figures and the docked panel still reads its own
+ *  community: a figure is not a point, and A21.2n's rule (median of what we know) is unchanged. */
+const A25_3: Amendment = {
+  id: 'A25.3', date: '2026-09-10', ruling: 'a listing with no coordinates keeps its place in the results and does not get a pin (Task MP1)',
+  find: '      communities: comms.map((c) => {',
+  replace: '      communities: comms.filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lng)).map((c) => {',
+  count: 1
+};
+
+/** A25.4 — the last place in the docked panel where a zero stood in for an absence, and the one
+ *  A21.1c/A21.2* could not reach: `marketPanel`'s last-resort community object, taken when the
+ *  selection has no community of its own AND the market has no communities at all. Measured on
+ *  the real producer it rendered "0" Population, "0.0% (5 yrs)", "$0K" Median Income, "0"
+ *  Veterinary Establishments and a "Flat" growth verdict — exactly the fabrication D-C31 rules
+ *  out. The arm is KEPT rather than removed (it is the guard that stops the panel throwing on an
+ *  empty market) and its values become `undefined`, which every A21 guard downstream already
+ *  reads as "we have no figure". */
+const A25_4: Amendment = {
+  id: 'A25.4', date: '2026-09-10', ruling: 'a missing figure is omitted, never zeroed — the panel’s last-resort community too (D-C31, Task MP1)',
+  find: '    const c = selComm || comms[0] || { pop: 0, hh: 0, income: 0, growth: 0, pets: 0, vets: 0 };',
+  replace: '    const c = selComm || comms[0] || { pop: undefined, hh: undefined, income: undefined, growth: undefined, pets: undefined, vets: undefined };',
+  count: 1
+};
+
+/** A25.5 — the panel and the detail disagreed about p8. The detail reads
+ *  `p.id !== "p8" && p.pop != null` (the design's own first term, which A12.10 widened); A21.4a
+ *  ported the idiom to the panel and dropped that first term, so the DESIGN's own fixture for
+ *  "Community data unavailable" showed a full profile in the docked panel and the unavailable
+ *  card on the detail behind it.
+ *
+ *  The p8 term is what is kept, on both, rather than dropped from both: p8 carries `pop`,
+ *  `growth`, `income` and `hh` in the fixture, so the id test is the DESIGN's deliberate way of
+ *  demonstrating the unavailable state, and removing it would delete that demonstration. It can
+ *  only ever be true of a design fixture — a real listing's id is a uuid — so nothing the API
+ *  serves is affected either way.
+ *
+ *  Applied after A21.4a, whose output is this `find`. No approved state opens the panel on p8
+ *  (`browse-market-panel` and `interest-modal` use Cedar Park and Round Rock), so no pixel moves. */
+const A25_5: Amendment = {
+  id: 'A25.5', date: '2026-09-10', ruling: 'the docked panel and the detail must not disagree about whether a listing has community data (Task MP1)',
+  find: '      hasDemo: sel.pop != null,\n      noDemo: sel.pop == null,',
+  replace: '      hasDemo: sel.id !== "p8" && sel.pop != null,\n      noDemo: sel.id === "p8" || sel.pop == null,',
+  count: 1
+};
+
+/** A25.6 — fix round 1, Important-1 (controller ruling, 2026-09-10: "no point, no ring"). The
+ *  FOURTH leg into the same trap, and the only one that asserts something false rather than
+ *  omitting something true.
+ *
+ *  `showDrive` is `!!sel` with no coordinate term, and `MarketMapView.vue:91` draws the C7
+ *  drive-time ring on `showDrive && driveCenter`. Before A25.2, selecting an unlocated listing
+ *  reached `engine.ring([null, null], 16000, …)` — `L.circle`, the same `toLatLng` — and threw,
+ *  so no ring was ever painted. A25.2 gave the expression its own else-branch back, which made
+ *  that branch PAINTABLE for the first time: a 16 km dashed "roughly ten minutes' drive" circle
+ *  centred on the middle of Austin, around a place the practice is not.
+ *
+ *  A missing pin omits; this fabricates. `showDrive` takes the same finite-coordinate test the
+ *  pin list uses, and nothing else changes — no substitute copy, no note, no empty state, and a
+ *  located listing's ring is untouched (a characterisation case pins both directions). */
+const A25_6: Amendment = {
+  id: 'A25.6', date: '2026-09-10', ruling: 'no point, no ring — the drive-time ring is not painted around the metro for a listing whose location is withheld (Task MP1, fix round 1)',
+  find: '      showDrive: !!sel,',
+  replace: '      showDrive: !!(sel && Number.isFinite(sel.lat) && Number.isFinite(sel.lng)),',
+  count: 1
+};
+
+/** A26 — the Browse filter bar's native `<select>`s become dropdowns in this design's own style
+ *  (John, 2026-09-11: "the dropdown 'more filters' is correct implementation while everything
+ *  else on the filter bar is implemented incorrectly and not using the site design, this must be
+ *  corrected").
+ *
+ *  This is the SECOND report about this toolbar row. On 2026-09-08 he made the identical
+ *  complaint about the metro picker sitting immediately to the left of these five, and it was
+ *  fixed as A13; A13's scope note left "the five filter selects" native, and that clause is what
+ *  he has now overruled. So A26 reuses A13's idiom verbatim rather than authoring a second one:
+ *  a trigger plus a `role="listbox"` panel composed from the Market data card's layer menu,
+ *  anchored with the "More filters" popover's own `top: 46px; z-index: 700` and
+ *  `box-shadow: 0 6px 20px rgba(0,58,112,.16)`, rows carrying the generated hover class the
+ *  layer-menu and compare-menu rows already get. Every declaration is one the pristine bundle
+ *  already carries — asserted, declaration by declaration, in `design-amendments.test.ts`.
+ *
+ *  A `<select>`'s popup is drawn by the OPERATING SYSTEM, not by the page: on macOS Chromium it
+ *  is the dark menu in his screenshots, it ignores every declaration in `fl.style`, and it renders
+ *  above every in-page `z-index`. No CSS reaches it; only replacing the element does.
+ *
+ *  The one thing A13 did not have to solve is multiplicity — it converted ONE control. A26's five
+ *  (eight, with the three inside the popover Task F2 added) are not eight menus: they are TWO
+ *  `.map()` body, so the family is one state slot, one open path, one set of closures and five
+ *  instances. `Object.assign` semantics mean writing `fMenu` closes whichever sibling was open,
+ *  so the invariant INSIDE the family is structural and there is nothing to forget; only the
+ *  edges across the family boundary are written by hand, and they are named in A26.4/A26.8/A26.9.
+ *
+ *  Two keys, both minted by their first `setState` exactly as `marketMenu`/`marketMenuAt`,
+ *  `giveMenu`, `navMenu`, `userMenu`, `moreFilters`, `mdLayerMenu` and `mdCompareMenu` are —
+ *  none of those is in the state literal either: `fMenu` (null, or the open dropdown's own filter
+ *  key) and `fMenuAt` (a rendered highlight in A13's shape, guarded BY THE KEY so a stale index
+ *  can never paint on a sibling). It is not shared with `giveMenuAt`, which is an unrendered
+ *  one-shot focus token with a `null` sentinel; sharing the slot was measured to drop a mouse
+ *  user on "Dr. Sophia Yin Memorial Fund", the exact defect the comment at V3's `givePanelRef`
+ *  says that `null` exists to prevent.
+ *
+ *  Task F1 converts the five on the toolbar (A26.10). The three inside the "More filters"
+ *  popover were converted by Task F2, so the family's two `.map()` bodies are both done.
+ */
+const A26 = {
+  date: '2026-09-11',
+  ruling: 'the dropdown "more filters" is correct implementation while everything else on the filter bar is implemented incorrectly and not using the site design, this must be corrected'
+};
+
+/** A26.1 — four class members beside `setMarket`, so the five instances share one implementation
+ *  of everything that is not per-instance. Anchored on `moveMarketHighlight`, A13.1's own last
+ *  member, which is where the metro dropdown's machinery already lives.
+ *
+ *  `openFilterMenu` is the family's ONE open path, and the only place it names the four overlay
+ *  menus John's m7 ruling governs — the toggle and the arrow key both call it, so the six
+ *  cross-close keys are written once rather than once per instance. `setFilter` is the choice:
+ *  it calls the design's OWN `setF` (V3:1907), so the 320 ms loading settle and the filter
+ *  transition are byte-for-byte the ones the `<select>`'s `onChange` had, and then shuts the
+ *  panel and returns focus the way `setMarket` does. `scrollFilterOption` and
+ *  `moveFilterHighlight` are A13.1's two, taking the instance's key as their first argument. */
+const A26_1: Amendment = {
+  id: 'A26.1', ...A26,
+  find: [
+    '  moveMarketHighlight = (i) => {',
+    '    this.setState({ marketMenuAt: i });',
+    '    this.scrollMarketOption(i);',
+    '  };',
+    ''
+  ].join('\n'),
+  replace: [
+    '  moveMarketHighlight = (i) => {',
+    '    this.setState({ marketMenuAt: i });',
+    '    this.scrollMarketOption(i);',
+    '  };',
+    '',
+    '  // Opening a filter dropdown. ONE open path for the whole family: the trigger and the arrow',
+    '  // keys both come here, so the cross-menu invariant (final review m7) is written once rather',
+    '  // than once per instance. Writing `fMenu` is what closes whichever sibling was open —',
+    '  // Object.assign semantics — so inside the family there is nothing to forget; the four keys',
+    '  // below are the only edges that leave it.',
+    '  openFilterMenu = (key, at) => {',
+    '    this.setState({ fMenu: key, fMenuAt: at, navMenu: false, userMenu: false, giveMenu: false, marketMenu: false, marketMenuAt: -1 });',
+    '  };',
+    '',
+    '  // The filter choice. It calls the design\'s own setF, so the state transition and the 320 ms',
+    '  // loading settle are the ones the <select>\'s onChange had, to the byte.',
+    '  setFilter = (key, v) => {',
+    '    this.setF(key)(v);',
+    '    this.setState({ fMenu: null, fMenuAt: -1 });',
+    '    // The choice unmounts the row the pointer or the keyboard was on, so focus would land on',
+    '    // <body>. A native select leaves the user on the control; so does this one.',
+    '    const host = this._fMenuEls && this._fMenuEls[key];',
+    '    const trigger = host && host.querySelector(\'button[aria-haspopup="listbox"]\');',
+    '    if (trigger) trigger.focus();',
+    '  };',
+    '',
+    '  // Bringing a row into view, scoped to the dropdown that owns it. Both the arrow keys and the',
+    '  // panel\'s own mount need this: one while the rows are already there, one at the moment they',
+    '  // arrive. The row is resolved through the field this component recorded, not across the',
+    '  // document — the ids are ones this component mints, as scrollMarketOption\'s are.',
+    '  scrollFilterOption = (key, i) => {',
+    '    const host = this._fMenuEls && this._fMenuEls[key];',
+    '    const row = host && host.querySelector("#f-opt-" + key + "-" + i);',
+    '    if (row && row.scrollIntoView) row.scrollIntoView({ block: "nearest" });',
+    '  };',
+    '',
+    '  // Moving the keyboard highlight. The rows are all in the DOM while the panel is open, so the',
+    '  // one being highlighted is scrolled into view here rather than after a re-render.',
+    '  moveFilterHighlight = (key, i) => {',
+    '    this.setState({ fMenuAt: i });',
+    '    this.scrollFilterOption(key, i);',
+    '  };',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A26.2 — the `filters:` map body. The five ARRAY LITERALS above it are untouched: the keys, the
+ *  option values and every one of the design's own labels are exactly as approved. Only the
+ *  `.map()` that turns each into render values changes, key for key on A13.2's metro menu —
+ *  `open` <-> `marketMenuOpen`, `toggle` <-> `toggleMarketMenu`, `caretStyle` <->
+ *  `marketCaretStyle`, `triggerLabel` <-> `marketTriggerLabel`, `hostRef` <-> `marketMenuRef`,
+ *  `panelRef` <-> `marketPanelRef`, `keys` <-> `marketMenuKeys`, and `rowStyle`/`tickStyle`
+ *  verbatim.
+ *
+ *  `style` is the `<select>`'s own string with three declarations prefixed — `display:
+ *  inline-flex; align-items: center; gap: 8px;`, which the "More filters" button in the same row
+ *  already carries — because a `<button>` has to lay out a label and a chevron where the
+ *  `<select>` had the user agent draw its own arrow. Nothing else about the closed box changes.
+ *
+ *  `aria` is derived from the design's OWN first option (all five read "<name>: Any") rather than
+ *  authoring five new strings. It is required, not cosmetic: today these five have no `<label>`
+ *  and no `aria-label`, and a `<label>` cannot name a `<button>` anyway; and `screens.ts`'s
+ *  `layerTrigger` addresses the Market data card's two listbox triggers as the UNLABELLED ones,
+ *  so an unlabelled trigger here would break `browse-layer-menu` and `browse-compare-open`.
+ *
+ *  The `<select>`'s two orphaned render keys go with it under the bundle's own dead-code rule,
+ *  exactly as A13.6/A13.7 dropped `market:` and `v: m`: `value:` fed `value="{{ fl.value }}"`
+ *  and `v:` fed `<option value="{{ o.v }}">`, and after A26.10 the template holds neither. Both
+ *  choices go through `setFilter(fl.key, …)`, which closes over the value itself. `set:` goes the
+ *  same way — `onChange="{{ fl.set }}"` was its only reader — while `setF` itself, and its
+ *  event-or-value line, are untouched and still what `setFilter` calls. */
+const A26_2: Amendment = {
+  id: 'A26.2', ...A26,
+  find: [
+    '      ].map((fl) => ({',
+    '        value: s.f[fl.key],',
+    '        set: this.setF(fl.key),',
+    '        options: fl.options.map((o) => ({ v: o[0], label: o[1] })),',
+    '        style: "height: 40px; padding: 0 13px; font-size: 13px; font-weight: 500; color: var(--color-navy); background: " +',
+    '          (s.f[fl.key] === "Any" ? "var(--color-white)" : "var(--rf-band)") + "; border: 1px solid " +',
+    '          (s.f[fl.key] === "Any" ? "var(--border-subtle)" : "var(--color-blue)") + "; border-radius: 6px; cursor: pointer;"',
+    '      })),',
+    ''
+  ].join('\n'),
+  replace: [
+    '      ].map((fl) => {',
+    '        // Each toolbar filter is a dropdown list in this design\'s own style, not the operating',
+    '        // system\'s popup: the same trigger + role="listbox" panel A13 gave the metro control',
+    '        // beside it. One .map() body, five instances, one state slot.',
+    '        //',
+    '        // The comment sits INSIDE the map body, not between the array rows and `].map(`:',
+    '        // `tests/seeds/test_hospitals_json.py`\'s `_BAR_BLOCK` reads the five option arrays',
+    '        // out of the design and requires `      ]` to follow the last row directly, and it',
+    '        // fails loudly rather than silently testing nothing when it does not.',
+    '        const cur = s.f[fl.key];',
+    '        const open = s.fMenu === fl.key;',
+    '        // Math.max: a value `f` holds that this option list does not would give indexOf -1 and',
+    '        // index the array out of bounds — the guard marketMenuKeys carries for a dropped metro.',
+    '        const sel = Math.max(0, fl.options.findIndex((o) => o[0] === cur));',
+    '        const at = open && s.fMenuAt >= 0 ? s.fMenuAt : sel;',
+    '        return {',
+    '          // The accessible name, taken from the design\'s OWN first option — all five read',
+    '          // "<name>: Any" — rather than authoring five new strings. A <select> with no <label>',
+    '          // is named by nothing, and a <label> cannot name a <button>, so the trigger needs one.',
+    '          aria: fl.options[0][1].split(":")[0],',
+    '          open,',
+    '          listId: "f-listbox-" + fl.key,',
+    '          // On the TRIGGER, which is always rendered: a shut dropdown has no active descendant,',
+    '          // and null is what both renderers omit the attribute for (a string would spell a dead',
+    '          // id). Keyed on fl.key as well, so a sibling never claims another\'s highlight.',
+    '          activeId: open ? "f-opt-" + fl.key + "-" + s.fMenuAt : null,',
+    '          // What the closed <select> displayed: the current option\'s own label.',
+    '          triggerLabel: fl.options[sel][1],',
+    '          toggle: () => (open ? this.setState({ fMenu: null, fMenuAt: -1 }) : this.openFilterMenu(fl.key, sel)),',
+    '          hostRef: (el) => { const m = this._fMenuEls || (this._fMenuEls = {}); m[fl.key] = el || null; },',
+    '          // The panel\'s own mount is when the option rows first exist, so it is where OPENING',
+    '          // scrolls the highlighted row into view — the arrow keys cannot, having seeded the',
+    '          // highlight while the panel was still unrendered. Same callback-ref idiom the compare',
+    '          // menu ships (md.compareMenuRef) and A13 reuses for marketPanelRef.',
+    '          panelRef: (el) => { if (el) this.scrollFilterOption(fl.key, this.state.fMenuAt); },',
+    '          keys: (e) => {',
+    '            const n = fl.options.length;',
+    '            if (e.key === "ArrowDown" || e.key === "ArrowUp") {',
+    '              e.preventDefault();',
+    '              if (!open) return this.openFilterMenu(fl.key, sel);',
+    '              return this.moveFilterHighlight(fl.key, (at + (e.key === "ArrowDown" ? 1 : n - 1)) % n);',
+    '            }',
+    '            if (!open) return;',
+    '            if (e.key === "Home" || e.key === "End") {',
+    '              e.preventDefault();',
+    '              return this.moveFilterHighlight(fl.key, e.key === "Home" ? 0 : n - 1);',
+    '            }',
+    '            if (e.key === "Enter" || e.key === " ") {',
+    '              e.preventDefault();',
+    '              return this.setFilter(fl.key, fl.options[at][0]);',
+    '            }',
+    '          },',
+    '          // The <select>\'s own box, byte for byte, plus the three declarations a label and a',
+    '          // chevron need where the user agent used to draw its own arrow (V3:382\'s own trio).',
+    '          style: "display: inline-flex; align-items: center; gap: 8px; height: 40px; padding: 0 13px; font-size: 13px; font-weight: 500; color: var(--color-navy); background: " +',
+    '            (cur === "Any" ? "var(--color-white)" : "var(--rf-band)") + "; border: 1px solid " +',
+    '            (cur === "Any" ? "var(--border-subtle)" : "var(--color-blue)") + "; border-radius: 6px; cursor: pointer;",',
+    '          caretStyle: "flex: none; display: block; transition: transform 150ms var(--easing-out); transform: rotate(" +',
+    '            (open ? "180deg" : "0deg") + ");",',
+    '          options: fl.options.map((o, i) => {',
+    '            const on = o[0] === cur;',
+    '            const hi = open && s.fMenuAt === i;',
+    '            return {',
+    '              label: o[1], selected: on,',
+    '              go: () => this.setFilter(fl.key, o[0]),',
+    '              optId: "f-opt-" + fl.key + "-" + i,',
+    '              rowStyle: "display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 8px; font-family: var(--rf-display); font-size: 13px; font-weight: " +',
+    '                (on ? "800" : "500") + "; color: var(--vf-navy); background: " +',
+    '                (on ? "var(--vf-accent-bg)" : hi ? "var(--vf-neutral)" : "none") + "; border: 0; border-radius: 6px; cursor: pointer;",',
+    '              tickStyle: "flex: none; display: block; filter: brightness(0) saturate(100%) invert(23%) sepia(89%) saturate(1352%) hue-rotate(184deg) brightness(94%) contrast(101%); opacity: " +',
+    '                (on ? "1" : "0") + ";"',
+    '            };',
+    '          })',
+    '        };',
+    '      }),',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A26.3 — the `moreFilters:` map body, Task F2. The three ARRAY LITERALS above it are untouched:
+ *  the keys, the option values and every one of the design's own labels are exactly as approved.
+ *
+ *  John called "More filters" the CORRECT implementation, so his words do not reach the three
+ *  under it — the user's experience does. A `<select>`'s popup is an OPERATING SYSTEM window and
+ *  renders above this popover's own `z-index: 700`, so converting only the toolbar five would
+ *  have put the dark menu he photographed on top of his own exemplar, one click deeper, rather
+ *  than removed it. They are also the cheapest three in the tree: no approved state had ever
+ *  clicked "More filters", so no committed pixel moves — and that missing oracle is itself the
+ *  gap this task closes (`browse-more-filters`, `browse-more-filters-menu`).
+ *
+ *  Key for key on A26.2, because it IS A26.2's loop with three instances instead of five: one
+ *  state slot, one open path, one set of closures, no new machinery. The eight filter keys are
+ *  disjoint (`est`/`ownership`/`sqft` against `type`/`price`/`revenue`/`doctors`/`building`), so
+ *  `fMenu` still names exactly one dropdown across BOTH loops and the invariant stays structural.
+ *
+ *  Two things differ, and both are the design's own. `label:` stays — it is the caption the
+ *  popover renders above the field — and it also NAMES the trigger, because a `<label>` does not
+ *  name a `<button>` (a button takes its accessible name from its own contents before the host
+ *  language's label), so the string is spelled again as an `aria-label` rather than an `aria:`
+ *  key being invented as A26.2 had to. And `cur` keeps the `|| "Any"` guard the `<select>`'s
+ *  `value:` carried and the toolbar's does not: the design's state literal seeds the five toolbar
+ *  keys and none of these three, so `s.f.est` is undefined on first render and the trigger would
+ *  otherwise open on a blank box.
+ *
+ *  The `<select>`'s three orphaned render keys go with it under the bundle's own dead-code rule,
+ *  exactly as A13.6/A13.7 and A26.2 dropped theirs: `value:` fed `value="{{ mf.value }}"`, `set:`
+ *  fed `onChange="{{ mf.set }}"`, and the rows' `v:` fed `<option value="{{ o.v }}">`. After
+ *  A26.11 the template holds none of the three. `setF` itself is untouched and is still what
+ *  `setFilter` calls. */
+const A26_3: Amendment = {
+  id: 'A26.3', ...A26,
+  find: [
+    '      ].map((fl) => ({',
+    '        label: fl.label,',
+    '        value: s.f[fl.key] || "Any",',
+    '        set: this.setF(fl.key),',
+    '        options: fl.options.map((o) => ({ v: o[0], label: o[1] }))',
+    '      })),',
+    ''
+  ].join('\n'),
+  replace: [
+    '      ].map((fl) => {',
+    '        // Each additional filter is a dropdown list in this design\'s own style, not the',
+    '        // operating system\'s popup: the SAME trigger + role="listbox" panel A26.2 gives the',
+    '        // five on the toolbar, and the same state slot — the eight filter keys are disjoint,',
+    '        // so `fMenu` still names exactly one dropdown across both loops.',
+    '        //',
+    '        // The comment sits INSIDE the map body, not between the array rows and `].map(`:',
+    '        // `tests/seeds/test_hospitals_json.py`\'s `_MORE_BLOCK` reads the three option arrays',
+    '        // out of the design and requires `      ]` to follow the last row directly, and it',
+    '        // fails loudly rather than silently testing nothing when it does not. A26.2 learned',
+    '        // that on its sibling `_BAR_BLOCK`.',
+    '        const cur = s.f[fl.key] || "Any";',
+    '        const open = s.fMenu === fl.key;',
+    '        // Math.max: a value `f` holds that this option list does not would give indexOf -1 and',
+    '        // index the array out of bounds — the guard marketMenuKeys carries for a dropped metro.',
+    '        const sel = Math.max(0, fl.options.findIndex((o) => o[0] === cur));',
+    '        const at = open && s.fMenuAt >= 0 ? s.fMenuAt : sel;',
+    '        return {',
+    '          // The popover\'s own caption, unchanged — and it is the trigger\'s accessible name',
+    '          // too: a <label> does not name a <button>, which takes its name from its own',
+    '          // contents first, so the same string is spelled again rather than a new one invented.',
+    '          label: fl.label,',
+    '          open,',
+    '          listId: "f-listbox-" + fl.key,',
+    '          // On the TRIGGER, which is always rendered: a shut dropdown has no active descendant,',
+    '          // and null is what both renderers omit the attribute for (a string would spell a dead',
+    '          // id). Keyed on fl.key as well, so a sibling never claims another\'s highlight.',
+    '          activeId: open ? "f-opt-" + fl.key + "-" + s.fMenuAt : null,',
+    '          // What the closed <select> displayed. `cur` keeps the design\'s own `|| "Any"` guard:',
+    '          // the state literal seeds the five TOOLBAR keys and none of these three.',
+    '          triggerLabel: fl.options[sel][1],',
+    '          toggle: () => (open ? this.setState({ fMenu: null, fMenuAt: -1 }) : this.openFilterMenu(fl.key, sel)),',
+    '          hostRef: (el) => { const m = this._fMenuEls || (this._fMenuEls = {}); m[fl.key] = el || null; },',
+    '          // The panel\'s own mount is when the option rows first exist, so it is where OPENING',
+    '          // scrolls the highlighted row into view — the arrow keys cannot, having seeded the',
+    '          // highlight while the panel was still unrendered (A13/A14 review round 1, C1).',
+    '          panelRef: (el) => { if (el) this.scrollFilterOption(fl.key, this.state.fMenuAt); },',
+    '          keys: (e) => {',
+    '            const n = fl.options.length;',
+    '            if (e.key === "ArrowDown" || e.key === "ArrowUp") {',
+    '              e.preventDefault();',
+    '              if (!open) return this.openFilterMenu(fl.key, sel);',
+    '              return this.moveFilterHighlight(fl.key, (at + (e.key === "ArrowDown" ? 1 : n - 1)) % n);',
+    '            }',
+    '            if (!open) return;',
+    '            if (e.key === "Home" || e.key === "End") {',
+    '              e.preventDefault();',
+    '              return this.moveFilterHighlight(fl.key, e.key === "Home" ? 0 : n - 1);',
+    '            }',
+    '            if (e.key === "Enter" || e.key === " ") {',
+    '              e.preventDefault();',
+    '              return this.setFilter(fl.key, fl.options[at][0]);',
+    '            }',
+    '          },',
+    '          caretStyle: "flex: none; display: block; transition: transform 150ms var(--easing-out); transform: rotate(" +',
+    '            (open ? "180deg" : "0deg") + ");",',
+    '          options: fl.options.map((o, i) => {',
+    '            const on = o[0] === cur;',
+    '            const hi = open && s.fMenuAt === i;',
+    '            return {',
+    '              label: o[1], selected: on,',
+    '              go: () => this.setFilter(fl.key, o[0]),',
+    '              optId: "f-opt-" + fl.key + "-" + i,',
+    '              rowStyle: "display: flex; align-items: center; gap: 9px; width: 100%; padding: 8px 8px; font-family: var(--rf-display); font-size: 13px; font-weight: " +',
+    '                (on ? "800" : "500") + "; color: var(--vf-navy); background: " +',
+    '                (on ? "var(--vf-accent-bg)" : hi ? "var(--vf-neutral)" : "none") + "; border: 0; border-radius: 6px; cursor: pointer;",',
+    '              tickStyle: "flex: none; display: block; filter: brightness(0) saturate(100%) invert(23%) sepia(89%) saturate(1352%) hue-rotate(184deg) brightness(94%) contrast(101%); opacity: " +',
+    '                (on ? "1" : "0") + ";"',
+    '            };',
+    '          })',
+    '        };',
+    '      }),',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A26.4 — the "More filters" popover is the three inner dropdowns' PARENT, not their peer, so it
+ *  is not one of the cross-close edges: opening one of the three inside it must not close it. Its
+ *  own toggle instead clears the family's keys unconditionally, which is one edit covering both
+ *  needed directions — closing the popover shuts any dropdown inside it, so a child cannot latch
+ *  behind an unmounted parent, and opening the popover shuts a toolbar dropdown. (Task F2 adds
+ *  the three; the second direction is live from F1, the first from F2.) */
+const A26_4: Amendment = {
+  id: 'A26.4', ...A26,
+  find: '      toggleMore: () => this.setState({ moreFilters: !s.moreFilters }),\n',
+  replace: '      toggleMore: () => this.setState({ moreFilters: !s.moreFilters, fMenu: null, fMenuAt: -1 }),\n',
+  count: 1
+};
+
+/** A26.5 — outside-click, in `trackMenuDismiss`'s existing shared `pointerdown` closure. No new
+ *  listener: A13.4 armed this one and A19 already shares it.
+ *
+ *  PLACEMENT. The ruling asks for the branch "after the existing ones", and it is placed after
+ *  Give's and BEFORE the metro's, because the metro branch's guard is an early `return` — a
+ *  branch appended after it would be dead whenever the metro menu is closed, which is almost
+ *  always. Both existing branches keep their own bytes, which is the invariant A14.4 established
+ *  and `design-amendments.test.ts` pins for each of the five. The host is resolved through the
+ *  keyed collection this component records (A14's `_giveItemEls` idiom), never across the
+ *  document — A13's deliberate rule (final review m5). */
+const A26_5: Amendment = {
+  id: 'A26.5', ...A26,
+  find: [
+    '      if (this.state.giveMenu) {',
+    '        const give = this._giveMenuEl;',
+    '        if (!(give && e.target && give.contains(e.target))) this.setState({ giveMenu: false });',
+    '      }',
+    '      if (!this.state.marketMenu) return;',
+    ''
+  ].join('\n'),
+  replace: [
+    '      if (this.state.giveMenu) {',
+    '        const give = this._giveMenuEl;',
+    '        if (!(give && e.target && give.contains(e.target))) this.setState({ giveMenu: false });',
+    '      }',
+    '      if (this.state.fMenu) {',
+    '        const fh = this._fMenuEls[this.state.fMenu];',
+    '        if (!(fh && e.target && fh.contains(e.target))) this.setState({ fMenu: null, fMenuAt: -1 });',
+    '      }',
+    '      if (!this.state.marketMenu) return;',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A26.6 — Escape, in the same function's shared `keydown` closure, in the same position and for
+ *  the same reason. No focus return is needed and none is written: the option rows carry
+ *  `tabindex="-1"` (A13.3), so focus never leaves the trigger, which is exactly why A13's own
+ *  Escape branch does not return focus either where A14's Give branch has to. */
+const A26_6: Amendment = {
+  id: 'A26.6', ...A26,
+  find: [
+    '      if (this.state.giveMenu) {',
+    '        this.setState({ giveMenu: false });',
+    '        if (this._giveButtonEl) this._giveButtonEl.focus();',
+    '      }',
+    '      if (!this.state.marketMenu) return;',
+    ''
+  ].join('\n'),
+  replace: [
+    '      if (this.state.giveMenu) {',
+    '        this.setState({ giveMenu: false });',
+    '        if (this._giveButtonEl) this._giveButtonEl.focus();',
+    '      }',
+    '      if (this.state.fMenu) this.setState({ fMenu: null, fMenuAt: -1 });',
+    '      if (!this.state.marketMenu) return;',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A26.7 — Tab out, in the same function's shared `focusout` closure, in the same position. The
+ *  window-blur rule above it (a null `relatedTarget` dismisses nothing — A19, A-LB3) is the
+ *  closure's own early return and covers this branch unchanged. */
+const A26_7: Amendment = {
+  id: 'A26.7', ...A26,
+  find: [
+    '      if (this.state.giveMenu) {',
+    '        const give = this._giveMenuEl;',
+    '        if (!(give && give.contains(to))) this.setState({ giveMenu: false });',
+    '      }',
+    '      if (!this.state.marketMenu) return;',
+    ''
+  ].join('\n'),
+  replace: [
+    '      if (this.state.giveMenu) {',
+    '        const give = this._giveMenuEl;',
+    '        if (!(give && give.contains(to))) this.setState({ giveMenu: false });',
+    '      }',
+    '      if (this.state.fMenu) {',
+    '        const fh = this._fMenuEls[this.state.fMenu];',
+    '        if (!(fh && fh.contains(to))) this.setState({ fMenu: null, fMenuAt: -1 });',
+    '      }',
+    '      if (!this.state.marketMenu) return;',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A26.8a–A26.8f — the six inbound cross-close edges. Each existing menu open path gains the
+ *  family's two keys, so opening any other menu shuts an open filter dropdown. The four overlay
+ *  menus' own OUTBOUND edge is written once, in A26.1's `openFilterMenu`. */
+const A26_8a: Amendment = {
+  id: 'A26.8a', ...A26,
+  find: '      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false }),\n',
+  replace: '      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false, fMenu: null, fMenuAt: -1 }),\n',
+  count: 1
+};
+
+const A26_8b: Amendment = {
+  id: 'A26.8b', ...A26,
+  find: '      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false }),\n',
+  replace: '      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false, fMenu: null, fMenuAt: -1 }),\n',
+  count: 1
+};
+
+const A26_8c: Amendment = {
+  id: 'A26.8c', ...A26,
+  find: '      toggleGiveMenu: () => this.setState({ giveMenu: !s.giveMenu, giveMenuAt: null, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 }),\n',
+  replace: '      toggleGiveMenu: () => this.setState({ giveMenu: !s.giveMenu, giveMenuAt: null, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1, fMenu: null, fMenuAt: -1 }),\n',
+  count: 1
+};
+
+const A26_8d: Amendment = {
+  id: 'A26.8d', ...A26,
+  find: '        this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1 });\n',
+  replace: '        this.setState({ giveMenu: true, giveMenuAt: at, navMenu: false, userMenu: false, marketMenu: false, marketMenuAt: -1, fMenu: null, fMenuAt: -1 });\n',
+  count: 1
+};
+
+const A26_8e: Amendment = {
+  id: 'A26.8e', ...A26,
+  find: '      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false }),\n',
+  replace: '      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false, fMenu: null, fMenuAt: -1 }),\n',
+  count: 1
+};
+
+const A26_8f: Amendment = {
+  id: 'A26.8f', ...A26,
+  find: '          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur });\n',
+  replace: '          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur, fMenu: null, fMenuAt: -1 });\n',
+  count: 1
+};
+
+/** A26.9 — `go()`'s three arms clear the family's keys, so navigating away cannot leave a panel
+ *  latched over the next screen. This matters because the design's existing menu keys DO latch —
+ *  `go("detail")` after opening the metro listbox leaves `marketMenu: true` — and A26 declines to
+ *  ship a ninth instance of a known defect while also declining to fix the existing ones here
+ *  (reported separately as D-F2, which is not authorised by this ruling). */
+const A26_9a: Amendment = {
+  id: 'A26.9a', ...A26,
+  find: '    if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false });\n',
+  replace: '    if (screen !== "gate" && !this.state.auth) return this.setState({ screen: "gate", gate: "signin", userMenu: false, fMenu: null, fMenuAt: -1 });\n',
+  count: 1
+};
+
+const A26_9b: Amendment = {
+  id: 'A26.9b', ...A26,
+  find: '    if (!this.props.listings || this.state.sellerView !== "wizard" || !this.state.editingId) return this.setState({ screen, interest: "closed", userMenu: false, lightbox: null, lightboxFocus: false });\n',
+  replace: '    if (!this.props.listings || this.state.sellerView !== "wizard" || !this.state.editingId) return this.setState({ screen, interest: "closed", userMenu: false, lightbox: null, lightboxFocus: false, fMenu: null, fMenuAt: -1 });\n',
+  count: 1
+};
+
+const A26_9c: Amendment = {
+  id: 'A26.9c', ...A26,
+  find: '      (d) => this.setState({ screen, interest: "closed", userMenu: false, wizAssets: d.assets, wizErr: "", lightbox: null, lightboxFocus: false }),\n',
+  replace: '      (d) => this.setState({ screen, interest: "closed", userMenu: false, wizAssets: d.assets, wizErr: "", lightbox: null, lightboxFocus: false, fMenu: null, fMenuAt: -1 }),\n',
+  count: 1
+};
+
+/** A26.10 — the markup for the five. A13.3's shape, per instance: the `<select>` becomes the
+ *  layer menu's trigger and its panel, wrapped in the `position: relative` div the "More filters"
+ *  control in this same row already uses so the panel can anchor beneath the field. Each row
+ *  carries an `id` and the TRIGGER carries `aria-activedescendant`, because the focused element
+ *  is the only place a screen reader reads it and focus stays on the trigger throughout; the
+ *  trigger is `role="combobox"` (ARIA 1.2 supports `aria-activedescendant` on `combobox`, not on
+ *  `button` — A13's final review I1) and the rows carry `tabindex="-1"`, the other half of the
+ *  same pattern.
+ *
+ *  The panel carries NO width declaration. A13's metro panel is `width: 300px` because its field
+ *  is `min-width: 300px`; these five are five different widths, `min-width: 100%` appears nowhere
+ *  in the pristine bundle, and an absolutely positioned box with no width shrink-wraps its widest
+ *  row — which is always at least the current label, since the label IS one of the rows. Absent
+ *  beats invented. */
+const A26_10: Amendment = {
+  id: 'A26.10', ...A26,
+  find: [
+    '          <sc-for list="{{ filters }}" as="fl" hint-placeholder-count="5">',
+    '            <select value="{{ fl.value }}" onChange="{{ fl.set }}" style="{{ fl.style }}">',
+    '              <sc-for list="{{ fl.options }}" as="o" hint-placeholder-count="3">',
+    '                <option value="{{ o.v }}">{{ o.label }}</option>',
+    '              </sc-for>',
+    '            </select>',
+    '          </sc-for>',
+    ''
+  ].join('\n'),
+  replace: [
+    '          <sc-for list="{{ filters }}" as="fl" hint-placeholder-count="5">',
+    '            <div ref="{{ fl.hostRef }}" style="position: relative;">',
+    '              <button onClick="{{ fl.toggle }}" onKeyDown="{{ fl.keys }}" role="combobox" aria-label="{{ fl.aria }}" aria-haspopup="listbox" aria-controls="{{ fl.listId }}" aria-expanded="{{ fl.open }}" aria-activedescendant="{{ fl.activeId }}" style="{{ fl.style }}">',
+    '                <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ fl.triggerLabel }}</span>',
+    '                <img src="assets/icons/sub-chevron.svg" alt="" width="14" height="14" style="{{ fl.caretStyle }}">',
+    '              </button>',
+    '              <sc-if value="{{ fl.open }}" hint-placeholder-val="{{ false }}">',
+    '                <div role="listbox" aria-label="{{ fl.aria }}" id="{{ fl.listId }}" ref="{{ fl.panelRef }}" style="position: absolute; left: 0; top: 46px; z-index: 700; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;" class="rf-scroll">',
+    '                  <sc-for list="{{ fl.options }}" as="o" hint-placeholder-count="3">',
+    '                    <button onClick="{{ o.go }}" id="{{ o.optId }}" role="option" tabindex="-1" aria-selected="{{ o.selected }}" style="{{ o.rowStyle }}" style-hover="background: var(--vf-neutral);">',
+    '                      <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ o.label }}</span>',
+    '                      <img src="assets/icons/sub-check-filled.svg" alt="" width="11" height="11" style="{{ o.tickStyle }}">',
+    '                    </button>',
+    '                  </sc-for>',
+    '                </div>',
+    '              </sc-if>',
+    '            </div>',
+    '          </sc-for>',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A26.11 — the markup for the three inside the "More filters" popover, Task F2. A26.10's shape
+ *  per instance, dropped into the design's own `<label>` without disturbing it: the caption
+ *  `<span>` is byte-unchanged and the `<select>` becomes the layer menu's trigger and its panel,
+ *  wrapped in the `position: relative` div the popover's own parent already uses so the panel can
+ *  anchor beneath the field.
+ *
+ *  The trigger carries `width: 100%`, which the popover's own "Done" button carries and is
+ *  therefore the design's own declaration. It is load-bearing rather than decorative: the
+ *  `<select>` was a flex item of the column `<label>` and stretched to the popover's width by
+ *  `align-items: stretch`, while a button inside the new wrapper is not a flex item and would
+ *  shrink-wrap — and A26.16's `min-width: 100%` resolves against that wrapper, so a trigger
+ *  narrower than its wrapper would leave the panel wider than the trigger, which is the opposite
+ *  of what John ruled.
+ *
+ *  `aria-label` is `mf.label`, the caption the popover already shows. A `<label>` does not name a
+ *  `<button>` — a button's accessible name is computed from its own contents before the host
+ *  language's label is consulted — so without it the trigger would be named by its current
+ *  option, exactly the problem A26.2 fixed for the unlabelled five. It is also what keeps
+ *  `screens.ts`'s `layerTrigger` (`button[aria-haspopup="listbox"]:not([aria-label])`) pointing
+ *  at the Market data card's two.
+ *
+ *  Clicking the caption still reaches the control, as it did with the `<select>`: a `<label>`'s
+ *  activation behaviour forwards to its first labelable descendant, and does nothing for a click
+ *  that lands on an interactive descendant — so an option row's own click is not forwarded. */
+const A26_11: Amendment = {
+  id: 'A26.11', ...A26,
+  find: [
+    '                  <sc-for list="{{ moreFilters }}" as="mf" hint-placeholder-count="3">',
+    '                    <label style="display: flex; flex-direction: column; gap: 5px;">',
+    '                      <span style="font-size: 12px; font-weight: 500; color: var(--vf-text);">{{ mf.label }}</span>',
+    '                      <select value="{{ mf.value }}" onChange="{{ mf.set }}" style="height: 38px; padding: 0 10px; font-size: 13px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">',
+    '                        <sc-for list="{{ mf.options }}" as="o" hint-placeholder-count="3">',
+    '                          <option value="{{ o.v }}">{{ o.label }}</option>',
+    '                        </sc-for>',
+    '                      </select>',
+    '                    </label>',
+    '                  </sc-for>',
+    ''
+  ].join('\n'),
+  replace: [
+    '                  <sc-for list="{{ moreFilters }}" as="mf" hint-placeholder-count="3">',
+    '                    <label style="display: flex; flex-direction: column; gap: 5px;">',
+    '                      <span style="font-size: 12px; font-weight: 500; color: var(--vf-text);">{{ mf.label }}</span>',
+    '                      <div ref="{{ mf.hostRef }}" style="position: relative;">',
+    '                        <button onClick="{{ mf.toggle }}" onKeyDown="{{ mf.keys }}" role="combobox" aria-label="{{ mf.label }}" aria-haspopup="listbox" aria-controls="{{ mf.listId }}" aria-expanded="{{ mf.open }}" aria-activedescendant="{{ mf.activeId }}" style="display: inline-flex; align-items: center; gap: 8px; width: 100%; height: 38px; padding: 0 10px; font-size: 13px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">',
+    '                          <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ mf.triggerLabel }}</span>',
+    '                          <img src="assets/icons/sub-chevron.svg" alt="" width="14" height="14" style="{{ mf.caretStyle }}">',
+    '                        </button>',
+    '                        <sc-if value="{{ mf.open }}" hint-placeholder-val="{{ false }}">',
+    '                          <div role="listbox" aria-label="{{ mf.label }}" id="{{ mf.listId }}" ref="{{ mf.panelRef }}" style="position: absolute; left: 0; top: 46px; z-index: 700; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;" class="rf-scroll">',
+    '                            <sc-for list="{{ mf.options }}" as="o" hint-placeholder-count="3">',
+    '                              <button onClick="{{ o.go }}" id="{{ o.optId }}" role="option" tabindex="-1" aria-selected="{{ o.selected }}" style="{{ o.rowStyle }}" style-hover="background: var(--vf-neutral);">',
+    '                                <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">{{ o.label }}</span>',
+    '                                <img src="assets/icons/sub-check-filled.svg" alt="" width="11" height="11" style="{{ o.tickStyle }}">',
+    '                              </button>',
+    '                            </sc-for>',
+    '                          </div>',
+    '                        </sc-if>',
+    '                      </div>',
+    '                    </label>',
+    '                  </sc-for>',
+    ''
+  ].join('\n'),
+  count: 1
+};
+
+/** A26.12–A26.14 — John's 2026-09-08 m7 ruling, RESTORED (controller ruling on the A26 plan's
+ *  Q2, 2026-09-11). Its own three ids, on three lines A26.8 is already editing, so the widening
+ *  can be lifted out without touching the rest of the family.
+ *
+ *  m7 reads "opening any one of the four menus closes the other three", and three of the twelve
+ *  ordered directions among `navMenu`, `userMenu`, `giveMenu` and `marketMenu` were never
+ *  written: the account toggle closed neither the nav menu nor the metro listbox, the nav toggle
+ *  closed no metro listbox, and the metro trigger closed neither of the header's two. Give's own
+ *  six were complete, which is why the gap survived that review — and why it is a real defect and
+ *  not a theoretical one: Give and the metro listbox ALSO carry global pointerdown and focusout
+ *  dismissal (A13.4/A13.8), so their pointer paths were covered by accident, while `navMenu` and
+ *  `userMenu` have no outside-click, Escape or Tab dismissal of any kind. Two mouse clicks reach
+ *  it: open the account menu, click the metro trigger, and both stand open.
+ *
+ *  That wider menu-hygiene gap is reported as D-F2 and is NOT built here — it is its own piece of
+ *  work and this ruling does not authorise it. These three edits restore exactly the invariant
+ *  John already ruled on, and nothing else.
+ *
+ *  No pixel moves: each writes `false` over a flag that is already `false` in every approved
+ *  state, since no state opens two menus at once. */
+const A26_12: Amendment = {
+  id: 'A26.12', ...A26,
+  find: '      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false, fMenu: null, fMenuAt: -1 }),\n',
+  replace: '      toggleNavMenu: () => this.setState({ navMenu: !s.navMenu, userMenu: false, giveMenu: false, fMenu: null, fMenuAt: -1, marketMenu: false, marketMenuAt: -1 }),\n',
+  count: 1
+};
+
+const A26_13: Amendment = {
+  id: 'A26.13', ...A26,
+  find: '      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false, fMenu: null, fMenuAt: -1 }),\n',
+  replace: '      toggleUserMenu: () => this.setState({ userMenu: !s.userMenu, giveMenu: false, fMenu: null, fMenuAt: -1, navMenu: false, marketMenu: false, marketMenuAt: -1 }),\n',
+  count: 1
+};
+
+const A26_14: Amendment = {
+  id: 'A26.14', ...A26,
+  find: '      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false, fMenu: null, fMenuAt: -1 }),\n',
+  replace: '      toggleMarketMenu: () => this.setState({ marketMenu: !s.marketMenu, marketMenuAt: Math.max(0, Object.keys(MARKETS).indexOf(s.market || "Austin, TX")), giveMenu: false, fMenu: null, fMenuAt: -1, navMenu: false, userMenu: false }),\n',
+  count: 1
+};
+
+/** A26.15 — the fourth direction, found by the Q2 characterisation case rather than by reading.
+ *
+ *  A26.12–A26.14 fixed the three the A26 ruling's section 8 named, all of them PONTER paths. The
+ *  exhaustive enumeration of ordered pairs then failed on `nav then metro (arrow)`: the metro
+ *  listbox's ARROW-key open path (`marketMenuKeys`) closes none of the other three, where its
+ *  click path (`toggleMarketMenu`) closes all three after A26.14.
+ *
+ *  It is the same defect and the same ruling. A14's own m7 fix had to cover BOTH of Give's open
+ *  paths for exactly this reason, and m7's own comment names this user: "a pure-keyboard user
+ *  could hold this listbox and the header's Give menu open at once". The account menu has no
+ *  focusout dismissal (D-F2), so Shift+Tab from it to the metro trigger and one ArrowDown reaches
+ *  the state with a keyboard alone. Its own id, like A26.12–A26.14, and it changes no pixel: it
+ *  writes `false` over three flags that are already `false` in every approved state. */
+const A26_15: Amendment = {
+  id: 'A26.15', ...A26,
+  find: '          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur, fMenu: null, fMenuAt: -1 });\n',
+  replace: '          if (!s.marketMenu) return this.setState({ marketMenu: true, marketMenuAt: cur, fMenu: null, fMenuAt: -1, navMenu: false, userMenu: false, giveMenu: false });\n',
+  count: 1
+};
+
+/** A26.16 — the panel takes the width of the trigger that opened it (John, 2026-09-11, Task F1b).
+ *  Its OWN ruling and therefore its own id, and it edits BOTH panels in one entry (count: 2), so
+ *  Task F2's three are born with the width rather than acquiring it in a third pass.
+ *
+ *  Task F1's review measured the newly approved `browse-filter-menu` capture: the Practice type
+ *  trigger is 155 px and its panel 153 px, so the panel's right edge sat 2 px INSIDE the button
+ *  that opened it. It is structural rather than per-control — the row's chrome is 4 px narrower
+ *  than the trigger's and the widest row claws about 2 px back — so four of the five sat ~2 px
+ *  narrow and Property inverted, opening far wider than its 129 px collapsed trigger. The family
+ *  had no consistent panel-to-trigger relationship at all.
+ *
+ *  Why this needed a ruling rather than a default: A26.10's panel string is A13's metro panel
+ *  string with `width: 300px` DELETED and nothing else changed, so "the design is silent here"
+ *  was never the honest description — and the design is not silent. Six of six absolutely
+ *  positioned menu panels in the pristine bundle carry a width (account 208 px, the other header
+ *  menu 236 px, More filters 262 px, the layer menu 300 px, A13's listbox 300 px, A14's Give
+ *  panel `width: max-content; min-width: 130px`); the compare menu has none only because it is in
+ *  normal flow and fills its trigger by construction. A13 additionally pins its panel and its
+ *  field to the same 300 px deliberately, so their edges land together — the design's own stated
+ *  intent for this exact idiom.
+ *
+ *  The mechanism invents no number for any of the eight controls: each trigger already sits in a
+ *  `position: relative` wrapper with its panel absolutely positioned inside it, so `min-width:
+ *  100%` resolves against the wrapper — the trigger — and makes the panel at least as wide as it.
+ *  It is a NEW declaration, and this family's own gate otherwise requires every declaration to
+ *  appear in the pristine bundle; John's ruling makes it the SECOND named exception, after the
+ *  More-filters anchoring pair. `design-amendments.test.ts` retires the two
+ *  `not.toContain('min-width: 100%')` trip-wires Task F1 left for exactly this moment and asserts
+ *  instead that the declaration is on these two panels and nowhere else.
+ *
+ *  Rejected, and why: A14's `width: max-content; min-width: <px>` would mean inventing eight
+ *  numbers; one shared fixed width would mean choosing for the longest option across all eight
+ *  and leaving seven panels wider than they need to be. A13's metro panel keeps its own measured
+ *  300 px and is untouched here — its `find` carries `width: 300px` and this one does not. */
+const A26_16: Amendment = {
+  id: 'A26.16', date: '2026-09-11',
+  ruling: 'the panel takes the width of the trigger that opened it, so their edges line up',
+  find: 'top: 46px; z-index: 700; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;',
+  replace: 'top: 46px; z-index: 700; min-width: 100%; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;',
+  count: 2
 };
 
 export function amendments(): Amendment[] {
@@ -3106,7 +4267,39 @@ export function amendments(): Amendment[] {
     A19_1, A19_2, A19_3, A19_4, A19_5, A19_6, A19_7, A19_8, A19_9, A19_10, A19_11, A19_12,
     // A21 — market-data layers do not render absence as zero (A-C28); A21.2/A21.2b reverted (A-C29,
     // the figure is payroll); A21.3a–d take the year from the data instead of hard-coding 2015.
-    A21_1, A21_1b, A21_3a, A21_3b, A21_3c, A21_3d,
+    // A21.2b-e handle the panel rendering when figures are undefined (Task B10, D-C31).
+    A21_1, A21_1b, A21_2b, A21_2c, A21_2d, A21_2e, A21_2f, A21_2g, A21_2h, A21_3a, A21_3b, A21_3c, A21_3d, A21_2i, A21_2j, A21_2k, A21_2l,
+    // Task B10 (D-C31/D-C32, 2026-09-10). A21.1c is the root cause the entries above could not
+    // reach: `communities()` zeroed every absent figure, so every `!== undefined` guard was
+    // satisfied by a 0. A21.2m–A21.2p omit the three families of bars and the strip-card median
+    // that were drawn from those zeros; A21.4a–A21.4d put the design's own unavailable card on the
+    // panel; A21.5a–A21.5d name the area the figures describe when the API says it is not the
+    // listing's own community. A21.5c runs after A12.7, whose replace preserves its `find`.
+    A21_1c, A21_2m, A21_2n, A21_2o, A21_2p, A21_4a, A21_4b, A21_4c, A21_4d, A21_5a, A21_5b, A21_5c, A21_5d,
     // A22 — the ownership vocabulary widens to the seeds' own wording (2026-09-10, Task SL10).
-    A22];
+    A22,
+    // A23 — collapsing the Market data card closes both its menus (2026-09-10, Task MD1).
+    A23,
+    // A25 — a listing with no coordinates keeps its place and gets no pin (2026-09-10, Task MP1).
+    // A25.5 reads A21.4a's output, so the family is last. Definition order in this file matches
+    // this list (m8). A20 is reserved by the image-identifiability plan and A24 by the
+    // neighbourhood-shading spec, both in flight; A25 is the next free id in the ledger.
+    A25_1, A25_2, A25_3, A25_4, A25_5, A25_6,
+    // A26 — the Browse filter bar's native <select>s become in-design dropdowns (John,
+    // 2026-09-11), on A13's own idiom. Task F1 converts the five on the toolbar; A26.5-A26.7
+    // read A13.8's and A19's output in the three shared dismissal closures, and A26.8c/A26.8d
+    // read A14.2's, so the family is appended last as every family is. Definition order in
+    // this file matches this list (m8). A26.3 and A26.11 are Task F2 — the three inside the
+    // "More filters" popover, on the same idiom and the same state slot; A20 stays reserved by
+    // the image-identifiability plan and A24 by the neighbourhood-shading spec.
+    A26_1, A26_2, A26_3, A26_4, A26_5, A26_6, A26_7, A26_8a, A26_8b, A26_8c, A26_8d, A26_8e, A26_8f,
+    A26_9a, A26_9b, A26_9c, A26_10, A26_11,
+    // A26.12-A26.14 — the Q2 widening (controller ruling, 2026-09-11): John's own m7
+    // invariant, restored in the three directions that were never written. Each reads
+    // A26.8a/A26.8b/A26.8e's output, so all three run after the family's own entries.
+    A26_12, A26_13, A26_14, A26_15,
+    // A26.16 — the panel width (John, 2026-09-11, Task F1b): "the panel takes the width of the
+    // trigger that opened it, so their edges line up." Its `find` is A26.10's and A26.11's own
+    // output — the panel style string they share — so it is applied last, and once, for both.
+    A26_16];
 }

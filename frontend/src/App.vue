@@ -326,11 +326,22 @@
           </div>
           <div style="flex: 1; min-width: 12px;"></div>
           <template v-for="(fl, $index) in __arr(v.filters)" :key="$index">
-            <select :value="(fl?.value) ?? ''" @change="fl?.set" :style="fl?.style">
-              <template v-for="(o, $index) in __arr(fl?.options)" :key="$index">
-                <option :value="(o?.v) ?? ''"><span v-if="__s(o?.label) !== null" class="sc-interp">{{ __s(o?.label) }}</span></option>
+            <div :ref="fl?.hostRef" style="position: relative;">
+              <button @click="fl?.toggle" @keydown="fl?.keys" role="combobox" :aria-label="fl?.aria" aria-haspopup="listbox" :aria-controls="fl?.listId" :aria-expanded="fl?.open" :aria-activedescendant="fl?.activeId" :style="fl?.style">
+                <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><span v-if="__s(fl?.triggerLabel) !== null" class="sc-interp">{{ __s(fl?.triggerLabel) }}</span></span>
+                <img src="/assets/icons/sub-chevron.svg" alt width="14" height="14" :style="fl?.caretStyle">
+              </button>
+              <template v-if="fl?.open">
+                <div class="rf-scroll" role="listbox" :aria-label="fl?.aria" :id="fl?.listId" :ref="fl?.panelRef" style="position: absolute; left: 0; top: 46px; z-index: 700; min-width: 100%; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;">
+                  <template v-for="(o, $index) in __arr(fl?.options)" :key="$index">
+                    <button class="sch7" @click="o?.go" :id="o?.optId" role="option" tabindex="-1" :aria-selected="o?.selected" :style="o?.rowStyle">
+                      <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><span v-if="__s(o?.label) !== null" class="sc-interp">{{ __s(o?.label) }}</span></span>
+                      <img src="/assets/icons/sub-check-filled.svg" alt width="11" height="11" :style="o?.tickStyle">
+                    </button>
+                  </template>
+                </div>
               </template>
-            </select>
+            </div>
           </template>
           <div style="position: relative;">
             <button @click="v.toggleMore" :style="v.moreBtnStyle">
@@ -346,11 +357,22 @@
                   <template v-for="(mf, $index) in __arr(v.moreFilters)" :key="$index">
                     <label style="display: flex; flex-direction: column; gap: 5px;">
                       <span style="font-size: 12px; font-weight: 500; color: var(--vf-text);"><span v-if="__s(mf?.label) !== null" class="sc-interp">{{ __s(mf?.label) }}</span></span>
-                      <select :value="(mf?.value) ?? ''" @change="mf?.set" style="height: 38px; padding: 0 10px; font-size: 13px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">
-                        <template v-for="(o, $index) in __arr(mf?.options)" :key="$index">
-                          <option :value="(o?.v) ?? ''"><span v-if="__s(o?.label) !== null" class="sc-interp">{{ __s(o?.label) }}</span></option>
+                      <div :ref="mf?.hostRef" style="position: relative;">
+                        <button @click="mf?.toggle" @keydown="mf?.keys" role="combobox" :aria-label="mf?.label" aria-haspopup="listbox" :aria-controls="mf?.listId" :aria-expanded="mf?.open" :aria-activedescendant="mf?.activeId" style="display: inline-flex; align-items: center; gap: 8px; width: 100%; height: 38px; padding: 0 10px; font-size: 13px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">
+                          <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><span v-if="__s(mf?.triggerLabel) !== null" class="sc-interp">{{ __s(mf?.triggerLabel) }}</span></span>
+                          <img src="/assets/icons/sub-chevron.svg" alt width="14" height="14" :style="mf?.caretStyle">
+                        </button>
+                        <template v-if="mf?.open">
+                          <div class="rf-scroll" role="listbox" :aria-label="mf?.label" :id="mf?.listId" :ref="mf?.panelRef" style="position: absolute; left: 0; top: 46px; z-index: 700; min-width: 100%; padding: 4px; background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 8px; box-shadow: 0 6px 20px rgba(0,58,112,.16); max-height: 232px; overflow-y: auto;">
+                            <template v-for="(o, $index) in __arr(mf?.options)" :key="$index">
+                              <button class="sch7" @click="o?.go" :id="o?.optId" role="option" tabindex="-1" :aria-selected="o?.selected" :style="o?.rowStyle">
+                                <span style="flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;"><span v-if="__s(o?.label) !== null" class="sc-interp">{{ __s(o?.label) }}</span></span>
+                                <img src="/assets/icons/sub-check-filled.svg" alt width="11" height="11" :style="o?.tickStyle">
+                              </button>
+                            </template>
+                          </div>
                         </template>
-                      </select>
+                      </div>
                     </label>
                   </template>
                 </div>
@@ -689,7 +711,8 @@
 
               <template v-if="v.md?.panel?.isInsights">
                 <div style="padding: 16px;">
-                  <div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy);">Market Overview (10 min drive)</div>
+                  <template v-if="v.md?.panel?.hasDemo">
+                  <div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy);"><span v-if="__s(v.md?.panel?.overviewTitle) !== null" class="sc-interp">{{ __s(v.md?.panel?.overviewTitle) }}</span></div>
                   <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 9px;">
                     <template v-for="(o, $index) in __arr(v.md?.panel?.overviewTiles)" :key="$index">
                       <div style="padding: 9px 7px; border: 1px solid #e6e6e6; border-radius: 6px; text-align: center;">
@@ -744,10 +767,19 @@
                     </div>
                   </div>
 
+                  </template>
+                  <template v-if="v.md?.panel?.noDemo">
+                    <div style="padding: 22px; background: var(--color-off-white); border: 1px dashed var(--border-subtle); border-radius: 10px;">
+                      <div style="font-size: 14px; font-weight: 500; color: var(--color-navy);">Community data unavailable for this location</div>
+                      <p style="font-size: 13px; line-height: 1.6; color: #494949; margin: 6px 0 0; max-width: 60ch;">The Census geography for this address has not been matched yet. Everything else on this listing is seller-provided and unaffected.</p>
+                    </div>
+                  </template>
                   <button class="sch8" @click="v.md?.panel?.openListing" style="display: flex; align-items: center; justify-content: center; gap: 9px; width: 100%; height: 44px; margin-top: 16px; font-family: var(--rf-display); font-size: 13.5px; font-weight: 500; color: var(--vf-white); background: var(--vf-accent); border: 0; border-radius: 6px; cursor: pointer;">
                     View full listing<img src="/assets/icons/navigate-arrow.svg" alt width="12" height="12" style="transform: rotate(180deg); filter: brightness(0) invert(1);">
                   </button>
-                  <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">Drive-time figures are approximated from a straight-line catchment around the practice. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>
+                  <template v-if="v.md?.panel?.hasDemo">
+                    <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">Drive-time figures are approximated from a straight-line catchment around the practice. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>
+                  </template>
                 </div>
               </template>
 
@@ -923,7 +955,7 @@
                       </div>
                     </template>
                   </div>
-                  <p style="font-size: 12px; line-height: 1.6; color: var(--color-steel); margin: 14px 0 0;">Source: U.S. Census Bureau, American Community Survey 2023 5-year estimates (public domain, attribution requested). Figures describe the community around the practice, not the practice itself.</p>
+                  <p style="font-size: 12px; line-height: 1.6; color: var(--color-steel); margin: 14px 0 0;">Source: U.S. Census Bureau, American Community Survey 2023 5-year estimates (public domain, attribution requested). <span v-if="__s(v.d?.demoScope) !== null" class="sc-interp">{{ __s(v.d?.demoScope) }}</span></p>
                 </div>
               </template>
               <template v-if="v.d?.noDemo">

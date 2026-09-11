@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Component, P } from './logic.js';
+import { Component, ECON_K, MARKETS, P, VETS } from './logic.js';
 import { STEP_FIELDS, makeListingsAdapter } from './listings/seller';
 
 let c: any;
@@ -3298,5 +3298,1214 @@ describe('A19 — the photo lightbox', () => {
       }
       (P[0] as any).growth = originalGrowth;
     });
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A23 — collapsing the Market data card closes both its menus (John, 2026-09-10, Task MD1:
+// "the collapse widget top left expand/collapse is disconnected to the drop down").
+//
+// Exactly ONE of the card's two menus escaped the collapse, and it is the one John reported:
+// the layer menu's panel (App.vue:475-476) is `position: absolute; left: 16px; top: 118px;
+// z-index: 620` and sits OUTSIDE both of the card's `v-if="v.md?.legendOpen"` templates
+// (:382-410 and :413-472, the card div closing at :411), so nothing unmounted it. The
+// comparison listbox never floated: its panel (:434-435) is nested inside the second
+// `legendOpen` template in normal flow (`margin-top: 6px`) and has always unmounted with the
+// card. `mdCompareMenu` is cleared all the same, for a weaker and different reason — a menu
+// left open in state reappears already-open when the card is expanded again, which is its own
+// surprise.
+//
+// The one edit is `toggleLegend`'s single `setState`, and it clears UNCONDITIONALLY: the same
+// call runs on expand as on collapse. The four quadrants below — {menu open, menu closed} ×
+// {collapsing, expanding} — are one `it` each, because Vitest abandons an `it` at its first
+// failed expect and cases sharing an `it` are unreachable under any single mutation.
+// ---------------------------------------------------------------------------------------
+describe('A23 — the Market data card collapse closes its menus (Task MD1)', () => {
+  /** The card's own render values, read AFTER the state under test is in place: `toggleLegend`
+   *  closes over the `s` of the `renderVals()` call that produced it. */
+  const md = () => {
+    c.setState({ auth: true, screen: 'browse', mdValue: 'income' });
+    return c.renderVals().md;
+  };
+
+  // Quadrant 1 — a menu is open and the card is EXPANDED; collapsing must clear it. This is the
+  // defect John reported, and the layer menu is the one that actually floated.
+  it('both menus open, card expanded → collapsing clears both (A23, quadrant 1)', () => {
+    c.setState({ mdLegendOff: false, mdLayerMenu: true, mdCompareMenu: true });
+    md().toggleLegend();
+    expect(c.state).toMatchObject({ mdLegendOff: true, mdLayerMenu: false, mdCompareMenu: false });
+  });
+
+  it('only the layer menu open, card expanded → collapsing clears it (A23, quadrant 1)', () => {
+    c.setState({ mdLegendOff: false, mdLayerMenu: true, mdCompareMenu: false });
+    md().toggleLegend();
+    expect(c.state).toMatchObject({ mdLegendOff: true, mdLayerMenu: false, mdCompareMenu: false });
+  });
+
+  it('only the compare menu open, card expanded → collapsing clears it (A23, quadrant 1)', () => {
+    c.setState({ mdLegendOff: false, mdLayerMenu: false, mdCompareMenu: true });
+    md().toggleLegend();
+    expect(c.state).toMatchObject({ mdLegendOff: true, mdLayerMenu: false, mdCompareMenu: false });
+  });
+
+  // Quadrant 2 — both menus closed and the card COLLAPSED; expanding must not resurrect either.
+  it('both menus closed, card collapsed → expanding opens neither (A23, quadrant 2)', () => {
+    c.setState({ mdLegendOff: true, mdLayerMenu: false, mdCompareMenu: false });
+    md().toggleLegend();
+    expect(c.state).toMatchObject({ mdLegendOff: false, mdLayerMenu: false, mdCompareMenu: false });
+  });
+
+  // Quadrant 3 — a menu is open and the card is COLLAPSED; expanding must clear it too. Nothing
+  // else pins this: a narrower implementation that clears on collapse only —
+  // `mdLayerMenu: s.mdLegendOff === true ? s.mdLayerMenu : false` — passes every quadrant above.
+  // The clear is unconditional, and this is the case that says so.
+  it('a menu open, card collapsed → EXPANDING clears it as well: the clear is unconditional (A23, quadrant 3)', () => {
+    c.setState({ mdLegendOff: true, mdLayerMenu: true, mdCompareMenu: true });
+    md().toggleLegend();
+    expect(c.state).toMatchObject({ mdLegendOff: false, mdLayerMenu: false, mdCompareMenu: false });
+  });
+
+  // Quadrant 4 — both menus closed and the card EXPANDED; collapsing must not open either. The
+  // guard against `toggleLegend` copying `toggleLayerMenu`'s own idiom (logic.js:564,
+  // `mdLayerMenu: !s.mdLayerMenu`) instead of clearing.
+  it('both menus closed, card expanded → collapsing opens neither (A23, quadrant 4)', () => {
+    c.setState({ mdLegendOff: false, mdLayerMenu: false, mdCompareMenu: false });
+    md().toggleLegend();
+    expect(c.state).toMatchObject({ mdLegendOff: true, mdLayerMenu: false, mdCompareMenu: false });
+  });
+
+  // The design's own way of closing each menu, unchanged by A23 and characterised here so the
+  // amendment cannot quietly take it away. Note what is NOT here: neither menu has an Escape or
+  // an outside-click dismissal. `trackMenuDismiss` (logic.js:228-286) reads only `state.giveMenu`,
+  // `state.marketMenu` and `state.lightbox`, so A13's metro listbox and A14's Give menu have
+  // those affordances and these two do not. That gap is real, OUT OF SCOPE for A23 and owed a
+  // ruling from John — recorded at the end of the A-MD1 paragraph in
+  // docs/superpowers/plans/2026-09-08-metro-dropdown.md.
+  it('choosing a layer closes the layer menu (logic.js:580) — its only dismissal', () => {
+    const v = md();
+    v.toggleLayerMenu();
+    expect(c.state.mdLayerMenu).toBe(true);
+    c.renderVals().md.layerOptions[1].go();
+    expect(c.state.mdLayerMenu).toBe(false);
+  });
+
+  it('choosing a comparison metric closes the compare menu (logic.js:626) — its only dismissal', () => {
+    const v = md();
+    v.toggleCompareMenu();
+    expect(c.state.mdCompareMenu).toBe(true);
+    c.renderVals().md.compareOptions[1].go();
+    expect(c.state.mdCompareMenu).toBe(false);
+  });
+});
+
+// ------------------------------------------------------------------------------------------
+// Task B10 — the docked panel stops fabricating (D-C31), and the card says which area it
+// describes (D-C32).
+//
+// F-9: these cases live HERE, in the characterisation suite, and their fixtures are
+// `communities()`' OWN output rather than a hand-written object. The round before this one wrote
+// `{ pop: 100000, …, econ_k: 500 }` for its "full figures" case — `marketPanel` reads `c.econ`,
+// not `c.econ_k`, and never sees `pets` at all — so the "full" case exercised the same absent
+// branches the "empty" one did and could not tell them apart.
+//
+// F-8: every case asserts the CONTENT of what is rendered, not the absence of a substring. A
+// mutation probe on the previous round reverted all eleven guards one at a time and caught ten:
+// the three `oppTiles` survived, because with the guard removed they read `Median` / `Flat` /
+// `Lean` — no "undefined", no "NaN", and `on` false for all three, so every assertion still held.
+// `toEqual(['', '', ''])` on the labels is what catches it.
+// ------------------------------------------------------------------------------------------
+describe('A21 — a figure the API does not have renders as nothing, never as zero (Task B10)', () => {
+  const AUSTIN = 'Austin, TX';
+  const austin = () => (P as unknown as Record<string, unknown>[]).filter((x) => x.market === AUSTIN && x.status === 'published');
+
+  /** Run `body` with the four community strings and the two market-data figures REMOVED from
+   *  `targets` — which is exactly the row `GET /api/listings` serves for a listing the Census
+   *  cannot describe (six nulls, `community_label` null). Everything is put back afterwards, so
+   *  the fixtures the rest of this file characterises are untouched. */
+  function without(targets: Record<string, unknown>[], body: () => void): void {
+    const vets = VETS as unknown as Record<string, number>;
+    const econ = ECON_K as unknown as Record<string, number>;
+    const saved = targets.map((t) => ({
+      t, pop: t.pop, growth: t.growth, income: t.income, hh: t.hh,
+      v: vets[t.id as string], e: econ[t.id as string]
+    }));
+    for (const t of targets) {
+      t.pop = null; t.growth = null; t.income = null; t.hh = null;
+      delete vets[t.id as string];
+      delete econ[t.id as string];
+    }
+    try { body(); } finally {
+      for (const s of saved) {
+        s.t.pop = s.pop; s.t.growth = s.growth; s.t.income = s.income; s.t.hh = s.hh;
+        if (s.v !== undefined) vets[s.t.id as string] = s.v;
+        if (s.e !== undefined) econ[s.t.id as string] = s.e;
+      }
+    }
+  }
+
+  const commFor = (id: string) => c.communities().filter((x: any) => x.id === id)[0];
+  const panelFor = (listing: any) => c.marketPanel(listing, commFor(listing.id), c.communities(), AUSTIN);
+
+  // ---- F-1, the root cause -----------------------------------------------------------------
+
+  it('communities() yields undefined — not 0 — for every figure the API did not send (A21.1c)', () => {
+    const p = austin()[0];
+    without([p], () => {
+      const comm = commFor(p.id as string);
+      expect(comm).toMatchObject({ id: p.id, name: p.area });
+      for (const k of ['pop', 'hh', 'income', 'growth', 'pets', 'econ', 'vets']) {
+        expect(comm[k], `communities().${k} for a listing with no figures`).toBeUndefined();
+      }
+    });
+  });
+
+  it('…and keeps every figure it did send, parsed exactly as the design parsed it', () => {
+    const comm = commFor(austin()[0].id as string);
+    for (const k of ['pop', 'hh', 'income', 'growth', 'pets', 'econ', 'vets']) {
+      expect(typeof comm[k], `communities().${k} for a listing with figures`).toBe('number');
+    }
+    // The design's own arithmetic, unchanged: pets is 57 % of households, econ is thousands.
+    expect(comm.pets).toBe(Math.round(comm.hh * 0.57));
+  });
+
+  // ---- F-2/F-3/F-8, the panel's Insights tab -----------------------------------------------
+
+  it('the four overview tiles carry no value and no dangling unit (A21.2d, F-2)', () => {
+    const p = austin()[0];
+    without([p], () => {
+      expect(panelFor(p).overviewTiles).toEqual([
+        { v: undefined, k: 'Population', sub: undefined },
+        { v: undefined, k: 'Households', sub: 'ACS 5-year' },
+        { v: undefined, k: 'Median Income', sub: undefined },
+        { v: undefined, k: 'Est. Pet Households', sub: 'derived estimate' }
+      ]);
+    });
+  });
+
+  it('…and carry the design’s own values and sub-lines when the figures are there', () => {
+    const tiles = panelFor(austin()[0]).overviewTiles;
+    expect(tiles.map((t: any) => t.k)).toEqual(['Population', 'Households', 'Median Income', 'Est. Pet Households']);
+    for (const t of tiles) {
+      expect(typeof t.v).toBe('string');
+      expect(t.v).not.toContain('undefined');
+      expect(t.v).not.toContain('NaN');
+      expect(typeof t.sub).toBe('string');
+    }
+    expect(tiles[0].sub).toMatch(/^[+-]?\d+\.\d% \(5 yrs\)$/);
+    expect(tiles[2].sub).toMatch(/^[+-]?\d+% vs US$/);
+  });
+
+  it('the competition row shows no count, no ratio, no verdict and NO BARS (A21.2c/f/j/m, F-3)', () => {
+    const p = austin()[0];
+    without([p], () => {
+      const panel = panelFor(p);
+      expect(panel.compEstab).toBeUndefined();
+      expect(panel.compPer10k).toBeUndefined();
+      expect(panel.compLevel).toBeUndefined();
+      // Three bars painted at the floor are a reading, not an absence.
+      expect(panel.compBars).toEqual([]);
+    });
+  });
+
+  it('…and shows all three, with three bars, when the figures are there', () => {
+    const panel = panelFor(austin()[0]);
+    expect(panel.compEstab).toMatch(/^\d+$/);
+    expect(panel.compPer10k).toMatch(/^\d+\.\d$/);
+    expect(panel.compLevel).toMatch(/^(Low|Moderate|High) Competition$/);
+    expect(panel.compBars).toHaveLength(3);
+  });
+
+  // F-8's own case: the guard the mutation probe could not catch. With A21.2e reverted these
+  // three labels read 'Median', 'Flat' and 'Lean' — no "undefined", no "NaN", `on` false for all
+  // three — so only an assertion on the CONTENT fails.
+  it('the three opportunity tiles carry NO verdict — not "Median", not "Flat", not "Lean" (A21.2e)', () => {
+    const p = austin()[0];
+    without([p], () => {
+      const tiles = panelFor(p).oppTiles;
+      expect(tiles.map((t: any) => t.label)).toEqual(['', '', '']);
+      expect(tiles.map((t: any) => t.sub)).toEqual(['Affluence', 'Population Growth', 'Sector Payroll']);
+      // …and every one of them is drawn in the design's own "off" grey, not its navy.
+      expect(tiles.map((t: any) => t.labelStyle.includes('#8d99a6'))).toEqual([true, true, true]);
+    });
+  });
+
+  it('…and carry one of the design’s own verdicts when the figures are there', () => {
+    const tiles = panelFor(austin()[0]).oppTiles;
+    expect(tiles.map((t: any) => t.label)).toEqual([
+      expect.stringMatching(/^(High|Above avg\.|Median)$/),
+      expect.stringMatching(/^(Strong|Steady|Flat)$/),
+      expect.stringMatching(/^(Strong|Typical|Lean)$/)
+    ]);
+  });
+
+  it('the opportunity score is omitted entirely — a composite of unknowns is not a score (A21.2g/h/k/l)', () => {
+    const p = austin()[0];
+    without([p], () => {
+      const panel = panelFor(p);
+      expect(panel.score).toBeUndefined();
+      expect(panel.scoreLabel).toBeUndefined();
+      expect(panel.scoreRing).toBeUndefined();
+    });
+    const full = panelFor(austin()[0]);
+    expect(full.score).toMatch(/^\d+$/);
+    expect(full.scoreLabel).toMatch(/^(Attractive|Balanced|Challenging)$/);
+    expect(full.scoreRing).toContain('conic-gradient');
+  });
+
+  it('nothing the panel renders is ever "undefined", "NaN" or a zeroed figure', () => {
+    const p = austin()[0];
+    without([p], () => {
+      // The whole object, because these four can never be a static label of the design's own.
+      const rendered = JSON.stringify(panelFor(p));
+      for (const banned of ['undefined', 'NaN', '$0K', '0.0%', '% (5 yrs)', '% vs US']) {
+        expect(rendered, `the panel renders "${banned}" for a listing with no figures`).not.toContain(banned);
+      }
+    });
+  });
+
+  it('…and no verdict of any kind reaches a field the panel INTERPOLATES', () => {
+    const p = austin()[0];
+    without([p], () => {
+      const panel = panelFor(p);
+      // Exactly the fields `App.vue` renders as data on the Insights tab. Static labels — the
+      // tiles' `k`, the opportunity tiles' `sub`, the words "Median Income" among them — are not
+      // in this list, which is why the previous round's whole-object substring scan was both a
+      // false positive on "Median" and blind to the `oppTiles` verdicts it was written to catch.
+      const interpolated = [
+        ...panel.overviewTiles.flatMap((t: any) => [t.v, t.sub]),
+        ...panel.oppTiles.map((t: any) => t.label),
+        panel.compEstab, panel.compPer10k, panel.compLevel, panel.score, panel.scoreLabel
+      ].filter((x: unknown) => x !== undefined && x !== '');
+      // Two static sub-lines survive: they describe the SOURCE, not a figure.
+      expect(interpolated).toEqual(['ACS 5-year', 'derived estimate']);
+    });
+  });
+
+  // ---- F-4, the panel reaches the design's own unavailable card ----------------------------
+
+  it('the panel reaches the design’s own "Community data unavailable" card (A21.4a, A-C31 (2))', () => {
+    const p = austin()[0];
+    without([p], () => {
+      expect(panelFor(p).hasDemo).toBe(false);
+      expect(panelFor(p).noDemo).toBe(true);
+    });
+    expect(panelFor(austin()[0]).hasDemo).toBe(true);
+    expect(panelFor(austin()[0]).noDemo).toBe(false);
+  });
+
+  // ---- F-5, the card says which area it describes (D-C32) ----------------------------------
+
+  it('the panel’s Insights heading names the fallback area, and the design’s own wording otherwise (A21.5a)', () => {
+    const p = austin()[0];
+    expect(panelFor(p).overviewTitle).toBe('Market Overview (10 min drive)');
+    (p as any).communityLabel = 'Within 10 minutes of the practice';
+    try {
+      expect(panelFor(p).overviewTitle).toBe('Within 10 minutes of the practice');
+    } finally { delete (p as any).communityLabel; }
+  });
+
+  it('the detail’s Community Context names the fallback area in all three places (A21.5b/c/d)', () => {
+    const p = austin()[0];
+    c.setState({ auth: true, detailId: p.id });
+    const before = c.detail();
+    expect(before.demo[0].sub).toBe('Community, 2023');
+    expect(before.demo[3].sub).toBe('In the community');
+    expect(before.demoScope).toBe('Figures describe the community around the practice, not the practice itself.');
+
+    (p as any).communityLabel = 'Within 10 minutes of the practice';
+    try {
+      const after = c.detail();
+      expect(after.demo[0].sub).toBe('Within 10 minutes of the practice');
+      expect(after.demo[3].sub).toBe('Within 10 minutes of the practice');
+      expect(after.demoScope).toBe('Figures describe the area within 10 minutes of the practice, not the practice itself.');
+      // The Census attribution itself is legally load-bearing and is not part of this sentence.
+      expect(after.demoScope).not.toContain('Census');
+    } finally { delete (p as any).communityLabel; }
+  });
+
+  // ---- F-6, the Market data strip cards ----------------------------------------------------
+
+  it('a strip card whose metro has no figure keeps its title, source and link and shows no value (A21.2n/o)', () => {
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN });
+    without(austin(), () => {
+      const cards = c.renderVals().md.stripCards;
+      expect(cards.length).toBeGreaterThan(0);
+      for (const card of cards) {
+        expect(card.value, `${card.title} still prints a median of zeros`).toBeUndefined();
+        expect(card.bars, `${card.title} still draws bars from zeros`).toEqual([]);
+        expect(card.title.length).toBeGreaterThan(0);
+        expect(card.src.length).toBeGreaterThan(0);
+        expect(card.linkLabel.length).toBeGreaterThan(0);
+        expect(card.valueNote).toBe('metro median');
+      }
+    });
+  });
+
+  it('…and prints the metro median over the DEFINED values only when some are missing', () => {
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN });
+    const all = c.renderVals().md.stripCards;
+    const households = all.filter((x: any) => x.title === 'Households')[0];
+    const nine = austin();
+    // Drop the two lowest-household communities: a median over nine becomes a median over seven,
+    // and the old `num(raw)` coercion would instead have pushed two ZEROS to the bottom of the
+    // sort and moved the median the other way.
+    const byHh = nine.slice().sort((a, b) => Number(String(a.hh).replace(/[^0-9]/g, '')) - Number(String(b.hh).replace(/[^0-9]/g, '')));
+    without(byHh.slice(0, 2), () => {
+      const card = c.renderVals().md.stripCards.filter((x: any) => x.title === 'Households')[0];
+      expect(card.bars, 'one bar per community that HAS the figure').toHaveLength(7);
+      expect(card.value).not.toBe(households.value);
+      expect(card.value).not.toContain('0K0');
+    });
+  });
+
+  // ---- F-7, the Compare rows ---------------------------------------------------------------
+
+  it('a compare row for a community with no figure carries no bar (A21.2p)', () => {
+    c.setState({ auth: true, screen: 'browse', market: AUSTIN, mdValue: 'income', mdCompare: 'growth' });
+    const before = c.renderVals().md.compareRows;
+    expect(before.length).toBeGreaterThan(1);
+    for (const r of before) {
+      expect(r.aStyle).toContain('background:');
+      expect(r.bStyle).toContain('background:');
+    }
+    const p = austin()[0];
+    without([p], () => {
+      const rows = c.renderVals().md.compareRows;
+      const mine = rows.filter((r: any) => r.name === p.area)[0];
+      expect(mine.aStyle, 'a minimum-width bar drawn from a zero implies a lowest reading').toBeUndefined();
+      expect(mine.bStyle).toBeUndefined();
+      // …and every other row is untouched.
+      for (const r of rows.filter((x: any) => x.name !== p.area)) {
+        expect(r.aStyle).toContain('background:');
+        expect(r.bStyle).toContain('background:');
+      }
+    });
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// A25 — Task MP1. A published listing whose seller has not disclosed its location is served
+// `lat: null, lng: null` (`app/api/listings.py`'s `serialise`; `location_disclosed` defaults
+// FALSE in `migrations/016_listing.sql`, so the nulls are the default, not an edge case). It
+// reached `engine.marker([p.lat, p.lng], …)` unguarded, and Leaflet 1.9.4's `toLatLng` returns
+// `null` for `[null, null]` — the array branch is gated on `typeof a[0] !== 'object'` and
+// `typeof null === 'object'` — so `Marker._latlng` was null and `_setPos` read `.lat` off it.
+// One listing was enough: the `forEach` has no try/catch, so pin drawing stopped there for every
+// later listing, and the poisoned layer re-threw from inside Leaflet's own event loop on every
+// zoom pass.
+//
+// John's ruling: the listing KEEPS ITS PLACE in the results and does not get a pin. The four
+// production edits, each named on the case that fails without it:
+//   A25.1  `practices:` filters to listings with a finite point   (the pin list)
+//   A25.2  `driveCenter` falls back to the metro centre           (the second leg into Leaflet)
+//   A25.3  `communities:` filters the same way                    (the mosaic's own bbox)
+//   A25.6  `showDrive` takes the same test                        (fix round 1: A25.2 restored
+//          the else-branch, which made the drive-time ring paintable around the metro centre
+//          for a listing whose seller withheld the location — a false statement, not an
+//          omission. No point, no ring.)
+// -------------------------------------------------------------------------------------------
+describe('A25 — a listing with no coordinates keeps its place and gets no pin (Task MP1)', () => {
+  const AUSTIN = 'Austin, TX';
+  const austin = () => (P as unknown as Record<string, unknown>[]).filter((x) => x.market === AUSTIN && x.status === 'published');
+
+  /** Run `body` with `targets`' coordinates set to `lat`/`lng` — the row `GET /api/listings`
+   *  serves for a published listing whose location is undisclosed. Everything is put back
+   *  afterwards, so the fixtures the rest of this file characterises are untouched. */
+  function at(targets: Record<string, unknown>[], lat: unknown, lng: unknown, body: () => void): void {
+    const saved = targets.map((t) => ({ t, lat: t.lat, lng: t.lng }));
+    for (const t of targets) { t.lat = lat; t.lng = lng; }
+    try { body(); } finally { for (const s of saved) { s.t.lat = s.lat; s.t.lng = s.lng; } }
+  }
+
+  it('A25.1 — the pin list drops it, and the rail, the count and the order keep it', () => {
+    const p = austin()[0];
+    const before = c.marketVals(c.filtered());
+    at([p], null, null, () => {
+      const md = c.marketVals(c.filtered());
+      // The map skips it: not at [0, 0], not at the metro centre, not at all.
+      expect(md.practices.map((x: any) => x.id)).not.toContain(p.id);
+      expect(md.practices).toHaveLength(before.practices.length - 1);
+      for (const pin of md.practices) {
+        expect(Number.isFinite(pin.lat), `pin ${pin.id} carries a non-finite lat`).toBe(true);
+        expect(Number.isFinite(pin.lng), `pin ${pin.id} carries a non-finite lng`).toBe(true);
+      }
+      // …and the rail does not: same rows, same order, same count, same headline.
+      expect(md.mdResults.map((r: any) => r.name)).toEqual(before.mdResults.map((r: any) => r.name));
+      expect(md.mdHeadline).toBe(before.mdHeadline);
+      expect(md.showingLabel).toBe(before.showingLabel);
+    });
+  });
+
+  it('A25.1 — a NaN or an undefined point is skipped too, not only a null', () => {
+    const p = austin()[0];
+    for (const [lat, lng] of [[NaN, NaN], [undefined, undefined], [30.5, null]] as [unknown, unknown][]) {
+      at([p], lat, lng, () => {
+        expect(c.marketVals(c.filtered()).practices.map((x: any) => x.id)).not.toContain(p.id);
+      });
+    }
+  });
+
+  it('A25.2 — driveCenter falls back to the metro centre when the selection has no point', () => {
+    const p = austin()[0];
+    at([p], null, null, () => {
+      c.setState({ mdSel: p.id });
+      const md = c.marketVals(c.filtered());
+      expect(md.driveCenter).toEqual(MARKETS[AUSTIN].center);
+      expect(md.driveCenter).not.toEqual([null, null]);
+    });
+  });
+
+  it('A25.2 — …and is still the selection’s own point when it has one', () => {
+    const p = austin()[0];
+    c.setState({ mdSel: p.id });
+    expect(c.marketVals(c.filtered()).driveCenter).toEqual([p.lat, p.lng]);
+  });
+
+  it('A25.3 — the map’s community list drops it, so the mosaic bbox stays the metro’s', () => {
+    const p = austin()[0];
+    const before = c.marketVals(c.filtered());
+    const box = (comms: any[]) => [Math.min(...comms.map((x) => x.lat)), Math.max(...comms.map((x) => x.lat)),
+      Math.min(...comms.map((x) => x.lng)), Math.max(...comms.map((x) => x.lng))];
+    at([p], null, null, () => {
+      const md = c.marketVals(c.filtered());
+      expect(md.communities.map((x: any) => x.name)).not.toContain(p.area);
+      expect(md.communities).toHaveLength(before.communities.length - 1);
+      // `mosaicBbox` is Math.min/Math.max over these lats and lngs, and `null` coerces to 0:
+      // one unlocated community stretched the metro box to the equator and the prime meridian,
+      // which is 100 million mosaic cells — a hung tab, not a missing shape.
+      const [minLat, maxLat, minLng, maxLng] = box(md.communities);
+      expect(minLat).toBeGreaterThan(29); expect(maxLat).toBeLessThan(31);
+      expect(minLng).toBeLessThan(-97); expect(maxLng).toBeLessThan(-97);
+    });
+  });
+
+  it('A25.3 — …and the strip cards still count its figures, because a figure is not a point', () => {
+    const p = austin()[0];
+    const before = c.marketVals(c.filtered());
+    at([p], null, null, () => {
+      const md = c.marketVals(c.filtered());
+      // The premise, asserted rather than assumed (fix round 1, Minor-3): the MAP's list really
+      // did lose the unlocated community. Without this the case only discriminates because
+      // dropping one of nine values happens to move a median.
+      expect(md.communities.length, 'the map list did not shrink, so this control proves nothing')
+        .toBeLessThan(c.communities().length);
+      expect(md.stripCards.map((s: any) => s.value)).toEqual(before.stripCards.map((s: any) => s.value));
+    });
+  });
+
+  // Fix round 1, Important-1 (controller ruling, 2026-09-10: "no point, no ring"). `showDrive` is
+  // `!!sel` with no coordinate term, and `MarketMapView.vue:91` draws the C7 drive-time ring on
+  // `showDrive && driveCenter`. Before A25.2 that path threw inside `L.circle([null, null])` and
+  // no ring ever appeared; after it the else-branch became PAINTABLE, so selecting an unlocated
+  // listing drew a 16 km dashed "roughly ten minutes' drive" circle around the middle of Austin.
+  // That is worse than the missing pin it replaced: a missing pin omits, a ring centred on a
+  // place the practice is not ASSERTS something false. A25.6 gives `showDrive` the same
+  // finite-coordinate test the pin list uses.
+  it('A25.6 — no point, no ring: showDrive is false when the selection has no point', () => {
+    const p = austin()[0];
+    at([p], null, null, () => {
+      c.setState({ mdSel: p.id });
+      const md = c.marketVals(c.filtered());
+      expect(md.showDrive, 'a 16 km drive-time ring was painted around the metro centre').toBe(false);
+      // …and A25.2's fallback is still what it was: the ring is off, not aimed somewhere else.
+      expect(md.driveCenter).toEqual(MARKETS[AUSTIN].center);
+    });
+  });
+
+  it('A25.6 — …and a selection that HAS a point still gets its ring, on its own point', () => {
+    const p = austin()[0];
+    c.setState({ mdSel: p.id });
+    const md = c.marketVals(c.filtered());
+    expect(md.showDrive).toBe(true);
+    expect(md.driveCenter).toEqual([p.lat, p.lng]);
+  });
+
+  // ---- the two panel defects closed in the same task ---------------------------------------
+
+  it('A25.4 — the panel’s last-resort community renders nothing, never a zero (D-C31)', () => {
+    const sel = austin()[0];
+    // Reached with no community of its own AND an empty community list: the one place left in
+    // the panel where a zero stood in for an absence.
+    const panel = c.marketPanel(sel, null, [], AUSTIN);
+    expect(panel.overviewTiles).toEqual([
+      { v: undefined, k: 'Population', sub: undefined },
+      { v: undefined, k: 'Households', sub: 'ACS 5-year' },
+      { v: undefined, k: 'Median Income', sub: undefined },
+      { v: undefined, k: 'Est. Pet Households', sub: 'derived estimate' }
+    ]);
+    expect(panel.compEstab).toBeUndefined();
+    expect(panel.oppTiles.map((t: any) => t.label)).toEqual(['', '', '']);
+  });
+
+  it('A25.5 — the panel and the detail agree about p8, the design’s own unavailable fixture', () => {
+    const p8 = (P as unknown as Record<string, unknown>[]).filter((x) => x.id === 'p8')[0];
+    const comms = c.communities();
+    const panel = c.marketPanel(p8, comms.filter((x: any) => x.id === 'p8')[0], comms, AUSTIN);
+    c.setState({ detailId: 'p8' });
+    const detail = c.detail();
+    expect(detail.hasDemo, 'the design’s own fixture for "Community data unavailable"').toBe(false);
+    expect(panel.hasDemo, 'the panel showed a full profile for the listing whose detail says the data is unavailable').toBe(detail.hasDemo);
+    expect(panel.noDemo).toBe(detail.noDemo);
+  });
+
+  it('A25.5 — …and every other design fixture still shows its figures on both', () => {
+    const comms = c.communities();
+    for (const p of austin().filter((x) => x.id !== 'p8')) {
+      const panel = c.marketPanel(p, comms.filter((x: any) => x.id === p.id)[0], comms, AUSTIN);
+      expect(panel.hasDemo, `the panel hid ${p.id}'s figures`).toBe(true);
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A26 — the Browse filter bar's five native <select>s become in-design dropdowns (John,
+// 2026-09-11: "the dropdown 'more filters' is correct implementation while everything else on
+// the filter bar is implemented incorrectly and not using the site design, this must be
+// corrected"). The SECOND report about this toolbar row: the metro picker immediately to their
+// left was the first, fixed as A13, whose idiom this family reuses rather than inventing a
+// second one.
+//
+// Where A13 converted ONE control, A26 converts five in one `.map()` body, so the unit under
+// characterisation is the loop, not the instance: one state slot (`fMenu`/`fMenuAt`), one open
+// path, one set of closures, five instances. The cases below are A13's own
+// (logic.test.ts:2153-2573) applied to that shape, plus the two things multiplicity adds — that
+// a highlight can never paint on a sibling, and that opening one instance closes the others.
+// ---------------------------------------------------------------------------------------
+describe('A26 — the Browse filter dropdowns', () => {
+  const KEYS = ['type', 'price', 'revenue', 'doctors', 'building'];
+  // A13's own unconditional teardown (M4, review round 1): the cases here arm real `document`
+  // listeners through `componentDidMount`, and unmounting only on the happy path leaves one bound
+  // to a dead component for the rest of the FILE the moment an assertion fails.
+  afterEach(() => { c.componentWillUnmount(); });
+
+  const filters = () => c.renderVals().filters;
+  const byKey = (k: string) => filters()[KEYS.indexOf(k)];
+
+  it('the five toolbar filters are dropdowns, closed, each labelled and showing its own choice', () => {
+    const fl = filters();
+    expect(fl).toHaveLength(5);
+    expect(fl.map((f: any) => f.aria)).toEqual(['Practice type', 'Asking price', 'Gross revenue', 'Doctors', 'Property']);
+    expect(fl.map((f: any) => f.open)).toEqual([false, false, false, false, false]);
+    expect(fl.map((f: any) => f.triggerLabel)).toEqual([
+      'Practice type: Any', 'Asking price: Any', 'Gross revenue: Any', 'Doctors: Any', 'Property: Any'
+    ]);
+    expect(fl.map((f: any) => f.listId)).toEqual(KEYS.map((k) => `f-listbox-${k}`));
+    // A13's rule (V3 marketActiveId): a shut menu has no active descendant, and null is what
+    // both renderers omit the attribute for — a string would spell a dead id.
+    expect(fl.map((f: any) => f.activeId)).toEqual([null, null, null, null, null]);
+    expect(fl[0].caretStyle).toContain('rotate(0deg)');
+  });
+
+  it('the trigger reproduces the <select>\'s own box, plus only what a label and a chevron need', () => {
+    const style = filters()[0].style;
+    // Every declaration the <select> carried (V3 `filters[].style`), byte for byte…
+    expect(style).toContain('height: 40px; padding: 0 13px; font-size: 13px; font-weight: 500; color: var(--color-navy); background: var(--color-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;');
+    // …and the three the OS popup never needed because it drew its own arrow.
+    expect(style.startsWith('display: inline-flex; align-items: center; gap: 8px; ')).toBe(true);
+    // The chosen-value box is the design's own second state, unchanged.
+    c.setF('type')('Mixed');
+    expect(byKey('type').style).toContain('background: var(--rf-band)');
+    expect(byKey('type').style).toContain('border: 1px solid var(--color-blue)');
+  });
+
+  it('the trigger opens its own dropdown and seeds the highlight on the current choice', () => {
+    filters()[0].toggle();
+    expect(c.state).toMatchObject({ fMenu: 'type', fMenuAt: 0 });
+    const fl = byKey('type');
+    expect(fl.open).toBe(true);
+    expect(fl.caretStyle).toContain('rotate(180deg)');
+    expect(fl.activeId).toBe('f-opt-type-0');
+    expect(byKey('price').open, 'a sibling must not open with it').toBe(false);
+  });
+
+  it('the trigger closes it again (the design\'s own toggle contract)', () => {
+    filters()[0].toggle();
+    byKey('type').toggle();
+    expect(c.state).toMatchObject({ fMenu: null, fMenuAt: -1 });
+  });
+
+  it('one slot: opening a second dropdown closes the first, with nothing to forget', () => {
+    filters()[0].toggle();
+    byKey('revenue').toggle();
+    expect(c.state.fMenu).toBe('revenue');
+    expect(byKey('type').open).toBe(false);
+    expect(byKey('revenue').open).toBe(true);
+  });
+
+  it('the highlight is guarded by the key, so a stale index can never paint on a sibling', () => {
+    filters()[3].toggle();                     // Doctors, four options
+    c.setState({ fMenuAt: 3 });
+    expect(byKey('doctors').options[3].rowStyle).toContain('background: var(--vf-neutral)');
+    // The same index on a CLOSED sibling paints nothing — `hi` is keyed on fMenu, not on the index
+    expect(byKey('revenue').options[3].rowStyle).toContain('background: none');
+    expect(byKey('revenue').activeId).toBe(null);
+  });
+
+  it('the selected row is accented, the highlighted row takes the design\'s hover grey, the rest are plain', () => {
+    filters()[1].toggle();                     // Asking price
+    c.setState({ fMenuAt: 2 });
+    const rows = byKey('price').options;
+    expect(rows[0].rowStyle).toContain('background: var(--vf-accent-bg)');
+    expect(rows[0].rowStyle).toContain('font-weight: 800');
+    expect(rows[2].rowStyle).toContain('background: var(--vf-neutral)');
+    expect(rows[1].rowStyle).toContain('background: none');
+    expect(rows[0].tickStyle).toContain('opacity: 1');
+    expect(rows[1].tickStyle).toContain('opacity: 0');
+    expect(rows.map((r: any) => r.optId)).toEqual([0, 1, 2, 3, 4].map((i) => `f-opt-price-${i}`));
+  });
+
+  it('choosing an option produces exactly the transition the <select>\'s onChange did', () => {
+    vi.useFakeTimers();
+    filters()[1].toggle();
+    byKey('price').options[2].go();
+    expect(c.state.f).toMatchObject({ price: '500-1000' });
+    expect(c.state).toMatchObject({ loading: true, fMenu: null, fMenuAt: -1 });
+    vi.advanceTimersByTime(320);
+    expect(c.state.loading).toBe(false);
+    vi.useRealTimers();
+    // …and the trigger now says what the closed <select> would have displayed.
+    expect(byKey('price').triggerLabel).toBe('$500K – $1M');
+    expect(byKey('price').options[2].selected).toBe(true);
+    // the rail reads `f` — the contract the <select> had
+    expect(c.renderVals().resultHeadline).toBe(c.renderVals().resultHeadline);
+    expect(c.activeFilterCount()).toBe(1);
+  });
+
+  it('setF still accepts a change EVENT, so the design\'s own setter contract is untouched', () => {
+    c.setF('doctors')({ target: { value: '2' } });
+    expect(c.state.f.doctors).toBe('2');
+    expect(byKey('doctors').triggerLabel).toBe('2 or more');
+  });
+
+  it('ArrowDown opens a closed dropdown, then walks and wraps; ArrowUp wraps the other way', () => {
+    const key = (k: string) => { const e = { key: k, preventDefault: vi.fn() }; byKey('doctors').keys(e); return e; };
+    expect(key('ArrowDown').preventDefault).toHaveBeenCalled();
+    expect(c.state).toMatchObject({ fMenu: 'doctors', fMenuAt: 0 });
+    key('ArrowDown'); expect(c.state.fMenuAt).toBe(1);
+    key('ArrowDown'); key('ArrowDown'); key('ArrowDown'); expect(c.state.fMenuAt).toBe(0);
+    key('ArrowUp'); expect(c.state.fMenuAt).toBe(3);
+  });
+
+  it('Home and End jump to the ends, and do nothing while the dropdown is closed', () => {
+    const key = (k: string) => { const e = { key: k, preventDefault: vi.fn() }; byKey('type').keys(e); return e; };
+    expect(key('End').preventDefault).not.toHaveBeenCalled();
+    expect(c.state.fMenu).toBeFalsy();
+    byKey('type').toggle();
+    key('End'); expect(c.state.fMenuAt).toBe(5);
+    key('Home'); expect(c.state.fMenuAt).toBe(0);
+  });
+
+  it('Enter and Space choose the highlighted option; a closed dropdown leaves both to the button', () => {
+    const key = (k: string) => { const e = { key: k, preventDefault: vi.fn() }; byKey('building').keys(e); return e; };
+    expect(key('Enter').preventDefault).not.toHaveBeenCalled();   // closed: the native click opens it
+    expect(key('Tab').preventDefault).not.toHaveBeenCalled();     // an unhandled key is left alone
+    byKey('building').toggle();
+    key('ArrowDown');
+    expect(key('Enter').preventDefault).toHaveBeenCalled();
+    expect(c.state.f.building).toBe('Included');
+    // Reopening seeds the highlight on the option just chosen, so Space takes that one.
+    byKey('building').toggle();
+    expect(c.state.fMenuAt).toBe(1);
+    expect(key(' ').preventDefault).toHaveBeenCalled();
+    expect(c.state.f.building).toBe('Included');
+  });
+
+  it('Escape closes it; a keydown that is not Escape, and one while closed, do not', () => {
+    c.componentDidMount();
+    filters()[0].toggle();
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'a' }));
+    expect(c.state.fMenu).toBe('type');
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+    expect(c.state).toMatchObject({ fMenu: null, fMenuAt: -1 });
+    document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));  // no-op, and no throw
+    expect(c.state.fMenu).toBe(null);
+  });
+
+  it('a pointerdown outside closes it; one inside its own wrapper does not', () => {
+    const host = document.createElement('div');
+    const inside = document.createElement('button');
+    host.appendChild(inside);
+    document.body.appendChild(host);
+    try {
+      c.componentDidMount();
+      byKey('type').hostRef(host);
+      // A13's M3: a pointerdown while every dropdown is CLOSED takes the handler's early exit.
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.fMenu).toBeFalsy();
+      byKey('type').toggle();
+      inside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.fMenu).toBe('type');
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state).toMatchObject({ fMenu: null, fMenuAt: -1 });
+      // …and with no node recorded, an outside click still closes rather than throwing
+      byKey('type').hostRef(null);
+      byKey('type').toggle();
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.fMenu).toBe(null);
+    } finally {
+      host.remove();
+    }
+  });
+
+  it('Tab out closes it, and a window blur (null relatedTarget) does not', () => {
+    const host = document.createElement('div');
+    const inside = document.createElement('button');
+    const away = document.createElement('button');
+    host.appendChild(inside);
+    document.body.appendChild(host);
+    document.body.appendChild(away);
+    try {
+      c.componentDidMount();
+      byKey('price').hostRef(host);
+      byKey('price').toggle();
+      inside.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
+      expect(c.state.fMenu, 'a window blur dismisses nothing (A19/A-LB3)').toBe('price');
+      inside.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: inside }));
+      expect(c.state.fMenu, 'a move INSIDE the control is not a move out of it').toBe('price');
+      inside.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: away }));
+      expect(c.state).toMatchObject({ fMenu: null, fMenuAt: -1 });
+    } finally {
+      host.remove();
+      away.remove();
+    }
+  });
+
+  describe('focus returns to the trigger after a choice', () => {
+    const field = () => {
+      const host = document.createElement('div');
+      const trigger = document.createElement('button');
+      trigger.setAttribute('aria-haspopup', 'listbox');
+      host.appendChild(trigger);
+      document.body.appendChild(host);
+      return { host, spy: vi.spyOn(trigger, 'focus') };
+    };
+
+    it('after a mouse choice on an option row', () => {
+      const { host, spy } = field();
+      try {
+        byKey('revenue').hostRef(host);
+        byKey('revenue').toggle();
+        byKey('revenue').options[1].go();
+        expect(c.state.f.revenue).toBe('u1000');
+        expect(spy, 'the row it was on has just been unmounted').toHaveBeenCalled();
+      } finally {
+        host.remove();
+      }
+    });
+
+    it('after Enter on the keyboard', () => {
+      const { host, spy } = field();
+      try {
+        byKey('revenue').hostRef(host);
+        byKey('revenue').toggle();
+        byKey('revenue').keys({ key: 'ArrowDown', preventDefault: vi.fn() });
+        byKey('revenue').keys({ key: 'Enter', preventDefault: vi.fn() });
+        expect(c.state.f.revenue).toBe('u1000');
+        expect(spy).toHaveBeenCalled();
+      } finally {
+        host.remove();
+      }
+    });
+
+    it('and copes with no wrapper recorded, and with one that holds no trigger', () => {
+      byKey('revenue').options[2].go();                 // no ref yet — must not throw
+      expect(c.state.f.revenue).toBe('1000-2500');
+      const bare = document.createElement('div');
+      document.body.appendChild(bare);
+      try {
+        byKey('revenue').hostRef(bare);
+        byKey('revenue').options[3].go();
+        expect(c.state.f.revenue).toBe('o2500');
+      } finally {
+        bare.remove();
+      }
+    });
+  });
+
+  describe('the panel\'s own mount ref scrolls the highlight into view (A13/A14 C1)', () => {
+    it('spends the index the arrow keys seeded, which a setState callback could not', () => {
+      const host = document.createElement('div');
+      const row = document.createElement('button');
+      row.id = 'f-opt-type-3';
+      host.appendChild(row);
+      document.body.appendChild(host);
+      const spy = vi.fn();
+      (row as unknown as { scrollIntoView: unknown }).scrollIntoView = spy;
+      try {
+        byKey('type').hostRef(host);
+        byKey('type').keys({ key: 'ArrowDown', preventDefault: vi.fn() });
+        c.setState({ fMenuAt: 3 });
+        byKey('type').panelRef(host);
+        expect(spy).toHaveBeenCalledWith({ block: 'nearest' });
+      } finally {
+        host.remove();
+      }
+    });
+
+    it('and does nothing on unmount, on a row that cannot scroll, or with no wrapper', () => {
+      expect(() => byKey('type').panelRef(null)).not.toThrow();
+      const host = document.createElement('div');
+      const row = document.createElement('button');
+      row.id = 'f-opt-type-0';
+      host.appendChild(row);
+      document.body.appendChild(host);
+      try {
+        (row as unknown as { scrollIntoView: unknown }).scrollIntoView = undefined;
+        byKey('type').hostRef(host);
+        expect(() => byKey('type').panelRef(host)).not.toThrow();
+        byKey('type').hostRef(null);
+        expect(() => c.scrollFilterOption('type', 0)).not.toThrow();
+      } finally {
+        host.remove();
+      }
+    });
+  });
+
+  // ---------------------------------------------------------------------------------------
+  // The edges that cross the family boundary. Inside the family the invariant is structural
+  // (one slot), so only these need writing down.
+  // ---------------------------------------------------------------------------------------
+  describe('the cross-menu edges', () => {
+    it('opening a filter dropdown closes the four overlay menus m7 governs', () => {
+      c.setState({ navMenu: true, userMenu: true, giveMenu: true, marketMenu: true, marketMenuAt: 2 });
+      filters()[0].toggle();
+      expect(c.state).toMatchObject({
+        fMenu: 'type', navMenu: false, userMenu: false, giveMenu: false, marketMenu: false, marketMenuAt: -1
+      });
+    });
+
+    it('…and so does opening one with an arrow key, which is the family\'s SAME open path', () => {
+      c.setState({ giveMenu: true, marketMenu: true, marketMenuAt: 2 });
+      byKey('price').keys({ key: 'ArrowUp', preventDefault: vi.fn() });
+      expect(c.state).toMatchObject({ fMenu: 'price', giveMenu: false, marketMenu: false, marketMenuAt: -1 });
+    });
+
+    it('each of the six existing open paths closes an open filter dropdown', () => {
+      const v = () => c.renderVals();
+      const open = () => { filters()[0].toggle(); expect(c.state.fMenu).toBe('type'); };
+      for (const [name, fire] of [
+        ['toggleNavMenu', () => v().toggleNavMenu()],
+        ['toggleUserMenu', () => v().toggleUserMenu()],
+        ['toggleGiveMenu', () => v().toggleGiveMenu()],
+        ['the Give arrow-open', () => v().giveMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() })],
+        ['toggleMarketMenu', () => v().toggleMarketMenu()],
+        ['the metro arrow-open', () => v().marketMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() })]
+      ] as [string, () => void][]) {
+        c.setState({ navMenu: false, userMenu: false, giveMenu: false, marketMenu: false });
+        open();
+        fire();
+        expect(c.state, `${name} left a filter dropdown latched`).toMatchObject({ fMenu: null, fMenuAt: -1 });
+      }
+    });
+
+    it('the More-filters popover is the parent, not a peer: its toggle shuts a dropdown in both directions', () => {
+      filters()[0].toggle();
+      c.renderVals().toggleMore();                       // opening the popover shuts the toolbar dropdown
+      expect(c.state).toMatchObject({ moreFilters: true, fMenu: null, fMenuAt: -1 });
+      filters()[0].toggle();
+      c.renderVals().toggleMore();                       // and closing it cannot leave a child latched
+      expect(c.state).toMatchObject({ moreFilters: false, fMenu: null, fMenuAt: -1 });
+    });
+
+    it('navigating away cannot leave a dropdown latched, on any of go()\'s three arms', () => {
+      c.setState({ auth: false });
+      filters()[0].toggle();
+      c.go('browse')();                                   // arm 1: signed out
+      expect(c.state).toMatchObject({ screen: 'gate', fMenu: null, fMenuAt: -1 });
+      c.setState({ auth: true });
+      filters()[0].toggle();
+      c.go('browse')();                                   // arm 2: no wizard draft to save
+      expect(c.state).toMatchObject({ screen: 'browse', fMenu: null, fMenuAt: -1 });
+    });
+
+    it('…including go()\'s third arm, the one that saves a wizard step first', async () => {
+      const patch = vi.fn().mockResolvedValue({ assets: [] });
+      const w: any = new Component({ listings: { patch } });
+      w.setState({ auth: true, sellerView: 'wizard', editingId: 'L1', step: 2 });
+      w.renderVals().filters[0].toggle();
+      expect(w.state.fMenu).toBe('type');
+      await w.go('browse')();
+      expect(patch).toHaveBeenCalled();
+      expect(w.state).toMatchObject({ screen: 'browse', fMenu: null, fMenuAt: -1 });
+    });
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A26 Task F2 — the three dropdowns inside the "More filters" popover (A26.3, A26.11).
+//
+// John called "More filters" the CORRECT implementation, so his words do not reach the three
+// under it — the user's experience does. A native `<select>`'s popup is an operating-system
+// window and renders above the popover's own `z-index: 700`, so converting only the toolbar
+// five would have put the dark menu he photographed on top of his own exemplar, one click
+// deeper, rather than removed it.
+//
+// The same `.map()` shape, the same state slot and the same class members as the five: three
+// more instances, no new machinery. What is characterised here is only what multiplicity
+// ACROSS the two loops adds — that the eight keys are disjoint, so one slot still identifies
+// exactly one dropdown; that `value:`'s `|| "Any"` guard (which the toolbar's map body never
+// had, because `f` is seeded with the five toolbar keys and NOT with these three) survives
+// into the trigger's label; and that the popover is these three's PARENT rather than their
+// peer, so it closes them without them closing it.
+// ---------------------------------------------------------------------------------------
+describe('A26 (F2) — the three dropdowns inside "More filters"', () => {
+  const KEYS = ['est', 'ownership', 'sqft'];
+  // A13's own unconditional teardown (M4): these cases arm real `document` listeners through
+  // `componentDidMount`, and unmounting only on the happy path leaves one bound to a dead
+  // component for the rest of the file the moment an assertion fails.
+  afterEach(() => { c.componentWillUnmount(); });
+
+  const more = () => c.renderVals().moreFilters;
+  const byKey = (k: string) => more()[KEYS.indexOf(k)];
+  const filters = () => c.renderVals().filters;
+
+  it('the three are dropdowns, closed, each keeping the design\'s own caption as its label', () => {
+    const mf = more();
+    expect(mf).toHaveLength(3);
+    expect(mf.map((m: any) => m.label)).toEqual(['Year established', 'Ownership structure', 'Facility size']);
+    expect(mf.map((m: any) => m.open)).toEqual([false, false, false]);
+    expect(mf.map((m: any) => m.listId)).toEqual(KEYS.map((k) => `f-listbox-${k}`));
+    expect(mf.map((m: any) => m.activeId)).toEqual([null, null, null]);
+    expect(mf[0].caretStyle).toContain('rotate(0deg)');
+  });
+
+  it('the `|| "Any"` guard survives: `f` never seeds these three, and the trigger still reads the design\'s first option', () => {
+    // The design's own state literal carries the FIVE toolbar keys and none of these three, so
+    // `s.f.est` is undefined on first render. The `<select>`'s render value guarded that with
+    // `|| "Any"`; the trigger label is derived from the same guarded value, so an unset filter
+    // shows the design's own first option rather than a blank box.
+    expect(c.state.f.est).toBeUndefined();
+    expect(more().map((m: any) => m.triggerLabel)).toEqual(['Any year', 'Any structure', 'Any size']);
+    expect(more().map((m: any) => m.options[0].selected)).toEqual([true, true, true]);
+  });
+
+  it('the trigger opens its own dropdown and seeds the highlight on the current choice', () => {
+    c.setF('ownership')('Sole');
+    byKey('ownership').toggle();
+    expect(c.state).toMatchObject({ fMenu: 'ownership', fMenuAt: 1 });
+    expect(byKey('ownership').open).toBe(true);
+    expect(byKey('ownership').activeId).toBe('f-opt-ownership-1');
+    expect(byKey('ownership').caretStyle).toContain('rotate(180deg)');
+    expect(byKey('est').open, 'a sibling must not open with it').toBe(false);
+  });
+
+  it('ONE slot across BOTH loops: the eight keys are disjoint, so opening either closes the other', () => {
+    filters()[0].toggle();
+    expect(c.state.fMenu).toBe('type');
+    byKey('sqft').toggle();
+    expect(c.state.fMenu).toBe('sqft');
+    expect(filters()[0].open, 'a toolbar dropdown stayed open behind a popover one').toBe(false);
+    filters()[2].toggle();
+    expect(c.state.fMenu).toBe('revenue');
+    expect(byKey('sqft').open, 'a popover dropdown stayed open behind a toolbar one').toBe(false);
+  });
+
+  it('the highlight is guarded by the key here too, so a stale index cannot paint on a sibling', () => {
+    byKey('est').toggle();
+    c.setState({ fMenuAt: 2 });
+    expect(byKey('est').options[2].rowStyle).toContain('background: var(--vf-neutral)');
+    expect(byKey('sqft').options[2].rowStyle).toContain('background: none');
+    expect(byKey('sqft').activeId).toBe(null);
+  });
+
+  it('choosing an option produces exactly the transition the <select>\'s onChange did', () => {
+    vi.useFakeTimers();
+    byKey('est').toggle();
+    byKey('est').options[1].go();
+    expect(c.state.f).toMatchObject({ est: 'pre1995' });
+    expect(c.state).toMatchObject({ loading: true, fMenu: null, fMenuAt: -1 });
+    vi.advanceTimersByTime(320);
+    expect(c.state.loading).toBe(false);
+    vi.useRealTimers();
+    expect(byKey('est').triggerLabel).toBe('Before 1995');
+    expect(byKey('est').options[1].selected).toBe(true);
+    // …and the popover's own count pill, which reads the same three keys, has moved with it.
+    expect(c.renderVals().moreCount).toBe(1);
+    expect(c.renderVals().hasMoreCount).toBe(true);
+  });
+
+  it('the keyboard set is the toolbar\'s: arrows walk and wrap, Home/End jump, Enter chooses, and a closed one is left to the button', () => {
+    const key = (k: string) => { const e = { key: k, preventDefault: vi.fn() }; byKey('sqft').keys(e); return e; };
+    expect(key('Home').preventDefault, 'a closed dropdown leaves Home to the button').not.toHaveBeenCalled();
+    expect(key('ArrowDown').preventDefault).toHaveBeenCalled();
+    expect(c.state).toMatchObject({ fMenu: 'sqft', fMenuAt: 0 });
+    key('ArrowUp'); expect(c.state.fMenuAt, 'four options, wrapping backwards from the first').toBe(3);
+    key('ArrowDown'); expect(c.state.fMenuAt).toBe(0);
+    key('End'); expect(c.state.fMenuAt).toBe(3);
+    key('Home'); expect(c.state.fMenuAt).toBe(0);
+    key('ArrowDown');
+    expect(key('Enter').preventDefault).toHaveBeenCalled();
+    expect(c.state.f.sqft).toBe('u3000');
+  });
+
+  it('the three shared dismissal closures reach these three as well — no fourth listener', () => {
+    const host = document.createElement('div');
+    const inside = document.createElement('button');
+    const away = document.createElement('button');
+    host.appendChild(inside);
+    document.body.appendChild(host);
+    document.body.appendChild(away);
+    try {
+      c.componentDidMount();
+      byKey('ownership').hostRef(host);
+      byKey('ownership').toggle();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      expect(c.state, 'Escape (A26.6)').toMatchObject({ fMenu: null, fMenuAt: -1 });
+      byKey('ownership').toggle();
+      inside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.fMenu, 'a pointerdown INSIDE its own wrapper is not outside it').toBe('ownership');
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state, 'outside click (A26.5)').toMatchObject({ fMenu: null, fMenuAt: -1 });
+      byKey('ownership').toggle();
+      inside.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
+      expect(c.state.fMenu, 'a window blur dismisses nothing (A19/A-LB3)').toBe('ownership');
+      inside.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: away }));
+      expect(c.state, 'Tab out (A26.7)').toMatchObject({ fMenu: null, fMenuAt: -1 });
+    } finally {
+      host.remove();
+      away.remove();
+    }
+  });
+
+  it('focus returns to the trigger after a choice, through this instance\'s own wrapper', () => {
+    const host = document.createElement('div');
+    const trigger = document.createElement('button');
+    trigger.setAttribute('aria-haspopup', 'listbox');
+    host.appendChild(trigger);
+    document.body.appendChild(host);
+    const spy = vi.spyOn(trigger, 'focus');
+    try {
+      byKey('sqft').hostRef(host);
+      byKey('sqft').toggle();
+      byKey('sqft').options[2].go();
+      expect(c.state.f.sqft).toBe('3000-5000');
+      expect(spy, 'the row it was on has just been unmounted').toHaveBeenCalled();
+    } finally {
+      host.remove();
+    }
+  });
+
+  it('the panel\'s own mount ref scrolls the highlight into view for these three too (A13/A14 C1)', () => {
+    const host = document.createElement('div');
+    const row = document.createElement('button');
+    row.id = 'f-opt-est-2';
+    host.appendChild(row);
+    document.body.appendChild(host);
+    const spy = vi.fn();
+    (row as unknown as { scrollIntoView: unknown }).scrollIntoView = spy;
+    try {
+      byKey('est').hostRef(host);
+      byKey('est').keys({ key: 'ArrowDown', preventDefault: vi.fn() });
+      c.setState({ fMenuAt: 2 });
+      byKey('est').panelRef(host);
+      expect(spy).toHaveBeenCalledWith({ block: 'nearest' });
+    } finally {
+      host.remove();
+    }
+  });
+
+  it('opening one of the three closes the four overlay menus, and leaves its own parent popover open', () => {
+    c.renderVals().toggleMore();
+    expect(c.state.moreFilters).toBe(true);
+    c.setState({ navMenu: true, userMenu: true, giveMenu: true, marketMenu: true, marketMenuAt: 2 });
+    byKey('est').toggle();
+    expect(c.state).toMatchObject({
+      fMenu: 'est', navMenu: false, userMenu: false, giveMenu: false, marketMenu: false, marketMenuAt: -1
+    });
+    expect(c.state.moreFilters, 'the popover is the PARENT of this dropdown, not a peer').toBe(true);
+  });
+
+  it('closing the popover cannot leave a child latched behind an unmounted parent (A26.4)', () => {
+    c.renderVals().toggleMore();
+    byKey('ownership').toggle();
+    expect(c.state).toMatchObject({ moreFilters: true, fMenu: 'ownership' });
+    c.renderVals().toggleMore();
+    expect(c.state).toMatchObject({ moreFilters: false, fMenu: null, fMenuAt: -1 });
+  });
+
+  it('navigating away cannot leave one of the three latched either (A26.9)', () => {
+    c.setState({ auth: true });
+    byKey('sqft').toggle();
+    c.go('browse')();
+    expect(c.state).toMatchObject({ screen: 'browse', fMenu: null, fMenuAt: -1 });
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A26.12–A26.14 — John's 2026-09-08 m7 ruling, restored (controller ruling on the A26 plan's
+// Q2, 2026-09-11): "opening any one of the four menus closes the other three."
+//
+// Three of the twelve ordered directions among the four were never written. Give's own six
+// were, which is why the gap survived a final review: Give and the metro listbox also carry
+// global pointerdown/focusout dismissal, so their pointer paths were covered by accident,
+// while `navMenu` and `userMenu` have no outside-click, Escape or Tab dismissal of any kind
+// (D-F2 — reported, and deliberately NOT built here). Two mouse clicks reached the defect:
+// open the account menu, click the metro trigger, and both stand open.
+//
+// The case below is exhaustive rather than three regression cases, because "at most one" is
+// the invariant and enumerating the pairs is the only way to say so. A26's own five are proved
+// by their `describe` above; this is the four the ruling names.
+// ---------------------------------------------------------------------------------------
+describe('A26 (Q2) — opening any one of the four menus closes the other three (m7, restored)', () => {
+  afterEach(() => { c.componentWillUnmount(); });
+
+  /** The four m7 menus, each with its own open path and its own "is it open" reader. The metro
+   *  and Give each have a SECOND open path (the arrow keys), and both are included: A14's own
+   *  m7 fix had to cover both of Give's, so the same is asked of the other three. */
+  const MENUS: [string, (v: any) => void, (s: any) => boolean][] = [
+    ['nav', (v) => v.toggleNavMenu(), (s) => !!s.navMenu],
+    ['account', (v) => v.toggleUserMenu(), (s) => !!s.userMenu],
+    ['Give (click)', (v) => v.toggleGiveMenu(), (s) => !!s.giveMenu],
+    ['Give (arrow)', (v) => v.giveMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() }), (s) => !!s.giveMenu],
+    ['metro (click)', (v) => v.toggleMarketMenu(), (s) => !!s.marketMenu],
+    ['metro (arrow)', (v) => v.marketMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() }), (s) => !!s.marketMenu]
+  ];
+
+  it('every ordered pair of open paths leaves exactly one menu open', () => {
+    const menuOf = (n: string) => n.replace(/ \(.*\)$/, '');
+    let pairs = 0;
+    for (const [firstName, openFirst, firstIsOpen] of MENUS) {
+      for (const [secondName, openSecond, secondIsOpen] of MENUS) {
+        // Same menu twice is the design's own TOGGLE contract, not a cross-close: the second
+        // click shuts it, and the arrow keys on an already-open menu only move the highlight.
+        if (menuOf(firstName) === menuOf(secondName)) continue;
+        pairs++;
+        c = new Component({});
+        openFirst(c.renderVals());
+        expect(firstIsOpen(c.state), `${firstName} did not open`).toBe(true);
+        openSecond(c.renderVals());
+        expect(secondIsOpen(c.state), `${secondName} did not open after ${firstName}`).toBe(true);
+        const open = MENUS.filter(([, , isOpen]) => isOpen(c.state)).map(([n]) => n);
+        // Give's two paths and the metro's two each read the same flag, so "one menu open" is
+        // "at most two NAMES open, and both of them the same menu".
+        const distinct = new Set(open.map((n) => n.replace(/ \(.*\)$/, '')));
+        expect([...distinct], `${firstName} then ${secondName}: more than one menu is open`).toHaveLength(1);
+      }
+    }
+    // Not a vacuous pass: six open paths over four menus (nav 1, account 1, Give 2, metro 2),
+    // every ordered pair whose two paths belong to different menus — 26 of the 36.
+    expect(pairs, 'the pair enumeration stopped matching').toBe(26);
+  });
+
+  it('and the highlight goes with the menu it belonged to, never left behind', () => {
+    c.renderVals().toggleMarketMenu();
+    expect(c.state.marketMenuAt).toBe(0);
+    c.renderVals().toggleUserMenu();
+    expect(c.state, 'A26.13').toMatchObject({ userMenu: true, marketMenu: false, marketMenuAt: -1 });
+    c.renderVals().toggleMarketMenu();
+    c.renderVals().toggleNavMenu();
+    expect(c.state, 'A26.12').toMatchObject({ navMenu: true, marketMenu: false, marketMenuAt: -1 });
+  });
+
+  it('the two directions John\'s ruling named, each reachable with two mouse clicks', () => {
+    // The account menu, then the metro trigger (the A26 ruling's section 8, verbatim).
+    c.renderVals().toggleUserMenu();
+    c.renderVals().toggleMarketMenu();
+    expect(c.state, 'A26.14: the metro trigger left the account menu open').toMatchObject({ marketMenu: true, userMenu: false });
+    // The collapsed-header nav menu, then the metro trigger — the same, at header-1000.
+    c = new Component({});
+    c.renderVals().toggleNavMenu();
+    c.renderVals().toggleMarketMenu();
+    expect(c.state, 'A26.14: the metro trigger left the nav menu open').toMatchObject({ marketMenu: true, navMenu: false });
   });
 });

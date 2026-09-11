@@ -47,4 +47,56 @@ export function writeManifest() {
   writeFileSync(MANIFEST_PATH, `${JSON.stringify({ platform: process.platform, screens: hashBaselines() }, null, 2)}\n`);
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) writeManifest();
+/** Which screens hash differently from what the manifest recorded, in manifest order. */
+export function compare(recorded, actual) {
+  const moved = Object.keys(recorded).filter((name) => recorded[name] !== actual[name]);
+  return { ok: moved.length === 0, moved };
+}
+
+/**
+ * What an invocation MEANS, separated from doing it so it can be tested without a subprocess.
+ *
+ * This function exists because of a real defect (2026-09-11, found by Task 1 of the
+ * neighbourhood-shading plan): there was no argument parsing here at all, so
+ * `node tests/baseline-manifest.mjs --check` ignored the flag, rewrote the manifest and exited
+ * 0. A step that ran `--check` and then the vitest guard was comparing the manifest against the
+ * very PNGs it had just been written from, so a screen a code change had genuinely moved
+ * reported green. The manifest is the leak detector for the thirteen screens the design must
+ * not move; a flag that silently re-pins it defeats the only thing it does.
+ *
+ * An unrecognised argument REFUSES rather than falling through to a write, because falling
+ * through to a write is exactly how the defect behaved.
+ */
+export function route(argv) {
+  if (argv.length === 0) return { writes: true };
+  if (argv.length === 1 && argv[0] === '--write') return { writes: true };
+  if (argv.length === 1 && argv[0] === '--check') return { writes: false };
+  throw new Error(
+    `baseline-manifest: unknown argument ${JSON.stringify(argv.join(' '))} — use --check to compare, ` +
+    '--write (or no argument) to re-pin under a ruling'
+  );
+}
+
+/** Returns the process exit code; never writes under `--check`. */
+export function main(argv) {
+  const { writes } = route(argv);
+  if (writes) {
+    writeManifest();
+    return 0;
+  }
+  const recorded = JSON.parse(readFileSync(MANIFEST_PATH, 'utf8'));
+  if (recorded.platform !== process.platform) {
+    process.stderr.write(`baseline-manifest: pinned on ${recorded.platform}, this run is ${process.platform} — cannot compare\n`);
+    return 2;
+  }
+  const { ok, moved } = compare(recorded.screens, hashBaselines());
+  if (ok) {
+    process.stdout.write(`baseline-manifest: ${Object.keys(recorded.screens).length} frozen screens checked, none moved\n`);
+    return 0;
+  }
+  process.stderr.write(`baseline-manifest: MOVED — ${moved.join(', ')}\n`);
+  process.stderr.write('A moved hash means a CODE change moved a screen the design did not. Stop and diff; never re-pin to make a gate pass.\n');
+  return 1;
+}
+
+if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) process.exit(main(process.argv.slice(2)));

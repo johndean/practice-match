@@ -56,6 +56,14 @@ const SHEET = 'div[style*="z-index: 700"]';
 // comes FIRST in the DOM and would otherwise be what `.first()` clicked. It is the only one of
 // the three with an `aria-label` (V3: `aria-label="Metro area"`), so `:not([aria-label])` leaves
 // exactly the layer select and, once Compare is open, its identical control — in that order.
+//
+// A26 (John, 2026-09-11) put FIVE more listbox triggers on this same toolbar row, all of them
+// ahead of these two in the DOM, so the exclusion is now load-bearing rather than incidental:
+// every one of the five carries an `aria-label` (the design's own filter name, taken from its
+// first option), which is what keeps `.first()` on the layer select and `.nth(1)` on Compare's.
+// `design-amendments.test.ts` asserts that directly — of every `aria-haspopup="listbox"` button
+// in the amended design, exactly the Market data card's two are unlabelled — so an unlabelled
+// trigger added later fails there rather than silently re-pointing these two states.
 const layerTrigger = (p: Page) => p.locator('button[aria-haspopup="listbox"]:not([aria-label])');
 
 // ---------------------------------------------------------------------------------------
@@ -145,10 +153,13 @@ export const SCREENS: Screen[] = [
   // and the six-row bar chart. Picking the metric that already shades the map would reset the
   // comparison (no self-compare), so pick the second option — the menu's first row is
   // "Choose a metric…" (logic.js `compareOptions`). The option lookup is scoped to the
-  // compare menu's own listbox: Browse's native <select>s (filters, sort) own the `option` role
-  // too and come first in the DOM — as would A13's metro listbox, were it open — so an unscoped
-  // getByRole('option') resolves to a collapsed <select>'s hidden child on BOTH targets and never
-  // clicks. (The metro control is no longer one of them: A13 replaced that <select>.)
+  // compare menu's own listbox: the results-rail sort <select> owns the `option` role too and an
+  // unscoped getByRole('option') would resolve to its hidden child on BOTH targets and never
+  // click. (Neither the metro control nor the five toolbar filters are among them any more —
+  // A13 replaced that <select> and A26 replaced theirs; their rows are role="option" BUTTONS
+  // inside panels that are unmounted while closed. The scoping stays for the sort control, which
+  // stays native until it is both converted and wired — John's 2026-09-11 ruling on D-F1 — and
+  // because addressing a listbox's own rows through its listbox is right regardless.)
   { name: 'browse-compare-open', steps: async (p) => { await browse(p); await click(p, 'Compare'); await layerTrigger(p).nth(1).click(); await p.getByRole('listbox', { name: 'Comparison layer' }).getByRole('option').nth(1).click(); await p.waitForTimeout(400); } },
   // C8: the merged legend/insight card is dismissible.
   { name: 'browse-legend-collapsed', steps: async (p) => { await browse(p); await p.getByRole('button', { name: 'Dismiss interpretation' }).click(); await p.getByRole('button', { name: 'Dismiss interpretation' }).waitFor({ state: 'detached' }); await p.waitForTimeout(400); } },
@@ -371,7 +382,39 @@ export const SCREENS: Screen[] = [
   // A16.11's `startMyListings`; the app is answered a real, EMPTY page by `reach`'s own route,
   // over the design's own four rows that `prepare()` answers every other state with (A-SL23 (2)).
   // ---------------------------------------------------------------------------------------
-  { name: 'seller-dash-empty', steps: async (p) => { await reach(p, { screen: 'seller', myListings: [] }); } }
+  { name: 'seller-dash-empty', steps: async (p) => { await reach(p, { screen: 'seller', myListings: [] }); } },
+  // A26: one toolbar filter dropdown, open — the 50th approved state, APPENDED for the reason
+  // A13's, A14's and A19's were (`cross-plan-deltas.test.ts`'s `SCREENS.slice(0, 28)` pins the 28
+  // Browse V3 states to their positions; a new state goes on the end, never in the middle).
+  //
+  // ONE capture, not five. The five triggers are one `.map()` body over one set of render values,
+  // so five screenshots of an open panel would prove the same thing five times; the CLOSED
+  // triggers are photographed by every Browse state already. Practice type is the first of the
+  // five and the widest panel of them. Reached exactly as `browse-metro-menu` is — click, wait
+  // for the thing the state exists to show, then the 400 ms settle every Browse state was taken
+  // with — and addressed as a COMBOBOX, not a button, for A13's own reason (ARIA 1.2 supports
+  // `aria-activedescendant` on `combobox`; `button` is not among the roles that carry it).
+  { name: 'browse-filter-menu', steps: async (p) => { await browse(p); await p.getByRole('combobox', { name: 'Practice type' }).click(); await p.getByRole('listbox', { name: 'Practice type' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
+  // A26 Task F2 — the "More filters" popover, which had NO approved state of any kind before
+  // this: nothing in this file had ever clicked it, so the three `<select>`s under it appeared
+  // in no baseline PNG and in no DOM snapshot. That is why converting them moves not one
+  // committed pixel — and it is also the gap these two states close, because a ruled UI change
+  // with no oracle is a change nothing can regress against.
+  //
+  // TWO captures, and they are different things. The first is the popover with its three
+  // converted triggers CLOSED — the state the design has always had and nobody had ever
+  // photographed. The second is one of them OPEN, which is the state John's ruling is about: it
+  // is the proof that a panel inside a `z-index: 700` popover is now drawn by the page, where a
+  // native popup is an operating-system window and rendered above it. One capture per `.map()`
+  // body (the ruling's §4), so one of the three, not three.
+  //
+  // "Year established" is the FIRST of the three, so its panel opens over its two siblings
+  // rather than past the popover's own bottom edge. Addressed as a COMBOBOX for A13's own reason
+  // (ARIA 1.2 supports `aria-activedescendant` on `combobox`; `button` is not among the roles
+  // that carry it), and named by the caption the popover already shows — a `<label>` does not
+  // name a `<button>`, so A26.11 spells that caption again as the trigger's `aria-label`.
+  { name: 'browse-more-filters', steps: async (p) => { await browse(p); await click(p, 'More filters'); await p.getByRole('combobox', { name: 'Year established' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
+  { name: 'browse-more-filters-menu', steps: async (p) => { await browse(p); await click(p, 'More filters'); await p.getByRole('combobox', { name: 'Year established' }).click(); await p.getByRole('listbox', { name: 'Year established' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
 ];
 
 /**
