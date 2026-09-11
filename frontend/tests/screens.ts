@@ -415,6 +415,36 @@ export const SCREENS: Screen[] = [
   // name a `<button>`, so A26.11 spells that caption again as the trigger's `aria-label`.
   { name: 'browse-more-filters', steps: async (p) => { await browse(p); await click(p, 'More filters'); await p.getByRole('combobox', { name: 'Year established' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
   { name: 'browse-more-filters-menu', steps: async (p) => { await browse(p); await click(p, 'More filters'); await p.getByRole('combobox', { name: 'Year established' }).click(); await p.getByRole('listbox', { name: 'Year established' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
+  // A29 (defect D-F1) — the results-rail sort control, converted AND wired. TWO captures, and
+  // they are different things.
+  //
+  // The first is the panel OPEN, which is the conversion: this control's `<select>` opened the
+  // operating system's own dark popup, a window Chromium does not paint into a screenshot at
+  // all, so the state that mattered most about it could not be photographed. Its panel is the
+  // only one on Browse anchored `right: 0` — it sits at the right edge of a `space-between` row
+  // inside the rail's own `overflow-y: auto` scroller — and no other state shows it.
+  //
+  // The second is the wiring, and it is the state this project has twice this week shipped
+  // without: a ruled change to what a member SEES, with no oracle to regress it against. Nothing
+  // in this file had ever chosen a sort, because until now choosing one did nothing.
+  { name: 'browse-sort-menu', steps: async (p) => { await browse(p); await p.getByRole('combobox', { name: 'Sort results' }).click(); await p.getByRole('listbox', { name: 'Sort results' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
+  { name: 'browse-sorted', steps: async (p) => {
+    await browse(p);
+    await p.getByRole('combobox', { name: 'Sort results' }).click();
+    await p.getByRole('option', { name: 'Price: low to high' }).click();
+    // The thing the state exists to SHOW, waited for on both targets before the settle (review
+    // M9): not merely that the trigger's label changed, but that the RAIL took the order. The
+    // design's own nine Austin fixtures put Georgetown cheapest ($610K) and Cedar Park fifth
+    // ($1.45M) — source order has Cedar Park first — so a comparator that did nothing, or one
+    // reversed, leaves them the other way round and this never resolves.
+    await p.waitForFunction(() => {
+      const rail = document.querySelector('div.rf-scroll[style*="max-width: 470px"]');
+      const text = rail ? rail.textContent || '' : '';
+      const at = (s: string) => text.indexOf(s);
+      return at('Georgetown') > -1 && at('Cedar Park') > -1 && at('Georgetown') < at('Cedar Park');
+    });
+    await p.waitForTimeout(400);
+  } },
 ];
 
 /**

@@ -4509,3 +4509,430 @@ describe('A26 (Q2) — opening any one of the four menus closes the other three 
     expect(c.state, 'A26.14: the metro trigger left the nav menu open').toMatchObject({ marketMenu: true, navMenu: false });
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A29 — the results-rail sort control (defect D-F1; John, 2026-09-11: "Make it actually sort").
+//
+// The ninth and last native <select> on Browse, and the only one that was BROKEN as well as
+// out-of-design: it displayed an order the list never took. A13 left it native (its Q1) and
+// A26's ruling kept it out on the same words, "because it must be WIRED as well as converted".
+// This is that change, so it has two halves and they are tested as two.
+//
+// PART 1, the conversion, is A26's own machinery used a THIRD time rather than a second idiom:
+// one state slot (`fMenu`/`fMenuAt`), one open path (`openFilterMenu`), one set of dismissal
+// closures. "sort" is disjoint from the eight filter keys, so the slot still names exactly one
+// open dropdown on Browse and every cross-menu edge A26 wrote already covers it — which is why
+// the pair enumeration below can be widened without a single new cross-close line.
+//
+// PART 2, the wiring, is `sortResults`, applied once where `renderVals()` produces the list.
+// The three option LABELS are the design's own <option> text, verbatim and in its own order.
+// ---------------------------------------------------------------------------------------
+describe('A29 — the results-rail sort control (D-F1)', () => {
+  afterEach(() => { c.componentWillUnmount(); });
+
+  const sort = () => c.renderVals().md.sort;
+  const railIds = () => c.renderVals().md.mdResults.map((r: any) => r.id);
+  const ids = (p: any[]) => p.map((x) => x.id);
+
+  // The design's own fixture, read rather than retyped: nine published Austin practices, in the
+  // order the array declares them, which is the order the API also serves (ORDER BY listed_at
+  // DESC, id DESC — app/api/listings.py).
+  const SOURCE = ids(P.filter((p: any) => p.status === 'published' && p.market === 'Austin, TX'));
+  const BY_PRICE = ids([...P].filter((p: any) => p.status === 'published').sort((a: any, b: any) => a.price - b.price));
+  const BY_REV = ids([...P].filter((p: any) => p.status === 'published').sort((a: any, b: any) => b.rev - a.rev));
+
+  it('the option list is the design\'s own three <option> labels, in the design\'s own order', () => {
+    expect(sort().options.map((o: any) => o.label)).toEqual([
+      'Newest first', 'Price: low to high', 'Revenue: high to low'
+    ]);
+    // Nothing was invented beside them: three options, no fourth.
+    expect(sort().options).toHaveLength(3);
+  });
+
+  it('the closed trigger shows the design\'s own first option, as a <select> with no value did', () => {
+    const v = sort();
+    expect(v.open).toBe(false);
+    expect(v.triggerLabel).toBe('Newest first');
+    expect(v.aria).toBe('Sort results');
+    expect(v.listId).toBe('f-listbox-sort');
+    expect(v.activeId, 'a shut menu has no active descendant (A13\'s rule)').toBe(null);
+    expect(v.caretStyle).toContain('rotate(0deg)');
+    expect(v.options.map((o: any) => o.selected)).toEqual([true, false, false]);
+  });
+
+  it('the trigger carries no style render value — its box is one static string, in the markup', () => {
+    // A26.2 needed a `style:` key because its five triggers paint a chosen state; this one does
+    // not, so the `<select>`'s own declarations live in the markup exactly where A26.11 put the
+    // More-filters triggers' (`design-amendments.test.ts` pins the string byte for byte).
+    expect(sort().style).toBeUndefined();
+  });
+
+  // ----- PART 2: it actually sorts ------------------------------------------------------
+  //
+  // Each of the three orders is asserted as an EXACT id sequence, so removing a comparator
+  // (the list falls back to source order) and reversing one (the sequence reverses) both fail.
+
+  it('"Newest first" is the order the rows arrive in — the API serves listed_at DESC', () => {
+    expect(railIds()).toEqual(SOURCE);
+    // And it is a real choice, not merely the initial state: choosing it after another order
+    // restores the source order rather than leaving the last comparator in place.
+    c.setSort('Price: low to high');
+    c.setSort('Newest first');
+    expect(railIds()).toEqual(SOURCE);
+  });
+
+  it('"Price: low to high" reorders the rail, ascending by asking price', () => {
+    c.setSort('Price: low to high');
+    expect(railIds()).toEqual(BY_PRICE);
+    expect(railIds(), 'a comparator that did nothing would leave the source order').not.toEqual(SOURCE);
+    expect(railIds(), 'a reversed comparator would give the other end').not.toEqual([...BY_PRICE].reverse());
+    const prices = c.renderVals().md.mdResults.map((r: any) => P.filter((p: any) => p.id === r.id)[0].price);
+    expect(prices).toEqual([...prices].sort((a: number, b: number) => a - b));
+  });
+
+  it('"Revenue: high to low" reorders the rail, descending by gross revenue', () => {
+    c.setSort('Revenue: high to low');
+    expect(railIds()).toEqual(BY_REV);
+    expect(railIds(), 'a comparator that did nothing would leave the source order').not.toEqual(SOURCE);
+    expect(railIds(), 'a reversed comparator would give the other end').not.toEqual([...BY_REV].reverse());
+    const revs = c.renderVals().md.mdResults.map((r: any) => P.filter((p: any) => p.id === r.id)[0].rev);
+    expect(revs).toEqual([...revs].sort((a: number, b: number) => b - a));
+  });
+
+  it('the three orders are three DIFFERENT orders — the control is not a label on one list', () => {
+    const seen = new Set<string>();
+    for (const label of ['Newest first', 'Price: low to high', 'Revenue: high to low']) {
+      c.setSort(label);
+      seen.add(railIds().join(','));
+    }
+    expect(seen.size).toBe(3);
+  });
+
+  it('the chosen order survives into the trigger, the tick and the map\'s own list', () => {
+    c.setSort('Revenue: high to low');
+    const v = sort();
+    expect(v.triggerLabel).toBe('Revenue: high to low');
+    expect(v.options.map((o: any) => o.selected)).toEqual([false, false, true]);
+    expect(v.options[2].tickStyle).toContain('opacity: 1');
+    expect(v.options[0].tickStyle).toContain('opacity: 0');
+    // One sorted list, not two: the rail, the map's own marker list and the count all read it.
+    expect(c.renderVals().markers.map((m: any) => m.id)).toEqual(BY_REV);
+    expect(c.renderVals().md.mdHeadline).toBe('9 practices available');
+  });
+
+  it('the sort reorders the results and never changes WHICH results there are', () => {
+    const before = [...railIds()].sort();
+    c.setSort('Price: low to high');
+    expect([...railIds()].sort()).toEqual(before);
+    expect(c.state.f, 'a sort is not a filter — `f` is untouched').toEqual({
+      type: 'Any', price: 'Any', revenue: 'Any', doctors: 'Any', building: 'Any'
+    });
+    expect(c.activeFilterCount(), 'and it cannot be counted as an active filter').toBe(0);
+  });
+
+  it('it sorts what the filters left, not the whole market', () => {
+    c.setF('type')('Mixed');
+    c.setSort('Price: low to high');
+    const filtered = ids(P.filter((p: any) => p.status === 'published' && p.type === 'Mixed'))
+      .map((id) => P.filter((p: any) => p.id === id)[0])
+      .sort((a: any, b: any) => a.price - b.price)
+      .map((p: any) => p.id);
+    expect(railIds()).toEqual(filtered);
+    expect(railIds().length).toBeLessThan(SOURCE.length);
+  });
+
+  // A21/A25's rule, on this control: a missing figure is not a zero. A published listing whose
+  // price the API left null must not be sorted to the CHEAPEST end of the rail, which is a
+  // reading of a figure nobody has.
+  it('a listing with no figure sorts last in BOTH directions, never to an end it has not earned', () => {
+    const nulled = P.map((p: any) => (p.id === 'p4' ? { ...p, price: null, rev: null } : p));
+    const s = (label: string) => {
+      c.setSort(label);
+      return c.sortResults(nulled).map((p: any) => p.id);
+    };
+    expect(s('Price: low to high')[8], 'a null price is not the cheapest').toBe('p4');
+    expect(s('Revenue: high to low')[8], 'a null revenue is not the largest').toBe('p4');
+    // …and two of them keep the order they arrived in (Array.prototype.sort is stable), rather
+    // than being shuffled against each other by a comparator that has nothing to compare.
+    const two = P.map((p: any) => (p.id === 'p4' || p.id === 'p2' ? { ...p, price: null } : p));
+    c.setSort('Price: low to high');
+    expect(c.sortResults(two).map((p: any) => p.id).slice(-2)).toEqual(['p2', 'p4']);
+  });
+
+  it('and NaN is treated as absent too, the way A25 read a coordinate', () => {
+    c.setSort('Price: low to high');
+    const bad = P.map((p: any) => (p.id === 'p1' ? { ...p, price: NaN } : p));
+    expect(c.sortResults(bad).map((p: any) => p.id)[8]).toBe('p1');
+  });
+
+  it('sortResults returns the list itself under the identity order, and never mutates its input', () => {
+    const input = P.slice(0, 4);
+    const snapshot = ids(input);
+    expect(c.sortResults(input), 'no comparator, no copy').toBe(input);
+    c.setSort('Price: low to high');
+    expect(c.sortResults(input)).not.toBe(input);
+    expect(ids(input), 'the caller\'s array is left alone').toEqual(snapshot);
+  });
+
+  // ----- PART 1: the dropdown, on A26's own machinery -----------------------------------
+
+  it('the trigger opens the panel and seeds the highlight on the current choice', () => {
+    sort().toggle();
+    expect(c.state).toMatchObject({ fMenu: 'sort', fMenuAt: 0 });
+    const v = sort();
+    expect(v.open).toBe(true);
+    expect(v.activeId).toBe('f-opt-sort-0');
+    expect(v.caretStyle).toContain('rotate(180deg)');
+    expect(v.options.map((o: any) => o.optId)).toEqual(['f-opt-sort-0', 'f-opt-sort-1', 'f-opt-sort-2']);
+  });
+
+  it('…and opens it on the order already chosen, not always on the first row', () => {
+    c.setSort('Revenue: high to low');
+    sort().toggle();
+    expect(c.state.fMenuAt).toBe(2);
+  });
+
+  it('the trigger closes it again (the design\'s own toggle contract)', () => {
+    sort().toggle();
+    sort().toggle();
+    expect(c.state).toMatchObject({ fMenu: null, fMenuAt: -1 });
+  });
+
+  it('one slot: the filter dropdowns and the sort cannot be open at once, in either direction', () => {
+    c.renderVals().filters[0].toggle();
+    expect(c.state.fMenu).toBe('type');
+    sort().toggle();
+    expect(c.state.fMenu, 'the sort closed the filter dropdown').toBe('sort');
+    expect(c.renderVals().filters[0].open).toBe(false);
+    c.renderVals().filters[2].toggle();
+    expect(c.state.fMenu, 'and a filter dropdown closed the sort').toBe('revenue');
+    expect(sort().open).toBe(false);
+  });
+
+  it('the highlight is guarded by the key, so a filter\'s stale index cannot paint here', () => {
+    c.renderVals().filters[0].toggle();
+    c.setState({ fMenuAt: 2 });
+    expect(sort().options.map((o: any) => o.rowStyle.includes('var(--vf-neutral)')), 'the sort is shut')
+      .toEqual([false, false, false]);
+  });
+
+  it('a click on a row chooses that order and shuts the panel', () => {
+    sort().toggle();
+    sort().options[1].go();
+    expect(c.state).toMatchObject({ sort: 'Price: low to high', fMenu: null, fMenuAt: -1 });
+    expect(railIds()).toEqual(BY_PRICE);
+  });
+
+  it('the arrow keys move the highlight, wrapping at both ends, and Home/End reach the rows', () => {
+    const key = (k: string) => sort().keys({ key: k, preventDefault: vi.fn() });
+    key('ArrowDown');
+    expect(c.state).toMatchObject({ fMenu: 'sort', fMenuAt: 0 });
+    key('ArrowDown'); expect(c.state.fMenuAt).toBe(1);
+    key('ArrowDown'); expect(c.state.fMenuAt).toBe(2);
+    key('ArrowDown'); expect(c.state.fMenuAt, 'wraps forward').toBe(0);
+    key('ArrowUp'); expect(c.state.fMenuAt, 'wraps backward').toBe(2);
+    key('End'); expect(c.state.fMenuAt).toBe(2);
+    key('Home'); expect(c.state.fMenuAt).toBe(0);
+  });
+
+  it('Home, End and Enter do nothing while the panel is shut', () => {
+    const key = (k: string) => sort().keys({ key: k, preventDefault: vi.fn() });
+    key('Home'); key('End'); key('Enter'); key('x');
+    expect(c.state.fMenu).toBeFalsy();
+    expect(c.state.sort).toBeUndefined();
+  });
+
+  it('Enter and Space choose the highlighted order', () => {
+    const key = (k: string) => sort().keys({ key: k, preventDefault: vi.fn() });
+    key('ArrowDown'); key('ArrowDown');
+    key('Enter');
+    expect(c.state.sort).toBe('Price: low to high');
+    expect(c.state.fMenu).toBe(null);
+    key('ArrowDown'); key('ArrowDown');
+    key(' ');
+    expect(c.state.sort).toBe('Revenue: high to low');
+  });
+
+  it('an unhandled key while open is left to the browser', () => {
+    sort().toggle();
+    const e = { key: 'a', preventDefault: vi.fn() };
+    sort().keys(e);
+    expect(e.preventDefault).not.toHaveBeenCalled();
+    expect(c.state.fMenu).toBe('sort');
+  });
+
+  it('the choice returns focus to the trigger, which the unmounted row cannot hold', () => {
+    const host = document.createElement('div');
+    const trigger = document.createElement('button');
+    trigger.setAttribute('aria-haspopup', 'listbox');
+    host.appendChild(trigger);
+    document.body.appendChild(host);
+    const spy = vi.spyOn(trigger, 'focus');
+    try {
+      sort().hostRef(host);
+      sort().toggle();
+      sort().options[2].go();
+      expect(spy).toHaveBeenCalled();
+      expect(c.state.sort).toBe('Revenue: high to low');
+    } finally {
+      host.remove();
+    }
+  });
+
+  it('and copes with no wrapper recorded, and with one that holds no trigger', () => {
+    sort().options[1].go();
+    expect(c.state.sort).toBe('Price: low to high');
+    const bare = document.createElement('div');
+    document.body.appendChild(bare);
+    try {
+      sort().hostRef(bare);
+      sort().options[2].go();
+      expect(c.state.sort).toBe('Revenue: high to low');
+      sort().hostRef(null);
+      expect(() => sort().options[0].go()).not.toThrow();
+    } finally {
+      bare.remove();
+    }
+  });
+
+  it('the panel\'s own mount ref spends the index the arrow keys seeded (A13/A14 C1)', () => {
+    const host = document.createElement('div');
+    const row = document.createElement('button');
+    row.id = 'f-opt-sort-2';
+    host.appendChild(row);
+    document.body.appendChild(host);
+    const spy = vi.fn();
+    (row as unknown as { scrollIntoView: unknown }).scrollIntoView = spy;
+    try {
+      sort().hostRef(host);
+      sort().keys({ key: 'ArrowUp', preventDefault: vi.fn() });
+      c.setState({ fMenuAt: 2 });
+      sort().panelRef(host);
+      expect(spy).toHaveBeenCalledWith({ block: 'nearest' });
+      expect(() => sort().panelRef(null)).not.toThrow();
+    } finally {
+      host.remove();
+    }
+  });
+
+  it('the three shared dismissal closures already reach it — no new listener', () => {
+    const host = document.createElement('div');
+    const inside = document.createElement('button');
+    const away = document.createElement('button');
+    host.appendChild(inside);
+    document.body.appendChild(host);
+    document.body.appendChild(away);
+    try {
+      c.componentDidMount();
+      sort().hostRef(host);
+      sort().toggle();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }));
+      expect(c.state, 'Escape (A26.6)').toMatchObject({ fMenu: null, fMenuAt: -1 });
+      sort().toggle();
+      inside.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state.fMenu, 'a pointerdown INSIDE its own wrapper is not outside it').toBe('sort');
+      document.body.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true }));
+      expect(c.state, 'outside click (A26.5)').toMatchObject({ fMenu: null, fMenuAt: -1 });
+      sort().toggle();
+      inside.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: null }));
+      expect(c.state.fMenu, 'a window blur dismisses nothing (A19/A-LB3)').toBe('sort');
+      inside.dispatchEvent(new FocusEvent('focusout', { bubbles: true, relatedTarget: away }));
+      expect(c.state, 'Tab out (A26.7)').toMatchObject({ fMenu: null, fMenuAt: -1 });
+    } finally {
+      host.remove();
+      away.remove();
+    }
+  });
+
+  it('the cross-family edges A26 already wrote reach it too, with nothing new to forget', () => {
+    // Outbound: opening the sort closes the four overlay menus m7 governs.
+    c.setState({ navMenu: true, userMenu: true, giveMenu: true, marketMenu: true, marketMenuAt: 2 });
+    sort().toggle();
+    expect(c.state).toMatchObject({
+      fMenu: 'sort', navMenu: false, userMenu: false, giveMenu: false, marketMenu: false, marketMenuAt: -1
+    });
+    // Inbound: each of the six existing open paths closes it.
+    const v = () => c.renderVals();
+    for (const [name, fire] of [
+      ['toggleNavMenu', () => v().toggleNavMenu()],
+      ['toggleUserMenu', () => v().toggleUserMenu()],
+      ['toggleGiveMenu', () => v().toggleGiveMenu()],
+      ['the Give arrow-open', () => v().giveMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() })],
+      ['toggleMarketMenu', () => v().toggleMarketMenu()],
+      ['the metro arrow-open', () => v().marketMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() })]
+    ] as [string, () => void][]) {
+      c.setState({ navMenu: false, userMenu: false, giveMenu: false, marketMenu: false });
+      sort().toggle();
+      expect(c.state.fMenu).toBe('sort');
+      fire();
+      expect(c.state, `${name} left the sort dropdown latched`).toMatchObject({ fMenu: null, fMenuAt: -1 });
+    }
+    // The More-filters popover's own parent edge, and navigating away.
+    sort().toggle();
+    v().toggleMore();
+    expect(c.state).toMatchObject({ moreFilters: true, fMenu: null, fMenuAt: -1 });
+    c.setState({ auth: true });
+    sort().toggle();
+    c.go('requests')();
+    expect(c.state).toMatchObject({ screen: 'requests', fMenu: null, fMenuAt: -1 });
+  });
+
+  it('the chosen order is not cleared by navigating away and back', () => {
+    c.setState({ auth: true });
+    c.setSort('Price: low to high');
+    c.go('detail')();
+    c.go('browse')();
+    expect(c.state.sort, 'the order the member chose is theirs until they change it').toBe('Price: low to high');
+    expect(railIds()).toEqual(BY_PRICE);
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A29 widens the m7 enumeration. The A26 (Q2) case above enumerates the four menus John's
+// 2026-09-08 ruling names; A29 adds a SIXTH menu to the same screen, so the invariant it has
+// to hold is "at most one open dropdown on Browse" over every open path there is — the four
+// overlay menus, A26's eight filter dropdowns (one slot, two open paths) and this one.
+//
+// Enumerated rather than asserted direction by direction, because that is what the previous
+// four attempts at this invariant each got partly wrong: A14's m7 fix, A26.12–A26.14's
+// restoration, A26.15 (found only by the enumeration) and A26.8's own six.
+// ---------------------------------------------------------------------------------------
+describe('A29 — at most one dropdown is open on Browse, over every ordered pair of open paths', () => {
+  afterEach(() => { c.componentWillUnmount(); });
+
+  const MENUS: [string, (v: any) => void, (s: any) => boolean][] = [
+    ['nav', (v) => v.toggleNavMenu(), (s) => !!s.navMenu],
+    ['account', (v) => v.toggleUserMenu(), (s) => !!s.userMenu],
+    ['Give (click)', (v) => v.toggleGiveMenu(), (s) => !!s.giveMenu],
+    ['Give (arrow)', (v) => v.giveMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() }), (s) => !!s.giveMenu],
+    ['metro (click)', (v) => v.toggleMarketMenu(), (s) => !!s.marketMenu],
+    ['metro (arrow)', (v) => v.marketMenuKeys({ key: 'ArrowDown', preventDefault: vi.fn() }), (s) => !!s.marketMenu],
+    ['filter (click)', (v) => v.filters[0].toggle(), (s) => s.fMenu === 'type'],
+    ['filter (arrow)', (v) => v.filters[0].keys({ key: 'ArrowDown', preventDefault: vi.fn() }), (s) => s.fMenu === 'type'],
+    ['sort (click)', (v) => v.md.sort.toggle(), (s) => s.fMenu === 'sort'],
+    ['sort (arrow)', (v) => v.md.sort.keys({ key: 'ArrowDown', preventDefault: vi.fn() }), (s) => s.fMenu === 'sort']
+  ];
+
+  it('every ordered pair of open paths leaves exactly one menu open', () => {
+    const menuOf = (n: string) => n.replace(/ \(.*\)$/, '');
+    const isOpenNow = (s: any) => MENUS.filter(([, , open]) => open(s)).map(([n]) => menuOf(n));
+    let pairs = 0;
+    for (const [firstName, openFirst, firstIsOpen] of MENUS) {
+      for (const [secondName, openSecond, secondIsOpen] of MENUS) {
+        // Same menu twice is the design's own TOGGLE contract, not a cross-close.
+        if (menuOf(firstName) === menuOf(secondName)) continue;
+        pairs++;
+        c = new Component({});
+        openFirst(c.renderVals());
+        expect(firstIsOpen(c.state), `${firstName} did not open`).toBe(true);
+        openSecond(c.renderVals());
+        expect(secondIsOpen(c.state), `${secondName} did not open after ${firstName}`).toBe(true);
+        expect([...new Set(isOpenNow(c.state))], `${firstName} then ${secondName}: more than one menu is open`)
+          .toHaveLength(1);
+      }
+    }
+    // Not a vacuous pass: ten open paths over six menus (nav 1, account 1, Give 2, metro 2,
+    // filter 2, sort 2), every ordered pair whose two paths belong to different menus.
+    expect(pairs, 'the pair enumeration stopped matching').toBe(82);
+  });
+});

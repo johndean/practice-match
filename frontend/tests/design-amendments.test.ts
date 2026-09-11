@@ -297,11 +297,18 @@ describe('local design amendments (spec D15)', () => {
     // edits BOTH panels in one entry (count: 2) — which is how F2's three are born with the
     // width instead of acquiring it in a third pass.
     'A26.16',
+    // A29 — the results-rail sort control (defect D-F1; John, 2026-09-11: "Make it actually
+    // sort"). The ninth and last native <select> on Browse, and the only one that was BROKEN as
+    // well as out-of-design: it displayed an order the list never took. A13's Q1 left it native
+    // and A26's ruling kept it out of that family in the same words, "WIRED as well as
+    // converted". A29.1 the three orders, A29.2 the two class members, A29.3 the render values,
+    // A29.4 the one line that applies the order, A29.5 the markup.
+    'A29.1', 'A29.2', 'A29.3', 'A29.4', 'A29.5',
   ];
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(205);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(210);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -525,14 +532,14 @@ describe('local design amendments (spec D15)', () => {
     // is one of the thirteen frozen hashes and A26 is deliberately a family in which none moves.
     //
     // So the count is the live scope statement, not A13's, and not a stale literal: the amended
-    // design holds exactly TWO `<select >` tags now that Task F2 has converted the popover's
-    // loop as well — the results-rail sort control and the wizard's field-select loop, one tag
-    // each, and each left native by a ruling of its own. It was four before A26 and three
-    // between F1 and F2. The floor is two: converting either of those two here would be scope
-    // this family does not have.
-    expect((amended.match(/<select /g) ?? []).length, 'a select changed outside the ruled scope').toBe(2);
-    expect(amended, 'the results-rail sort control stays native (D-F1: it must be WIRED as well as converted)')
-      .toContain('<select style="flex: none; height: 34px; padding: 0 9px;');
+    // design holds exactly ONE `<select >` tag now that family A29 has converted and WIRED the
+    // results-rail sort control — the wizard's field-select loop, which converts later as its
+    // own change because `wizard-step-1` is one of the thirteen frozen hashes. It was four
+    // before A26, three between F1 and F2, and two between F2 and A29. The floor is one:
+    // converting the wizard's here would be scope no ruling on the table grants.
+    expect((amended.match(/<select /g) ?? []).length, 'a select changed outside the ruled scope').toBe(1);
+    expect(amended, 'the results-rail sort control is converted AND wired (D-F1, family A29)')
+      .not.toContain('<select style="flex: none; height: 34px; padding: 0 9px;');
     expect(amended, 'the wizard\'s field selects stay native (wizard-step-1 is a frozen hash)')
       .toContain('<select value="{{ fd.value }}" onChange="{{ fd.set }}"');
   });
@@ -825,11 +832,16 @@ describe('local design amendments (spec D15)', () => {
     // INVERTED rather than deleted — the declaration must sit on this family's two listbox panels
     // and nowhere else, so the exception cannot spread to a third element by accident.
     expect(pristine, 'min-width: 100% is a RULED exception, not the design\'s own — it must stay absent here').not.toContain('min-width: 100%');
+    //
+    // WIDENED BY A29 (D-F1, 2026-09-11), not relaxed: John's width ruling is about this idiom,
+    // so the ninth dropdown on Browse is born with it too. Three listbox panels carry it now —
+    // A26.10's, A26.11's and A29.5's — and still nothing else.
     const widthed = amended.split('\n').filter((l) => l.includes('min-width: 100%')).map((l) => l.trim());
-    expect(widthed.length, 'A26.16 applies to the two A26 panels and to nothing else').toBe(2);
+    expect(widthed.length, 'the ruled width applies to the three listbox panels and to nothing else').toBe(3);
     for (const line of widthed) expect(line.startsWith('<div role="listbox" '), line).toBe(true);
     expect(widthed[0], 'the toolbar five (A26.10)').toContain('id="{{ fl.listId }}" ref="{{ fl.panelRef }}"');
     expect(widthed[1], 'the three inside More filters (A26.11)').toContain('id="{{ mf.listId }}" ref="{{ mf.panelRef }}"');
+    expect(widthed[2], 'the results-rail sort control (A29.5)').toContain('id="{{ md.sort.listId }}" ref="{{ md.sort.panelRef }}"');
     // …and A13's metro panel keeps the width the design measured for it, rather than being
     // quietly swept into the new rule: its field is `min-width: 300px` and its panel 300 px, and
     // pinning the two together is the design's own stated intent for this idiom.
@@ -850,14 +862,14 @@ describe('local design amendments (spec D15)', () => {
     expect(amended).toContain('<div role="listbox" aria-label="{{ fl.aria }}" id="{{ fl.listId }}" ref="{{ fl.panelRef }}"');
     expect(amended, 'aria-activedescendant must sit on the focused trigger, never on the panel')
       .not.toContain('<div role="listbox" aria-label="{{ fl.aria }}" aria-activedescendant=');
-    expect((amended.match(/role="option" tabindex="-1"/g) ?? []).length, 'A13\'s row, A26.10\'s and A26.11\'s').toBe(3);
+    expect((amended.match(/role="option" tabindex="-1"/g) ?? []).length, 'A13\'s row, A26.10\'s, A26.11\'s and A29.5\'s').toBe(4);
 
     // Collateral 2 (`screens.ts:59`): `layerTrigger` is
     // `button[aria-haspopup="listbox"]:not([aria-label])`, so the five new triggers are excluded
     // from `.first()`/`.nth(1)` ONLY because each carries an aria-label. Every listbox trigger in
     // the design that is NOT one of the Market data card's two must be labelled.
     const triggers = [...amended.matchAll(/<button[^>]*aria-haspopup="listbox"[^>]*>/g)].map((m) => m[0]);
-    expect(triggers.length, 'the metro trigger, the layer trigger, the compare trigger and A26\'s two').toBe(5);
+    expect(triggers.length, 'the metro, layer and compare triggers, A26\'s two and A29\'s one').toBe(6);
     expect(triggers.filter((t) => !t.includes('aria-label')).length, 'the Market data card\'s two, which screens.ts addresses by exclusion').toBe(2);
   });
 
@@ -897,6 +909,132 @@ describe('local design amendments (spec D15)', () => {
     // family's keys unconditionally, which closes a child with its parent AND a toolbar
     // dropdown when the parent opens.
     expect(amended).toContain('toggleMore: () => this.setState({ moreFilters: !s.moreFilters, fMenu: null, fMenuAt: -1 }),');
+  });
+
+  // A29 (defect D-F1; John, 2026-09-11: "Make it actually sort"). The ninth and last native
+  // <select> on Browse, and the only one that was BROKEN as well as out-of-design: it displayed
+  // an order the list never took. A13's own scope note left it native (Q1) and A26's ruling kept
+  // it out of that family in the same words — "WIRED as well as converted" — so this family is
+  // both halves, and the gates below are both halves too.
+  it('A29 converts the results-rail sort control on A26\'s own idiom, adding no machinery', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    // The operating system's popup is gone from the rail: the design's own three <option> rows
+    // are still the option list, and they are now a labelled listbox.
+    expect(pristine, 'the pristine control is an inert <select> with no value and no onChange')
+      .toContain('<select style="flex: none; height: 34px; padding: 0 9px; font-size: 12.5px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;">\n                <option>Newest first</option>');
+    expect(amended).not.toContain('<option>Newest first</option>');
+    expect(amended).toContain('role="combobox" aria-label="{{ md.sort.aria }}" aria-haspopup="listbox" aria-controls="{{ md.sort.listId }}" aria-expanded="{{ md.sort.open }}" aria-activedescendant="{{ md.sort.activeId }}"');
+    expect(amended).toContain('<div role="listbox" aria-label="{{ md.sort.aria }}" id="{{ md.sort.listId }}" ref="{{ md.sort.panelRef }}"');
+    expect(amended, 'aria-activedescendant must sit on the focused trigger, never on the panel')
+      .not.toContain('<div role="listbox" aria-label="{{ md.sort.aria }}" aria-activedescendant=');
+
+    // The trigger is the <select>'s own box, byte for byte, plus only the three declarations a
+    // label and a chevron need where the user agent used to draw its own arrow (A26.2's trio,
+    // which is the "More filters" button's own). Static, so it lives in the markup, exactly
+    // where A26.11 put the More-filters triggers' own static style.
+    expect(amended).toContain('style="display: inline-flex; align-items: center; gap: 8px; flex: none; height: 34px; padding: 0 9px; font-size: 12.5px; font-weight: 500; color: var(--vf-navy); background: var(--vf-white); border: 1px solid var(--border-subtle); border-radius: 6px; cursor: pointer;"');
+
+    // A29 adds NO cross-close line and no new listener: it reuses A26's slot, open path and
+    // three dismissal closures. That is asserted as an ABSENCE, because it is the claim that
+    // would be most expensive to get wrong — the m7 invariant has now been broken and re-fixed
+    // four separate times (A14's own final review, A26.12-A26.14, A26.15, and A26.8's six).
+    expect(amended, 'the open path is A26.1\'s, called with this control\'s own key')
+      .toContain('this.openFilterMenu("sort", sel)');
+    expect((amended.match(/openFilterMenu = \(key, at\) =>/g) ?? []).length, 'still ONE open path for every dropdown on Browse').toBe(1);
+    // Measured against the file WITHOUT this family, so the claim is "A29 added these two and no
+    // others" rather than a literal somebody will re-fit the next time the number moves.
+    const withoutA29 = applyAmendments(pristine, amendmentsFor('dc').filter((a) => !a.id.startsWith('A29')));
+    const clears = (s: string) => (s.match(/fMenu: null, fMenuAt: -1/g) ?? []).length;
+    expect(clears(amended) - clears(withoutA29),
+      'A29 writes the clear only where its own control chooses or toggles — every cross-close edge is A26\'s, untouched')
+      .toBe(2);
+    expect(amended.split('\n').filter((l) => l.includes('fMenu: null, fMenuAt: -1') && l.includes('sort')).length,
+      'and both of them are this control\'s own lines').toBe(2);
+    // The highlight, the row scrolling and the row ids are A26's, taking this control's key.
+    expect(amended).toContain('this.moveFilterHighlight("sort", ');
+    expect(amended).toContain('this.scrollFilterOption("sort", this.state.fMenuAt)');
+    expect(amended).toContain('optId: "f-opt-sort-" + i,');
+  });
+
+  it('A29 introduces one new word and one new number, and says which', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    // Every declaration is the design's own, as A13's and A26's are…
+    for (const decl of [
+      'display: inline-flex; align-items: center; gap: 8px;',               // More filters button
+      'flex: none; height: 34px; padding: 0 9px;',                          // the <select> A29 replaces
+      'position: relative;',                                                // the More filters wrapper
+      'right: 0',                                                           // the More filters panel's own anchor
+      'z-index: 700',                                                       // the same
+      'font-family: var(--rf-display); font-size: 13px; font-weight: ',     // rowStyle, layer menu
+      'background: var(--vf-accent-bg)',                                    // selected row
+      'background: var(--vf-neutral)',                                      // hover / highlight
+      'transition: transform 150ms var(--easing-out); transform: rotate(',  // caret
+      'box-shadow: 0 6px 20px rgba(0,58,112,.16)',                          // More filters panel
+      'max-height: 232px; overflow-y: auto',                                // compare menu
+      'flex: 1; text-align: left; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;'
+    ]) {
+      expect(pristine, `${decl} is not the design's own`).toContain(decl);
+    }
+
+    // …with exactly two exceptions, both named here rather than left to be discovered.
+    //
+    // ONE: `top: 40px`, DERIVED rather than copied. The eight A26 panels sit at `top: 46px`
+    // under 40 px triggers — a 6 px gap — and this trigger is the design's own `height: 34px`,
+    // so the same gap puts the panel at 40. The arithmetic is done here from the two pristine
+    // terms, never written down as a constant, so it cannot drift from either of them.
+    const TRIGGER_H = 34, FILTER_H = 40, FILTER_TOP = 46;
+    expect(pristine, 'the trigger height this derivation reads').toContain(`height: ${TRIGGER_H}px; padding: 0 9px;`);
+    expect(amended, 'the A26 pair this derivation reads').toContain(`height: ${FILTER_H}px; padding: 0 13px;`);
+    expect(amended).toContain(`top: ${FILTER_TOP}px; z-index: 700; min-width: 100%;`);
+    expect(amended, 'the panel sits the family\'s own 6 px under its own trigger')
+      .toContain(`top: ${TRIGGER_H + (FILTER_TOP - FILTER_H)}px; z-index: 700; min-width: 100%;`);
+    expect(pristine, 'and the derived number is not itself a pristine declaration').not.toContain('top: 40px');
+
+    // TWO: "Sort results", a new accessible name. A26.2 derived its five from the design's own
+    // first options ("<name>: Any"); this control's first option names a VALUE ("Newest first"),
+    // not a control, and the design has no other word for it — so a word is minted, exactly as
+    // A13 minted "Metro area" for the metro listbox and for the same two reasons: a <label>
+    // cannot name a <button>, and `screens.ts`'s `layerTrigger` addresses the Market data card's
+    // two triggers as the UNLABELLED ones.
+    expect(pristine, 'the design has no word of its own for this control').not.toMatch(/\bSort\b/);
+    expect(amended).toContain('aria: "Sort results",');
+    expect((amended.match(/aria: "Sort results",/g) ?? []).length, 'one control, one new word').toBe(1);
+  });
+
+  it('A29 wires it: the design\'s own three <option> labels become three orders, applied once', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    // The option list is READ off the design's own <option> text rather than authored — the
+    // three labels are the pristine bundle's, verbatim and in its own order.
+    const labels = [...pristine.matchAll(/<option>([^<]+)<\/option>/g)].map((m) => m[1]);
+    expect(labels, 'the pristine bundle\'s only <option> text nodes').toEqual([
+      'Newest first', 'Price: low to high', 'Revenue: high to low'
+    ]);
+    const table = /const SORT_ORDERS = \{\n([\s\S]*?)\n\};/.exec(amended);
+    expect(table, 'A29.1 declares no order table').not.toBe(null);
+    expect([...table![1].matchAll(/^  "([^"]+)":/gm)].map((m) => m[1]), 'the table IS the design\'s labels')
+      .toEqual(labels);
+    // Each order names the field it reads and the direction it reads it in, and the identity
+    // order is null — the API serves this list ORDER BY listed_at DESC, id DESC.
+    expect(table![1]).toContain('"Newest first": null,');
+    expect(table![1]).toContain('"Price: low to high": { of: (p) => p.price, dir: 1 },');
+    expect(table![1]).toContain('"Revenue: high to low": { of: (p) => p.rev, dir: -1 }');
+
+    // Applied ONCE, where renderVals() produces the list, so the rail, the map's marker list,
+    // the mobile list and the count cannot disagree about the order.
+    expect(pristine).toContain('    const list = this.filtered();\n');
+    expect(amended).toContain('    const list = this.sortResults(this.filtered());\n');
+    expect((amended.match(/this\.sortResults\(/g) ?? []).length, 'one caller, one ordered list').toBe(1);
+    expect(amended, 'filtered() itself is untouched — what is shown and in what order are two questions')
+      .toContain('  filtered() {\n    const f = this.state.f;\n');
+    // A missing figure is not a zero (A21, A25), and a NaN is absent too (A25's own distinction).
+    expect(amended).toContain('if (!Number.isFinite(av)) return Number.isFinite(bv) ? 1 : 0;');
+    expect(amended).toContain('if (!Number.isFinite(bv)) return -1;');
+    // …and a sort is not a filter: setSort does not touch `f`, so activeFilterCount() cannot
+    // count it and the toolbar's "Clear all" has nothing of this control's to clear.
+    const setSort = /  setSort = \(v\) => \{\n([\s\S]*?)\n  \};/.exec(amended);
+    expect(setSort, 'A29.2 declares no setSort').not.toBe(null);
+    expect(setSort![1], 'setSort must not write the filter map').not.toContain('setF');
+    expect(setSort![1]).not.toContain('f:');
   });
 
   it('A26 writes ONE open path, so the cross-menu invariant is structural inside the family', () => {
