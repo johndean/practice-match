@@ -66,6 +66,49 @@ const SHEET = 'div[style*="z-index: 700"]';
 // trigger added later fails there rather than silently re-pointing these two states.
 const layerTrigger = (p: Page) => p.locator('button[aria-haspopup="listbox"]:not([aria-label])');
 
+// A27.5's sentence, in the Browse "Market data" strip's footnote paragraph.
+const STRIP_FOOTNOTE = 'Figures describe the area around each practice, not the practice itself.';
+
+/**
+ * `browse-market-strip` alone: the strip's OWN `.rf-scroll` container, pinned to its bottom.
+ *
+ * MEASURED, not assumed. The strip's body is `max-height: 40vh; overflow-y: auto`
+ * (`App.vue`'s strip container) — 376 px at the harness's 940 px viewport — and at 1440 px wide
+ * the six cards wrap to two rows that fill it, so A27.5's footnote sits BELOW the fold. A capture
+ * taken at `scrollTop: 0` does not contain the ruled sentence at all (checked by reading the
+ * first generated PNG), which is the one thing D-C40 appended this state to photograph. The DOM
+ * oracle carries it either way — it serialises the node, not the viewport — but "photographed"
+ * is what the ruling says.
+ *
+ * Pinned rather than hoped for, in `atTop`'s own shape (harness.ts, A-LB2 Important 1): set the
+ * scroll to its maximum, then hold until the footnote's box has been identical across two
+ * consecutive animation frames AND lies inside the container's box. Both targets run the same
+ * step, so the comparison is unaffected; nothing here is a tolerance.
+ *
+ * This is the ONE approved state whose capture depends on an `.rf-scroll` container being
+ * scrolled away from the top, and it deliberately does not call `atTop` — which resets every
+ * such container — so that helper's unconditional reset stays safe (its comment says so too).
+ */
+const stripFootnoteInFrame = async (p: Page) => {
+  await p.waitForFunction((text) => new Promise<boolean>((resolve) => {
+    const panel = Array.from(document.querySelectorAll('.rf-scroll'))
+      .find((n) => (n.textContent || '').includes(text)) as HTMLElement | undefined;
+    const note = panel && Array.from(panel.querySelectorAll('p')).find((n) => (n.textContent || '').includes(text));
+    if (!panel || !note) return resolve(false);
+    panel.scrollTop = panel.scrollHeight;
+    const a = note.getBoundingClientRect();
+    requestAnimationFrame(() => requestAnimationFrame(() => {
+      const b = note.getBoundingClientRect();
+      const box = panel.getBoundingClientRect();
+      resolve(
+        Math.abs(panel.scrollTop - (panel.scrollHeight - panel.clientHeight)) <= 1 &&
+        a.top === b.top && a.height === b.height &&
+        b.top >= box.top - 1 && b.bottom <= box.bottom + 1
+      );
+    }));
+  }), STRIP_FOOTNOTE);
+};
+
 // ---------------------------------------------------------------------------------------
 // The fifteen account-screen states (spec §6, controller amendment A-S5). Three helpers, and
 // then one entry per state — everything else about them is in `reach()`.
@@ -415,6 +458,43 @@ export const SCREENS: Screen[] = [
   // name a `<button>`, so A26.11 spells that caption again as the trigger's `aria-label`.
   { name: 'browse-more-filters', steps: async (p) => { await browse(p); await click(p, 'More filters'); await p.getByRole('combobox', { name: 'Year established' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
   { name: 'browse-more-filters-menu', steps: async (p) => { await browse(p); await click(p, 'More filters'); await p.getByRole('combobox', { name: 'Year established' }).click(); await p.getByRole('listbox', { name: 'Year established' }).waitFor({ state: 'visible' }); await p.waitForTimeout(400); } },
+  // A27.5 / D-C40 — the Browse "Market data" strip, OPEN: the 53rd approved state, APPENDED for
+  // the reason A13's, A14's, A19's and A26's were (`cross-plan-deltas.test.ts`'s
+  // `SCREENS.slice(0, 28)` pins the 28 Browse V3 states to their positions; a new state goes on
+  // the end, never in the middle).
+  //
+  // A27.5 corrects a sentence that lives INSIDE this strip, behind `md.stripOpen`, and nothing in
+  // this file had ever opened it: a ruled UI change with no oracle, the same gap A26's Task F2
+  // closed for the More-filters popover. The strip's own control is the design's "Expand all six
+  // layers" (`logic.js` `md.toggleStrip` / `md.stripToggleLabel`), and the six cards behind it had
+  // no baseline of any kind either.
+  //
+  // Waits for the CORRECTED SENTENCE itself before the 400 ms settle every Browse state was taken
+  // with — the rule stated at the top of this file, and the reason it exists: a bare
+  // `waitForTimeout` cannot tell "the click worked" from "the click no-opped on both targets".
+  // Matched as a SUBSTRING, because the design's paragraph carries two more sentences after it
+  // and both are untouched. Then `stripFootnoteInFrame` puts that sentence inside the capture:
+  // the strip's body is `max-height: 40vh` and the six cards fill it, so a click alone leaves the
+  // footnote below the fold — see that helper for the measurement.
+  { name: 'browse-market-strip', steps: async (p) => {
+    await browse(p);
+    await click(p, 'Expand all six layers');
+    await p.getByText(STRIP_FOOTNOTE).first().waitFor({ state: 'visible' });
+    await stripFootnoteInFrame(p);
+    // H2 (the fix-round re-review's own one-liner). `stripFootnoteInFrame` proves the note lies
+    // inside the PANEL's box, which is not the same as inside the VIEWPORT — and the pixel gate
+    // cannot tell the difference: if someone later drops that scroll, BOTH targets reset
+    // identically, the comparison still passes at `maxDiffPixels: 0`, and the one sentence this
+    // state exists to photograph leaves the baseline in silence. This is the assertion that
+    // fails instead. It runs on the reference and the app alike, before the capture, and changes
+    // nothing about it.
+    // `{ ratio: 1 }`, not the default (minor, whole-branch review 2026-09-11): bare
+    // `toBeInViewport()` passes at ANY intersection above zero, so a sentence clipped to its last
+    // two words still satisfied it and the state would go on photographing a truncated footnote.
+    // The whole element has to be in the frame, which is what this capture exists to prove.
+    await expect(p.getByText(STRIP_FOOTNOTE).first()).toBeInViewport({ ratio: 1 });
+    await p.waitForTimeout(400);
+  } },
 ];
 
 /**

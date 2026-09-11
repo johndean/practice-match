@@ -7,16 +7,34 @@ single source of truth so both `market.py`'s panel and the listing card read the
 """
 from __future__ import annotations
 
+import logging
 from typing import Any, TypedDict
 
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+log = logging.getLogger(__name__)
+
 
 class CommunityRow(TypedDict):
-    """The six Community Context fields, all nullable. A null means unavailable — either the
-    dataset is not cleared, the value is suppressed, or there is no row for this metric. The
-    label indicates which data band was used: either the place name or "Within 10 minutes of
-    the practice" for the drive_10 fallback, or None if no figures are available."""
+    """The six Community Context figures and the three fields that say where each one comes from.
+    Every field is nullable, and a null means unavailable — the dataset is not cleared, the value
+    is suppressed, or there is no row for this metric (D-C31: never `0`, never `""`).
+
+    D-C38 (John, 2026-09-11) — each figure is served at its OWN honest geography and the card
+    names it, per tile:
+
+      * `label` names the area the three AREA figures (`pop`, `hh`, `income`) and the off-card
+        `vets` describe. `BAND_LABEL` when they came from the catchment band; None when they came
+        from the listing's own Census place, which is the wording the design already uses.
+      * `growth_scope` names the geography the GROWTH figure was measured at — "Dallas",
+        "Orange County" — because growth exists at no finer geography than place-or-county until
+        the 2010->2020 tract crosswalk is loaded (D12, a registered Phase C deferral), and a
+        city figure under a catchment caption is the defect D-C38 exists to remove.
+      * `income_note` replaces the median-income tile's sub-line when that median is an
+        approximation rather than a published Census figure.
+
+    `econ_k` is county everywhere and always (`materialize.py` writes `ctx.cbp` into all three
+    bands), and the card does not render it — it feeds the Browse Payroll layer."""
     pop: str | None
     growth: str | None
     income: str | None
@@ -24,6 +42,8 @@ class CommunityRow(TypedDict):
     vets: int | None
     econ_k: int | None
     label: str | None
+    growth_scope: str | None
+    income_note: str | None
 
 
 async def _active(conn: AsyncConnection) -> dict[str, str]:
@@ -51,9 +71,16 @@ def _extra_cleared(reg: dict[str, dict[str, Any]], metric_key: str, source_datas
     """A-C23 (1): a row's `source_dataset` is the ONE dataset `market_metric` can stamp it with,
     but three metrics fold in a SECOND dataset the generic gate above cannot see. Moved from market.py.
 
-    The card has no caveat affordance, so a metric that is `suppressed` OR `approximate` is null
-    in the card (different from the panel, which has the affordance and keeps showing approximate
-    figures). This is deliberate — the contract says so."""
+    A `suppressed` metric is null in the card, here and in the panel. An APPROXIMATE one is not:
+    this function's docstring used to claim that "a metric that is `suppressed` OR `approximate`
+    is null in the card", and nothing in this module has ever read `is_derived`, so the claim was
+    false for every approximate figure the pipeline has produced — the Orlando listing's $69,780
+    among them. D-C38 makes the card do what the contract actually asks
+    (`docs/integrations/market-data-api.md`: an approximate median "renders 'approximate' beside
+    the value") rather than what this docstring asserted: the figure is SHOWN, with `income_note`
+    saying what it is. Nulling it would have been the worse answer anyway — a catchment median can
+    never be suppressed (`materialize.py`), so the rule as written would have blanked the median
+    on every listing D-C38 serves from a ring."""
     if metric_key == "population_growth_pct":
         return _cleared(reg, "acs5_prior")
     if metric_key == "vets_per_10k_households":
@@ -61,6 +88,29 @@ def _extra_cleared(reg: dict[str, dict[str, Any]], metric_key: str, source_datas
     if metric_key == "establishments" and source_dataset == "cbp":
         return _cleared(reg, "acs5")
     return True
+
+
+def _servable(m: dict[str, Any], reg: dict[str, dict[str, Any]]) -> bool:
+    """Whether a `market_metric` row carries a figure a buyer may be shown: it has a VALUE, that
+    value is not suppressed, and the dataset that produced it is licence-cleared.
+
+    The value term is the one the six call sites below kept forgetting (C2, whole-branch review
+    2026-09-11). `market_metric.value_num` is NULLABLE and `suppressed` is `NOT NULL DEFAULT
+    false` (`migrations/061_census_listing_tables.sql:34,40`), and the pipeline writes exactly
+    that pair on purpose: `_suppression(None, moe)` returns `(False, None)` because "a missing
+    value has nothing to suppress" (`materialize.py:105-107`), and `materialize.py:239-244` emits
+    the row whether or not the ACS answered. So a null value cleared both of the old guards and
+    reached `float(None)`, which raised `TypeError` out of the listings serialiser — a 500 on the
+    whole page rather than one blank tile.
+
+    An unanswered figure is ABSENT, not an error: D-C31's rule ("a missing figure is omitted,
+    never zeroed") and `_figures`'s own promise below, "A figure that is absent is None". The
+    three terms live here, once, so a seventh figure cannot be added with two of them."""
+    return (
+        m["value_num"] is not None
+        and not m["suppressed"]
+        and _cleared(reg, m["source_dataset"])
+    )
 
 
 def _figures(
@@ -81,27 +131,26 @@ def _figures(
     # Population
     if "population" in metrics:
         m = metrics["population"]
-        if not m["suppressed"] and _cleared(reg, m["source_dataset"]):
+        if _servable(m, reg):
             figures["pop"] = f"{round(float(m['value_num'])):,}"
 
     # Households
     if "households" in metrics:
         m = metrics["households"]
-        if not m["suppressed"] and _cleared(reg, m["source_dataset"]):
+        if _servable(m, reg):
             figures["hh"] = f"{round(float(m['value_num'])):,} households"
 
     # Median household income
     if "median_hh_income" in metrics:
         m = metrics["median_hh_income"]
-        if not m["suppressed"] and _cleared(reg, m["source_dataset"]):
+        if _servable(m, reg):
             figures["income"] = f"${round(float(m['value_num'])):,}"
 
     # Population growth (requires acs5_prior cleared, and an active acs5_prior vintage to name)
     if "population_growth_pct" in metrics:
         m = metrics["population_growth_pct"]
         if (
-            not m["suppressed"]
-            and _cleared(reg, m["source_dataset"])
+            _servable(m, reg)
             and _extra_cleared(reg, "population_growth_pct", m["source_dataset"])
             and acs5_prior_vintage
         ):
@@ -111,17 +160,110 @@ def _figures(
     # Establishments (vets)
     if "establishments" in metrics:
         m = metrics["establishments"]
-        if not m["suppressed"] and _cleared(reg, m["source_dataset"]) and _extra_cleared(reg, "establishments", m["source_dataset"]):
+        if _servable(m, reg) and _extra_cleared(reg, "establishments", m["source_dataset"]):
             figures["vets"] = int(float(m["value_num"]))
 
     # Payroll per establishment (econ_k) - in thousands. The column is historically named
     # `revenue_per_establishment`; the figure is payroll, not revenue (amendment A-C29).
     if "revenue_per_establishment" in metrics:
         m = metrics["revenue_per_establishment"]
-        if not m["suppressed"] and _cleared(reg, m["source_dataset"]):
+        if _servable(m, reg):
             figures["econ_k"] = round(float(m["value_num"]) / 1000)
 
     return figures
+
+
+# D-C39 (John, 2026-09-11) — the ring is described by DISTANCE, not by time. The band is an 8 km
+# straight-line buffer from the practice point (spec §8, "straight-line buffers of 8 km (≈10 min)
+# and 16 km (≈20 min) … labeled as approximations"), not a routed drive time, and spec §15 still
+# lists true drive-time isochrones as OPEN for V1. "About 5 miles" is what the geometry supports;
+# "10 minutes" was a reading of it. The two sentences in the app that said otherwise
+# (`App.vue`'s Insights heading and its footnote) are corrected in the same release.
+BAND_LABEL = "Within about 5 miles of the practice"
+
+# The area figures move as ONE GROUP (D-C38). `label` describes all of them at once, so a group
+# drawn half from the ring and half from the city would put a city figure under a ring caption —
+# the very defect D-C38 exists to remove. A figure the chosen band does not have is null, which is
+# what the design's own guards read as absence; it is never backfilled from the other band.
+#
+# `vets` BELONGS HERE, and the whole-branch review's minor asked it to be confirmed rather than
+# assumed. It is measured over the BAND'S OWN footprint, not at a fixed geography: `_competition`
+# is called once per band with that band's ZCTA weights — `_PLACE_ZCTA_SQL` for the place,
+# `practice_catchment` for the ring — and weights the ZBP ZIP-code counts by them, so the figure
+# describes the same area the other three do. `geo_level: "zcta"` in its `inputs` records the
+# LEVEL the counts were read at, not the area they were aggregated to. The contract document says
+# the same in its own words ("`pop`, `hh`, `income`, `vets` … These vary by band"), and
+# `test_an_off_card_figure_decides_the_on_card_group_s_band` pins the consequence deliberately.
+_AREA_KEYS = ("pop", "hh", "income", "vets")
+
+_SCOPE_NAME_SQL = """
+    SELECT pl.listing_id, 'place', g.name
+      FROM practice_location pl
+      LEFT JOIN geo_area g ON g.geo_id = pl.place_geoid AND g.summary_level = '160' AND g.vintage = %s
+     WHERE pl.listing_id = ANY(%s::uuid[]) AND pl.place_geoid IS NOT NULL
+    UNION ALL
+    SELECT pl.listing_id, 'county', g.name
+      FROM practice_location pl
+      LEFT JOIN geo_area g ON g.geo_id = pl.county_geoid AND g.summary_level = '050' AND g.vintage = %s
+     WHERE pl.listing_id = ANY(%s::uuid[]) AND pl.county_geoid IS NOT NULL
+"""
+
+
+def _scope_names(conn: Any, listing_ids: list[str], geo_vintage: str | None) -> dict[tuple[str, str], str]:
+    """Each listing's place and county NAME, keyed by `(listing_id, geo_level)` — ONE batched
+    query for the whole page, never one per row.
+
+    D-C38 supersedes this module's own "There is no geoid lookup and none is wanted": the Growth
+    tile has to name the geography its figure was measured at, and that name is a join from
+    `practice_location.place_geoid` / `county_geoid` (migrations/061) to `geo_area.name`.
+
+    TWO branches of a UNION rather than one join with an OR, because each branch then reads
+    `geo_area`'s own primary key (geo_id, summary_level, vintage) straight down; an OR across two
+    different columns gives the planner nothing to descend. `geo_vintage` is the active `tiger_cb`
+    edition — the same boundary vintage `materialize.py` builds catchments against — and a
+    database with no active `tiger_cb` matches no row and names nothing, which is the same answer
+    as a listing that was never geocoded.
+
+    The two summary levels are LITERALS in the SQL, so the tag beside each name ('place',
+    'county') is the level it was actually read at, not a re-derivation of it.
+
+    I4 (whole-branch review, 2026-09-11) — A GEOID THE ACTIVE EDITION CANNOT RESOLVE IS AUDIBLE.
+    `practice_location` carries no vintage column: its geoids were resolved by the Census
+    geocoder at whatever boundary edition was current then. Activate a `tiger_cb` whose
+    `geo_area` rows are not loaded — a refresh whose ingest has not run, or ran partially — and
+    the join matches nothing for EVERY listing at once, so every growth sub-line loses its
+    geography while the card goes on saying the figures came from a ring: D-C38's defect
+    restored silently, fleet-wide. This docstring used to call that "the same answer as a listing
+    that was never geocoded". It is not the same answer, and the two are separated here.
+
+    The separation is in the QUERY, not in a second one: `LEFT JOIN` with the geoid's own
+    `IS NOT NULL` in the `WHERE`, so a row comes back for every listing that HAS a geoid and its
+    `name` is null exactly when the active edition could not name it. Same two-branch UNION, same
+    index descent, one query per page.
+
+    The page keeps SERVING and the fault becomes audible rather than fatal. C2 removed exactly
+    this class of thing — a data-ops condition taking the listings page down — and reinstating it
+    for a missing sub-line would be worse than the defect it reports. The join stays pinned to
+    the active vintage because `geo_area` holds several editions and a place's NAME can change
+    between them (annexation, renaming): dropping the term would name the area from an arbitrary
+    edition, which is a wrong answer where a null is an absent one."""
+    names: dict[tuple[str, str], str] = {}
+    unresolved = 0
+    with conn.cursor() as cur:
+        cur.execute(_SCOPE_NAME_SQL, (geo_vintage, listing_ids, geo_vintage, listing_ids))
+        for lid, level, name in cur.fetchall():
+            if name is None:
+                unresolved += 1
+                continue
+            names[(str(lid), level)] = name
+    if unresolved:
+        log.warning(
+            "census: %d geocoded geoid(s) across %d listing(s) have no geo_area name at the "
+            "active tiger_cb vintage %r; those listings serve their growth figure with no "
+            "geography named beside it. Load the boundary edition or roll tiger_cb back.",
+            unresolved, len(listing_ids), geo_vintage,
+        )
+    return names
 
 
 def community_rows(
@@ -131,16 +273,35 @@ def community_rows(
     active: dict[str, str],
     registry: dict[str, dict[str, Any]],
 ) -> dict[str, CommunityRow]:
-    """One batched query for all listings on a page — ONE query per page, never per-row.
-    Returns a dict keyed by listing_id, one CommunityRow per listing id asked for.
+    """Two batched queries for a whole page — never one per row, whatever the page holds.
 
-    D-C32 (2026-09-10) — the fallback is decided on FIGURES, never on row presence. The row is
-    built from the `place` band first; if all six figures came out None — no place rows at all,
-    every place row suppressed, or every place row stamped with a dataset the VIN Foundation has
-    not cleared — it is built again from `drive_10`, and the label then reads "Within 10 minutes
-    of the practice" so the card says which area it describes. If that band is empty too the row
-    is six nulls with no label, which is what puts the design's own "Community data unavailable"
-    card on the screen.
+    D-C38 (2026-09-11) — PER-FIGURE GEOGRAPHY. Each figure is served at its own honest geography
+    and the row names it. This supersedes D-C32's whole-row rule ("built from the `place` band
+    first; if all six figures came out None it is built again from `drive_10`"), which was written
+    for one condition — the Orlando specialist centre in unincorporated Orange County, which has
+    no Census place at all — and was never asked what it does to a listing INSIDE a large city.
+    What it did: all twelve Dallas listings sit in one Census place, so all twelve were served the
+    City of Dallas — one median household income under twelve different neighbourhood headings —
+    while their own catchment figures sat materialised and unreachable.
+
+    The rule now:
+
+      * The three AREA figures (`pop`, `hh`, `income`) and the off-card `vets` come from the
+        catchment band, with `place` as the fallback, AS ONE GROUP — see `_AREA_KEYS`. `label` is
+        set whenever that group came from the catchment.
+      * `growth` and `econ_k` are taken from whichever band carries them, because neither can vary
+        by band at all: `materialize.py` computes growth ONCE per listing outside the band loop
+        and writes that one value into all three bands (D12), and always writes the county CBP
+        row for payroll. `growth_scope` names growth's own geography so the tile stops implying it
+        describes the ring beside it.
+      * `drive_20` is still never a fallback: a wider area served under a narrower heading would
+        be a reading the data does not support.
+
+    What D-C32 ruled and this keeps: the card SAYS which area it describes, so a buyer is never
+    shown a catchment disguised as a named city — a rule that governed one listing of 29 and now
+    governs nearly all of them. And where NEITHER band has figures the row is all nulls with no
+    label, which is what puts the design's own "Community data unavailable" card on the screen; a
+    per-figure rule makes that rarer, and must not make it unreachable.
 
     Parameters:
         conn: sync psycopg2 database connection
@@ -160,7 +321,7 @@ def community_rows(
     # Fetch all market_metric rows for these listings, both place and drive_10 bands
     with conn.cursor() as cur:
         cur.execute("""
-            SELECT listing_id, metric_key, value_num, suppressed, source_dataset, vintage, band
+            SELECT listing_id, metric_key, value_num, suppressed, source_dataset, vintage, band, is_derived, inputs
             FROM market_metric
             WHERE listing_id = ANY(%s::uuid[]) AND band = ANY(%s::text[])
             ORDER BY listing_id, band
@@ -185,33 +346,86 @@ def community_rows(
             metrics_by_listing_band[key] = {}
         metrics_by_listing_band[key][row["metric_key"]] = row
 
-    # For each listing, build the place band's row first and fall back to drive_10 on FIGURES
-    # (B-2): a place band that yields nothing — no rows, all suppressed, or an uncleared dataset —
-    # is indistinguishable from no place at all to the buyer, and the drive_10 band can describe
-    # the market where the place band cannot.
     result: dict[str, CommunityRow] = {}
     acs5_prior_vintage = active.get("acs5_prior")
+    names = _scope_names(conn, listing_ids, active.get("tiger_cb"))
 
     for lid in listing_ids:
-        figures = _figures(metrics_by_listing_band.get((lid, "place"), {}), reg, acs5_prior_vintage)
-        label: str | None = None
-        if all(v is None for v in figures.values()):
-            drive_10 = _figures(metrics_by_listing_band.get((lid, "drive_10"), {}), reg, acs5_prior_vintage)
-            if any(v is not None for v in drive_10.values()):
-                figures = drive_10
-                label = "Within 10 minutes of the practice"
+        place_metrics = metrics_by_listing_band.get((lid, "place"), {})
+        drive_metrics = metrics_by_listing_band.get((lid, "drive_10"), {})
+        place = _figures(place_metrics, reg, acs5_prior_vintage)
+        drive = _figures(drive_metrics, reg, acs5_prior_vintage)
+
+        # The area group, at the finest geography that actually has it. Decided on FIGURES, never
+        # on row presence (B-2, and still true): a place band that yields nothing — no rows, all
+        # suppressed, or an uncleared dataset — is indistinguishable from no place at all to the
+        # buyer, and the catchment can describe the market where the place cannot.
+        from_catchment = any(drive[k] is not None for k in _AREA_KEYS)
+        area = drive if from_catchment else place
+        area_metrics = drive_metrics if from_catchment else place_metrics
+
+        # B-3, widened by D-C38: `label` is None whenever the area figures came from the listing's
+        # own community. The design already names that community from the listing's own `area`, so
+        # the label exists solely to OVERRIDE that wording when the figures did not come from it.
+        label = BAND_LABEL if from_catchment else None
+
+        # An approximate median is SHOWN with the word beside it, never blanked — a catchment
+        # median is a household-weighted average of the tract medians inside the ring rather than
+        # a published Census figure, which is exactly what `is_derived` records.
+        #
+        # The guard is the SERVED ROW's own `is_derived`, never the band the area group came
+        # from (fix round 1, finding 5). It was `label is not None` — true of every approximate
+        # median the pipeline produces today, since `materialize.py` derives the catchment median
+        # and reads the place median straight from the ACS — but that is a coincidence of the
+        # producer, not what makes a figure approximate, and an approximate PLACE median would
+        # have lost the qualifier in silence. The contract's copy rule has no band condition in
+        # it: "`median_hh_income.approximate: true` → render 'approximate' beside the value"
+        # (`docs/integrations/market-data-api.md`).
+        #
+        # With no label there is no area to name, so the note is the qualifier alone: the tile has
+        # one sub-line and it says the number is approximate and nothing it cannot support.
+        income_note = None
+        if area["income"] is not None and area_metrics["median_hh_income"]["is_derived"]:
+            income_note = f"{label} · approximate" if label is not None else "Approximate"
+
+        # Growth and payroll are byte-identical in every band by construction, so "whichever band
+        # carries it" is a choice between two copies of one number — but the GEOGRAPHY it was
+        # measured at is its own, and that is what the card has to name.
+        growth = drive["growth"] if drive["growth"] is not None else place["growth"]
+        econ_k = drive["econ_k"] if drive["econ_k"] is not None else place["econ_k"]
+
+        growth_scope = None
+        if growth is not None:
+            source = drive_metrics if drive["growth"] is not None else place_metrics
+            level = (source["population_growth_pct"]["inputs"] or {}).get("geo_level")
+            name = names.get((lid, level))
+            if name is not None:
+                # TIGER's place `NAME` drops the legal descriptor ("Dallas"); its county
+                # `NAMELSAD` keeps it ("Orange County"). D-C38's option text read "City of
+                # Dallas", and composing that prefix was the first implementation — but the
+                # descriptor is not ours to invent: `app/census/tiger.py:102` loads level 160
+                # from `NAME`, so a census-designated place comes through as "Florin" and the
+                # composed string would read "City of Florin", which Florin is not. The
+                # Sacramento listings resolve to exactly that.
+                #
+                # Controller ruling on the implementer's own concern (2026-09-11): use the name
+                # TIGER gives and prefix nothing. "Dallas · since 2018" and "Florin · since 2018"
+                # both say where the figure was measured, which is what John ruled, without
+                # asserting a legal status the data does not carry. Loading `NAMELSAD` for level
+                # 160 would give the true descriptor and is the better long answer; it needs a
+                # TIGER re-ingest and is not this change.
+                growth_scope = name
 
         result[lid] = {
-            "pop": figures["pop"],
-            "growth": figures["growth"],
-            "income": figures["income"],
-            "hh": figures["hh"],
-            "vets": figures["vets"],
-            "econ_k": figures["econ_k"],
-            # B-3: `label` is None whenever the figures came from the listing's own community.
-            # The design already names that community from the listing's own `area`, so the label
-            # exists solely to OVERRIDE that wording when the figures did not come from it.
+            "pop": area["pop"],
+            "growth": growth,
+            "income": area["income"],
+            "hh": area["hh"],
+            "vets": area["vets"],
+            "econ_k": econ_k,
             "label": label,
+            "growth_scope": growth_scope,
+            "income_note": income_note,
         }
 
     return result

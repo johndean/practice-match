@@ -783,7 +783,7 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
     );
   }
 
-  const NO_FIGURES = { pop: null, growth: null, income: null, hh: null, vets: null, econ_k: null, community_label: null };
+  const NO_FIGURES = { pop: null, growth: null, income: null, hh: null, vets: null, econ_k: null, community_label: null, growth_scope: null, income_note: null };
 
   /** Cedar Park's docked panel, opened the way `browse-market-panel` opens it: a card click. */
   async function openPanel(page: Page) {
@@ -863,12 +863,34 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
   test('the fallback label reaches every place that names the area, and nothing else moves', async ({ page }) => {
     await prepare(page);
     const errors = trapErrors(page);
-    const LABEL = 'Within 10 minutes of the practice';
+    // D-C39 (2026-09-11): the ring is described by DISTANCE. It is an 8 km straight-line buffer
+    // (spec §8), not a routed drive time, and true isochrones are still open for V1 (spec §15).
+    const LABEL = 'Within about 5 miles of the practice';
     await serveListings(page, { community_label: LABEL });
     const panel = await openPanel(page);
 
     await expect(panel.getByText(LABEL)).toBeVisible();
-    await expect(panel.getByText('Market Overview (10 min drive)')).toHaveCount(0);
+    // D-C42 (John, 2026-09-11). The heading KEEPS its name and the geography renders on its own
+    // sub-line beneath it — A21.5a let the label replace the heading, and D-C38 gives 28 of 29 QA
+    // listings a label, so "Market Overview" appeared nowhere on QA and A27.3's own correction
+    // was invisible.
+    //
+    // THIS IS THE ONLY ORACLE THE LABELLED PATH HAS, and it is here rather than in `screens.ts`
+    // by measurement: the design's own fixtures carry no `communityLabel`, `design-listings.mjs`
+    // sends `community_label: null`, and the REFERENCE has no way to be handed one — its listings
+    // are `logic.js`'s own `P`, and reaching it would mean either editing the approved fixture
+    // data or declaring a ninth prototype prop, neither of which this ruling authorises. So the
+    // assertion is on the RENDERED DOM, not the payload: the sub-line is the heading's own next
+    // element sibling, it carries the label, and it is set in the design's place-line 12.5px.
+    await expect(panel.getByText('Market Overview', { exact: true })).toBeVisible();
+    const beneath = await panel.evaluate((root) => {
+      const heading = Array.from(root.querySelectorAll('div')).find((d) => (d.textContent || '').trim() === 'Market Overview');
+      const next = heading && (heading.nextElementSibling as HTMLElement | null);
+      return { heading: Boolean(heading), text: next && (next.textContent || '').trim(), size: next && getComputedStyle(next).fontSize };
+    });
+    expect(beneath.heading, 'the panel has no "Market Overview" heading — the label replaced it again').toBe(true);
+    expect(beneath.text, 'the geography is not on the line directly beneath the heading').toBe(LABEL);
+    expect(beneath.size, 'the sub-line is not the design\'s own place-line type').toBe('12.5px');
     // The figures themselves are the design's own and still render.
     await expect(panel.getByText('Veterinary Establishments')).toBeVisible();
 
@@ -878,9 +900,42 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
     await expect(detail.getByText(LABEL).first()).toBeVisible();
     await expect(detail.getByText('Community, 2023')).toHaveCount(0);
     await expect(detail.getByText('In the community')).toHaveCount(0);
-    await expect(detail.getByText(`Figures describe the area within 10 minutes of the practice, not the practice itself.`)).toBeVisible();
+    await expect(detail.getByText(`Figures describe the area within about 5 miles of the practice, not the practice itself.`)).toBeVisible();
     // The Census attribution is legally load-bearing and is not part of the sentence that moved.
     await expect(detail.getByText('Source: U.S. Census Bureau, American Community Survey 2023 5-year estimates (public domain, attribution requested).')).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  // D-C48 (John, 2026-09-11, on the whole-branch review). A27.7's ONE sub-line above the grid
+  // describes the AREA figures, and the Population tile's sub-line is not one of them — it is
+  // GROWTH, which the API measures at place-or-county and serves with its own `growth_scope`. So
+  // the panel printed a city number under a ring caption on 28 of 29 QA listings.
+  //
+  // Its oracle is here, beside A27.7's, for the same measured reason: the design's own fixtures
+  // carry no `growthScope`, `design-listings.mjs` sends `growth_scope: null`, and the reference
+  // has no way to be handed one without editing approved fixture data or declaring a ninth
+  // prototype prop. The assertion is therefore on the RENDERED DOM under a stubbed API.
+  test('the panel\'s Population tile names the geography its growth figure came from', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    const LABEL = 'Within about 5 miles of the practice';
+    await serveListings(page, { community_label: LABEL, growth_scope: 'Dallas' });
+    const panel = await openPanel(page);
+
+    const tile = await panel.evaluate((root) => {
+      const label = Array.from(root.querySelectorAll('div')).find((d) => (d.textContent || '').trim() === 'Population');
+      const box = label && (label.parentElement as HTMLElement | null);
+      return box && (box.textContent || '').trim();
+    });
+    expect(tile, 'the panel has no Population tile').toBeTruthy();
+    // The figure and its period lead, the geography follows, joined by the design's own middot —
+    // the idiom of the detail card's Growth tile (A27.2) and of `income_note` (A27.1).
+    expect(tile, 'the Population tile\'s growth sub-line names no geography')
+      .toMatch(/[+-]\d+\.\d% \(5 yrs\) \u00b7 Dallas/);
+    // The heading's own sub-line still says what the AREA figures describe, and says it once.
+    await expect(panel.getByText('Market Overview', { exact: true })).toBeVisible();
+    expect((await panel.innerText()).split(LABEL).length - 1,
+      'the ring caption is stated more than once on the Insights tab').toBe(1);
     expect(errors).toEqual([]);
   });
 
@@ -890,13 +945,74 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
     await prepare(page);
     const errors = trapErrors(page);
     const panel = await openPanel(page);
-    await expect(panel.getByText('Market Overview (10 min drive)')).toBeVisible();
+    // A27.3: the design's own two words, minus the parenthetical D-C39 ruled out. This heading
+    // sat over PLACE-band figures on 28 of 29 listings and named a drive time the pipeline has
+    // never computed.
+    await expect(panel.getByText('Market Overview').first()).toBeVisible();
+    await expect(panel.getByText('10 min drive')).toHaveCount(0);
+    // A27.7 (D-C42): and with no label there is no sub-line ELEMENT at all — an empty one would
+    // still take its `margin-top` and move every approved Browse capture. The heading's next
+    // sibling is the overview tiles grid, exactly as the design has it.
+    const beneath = await panel.evaluate((root) => {
+      const heading = Array.from(root.querySelectorAll('div')).find((d) => (d.textContent || '').trim() === 'Market Overview');
+      const next = heading && (heading.nextElementSibling as HTMLElement | null);
+      return next && (next.textContent || '').trim();
+    });
+    expect(beneath, 'a sub-line was rendered for a listing the API sent no community_label for').toContain('Population');
+    // A27.4: and its footnote, the second sentence D-C39 names.
+    await expect(panel.getByText('A catchment figure is a straight-line area of about 5 miles around the practice, not a driving route.').first()).toBeVisible();
+    await expect(panel.getByText('Drive-time figures are approximated')).toHaveCount(0);
 
     await panel.getByRole('button', { name: 'View full listing' }).click();
     const detail = page.getByRole('heading', { name: 'Community Context' }).locator('xpath=..');
     await expect(detail.getByText('Community, 2023')).toBeVisible();
     await expect(detail.getByText('In the community')).toBeVisible();
     await expect(detail.getByText('Figures describe the community around the practice, not the practice itself.')).toBeVisible();
+    // A27.1/A27.2 null branches: the design's own two literals, which is what keeps `detail` on
+    // its frozen hash.
+    await expect(detail.getByText('Household, 2023').first()).toBeVisible();
+    await expect(detail.getByText('Since 2015', { exact: true }).first()).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+
+  // -----------------------------------------------------------------------------------------
+  // D-C38 — per-figure geography, end to end in a real browser. The card's own tiles, not the
+  // payload: the three area figures follow the catchment while the Growth tile says out loud
+  // that its number is the city's, which is the whole reason John chose this option over the
+  // one that relabels every tile uniformly.
+  //
+  // THE HONEST MEASURE this case exists to hold: THREE of the four tiles gain neighbourhood
+  // detail. The Growth tile gains a label and nothing else, and will until the 2010->2020 tract
+  // crosswalk is loaded.
+  // -----------------------------------------------------------------------------------------
+  test('each tile names where its own number comes from (D-C38)', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    const LABEL = 'Within about 5 miles of the practice';
+    await serveListings(page, {
+      community_label: LABEL,
+      growth_scope: 'Dallas',
+      income_note: `${LABEL} \u00b7 approximate`,
+    });
+    const panel = await openPanel(page);
+    await panel.getByRole('button', { name: 'View full listing' }).click();
+    const detail = page.getByRole('heading', { name: 'Community Context' }).locator('xpath=..');
+
+    // Population and Households: the ring, named by the one label that describes them.
+    await expect(detail.getByText(LABEL).first()).toBeVisible();
+    // Median income: the ring AND the qualifier, in the one sub-line the tile has. The design's
+    // own hard-coded "Household, 2023" is gone, which is the sub-line A21.5b/c could not reach.
+    await expect(detail.getByText(`${LABEL} \u00b7 approximate`).first()).toBeVisible();
+    await expect(detail.getByText('Household, 2023')).toHaveCount(0);
+    // Growth: NOT the ring. The city, said out loud, beside the vintage A21.3d takes from the
+    // API's own string. The stub is 'Dallas', the name TIGER itself gives (D-C41): the API
+    // composes no "City of " prefix, so a fixture carrying one asserts a value the backend
+    // cannot emit — which is the reading that made the prefix look composed in the first place.
+    // `exact` on the negative: `getByText` matches by case-insensitive SUBSTRING, so a bare
+    // 'Since 2015' would match the new sub-line's own tail and the assertion would say the
+    // opposite of what it means.
+    await expect(detail.getByText('Dallas \u00b7 since 2015').first()).toBeVisible();
+    await expect(detail.getByText('Since 2015', { exact: true })).toHaveCount(0);
     expect(errors).toEqual([]);
   });
 });

@@ -4242,10 +4242,365 @@ const A26_16: Amendment = {
   count: 2
 };
 
+/** A27 (John, 2026-09-11 — rulings D-C38 and D-C39). PER-FIGURE GEOGRAPHY on the Community
+ *  Context card, and the ring described by DISTANCE rather than by time.
+ *
+ *  What John was shown: a Dallas practice headed "Specialty practice — Highland Park / affluent
+ *  central" whose card read the same four numbers as every other Dallas listing, South Dallas
+ *  included — median income $67,760 on all twelve — because all twelve sit inside one Census
+ *  place and `serve.py` served the place band to every one of them. He chose the option in which
+ *  EACH TILE NAMES WHERE ITS OWN NUMBER COMES FROM, against the cheaper one that relabels every
+ *  tile uniformly, and the reason he rejected that one is worth keeping: it moves the defect one
+ *  tile over rather than fixing it, because the Growth number would still be the whole City of
+ *  Dallas under a caption saying otherwise.
+ *
+ *  THE HONEST MEASURE, which no comment here may soften: three of the card's four tiles gain
+ *  neighbourhood detail. The fourth gains an honest label and nothing more — `population_growth_pct`
+ *  cannot vary below place-or-county until the 2010->2020 tract crosswalk is loaded, a registered
+ *  Phase C deferral (`materialize.py` computes it once per listing OUTSIDE the band loop and
+ *  writes that one value into all three bands, plan D12). On the Browse map two of the three fill
+ *  layers still paint one flat colour per city or county. This is not "per-neighbourhood market
+ *  data" and may not be described as such.
+ *
+ *  D-C39: the band is an 8 km straight-line buffer from the practice point (spec §8), not a
+ *  routed drive time, and spec §15 still lists true drive-time isochrones as OPEN for V1. So the
+ *  card says "within about 5 miles of the practice", and the two live sentences that said
+ *  otherwise over PLACE-band figures — the docked panel's Insights heading and its footnote — are
+ *  corrected in the same release rather than left to contradict it. He took the largest of the
+ *  three wording options knowingly, and it touches approved copy: A27.3 and A27.4 re-base the
+ *  Browse states that render the panel. None of `baseline-manifest.json`'s thirteen frozen hashes
+ *  is a Browse capture, and none of them moves.
+ *
+ *  THE NULL BRANCH OF EVERY ENTRY IS BYTE-IDENTICAL IN WHAT IT RENDERS — the A21.5 pattern
+ *  (`design-amendments.ts`'s A21.5b/A21.5c), and the reason no approved state outside those two
+ *  Browse captures moves: `frontend/tests/design-listings.mjs` sends `null` for `growth_scope` and
+ *  `income_note` exactly as it sends it for `community_label`, so the reference, the app and every
+ *  baseline take the design's own literal.
+ *
+ *  A27.3 is the ONE entry whose null branch does change, and deliberately: the design's own
+ *  "Market Overview (10 min drive)" is the false sentence D-C39 names, so there is no null branch
+ *  to preserve — it is the thing being corrected. A27.4 is the same. The third such sentence,
+ *  the Browse "Market data" card's "Figures describe the community around each practice…",
+ *  IS corrected too, as A27.5 — its own id and its own ruling, not a silent widening of A27.4:
+ *  the figures it describes are the ones this release moves to the catchment, so leaving it
+ *  would have made it false by this release's own act. It sits inside the strip behind
+ *  `md.stripOpen`, which no approved state opened until `browse-market-strip` was appended
+ *  to `screens.ts` in the same release (D-C40). */
+
+/** A27.1 — the Median income tile's sub-line. The design hard-codes "Household, 2023", and
+ *  A21.5b/A21.5c deliberately took only the two sub-lines that said "the community" — so this was
+ *  the one area figure on the card whose caption could not follow its own geography. With no note
+ *  the design's literal stands, byte for byte. */
+const A27_1: Amendment = {
+  id: 'A27.1', date: '2026-09-11', ruling: 'each tile names where its own number comes from, and a ring median says it is approximate (D-C38)',
+  find: '{ k: "Median income", v: p.income, sub: "Household, 2023" },',
+  replace: '{ k: "Median income", v: p.income, sub: p.incomeNote || "Household, 2023" },',
+  count: 1
+};
+
+/** A27.2 — the Growth tile's sub-line, which is where D-C38 actually lands: the figure stays the
+ *  city's or the county's and the caption SAYS so, beside a population that is the ring's.
+ *
+ *  CHAINED on A21.3d, like A21.5c on A12.7: the `find` is A21.3d's whole `replace`, not the
+ *  pristine row, because A21.3d already rewrote this row to take the vintage from the API's own
+ *  string instead of hard-coding 2015. The null branch returns exactly what A21.3d returns —
+ *  "Since <year>", or "" where the API sent no vintage — so a listing with no named geography
+ *  renders the same bytes it does today. */
+const A27_2: Amendment = {
+  id: 'A27.2', date: '2026-09-11', ruling: 'growth keeps its city-or-county figure and its own sub-line says so (D-C38)',
+  find: '{ k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); return g.length > 1 ? "Since " + g[1] : ""; })() },',
+  replace: '{ k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); const y = g.length > 1 ? g[1] : ""; if (!p.growthScope) return y ? "Since " + y : ""; return y ? p.growthScope + " · since " + y : p.growthScope; })() },',
+  count: 1
+};
+
+/** A27.3 — the docked panel's Insights heading. D-C39 names this sentence: it reads "Market
+ *  Overview (10 min drive)" over PLACE-band figures on 28 of 29 listings today, and the band it
+ *  names is not a drive time even on the one listing it describes. The parenthetical goes and the
+ *  design's own two words stay; `communityLabel` still overrides the whole heading when the
+ *  figures came from the catchment, which is A21.5a's mechanism unchanged.
+ *
+ *  CHAINED on A21.4a, which introduced the line. */
+const A27_3: Amendment = {
+  id: 'A27.3', date: '2026-09-11', ruling: 'the ring is described by distance, not by time, and the sentences that said otherwise are corrected in the same release (D-C39)',
+  find: 'overviewTitle: sel.communityLabel || "Market Overview (10 min drive)",',
+  replace: 'overviewTitle: sel.communityLabel || "Market Overview",',
+  count: 1
+};
+
+/** A27.4 — the docked panel's footnote, the second sentence D-C39 names. "Drive-time figures are
+ *  approximated from a straight-line catchment around the practice" is two claims, and the first
+ *  is false: there is no drive time anywhere in the pipeline. The straight-line catchment IS the
+ *  measurement, so the corrected sentence keeps it and says how far it reaches. The other two
+ *  sentences in the paragraph are untouched, byte for byte.
+ *
+ *  CHAINED on A21.4d, which wrapped this paragraph in the `hasDemo` branch. */
+const A27_4: Amendment = {
+  id: 'A27.4', date: '2026-09-11', ruling: 'the ring is described by distance, not by time, and the sentences that said otherwise are corrected in the same release (same ruling)',
+  find: 'Drive-time figures are approximated from a straight-line catchment around the practice. ',
+  replace: 'A catchment figure is a straight-line area of about 5 miles around the practice, not a driving route. ',
+  count: 1
+};
+
+/** A27.5 (controller ruling on the implementer's own concern, 2026-09-11). D-C39 named TWO
+ *  sentences that describe the ring by time; the implementer found a THIRD and, correctly,
+ *  did not widen its own scope. The Browse "Market data" card says "Figures describe the
+ *  community around each practice" — which was already loose over place-band figures and
+ *  becomes plainly wrong once D-C38 serves most of them from the catchment. Leaving it would
+ *  have shipped a change that fixes two false sentences and makes a third one worse in the
+ *  same release. "Area" is true whichever band answered, which is why it is the word chosen
+ *  over naming either geography here: this sentence covers every listing on the screen at
+ *  once, and they no longer all come from the same band. */
+const A27_5: Amendment = {
+  id: 'A27.5', date: '2026-09-11', ruling: 'the third sentence that described the figures as the community is corrected too (D-C39, extended on the implementer\'s report)',
+  find: 'Figures describe the community around each practice, not the practice itself. ',
+  replace: 'Figures describe the area around each practice, not the practice itself. ',
+  count: 1
+};
+
+/** A27.6 (John, 2026-09-11 — ruling D-C42). THE HEADING KEEPS ITS NAME; THE GEOGRAPHY GOES TO A
+ *  SUB-LINE. A21.5a let `communityLabel` REPLACE the docked panel's Insights heading, and D-C38
+ *  gives 28 of 29 QA listings a label — so on QA the heading read "Within about 5 miles of the
+ *  practice" and the words "Market Overview" appeared NOWHERE. A27.3's own correction was
+ *  invisible for the same reason: the default it corrected was never reached. The cost was named
+ *  in the ruling that produced Option C, as a cost of the Option B John REJECTED; it landed under
+ *  Option C too and had never been put to him. It was, and he ruled: the section gets its name
+ *  back and the label moves beneath it.
+ *
+ *  He took the reasoning that this is the card's OWN established idiom — A21.5b, A21.5c, A27.1
+ *  and A27.2 all put the geography on a sub-line under the value it describes, and the heading
+ *  was the only place on the card where the label replaced the thing it was meant to qualify.
+ *
+ *  CHAINED on A27.3, whose `replace` this `find` is, exactly as A27.2 chains on A21.3d and A21.5c
+ *  on A12.7. A21.5a's own edit — the template interpolation — STAYS: it is what put a render value
+ *  in the heading at all, and the heading is still data. What is retired is its BEHAVIOUR, the
+ *  `||` that let the label stand in for the title, and it is retired by a later entry rather than
+ *  by editing an earlier one's `find`/`replace`.
+ *
+ *  `hasOverviewScope` is a boolean because the design's own way to omit an element is `sc-if` over
+ *  one (A21.4a's `hasDemo`/`noDemo`, this same panel). With no label the sub-line is not in the
+ *  DOM and the heading is A27.3's literal byte for byte, which is what keeps every approved state
+ *  and all thirteen frozen hashes where they are. */
+const A27_6: Amendment = {
+  id: 'A27.6', date: '2026-09-11', ruling: 'the Insights heading keeps its name and the geography moves to its own sub-line beneath it (D-C42)',
+  find: 'overviewTitle: sel.communityLabel || "Market Overview",',
+  replace: 'overviewTitle: "Market Overview",\n      hasOverviewScope: !!sel.communityLabel,\n      overviewScope: sel.communityLabel || "",',
+  count: 1
+};
+
+/** A27.7 — the sub-line itself, beneath the heading A27.6 gave back its name.
+ *
+ *  COMPOSED FROM THE DESIGN'S OWN ELEMENT, not invented: the declaration is the docked panel's
+ *  own `md.panel.place` line — `font-size: 12.5px; color: var(--vf-text); margin-top: 2px;` —
+ *  which sits eight lines above this one in the same panel, under `md.panel.name`, and is the
+ *  design's only existing heading-and-geography pair: a title in the display face with the place
+ *  it describes on a quieter line directly beneath. It occurs exactly once in the pristine bundle,
+ *  so nothing else can be picked up by mistake. Type, colour and spacing are taken whole; none of
+ *  the three is chosen here.
+ *
+ *  Rejected, and why: the overview tiles' own sub-line (`9.5px`, `var(--vf-accent)`) qualifies a
+ *  FIGURE and is accent-coloured for it, and the footnote's `10.5px` closes the section rather
+ *  than opening one. Neither is a heading's sub-line; the place line is.
+ *
+ *  CHAINED on A21.5a, whose `replace` this `find` is — the interpolation A21.5a introduced. The
+ *  `sc-if` carries `hint-placeholder-val="{{ false }}"` for the same reason A21.4c's `noDemo`
+ *  branch does: the design's own fixtures carry no `communityLabel`, so the branch the Claude
+ *  Design preview should show is the one without it. */
+const A27_7: Amendment = {
+  id: 'A27.7', date: '2026-09-11', ruling: 'the Insights heading keeps its name and the geography moves to its own sub-line beneath it (same ruling)',
+  find: '<div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy);">{{ md.panel.overviewTitle }}</div>',
+  replace: '<div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy);">{{ md.panel.overviewTitle }}</div>\n'
+    + '                  <sc-if value="{{ md.panel.hasOverviewScope }}" hint-placeholder-val="{{ false }}">\n'
+    + '                    <div style="font-size: 12.5px; color: var(--vf-text); margin-top: 2px;">{{ md.panel.overviewScope }}</div>\n'
+    + '                  </sc-if>',
+  count: 1
+};
+
+/** A27.8 (John, 2026-09-11 — ruling D-C48, on the whole-branch review of this branch). THE
+ *  DOCKED PANEL'S POPULATION TILE NAMES THE GEOGRAPHY ITS OWN SUB-LINE CAME FROM.
+ *
+ *  A27.7 places ONE geography sub-line above the whole four-tile grid, and three of the four
+ *  tiles are the area group it describes. The fourth is not: the Population tile's SUB-LINE is
+ *  not a population figure at all — it is GROWTH, which `serve.py` measures at place-or-county
+ *  and serves with its own `growth_scope`, and which reads −1.5% for the whole of Dallas. So the
+ *  panel printed a city number under a caption describing a ring, on 28 of 29 QA listings: the
+ *  defect D-C38 removed, one card over, live in front of the stakeholder.
+ *
+ *  John ruled it is named ON THE TILE, so the heading's sub-line honestly covers only the
+ *  figures it describes. The idiom is the detail card's own Growth tile (A27.2) and the API's own
+ *  `income_note` (A27.1): the design's ` · ` joins a figure to the thing that qualifies it. The
+ *  figure and its period lead and the geography follows, because unlike A27.2's sub-line — where
+ *  the whole line is a qualifier and the scope opens it — this line BEGINS with the number.
+ *
+ *  CHAINED on A21.2d, whose `replace` this `find` is part of: A21.2d already rewrote this tile
+ *  to render nothing rather than a dangling unit where the API sent no growth. That guard is
+ *  what the new term sits inside, so no figure still means no sub-line — a geography with no
+ *  number beside it is a caption for something that is not there.
+ *
+ *  `sel` is the panel's own selected listing, already read four lines above for `hasDemo`; the
+ *  scope is the LISTING's (`growth_scope`), not the community row's, because growth cannot vary
+ *  by band (plan D12) and the community object carries no name. The design's own fixtures carry
+ *  no `growthScope`, so the guard is falsey and every approved state keeps its pixels. */
+const A27_8: Amendment = {
+  id: 'A27.8', date: '2026-09-11', ruling: 'the panel\'s Population tile names the geography its growth sub-line was measured at (D-C48)',
+  find: 'k: "Population", sub: (c.growth !== undefined) ? ((c.growth > 0 ? "+" : "") + c.growth.toFixed(1) + "% (5 yrs)") : undefined },',
+  replace: 'k: "Population", sub: (c.growth !== undefined) ? ((c.growth > 0 ? "+" : "") + c.growth.toFixed(1) + "% (5 yrs)" + (sel.growthScope ? " \u00b7 " + sel.growthScope : "")) : undefined },',
+  count: 1
+};
+
+/** A28.1 (John, 2026-09-11 — ruling D-C44). THE RING IS DRAWN AT THE DISTANCE THE CARD NAMES.
+ *  `MarketMapV3.jsx:230-234` draws the C7 drive-time ring at `radius: 16000, color: "#003a70"`,
+ *  and D-C38 gives the Community Context card the sentence "Within about 5 miles of the
+ *  practice" — so a buyer reads one distance and is shown a circle twice its size, on every
+ *  listing with a point.
+ *
+ *  Neither number is invented. V2 drew TWO rings
+ *  (`design_handoff_practice_match_v2/MarketMap.jsx:160-169`): `drive10` at 16 000 m in
+ *  `#339dde` and `drive5` at 8 000 m in `#003a70`. V3 replaced the panel that toggled them,
+ *  kept ONE hard-coded ring, and kept the FAR radius in the NEAR ring's colour — a mash-up of
+ *  V2's two rings rather than either of them. 8 000 m is the band the card describes, the band
+ *  D-C38 serves the area figures from, and the band `#003a70` already belongs to, so the number
+ *  and the colour agree for the first time since the V3 panel rewrite.
+ *
+ *  The FIRST entry in `amendments()` order to edit `MarketMapV3.jsx` — `file: 'jsx'`, the
+ *  partition spec §9.2 put in place for A24 — and the first to LAND, because A28's branch merged
+ *  first. A24's own four jsx entries are appended after this family, not before it. No visible control is added: John was offered V2's
+ *  two toggleable rings, composed into V3's own "Market data layers" drawer, and chose against
+ *  it. A25.6's "no point, no ring" is untouched — the radius moves, the finite-point test that
+ *  decides whether anything is drawn at all does not. */
+const A28_1: Amendment = {
+  id: 'A28.1', date: '2026-09-11', file: 'jsx',
+  ruling: 'the ring is drawn at the distance the card names — 8 000 m, keeping #003a70 (D-C44)',
+  find: '        radius: 16000, color: "#003a70", weight: 1.5, dashArray: "4 4",',
+  replace: '        radius: 8000, color: "#003a70", weight: 1.5, dashArray: "4 4",',
+  count: 1
+};
+
+/** A28.2 (same ruling). THE LEGACY PANEL'S GROUP 1 ROWS, deleted under the bundle's own
+ *  dead-code rule — the rule that removed the `browseSel` orphans (A2.3-A2.5) and the two
+ *  `<select>` render-value orphans A13 left behind (A13.6-A13.7).
+ *
+ *  `layerHelp` and `fillRows` are read by NO template on either target: each occurs exactly once
+ *  in the amended design — its own declaration — and zero times in the template region, and
+ *  `grep fillRows frontend/src/App.vue` is empty. The design says so itself on the line this
+ *  entry deletes with them: "GROUP 1 — retained for the legacy panel; the compact control above
+ *  is canonical." V3 replaced that panel with `md.layerChoices` ("Market data layers · select
+ *  any or all"), which is what `browse-layers-open` photographs. */
+const A28_2: Amendment = {
+  id: 'A28.2', date: '2026-09-11', ruling: 'the orphans are deleted under the bundle\'s own dead-code rule (D-C44)',
+  find: '      // GROUP 1 — retained for the legacy panel; the compact control above is canonical.\n'
+    + '      layerHelp: "Area shading: rates and medians shade the whole community, so only one can show at a time — two fills blend into a colour that means nothing. Overlays: counts drawn as sized circles, which stack freely on each other and on the shading.",\n'
+    + '      fillRows: [radioRow("none", "No shading", !valueLayer, null, () => this.setState({ mdValue: null }))].concat(\n'
+    + '        enabled("income") ? [radioRow("income", "Median Household Income", valueLayer === "income", ramp("income")[3], setValue("income"))] : [],\n'
+    + '        enabled("growth") ? [radioRow("growth", "Population Growth", valueLayer === "growth", ramp("growth")[3], setValue("growth"))] : [],\n'
+    + '        enabled("econ") ? [radioRow("econ", "Average Practice Payroll", valueLayer === "econ", ramp("econ")[3], setValue("econ"))] : []\n'
+    + '      ),\n',
+  replace: '',
+  count: 1
+};
+
+/** A28.3 (same ruling). THE LEGACY PANEL'S GROUP 2 ROWS, on the same rule and the same
+ *  measurement: `overlayRows` occurs exactly once in the amended design, its own declaration,
+ *  and zero times in the template region; `grep overlayRows frontend/src/App.vue` is empty.
+ *
+ *  This is the entry that removes the LAST "drive time" strings in the product — "5–10 min drive
+ *  time" and "10–20 min drive time", two rows nothing renders. A27.3/A27.4/A27.5 corrected every
+ *  sentence a member can actually read; these two were all that was left, which is what D-C39 was
+ *  reaching for and could not name correctly. */
+const A28_3: Amendment = {
+  id: 'A28.3', date: '2026-09-11', ruling: 'the orphans are deleted under the bundle\'s own dead-code rule (same ruling)',
+  find: '      // GROUP 2 — everything that can coexist with a fill and with each other.\n'
+    + '      overlayRows: [\n'
+    + '        layerRow("practices", "Practice Listings", !!layers.practices, "#003a70", setLayer("practices")),\n'
+    + '        layerRow("drive5", "5–10 min drive time", !!layers.drive5, "#003a70", setLayer("drive5")),\n'
+    + '        layerRow("drive10", "10–20 min drive time", !!layers.drive10, "#339dde", setLayer("drive10"))\n'
+    + '      ].concat(\n'
+    + '        enabled("households") ? [layerRow("households", "Households", !!layers.households, ramp("households")[3], setLayer("households"))] : [],\n'
+    + '        enabled("pets") ? [layerRow("pets", "Estimated Pet Households", !!layers.pets, ramp("pets")[3], setLayer("pets"))] : [],\n'
+    + '        enabled("vets") ? [layerRow("competition", "Veterinary Establishments", !!layers.competition, ramp("competition")[3], setLayer("competition"))] : []\n'
+    + '      ),\n',
+  replace: '',
+  count: 1
+};
+
+/** A28.4 (same ruling). THE TWO DRIVE-BAND STATE FLAGS. `drive5` and `drive10` are the only two
+ *  members of `marketVals`'s layer defaults that A28.3's rows were the sole reader of: the other
+ *  four are live — `practices`, `households`, `pets` and `competition` are what `SYMBOL_KEYS`
+ *  filters `activeSymbols` by (`logic.js`), and `competition` is written by the Data Layers
+ *  card's own source switch. Deleting the two that nothing reads leaves those four exactly as
+ *  they are, including their order. */
+const A28_4: Amendment = {
+  id: 'A28.4', date: '2026-09-11', ruling: 'the drive5/drive10 state flags go with the rows that were their only reader (same ruling)',
+  find: '      { practices: true, drive5: true, drive10: true, competition: true, households: false, pets: false },',
+  replace: '      { practices: true, competition: true, households: false, pets: false },',
+  count: 1
+};
+
+/** A28.5-A28.8 (controller amendment D-C45, 2026-09-11). THE HELPERS THE DELETION ORPHANED.
+ *  D-C44 deleted the legacy panel's rows (`fillRows`, `overlayRows`) and the two state flags
+ *  those rows were the sole reader of, but left the four helpers that BUILT the rows standing —
+ *  the ruling named the rows and the flags and nothing else, and the D-C44 implementer added a
+ *  case asserting the four were still present so that leaving them would read as a decision
+ *  rather than an oversight. This closes it: `radioRow`, `layerRow`, `setValue` and `setLayer`
+ *  are re-measured (as the brief required before deleting) and each occurs exactly ONCE in
+ *  `logic.js` and once in the amended design — its own declaration — and ZERO times in
+ *  `App.vue`. Same rule as A2.3-A2.5 and A13.6-A13.7: one entry per helper, in the file's own
+ *  order, each entry taking its own trailing blank line so the block that follows (`s.mdOff`'s
+ *  footer-card switch) ends up separated from `minLng` by exactly the one blank line the design
+ *  had before any of GROUP 1/GROUP 2 existed. */
+const A28_5: Amendment = {
+  id: 'A28.5', date: '2026-09-11', ruling: 'the helpers the deletion orphaned go too (controller amendment D-C45)',
+  find: '    const layerRow = (key, label, on, color, toggle) => ({\n      label, on,\n      toggle,\n      boxStyle: "flex: none; width: 17px; height: 17px; border-radius: 3px; display: grid; place-items: center; border: 1.5px solid " +\n        (on ? color : "#c4ccd6") + "; background: " + (on ? color : "var(--vf-white)") + ";",\n      tickStyle: "display: block; opacity: " + (on ? "1" : "0") + ";",\n      textStyle: "font-size: 13px; font-weight: " + (on ? "500" : "400") + "; color: " + (on ? "var(--vf-navy)" : "var(--vf-text)") + ";"\n    });\n\n',
+  replace: '',
+  count: 1
+};
+
+const A28_6: Amendment = {
+  id: 'A28.6', date: '2026-09-11', ruling: 'the helpers the deletion orphaned go too (same amendment)',
+  find: '    const radioRow = (key, label, on, color, toggle) => ({\n      label, on, toggle,\n      boxStyle: "flex: none; width: 15px; height: 15px; border-radius: 999px; display: grid; place-items: center; border: 1.5px solid " +\n        (on ? "var(--vf-navy)" : "#c3d4e2") + "; background: var(--vf-white);",\n      dotStyle: "width: 7px; height: 7px; border-radius: 999px; background: var(--vf-navy); opacity: " + (on ? "1" : "0") + ";",\n      swatchStyle: "flex: none; width: 12px; height: 12px; border-radius: 2px; background: " + (color || "transparent") +\n        "; opacity: " + (color ? (on ? "1" : ".4") : "0") + ";",\n      labelStyle: "font-size: 12.5px; font-weight: " + (on ? "500" : "400") + "; color: " + (on ? "var(--vf-navy)" : "var(--vf-text)") + ";"\n    });\n\n',
+  replace: '',
+  count: 1
+};
+
+const A28_7: Amendment = {
+  id: 'A28.7', date: '2026-09-11', ruling: 'the helpers the deletion orphaned go too (same amendment)',
+  find: '    const setValue = (k) => () => this.setState({ mdValue: s.mdValue === k ? null : k });\n',
+  replace: '',
+  count: 1
+};
+
+const A28_8: Amendment = {
+  id: 'A28.8', date: '2026-09-11', ruling: 'the helpers the deletion orphaned go too (same amendment)',
+  find: '    const setLayer = (k) => () => this.setState({ mdLayers: Object.assign({}, layers, { [k]: !layers[k] }) });\n\n',
+  replace: '',
+  count: 1
+};
+
+/** A28.9 (controller amendment, 2026-09-11, whole-branch review). THE LAST ORPHAN THE DELETION
+ *  LEFT, under the rule D-C45 already applied to the four helpers — not a new product decision,
+ *  and the same rule John has ruled the shape of twice (A2.2-A2.5 for `browseSel`, A13.6-A13.7
+ *  for the `<select>` render values).
+ *
+ *  A28.2-A28.4 deleted `overlayRows` and the `drive5`/`drive10` flags. `overlayRows`'s own row
+ *  `layerRow("practices", "Practice Listings", !!layers.practices, ...)` was the ONLY reader of
+ *  the `practices` default in this literal: `SYMBOL_KEYS` is `["pets", "households",
+ *  "competition"]`, so `activeSymbols` never asks for it, and the one other place `layers` is
+ *  spread (`patch.mdLayers = Object.assign({}, layers, { competition: false })`) copies the key
+ *  forward without reading it. `md.practices` — the pin list the map component is handed — is a
+ *  different declaration entirely and is untouched.
+ *
+ *  The other three defaults STAY: `competition`, `households` and `pets` are exactly
+ *  `SYMBOL_KEYS`, and each is read on every render. */
+const A28_9: Amendment = {
+  id: 'A28.9', date: '2026-09-11', ruling: 'the orphans are deleted under the bundle\'s own dead-code rule (D-C44/D-C45)',
+  find: '      { practices: true, competition: true, households: false, pets: false },',
+  replace: '      { competition: true, households: false, pets: false },',
+  count: 1
+};
+
 // A24 -- real Census boundary polygons (John's rulings D-C34-D-C37 of 2026-09-10; spec
 // docs/superpowers/specs/2026-09-10-neighbourhood-shading-design.md). Eleven `.dc.html` entries and
-// four in `MarketMapV3.jsx`, the first family in the programme's history to reach a bundle file
-// other than the `.dc.html` (controller ruling, §14 Q3). A24.1's payload is GENERATED --
+// four in `MarketMapV3.jsx`, the family the second-file partition was put in place for
+// (controller ruling, §14 Q3); A28.1 reached that file first, by merging first. A24.1's payload is GENERATED --
 // scripts/export_design_boundaries.py -- so the design carries real geometry and not one hand-typed
 // coordinate. A24.13 is the family's OTHER ruling, D-C46, and rides here because it moves the same
 // Browse captures.
@@ -4605,6 +4960,34 @@ export function amendments(): Amendment[] {
     // trigger that opened it, so their edges line up." Its `find` is A26.10's and A26.11's own
     // output — the panel style string they share — so it is applied last, and once, for both.
     A26_16,
+    // A27 — per-figure geography on the Community Context card (John, 2026-09-11, D-C38/D-C39).
+    // A27.2 reads A21.3d's output, A27.3 A21.4a's and A27.4 A21.4d's, so the family is appended
+    // last as every family is. Definition order in this file matches this list (m8). A20 stays
+    // reserved by the image-identifiability plan and A24 by the neighbourhood-shading spec, so
+    // A27 is the next free id in the ledger after A26.
+    A27_1, A27_2, A27_3, A27_4, A27_5,
+    // D-C42 (John, 2026-09-11): the Insights heading keeps its name and the geography moves to a
+    // sub-line. A27.6 reads A27.3's output and A27.7 A21.5a's, so both run after them.
+    A27_6, A27_7,
+    // D-C48 (John, 2026-09-11, on the whole-branch review): the Population tile's sub-line is
+    // growth, which is place-level, so it names its own geography rather than being covered by
+    // A27.7's ring caption. Chained on A21.2d, which runs far earlier.
+    A27_8,
+    // A28 — the ring is drawn at the distance the card names (John, 2026-09-11, ruling D-C44).
+    // A28.1 is the FIRST entry in this list that edits `MarketMapV3.jsx` rather than the
+    // `.dc.html` (`file: 'jsx'`, the partition spec §9.2 added for A24, whose own four jsx
+    // entries are appended after this family); A28.2-A28.4
+    // delete the legacy panel's orphan rows and the two state flags those rows were the only
+    // reader of, under the bundle's own dead-code rule. A28.5-A28.8 (controller amendment
+    // D-C45) finish it: the four helpers those rows called (`layerRow`, `radioRow`, `setValue`,
+    // `setLayer`) are unreferenced now too, and go under the same rule. None of the eight reads
+    // an earlier entry's output — every `find` occurs in the pristine file — but the family is
+    // appended last as every family is, and definition order in this file matches this list
+    // (m8). A20 stays reserved by the image-identifiability plan and A24 by the
+    // neighbourhood-shading spec, so A28 is the next free id in the ledger after A27.
+    // A28.9 (whole-branch review, 2026-09-11) is the last orphan the same deletion left: the
+    // `practices` layer default, whose only reader was A28.2's own deleted row.
+    A28_1, A28_2, A28_3, A28_4, A28_5, A28_6, A28_7, A28_8, A28_9,
     // A24 -- real Census boundary polygons (2026-09-10, John's D-C34-D-C37) and the
     // growth breaks that make them readable (A24.13, D-C46, 2026-09-11). Numerically
     // before A25 and A26 and applied after both: A24 was RESERVED by the ledger's own

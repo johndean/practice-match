@@ -244,7 +244,28 @@ def test_claude_md_literal_edit_clauses_count_each_family_s_own_entries():
     reintroduces A7's bold marker a second time ("widened **A7** with A7.3-A7.4") with no count
     clause of its own, so a family's block runs from ONE of its `**A<n>**` markers to the very NEXT
     such marker of ANY family — a phrase found in that span belongs to the family whose marker
-    opened it, never to whatever other family's clause happens to follow it in the file."""
+    opened it, never to whatever other family's clause happens to follow it in the file.
+
+    D-C38/D-C39 fix round 1, finding 1 — THE GATE WAS BLIND AND SILENT ABOUT IT. Two defects, one
+    cause. (a) The clause regex was built from a lowercase word tuple and run WITHOUT
+    `re.IGNORECASE`, and it matched only the plural "literal edits" / "literal script edits", so a
+    sentence-initial "Eight literal edits:" (A14), "Twelve literal edits" (A19), "Two literal
+    TEMPLATE edits" (A18), "One literal edit." (A23), "Six literal script edits:" (A25) and "Five
+    literal edits:" (A27) were all invisible: the families actually checked were 8, 12, 13, 15, 16
+    and 17, six of the twelve that carry a clause. CLAUDE.md said "Four literal edits" for A27's
+    five entries and this test passed. (b) It reported nothing about the six it skipped, which is
+    what let (a) live: `assert len(checked) >= 4` is satisfied by any four.
+
+    So the clause form is matched case-insensitively, singular or plural, with the family's own
+    qualifier ("script", "template") optional, and EVERY occurrence in every span of the family is
+    compared — not just the first — so the two copies of the amendment paragraph cannot disagree.
+    And the skip is no longer silent: the families that carry NO clause at all are DECLARED below,
+    and the scan asserts that the declared set and the checked set together account for every
+    family `design-amendments.ts` knows about, with no overlap. A new family whose clause this
+    cannot parse is then a failure ("carries no literal-count clause this scan can read") rather
+    than a hole, and a declared family that grows a clause fails too, so the declaration cannot go
+    stale in either direction. Chosen over asserting the checked set by name because asserting the
+    checked set is satisfied by silence: an unparseable clause simply does not join it."""
     claude = (ROOT / "CLAUDE.md").read_text()
     ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
     words = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
@@ -256,24 +277,103 @@ def test_claude_md_literal_edit_clauses_count_each_family_s_own_entries():
     # families **of literal** edits", "the other three families are literal script or template
     # edits") reads as a false per-family clause under a bare `\w+`, which is how this first found
     # A4's block: the next family's own preamble ("... of literal edits: **A5** (...") sits inside
-    # A4's span and `\w+` happily captured "of".
+    # A4's span and `\w+` happily captured "of". Those two descriptors survive the widening below
+    # because the number and the word "literal" must be ADJACENT: "three MORE FAMILIES OF literal
+    # edits" and "three FAMILIES ARE literal script or template edits" both fail on that, and so
+    # does A16's "one TEMPLATE literal wires the tile's onClick" and A17's "five literal ROWS".
     number = "|".join(words)
+    clause_re = re.compile(rf"\b({number}) literal (?:script |template )?edits?\b", re.IGNORECASE)
+    families = sorted({n for n in re.findall(r"id: 'A(\d+)", ts)}, key=int)
+    assert families, "frontend/tests/design-amendments.ts: no literal amendment ids found (id: 'A<n>...)"
+
+    # The families whose CLAUDE.md prose states no per-family literal-edit count at all. Declared,
+    # never inferred: an undeclared family with no readable clause is the hole this test exists to
+    # close, so it has to be a failure rather than a skip. A1's block carries the derived-edit
+    # sentence instead ("A1's 24 derived edits plus N literals"), which the family/entry-count test
+    # below owns; A2-A7, A9-A11, A21, A22 and A26 describe their edits in prose without counting
+    # them.
+    no_clause = {"1", "2", "3", "4", "5", "6", "7", "9", "10", "11", "21", "22", "26"}
+
+    # H1 (the fix-round re-review's own finding, 2026-09-11). `no_clause` was read as "this family
+    # states no count"; what the scan actually proved was "this family states no count THE REGEX
+    # ABOVE CAN READ" — the same silence moved one line down. The re-reviewer measured it: inserting
+    # `Sixteen literal in-place edits.` into A26's block left every assertion here green, because
+    # `clause_re` requires "literal edits" to be adjacent and that wording separates them. A
+    # declared clause-free family is therefore also checked to state NO count at all: any number —
+    # spelled out or in digits — within three words of `edits`/`entries`. `clause_re` stays the
+    # strict reader (it is what a count is COMPARED against); this one only asks whether a count is
+    # being stated, so it is deliberately the looser of the two and never reads a value.
+    #
+    # Calibrated against the file rather than guessed: at three words it fires on A21's clause
+    # alone. The two GROUP descriptors the docstring above names — A1's "three families are literal
+    # script or template edits" and A4's "three more families of literal edits" — put six and four
+    # words between the number and the noun, so the same adjacency rule that keeps them out of
+    # `clause_re` keeps them out of this.
+    loose_count_re = re.compile(rf"\b(?:{number}|\d+)\b(?:\s+[\w’'-]+){{0,3}}\s+(?:edits?|entries)\b", re.IGNORECASE)
+
+    # A21, exempt with a reason rather than by widening the regex until it passes. Its clause is
+    # "Task B10 … adds thirteen more A21 entries", a PARTIAL count: thirteen on top of the entries
+    # A-C28/A-C29 had already added, never the family's total. There is nothing in
+    # `design-amendments.ts` for it to be compared with — the family has 30 entries and the
+    # sentence is true — so no scan can check it, and pretending otherwise would mean either a
+    # wrong assertion or a regex bent to make a true sentence readable. It is the only family in
+    # the file that states its count that way.
+    partial_count = {"21"}
+
+    spans: dict[str, list[str]] = {}
     checked = []
     for i, marker in enumerate(markers):
         family = marker.group(1)
         end = markers[i + 1].start() if i + 1 < len(markers) else len(claude)
-        clause = re.search(rf"\b({number}) literal (?:script )?edits\b", claude[marker.start():end])
-        if clause is None:
+        spans.setdefault(family, []).append(claude[marker.start():end])
+        clauses = clause_re.findall(claude[marker.start():end])
+        if not clauses:
             continue
-        entries = len(set(re.findall(rf"id: 'A{family}\.[^']+'", ts)))
+        # The BARE id counts too: a one-entry family is declared `id: 'A23'`, not `id: 'A23.1'`
+        # (A22 and A23 are both shaped that way), and the dot-only form this used to require read
+        # zero entries for them. The optional-dot group cannot bleed across families — after
+        # `A2` the next character must be `'` or `.`, so `A21.1` is not an A2 entry.
+        entries = len(set(re.findall(rf"id: 'A{family}(?:\.[^']+)?'", ts)))
         assert entries, f"A{family}'s clause names literal edits but design-amendments.ts declares no A{family} entries"
         assert entries < len(words), f"no spelled-out word on hand for {entries} A{family} entries"
-        assert clause.group(1) == words[entries], (
-            f"CLAUDE.md's A{family} clause says '{clause.group(1)} literal edits'; the family has "
-            f"{entries} entries ('{words[entries]}')"
-        )
+        for word in clauses:
+            assert word.lower() == words[entries], (
+                f"CLAUDE.md's A{family} clause says '{word} literal edits'; the family has "
+                f"{entries} entries ('{words[entries]}')"
+            )
         checked.append(family)
-    assert len(checked) >= 4, f"only {checked} families carry a literal-count clause — the scan may have broken"
+
+    unreadable = sorted(set(families) - set(checked) - no_clause, key=int)
+    assert unreadable == [], (
+        f"A{', A'.join(unreadable)} carries no literal-count clause this scan can read. Either the "
+        "clause is worded in a form the regex above does not match — which is the silent hole that "
+        "let A27 ship as 'Four literal edits' — or the family genuinely states no count and belongs "
+        "in `no_clause`."
+    )
+    stale = sorted(set(checked) & no_clause, key=int)
+    assert stale == [], (
+        f"A{', A'.join(stale)} is declared in `no_clause` but now carries a readable literal-count "
+        "clause; drop it from the declaration so the count is gated."
+    )
+
+    # H1: every declared clause-free family genuinely states no count.
+    for family in sorted(no_clause, key=int):
+        found = sorted({m.group(0) for span in spans.get(family, []) for m in loose_count_re.finditer(span)})
+        if family in partial_count:
+            # The exemption cannot go stale in the other direction either: if A21's partial count
+            # ever leaves the prose, this says so instead of quietly protecting nothing.
+            assert found, (
+                f"A{family} is exempted from the clause-free scan as a PARTIAL count, and its block "
+                "no longer states one. Drop it from `partial_count` — the exemption is now dead."
+            )
+            continue
+        assert found == [], (
+            f"A{family} is declared in `no_clause` — no per-family count — but its block states "
+            f"{found}. Either the clause is real, in which case word it so `clause_re` reads it "
+            f"and drop A{family} from `no_clause` so the number is checked, or it is a group "
+            "descriptor that has drifted next to a count noun. A count nothing compares against "
+            "is the hole this scan closes."
+        )
 
 
 def test_ci_workflow_installs_no_ad_hoc_tooling():
@@ -1388,15 +1488,46 @@ def test_claude_md_amendment_paragraph_has_a_prose_section_for_every_family():
     Family identifiers are read from `design-amendments.ts`'s own literal ids (`id: 'A<n>...'`) —
     the same source the family/entry-count test above reads — never hand-typed here: for every
     distinct family number found there, CLAUDE.md must carry that family's own bold marker,
-    `**A<n>**`, opening a prose section."""
+    `**A<n>**`, opening a prose section.
+
+    I1 (whole-branch review, 2026-09-11) — CHECKED PER COPY, and the copies must AGREE.
+    CLAUDE.md carries its ~35 KB amendment paragraph TWICE, on two adjacent lines, and the two
+    copies had silently diverged: one documented A22 and omitted A21, the other documented A21
+    and omitted A22. Every doc gate stayed green because every one of them — this test included,
+    and the literal-edit clause scan, and the family/entry-count sentence check — read the WHOLE
+    FILE, so the UNION of the two copies satisfied all of them. The reviewer proved it by
+    deleting A27's entire 6,672-character section from one copy only and watching all 99 doc
+    gates pass.
+
+    A union is not a document. Each copy is read on its own here, and then the copies are
+    required to be byte-identical, which is the invariant that makes every OTHER whole-file
+    substring check in this module honest again: where the copies agree, the union IS each copy.
+    A second paragraph that deliberately says something different is not a copy and must not be
+    written in the amendment ledger's own shape."""
     claude = (ROOT / "CLAUDE.md").read_text()
     ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
     literal_families = sorted({int(n) for n in re.findall(r"id: 'A(\d+)", ts)})
     assert literal_families, "frontend/tests/design-amendments.ts: no literal amendment ids found (id: 'A<n>...)"
-    missing = [f"A{n}" for n in literal_families if not re.search(rf"\*\*A{n}\*\*", claude)]
-    assert missing == [], (
-        "CLAUDE.md's amendment paragraph carries no prose section (no **A<n>** marker) for: "
-        f"{', '.join(missing)}"
+
+    # A copy of the amendment paragraph is any line carrying at least one family marker. Found by
+    # the marker rather than by an opening phrase, so a copy cannot escape by being re-worded.
+    copies = [line for line in claude.splitlines() if re.search(r"\*\*A\d+\*\*", line)]
+    assert copies, "CLAUDE.md carries no amendment paragraph at all (no **A<n>** marker anywhere)"
+
+    for i, copy in enumerate(copies, start=1):
+        missing = [f"A{n}" for n in literal_families if not re.search(rf"\*\*A{n}\*\*", copy)]
+        assert missing == [], (
+            f"copy {i} of {len(copies)} of CLAUDE.md's amendment paragraph carries no prose "
+            f"section (no **A<n>** marker) for: {', '.join(missing)}"
+        )
+
+    distinct = sorted(set(copies), key=copies.index)
+    assert len(distinct) == 1, (
+        f"CLAUDE.md carries {len(copies)} copies of the amendment paragraph and "
+        f"{len(distinct)} of them differ. They must be byte-identical: every other gate in this "
+        "module reads the whole file, so a disagreement between copies is invisible to all of "
+        "them. First divergence at character "
+        f"{next(j for j in range(max(map(len, distinct))) if len({d[j:j + 1] for d in distinct}) > 1)}."
     )
 
 

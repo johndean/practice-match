@@ -66,7 +66,13 @@ describe('logic.js is the design script block, ported verbatim', () => {
 
   it('carries V3\'s market-data shape and none of V2\'s Listings tab', () => {
     const logic = readFileSync(join(ROOT, 'src/logic.js'), 'utf8');
-    for (const gone of ['browseMode', 'browseToggle', 'hasPeek']) {
+    // A28.2-A28.4 (John, 2026-09-11, ruling D-C44) append the legacy panel's own orphans to this
+    // list: `layerHelp`, `fillRows`, `overlayRows` and the two drive-band layer-default flags the
+    // deleted rows were the sole reader of. They are here rather than only in
+    // `design-amendments.test.ts` because that suite asserts on the DESIGN and this one asserts
+    // on the PORT — a hand edit that put any of them back into `logic.js` alone would fail the
+    // byte-parity case above, and this names what it was.
+    for (const gone of ['browseMode', 'browseToggle', 'hasPeek', 'fillRows', 'overlayRows', 'layerHelp', 'drive5', 'drive10']) {
       expect(logic, `logic.js still carries ${gone}`).not.toContain(gone);
     }
     // README §7, risk register: the V3 reference still declares a vestigial `isBrowse: false`
@@ -93,9 +99,12 @@ describe('logic.js is the design script block, ported verbatim', () => {
   //     so one unlocated community stretches it to the equator, which is precisely the failure
   //     A25.3 measured in the mosaic's own bbox (100,482,513 cells).
   //
-  // NEITHER IS DELETED. Deleting them is an unruled edit to the approved design, and the
-  // bundle's dead-code rule has only ever been applied to orphans an amendment itself created
-  // (A2.3-A2.5, A13.6-A13.7). They are INERT ONLY BECAUSE NO TEMPLATE CONSUMES THEM, and that —
+  // NEITHER IS DELETED. Deleting them is an unruled edit to the approved design. The bundle's
+  // dead-code rule had only ever been applied to orphans an amendment itself created (A2.3-A2.5,
+  // A13.6-A13.7) until A28.2-A28.4 (John, 2026-09-11, ruling D-C44) applied it to the legacy
+  // panel's own pre-existing orphans — and that widening is the point: it took a RULING, named
+  // the identifiers, and was measured one by one. These two are not in it. They are INERT ONLY
+  // BECAUSE NO TEMPLATE CONSUMES THEM, and that —
   // not their existence — is what this case pins, in the same spirit as the reference's
   // vestigial `isBrowse: false` above: as facts, not defects. The day either is wired to a
   // template this fails, and whoever wires it is made to give it A25.1's finite-coordinate test
@@ -158,6 +167,35 @@ describe('the docked panel and the detail card say which area their figures desc
     const insights = appVue.slice(appVue.indexOf('v-if="v.md?.panel?.isInsights"'), appVue.indexOf('v-if="v.md?.panel?.isOther"'));
     expect((insights.match(/v-if="v\.md\?\.panel\?\.hasDemo"/g) ?? []).length).toBe(2);
     expect(insights.indexOf('v-if="v.md?.panel?.noDemo"')).toBeLessThan(insights.indexOf('View full listing'));
-    expect(insights.indexOf('View full listing')).toBeLessThan(insights.indexOf('Drive-time figures are approximated'));
+    // A27.4 (D-C39) corrected the footnote's first sentence: the band is a straight-line
+    // catchment, never a drive time. Its place in the order is what this line measures.
+    expect(insights.indexOf('View full listing')).toBeLessThan(insights.indexOf('A catchment figure is a straight-line area'));
+    expect(appVue, 'the corrected footnote must not come back as a drive time').not.toContain('Drive-time figures are approximated');
+  });
+
+  // D-C42 (John, 2026-09-11). The sub-line A27.7 puts under the heading is a TEMPLATE amendment,
+  // so it is pinned here for the reason the four above are: the reference and the app are
+  // generated from the same amended design and would lose it together, leaving the DOM oracle and
+  // the pixel gate both green. Reverting A27.7 leaves `overviewScope` computed and rendered
+  // nowhere, which is exactly the shape A21.5a's own pin was written for.
+  it('A27.7: the geography is a sub-line UNDER the heading, and the heading is still data', () => {
+    const insights = appVue.slice(appVue.indexOf('v-if="v.md?.panel?.isInsights"'), appVue.indexOf('v-if="v.md?.panel?.isOther"'));
+    // The heading interpolation A21.5a introduced is untouched — A27.6 retired its BEHAVIOUR,
+    // not its markup.
+    expect(insights).toContain('{{ __s(v.md?.panel?.overviewTitle) }}');
+    // …and the label now renders beneath it, in its own element, gated so that a listing with no
+    // label has no element at all rather than an empty one.
+    expect(insights, 'the sub-line is not rendered anywhere on the Insights tab').toContain('{{ __s(v.md?.panel?.overviewScope) }}');
+    expect(insights).toContain('v-if="v.md?.panel?.hasOverviewScope"');
+    expect(
+      insights.indexOf('{{ __s(v.md?.panel?.overviewTitle) }}'),
+      'the geography is not BENEATH the heading'
+    ).toBeLessThan(insights.indexOf('{{ __s(v.md?.panel?.overviewScope) }}'));
+    // …and it is above the tiles it describes, not appended after the section.
+    expect(insights.indexOf('{{ __s(v.md?.panel?.overviewScope) }}'))
+      .toBeLessThan(insights.indexOf('v-for="(o, $index) in __arr(v.md?.panel?.overviewTiles)"'));
+    // The design's own place line, taken whole — A27.7 invents no type, colour or spacing. Twice
+    // in the file and only twice: `md.panel.place` and this one.
+    expect((appVue.match(/font-size: 12\.5px; color: var\(--vf-text\); margin-top: 2px;/g) ?? []).length).toBe(2);
   });
 });

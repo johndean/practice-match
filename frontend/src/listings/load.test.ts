@@ -43,6 +43,8 @@ function row(over: Partial<ApiListing> = {}): ApiListing {
     vets: null,
     econ_k: null,
     community_label: null,
+    growth_scope: null,
+    income_note: null,
     ...over
   };
 }
@@ -261,9 +263,22 @@ describe('applyListings', () => {
   // carries none leaves the key ABSENT — `p.communityLabel || "…"` is how the design falls back
   // to its own wording, and a present-but-undefined key is a difference the D6 round-trip sees.
   it('carries community_label as communityLabel, and omits the key when the API sent none', () => {
-    expect(toPractice(row({ community_label: 'Within 10 minutes of the practice' })).communityLabel)
-      .toBe('Within 10 minutes of the practice');
+    expect(toPractice(row({ community_label: 'Within about 5 miles of the practice' })).communityLabel)
+      .toBe('Within about 5 miles of the practice');
     expect('communityLabel' in toPractice(row({ community_label: null }))).toBe(false);
+  });
+
+  // D-C38 (2026-09-11): the same rule again, for the two per-figure fields the Growth and Median
+  // income tiles read. Each is ABSENT rather than present-and-undefined when the API sent none,
+  // because that is what makes `p.growthScope ? … : …` and `p.incomeNote || "…"` fall back to the
+  // design's own literals — and `detail` is one of the thirteen frozen screens, so a key that
+  // arrived as anything but absent would move its hash.
+  it('carries growth_scope and income_note under the design\'s own names, and omits each when the API sent none', () => {
+    expect(toPractice(row({ growth_scope: 'Dallas' })).growthScope).toBe('Dallas');
+    expect(toPractice(row({ income_note: 'Within about 5 miles of the practice \u00b7 approximate' })).incomeNote)
+      .toBe('Within about 5 miles of the practice \u00b7 approximate');
+    expect('growthScope' in toPractice(row({ growth_scope: null }))).toBe(false);
+    expect('incomeNote' in toPractice(row({ income_note: null }))).toBe(false);
   });
 
   // B10: the CLEAR runs before the INSTALL. It used to run after, so a row whose id is one of the

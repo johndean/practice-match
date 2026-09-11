@@ -270,7 +270,14 @@ async def communities(cbsa: str, band: str | None = Query(None)) -> Response:
                     c["suppressed"].append(field)
                 else:
                     c[field] = float(row["value_num"]) if row["value_num"] is not None else None
-        if row["metric_key"] == "establishments" and not row["suppressed"]:
+        # `value_num is not None` belongs here as much as on the two branches either side of it
+        # (whole-branch re-review, 2026-09-11): the column is nullable and `suppressed` is
+        # NOT NULL DEFAULT false, so "the source did not answer" reaches this line as a null on an
+        # UNSUPPRESSED row and `float(None)` took the whole communities route down with a 500.
+        # D-C31's rule decides the answer: an absent figure is absent — the community keeps every
+        # figure that IS servable and simply carries no competition count, exactly as a suppressed
+        # row does. This was the last unguarded `float()` in the module.
+        if row["metric_key"] == "establishments" and not row["suppressed"] and row["value_num"] is not None:
             inputs = row["inputs"] or {}
             comp_count[lid] = {"count": float(row["value_num"]), "geo_level": inputs.get("geo_level"), "zctas": inputs.get("zctas")}
         if row["metric_key"] == "vets_per_10k_households" and not row["suppressed"]:

@@ -124,6 +124,29 @@ describe('logic.js — characterisation of the approved prototype (file untouche
     expect(v).toHaveProperty('isBrowse', false);
   });
 
+  // A28.2-A28.4 (John, 2026-09-11, ruling D-C44), the same dead-code rule again — this time on
+  // orphans the DESIGN itself left behind rather than ones an amendment created. `layerHelp`,
+  // `fillRows` and `overlayRows` were V3's "GROUP 1 / GROUP 2" rows for the panel V3 replaced
+  // with `md.layerChoices`, retained by the design's own comment as legacy and read by no
+  // template on either target; `drive5`/`drive10` were layer-default flags only those rows read.
+  // Deleting them removes the last "drive time" strings in the product (D-C39's real target).
+  it('marketVals no longer exposes the legacy panel\'s orphan rows (A28.2-A28.4)', () => {
+    const md = c.marketVals(c.filtered());
+    expect(md).not.toHaveProperty('layerHelp');
+    expect(md).not.toHaveProperty('fillRows');
+    expect(md).not.toHaveProperty('overlayRows');
+    // …and nothing the family did not name went with them: the compact control V3 made
+    // canonical, and the legend the design still draws, are untouched.
+    expect(md).toHaveProperty('layerChoices');
+    expect(md).toHaveProperty('legend');
+    // A28.4: the two drive-band flags leave the defaults and the four LIVE members stay, with
+    // their values. Read through `symbols` — `SYMBOL_KEYS.filter((k) => layers[k] && ...)` — which
+    // is what actually consumes them, so all three of `pets: false`, `households: false` and
+    // `competition: true` are pinned by one literal. (`practices`, the fourth, is not a symbol
+    // key; the design reads it only from the deleted row, and it stays in the defaults.)
+    expect(md.symbols, 'A28.4 changed a layer default it was not given').toEqual(['competition']);
+  });
+
   // A2.5 (zero-gaps review, same dead-code rule as A2.3: a dead handler is dead code). The
   // top-level `selectMarker` A2.4 trimmed is never wired to any template prop — App.vue's
   // only `on-select` binding is `v.mob?.selectMarker`, the mobileVals one (`logic.js:972`) —
@@ -3595,16 +3618,66 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
 
   // ---- F-5, the card says which area it describes (D-C32) ----------------------------------
 
-  it('the panel’s Insights heading names the fallback area, and the design’s own wording otherwise (A21.5a)', () => {
+  it('the panel’s Insights heading KEEPS its name and the area goes to its own sub-line (A27.6, D-C42)', () => {
     const p = austin()[0];
-    expect(panelFor(p).overviewTitle).toBe('Market Overview (10 min drive)');
-    (p as any).communityLabel = 'Within 10 minutes of the practice';
+    // A27.3 (D-C39): the default loses the parenthetical it could not support. The band is an
+    // 8 km straight-line buffer, not a routed drive time, and this heading sat over PLACE-band
+    // figures on all but one listing.
+    //
+    // A27.6 (D-C42, John, 2026-09-11): and the heading is now that default ALWAYS. A21.5a let
+    // `communityLabel` REPLACE it, so on QA — where D-C38 gives 28 of 29 listings a label — the
+    // words "Market Overview" appeared nowhere and A27.3's own correction was invisible. The
+    // geography moves to a sub-line beneath the heading, which is what every other place on this
+    // card already does with it (A21.5b, A21.5c, A27.1, A27.2).
+    expect(panelFor(p).overviewTitle).toBe('Market Overview');
+    expect(panelFor(p).hasOverviewScope).toBe(false);
+    expect(panelFor(p).overviewScope).toBe('');
+    (p as any).communityLabel = 'Within about 5 miles of the practice';
     try {
-      expect(panelFor(p).overviewTitle).toBe('Within 10 minutes of the practice');
+      expect(panelFor(p).overviewTitle, 'the label replaced the heading again').toBe('Market Overview');
+      expect(panelFor(p).hasOverviewScope).toBe(true);
+      expect(panelFor(p).overviewScope).toBe('Within about 5 miles of the practice');
     } finally { delete (p as any).communityLabel; }
   });
 
-  it('the detail’s Community Context names the fallback area in all three places (A21.5b/c/d)', () => {
+  it('the panel’s Population tile names the geography its GROWTH sub-line came from (A27.8, D-C48)', () => {
+    // D-C48 (John, 2026-09-11, on the whole-branch review). A27.7 puts ONE geography sub-line
+    // above the whole four-tile grid, and the Population tile's sub-line is not a population
+    // figure at all — it is GROWTH, which is place-level (`serve.py`'s `growth_scope`) and reads
+    // −1.5% for the whole of Dallas. So a city number sat under a caption describing a ring on
+    // 28 of 29 QA listings: the defect D-C38 removed, one card over. John ruled it is named on
+    // the tile, the way the detail card's own Growth tile already names it (A27.2).
+    const p = austin()[0];
+    // The design's own fixtures carry no `growthScope`, so the null branch is the design's own
+    // sub-line byte for byte — which is what keeps every approved Browse state where it is.
+    const withoutScope = panelFor(p).overviewTiles[0].sub;
+    expect(withoutScope).toMatch(/^[+-]?\d+\.\d% \(5 yrs\)$/);
+    const value = panelFor(p).overviewTiles[0].v;
+
+    (p as any).growthScope = 'Dallas';
+    try {
+      expect(panelFor(p).overviewTiles[0].sub).toBe(withoutScope + ' \u00b7 Dallas');
+      // The VALUE is the ring's population and is untouched: D-C48 labels the sub-line, it
+      // changes no figure. And the three tiles the heading sub-line DOES describe keep theirs.
+      expect(panelFor(p).overviewTiles[0].v).toBe(value);
+      expect(panelFor(p).overviewTiles[1].sub).toBe('ACS 5-year');
+      expect(panelFor(p).overviewTiles[3].sub).toBe('derived estimate');
+    } finally { delete (p as any).growthScope; }
+  });
+
+  it('…and a Population tile with no growth figure names nothing, scope or no scope (A27.8)', () => {
+    // A21.2d's own rule, which D-C48 must not weaken: no figure, no sub-line. A geography with
+    // no number beside it is a caption for something that is not there.
+    const p = austin()[0];
+    (p as any).growthScope = 'Dallas';
+    try {
+      without([p], () => {
+        expect(panelFor(p).overviewTiles[0].sub).toBe(undefined);
+      });
+    } finally { delete (p as any).growthScope; }
+  });
+
+  it('the detail’s Community Context names the area in all three places (A21.5b/c/d)', () => {
     const p = austin()[0];
     c.setState({ auth: true, detailId: p.id });
     const before = c.detail();
@@ -3612,15 +3685,69 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     expect(before.demo[3].sub).toBe('In the community');
     expect(before.demoScope).toBe('Figures describe the community around the practice, not the practice itself.');
 
-    (p as any).communityLabel = 'Within 10 minutes of the practice';
+    (p as any).communityLabel = 'Within about 5 miles of the practice';
     try {
       const after = c.detail();
-      expect(after.demo[0].sub).toBe('Within 10 minutes of the practice');
-      expect(after.demo[3].sub).toBe('Within 10 minutes of the practice');
-      expect(after.demoScope).toBe('Figures describe the area within 10 minutes of the practice, not the practice itself.');
+      expect(after.demo[0].sub).toBe('Within about 5 miles of the practice');
+      expect(after.demo[3].sub).toBe('Within about 5 miles of the practice');
+      expect(after.demoScope).toBe('Figures describe the area within about 5 miles of the practice, not the practice itself.');
       // The Census attribution itself is legally load-bearing and is not part of this sentence.
       expect(after.demoScope).not.toContain('Census');
     } finally { delete (p as any).communityLabel; }
+  });
+
+  // ---- D-C38, per-figure geography: the two tiles A21.5b/c could not reach ------------------
+  //
+  // THE HONEST MEASURE, which these cases exist to hold: only THREE of the card's four tiles gain
+  // neighbourhood detail. Population, Households and Median income follow the catchment; the
+  // Growth tile keeps its city-or-county figure and gains an honest label and nothing else,
+  // because `population_growth_pct` cannot vary below place-or-county until the 2010->2020 tract
+  // crosswalk is loaded. Nothing here is "per-neighbourhood market data".
+
+  it('the Growth tile names the geography its own figure was measured at (A27.2)', () => {
+    const p = austin()[0];
+    c.setState({ auth: true, detailId: p.id });
+    // The design's own fixtures carry no `growthScope`, so the null branch is A21.3d's output
+    // unchanged — which is what keeps `detail` on its frozen hash.
+    expect(c.detail().demo[1].sub).toBe('Since 2015');
+    // Read BEFORE the scope arrives. `expect(x).toBe(x)` was the assertion here and it compared
+    // the post-change value with itself — a tautology no change to A27.2 could ever fail.
+    const valueWithoutScope = c.detail().demo[1].v;
+
+    // 'Dallas', the name TIGER itself gives (D-C41). The API composes no "City of " prefix, so a
+    // fixture carrying one asserts a value the backend cannot emit.
+    (p as any).growthScope = 'Dallas';
+    try {
+      expect(c.detail().demo[1].sub).toBe('Dallas \u00b7 since 2015');
+      // The VALUE is untouched: D-C38 labels this figure, it does not change it.
+      expect(c.detail().demo[1].v).toBe(valueWithoutScope);
+    } finally { delete (p as any).growthScope; }
+  });
+
+  it('…and a growth figure with no vintage still names its geography, alone (A27.2)', () => {
+    const p = austin()[0];
+    const growth = (p as any).growth;
+    c.setState({ auth: true, detailId: p.id });
+    (p as any).growth = '+1.2%';
+    try {
+      // A21.3d renders "" for a figure that carries no " since " — the sub-line must not become
+      // "Dallas · since " with nothing after it.
+      expect(c.detail().demo[1].sub).toBe('');
+      (p as any).growthScope = 'Orange County';
+      expect(c.detail().demo[1].sub).toBe('Orange County');
+      delete (p as any).growthScope;
+    } finally { (p as any).growth = growth; }
+  });
+
+  it('the Median income tile carries the approximate qualifier when the API sends one (A27.1)', () => {
+    const p = austin()[0];
+    c.setState({ auth: true, detailId: p.id });
+    expect(c.detail().demo[2].sub).toBe('Household, 2023');
+
+    (p as any).incomeNote = 'Within about 5 miles of the practice \u00b7 approximate';
+    try {
+      expect(c.detail().demo[2].sub).toBe('Within about 5 miles of the practice \u00b7 approximate');
+    } finally { delete (p as any).incomeNote; }
   });
 
   // ---- F-6, the Market data strip cards ----------------------------------------------------
@@ -3797,16 +3924,19 @@ describe('A25 — a listing with no coordinates keeps its place and gets no pin 
   // `!!sel` with no coordinate term, and `MarketMapView.vue:91` draws the C7 drive-time ring on
   // `showDrive && driveCenter`. Before A25.2 that path threw inside `L.circle([null, null])` and
   // no ring ever appeared; after it the else-branch became PAINTABLE, so selecting an unlocated
-  // listing drew a 16 km dashed "roughly ten minutes' drive" circle around the middle of Austin.
-  // That is worse than the missing pin it replaced: a missing pin omits, a ring centred on a
-  // place the practice is not ASSERTS something false. A25.6 gives `showDrive` the same
-  // finite-coordinate test the pin list uses.
+  // listing drew a dashed circle around the middle of Austin. That is worse than the missing pin
+  // it replaced: a missing pin omits, a ring centred on a place the practice is not ASSERTS
+  // something false. A25.6 gives `showDrive` the same finite-coordinate test the pin list uses.
+  //
+  // A28.1 (D-C44, 2026-09-11) moved that circle from 16 km to 8 km and changed nothing here: the
+  // discriminator is the BOOLEAN, not the radius, so this case is as live after the ruling as
+  // before it — verified by perturbation, `showDrive: !!sel` still fails it.
   it('A25.6 — no point, no ring: showDrive is false when the selection has no point', () => {
     const p = austin()[0];
     at([p], null, null, () => {
       c.setState({ mdSel: p.id });
       const md = c.marketVals(c.filtered());
-      expect(md.showDrive, 'a 16 km drive-time ring was painted around the metro centre').toBe(false);
+      expect(md.showDrive, 'an 8 km drive-time ring was painted around the metro centre').toBe(false);
       // …and A25.2's fallback is still what it was: the ring is off, not aimed somewhere else.
       expect(md.driveCenter).toEqual(MARKETS[AUSTIN].center);
     });

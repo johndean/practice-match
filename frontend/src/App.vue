@@ -716,6 +716,9 @@
                 <div style="padding: 16px;">
                   <template v-if="v.md?.panel?.hasDemo">
                   <div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy);"><span v-if="__s(v.md?.panel?.overviewTitle) !== null" class="sc-interp">{{ __s(v.md?.panel?.overviewTitle) }}</span></div>
+                  <template v-if="v.md?.panel?.hasOverviewScope">
+                    <div style="font-size: 12.5px; color: var(--vf-text); margin-top: 2px;"><span v-if="__s(v.md?.panel?.overviewScope) !== null" class="sc-interp">{{ __s(v.md?.panel?.overviewScope) }}</span></div>
+                  </template>
                   <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-top: 9px;">
                     <template v-for="(o, $index) in __arr(v.md?.panel?.overviewTiles)" :key="$index">
                       <div style="padding: 9px 7px; border: 1px solid #e6e6e6; border-radius: 6px; text-align: center;">
@@ -781,7 +784,7 @@
                     View full listing<img src="/assets/icons/navigate-arrow.svg" alt width="12" height="12" style="transform: rotate(180deg); filter: brightness(0) invert(1);">
                   </button>
                   <template v-if="v.md?.panel?.hasDemo">
-                    <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">Drive-time figures are approximated from a straight-line catchment around the practice. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>
+                    <p style="font-size: 10.5px; line-height: 1.55; color: var(--vf-text); margin: 10px 0 0;">A catchment figure is a straight-line area of about 5 miles around the practice, not a driving route. Pet-household counts are derived from ACS households, not measured. Score weights income, growth and competition; the formula ships in the data specification.</p>
                   </template>
                 </div>
               </template>
@@ -834,7 +837,7 @@
                   </div>
                 </template>
               </div>
-              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">Figures describe the community around each practice, not the practice itself. Pet-household counts and average practice payroll are derived estimates, not observed values. Community areas are Census ZIP Code Tabulation Areas (2023 boundaries); figures describe the area, not the practice.</p>
+              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">Figures describe the area around each practice, not the practice itself. Pet-household counts and average practice payroll are derived estimates, not observed values. Community areas are Census ZIP Code Tabulation Areas (2023 boundaries); figures describe the area, not the practice.</p>
             </div>
           </template>
 

@@ -359,9 +359,14 @@ export function btn(page: Page, name: RegExp) {
 // localized to the docked panel, not the lightbox itself: the panel's own `scrollTop` was left
 // wherever the click happened to leave it, and nothing after the click reset or checked it. Pinned
 // here in `atTop`'s own shape — reset alongside the page scroll, held stable alongside the
-// selector's own box — so every state that calls `atTop` benefits, not only the lightbox ones. No
-// approved state depends on a `.rf-scroll` container being scrolled away from the top when its
-// capture is taken (grep finds no such step), so resetting all of them unconditionally is safe.
+// selector's own box — so every state that calls `atTop` benefits, not only the lightbox ones.
+//
+// Resetting all of them unconditionally is safe because no state that CALLS `atTop` depends on a
+// `.rf-scroll` container being scrolled away from the top. Exactly one approved state now does —
+// `browse-market-strip` (D-C40), whose ruled sentence sits below the fold of the Market data
+// strip's own `max-height: 40vh` body and is scrolled into frame by `screens.ts`'s
+// `stripFootnoteInFrame` — and that state deliberately does not call `atTop`: it has no
+// `position: fixed` element, so it never needed it, and calling it would undo its own scroll.
 export async function atTop(page: Page, selector: string): Promise<void> {
   await page.locator(selector).first().waitFor({ state: 'visible' });
   await page.evaluate(() => {

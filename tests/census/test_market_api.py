@@ -203,6 +203,28 @@ async def test_competition_count_serialises_without_a_per10k_partner(client, mat
     assert "per_10k_households" not in c["competition"] and "level" not in c["competition"]
 
 
+async def test_a_null_establishments_count_is_absent_not_a_server_error(client, materialized, conn, H):
+    """The C2 shape, one module over (whole-branch re-review, 2026-09-11). `market_metric.value_num`
+    is nullable and `suppressed` is `NOT NULL DEFAULT false`, so "the source did not answer" is a
+    NULL on an unsuppressed row -- which is what `materialize.py` writes when a formula has no
+    inputs. `app/api/market.py` guarded that shape on the two lines either side of the
+    `establishments` branch and not on the branch itself, so the one unguarded `float()` in the
+    module would raise and the whole communities route would answer 500.
+
+    D-C31 governs the answer: an absent figure is absent. The community keeps every figure that
+    IS servable and simply carries no `competition` count, exactly as a suppressed row does."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "UPDATE market_metric SET value_num=NULL WHERE listing_id=%s AND band='place' AND metric_key='establishments'",
+            (materialized,),
+        )
+    r = await client.get("/api/markets/12420/communities", headers=H)
+    assert r.status_code == 200, f"a null establishments count took the whole route down: {r.status_code}"
+    c = r.json()["communities"][0]
+    assert "count" not in c.get("competition", {})
+    assert c["pop"] == 81900  # every other figure is untouched
+
+
 async def test_uncleared_acs5_prior_hides_growth_from_communities_but_not_population(client, materialized, conn, H):
     """Growth's own gate is `acs5_prior cleared` (the layer-rendering contract table), even though
     the `market_metric` row materialize.py writes for it is stamped `source_dataset='acs5'` (its

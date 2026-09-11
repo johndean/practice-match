@@ -81,7 +81,13 @@ export function toApiShape(p, i) {
     econ_k: ECON_K[p.id] ?? null,
     // D-C32: the design's fixtures are all Census places, so no fixture is ever served a label —
     // and every approved state therefore keeps the design's own wording, byte for byte.
-    community_label: null
+    community_label: null,
+    // D-C38: the same statement about the two per-figure fields A27 reads. The design's fixtures
+    // carry no geography to name and no approximate median, so both are null and the Growth and
+    // Median income tiles render the design's own "Since <year>" and "Household, 2023" — which is
+    // what keeps `detail`'s frozen hash where it is. A non-null here would move it.
+    growth_scope: null,
+    income_note: null
   };
 }
 

@@ -262,7 +262,8 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
     listing_id = str(row["id"])
     photos = photo_list(row["photos"])
 
-    # Community context data (Task B7: six fields plus two Browse fields, Task B10: label for fallback)
+    # Community context data (Task B7: six fields plus two Browse fields, Task B10: label for
+    # fallback, D-C38: the two per-figure geography fields beside it)
     pop = None
     growth = None
     income = None
@@ -270,6 +271,8 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
     vets = None
     econ_k = None
     community_label = None
+    growth_scope = None
+    income_note = None
     if community is not None:
         pop = community.get("pop")
         growth = community.get("growth")
@@ -278,6 +281,8 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         vets = community.get("vets")
         econ_k = community.get("econ_k")
         community_label = community.get("label")
+        growth_scope = community.get("growth_scope")
+        income_note = community.get("income_note")
 
     return {
         "id": listing_id,
@@ -302,6 +307,15 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         "vets": vets, "econ_k": econ_k,
         # Task B10: Label indicating which data band was used for fallback
         "community_label": community_label,
+        # D-C38: where the two figures the label does NOT describe come from. `growth_scope` names
+        # growth's own place-or-county geography with the name TIGER itself gives ("Dallas",
+        # "Orange County" — no composed "City of " prefix: level 160 covers designated places
+        # too, and a CDP is not a city), because that
+        # figure exists at no finer geography until the 2010->2020 tract crosswalk is loaded;
+        # `income_note` replaces the median tile's sub-line when that median is an approximation
+        # rather than a published Census figure. Both `null` when there is nothing to say.
+        "growth_scope": growth_scope,
+        "income_note": income_note,
         "note": row["note"], "staff": row["staff"], "services": row["services"],
         "facility": row["facility"], "ownership": row["ownership"],
         "lat": float(row["lat"]) if disclosed and row["lat"] is not None else None,

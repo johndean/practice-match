@@ -571,7 +571,7 @@ class Component extends DCLogic {
     const comms = this.communities();
     const valueLayer = s.mdValue === undefined ? "income" : s.mdValue;
     const layers = Object.assign(
-      { practices: true, drive5: true, drive10: true, competition: true, households: false, pets: false },
+      { competition: true, households: false, pets: false },
       s.mdLayers || {}
     );
     const sel = s.mdSel ? P.filter((x) => x.id === s.mdSel)[0] : null;
@@ -587,28 +587,6 @@ class Component extends DCLogic {
     const pad = 0.12;
     const minLat = Math.min.apply(null, lats) - pad, maxLat = Math.max.apply(null, lats) + pad;
     const minLng = Math.min.apply(null, lngs) - pad, maxLng = Math.max.apply(null, lngs) + pad;
-
-    const layerRow = (key, label, on, color, toggle) => ({
-      label, on,
-      toggle,
-      boxStyle: "flex: none; width: 17px; height: 17px; border-radius: 3px; display: grid; place-items: center; border: 1.5px solid " +
-        (on ? color : "#c4ccd6") + "; background: " + (on ? color : "var(--vf-white)") + ";",
-      tickStyle: "display: block; opacity: " + (on ? "1" : "0") + ";",
-      textStyle: "font-size: 13px; font-weight: " + (on ? "500" : "400") + "; color: " + (on ? "var(--vf-navy)" : "var(--vf-text)") + ";"
-    });
-
-    const radioRow = (key, label, on, color, toggle) => ({
-      label, on, toggle,
-      boxStyle: "flex: none; width: 15px; height: 15px; border-radius: 999px; display: grid; place-items: center; border: 1.5px solid " +
-        (on ? "var(--vf-navy)" : "#c3d4e2") + "; background: var(--vf-white);",
-      dotStyle: "width: 7px; height: 7px; border-radius: 999px; background: var(--vf-navy); opacity: " + (on ? "1" : "0") + ";",
-      swatchStyle: "flex: none; width: 12px; height: 12px; border-radius: 2px; background: " + (color || "transparent") +
-        "; opacity: " + (color ? (on ? "1" : ".4") : "0") + ";",
-      labelStyle: "font-size: 12.5px; font-weight: " + (on ? "500" : "400") + "; color: " + (on ? "var(--vf-navy)" : "var(--vf-text)") + ";"
-    });
-
-    const setValue = (k) => () => this.setState({ mdValue: s.mdValue === k ? null : k });
-    const setLayer = (k) => () => this.setState({ mdLayers: Object.assign({}, layers, { [k]: !layers[k] }) });
 
     // A footer card is the SOURCE switch for its dataset: off means the dataset
     // is not in play at all, so its row leaves the Data Layers widget.
@@ -865,23 +843,6 @@ class Component extends DCLogic {
       resetView: () => this.setState({ mdSel: null, mdRecenter: (s.mdRecenter || 0) + 1 }),
       selectArea: (name) => this.setState({ mdArea: name }),
       snapshotCount: "6 indicators · Census-sourced",
-      // GROUP 1 — retained for the legacy panel; the compact control above is canonical.
-      layerHelp: "Area shading: rates and medians shade the whole community, so only one can show at a time — two fills blend into a colour that means nothing. Overlays: counts drawn as sized circles, which stack freely on each other and on the shading.",
-      fillRows: [radioRow("none", "No shading", !valueLayer, null, () => this.setState({ mdValue: null }))].concat(
-        enabled("income") ? [radioRow("income", "Median Household Income", valueLayer === "income", ramp("income")[3], setValue("income"))] : [],
-        enabled("growth") ? [radioRow("growth", "Population Growth", valueLayer === "growth", ramp("growth")[3], setValue("growth"))] : [],
-        enabled("econ") ? [radioRow("econ", "Average Practice Payroll", valueLayer === "econ", ramp("econ")[3], setValue("econ"))] : []
-      ),
-      // GROUP 2 — everything that can coexist with a fill and with each other.
-      overlayRows: [
-        layerRow("practices", "Practice Listings", !!layers.practices, "#003a70", setLayer("practices")),
-        layerRow("drive5", "5–10 min drive time", !!layers.drive5, "#003a70", setLayer("drive5")),
-        layerRow("drive10", "10–20 min drive time", !!layers.drive10, "#339dde", setLayer("drive10"))
-      ].concat(
-        enabled("households") ? [layerRow("households", "Households", !!layers.households, ramp("households")[3], setLayer("households"))] : [],
-        enabled("pets") ? [layerRow("pets", "Estimated Pet Households", !!layers.pets, ramp("pets")[3], setLayer("pets"))] : [],
-        enabled("vets") ? [layerRow("competition", "Veterinary Establishments", !!layers.competition, ramp("competition")[3], setLayer("competition"))] : []
-      ),
       symbols: activeSymbols,
       symbolColors: SYMBOL_KEYS.reduce((o, k) => { o[k] = ramp(k)[3]; return o; }, {}),
       hiddenLayers: ["pets", "income", "growth", "vets", "households", "econ"].filter((k) => off[k]).length,
@@ -1199,13 +1160,15 @@ class Component extends DCLogic {
       })),
       hasDemo: sel.id !== "p8" && sel.pop != null,
       noDemo: sel.id === "p8" || sel.pop == null,
-      overviewTitle: sel.communityLabel || "Market Overview (10 min drive)",
+      overviewTitle: "Market Overview",
+      hasOverviewScope: !!sel.communityLabel,
+      overviewScope: sel.communityLabel || "",
       isInsights: (s.mdTab || "insights") === "insights",
       isOther: (s.mdTab || "insights") !== "insights",
       otherTitle: ({ overview: "Overview", financials: "Financials", property: "Property", contact: "Contact" })[s.mdTab] || "Overview",
       goInsights: () => this.setState({ mdTab: "insights" }),
       overviewTiles: [
-        { v: (c.pop !== undefined) ? this.fmtMetric("households", c.pop) : undefined, k: "Population", sub: (c.growth !== undefined) ? ((c.growth > 0 ? "+" : "") + c.growth.toFixed(1) + "% (5 yrs)") : undefined },
+        { v: (c.pop !== undefined) ? this.fmtMetric("households", c.pop) : undefined, k: "Population", sub: (c.growth !== undefined) ? ((c.growth > 0 ? "+" : "") + c.growth.toFixed(1) + "% (5 yrs)" + (sel.growthScope ? " · " + sel.growthScope : "")) : undefined },
         { v: (c.hh !== undefined) ? this.fmtMetric("households", c.hh) : undefined, k: "Households", sub: "ACS 5-year" },
         { v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined) ? ((incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US") : undefined },
         { v: (c.pets !== undefined) ? this.fmtMetric("households", c.pets) : undefined, k: "Est. Pet Households", sub: "derived estimate" }
@@ -1662,8 +1625,8 @@ class Component extends DCLogic {
       demoScope: "Figures describe " + (p.communityLabel ? "the area " + p.communityLabel.charAt(0).toLowerCase() + p.communityLabel.slice(1) : "the community around the practice") + ", not the practice itself.",
       demo: [
         { k: "Population", v: p.pop, sub: p.communityLabel || "Community, 2023" },
-        { k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); return g.length > 1 ? "Since " + g[1] : ""; })() },
-        { k: "Median income", v: p.income, sub: "Household, 2023" },
+        { k: "Growth", v: (() => { const g = (p.growth || "").split(" since "); return g[0]; })(), sub: (() => { const g = (p.growth || "").split(" since "); const y = g.length > 1 ? g[1] : ""; if (!p.growthScope) return y ? "Since " + y : ""; return y ? p.growthScope + " · since " + y : p.growthScope; })() },
+        { k: "Median income", v: p.income, sub: p.incomeNote || "Household, 2023" },
         { k: "Households", v: (p.hh || "").replace(" households", ""), sub: p.communityLabel || "In the community" }
       ],
       keyFacts: [

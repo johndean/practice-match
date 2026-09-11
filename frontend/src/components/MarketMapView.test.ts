@@ -714,7 +714,14 @@ describe('MarketMapView — the V3 map', () => {
     expect(seen).toEqual(['Cedar Park']);
   });
 
-  it('draws ONE dashed unfilled drive-time ring at 16 000 m, not two filled circles (C7)', async () => {
+  // D-C44 (John, 2026-09-11): the ring is drawn at the distance the card names. The Community
+  // Context card says "Within about 5 miles of the practice" (D-C38) and the band D-C38 serves
+  // the area figures from is 8 km, so a 16 000 m ring showed a buyer a circle twice the size of
+  // the number they were reading. `#003a70` is V2's own colour for its 8 km ring
+  // (design_handoff_practice_match_v2/MarketMap.jsx:166-168); its 16 km ring was `#339dde`, so
+  // V3's `radius: 16000, color: "#003a70"` was the far radius in the near ring's colour. The
+  // radius moves to V2's own 8 000 m and the colour is already V2's own for it.
+  it('draws ONE dashed unfilled drive-time ring at 8 000 m — the 5-mile band the card names (C7, D-C44)', async () => {
     const stub = installLeafletStub();
     mount(MarketMapView, { props: v3Props({ showDrive: true, driveCenter: [30.5052, -97.8203] }) });
     await flushPromises();
@@ -722,7 +729,7 @@ describe('MarketMapView — the V3 map', () => {
     expect(overlay.added.filter((l) => typeof l.options?.radius === 'number')).toHaveLength(1);
     const circles = stub.calls.filter((c) => c.fn === 'circle');
     expect(circles).toHaveLength(1);
-    expect(circles[0].args).toEqual([[30.5052, -97.8203], { radius: 16000, color: '#003a70', weight: 1.5, dashArray: '4 4', fill: false, interactive: false }]);
+    expect(circles[0].args).toEqual([[30.5052, -97.8203], { radius: 8000, color: '#003a70', weight: 1.5, dashArray: '4 4', fill: false, interactive: false }]);
   });
 
   it('draws no ring when showDrive is false, and none when there is no drive centre to draw it around', async () => {
