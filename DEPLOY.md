@@ -479,6 +479,23 @@ env PYTHONPATH=/app python scripts/census_load.py activate cbp           2022   
 env PYTHONPATH=/app python scripts/census_load.py activate zbp           2022        --by john --note "…"
 ```
 
+> ### After activating `tiger_cb`, check the log for silently-lost place names
+> The Community Context card's Growth tile names the geography its figure was measured at —
+> "Dallas", "Orange County" — by joining each listing's stored `place_geoid`/`county_geoid` to
+> `geo_area` **at the currently active `tiger_cb` vintage**. `practice_location` carries no vintage
+> of its own, so a listing geocoded against one edition may hold a geoid the next edition does not
+> define. The API keeps serving (a page that fails is worse than a name that is missing — the same
+> ruling that removed the `float(None)` 500), and says so in the api log:
+>
+> ```bash
+> railway logs --service api --environment <env> --lines 200 | grep "no geo_area name at the active tiger_cb vintage"
+> ```
+>
+> **Run that after every `tiger_cb` activation.** Nothing else surfaces it: the tile simply stops
+> naming its geography while `community_label` keeps describing the ring, every gate stays green,
+> and no screen says anything is wrong. If the grep returns rows, the geoids need re-resolving at
+> the new edition before the vintage is announced as live.
+
 Then geocode every listing to its practice location, building catchments and figures for display
 (figures need the active vintages first, so this step comes after `activate`):
 
