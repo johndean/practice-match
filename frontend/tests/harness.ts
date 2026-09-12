@@ -5,15 +5,16 @@ import { fileURLToPath } from 'node:url';
 import { designAdminListingsBody } from './design-admin-listings.mjs';
 import { designBoundariesBody, designMarketsBody } from './design-boundaries.mjs';
 
+import { designListingsBody } from './design-listings.mjs';
+import { designSellerPageBody } from './design-seller-listings.mjs';
+import { designWizardDraftBody } from './design-wizard-draft.mjs';
+
 /** `app.api.market.MAX_BBOX_DEG`, the span cap the boundary route refuses on — stated in
  *  `docs/integrations/market-data-api.md` and pinned against this copy by
  *  `harness.test.ts`, so the stub cannot go on answering 200 to a box the real route would
  *  refuse. It is a number rather than an import because this file runs in a browser test
  *  process and the constant lives in Python. */
 export const MAX_BBOX_DEG = 4.0;
-import { designListingsBody } from './design-listings.mjs';
-import { designSellerPageBody } from './design-seller-listings.mjs';
-import { designWizardDraftBody } from './design-wizard-draft.mjs';
 
 // Deterministic rendering on both targets: no basemap tiles (markers still draw
 // over the blank canvas), fonts loaded, pointer parked, animations settled.
@@ -1449,6 +1450,19 @@ export function consumeExpectedApiFailure(page: Page, message: string): boolean 
   const [status] = armed.splice(at, 1);
   observedApiFailures.set(page, [...(observedApiFailures.get(page) ?? []), status]);
   return true;
+}
+
+/** Drops any allowance that was never spent, for the ONE case whose refusal count is not
+ *  deterministic: the metro-switch cost case races a settled view against a refusal, and which
+ *  side wins decides whether the map asks twice or three times. `assertExpectedApiFailuresObserved`
+ *  is the right default everywhere else — an allowance nobody used usually means the state stopped
+ *  provoking the failure it exists for — so this is deliberately separate, named for what it gives
+ *  up, and used once.
+ *
+ *  It still spends what DID arrive: an unarmed 4xx is a thrown console error either way, so this
+ *  loosens the count and never the rule. */
+export function forgetExpectedApiFailures(page: Page): void {
+  armedApiFailures.delete(page);
 }
 
 /** Throws unless every armed allowance was actually used. */

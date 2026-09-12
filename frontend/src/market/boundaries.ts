@@ -183,12 +183,6 @@ export function makeMarketAdapter(fetchFn: typeof fetch = globalThis.fetch.bind(
     },
     onViewport: subscribe,
     async boundaries(marketName: string, bbox: string | null = null) {
-      // The SETTLED view, read BEFORE the catalogue is awaited: `bbox` is the box `logic.js` took
-      // from `viewport()` one statement ago, and the first call of the page has a `/api/markets`
-      // round trip in front of it. One view, two boxes — the padded one that goes out and the bare
-      // one the retry falls back to — so the retry can never ask for ground the member is not
-      // being answered for.
-      const v = settled();
       const rows = await catalogue();
       const metro = rows.find((m) => m.name === marketName);
       if (!metro) throw new Error(`no CBSA for market ${marketName}`);
@@ -227,7 +221,14 @@ export function makeMarketAdapter(fetchFn: typeof fetch = globalThis.fetch.bind(
         // being null is the same answer — the map has gone.
         const current = settled();
         if (current === null || bboxOf(current, PAD) !== bbox) throw e;
-        const again = e.code === 'BBOX_TOO_LARGE' ? null : (v === null ? null : bboxOf(v, 0));
+        // From `current`, the view the guard has just CHECKED. The retry used to be cut from a
+        // separate read taken before the catalogue round trip; the two agree whenever the guard
+        // passes, which is exactly why reading the other one was a trap — one value validated
+        // and a different one used is a pair that can only come apart silently. That earlier
+        // read is gone with it: one view, one read, two boxes (the padded one that went out and
+        // the bare one the retry falls back to), so the retry can never ask for ground the
+        // member is not being answered for.
+        const again = e.code === 'BBOX_TOO_LARGE' ? null : bboxOf(current, 0);
         if (bbox === null || (e.code !== 'AREA_TOO_LARGE' && e.code !== 'BBOX_TOO_LARGE') || again === bbox) throw e;
         if (e.code === 'AREA_TOO_LARGE' && again === null) throw e;
         return await collect(metro.cbsa_geoid, again, true);
