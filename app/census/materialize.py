@@ -285,7 +285,7 @@ def materialize_listing(conn: psycopg2.extensions.connection, redis: redis_sync.
                 rows.append(_row(
                     listing_id, band, "median_hh_income", ctx.acs_v, inc_e, "usd", derived=inc_approx, moe=inc_m,
                     suppressed=inc_sup, reason=inc_reason,
-                    inputs={**base, "note": "household-weighted average of tract medians"} if inc_approx else base,
+                    inputs={**base, "note": "household-weighted median of tract medians, interpolated"} if inc_approx else base,
                 ))
                 rows.append(_row(
                     listing_id, band, "pet_households_est", ctx.acs_v, M.pet_households_est(hh_e), "count", derived=True,

@@ -169,7 +169,7 @@ def test_load_aborts_and_records_the_run_when_a_response_is_missing_a_variable(c
 
 
 # --- D-NS4: ZCTA income is LOADED, never aggregated from tracts -------------------------------
-# `metrics.weighted_median` is a household-weighted average of tract medians: it has no combined
+# `metrics.weighted_median` is a household-weighted median of tract medians: it has no combined
 # margin of error by construction, so a figure derived that way could never fail the CV test, and
 # shading a metro's ZCTAs with values that can never be suppressed would hollow out D-C36, whose
 # entire point is that the margin of error is shown and measured. So summary level `860` is

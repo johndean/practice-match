@@ -1021,7 +1021,7 @@ def _seed_drive_10_only(conn: Any, listing_id: str) -> None:
             ("acs5", "2019-2023", "test", "acs5_prior", "2014-2018", "test", "zbp", "2022", "test", "cbp", "2022", "test"),
         )
         # D-C38: `median_hh_income` is seeded the way the pipeline actually writes a ring median —
-        # `is_derived=True` with NO margin of error, because it is a household-weighted average of
+        # `is_derived=True` with NO margin of error, because it is a household-weighted median of
         # the tract medians inside the buffer rather than a published Census figure
         # (`materialize.py`), and a catchment median can therefore never be suppressed. The old
         # fixture seeded every row `is_derived=False, moe=1` — place-shaped rows wearing a drive

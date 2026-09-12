@@ -543,7 +543,7 @@ def _ring(metrics=_SIX):
     only values the API can emit. `_SIX` carries a published median (`is_derived=False`, a real
     MOE), which is the PLACE shape: `materialize.py`'s `_band_inputs` returns `income_is_approx`
     FALSE only on the `place` branch and hard-codes TRUE with a null MOE for every catchment,
-    because a ring median is a household-weighted average of the tract medians inside it and
+    because a ring median is a household-weighted median of the tract medians inside it and
     never a published figure. So `_SIX` seeded into `drive_10` described a row the pipeline
     cannot write, and a test asserting `income_note is None` off it was pinning a state
     production can never reach — and would have obstructed a correct change to `serve.py`.
@@ -713,7 +713,7 @@ def test_a_drive_20_only_listing_reaches_no_figures(conn):
 # `_SIX` CANNOT TELL THE BANDS APART — it seeds identical values in both (`_seed_band`), which is
 # why no test above could see the flip. The two tuples below differ in every area figure, and
 # `_CATCHMENT_SIX`'s median is the shape the pipeline actually produces for a ring: `is_derived`
-# with no MOE (`materialize.py:210`, `:241` — a catchment median is a household-weighted average
+# with no MOE (`materialize.py:210`, `:241` — a catchment median is a household-weighted median
 # of tract medians, never a published one, and can never be suppressed).
 # ---------------------------------------------------------------------------------------------
 
@@ -806,7 +806,7 @@ def test_the_area_figures_come_from_the_catchment_band_when_both_bands_have_them
 
 
 def test_a_catchment_median_carries_the_approximate_qualifier(conn):
-    """A ring median is a household-weighted average of the tract medians inside it, never a
+    """A ring median is a household-weighted median of the tract medians inside it, never a
     published figure — `materialize.py` stamps it `is_derived` with no MOE, and it can never be
     suppressed. The contract has always said an approximate median renders the word beside the
     value (`docs/integrations/market-data-api.md`); until D-C38 the card had no way to."""
