@@ -271,9 +271,14 @@ def test_claude_md_literal_edit_clauses_count_each_family_s_own_entries():
     checked set is satisfied by silence: an unparseable clause simply does not join it."""
     claude = (ROOT / "CLAUDE.md").read_text()
     ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
+    # A18 (2026-09-09) stopped this tuple at "Fifteen" and the assertion failed on its own
+    # vocabulary before it compared anything; D-L1 (2026-09-12) took A24 to thirty-three entries
+    # and did it again. Extended to "thirty-nine", which is `NUMBER_WORDS` below, lowercased.
     words = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
              "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "twenty-one",
-             "twenty-two", "twenty-three", "twenty-four", "twenty-five")
+             "twenty-two", "twenty-three", "twenty-four", "twenty-five", "twenty-six", "twenty-seven", "twenty-eight",
+             "twenty-nine", "thirty", "thirty-one", "thirty-two", "thirty-three", "thirty-four", "thirty-five",
+             "thirty-six", "thirty-seven", "thirty-eight", "thirty-nine")
     markers = list(re.finditer(r"\*\*A(\d+)\*\*", claude))
     assert markers, "CLAUDE.md declares no bold amendment family markers (**A<n>**)"
     # The captured word is one of `words` ITSELF, not any `\w+` — a GROUP descriptor ("three more
