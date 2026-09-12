@@ -5362,6 +5362,45 @@ const A24_42: Amendment = {
   count: 1
 };
 
+/** A24.43 -- MS1 (ruling `2026-09-05-practice-match-census-data-layer/ruling-market-strip.md`,
+ *  recorded and never fixed; re-found on 304b80f, 2026-09-12). The Market snapshot strip showed
+ *  Dallas Population growth as "+1.5% metro median" while every Dallas listing's own figure is
+ *  "-1.5% since 2018": one screen said the opposite of the other about the same city.
+ *
+ *  `num` stripped every character but digits and a dot, which loses a leading MINUS and
+ *  CONCATENATES whatever number follows the figure -- "-1.5% since 2018" became "1.52018", a
+ *  quantity nothing measured, of the wrong sign. `communities()` does not use it for growth (it
+ *  parses with `parseFloat` and keeps the sign, A24.3's own note), which is exactly why the docked
+ *  panel was right; `stripCards` is the one growth reader that does, and it classes with
+ *  `bucket()`, so the lost sign was a wrong number AND a wrong colour -- D-C46 gave the growth
+ *  ramp a band below zero precisely so a decline reads as one, and this put a declining metro in a
+ *  growth class.
+ *
+ *  The replacement reads the FIRST number in the string and nothing after it, sign included, with
+ *  thousands separators removed: "-1.5% since 2018" -> -1.5, "$101,721" -> 101721, "169,355
+ *  households" -> 169355, "1,900 sq ft" -> 1900. The design's zero-for-null contract is kept
+ *  deliberately -- `num(null)` and `num("no figure")` are still 0, and A21.1c's guards do not go
+ *  through this helper, so nothing that must tell absence from zero asks it.
+ *
+ *  PIXEL-SAFE: every growth figure in the design's own fixtures is POSITIVE and carries one
+ *  decimal, and `stripCards` reads growth as the number `communities()` already parsed, so the
+ *  digits before the `%` are unchanged on every approved state; the other `num` readers are fed
+ *  fixture strings whose first number is the whole figure ("81,900", "$118,400", "27,600
+ *  households"), which this reads identically. */
+const A24_43: Amendment = {
+  id: 'A24.43',
+  date: '2026-09-12',
+  ruling: 'MS1: the Market snapshot strip reported a declining metro as growing. `num` dropped a leading minus and concatenated the year that followed the figure, so "-1.5% since 2018" became 1.52018 — the wrong sign and a quantity nothing measured, classed by `bucket` into a growth band. It reads the first number in the string and nothing after it, sign included, and keeps the design’s zero-for-null contract.',
+  find: 'const num = (s) => (s == null ? 0 : Number(String(s).replace(/[^0-9.]/g, "")) || 0);\n',
+  replace: '// MS1: the FIRST number in the string and nothing after it, sign included. Stripping every\n'
+    + '// character but digits and a dot loses a leading minus and glues on whatever number follows\n'
+    + '// the figure — "-1.5% since 2018" became "1.52018", which the snapshot strip then reported as\n'
+    + '// "+1.5%" and `bucket` classed as growth. Zero for a null or for a string carrying no number\n'
+    + '// at all is the design’s own contract and is kept.\n'
+    + 'const num = (s) => { const m = s == null ? null : String(s).match(/[-+]?\\d[\\d,]*(?:\\.\\d+)?/); return m ? Number(m[0].replace(/,/g, "")) || 0 : 0; };\n',
+  count: 1
+};
+
 const A24_9: Amendment = {
   id: 'A24.9', ...NS, file: 'jsx',
   find: '// GEOMETRY NOTE: the prototype has no ZCTA boundary file, so community areas are\n// approximated as Voronoi cells around each community\'s centroid, clipped to the metro\n// bounding box. Cells are contiguous and non-overlapping, which is what a choropleth\n// requires, but they are NOT real Census boundaries — the UI labels them "approximate\n// community areas". Production must load tiger_cb ZCTA polygons per the Census Data\n// Source Specification and drop this approximation.\n',
@@ -5534,5 +5573,8 @@ export function amendments(): Amendment[] {
     // A24.32's and A24.42 A24.31a's, so each runs after the entry it reads. Definition order in
     // this file matches this list (m8).
     A24_33, A24_34, A24_35, A24_36, A24_37, A24_38, A24_39, A24_40, A24_41, A24_42,
+    // A24.43 -- MS1, the snapshot strip's own sign (2026-09-12). Not chained: its `find` is the
+    // pristine bundle's own `num` declaration.
+    A24_43,
     A24_9, A24_10, A24_11, A24_12];
 }

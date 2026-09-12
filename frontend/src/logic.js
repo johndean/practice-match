@@ -216,7 +216,12 @@ const LAYER_META = {
 };
 
 
-const num = (s) => (s == null ? 0 : Number(String(s).replace(/[^0-9.]/g, "")) || 0);
+// MS1: the FIRST number in the string and nothing after it, sign included. Stripping every
+// character but digits and a dot loses a leading minus and glues on whatever number follows
+// the figure — "-1.5% since 2018" became "1.52018", which the snapshot strip then reported as
+// "+1.5%" and `bucket` classed as growth. Zero for a null or for a string carrying no number
+// at all is the design’s own contract and is kept.
+const num = (s) => { const m = s == null ? null : String(s).match(/[-+]?\d[\d,]*(?:\.\d+)?/); return m ? Number(m[0].replace(/,/g, "")) || 0 : 0; };
 
 // SUBSTITUTIONS — the VIN icon set ships no heart or check glyph. Per the design system's
 // iconography rule (no unicode glyphs as icons) these are closest-match filled silhouettes

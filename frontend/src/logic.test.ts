@@ -4817,6 +4817,62 @@ describe('A24 — real boundary polygons', () => {
     expect(c.marketVals(P).areas.features).toEqual([]);
   });
 
+  // MS1 (2026-09-12) — the snapshot strip showed Dallas Population growth as "+1.5% metro
+  // median" while every Dallas listing's own API figure is "-1.5% since 2018". `num` stripped the
+  // MINUS and then concatenated the trailing year: "-1.5% since 2018" -> "1.52018" -> 1.52018,
+  // which `fmtMetric` rounds to "+1.5%" and `bucket` classes as growth. The docked panel was
+  // right all along because `communities()` uses `parseFloat` and keeps the sign; the strip is
+  // the ONE reader that goes through `num`, which is why one screen said the opposite of the
+  // other about the same city.
+  it('num keeps a figure\'s sign and stops at the end of the number', () => {
+    // `num` is module-scoped in the ported script and the trailing export is pinned byte for byte
+    // (`app-generated.test.ts`), so it is exercised through the ONE reader whose output is a
+    // number rather than a colour: `communities()`, which the docked panel reads. Both the sign
+    // and the trailing-token trap are covered here, and the strip's own case below proves the
+    // reader that actually broke.
+    const through = (field: string, raw: string) => {
+      c.state.market = 'Austin, TX';
+      const one = { ...P[0], market: 'Austin, TX', status: 'published', [field]: raw };
+      const saved = P.slice();
+      P.length = 0; P.push(one);
+      try { return c.communities()[0]; } finally { P.length = 0; P.push(...saved); }
+    };
+    expect(through('hh', '169,355 households').hh).toBe(169355);
+    expect(through('income', '$101,721').income).toBe(101721);
+    expect(through('pop', '81,900').pop).toBe(81900);
+    // BOTH halves of the trap in one string, through a field that really goes through `num`:
+    // the leading minus was stripped and the trailing year was CONCATENATED onto the digits, so
+    // "-1.5% since 2018" became 1.52018 — a number nothing measured, of the wrong sign.
+    expect(through('pop', '-1.5% since 2018').pop).toBe(-1.5);
+    expect(through('pop', '+11.6% since 2018').pop).toBe(11.6);
+    // The design's own zero-for-null contract is unchanged: A21.1c's guards do not go through
+    // `num`, so a caller that must tell absence from zero already does not ask this helper.
+    expect(through('hh', 'no figure').hh).toBe(0);
+  });
+
+  it('the snapshot strip reads a declining metro as declining', () => {
+    // The strip's own path, end to end: `stripCards` is the only growth reader that goes through
+    // `num`, and it classes with `bucket`, so a lost sign is both a wrong number and a wrong
+    // colour — D-C46's band below zero exists precisely so a decline reads as one.
+    // `communities()` has already parsed growth to a NUMBER and kept its sign (`parseFloat`,
+    // A24.3's own note), which is why the docked panel reads it correctly — and `num(-1.5)` is
+    // `String(-1.5)` with everything but digits and a dot stripped, so the strip lost the sign
+    // one step later. Numbers here, because that is exactly what this reader is handed.
+    c.communities = () => [
+      { id: 'a', name: 'A', lat: 30.3, lng: -97.7, growth: -1.5 },
+      { id: 'b', name: 'B', lat: 30.4, lng: -97.8, growth: -2.5 }
+    ];
+    const card = c.marketVals(P).stripCards.filter((x: { title: string }) => x.title === 'Population growth')[0];
+    // The design's own median rule on an even count takes the upper of the two (`sort(...)[
+    // Math.floor(n / 2)]`), so two declining communities read as the SHALLOWER decline — and the
+    // point is that it is a decline at all: this card said "+2.5%" before the fix.
+    expect(card.value, 'the strip reported a declining metro as growing').toBe('-1.5%');
+    // …and the colour follows the number: D-C46 gave growth a band below zero precisely so a
+    // decline reads as one, and `bucket` classed 1.5 into the band above it.
+    expect(card.bars[0].style).toContain(c.bucket('growth', -1.5).color);
+    expect(card.bars[0].style).not.toContain(c.bucket('growth', 1.5).color);
+  });
+
   // A24.25/A24.26: one classifier, two tables. The choropleth asks for the breaks measured over
   // the geography it paints; everything else on the screen keeps asking for the design's own.
   it('the choropleth classes a count against the tract-scale breaks and the cards against the city-scale ones', () => {

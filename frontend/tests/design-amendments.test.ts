@@ -337,6 +337,9 @@ describe('local design amendments (spec D15)', () => {
     // A24 entry's output, so each runs after the one it reads.
     'A24.33', 'A24.34', 'A24.35', 'A24.36', 'A24.37', 'A24.38', 'A24.39', 'A24.40', 'A24.41',
     'A24.42',
+    // MS1 (2026-09-12): the snapshot strip's own sign. Not chained — its `find` is the pristine
+    // bundle's own `num` declaration.
+    'A24.43',
     'A24.9', 'A24.10', 'A24.11', 'A24.12',
   ];
 
@@ -483,7 +486,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(268);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(269);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
