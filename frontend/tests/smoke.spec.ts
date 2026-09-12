@@ -321,7 +321,10 @@ test.describe('mobile: the same map, market data in a sheet', () => {
     expect(updated, 'the sheet renders no "Updated:" line').toBeGreaterThan(source);
     expect(updated, 'the ramp + source/updated block is not between Shading and Compare against')
       .toBeLessThan(text.indexOf('COMPARE AGAINST'));
-    expect(text).toContain('Source: U.S. Census ACS 5-year estimates (2023) · community level');
+    // A24.36 (fix round 1, Important 2): income shades at the CENSUS TRACT and its source line
+    // said "community level" — the one line on this card that named no geography while the line
+    // above it named the tract.
+    expect(text).toContain('Source: U.S. Census ACS 5-year estimates (2023) · Census tract');
   });
 
   test('every tap target in the sheet is at least 44px', async ({ page }) => {
