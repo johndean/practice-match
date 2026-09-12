@@ -70,6 +70,7 @@ from app.census.serve import community_rows
 from app.config import settings
 from app.db import sync_conn
 from app.storage import ObjectStore
+from app.tasks.celery_app import celery_app
 
 log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api")
@@ -85,6 +86,10 @@ MAX_LIMIT = 200
 MAX_MARKET_LEN = 64
 PHOTO_CACHE_CONTROL = "private, max-age=86400"
 LIST_CACHE_PREFIX = "listings:v1:"
+# GEO-WIRE (1). `app/api/market.py`'s `BACKFILL_DEDUPE_TTL` (600 s) and its key shape, one task
+# earlier in the same chain: geocode -> backfill -> materialise.
+GEOCODE_DEDUPE_PREFIX = "geocode:"
+GEOCODE_DEDUPE_TTL = 600
 
 _SELECT = """
 SELECT id, slug, name, street, city, state, zip, phone, hours, status, location_disclosed,
@@ -93,7 +98,12 @@ SELECT id, slug, name, street, city, state, zip, phone, hours, status, location_
        note, staff, services, facility, ownership, photos, photo_captions,
        coalesce((SELECT jsonb_object_agg(a.id::text, a.caption) FROM listing_asset a
                   WHERE a.listing_id = listing.id AND a.kind = 'photo' AND a.caption IS NOT NULL),
-                '{}'::jsonb) AS asset_captions
+                '{}'::jsonb) AS asset_captions,
+       -- GEO-WIRE (4). A scalar subquery, in `asset_captions`'s own shape, so `FROM listing`
+       -- stays a single table every caller can go on appending its own WHERE to. `null` for a
+       -- listing that has never been geocoded, which is what absence means everywhere else in
+       -- this payload (D-C31).
+       (SELECT pl.geo_precision FROM practice_location pl WHERE pl.listing_id = listing.id) AS geo_precision
   FROM listing
 """
 
@@ -121,6 +131,47 @@ def drop_list_cache(cache: Any) -> int:
         cache.delete(key)
         removed += 1
     return removed
+
+
+def has_geocode(conn: Any, listing_id: Any) -> bool:
+    """Whether this listing already has the geography a geocode resolves (`practice_location`).
+
+    Read INSIDE the caller's transaction, beside the status change it is deciding on; the enqueue
+    itself happens after that transaction commits, which is the ordering `drop_list_cache` follows
+    and for the same reason — a worker that started before the commit would read the pre-write row.
+    """
+    with conn.cursor() as cur:
+        cur.execute("SELECT 1 FROM practice_location WHERE listing_id = %s", (listing_id,))
+        return cur.fetchone() is not None
+
+
+def enqueue_geocode(cache: Any, listing_id: str) -> bool:
+    """Enqueues `census.geocode_listing` for this listing unless it was already enqueued recently;
+    True when this call is the one that sent it.
+
+    **By NAME, never by import** (spec §10, and `app/tasks/census.py:326-348`'s own posture): the
+    request path must not reach a Census write, and `send_task` is how one is asked for without
+    importing the module that performs it.
+
+    **Deduped on the listing id** in `app/api/market.py`'s own shape (`BACKFILL_DEDUPE_TTL`, the
+    `nx=True` claim), because `has_geocode` alone cannot do it: the row it looks for is written by
+    the WORKER, so every publish inside the window between the enqueue and that write saw no row
+    and enqueued again. `clear_geocode_dedupe` is the one thing that re-opens the window early,
+    and an address edit is the one event that calls it.
+    """
+    if not cache.set(f"{GEOCODE_DEDUPE_PREFIX}{listing_id}", "1", ex=GEOCODE_DEDUPE_TTL, nx=True):
+        return False
+    celery_app.send_task("census.geocode_listing", args=[listing_id])
+    return True
+
+
+def clear_geocode_dedupe(cache: Any, listing_id: str) -> None:
+    """Forgets that this listing was recently enqueued, so the next publish geocodes it again.
+
+    Called when the listing's address CHANGES — the one event that makes a pending or completed
+    geocode describe somewhere the practice is not, and the one that arrives precisely inside the
+    dedupe window, because a correction follows the publish that revealed the mistake."""
+    cache.delete(f"{GEOCODE_DEDUPE_PREFIX}{listing_id}")
 
 
 def anonymised_name(area: str) -> str:
@@ -316,6 +367,15 @@ def serialise(row: Mapping[str, Any], now: datetime, community: Mapping[str, Any
         # rather than a published Census figure. Both `null` when there is nothing to say.
         "growth_scope": growth_scope,
         "income_note": income_note,
+        # GEO-WIRE (4): how precisely this listing's point is known — 'rooftop', 'tract', 'zcta',
+        # 'place', 'county' (`migrations/061`'s own CHECK), or `null` where it has never been
+        # geocoded. The contract's copy rule keys on exactly this ("`geo_precision != \"rooftop\"`
+        # → render 'approximate community data' near the map pin"), and both market endpoints have
+        # served it since Task B5; the card and the pin are built from THIS payload, so until now
+        # the one rule the contract states about precision could not be honoured where it applies.
+        # NOT gated on `location_disclosed`: it says how well the point is known, never where it
+        # is, and the two flags above it blank every field that would say where.
+        "geo_precision": row["geo_precision"],
         "note": row["note"], "staff": row["staff"], "services": row["services"],
         "facility": row["facility"], "ownership": row["ownership"],
         "lat": float(row["lat"]) if disclosed and row["lat"] is not None else None,

@@ -2488,3 +2488,21 @@ def test_seeding_section_pins_the_geocode_requirement():
         "seeding section must mention geocoding — "
         "the pointer to the manual step is only meaningful if it says why it's needed"
     )
+
+
+def test_deploy_md_says_what_the_publish_trigger_does_and_does_not_cover():
+    """Task GEO-WIRE. The operator page already said a listing published through the API is
+    geocoded automatically and a seeded one is not. What it could not say, because none of it
+    existed, is what re-triggers a geocode, what suppresses one, and that the geocode now writes
+    the pin `GET /api/listings` serves — which is the difference between "re-run the command" and
+    "wait ten minutes" when a seller reports a listing in the wrong place."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    flat = re.sub(r"\s+", " ", text)
+    # The dedupe, named with its own window, so an operator watching the queue knows why a second
+    # publish inside it enqueued nothing.
+    assert "deduped on the listing id for 600 seconds" in flat
+    # The one event that re-arms it.
+    assert "changes the city or the ZIP" in flat
+    # The second column the geocode now writes, and the one it does not replace.
+    assert "`listing.geom`" in text
+    assert "`scripts/seed_listings.py` still writes the seeds' own points" in flat

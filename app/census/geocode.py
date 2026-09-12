@@ -371,6 +371,22 @@ def resolve(conn: psycopg2.extensions.connection, geocoder: Geocoder, listing_id
                 GEOCODER_VINTAGE,
             ),
         )
+        # GEO-WIRE (3): the SAME resolved point, written to the column the product actually
+        # serves as a pin. `listing.geom` was written by `scripts/seed_listings.py` alone, so a
+        # real seller's listing reached Browse with no pin however well it geocoded --
+        # `app/api/listings.py`'s `_SELECT` reads `ST_Y(geom::geometry)`/`ST_X(geom::geometry)`
+        # and nothing else. One writer, here, beside `practice_location.point`: a second writer
+        # elsewhere is how the two columns start disagreeing. The column is
+        # `geography(Point,4326)` (`migrations/016_listing.sql:26`) and this is the seeder's own
+        # expression, so both writers write the same thing; the `CASE` mirrors the row above, so
+        # a resolution that found no coordinate leaves no pin rather than one at [0, 0] (A25).
+        cur.execute(
+            """UPDATE listing
+                  SET geom = CASE WHEN %s IS NULL THEN NULL
+                                  ELSE ST_SetSRID(ST_MakePoint(%s, %s), 4326)::geography END
+                WHERE id = %s""",
+            (loc.lng, loc.lng, loc.lat, listing_id),
+        )
         if precision != "rooftop":
             cur.execute(
                 "INSERT INTO geocode_review (listing_id, reason) VALUES (%s, %s)",

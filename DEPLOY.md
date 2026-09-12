@@ -514,6 +514,28 @@ nothing will consume is worse than not queueing it. A listing published through 
 goes through this geocoding pipeline; seeded listings created via direct INSERT do not, which is why
 the manual step is needed after seeding.
 
+**What the automatic trigger covers, and what it does not (Task GEO-WIRE).** Publishing a listing
+— the reviewer's `POST /api/admin/listings/{id}/decide` with `action: "publish"`, or the seller's
+own `republish` — enqueues `census.geocode_listing` by name, after the transaction commits, when
+the listing has no `practice_location` row. That enqueue is **deduped on the listing id for 600
+seconds**, because the row it checks for is written by the worker: without the dedupe, every
+publish inside the window between the enqueue and that write queued the same listing again. So a
+second publish a minute after the first enqueues nothing, and that is correct, not a fault. The one
+thing that re-arms it early is an address edit: when a seller **changes the city or the ZIP** at
+step 2 of the wizard, the listing's `practice_location` row is deleted in the same transaction and
+the dedupe key is dropped, so the very next publish resolves the new address. Everything else
+about the listing — a new price, a new photograph, a disclosure switch — leaves the geography
+alone, because the practice has not moved.
+
+The geocode writes **both** point columns from one resolved coordinate: `practice_location.point`,
+which every market figure is computed against, and `listing.geom`, which is the pin
+`GET /api/listings` serves as `lat`/`lng` (still blanked for a listing whose seller has not
+disclosed its location). `scripts/seed_listings.py` still writes the seeds' own points on every
+import, and re-asserts them on the UPDATE half, so a re-seed restores a curated pin; the two
+writers write the same column in the same SRID. Nothing above changes the demo hospitals: they
+already carry a `practice_location` row, so `census_load.py geocode` skips them and only `--force`
+would re-resolve them.
+
 The vintage string must match what was ingested exactly, en dash included. `bds` and `qwi` have no
 `activate` step in this sequence — `qwi`'s vintage is `<year>Q<quarter>` and `bds`'s is the year;
 activate them only if the controller wants them pinned. Finally, `GET /api/admin/data-sources` on

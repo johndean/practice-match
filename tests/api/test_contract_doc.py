@@ -129,6 +129,10 @@ def test_contract_doc_names_every_community_field_the_listing_serialiser_emits()
         "est": 2001, "listed_at": datetime(2026, 9, 1, tzinfo=UTC), "status": "published",
         "note": None, "staff": None, "services": None, "facility": None, "ownership": None,
         "lat": None, "lng": None, "photos": [], "photo_captions": [], "asset_captions": {},
+        # GEO-WIRE (4): `_SELECT`'s own `practice_location.geo_precision`. It is a LISTING column,
+        # not a `CommunityRow` field, so it is constant across the two calls below and the
+        # measurement never claims it — which is exactly the distinction this test is drawing.
+        "geo_precision": None,
     }
     now = datetime(2026, 9, 6, tzinfo=UTC)
     fields = tuple(CommunityRow.__annotations__)
@@ -260,3 +264,30 @@ def test_the_metro_catalogue_name_join_is_the_same_field_on_both_sides() -> None
         f"{ADAPTER.name} joins on {field!r} but `app.api.market.markets` does not select "
         f"`l.market AS {field}` — the dropdown key and the served name are no longer the same string"
     )
+
+
+def test_contract_doc_states_when_a_listing_gets_its_geography() -> None:
+    """Task GEO-WIRE. This document described the endpoints and said nothing about WHEN the
+    geography behind them is resolved, so a reader could not tell an empty Community Context card
+    ("this listing has not been geocoded yet") from a full one that is simply out of date. The
+    trigger, its dedupe window, the event that invalidates a resolved geography and the precision a
+    wizard-built address can actually reach are all part of the contract Sub-project 2 builds
+    against, not implementation detail."""
+    # Read with the line breaks flattened, the whole file's own convention for a prose needle
+    # (`test_contract_doc_states_the_per_figure_geography_rule`): every sentence below is wrapped
+    # in the document, so a literal read would pin the wrapping rather than the words.
+    flat = re.sub(r"\s+", " ", DOC.read_text(encoding="utf-8"))
+
+    # The trigger: the reviewer's own decision route, and the task it enqueues by name.
+    assert "/api/admin/listings/{listing_id}/decide" in flat
+    assert "`census.geocode_listing`" in flat
+    # The seller's own door onto the market enqueues it too.
+    assert "/api/seller/listings/{listing_id}/status" in flat
+    # The event that invalidates a resolved geography, and what happens to it.
+    assert "`practice_location`" in flat
+    assert "a changed `city` or `zip`" in flat
+    # The operator path the demo rows still take -- unchanged by this, and not the product's.
+    assert "`scripts/census_load.py geocode`" in flat
+    # The precision a wizard-built address can reach, stated rather than implied.
+    assert "`geo_precision`" in flat
+    assert "the wizard collects a city and a ZIP and no street" in flat

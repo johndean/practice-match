@@ -372,9 +372,11 @@ async def test_serialise_blanks_rev_when_the_flag_is_off_and_keeps_it_when_it_is
         "rooms": None, "sqft": None, "bldg": None, "est": None, "listed_at": datetime.now(UTC),
         "note": None, "staff": None, "services": None, "facility": None, "ownership": None, "photos": [],
         "rev_disclosed": False,
-        # `_SELECT` selects them (A-L11 `main`, and A-SL23 (0)): a row "as `_rows()` builds one"
-        # carries every column the query names, and `serialise` reads both unconditionally.
-        "photo_captions": [], "asset_captions": {},
+        # `_SELECT` selects them (A-L11 `main`, A-SL23 (0), and GEO-WIRE (4) for the third): a row
+        # "as `_rows()` builds one" carries every column the query names, and `serialise` reads all
+        # three unconditionally. `geo_precision` is `None` here — this listing has never been
+        # geocoded, which is the state a seller's draft is in.
+        "photo_captions": [], "asset_captions": {}, "geo_precision": None,
     }
     assert serialise(row, datetime.now(UTC))["rev"] is None
     assert serialise({**row, "rev_disclosed": True}, datetime.now(UTC))["rev"] == 2_100_000
@@ -2150,3 +2152,90 @@ def test_all_seeded_hospitals_have_ownership_in_ownerships() -> None:
         ownership = hospital.get("ownership")
         assert ownership in OWNERSHIPS, f"Hospital {i} ({hospital.get('name')}) has ownership " \
             f"'{ownership}' not in OWNERSHIPS: {OWNERSHIPS}"
+
+
+# --- Task GEO-WIRE: an address edit drops the geography it resolved to --------------------------
+def _location_rows(conn: Any, listing_id: str) -> int:
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM practice_location WHERE listing_id=%s", (listing_id,))
+        count: int = cur.fetchone()[0]
+    return count
+
+
+def _seed_location(conn: Any, listing_id: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO practice_location (listing_id, address_hash, geo_precision, geocoder_vintage, geocoded_at)"
+                    " VALUES (%s, 'h', 'zcta', 'Current_Current', now())", (listing_id,))
+
+
+async def test_changing_the_city_or_zip_drops_the_listings_resolved_location(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """GEO-WIRE (2). Step 2 collects the ONLY address the geocoder ever sees (`STEP_FIELDS[2]` is
+    `city, zip, anon`; `state` and `market` are the reviewer's, D12), so a change to either makes
+    `practice_location` — its point, its tract, its CBSA — a description of somewhere the practice
+    is not. Deleting the row rather than flagging it is the smaller of the two shapes the brief
+    offers: the publish path already reads "no row" as "geocode this", so one DELETE re-arms the
+    trigger with no column, no migration and no second rule to keep in step.
+
+    Nothing a buyer can see is lost by it: the same PATCH takes a published listing off the market
+    (D3, `EDIT_REENTERS_REVIEW`) in this same transaction, and a draft never had a location."""
+    listing_id, signed = await _ready(client, member)
+    _seed_location(conn, listing_id)
+    response = await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                                  json={"city": "Round Rock", "zip": "78664"}, headers=signed)
+    assert response.status_code == 200, response.text
+    assert _location_rows(conn, listing_id) == 0
+
+
+async def test_a_step_2_patch_that_changes_no_address_keeps_the_resolved_location(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """The autosave fires on every step-2 visit, so "the seller opened step 2" must not throw away
+    a geocode. Only a CHANGED city or ZIP does — the same "did the seller actually change this"
+    oracle `columns_for` is handed the row for (A-SL31/A-SL32 (2))."""
+    listing_id, signed = await _ready(client, member)
+    with conn.cursor() as cur:
+        cur.execute("SELECT city, zip FROM listing WHERE id=%s", (listing_id,))
+        city, zip_ = cur.fetchone()
+    _seed_location(conn, listing_id)
+    response = await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                                  json={"city": city, "zip": zip_}, headers=signed)
+    assert response.status_code == 200, response.text
+    assert _location_rows(conn, listing_id) == 1
+
+
+async def test_toggling_the_anonymity_switch_alone_keeps_the_resolved_location(
+    client: Any, conn: Any, member: Any
+) -> None:
+    """Step 2's third field is `anon`, which sets the two disclosure columns and touches no
+    address at all. A step-2 PATCH carrying only it must leave the geocode alone — a listing that
+    hides its address has not MOVED."""
+    listing_id, signed = await _ready(client, member)
+    _seed_location(conn, listing_id)
+    response = await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                                  json={"anon": True}, headers=signed)
+    assert response.status_code == 200, response.text
+    assert _location_rows(conn, listing_id) == 1
+
+
+async def test_a_second_republish_inside_the_dedupe_window_enqueues_nothing(
+    client: Any, conn: Any, member: Any, monkeypatch: Any
+) -> None:
+    """GEO-WIRE (1), the seller's own door onto the market. `practice_location` is written by the
+    WORKER, so pause -> republish -> pause -> republish enqueued the same listing twice before the
+    first task had run."""
+    listing_id, signed = await _ready(client, member)
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET status='published', state='TX', market='Austin, TX',"
+                    " area='Cedar Park' WHERE id=%s", (listing_id,))
+    sent: list[tuple[str, Any]] = []
+    from app.tasks.celery_app import celery_app
+    monkeypatch.setattr(celery_app, "send_task", lambda name, args=None, **kw: sent.append((name, args)))
+
+    for _ in range(2):
+        assert (await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": "pause"},
+                                  headers=signed)).status_code == 200
+        assert (await client.post(f"/api/seller/listings/{listing_id}/status", json={"action": "republish"},
+                                  headers=signed)).status_code == 200
+    assert sent == [("census.geocode_listing", [listing_id])]

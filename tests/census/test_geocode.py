@@ -550,3 +550,38 @@ def test_a_territory_skips_the_place_rung_because_states_py_deliberately_exclude
         assert geocode.STATE_FIPS.get(territory) is None, f"{territory} must not be in the state table"
         assert not any("summary_level = '160'" in q for q in rec.executed), territory
         assert any("summary_level = '860'" in q for q in rec.executed), territory  # the zcta rung DID run
+
+
+# ---- Task GEO-WIRE: one writer for the pin ----------------------------------------------------
+
+
+def test_resolve_writes_the_listings_own_pin_from_the_resolved_point(conn):
+    """GEO-WIRE (3). `listing.geom` is the column `GET /api/listings` serves as `lat`/`lng`
+    (`app/api/listings.py`'s `_SELECT`), and until this it was written by `scripts/seed_listings.py`
+    ALONE -- so a real seller's listing, geocoded on publish, still reached Browse with no pin.
+
+    The point is written HERE, beside `practice_location.point`, rather than in the Celery task or
+    the CLI: `resolve` is where the resolved coordinate exists, and a second writer somewhere else
+    is how the two columns start disagreeing. `geography(Point,4326)` is the listing column's own
+    type (`migrations/016_listing.sql:26`) and `ST_SetSRID(ST_MakePoint(lng,lat),4326)::geography`
+    is the seeder's own expression, so both writers write the same thing."""
+    _seed_geo(conn)
+    lid = make_listing(conn)
+    geocode.resolve(conn, _geocoder(MATCH), lid)
+    with conn.cursor() as cur:
+        cur.execute("SELECT ST_X(geom::geometry), ST_Y(geom::geometry) FROM listing WHERE id=%s", (lid,))
+        assert cur.fetchone() == (-97.820278589313, 30.497509155435)
+
+
+def test_resolve_below_rooftop_writes_the_fallback_centroid_as_the_pin(conn):
+    """The §11 ladder's own rungs carry a point too (the ZCTA/place/county centroid), and that
+    point is the one `practice_location` is written with -- so the pin follows it rather than
+    staying null for every listing the geocoder cannot match. `GET /api/listings` then serves a
+    pin the Community Context card's own figures were computed around."""
+    _seed_geo(conn)
+    lid = make_listing(conn, zip="78613")
+    loc = geocode.resolve(conn, _geocoder(NOMATCH), lid)
+    assert loc.geo_precision == "zcta"
+    with conn.cursor() as cur:
+        cur.execute("SELECT ST_X(geom::geometry), ST_Y(geom::geometry) FROM listing WHERE id=%s", (lid,))
+        assert cur.fetchone() == (-97.8, 30.55)

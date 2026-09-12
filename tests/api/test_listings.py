@@ -376,6 +376,12 @@ def _row(**over: Any) -> dict[str, Any]:
         # A-SL23 (0): `_SELECT`'s aggregate of this listing's own `listing_asset.caption`s, keyed
         # by asset id. Empty for a seed, whose `photos` name no asset row at all.
         "asset_captions": {},
+        # GEO-WIRE (4): `_SELECT`'s `practice_location.geo_precision` subquery. `None` here is the
+        # un-geocoded listing, which is what every one of these direct tests is; the geocoded arm
+        # is exercised over HTTP at the bottom of this file, against a real `practice_location`
+        # row. Present for `rev_disclosed`'s own reason (SL3 review L8): a row this helper builds
+        # must be a row `_rows()` could build.
+        "geo_precision": None,
     }
     base.update(over)
     return base
@@ -1136,6 +1142,7 @@ def test_serialise_carries_the_community_label_and_never_invents_one() -> None:
         "est": 2001, "listed_at": datetime(2026, 9, 1, tzinfo=UTC), "status": "published",
         "note": None, "staff": None, "services": None, "facility": None, "ownership": None,
         "lat": None, "lng": None, "photos": [], "photo_captions": [], "asset_captions": {},
+        "geo_precision": None,
     }
     now = datetime(2026, 9, 6, tzinfo=UTC)
 
@@ -1161,3 +1168,44 @@ def test_serialise_carries_the_community_label_and_never_invents_one() -> None:
     absent = serialise(row, now)
     for field in ("pop", "growth", "income", "hh", "vets", "econ_k", "community_label", "growth_scope", "income_note"):
         assert absent[field] is None, field
+
+
+# --- Task GEO-WIRE (4): the card is told how precisely the point is known ------------------------
+def _locate(conn: Any, listing_id: str, precision: str) -> None:
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO practice_location (listing_id, address_hash, geo_precision, geocoder_vintage, geocoded_at)"
+                    " VALUES (%s, 'h', %s, 'Current_Current', now())", (listing_id, precision))
+
+
+async def test_a_listings_payload_carries_the_precision_its_point_was_resolved_at(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """GEO-WIRE (4). The contract already rules what this datum means — "`geo_precision !=
+    "rooftop"` → render 'approximate community data' near the map pin"
+    (`docs/integrations/market-data-api.md`) — and `GET /api/markets/{cbsa}/communities` and
+    `GET /api/listings/{id}/market` have both served it since Task B5. The listing payload, which
+    is what the Community Context card and the Browse pin are actually built from, did not, so the
+    one rule the contract states about precision was unreachable from the one place it applies.
+
+    It matters far more now than it did: the wizard collects a city and a ZIP and no street
+    (`STEP_FIELDS[2]`), so a seller's listing resolves through the §11 ladder at `zcta` — a ZIP-code
+    centroid — and the ring the card describes is centred there, not on the practice. The figure is
+    served; naming it on the card is the frontend's own ruled copy, not this payload's to invent."""
+    _account, cookies, _headers = member(("buyer",))
+    listing_id = _insert(conn)
+    _locate(conn, listing_id, "zcta")
+    body = (await client.get(f"/api/listings/{listing_id}", headers=auth_headers(cookies))).json()
+    assert body["geo_precision"] == "zcta"
+    listed = (await client.get("/api/listings", headers=auth_headers(cookies))).json()["items"]
+    assert [item["geo_precision"] for item in listed] == ["zcta"]
+
+
+async def test_a_listing_that_was_never_geocoded_says_nothing_about_its_precision(
+    client: Any, conn: Any, redis: Any, member: Any
+) -> None:
+    """`null`, never a guessed "rooftop" — the D-C31 rule this payload already applies to every
+    community figure: a thing the database does not know is absent, not defaulted."""
+    _account, cookies, _headers = member(("buyer",))
+    listing_id = _insert(conn)
+    body = (await client.get(f"/api/listings/{listing_id}", headers=auth_headers(cookies))).json()
+    assert body["geo_precision"] is None

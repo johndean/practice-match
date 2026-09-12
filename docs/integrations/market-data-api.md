@@ -549,6 +549,53 @@ RARER; it does not make it unreachable. **A figure the database does not have is
 payload — never `0`, never `""`** (D-C31: a missing figure is omitted, never zeroed), because
 `null` is the only value the frontend's own guards read as absence.
 
+## When a listing gets its geography (the per-listing lifecycle, Task GEO-WIRE)
+
+Every endpoint above answers out of `practice_location` and `market_metric`, and both are written
+by the per-listing chain — `census.geocode_listing` → `census.backfill_listing` → `market_metric`.
+Phase B built that chain; Task B9 put the publish trigger on it, and Task GEO-WIRE closed what
+that left: the enqueue had no dedupe, an address change did not invalidate a resolved geography,
+and the geocode did not write the pin at all — so a seller's published listing reached Browse with
+no pin however well it geocoded. This is the whole of what triggers it, and what invalidates it.
+
+| Event | Route | What happens |
+|---|---|---|
+| A reviewer publishes a listing | `POST /api/admin/listings/{listing_id}/decide` (`action: "publish"`) | If the listing has no `practice_location` row, `census.geocode_listing` is enqueued **by name** after the transaction commits |
+| A seller puts a paused listing back on the market | `POST /api/seller/listings/{listing_id}/status` (`action: "republish"`) | The same, on the same condition |
+| A seller changes the address | `PATCH /api/seller/listings/{listing_id}?step=2` | **a changed `city` or `zip`** deletes the listing's `practice_location` row in the same transaction and forgets the dedupe below, so the next publish resolves the new address |
+
+The enqueue is **deduped on the listing id for 600 seconds** (`app/api/market.py`'s own
+`BACKFILL_DEDUPE_TTL` shape). `practice_location` alone cannot dedupe it: that row is written by
+the WORKER, so every publish inside the window between the enqueue and the write saw no row.
+An address edit is the one event that re-opens the window early, for the obvious reason — a
+correction arrives immediately after the publish that revealed the mistake.
+
+The request path **never imports a Census write** (spec §10): the task is asked for by name
+through `celery_app.send_task`, exactly as `app/tasks/census.py` asks for the backfill.
+
+`census.geocode_listing` writes **both** point columns from the one resolved coordinate:
+`practice_location.point` (NAD83, the geography every figure above is computed against) and
+`listing.geom` (WGS84, the pin `GET /api/listings` serves as `lat`/`lng`, still blanked for a
+listing whose seller has not disclosed its location). Before this, `listing.geom` was written by
+`scripts/seed_listings.py` alone.
+
+**The twenty-nine demo hospitals are unaffected and still take the operator path.**
+`scripts/census_load.py geocode` resolves every listing that has no `practice_location` row, and
+`--force` re-resolves one that has; `DEPLOY.md` carries the runbook. Nothing above changes that
+command or the rows it has already written.
+
+**What precision a seller's address can reach, and why it is now on every listing payload.** The
+approved wizard's step 2 collects a city and a ZIP and nothing else — **the wizard collects a city
+and a ZIP and no street**, and inventing a field is out of scope (spec Q2, D12) — so the Census
+geocoder cannot match a street address and the §11 ladder resolves the listing at `zcta`: a
+ZIP-code centroid, not the practice. `GET /api/listings` and `GET /api/listings/{id}` therefore
+carry **`geo_precision`** (`"rooftop" | "tract" | "zcta" | "place" | "county"`, or `null` for a
+listing that has never been geocoded) beside the community fields, the same value
+`GET /api/markets/{cbsa}/communities` and `GET /api/listings/{listing_id}/market` have carried
+since Task B5. The copy rule below — `geo_precision != "rooftop"` → "approximate community data" —
+has always applied to it; until now the listing payload gave the card no way to honour it. It is
+NOT gated on `location_disclosed`: it says how well the point is known, never where it is.
+
 ## Copy rules (spec §8/§12/§14) the frontend must honour when wiring this up
 
 * Every figure shown carries its dataset and vintage — `attribution[]` at the response level,
