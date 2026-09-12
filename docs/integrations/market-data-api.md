@@ -499,7 +499,7 @@ The rule now, figure by figure:
 
 | Figure | Geography served | Why |
 |---|---|---|
-| `pop`, `hh`, `income`, `vets` | the catchment band, with `place` as the fallback | These vary by band, and the catchment is the finer reading. They move as **one group**: one `community_label` describes all of them, so a group drawn half from the ring and half from the city would put a city figure under a ring caption — the defect being fixed. A figure the chosen band does not have is `null`; it is never backfilled from the other band. |
+| `pop`, `hh`, `income`, `vets` | the catchment band **only when `geo_precision` is `"rooftop"`**, otherwise `place` | These vary by band, and the catchment is the finer reading — *when the point it is drawn around is the practice*. They move as **one group**: one `community_label` describes all of them, so a group drawn half from the ring and half from the city would put a city figure under a ring caption — the defect being fixed. A figure the chosen band does not have is `null`; it is never backfilled from the other band. See "When the ring is offered at all" below. |
 | `growth` | `place`, or `county` where the listing has no place | `population_growth_pct` **cannot vary by band at all.** `app/census/materialize.py` computes it once per listing, outside the band loop, and writes that one value into all three bands (plan D12). Its resolution below place-or-county waits on the 2010→2020 tract crosswalk, a registered Phase C deferral. |
 | `econ` (`econ_k`) | `county`, always | `materialize.py` always writes the county CBP row, identically in all three bands. |
 
@@ -517,6 +517,23 @@ the data does not support.
 | `community_label` | `"Within about 5 miles of the practice"` | The area figures came from the catchment band. The frontend MUST render this label wherever it names the area — a buyer is never shown a catchment disguised as a named city. |
 | `growth_scope` | e.g. `"Dallas"`, `"Orange County"` | The geography the GROWTH figure was measured at, which `community_label` does not describe. The frontend renders it on the Growth tile's own sub-line, so the figure stops implying it describes the ring beside it. `null` where the geography has no name to give. |
 | `income_note` | e.g. `"Within about 5 miles of the practice · approximate"`, or `"Approximate"` | Replaces the median-income tile's sub-line when that median is an approximation — a catchment median is a household-weighted median of the tract medians inside the ring rather than a published Census figure, and can never be suppressed. The guard is the SERVED ROW's own `is_derived`, never the band the area group came from, so an approximate PLACE median carries the qualifier too; with no `community_label` there is no area to name and the note is the bare word `"Approximate"`. `null` for a published median, and the design's own sub-line then stands. Known limit, ruled and accepted: because the tile has ONE sub-line, a note replaces the vintage rather than joining it — a tile carrying a note does not show its year. |
+
+**When the ring is offered at all (controller ruling, GEO-WIRE fix round 1).** `practice_catchment`
+is an 8 km buffer around `practice_location.point`, and `community_label` tells the buyer it is
+"Within about 5 miles of the practice". That sentence is true of a rooftop match and of nothing
+else. The seller wizard collects a city and a ZIP and no street, so the §11 fallback ladder
+resolves a real seller's listing at `zcta` — **a ZIP-code centroid**, which in a large ZIP is miles
+from the practice. Wiring the geocode onto publish (Task GEO-WIRE) made that the ordinary case
+rather than a rarity.
+
+So the area group is **served the `place` band** — the listing's own Census place — whenever
+`geo_precision` is anything but `"rooftop"`. That is the path the design already renders: **no
+`community_label`**, the design's own sub-lines, `growth_scope` and `income_note` exactly as they
+behave for a place band today. **No new string is introduced anywhere**, and a true city figure at
+the precision we actually hold is served in place of a ring described as the practice. A rooftop
+listing is unchanged, and **a listing with no `practice_location` row is unaffected** — the rule
+has to KNOW the point is approximate, and "never geocoded" says nothing about where it is. All
+twenty-nine QA demo hospitals carry a street and resolve at rooftop, so none of them moves.
 
 **The ring is described by DISTANCE, not by time** (D-C39). The band is an 8 km straight-line
 buffer from the practice point (spec §8: "straight-line buffers of 8 km (≈10 min) and 16 km
@@ -596,6 +613,10 @@ since Task B5. The copy rule below — `geo_precision != "rooftop"` → "approxi
 has always applied to it; until now the listing payload gave the card no way to honour it. It is
 NOT gated on `location_disclosed`: it says how well the point is known, never where it is.
 
+Such a listing is ALSO served the `place` band for its area figures rather than the catchment ring
+— "When the ring is offered at all" above — so the figures on its card describe a real Census
+place, and `community_label` is `null`.
+
 ## Copy rules (spec §8/§12/§14) the frontend must honour when wiring this up
 
 * Every figure shown carries its dataset and vintage — `attribution[]` at the response level,
@@ -606,7 +627,10 @@ NOT gated on `location_disclosed`: it says how well the point is known, never wh
   sub-line and it has to carry the area and the qualifier together.
 * `suppressed: true` → render "Estimate too imprecise to show at this geography", never a blank or
   a zero.
-* `geo_precision != "rooftop"` → render "approximate community data" near the map pin.
+* `geo_precision != "rooftop"` → render "approximate community data" near the map pin. Note that
+  such a listing is also served the `place` band for its area figures rather than the ring (see
+  "When the ring is offered at all" above), so the caption near the pin is the only place the
+  approximation is stated — the figures themselves are a real Census geography, not an estimate.
 * On the map, `value: null` with `suppressed: false` is the no-data class with "No data for this
   area"; `suppressed: true` is the same class with the suppression wording above; `band_ambiguous`
   `true` renders the value plus "this margin spans two legend bands" — never grey, because greying

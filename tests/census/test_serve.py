@@ -743,7 +743,8 @@ _CATCHMENT_SIX = (
 )
 
 
-def _seed_geography(conn, listing_id, *, place_geoid=None, place_name=None, county_geoid=None, county_name=None):
+def _seed_geography(conn, listing_id, *, place_geoid=None, place_name=None, county_geoid=None, county_name=None,
+                    precision="rooftop"):
     """The listing's geocoded place and county, and the `geo_area` rows that NAME them.
 
     D-C38 supersedes `serve.py`'s own "There is no geoid lookup and none is wanted": the Growth
@@ -754,8 +755,8 @@ def _seed_geography(conn, listing_id, *, place_geoid=None, place_name=None, coun
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO practice_location (listing_id, address_hash, county_geoid, place_geoid, geo_precision, geocoded_at, geocoder_vintage) "
-            "VALUES (%s, 'h', %s, %s, 'rooftop', now(), 'Current_Current')",
-            (listing_id, county_geoid, place_geoid),
+            "VALUES (%s, 'h', %s, %s, %s, now(), 'Current_Current')",
+            (listing_id, county_geoid, place_geoid, precision),
         )
         # A `geo_area` row only where the caller gave a NAME. A geoid with no name is the
         # "geocoded, but the active boundary edition does not resolve it" case (I4) — the row is
@@ -1264,3 +1265,60 @@ def test_one_listing_whose_place_alone_is_unnamed_still_warns(conn, caplog):
     assert row["growth_scope"] == "Dallas County"
     assert len(caplog.records) == 1
     assert "2023" in caplog.records[0].getMessage()
+
+
+# ---- fix round 1, Important 1: a point that is not a rooftop match is served its city ----------
+
+
+def test_a_listing_whose_point_is_not_a_rooftop_match_is_served_the_place_band(conn):
+    """Controller ruling, fix round 1 on GEO-WIRE. The catchment band is an 8 km ring drawn around
+    `practice_location.point`, and `BAND_LABEL` tells the buyer it is "Within about 5 miles of the
+    practice". That sentence is only true when the point IS the practice.
+
+    The seller wizard collects a city and a ZIP and no street (`STEP_FIELDS[2]`), so the Census
+    geocoder cannot match an address and the §11 ladder resolves the listing at `zcta` — a
+    ZIP-code centroid, which in a large ZIP is miles from the practice. Wiring the geocode
+    (GEO-WIRE) made that the ordinary case rather than a rarity, so the ring would have been drawn
+    around a point the practice is not and captioned as though it were: D-C39's class of false
+    sentence arriving by another door.
+
+    The ruling serves the PLACE band instead — the listing's own Census place, which the design
+    already labels with no `community_label` at all and no new copy anywhere. A true city figure
+    at the precision we actually hold beats a ring described as something it is not."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _seed_band(conn, listing_id, "drive_10", metrics=_CATCHMENT_SIX)
+    _seed_geography(conn, listing_id, place_geoid="4819000", place_name="Dallas", precision="zcta")
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    # The PLACE band's own figures (`_PLACE_SIX`, the City of Dallas), not the ring's
+    # (369,569 / 181,745 households / $109,548).
+    assert (row["pop"], row["hh"], row["income"]) == ("1,299,553", "528,038 households", "$67,760")
+    # ...and no label, which is the design's own wording for "this is the listing's community".
+    assert row["label"] is None
+
+
+def test_a_rooftop_listing_keeps_its_catchment_and_its_label(conn):
+    """The other half of the same ruling, and the reason it is scoped to precision rather than
+    applied to everyone: a rooftop point IS the practice, so the ring around it is exactly what
+    D-C38 put there and the sentence describing it is true. All twenty-nine QA demo hospitals
+    carry a street and resolve at rooftop, so none of them moves.
+
+    A listing with NO `practice_location` row at all is untouched by this too — the rule needs to
+    KNOW the point is approximate, and an absent row says nothing. That case is already pinned by
+    `test_the_area_figures_come_from_the_catchment_band_when_both_bands_have_them`, which seeds no
+    location and asserts the catchment."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _seed_band(conn, listing_id, "drive_10", metrics=_CATCHMENT_SIX)
+    _seed_geography(conn, listing_id, place_geoid="4819000", place_name="Dallas", precision="rooftop")
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert (row["pop"], row["hh"], row["income"]) == ("369,569", "181,745 households", "$109,548")
+    assert row["label"] == BAND_LABEL

@@ -527,6 +527,16 @@ the dedupe key is dropped, so the very next publish resolves the new address. Ev
 about the listing — a new price, a new photograph, a disclosure switch — leaves the geography
 alone, because the practice has not moved.
 
+**What a seller's own listing is served, and why the demo hospitals are not.** The wizard collects
+a city and a ZIP and no street, so the Census geocoder cannot match an address and the fallback
+ladder resolves at `zcta` — a ZIP-code centroid, which in a large ZIP is miles from the practice.
+A listing like that is served its Census place rather than the ring for its Community Context
+figures (the controller's ruling, GEO-WIRE fix round 1), so its card shows a true city figure and
+no "Within about 5 miles of the practice" heading. By contrast all twenty-nine demo hospitals carry
+a street and resolve at `rooftop`, so their cards keep the catchment ring they have today and
+nothing about them changes. `SELECT geo_precision, count(*) FROM practice_location GROUP BY 1;` is
+how to see which listings on an environment are in which case.
+
 The geocode writes **both** point columns from one resolved coordinate: `practice_location.point`,
 which every market figure is computed against, and `listing.geom`, which is the pin
 `GET /api/listings` serves as `lat`/`lng` (still blanked for a listing whose seller has not

@@ -291,3 +291,25 @@ def test_contract_doc_states_when_a_listing_gets_its_geography() -> None:
     # The precision a wizard-built address can reach, stated rather than implied.
     assert "`geo_precision`" in flat
     assert "the wizard collects a city and a ZIP and no street" in flat
+
+
+def test_contract_doc_states_that_a_non_rooftop_point_is_served_its_place_band() -> None:
+    """Controller ruling, GEO-WIRE fix round 1. The catchment band is a ring around
+    `practice_location.point` and `community_label` says it is "within about 5 miles of the
+    practice" — true only of a rooftop match. A wizard-built listing resolves at `zcta`, so
+    `community_rows` serves it the `place` band instead.
+
+    Pinned because it changes WHICH GEOGRAPHY a figure describes, which is the one thing this
+    document exists to let Sub-project 2 reason about: a reader who believes the D-C38 table
+    unconditionally will caption a city figure as a ring on every listing a seller creates."""
+    flat = re.sub(r"\s+", " ", DOC.read_text(encoding="utf-8"))
+
+    # The rule, and the column the condition is read from.
+    assert "only when `geo_precision` is `\"rooftop\"`" in flat
+    assert "served the `place` band" in flat
+    # ...and that it invents no copy: the place band is the path the design already renders.
+    assert "no `community_label`" in flat
+    # The reason, stated rather than implied.
+    assert "a ZIP-code centroid" in flat
+    # A listing that has never been geocoded is NOT swept up by it.
+    assert "a listing with no `practice_location` row is unaffected" in flat

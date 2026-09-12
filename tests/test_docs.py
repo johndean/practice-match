@@ -2506,3 +2506,8 @@ def test_deploy_md_says_what_the_publish_trigger_does_and_does_not_cover():
     # The second column the geocode now writes, and the one it does not replace.
     assert "`listing.geom`" in text
     assert "`scripts/seed_listings.py` still writes the seeds' own points" in flat
+    # Controller ruling, fix round 1: what a seller's own listing is served, and why the demo
+    # hospitals are not affected by it — the operator needs both to read a QA card correctly.
+    assert "resolves at `zcta` — a ZIP-code centroid" in flat
+    assert "served its Census place rather than the ring" in flat
+    assert "all twenty-nine demo hospitals carry a street and resolve at `rooftop`" in flat
