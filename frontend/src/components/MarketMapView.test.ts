@@ -28,6 +28,7 @@ import { FakeMap, installLeafletStub, type LeafletStub } from '../map/testing/le
 import MarketMapView from './MarketMapView.vue';
 import * as viewport from '../map/viewport';
 import { DEBOUNCE_MS, PAD, bboxOf } from '../map/viewport';
+import { LeafletMapEngine } from '../map/engines/leaflet';
 
 /** Real timers, deliberately: the engine loader and Vue's own watcher flush are
  *  promise-scheduled, and a fake clock that has to be advanced between them turns one
@@ -978,6 +979,47 @@ describe('MarketMapView — the V3 map', () => {
       expect(viewport.current()).not.toBeNull();
       w.unmount();
       expect(viewport.current()).toBeNull();
+    });
+
+    // publishViewport()'s own `if (!engine) return;` (MarketMapView.vue:85). Every call site
+    // checks `engine` before reaching this function — onMounted only after assigning it, the
+    // recentre watcher only after its own `!engine` guard — so the ONLY way this function itself
+    // sees a null engine is a moveend/zoomend already being delivered when the map tears down:
+    // `offMove()` (this.map.off) cannot un-fire an event Leaflet already handed to the specific
+    // handler it captured. Captured here BEFORE unmount, so the same closure is still callable
+    // once `off()` has deleted it from the map's own handler table.
+    it('a moveend already in flight when the map tears down hits the (!engine) guard, not a crash', async () => {
+      const stub = installLeafletStub();
+      const w = mount(MarketMapView, { props: v3Props() });
+      await flushPromises();
+      const stale = stub.map.handlers.moveend!;
+      w.unmount();
+      // Subscribed AFTER unmount, so unmount's own `publish(null)` cannot be what this counts —
+      // only the replayed handler's own call could reach it from here.
+      const cb = vi.fn();
+      const off = viewport.subscribe(cb);
+      expect(() => stale(), 'a late event reaching a nulled engine should not throw').not.toThrow();
+      expect(cb, 'the guard must return before publishing anything, not merely avoid throwing').not.toHaveBeenCalled();
+      off();
+    });
+
+    // publishViewport()'s other guard, `if (!b) return;` (MarketMapView.vue:87).
+    // `LeafletMapEngine.getBounds()` answers null in exactly one case — the engine already
+    // destroyed — and this component's own teardown order (offMove, THEN destroy, with no
+    // await between destroy and nulling `engine`) never leaves a window where `engine` is still
+    // truthy and `getBounds()` already null. The observable contract this guard protects is
+    // simpler than that one race, so it is stubbed directly: whatever the engine answers when it
+    // has no bounds to give, publishing must skip it rather than forward a hole.
+    it('an engine that answers no bounds publishes nothing either (!b guard)', async () => {
+      const stub = installLeafletStub();
+      const w = mount(MarketMapView, { props: v3Props() });
+      await flushPromises();
+      const before = viewport.current();
+      const spy = vi.spyOn(LeafletMapEngine.prototype, 'getBounds').mockReturnValueOnce(null);
+      stub.map.handlers.moveend!();
+      expect(viewport.current(), 'no bounds means no publish — the last good box must stand').toEqual(before);
+      spy.mockRestore();
+      w.unmount();
     });
 
     it('publishes nothing at all when the map never came up', async () => {
