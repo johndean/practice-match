@@ -8,7 +8,7 @@
     "build": "vite build",
     "preview": "vite preview",
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
-    "test": "vitest run",
+    "test": "vitest run --coverage",
     "test:e2e": "playwright test --config=tests/playwright.config.ts --project=app",
     "test:smoke": "playwright test --config=tests/playwright.config.ts --project=app smoke.spec.ts",
     "test:visual": "playwright test --config=tests/playwright.config.ts --project=app visual.spec.ts",
