@@ -23,13 +23,17 @@ patch with `reset()` on both sides of its yield.
 """
 from __future__ import annotations
 
+import logging
 import threading
+from collections.abc import Callable
 from typing import Any
 
 import redis as redis_sync
 import redis.asyncio as aioredis
 
 from app.config import settings
+
+log = logging.getLogger(__name__)
 
 #: The key prefix `GET /api/listings` caches a page under. It lives HERE, beside the client, and
 #: not in the route module, because two very different callers have to agree on it: the API, which
@@ -126,3 +130,35 @@ def drop_list_cache(cache: Any) -> int:
         cache.delete(key)
         removed += 1
     return removed
+
+
+def drop_list_cache_quietly(redis_factory: Callable[[], redis_sync.Redis] = sync_redis) -> bool:
+    """`drop_list_cache`, guarded so a Redis blip can never turn an already-committed write into
+    an error for the caller (Task CACHE-DROP-GUARD, 2026-09-12).
+
+    GEO-WIRE guarded its own two call sites this exact way (`app/tasks/census.py`,
+    `scripts/census_load.py`); its reviewer found the same bare `drop_list_cache(sync_redis())`
+    shape at ten pre-existing sites — nine in `app/api/seller_listings.py`, one in
+    `app/api/admin_listings.py` — every one of them AFTER its own transaction commits (D16), so a
+    Redis failure there was turning a successful publish / republish / photo upload / decision
+    into a 500 for a caller whose row had already changed. This is that guard, centralised: obtain
+    the client, run the drop, and on `redis.RedisError` log the exception's TYPE only — never its
+    text, which can carry a host and port — and return `False` rather than let the exception
+    replace the caller's own result. The cache's own 60 s TTL is the backstop. Returns `True` on
+    an ordinary success.
+
+    `redis_factory`, not a bare call to `sync_redis()`: every caller so far wants the default, but
+    the seam is a parameter rather than a hard-coded name, so a test can hand it a factory that
+    fails before a client is even built, with no need to reach into `app.cache`'s own module
+    globals to do it.
+
+    Any exception that is NOT a `redis.RedisError` is this codebase's own defect and is left to
+    propagate — swallowing it would hide it for as long as nobody reads the logs, the same
+    boundary `app/tasks/census.py::geocode_listing` and `app/api/admin_data_sources.py`'s licence
+    gate already draw for the same reason."""
+    try:
+        drop_list_cache(redis_factory())
+    except redis_sync.RedisError as exc:
+        log.warning("browse cache drop failed: %s", type(exc).__name__)
+        return False
+    return True

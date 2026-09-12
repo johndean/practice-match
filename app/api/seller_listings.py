@@ -74,7 +74,7 @@ from app.auth.limits import (
     LISTING_UPLOAD,
     hit,
 )
-from app.cache import drop_list_cache, sync_redis
+from app.cache import drop_list_cache_quietly, sync_redis
 from app.config import settings
 from app.db import sync_conn
 from app.mail.outbox import enqueue
@@ -685,7 +685,7 @@ async def patch_step(listing_id: str, request: Request, principal: Owner) -> Res
     # change a published payload" (review L6). A draft's autosave changes nothing a buyer can read,
     # and a SCAN plus a DELETE per key on each of 240 patches an hour flushes Browse for everyone.
     if leaving_market:
-        drop_list_cache(sync_redis())
+        drop_list_cache_quietly()
     # GEO-WIRE (2), after the commit like every other cache write here: the dedupe key is what
     # would otherwise swallow the re-geocode, since a correction arrives precisely inside the
     # window the publish that revealed the mistake opened.
@@ -1012,7 +1012,7 @@ async def upload_photo(listing_id: str, request: Request, principal: Owner) -> R
     except Refusal as exc:
         return _refused(exc)
     if on_market:
-        drop_list_cache(sync_redis())
+        drop_list_cache_quietly()
     return JSONResponse(payload, status_code=201)
 
 
@@ -1056,7 +1056,7 @@ async def reorder_photos(listing_id: str, request: Request, principal: Owner) ->
     except Refusal as exc:
         return _refused(exc)
     if on_market:
-        drop_list_cache(sync_redis())
+        drop_list_cache_quietly()
     return JSONResponse(payload)
 
 
@@ -1098,7 +1098,7 @@ async def caption_asset(listing_id: str, asset_id: str, request: Request, princi
     except Refusal as exc:
         return _refused(exc)
     if on_market:
-        drop_list_cache(sync_redis())
+        drop_list_cache_quietly()
     return JSONResponse(payload)
 
 
@@ -1154,7 +1154,7 @@ async def caption_seed_photo(listing_id: str, n: int, request: Request, principa
     except Refusal as exc:
         return _refused(exc)
     if on_market:
-        drop_list_cache(sync_redis())
+        drop_list_cache_quietly()
     return JSONResponse(payload)
 
 
@@ -1200,7 +1200,7 @@ async def delete_asset(listing_id: str, asset_id: str, request: Request, princip
     except Refusal as exc:
         return _refused(exc)
     if on_market:
-        drop_list_cache(sync_redis())
+        drop_list_cache_quietly()
     return Response(status_code=204)
 
 
@@ -1244,7 +1244,7 @@ async def upload_document(listing_id: str, request: Request, principal: Owner) -
     except Refusal as exc:
         return _refused(exc)
     if on_market:
-        drop_list_cache(sync_redis())
+        drop_list_cache_quietly()
     return JSONResponse(payload, status_code=201)
 
 
@@ -1396,7 +1396,7 @@ async def submit_listing(listing_id: str, request: Request, principal: Owner) ->
             payload = serialise_draft(locked_row(conn, listing_id, principal), assets_of(conn, row["id"]))
     except Refusal as exc:
         return _refused(exc)
-    drop_list_cache(sync_redis())
+    drop_list_cache_quietly()
     return JSONResponse(payload)
 
 
@@ -1438,7 +1438,7 @@ async def set_status(listing_id: str, request: Request, principal: Owner) -> Res
     # conditional because it fires 240 times an hour (A-SL13 L6). A transition is a deliberate act
     # bounded by `LISTING_SUBMIT`, three of the four move a row onto or off the market, and a SCAN
     # that matches nothing costs one round trip.
-    drop_list_cache(sync_redis())
+    drop_list_cache_quietly()
     # Task B9, deduped by GEO-WIRE (1) and enqueued after the commit for `drop_list_cache`'s own
     # reason: a listing the seller puts back on the market needs the pin, the community card and
     # the metro every other published listing has.

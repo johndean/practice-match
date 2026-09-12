@@ -741,13 +741,19 @@ async def test_every_asset_write_drops_the_listings_cache_after_the_commit(
     `drop_list_cache` runs is what a concurrent reader could see, so a spy that finds the new
     `photos` value proves the transaction had already committed. Dropping the key while the write
     was still uncommitted would leave a window in which a concurrent read re-cached the pre-write
-    payload for the full TTL."""
+    payload for the full TTL.
+
+    Patched on `app.cache` itself (Task CACHE-DROP-GUARD), not on `seller_listings.SL` as before:
+    every writer now calls `drop_list_cache_quietly()`, which resolves the sibling `drop_list_cache`
+    name from `app.cache`'s OWN globals at call time — the same late-binding seam `sync_redis`/
+    `_make_sync` already use — so patching it here, rather than the route module's copy of the old
+    name, is what a caller reached through the guard now needs."""
     import psycopg2
 
-    from app.api import seller_listings as SL
+    from app import cache as cache_module
 
     seen: list[Any] = []
-    original = SL.drop_list_cache
+    original = cache_module.drop_list_cache
 
     def _spy(cache: Any) -> int:
         with closing(psycopg2.connect(scratch_dsn)) as probe, probe.cursor() as cur:
@@ -756,7 +762,7 @@ async def test_every_asset_write_drops_the_listings_cache_after_the_commit(
         removed: int = original(cache)
         return removed
 
-    monkeypatch.setattr(SL, "drop_list_cache", _spy)
+    monkeypatch.setattr(cache_module, "drop_list_cache", _spy)
     _, cookies, headers = _seller(member)
     listing_id = await _create(client, cookies, headers)
     signed = auth_headers(cookies, headers)
@@ -790,6 +796,43 @@ async def test_every_asset_write_drops_the_listings_cache_after_the_commit(
     assert redis.get("listings:v1:Austin, TX::50") is None
     assert redis.get("session:keep") == b"kept"
     assert seen[-1] == ([], "in_review")
+
+
+async def test_a_redis_failure_during_the_photo_upload_cache_drop_is_logged_and_never_replaces_the_result(
+    client: Any, conn: Any, member: Any, store: Any, caplog: Any, monkeypatch: Any
+) -> None:
+    """Task CACHE-DROP-GUARD (2026-09-12), the seller side of the same finding:
+    `seller_listings.py:1015`'s own `drop_list_cache(sync_redis())`, guarded the same way GEO-WIRE
+    guarded its two — the photograph is already re-encoded, stored and its row committed by the
+    time this runs (D16), so a Redis blip here must not turn a successful upload into a 500 the
+    seller would retry against a listing that already has the photograph. Logged at WARNING, the
+    exception's TYPE only — never its text, which can carry a host and port."""
+    import logging
+
+    import redis as redis_sync
+
+    from app import cache as cache_module
+
+    _, cookies, headers = _seller(member)
+    listing_id = await _create(client, cookies, headers)
+    signed = auth_headers(cookies, headers)
+    _publish(conn, listing_id)
+
+    def _boom(cache: Any) -> int:
+        raise redis_sync.exceptions.ConnectionError("redis://someone:6379 is having a moment")
+
+    monkeypatch.setattr(cache_module, "drop_list_cache", _boom)
+
+    with caplog.at_level(logging.WARNING, logger="app.cache"):
+        response = await _upload_photo(client, listing_id, signed)
+
+    assert response.status_code == 201, response.text
+    assert len(_photos(conn, listing_id)) == 1
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "ConnectionError" in warnings[0].getMessage()
+    assert "6379" not in warnings[0].getMessage(), "the type, never the text: it can carry a host"
 
 
 async def test_an_asset_write_on_a_draft_leaves_the_browse_cache_alone(

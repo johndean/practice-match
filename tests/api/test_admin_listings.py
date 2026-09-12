@@ -565,6 +565,43 @@ async def test_a_publish_enqueues_no_reason(client: Any, conn: Any, member: Any)
     assert rows["listing_published"] == {}
 
 
+async def test_a_redis_failure_during_the_publish_cache_drop_is_logged_and_never_replaces_the_result(
+    client: Any, conn: Any, member: Any, caplog: Any, monkeypatch: Any
+) -> None:
+    """Task CACHE-DROP-GUARD (2026-09-12): `admin_listings.py:292`'s own
+    `drop_list_cache(sync_redis())`, guarded the same way GEO-WIRE guarded its two — a publish's
+    row is already committed by the time this runs (D16), so a Redis blip here must not turn a
+    successful decision into a 500 the reviewer would retry against a listing that is already
+    published. Logged at WARNING, the exception's TYPE only — never its text, which can carry a
+    host and port."""
+    import logging
+
+    import redis as redis_sync
+
+    from app import cache as cache_module
+
+    listing_id, _signed = await _submitted(client, member)
+    staff = await _staff(client, member)
+
+    def _boom(cache: Any) -> int:
+        raise redis_sync.exceptions.ConnectionError("redis://someone:6379 is having a moment")
+
+    monkeypatch.setattr(cache_module, "drop_list_cache", _boom)
+
+    with caplog.at_level(logging.WARNING, logger="app.cache"):
+        response = await client.post(f"/api/admin/listings/{listing_id}/decide",
+                                     json={"action": "publish", "state": "TX", "market": "Austin, TX"},
+                                     headers=staff)
+
+    assert response.status_code == 200, response.text
+    assert _row(conn, listing_id)[0] == "published"
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "ConnectionError" in warnings[0].getMessage()
+    assert "6379" not in warnings[0].getMessage(), "the type, never the text: it can carry a host"
+
+
 async def test_decide_returns_the_full_draft_of_the_decided_listing(
     client: Any, conn: Any, member: Any
 ) -> None:

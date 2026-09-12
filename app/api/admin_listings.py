@@ -36,7 +36,7 @@ from app.api.seller_listings import _COLUMNS, _row, _rows, assets_for, assets_of
 from app.auth import audit
 from app.auth import sessions as S
 from app.auth.deps import require
-from app.cache import drop_list_cache, sync_redis
+from app.cache import drop_list_cache_quietly, sync_redis
 from app.db import sync_conn
 from app.mail.outbox import enqueue
 
@@ -289,7 +289,7 @@ async def decide_listing(listing_id: str, body: Decision, request: Request, prin
         payload = serialise_draft(decided, assets_of(conn, parsed))
     # AFTER the commit (D16): a publish must reach Browse at once and an unpublish must leave it at
     # once, and dropping the key while the write was uncommitted would re-cache the old payload.
-    drop_list_cache(sync_redis())
+    drop_list_cache_quietly()
     # Task B9, deduped by GEO-WIRE (1). AFTER the commit, for `drop_list_cache`'s own reason: the
     # worker opens its own connection and would read the pre-decision row if it started first.
     if needs_geocode:
