@@ -4953,10 +4953,12 @@ const A24_20: Amendment = {
 
 /** A24.21-A24.23 -- the VIEWPORT BBOX (controller, 2026-09-12). `GET /api/markets/{cbsa}/boundaries`
  *  has taken a `bbox` since Task 9 and A24.15's loader never sent one, so every request was for the
- *  whole metro envelope. At Census-tract scale that is 5,935 tracts in New York against the route's
- *  own `MAX_FEATURES = 4000` -- a COUNT, which no delivery tolerance can coarsen away -- so the
- *  largest market in the country had a permanently unshaded map. The same viewport at the Browse
- *  map's own zoom is 3,706, and served.
+ *  whole metro envelope. At Census-tract scale that is 5,935 tracts in New York where the Browse
+ *  map's own zoom holds 3,706. When this amendment was written the caps were still the ZCTA era's
+ *  (`MAX_FEATURES = 4000`) and the metro request was refused outright; they were re-measured for
+ *  tracts the same day -- 12,000 features, 6,000,000 bytes -- so it is served now, and what the box
+ *  buys is the size of the ANSWER rather than the difference between a map and a blank one. The
+ *  RULING below is the controller's own words of the day and is left exactly as it was given.
  *
  *  All three are CHAINED, the A21.5c / A24.19 shape: A24.21 reads A24.15's whole output, A24.22
  *  reads A24.17's line and A24.23 reads A13.5's, so none occurs in the pristine bundle.

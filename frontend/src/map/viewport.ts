@@ -108,8 +108,13 @@ const listeners = new Set<() => void>();
 
 const key = (v: Viewport | null) => (v === null ? null : bboxOf(v, PAD));
 
-/** The LIVE view — what the map is looking at this instant. It is the debounce's INPUT and
- *  nothing else reads it to decide what to ask the API for: see `settled()`. */
+/** The LIVE view — what the map is looking at this instant.
+ *
+ *  TESTS ONLY, the way `reset()` below is: no production reader takes it (`MarketMapView.vue`
+ *  publishes, `src/market/boundaries.ts` reads `settled()`), and a future one that reached for it
+ *  to decide what to fetch would reintroduce fix round 1's finding exactly — an answer discarded
+ *  for a view the member was already back on. It is exported so the debounce's INPUT can be
+ *  observed separately from its output. */
 export function current(): Viewport | null {
   return live;
 }

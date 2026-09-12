@@ -674,6 +674,14 @@ async def test_the_default_new_york_view_serves_at_a_sub_two_pixel_tier(client, 
     Not merely answered — answered at a delivery tolerance no member could see. A map served at a
     visibly coarsened tract outline is a false precision of a different kind, so the tier is
     asserted in PIXELS at the zoom the view is served for, never only in degrees.
+
+    WHICH CAP THIS GATES: `MAX_FEATURES`, and only that. The 7,470 synthetic rectangles compose to
+    roughly 2.5 MB — well inside `MAX_BODY_BYTES` — so the route serves them at tier 0 and the
+    pixel assertion holds trivially here. It would fail the moment a count cap stood in front of
+    this view again, which is the defect it exists for. The BYTE cap's own guard is
+    `test_a_body_over_the_cap_is_simplified_and_served_rather_than_refused`, which monkeypatches
+    it, and `test_the_caps_clear_every_view_the_route_can_legally_be_asked_for`, which pins the
+    measured need both caps have to clear.
     """
     w, s, e, n = NY_DEFAULT_VIEW
     r = await client.get(f"/api/markets/35620/boundaries?layer=income&bbox={w},{s},{e},{n}", headers=H)

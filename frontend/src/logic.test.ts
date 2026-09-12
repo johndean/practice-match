@@ -4902,8 +4902,10 @@ describe('A24 — the market adapter', () => {
   // -----------------------------------------------------------------------------------
   // A24.21-A24.23 (2026-09-12) — the map asks for the ground it is SHOWING. The route has taken
   // a `bbox` since Task 9 and the adapter never sent one, so every request was for the whole
-  // metro envelope: 5,935 Census tracts in New York against `MAX_FEATURES = 4000`, a count no
-  // delivery tolerance can coarsen away and so a permanently unshaded map there.
+  // metro envelope: 5,935 Census tracts in New York where the view holds 3,706. The caps were
+  // re-measured for Census tracts the same day (`MAX_FEATURES = 12000`, `MAX_BODY_BYTES =
+  // 6_000_000`), so the metro request is no longer refused — it is simply an answer nobody asked
+  // for, and the box is what keeps it the size of the screen.
   //
   // The adapter's own `viewport()` is BOTH the box that is sent and the token an arriving answer
   // is checked against — one value, so the guard cannot drift from the request. An adapter

@@ -19,8 +19,10 @@ function fakeFetch(handler: (url: string) => { ok?: boolean; status?: number; bo
   });
 }
 
-// The Browse map over New York at zoom 10, the case the bbox wiring exists for: 5,935 tracts
-// whole-metro against the route's `MAX_FEATURES = 4000`, 3,706 for this box.
+// The Browse map over New York at zoom 10, the case the bbox wiring exists for: 5,935 tracts for
+// the whole metro envelope against 3,706 for this box. Both are served since the caps were
+// re-measured for Census tracts (`MAX_FEATURES = 12000`, `MAX_BODY_BYTES = 6_000_000`); the box is
+// what keeps the answer the size of the screen.
 const NY = { w: -74.2263, s: 40.1274, e: -72.8253, n: 40.8984, zoom: 10 };
 const seeViewport = (v = NY) => { publish(v); vi.advanceTimersByTime(DEBOUNCE_MS); };
 const refusal = (code: string) => ({ ok: false, status: 422, body: { error: { code, message: `${code} here` } } });

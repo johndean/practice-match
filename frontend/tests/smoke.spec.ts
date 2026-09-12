@@ -1225,10 +1225,11 @@ test.describe('A24 — the boundary route is absent, and the map degrades rather
 // A24.21–A24.23 — the map asks the API for the ground it is SHOWING (2026-09-12).
 //
 // The route has taken a `bbox` since Task 9 and the adapter never sent one, so every request was
-// for the whole metro envelope: 5,935 Census tracts in New York against the route's own
-// `MAX_FEATURES = 4000`, a count no delivery tolerance can coarsen away, and so a permanently
-// unshaded map in the largest market in the country
-// (`tests/census/test_boundaries.py::test_new_york_is_refused_whole_metro_and_served_at_the_viewport_bbox`).
+// for the whole metro envelope — every screen paying for the whole of New York when it can see a
+// fifth of it. (When this was wired the caps were still the ZCTA era's and that request was a 422
+// outright; they were re-measured for Census tracts the same day — `MAX_FEATURES = 12000`,
+// `MAX_BODY_BYTES = 6_000_000` — so both arms serve now and what the box buys is the size of the
+// ANSWER: `tests/census/test_boundaries.py::test_the_viewport_bbox_narrows_new_yorks_answer_and_both_arms_now_serve`.)
 //
 // The unit tests own the arithmetic — `src/map/viewport.test.ts` for the padding, the grid and
 // the debounce, `src/market/boundaries.test.ts` for the request and the retry, `src/logic.test.ts`
