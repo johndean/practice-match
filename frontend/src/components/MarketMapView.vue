@@ -61,11 +61,13 @@ const host = ref(null);
 const status = ref('loading');
 let engine = null;
 // The bbox wiring (2026-09-12). `GET /api/markets/{cbsa}/boundaries` takes a `bbox` and the
-// adapter never sent one, so it always asked for the whole metro envelope — 5,935 Census
-// tracts in New York against the route's own `MAX_FEATURES = 4000`, a count no delivery
-// tolerance can coarsen away and so a permanently unshaded map in the largest market in the
-// country. This component holds the only map, so it is the only thing that can say what the
-// member is looking at; `src/map/viewport.ts` carries it to `src/market/boundaries.ts`.
+// adapter never sent one, so it always asked for the whole metro envelope — every screen paying
+// for the whole of New York when it can see a fifth of it. This component holds the only map, so
+// it is the only thing that can say what the member is looking at; `src/map/viewport.ts` carries
+// it to `src/market/boundaries.ts`. Measured: New York's first view is 7,470 tracts against the
+// 5,935 of its own CBSA envelope at the design's smaller preview size — the box is not a
+// shortcut around a cap (the caps were re-measured for tracts the same day), it is how the
+// answer stays the size of the screen.
 //
 // `onMove` is the engine's own `moveend zoomend` subscription — the events Leaflet fires when
 // the map has SETTLED, which is the only view worth asking the API about.

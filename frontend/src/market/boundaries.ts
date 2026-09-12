@@ -136,8 +136,10 @@ export function makeMarketAdapter(fetchFn: typeof fetch = globalThis.fetch.bind(
         // The ladder is the route's instruction, not an invention of ours:
         //
         //   AREA_TOO_LARGE  — "Zoom in or pass a smaller bbox". The padding is 0.3 of the viewport
-        //     on every side and dropping it is exactly what there is to give back: in New York at
-        //     zoom 10 that is the difference between 4,811 tracts (refused) and 3,706 (served).
+        //     on every side and dropping it is exactly what there is to give back: on the
+        //     stakeholder's 1460 x 1228 map that is 7,470 tracts against 5,262. Neither is refused
+        //     since the caps were re-measured for Census tracts (2026-09-12) — this arm is now the
+        //     guard for a geography denser than today's, not New York's daily path.
         //   BBOX_TOO_LARGE  — the box is wider than `MAX_BBOX_DEG`, which means the member is
         //     looking at more than one metro. The honest next question is the metro itself, which
         //     is the request this adapter made before it learned to send a box at all, and is what

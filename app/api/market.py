@@ -98,14 +98,52 @@ BANDS: tuple[str, ...] = ("place", "drive_10", "drive_20")
 DEFAULT_BLOCKED_REASON = "Licence not cleared."
 
 BOUNDARY_TTL = 86400
-# D-NS12. The caps are chosen against the GEOGRAPHY, not against a load test: the Austin metro's
-# own envelope is roughly 1.0 deg x 0.9 deg, and 4 deg on a side covers any single CBSA in the six
-# states with room to spare while refusing a state. MAX_FEATURES sits above the largest plausible
-# single-metro ZCTA count and below the 6,884 tracts a whole-Texas box returns (9.2 MB, and there
-# was no bound anywhere in app/ before this route).
+# D-NS12, RE-MEASURED FOR CENSUS TRACTS (Task CAP, 2026-09-12). The caps are chosen against the
+# GEOGRAPHY, not against a load test -- that part of D-NS12 stands. What did not stand is the
+# number: `MAX_FEATURES = 4000` was sized when the granular layer was the ZCTA ("sits above the
+# largest plausible single-metro ZCTA count"), and it was never re-measured when A24.19 made the
+# Census TRACT the unit. On the stakeholder's own 1460 x 1228 screen that left New York's DEFAULT
+# view -- the first request the app makes when the metro is chosen -- refused, and still refused a
+# zoom level in.
+#
+# THE OLD ORDERING ARGUMENT IS RETIRED, not merely outgrown. It read "below the 6,884 tracts a
+# whole-Texas box returns", which made the COUNT cap the thing that refuses a state. It is not:
+# a whole-Texas box is about 13 degrees on a side and `MAX_BBOX_DEG` refuses it on SPAN before a
+# single row is counted (`test_a_state_sized_box_is_still_refused_on_span_before_any_count`). The
+# count cap is therefore free to be measured against what the map actually asks for -- and it has
+# to be, since the largest first view is now 7,530, which is above 6,884.
+#
+# Measured on QA's own PostGIS, read-only, through this module's own `_BOUNDARY_SQL` and the byte
+# arithmetic `compose()` performs (2026-09-12; the full table is in `tests/census/test_boundaries`
+# above `NY_DEFAULT_VIEW`). Bytes at delivery tier 0 / 1-4000 / 1-2000 / 1-1000 of the box's span:
+#
+#   view (1460 x 1228 px)                    tracts   raw bytes at each tier
+#   New York default, padded (what is sent)   7,470   6,538,264 / 4,254,031 / 3,662,228 / 3,267,466
+#   New York default, bare (the one retry)    5,262   4,268,451 / 3,058,406 / 2,667,225 / 2,356,180
+#   Manhattan-centred z10, padded             7,530   6,587,141 / 4,269,628 / 3,670,796 / 3,271,014
+#   Manhattan-centred z11, padded             4,709   3,660,966 / 2,717,359 / 2,419,824 / 2,137,523
+#   densest 4 x 4 deg box in the country      9,767   9,705,776 / 5,824,182 / 4,911,729 / 4,315,325
+#
+# `MAX_BBOX_DEG` is UNCHANGED at 4.0 and is what refuses a state.
+#
+# `MAX_FEATURES` is measured against the densest box the SPAN cap admits: 9,767 tracts, found by
+# sweeping 4-degree windows on a half-degree lattice over the lower 48 (the New York-Philadelphia
+# corridor, near 40.5N 75.0W). 12,000 clears it by 23 %, which also covers the coarseness of that
+# lattice -- a finer sweep would find a slightly denser window. So the count cap no longer stands
+# in front of the byte cap for anything this route can legally be asked for; it is the guard
+# against a geography denser than today's, and the refusal below still names it when it is hit.
+#
+# `MAX_BODY_BYTES` is measured against the largest FIRST VIEW, Manhattan-centred at zoom 10:
+# 4,269,628 bytes at a tolerance of 1/4000 of the box's span, which at zoom 10 is 0.59 CSS px of
+# longitude and 0.78 px of latitude -- a generalisation no member can see. 6,000,000 clears that by
+# 40 %, and clears the densest legal box at the same tier (5,824,182) as well, so every box the
+# route accepts is served rather than refused. It is not set high enough to serve those views at
+# tier 0 (6.5 MB), deliberately: the ladder exists so that the wire pays for pixels a member can
+# see and nothing more. The wire itself is gzip -- the New York first view is 652,848 bytes
+# compressed at the tier it is served at, against 1,105,917 at tier 0.
 MAX_BBOX_DEG = 4.0
-MAX_FEATURES = 4000
-MAX_BODY_BYTES = 2_000_000
+MAX_FEATURES = 12000
+MAX_BODY_BYTES = 6_000_000
 
 # Delivery generalisation, as a fraction of the request's own longest span, tried in order until
 # the body fits `MAX_BODY_BYTES`. MEASURED on real TIGER tract geometry, not chosen by feel:

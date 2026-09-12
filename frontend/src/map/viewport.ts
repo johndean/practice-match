@@ -2,11 +2,16 @@
  * The map's CURRENT viewport, as the one box the boundary adapter asks the API for.
  *
  * `GET /api/markets/{cbsa}/boundaries` has accepted a `bbox` since Task 9 and the adapter never
- * sent one, so it always asked for the whole metro envelope — which at Census-tract scale is
- * 5,935 tracts in New York against the route's own `MAX_FEATURES = 4000`, a count no delivery
- * tolerance can coarsen away and therefore a permanently blank map in the largest market in the
- * country. This module is the channel that closes that: `MarketMapView` publishes what the map
- * is looking at, `src/market/boundaries.ts` reads it and asks for exactly that ground.
+ * sent one, so it always asked for the whole metro envelope. This module is the channel that
+ * closes that: `MarketMapView` publishes what the map is looking at, `src/market/boundaries.ts`
+ * reads it and asks for exactly that ground.
+ *
+ * The numbers below were first measured against `MAX_FEATURES = 4000`, which was sized for the
+ * ZCTA era; the caps were re-measured for Census tracts on 2026-09-12 (`app/api/market.py`) and
+ * are now 12,000 features and 6,000,000 bytes. So the box is no longer what stands between New
+ * York and a blank map — it is what keeps the answer the size of the screen. Measured on the
+ * stakeholder's own 1460 x 1228 map: the first New York view is 7,470 tracts and 4.25 MB served
+ * (652 KB gzipped), against 9,767 tracts for the widest box the route accepts at all.
  *
  * A module-level singleton, deliberately: there is one Browse map, `MarketMapView` mounts it and
  * `logic.js` — a verbatim port that knows nothing about Leaflet — asks for the shading. Threading
@@ -28,11 +33,12 @@ export interface Viewport { w: number; s: number; e: number; n: number; zoom: nu
  * moment a larger box would start to matter is the moment the refetch is already in flight. 0.3
  * is therefore both the largest padding that can show and the smallest that covers a drag.
  *
- * It is not free. Measured on real TIGER tracts (31,252 rows, 10 states): a 1440 x 940 Browse map
- * centred on the New York CBSA centroid at zoom 10 sees 3,706 tracts unpadded and 4,811 at this
- * padding, and `MAX_FEATURES` is 4,000 — which is why `boundaries()` retries once, unpadded, on
- * the route's own `AREA_TOO_LARGE`. Doing what the refusal asks for ("Zoom in or pass a smaller
- * bbox") is the route's contract, not a workaround.
+ * It is not free, and what it costs is BYTES rather than a refusal. Measured on QA's own tract
+ * geometry at 1460 x 1228 px: New York's first view is 5,262 tracts bare and 7,470 padded, which
+ * is 4.27 MB against 6.54 MB unsimplified — so the padding is what pushes that view off the exact
+ * outline and onto the 1/4000 delivery tier (0.78 CSS px of latitude at zoom 10, invisible). The
+ * unpadded retry in `boundaries()` stays: it is the route's own instruction on `AREA_TOO_LARGE`
+ * ("Zoom in or pass a smaller bbox"), and a geography denser than today's will reach it.
  */
 export const PAD = 0.3;
 
@@ -53,11 +59,14 @@ export const DEBOUNCE_MS = 250;
  * Without it, `Leaflet.getBounds()` hands back a float that moves at the 1e-7-degree — centimetre
  * — scale on every `moveend`, and every pan would be its own cache miss.
  *
- * An eighth, and not a quarter or a whole tile, is the measured ceiling rather than a preference:
- * outward snapping adds up to one cell per side, and New York at zoom 10 has room for about 0.07
- * degrees per side before it crosses `MAX_FEATURES` (3,945 tracts at 1.541 x 0.848 degrees, 4,148
- * at 1.681 x 0.925). A quarter tile is 0.088 degrees at zoom 10 and does not fit; an eighth is
- * 0.044 and does. Expressed against the zoom, so it is 32 px at every scale.
+ * An eighth, and not a quarter or a whole tile. That used to be a CEILING — a quarter tile did not
+ * fit under `MAX_FEATURES = 4000` and an eighth did — and since the caps were re-measured for
+ * Census tracts it is not: measured on QA, New York's first view snapped to a quarter tile is
+ * 7,651 tracts and 4,329,601 bytes at its delivery tier, comfortably inside both caps. What binds
+ * now is the WIRE. Outward snapping adds up to one cell per side to a body that is already the
+ * largest this product serves, and a quarter tile buys nothing for it: +181 tracts and +75,570
+ * bytes (+1.8 %) for a cache hit on pans up to 64 px instead of 32. An eighth costs at most 3.1 %
+ * of the span per side. Expressed against the zoom, so it is 32 px at every scale.
  */
 export const GRID_TILE_FRACTION = 8;
 

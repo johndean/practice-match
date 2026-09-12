@@ -167,11 +167,20 @@ establishments rather than a sample), so both are `false` on those layers by con
 than by omission.
 
 **Bounds.** `bbox` is optional and defaults to the metro's own envelope at summary level `310`.
-`MAX_BBOX_DEG = 4.0` degrees on either axis, `MAX_FEATURES = 4000`, `MAX_BODY_BYTES = 2_000_000`
+`MAX_BBOX_DEG = 4.0` degrees on either axis, `MAX_FEATURES = 12000`, `MAX_BODY_BYTES = 6_000_000`
 uncompressed; a breach is `422` with `{"error": {"code": "BBOX_TOO_LARGE" | "AREA_TOO_LARGE",
 "message": …}}`. A bbox that is not four ordered numbers is `422 BAD_BBOX`; a layer that is not one
-of the three is `422 BAD_LAYER`; an unknown metro is `404 NOT_FOUND`. For scale: an Austin metro
-(`12420`) income response carries **88 ZCTAs**, two orders of magnitude inside `MAX_FEATURES`.
+of the three is `422 BAD_LAYER`; an unknown metro is `404 NOT_FOUND`.
+
+The two size caps were re-measured for Census tracts on 2026-09-12 (they had been sized for the
+ZCTA era: `MAX_FEATURES` was 4000 and `MAX_BODY_BYTES` 2_000_000, which refused New York's own
+first view). `MAX_BBOX_DEG` is unchanged and is what refuses a state — a whole-Texas box is about
+13 degrees on a side and is refused on span before a row is counted. For scale, measured on real
+TIGER tract geometry: a New York first view at 1460 x 1228 px carries **7,470 tracts**, and the
+densest 4-degree box anywhere in the country — the largest this route accepts — carries **9,767**;
+both are served, the first at a delivery tolerance of 0.78 CSS px. A client should still send the
+viewport `bbox` rather than rely on the metro default: the metro envelope is a larger answer than
+any one screen needs.
 
 **Licence.** A layer whose dataset is not `cleared` answers `200` with `"features": []` and
 `"state": "disabled"` or `"blocked"` (+ `blocked_reason`) — never a `403`, because `/api/layers`

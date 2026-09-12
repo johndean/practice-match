@@ -476,18 +476,20 @@ async def test_the_delivery_tolerance_actually_reaches_postgis(client, seeded, H
 # ten states, in a real PostGIS), not chosen to make a test pass:
 #
 #   * the CBSA 35620 envelope is -75.195114, 39.498537 to -71.856483, 41.527194, and **5,935**
-#     tracts intersect it. `MAX_FEATURES` is 4,000 and a COUNT cannot be coarsened away, so the
-#     whole-metro request the adapter used to make is a 422 at every delivery tolerance — a
-#     permanently unshaded map in the largest market in the country.
+#     tracts intersect it.
 #   * the Browse map at the design's own 1440 x 940 preview is ~1020 x 740 CSS px beside the
 #     results rail, which at zoom 10 is 1.401 x 0.771 degrees; snapped outward to
-#     `src/map/viewport.ts`'s grid that is the box below, and **3,706** tracts intersect it —
-#     under the cap, and served.
+#     `src/map/viewport.ts`'s grid that is the box below, and **3,706** tracts intersect it.
 #
-# The geometry here is SYNTHETIC and the two counts are the measured ones: 5,935 tracts of which
-# 3,706 fall in that viewport. What is under test is the straddle — that the route refuses the
-# envelope and serves the viewport at the caps as they stand — which is exactly what would be
-# silently lost if a cap moved or the adapter stopped sending the box.
+# WHAT THIS PAIR ASSERTS CHANGED ON 2026-09-12 (Task CAP), and the change is recorded rather than
+# quietly rewritten. When the bbox was wired, `MAX_FEATURES` was 4,000: the whole-metro arm was a
+# 422 at every delivery tolerance and the viewport arm was the only one that could be served, so
+# the pair pinned a STRADDLE. Re-measuring the caps for Census tracts lifted the count cap to
+# 12,000, and both arms serve now. That does not make the bbox redundant and it is not what the
+# bbox was for: on the stakeholder's real 1460 x 1228 screen the first view is 7,470 tracts and
+# 6.5 MB unsimplified, and it is the box that keeps the ANSWER small — fewer features, fewer
+# bytes, a faster first paint — which is what this pair asserts now. The companion below still
+# drops the cap under the viewport's own count, so the gate can still fail.
 NY_METRO = (-75.195114, 39.498537, -71.856483, 41.527194)
 #: The zoom-10 Browse viewport over New York, padded by nothing and snapped to the 1/8-tile grid.
 NY_VIEWPORT = (-74.2426, 40.1221, -72.8174, 40.9131)
@@ -536,25 +538,27 @@ def new_york(conn):
     return conn
 
 
-async def test_new_york_is_refused_whole_metro_and_served_at_the_viewport_bbox(client, new_york, H) -> None:  # noqa: F811
-    """The two arms, measured: the envelope 422s on a COUNT and the viewport is served exact.
+async def test_the_viewport_bbox_narrows_new_yorks_answer_and_both_arms_now_serve(client, new_york, H) -> None:  # noqa: F811
+    """Both arms, measured: the whole metro and the viewport, and what the box actually buys.
 
-    This is the gap the bbox wiring closes. Before it, `boundaries(marketName)` asked for the whole
-    metro every time and there was no second arm at all.
+    Before Task CAP the first assertion here was a 422 on the metro arm. The caps are measured for
+    Census tracts now and it serves, so this asserts the thing that is still true and still the
+    point — the box makes the ANSWER smaller, in features and in bytes, which is the difference
+    between a first paint and a stall on the largest metro in the country.
     """
     whole = await client.get("/api/markets/35620/boundaries?layer=income", headers=H)
-    assert whole.status_code == 422
-    body = whole.json()["error"]
-    assert body["code"] == "AREA_TOO_LARGE"
-    assert str(NY_TRACTS_IN_METRO) in body["message"]
-    assert str(market.MAX_FEATURES) in body["message"]
+    assert whole.status_code == 200, whole.json()
+    metro = json.loads(whole.content)
+    assert len(metro["features"]) == NY_TRACTS_IN_METRO
 
     w, s, e, n = NY_VIEWPORT
     seen = await client.get(f"/api/markets/35620/boundaries?layer=income&bbox={w},{s},{e},{n}", headers=H)
     assert seen.status_code == 200
     served = json.loads(seen.content)
     assert len(served["features"]) == NY_TRACTS_IN_VIEWPORT
-    assert NY_TRACTS_IN_VIEWPORT < market.MAX_FEATURES <= NY_TRACTS_IN_METRO
+    # The box is not decoration: it is 1,229 fewer polygons and a materially smaller body.
+    assert NY_TRACTS_IN_VIEWPORT < NY_TRACTS_IN_METRO
+    assert len(seen.content) < len(whole.content)
     # Served EXACT: the whole point of a viewport request is that it needs no generalisation.
     assert served["simplified_deg"] == 0.0
     assert served["state"] == "enabled" and served["summary_level"] == "140"
@@ -595,3 +599,120 @@ async def test_panning_hits_the_cache_for_ground_already_asked_for_and_misses_fo
     assert (await client.get(f"/api/markets/12420/boundaries{there}", headers=H)).headers["x-cache"] == "hit"
     # …and the whole-metro entry is a third, never served to a box request or the other way round.
     assert (await client.get("/api/markets/12420/boundaries?layer=income", headers=H)).headers["x-cache"] == "miss"
+
+
+# ---------------------------------------------------------------------------------------------
+# THE CAPS, RE-MEASURED FOR CENSUS TRACTS (Task CAP, 2026-09-12).
+#
+# `MAX_FEATURES = 4000`'s own comment said it "sits above the largest plausible single-metro ZCTA
+# count". It was measured for the ZCTA era and never re-measured when the tract became the map's
+# unit, so on the stakeholder's own 1460 x 1228 screen New York's DEFAULT view — the first request
+# the app makes when the metro is chosen — was refused, and stayed refused a zoom level in.
+#
+# Measured on QA's own PostGIS (read-only, 2026-09-12), against the route's own `_BOUNDARY_SQL`
+# and `compose()` byte arithmetic:
+#
+#   view (1460 x 1228 px)                    tracts   bytes @ tier 0 / 1-4000 / 1-2000 / 1-1000
+#   New York default, padded (what is sent)   7,470   6,538,264 / 4,254,031 / 3,662,228 / 3,267,466
+#   New York default, bare (the one retry)    5,262   4,268,451 / 3,058,406 / 2,667,225 / 2,356,180
+#   Manhattan-centred z10, padded             7,530   6,587,141 / 4,269,628 / 3,670,796 / 3,271,014
+#   Manhattan-centred z11, padded             4,709   3,660,966 / 2,717,359 / 2,419,824 / 2,137,523
+#   densest 4 x 4 deg box in the country      9,767   9,705,776 / 5,824,182 / 4,911,729 / 4,315,325
+#
+# The last row is the LARGEST box the route accepts at all — `MAX_BBOX_DEG = 4.0` refuses anything
+# wider — found by sweeping 4-degree windows on a half-degree lattice over the lower 48: the New
+# York-Philadelphia corridor, centred near 40.5N 75.0W.
+NY_DEFAULT_VIEW = (-75.629883, 39.682617, -72.377930, 41.748047)
+NY_TRACTS_IN_DEFAULT_VIEW = 7470
+#: deg/px at zoom 10, and the same in LATITUDE at New York's own latitude, where a degree spans
+#: more pixels: 360 / (256 * 2**10), scaled by cos(40.7 deg). The latitude figure is the binding
+#: one, so it is the one a tolerance is judged against.
+DEG_PER_PX_Z10_LAT = (360 / (256 * 2 ** 10)) * 0.7585
+#: "A delivery tolerance a member could see." Two CSS px at the zoom the view is served for.
+SUB_TWO_PIXELS_DEG = 2 * DEG_PER_PX_Z10_LAT
+
+
+@pytest.fixture
+def new_york_first_view(conn):
+    """CBSA 35620 and the 7,470 tracts of New York's DEFAULT view, each carrying a median.
+
+    The box and the count are QA's own, measured; the geometry is synthetic, laid out as a 90 x 83
+    grid filling that box exactly. What is under test is the CAP, and a cap is a number against a
+    count and a byte length — neither of which needs the real outlines to be honest.
+    """
+    w, s, e, n = NY_DEFAULT_VIEW
+    with conn.cursor() as cur:
+        for key, vintage in (("tiger_cb", "2023"), ("acs5", "2019\u20132023"), ("acs5_prior", "2014\u20132018"), ("cbp", "2022")):
+            cur.execute("INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES (%s,%s,now(),'test')", (key, vintage))
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, geom, centroid) VALUES "
+            "('35620','310','2023','New York-Newark-Jersey City, NY-NJ',"
+            " ST_Multi(ST_MakeEnvelope(%s,%s,%s,%s,4269)), ST_Point(%s,%s,4269))",
+            (w, s, e, n, (w + e) / 2, (s + n) / 2),
+        )
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, geom, centroid) "
+            "SELECT lpad((36000000000 + i)::text, 11, '0'), '140', '2023', 'Census Tract ' || i, '36', "
+            "  ST_Multi(ST_MakeEnvelope(x, y, x + %(cw)s, y + %(ch)s, 4269)), ST_Point(x, y, 4269) "
+            "FROM generate_series(0, %(n)s - 1) AS i, "
+            "  LATERAL (SELECT %(w)s + (i %% 90) * %(cw)s AS x, %(s)s + (i / 90) * %(ch)s AS y) p",
+            {"n": NY_TRACTS_IN_DEFAULT_VIEW, "w": w, "s": s, "cw": (e - w) / 90, "ch": (n - s) / 83},
+        )
+        cur.execute(
+            "INSERT INTO geo_metric (geo_id, summary_level, vintage, metric_key, value_num, unit, moe, suppressed, suppress_reason, source_dataset, computed_at) "
+            "SELECT lpad((36000000000 + i)::text, 11, '0'), '140', '2019\u20132023', 'median_hh_income', "
+            "  60000 + i, 'usd', 6420, false, NULL, 'acs5', now() "
+            "FROM generate_series(0, %(n)s - 1) AS i",
+            {"n": NY_TRACTS_IN_DEFAULT_VIEW},
+        )
+    return conn
+
+
+async def test_the_default_new_york_view_serves_at_a_sub_two_pixel_tier(client, new_york_first_view, H) -> None:  # noqa: F811
+    """The first request the app makes for the largest metro in the country is answered.
+
+    Not merely answered — answered at a delivery tolerance no member could see. A map served at a
+    visibly coarsened tract outline is a false precision of a different kind, so the tier is
+    asserted in PIXELS at the zoom the view is served for, never only in degrees.
+    """
+    w, s, e, n = NY_DEFAULT_VIEW
+    r = await client.get(f"/api/markets/35620/boundaries?layer=income&bbox={w},{s},{e},{n}", headers=H)
+    assert r.status_code == 200, r.json()
+    body = json.loads(r.content)
+    assert len(body["features"]) == NY_TRACTS_IN_DEFAULT_VIEW
+    assert body["simplified_deg"] <= SUB_TWO_PIXELS_DEG
+    assert body["state"] == "enabled" and body["summary_level"] == "140"
+
+
+async def test_a_state_sized_box_is_still_refused_on_span_before_any_count(client, seeded, H) -> None:  # noqa: F811
+    """What refuses a STATE is the span cap, not the count cap.
+
+    The old `MAX_FEATURES` comment argued its value by ordering — "below the 6,884 tracts a
+    whole-Texas box returns" — which made the count cap the thing that refused a state. It is not,
+    and never was: a whole-Texas box is about 13 degrees on a side and `MAX_BBOX_DEG = 4.0` refuses
+    it on span before a single row is counted. That is what this pins, so the count cap is free to
+    be measured against the geography the map actually asks for.
+    """
+    texas = "-106.6,25.8,-93.5,36.5"          # ~13.1 x 10.7 degrees
+    r = await client.get(f"/api/markets/12420/boundaries?layer=income&bbox={texas}", headers=H)
+    assert r.status_code == 422
+    err = r.json()["error"]
+    assert err["code"] == "BBOX_TOO_LARGE"
+    assert str(market.MAX_BBOX_DEG) in err["message"]
+
+
+def test_the_caps_clear_every_view_the_route_can_legally_be_asked_for() -> None:
+    """The measurement, carried into the suite so a later reduction of a cap fails here.
+
+    Both numbers are QA's own (2026-09-12, real TIGER tract geometry, the route's own SQL and byte
+    arithmetic); the comment above this block has the full table. `MAX_FEATURES` clears the densest
+    4-degree box anywhere in the country — the largest `MAX_BBOX_DEG` admits — and `MAX_BODY_BYTES`
+    clears the largest FIRST VIEW at a tier of 1/4000 of its own span, which at zoom 10 is 0.78 CSS
+    px of latitude and invisible.
+    """
+    densest_legal_box_tracts = 9767
+    largest_first_view_at_the_quarter_tier = 4_269_628      # Manhattan z10 padded, 7,530 tracts
+    assert market.MAX_FEATURES > densest_legal_box_tracts
+    assert market.MAX_BODY_BYTES > largest_first_view_at_the_quarter_tier
+    # …and the span cap is what refuses a state, unchanged.
+    assert market.MAX_BBOX_DEG == 4.0
