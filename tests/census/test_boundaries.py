@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 import logging
+from pathlib import Path
 
 import fakeredis
 import pytest
@@ -19,6 +20,7 @@ from app.config import settings
 from tests.api.conftest import auth_headers
 from tests.census.test_market_api import H, client  # noqa: F401 -- the fixtures, by name
 
+ROOT = Path(__file__).resolve().parents[2]
 AUSTIN = "POLYGON((-98 30,-97 30,-97 31,-98 31,-98 30))"
 #: Two real Travis County (Austin) tract GEOIDs: state 48 + county 453 + tract, eleven digits.
 TRACT_A = "48453001100"
@@ -416,6 +418,32 @@ async def test_the_endpoint_and_community_rows_agree_on_suppression(client, seed
         assert (rows[str(lid)]["econ_k"] is None) is hidden, f"the card and the table disagree on flag {flag!r}"
 
 
+async def test_the_contract_docs_example_payload_carries_every_member_the_route_emits(client, seeded, H) -> None:  # noqa: F811
+    """`docs/integrations/market-data-api.md` is what Sub-project 2 codes against, and until
+    2026-09-12 its boundary example was missing `simplified_deg` -- the ONE member carrying the
+    coarsening honesty (§10), added by the tract commits and documented nowhere. The doc's own
+    gate (`tests/api/test_contract_doc.py`) pins caps, geographies and three named properties, and
+    had no rule that could have seen an absent key at all.
+
+    This is that rule, and it lives here rather than beside the others because the answer is
+    compared against a REAL response rather than a typed list: a key set that must be maintained
+    by hand is the same defect one level up. `blocked_reason` is excluded on purpose -- it appears
+    only when a licence is withdrawn, so a payload that always carried it would be the wrong
+    example."""
+    doc = (ROOT / "docs" / "integrations" / "market-data-api.md").read_text(encoding="utf-8")
+    section = doc.split("## `GET /api/markets/{cbsa}/boundaries", 1)[1]
+    example = json.loads(section.split("```json", 1)[1].split("```", 1)[0])
+    _r, live = await _body(client, H)
+    assert set(example) == set(live), (
+        "the documented boundary payload and the real one carry different members: "
+        f"{sorted(set(example) ^ set(live))}"
+    )
+    assert set(example["features"][0]) == set(live["features"][0]), "the documented FEATURE shape has drifted"
+    assert set(example["features"][0]["properties"]) == set(live["features"][0]["properties"]), (
+        "the documented feature PROPERTIES have drifted"
+    )
+
+
 def _registry_sync(conn):
     with conn.cursor() as cur:
         cur.execute("SELECT dataset_key, attribution_text, vintage, license_status, notes FROM dataset_registry")
@@ -448,14 +476,33 @@ def test_income_shades_at_census_tract_and_the_coarser_layers_say_so() -> None:
     assert market.SHADING["econ"] == {"summary_level": "050", "label": "County"}
 
 
-def test_the_two_layer_tables_agree_on_level_and_metric() -> None:
+def test_the_shaded_layers_and_the_writers_LAYERS_are_one_truth() -> None:
     """The merge-time gap Task 8's report named and nothing pinned: `app.census.geo_metric.LAYERS`
     WRITES the rows `app.api.market` SERVES, so a summary level that differs by one table serves a
-    map with no values at all -- every LEFT JOIN would miss. Two spellings of one truth, now
-    pinned both ways."""
+    map with no values at all -- every LEFT JOIN would miss. Two spellings of one truth, pinned
+    both ways.
+
+    FOUR guards beyond the equality, each restored on 2026-09-12 after the tract commits replaced
+    this test with a bare `written == served` (whole-branch review, finding 1) and each proved by
+    mutation rather than asserted to work:
+
+      * the anti-vacuity `assert written` -- `{} == {}` is a green test that pins nothing, and
+        both sides are built by comprehension from a table that could be emptied;
+      * a duplicate `metric_key` on EITHER side, which a dict comprehension silently collapses --
+        two layers shading one metric would then compare equal while one of them served the
+        other's rows;
+      * `set(SHADING) == set(BOUNDARY_METRIC)`, with a diagnostic naming the difference: a layer
+        in one and not the other is a `KeyError` at request time, not a mismatch here."""
     written = {metric: (level, dataset) for metric, level, dataset, _extra in geo_metric.LAYERS}
+    assert written, "the writer's LAYERS is empty; every assertion below would then hold vacuously"
+    assert len(written) == len(geo_metric.LAYERS), f"two writer rows share one metric_key: {geo_metric.LAYERS}"
+    assert set(market.SHADING) == set(market.BOUNDARY_METRIC), (
+        "SHADING and BOUNDARY_METRIC disagree about which layers shade: "
+        f"{sorted(set(market.SHADING) ^ set(market.BOUNDARY_METRIC))}"
+    )
     served = {market.BOUNDARY_METRIC[layer][0]: (market.SHADING[layer]["summary_level"], market.BOUNDARY_METRIC[layer][1])
               for layer in market.SHADING}
+    assert len(served) == len(market.SHADING), f"two shaded layers share one metric_key: {market.BOUNDARY_METRIC}"
     assert written == served
 
 
@@ -511,7 +558,12 @@ async def test_the_delivery_tolerance_actually_reaches_postgis(client, seeded, H
     exact = json.loads((await client.get("/api/markets/12420/boundaries?layer=income", headers=H)).content)
     sync_redis().flushdb()
     monkeypatch.setattr(market, "MAX_BODY_BYTES", len(json.dumps(exact).encode()) - 1)
-    _r, body = await _body(client, H)
+    r, body = await _body(client, H)
+    # The first arm, and it is load-bearing (whole-branch review, finding 3): with the CAST
+    # reverted the coarsest rung still measures over the cap, the route answers 422, and the
+    # vertex comparison below dies on `KeyError: 'features'` -- red for the right reason but
+    # named after the wrong cause. Asserting the status first makes the comparison reachable.
+    assert r.status_code == 200, body
 
     def vertices(collection: dict) -> int:
         feature = next(f for f in collection["features"] if f["id"] == TRACT_A)

@@ -129,15 +129,24 @@ what it does not know):
   "attribution": ["Boundaries: U.S. Census Bureau, TIGER/Line Cartographic Boundary Files 2023",
                   "Source: U.S. Census Bureau, American Community Survey 5-Year Estimates, 2019–2023"],
   "values_without_geometry": 0,
+  "simplified_deg": 0.0,
   "features": [
-    { "type": "Feature", "id": "78704",
-      "properties": { "geo_id": "78704", "name": "ZCTA5 78704",
+    { "type": "Feature", "id": "48453001100", "properties": { "geo_id": "48453001100", "name": "Census Tract 11",
                       "value": 92150, "moe": 6420,
                       "suppressed": false, "suppress_reason": null, "band_ambiguous": false },
       "geometry": { "type": "MultiPolygon", "coordinates": [] } }
   ]
 }
 ```
+
+**`simplified_deg` is the delivery tolerance, in degrees, and it describes the GEOMETRY only.**
+`0.0` is the exact outline and is what every request that fits `MAX_BODY_BYTES` receives. A body
+over the cap is SERVED at a coarser geometry rather than refused -- polygons are never dropped to
+make room, because a missing polygon leaves a hole that reads as a boundary -- and this member
+states the tolerance that was used, so a client can say "outlines generalised for display" instead
+of presenting a coarsened outline as an exact one. It never describes the FIGURES: a coarsened
+answer carries the same values as an exact one. Measured live: Austin (`12420`) income at whole
+metro is 577 tracts at `0.0`; Dallas (`19100`) is 1,791 tracts at `0.00055`.
 
 Every feature's `properties` carries exactly those seven keys — `geo_id`, `name`, `value`, `moe`,
 `suppressed`, `suppress_reason`, `band_ambiguous` — on every polygon, whatever its state. Nothing
@@ -170,7 +179,7 @@ than by omission.
 `MAX_BBOX_DEG = 4.0` degrees on either axis, `MAX_FEATURES = 12000`, `MAX_BODY_BYTES = 6_000_000`
 uncompressed; a breach is `422` with `{"error": {"code": "BBOX_TOO_LARGE" | "AREA_TOO_LARGE",
 "message": …}}`. A bbox that is not four ordered numbers is `422 BAD_BBOX`; a layer that is not one
-of the three is `422 BAD_LAYER`; an unknown metro is `404 NOT_FOUND`.
+of the shaded layers is `422 BAD_LAYER`; an unknown metro is `404 NOT_FOUND`.
 
 The two size caps were re-measured for Census tracts on 2026-09-12 (they had been sized for the
 ZCTA era: `MAX_FEATURES` was 4000 and `MAX_BODY_BYTES` 2_000_000, which refused New York's own
