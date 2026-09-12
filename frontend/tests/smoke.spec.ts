@@ -1550,8 +1550,11 @@ test.describe('A31 — the Market snapshot has two modes (D-C50 as revised)', ()
     const card = strip.locator('div[style*="border-radius: 8px"]').filter({ hasText: 'Median household income' }).first();
     await expect(card).toContainText(`$${Math.round(income.median! / 1000)}K`);
     // …and it names the geography and the count it summarised, which is the whole correction: a
-    // number under a caption that does not describe it is the defect D-C50 removed.
-    await expect(card).toContainText(`metro median · ${income.with_value.toLocaleString('en-US')} ${income.geo_label}s`);
+    // number under a caption that does not describe it is the defect D-C50 removed. The count is
+    // grouped by the PAGE's own `toLocaleString`, evaluated in the page rather than here, so this
+    // assertion reads the same separator the design does on a browser in any locale.
+    const grouped = await page.evaluate((n: number) => n.toLocaleString(), income.with_value);
+    await expect(card).toContainText(`metro median · ${grouped} ${income.geo_label}s`);
 
     // LOCATION: selecting a practice switches the header and the figures, and "metro median"
     // leaves the card entirely — it is AREA mode's wording alone.
@@ -1563,5 +1566,47 @@ test.describe('A31 — the Market snapshot has two modes (D-C50 as revised)', ()
     await page.getByRole('button', { name: 'Close panel' }).first().click();
     await expect(strip.getByText(/^AREA · /)).toBeVisible();
     expect(errors).toEqual([]);
+  });
+
+  // The LIVE data path, which no fixture reaches: 28 of 29 QA listings carry a `community_label`
+  // (D-C38), and in LOCATION mode the ruling puts that label on every card as its value note. The
+  // design's own fixtures carry none, so the reference — and therefore both approved states —
+  // renders the short fallback "community level" and can never photograph this. This is the case
+  // that does, and it MEASURES the consequence rather than only asserting the string: the label is
+  // 38 characters at 10.5 px beside a 24 px figure in a 232 px card, so the note wraps, and the
+  // number recorded here is what a reader needs to judge whether the ruling wants revisiting.
+  //
+  // The listings stub is written inline rather than reached for: `serveListings` is scoped to the
+  // docked-panel suite above, and hoisting it would be a drive-by edit to a passing file.
+  test('LOCATION mode carries the practice’s own basis label on every card, as ruled', async ({ page }) => {
+    await prepare(page);
+    const LABEL = 'Within about 5 miles of the practice';
+    const stub = listingsStubUrl();
+    expect(stub, 'this test overrides the D6 stub, and a live target has none to override').not.toBeNull();
+    const body = JSON.parse(designListingsBody()) as { items: Record<string, unknown>[] };
+    for (const item of body.items) item.community_label = LABEL;
+    await page.route(
+      (url) => matchesListings(url.href, stub as string),
+      (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(body) })
+    );
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await click(page, 'Expand all six layers');
+    await page.getByText('Cedar Park').first().click();
+
+    const strip = page.locator('div.rf-scroll[style*="max-height: 40vh"]');
+    await expect(strip.getByText(/^LOCATION · /)).toBeVisible();
+    // The sub-line beneath the mode is the label (A31.7), and every card's note is the label too
+    // (A31.8) — the ruling's own "LOCATION mode's value note is the practice's own basis label".
+    const notes = await strip.locator('span[style*="font-size: 10.5px"]').allInnerTexts();
+    expect(notes.length, 'the strip rendered no value notes at all').toBeGreaterThan(0);
+    expect(new Set(notes)).toEqual(new Set([LABEL]));
+    expect(notes.some((n) => n.includes('metro median')), 'the AREA wording reached LOCATION mode').toBe(false);
+    // The measurement: how many lines that note takes on a card, so the cost of the repetition is
+    // a number in the record and not an impression. One line is 1.4 × 10.5 px ≈ 15 px.
+    const lines = await strip.locator('span[style*="font-size: 10.5px"]').first()
+      .evaluate((el) => Math.round(el.getBoundingClientRect().height / parseFloat(getComputedStyle(el).fontSize) / 1.4));
+    expect(lines, 'the note is rendered with no height at all').toBeGreaterThan(0);
+    console.log(`[A31] LOCATION value note "${LABEL}" renders on ${lines} line(s), on each of ${notes.length} cards`);
   });
 });
