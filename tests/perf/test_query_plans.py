@@ -22,6 +22,7 @@ database its plan is a claim about.
 """
 from __future__ import annotations
 
+import re
 from typing import Any
 
 import pytest
@@ -31,6 +32,7 @@ from app.api.admin_signups import LIST_SQL as SIGNUPS_LIST_SQL
 from app.api.admin_signups import MAX_LAUNCH_BATCH, UNMAILED_SQL
 from app.api.admin_signups import MAX_LIST as SIGNUPS_MAX_LIST
 from app.api.admin_users import LIST_SQL, MAX_LIST
+from app.api.market import _SUMMARY_SQL, SUMMARY_FRACTIONS
 from app.census.catchment import BANDS as CATCHMENT_BANDS
 from app.census.catchment import METHOD as CATCHMENT_METHOD
 from app.census.catchment import SQL as CATCHMENT_SQL
@@ -76,6 +78,22 @@ _SCOPE_NAMES_LISTING_IDS = [
 # The active `tiger_cb` edition the seed writes and the plan asks for — one constant, so the
 # JOIN's third equality cannot silently stop matching.
 _SCOPE_NAMES_VINTAGE = "2023"
+
+# Task SNAP fix round 1 (2026-09-13): `_SUMMARY_SQL` is written for SQLAlchemy's `text()`
+# (`:metric`) and this gate runs on a raw psycopg2 cursor (`%(metric)s`), so — unlike `panel`,
+# which is hand-matched for exactly that reason — the module's own string is IMPORTED and its
+# bind markers are translated mechanically. The gate therefore cannot drift from the query it is
+# a gate on. `::` casts would be mangled by the same substitution, so their absence is asserted
+# rather than assumed; `_SUMMARY_SQL` spells every cast `CAST(... AS ...)` deliberately.
+def _pyformat(sql: str) -> str:
+    assert "::" not in sql, "a `::` cast would be mangled by the bind-marker translation below"
+    return re.sub(r":(\w+)", r"%(\1)s", sql)
+
+
+# The tract the summary plan's envelope encloses, and the metric it asks for. Shared between
+# `_seed_summary_geo` and the plan's own params, as `_CATCHMENT_LISTING_ID` is.
+_SUMMARY_METRIC = "median_hh_income"
+_SUMMARY_VALUE_VINTAGE = "2019\u20132023"
 
 PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
     "users_queue": (
@@ -176,6 +194,22 @@ PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
         "EXPLAIN (FORMAT JSON) " + _PRECISION_SQL,
         (_SCOPE_NAMES_LISTING_IDS,),
     ),
+    # Task SNAP fix round 1, the spec gap the review named: `GET /api/markets/{cbsa}/summary`'s
+    # own query on a cache miss (`app.api.market._SUMMARY_SQL`). It is `_BOUNDARY_SQL`'s FROM and
+    # WHERE with no geometry on the wire, so it has to take the same path — `geo_area_geom_gix`,
+    # the GiST index the envelope is transformed INTO 4269 rather than the column out of it to
+    # keep usable — and it runs SIX times per miss, once per shaded layer, over the metro's whole
+    # envelope rather than a viewport. `_BOUNDARY_SQL` itself has no entry here and this is not
+    # the task that adds one; what this pins is the query the strip's AREA mode waits on.
+    "summary": (
+        "EXPLAIN (FORMAT JSON) " + _pyformat(_SUMMARY_SQL),
+        {"metric": _SUMMARY_METRIC, "value_vintage": _SUMMARY_VALUE_VINTAGE,
+         "level": "140", "geo_vintage": "2023", "fractions": list(SUMMARY_FRACTIONS),
+         # The seeded target tract's own envelope: the 5,000 noise tracts are scattered from
+         # -130 to -80 and none of them is in it, so the spatial predicate is selective and the
+         # planner's choice is the one it would make on a real metro.
+         "w": -98.0, "s": 30.4, "e": -97.7, "n": 30.7},
+    ),
 }
 
 # The index each plan must be using, by name. Absent for an entry whose only claim is its shape.
@@ -210,6 +244,10 @@ INDEXES: dict[str, tuple[str, ...]] = {
     # column this query touches on either side of the `= ANY(...)`, so there is exactly one index
     # it can be right to use and this names it.
     "precisions": ("practice_location_pkey",),
+    # migrations/018_census_geo.sql's GiST index on geo_area.geom, the same one `catchment_tracts`
+    # pins — `_SUMMARY_SQL` drives off that predicate, and the whole reason the envelope is
+    # transformed into 4269 instead of the column out of it is to keep this index usable.
+    "summary": ("geo_area_geom_gix",),
 }
 
 
@@ -398,6 +436,26 @@ def _seed_scope_names(conn: Any) -> None:
         cur.execute("ANALYZE geo_area")
 
 
+def _seed_summary_geo(conn: Any) -> None:
+    """`_seed_catchment_geo`'s 5,000 scattered tracts plus the one the envelope encloses — the
+    same shape, and for the same reason ("row counts are part of the gate") — and then a
+    `geo_metric` row for every one of them, because `_SUMMARY_SQL` LEFT JOINs that table and a
+    join to an EMPTY table plans nothing like a join to a populated one.
+
+    `ANALYZE geo_metric` is what makes the join's own statistics visible; `_seed_catchment_geo`
+    already analyses `geo_area`, whose PostGIS histogram is what the spatial predicate's
+    selectivity is estimated from."""
+    _seed_catchment_geo(conn)
+    with conn.cursor() as cur:
+        cur.execute("""INSERT INTO geo_metric (geo_id, summary_level, vintage, metric_key, value_num, unit,
+                                               moe, suppressed, source_dataset, computed_at)
+                       SELECT geo_id, '140', %s, %s, 40000 + (random() * 90000)::numeric, 'usd',
+                              1200, false, 'acs5', now()
+                         FROM geo_area WHERE summary_level = '140' AND vintage = '2023'""",
+                    (_SUMMARY_VALUE_VINTAGE, _SUMMARY_METRIC))
+        cur.execute("ANALYZE geo_metric")
+
+
 SEEDS: dict[str, Any] = {"users_queue": _seed_admin_queue, "signups_list": _seed_signups, "signups_counts": _seed_signups,
                         "signups_unmailed": _seed_signups, "catchment_tracts": _seed_catchment_geo, "panel": _seed_panel_metrics,
                         "community_rows": _seed_community_rows, "scope_names": _seed_scope_names,
@@ -405,7 +463,7 @@ SEEDS: dict[str, Any] = {"users_queue": _seed_admin_queue, "signups_list": _seed
                         # for its own plan and which are exactly what this one needs — "row counts
                         # are part of the gate", and a handful of rows would make the planner's
                         # choice a coin toss.
-                        "precisions": _seed_scope_names}
+                        "precisions": _seed_scope_names, "summary": _seed_summary_geo}
 
 
 def _node_types(plan: dict[str, Any]) -> list[str]:

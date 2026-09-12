@@ -736,8 +736,15 @@ async def summary(cbsa: str) -> Response:
     every cached body unreachable within the same minute (§11).
 
     There is no `bbox` and no `layer` parameter, and that is the point: this is the METRO, which
-    is the geography the word "metro median" names.
+    is the geography the card's caption names.
     """
+    # Fix round 1: the clock starts before the cache is read, because what the line at the end of
+    # this function reports is the cost of a MISS end to end -- six runs of `_SUMMARY_SQL` over
+    # the metro's WHOLE envelope, each with a `percentile_cont` over every valued polygon of that
+    # layer's level. `boundaries` has carried its own such line since A24's fix round 2, for the
+    # same reason and in the same shape; a HIT stays silent, because a line per request would
+    # drown the thing this exists to make visible.
+    started = time.perf_counter()
     r = sync_redis()
     geo_version = cast("bytes | str | None", r.get(GEO_VERSION_KEY))
     async with engine().connect() as conn:
@@ -810,6 +817,14 @@ async def summary(cbsa: str) -> Response:
         "layers": layers,
     }
     r.set(key, json.dumps(body), ex=SUMMARY_TTL)
+    # Identifiers and sizes only, as `boundaries`' own line is: `cbsa` is a Census geoid, `layers`
+    # is how many rows the body carries and `rows` how many polygons were counted across them --
+    # no median, no quantile, no geography NAME, nothing the payload shows a member.
+    log.info(
+        "summary miss cbsa=%s layers=%d rows=%d ms=%.1f",
+        cbsa, len(layers), sum(int(row["count"]) for row in layers),
+        (time.perf_counter() - started) * 1000,
+    )
     return JSONResponse(body, headers={"x-cache": "miss"})
 
 

@@ -14,6 +14,7 @@ test, a real `buyer` session presented as a literal Cookie header (Task I9a) —
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 
 import pytest
@@ -325,3 +326,40 @@ async def test_the_contract_docs_example_payload_carries_every_member_the_route_
         f"{sorted(set(example) ^ set(live))}"
     )
     assert set(example["layers"][0]) == set(live["layers"][0]), "the documented LAYER shape has drifted"
+
+
+async def test_a_cache_miss_logs_its_cost_once_and_a_hit_logs_nothing(client, seeded, H, caplog) -> None:  # noqa: F811
+    """Fix round 1's spec gap: the AREA strip waits on this route and its cost was invisible from
+    outside the process — six runs of `_SUMMARY_SQL` over the metro's whole envelope per miss,
+    with a `percentile_cont` over every valued polygon of each layer's own level. `boundaries` has
+    carried one INFO line per miss since fix round 2 of A24 for exactly that reason; this is its
+    sibling, in the same shape and with the same rules.
+
+    Identifiers and sizes only: `cbsa` is a Census geoid and the rest are counts and a duration.
+    No figure the payload carries — no median, no quantile, no geography NAME — is in it. A cache
+    HIT is silent, because a line per request would drown the thing this exists to make visible.
+    """
+    caplog.set_level(logging.INFO, logger="app.api.market")
+    first, body = await _body(client, H)
+    assert first.status_code == 200 and first.headers["x-cache"] == "miss"
+
+    lines = [r for r in caplog.records if r.getMessage().startswith("summary miss ")]
+    assert len(lines) == 1, [r.getMessage() for r in caplog.records]
+    line = lines[0]
+    assert line.levelno == logging.INFO
+    fields = dict(pair.split("=", 1) for pair in line.getMessage().removeprefix("summary miss ").split(" "))
+    assert sorted(fields) == ["cbsa", "layers", "ms", "rows"]
+    assert fields["cbsa"] == "12420"
+    # Read off the response rather than typed: `layers` is what the body carries and `rows` is the
+    # polygons actually counted, summed across them — so a field wired to the wrong value fails.
+    assert int(fields["layers"]) == len(body["layers"])
+    assert int(fields["rows"]) == sum(l["count"] for l in body["layers"])
+    assert int(fields["rows"]) > 0, "the fixture counted no polygons, so `rows` proves nothing"
+    assert float(fields["ms"]) >= 0
+    # The fixture's own median, by value, and the geography label it carries.
+    assert "50000" not in line.getMessage() and "Census tract" not in line.getMessage()
+
+    caplog.clear()
+    again, _ = await _body(client, H)
+    assert again.headers["x-cache"] == "hit"
+    assert [r.getMessage() for r in caplog.records if r.getMessage().startswith("summary miss ")] == []
