@@ -912,7 +912,7 @@
                   </div>
                 </sc-for>
               </div>
-              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">Figures describe the area around each practice, not the practice itself. Pet-household counts and average practice payroll are derived estimates, not observed values. Community areas are Census tracts (2023 boundaries); figures describe the area, not the practice. Population growth is measured for the surrounding city or county, not the tract.</p>
+              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">Figures describe the area around each practice, not the practice itself. Pet-household counts and average practice payroll are derived estimates, not observed values. The map shades Census tracts, places, counties or ZIP Code Tabulation Areas, as each layer’s legend names; the snapshot’s figures describe the area around each practice, not the practice itself.</p>
             </div>
           </sc-if>
 
@@ -1905,6 +1905,17 @@ const SYMBOL_SCALE = {
   competition: [{ px: 6, label: "2" }, { px: 9, label: "8" }, { px: 13, label: "14+" }]
 };
 
+// A24 (D-C50 interim): the source line, composed for the surface that prints it. A layer
+// whose line names a GEOGRAPHY carries the dataset alone (`dataset:`) and is given the basis
+// by its caller - the map's own geography for the legend and the tip, the practice-area label
+// for the snapshot strip, whose figures are per-listing and are not measured at either. A
+// layer that names no geography (`growth`, `econ`, `pets`) keeps its own `source` sentence,
+// which is true on both surfaces, and this returns it unchanged.
+const metaSource = (k, basis) => {
+  const m = LAYER_META[k] || {};
+  return m.dataset ? m.dataset + " · " + basis : (m.source || "");
+};
+
 // One catalogue per market layer: what it is, where it comes from, and how to read it.
 // "derived" marks metrics that are modelled rather than observed.
 const LAYER_META = {
@@ -1912,7 +1923,7 @@ const LAYER_META = {
     title: "Median household income",
     sub: "Household income by community · ACS 5-year",
     updated: "Updated: ACS 2023 release (Jan 2025)",
-    source: "U.S. Census ACS 5-year estimates (2023) · Census tract",
+    dataset: "U.S. Census ACS 5-year estimates (2023)",
     means: "Higher-income areas may support stronger demand, but income alone does not indicate practice performance.",
     why: "Household income can correlate with pet care spending and service mix, helping you identify attractive markets to explore further."
   },
@@ -1928,7 +1939,7 @@ const LAYER_META = {
     title: "Veterinary competition",
     sub: "Veterinary establishments · ZIP Code Business Patterns, NAICS 541940",
     updated: "Updated: ZIP Code Business Patterns 2022",
-    source: "U.S. Census ZIP Code Business Patterns (2022), NAICS 541940 · ZIP Code Tabulation Area",
+    dataset: "U.S. Census ZIP Code Business Patterns (2022), NAICS 541940",
     means: "Establishment counts show how many veterinary businesses operate nearby. They say nothing about size, quality or overlap in services.",
     why: "Competitive density helps you judge whether a market is underserved or already crowded."
   },
@@ -1944,7 +1955,7 @@ const LAYER_META = {
     title: "Households",
     sub: "Total households · ACS 5-year",
     updated: "Updated: ACS 2023 release (Jan 2025)",
-    source: "U.S. Census ACS 5-year estimates (2023) · Census tract",
+    dataset: "U.S. Census ACS 5-year estimates (2023)",
     means: "The count of occupied housing units in each community — the denominator behind most other figures here.",
     why: "Household counts give scale: two areas can share an income level and differ tenfold in size."
   },
@@ -2302,7 +2313,7 @@ class Component extends DCLogic {
     const meta = LAYER_META[layer] || {};
     const absent = p.suppressed
       ? (p.suppress_reason === "source_flag" ? "Not published for this county"
-        : p.suppress_reason === "source_threshold" ? "Fewer than three veterinary establishments here. The Census does not publish a ZIP-level count for a category with fewer than three establishments, though they are counted in its all-industry total."
+        : p.suppress_reason === "source_threshold" ? "The Census does not publish a ZIP-level count for a category with fewer than three establishments, though they are counted in its all-industry total."
         : "Estimate too imprecise to show at this geography")
       : "No data for this area";
     const margin = (p.moe !== null && p.moe !== undefined)
@@ -2321,7 +2332,7 @@ class Component extends DCLogic {
       '<div style="font-size:11px;color:#494949;margin-top:3px">' + (meta.title || "") + "</div>" +
       '<div style="font-size:15px;font-weight:800;color:#003a70;margin-top:1px">' + (shown ? this.fmtMetric(layer, p.value) + (layer === "competition" ? " veterinary practices" : "") : NO_DATA_LABEL) + "</div>" +
       '<div style="font-size:10.5px;color:#494949;margin-top:4px">' + (shown ? margin : absent) + "</div>" +
-      '<div style="font-size:10px;color:#767676;margin-top:5px">' + (meta.source || "") + "</div>" +
+      '<div style="font-size:10px;color:#767676;margin-top:5px">' + metaSource(layer, AREA_LABEL[layer] || "") + "</div>" +
     "</div>";
   }
 
@@ -2330,7 +2341,7 @@ class Component extends DCLogic {
     return P.filter((p) => p.market === market && p.status === "published").map((p) => {
       const hh = p.hh != null ? num(p.hh) : undefined;
       return {
-        id: p.id, name: p.area, lat: p.lat, lng: p.lng,
+        id: p.id, name: p.area, lat: p.lat, lng: p.lng, communityLabel: p.communityLabel,
         pop: p.pop != null ? num(p.pop) : undefined, hh: hh, income: p.income != null ? num(p.income) : undefined,
         growth: p.growth != null ? (parseFloat(String(p.growth).replace(/[^0-9.\-]/g, "")) || 0) : undefined,
         pets: hh !== undefined ? Math.round(hh * 0.57) : undefined,
@@ -2451,7 +2462,7 @@ class Component extends DCLogic {
         return {
           name: c.name, lat: c.lat, lng: c.lng, vets: c.vets, values: vals,
           metricName: valueLayer ? LAYER_META[valueLayer].title : "",
-          sourceNote: valueLayer ? LAYER_META[valueLayer].source : ""
+          sourceNote: valueLayer ? metaSource(valueLayer, AREA_LABEL[valueLayer] || "") : ""
         };
       }),
       practices: list.filter((p) => Number.isFinite(p.lat) && Number.isFinite(p.lng)).map((p) => ({
@@ -2465,11 +2476,12 @@ class Component extends DCLogic {
       active: (() => {
         const meta = LAYER_META[valueLayer] || {};
         const cfg = valueLayer ? VALUE_LAYERS[valueLayer] : null;
+        const mapSource = valueLayer ? metaSource(valueLayer, AREA_LABEL[valueLayer] || "") : "";
         return {
           title: meta.title || "No layer active",
           sub: meta.sub || "Choose a layer to shade the map",
-          sourceLine: meta.source ? "Source: " + meta.source : "",
-          sourceShort: meta.source ? "Source: " + meta.source.split(" · ")[0] : "",
+          sourceLine: mapSource ? "Source: " + mapSource : "",
+          sourceShort: mapSource ? "Source: " + mapSource.split(" · ")[0] : "",
           updatedLine: meta.updated || "",
           means: meta.means || "",
           why: meta.why || "",
@@ -2744,7 +2756,15 @@ class Component extends DCLogic {
       hasSel: !!sel,
       panel: sel ? this.marketPanel(sel, selComm, comms, market) : null,
       closePanel: () => this.setState({ mdSel: null }),
-      stripCards: ["income", "pets", "competition", "growth", "households", "econ"]
+      stripCards: (() => {
+        // What the snapshot's own figures describe: `comms` is one row per LISTING, so the
+        // basis is the practice-area label the API serves, and only where the whole metro
+        // agrees on one. Otherwise the design's own words, which is what the reference path
+        // and every approved state renders - the design's fixtures carry no label at all.
+        const labels = comms.map((c) => c.communityLabel).filter(Boolean);
+        const stripBasis = (labels.length === comms.length && labels.length > 0 && labels.every((l) => l === labels[0]))
+          ? labels[0] : "community level";
+        return ["income", "pets", "competition", "growth", "households", "econ"]
         .filter((k) => enabled(k === "competition" ? "vets" : k))
         .map((k) => {
           const meta = LAYER_META[k];
@@ -2758,7 +2778,7 @@ class Component extends DCLogic {
             title: meta.title,
             value: (mid !== undefined) ? this.fmtMetric(k, mid) : undefined,
             valueNote: "metro median",
-            src: meta.source,
+            src: metaSource(k, stripBasis),
             bars: vals.slice(0, 7).map((v) => ({
               style: "flex: 1; height: " + Math.max(4, Math.round(6 + v.t * 24)) +
                 "px; border-radius: 2px 2px 0 0; background: " + ramp(k)[Math.min(3, Math.round(v.t * 3))] + ";"
@@ -2770,7 +2790,8 @@ class Component extends DCLogic {
             cardStyle: "display: flex; flex-direction: column; height: 100%; padding: 13px 14px; background: var(--vf-white); border: 1px solid " +
               (on ? "var(--vf-accent)" : "#e6e6e6") + "; border-radius: 8px;"
           };
-        })
+        });
+      })()
     };
   }
 

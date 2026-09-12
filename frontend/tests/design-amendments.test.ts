@@ -340,6 +340,10 @@ describe('local design amendments (spec D15)', () => {
     // MS1 (2026-09-12): the snapshot strip's own sign. Not chained — its `find` is the pristine
     // bundle's own `num` declaration.
     'A24.43',
+    // Fix round 2 (2026-09-12): the snapshot states its own basis (B) and the threshold tip
+    // carries the ruled sentence alone (E). A24.56 reads A24.20's output and A24.57 A24.38's.
+    'A24.44', 'A24.45', 'A24.46', 'A24.47', 'A24.48', 'A24.49', 'A24.50', 'A24.52', 'A24.51',
+    'A24.54', 'A24.53', 'A24.55', 'A24.56', 'A24.57',
     'A24.9', 'A24.10', 'A24.11', 'A24.12',
   ];
 
@@ -379,7 +383,17 @@ describe('local design amendments (spec D15)', () => {
     expect(amended).toContain('"Counted within this " + AREA_LABEL[layer] + ". ZIP Code Business Patterns is published per ZIP code, which is this dataset\u2019s own authoritative geography.');
     // Fix round 1, Important 3: the third ZCTA state says which rule hid it, in the API's own
     // words (`tests/census/test_design_shading_labels.py` pins the sentence across both sides).
-    expect(amended).toContain('p.suppress_reason === "source_threshold" ? "Fewer than three veterinary establishments here.');
+    // Fix round 2, E: the ruled sentence and NOTHING else — A24.38 had shipped a lead-in in
+    // front of it, and the stakeholder rejected invented copy.
+    expect(amended).toContain('p.suppress_reason === "source_threshold" ? "The Census does not publish a ZIP-level count');
+    expect(amended, 'the lead-in sentence is still there').not.toContain('Fewer than three veterinary establishments here');
+    // Fix round 2, B: one string per fact — the three layers whose line named the MAP's geography
+    // carry the dataset alone, and `metaSource` composes the rest for the surface that prints it.
+    expect(amended).toContain('const metaSource = (k, basis) => {');
+    expect(amended).toContain('    dataset: "U.S. Census ZIP Code Business Patterns (2022), NAICS 541940",');
+    expect(amended, 'a layer still carries the map geography baked into its source line')
+      .not.toContain('estimates (2023) \u00b7 Census tract",');
+    expect(amended).toContain('            src: metaSource(k, stripBasis),');
 
     // D-NS16 (John, 2026-09-10): the no-data class is the design's own --border-subtle value and
     // the legend gains one row reading exactly "No data".
@@ -414,7 +428,9 @@ describe('local design amendments (spec D15)', () => {
     // The footnote John ruled on, byte for byte (§14 Q2), and the sentence it replaced is gone.
     // A24.20 (2026-09-12) renamed the geography here and added the growth caveat: a reader told the
     // areas are tracts would otherwise take EVERY figure on the strip for a tract-level one.
-    expect(amended).toContain('Community areas are Census tracts (2023 boundaries); figures describe the area, not the practice. Population growth is measured for the surrounding city or county, not the tract.');
+    // A24.56 (fix round 2, B): A24.20's sentence describes the MAP alone and sits under the
+    // snapshot strip, whose figures are per-practice. One sentence, true of both surfaces.
+    expect(amended).toContain('The map shades Census tracts, places, counties or ZIP Code Tabulation Areas, as each layer\u2019s legend names; the snapshot\u2019s figures describe the area around each practice, not the practice itself.');
     expect(amended).not.toContain('production draws Census ZCTA boundaries');
 
     // The legend names the geography, on the desktop panel and in the phone sheet, and nowhere
@@ -486,7 +502,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(269);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(283);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

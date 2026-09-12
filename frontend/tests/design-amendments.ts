@@ -5401,6 +5401,184 @@ const A24_43: Amendment = {
   count: 1
 };
 
+/** A24.44-A24.52 -- FIX ROUND 2, B and E (2026-09-12). The Market snapshot strip states its OWN
+ *  basis instead of borrowing the map's.
+ *
+ *  Measured on QA: the strip's Households card read "162K metro median · U.S. Census ACS 5-year
+ *  estimates (2023) · Census tract". The 162K is the MEDIAN OF THE LISTINGS' OWN five-mile-ring
+ *  totals -- `stripCards` reads `comms`, one row per listing -- and a Census tract holds about
+ *  1,500 households, so the caption named a geography the number is not measured at. Nothing was
+ *  wrong with A24.34-A24.36: they made `LAYER_META.*.source` truthfully name the MAP's geography,
+ *  which is exactly right for the legend and exactly wrong for the strip, which borrows the same
+ *  string. Ruling D-C50 (Task SNAP, 0.1.22) later makes the strip describe the MAP; until then it
+ *  must describe what it IS.
+ *
+ *  ONE STRING PER FACT. The three layers whose source named the map's geography keep only the
+ *  DATASET (`dataset:`), and `metaSource(k, basis)` composes the rest -- the map's geography for
+ *  the legend, the tip and the map's own community notes; the practice-area basis for the strip.
+ *  `growth` and `econ` describe place and county on BOTH surfaces and keep their wording, which is
+ *  why they keep `source` and have no `dataset`; `pets` names no geography at all and keeps its.
+ *
+ *  The basis is what the API already serves: the listings' own `communityLabel` where every
+ *  community in the metro carries the same one ("Within about 5 miles of the practice" on all
+ *  twelve Dallas listings), and the design's own "community level" otherwise. The design's
+ *  fixtures carry no `communityLabel`, so the reference path renders "community level" -- which
+ *  is the string those cards carry today -- and every approved state keeps its pixels except the
+ *  footnote sentence, which re-bases `browse-market-strip` alone. */
+const FIX2 = {
+  date: '2026-09-12',
+  ruling: 'D-C50 (interim): the Market snapshot states the basis of its OWN figures — the practice-area label the API serves — rather than borrowing the map legend’s geography, which is false for a median of per-listing ring totals; the footnote is made true for both surfaces; and the threshold tip carries the ruled sentence and nothing else.'
+};
+
+/** A24.44 -- the basis has to reach the strip, and it reaches it the way every other figure does:
+ *  as a field on the community objects `communities()` builds. One line, beside the fields it
+ *  already copies off the listing. */
+const A24_44: Amendment = {
+  id: 'A24.44', ...FIX2,
+  find: '        id: p.id, name: p.area, lat: p.lat, lng: p.lng,\n',
+  replace: '        id: p.id, name: p.area, lat: p.lat, lng: p.lng, communityLabel: p.communityLabel,\n',
+  count: 1
+};
+
+/** A24.45 -- `metaSource(k, basis)`: the ONE composer both surfaces read. A layer that names a
+ *  geography carries the dataset alone and has the basis supplied by its caller; a layer whose
+ *  source line names no geography at all keeps the sentence it has. */
+const A24_45: Amendment = {
+  id: 'A24.45', ...FIX2,
+  find: '// One catalogue per market layer: what it is, where it comes from, and how to read it.\n',
+  replace: '// A24 (D-C50 interim): the source line, composed for the surface that prints it. A layer\n'
+    + '// whose line names a GEOGRAPHY carries the dataset alone (`dataset:`) and is given the basis\n'
+    + '// by its caller - the map\'s own geography for the legend and the tip, the practice-area label\n'
+    + '// for the snapshot strip, whose figures are per-listing and are not measured at either. A\n'
+    + '// layer that names no geography (`growth`, `econ`, `pets`) keeps its own `source` sentence,\n'
+    + '// which is true on both surfaces, and this returns it unchanged.\n'
+    + 'const metaSource = (k, basis) => {\n'
+    + '  const m = LAYER_META[k] || {};\n'
+    + '  return m.dataset ? m.dataset + " \u00b7 " + basis : (m.source || "");\n'
+    + '};\n'
+    + '\n'
+    + '// One catalogue per market layer: what it is, where it comes from, and how to read it.\n',
+  count: 1
+};
+
+const A24_46: Amendment = {
+  id: 'A24.46', ...FIX2,
+  find: '    source: "U.S. Census ACS 5-year estimates (2023) \u00b7 Census tract",\n'
+    + '    means: "Higher-income areas may support stronger demand',
+  replace: '    dataset: "U.S. Census ACS 5-year estimates (2023)",\n'
+    + '    means: "Higher-income areas may support stronger demand',
+  count: 1
+};
+
+const A24_47: Amendment = {
+  id: 'A24.47', ...FIX2,
+  find: '    source: "U.S. Census ACS 5-year estimates (2023) \u00b7 Census tract",\n'
+    + '    means: "The count of occupied housing units in each community',
+  replace: '    dataset: "U.S. Census ACS 5-year estimates (2023)",\n'
+    + '    means: "The count of occupied housing units in each community',
+  count: 1
+};
+
+const A24_48: Amendment = {
+  id: 'A24.48', ...FIX2,
+  find: '    source: "U.S. Census ZIP Code Business Patterns (2022), NAICS 541940 \u00b7 ZIP Code Tabulation Area",\n',
+  replace: '    dataset: "U.S. Census ZIP Code Business Patterns (2022), NAICS 541940",\n',
+  count: 1
+};
+
+/** A24.49-A24.51 -- the three MAP surfaces, each asking for the map's own geography. Their output
+ *  is byte-identical to what they printed before: `metaSource` composes exactly the string the
+ *  literal used to hold. */
+const A24_49: Amendment = {
+  id: 'A24.49', ...FIX2,
+  find: '      \'<div style="font-size:10px;color:#767676;margin-top:5px">\' + (meta.source || "") + "</div>" +\n',
+  replace: '      \'<div style="font-size:10px;color:#767676;margin-top:5px">\' + metaSource(layer, AREA_LABEL[layer] || "") + "</div>" +\n',
+  count: 1
+};
+
+const A24_50: Amendment = {
+  id: 'A24.50', ...FIX2,
+  find: '          sourceNote: valueLayer ? LAYER_META[valueLayer].source : ""\n',
+  replace: '          sourceNote: valueLayer ? metaSource(valueLayer, AREA_LABEL[valueLayer] || "") : ""\n',
+  count: 1
+};
+
+const A24_51: Amendment = {
+  id: 'A24.51', ...FIX2,
+  find: '          sourceLine: meta.source ? "Source: " + meta.source : "",\n'
+    + '          sourceShort: meta.source ? "Source: " + meta.source.split(" \u00b7 ")[0] : "",\n',
+  replace: '          sourceLine: mapSource ? "Source: " + mapSource : "",\n'
+    + '          sourceShort: mapSource ? "Source: " + mapSource.split(" \u00b7 ")[0] : "",\n',
+  count: 1
+};
+
+const A24_52: Amendment = {
+  id: 'A24.52', ...FIX2,
+  find: '        const cfg = valueLayer ? VALUE_LAYERS[valueLayer] : null;\n',
+  replace: '        const cfg = valueLayer ? VALUE_LAYERS[valueLayer] : null;\n'
+    + '        const mapSource = valueLayer ? metaSource(valueLayer, AREA_LABEL[valueLayer] || "") : "";\n',
+  count: 1
+};
+
+/** A24.53 -- the strip itself. The basis is the listings' OWN label where the whole metro agrees
+ *  on one, and the design's own "community level" where it does not or where there is none at all
+ *  (which is the reference path, and every approved state). */
+const A24_53: Amendment = {
+  id: 'A24.53', ...FIX2,
+  find: '            src: meta.source,\n',
+  replace: '            src: metaSource(k, stripBasis),\n',
+  count: 1
+};
+
+const A24_54: Amendment = {
+  id: 'A24.54', ...FIX2,
+  find: '      stripCards: ["income", "pets", "competition", "growth", "households", "econ"]\n',
+  replace: '      stripCards: (() => {\n'
+    + '        // What the snapshot\'s own figures describe: `comms` is one row per LISTING, so the\n'
+    + '        // basis is the practice-area label the API serves, and only where the whole metro\n'
+    + '        // agrees on one. Otherwise the design\'s own words, which is what the reference path\n'
+    + '        // and every approved state renders - the design\'s fixtures carry no label at all.\n'
+    + '        const labels = comms.map((c) => c.communityLabel).filter(Boolean);\n'
+    + '        const stripBasis = (labels.length === comms.length && labels.length > 0 && labels.every((l) => l === labels[0]))\n'
+    + '          ? labels[0] : "community level";\n'
+    + '        return ["income", "pets", "competition", "growth", "households", "econ"]\n',
+  count: 1
+};
+
+/** A24.55 -- the strip's own IIFE closes where the array's `.map` did. */
+const A24_55: Amendment = {
+  id: 'A24.55', ...FIX2,
+  find: '            cardStyle: "display: flex; flex-direction: column; height: 100%; padding: 13px 14px; background: var(--vf-white); border: 1px solid " +\n'
+    + '              (on ? "var(--vf-accent)" : "#e6e6e6") + "; border-radius: 8px;"\n'
+    + '          };\n'
+    + '        })\n',
+  replace: '            cardStyle: "display: flex; flex-direction: column; height: 100%; padding: 13px 14px; background: var(--vf-white); border: 1px solid " +\n'
+    + '              (on ? "var(--vf-accent)" : "#e6e6e6") + "; border-radius: 8px;"\n'
+    + '          };\n'
+    + '        });\n'
+    + '      })()\n',
+  count: 1
+};
+
+/** A24.56 -- the footnote, true for BOTH surfaces. A24.20's sentence describes the map alone, and
+ *  it sits under the strip, whose figures are per-practice. CHAINED on A24.20. */
+const A24_56: Amendment = {
+  id: 'A24.56', ...FIX2,
+  find: 'Community areas are Census tracts (2023 boundaries); figures describe the area, not the practice. Population growth is measured for the surrounding city or county, not the tract.',
+  replace: 'The map shades Census tracts, places, counties or ZIP Code Tabulation Areas, as each layer’s legend names; the snapshot’s figures describe the area around each practice, not the practice itself.',
+  count: 1
+};
+
+/** A24.57 -- fix round 2, E. The ruling was ONE sentence, `app.api.market.THRESHOLD_RULE`, and no
+ *  other new copy; A24.38 shipped a lead-in in front of it. The design's own headline above the
+ *  line already says which layer and which polygon this is. CHAINED on A24.38. */
+const A24_57: Amendment = {
+  id: 'A24.57', ...FIX2,
+  find: '        : p.suppress_reason === "source_threshold" ? "Fewer than three veterinary establishments here. The Census does not publish',
+  replace: '        : p.suppress_reason === "source_threshold" ? "The Census does not publish',
+  count: 1
+};
+
 const A24_9: Amendment = {
   id: 'A24.9', ...NS, file: 'jsx',
   find: '// GEOMETRY NOTE: the prototype has no ZCTA boundary file, so community areas are\n// approximated as Voronoi cells around each community\'s centroid, clipped to the metro\n// bounding box. Cells are contiguous and non-overlapping, which is what a choropleth\n// requires, but they are NOT real Census boundaries — the UI labels them "approximate\n// community areas". Production must load tiger_cb ZCTA polygons per the Census Data\n// Source Specification and drop this approximation.\n',
@@ -5576,5 +5754,11 @@ export function amendments(): Amendment[] {
     // A24.43 -- MS1, the snapshot strip's own sign (2026-09-12). Not chained: its `find` is the
     // pristine bundle's own `num` declaration.
     A24_43,
+    // A24.44-A24.57 -- fix round 2 (2026-09-12). The snapshot states its own basis (B) and the
+    // threshold tip carries the ruled sentence alone (E). A24.56 reads A24.20's output and A24.57
+    // A24.38's, so both run after the entries they read; A24.52 declares the term A24.51 reads
+    // and A24.54 the term A24.53 reads, so each pair is ordered.
+    A24_44, A24_45, A24_46, A24_47, A24_48, A24_49, A24_50, A24_52, A24_51, A24_54, A24_53,
+    A24_55, A24_56, A24_57,
     A24_9, A24_10, A24_11, A24_12];
 }

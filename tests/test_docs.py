@@ -273,7 +273,7 @@ def test_claude_md_literal_edit_clauses_count_each_family_s_own_entries():
     ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
     # A18 (2026-09-09) stopped this tuple at "Fifteen" and the assertion failed on its own
     # vocabulary before it compared anything; D-L1 (2026-09-12) took A24 to thirty-three entries
-    # and did it again, and its own fix round to forty-six a few hours later. Extended to "fifty",
+    # and did it again, and its own fix rounds to forty-six and then sixty-one the same day. Extended to "seventy",
     # which is past `NUMBER_WORDS` below — that table is the FAMILY count's vocabulary (27 today)
     # and this one is the largest family's ENTRY count, so they grow at different rates and the
     # second has now outrun the first.
@@ -283,7 +283,10 @@ def test_claude_md_literal_edit_clauses_count_each_family_s_own_entries():
              "twenty-nine", "thirty", "thirty-one", "thirty-two", "thirty-three", "thirty-four", "thirty-five",
              "thirty-six", "thirty-seven", "thirty-eight", "thirty-nine", "forty", "forty-one",
              "forty-two", "forty-three", "forty-four", "forty-five", "forty-six", "forty-seven",
-             "forty-eight", "forty-nine", "fifty")
+             "forty-eight", "forty-nine", "fifty", "fifty-one", "fifty-two", "fifty-three",
+             "fifty-four", "fifty-five", "fifty-six", "fifty-seven", "fifty-eight", "fifty-nine",
+             "sixty", "sixty-one", "sixty-two", "sixty-three", "sixty-four", "sixty-five",
+             "sixty-six", "sixty-seven", "sixty-eight", "sixty-nine", "seventy")
     markers = list(re.finditer(r"\*\*A(\d+)\*\*", claude))
     assert markers, "CLAUDE.md declares no bold amendment family markers (**A<n>**)"
     # The captured word is one of `words` ITSELF, not any `\w+` — a GROUP descriptor ("three more

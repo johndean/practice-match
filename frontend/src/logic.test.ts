@@ -4817,6 +4817,44 @@ describe('A24 — real boundary polygons', () => {
     expect(c.marketVals(P).areas.features).toEqual([]);
   });
 
+  // Fix round 2, B (2026-09-12). Measured on QA: the strip's Households card read "162K metro
+  // median · U.S. Census ACS 5-year estimates (2023) · Census tract". The 162K is the MEDIAN OF
+  // THE LISTINGS' OWN five-mile-ring totals — `stripCards` reads `comms`, one row per listing —
+  // and a Census tract holds about 1,500 households, so the caption described a geography the
+  // number is not measured at. A24.34–A24.36 made `LAYER_META.*.source` truthfully name the MAP's
+  // geography, which is right for the legend and made the strip borrow a caption that is false
+  // for it. Until D-C50 makes the strip describe the map (Task SNAP, 0.1.22) the strip must
+  // describe what it IS: the same dataset, and the practice-area basis the API already serves.
+  it('the snapshot caption names the area its own figures describe, never the map geography', () => {
+    const ring = 'Within about 5 miles of the practice';
+    c.communities = () => [
+      { id: 'a', name: 'A', lat: 30.3, lng: -97.7, hh: 162000, communityLabel: ring },
+      { id: 'b', name: 'B', lat: 30.4, lng: -97.8, hh: 158000, communityLabel: ring }
+    ];
+    const card = c.marketVals(P).stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
+    expect(card.src).toContain(ring);
+    expect(card.src, 'the strip borrowed the map\'s geography for a practice-area median').not.toContain('Census tract');
+    // …and the dataset itself is unchanged: one string per fact, composed for each surface.
+    expect(card.src).toContain('U.S. Census ACS 5-year estimates (2023)');
+    // The LEGEND still names the map's own geography — that is what it describes.
+    c.state.mdValue = 'households';
+    expect(c.marketVals(P).active.sourceLine).toBe('Source: U.S. Census ACS 5-year estimates (2023) · Census tract');
+  });
+
+  it('a mixed or absent practice-area basis falls back to the design\'s own wording', () => {
+    // The design's own fixtures carry no `communityLabel` at all, which is the reference path and
+    // every approved state; and a metro whose listings disagree has no ONE area to name.
+    c.communities = () => [
+      { id: 'a', name: 'A', lat: 30.3, lng: -97.7, hh: 162000, communityLabel: 'Within about 5 miles of the practice' },
+      { id: 'b', name: 'B', lat: 30.4, lng: -97.8, hh: 158000, communityLabel: 'City of Dallas' }
+    ];
+    expect(c.marketVals(P).stripCards.filter((x: { title: string }) => x.title === 'Households')[0].src)
+      .toBe('U.S. Census ACS 5-year estimates (2023) · community level');
+    c.communities = () => [{ id: 'a', name: 'A', lat: 30.3, lng: -97.7, hh: 162000 }];
+    expect(c.marketVals(P).stripCards.filter((x: { title: string }) => x.title === 'Households')[0].src)
+      .toBe('U.S. Census ACS 5-year estimates (2023) · community level');
+  });
+
   // MS1 (2026-09-12) — the snapshot strip showed Dallas Population growth as "+1.5% metro
   // median" while every Dallas listing's own API figure is "-1.5% since 2018". `num` stripped the
   // MINUS and then concatenated the trailing year: "-1.5% since 2018" -> "1.52018" -> 1.52018,
