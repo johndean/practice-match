@@ -143,14 +143,18 @@ export function makeMarketAdapter(fetchFn: typeof fetch = globalThis.fetch.bind(
    */
   const collect = async (geoid: string, bbox: string | null, final: boolean) => {
     const at = bbox === null ? '' : `&bbox=${encodeURIComponent(bbox)}`;
-    const settled = await Promise.allSettled(
+    // `answers`, not `settled`: `settled` is the viewport module's own exported reader, imported
+    // at the head of this file and called by `viewport()` below, and a local of that name here
+    // shadows it inside this closure. Nothing breaks today — the two live in different scopes —
+    // and that is exactly the kind of coincidence a later edit turns into a bug.
+    const answers = await Promise.allSettled(
       FILL_LAYERS.map((layer) => read(fetchFn, `/api/markets/${encodeURIComponent(geoid)}/boundaries?layer=${layer}${at}`))
     );
     const out: Record<string, BoundaryCollection> = {};
     let retryable: Refused | null = null;
     let failure: unknown = null;
     FILL_LAYERS.forEach((layer, i) => {
-      const answer = settled[i];
+      const answer = answers[i];
       if (answer.status === 'rejected') {
         const e: unknown = answer.reason;
         if (failure === null) failure = e;
