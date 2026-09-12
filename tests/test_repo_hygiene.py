@@ -31,7 +31,10 @@ def test_the_coverage_report_is_ignored_and_untracked():
         cwd=ROOT, capture_output=True, text=True, check=True,
     ).stdout.split("\0")
     assert [name for name in tracked if name] == []
+    # `check=False` is the POINT of this call, not an oversight (ruff PLW1510): `git check-ignore`
+    # answers by EXIT CODE — 0 ignored, 1 not ignored — so a non-zero status is the finding this
+    # assertion reads, and `check=True` would raise instead of failing with the message below.
     ignored = subprocess.run(
-        ["git", "check-ignore", "-q", "coverage.xml"], cwd=ROOT, capture_output=True, text=True,
+        ["git", "check-ignore", "-q", "coverage.xml"], cwd=ROOT, capture_output=True, text=True, check=False,
     )
     assert ignored.returncode == 0, "coverage.xml is not covered by .gitignore"
