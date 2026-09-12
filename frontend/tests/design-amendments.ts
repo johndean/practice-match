@@ -6497,6 +6497,67 @@ const A33_3f: Amendment = {
   count: 1
 };
 
+/** A33.1c — WITH THE API PRESENT THE INDEX IS THE API'S OR NOTHING (fix round 1, controller
+ *  ruling on the review's Important, 2026-09-13).
+ *
+ *  A33.1a kept `incomeNat = 75149` as the fallback, measured: `incomeIdx` has a SECOND reader,
+ *  the Affluence opportunity tile, so deleting the constant outright would blank an element of
+ *  the approved design on the reference path. What that left is the defect one door along: a
+ *  listing WITH a median and no served index still divides by the constant, and on a real
+ *  database that is a missing `acs_measure` summary-level-010 row — `materialize._Ctx.us_income`
+ *  is then None and `income_index_vs_us` is null for EVERY listing in the country at once. The
+ *  panel would print an index, and an Affluence verdict, against a 2023 constant with nothing
+ *  saying so.
+ *
+ *  THE GATE IS ADAPTER PRESENCE, NEVER DATA — A16.1's own idiom, and the same seam A24.14-A24.18
+ *  opened. `this.props.market` is the app-only Browse adapter: the app hands one to every render
+ *  (`app.setup.js`'s own default factory) and the reference is never given one — this file's own
+ *  test pins `market` OUT of the design's declared `data-props`, so the reference cannot receive
+ *  it even by accident. `this.props.listings` was the other candidate and is wrong: it names the
+ *  SELLER adapter, and the design has no Browse-listings adapter at all because `load.ts`
+ *  replaces `P` in place.
+ *
+ *  So: with an adapter the index is the SERVED one or nothing, and the Affluence tile falls to
+ *  the design's OWN unavailable treatment (`label: ""`, `on: false`, `tone()`'s `#8d99a6`) —
+ *  identical to what its Population-Growth and Sector-Payroll neighbours already do for an
+ *  absent figure, so no copy is invented for it and no third entry is needed. Without an
+ *  adapter — the reference, the Claude Design preview — the design's constant stands and every
+ *  approved state keeps its pixels. The constant is NOT deleted and its comment still names the
+ *  vintage it belongs to.
+ *
+ *  CHAINED on A33.1a, whose `replace`'s second line is this entry's whole `find`. */
+const A33_1c1: Amendment = {
+  id: 'A33.1c.1', date: '2026-09-13',
+  ruling: "with the API present the panel's income index is the API's or nothing, never the design's fixture constant (fix round 1, review Important)",
+  find: '    const incomeIdx = sel.incomeVsUs != null ? Math.round(sel.incomeVsUs) : (c.income ? Math.round(((c.income - incomeNat) / incomeNat) * 100) : undefined);',
+  replace: '    const incomeIdx = this.props.market\n'
+    + '      ? (sel.incomeVsUs != null ? Math.round(sel.incomeVsUs) : undefined)\n'
+    + '      : (c.income ? Math.round(((c.income - incomeNat) / incomeNat) * 100) : undefined);',
+  count: 1
+};
+
+/** A33.1c.2 — the sub-line's second arm, which A33.1b's own docstring promised and A33.1c.1
+ *  makes reachable: with a median, `incomeApproximate` true and NO index, today's expression
+ *  drops the qualifier entirely. A33.1b reasoned that state away on the ground that an index
+ *  exists whenever a median does — true while the constant was the fallback on every path, and
+ *  false the moment A33.1c.1 gates it. The two ship together for exactly that reason.
+ *
+ *  The arm is the detail card's own treatment (`income_note` == "Approximate", A27.1) in the
+ *  panel's own lower-case voice, beside "ACS 5-year" and "derived estimate". It carries no
+ *  second guard on the median: the payload pairs the two — `income_approximate` is `null`, never
+ *  `false`, where there is no median at all
+ *  (`tests/census/test_serve.py::test_no_median_means_nothing_to_say_about_it`) — and a guard
+ *  the producer makes unreachable is the inert kind this codebase removes rather than adds.
+ *
+ *  CHAINED on A33.1b, whose whole `replace` is this entry's `find`. */
+const A33_1c2: Amendment = {
+  id: 'A33.1c.2', date: '2026-09-13',
+  ruling: "with the API present the panel's income index is the API's or nothing, never the design's fixture constant (same ruling)",
+  find: '{ v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined) ? ((incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US" + (sel.incomeApproximate ? " · approximate" : "")) : undefined },',
+  replace: '{ v: (c.income !== undefined) ? "$" + Math.round(c.income / 1000) + "K" : undefined, k: "Median Income", sub: (incomeIdx !== undefined) ? ((incomeIdx > 0 ? "+" : "") + incomeIdx + "% vs US" + (sel.incomeApproximate ? " · approximate" : "")) : (sel.incomeApproximate ? "approximate" : undefined) },',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -6655,5 +6716,8 @@ export function amendments(): Amendment[] {
     // expression it rewrites). None reads an A31 entry's output and none is read by one, so the
     // two families are independent; A33 is appended last, as every family is.
     A33_1a, A33_1b, A33_2a, A33_2b, A33_2c,
-    A33_3a, A33_3b, A33_3c, A33_3d, A33_3e, A33_3f];
+    A33_3a, A33_3b, A33_3c, A33_3d, A33_3e, A33_3f,
+    // A33.1c (fix round 1, 2026-09-13) -- both CHAINED on A33.1's own output: A33.1c.1 reads
+    // A33.1a's `incomeIdx` line and A33.1c.2 reads A33.1b's whole tile, so both run after them.
+    A33_1c1, A33_1c2];
 }

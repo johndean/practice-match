@@ -1027,16 +1027,46 @@ test.describe('Task B10 — the docked panel renders nothing where the Census ha
     expect(errors).toEqual([]);
   });
 
-  test('…and with no index and no flag the design\'s own sub-line stands', async ({ page }) => {
+  // A33.1c (fix round 1, ruled on the review's Important) — WITH THE API PRESENT THE INDEX IS
+  // THE API'S OR NOTHING. The app hands `marketPanel` the Browse market adapter on every render,
+  // so the design's own `incomeNat = 75149` is not read here at all: a listing with a median and
+  // no served index shows its median and NO index, rather than a percentage against a 2023
+  // constant with nothing saying so. This is the state a real database with no `acs_measure`
+  // summary-level-010 row puts every listing in the country into at once.
+  //
+  // The Affluence opportunity tile beside it is the same statement in the design's own
+  // vocabulary and NO new copy: an empty label in `tone(false)`'s `#8d99a6`, exactly what its
+  // Population-Growth and Sector-Payroll neighbours already render for an absent figure.
+  test('…and with the API serving no index the tile shows none, and Affluence goes to the design\'s own unavailable treatment', async ({ page }) => {
     await prepare(page);
     const errors = trapErrors(page);
-    const panel = await openPanel(page);
+    const panel = await openPanel(page);   // the D6 stub sends income_vs_us_pct: null
 
     const tile = await overviewTile(panel, 'Median Income');
-    // The D6 stub sends both fields null, which is the reference path and every approved state:
-    // the design's own fixture arithmetic, and no qualifier anywhere on the tile.
-    expect(tile).toMatch(/[+-]\d+% vs US/);
+    expect(tile, 'the median itself still renders').toMatch(/\$\d+K/);
+    expect(tile, 'an index was rendered for a listing the API served none for').not.toContain('vs US');
     expect(tile, 'a qualifier appeared for a median the API did not call approximate').not.toContain('approximate');
+
+    const affluence = await panel.evaluate((root) => {
+      const label = Array.from(root.querySelectorAll('div')).find((d) => (d.textContent || '').trim() === 'Affluence');
+      const box = label && (label.parentElement as HTMLElement | null);
+      if (!box) return null;
+      const rows = Array.from(box.querySelectorAll('div')).map((d) => ({
+        text: (d.textContent || '').trim(), color: getComputedStyle(d).color
+      }));
+      return { text: (box.textContent || '').replace(/\s+/g, ' ').trim(), rows };
+    });
+    expect(affluence, 'the panel has no Affluence tile').toBeTruthy();
+    // The design's own `$` icon, its own caption, and NO verdict — `oppTiles[0].label` is "" for
+    // an undefined index, so the tile carries the two things it always carries and nothing else.
+    expect(affluence!.text, 'Affluence still carries a verdict with no index behind it').toBe('$ Affluence');
+    for (const verdict of ['High', 'Above avg.', 'Median']) {
+      expect(affluence!.text, `Affluence reads "${verdict}" with no index behind it`).not.toContain(verdict);
+    }
+    // `tone(false)` is #8d99a6 — rgb(141, 153, 166). Read off the computed style rather than the
+    // attribute, so this is the colour a member actually sees.
+    expect(affluence!.rows.some((r) => r.color === 'rgb(141, 153, 166)'),
+      'the Affluence tile is still painted as though it had a figure').toBe(true);
     expect(errors).toEqual([]);
   });
 
