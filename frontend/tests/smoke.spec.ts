@@ -1554,14 +1554,20 @@ test.describe('A31 — the Market snapshot has two modes (D-C50 as revised)', ()
     // grouped by the PAGE's own `toLocaleString`, evaluated in the page rather than here, so this
     // assertion reads the same separator the design does on a browser in any locale.
     const grouped = await page.evaluate((n: number) => n.toLocaleString(), income.with_value);
-    await expect(card).toContainText(`metro median · ${grouped} ${income.geo_label}s`);
+    // Fix round 1's Addendum (2026-09-13): the caption states exactly what the number IS and the
+    // word "metro" is gone from it — the Census PUBLISHES a metro median at summary level 310
+    // (97,638 ± 1,163 for CBSA 12420) and this is the median OF the metro's valued areas (94,801
+    // on the same metro), so "metro median" beside a published figure gave a reader two different
+    // numbers under one name. The heading still says "AREA · … metro", which is true of the SCOPE.
+    await expect(card).toContainText(`median of ${grouped} ${income.geo_label}s`);
+    await expect(card, 'the caption still claims to be the metro’s own median').not.toContainText('metro median');
 
-    // LOCATION: selecting a practice switches the header and the figures, and "metro median"
-    // leaves the card entirely — it is AREA mode's wording alone.
+    // LOCATION: selecting a practice switches the header and the figures, and the AREA caption
+    // leaves the card entirely — "median of N areas" is AREA mode's wording alone.
     await page.getByText('Cedar Park').first().click();
     await expect(strip.getByText(/^LOCATION · /)).toBeVisible();
     await expect(strip.getByText(/^AREA · /)).toHaveCount(0);
-    await expect(card).not.toContainText('metro median');
+    await expect(card).not.toContainText('median of');
     // Closing the docked panel returns to AREA — the ruling's own last sentence.
     await page.getByRole('button', { name: 'Close panel' }).first().click();
     await expect(strip.getByText(/^AREA · /)).toBeVisible();
