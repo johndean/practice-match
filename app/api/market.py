@@ -221,13 +221,6 @@ def _error(code: str, message: str, status: int) -> JSONResponse:
     return JSONResponse({"error": {"code": code, "message": message}}, status_code=status)
 
 
-def short_market_name(cbsa_name: str) -> str:
-    """`"Austin-Round Rock-San Marcos, TX Metro Area"` -> `"Austin, TX"` — the design's own short
-    form: the first hyphen-joined city and the state abbreviation."""
-    city_part, _, rest = cbsa_name.partition(",")
-    return f"{city_part.split('-')[0].strip()}, {rest.strip().split(' ')[0]}"
-
-
 def _resolve_band(band: str | None, default: str) -> str | None:
     """The requested band, or the default when none was given; `None` when the caller asked for
     something that is not one of `BANDS` at all, which the route turns into decision A5's 422."""
@@ -316,15 +309,24 @@ async def layers() -> Response:
 
 @router.get("/markets", dependencies=[Depends(REQUIRE_MARKET_READ)])
 async def markets() -> Response:
+    # Task CK: one row per (listing market key, CBSA), found by the practice's own COORDINATES --
+    # never a name heuristic over the CBSA's official name (`short_market_name`, deleted). `name`
+    # is the listing's own `market` column verbatim, the exact string `logic.js`'s metro dropdown
+    # lists and `boundaries()` joins against; two market keys sharing one CBSA (e.g. "Sacramento,
+    # CA" and "South Lake Tahoe, CA", both CBSA 40900) are two rows, and a published listing whose
+    # point falls in no CBSA (`practice_location.cbsa_geoid IS NULL`) has no row at all.
     async with engine().connect() as conn:
         act = await _active(conn)
         rows = (await conn.execute(text("""
-            SELECT DISTINCT pl.cbsa_geoid, ga.name, ST_Y(ga.centroid) AS lat, ST_X(ga.centroid) AS lng
-            FROM practice_location pl JOIN listing l ON l.id = pl.listing_id AND l.status = 'published'
+            SELECT l.market AS name, pl.cbsa_geoid, ST_Y(ga.centroid) AS lat, ST_X(ga.centroid) AS lng
+            FROM listing l
+            JOIN practice_location pl ON pl.listing_id = l.id AND pl.cbsa_geoid IS NOT NULL
             JOIN geo_area ga ON ga.geo_id = pl.cbsa_geoid AND ga.summary_level = '310' AND ga.vintage = :gv
-            ORDER BY ga.name"""), {"gv": act.get("tiger_cb")})).mappings().all()
+            WHERE l.status = 'published'
+            GROUP BY l.market, pl.cbsa_geoid, ga.centroid
+            ORDER BY l.market"""), {"gv": act.get("tiger_cb")})).mappings().all()
     return JSONResponse([
-        {"cbsa_geoid": r["cbsa_geoid"], "name": short_market_name(r["name"]), "center": [round(r["lat"], 2), round(r["lng"], 2)], "zoom": 10}
+        {"cbsa_geoid": r["cbsa_geoid"], "name": r["name"], "center": [round(r["lat"], 2), round(r["lng"], 2)], "zoom": 10}
         for r in rows
     ])
 

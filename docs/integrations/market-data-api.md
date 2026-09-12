@@ -199,9 +199,12 @@ materialised by the nightly job, once per vintage.
 [ { "cbsa_geoid": "12420", "name": "Austin, TX", "center": [30.31, -97.75], "zoom": 10 } ]
 ```
 
-One row per CBSA that has at least one **published** listing (`listing.status = 'published'`),
-named with the design's short form (`short_market_name`: `"Austin-Round Rock-San Marcos, TX Metro
-Area"` → `"Austin, TX"`).
+One row per **listing market key** (`listing.market`, the design's dropdown key, e.g. `"Austin,
+TX"`) per CBSA that holds at least one **published** listing with a geocoded point
+(`practice_location.cbsa_geoid`, found by the practice's own coordinates — never a name heuristic
+over the CBSA's official name). Two listing market keys inside one CBSA are two rows (example:
+`"Sacramento, CA"` and `"South Lake Tahoe, CA"`, both CBSA `40900`). A published listing whose
+point lies outside every CBSA has no row here, and therefore no shading.
 
 ## `GET /api/markets/{cbsa}/communities?band=place|drive_10|drive_20` (default `place`)
 

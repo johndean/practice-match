@@ -81,13 +81,6 @@ def materialized(conn, world):  # noqa: F811  (`world` the fixture, by name)
     return world
 
 
-def test_short_market_name():
-    from app.api.market import short_market_name
-
-    assert short_market_name("Austin-Round Rock-San Marcos, TX Metro Area") == "Austin, TX"
-    assert short_market_name("Sacramento-Roseville-Folsom, CA Metro Area") == "Sacramento, CA"
-
-
 async def test_market_endpoints_require_a_member_unless_public(client, materialized, member, monkeypatch):
     paths = ("/api/layers", "/api/markets", "/api/markets/12420/communities", f"/api/listings/{materialized}/market")
     for path in paths:
@@ -132,8 +125,87 @@ async def test_layers_come_from_the_registry_with_three_valued_state_and_caveats
 
 
 async def test_markets_lists_cbsas_with_published_listings(client, materialized, H):
+    # Task CK: the catalogue names each row with the LISTING's own `market` column, never a
+    # heuristic over the CBSA's official name. `materialized` builds on `world`, whose listing is
+    # `make_listing`'s DEFAULT city/state ("Cedar Park", "TX") -- so its real market key is
+    # "Cedar Park, TX", not "Austin, TX" (the pre-fix route's `short_market_name` over the CBSA's
+    # own name, "Austin-Round Rock-San Marcos, TX Metro Area"). The CBSA and its centre are
+    # unchanged; only the label the pre-fix route invented is gone.
     r = await client.get("/api/markets", headers=H)
-    assert r.json() == [{"cbsa_geoid": "12420", "name": "Austin, TX", "center": [30.31, -97.75], "zoom": 10}]
+    assert r.json() == [{"cbsa_geoid": "12420", "name": "Cedar Park, TX", "center": [30.31, -97.75], "zoom": 10}]
+
+
+async def test_markets_names_a_metro_by_the_listings_own_market_key_not_the_cbsa_name(client, materialized, conn, H):
+    """QA evidence #1 (2026-09-12 03:38Z): New York's CBSA official name is "New York-Newark-
+    Jersey City, NY-NJ", but the design's dropdown -- and the listing's own `market` column --
+    reads "New York, NY". The pre-fix route's `short_market_name(ga.name)` heuristic produced the
+    former, which never equals the latter, so `boundaries()`'s `rows.find((m) => m.name ===
+    marketName)` always missed and no boundary request was ever made for New York."""
+    from tests.census.listing_fixtures import make_listing
+
+    lid = make_listing(conn, city="New York", state="NY")
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, geom, centroid) VALUES "
+            "('35620','310','2023','New York-Newark-Jersey City, NY-NJ', "
+            "ST_Multi(ST_GeomFromText('POLYGON((-75 40,-73 40,-73 41,-75 41,-75 40))',4269)), "
+            "ST_Point(-74.02,40.72,4269))"
+        )
+        cur.execute(
+            "INSERT INTO practice_location (listing_id, address_hash, geo_precision, geocoded_at, geocoder_vintage, cbsa_geoid) "
+            "VALUES (%s, 'h', 'rooftop', now(), 'Current_Current', '35620')",
+            (lid,),
+        )
+    rows = (await client.get("/api/markets", headers=H)).json()
+    assert {"cbsa_geoid": "35620", "name": "New York, NY", "center": [40.72, -74.02], "zoom": 10} in rows
+    assert not any("NY-NJ" in r["name"] for r in rows)
+
+
+async def test_markets_serves_one_row_per_market_key_when_two_keys_share_a_cbsa(client, materialized, conn, H):
+    """QA evidence #2: CBSA 42200 is "Santa Maria-Santa Barbara"; the design lists both cities as
+    separate markets. Modelled here on the same shape with Sacramento/South Lake Tahoe (CBSA
+    40900, per the brief) so the fixture geo_area row is realistic: two listing market keys, one
+    CBSA, must serve as TWO rows -- one per key -- never collapsed into one by a `SELECT DISTINCT`
+    over the CBSA's own name and centroid."""
+    from tests.census.listing_fixtures import make_listing
+
+    l1 = make_listing(conn, city="Sacramento", state="CA")
+    l2 = make_listing(conn, city="South Lake Tahoe", state="CA")
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, geom, centroid) VALUES "
+            "('40900','310','2023','Sacramento-Roseville-Folsom, CA Metro Area', "
+            "ST_Multi(ST_GeomFromText('POLYGON((-122 38,-121 38,-121 39,-122 39,-122 38))',4269)), "
+            "ST_Point(-121.49,38.58,4269))"
+        )
+        cur.executemany(
+            "INSERT INTO practice_location (listing_id, address_hash, geo_precision, geocoded_at, geocoder_vintage, cbsa_geoid) "
+            "VALUES (%s, 'h', 'rooftop', now(), 'Current_Current', '40900')",
+            [(l1,), (l2,)],
+        )
+    rows = (await client.get("/api/markets", headers=H)).json()
+    named = {r["name"]: r["cbsa_geoid"] for r in rows}
+    assert named.get("Sacramento, CA") == "40900"
+    assert named.get("South Lake Tahoe, CA") == "40900"
+    pairs = [(r["name"], r["cbsa_geoid"]) for r in rows]
+    assert len(pairs) == len(set(pairs))  # no duplicate (name, cbsa_geoid) pair
+
+
+async def test_markets_omits_a_published_listing_whose_point_is_in_no_cbsa(client, materialized, conn, H):
+    """QA evidence #3's mirror: a published listing whose geocode never resolved a CBSA
+    (`practice_location.cbsa_geoid IS NULL`) must never appear in the catalogue at all -- stated
+    behaviour (docs/integrations/market-data-api.md), not a silent fallback to some default."""
+    from tests.census.listing_fixtures import make_listing
+
+    lid = make_listing(conn, city="Nowhere", state="MT")
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO practice_location (listing_id, address_hash, geo_precision, geocoded_at, geocoder_vintage) "
+            "VALUES (%s, 'h', 'rooftop', now(), 'Current_Current')",
+            (lid,),
+        )
+    rows = (await client.get("/api/markets", headers=H)).json()
+    assert not any(r["name"] == "Nowhere, MT" for r in rows)
 
 
 async def test_communities_default_to_place_band_with_fixture_fields_and_competition(client, materialized, H):
