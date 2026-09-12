@@ -76,13 +76,20 @@ async def test_signin_sets_cookies_and_me_returns_the_design_shape(client, membe
                   "state": "active", "roles": ["buyer"], "affiliation_label": "StartUp Club"}
 
 
+@pytest.mark.timing
 async def test_signin_failures_are_generic_for_wrong_unknown_suspended_and_revoked(client, member):
     """One warm-up request, then FIVE samples per case compared as medians (fix round 2, NEW-5).
 
     The brief compared the single-shot min and max of four samples, and the first sample is always
     the outlier — a warm-up cost, not unequal work, so widening the tolerance would only hide it.
     Six concurrent runs of the old shape failed six times, every one with the same signature: first
-    ~230-280 ms, the other three within ~17 ms of each other. The tolerance is unchanged."""
+    ~230-280 ms, the other three within ~17 ms of each other. The tolerance is unchanged.
+
+    Task CI-TIMING fix round 1: `@pytest.mark.timing` — this is the structurally-identical fourth
+    auth test the RED-first predicate always found (looser tolerance, 100 ms of pairwise median
+    spread; declared `NOT_YET_SERIALISED` in round 0), which fix round 1's ruling folds into the
+    marked class along with the other eight the round 0 report undercounted (fourteen, not
+    thirteen)."""
     member(("buyer",), state="suspended", email="s@example.org"); member(("buyer",), state="revoked", email="r@example.org")
     await client.post("/api/auth/signin", json={"email": "warm-up@example.org", "password": PW})   # discarded
     bodies, medians = set(), []

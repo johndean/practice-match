@@ -193,7 +193,11 @@ def test_the_e2e_launcher_is_in_both_gates_a_module_of_its_shape_lives_in():
     `scripts/`). So every non-test module under `tests/e2e/` is named in the strict mypy line, and
     `--cov=tests/e2e` is in the backend gate wherever the gate is spelled as a rule — CI, CLAUDE.md's
     Common operations, and the seller lifecycle plan's policy line and gate tables. Derived from the
-    directory, not from a list, for the reason the `scripts/` pin gives."""
+    directory, not from a list, for the reason the `scripts/` pin gives.
+
+    Task CI-TIMING fix round 1: the seller plan's two pinned spots (the policy line and the gate
+    tables) now show the gate's two steps — `gate_step1`/`gate_step2` below — rather than the one
+    invocation the round-0 pin checked; `tests/test_timing_marker.py`'s docstring records why."""
     modules = sorted(p.name for p in (ROOT / "tests" / "e2e").glob("*.py")
                      if p.name != "__init__.py" and not p.name.startswith("test_"))
     assert modules, "tests/e2e/ carries no launcher module to gate"
@@ -206,12 +210,15 @@ def test_the_e2e_launcher_is_in_both_gates_a_module_of_its_shape_lives_in():
     claude_gate = next(line for line in (ROOT / "CLAUDE.md").read_text().splitlines() if "--cov=app" in line)
     assert "--cov=tests/e2e" in claude_gate, "CLAUDE.md's backend gate line does not measure tests/e2e"
     plan = (ROOT / "docs" / "superpowers" / "plans" / "2026-09-08-seller-listing-lifecycle.md").read_text()
-    gate = "--cov=app --cov=scripts --cov-branch --cov=tests/e2e --cov-fail-under=100"
+    gate_step1 = '--cov=app --cov=scripts --cov-branch --cov=tests/e2e -m "not timing"'
+    gate_step2 = "-m timing -p no:randomly --cov-append --cov-report=xml --cov-fail-under=100"
     policy_line = next(line for line in plan.splitlines() if line.startswith("- **(a) 100 % lines AND branches, backend.**"))
-    assert gate in policy_line, "the seller plan's policy line (a) does not measure tests/e2e"
+    assert gate_step1 in policy_line and gate_step2 in policy_line, "the seller plan's policy line (a) does not state the gate's two steps"
     table_rows = [line for line in plan.splitlines() if line.startswith("|") and "100 % backend" in line]
     assert table_rows, "the seller plan's gate tables no longer carry a '100 % backend' row"
-    assert all(gate in row for row in table_rows), [row[:80] for row in table_rows if gate not in row]
+    assert all(gate_step1 in row and gate_step2 in row for row in table_rows), [
+        row[:100] for row in table_rows if gate_step1 not in row or gate_step2 not in row
+    ]
 
 
 def test_no_test_under_tests_spawns_node():
@@ -731,6 +738,22 @@ def test_claude_md_local_backend_gate_is_the_one_ci_runs():
     for doc, text in (("CLAUDE.md", claude), ("quality.yml", workflow), ("the quality policy", policy)):
         assert "--cov-fail-under=100" in text, doc
         assert "--cov-fail-under=90" not in text, f"{doc} still carries the old 90 % threshold"
+
+
+def test_quality_policy_records_the_timing_split_as_a_dated_note():
+    """Task CI-TIMING fix round 1 (John's ruling): the policy's "Backend tests" row is a RULED
+    paragraph (P14, 2026-09-07's 100 % raise) and stays byte-identical rather than being silently
+    rewritten — the split is recorded as an appended, dated note instead, so a reader sees both what
+    was ruled and what changed since. This pins that the note exists and actually states the two
+    real invocations, not just a date."""
+    policy = (ROOT / "docs" / "superpowers" / "specs" / "2026-09-05-quality-and-performance-policy.md").read_text()
+    assert "**Task CI-TIMING (2026-09-12).**" in policy, "the dated note is missing"
+    assert 'poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e -m "not timing"' in policy
+    assert ("poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e "
+            "-m timing -p no:randomly --cov-append --cov-report=xml --cov-fail-under=100") in policy
+    # The original ruled row itself must survive untouched beside the note — this is an ADDITION.
+    assert ("`poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov-report=xml "
+            "--cov-fail-under=100`") in policy, "the original P14 row was rewritten, not appended beside"
 
 
 # The four sub-project plans whose policy-summary line quoted the backend CI gate. P14 raised

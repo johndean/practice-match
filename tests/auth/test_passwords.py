@@ -291,7 +291,11 @@ def test_pwned_check_warns_and_uses_the_bundled_list_when_hibp_is_disabled(monke
     assert all("password" not in r.getMessage() for r in warnings)      # never the password itself
 
 
+@pytest.mark.timing
 def test_argon2id_parameters_hash_verify_rehash_and_cost():
+    # Task CI-TIMING fix round 1: `@pytest.mark.timing` — a real, if generous, wall-clock ceiling
+    # (250 ms) on a single Argon2id verify; folded into the marked class rather than left an
+    # acknowledged gap.
     h = P.hash_password("orbit-lantern-quiet-42")
     assert h.startswith("$argon2id$v=19$m=65536,t=3,p=1$")
     assert P.verify("orbit-lantern-quiet-42", h) and not P.verify("nope", h)

@@ -163,8 +163,13 @@ async def _samples(client, path: str, n: int = 50) -> list[float]:
     return samples
 
 
+@pytest.mark.timing
 @pytest.mark.parametrize("path, budget", sorted(BUDGET_MS.items()))
 async def test_p95_within_budget(client, signed_in, staff, path, budget):
+    # Task CI-TIMING fix round 1: `@pytest.mark.timing` — one of the six parametrised cases here
+    # (`/api/healthz-20`) is what the round 0 brief itself already knew had flaked once; the RED-
+    # first predicate found the whole function is the same `gate_p95` shape as the four round 0
+    # named outright, and round 1's ruling folds all eight into the marked class together.
     # `signed_in` is taken as an ordinary parameter, not resolved lazily through
     # `request.getfixturevalue`: pytest-asyncio cannot set an ASYNC fixture up from inside a running
     # event loop ("Runner.run() cannot be called from a running event loop"). `staff` (Task I9a) is
@@ -183,11 +188,15 @@ async def test_p95_within_budget(client, signed_in, staff, path, budget):
     await gate_p95(measure, budget, label=path)
 
 
+@pytest.mark.timing
 async def test_anonymous_well_formed_bearer_p95_within_budget(client, db_ready):
     """I3 fix round 2 refuses a MALFORMED bearer on shape alone, before Postgres. A WELL-FORMED one
     (`pm_<uuid>.<secret>`) that names no token still costs one un-pooled psycopg2 connect per
     request on every guarded route — `app.db.sync_conn()` opens a fresh connection, there is no
-    sync pool — and this is what pins that cost. The answer is the generic 401."""
+    sync pool — and this is what pins that cost. The answer is the generic 401.
+
+    Task CI-TIMING fix round 1: `@pytest.mark.timing` — same `gate_p95` shape as the rest of this
+    family, folded into the marked class in the same ruling."""
     bearer = {"Authorization": f"Bearer pm_{uuid.uuid4()}.{'x' * 43}"}
 
     async def measure() -> list[float]:
@@ -203,9 +212,14 @@ async def test_anonymous_well_formed_bearer_p95_within_budget(client, db_ready):
     await gate_p95(measure, BEARER_BUDGET_MS, label="anonymous well-formed bearer")
 
 
+@pytest.mark.timing
 async def test_signin_p95_under_300ms(client, db_ready):
     """Spec §3. One Argon2id verify (64 MiB, t=3) dominates; the session write and the principal
     cache are the rest.
+
+    Task CI-TIMING fix round 1: `@pytest.mark.timing` — this one failed outright in round 0's own
+    baseline run (first p95 307.6 ms, re-measured 353.9 ms, both over the 300 ms budget); folded
+    into the marked class rather than left an acknowledged gap.
 
     ELEVEN samples, the first discarded, through `p95_of` (fix round 2's NEW-2, actually applied in
     round 3 — see the report). Two things were wrong with the old shape, and both are visible in a
@@ -241,12 +255,16 @@ async def test_signin_p95_under_300ms(client, db_ready):
         _sql("DELETE FROM account WHERE email=%s", (email,))
 
 
+@pytest.mark.timing
 async def test_signup_p95_within_budget(client, db_ready, monkeypatch):
     """One Argon2id hash, one INSERT, one token row, one outbox row. Every request carries a fresh
     client address and a fresh email so neither `limits.SIGNUP_IP` (5/hour) nor `SIGNUP_EMAIL`
     (3/day) can turn a sample into a 429. The HIBP screen is switched to its bundled offline list:
     a 2 s-timeout call to a third party is not a budget this suite can hold, and what is being
-    measured is the app's own work."""
+    measured is the app's own work.
+
+    Task CI-TIMING fix round 1: `@pytest.mark.timing` — same `gate_p95` shape as the rest of this
+    family, folded into the marked class in the same ruling."""
     monkeypatch.setattr(settings, "hibp_enabled", False)
     tag = uuid.uuid4().hex[:8]
     try:
@@ -268,9 +286,14 @@ async def test_signup_p95_within_budget(client, db_ready, monkeypatch):
 
 
 # POST budgets live here as their own tests; BUDGET_MS (GET) is what Census B5 / Map M3-M4 extend (M7 ruling).
+@pytest.mark.timing
 async def test_interest_stored_path_p95_within_budget(client, db_ready):
     """Spec 2026-09-06 §3: the full path — validation, three Redis counters, one INSERT — at p95 ≤ 100 ms.
     Every request carries a fresh client IP and a fresh address so no rate limit trips; rows are removed after.
+
+    Task CI-TIMING fix round 1: `@pytest.mark.timing` — this docstring already records its own
+    prior flake on a shared runner (below); folded into the marked class rather than left an
+    acknowledged gap.
 
     THREE warm-up requests, none of them measured (2026-09-07). One was not enough, and for the same
     reason the sign-in gate needed the same correction in fix round 3: the autouse `_dispose_pools`
@@ -367,10 +390,14 @@ async def test_no_connection_is_held_across_the_argon2id_hop(client, db_ready, m
 LISTINGS_BUDGET_MS = {"list": 100, "one": 100, "photo": 150}
 
 
+@pytest.mark.timing
 async def test_listings_p95_within_budget(origin_client, conn, redis, member):
     """The three listing reads against the real eighteen — the seeder, the endpoint, the committed
     photographs. `conn` points `settings.database_url` at a scratch database, so this neither reads
-    nor writes the shared dev one."""
+    nor writes the shared dev one.
+
+    Task CI-TIMING fix round 1: `@pytest.mark.timing` — same `gate_p95` shape as the rest of this
+    family, folded into the marked class in the same ruling."""
     from scripts import seed_listings as SL
     from tests.api.conftest import auth_headers
 
@@ -412,12 +439,16 @@ async def test_listings_p95_within_budget(origin_client, conn, redis, member):
 MARKET_BUDGET_MS = {"layers": 100, "markets": 100, "communities": 150, "panel": 150}
 
 
+@pytest.mark.timing
 async def test_market_api_p95_within_budget(origin_client, conn, redis, member, world):  # noqa: F811  (`world` the fixture, by name)
     """The four member-gated market reads (Task B5) against one real, materialised listing. `conn`
     points `settings.database_url` at a scratch database, so this neither reads nor writes the
     shared dev one, exactly as `test_listings_p95_within_budget` above; `world` (imported from
     `tests.census.test_materialize`) is the same seeded-listing fixture Task B5's own test suite
-    builds on, so the shape of the data behind these numbers is not invented for this file."""
+    builds on, so the shape of the data behind these numbers is not invented for this file.
+
+    Task CI-TIMING fix round 1: `@pytest.mark.timing` — same `gate_p95` shape as the rest of this
+    family, folded into the marked class in the same ruling."""
     from app.cache import sync_redis
     from app.census import materialize
     from tests.api.conftest import auth_headers

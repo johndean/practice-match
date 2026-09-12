@@ -29,6 +29,23 @@ Target shape — roughly **70 % unit · 20 % integration · 10 % end-to-end** by
 | Secrets | `gitleaks detect` | 0 findings |
 | Deploy | `scripts/verify-deploy.sh <ENV>` then the smoke project against the live host | must pass before promotion; a failure on production triggers the DEPLOY.md rollback (redeploy the previous image tag) |
 
+**Task CI-TIMING (2026-09-12).** The Backend tests row above is unchanged as a RULE — the same
+coverage, the same 100 % threshold — but the ONE `poetry run pytest` invocation it names now runs
+in two steps, not one: real wall-clock budget tests (three constant-time auth checks and eleven
+p95 latency gates, `@pytest.mark.timing`, registered in `pyproject.toml`) measured the loaded
+developer machine rather than the code when scheduled beside CPU-heavy neighbours, so they are
+pulled out of the normal run and into a second, serial, LAST step, their coverage appended onto
+the first step's so `--cov-fail-under=100` still reads one combined report:
+
+```
+poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e -m "not timing"
+poetry run pytest -q -W error --cov=app --cov=scripts --cov-branch --cov=tests/e2e -m timing -p no:randomly --cov-append --cov-report=xml --cov-fail-under=100
+```
+
+Neither budget is widened or skipped; only WHEN they run moves. `tests/test_timing_marker.py` is
+the RED-first proof that every test asserting a real wall-clock budget carries the marker, checked
+against the whole suite rather than a hand-typed list of names.
+
 ## 3. "Always fast" — performance budgets, enforced
 
 | Budget | Test | Threshold |
