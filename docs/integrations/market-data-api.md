@@ -35,7 +35,7 @@ this is not a bug to route around, it is the same launch gate the rest of the ap
 account holding `buyer`/`seller`/`staff`/`admin`, or an `api_token` carrying one of those roles.
 `MARKET_DATA_PUBLIC=true` does **not** remove the `Depends(require("market.read"))` on any route —
 it widens who satisfies it: `app.auth.permissions.allowed` additionally grants `market.read` to
-`anonymous` while the flag is set (spec §15; Task I9a). The five `market.py` routes resolve this
+`anonymous` while the flag is set (spec §15; Task I9a). The six `market.py` routes resolve this
 dependency **once, at import time**, into a module-level constant (`REQUIRE_MARKET_READ`) rather
 than re-wrapping it per route — `tests/auth/test_permissions.py` walks every mounted route and
 resolves its guard by object identity, so a fresh `require(...)` call per route would read as
@@ -319,7 +319,9 @@ every count** — never a `403`, because a client has to be able to draw "unavai
 drops out of `attribution` with it: nothing of that dataset is on the wire to attribute.
 
 **Bounds and caching.** No `bbox` and no `layer` parameter — this is the metro, which is the
-geography the words "metro median" name. An unknown metro is `404 NOT_FOUND` in decision A5's
+geography the card's caption names ("median of 503 Census tracts"; the word "metro" left that
+caption in Task SNAP fix round 1, because the Census publishes a metro median of its own at
+summary level 310 and this figure is not it). An unknown metro is `404 NOT_FOUND` in decision A5's
 envelope. The answer is cached for `SUMMARY_TTL = 86400` seconds under a key carrying the boundary
 vintage, **every value dataset's active vintage** (one body carries four of them, so a key naming
 only the ACS vintage would serve a stale ZIP Business Patterns card for a day), `gate.version()`

@@ -37,6 +37,33 @@ def test_contract_doc_names_every_market_and_admin_route():
         assert path in text, path
 
 
+def test_contract_doc_counts_the_market_routes_it_describes():
+    """Fix round 1, Minor 4 (2026-09-13). The permission-model paragraph said "The five `market.py`
+    routes resolve this dependency once, at import time" while `market.py` mounts SIX — Task SNAP
+    added `/summary` and the sentence was not counted. It had drifted before (the route table above
+    is checked path by path and this sentence is not), so it is pinned rather than corrected a
+    second time.
+
+    The number is read off the MODULE, never typed here: the doc's own spelled-out word must be the
+    word for however many `@router.get` decorators `app/api/market.py` carries. The source is read
+    as text rather than counted off `market.router.routes` deliberately — the sentence is about
+    what is WRITTEN in that file, and a route mounted from elsewhere onto the same router would
+    make the router's count right and the sentence's still wrong."""
+    from app.api import market
+
+    words = ["no", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"]
+    source = Path(market.__file__).read_text(encoding="utf-8")
+    mounted = len(re.findall(r"^@router\.get\(", source, re.MULTILINE))
+    assert mounted, "no @router.get found in app/api/market.py — the pattern has drifted"
+    assert mounted < len(words), f"no spelled-out word on hand for {mounted} routes"
+    stated = re.search(r"The (\w+) `market\.py` routes resolve", DOC.read_text(encoding="utf-8"))
+    assert stated, "the permission-model paragraph no longer states a route count this test can read"
+    assert stated.group(1).lower() == words[mounted], (
+        f"the contract doc says '{stated.group(1)} `market.py` routes'; the module mounts "
+        f"{mounted} ('{words[mounted]}')"
+    )
+
+
 def test_contract_doc_carries_the_fixture_field_names_and_the_vintage_statement():
     text = DOC.read_text(encoding="utf-8")
     for field in ("pop", "hh", "income", "growth", "pets", "econ", "vets"):
