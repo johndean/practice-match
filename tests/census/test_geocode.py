@@ -527,3 +527,26 @@ def test_practices_resolve_in_states_across_the_country_including_one_in_no_cbsa
     with conn.cursor() as cur:   # the premise of the Montana case, asserted rather than assumed
         cur.execute("SELECT count(*) FROM geo_area WHERE summary_level = '310'")
         assert cur.fetchone()[0] == 0, "no CBSA was seeded, so none of these practices is in a metro"
+
+
+def test_a_territory_skips_the_place_rung_because_states_py_deliberately_excludes_it(conn) -> None:
+    """`STATE_FIPS` covers the fifty states and DC and NOTHING else, so `state_fips` is `None` for
+    Puerto Rico and the place rung is skipped for it exactly as it used to be skipped for
+    forty-five real states. That exclusion is a DATA decision recorded in `app/census/states.py`:
+    the ACS 5-year detailed tables do not publish `B19013_001E` for the island areas on the same
+    `state:*` geography, and TIGER publishes their tract files under separate vintages -- so a
+    territory would resolve to a geography carrying no figure.
+
+    Discriminating in the way A-C18 ruling 4 asked for, and for the same reason it gave: a null
+    `state_fips` makes `state_fips = %s` fail identically with the guard deleted (SQL `NULL = NULL`
+    is never true), so asserting only `GeocodeFailed` could not tell a real guard from no guard.
+    The recording connection proves the place query's own SQL text never executes."""
+    _seed_geo(conn)
+    for territory in ("PR", "VI", "GU"):
+        lid = make_listing(conn, zip="00000", city="Cedar Park", state=territory)
+        rec = _RecordingConn(conn)
+        with pytest.raises(geocode.GeocodeFailed):
+            geocode.resolve(rec, _geocoder(NOMATCH), lid)
+        assert geocode.STATE_FIPS.get(territory) is None, f"{territory} must not be in the state table"
+        assert not any("summary_level = '160'" in q for q in rec.executed), territory
+        assert any("summary_level = '860'" in q for q in rec.executed), territory  # the zcta rung DID run
