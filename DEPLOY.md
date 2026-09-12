@@ -525,8 +525,19 @@ means the first enqueue is still in flight and there is nothing to do, but if th
 has no pin after ten minutes** the first task failed and the dedupe is now the only reason a
 re-publish does not retry — **re-run `census_load.py geocode`** (the plain form, with no flags: it
 selects exactly the listings that have no `practice_location` row, so it retries the failures and
-touches nothing else), and read the worker log for the reason it failed the first time. The one
-thing that re-arms the trigger early is an address edit: when a seller **changes the city or the ZIP** at
+touches nothing else), and read the worker log for the reason it failed the first time.
+
+There is a second signature, with a different command behind it: **pin present but no card** — the
+listing has a location and `lat`/`lng` on Browse, but its Community Context reads "Community data
+unavailable" and `GET /api/listings/{id}/market` 404s. That is a geocode that succeeded and a
+BACKFILL that did not, and `census_load.py geocode` will not retry it, because that listing is not
+pinless any more. Run **`census_load.py materialize --listing <id>`** (and, if
+`practice_catchment` is empty for it too, the plain `census_load.py materialize`, which rebuilds
+every geocoded listing). A listing whose ZIP centroid lies in no place at all is NOT this case: it
+is the unincorporated one described above, it is correct, and materialising it again will not
+change it.
+
+The one thing that re-arms the trigger early is an address edit: when a seller **changes the city or the ZIP** at
 step 2 of the wizard, the listing's `practice_location` row is deleted in the same transaction and
 the dedupe key is dropped, so the very next publish resolves the new address. Everything else
 about the listing — a new price, a new photograph, a disclosure switch — leaves the geography

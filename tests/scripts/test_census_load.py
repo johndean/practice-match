@@ -1490,6 +1490,54 @@ def test_cmd_geocode_resolves_listing_with_no_practice_location_row(scratch_dsn,
     assert "1 listing(s) geocoded" in out
 
 
+def test_cmd_geocode_drops_the_browse_list_cache_once_after_its_loop(scratch_dsn, redis, monkeypatch, capsys):
+    """Fix round 2, Moderate 2. `resolve()` no longer drops the Browse list cache itself — a
+    network call between two committed point columns and the backfill that turns them into figures
+    is a place a Redis blip costs a listing its market card. Its two callers do it instead, each
+    after the rest of its own work: the Celery task after it enqueues the backfill, and this
+    command ONCE after its loop rather than once per listing.
+
+    A pass over hundreds of listings has no reason to flush a handful of 60 s keys hundreds of
+    times; `test_cmd_geocode_skips_listing_with_practice_location_row` covers the other arm, where
+    nothing was geocoded and the idempotent re-run stays a read."""
+    from app.census import geocode as census_geocode
+    from tests.census.listing_fixtures import make_listing
+
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    conn = census_load._conn(scratch_dsn)
+    try:
+        lid = make_listing(conn)
+        with conn.cursor() as cur:
+            cur.execute(
+                """INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, county_fips, parent_geo_id, geom, centroid) VALUES
+                     ('48491020355','140','2023','Census Tract 203.55','48','491','48491',
+                      ST_Multi(ST_GeomFromText('POLYGON((-97.9 30.5,-97.7 30.5,-97.7 30.6,-97.9 30.6,-97.9 30.5))',4269)),
+                      ST_SetSRID(ST_MakePoint(-97.8,30.55),4269))"""
+            )
+            cur.executemany(
+                "INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES (%s, %s, now(), %s)",
+                [("tiger_cb", "2023", "test"), ("acs5", "2019\u20132023", "test")],
+            )
+    finally:
+        conn.close()
+
+    def _mock_resolve(conn, gc, listing_id):
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO practice_location (listing_id, address_hash, point, tract_geoid, geo_precision,"
+                " geocoded_at, geocoder_vintage) VALUES (%s, 'h', ST_SetSRID(ST_MakePoint(-97.8, 30.55), 4269),"
+                " '48491020355', 'rooftop', now(), 'Current_Current')", (listing_id,))
+        return census_geocode.Location(listing_id, "rooftop", 30.55, -97.8, "48491020355", None, None, None, None)
+
+    monkeypatch.setattr(census_geocode, "resolve", _mock_resolve)
+    redis.set("listings:v1:::50", b"stale page")
+
+    assert census_load.main(["geocode", "--listing", lid]) == 0
+
+    assert redis.get("listings:v1:::50") is None
+    assert "1 listing(s) geocoded" in capsys.readouterr().out
+
+
 def test_cmd_geocode_skips_listing_with_practice_location_row(scratch_dsn, monkeypatch, capsys):
     """Task B9, case (b): a listing that already has a practice_location row is SKIPPED and
     the output says so."""

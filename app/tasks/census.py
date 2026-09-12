@@ -346,6 +346,17 @@ def geocode_listing(listing_id: str) -> dict[str, object]:
             gc = geocode.Geocoder(http, "https://geocoding.geo.census.gov/geocoder", ua)
             loc = geocode.resolve(conn, gc, listing_id)
         celery_app.send_task("census.backfill_listing", args=[listing_id])
+        # AFTER the enqueue, and last (fix round 2). `GET /api/listings` caches a page for 60 s
+        # and the PUBLISH that queued this task dropped that cache before the point existed, so a
+        # buyer who loaded Browse in between would be served a pinless card for the rest of the
+        # TTL; this drops it again now the pin is real. It is LAST because the ordering is what
+        # bounds its failure: `resolve` has committed both point columns and the backfill is
+        # queued, so a Redis blip here costs one stale page and nothing else. With the drop
+        # BEFORE the `send_task` (fix round 1, inside `resolve`) the same blip left a committed
+        # pin, no backfill, no retry, and a republish that would not re-trigger because
+        # `has_geocode()` is already true.
+        from app.cache import drop_list_cache, sync_redis
+        drop_list_cache(sync_redis())
         return {"listing_id": listing_id, "precision": loc.geo_precision}
     finally:
         conn.close()

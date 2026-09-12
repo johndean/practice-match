@@ -2520,3 +2520,8 @@ def test_deploy_md_says_what_the_publish_trigger_does_and_does_not_cover():
     # Review minor 5: what to DO when a listing is still pinless, named as a command.
     assert "still has no pin after ten minutes" in flat
     assert "re-run `census_load.py geocode`" in flat
+    # Fix round 2: the SECOND signature, which the first recovery sentence could not name because
+    # the failure it describes could not happen yet. A pin with no card is a backfill that never
+    # ran, and `geocode` will not retry it — that listing HAS a location.
+    assert "pin present but no card" in flat
+    assert "`census_load.py materialize --listing <id>`" in flat

@@ -638,23 +638,6 @@ def test_a_resolve_that_finds_no_coordinate_leaves_an_existing_pin_alone(conn):
     assert _pin(conn, lid) == (-97.75, 30.51), "a resolve with no coordinate must not blank the pin"
 
 
-def test_resolve_drops_the_browse_list_cache_so_a_new_pin_is_visible_at_once(conn, redis):
-    """Review minor 6. `GET /api/listings` caches its page under `listings:v1:*` for 60 s, and the
-    publish that enqueues the geocode drops that cache BEFORE the worker has written the pin — so
-    a buyer who loaded Browse in between would see the new listing pinless for up to a minute,
-    which is exactly the defect GEO-WIRE exists to remove, merely shortened.
-
-    The worker drops it again when the pin lands. Through `app.cache`, never by importing the API:
-    nothing under `app/census/` may depend on a route module."""
-    _seed_geo(conn)
-    lid = make_listing(conn)
-    redis.set("listings:v1:::50", b"stale page")
-
-    geocode.resolve(conn, _geocoder(MATCH), lid)
-
-    assert redis.get("listings:v1:::50") is None
-
-
 def test_the_pin_and_the_practice_location_point_are_the_same_place(conn):
     """Review minor 7. `practice_location.point` is `geometry(Point,4269)` (NAD83) and
     `listing.geom` is `geography(Point,4326)` (WGS84), and the two used to be built by two
@@ -804,3 +787,102 @@ def test_the_place_rung_resolves_the_county_and_cbsa_its_own_centroid_lies_in(co
     assert loc.geo_precision == "place" and loc.place_geoid == "4813552"
     assert loc.county_geoid == "48491"
     assert loc.cbsa_geoid == "12420"
+
+
+# ---- fix round 2, Moderate 2: the cache drop belongs to the task, after the backfill enqueue ----
+
+
+def test_resolve_is_a_pure_postgis_write_and_never_reaches_redis(conn):
+    """Fix round 2, Moderate 2. Fix round 1 put `drop_list_cache(sync_redis())` INSIDE `resolve()`,
+    which put a network call between two committed point columns and the backfill that turns them
+    into figures: `resolve` runs to completion (autocommit, so both writes are durable), the drop
+    raises on a Redis blip, `geocode_listing` never reaches its `send_task`, and a later republish
+    sees `has_geocode() == True` and does not re-trigger. The listing keeps a pin and NO market
+    card, silently and permanently — GEO-WIRE's own defect, wearing the fix for a smaller one.
+
+    `resolve` is a PostGIS write and nothing else again. `app.cache` is not imported by
+    `app/census/geocode.py` at all, which is what this asserts — the ~25 direct callers in this
+    file stopped opening a real Redis connection with it."""
+    import app.census.geocode as G
+
+    assert not hasattr(G, "drop_list_cache") and not hasattr(G, "sync_redis")
+    _seed_geo(conn)
+    lid = make_listing(conn)
+
+    calls: list[str] = []
+    from app import cache as cache_module
+    original = cache_module.sync_redis
+    try:
+        cache_module.sync_redis = lambda: calls.append("redis") or original()  # type: ignore[assignment]
+        geocode.resolve(conn, _geocoder(MATCH), lid)
+    finally:
+        cache_module.sync_redis = original  # type: ignore[assignment]
+    assert calls == []
+
+
+def test_the_task_drops_the_browse_cache_only_after_the_backfill_is_enqueued(conn, monkeypatch):
+    """The ORDER is the whole point: the durable work is committed, the backfill is queued, and
+    only then is a cache touched. A drop that fails after that costs a stale Browse page for the
+    rest of its 60 s TTL and nothing else — the figures are already on their way."""
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+    _seed_geo(conn)
+    lid = make_listing(conn)
+    order: list[str] = []
+
+    # Built BEFORE the patch: `_geocoder` calls `geocode.Geocoder` itself, so patching the name
+    # to a factory that calls `_geocoder` would recurse.
+    gc = _geocoder(MATCH)
+    monkeypatch.setattr(geocode, "Geocoder", lambda *a, **kw: gc)
+    monkeypatch.setattr(celery_app, "send_task", lambda name, args=None, **kw: order.append(f"enqueue:{name}"))
+    from app import cache as cache_module
+    monkeypatch.setattr(cache_module, "drop_list_cache", lambda cache: order.append("drop"))
+
+    CT.geocode_listing(lid)
+
+    assert order == ["enqueue:census.backfill_listing", "drop"]
+
+
+def test_a_failed_cache_drop_does_not_un_enqueue_the_backfill(conn, monkeypatch):
+    """The failure this whole move exists to bound. The drop raising is now the LAST thing the
+    task does, so the exception surfaces (Celery marks the task failed and a retry re-runs an
+    idempotent upsert) while the backfill is already queued — which is the difference between a
+    stale page and a listing with a pin and no figures."""
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+    _seed_geo(conn)
+    lid = make_listing(conn)
+    sent: list[str] = []
+
+    def _boom(cache):
+        raise ConnectionError("redis is having a moment")
+
+    gc = _geocoder(MATCH)
+    monkeypatch.setattr(geocode, "Geocoder", lambda *a, **kw: gc)
+    monkeypatch.setattr(celery_app, "send_task", lambda name, args=None, **kw: sent.append(name))
+    from app import cache as cache_module
+    monkeypatch.setattr(cache_module, "drop_list_cache", _boom)
+
+    with pytest.raises(ConnectionError):
+        CT.geocode_listing(lid)
+
+    assert sent == ["census.backfill_listing"]
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM practice_location WHERE listing_id=%s", (lid,))
+        assert cur.fetchone()[0] == 1, "the durable write is committed either way"
+
+
+def test_the_task_really_clears_a_planted_browse_page(conn, redis, monkeypatch):
+    """The behaviour fix round 1 pinned at `resolve` level, re-pinned where it now lives: a real
+    `listings:v1:*` key, the real `drop_list_cache`, and the task. The two tests above assert the
+    ORDER and the failure bound with a spy; this one asserts the key actually goes."""
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+    _seed_geo(conn)
+    lid = make_listing(conn)
+    redis.set("listings:v1:::50", b"stale page")
+
+    gc = _geocoder(MATCH)
+    monkeypatch.setattr(geocode, "Geocoder", lambda *a, **kw: gc)
+    monkeypatch.setattr(celery_app, "send_task", lambda *a, **kw: None)
+
+    CT.geocode_listing(lid)
+
+    assert redis.get("listings:v1:::50") is None

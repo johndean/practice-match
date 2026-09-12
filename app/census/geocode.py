@@ -94,7 +94,6 @@ from typing import cast
 import httpx
 import psycopg2.extensions
 
-from app.cache import drop_list_cache, sync_redis
 from app.census.states import FIPS_BY_ABBR
 
 #: A-C15 correction 2, widened to the nation on 2026-09-12: every state `market_state` carries,
@@ -454,11 +453,12 @@ def resolve(conn: psycopg2.extensions.connection, geocoder: Geocoder, listing_id
                 (listing_id, f"geocoder fell back to {precision}; market panel shows 'approximate community data'",
                  listing_id),
             )
-    # Review minor 6: the pin is now visible to Browse at once. `GET /api/listings` caches a page
-    # for 60 s and the PUBLISH drops that cache when the reviewer decides -- which is before this
-    # function has run, so a buyer who loaded Browse in between would have been served a card with
-    # no pin for the rest of the TTL. Dropped through `app.cache`, never by importing a route
-    # module: `app/census/` depends on no part of `app/api/`, and this is the one function both
-    # sides share.
-    drop_list_cache(sync_redis())
+    # The Browse list cache is dropped by this function's CALLERS, after they have done the rest
+    # of their work -- `app.tasks.census.geocode_listing` after it enqueues the backfill, and
+    # `scripts/census_load.py geocode` once after its loop. Fix round 1 put the drop HERE and fix
+    # round 2 took it out again: a network call between two committed point columns and the
+    # backfill that turns them into figures is a place where a Redis blip costs a listing its
+    # market card permanently (`resolve` has already committed, the caller never reaches its
+    # `send_task`, and a later republish sees `has_geocode() == True` and does not re-trigger).
+    # This function is a PostGIS write and nothing else.
     return loc

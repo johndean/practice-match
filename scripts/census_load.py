@@ -551,7 +551,7 @@ def cmd_geocode(args: argparse.Namespace) -> int:
     figures. Never touches the Census API (no key/contact gate, like `activate` and `materialize`),
     so it shares only the DATABASE_URL/unreachable/post-connect-database-error arms; it DOES need
     Redis, like `materialize`."""
-    from app.cache import sync_redis
+    from app.cache import drop_list_cache, sync_redis
     from app.census import catchment, geocode, materialize
 
     dsn = os.environ.get("DATABASE_URL")
@@ -631,6 +631,12 @@ def cmd_geocode(args: argparse.Namespace) -> int:
                         print(f"  {listing_id}: geocoding failed: {exc}", file=sys.stderr)
                         return 5
 
+        if geocoded_count:
+            # Once, after the loop, not once per listing (fix round 2): the Browse list cache is a
+            # handful of keys with a 60 s TTL, and an operator pass over hundreds of listings has
+            # no reason to flush it hundreds of times. Skipped entirely when nothing was geocoded,
+            # so the idempotent re-run this command is built for stays a read.
+            drop_list_cache(redis)
         print(f"[census_load] {geocoded_count} listing(s) geocoded")
         return 0
     except RuntimeError as exc:
