@@ -56,6 +56,22 @@ export interface BoundaryProperties {
 export interface BoundaryFeature { type: 'Feature'; id: string; properties: BoundaryProperties; geometry: unknown }
 export interface BoundaryCollection { type: 'FeatureCollection'; state: string; features: BoundaryFeature[] }
 /**
+ * One row of `GET /api/markets/{cbsa}/summary` — the METRO-WIDE distribution of one shaded layer
+ * (Task SNAP; ruling D-C50 as revised, 2026-09-12).
+ *
+ * `quantiles` is `[p10, p25, p50, p75, p90]` and `median` is that array's own middle element, so
+ * the figure a card prints and the bars drawn beside it cannot disagree; both are `null` when
+ * `with_value` is 0. `count === with_value + suppressed + no_data` always — `with_value` is NOT
+ * "how many areas this metro has", and reading it as one would caption a metro of 577 tracts
+ * "561 Census tracts".
+ */
+export interface LayerSummary {
+  layer: string; summary_level: string; geo_label: string; unit: string; state: string;
+  count: number; with_value: number; suppressed: number; no_data: number;
+  median: number | null; quantiles: number[] | null;
+  value_vintage: string | null; source_dataset: string;
+}
+/**
  * One row of `GET /api/markets`.
  *
  * `name` is LOAD-BEARING and its meaning is a cross-language contract: it is `listing.market`
@@ -78,6 +94,10 @@ export interface MarketAdapter {
    *  metro envelope, which is the pre-map boot and what the reference would get if it had an
    *  adapter at all. */
   boundaries(marketName: string, bbox?: string | null): Promise<Record<string, BoundaryCollection>>;
+  /** The whole metro's distribution of every shaded layer, keyed by layer — what the Browse
+   *  snapshot strip prints in AREA mode. NO bbox: "metro median" names the metro, and a median
+   *  over whatever is on screen would be a different number every time the member pans. */
+  summary(marketName: string): Promise<Record<string, LayerSummary>>;
   /** The ground the map has SETTLED on, as the route's `bbox`, or `null` before a map exists.
    *  The settled view and not the live one (fix round 1): this value is both the box a request
    *  carries and the token `logic.js` checks an arriving answer against, and a token that moved
@@ -176,16 +196,42 @@ export function makeMarketAdapter(fetchFn: typeof fetch = globalThis.fetch.bind(
     if (Object.keys(out).length === 0 && failure !== null) throw failure;
     return out;
   };
+  /** The metro a market name resolves to, or a rejection naming the key that could not be
+   *  resolved. Both readers below need one and neither may invent it, so the lookup — and the
+   *  message a failure carries — is written once. */
+  const metroFor = async (marketName: string): Promise<MetroRow> => {
+    const rows = await catalogue();
+    const metro = rows.find((m) => m.name === marketName);
+    if (!metro) throw new Error(`no CBSA for market ${marketName}`);
+    return metro;
+  };
   return {
     viewport() {
       const v = settled();
       return v === null ? null : bboxOf(v, PAD);
     },
     onViewport: subscribe,
+    /**
+     * Task SNAP. ONE request for all six layers, because the strip shows them together and six
+     * round trips would buy nothing but six chances to render half a card set.
+     *
+     * A refusal REJECTS rather than resolving with an empty record, which is the opposite of
+     * `collect`'s partial-answer rule one method up — and deliberately so: there, a layer's
+     * absence means that layer is not shaded and the other five still are. Here an empty record
+     * is indistinguishable from "every layer is off", and `logic.js` would print six cards with
+     * no figures over a metro that has them. A rejection leaves the strip on its own fallback and
+     * puts the route's code in the console.
+     */
+    async summary(marketName: string) {
+      const metro = await metroFor(marketName);
+      const body = await read(fetchFn, `/api/markets/${encodeURIComponent(metro.cbsa_geoid)}/summary`) as { layers?: unknown };
+      if (!Array.isArray(body?.layers)) throw new Error('the market summary answered no layers');
+      const out: Record<string, LayerSummary> = {};
+      for (const row of body.layers as LayerSummary[]) out[row.layer] = row;
+      return out;
+    },
     async boundaries(marketName: string, bbox: string | null = null) {
-      const rows = await catalogue();
-      const metro = rows.find((m) => m.name === marketName);
-      if (!metro) throw new Error(`no CBSA for market ${marketName}`);
+      const metro = await metroFor(marketName);
       try {
         return await collect(metro.cbsa_geoid, bbox, false);
       } catch (e) {
