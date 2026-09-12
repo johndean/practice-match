@@ -1,5 +1,6 @@
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { DESIGN_AREAS_LITERAL } from './design-boundary-fixture';
 
 const V3_DIR = new URL('../../docs/design-reference/design_handoff_practice_match_v3/', import.meta.url);
 export const PRISTINE = fileURLToPath(new URL('Practice Match V3.rev2.dc.html', V3_DIR));
@@ -4460,8 +4461,9 @@ const A27_8: Amendment = {
  *  D-C38 serves the area figures from, and the band `#003a70` already belongs to, so the number
  *  and the colour agree for the first time since the V3 panel rewrite.
  *
- *  The FIRST amendment in the programme's history to edit `MarketMapV3.jsx` — `file: 'jsx'`, the
- *  partition spec §9.2 put in place for A24. No visible control is added: John was offered V2's
+ *  The FIRST entry in `amendments()` order to edit `MarketMapV3.jsx` — `file: 'jsx'`, the
+ *  partition spec §9.2 put in place for A24 — and the first to LAND, because A28's branch merged
+ *  first. A24's own four jsx entries are appended after this family, not before it. No visible control is added: John was offered V2's
  *  two toggleable rings, composed into V3's own "Market data layers" drawer, and chose against
  *  it. A25.6's "no point, no ring" is untouched — the radius moves, the finite-point test that
  *  decides whether anything is drawn at all does not. */
@@ -4595,6 +4597,1093 @@ const A28_9: Amendment = {
   count: 1
 };
 
+// A24 -- real Census boundary polygons (John's rulings D-C34-D-C37 of 2026-09-10; spec
+// docs/superpowers/specs/2026-09-10-neighbourhood-shading-design.md). Eleven `.dc.html` entries and
+// four in `MarketMapV3.jsx`, the family the second-file partition was put in place for
+// (controller ruling, §14 Q3); A28.1 reached that file first, by merging first. A24.1's payload is GENERATED --
+// scripts/export_design_boundaries.py -- so the design carries real geometry and not one hand-typed
+// coordinate. A24.13 is the family's OTHER ruling, D-C46, and rides here because it moves the same
+// Browse captures.
+//
+// PUNCTUATION: measured, the pristine `.dc.html` carries only — → © · – ÷ … ≈ − ‹ › ↗ ⌂ outside
+// ASCII and the pristine `.jsx` only — – …. No `replace` below introduces a character outside
+// those sets — an apostrophe in an inserted comment is the straight one the bundle's own comments
+// use. (`±` in A24.3's tip is the one addition, and it is unreachable on the design's fixture
+// path: `areaSet` always writes `moe: null`, so no approved state can render it. It exists for the
+// API path Task 10 wires.)
+const NS = {
+  date: '2026-09-10',
+  ruling: 'the data is not to the granular level required at neighborhood level — right now it’s just a blob over the whole city and misses the entire point of what is required and the required level of detail and data per neighborhood required to make a decision to buy a practice'
+};
+
+const A24_1: Amendment = {
+  id: 'A24.1', ...NS,
+  find: '    adminTab: "users", sellerView: "dash",\n',
+  replace: '    areas: ' + DESIGN_AREAS_LITERAL + ',\n'
+    + '    adminTab: "users", sellerView: "dash",\n',
+  count: 1
+};
+
+const A24_2: Amendment = {
+  id: 'A24.2', ...NS,
+  find: 'const FILL_KEYS = ["income", "growth", "econ"];\n',
+  replace: 'const FILL_KEYS = ["income", "growth", "econ"];\n'
+    + '// A24 (D-C35): each fill layer draws at the geography its figure is honest at, and the\n'
+    + '// legend names it. `pets`, `households` and `competition` stay graduated symbols at the\n'
+    + '// listing point - city-scale class breaks on small areas produce a picture with no\n'
+    + '// information, and `households` first `< 10K` bucket would swallow essentially every one.\n'
+    + 'const AREA_LEVEL = { income: "860", growth: "160", econ: "050" };\n'
+    + 'const AREA_LABEL = { income: "ZIP Code Tabulation Area", growth: "Place (city/town)", econ: "County" };\n'
+    + '// D-NS16 (John, 2026-09-10): a polygon with no usable figure is drawn in a neutral class\n'
+    + '// and never omitted - a hole in a choropleth reads as a boundary, not as an absence. The\n'
+    + '// colour is the design\'s own --border-subtle value at the same fillOpacity every other\n'
+    + '// class uses, so this adds no style vocabulary. Grey means UNMEASURED and only that: a\n'
+    + '// figure that WAS measured but whose margin spans a band is shown with its value (D-C36).\n'
+    + 'const NO_DATA_FILL = "#e6e6e6";\n'
+    + 'const NO_DATA_LABEL = "No data";\n',
+  count: 1
+};
+
+const A24_3: Amendment = {
+  id: 'A24.3', ...NS,
+  find: '  communities() {\n',
+  replace: '  // A24 (spec 9.4): the design\'s own boundary fixture, given the design\'s own figures.\n'
+    + '  // Each polygon takes the value of the NEAREST community centroid - the one line of\n'
+    + '  // `mosaicCells` that survives ("spatial ASSIGNMENT of existing community data, not\n'
+    + '  // interpolation, and not new data"), applied to real Census boundaries instead of grid\n'
+    + '  // cells, with longitude scaled by cos(lat) exactly as the mosaic scaled it.\n'
+    + '  //\n'
+    + '  // The value is taken as it comes and is NOT put through `num()`: that helper strips\n'
+    + '  // everything but digits and a dot, so `num(-5.1)` is `5.1` - it would turn a declining\n'
+    + '  // area into a growing one. Invisible until now, because every one of the design\'s own\n'
+    + '  // nine communities grows; A24.13 (D-C46) makes a negative growth a first-class value.\n'
+    + '  areaSet(layer) {\n'
+    + '    const src = (this.state.areas || {})[AREA_LEVEL[layer]];\n'
+    + '    if (!src) return { type: "FeatureCollection", features: [] };\n'
+    + '    const comms = this.communities().filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lng));\n'
+    + '    return {\n'
+    + '      type: "FeatureCollection",\n'
+    + '      features: src.features.map((f) => {\n'
+    + '        const p = f.properties;\n'
+    + '        let best = null, bestD = Infinity;\n'
+    + '        for (let i = 0; i < comms.length; i++) {\n'
+    + '          const s = comms[i];\n'
+    + '          const dLat = s.lat - p.c[0];\n'
+    + '          const dLng = (s.lng - p.c[1]) * Math.cos((p.c[0] * Math.PI) / 180);\n'
+    + '          const d = dLat * dLat + dLng * dLng;\n'
+    + '          if (d < bestD) { bestD = d; best = s; }\n'
+    + '        }\n'
+    + '        const raw = best ? best[layer] : undefined;\n'
+    + '        return {\n'
+    + '          type: "Feature", id: p.geo_id, geometry: f.geometry,\n'
+    + '          properties: {\n'
+    + '            geo_id: p.geo_id, name: p.name,\n'
+    + '            value: (raw === undefined || raw === null) ? null : raw,\n'
+    + '            moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false\n'
+    + '          }\n'
+    + '        };\n'
+    + '      })\n'
+    + '    };\n'
+    + '  }\n'
+    + '\n'
+    + '  // The ONE door every polygon enters by, whichever side produced it (spec 2.2): the\n'
+    + '  // colour is `bucket()`s and the label is `fmtMetric()`s, so the fill and the legend\n'
+    + '  // cannot disagree. A value that is absent OR suppressed takes the no-data class; a value\n'
+    + '  // that is present takes its band even when its margin spans one (D-C36).\n'
+    + '  areaVals(fc, layer) {\n'
+    + '    const feats = (fc && fc.features) || [];\n'
+    + '    return {\n'
+    + '      type: "FeatureCollection",\n'
+    + '      features: feats.map((f) => {\n'
+    + '        const p = f.properties;\n'
+    + '        const shown = p.value !== null && p.value !== undefined && !p.suppressed;\n'
+    + '        const b = shown ? this.bucket(layer, p.value) : null;\n'
+    + '        return {\n'
+    + '          type: "Feature", id: p.geo_id, geometry: f.geometry,\n'
+    + '          properties: {\n'
+    + '            geo_id: p.geo_id, name: p.name, value: p.value, moe: p.moe,\n'
+    + '            suppressed: !!p.suppressed, suppressReason: p.suppress_reason || null,\n'
+    + '            ambiguous: !!p.band_ambiguous,\n'
+    + '            color: shown ? b.color : NO_DATA_FILL,\n'
+    + '            label: shown ? this.fmtMetric(layer, p.value) : NO_DATA_LABEL,\n'
+    + '            tip: this.areaTip(p, layer, shown)\n'
+    + '          }\n'
+    + '        };\n'
+    + '      })\n'
+    + '    };\n'
+    + '  }\n'
+    + '\n'
+    + '  // The hover tip, built ONCE. Every honesty line is the wording the market-data contract\n'
+    + '  // already mandates, so the map says what the docked panel says. `growth` and `econ` carry\n'
+    + '  // no published margin (D-NS17) and say why rather than being greyed.\n'
+    + '  areaTip(p, layer, shown) {\n'
+    + '    const meta = LAYER_META[layer] || {};\n'
+    + '    const absent = p.suppressed\n'
+    + '      ? (p.suppress_reason === "source_flag" ? "Not published for this county" : "Estimate too imprecise to show at this geography")\n'
+    + '      : "No data for this area";\n'
+    + '    const margin = (p.moe !== null && p.moe !== undefined)\n'
+    + '      ? "\u00b1 " + this.fmtMetric(layer, p.moe) + (p.band_ambiguous ? " \u2014 this margin spans two legend bands." : "")\n'
+    + '      : (layer === "growth"\n'
+    + '          ? "Derived from two ACS 5-year periods. No combined margin of error is published."\n'
+    + '          : layer === "econ"\n'
+    + '            ? "Payroll per establishment (NAICS 541940), county level. County Business Patterns is a census of establishments, not a sample; no margin of error applies."\n'
+    + '            : "");\n'
+    + '    return \'<div style="font-family:ProximaNova,Arial,Helvetica,sans-serif;min-width:150px">\' +\n'
+    + '      \'<div style="font-size:12.5px;font-weight:800;color:#003a70">\' + p.name + "</div>" +\n'
+    + '      \'<div style="font-size:11px;color:#494949;margin-top:3px">\' + (meta.title || "") + "</div>" +\n'
+    + '      \'<div style="font-size:15px;font-weight:800;color:#003a70;margin-top:1px">\' + (shown ? this.fmtMetric(layer, p.value) : NO_DATA_LABEL) + "</div>" +\n'
+    + '      \'<div style="font-size:10.5px;color:#494949;margin-top:4px">\' + (shown ? margin : absent) + "</div>" +\n'
+    + '      \'<div style="font-size:10px;color:#767676;margin-top:5px">\' + (meta.source || "") + "</div>" +\n'
+    + '    "</div>";\n'
+    + '  }\n'
+    + '\n'
+    + '  communities() {\n',
+  count: 1
+};
+
+const A24_4: Amendment = {
+  id: 'A24.4', ...NS,
+  find: '      communities: comms.filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lng)).map((c) => {\n',
+  replace: '      areas: this.areaVals(this.areaSet(valueLayer), valueLayer),\n'
+    + '      communities: comms.filter((c) => Number.isFinite(c.lat) && Number.isFinite(c.lng)).map((c) => {\n',
+  count: 1
+};
+
+const A24_5: Amendment = {
+  id: 'A24.5', ...NS,
+  find: '          hasRamp: !!valueLayer,\n'
+    + '          ramp: valueLayer\n'
+    + '            ? ramp(valueLayer).map((c, i) => ({\n'
+    + '                style: "flex: 1; height: 9px; background: " + c + ";",\n'
+    + '                label: cfg.buckets[i]\n'
+    + '              }))\n'
+    + '            : []\n',
+  replace: '          hasRamp: !!valueLayer,\n'
+    + '          hasGeo: FILL_KEYS.indexOf(valueLayer) > -1,\n'
+    + '          geoLine: AREA_LABEL[valueLayer] || "",\n'
+    + '          ramp: valueLayer\n'
+    + '            ? ramp(valueLayer).map((c, i) => ({\n'
+    + '                style: "flex: 1; height: 9px; background: " + c + ";",\n'
+    + '                label: cfg.buckets[i]\n'
+    + '              })).concat(FILL_KEYS.indexOf(valueLayer) > -1\n'
+    + '                ? [{ style: "flex: 1; height: 9px; background: " + NO_DATA_FILL + ";", label: NO_DATA_LABEL }]\n'
+    + '                : [])\n'
+    + '            : []\n',
+  count: 1
+};
+
+const A24_6a: Amendment = {
+  id: 'A24.6a', ...NS,
+  find: ' practices="{{ md.practices }}" communities="{{ md.communities }}" active-layer="{{ md.activeLayer }}" basemap="{{ md.basemap }}" active-id="{{ md.activeId }}" on-select="{{ md.selectFromMap }}"',
+  replace: ' practices="{{ md.practices }}" communities="{{ md.communities }}" areas="{{ md.areas }}" active-layer="{{ md.activeLayer }}" basemap="{{ md.basemap }}" active-id="{{ md.activeId }}" on-select="{{ md.selectFromMap }}"',
+  count: 1
+};
+
+const A24_6b: Amendment = {
+  id: 'A24.6b', ...NS,
+  find: ' practices="{{ md.practices }}" communities="{{ md.communities }}" active-layer="{{ md.activeLayer }}" basemap="{{ md.basemap }}" active-id="{{ md.activeId }}" on-select="{{ mob.selectMarker }}"',
+  replace: ' practices="{{ md.practices }}" communities="{{ md.communities }}" areas="{{ md.areas }}" active-layer="{{ md.activeLayer }}" basemap="{{ md.basemap }}" active-id="{{ md.activeId }}" on-select="{{ mob.selectMarker }}"',
+  count: 1
+};
+
+const A24_7: Amendment = {
+  id: 'A24.7', ...NS,
+  find: 'Community areas on the map are approximate — production draws Census ZCTA boundaries.',
+  replace: 'Community areas are Census ZIP Code Tabulation Areas (2023 boundaries); figures describe the area, not the practice.',
+  count: 1
+};
+
+const A24_8a: Amendment = {
+  id: 'A24.8a', ...NS,
+  find: '                    <div style="margin-top: 11px; font-size: 10.5px; line-height: 1.55; color: #767676;">{{ md.active.sourceLine }}</div>\n',
+  replace: '                    <sc-if value="{{ md.active.hasGeo }}" hint-placeholder-val="{{ true }}">\n'
+    + '                      <div style="margin-top: 11px; font-size: 10.5px; line-height: 1.55; color: #767676;">{{ md.active.geoLine }}</div>\n'
+    + '                    </sc-if>\n'
+    + '                    <div style="margin-top: 11px; font-size: 10.5px; line-height: 1.55; color: #767676;">{{ md.active.sourceLine }}</div>\n',
+  count: 1
+};
+
+const A24_8b: Amendment = {
+  id: 'A24.8b', ...NS,
+  find: '                        <div style="margin-top: 10px; font-size: 10.5px; line-height: 1.55; color: #767676;">{{ md.active.sourceLine }}</div>\n',
+  replace: '                        <sc-if value="{{ md.active.hasGeo }}" hint-placeholder-val="{{ true }}">\n'
+    + '                          <div style="margin-top: 10px; font-size: 10.5px; line-height: 1.55; color: #767676;">{{ md.active.geoLine }}</div>\n'
+    + '                        </sc-if>\n'
+    + '                        <div style="margin-top: 10px; font-size: 10.5px; line-height: 1.55; color: #767676;">{{ md.active.sourceLine }}</div>\n',
+  count: 1
+};
+
+/** A24.13 -- D-C46 (John, 2026-09-11), the family's other ruling and the reason it rides in this
+ *  change: real polygons drawn on class breaks that cannot represent real data are still one
+ *  colour, and the complaint this whole stream answers would have survived A24.
+ *
+ *  MEASURED, not invented. ACS 5-year place populations, 2014-2018 against 2019-2023 -- exactly the
+ *  pair `app.census.metrics.population_growth_pct` divides -- read from the Census Bureau's keyless
+ *  summary files for all 50 states, DC and Puerto Rico: 29,232 places carry both vintages.
+ *
+ *    universe                        declining   [10,20,35] bottom bucket
+ *    US places, all                    47.1 %          70.5 %
+ *    US places >= 10,000 people        30.5 %          79.9 %
+ *    Texas places inside a CBSA        43.6 %          63.1 %
+ *    Austin CBSA (the design's metro)  13.8 %          32.3 %
+ *
+ *  So the published breaks put four places in five into ONE class, and a place that LOST population
+ *  was painted the same colour as one that grew 9 %. The new stops are the tertiles of the
+ *  non-declining half of that distribution -- +3.3 / +8.8 nationally, +4.8 / +13.5 across Texas
+ *  metro places, +6.6 / +22.6 over all US places -- rounded to numbers a 10.5 px legend can carry.
+ *  On [0, 5, 15] the four classes take 30.5 / 32.3 / 25.3 / 11.9 % of US places over 10,000 people
+ *  and 27.0 / 24.7 / 27.4 / 20.9 % of Texas metro places that size.
+ *
+ *  FOUR buckets, not five: the growth ramp has exactly four colours in all three palettes, and a
+ *  fifth class would mean inventing a colour the design does not have. The below-zero swatch is
+ *  therefore the ramp's own first colour, and it is labelled "Declining" rather than "< 0%" because
+ *  the ruling is that a declining area READS as declining. */
+const A24_13: Amendment = {
+  id: 'A24.13',
+  date: '2026-09-11',
+  ruling: 'D-C46 (John, 2026-09-11): the growth class breaks are re-scaled to real ACS data, with a band below zero, so a declining area reads as declining rather than as the bottom of a growth scale',
+  find: '  growth: { label: "Population Growth (ACS)", short: "Projected growth (5 yrs)", unit: "pct", buckets: ["< 10%", "10\u201320%", "20\u201335%", "> 35%"], stops: [10, 20, 35] },\n',
+  replace: '  growth: { label: "Population Growth (ACS)", short: "Projected growth (5 yrs)", unit: "pct", buckets: ["Declining", "0\u20135%", "5\u201315%", "> 15%"], stops: [0, 5, 15] },\n',
+  count: 1
+};
+
+/** A24.14-A24.18 -- the ADAPTER path (Task 10). The seam A16 and A17 established, a fourth time:
+ *  an app-only prop the reference never receives, and a ternary keyed on adapter PRESENCE rather
+ *  than on data (A16.1's exact shape, A-SL23 (2)). With `props.market` present the map draws the
+ *  polygons the API answered or NONE at all, whatever it answered, and never the design's own
+ *  fixture -- the design's fixture is the AUSTIN metro with the design's own nine figures assigned
+ *  to it, so falling back to it over a real metro would draw the wrong city's boundaries carrying
+ *  numbers nobody measured. The reference and the Claude Design preview pass no adapter, so every
+ *  one of these five is inert there and both targets keep Task 4's pixels.
+ *
+ *  The plan allotted this task ids A24.13-A24.17; D-C46 took A24.13 inside Task 4, so the five
+ *  are A24.14-A24.18 and family A24 totals twenty, exactly as the plan's arithmetic says.
+ *
+ *  What a member sees when the API cannot answer is written down in `src/market/boundaries.ts`:
+ *  the shading is empty and nothing else is, because `MarketMapView.drawOverlay` paints the C7
+ *  drive-time ring before it reaches the polygon layer and `drawPins()` is a separate call. */
+const A24_14: Amendment = {
+  id: 'A24.14', ...NS,
+  find: '    adminTab: "users", sellerView: "dash",\n',
+  replace: '    mdAreas: null,\n    adminTab: "users", sellerView: "dash",\n',
+  count: 1
+};
+
+/** A24.15 -- the ONE loader (A16.17's lesson: every adapter path in this design shares one, and
+ *  the rejection arm is the thing callers keep forgetting). Three properties beyond the plan's
+ *  specimen, each because the alternative puts a FALSE map on screen rather than an empty one:
+ *
+ *  1. It CLEARS `mdAreas` before it asks. Without that, changing metro leaves the previous
+ *     metro's polygons painted over the new metro's view until the answer lands -- real outlines,
+ *     real figures, wrong city.
+ *  2. It ignores an answer for a market the member has since left. Two fetches can resolve out of
+ *     order, and last-write-wins would then leave the wrong metro's boundaries on screen
+ *     indefinitely rather than transiently.
+ *  3. A refused or empty load EMPTIES the map. It never restores the design's fixture, because a
+ *     member must not be shown boundaries that are not the ones the API holds (A-SL23 (2)). */
+const A24_15: Amendment = {
+  id: 'A24.15', ...NS,
+  find: '  componentDidMount() {\n',
+  replace: '  loadAreas(market) {\n'
+    + '    if (!this.props.market) return;\n'
+    + '    const asked = market || "Austin, TX";\n'
+    + '    const mine = () => (this.state.market || "Austin, TX") === asked;\n'
+    + '    this.setState({ mdAreas: null });\n'
+    + '    this.props.market.boundaries(asked).then(\n'
+    + '      (areas) => { if (mine()) this.setState({ mdAreas: areas }); },\n'
+    + '      () => { if (mine()) this.setState({ mdAreas: {} }); }\n'
+    + '    );\n'
+    + '  }\n'
+    + '\n'
+    + '  componentDidMount() {\n',
+  count: 1
+};
+
+const A24_16: Amendment = {
+  id: 'A24.16', ...NS,
+  find: '      areas: this.areaVals(this.areaSet(valueLayer), valueLayer),\n',
+  replace: '      areas: this.areaVals(this.props.market ? ((s.mdAreas || {})[valueLayer] || { type: "FeatureCollection", features: [] }) : this.areaSet(valueLayer), valueLayer),\n',
+  count: 1
+};
+
+const A24_17: Amendment = {
+  id: 'A24.17', ...NS,
+  find: '    if (this.props.adminListings && me && me.state === "active" && (me.roles || []).some((r) => r === "staff" || r === "admin")) this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] }));\n',
+  replace: '    if (this.props.adminListings && me && me.state === "active" && (me.roles || []).some((r) => r === "staff" || r === "admin")) this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] }));\n'
+    + '    this.loadAreas(this.state.market);\n',
+  count: 1
+};
+
+const A24_18: Amendment = {
+  id: 'A24.18', ...NS,
+  find: '  setMarket = (e) => {\n    const v = e && e.target ? e.target.value : e;\n',
+  replace: '  setMarket = (e) => {\n    const v = e && e.target ? e.target.value : e;\n    this.loadAreas(v);\n',
+  count: 1
+};
+
+/** A24.19-A24.20 -- the CENSUS TRACT ruling (controller, 2026-09-12). Both are CHAINED entries in
+ *  the A21.5c / A12.7 shape: each `find` is a string an EARLIER A24 amendment produced, so neither
+ *  occurs in the pristine bundle and both must run after the entry they read.
+ *
+ *  A24.19 reads A24.2's own output and A24.20 reads A24.7's. The ruling: the canonical granular
+ *  unit is the Census tract (summary level 140), nationwide. Tracts are designed as neighbourhood
+ *  approximations and ACS publishes the variable at tract level; calling a ZIP area a
+ *  neighbourhood is a named prohibition. `growth` and `econ` are UNCHANGED here and that is the
+ *  point -- growth cannot follow the tract (the 2010->2020 boundary change, plan D12), so each
+ *  layer keeps its own label and the legend prints the geography the figure is really measured at.
+ *  `tests/census/test_design_shading_labels.py` pins this half against `app.api.market.SHADING`,
+ *  so the design and the route cannot disagree about a geography. */
+const TRACT = { date: '2026-09-12', ruling: 'The canonical granular unit is the Census tract (summary level 140), nationwide. Not ZCTA. Census tract is an acceptable authoritative small-area geography, tracts are designed as neighbourhood approximations, and ACS publishes the needed variables at tract level. Calling a ZIP area a neighbourhood is a named prohibition. Exception, which must be labelled and never fabricated: population_growth_pct stays at place-or-county.' };
+
+const A24_19: Amendment = {
+  id: 'A24.19', ...TRACT,
+  find: 'const AREA_LEVEL = { income: "860", growth: "160", econ: "050" };\n'
+    + 'const AREA_LABEL = { income: "ZIP Code Tabulation Area", growth: "Place (city/town)", econ: "County" };\n',
+  replace: 'const AREA_LEVEL = { income: "140", growth: "160", econ: "050" };\n'
+    + 'const AREA_LABEL = { income: "Census tract", growth: "Place (city/town)", econ: "County" };\n',
+  count: 1
+};
+
+const A24_20: Amendment = {
+  id: 'A24.20', ...TRACT,
+  find: 'Community areas are Census ZIP Code Tabulation Areas (2023 boundaries); figures describe the area, not the practice.',
+  replace: 'Community areas are Census tracts (2023 boundaries); figures describe the area, not the practice. Population growth is measured for the surrounding city or county, not the tract.',
+  count: 1
+};
+
+/** A24.21-A24.23 -- the VIEWPORT BBOX (controller, 2026-09-12). `GET /api/markets/{cbsa}/boundaries`
+ *  has taken a `bbox` since Task 9 and A24.15's loader never sent one, so every request was for the
+ *  whole metro envelope. At Census-tract scale that is 5,935 tracts in New York where the Browse
+ *  map's own zoom holds 3,706. When this amendment was written the caps were still the ZCTA era's
+ *  (`MAX_FEATURES = 4000`) and the metro request was refused outright; they were re-measured for
+ *  tracts the same day -- 12,000 features, 6,000,000 bytes -- so it is served now, and what the box
+ *  buys is the size of the ANSWER rather than the difference between a map and a blank one. The
+ *  RULING below is the controller's own words of the day and is left exactly as it was given.
+ *
+ *  All three are CHAINED, the A21.5c / A24.19 shape: A24.21 reads A24.15's whole output, A24.22
+ *  reads A24.17's line and A24.23 reads A13.5's, so none occurs in the pristine bundle.
+ *
+ *  Four properties, each because the alternative puts a false or an empty map on screen:
+ *
+ *  1. `viewport()` is BOTH the box that is sent and the token an arriving answer is checked
+ *     against -- one value read once, so the guard cannot drift from the request. A24.15's market
+ *     guard is extended, not replaced: an answer is drawn only if the member is still on the same
+ *     metro AND the same box.
+ *  2. A pan KEEPS the polygons up while the new box loads (`keep`). A24.15's clear exists so one
+ *     city is never drawn over another; a pan is the same city, and clearing would blank the map
+ *     on every drag. A metro change still clears, because that is a different city.
+ *  3. It asks for NOTHING until a map has published a box. `componentDidMount` runs before the map
+ *     component has finished mounting Leaflet, so without this the boot would fire exactly the
+ *     doomed whole-metro request this amendment exists to stop.
+ *  4. An adapter with NO `viewport` -- the reference, the Claude Design preview, any older build --
+ *     takes the old path unchanged, whole-metro and all, because both new terms are guarded on the
+ *     method's presence. */
+const BBOX = { date: '2026-09-12', ruling: 'The adapter sends the map\'s current viewport as bbox, re-fetches when the viewport changes enough to matter, and draws what the API answers for that box. New York whole-metro is 5,935 tracts and 422s; the viewport is 3,706 and is served.' };
+
+const A24_21: Amendment = {
+  id: 'A24.21', ...BBOX,
+  find: '  loadAreas(market) {\n'
+    + '    if (!this.props.market) return;\n'
+    + '    const asked = market || "Austin, TX";\n'
+    + '    const mine = () => (this.state.market || "Austin, TX") === asked;\n'
+    + '    this.setState({ mdAreas: null });\n'
+    + '    this.props.market.boundaries(asked).then(\n'
+    + '      (areas) => { if (mine()) this.setState({ mdAreas: areas }); },\n'
+    + '      () => { if (mine()) this.setState({ mdAreas: {} }); }\n'
+    + '    );\n'
+    + '  }\n',
+  replace: '  loadAreas(market, keep) {\n'
+    + '    if (!this.props.market) return;\n'
+    + '    const asked = market || "Austin, TX";\n'
+    + '    const at = this.props.market.viewport ? this.props.market.viewport() : null;\n'
+    + '    if (!keep) this.setState({ mdAreas: null });\n'
+    + '    if (this.props.market.viewport && at === null) return;\n'
+    + '    const mine = () => (this.state.market || "Austin, TX") === asked && (this.props.market.viewport ? this.props.market.viewport() : null) === at;\n'
+    + '    this.props.market.boundaries(asked, at).then(\n'
+    + '      (areas) => { if (mine()) this.setState({ mdAreas: areas }); },\n'
+    + '      () => { if (mine()) this.setState({ mdAreas: {} }); }\n'
+    + '    );\n'
+    + '  }\n',
+  count: 1
+};
+
+const A24_22: Amendment = {
+  id: 'A24.22', ...BBOX,
+  find: '    this.loadAreas(this.state.market);\n',
+  replace: '    this.loadAreas(this.state.market);\n'
+    + '    if (this.props.market && this.props.market.onViewport) this._offViewport = this.props.market.onViewport(() => this.loadAreas(this.state.market, true));\n',
+  count: 1
+};
+
+const A24_23: Amendment = {
+  id: 'A24.23', ...BBOX,
+  find: '    if (this._onDocOut) document.removeEventListener("focusout", this._onDocOut, true);\n  }\n',
+  replace: '    if (this._onDocOut) document.removeEventListener("focusout", this._onDocOut, true);\n'
+    + '    if (this._offViewport) this._offViewport();\n  }\n',
+  count: 1
+};
+
+/** A24.24-A24.32 -- the FOUR LAYERS THAT PAINTED NOTHING (D-L1, 2026-09-12). The stakeholder saw
+ *  median income and population growth render as real Census geography for the first time and
+ *  said so; in the same message he reported that households, average practice payroll, veterinary
+ *  competition and pet ownership (estimated) render NOTHING. Payroll was a backend defect (the CBP
+ *  noise flag read as a withholding flag, all 392 counties suppressed); the other three had no
+ *  writer row, no `SHADING` entry and no `AREA_LEVEL` entry, so the route answered
+ *  `422 BAD_LAYER` and the app -- which draws what the API answered or nothing at all -- correctly
+ *  drew nothing.
+ *
+ *  Every entry below is CHAINED on an earlier A24 entry's own output, so none occurs in the
+ *  pristine bundle and each must run after the entry it reads.
+ *
+ *  THE CLASS BREAKS ARE MEASURED, NOT CHOSEN, and they are a SECOND table rather than a re-cut of
+ *  the design's own (A24.25). `VALUE_LAYERS` classes the figures the design's community cards
+ *  carry -- a city's households, a metro's establishment count -- and a polygon carries the same
+ *  metric at a different GEOGRAPHY, where the same numbers mean something else: 1,480 households
+ *  is an ordinary Census tract and an implausibly small city. Income, growth and payroll are
+ *  scale-invariant (a median, a percentage, a per-establishment figure) and keep one table. The
+ *  three COUNT layers get their own, measured over the distribution the map actually paints:
+ *
+ *    households / pets -- ACS 2019-2023 `B11001_001E`, the Census Bureau's own keyless
+ *    table-based summary file, every Census tract in the United States: 85,381 tracts carry the
+ *    variable. p25 1,054, p50 1,446, p75 1,897, max 10,466. The design's city-scale
+ *    `[10000, 25000, 45000]` put **100.0 %** of them in ONE class -- the whole map one colour,
+ *    which is the complaint this entire stream answers. `[1000, 1500, 2000]` takes
+ *    21.9 / 31.4 / 26.0 / 20.7 %. Pets is that distribution times the design's own 0.57
+ *    (p25 601, p50 824, p75 1,081), so `[600, 850, 1100]` takes 24.9 / 27.9 / 23.7 / 23.5 %.
+ *
+ *    competition -- ZIP Code Business Patterns 2022, NAICS 541940, the Census Bureau's own
+ *    keyless `zbp22detail` file, every ZIP area in the United States: 4,720 carry a published
+ *    count, min 3 (the file publishes no smaller cell), p50 4, p75 6, p90 8, p95 10, max 44. The
+ *    design's `[3, 6, 10]` leaves its FIRST class **empty** and puts 73.1 % in one; `[4, 6, 10]`
+ *    takes 37.0 / 36.1 / 21.4 / 5.5 %. The first bucket is labelled "1-3" rather than "3",
+ *    because the label states the class's RANGE and must stay true if a smaller count is ever
+ *    published.
+ *
+ *  Because `VALUE_LAYERS` itself is untouched, the snapshot strip's cards, the Compare rows, the
+ *  graduated symbols and the docked panel keep their own community-scale classification and their
+ *  own pixels, and the legend over a tract map reads tract-scale bands. */
+const LAYERS_RULING = {
+  date: '2026-09-12',
+  ruling: 'households, average practice payroll, veterinary competition and pet ownership (estimated) render NOTHING (John, 2026-09-12, on QA). Each layer shades at the geography its figure is honest at and the legend names it; the estimate is identified as an estimate; the ZIP Code Tabulation Area is used for ZIP Code Business Patterns alone, because it is that dataset’s own authoritative geography.'
+};
+
+const A24_24: Amendment = {
+  id: 'A24.24', ...LAYERS_RULING,
+  find: 'const FILL_KEYS = ["income", "growth", "econ"];\n'
+    + '// A24 (D-C35): each fill layer draws at the geography its figure is honest at, and the\n'
+    + '// legend names it. `pets`, `households` and `competition` stay graduated symbols at the\n'
+    + '// listing point - city-scale class breaks on small areas produce a picture with no\n'
+    + '// information, and `households` first `< 10K` bucket would swallow essentially every one.\n'
+    + 'const AREA_LEVEL = { income: "140", growth: "160", econ: "050" };\n'
+    + 'const AREA_LABEL = { income: "Census tract", growth: "Place (city/town)", econ: "County" };\n',
+  replace: 'const FILL_KEYS = ["income", "growth", "econ", "households", "pets", "competition"];\n'
+    + '// A24 (D-C35): each fill layer draws at the geography its figure is honest at, and the\n'
+    + '// legend names it. `households` and `pets` joined income at the tract on 2026-09-12 and\n'
+    + '// `competition` at the ZCTA (D-L1): they were graduated symbols at the listing point on the\n'
+    + '// grounds that city-scale class breaks on small areas produce a picture with no information,\n'
+    + '// which was true of the BREAKS and not of the geography - `AREA_LAYERS` below cuts them at\n'
+    + '// the scale the map paints. `competition` is the one ZIP-area layer, and it is honest there\n'
+    + '// rather than approximate: ZIP Code Business Patterns is published per ZIP code and exists\n'
+    + '// at no other geography, so the ZCTA is where it was measured.\n'
+    + 'const AREA_LEVEL = { income: "140", growth: "160", econ: "050", households: "140", pets: "140", competition: "860" };\n'
+    + 'const AREA_LABEL = { income: "Census tract", growth: "Place (city/town)", econ: "County", households: "Census tract", pets: "Census tract", competition: "ZIP Code Tabulation Area" };\n',
+  count: 1
+};
+
+const A24_25: Amendment = {
+  id: 'A24.25', ...LAYERS_RULING,
+  find: 'const NO_DATA_FILL = "#e6e6e6";\nconst NO_DATA_LABEL = "No data";\n',
+  replace: 'const NO_DATA_FILL = "#e6e6e6";\nconst NO_DATA_LABEL = "No data";\n'
+    + '// A24 (D-L1): the CHOROPLETH\'s own class breaks, for the three layers whose figure is a\n'
+    + '// COUNT and therefore means something different at a different geography. `VALUE_LAYERS`\n'
+    + '// classes what the community cards carry (a city\'s households); these class what the map\n'
+    + '// paints (a tract\'s). Measured over every US tract and every US ZIP area, not over Austin:\n'
+    + '// households p25/p50/p75 = 1,054 / 1,446 / 1,897 across 85,381 tracts, pets the same times\n'
+    + '// 0.57, competition p50/p75/p90 = 4 / 6 / 8 across 4,720 ZIP areas carrying a count. The\n'
+    + '// design\'s own breaks put 100.0 % of tracts and 73.1 % of ZIP areas into ONE class.\n'
+    + '// Income, growth and payroll are scale-invariant and are deliberately absent.\n'
+    + 'const AREA_LAYERS = {\n'
+    + '  households: { buckets: ["< 1,000", "1,000–1,500", "1,500–2,000", "> 2,000"], stops: [1000, 1500, 2000] },\n'
+    + '  pets: { buckets: ["< 600", "600–850", "850–1,100", "> 1,100"], stops: [600, 850, 1100] },\n'
+    + '  competition: { buckets: ["1–3", "4–5", "6–9", "10+"], stops: [4, 6, 10] }\n'
+    + '};\n',
+  count: 1
+};
+
+const A24_26: Amendment = {
+  id: 'A24.26', ...LAYERS_RULING,
+  find: '  bucket(metric, v) {\n    const cfg = VALUE_LAYERS[metric];\n',
+  replace: '  bucket(metric, v, area) {\n'
+    + '    // `area` asks for the CHOROPLETH\'s breaks. Everything else on the screen classes a\n'
+    + '    // community-scale figure and must keep asking for the design\'s own (A24.25).\n'
+    + '    const cfg = (area && AREA_LAYERS[metric]) || VALUE_LAYERS[metric];\n',
+  count: 1
+};
+
+const A24_27: Amendment = {
+  id: 'A24.27', ...LAYERS_RULING,
+  find: '        const b = shown ? this.bucket(layer, p.value) : null;\n',
+  replace: '        const b = shown ? this.bucket(layer, p.value, true) : null;\n',
+  count: 1
+};
+
+const A24_28: Amendment = {
+  id: 'A24.28', ...LAYERS_RULING,
+  find: '            ? ramp(valueLayer).map((c, i) => ({\n'
+    + '                style: "flex: 1; height: 9px; background: " + c + ";",\n'
+    + '                label: cfg.buckets[i]\n'
+    + '              })).concat(FILL_KEYS.indexOf(valueLayer) > -1\n',
+  replace: '            ? ramp(valueLayer).map((c, i) => ({\n'
+    + '                style: "flex: 1; height: 9px; background: " + c + ";",\n'
+    + '                label: ((AREA_LAYERS[valueLayer] || cfg).buckets)[i]\n'
+    + '              })).concat(FILL_KEYS.indexOf(valueLayer) > -1\n',
+  count: 1
+};
+
+const A24_29: Amendment = {
+  id: 'A24.29', ...LAYERS_RULING,
+  find: '    return v >= 1000 ? Math.round(v / 1000) + "K" : String(v);\n',
+  replace: '    // Abbreviated from ten thousand, not from one: a Census tract holds about 1,400\n'
+    + '    // households and "1K" is the same label for 1,000 and for 1,499. `toLocaleString` is\n'
+    + '    // the design\'s own separator, the one `p.sqft` already uses.\n'
+    + '    return v >= 10000 ? Math.round(v / 1000) + "K" : Math.round(v).toLocaleString();\n',
+  count: 1
+};
+
+const A24_30a: Amendment = {
+  id: 'A24.30a', ...LAYERS_RULING,
+  find: '      \'<div style="font-size:15px;font-weight:800;color:#003a70;margin-top:1px">\' + (shown ? this.fmtMetric(layer, p.value) : NO_DATA_LABEL) + "</div>" +\n',
+  replace: '      \'<div style="font-size:15px;font-weight:800;color:#003a70;margin-top:1px">\' + (shown ? this.fmtMetric(layer, p.value) + (layer === "competition" ? " veterinary practices" : "") : NO_DATA_LABEL) + "</div>" +\n',
+  count: 1
+};
+
+const A24_30b: Amendment = {
+  id: 'A24.30b', ...LAYERS_RULING,
+  find: '          : layer === "econ"\n'
+    + '            ? "Payroll per establishment (NAICS 541940), county level. County Business Patterns is a census of establishments, not a sample; no margin of error applies."\n'
+    + '            : "");\n',
+  replace: '          : layer === "econ"\n'
+    + '            ? "Payroll per establishment (NAICS 541940), county level. County Business Patterns is a census of establishments, not a sample; no margin of error applies."\n'
+    + '            : layer === "competition"\n'
+    + '              ? "within this " + AREA_LABEL[layer] + ". ZIP Code Business Patterns is published per ZIP code, which is this dataset’s own authoritative geography. Establishments include corporate-owned and specialty locations."\n'
+    + '              : layer === "pets"\n'
+    + '                ? "Modelled estimate: households × 0.57. Not an observed count."\n'
+    + '                : "");\n',
+  count: 1
+};
+
+const A24_31a: Amendment = {
+  id: 'A24.31a', ...LAYERS_RULING,
+  find: '    const selComm = sel ? comms.filter((c) => c.id === sel.id)[0] : null;\n',
+  replace: '    const selComm = sel ? comms.filter((c) => c.id === sel.id)[0] : null;\n'
+    + '    // Hoisted out of the returned object so the LEGEND can see how many polygons were\n'
+    + '    // actually drawn (A24.32). One call, one collection, no second classification pass.\n'
+    + '    const areaFc = this.areaVals(this.props.market ? ((s.mdAreas || {})[valueLayer] || { type: "FeatureCollection", features: [] }) : this.areaSet(valueLayer), valueLayer);\n',
+  count: 1
+};
+
+const A24_31b: Amendment = {
+  id: 'A24.31b', ...LAYERS_RULING,
+  find: '      areas: this.areaVals(this.props.market ? ((s.mdAreas || {})[valueLayer] || { type: "FeatureCollection", features: [] }) : this.areaSet(valueLayer), valueLayer),\n',
+  replace: '      areas: areaFc,\n',
+  count: 1
+};
+
+/** A24.32 -- the legend must not claim a ramp the map does not carry (whole-branch review of
+ *  `feat/tract`, finding 5). A practice in a metro that is in no CBSA -- Bozeman, deliberately --
+ *  reaches the metro picker, because the client builds `MARKETS` from the listings’ own market
+ *  strings while `/api/markets` INNER JOINs a `310` geography. `boundaries()` then rejects, the
+ *  loader’s own rejection arm empties `mdAreas`, and the map draws no polygons at all -- while
+ *  the legend went on printing the full colour ramp, the "No data" swatch and the geography name
+ *  over an unshaded map, which reads as "every area here is unmeasured" rather than "nothing was
+ *  drawn". No new copy and no new state: `hasRamp` and `hasGeo` already exist and already gate
+ *  exactly the two blocks that would be lying. */
+const A24_32: Amendment = {
+  id: 'A24.32', ...LAYERS_RULING,
+  find: '          hasRamp: !!valueLayer,\n'
+    + '          hasGeo: FILL_KEYS.indexOf(valueLayer) > -1,\n',
+  replace: '          hasRamp: !!valueLayer && areaFc.features.length > 0,\n'
+    + '          hasGeo: FILL_KEYS.indexOf(valueLayer) > -1 && areaFc.features.length > 0,\n',
+  count: 1
+};
+
+/** A24.33-A24.41 -- FIX ROUND 1 on the layers branch (review of e984c85..304b80f, 2026-09-12).
+ *  Every entry is CHAINED on an earlier A24 entry's output. The findings, in the reviewer's own
+ *  order, and what each entry does about it. */
+const FIX1 = {
+  date: '2026-09-12',
+  ruling: 'Fix round 1 on the four-layer change (review of e984c85..304b80f, 2026-09-12): the shaded layers must draw the figures they name. `areaSet` learns the design’s own field aliases; the competition catalogue names the dataset, vintage and geography the route actually serves; a ZIP area the Census withheld under its three-establishment publication rule is SUPPRESSED with its own reason and says so, and no legend class promises a count the data cannot hold; a metric shading the map does not also draw its own symbols; and the legend stays mounted while a metro loads.'
+};
+
+/** A24.33 -- Important 1, and the defect of the round. `areaSet` read `best[layer]` while
+ *  `communities()` names the field `hh` for households and `vets` for competition; the design's
+ *  three OTHER readers of the same objects alias them (`marketVals`'s community values, the
+ *  Compare rows, the strip cards). So on the reference path -- and in the app's own e2e oracle,
+ *  which is derived from `areaSet` -- `households` drew 503 of 503 polygons in the no-data grey
+ *  UNDER A FULL FOUR-CLASS RAMP that named a geography: a legend claiming a scale nothing on the
+ *  map is drawn on, which is the exact statement A24.32 was written to prevent. The alias is the
+ *  one `marketVals` already uses, verbatim, so there is one spelling of it and not a fourth. */
+const A24_33: Amendment = {
+  id: 'A24.33', ...FIX1,
+  find: '        const raw = best ? best[layer] : undefined;\n',
+  replace: '        // The design\'s own alias, verbatim from `marketVals`: `communities()` names\n'
+    + '        // these two fields `hh` and `vets`, and a fill layer reads the same objects the\n'
+    + '        // symbols and the Compare rows do.\n'
+    + '        const raw = best ? (layer === "households" ? best.hh : layer === "competition" ? best.vets : best[layer]) : undefined;\n',
+  count: 1
+};
+
+/** A24.34 -- Important 2. `competition` is served `source_dataset: "zbp"`, `value_vintage:
+ *  "2022"`, `geo_label: "ZIP Code Tabulation Area"`, and its catalogue entry named County
+ *  Business Patterns, a 2023 release and "community level" -- so `areaTip` printed A24.30b's ZBP
+ *  sentence and this CBP source line in the same tooltip. A sentence a release makes false is
+ *  corrected in that release (A27.4/A27.5's own precedent); none of this is new copy. */
+const A24_34: Amendment = {
+  id: 'A24.34', ...FIX1,
+  find: '    sub: "Veterinary establishments · CBP, NAICS 541940",\n'
+    + '    updated: "Updated: CBP 2023 release (Nov 2024)",\n'
+    + '    source: "U.S. Census County Business Patterns (2023), NAICS 541940 · community level",\n',
+  replace: '    sub: "Veterinary establishments · ZIP Code Business Patterns, NAICS 541940",\n'
+    + '    updated: "Updated: ZIP Code Business Patterns 2022",\n'
+    + '    source: "U.S. Census ZIP Code Business Patterns (2022), NAICS 541940 · ZIP Code Tabulation Area",\n',
+  count: 1
+};
+
+/** A24.35 / A24.36 -- Important 2's other half. Both layers shade the CENSUS TRACT and both
+ *  source lines said "community level"; income's has said it since before the tract ruling and is
+ *  corrected here rather than left as the one line on the card that names no geography at all. */
+const A24_35: Amendment = {
+  id: 'A24.35', ...FIX1,
+  find: '    source: "U.S. Census ACS 5-year estimates (2023) · community level",\n'
+    + '    means: "The count of occupied housing units in each community',
+  replace: '    source: "U.S. Census ACS 5-year estimates (2023) · Census tract",\n'
+    + '    means: "The count of occupied housing units in each community',
+  count: 1
+};
+
+const A24_36: Amendment = {
+  id: 'A24.36', ...FIX1,
+  find: '    source: "U.S. Census ACS 5-year estimates (2023) · community level",\n'
+    + '    means: "Higher-income areas may support stronger demand',
+  replace: '    source: "U.S. Census ACS 5-year estimates (2023) · Census tract",\n'
+    + '    means: "Higher-income areas may support stronger demand',
+  count: 1
+};
+
+/** A24.37 -- Important 3's legend half, CHAINED on A24.25. The Census publishes ZIP-level
+ *  INDUSTRY detail only where a category has three or more establishments ("if a given NAICS
+ *  category has less than three business establishments, the number of establishments won't be
+ *  reported for that category, but they will be included in the sum total"), so the served
+ *  distribution has a FLOOR of 3 -- measured on QA: `zbp_industry` min 3, zero rows below it, and
+ *  `geo_metric.establishments` min 3 across 4,719 ZCTAs. A first class labelled "1-3" therefore
+ *  promises two counts the data cannot hold; it can only ever contain a 3, and it says so. The
+ *  stops do not move: re-measured on the served distribution (`scripts/measure_area_breaks.py`),
+ *  `[4, 6, 10]` takes 37.0 / 36.1 / 21.4 / 5.5 % of it. */
+const A24_37: Amendment = {
+  id: 'A24.37', ...FIX1,
+  find: '  competition: { buckets: ["1–3", "4–5", "6–9", "10+"], stops: [4, 6, 10] }\n',
+  replace: '  competition: { buckets: ["3", "4–5", "6–9", "10+"], stops: [4, 6, 10] }\n',
+  count: 1
+};
+
+/** A24.38 -- Important 3's honesty half, CHAINED on A24.3. `geo_metric` now tells the three ZCTA
+ *  states apart (`app/census/geo_metric.py`): a count, a ZIP area the Census WITHHELD under its
+ *  own three-establishment rule (`suppressed: true, suppress_reason: "source_threshold"`), and a
+ *  ZIP area ZIP Code Business Patterns does not cover at all. The design's `absent` line already
+ *  branches on `suppress_reason`, so the third state needs one more arm and no new legend, no new
+ *  colour and no new control: the polygon stays in the design's own no-data grey and the tip says
+ *  which of the three it is. Before this, 393 of Dallas's 535 ZCTAs -- 73 % of the map -- said
+ *  "No data for this area" over cells the Census had deliberately withheld. */
+const A24_38: Amendment = {
+  id: 'A24.38', ...FIX1,
+  find: '      ? (p.suppress_reason === "source_flag" ? "Not published for this county" : "Estimate too imprecise to show at this geography")\n',
+  replace: '      ? (p.suppress_reason === "source_flag" ? "Not published for this county"\n'
+    + '        : p.suppress_reason === "source_threshold" ? "Fewer than three veterinary establishments here. The Census does not publish a ZIP-level count for a category with fewer than three establishments, though they are counted in its all-industry total."\n'
+    + '        : "Estimate too imprecise to show at this geography")\n',
+  count: 1
+};
+
+/** A24.39 -- Minor 5, CHAINED on A24.30b. The competition margin line was written as a lowercase
+ *  fragment meant to be read as the continuation of the value line above it ("7 veterinary
+ *  practices" / "within this ZIP Code Tabulation Area."), but it is its own `<div>` in its own
+ *  declarations, so it read as a sentence beginning in the middle. It is a sentence now; the
+ *  value line above keeps the noun it already names. */
+const A24_39: Amendment = {
+  id: 'A24.39', ...FIX1,
+  find: '              ? "within this " + AREA_LABEL[layer] + ". ZIP Code Business Patterns is published per ZIP code, which is this dataset’s own authoritative geography. Establishments include corporate-owned and specialty locations."\n',
+  replace: '              ? "Counted within this " + AREA_LABEL[layer] + ". ZIP Code Business Patterns is published per ZIP code, which is this dataset’s own authoritative geography. Establishments include corporate-owned and specialty locations."\n',
+  count: 1
+};
+
+/** A24.40 -- Minor 4. `SYMBOL_KEYS` and `FILL_KEYS` now overlap completely for the three count
+ *  layers, and `competition`'s symbols default ON -- so choosing Veterinary competition drew a
+ *  ZCTA choropleth classed on `AREA_LAYERS` AND graduated symbols at the listing points classed
+ *  on `VALUE_LAYERS`, two different scales for one metric under one legend that describes only
+ *  the first. A metric that is SHADING the map does not also draw its own symbols. The design's
+ *  own `layers` toggles are untouched: this narrows what is drawn for the active layer, it does
+ *  not change what a member has turned on, and turning the fill to another layer brings the
+ *  symbols straight back. */
+const A24_40: Amendment = {
+  id: 'A24.40', ...FIX1,
+  find: '    const activeSymbols = SYMBOL_KEYS.filter(\n'
+    + '      (k) => layers[k] && !(s.mdOff || {})[k === "competition" ? "vets" : k]\n'
+    + '    );\n',
+  replace: '    const activeSymbols = SYMBOL_KEYS.filter(\n'
+    + '      (k) => k !== valueLayer && layers[k] && !(s.mdOff || {})[k === "competition" ? "vets" : k]\n'
+    + '    );\n',
+  count: 1
+};
+
+/** A24.41 -- Minor 7, CHAINED on A24.32. A24.32 unmounts the ramp and the geography line when no
+ *  polygon was drawn, which is right for a metro the API cannot answer for and wrong for the
+ *  moment between asking and being answered: `loadAreas` clears `mdAreas` on a METRO CHANGE, so
+ *  the legend vanished and came back on every change of market. A pan already keeps it (A24.21's
+ *  `keep`), and a legend that disappears and returns is a flicker rather than a state. `mdAreas
+ *  === null` is the design's own "nothing has been loaded" value, distinct from `{}` ("the API
+ *  answered, and it held nothing"), which is exactly the distinction this needs. */
+const A24_41: Amendment = {
+  id: 'A24.41', ...FIX1,
+  find: '          hasRamp: !!valueLayer && areaFc.features.length > 0,\n'
+    + '          hasGeo: FILL_KEYS.indexOf(valueLayer) > -1 && areaFc.features.length > 0,\n',
+  replace: '          hasRamp: !!valueLayer && (areaFc.features.length > 0 || areasPending),\n'
+    + '          hasGeo: FILL_KEYS.indexOf(valueLayer) > -1 && (areaFc.features.length > 0 || areasPending),\n',
+  count: 1
+};
+
+/** A24.42 -- A24.41's own term, declared beside the collection it qualifies. It is true only with
+ *  an adapter present and only while `mdAreas` is the design's own "nothing loaded yet" null, so
+ *  the reference and the Claude Design preview never reach it. */
+const A24_42: Amendment = {
+  id: 'A24.42', ...FIX1,
+  find: '    const areaFc = this.areaVals(this.props.market ? ((s.mdAreas || {})[valueLayer] || { type: "FeatureCollection", features: [] }) : this.areaSet(valueLayer), valueLayer);\n',
+  replace: '    const areaFc = this.areaVals(this.props.market ? ((s.mdAreas || {})[valueLayer] || { type: "FeatureCollection", features: [] }) : this.areaSet(valueLayer), valueLayer);\n'
+    + '    // "asked, not yet answered" — A24.41 keeps the legend mounted across it.\n'
+    + '    const areasPending = !!this.props.market && s.mdAreas === null;\n',
+  count: 1
+};
+
+/** A24.43 -- MS1 (ruling `2026-09-05-practice-match-census-data-layer/ruling-market-strip.md`,
+ *  recorded and never fixed; re-found on 304b80f, 2026-09-12). The Market snapshot strip showed
+ *  Dallas Population growth as "+1.5% metro median" while every Dallas listing's own figure is
+ *  "-1.5% since 2018": one screen said the opposite of the other about the same city.
+ *
+ *  `num` stripped every character but digits and a dot, which loses a leading MINUS and
+ *  CONCATENATES whatever number follows the figure -- "-1.5% since 2018" became "1.52018", a
+ *  quantity nothing measured, of the wrong sign. `communities()` does not use it for growth (it
+ *  parses with `parseFloat` and keeps the sign, A24.3's own note), which is exactly why the docked
+ *  panel was right; `stripCards` is the one growth reader that does, and it classes with
+ *  `bucket()`, so the lost sign was a wrong number AND a wrong colour -- D-C46 gave the growth
+ *  ramp a band below zero precisely so a decline reads as one, and this put a declining metro in a
+ *  growth class.
+ *
+ *  The replacement reads the FIRST number in the string and nothing after it, sign included, with
+ *  thousands separators removed: "-1.5% since 2018" -> -1.5, "$101,721" -> 101721, "169,355
+ *  households" -> 169355, "1,900 sq ft" -> 1900. The design's zero-for-null contract is kept
+ *  deliberately -- `num(null)` and `num("no figure")` are still 0, and A21.1c's guards do not go
+ *  through this helper, so nothing that must tell absence from zero asks it.
+ *
+ *  PIXEL-SAFE: every growth figure in the design's own fixtures is POSITIVE and carries one
+ *  decimal, and `stripCards` reads growth as the number `communities()` already parsed, so the
+ *  digits before the `%` are unchanged on every approved state; the other `num` readers are fed
+ *  fixture strings whose first number is the whole figure ("81,900", "$118,400", "27,600
+ *  households"), which this reads identically. */
+const A24_43: Amendment = {
+  id: 'A24.43',
+  date: '2026-09-12',
+  ruling: 'MS1: the Market snapshot strip reported a declining metro as growing. `num` dropped a leading minus and concatenated the year that followed the figure, so "-1.5% since 2018" became 1.52018 — the wrong sign and a quantity nothing measured, classed by `bucket` into a growth band. It reads the first number in the string and nothing after it, sign included, and keeps the design’s zero-for-null contract.',
+  find: 'const num = (s) => (s == null ? 0 : Number(String(s).replace(/[^0-9.]/g, "")) || 0);\n',
+  replace: '// MS1: the FIRST number in the string and nothing after it, sign included. Stripping every\n'
+    + '// character but digits and a dot loses a leading minus and glues on whatever number follows\n'
+    + '// the figure — "-1.5% since 2018" became "1.52018", which the snapshot strip then reported as\n'
+    + '// "+1.5%" and `bucket` classed as growth. Zero for a null or for a string carrying no number\n'
+    + '// at all is the design’s own contract and is kept.\n'
+    + 'const num = (s) => { const m = s == null ? null : String(s).match(/[-+]?\\d[\\d,]*(?:\\.\\d+)?/); return m ? Number(m[0].replace(/,/g, "")) || 0 : 0; };\n',
+  count: 1
+};
+
+/** A24.44-A24.52 -- FIX ROUND 2, B and E (2026-09-12). The Market snapshot strip states its OWN
+ *  basis instead of borrowing the map's.
+ *
+ *  Measured on QA: the strip's Households card read "162K metro median · U.S. Census ACS 5-year
+ *  estimates (2023) · Census tract". The 162K is the MEDIAN OF THE LISTINGS' OWN five-mile-ring
+ *  totals -- `stripCards` reads `comms`, one row per listing -- and a Census tract holds about
+ *  1,500 households, so the caption named a geography the number is not measured at. Nothing was
+ *  wrong with A24.34-A24.36: they made `LAYER_META.*.source` truthfully name the MAP's geography,
+ *  which is exactly right for the legend and exactly wrong for the strip, which borrows the same
+ *  string. Ruling D-C50 (Task SNAP, 0.1.22) later makes the strip describe the MAP; until then it
+ *  must describe what it IS.
+ *
+ *  ONE STRING PER FACT. The three layers whose source named the map's geography keep only the
+ *  DATASET (`dataset:`), and `metaSource(k, basis)` composes the rest -- the map's geography for
+ *  the legend, the tip and the map's own community notes; the practice-area basis for the strip.
+ *  `growth` and `econ` describe place and county on BOTH surfaces and keep their wording, which is
+ *  why they keep `source` and have no `dataset`; `pets` names no geography at all and keeps its.
+ *
+ *  The basis is what the API already serves: the listings' own `communityLabel` where every
+ *  community in the metro carries the same one ("Within about 5 miles of the practice" on all
+ *  twelve Dallas listings), and the design's own "community level" otherwise. The design's
+ *  fixtures carry no `communityLabel`, so the reference path renders "community level" -- which
+ *  is the string those cards carry today -- and every approved state keeps its pixels except the
+ *  footnote sentence, which re-bases `browse-market-strip` alone. */
+const FIX2 = {
+  date: '2026-09-12',
+  ruling: 'D-C50 (interim): the Market snapshot states the basis of its OWN figures — the practice-area label the API serves — rather than borrowing the map legend’s geography, which is false for a median of per-listing ring totals; the footnote is made true for both surfaces; and the threshold tip carries the ruled sentence and nothing else.'
+};
+
+/** A24.44 -- the basis has to reach the strip, and it reaches it the way every other figure does:
+ *  as a field on the community objects `communities()` builds. One line, beside the fields it
+ *  already copies off the listing. */
+const A24_44: Amendment = {
+  id: 'A24.44', ...FIX2,
+  find: '        id: p.id, name: p.area, lat: p.lat, lng: p.lng,\n',
+  replace: '        id: p.id, name: p.area, lat: p.lat, lng: p.lng, communityLabel: p.communityLabel,\n',
+  count: 1
+};
+
+/** A24.45 -- `metaSource(k, basis)`: the ONE composer both surfaces read. A layer that names a
+ *  geography carries the dataset alone and has the basis supplied by its caller; a layer whose
+ *  source line names no geography at all keeps the sentence it has. */
+const A24_45: Amendment = {
+  id: 'A24.45', ...FIX2,
+  find: '// One catalogue per market layer: what it is, where it comes from, and how to read it.\n',
+  replace: '// A24 (D-C50 interim): the source line, composed for the surface that prints it. A layer\n'
+    + '// whose line names a GEOGRAPHY carries the dataset alone (`dataset:`) and is given the basis\n'
+    + '// by its caller - the map\'s own geography for the legend and the tip, the practice-area label\n'
+    + '// for the snapshot strip, whose figures are per-listing and are not measured at either. A\n'
+    + '// layer that names no geography (`growth`, `econ`, `pets`) keeps its own `source` sentence,\n'
+    + '// which is true on both surfaces, and this returns it unchanged.\n'
+    + 'const metaSource = (k, basis) => {\n'
+    + '  const m = LAYER_META[k] || {};\n'
+    + '  return m.dataset ? m.dataset + " \u00b7 " + basis : (m.source || "");\n'
+    + '};\n'
+    + '\n'
+    + '// One catalogue per market layer: what it is, where it comes from, and how to read it.\n',
+  count: 1
+};
+
+const A24_46: Amendment = {
+  id: 'A24.46', ...FIX2,
+  find: '    source: "U.S. Census ACS 5-year estimates (2023) \u00b7 Census tract",\n'
+    + '    means: "Higher-income areas may support stronger demand',
+  replace: '    dataset: "U.S. Census ACS 5-year estimates (2023)",\n'
+    + '    means: "Higher-income areas may support stronger demand',
+  count: 1
+};
+
+const A24_47: Amendment = {
+  id: 'A24.47', ...FIX2,
+  find: '    source: "U.S. Census ACS 5-year estimates (2023) \u00b7 Census tract",\n'
+    + '    means: "The count of occupied housing units in each community',
+  replace: '    dataset: "U.S. Census ACS 5-year estimates (2023)",\n'
+    + '    means: "The count of occupied housing units in each community',
+  count: 1
+};
+
+const A24_48: Amendment = {
+  id: 'A24.48', ...FIX2,
+  find: '    source: "U.S. Census ZIP Code Business Patterns (2022), NAICS 541940 \u00b7 ZIP Code Tabulation Area",\n',
+  replace: '    dataset: "U.S. Census ZIP Code Business Patterns (2022), NAICS 541940",\n',
+  count: 1
+};
+
+/** A24.49-A24.51 -- the three MAP surfaces, each asking for the map's own geography. Their output
+ *  is byte-identical to what they printed before: `metaSource` composes exactly the string the
+ *  literal used to hold. */
+const A24_49: Amendment = {
+  id: 'A24.49', ...FIX2,
+  find: '      \'<div style="font-size:10px;color:#767676;margin-top:5px">\' + (meta.source || "") + "</div>" +\n',
+  replace: '      \'<div style="font-size:10px;color:#767676;margin-top:5px">\' + metaSource(layer, AREA_LABEL[layer] || "") + "</div>" +\n',
+  count: 1
+};
+
+const A24_50: Amendment = {
+  id: 'A24.50', ...FIX2,
+  find: '          sourceNote: valueLayer ? LAYER_META[valueLayer].source : ""\n',
+  replace: '          sourceNote: valueLayer ? metaSource(valueLayer, AREA_LABEL[valueLayer] || "") : ""\n',
+  count: 1
+};
+
+const A24_51: Amendment = {
+  id: 'A24.51', ...FIX2,
+  find: '          sourceLine: meta.source ? "Source: " + meta.source : "",\n'
+    + '          sourceShort: meta.source ? "Source: " + meta.source.split(" \u00b7 ")[0] : "",\n',
+  replace: '          sourceLine: mapSource ? "Source: " + mapSource : "",\n'
+    + '          sourceShort: mapSource ? "Source: " + mapSource.split(" \u00b7 ")[0] : "",\n',
+  count: 1
+};
+
+const A24_52: Amendment = {
+  id: 'A24.52', ...FIX2,
+  find: '        const cfg = valueLayer ? VALUE_LAYERS[valueLayer] : null;\n',
+  replace: '        const cfg = valueLayer ? VALUE_LAYERS[valueLayer] : null;\n'
+    + '        const mapSource = valueLayer ? metaSource(valueLayer, AREA_LABEL[valueLayer] || "") : "";\n',
+  count: 1
+};
+
+/** A24.53 -- the strip itself. The basis is the listings' OWN label where the whole metro agrees
+ *  on one, and the design's own "community level" where it does not or where there is none at all
+ *  (which is the reference path, and every approved state). */
+const A24_53: Amendment = {
+  id: 'A24.53', ...FIX2,
+  find: '            src: meta.source,\n',
+  replace: '            src: metaSource(k, stripBasis),\n',
+  count: 1
+};
+
+const A24_54: Amendment = {
+  id: 'A24.54', ...FIX2,
+  find: '      stripCards: ["income", "pets", "competition", "growth", "households", "econ"]\n',
+  replace: '      stripCards: (() => {\n'
+    + '        // What the snapshot\'s own figures describe: `comms` is one row per LISTING, so the\n'
+    + '        // basis is the practice-area label the API serves, and only where the whole metro\n'
+    + '        // agrees on one. Otherwise the design\'s own words, which is what the reference path\n'
+    + '        // and every approved state renders - the design\'s fixtures carry no label at all.\n'
+    + '        const labels = comms.map((c) => c.communityLabel).filter(Boolean);\n'
+    + '        const stripBasis = (labels.length === comms.length && labels.length > 0 && labels.every((l) => l === labels[0]))\n'
+    + '          ? labels[0] : "community level";\n'
+    + '        return ["income", "pets", "competition", "growth", "households", "econ"]\n',
+  count: 1
+};
+
+/** A24.55 -- the strip's own IIFE closes where the array's `.map` did. */
+const A24_55: Amendment = {
+  id: 'A24.55', ...FIX2,
+  find: '            cardStyle: "display: flex; flex-direction: column; height: 100%; padding: 13px 14px; background: var(--vf-white); border: 1px solid " +\n'
+    + '              (on ? "var(--vf-accent)" : "#e6e6e6") + "; border-radius: 8px;"\n'
+    + '          };\n'
+    + '        })\n',
+  replace: '            cardStyle: "display: flex; flex-direction: column; height: 100%; padding: 13px 14px; background: var(--vf-white); border: 1px solid " +\n'
+    + '              (on ? "var(--vf-accent)" : "#e6e6e6") + "; border-radius: 8px;"\n'
+    + '          };\n'
+    + '        });\n'
+    + '      })()\n',
+  count: 1
+};
+
+/** A24.56 -- the footnote, true for BOTH surfaces. A24.20's FIRST sentence describes the map alone
+ *  and sits under the strip, whose figures are per-practice, so it is the one that is rewritten.
+ *  CHAINED on A24.20.
+ *
+ *  Its SECOND sentence -- "Population growth is measured for the surrounding city or county, not
+ *  the tract." -- is restored here byte for byte (fix round 3, the re-review's Important). The
+ *  first draft's `find` reached one sentence too far and took it out of the product, while
+ *  `CLAUDE.md`'s A24.20 narrative went on asserting it was there. It is exactly the fact the
+ *  snapshot cannot state for itself: growth is the one layer whose card still reads "· community
+ *  level", because its basis is place-or-county on both surfaces and neither the map's geography
+ *  nor the practice-area label describes it.
+ *
+ *  The new sentence also stops at "describe the area around each practice": the words that
+ *  followed it -- "not the practice itself" -- are the paragraph's own opening clause, three
+ *  sentences earlier. */
+const A24_56: Amendment = {
+  id: 'A24.56', ...FIX2,
+  find: 'Community areas are Census tracts (2023 boundaries); figures describe the area, not the practice. Population growth is measured for the surrounding city or county, not the tract.',
+  replace: 'The map shades Census tracts, places, counties or ZIP Code Tabulation Areas, as each layer’s legend names; the snapshot’s figures describe the area around each practice. Population growth is measured for the surrounding city or county, not the tract.',
+  count: 1
+};
+
+/** A24.57 -- fix round 2, E. The ruling was ONE sentence, `app.api.market.THRESHOLD_RULE`, and no
+ *  other new copy; A24.38 shipped a lead-in in front of it. The design's own headline above the
+ *  line already says which layer and which polygon this is. CHAINED on A24.38. */
+const A24_57: Amendment = {
+  id: 'A24.57', ...FIX2,
+  find: '        : p.suppress_reason === "source_threshold" ? "Fewer than three veterinary establishments here. The Census does not publish',
+  replace: '        : p.suppress_reason === "source_threshold" ? "The Census does not publish',
+  count: 1
+};
+
+/** A24.58 / A24.59 -- FIX ROUND 2, C and D (2026-09-12, found by the re-review of round 1).
+ *
+ *  C: `communities()` carries its OWN growth parser, and it had the same trap A24.43 took out of
+ *  `num` -- stripping everything but digits, a dot and a minus leaves the YEAR glued to the
+ *  figure, so "+14.2% since 2015" parsed as 14.22015 and "-1.5% since 2018" as -1.52018. Harmless
+ *  today only because `toFixed(1)` rounds it away on the one surface that prints it and no fixture
+ *  sits on a class boundary; it is still a number nothing measured, and the same defect in a
+ *  second place is how the first one came back. One helper, two readers: this parses with
+ *  `num()` itself. The sign survives because `num` keeps it (A24.43), which is the whole reason
+ *  `communities()` had a parser of its own in the first place.
+ *
+ *  D: the comment above `areaSet` justified NOT using `num()` by saying `num(-5.1)` is `5.1`.
+ *  A24.43 made that false. What still holds is the other half of the reason, so that is what it
+ *  says now. */
+const FIX2CD = {
+  date: '2026-09-12',
+  ruling: 'The design has one number parser, not two: `communities()` parsed a growth figure with a second regex that glued the trailing year onto the digits ("+14.2% since 2015" → 14.22015), and the comment justifying a third path cited behaviour A24.43 had already removed.'
+};
+
+const A24_58: Amendment = {
+  id: 'A24.58', ...FIX2CD,
+  find: '        growth: p.growth != null ? (parseFloat(String(p.growth).replace(/[^0-9.\\-]/g, "")) || 0) : undefined,\n',
+  replace: '        growth: p.growth != null ? num(p.growth) : undefined,\n',
+  count: 1
+};
+
+const A24_59: Amendment = {
+  id: 'A24.59', ...FIX2CD,
+  find: '  // The value is taken as it comes and is NOT put through `num()`: that helper strips\n'
+    + '  // everything but digits and a dot, so `num(-5.1)` is `5.1` - it would turn a declining\n'
+    + '  // area into a growing one. Invisible until now, because every one of the design\'s own\n'
+    + '  // nine communities grows; A24.13 (D-C46) makes a negative growth a first-class value.\n',
+  replace: '  // The value is taken as it comes and is NOT put through `num()`: by this point it is\n'
+    + '  // already a number, parsed once by `communities()`, and a second pass would be a second\n'
+    + '  // chance to lose something. (The older reason - that `num` stripped a leading minus, so\n'
+    + '  // `num(-5.1)` was `5.1` and a decline read as growth - stopped being true with A24.43,\n'
+    + '  // which taught it to read the first signed number and nothing after it.)\n',
+  count: 1
+};
+
+const A24_9: Amendment = {
+  id: 'A24.9', ...NS, file: 'jsx',
+  find: '// GEOMETRY NOTE: the prototype has no ZCTA boundary file, so community areas are\n// approximated as Voronoi cells around each community\'s centroid, clipped to the metro\n// bounding box. Cells are contiguous and non-overlapping, which is what a choropleth\n// requires, but they are NOT real Census boundaries — the UI labels them "approximate\n// community areas". Production must load tiger_cb ZCTA polygons per the Census Data\n// Source Specification and drop this approximation.\n',
+  replace: '// GEOMETRY: real Census boundary polygons, handed in as `areas` - one GeoJSON\n'
+    + '// FeatureCollection for the active fill layer, each feature already carrying the colour\n'
+    + '// `bucket()` chose and the tooltip `areaVals()` built, so this component classes nothing\n'
+    + '// and formats nothing. The approximation this file used to draw (grid cells nearest each\n'
+    + '// community\'s centroid, clipped to the metro bounding box) is gone: amendment A24, spec\n'
+    + '// 2026-09-10, John\'s rulings D-C34-D-C37 of 2026-09-10.\n',
+  count: 1
+};
+
+/** A24.10 -- `mosaicCells` and its comment, deleted outright under the bundle's own dead-code rule
+ *  (spec D8/D12, as A2.3-A2.5 and A13.6-A13.7 applied it): A24.12 removes its only caller. The
+ *  `find` is the pristine file's own bytes, printed rather than transcribed -- 26 lines, not the 23
+ *  the plan predicted, which is exactly why it is derived and not typed. */
+const A24_10: Amendment = {
+  id: 'A24.10', ...NS, file: 'jsx',
+  find: '// ---- Fine-grained mosaic ---------------------------------------------------\n// Each cell is assigned the class of its nearest community centroid, which yields crisp\n// finite boundaries rather than overlapping discs. This is spatial ASSIGNMENT of existing\n// community data, not interpolation, and not new data — production replaces it with real\n// ZCTA polygons (tiger_cb) per the Census Data Source Specification.\nfunction mosaicCells(sites, bbox, step) {\n  const out = [];\n  for (let lat = bbox.minLat; lat < bbox.maxLat; lat += step) {\n    for (let lng = bbox.minLng; lng < bbox.maxLng; lng += step) {\n      const cLat = lat + step / 2, cLng = lng + step / 2;\n      let best = null, bestD = Infinity;\n      for (let i = 0; i < sites.length; i++) {\n        const s = sites[i];\n        const dLat = s.lat - cLat;\n        const dLng = (s.lng - cLng) * Math.cos((cLat * Math.PI) / 180);\n        const d = dLat * dLat + dLng * dLng;\n        if (d < bestD) { bestD = d; best = s; }\n      }\n      // Drop cells too far from every community rather than shading empty country.\n      if (!best || bestD > 0.016) continue;\n      out.push({ site: best, bounds: [[lat, lng], [lat + step, lng + step]] });\n    }\n  }\n  return out;\n}\n\n',
+  replace: '',
+  count: 1
+};
+
+const A24_11: Amendment = {
+  id: 'A24.11', ...NS, file: 'jsx',
+  find: '    communities = [],\n',
+  replace: '    communities = [],\n    areas = null,\n',
+  count: 1
+};
+
+/** A24.12 -- the area effect draws `props.areas` through `L.geoJSON` on the SAME shared canvas
+ *  renderer the mosaic used, so `leaflet.ts:49-50`'s note ("ONE canvas renderer per mount") outlives
+ *  the mosaic. 35 lines replaced; the drive-time ring above them is outside the `find` and is
+ *  untouched. */
+const A24_12: Amendment = {
+  id: 'A24.12', ...NS, file: 'jsx',
+  find: '    if (!activeLayer || !communities.length) return;\n\n    const lats = communities.map((c) => c.lat);\n    const lngs = communities.map((c) => c.lng);\n    const bbox = {\n      minLat: Math.min.apply(null, lats) - 0.13,\n      maxLat: Math.max.apply(null, lats) + 0.13,\n      minLng: Math.min.apply(null, lngs) - 0.15,\n      maxLng: Math.max.apply(null, lngs) + 0.15\n    };\n\n    const canvas = L.canvas({ padding: 0.3 });\n    mosaicCells(communities, bbox, 0.0055).forEach(({ site, bounds }) => {\n      const v = site.values[activeLayer];\n      if (v == null) return;\n      L.rectangle(bounds, {\n        renderer: canvas,\n        stroke: false,\n        fillColor: v.color,\n        fillOpacity: 0.5,\n        interactive: true\n      })\n        .bindTooltip(\n          \'<div style="font-family:ProximaNova,Arial,Helvetica,sans-serif;min-width:150px">\' +\n            \'<div style="font-size:12.5px;font-weight:800;color:#003a70">\' + site.name + "</div>" +\n            \'<div style="font-size:11px;color:#494949;margin-top:3px">\' + (site.metricName || "") + "</div>" +\n            \'<div style="font-size:15px;font-weight:800;color:#003a70;margin-top:1px">\' + v.label + "</div>" +\n            \'<div style="font-size:10px;color:#767676;margin-top:5px">\' + (site.sourceNote || "") + "</div>" +\n          "</div>",\n          { sticky: true, className: "rf-tip" }\n        )\n        .on("click", () => onArea && onArea(site.name))\n        .addTo(g);\n    });\n  }, [communities, activeLayer, showDrive, driveCenter && driveCenter[0], status]);\n',
+  replace: '    if (!activeLayer || !areas || !areas.features.length) return;\n'
+    + '\n'
+    + '    const canvas = L.canvas({ padding: 0.3 });\n'
+    + '    L.geoJSON(areas, {\n'
+    + '      renderer: canvas,\n'
+    + '      style: (f) => ({ renderer: canvas, stroke: false, fillColor: f.properties.color, fillOpacity: 0.5, interactive: true }),\n'
+    + '      onEachFeature: (f, l) => {\n'
+    + '        l.bindTooltip(f.properties.tip, { sticky: true, className: "rf-tip" });\n'
+    + '        l.on("click", () => onArea && onArea(f.properties.name));\n'
+    + '      }\n'
+    + '    }).addTo(g);\n'
+    + '  }, [areas, communities, activeLayer, showDrive, driveCenter && driveCenter[0], status]);\n',
+  count: 1
+};
+
 export function amendments(): Amendment[] {
   return [...deriveTypographyB(readFileSync(V2, 'utf8'), readFileSync(PRISTINE, 'utf8')), A2, A2_2, A2_3, A2_4, A2_5, A3, A4, A5_1, A5_3a, A5_3b, A5_4, A5_6, A5_7,
     A6_1, A6_2, A6_3a, A6_3b, A6_3c, A6_4a, A6_4b, A6_4c, A6_4d, A6_5, A6_6a, A6_6b, A7_1, A7_2,
@@ -4670,8 +5759,9 @@ export function amendments(): Amendment[] {
     // A27.7's ring caption. Chained on A21.2d, which runs far earlier.
     A27_8,
     // A28 — the ring is drawn at the distance the card names (John, 2026-09-11, ruling D-C44).
-    // A28.1 is the FIRST entry in the programme's history that edits `MarketMapV3.jsx` rather
-    // than the `.dc.html` (`file: 'jsx'`, the partition spec §9.2 added for A24); A28.2-A28.4
+    // A28.1 is the FIRST entry in this list that edits `MarketMapV3.jsx` rather than the
+    // `.dc.html` (`file: 'jsx'`, the partition spec §9.2 added for A24, whose own four jsx
+    // entries are appended after this family); A28.2-A28.4
     // delete the legacy panel's orphan rows and the two state flags those rows were the only
     // reader of, under the bundle's own dead-code rule. A28.5-A28.8 (controller amendment
     // D-C45) finish it: the four helpers those rows called (`layerRow`, `radioRow`, `setValue`,
@@ -4682,5 +5772,49 @@ export function amendments(): Amendment[] {
     // neighbourhood-shading spec, so A28 is the next free id in the ledger after A27.
     // A28.9 (whole-branch review, 2026-09-11) is the last orphan the same deletion left: the
     // `practices` layer default, whose only reader was A28.2's own deleted row.
-    A28_1, A28_2, A28_3, A28_4, A28_5, A28_6, A28_7, A28_8, A28_9];
+    A28_1, A28_2, A28_3, A28_4, A28_5, A28_6, A28_7, A28_8, A28_9,
+    // A24 -- real Census boundary polygons (2026-09-10, John's D-C34-D-C37) and the
+    // growth breaks that make them readable (A24.13, D-C46, 2026-09-11). Numerically
+    // before A25 and A26 and applied after both: A24 was RESERVED by the ledger's own
+    // A25.1 row while those two families were written and merged, so every A24 `find`
+    // is measured against the file they leave behind. Definition order in this file
+    // matches this list (m8). The four `MarketMapV3.jsx` entries sit last;
+    // `amendmentsFor` partitions them, so their position here only decides their
+    // order among themselves.
+    A24_1, A24_2, A24_3, A24_4, A24_5, A24_6a, A24_6b, A24_7, A24_8a, A24_8b, A24_13,
+    // A24.14-A24.18 -- the adapter path (Task 10). A24.14 reads A24.1's own output and A24.16
+    // reads A24.4's, so they run after the family's first pass. Definition order in this file
+    // matches this list (m8).
+    A24_14, A24_15, A24_16, A24_17, A24_18,
+    // A24.19-A24.20 -- the Census tract ruling (2026-09-12). Both CHAINED: A24.19 reads A24.2's
+    // output and A24.20 reads A24.7's, so both must sit after those two.
+    A24_19, A24_20,
+    // A24.21-A24.23 -- the viewport bbox (2026-09-12). All three CHAINED: A24.21 reads
+    // A24.15's whole output, A24.22 reads A24.17's line and A24.23 reads A13.5's, so each
+    // must sit after the entry it reads.
+    A24_21, A24_22, A24_23,
+    // A24.24-A24.32 -- the four layers that painted nothing (D-L1, 2026-09-12). Every entry is
+    // CHAINED on an earlier A24 entry's output, so each runs after the one it reads: A24.24 reads
+    // A24.2's and A24.19's, A24.25 A24.2's, A24.27/A24.30a/A24.30b A24.3's, A24.28 and A24.32
+    // A24.5's (A24.32 runs after A24.28, which edits the same block), and A24.31b A24.16's.
+    // Definition order in this file matches this list (m8).
+    A24_24, A24_25, A24_26, A24_27, A24_28, A24_29, A24_30a, A24_30b, A24_31a, A24_31b, A24_32,
+    // A24.33-A24.42 -- fix round 1 (review of e984c85..304b80f, 2026-09-12). Every entry is
+    // CHAINED: A24.33/A24.38 read A24.3's output, A24.37 A24.25's, A24.39 A24.30b's, A24.41
+    // A24.32's and A24.42 A24.31a's, so each runs after the entry it reads. Definition order in
+    // this file matches this list (m8).
+    A24_33, A24_34, A24_35, A24_36, A24_37, A24_38, A24_39, A24_40, A24_41, A24_42,
+    // A24.43 -- MS1, the snapshot strip's own sign (2026-09-12). Not chained: its `find` is the
+    // pristine bundle's own `num` declaration.
+    A24_43,
+    // A24.44-A24.57 -- fix round 2 (2026-09-12). The snapshot states its own basis (B) and the
+    // threshold tip carries the ruled sentence alone (E). A24.56 reads A24.20's output and A24.57
+    // A24.38's, so both run after the entries they read; A24.52 declares the term A24.51 reads
+    // and A24.54 the term A24.53 reads, so each pair is ordered.
+    A24_44, A24_45, A24_46, A24_47, A24_48, A24_49, A24_50, A24_52, A24_51, A24_54, A24_53,
+    A24_55, A24_56, A24_57,
+    // A24.58/A24.59 -- fix round 2, C and D: one number parser, and a comment that stopped being
+    // true when A24.43 fixed it. A24.59 reads A24.3's own output.
+    A24_58, A24_59,
+    A24_9, A24_10, A24_11, A24_12];
 }

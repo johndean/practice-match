@@ -3,6 +3,10 @@ Establishment counts per ZIP for the spec's NAICS codes, using the same NAICS-20
 (`app.census.cbp.NAICS_ALIASES`); employment/payroll are mostly suppressed at ZIP level and are
 not requested here -- `ESTAB` is what the competition layer needs.
 
+The all-industry total (`TOTAL_NAICS`) is fetched in the same pass and stored under its own NAICS
+key; it is the ZIP-coverage universe the competition layer reads to tell a withheld count from an
+uncovered ZIP (review round 1, Important 3).
+
 Controller amendment A-C6 (2026-09-09): the standalone `zbp` dataset ends at vintage 2018 --
 `2022/zbp` is a 404. From 2019 the ZIP-level Business Patterns are served by the CBP endpoint's
 OWN `zip code` geography (Census's own summary level `861` for this request -- distinct from the
@@ -29,6 +33,23 @@ from app.census.registry import Dataset
 from app.census.registry import load as load_registry
 
 VARS = ["ZIPCODE", "ESTAB"]
+
+#: The ALL-INDUSTRY total, requested in the same pass as the three industry codes and stored
+#: under its own key (review round 1, Important 3, 2026-09-12).
+#:
+#: The Census publishes ZIP-level INDUSTRY detail only where a category has three or more
+#: establishments -- "if a given NAICS category has less than three business establishments, the
+#: number of establishments won't be reported for that category, but they will be included in the
+#: sum total". Measured on QA before this was written: `zbp_industry` held a minimum of 3 and not
+#: one row below it, nationally. Without the total there is no way to tell a ZIP area with one or
+#: two veterinary practices -- a real, withheld figure -- from a ZIP area ZIP Code Business
+#: Patterns does not cover at all, and `geo_metric` served both as `value: null, suppressed:
+#: false`: 393 of Dallas's 535 ZCTAs claiming "no data" over cells the Census had withheld, which
+#: is the mirror image of the CBP over-suppression this same branch fixed.
+#:
+#: `00` is the Census's own code for the total across all industries on this endpoint, and it
+#: needs no alias in any NAICS vintage.
+TOTAL_NAICS = "00"
 
 UPSERT = """
 INSERT INTO zbp_industry (geo_id, summary_level, vintage, naics_code, establishments, ingest_run_id)
@@ -60,7 +81,7 @@ def load(conn: psycopg2.extensions.connection, client_factory: Callable[[Dataset
         raise MissingBoundaries("zbp needs the market states' ZCTAs in geo_area — run 'census_load.py tiger' first")
     param = ds.naics_param or "NAICS2017"
     with ingest.run(conn, "zbp", ds.vintage) as run, client_factory(ds) as client:
-        for code in NAICS:
+        for code in (*NAICS, TOTAL_NAICS):
             requested = NAICS_ALIASES.get((param, code), code)
             rows = client.fetch_table(VARS, "zip code:*", VARS, None, {param: requested})
             payload = [(r["ZIPCODE"], ds.vintage, code, _int(r.get("ESTAB")), run.id) for r in rows if r["ZIPCODE"] in zctas]

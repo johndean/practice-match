@@ -148,3 +148,115 @@ def test_contract_doc_names_every_community_field_the_listing_serialiser_emits()
         "docs/integrations/market-data-api.md names no field for these keys of "
         f"GET /api/listings: {', '.join(missing)}"
     )
+
+
+def test_contract_doc_states_the_boundary_caps_and_geographies_the_code_enforces() -> None:
+    """A hand-maintained number in a document is a defect waiting to happen: every figure below is
+    read off `app.api.market` rather than typed here, so the document cannot drift from the caps
+    the route really applies (plan Global Constraint (i))."""
+    from app.api import market
+
+    text = DOC.read_text(encoding="utf-8")
+    assert f"`MAX_BBOX_DEG = {market.MAX_BBOX_DEG}`" in text
+    assert f"`MAX_FEATURES = {market.MAX_FEATURES}`" in text
+    assert f"`MAX_BODY_BYTES = {market.MAX_BODY_BYTES:_}`" in text
+    assert f"`BOUNDARY_TTL = {market.BOUNDARY_TTL}`" in text
+    for layer, shading in market.SHADING.items():
+        assert f'"{layer}"' in text or f"`{layer}`" in text, layer
+        assert f'"summary_level": "{shading["summary_level"]}"' in text, layer
+        assert shading["label"] in text, layer
+    # The two properties §6 turns on, by name: a document that stops naming them is a contract
+    # Task 10 can implement the no-data swatch wrongly against.
+    for prop in ("suppress_reason", "band_ambiguous", "values_without_geometry"):
+        assert f"`{prop}`" in text, prop
+    # /api/layers' own sample must show the new member on every layer, shaded or not: an
+    # integration contract whose example payload is missing a field is one Task 10 codes without.
+    sample = text.split("## `GET /api/layers`", 1)[1].split("```", 2)[1]
+    assert sample.count('"shading"') == 9, "every layer in the /api/layers sample must show the member"
+    assert sample.count('"shading": null') == 9 - len(market.SHADING), (
+        "every layer that does NOT shade must show shading: null"
+    )
+    # The one exception spec §6 grants, written down where an integrator will read it: a ZIP area
+    # may be used where it IS the dataset's authoritative geography, and the answer must say so.
+    if any(v["summary_level"] == "860" for v in market.SHADING.values()):
+        assert "authoritative geography" in text
+        assert "ZIP Code Business Patterns" in text
+    assert '`shading` is the geography the MAP paints' in text
+
+
+#: The adapter, as TEXT. `frontend/src/market/boundaries.ts` is TypeScript and this is pytest, so
+#: it is read the way `frontend/src/listings/step-fields.json` is read — no parser, no build step,
+#: no Node in the backend gate. A regex over source is a weak reader, so the assertions below are
+#: written to fail LOUDLY if it reads nothing at all rather than to pass vacuously.
+ADAPTER = Path(__file__).resolve().parents[2] / "frontend" / "src" / "market" / "boundaries.ts"
+
+
+def test_the_refusal_codes_the_boundary_adapter_branches_on_are_pinned_to_the_route() -> None:
+    """The retry ladder is a cross-language contract, and nothing pinned it.
+
+    `boundaries.ts` branches on the literals `'AREA_TOO_LARGE'` and `'BBOX_TOO_LARGE'` to decide
+    whether a refusal is one a smaller box can fix, one the whole-metro request can fix, or one
+    that is final. `app/api/market.py` produces those strings and the contract doc restates them.
+    Rename one on the server and New York goes blank with every gate in this repository green —
+    the drift class this project has been bitten by repeatedly, which is why the caps beside this
+    are pinned off the module rather than typed into the document.
+
+    So: every code the CLIENT compares against `e.code` must (a) be raised by the `boundaries`
+    route itself, and (b) be named in the contract doc. And the set is pinned exactly, so a THIRD
+    code the client starts branching on has to be brought here rather than silently trusted.
+    """
+    import inspect
+
+    from app.api import market
+
+    adapter = ADAPTER.read_text(encoding="utf-8")
+    # Every `e.code === 'X'` / `e.code !== 'X'` in the file, in either order of operands.
+    branched = set(re.findall(r"e\.code\s*[!=]==\s*'([A-Z_]+)'", adapter))
+    branched |= set(re.findall(r"'([A-Z_]+)'\s*[!=]==\s*e\.code", adapter))
+    assert branched == {"AREA_TOO_LARGE", "BBOX_TOO_LARGE"}, (
+        f"{ADAPTER.name} branches on {sorted(branched)}; the route, the contract doc and this pin "
+        "must all be widened together when the client learns a new code"
+    )
+
+    route = inspect.getsource(market.boundaries)
+    doc = DOC.read_text(encoding="utf-8")
+    bounds = doc.split("**Bounds.**", 1)[1].split("**Licence.**", 1)[0]
+    for code in sorted(branched):
+        assert f'_error("{code}"' in route, (
+            f"{ADAPTER.name} branches on {code!r} but `app.api.market.boundaries` never raises it"
+        )
+        assert code in bounds, (
+            f"{ADAPTER.name} branches on {code!r} but the contract doc's Bounds section never names it"
+        )
+
+
+def test_the_metro_catalogue_name_join_is_the_same_field_on_both_sides() -> None:
+    """The client resolves a metro by NAME, and nothing pinned what that name is.
+
+    `boundaries.ts` joins `rows.find((m) => m.name === marketName)` where `marketName` is the
+    design's own `P[i].market`; `markets()` serves `l.market AS name` precisely so that no name
+    heuristic stands between the dropdown and the geoid (Task CK deleted `short_market_name` for
+    exactly that reason). The two halves are in different languages and nothing connected them:
+    alias that column to anything else — `cbsa_name`, `label`, the CBSA's official title — and
+    every metro silently fails to resolve, with every gate in this repository green.
+
+    Read as TEXT, the `step-fields.json` posture, like the refusal-code pin above it.
+    """
+    import inspect
+
+    from app.api import market
+
+    adapter = ADAPTER.read_text(encoding="utf-8")
+    join = re.search(r"rows\.find\(\((\w+)\)\s*=>\s*\1\.(\w+)\s*===\s*marketName\)", adapter)
+    assert join is not None, (
+        f"{ADAPTER.name} no longer resolves a metro with `rows.find(m => m.<field> === marketName)`; "
+        "this pin reads that join and must be rewritten with it"
+    )
+    field = join.group(2)
+    assert field == "name", f"{ADAPTER.name} joins the metro catalogue on {field!r}"
+
+    source = inspect.getsource(market.markets)
+    assert f"l.market AS {field}" in source, (
+        f"{ADAPTER.name} joins on {field!r} but `app.api.market.markets` does not select "
+        f"`l.market AS {field}` — the dropdown key and the served name are no longer the same string"
+    )

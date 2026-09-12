@@ -43,6 +43,7 @@ from app.census import qwi as census_qwi
 from app.census import tiger as census_tiger
 from app.census import vintage as census_vintage
 from app.census import zbp as census_zbp
+from app.census.states import STATES as _STATES
 from scripts import census_load
 
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -68,7 +69,7 @@ def test_cmd_tiger_queries_market_state_and_prints_row_counts(scratch_dsn, monke
     assert census_load.main(["tiger"]) == 0
 
     # market_state seeds six states (017_census_registry.sql; A-C0 P10 / A-C1 (5)).
-    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     assert captured["vintage"] == "2023"
     out = capsys.readouterr().out
     assert "140:cb_2023_48_tract_500k.zip: 2 rows" in out
@@ -314,7 +315,7 @@ def test_cmd_acs_queries_market_state_and_prints_measure_counts(scratch_dsn, mon
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     captured: dict = {}
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         captured.setdefault("dataset_keys", []).append(dataset_key)
         captured["states"] = list(states)
         return {"acs5": 100, "acs5_subject": 10, "acs5_prior": 50}[dataset_key]
@@ -324,7 +325,7 @@ def test_cmd_acs_queries_market_state_and_prints_measure_counts(scratch_dsn, mon
     assert census_load.main(["acs"]) == 0
 
     # market_state seeds six states (017_census_registry.sql; A-C0 P10 / A-C1 (5)).
-    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     # the default `--dataset` list is all three ACS datasets, in order.
     assert captured["dataset_keys"] == ["acs5", "acs5_subject", "acs5_prior"]
     out = capsys.readouterr().out
@@ -337,7 +338,7 @@ def test_cmd_acs_accepts_a_dataset_override(scratch_dsn, monkeypatch):
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
     captured: dict = {}
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         captured.setdefault("dataset_keys", []).append(dataset_key)
         return 1
 
@@ -371,7 +372,7 @@ def test_cmd_acs_builds_the_client_factory_from_the_required_key_and_contact_nev
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "distinctive-contact@vinfoundation.example.org")
     captured: dict = {}
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         client = client_factory(object())  # CensusClient's constructor never inspects `ds`
         captured["api_key"] = client.api_key
         captured["contact"] = client.contact
@@ -400,7 +401,7 @@ def test_cmd_acs_leaves_the_archive_disabled_without_s3_settings(scratch_dsn, mo
     monkeypatch.setattr(settings, "s3_secret_access_key", None)
     captured: dict = {}
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         captured["archive"] = client_factory(object()).archive
         return 0
 
@@ -424,7 +425,7 @@ def test_cmd_acs_passes_a_real_archive_once_s3_settings_are_configured(scratch_d
     monkeypatch.setattr(settings, "s3_secret_access_key", "secretkey")
     captured: dict = {}
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         captured["archive"] = client_factory(object()).archive
         return 0
 
@@ -480,7 +481,7 @@ def test_cmd_acs_returns_four_when_a_dataset_download_fails(scratch_dsn, monkeyp
     monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         raise CensusHTTPError(500, "https://api.census.gov/data/2023/acs/acs5?key=SECRET")
 
     monkeypatch.setattr(census_acs, "load", fake_load)
@@ -497,7 +498,7 @@ def test_cmd_acs_returns_five_when_a_dataset_fails_validation(scratch_dsn, monke
     monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         raise VariableMissing(["B19013_001E"])
 
     monkeypatch.setattr(census_acs, "load", fake_load)
@@ -517,7 +518,7 @@ def test_cmd_acs_returns_two_when_a_dataset_is_licence_gated(scratch_dsn, monkey
     monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
     monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
 
-    def fake_load(conn, client_factory, dataset_key, states):
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
         raise PermissionError(f"{dataset_key} is blocked; loads are refused (spec §1 licensing gate)")
 
     monkeypatch.setattr(census_acs, "load", fake_load)
@@ -525,6 +526,68 @@ def test_cmd_acs_returns_two_when_a_dataset_is_licence_gated(scratch_dsn, monkey
     assert census_load.main(["acs", "--dataset", "acs5"]) == 2
     err = capsys.readouterr().err
     assert "acs5" in err and "refused" in err
+
+
+# --- acs --levels (Task 6, D-NS4) -------------------------------------------------------------
+
+def test_cmd_acs_passes_a_levels_filter_through(scratch_dsn, monkeypatch):
+    """The CLI's own half of D-NS4: `census_load.py acs --levels 860` loads the one level, so the
+    ZCTA pull can be run on its own instead of re-running six geographies for six states."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    captured: dict = {}
+
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
+        captured["levels"] = levels
+        return 1
+
+    monkeypatch.setattr(census_acs, "load", fake_load)
+
+    assert census_load.main(["acs", "--dataset", "acs5", "--levels", "860"]) == 0
+
+    assert captured["levels"] == ["860"]
+
+
+def test_cmd_acs_accepts_more_than_one_level(scratch_dsn, monkeypatch):
+    """`nargs="+"`: the flag is a list, so an operator can reload two geographies together."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    captured: dict = {}
+
+    def fake_load(conn, client_factory, dataset_key, states, levels=None):
+        captured["levels"] = levels
+        return 1
+
+    monkeypatch.setattr(census_acs, "load", fake_load)
+
+    assert census_load.main(["acs", "--dataset", "acs5", "--levels", "860", "160"]) == 0
+
+    assert captured["levels"] == ["860", "160"]
+
+
+def test_cmd_acs_defaults_to_every_level(scratch_dsn, monkeypatch):
+    """Omitting the flag must leave the existing load exactly as it was: `levels=None`, which is
+    `acs.load`'s "every geography" arm (`tests/census/test_acs.py
+    ::test_load_without_a_levels_filter_still_fetches_every_geography` proves what that arm does)."""
+    monkeypatch.setenv("DATABASE_URL", scratch_dsn)
+    monkeypatch.setenv("CENSUS_API_KEY", "the-key")  # gitleaks:allow — synthetic fixture, not a credential
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", "tech@vinfoundation.example.org")
+    captured: dict = {}
+
+    # `**kwargs`, not `levels=None`: a fake with its own default would report `None` whether or
+    # not `cmd_acs` passed the argument at all, which is a gate that cannot fail. This one sees
+    # exactly what was handed over.
+    def fake_load(conn, client_factory, dataset_key, states, **kwargs):
+        captured["kwargs"] = kwargs
+        return 1
+
+    monkeypatch.setattr(census_acs, "load", fake_load)
+
+    assert census_load.main(["acs", "--dataset", "acs5"]) == 0
+
+    assert captured["kwargs"] == {"levels": None}
 
 
 # --- cbp/zbp/bds subcommands (Task A6) --------------------------------------------------------
@@ -547,7 +610,7 @@ def test_cmd_cbp_queries_market_state_and_prints_row_count(scratch_dsn, monkeypa
     assert census_load.main(["cbp"]) == 0
 
     # market_state seeds six states (017_census_registry.sql; A-C0 P10 / A-C1 (5)).
-    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     assert "cbp: 42 rows" in capsys.readouterr().out
 
 
@@ -652,7 +715,7 @@ def test_cmd_zbp_queries_market_state_and_prints_row_count(scratch_dsn, monkeypa
 
     assert census_load.main(["zbp"]) == 0
 
-    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     assert "zbp: 18 rows" in capsys.readouterr().out
 
 
@@ -775,7 +838,7 @@ def test_cmd_bds_requires_a_year_and_prints_row_count(scratch_dsn, monkeypatch, 
 
     assert census_load.main(["bds", "--year", "2022"]) == 0
 
-    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     assert captured["year"] == 2022
     assert "bds 2022: 6 rows" in capsys.readouterr().out
 
@@ -898,7 +961,7 @@ def test_cmd_qwi_loads_a_given_quarter_without_resolving_latest(scratch_dsn, mon
 
     assert census_load.main(["qwi", "--year", "2024", "--quarter", "4"]) == 0
 
-    assert captured["states"] == ["06", "08", "12", "13", "36", "48"]
+    assert captured["states"] == [fips for _a, fips, _n in _STATES], "the loader is handed every state, not a subset"
     assert captured["year"] == 2024 and captured["quarter"] == 4
     assert captured["trimmed_keep_default"] == 20
     out = capsys.readouterr().out
@@ -926,7 +989,7 @@ def test_cmd_qwi_resolves_the_latest_available_quarter_when_omitted(scratch_dsn,
 
     assert census_load.main(["qwi"]) == 0
 
-    assert captured["state"] == "06"  # states[0], market_state's first row
+    assert captured["state"] == _STATES[0][1] == "01"  # states[0], market_state's first row — Alabama since 065
     assert captured["year"] == 2024 and captured["quarter"] == 4
     assert "qwi 2024Q4: 6 rows (0 trimmed)" in capsys.readouterr().out
 

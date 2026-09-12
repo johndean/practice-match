@@ -20,6 +20,7 @@ Railway project **Practice Match** (id `d20ecd90-2855-4b7d-957d-96a882b3a95d`) �
 | `LINK_BASE_URL` | ✓ | ✓ | `https://qa.foundation.vin` / `https://foundation.vin` — the origin the verify and password-reset links in transactional email point at; a wrong value sends people to the other environment (Identity plan Task I4) |
 | `EMAIL_ALLOWLIST` | ✓ | ✓ | comma-separated **whole addresses** (not domains) transactional email may be delivered to on any non-production environment. Fail-closed: outside production an **empty** list delivers to **nobody** — every row is recorded `suppressed` — so QA test sign-ups cannot email real people. Ignored on production, which delivers to everyone (Identity plan Task I6) |
 | `DB_POOL_MAX` | ✓ | ✓ | QA (set 2026-09-08): `10` on api, `4` on worker — the size of the psycopg2 **reuse pool** per DSN (`app/db.py`), which is what removes the per-request connect. uvicorn runs the api as a single process and celery runs `--concurrency=2` (`scripts/start.sh`) plus beat, so the two reuse pools together hold at most 14 idle connections against PostGIS's `max_connections` of 100. It does **not** cap how many connections exist: past the pool a caller gets an un-pooled connection rather than an error — that overflow is per call and closes on return, so the ceiling on backends is request concurrency, not this number. Bounding that overflow is Sub-project 2's concurrency work (Identity plan Task I9); raise this only if the pool is measured to be the bottleneck (Identity plan Task I4) |
+| `LOG_LEVEL` | ✓ | | `INFO` (the default; leave unset unless quietening a noisy deploy). The level `app/main.py`'s `_configure_logging` puts on the **`app`** logger hierarchy at app creation, which every module logger under `app.` inherits. Until 2026-09-12 NOTHING configured logging at all — not this repo, and uvicorn's own `LOGGING_CONFIG` touches only the `uvicorn*` loggers — so the root logger sat at its default `WARNING` with the last-resort handler and `railway logs --service api` showed uvicorn's access lines and nothing else: every `log.info` the api emits, including `app/api/market.py`'s structured boundaries cost line, went into the void while `log.warning` surfaced. One stderr stream handler, format `LEVEL logger: message`. uvicorn's three loggers are deliberately untouched. **An unknown value never takes the api down**: case and surrounding whitespace are normalised, the result is checked against `logging.getLevelNamesMapping()` (`DEBUG`, `INFO`, `WARNING`/`WARN`, `ERROR`, `CRITICAL`/`FATAL`, `NOTSET`), and anything else — `20`, `verbose` — **falls back to `INFO`** and is named once in a `WARNING` line at boot. Before that validator, `LOG_LEVEL=20` or even `INFO` with a trailing space raised `ValueError` inside `create_app()` at import and restart-looped the container. **api only** — the worker never calls `create_app()` and was never affected: `scripts/start.sh` already runs `celery … --loglevel=info`, which configures celery's own logging, so `app.tasks.census`'s INFO records have always reached the worker's log |
 | `MAIL_FROM` | | ✓ | `VIN Foundation — Practice Match <no-reply@foundation.vin>` — the Resend sender. `foundation.vin` is the sender domain only (spec §2); changing it needs the matching Resend DNS records (Identity plan Task I6) |
 | `MAIL_REPLY_TO` | | ✓ | `practicematch@vin.com` — **placeholder**. The mailbox replies to transactional email reach is an open item for the VIN Foundation (spec §10); set the real one before launch (Identity plan Task I6) |
 | `VIN_FOUNDATION_POSTAL_ADDRESS` | ✓ | ✓ | The VIN Foundation's official postal address, printed in the launch email's CAN-SPAM footer (`VIN Foundation · {address}`). John sets it; never invented and never a placeholder (controller amendment A-I5d.4, 2026-09-08 — "Do not invent the address"). Optional at boot: `POST /api/admin/signups/launch-mail` refuses a real send with `409 LAUNCH_MAIL_NOT_CONFIGURED` while it is unset, rather than sending a footer with a blank address line |
@@ -526,6 +527,140 @@ admin Data Sources console above, the licence gates each figure carries, and —
 not here — the Phase B exit checklist's per-dataset licence-flip verification (`zbp` for `vets`,
 `cbp` for `econ`, `acs5` for the two figures Task B6 closed a licence hole on). The ingest/activate
 sequence above is unchanged by Phase B; nothing here is repeated in that document.
+
+## National Census loads and the `geo_metric` materialise — runbook
+
+Seven rules, drafted 2026-09-12 from failures measured the same night — **every one of them was
+learned by breaking it**. They govern any `scripts/census_load.py` run and any manual
+`materialize_geo_metrics()` on the QA or production worker, and they sit here rather than in a
+plan because a precondition that lives only in a working document is one somebody will not read.
+`tests/test_docs.py::test_deploy_md_carries_the_national_census_loads_runbook` keeps them here.
+
+### Rule 1 — a long load runs detached, or the ssh session kills it
+
+`railway ssh --service worker -- <command>` ties the child to the session. When the session ends —
+including when the CLI returns early, which it does — the child dies, and **`railway ssh` reports
+exit 0 regardless**. The first national TIGER load (108 requests, ~6 minutes) was killed this way in
+under a minute, left an `ingest_run` row orphaned at `running`, and reported success.
+
+Run every load detached, inside ONE single-quoted `bash -c`, with stdin closed:
+
+```bash
+railway ssh --service worker --environment QA -- bash -c 'cd /app && nohup env PYTHONPATH=/app python scripts/census_load.py tiger > /tmp/tiger.log 2>&1 < /dev/null & echo "PID $!"'
+```
+
+Do not pass the command's own flags as separate ssh arguments: `acs --dataset acs5 --levels 140`
+passed that way was mangled into "unrecognized arguments: --levels 140" while the deployed
+subparser plainly had the flag. Quote the whole command.
+
+### Rule 2 — poll the LEDGER, not the process
+
+`railway ssh` under concurrent sessions returns empty output often enough that a process poll
+through it times out having learned nothing (`/proc/<pid>` checks returned neither ALIVE nor DONE
+for thirty iterations while the process had in fact exited). The worker image also has no `pgrep`,
+`ps` or `uptime`.
+
+The reliable completion signal is the database. `railway run --service PostGIS` did not flake in
+the same session:
+
+```bash
+railway run --service PostGIS --environment QA -- bash -c 'PGPASSWORD=$POSTGRES_PASSWORD psql -h $RAILWAY_TCP_PROXY_DOMAIN -p $RAILWAY_TCP_PROXY_PORT -U $POSTGRES_USER -d $POSTGRES_DB -X -A -F"|" -c "SELECT dataset_key, status, rows_written, request_count, started_at, finished_at FROM ingest_run ORDER BY started_at DESC LIMIT 5"'
+```
+
+`rows_written` and `request_count` are written at COMMIT: a `running` row carrying zeros says only
+that the run has not finished. A row stuck at `running` with the process gone is an orphan; mark it
+`failed` with the reason (guard the UPDATE by `id`, `status='running'` and `finished_at IS NULL`).
+
+### Rule 3 — activation is usually not needed, and forcing it would be wrong
+
+If a load writes MORE rows under a vintage string that is ALREADY in `active_vintage`, the new rows
+are served the moment the transaction commits — the read path selects on the active vintage. Do not
+`activate` again: its [0.8, 1.25] row-count ratio guard exists to catch a suspicious jump, and a
+six-state → national load is a measured ~3× jump you would have to `--force` through. Record the
+expected jump in the ledger instead.
+
+### Rule 4 — growth needs BOTH vintages at the SAME level
+
+`population_growth_pct` is a difference of `acs5` (2019–2023) and `acs5_prior` (2014–2018) at one
+summary level. Loading the baseline nationally at place level while the current vintage is still
+six-state at that level changes nothing: growth exists only where both do. Load both, at every level
+the card and the map read: `--levels 160 050` for the card's place/county path, `140` for the map.
+
+### Rule 5 — the national numbers, measured 2026-09-12
+
+| load | rows | requests | wall time |
+|---|---|---|---|
+| `tiger` (all levels, 51 states) | 154,176 | 107 | 5 m 39 s |
+| `acs --dataset acs5 --levels 140` | 590,800 | 51 | 16 m 49 s |
+| `acs --dataset acs5_prior --levels 160` | 29,320 | 51 | ~1 min |
+| `acs --dataset acs5 --levels 160 050` | 246,239 | 102 | ~8 min |
+| `acs --dataset acs5_prior --levels 050` | 3,142 | 51 | ~1 min |
+| `cbp` | 3,696 | 153 | ~1 min |
+| `zbp` | 9,258 | 3 | ~1 min |
+| `materialize_geo_metrics()` | 84,106 + 6,424 + 1,819 rows | — | ~9 min |
+
+**`zbp` MUST BE RELOADED after `feat/layers` deploys (fix round 1, 2026-09-12).** The loader now
+fetches a FOURTH NAICS key in the same pass — `00`, the all-industry total — because it is the
+only way to tell a ZIP area whose veterinary count the Census WITHHELD (its rule: a category with
+fewer than three establishments is not reported at ZIP level, but is counted in the sum total)
+from one ZIP Code Business Patterns does not cover at all. Without those rows every withheld ZIP
+is served as an absence, which on Dallas was 393 of 535 polygons. One more request, about a third
+more rows, same wall time:
+
+```
+railway ssh --service worker --environment QA -- bash -c 'nohup env PYTHONPATH=/app python scripts/census_load.py zbp > /tmp/zbp.log 2>&1 < /dev/null &'
+```
+
+then `materialize_geo_metrics()` again (below) so `geo_metric.establishments` picks up the third
+state. The reload is an UPSERT and the existing 541940/812910/459910 rows are rewritten in place.
+
+The write path was `psycopg2.executemany`, one round trip per row; `execute_batch(page_size=100)`
+is a measured 2.9× speedup and **is applied** as of `feat/layers` — the six-layer nightly measured
+~20 s nationally (06:21:02 → 06:21:21 on QA).
+
+After the loads: `python -c "from app.tasks.census import materialize_geo_metrics; print(materialize_geo_metrics())"`
+on the worker (detached, per Rule 1). It returns `{"metrics": {metric_key: rows}}`; a layer at 0 means
+a missing active vintage or an uncleared licence, not an error. After ANY `tiger_cb` activation, grep
+the api log for `no geo_area name at the active tiger_cb vintage` (the I4 rule).
+
+### Rule 6 — do not redeploy the worker inside the five minutes before a beat entry fires
+
+`scripts/deploy.sh` redeploys `api` AND `worker`. A worker restart as celery beat is about to fire
+kills or reschedules that tick silently. The entries, all UTC: `materialize-nightly` 03:00,
+`geo-metric-nightly` 03:30, `sessions-purge-nightly` 04:30, `outbox-purge-nightly` 04:40,
+`qwi-quarterly` 06:00 on the 15th of Feb/May/Aug/Nov, `license-audit-quarterly` 07:00 on the 1st of
+Jan/Apr/Jul/Oct. If a deploy must land in a window, run the missed task by hand afterwards and say so
+in the ledger — never assume the nightly ran because the clock passed it.
+
+### Rule 7 — a manual `geo_metric` materialise runs DETACHED on the worker (Rule 1) and is polled in the TABLE (Rule 2)
+
+The polygon table's only writer is `app.tasks.census.materialize_geo_metrics` (celery name
+`census.materialize_geo_metrics`, beat entry `geo-metric-nightly` 03:30 UTC). It writes NO
+`ingest_run` row, so `celery_app.send_task(...)` hands back a task id and nothing pollable — do
+not use it. Run the function itself, detached, and read its own log; it prints one row count per
+layer and bumps `market:geo:version` on commit so cached nulls expire:
+
+`railway ssh` re-tokenises the command it is handed, so a `python -c "…"` with quotes inside a
+quoted `bash -c` arrives as `nohup: missing operand` and NOTHING runs (measured 2026-09-12 06:17Z;
+the table showed no new rows three minutes later). Deliver the snippet with no inner quotes at
+all — base64 into a file, then run the file detached:
+
+    B64=$(printf 'from app.tasks.census import materialize_geo_metrics\nprint(materialize_geo_metrics(), flush=True)\n' | base64 | tr -d '\n')
+    railway ssh --service worker --environment QA -- bash -c "cd /app && echo $B64 | base64 -d > /tmp/geo_run.py && (PYTHONPATH=/app nohup python /tmp/geo_run.py > /tmp/geo.log 2>&1 < /dev/null &) && sleep 4 && grep -la geo_run /proc/[0-9]*/cmdline | head -2"
+
+The `grep -la … /proc/*/cmdline` line is the liveness check (no `ps`/`pgrep` in the image; a
+shell `for` loop is mangled the same way the quotes are). It prints a `/proc/<pid>/cmdline` path
+while the run is alive and nothing once it has exited.
+
+Then poll the TABLE via `railway run` (Rule 2) — one row per layer, `served` = rows with a value —
+and read `/tmp/geo.log` on the worker only when `max(computed_at)` has stopped advancing:
+
+    SELECT metric_key, count(*) AS rows, count(*) FILTER (WHERE NOT suppressed AND value_num IS NOT NULL) AS served, max(computed_at) FROM geo_metric GROUP BY 1 ORDER BY 1;
+
+Never two writers at once: `materialize-nightly` 03:00 writes the LISTING table, `geo-metric-nightly`
+03:30 writes THIS table — never start inside the five minutes before 03:30 or while a previous run's
+`max(computed_at)` is still advancing. Three national layers took the nightly ~3.5 min (03:30:01 →
+03:33:16 on 2026-09-12); budget ~8 for six.
 
 ## Rollback
 

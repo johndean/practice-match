@@ -112,6 +112,46 @@ def _suppression(value: float | None, moe: float | None) -> tuple[bool, str | No
     return False, None
 
 
+#: CBP's `EMP_N`/`PAYANN_N` noise LEVELS, as `app/census/cbp.py` asks for them and `_flags`
+#: joins them: 0 none, 1 low, 2 medium, 3 high. None of the four withholds anything.
+_CBP_NOISE_LEVELS = frozenset("0123")
+
+
+def _cbp_suppression(flag: str | None) -> tuple[bool, str | None]:
+    """Whether a `cbp_industry.flag` string means the Census WITHHELD the cell (D-L1, 2026-09-12).
+
+    The one decision both writers make about one column, so `market_metric` and `geo_metric`
+    cannot disagree about the same county the way they did until this function existed: the map's
+    writer suppressed on the flag's TRUTHINESS and hid all 392 counties in the country, while the
+    docked panel served the same row as "$819K".
+
+    CBP's disclosure avoidance has been NOISE INFUSION rather than cell suppression since the 2018
+    release, which is why `app/census/cbp.py` asks for `EMP_N`/`PAYANN_N` ("Noise range for ...")
+    and there is no `_F` withholding variable in `2022/cbp` to ask for; `_flags` joins whatever
+    came back as `KEY=VALUE[;KEY=VALUE]`, so the string a real county carries is
+    `EMP_N=0;PAYANN_N=0` -- noise level ZERO on both fields, published cleanly.
+
+    So: **noise never suppresses, at any level.** A noise range is a statement about PRECISION,
+    not about availability, and greying a county whose payroll the Census published is the mirror
+    image of fabricating one -- the Census spec's §21 forbids both directions ("never render
+    unknown when the value is known"). At the payroll layer's own class breaks ($450K / $650K /
+    $900K) even the highest published noise level, 3, cannot move a county more than a fraction of
+    a band, so there is nothing for a `band_ambiguous`-style caveat to warn about either; the
+    level itself is carried into `inputs` by both writers, so a later ruling can surface it
+    without a second read of the source.
+
+    Anything the loader could not have produced as a noise pair -- a withholding code (`D`, `S`),
+    an unknown key, a level outside 0-3 -- FAILS CLOSED and suppresses as `source_flag`, because
+    an unrecognised flag is not evidence that a cell may be shown."""
+    if not flag:
+        return False, None
+    for part in flag.split(";"):
+        key, sep, value = part.partition("=")
+        if not (sep and key.endswith("_N") and value in _CBP_NOISE_LEVELS):
+            return True, "source_flag"
+    return False, None
+
+
 def _row(
     lid: str, band: str, key: str, vintage: str, value: float | None, unit: str, *,
     derived: bool = False, moe: float | None = None, suppressed: bool = False, reason: str | None = None,
@@ -245,7 +285,7 @@ def materialize_listing(conn: psycopg2.extensions.connection, redis: redis_sync.
                 rows.append(_row(
                     listing_id, band, "median_hh_income", ctx.acs_v, inc_e, "usd", derived=inc_approx, moe=inc_m,
                     suppressed=inc_sup, reason=inc_reason,
-                    inputs={**base, "note": "household-weighted average of tract medians"} if inc_approx else base,
+                    inputs={**base, "note": "household-weighted median of tract medians, interpolated"} if inc_approx else base,
                 ))
                 rows.append(_row(
                     listing_id, band, "pet_households_est", ctx.acs_v, M.pet_households_est(hh_e), "count", derived=True,
@@ -264,9 +304,14 @@ def materialize_listing(conn: psycopg2.extensions.connection, redis: redis_sync.
                         suppressed=hh_sup, reason="input_suppressed" if hh_sup else None, inputs={**comp_inputs, "acs5": ctx.acs_v},
                     ))
                     if ctx.cbp and ctx.cbp_v:
+                        # D-L1: the flag's CONTENT, through the one function `geo_metric._econ`
+                        # also calls. Until 2026-09-12 this row read the column and ignored it
+                        # while the map's writer suppressed on its truthiness.
+                        cbp_sup, cbp_reason = _cbp_suppression(ctx.cbp[2])
                         rows.append(_row(
                             listing_id, band, "revenue_per_establishment", ctx.cbp_v, M.revenue_per_establishment(ctx.cbp[1], ctx.cbp[0]), "usd",
-                            derived=True, source="cbp", inputs={"cbp": ctx.cbp_v, "geo_level": "county", "note": "payroll per establishment, not revenue"},
+                            derived=True, source="cbp", suppressed=cbp_sup, reason=cbp_reason,
+                            inputs={"cbp": ctx.cbp_v, "geo_level": "county", "note": "payroll per establishment, not revenue", "cbp_noise": ctx.cbp[2]},
                         ))
                     score = M.opportunity_score(inc_e, ctx.growth, per10k)
                     if score is not None:

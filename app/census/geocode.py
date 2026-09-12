@@ -25,15 +25,18 @@ Every resolution -- ladder rung or fallback -- writes `practice_location` (upser
 market panel's "approximate community data" notice, per §11).
 
 Controller amendment A-C15 corrections, applied here (not rediscovered):
-  2 -- `STATE_FIPS` is an explicit six-entry mapping (the states `market_state`/migration 017
-       pins: California, Texas, Florida, Georgia, New York, Colorado) to their two-digit FIPS
-       codes, and `_fallback`'s place query filters `geo_area.state_fips` directly against it.
-       The brief's own illustrative code instead joined through a `geo_area` name lookup on
-       `summary_level = '040'` state rows, gated by a FOUR-entry name map -- which would refuse
-       New York and Colorado (Denver) outright even before considering whether TIGER's own state
-       boundary rows carry a name a joined predicate could ever match. `tests/census/
-       test_geocode.py::test_state_fips_matches_the_market_state_registry` pins the six entries
-       against the registry so the two can never drift apart silently.
+  2 -- `STATE_FIPS` maps a USPS abbreviation to its two-digit FIPS code, and `_fallback`'s place
+       query filters `geo_area.state_fips` directly against it. The brief's own illustrative code
+       instead joined through a `geo_area` name lookup on `summary_level = '040'` state rows,
+       gated by a FOUR-entry name map -- which would refuse New York and Colorado (Denver)
+       outright even before considering whether TIGER's own state boundary rows carry a name a
+       joined predicate could ever match. It was an explicit SIX-entry mapping (California, Texas,
+       Florida, Georgia, New York, Colorado) until 2026-09-12, when the nationwide ruling deleted
+       both hand-kept six-state lists: it is now derived from `app.census.states.STATES` -- the
+       fifty states and the District of Columbia, the one place this programme enumerates the
+       United States -- and `tests/census/test_geocode.py::
+       test_state_fips_matches_the_market_state_registry` pins it against `market_state`, which
+       migration 065 widened to the same set, so the two can never drift apart silently.
   3 -- `layers=all` is on every geocoder request (`Geocoder.lookup`'s own `params`): without it
        the service returns no ZIP-code-area and no metropolitan-area geography at all, so
        `zcta_geoid`/`cbsa_geoid` would be empty for every listing regardless of precision.
@@ -91,18 +94,16 @@ from typing import cast
 import httpx
 import psycopg2.extensions
 
-#: A-C15 correction 2: the six states `market_state` (migration 017) pins, mapped to their
-#: two-digit FIPS codes -- `_fallback`'s place query filters `geo_area.state_fips` against this
-#: directly. `tests/census/test_geocode.py::test_state_fips_matches_the_market_state_registry`
-#: is the drift test correction 2 asks for.
-STATE_FIPS = {
-    "CA": "06",
-    "TX": "48",
-    "FL": "12",
-    "GA": "13",
-    "NY": "36",
-    "CO": "08",
-}
+from app.census.states import FIPS_BY_ABBR
+
+#: A-C15 correction 2, widened to the nation on 2026-09-12: every state `market_state` carries,
+#: mapped to its two-digit FIPS code -- `_fallback`'s place query filters `geo_area.state_fips`
+#: against this directly. It was a hand-kept SIX-entry literal until the ruling, which is what made
+#: the place rung skip forty-five states; it is now derived from `app/census/states.py`, the one
+#: place the United States is enumerated, and
+#: `tests/census/test_geocode.py::test_state_fips_matches_the_market_state_registry` is the drift
+#: test correction 2 asks for, now pinning all fifty-one.
+STATE_FIPS = FIPS_BY_ABBR
 
 #: The Census Geocoder benchmark/vintage pair every request in this module pins (spec §6) --
 #: distinct from the TIGER cartographic `vintage` `_tiger_vintage`/`_fallback` read out of

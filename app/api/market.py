@@ -64,11 +64,14 @@ task brief's own "Corrections to the brief" list); the point is to not rediscove
 """
 from __future__ import annotations
 
+import gzip
 import json
+import logging
+import time
 from typing import Any, cast
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Query, Response
+from fastapi import APIRouter, Depends, Query, Request, Response
 from fastapi.responses import JSONResponse
 from sqlalchemy import text
 from sqlalchemy.engine import RowMapping
@@ -77,9 +80,13 @@ from app.auth.deps import require
 from app.cache import sync_redis
 from app.census import gate
 from app.census import metrics as M
+from app.census.bands import HOUSEHOLDS_STOPS, INCOME_STOPS, band_ambiguous
+from app.census.geo_metric import GEO_VERSION_KEY
 from app.census.serve import _active, _extra_cleared, _registry
 from app.db import engine
 from app.tasks.celery_app import celery_app
+
+log = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api")
 
@@ -91,9 +98,162 @@ BACKFILL_DEDUPE_TTL = 600
 BANDS: tuple[str, ...] = ("place", "drive_10", "drive_20")
 DEFAULT_BLOCKED_REASON = "Licence not cleared."
 
+BOUNDARY_TTL = 86400
+# D-NS12, RE-MEASURED FOR CENSUS TRACTS (Task CAP, 2026-09-12). The caps are chosen against the
+# GEOGRAPHY, not against a load test -- that part of D-NS12 stands. What did not stand is the
+# number: `MAX_FEATURES = 4000` was sized when the granular layer was the ZCTA ("sits above the
+# largest plausible single-metro ZCTA count"), and it was never re-measured when A24.19 made the
+# Census TRACT the unit. On the stakeholder's own 1460 x 1228 screen that left New York's DEFAULT
+# view -- the first request the app makes when the metro is chosen -- refused, and still refused a
+# zoom level in.
+#
+# THE OLD ORDERING ARGUMENT IS RETIRED, not merely outgrown. It read "below the 6,884 tracts a
+# whole-Texas box returns", which made the COUNT cap the thing that refuses a state. It is not:
+# a whole-Texas box is about 13 degrees on a side and `MAX_BBOX_DEG` refuses it on SPAN before a
+# single row is counted (`test_a_state_sized_box_is_still_refused_on_span_before_any_count`). The
+# count cap is therefore free to be measured against what the map actually asks for -- and it has
+# to be, since the largest first view is now 7,530, which is above 6,884.
+#
+# Measured on QA's own PostGIS, read-only, through this module's own `_BOUNDARY_SQL` and the byte
+# arithmetic `compose()` performs (2026-09-12; the full table is in `tests/census/test_boundaries`
+# above `NY_DEFAULT_VIEW`). Bytes at delivery tier 0 / 1-4000 / 1-2000 / 1-1000 of the box's span:
+#
+#   view (1460 x 1228 px)                    tracts   raw bytes at each tier
+#   New York default, padded (what is sent)   7,470   6,538,264 / 4,254,031 / 3,662,228 / 3,267,466
+#   New York default, bare (the one retry)    5,262   4,268,451 / 3,058,406 / 2,667,225 / 2,356,180
+#   Manhattan-centred z10, padded             7,530   6,587,141 / 4,269,628 / 3,670,796 / 3,271,014
+#   Manhattan-centred z11, padded             4,709   3,660,966 / 2,717,359 / 2,419,824 / 2,137,523
+#   densest 4 x 4 deg box in the country      9,767   9,705,776 / 5,824,182 / 4,911,729 / 4,315,325
+#
+# `MAX_BBOX_DEG` is UNCHANGED at 4.0 and is what refuses a state.
+#
+# `MAX_FEATURES` is measured against the densest box the SPAN cap admits: 9,767 tracts, found by
+# sweeping 4-degree windows on a half-degree lattice over the lower 48 (the New York-Philadelphia
+# corridor, near 40.5N 75.0W). 12,000 clears it by 23 %, which also covers the coarseness of that
+# lattice -- a finer sweep would find a slightly denser window. So the count cap no longer stands
+# in front of the byte cap for anything this route can legally be asked for; it is the guard
+# against a geography denser than today's, and the refusal below still names it when it is hit.
+#
+# `MAX_BODY_BYTES` is measured against the largest FIRST VIEW, Manhattan-centred at zoom 10:
+# 4,269,628 bytes at a tolerance of 1/4000 of the box's span, which at zoom 10 is 0.59 CSS px of
+# longitude and 0.78 px of latitude -- a generalisation no member can see. 6,000,000 clears that by
+# 40 %, and clears the densest legal box at the same tier (5,824,182) as well, so every box the
+# route accepts is served rather than refused. It is not set high enough to serve those views at
+# tier 0 (6.5 MB), deliberately: the ladder exists so that the wire pays for pixels a member can
+# see and nothing more. The wire itself is gzip -- the New York first view is 652,848 bytes
+# compressed at the tier it is served at, against 1,105,917 at tier 0.
+MAX_BBOX_DEG = 4.0
+MAX_FEATURES = 12000
+MAX_BODY_BYTES = 6_000_000
+
+# Delivery generalisation, as a fraction of the request's own longest span, tried in order until
+# the body fits `MAX_BODY_BYTES`. MEASURED on real TIGER tract geometry, not chosen by feel:
+#
+#   * 0.0 -- serve the exact outline. Every metro-zoom viewport measured fits here (Austin 568
+#     tracts / 0.949 MB, Dallas 1,410 / 1.303 MB, Atlanta 1,037 / 1.100 MB, SF 1,093 / 1.043 MB)
+#     and every one of them is 0.0000 % uncovered, so neighbours share edges exactly and the
+#     shading has no slivers. This is the stakeholder's target view and it pays nothing here.
+#   * the three coarser rungs exist for the zoomed-out and the very dense: New York's whole-CBSA
+#     envelope is 5,935 tracts / 5.079 MB and Atlanta's 2.912 MB, both of which were answered 422
+#     before this ladder existed -- a blank map in three of six markets at tract scale.
+#
+# span/2000 is sub-pixel at a ~1200 px viewport, so a rung is invisible at the zoom it is served
+# for; the coarsest rung costs 0.89 % of covered area at a whole-CBSA span, against the 2.29 % the
+# fixture's 0.010 deg simplification lost. `ST_CoverageSimplify` would hold shared edges exactly,
+# but the runtime image's GEOS is 3.9.0 and that function needs 3.12+, so it is not available here.
+SIMPLIFY_TIERS: tuple[float, ...] = (0.0, 1 / 4000, 1 / 2000, 1 / 1000)
+
+# D-C35's three geographies, and the label the legend prints. `income` moved 860 -> 140 on
+# 2026-09-12 (controller ruling): the canonical granular unit is the Census TRACT, nationwide --
+# tracts are designed as neighbourhood approximations and ACS publishes the variable at tract
+# level, while calling a ZIP area a neighbourhood is a named prohibition. `growth` CANNOT follow:
+# the 2010->2020 tract boundary change means a tract-level growth figure is not computable from
+# what we hold (plan D12, a registered Phase C deferral), so it keeps place and `econ` keeps
+# county -- and each carries its own label, which is how a coarse figure is never shown as
+# granular. A NEW member on /api/layers rather
+# than a change to `geo_level`: `income`'s geo_level is "place|catchment" and describes the
+# PANEL's geography — the docked panel and the map answer different questions about the same
+# layer (D-NS15).
+SHADING: dict[str, dict[str, str]] = {
+    "income": {"summary_level": "140", "label": "Census tract"},
+    "growth": {"summary_level": "160", "label": "Place (city/town)"},
+    "econ": {"summary_level": "050", "label": "County"},
+    "households": {"summary_level": "140", "label": "Census tract"},
+    "pets": {"summary_level": "140", "label": "Census tract"},
+    "competition": {"summary_level": "860", "label": "ZIP Code Tabulation Area"},
+}
+# layer -> (metric_key, the dataset its geo_metric rows are STAMPED with, whose active vintage is
+# therefore the value vintage).
+BOUNDARY_METRIC: dict[str, tuple[str, str]] = {
+    "income": ("median_hh_income", "acs5"),
+    "growth": ("population_growth_pct", "acs5"),
+    "econ": ("revenue_per_establishment", "cbp"),
+    "households": ("households", "acs5"),
+    "pets": ("pet_households_est", "acs5"),
+    "competition": ("establishments", "zbp"),
+}
+# The layer's own unit, from `geo_metric.unit`. A count served as `usd` or `pct` is a wrong
+# reading of the number, not a cosmetic slip -- it was `"usd" if layer in ("income", "econ") else
+# "pct"` while only three layers shaded and every one of them was one or the other.
+UNIT: dict[str, str] = {"income": "usd", "econ": "usd", "growth": "pct",
+                        "households": "count", "pets": "count", "competition": "count"}
+# The legend stops each layer's own `band_ambiguous` is judged against (`app.census.bands`).
+# A layer absent here has no published margin at all, so the question cannot arise -- and asking
+# it against the WRONG layer's stops is the failure this dict exists to make impossible.
+BAND_STOPS: dict[str, tuple[int, ...]] = {"income": INCOME_STOPS, "households": HOUSEHOLDS_STOPS}
+
+# D-NS11. The CASTs on `:tol` are load-bearing, not decoration: an UNTYPED bound parameter inside
+# a `CASE WHEN` silently takes the ELSE branch under asyncpg. Measured on this database --
+# `CASE WHEN 0.01 > 0 THEN ST_SimplifyPreserveTopology(geom, 0.01) ELSE geom END` gives 17 points,
+# the same expression with `:tol` bound to 0.01 gives 460 (the unsimplified count), and the same
+# call WITHOUT the CASE gives 17. No error is raised either way, so the failure mode is a response
+# that is silently never generalised; `test_the_delivery_tolerance_actually_reaches_postgis` is
+# the case that catches it, and it asserts vertex counts rather than body bytes for that reason.
+# Three further things about it are deliberate. `ST_Transform(g.geom, 4326)` is required, not
+# decorative: geo_area.geom is geometry(MultiPolygon, 4269) and GeoJSON is WGS84. The `6` is
+# measured to be a NO-OP -- cb_500k already carries six or fewer decimals -- and is kept as an
+# explicit ceiling. And the envelope is transformed INTO 4269 rather than the geometry column out
+# of it, so the geo_area_geom_gix GiST index is usable on the predicate (an Austin z11 tract
+# viewport: 49.8 ms).
+_BOUNDARY_SQL = """
+SELECT g.geo_id, g.name, m.value_num, m.moe, m.suppressed, m.suppress_reason,
+       ST_AsGeoJSON(ST_Transform(CASE WHEN CAST(:tol AS double precision) > 0
+            THEN ST_SimplifyPreserveTopology(g.geom, CAST(:tol AS double precision)) ELSE g.geom END, 4326), 6) AS geometry
+  FROM geo_area g
+  LEFT JOIN geo_metric m
+    ON m.geo_id = g.geo_id AND m.summary_level = g.summary_level
+   AND m.metric_key = :metric AND m.vintage = :value_vintage
+ WHERE g.summary_level = :level AND g.vintage = :geo_vintage
+   AND ST_Intersects(g.geom, ST_Transform(ST_MakeEnvelope(:w, :s, :e, :n, 4326), 4269))
+ ORDER BY g.geo_id
+"""
+
+# §7, the other direction: a value whose geography the boundary vintage no longer carries. The
+# writer never invents a shape and the endpoint never silently loses a row. Deliberately NOT
+# narrowed by the bbox: "values whose geography is not in this viewport" would be non-zero on
+# every zoomed request and would mean nothing. This counts values with no `geo_area` row at that
+# level and vintage AT ALL, which is what §7's "a boundary vintage that has moved out from under
+# the values" actually describes.
+_ORPHAN_SQL = """
+SELECT count(*) FROM geo_metric m
+ WHERE m.summary_level = :level AND m.metric_key = :metric AND m.vintage = :value_vintage
+   AND NOT EXISTS (SELECT 1 FROM geo_area g WHERE g.geo_id = m.geo_id AND g.summary_level = :level AND g.vintage = :geo_vintage)
+"""
+
 # The three-valued state B6's contract settled on, keyed off `dataset_registry.license_status`
 # (migration 017's own CHECK constraint admits exactly these three strings).
 _STATE_FOR = {"cleared": "enabled", "unresolved": "disabled", "blocked": "blocked"}
+
+# The Census's OWN publication rule for ZIP-level industry detail, stated once and read in two
+# places: this catalogue's `competition` caveat, and -- word for word -- the design's tooltip for a
+# polygon `geo_metric` marked `source_threshold` (`tests/census/test_design_shading_labels.py`
+# pins the two). A category under three establishments is not reported at the ZIP level but IS
+# counted in the sum total, which is why `app/census/zbp.py` loads that total: it is the only way
+# to tell a withheld count from a ZIP the dataset does not cover (review round 1, Important 3).
+THRESHOLD_RULE = (
+    "The Census does not publish a ZIP-level count for a category with fewer than three "
+    "establishments, though they are counted in its all-industry total."
+)
 
 # The nine approved layers (Census spec §2 table + the layer-rendering contract). Labels are the
 # design's; sources/vintages/state come from the registry at request time, never hard-coded.
@@ -107,7 +267,7 @@ LAYERS: list[dict[str, Any]] = [
     {"key": "econ", "label": "Average Practice Payroll", "dataset_key": "cbp", "metric": "revenue_per_establishment", "is_derived": True, "geo_level": "county",
      "caveat": "Payroll per establishment (NAICS 541940), not revenue; county level."},
     {"key": "competition", "label": "Veterinary Competition", "dataset_key": "zbp", "metric": "establishments", "is_derived": False, "geo_level": "zcta",
-     "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. ZIP-code counts aggregated to the community."},
+     "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. Published per ZIP code by ZIP Code Business Patterns, and shaded at the ZIP Code Tabulation Area, which is that dataset's own authoritative geography. " + THRESHOLD_RULE},
     {"key": "practices", "label": "Practice Listings", "dataset_key": None, "metric": None, "is_derived": False, "caveat": None},
     {"key": "drive_10", "label": "5\u201310 min drive time", "dataset_key": None, "metric": None, "is_derived": True, "caveat": "Straight-line 8 km approximation of drive time."},
     {"key": "drive_20", "label": "10\u201320 min drive time", "dataset_key": None, "metric": None, "is_derived": True, "caveat": "Straight-line 16 km approximation of drive time."},
@@ -126,18 +286,27 @@ def _error(code: str, message: str, status: int) -> JSONResponse:
     return JSONResponse({"error": {"code": code, "message": message}}, status_code=status)
 
 
-def short_market_name(cbsa_name: str) -> str:
-    """`"Austin-Round Rock-San Marcos, TX Metro Area"` -> `"Austin, TX"` — the design's own short
-    form: the first hyphen-joined city and the state abbreviation."""
-    city_part, _, rest = cbsa_name.partition(",")
-    return f"{city_part.split('-')[0].strip()}, {rest.strip().split(' ')[0]}"
-
-
 def _resolve_band(band: str | None, default: str) -> str | None:
     """The requested band, or the default when none was given; `None` when the caller asked for
     something that is not one of `BANDS` at all, which the route turns into decision A5's 422."""
     b = band or default
     return b if b in BANDS else None
+
+
+def _parse_bbox(raw: str) -> tuple[float, float, float, float] | None:
+    """`minLng,minLat,maxLng,maxLat`, or `None` when it is not four numbers in that order. Parsed
+    by hand rather than through `Query(ge=…)` so a bad value gets decision A5's envelope, which is
+    the shape `_resolve_band` already uses for BAD_BAND."""
+    parts = raw.split(",")
+    if len(parts) != 4:
+        return None
+    try:
+        w, s, e, n = (float(p) for p in parts)
+    except ValueError:
+        return None
+    if e <= w or n <= s:
+        return None
+    return w, s, e, n
 
 
 def _is_uuid(value: str) -> bool:
@@ -191,6 +360,10 @@ async def layers() -> Response:
             "key": layer["key"], "label": layer["label"], "dataset_key": ds,
             "source_label": reg[ds]["attribution_text"] if ds else None,
             "vintage": vintage, "geo_level": layer.get("geo_level", "place|catchment" if ds else None),
+            # D-NS15: the geography the MAP shades this layer at, or null where it is not shaded at
+            # all (the three graduated-symbol layers, `practices` and the two drive rings). A new
+            # member, never a change to `geo_level` above, which describes the docked PANEL.
+            "shading": SHADING.get(layer["key"]),
             "state": state, "is_derived": layer["is_derived"], "caveat": layer["caveat"],
         }
         if blocked_reason is not None:
@@ -201,15 +374,33 @@ async def layers() -> Response:
 
 @router.get("/markets", dependencies=[Depends(REQUIRE_MARKET_READ)])
 async def markets() -> Response:
+    # Task CK: one row per (listing market key, CBSA), found by the practice's own COORDINATES --
+    # never a name heuristic over the CBSA's official name (`short_market_name`, deleted). `name`
+    # is the listing's own `market` column verbatim, the exact string `logic.js`'s metro dropdown
+    # lists and `boundaries()` joins against; two market keys sharing one CBSA (e.g. "Sacramento,
+    # CA" and "South Lake Tahoe, CA", both CBSA 40900) are two rows, and a published listing whose
+    # point falls in no CBSA (`practice_location.cbsa_geoid IS NULL`) has no row at all.
+    #
+    # THE REVERSE CASE -- one market key spanning two CBSAs -- is the one this ORDER BY settles.
+    # It is not hypothetical: a key like "Kansas City, MO" can hold listings on both sides of a
+    # metro boundary, and the client resolves a metro with `rows.find(m => m.name === marketName)`,
+    # which takes the FIRST match. Ordering on `l.market` alone left Postgres free to return either
+    # row first, so the same catalogue could shade a different half of the country between two
+    # requests, with nothing anywhere to notice. `pl.cbsa_geoid` is the tie-break: an arbitrary
+    # choice made DETERMINISTIC, which is all that is available until a market key is allowed to
+    # name its own CBSA.
     async with engine().connect() as conn:
         act = await _active(conn)
         rows = (await conn.execute(text("""
-            SELECT DISTINCT pl.cbsa_geoid, ga.name, ST_Y(ga.centroid) AS lat, ST_X(ga.centroid) AS lng
-            FROM practice_location pl JOIN listing l ON l.id = pl.listing_id AND l.status = 'published'
+            SELECT l.market AS name, pl.cbsa_geoid, ST_Y(ga.centroid) AS lat, ST_X(ga.centroid) AS lng
+            FROM listing l
+            JOIN practice_location pl ON pl.listing_id = l.id AND pl.cbsa_geoid IS NOT NULL
             JOIN geo_area ga ON ga.geo_id = pl.cbsa_geoid AND ga.summary_level = '310' AND ga.vintage = :gv
-            ORDER BY ga.name"""), {"gv": act.get("tiger_cb")})).mappings().all()
+            WHERE l.status = 'published'
+            GROUP BY l.market, pl.cbsa_geoid, ga.centroid
+            ORDER BY l.market, pl.cbsa_geoid"""), {"gv": act.get("tiger_cb")})).mappings().all()
     return JSONResponse([
-        {"cbsa_geoid": r["cbsa_geoid"], "name": short_market_name(r["name"]), "center": [round(r["lat"], 2), round(r["lng"], 2)], "zoom": 10}
+        {"cbsa_geoid": r["cbsa_geoid"], "name": r["name"], "center": [round(r["lat"], 2), round(r["lng"], 2)], "zoom": 10}
         for r in rows
     ])
 
@@ -293,6 +484,183 @@ async def communities(cbsa: str, band: str | None = Query(None)) -> Response:
         "band": b, "vintage": act.get("acs5"), "attribution": [reg[k]["attribution_text"] for k in sorted(used)],
         "communities": list(by.values()),
     })
+
+
+@router.get("/markets/{cbsa}/boundaries", dependencies=[Depends(REQUIRE_MARKET_READ)])
+async def boundaries(cbsa: str, request: Request, layer: str | None = Query(None), bbox: str | None = Query(None)) -> Response:
+    """Real Census boundary polygons for one metro and one shaded layer (D-C34 through D-C37).
+
+    Served as a member-gated ENDPOINT rather than CDN tiles: `MARKET_DATA_PUBLIC` is false so
+    tiles would have to be member-gated anyway, and spec §10's "30 days, immutable" CDN row
+    directly contradicts §11's "the layer disappears within one minute" the moment a tile carries
+    values rather than only geometry. One route inside the existing `market:gate:v` cache key
+    honours both."""
+    # The clock starts before the cache is even read, because what the line at the end of this
+    # function reports is the cost of a MISS end to end -- the number the caps' re-measurement
+    # (2026-09-12) makes worth watching, and which nobody could see from outside.
+    started = time.perf_counter()
+    sql_ms = 0.0
+    tiers_tried = 0
+
+    def cost(outcome: str, features: int, raw_bytes: int, gz_bytes: int) -> None:
+        """ONE line per cache MISS, whatever the miss cost and however it ended.
+
+        Every miss is logged, not only the ones that were served: a refusal spends the same SQL
+        and, on the byte arm, the same serialisations, so a measurement that saw only the successes
+        would be reading a survivor's sample and drawing the wrong conclusion about what a far
+        zoom costs. `outcome` is what tells them apart -- `served`, `refused_count` (the feature
+        cap, which breaks the ladder on its first tier because simplification never drops a
+        polygon) or `refused_bytes` (the byte cap at the coarsest tier, the one place the ladder
+        gives up). A cache HIT stays silent: a line per request would drown the thing this exists
+        to make visible.
+
+        `bytes_raw` is 0 on the count arm because no body was ever composed there, and `bytes_gz`
+        is 0 on BOTH refusals because a refused body is never compressed -- one gzip of several
+        megabytes on the path that is already failing is a cost nobody asked for. `outcome` is
+        what says why the zeros are there; a number invented for them would be read as a
+        measurement.
+
+        Identifiers and sizes only: `cbsa` is a Census geoid, `layer` is one of three literals,
+        and no figure the payload carries appears. `log.warning` below is the module's own idiom;
+        this is its INFO sibling.
+        """
+        log.info(
+            "boundaries miss outcome=%s cbsa=%s layer=%s features=%d tiers_tried=%d "
+            "bytes_raw=%d bytes_gz=%d ms_sql=%.1f ms_total=%.1f",
+            outcome, cbsa, layer, features, tiers_tried, raw_bytes, gz_bytes,
+            sql_ms, (time.perf_counter() - started) * 1000,
+        )
+
+    if layer not in SHADING:
+        return _error("BAD_LAYER", f"layer must be one of {tuple(SHADING)}", 422)
+    box: tuple[float, float, float, float] | None = None
+    if bbox is not None:
+        box = _parse_bbox(bbox)
+        if box is None:
+            return _error("BAD_BBOX", "bbox must be minLng,minLat,maxLng,maxLat with maxima above minima", 422)
+        if box[2] - box[0] > MAX_BBOX_DEG or box[3] - box[1] > MAX_BBOX_DEG:
+            return _error("BBOX_TOO_LARGE", f"bbox spans {box[2] - box[0]:.2f} x {box[3] - box[1]:.2f} degrees; the cap is {MAX_BBOX_DEG} on either axis", 422)
+
+    metric_key, source = BOUNDARY_METRIC[layer]
+    r = sync_redis()
+    geo_version = cast("bytes | str | None", r.get(GEO_VERSION_KEY))
+    async with engine().connect() as conn:
+        act, reg = await _active(conn), await _registry(conn)
+        geo_vintage, value_vintage = act.get("tiger_cb"), act.get(source)
+        key = (f"boundaries:{cbsa}:{layer}:{geo_vintage}:{value_vintage}:g{gate.version(r)}"
+               f":m{int(geo_version) if geo_version else 0}:b{bbox or 'metro'}")
+        cached = cast("bytes | None", r.get(key))
+        if cached is not None:
+            return _geojson(cached, request, "hit")
+        metro = (await conn.execute(text(
+            "SELECT ST_XMin(geom), ST_YMin(geom), ST_XMax(geom), ST_YMax(geom) FROM geo_area "
+            "WHERE geo_id = :cbsa AND summary_level = '310' AND vintage = :gv"), {"cbsa": cbsa, "gv": geo_vintage})).first()
+        if metro is None:
+            return _error("NOT_FOUND", "No such metro.", 404)
+        if box is None:
+            box = (float(metro[0]), float(metro[1]), float(metro[2]), float(metro[3]))
+        entry = next(l for l in LAYERS if l["key"] == layer)
+        state, blocked_reason = _layer_state(reg, entry["dataset_key"])
+        # Belt as well as braces, and legally load-bearing: `_layer_state` reads the layer
+        # CATALOGUE's dataset (growth's is `acs5_prior`), while the rows themselves are stamped
+        # with `source` — so a withdrawn `acs5` licence would otherwise leave growth enabled.
+        if state == "enabled" and not (_cleared(reg, source) and _extra_cleared(reg, metric_key, source)):
+            state = "disabled"
+        used = sorted({source} | ({"acs5_prior"} if metric_key == "population_growth_pct" else set()))
+
+        def compose(rows: list[RowMapping], orphans: int, simplified: float) -> dict[str, Any]:
+            body: dict[str, Any] = {
+                "type": "FeatureCollection", "cbsa_geoid": cbsa, "layer": layer, "metric_key": metric_key,
+                "summary_level": SHADING[layer]["summary_level"], "geo_label": SHADING[layer]["label"],
+                "unit": UNIT[layer], "state": state,
+                "boundary_vintage": geo_vintage, "value_vintage": value_vintage, "source_dataset": source,
+                # Read from dataset_registry, never composed here: attribution is legally load-bearing
+                # and a terms change must be one UPDATE rather than a redeploy. Boundaries first — the
+                # map carries the geometry's attribution beside the values' (Census spec §2b).
+                "attribution": [reg["tiger_cb"]["attribution_text"]] + [reg[k]["attribution_text"] for k in used],
+                "values_without_geometry": orphans,
+                # The delivery tolerance in degrees, 0.0 when the exact outline was served. Stated
+                # rather than hidden: it describes the GEOMETRY only and never the figures, and a
+                # client that wants to say "outlines generalised for display" can read it here.
+                "simplified_deg": simplified,
+                "features": [_boundary_feature(row, layer) for row in rows],
+            }
+            if blocked_reason is not None:
+                body["blocked_reason"] = blocked_reason
+            return body
+
+        rows: list[RowMapping] = []
+        orphans = 0
+        simplified = 0.0
+        raw = json.dumps(compose(rows, orphans, simplified)).encode("utf-8")
+        if state == "enabled":
+            params = {"metric": metric_key, "value_vintage": value_vintage, "level": SHADING[layer]["summary_level"],
+                      "geo_vintage": geo_vintage, "w": box[0], "s": box[1], "e": box[2], "n": box[3]}
+            sql_at = time.perf_counter()
+            orphans = int((await conn.execute(text(_ORPHAN_SQL), params)).scalar_one())
+            sql_ms += (time.perf_counter() - sql_at) * 1000
+            span = max(box[2] - box[0], box[3] - box[1])
+            # Coarsen until it fits. A polygon is NEVER dropped to make room — a missing polygon
+            # leaves a hole that reads as a boundary — so the feature cap is a refusal, not a rung.
+            for frac in SIMPLIFY_TIERS:
+                simplified = span * frac
+                tiers_tried += 1
+                sql_at = time.perf_counter()
+                rows = list((await conn.execute(text(_BOUNDARY_SQL), {**params, "tol": simplified})).mappings().all())
+                sql_ms += (time.perf_counter() - sql_at) * 1000
+                if len(rows) > MAX_FEATURES:
+                    break
+                raw = json.dumps(compose(rows, orphans, simplified)).encode("utf-8")
+                if len(raw) <= MAX_BODY_BYTES:
+                    break
+    if len(rows) > MAX_FEATURES:
+        cost("refused_count", len(rows), 0, 0)
+        return _error("AREA_TOO_LARGE", f"{len(rows)} features in this area; the cap is {MAX_FEATURES}. Zoom in or pass a smaller bbox.", 422)
+    if orphans:
+        # A non-zero count on a metro that has previously reported zero is how a boundary vintage
+        # that has moved out from under the values announces itself (R4).
+        log.warning("boundaries: %d %s values at level %s have no %s geometry", orphans, value_vintage, SHADING[layer]["summary_level"], geo_vintage)
+    if len(raw) > MAX_BODY_BYTES:
+        cost("refused_bytes", len(rows), len(raw), 0)
+        return _error("AREA_TOO_LARGE", f"{len(raw)} bytes in this area even at the coarsest delivery tolerance; the cap is {MAX_BODY_BYTES}. Zoom in or pass a smaller bbox.", 422)
+    packed = gzip.compress(raw)
+    r.set(key, packed, ex=BOUNDARY_TTL)
+    cost("served", len(rows), len(raw), len(packed))
+    return _geojson(packed, request, "miss")
+
+
+def _boundary_feature(row: RowMapping, layer: str) -> dict[str, Any]:
+    """One polygon. `value` is `None` both when the geography has no row at all and when its row
+    is suppressed, and the two are told apart by `suppressed`/`suppress_reason` — the client draws
+    both in the no-data class but says something different about each (§6)."""
+    value = None if row["value_num"] is None else float(row["value_num"])
+    moe = None if row["moe"] is None else float(row["moe"])
+    return {
+        "type": "Feature", "id": row["geo_id"],
+        "properties": {
+            "geo_id": row["geo_id"], "name": row["name"],
+            "value": None if row["suppressed"] else value, "moe": moe,
+            "suppressed": bool(row["suppressed"]), "suppress_reason": row["suppress_reason"],
+            # Judged against THIS layer's own legend stops, never another's. Growth, payroll
+            # and competition carry no published margin at all (D-NS17) and pets is a rounded
+            # model output, so `band_ambiguous` is False for those four by construction rather
+            # than by omission -- `BAND_STOPS` does not name them and `band_ambiguous` is False
+            # for a missing margin anyway.
+            "band_ambiguous": layer in BAND_STOPS and band_ambiguous(value, moe, BAND_STOPS[layer]),
+        },
+        "geometry": json.loads(row["geometry"]),
+    }
+
+
+def _geojson(packed: bytes, request: Request, cache: str) -> Response:
+    """D-NS14: gzip in the HANDLER, and the COMPRESSED bytes are what Redis holds, so a cache hit
+    costs no second compression. No global `GZipMiddleware`: that would change every response in
+    the application, including the ones carrying `x-cache` and the four security headers
+    `SecurityHeadersMiddleware` puts on EVERY answer, which is far wider than the ask."""
+    headers = {"x-cache": cache, "Vary": "Accept-Encoding"}
+    if "gzip" in request.headers.get("accept-encoding", ""):
+        return Response(packed, media_type="application/geo+json", headers={**headers, "Content-Encoding": "gzip"})
+    return Response(gzip.decompress(packed), media_type="application/geo+json", headers=headers)
 
 
 _PANEL_SQL = """

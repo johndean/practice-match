@@ -32,6 +32,10 @@ export interface MapEngine {
   setControls(opts: Pick<MountOptions, 'zoomControl' | 'scaleControl'>): void;
   setView(center: LatLng, zoom: number, animate?: boolean): void;
   getZoom(): number;
+  /** What the map is looking at, as `[[south, west], [north, east]]`, or `null` when there
+   *  is no map — before the first mount and after destroy. `src/map/viewport.ts` turns this
+   *  into the `bbox` the boundary route is asked for, which is the whole reason it exists. */
+  getBounds(): [LatLng, LatLng] | null;
   zoomIn(): void;
   zoomOut(): void;
   fitBounds(points: LatLng[]): void;

@@ -4639,3 +4639,622 @@ describe('A26 (Q2) — opening any one of the four menus closes the other three 
     expect(c.state, 'A26.14: the metro trigger left the nav menu open').toMatchObject({ marketMenu: true, navMenu: false });
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A24 — real Census boundary polygons (John's rulings D-C34–D-C37, 2026-09-10) and D-C46's
+// re-scaled growth breaks (2026-09-11). Every branch the amendment adds to the design's script
+// is characterised here; `logic.js` itself is never hand-edited.
+// ---------------------------------------------------------------------------------------
+describe('A24 — real boundary polygons', () => {
+  const fc = (features: unknown[]) => ({ type: 'FeatureCollection', features });
+  const feat = (props: Record<string, unknown>) => ({
+    type: 'Feature', geometry: null,
+    properties: { geo_id: 'g', name: 'g', value: null, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false, ...props }
+  });
+
+  it('areaSet gives every polygon the value of the NEAREST community, at the ruled geography', () => {
+    const set = c.areaSet('income');
+    expect(set.features.length, 'the design fixture has no tract features').toBeGreaterThan(0);
+    for (const f of set.features) {
+      expect(f.properties.geo_id).toBe(f.id);
+      expect(f.properties.moe).toBeNull();
+      expect(f.properties.suppressed).toBe(false);
+      expect(f.properties.band_ambiguous).toBe(false);
+      expect(f.geometry).toBeTruthy();
+    }
+    // Every design community carries an income, so no tract comes out null on this layer.
+    expect(set.features.every((f: any) => typeof f.properties.value === 'number')).toBe(true);
+    // The three geographies are D-C35's, and each layer reads its OWN level — `growth` sees the
+    // places and `econ` the counties, so a layer promoted into a finer slot fails here.
+    expect(c.areaSet('growth').features.length).toBe(c.state.areas['160'].features.length);
+    expect(c.areaSet('econ').features.length).toBe(c.state.areas['050'].features.length);
+    expect(set.features.length).toBe(c.state.areas['140'].features.length);
+  });
+
+  it('areaSet returns a collection for every layer with a geography, and none for no layer at all', () => {
+    // A24.24 (D-L1, 2026-09-12) INVERTS the half of this case that asserted `pets`, `households`
+    // and `competition` had no geography: all three shade now. The two ACS counts take the tract,
+    // beside income, and read the design's own tract fixture; `competition` takes the ZCTA, which
+    // the design's fixture does not carry at all — so it is EMPTY on the reference path, and
+    // empty is the honest answer there rather than a fabricated one.
+    for (const k of ['households', 'pets']) expect(c.areaSet(k).features.length).toBe(c.state.areas['140'].features.length);
+    expect(c.areaSet('competition').features, 'the design fixture carries no ZCTAs').toEqual([]);
+    expect(c.areaSet(null).features).toEqual([]);
+    expect(c.areaSet(undefined).features).toEqual([]);
+  });
+
+  // The nearest-community rule itself, on a fixture whose answer is knowable: two communities,
+  // one far away, so every polygon must take the near one's figure.
+  it('areaSet measures to the community centroid with the mosaic\'s own cos(lat) scaling', () => {
+    const near = { id: 'n', name: 'Near', lat: 30.31, lng: -97.75, income: 111111 };
+    const far = { id: 'f', name: 'Far', lat: 45.0, lng: -120.0, income: 222222 };
+    c.communities = () => [far, near];
+    expect(new Set(c.areaSet('income').features.map((f: any) => f.properties.value))).toEqual(new Set([111111]));
+    // A community with no usable point is skipped, exactly as A25 skips it for a pin.
+    c.communities = () => [{ id: 'x', name: 'X', lat: null, lng: null, income: 9 }];
+    expect(c.areaSet('income').features.every((f: any) => f.properties.value === null)).toBe(true);
+  });
+
+  // Global Constraint (c), and a real trap: `num()` strips every character but digits and a dot,
+  // so `num(-5.1)` is `5.1`. Routing a growth figure through it would paint a DECLINING place as
+  // a growing one — silently, and only for the sign that D-C46 exists to make visible.
+  it('a negative growth figure keeps its sign all the way to the fill', () => {
+    c.communities = () => [{ id: 'd', name: 'Declining', lat: 30.31, lng: -97.75, growth: -5.1 }];
+    const set = c.areaSet('growth');
+    expect(set.features[0].properties.value).toBe(-5.1);
+    const out = c.areaVals(set, 'growth');
+    expect(out.features[0].properties.label).toBe('-5.1%');
+    expect(out.features[0].properties.color, 'a decline took a growth band').toBe(c.bucket('growth', -5.1).color);
+    expect(out.features[0].properties.color).not.toBe(c.bucket('growth', 5.1).color);
+  });
+
+  it('areaVals colours a measured value through bucket() and labels it through fmtMetric()', () => {
+    const out = c.areaVals(fc([feat({ geo_id: '78704', name: 'ZCTA5 78704', value: 92150, moe: 6420 })]), 'income');
+    expect(out.features[0].properties.color).toBe(c.bucket('income', 92150).color);
+    expect(out.features[0].properties.label).toBe(c.fmtMetric('income', 92150));
+    expect(out.features[0].properties.tip).toContain('ZCTA5 78704');
+    expect(out.features[0].id).toBe('78704');
+    // Nothing but a FeatureCollection is required of the caller: an absent one is empty, not a throw.
+    expect(c.areaVals(null, 'income').features).toEqual([]);
+    expect(c.areaVals({}, 'income').features).toEqual([]);
+  });
+
+  // Global Constraint (c) again: the producer's sentinel, measured rather than assumed. A MISSING
+  // value is `value: null` with `suppressed: false` — that is what `_suppression(None, None)`
+  // returns and what the endpoint will serialise — so a guard on `suppressed` alone would paint a
+  // null as a measured figure.
+  it('a null value takes the no-data class even though it is not suppressed', () => {
+    const out = c.areaVals(fc([feat({ geo_id: '78745', name: 'ZCTA5 78745', value: null })]), 'income');
+    expect(out.features[0].properties.color).toBe('#e6e6e6');
+    expect(out.features[0].properties.label).toBe('No data');
+    expect(out.features[0].properties.tip).toContain('No data for this area');
+    // …and so does a SUPPRESSED value, which is a different state and the same class.
+    const sup = c.areaVals(fc([feat({ value: 92150, suppressed: true, suppress_reason: 'high_moe' })]), 'income');
+    expect(sup.features[0].properties.color).toBe('#e6e6e6');
+    expect(sup.features[0].properties.suppressed).toBe(true);
+    expect(sup.features[0].properties.suppressReason).toBe('high_moe');
+  });
+
+  it('the honesty lines are the contract\'s own wording, one per case', () => {
+    const tip = (props: Record<string, unknown>, layer = 'income') =>
+      c.areaVals(fc([feat(props)]), layer).features[0].properties.tip;
+    expect(tip({ value: 1, suppressed: true, suppress_reason: 'no_moe' })).toContain('Estimate too imprecise to show at this geography');
+    expect(tip({ value: 1, suppressed: true, suppress_reason: 'high_moe' })).toContain('Estimate too imprecise to show at this geography');
+    expect(tip({ value: 1, suppressed: true, suppress_reason: 'source_flag' })).toContain('Not published for this county');
+    expect(tip({ value: null })).toContain('No data for this area');
+    expect(tip({ value: 92150, moe: 6420, band_ambiguous: true })).toContain('this margin spans two legend bands.');
+    expect(tip({ value: 92150, moe: 6420, band_ambiguous: false })).not.toContain('spans two legend bands');
+    expect(tip({ value: 12.4 }, 'growth')).toContain('No combined margin of error is published.');
+    expect(tip({ value: 640000 }, 'econ')).toContain('a census of establishments, not a sample');
+    // The tip's own shape, once: every line the reference's literal carries, in order, so a
+    // trimmed inline style is caught here rather than only by a pixel that nothing captures.
+    expect(tip({ value: 92150, moe: 6420 }).startsWith('<div style="font-family:ProximaNova,Arial,Helvetica,sans-serif;min-width:150px">')).toBe(true);
+    expect(tip({ value: 92150, moe: 6420 })).toContain('<div style="font-size:10.5px;color:#494949;margin-top:4px">\u00b1 $6K</div>');
+  });
+
+  it('the legend names the geography and gains a No data row, for every layer that shades', () => {
+    for (const [layer, label] of [['income', 'Census tract'], ['growth', 'Place (city/town)'], ['econ', 'County'],
+      ['households', 'Census tract'], ['pets', 'Census tract']] as const) {
+      c.state.mdValue = layer;
+      const md = c.marketVals(P);
+      const active = md.active;
+      expect(active.hasGeo).toBe(true);
+      expect(active.geoLine).toBe(label);
+      // Review round 1, Important 1 — the assertion this case was MISSING, and the reason it
+      // stepped over a layer that painted 503 of 503 polygons "No data" under a full four-class
+      // ramp: `areaSet` read `best[layer]` while `communities()` names the field `hh` for
+      // households and `vets` for competition, which the design's three OTHER readers alias. A
+      // legend is a claim about what is drawn, so a case that checks the legend and never the
+      // fill cannot see the exact lie A24.32 exists to prevent.
+      expect(md.areas.features.length, `${layer}: no polygons at all`).toBeGreaterThan(0);
+      expect(
+        md.areas.features.filter((f: { properties: { value: number | null } }) => f.properties.value !== null).length,
+        `${layer}: every polygon is valueless, so the ramp above describes nothing`
+      ).toBeGreaterThan(0);
+      expect(active.ramp[active.ramp.length - 1]).toEqual({ style: 'flex: 1; height: 9px; background: #e6e6e6;', label: 'No data' });
+      // …and exactly one such row, appended, with the design's own classes ahead of it.
+      expect(active.ramp.filter((r: { label: string }) => r.label === 'No data')).toHaveLength(1);
+    }
+    // A24.28: a shading layer with its OWN class breaks prints its own labels, not the design's
+    // community-scale ones — a legend reading "< 10K" over a map cut at 1,000 households would be
+    // the caption for a different map.
+    c.state.mdValue = 'households';
+    expect(c.marketVals(P).active.ramp.map((r: { label: string }) => r.label))
+      .toEqual(['< 1,000', '1,000–1,500', '1,500–2,000', '> 2,000', 'No data']);
+    c.state.mdValue = 'income';
+    expect(c.marketVals(P).active.ramp.map((r: { label: string }) => r.label))
+      .toEqual(['< $50K', '$50–75K', '$75–100K', '$100–150K', '> $150K', 'No data']);
+
+    // A24.32 (review finding 5): zero polygons drawn, no ramp and no geography line. On the
+    // reference path `competition` is the reachable case — the design's fixture has no ZCTAs —
+    // and on the app it is any metro the API could not answer for, Bozeman included.
+    c.state.mdValue = 'competition';
+    const nothingDrawn = c.marketVals(P).active;
+    expect(nothingDrawn.hasRamp, 'a ramp was printed over a map with no polygons').toBe(false);
+    expect(nothingDrawn.hasGeo).toBe(false);
+
+    // "No shading — practices only": no ramp at all, so no no-data row either.
+    c.state.mdValue = null;
+    const none = c.marketVals(P).active;
+    expect(none.hasGeo).toBe(false);
+    expect(none.ramp).toEqual([]);
+  });
+
+  it('md.areas is the drawable collection, taken through areaVals for the active layer', () => {
+    c.state.mdValue = 'income';
+    const md = c.marketVals(P);
+    expect(md.areas.type).toBe('FeatureCollection');
+    expect(md.areas.features.length).toBe(c.state.areas['140'].features.length);
+    for (const f of md.areas.features) {
+      expect(typeof f.properties.color).toBe('string');
+      expect(typeof f.properties.tip).toBe('string');
+    }
+    // Every shading layer is handed its own polygons now (A24.24), and a layer the fixture has
+    // no geography for is handed none rather than another layer's.
+    c.state.mdValue = 'pets';
+    expect(c.marketVals(P).areas.features.length).toBe(c.state.areas['140'].features.length);
+    c.state.mdValue = 'competition';
+    expect(c.marketVals(P).areas.features).toEqual([]);
+  });
+
+  // Fix round 2, B (2026-09-12). Measured on QA: the strip's Households card read "162K metro
+  // median · U.S. Census ACS 5-year estimates (2023) · Census tract". The 162K is the MEDIAN OF
+  // THE LISTINGS' OWN five-mile-ring totals — `stripCards` reads `comms`, one row per listing —
+  // and a Census tract holds about 1,500 households, so the caption described a geography the
+  // number is not measured at. A24.34–A24.36 made `LAYER_META.*.source` truthfully name the MAP's
+  // geography, which is right for the legend and made the strip borrow a caption that is false
+  // for it. Until D-C50 makes the strip describe the map (Task SNAP, 0.1.22) the strip must
+  // describe what it IS: the same dataset, and the practice-area basis the API already serves.
+  it('the snapshot caption names the area its own figures describe, never the map geography', () => {
+    const ring = 'Within about 5 miles of the practice';
+    c.communities = () => [
+      { id: 'a', name: 'A', lat: 30.3, lng: -97.7, hh: 162000, communityLabel: ring },
+      { id: 'b', name: 'B', lat: 30.4, lng: -97.8, hh: 158000, communityLabel: ring }
+    ];
+    const card = c.marketVals(P).stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
+    expect(card.src).toContain(ring);
+    expect(card.src, 'the strip borrowed the map\'s geography for a practice-area median').not.toContain('Census tract');
+    // …and the dataset itself is unchanged: one string per fact, composed for each surface.
+    expect(card.src).toContain('U.S. Census ACS 5-year estimates (2023)');
+    // The LEGEND still names the map's own geography — that is what it describes.
+    c.state.mdValue = 'households';
+    expect(c.marketVals(P).active.sourceLine).toBe('Source: U.S. Census ACS 5-year estimates (2023) · Census tract');
+  });
+
+  it('a mixed or absent practice-area basis falls back to the design\'s own wording', () => {
+    // The design's own fixtures carry no `communityLabel` at all, which is the reference path and
+    // every approved state; and a metro whose listings disagree has no ONE area to name.
+    c.communities = () => [
+      { id: 'a', name: 'A', lat: 30.3, lng: -97.7, hh: 162000, communityLabel: 'Within about 5 miles of the practice' },
+      { id: 'b', name: 'B', lat: 30.4, lng: -97.8, hh: 158000, communityLabel: 'City of Dallas' }
+    ];
+    expect(c.marketVals(P).stripCards.filter((x: { title: string }) => x.title === 'Households')[0].src)
+      .toBe('U.S. Census ACS 5-year estimates (2023) · community level');
+    c.communities = () => [{ id: 'a', name: 'A', lat: 30.3, lng: -97.7, hh: 162000 }];
+    expect(c.marketVals(P).stripCards.filter((x: { title: string }) => x.title === 'Households')[0].src)
+      .toBe('U.S. Census ACS 5-year estimates (2023) · community level');
+  });
+
+  // MS1 (2026-09-12) — the snapshot strip showed Dallas Population growth as "+1.5% metro
+  // median" while every Dallas listing's own API figure is "-1.5% since 2018". `num` stripped the
+  // MINUS and then concatenated the trailing year: "-1.5% since 2018" -> "1.52018" -> 1.52018,
+  // which `fmtMetric` rounds to "+1.5%" and `bucket` classes as growth. The docked panel was
+  // right all along because `communities()` uses `parseFloat` and keeps the sign; the strip is
+  // the ONE reader that goes through `num`, which is why one screen said the opposite of the
+  // other about the same city.
+  // Fix round 2, C (found by the re-review). `communities()` has its OWN growth parser, and it
+  // has the same trap `num` had: stripping everything but digits, a dot and a minus leaves the
+  // year glued to the figure — "+14.2% since 2015" parses as 14.22015. Harmless today only
+  // because `toFixed(1)` rounds it away on the one surface that prints it and no fixture sits on
+  // a class boundary; a number nothing measured is still a number nothing measured, and the two
+  // parsers are now one helper with two readers.
+  it('communities() parses a growth figure to the number it states, year and all', () => {
+    const through = (raw: string) => {
+      const one = { ...P[0], market: 'Austin, TX', status: 'published', growth: raw };
+      const saved = P.slice();
+      P.length = 0; P.push(one);
+      try { return c.communities()[0].growth; } finally { P.length = 0; P.push(...saved); }
+    };
+    expect(through('+14.2% since 2015')).toBe(14.2);
+    expect(through('-1.5% since 2018')).toBe(-1.5);
+    expect(through('+3% since 2018')).toBe(3);
+    // The design's own zero-for-absent contract on this field is unchanged.
+    expect(through('no figure')).toBe(0);
+  });
+
+  it('num keeps a figure\'s sign and stops at the end of the number', () => {
+    // `num` is module-scoped in the ported script and the trailing export is pinned byte for byte
+    // (`app-generated.test.ts`), so it is exercised through the ONE reader whose output is a
+    // number rather than a colour: `communities()`, which the docked panel reads. Both the sign
+    // and the trailing-token trap are covered here, and the strip's own case below proves the
+    // reader that actually broke.
+    const through = (field: string, raw: string) => {
+      c.state.market = 'Austin, TX';
+      const one = { ...P[0], market: 'Austin, TX', status: 'published', [field]: raw };
+      const saved = P.slice();
+      P.length = 0; P.push(one);
+      try { return c.communities()[0]; } finally { P.length = 0; P.push(...saved); }
+    };
+    expect(through('hh', '169,355 households').hh).toBe(169355);
+    expect(through('income', '$101,721').income).toBe(101721);
+    expect(through('pop', '81,900').pop).toBe(81900);
+    // BOTH halves of the trap in one string, through a field that really goes through `num`:
+    // the leading minus was stripped and the trailing year was CONCATENATED onto the digits, so
+    // "-1.5% since 2018" became 1.52018 — a number nothing measured, of the wrong sign.
+    expect(through('pop', '-1.5% since 2018').pop).toBe(-1.5);
+    expect(through('pop', '+11.6% since 2018').pop).toBe(11.6);
+    // The design's own zero-for-null contract is unchanged: A21.1c's guards do not go through
+    // `num`, so a caller that must tell absence from zero already does not ask this helper.
+    expect(through('hh', 'no figure').hh).toBe(0);
+  });
+
+  it('the snapshot strip reads a declining metro as declining', () => {
+    // The strip's own path, end to end: `stripCards` is the only growth reader that goes through
+    // `num`, and it classes with `bucket`, so a lost sign is both a wrong number and a wrong
+    // colour — D-C46's band below zero exists precisely so a decline reads as one.
+    // `communities()` has already parsed growth to a NUMBER and kept its sign (`parseFloat`,
+    // A24.3's own note), which is why the docked panel reads it correctly — and `num(-1.5)` is
+    // `String(-1.5)` with everything but digits and a dot stripped, so the strip lost the sign
+    // one step later. Numbers here, because that is exactly what this reader is handed.
+    c.communities = () => [
+      { id: 'a', name: 'A', lat: 30.3, lng: -97.7, growth: -1.5 },
+      { id: 'b', name: 'B', lat: 30.4, lng: -97.8, growth: -2.5 }
+    ];
+    const card = c.marketVals(P).stripCards.filter((x: { title: string }) => x.title === 'Population growth')[0];
+    // The design's own median rule on an even count takes the upper of the two (`sort(...)[
+    // Math.floor(n / 2)]`), so two declining communities read as the SHALLOWER decline — and the
+    // point is that it is a decline at all: this card said "+2.5%" before the fix.
+    expect(card.value, 'the strip reported a declining metro as growing').toBe('-1.5%');
+    // …and the colour follows the number: D-C46 gave growth a band below zero precisely so a
+    // decline reads as one, and `bucket` classed 1.5 into the band above it.
+    expect(card.bars[0].style).toContain(c.bucket('growth', -1.5).color);
+    expect(card.bars[0].style).not.toContain(c.bucket('growth', 1.5).color);
+  });
+
+  // A24.25/A24.26: one classifier, two tables. The choropleth asks for the breaks measured over
+  // the geography it paints; everything else on the screen keeps asking for the design's own.
+  it('the choropleth classes a count against the tract-scale breaks and the cards against the city-scale ones', () => {
+    // 1,480 households is an ordinary Census tract and an implausibly small city, and the two
+    // tables say so: the design's own breaks put every US tract in one class, which was the
+    // whole complaint.
+    expect(c.bucket('households', 1480, true).t).not.toBe(c.bucket('households', 1480).t);
+    expect(c.bucket('households', 1480).t, 'the design\'s own first class swallows every tract').toBe(0);
+    expect(new Set([1, 1200, 1700, 2500].map((v) => c.bucket('households', v, true).color)).size).toBe(4);
+    expect(new Set([1, 1200, 1700, 2500].map((v) => c.bucket('households', v).color)).size).toBe(1);
+    // A layer with no area table of its own is classed identically either way.
+    expect(c.bucket('income', 92150, true)).toEqual(c.bucket('income', 92150));
+    // A24.29: a tract-scale count is not abbreviated to the thousand it shares with 500 others.
+    expect(c.fmtMetric('households', 1446)).toBe('1,446');
+    expect(c.fmtMetric('households', 27600), 'nothing at ten thousand or above moves').toBe('28K');
+    expect(c.fmtMetric('competition', 7)).toBe('7');
+  });
+
+  // §15 (the stakeholder's own directive): a competition count states its geography on screen.
+  it('a competition tip names what it counts and the geography it counts them in', () => {
+    const tip = c.areaTip({ name: 'ZCTA5 78704', value: 7, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false }, 'competition', true);
+    expect(tip).toContain('7 veterinary practices');
+    expect(tip).toContain('within this ZIP Code Tabulation Area');
+    expect(tip).toContain('authoritative geography');
+    // §9: the modelled estimate says it is modelled, on the polygon as well as in the catalogue.
+    const pets = c.areaTip({ name: 'Census Tract 11', value: 844, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false }, 'pets', true);
+    expect(pets).toContain('Modelled estimate: households × 0.57. Not an observed count.');
+    expect(pets, 'a derived estimate is never described as a count of anything').not.toContain('veterinary practices');
+  });
+
+  // D-C46 (John, 2026-09-11). Measured against ACS 2014-2018 -> 2019-2023 place populations; the
+  // band below zero is the ruling's own point, so it is asserted as a band and not as a label.
+  it('A24.13 — the growth breaks carry a band below zero, and a decline never shares a class with growth', () => {
+    const band = (v: number) => c.bucket('growth', v).color;
+    expect(band(-12)).toBe(band(-0.1));
+    expect(band(-0.1), 'a decline is in the same class as a 9 % rise — D-C46\'s own defect').not.toBe(band(9));
+    // Four distinct classes over the real range, which is what "still all one colour" was about.
+    expect(new Set([band(-5), band(2), band(9), band(24)]).size).toBe(4);
+    expect(band(0), 'zero is growth, not decline: the stop is inclusive upward').toBe(band(4.9));
+    expect(band(15)).toBe(band(200));
+  });
+});
+
+// ---------------------------------------------------------------------------------------
+// A24.14-A24.18 — the `market` adapter. The seam A16 and A17 established, keyed on adapter
+// PRESENCE and never on data (A16.1's shape, A-SL23 (2)). The design's own fixture is the
+// AUSTIN metro carrying the design's own nine figures, so the one thing that must never happen
+// is it being drawn over a real metro: every arm below ends either on the API's polygons or on
+// none, and never on `areaSet`.
+// ---------------------------------------------------------------------------------------
+describe('A24 — the market adapter', () => {
+  const FC = (ids: string[]) => ({
+    type: 'FeatureCollection',
+    features: ids.map((id) => ({
+      type: 'Feature', id,
+      properties: { geo_id: id, name: id.toUpperCase(), value: 60000, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false },
+      geometry: null
+    }))
+  });
+  const adapter = (areas: Record<string, unknown>) => ({ boundaries: () => Promise.resolve(areas) });
+  const drawn = (comp: any) => comp.marketVals(P).areas.features.map((f: any) => f.properties.geo_id);
+
+  it("with an adapter present the map draws the API's polygons and NEVER the design's fixture", async () => {
+    const api = { income: FC(['x']) };
+    const comp: any = new Component({ market: adapter(api) });
+    comp.componentDidMount();
+    await Promise.resolve();
+    expect(comp.state.mdAreas).toBe(api);
+    expect(drawn(comp)).toEqual(['x']);
+  });
+
+  it('an EMPTY answer empties the map — it does not fall back to the fixture', async () => {
+    const comp: any = new Component({ market: adapter({}) });
+    comp.componentDidMount();
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual([]);
+  });
+
+  it('a REFUSED load empties the map too, and the rejection arm exists', async () => {
+    const comp: any = new Component({ market: { boundaries: () => Promise.reject(new Error('404')) } });
+    comp.componentDidMount();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(comp.state.mdAreas).toEqual({});
+    expect(drawn(comp)).toEqual([]);
+  });
+
+  it("with NO adapter the design's own fixture path runs, untouched", () => {
+    const comp: any = new Component({});
+    comp.componentDidMount();
+    expect(comp.state.mdAreas).toBeNull();
+    expect(comp.marketVals(P).areas.features.length).toBeGreaterThan(0);
+  });
+
+  it('changing the metro reloads the polygons for the metro chosen', async () => {
+    const asked: string[] = [];
+    const comp: any = new Component({ market: { boundaries: (n: string) => { asked.push(n); return Promise.resolve({}); } } });
+    comp.componentDidMount();
+    comp.setMarket('Sacramento, CA');
+    expect(asked).toEqual(['Austin, TX', 'Sacramento, CA']);
+  });
+
+  it("a metro change CLEARS the previous metro's polygons before it asks, so no city is ever drawn over another", async () => {
+    let settle: (v: unknown) => void = () => {};
+    const comp: any = new Component({ market: { boundaries: () => new Promise((r) => { settle = r; }) } });
+    comp.componentDidMount();
+    settle({ income: FC(['austin'] ) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['austin']);
+    comp.setMarket('Sacramento, CA');
+    expect(comp.state.mdAreas, 'Austin is off the map the instant Sacramento is asked for').toBeNull();
+    expect(drawn(comp)).toEqual([]);
+    settle({ income: FC(['sacramento']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['sacramento']);
+  });
+
+  it('an answer for a market the member has already left is DISCARDED, however late it lands', async () => {
+    const pending: ((v: unknown) => void)[] = [];
+    const comp: any = new Component({ market: { boundaries: () => new Promise((r) => pending.push(r)) } });
+    comp.componentDidMount();          // asks for Austin
+    comp.setMarket('Sacramento, CA');  // asks for Sacramento
+    pending[1]({ income: FC(['sacramento']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['sacramento']);
+    // Austin's answer arrives second. Last-write-wins would strand Austin's outlines over
+    // Sacramento's map indefinitely; the guard drops it instead.
+    pending[0]({ income: FC(['austin']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['sacramento']);
+  });
+
+  it("a late REJECTION for a market already left does not empty the market the member is on", async () => {
+    const pending: { reject: (e: unknown) => void }[] = [];
+    const comp: any = new Component({ market: { boundaries: () => new Promise((_r, reject) => pending.push({ reject })) } });
+    comp.componentDidMount();
+    comp.setMarket('Sacramento, CA');
+    pending[1].reject(new Error('nope'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(comp.state.mdAreas).toEqual({});
+    pending[0].reject(new Error('Austin, late'));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(comp.state.mdAreas, "Austin's refusal is not Sacramento's") .toEqual({});
+  });
+
+  // -----------------------------------------------------------------------------------
+  // A24.21-A24.23 (2026-09-12) — the map asks for the ground it is SHOWING. The route has taken
+  // a `bbox` since Task 9 and the adapter never sent one, so every request was for the whole
+  // metro envelope: 5,935 Census tracts in New York where the view holds 3,706. The caps were
+  // re-measured for Census tracts the same day (`MAX_FEATURES = 12000`, `MAX_BODY_BYTES =
+  // 6_000_000`), so the metro request is no longer refused — it is simply an answer nobody asked
+  // for, and the box is what keeps it the size of the screen.
+  //
+  // The adapter's own `viewport()` is BOTH the box that is sent and the token an arriving answer
+  // is checked against — one value, so the guard cannot drift from the request. An adapter
+  // WITHOUT it (every case above, and any older build) keeps the whole-metro behaviour exactly.
+  // -----------------------------------------------------------------------------------
+  const viewportAdapter = (boxes: string[]) => {
+    const calls: { market: string; bbox: string | null }[] = [];
+    const subs: (() => void)[] = [];
+    const pending: ((v: unknown) => void)[] = [];
+    return {
+      calls, pending,
+      move: (box: string) => { boxes.unshift(box); subs.forEach((s) => s()); },
+      unsubscribed: () => subs.length === 0,
+      adapter: {
+        viewport: () => boxes[0] ?? null,
+        onViewport: (cb: () => void) => { subs.push(cb); return () => { subs.length = 0; }; },
+        boundaries: (market: string, bbox: string | null) => {
+          calls.push({ market, bbox });
+          return new Promise((r) => pending.push(r));
+        }
+      }
+    };
+  };
+
+  it('asks for NOTHING until a map has said what it is looking at — no doomed whole-metro request', () => {
+    const a = viewportAdapter([]);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    expect(a.calls).toEqual([]);
+    expect(comp.state.mdAreas).toBeNull();
+  });
+
+  it('asks with the box the map published, the moment it publishes one', async () => {
+    const a = viewportAdapter([]);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    a.move('-74.2,40.1,-72.8,40.9');
+    expect(a.calls).toEqual([{ market: 'Austin, TX', bbox: '-74.2,40.1,-72.8,40.9' }]);
+    a.pending[0]({ income: FC(['tract-a']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['tract-a']);
+  });
+
+  it('KEEPS the polygons on screen while a pan reloads — a pan is not a metro change', async () => {
+    const a = viewportAdapter([]);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    a.move('box-1');
+    a.pending[0]({ income: FC(['before']) });
+    await Promise.resolve();
+    a.move('box-2');
+    expect(comp.state.mdAreas, 'the map went blank mid-pan').not.toBeNull();
+    expect(drawn(comp)).toEqual(['before']);
+    a.pending[1]({ income: FC(['after']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['after']);
+  });
+
+  it('DISCARDS an answer for a box the member has already panned off, the market guard extended', async () => {
+    const a = viewportAdapter([]);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    a.move('box-1');
+    a.move('box-2');
+    a.pending[1]({ income: FC(['box-2']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['box-2']);
+    a.pending[0]({ income: FC(['box-1']) });
+    await Promise.resolve();
+    expect(drawn(comp), "box-1's answer landed on box-2's map").toEqual(['box-2']);
+  });
+
+  it('a metro change still CLEARS first, even with a viewport — one city is never drawn over another', () => {
+    const a = viewportAdapter(['box-1']);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    a.pending[0]({ income: FC(['austin']) });
+    comp.setMarket('Sacramento, CA');
+    expect(comp.state.mdAreas).toBeNull();
+    expect(a.calls.map((c) => c.market)).toEqual(['Austin, TX', 'Sacramento, CA']);
+  });
+
+  it('unsubscribes on unmount, so a torn-down screen stops asking the API for boxes', () => {
+    const a = viewportAdapter(['box-1']);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    expect(a.unsubscribed()).toBe(false);
+    comp.componentWillUnmount();
+    expect(a.unsubscribed()).toBe(true);
+    expect(() => comp.componentWillUnmount()).not.toThrow();
+  });
+
+  it('an adapter with no viewport at all keeps the whole-metro behaviour, unchanged', () => {
+    const asked: unknown[] = [];
+    const comp: any = new Component({ market: { boundaries: (n: string, b: unknown) => { asked.push([n, b]); return Promise.resolve({}); } } });
+    comp.componentDidMount();
+    expect(asked).toEqual([['Austin, TX', null]]);
+  });
+
+  // -----------------------------------------------------------------------------------
+  // The three states Task 9's payload distinguishes, rendered. These property dicts are
+  // `app/api/market._boundary_feature`'s own output, transcribed from the route (commit
+  // `c466415`) rather than imagined: `value` is null BOTH when the geography has no row and
+  // when its row is suppressed, and the two are told apart by `suppressed`/`suppress_reason`
+  // on the same dict. `band_ambiguous` is orthogonal to both — the value is KEPT and a caveat
+  // is added, never greyed (D-C36: "greying a measured figure is its own false statement").
+  // -----------------------------------------------------------------------------------
+  it('renders no-data, suppressed and band-ambiguous as three different things', () => {
+    const props = [
+      { geo_id: 'none', name: 'No row', value: null, moe: null, suppressed: false, suppress_reason: null, band_ambiguous: false },
+      { geo_id: 'nomoe', name: 'No margin', value: null, moe: null, suppressed: true, suppress_reason: 'no_moe', band_ambiguous: false },
+      { geo_id: 'highmoe', name: 'Wide margin', value: null, moe: 40000, suppressed: true, suppress_reason: 'high_moe', band_ambiguous: false },
+      { geo_id: 'cascade', name: 'Cascaded', value: null, moe: null, suppressed: true, suppress_reason: 'input_suppressed', band_ambiguous: false },
+      { geo_id: 'flag', name: 'Withheld', value: null, moe: null, suppressed: true, suppress_reason: 'source_flag', band_ambiguous: false },
+      { geo_id: 'amb', name: 'Ambiguous', value: 92150, moe: 6420, suppressed: false, suppress_reason: null, band_ambiguous: true },
+      { geo_id: 'plain', name: 'Measured', value: 92150, moe: 1200, suppressed: false, suppress_reason: null, band_ambiguous: false }
+    ];
+    const comp: any = new Component({});
+    const out = comp.areaVals({ type: 'FeatureCollection', features: props.map((p) => ({ type: 'Feature', id: p.geo_id, properties: p, geometry: null })) }, 'income');
+    const by = Object.fromEntries(out.features.map((f: any) => [f.properties.geo_id, f.properties]));
+
+    // Every unmeasured polygon is DRAWN — never omitted, because a hole on a choropleth reads
+    // as a park, a lake or the edge of the market (D-NS16).
+    expect(out.features).toHaveLength(props.length);
+
+    // One neutral class for all five unmeasured states, and a DIFFERENT sentence for each fact.
+    const grey = by.none.color;
+    for (const id of ['none', 'nomoe', 'highmoe', 'cascade', 'flag']) {
+      expect(by[id].color, `${id} must take the no-data class`).toBe(grey);
+      expect(by[id].label).toBe('No data');
+    }
+    expect(by.none.tip).toContain('No data for this area');
+    // The three imprecision reasons share the contract's own wording; `input_suppressed` is a
+    // cascade from a figure suppressed for imprecision, so it reads as imprecision too. It is
+    // also unreachable on this endpoint today — only `median_hh_income` is suppressed here
+    // (D-NS17) and `_suppression` emits `no_moe`/`high_moe` alone.
+    for (const id of ['nomoe', 'highmoe', 'cascade']) {
+      expect(by[id].tip).toContain('Estimate too imprecise to show at this geography');
+    }
+    expect(by.flag.tip).toContain('Not published for this county');
+    expect(by.flag.tip).not.toContain('Estimate too imprecise');
+
+    // Band-ambiguous is NOT greyed: the figure stands, and the caveat rides beside it.
+    expect(by.amb.color).not.toBe(grey);
+    expect(by.amb.color).toBe(by.plain.color);
+    expect(by.amb.label).toBe('$92K');
+    expect(by.amb.tip).toContain('this margin spans two legend bands');
+    expect(by.plain.tip).not.toContain('spans two legend bands');
+  });
+
+  it("a blocked or disabled layer arrives with no features, so nothing of it is ever painted", async () => {
+    // Verified against the route, not assumed: `app/api/market.py` fills `rows` only when
+    // `state == "enabled"`, so a licence-blocked layer answers `features: []` with a
+    // `blocked_reason`. "Blocked datasets never ship" therefore holds without the design
+    // reading `state` at all — and if that ever changes, this case is where it shows.
+    const comp: any = new Component({ market: { boundaries: () => Promise.resolve({
+      income: { type: 'FeatureCollection', state: 'blocked', blocked_reason: 'licence refused', features: [] }
+    }) } });
+    comp.componentDidMount();
+    await Promise.resolve();
+    expect(comp.marketVals(P).areas.features).toEqual([]);
+  });
+
+  it('a layer the API did not answer for draws nothing rather than the fixture for that layer', async () => {
+    const comp: any = new Component({ market: adapter({ income: FC(['x']) }) });
+    comp.componentDidMount();
+    await Promise.resolve();
+    comp.state.mdValue = 'growth';
+    expect(comp.marketVals(P).areas.features).toEqual([]);
+    comp.state.mdValue = 'income';
+    expect(drawn(comp)).toEqual(['x']);
+  });
+});

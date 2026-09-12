@@ -41,12 +41,17 @@ def test_the_mail_pipeline_tasks_are_registered_and_scheduled():
     assert schedule["qwi-quarterly"]["task"] == "census.load_qwi"
     assert schedule["license-audit-quarterly"]["task"] == "census.license_audit"
     assert schedule["materialize-nightly"]["task"] == "census.materialize_metrics"
+    assert schedule["geo-metric-nightly"]["task"] == "census.materialize_geo_metrics"
+    # D-NS9: 03:30 UTC, half an hour after materialize-nightly's 03:00 -- the two are independent
+    # (neither reads the other's table) and the stagger keeps two heavy read-only passes over
+    # acs_measure off one database at the same moment. Never on the request path (spec §10).
+    assert schedule["geo-metric-nightly"]["schedule"].hour == {3} and schedule["geo-metric-nightly"]["schedule"].minute == {30}
     # Task B4b widens this set (never replaces it) the same way Task A8 originally did: a future
     # accidental wipe of any sub-project's entries -- Census's own materialisation beat included
     # -- still goes red here.
     assert {entry["task"] for entry in schedule.values()} == {
         "mail.send", "mail.purge_sessions", "mail.purge_outbox", "census.load_qwi", "census.license_audit",
-        "census.materialize_metrics",
+        "census.materialize_metrics", "census.materialize_geo_metrics",
     }
     for name in ("sessions-purge-nightly", "outbox-purge-nightly"):
         assert schedule[name]["schedule"].hour == {4}, name

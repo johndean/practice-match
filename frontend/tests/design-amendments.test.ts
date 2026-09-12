@@ -14,8 +14,8 @@ describe('local design amendments (spec D15)', () => {
   });
 
   // The bundle's SECOND amendable file (spec §9.2, ruled by the controller 2026-09-10 §14 Q3).
-  // A24 is the first amendment in the programme's history that has to reach a file other than
-  // the `.dc.html`, and the alternative — hand-editing an approved bundle file — is the exact
+  // A24 is the family that first needed a file other than the `.dc.html` (A28.1 reached it
+  // first, by merging first), and the alternative — hand-editing an approved bundle file — is the exact
   // failure mode spec D15 exists to remove. Same contract, same proof: a frozen pristine twin
   // that is never edited, and byte equality with the amended file it plus its own amendments
   // produce. This hash changes only when a re-issued bundle lands.
@@ -311,11 +311,209 @@ describe('local design amendments (spec D15)', () => {
     // the legacy panel's orphan rows and the two state flags those rows were the only reader of.
     // A28.5-A28.8 (controller amendment D-C45) delete the four helpers those rows called.
     'A28.1', 'A28.2', 'A28.3', 'A28.4', 'A28.5', 'A28.6', 'A28.7', 'A28.8', 'A28.9',
+    // A24 — real Census boundary polygons replace the grid mosaic (2026-09-10; John's rulings
+    // D-C34–D-C37, spec 2026-09-10-neighbourhood-shading-design.md). Numerically before A25/A26
+    // and applied after them: A24 was reserved by the ledger's own A25.1 row while those two
+    // families were written and merged, so every A24 `find` is measured against the file they
+    // leave behind. The four `.jsx` entries are the ones the second-file partition was built for
+    // (A28.1, merged first, is the first jsx entry in this list); `amendmentsFor` partitions them and each
+    // file is proved on its own. A24.13 is the same family's OTHER ruling, D-C46 (John,
+    // 2026-09-11): real polygons drawn on class breaks that cannot represent real data would
+    // still be one colour, so the breaks move in the same change that makes them visible.
+    'A24.1', 'A24.2', 'A24.3', 'A24.4', 'A24.5', 'A24.6a', 'A24.6b', 'A24.7', 'A24.8a', 'A24.8b',
+    'A24.13',
+    // Task 10 -- the adapter path. The plan allotted it A24.13-A24.17; D-C46 took A24.13
+    // inside Task 4, so these are A24.14-A24.18 and the family totals twenty.
+    'A24.14', 'A24.15', 'A24.16', 'A24.17', 'A24.18',
+    // The Census tract ruling (controller, 2026-09-12). Both CHAINED, so both sit after the
+    // entries they read: A24.19 after A24.2, A24.20 after A24.7.
+    'A24.19', 'A24.20',
+    'A24.21', 'A24.22', 'A24.23',
+    // D-L1 (John, 2026-09-12): the four layers that painted nothing. Every entry is CHAINED on
+    // an earlier A24 entry's output, so each runs after the one it reads.
+    'A24.24', 'A24.25', 'A24.26', 'A24.27', 'A24.28', 'A24.29', 'A24.30a', 'A24.30b',
+    'A24.31a', 'A24.31b', 'A24.32',
+    // Fix round 1 (review of e984c85..304b80f, 2026-09-12). Every entry is CHAINED on an earlier
+    // A24 entry's output, so each runs after the one it reads.
+    'A24.33', 'A24.34', 'A24.35', 'A24.36', 'A24.37', 'A24.38', 'A24.39', 'A24.40', 'A24.41',
+    'A24.42',
+    // MS1 (2026-09-12): the snapshot strip's own sign. Not chained — its `find` is the pristine
+    // bundle's own `num` declaration.
+    'A24.43',
+    // Fix round 2 (2026-09-12): the snapshot states its own basis (B) and the threshold tip
+    // carries the ruled sentence alone (E). A24.56 reads A24.20's output and A24.57 A24.38's.
+    'A24.44', 'A24.45', 'A24.46', 'A24.47', 'A24.48', 'A24.49', 'A24.50', 'A24.52', 'A24.51',
+    'A24.54', 'A24.53', 'A24.55', 'A24.56', 'A24.57',
+    // Fix round 2, C and D: one number parser, and a comment that stopped being true when A24.43
+    // fixed it. A24.59 reads A24.3's own output.
+    'A24.58', 'A24.59',
+    'A24.9', 'A24.10', 'A24.11', 'A24.12',
   ];
+
+  it('A24 draws real boundary polygons, each at its own geography, through the design\'s own bucket()', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    const jsx = readFileSync(AMENDED_JSX, 'utf8');
+
+    // D-C35's rule and the six geographies it now governs, each with its own legend label.
+    // income moved 860 -> 140 "Census tract" on 2026-09-12 (A24.19); growth and econ did NOT,
+    // and that asymmetry is the ruling rather than an oversight — growth cannot be computed at
+    // tract level across the 2010->2020 boundary change (plan D12).
+    // A24.24 (D-L1, 2026-09-12) INVERTS the assertion that stood here: `pets`, `households` and
+    // `competition` were required NOT to have a geography, because they were graduated symbols
+    // at the listing point. They painted NOTHING on QA, the stakeholder said so, and each now
+    // shades where its own figure is measured — the two ACS counts at the tract beside income,
+    // and the ZIP Business Patterns count at the ZCTA, which is that dataset's own geography.
+    expect(amended).toContain('const AREA_LEVEL = { income: "140", growth: "160", econ: "050", households: "140", pets: "140", competition: "860" };');
+    expect(amended).toContain('const AREA_LABEL = { income: "Census tract", growth: "Place (city/town)", econ: "County", households: "Census tract", pets: "Census tract", competition: "ZIP Code Tabulation Area" };');
+    expect(amended).toContain('const FILL_KEYS = ["income", "growth", "econ", "households", "pets", "competition"];');
+    // The choropleth's own class breaks, measured over the distribution the MAP paints rather
+    // than over the community cards' (A24.25). `VALUE_LAYERS` is untouched, which is what keeps
+    // the snapshot strip, the Compare rows and the docked panel on their own scale and pixels.
+    expect(amended).toContain('  households: { buckets: ["< 1,000", "1,000\u20131,500", "1,500\u20132,000", "> 2,000"], stops: [1000, 1500, 2000] },');
+    expect(amended).toContain('  pets: { buckets: ["< 600", "600\u2013850", "850\u20131,100", "> 1,100"], stops: [600, 850, 1100] },');
+    // Fix round 1, Important 3: the first class is labelled "3", not "1-3". The Census publishes
+    // no ZIP-level count for a category under three establishments, so the served distribution has
+    // a floor of three and a class promising a 1 or a 2 is false precision.
+    expect(amended).toContain('  competition: { buckets: ["3", "4\u20135", "6\u20139", "10+"], stops: [4, 6, 10] }');
+    // …and the alias `areaSet` was missing, which is what painted households 503/503 "No data".
+    expect(amended).toContain('const raw = best ? (layer === "households" ? best.hh : layer === "competition" ? best.vets : best[layer]) : undefined;');
+    expect(amended).toContain('  households: { label: "Households (ACS)", short: "Total households", unit: "count", buckets: ["< 10K", "10K\u201325K", "25K\u201345K", "> 45K"], stops: [10000, 25000, 45000] },');
+    // §9: the modelled estimate says it is modelled, in the tip as well as in the catalogue.
+    expect(amended).toContain('"Modelled estimate: households \u00d7 0.57. Not an observed count."');
+    // §15: a competition count never reaches the screen bare — it names what it counts and the
+    // geography it counts them in, and the geography comes from AREA_LABEL rather than a literal.
+    expect(amended).toContain('(layer === "competition" ? " veterinary practices" : "")');
+    expect(amended).toContain('"Counted within this " + AREA_LABEL[layer] + ". ZIP Code Business Patterns is published per ZIP code, which is this dataset\u2019s own authoritative geography.');
+    // Fix round 1, Important 3: the third ZCTA state says which rule hid it, in the API's own
+    // words (`tests/census/test_design_shading_labels.py` pins the sentence across both sides).
+    // Fix round 2, E: the ruled sentence and NOTHING else — A24.38 had shipped a lead-in in
+    // front of it, and the stakeholder rejected invented copy.
+    expect(amended).toContain('p.suppress_reason === "source_threshold" ? "The Census does not publish a ZIP-level count');
+    expect(amended, 'the lead-in sentence is still there').not.toContain('Fewer than three veterinary establishments here');
+    // Fix round 2, B: one string per fact — the three layers whose line named the MAP's geography
+    // carry the dataset alone, and `metaSource` composes the rest for the surface that prints it.
+    expect(amended).toContain('const metaSource = (k, basis) => {');
+    expect(amended).toContain('    dataset: "U.S. Census ZIP Code Business Patterns (2022), NAICS 541940",');
+    expect(amended, 'a layer still carries the map geography baked into its source line')
+      .not.toContain('estimates (2023) \u00b7 Census tract",');
+    expect(amended).toContain('            src: metaSource(k, stripBasis),');
+
+    // D-NS16 (John, 2026-09-10): the no-data class is the design's own --border-subtle value and
+    // the legend gains one row reading exactly "No data".
+    expect(amended).toContain('const NO_DATA_FILL = "#e6e6e6";');
+    expect(amended).toContain('const NO_DATA_LABEL = "No data";');
+
+    // The one door (spec §2.2): every polygon's colour comes from the design's own bucket() and
+    // its label from the design's own fmtMetric(), so the fill and the legend cannot disagree.
+    expect(amended).toContain('const b = shown ? this.bucket(layer, p.value, true) : null;');
+    expect(amended).toContain('label: shown ? this.fmtMetric(layer, p.value) : NO_DATA_LABEL,');
+
+    // The tip is built ONCE, in the script, and both renderers bind it — the design and the port
+    // used to build it twice and keep the two in step by hand.
+    expect(amended.split('Estimate too imprecise to show at this geography')).toHaveLength(2);
+    expect(jsx).not.toContain('Estimate too imprecise');
+    expect(jsx).toContain('l.bindTooltip(f.properties.tip, { sticky: true, className: "rf-tip" });');
+
+    // The grid is gone from the reference, name and all.
+    expect(jsx).not.toContain('mosaicCells');
+    expect(jsx).not.toContain('0.0055');
+    expect(jsx).not.toContain('GEOMETRY NOTE');
+    expect(jsx).toContain('// GEOMETRY: real Census boundary polygons, handed in as `areas`');
+    // `voronoiCells`/`clipPolygon` were dead before this change and are left alone: the bundle's
+    // dead-code rule applies to orphans a change CREATES (A2.3, A13.6), not to pre-existing ones.
+    expect(jsx).toContain('function voronoiCells(sites, bbox) {');
+
+    // Both maps are handed the polygons, and `communities` stays passed — the fixture's figures
+    // are derived from it, so it is not dead.
+    expect(amended.split('areas="{{ md.areas }}"')).toHaveLength(3);
+    expect(amended.split('communities="{{ md.communities }}"')).toHaveLength(3);
+
+    // The footnote John ruled on, byte for byte (§14 Q2), and the sentence it replaced is gone.
+    // A24.20 (2026-09-12) renamed the geography here and added the growth caveat: a reader told the
+    // areas are tracts would otherwise take EVERY figure on the strip for a tract-level one.
+    // A24.56 (fix round 2, B) rewrote the sentence that described the MAP alone while sitting
+    // under the snapshot strip, whose figures are per-practice. Its `find` reached one sentence
+    // too far and took A24.20's ruled caveat with it (fix round 3, the re-review's Important):
+    // the growth geography is exactly the fact the snapshot cannot state — its card still reads
+    // "· community level" — so the paragraph carries BOTH sentences, in that order.
+    const footnote = amended.split('<p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">')[1].split('</p>')[0];
+    expect(footnote).toContain('The map shades Census tracts, places, counties or ZIP Code Tabulation Areas, as each layer\u2019s legend names; the snapshot\u2019s figures describe the area around each practice.');
+    expect(footnote, 'A24.20\'s growth caveat is gone from the product').toContain('Population growth is measured for the surrounding city or county, not the tract.');
+    // …and the opening clause is stated ONCE: A24.56's first draft ended on the same words the
+    // paragraph opens with.
+    expect(footnote.split('not the practice itself'), 'the paragraph repeats its own opening clause').toHaveLength(2);
+    expect(amended).not.toContain('production draws Census ZCTA boundaries');
+
+    // The legend names the geography, on the desktop panel and in the phone sheet, and nowhere
+    // introduces a style the design does not already carry.
+    expect(amended.split('{{ md.active.geoLine }}')).toHaveLength(3);
+    expect(amended.split('value="{{ md.active.hasGeo }}"')).toHaveLength(3);
+  });
+
+  it('A24.14-A24.18 wire the map to the API on adapter presence, never on data', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+    // A16.1's exact shape (A-SL23 (2)): with the adapter present the map draws what the API
+    // answered or NOTHING, and never the design's fixture, whatever the API answered.
+    // A24.31a/A24.31b hoisted the expression into `areaFc` so the legend can see how many
+    // polygons were drawn; the ternary itself is byte-unchanged and still keyed on adapter
+    // PRESENCE rather than on data.
+    expect(amended).toContain('    const areaFc = this.areaVals(this.props.market ? ((s.mdAreas || {})[valueLayer] || { type: "FeatureCollection", features: [] }) : this.areaSet(valueLayer), valueLayer);');
+    expect(amended).toContain('      areas: areaFc,');
+    // A24.32 (whole-branch review, finding 5): zero polygons drawn, no ramp and no geography
+    // name — the legend never claims a scale the map does not carry.
+    // A24.41/A24.42 (fix round 1, Minor 7): the legend stays mounted while a metro's areas load,
+    // exactly as a pan already keeps it — a legend that disappears and returns is a flicker.
+    expect(amended).toContain('          hasRamp: !!valueLayer && (areaFc.features.length > 0 || areasPending),');
+    expect(amended).toContain('          hasGeo: FILL_KEYS.indexOf(valueLayer) > -1 && (areaFc.features.length > 0 || areasPending),');
+    expect(amended).toContain('    const areasPending = !!this.props.market && s.mdAreas === null;');
+    expect(amended).toContain('mdAreas: null,');
+    // One loader, with the rejection arm every adapter path in this design keeps forgetting
+    // (A16.17's own lesson): a refused load empties the map, it does not restore the fixture.
+    expect(amended).toContain('loadAreas(market, keep) {');   // A24.21 widened the signature
+    expect(amended).toContain('if (mine()) this.setState({ mdAreas: {} });');
+    // It clears before it asks, so a metro change cannot leave the previous metro's polygons
+    // painted over the new metro's view; and it ignores an answer for a market the member has
+    // since left, so two fetches resolving out of order cannot strand the wrong metro's
+    // boundaries on screen. Both are "draw what the API answered for what you are looking at".
+    expect(amended).toContain('if (!keep) this.setState({ mdAreas: null });');
+    expect(amended).toContain('const mine = () => (this.state.market || "Austin, TX") === asked &&');
+    // Three call sites since A24.22: the bootstrap, a change of metro, and a settled pan or zoom.
+    expect(amended.split('this.loadAreas(')).toHaveLength(4);
+    expect(amended.split('loadAreas(market, keep) {')).toHaveLength(2); // and exactly one definition
+    // NO new prototype prop: the reference reaches the fixture path by having no adapter at all,
+    // exactly as it does for `listings` and `adminListings`. `market` is an app-only prop, so it
+    // must NOT appear in the design's declared `data-props` (which `app-generated.test.ts`
+    // requires app.setup.js to mirror).
+    const props = /data-props="([^"]*)"/.exec(amended)![1].replace(/&quot;/g, '"').replace(/&amp;/g, '&');
+    expect(Object.keys(JSON.parse(props))).not.toContain('market');
+  });
+
+  it('A24.13 re-scales the growth breaks onto real ACS data, with a band below zero (D-C46)', () => {
+    const amended = readFileSync(AMENDED, 'utf8');
+
+    // D-C46 (John, 2026-09-11). The published stops were [10, 20, 35] with no band below zero, so
+    // a place that LOST population was painted the same colour as one that grew 9 %, and — measured
+    // against ACS 2014-2018 → 2019-2023 place populations, which is exactly what
+    // `app.census.metrics.population_growth_pct` computes — 79.9 % of US places of 10,000 people or
+    // more landed in the single bottom bucket. The new breaks are the tertiles of the non-declining
+    // half of that distribution (+3.3 / +8.8 nationally, +4.8 / +13.5 across Texas metro places),
+    // rounded to numbers a legend can carry; 30.5 % of those places are declining and now read as
+    // declining.
+    expect(amended).toContain('buckets: ["Declining", "0–5%", "5–15%", "> 15%"], stops: [0, 5, 15] }');
+    expect(amended, 'the un-scaled stops must be gone, not merely joined').not.toContain('stops: [10, 20, 35]');
+    expect(amended).not.toContain('buckets: ["< 10%", "10–20%", "20–35%", "> 35%"]');
+
+    // D-C36 froze the OTHER two fill layers' bands, and this ruling does not reach them.
+    expect(amended).toContain('stops: [50000, 75000, 100000, 150000]');
+    expect(amended).toContain('stops: [450000, 650000, 900000]');
+    // Four buckets, because the growth ramp carries exactly four colours in all three palettes —
+    // a fifth class would mean inventing a colour the design does not have.
+    for (const pal of ['#efe6dd', '#e6f2e8', '#e8f1e3']) expect(amended).toContain(pal);
+  });
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(222);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(285);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 
@@ -1145,8 +1343,12 @@ describe('local design amendments (spec D15)', () => {
     // `showDrive` (in the .dc.html, not here), are untouched.
     expect(jsx).toContain('fill: false, interactive: false');
     expect(jsx.split('L.circle(').length - 1, 'A28.1 added or removed a circle').toBe(pristineJsx.split('L.circle(').length - 1);
-    // A28.1 is the only jsx entry, and it is the first one the programme has ever had.
-    expect(amendmentsFor('jsx').map((a) => a.id)).toEqual(['A28.1']);
+    // A28.1 was the only jsx entry when this case was written, and the first the programme ever
+    // had; the A24 merge (real Census boundary polygons, 2026-09-11) added the four the partition
+    // was built for, and they are appended after it because A24 is appended after A28 in
+    // `amendments()`. The list is spelled out rather than counted so an entry that silently
+    // changes file still fails here.
+    expect(amendmentsFor('jsx').map((a) => a.id)).toEqual(['A28.1', 'A24.9', 'A24.10', 'A24.11', 'A24.12']);
   });
 
   it('A28.2-A28.4 delete the legacy panel\'s orphans, and the last "drive time" strings with them', () => {

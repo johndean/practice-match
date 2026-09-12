@@ -19,11 +19,12 @@ of truth and the surrounding sentences as commentary.
 | GET | `/api/layers` | `market.read` |
 | GET | `/api/markets` | `market.read` |
 | GET | `/api/markets/{cbsa}/communities` | `market.read` |
+| GET | `/api/markets/{cbsa}/boundaries` | `market.read` |
 | GET | `/api/listings/{listing_id}/market` | `market.read` |
 | GET | `/api/admin/data-sources` | `data_sources.read` (staff/admin) |
 | POST | `/api/admin/data-sources/{dataset_key}/license` | `licence.decide` (admin, re-authenticated within 10 minutes) |
 
-**Mounted only while `SITE_MODE=app`.** All six routes live inside `app/main.py`'s `if
+**Mounted only while `SITE_MODE=app`.** All seven routes live inside `app/main.py`'s `if
 settings.site_mode == "app":` block, the same gate `admin_users_router`/`listings_router` sit
 behind. Production runs `coming_soon` until launch (`CLAUDE.md`), so on production today every one
 of these paths 404s through `not_found_router`, exactly like every other member or admin surface —
@@ -54,28 +55,37 @@ still LISTED (so the UI can render it as unavailable), just never carries data:
 [
   { "key": "income", "label": "Median Household Income", "dataset_key": "acs5",
     "source_label": "Source: U.S. Census Bureau, American Community Survey 5-Year Estimates, 2019–2023",
-    "vintage": "2019–2023", "geo_level": "place|catchment", "state": "enabled",
-    "is_derived": false, "caveat": null },
-  { "key": "pets", "label": "Pet Ownership (est.)", "dataset_key": "acs5", "state": "enabled",
+    "vintage": "2019–2023", "geo_level": "place|catchment",
+    "shading": { "summary_level": "140", "label": "Census tract" },
+    "state": "enabled", "is_derived": false, "caveat": null },
+  { "key": "pets", "label": "Pet Ownership (est.)", "dataset_key": "acs5",
+    "shading": { "summary_level": "140", "label": "Census tract" }, "state": "enabled",
     "is_derived": true, "caveat": "Derived estimate: households × 0.57 (national placeholder rate until a licensed regional rate is cleared)." },
   { "key": "growth", "label": "Population Growth", "dataset_key": "acs5_prior",
-    "vintage": "2014–2018 → 2019–2023", "geo_level": "place", "state": "enabled", "is_derived": true,
+    "vintage": "2014–2018 → 2019–2023", "geo_level": "place",
+    "shading": { "summary_level": "160", "label": "Place (city/town)" },
+    "state": "enabled", "is_derived": true,
     "caveat": "Change between two ACS 5-year periods, measured for the listing's city/CDP." },
-  { "key": "households", "label": "Households", "dataset_key": "acs5", "state": "enabled", "is_derived": false, "caveat": null },
+  { "key": "households", "label": "Households", "dataset_key": "acs5",
+    "shading": { "summary_level": "140", "label": "Census tract" },
+    "state": "enabled", "is_derived": false, "caveat": null },
   { "key": "econ", "label": "Average Practice Payroll", "dataset_key": "cbp", "geo_level": "county",
+    "shading": { "summary_level": "050", "label": "County" },
     "state": "enabled", "is_derived": true,
     "caveat": "Payroll per establishment (NAICS 541940), not revenue; county level." },
   { "key": "competition", "label": "Veterinary Competition", "dataset_key": "zbp", "geo_level": "zcta",
-    "state": "blocked", "blocked_reason": "Counsel declined the terms.", "is_derived": false,
-    "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. ZIP-code counts aggregated to the community." },
-  { "key": "practices", "label": "Practice Listings", "dataset_key": null, "state": "enabled", "is_derived": false, "caveat": null },
-  { "key": "drive_10", "label": "5–10 min drive time", "dataset_key": null, "state": "enabled", "is_derived": true, "caveat": "Straight-line 8 km approximation of drive time." },
-  { "key": "drive_20", "label": "10–20 min drive time", "dataset_key": null, "state": "enabled", "is_derived": true, "caveat": "Straight-line 16 km approximation of drive time." }
+    "shading": { "summary_level": "860", "label": "ZIP Code Tabulation Area" },
+    "state": "enabled", "is_derived": false,
+    "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. Published per ZIP code by ZIP Code Business Patterns, and shaded at the ZIP Code Tabulation Area, which is that dataset's own authoritative geography." },
+  { "key": "practices", "label": "Practice Listings", "dataset_key": null, "shading": null, "state": "enabled", "is_derived": false, "caveat": null },
+  { "key": "drive_10", "label": "5–10 min drive time", "dataset_key": null, "shading": null, "state": "enabled", "is_derived": true, "caveat": "Straight-line 8 km approximation of drive time." },
+  { "key": "drive_20", "label": "10–20 min drive time", "dataset_key": null, "shading": null, "state": "enabled", "is_derived": true, "caveat": "Straight-line 16 km approximation of drive time." }
 ]
 ```
 
 **`state` is three-valued, never a bare boolean** (`enabled` / `disabled` / `blocked`, plus
-`blocked_reason` only when `blocked`) — `dataset_registry.license_status`'s `cleared` /
+`blocked_reason` only when `blocked`, which no layer in the sample above is — `zbp` is seeded
+`cleared` by `migrations/017_census_registry.sql`) — `dataset_registry.license_status`'s `cleared` /
 `unresolved` / `blocked` (migration `017`'s own CHECK constraint), mapped straight across. "Off
 because a member turned a layer off" and "off because the licence is not cleared" are different
 facts the frontend and the admin surface both need to tell apart (A-C14 (4)); "off because it is
@@ -83,10 +93,163 @@ not yet cleared" (`disabled`) is not the same as "off because the licence was re
 (`blocked`) — the first can still change, the second is a standing decision until an admin revisits
 it. `practices`/`drive_10`/`drive_20` carry no `dataset_key` at all and are always `enabled`.
 
+**`shading` is the geography the MAP paints this layer at, and is never the same field as
+`geo_level`** (D-NS15). `geo_level` describes the docked PANEL's geography — `income`'s is
+`"place|catchment"` — and the panel and the map answer different questions about the same layer.
+Only the three fill layers carry a `shading` object; the three graduated-symbol layers, `practices`
+and the two drive rings carry `"shading": null`. `GET /api/markets/{cbsa}/boundaries` below serves
+the polygons at exactly the `summary_level` named here.
+
 A licence decision on `/api/admin/data-sources/{key}/license` is reflected here within 60 seconds
 (spec §11): `app.census.gate`'s Redis counter is bumped on every decision and rides inside the
 market-payload cache key below, so a stale answer cannot outlive the decision by more than the
 gate's own TTL.
+
+## `GET /api/markets/{cbsa}/boundaries?layer=income|growth|econ|households|pets|competition[&bbox=minLng,minLat,maxLng,maxLat]`
+
+The shaded map layer: real Census boundary polygons joined to `geo_metric`, one geography per
+layer (John's rulings D-C34–D-C37, 2026-09-10). `income`, `households` and `pets` draw Census
+tracts (`"summary_level": "140"`), `growth` draws Place (city/town) (`"summary_level": "160"`),
+`econ` draws County (`"summary_level": "050"`), and `competition` draws the ZIP Code Tabulation
+Area (`"summary_level": "860"`). Income moved from the ZIP Code Tabulation Area to the
+Census tract on 2026-09-12 (controller ruling): the tract is the canonical granular unit,
+nationwide. `growth` **cannot** follow it -- the 2010→2020 tract boundary change means a
+tract-level growth figure is not computable from the data we hold (plan D12, a registered Phase C
+deferral) -- so it keeps Place, `econ` keeps County, and each layer's own `geo_label` is what the
+legend prints, which is how a coarser figure is never presented as a tract-level one. **No layer is ever painted at a geography finer than its
+figure is honest at** — spec §6's standing rule, "Never silently promote a county figure into a
+tract-labeled slot", applied to the map. `/api/layers` names each layer's own geography in its
+`shading` member, or `null` where it has none — the three overlays that shade nothing
+(`practices`, `drive_10`, `drive_20`).
+
+**Why `competition` is served at the ZIP Code Tabulation Area.** Spec §6 forbids treating a ZIP
+code as a neighbourhood or any other Census geography, **unless the ZIP area is the dataset's own
+authoritative geography and the response says so.** For ZIP Code Business Patterns it literally
+is: the product is published per ZIP code and exists at no other geography, so serving it at the
+ZCTA is reporting it where it was measured rather than approximating it anywhere. The response
+carries `"geo_label": "ZIP Code Tabulation Area"` and the client prints that name on the legend
+and in every tooltip, so a count is never read as a neighbourhood figure. The approximation the
+same spec does forbid — apportioning ZIP counts into some finer or differently-shaped area — is
+not done anywhere on this route.
+
+**`households` and `pets` shade at the tract, and `pets` is modelled.** `households` is
+`B11001_001E`, a published ACS estimate with a published margin, served where the ACS publishes
+it. `pets` is `households × 0.57`, a national placeholder incidence rate: its `/api/layers` entry
+carries `"is_derived": true` and a caveat naming the rate, its `geo_metric` rows carry
+`is_derived` and `formula_version`, and it is never presented as an observed count (spec §9).
+
+One GeoJSON `FeatureCollection` with foreign members (RFC 7946 permits them; `L.geoJSON` ignores
+what it does not know):
+
+```json
+{
+  "type": "FeatureCollection",
+  "cbsa_geoid": "12420", "layer": "income", "metric_key": "median_hh_income",
+  "summary_level": "140", "geo_label": "Census tract", "unit": "usd",
+  "state": "enabled", "boundary_vintage": "2023", "value_vintage": "2019–2023",
+  "source_dataset": "acs5",
+  "attribution": ["Boundaries: U.S. Census Bureau, TIGER/Line Cartographic Boundary Files 2023",
+                  "Source: U.S. Census Bureau, American Community Survey 5-Year Estimates, 2019–2023"],
+  "values_without_geometry": 0,
+  "simplified_deg": 0.0,
+  "features": [
+    { "type": "Feature", "id": "48453001100", "properties": { "geo_id": "48453001100", "name": "Census Tract 11",
+                      "value": 92150, "moe": 6420,
+                      "suppressed": false, "suppress_reason": null, "band_ambiguous": false },
+      "geometry": { "type": "MultiPolygon", "coordinates": [] } }
+  ]
+}
+```
+
+**`simplified_deg` is the delivery tolerance, in degrees, and it describes the GEOMETRY only.**
+`0.0` is the exact outline and is what every request that fits `MAX_BODY_BYTES` receives. A body
+over the cap is SERVED at a coarser geometry rather than refused -- polygons are never dropped to
+make room, because a missing polygon leaves a hole that reads as a boundary -- and this member
+states the tolerance that was used, so a client can say "outlines generalised for display" instead
+of presenting a coarsened outline as an exact one. It never describes the FIGURES: a coarsened
+answer carries the same values as an exact one. Measured live: Austin (`12420`) income at whole
+metro is 577 tracts at `0.0`; Dallas (`19100`) is 1,791 tracts at `0.00055`.
+
+Every feature's `properties` carries exactly those seven keys — `geo_id`, `name`, `value`, `moe`,
+`suppressed`, `suppress_reason`, `band_ambiguous` — on every polygon, whatever its state. Nothing
+is omitted to signal an absence; an absence is a value.
+
+**Two vintages, named separately.** `tiger_cb` is a bare year and `acs5` is an en-dashed range;
+they advance on different calendars and are not interchangeable. A geography present in one and
+not the other is handled in both directions: **geometry with no value** is returned with
+`"value": null, "suppressed": false, "suppress_reason": null` and drawn in the no-data class —
+never omitted, because a hole in a choropleth reads as a boundary; **a value with no geometry** is
+dropped from `features` (there is nothing to draw) and counted in `values_without_geometry`, which
+is logged on every cache miss. That counter is deliberately NOT narrowed by `bbox` — it counts
+values with no `geo_area` row at that level and vintage AT ALL, since "values whose geography is
+not in this viewport" would be non-zero on every zoomed request and would mean nothing. A non-zero
+count on a metro that has previously reported zero means a boundary vintage has moved out from
+under the values.
+
+**`value` is `null` in two different cases and the client must tell them apart.** A geography with
+no row at all is `value: null` with `suppressed: false` and `suppress_reason: null`; a suppressed
+one is `value: null` with `suppressed: true` and a `suppress_reason` of `no_moe`, `high_moe`,
+`input_suppressed`, `source_flag` or `source_threshold`. Both are drawn in the same neutral class;
+they say different things, and a client that guards on `suppressed` alone paints the first as
+measured. `band_ambiguous` is `true` when the margin of error spans a legend stop — that polygon
+keeps its value and takes a caveat, and is **never** greyed.
+
+**Which layers can carry which state.** `income` and `households` are published ACS estimates with
+published margins, so both can be `suppressed` (`no_moe`, `high_moe`) and both can be
+`band_ambiguous`, each judged against its OWN legend stops. `pets` is derived from `households`
+and inherits its verdict as `input_suppressed`; it carries no margin of its own, so it is never
+`band_ambiguous`. `econ` can be `source_flag` (the Census withheld the county cell — a CBP NOISE
+level never suppresses; see "Average practice payroll" below). `competition` can be
+`source_threshold`. `growth` can be neither: it is a difference of two ACS 5-year periods and is
+published with no combined margin at all, so `suppressed` and `band_ambiguous` are both `false` on
+it by construction rather than by omission.
+
+**`source_threshold` — the Census's own ZIP publication rule.** ZIP Code Business Patterns
+publishes industry detail only where a category has three or more establishments: a category under
+three is not reported at ZIP level, though it IS counted in the dataset's all-industry total. A
+ZCTA the dataset covers whose veterinary count was withheld that way is therefore `value: null,
+suppressed: true, suppress_reason: "source_threshold"` — a real figure the Census chose not to
+publish — while a ZCTA ZIP Code Business Patterns does not cover at all is `value: null,
+suppressed: false`. The two are told apart by loading the all-industry total (`NAICS 00`) beside
+the industry codes, which `app/census/zbp.py` does in the same pass; without it both states are
+served as an absence. The served distribution therefore has a FLOOR of three, which is why the
+`competition` legend's first class is labelled `3` and not `1–3`.
+
+**Bounds.** `bbox` is optional and defaults to the metro's own envelope at summary level `310`.
+`MAX_BBOX_DEG = 4.0` degrees on either axis, `MAX_FEATURES = 12000`, `MAX_BODY_BYTES = 6_000_000`
+uncompressed; a breach is `422` with `{"error": {"code": "BBOX_TOO_LARGE" | "AREA_TOO_LARGE",
+"message": …}}`. A bbox that is not four ordered numbers is `422 BAD_BBOX`; a layer that is not one
+of the shaded layers is `422 BAD_LAYER`; an unknown metro is `404 NOT_FOUND`.
+
+The two size caps were re-measured for Census tracts on 2026-09-12 (they had been sized for the
+ZCTA era: `MAX_FEATURES` was 4000 and `MAX_BODY_BYTES` 2_000_000, which refused New York's own
+first view). `MAX_BBOX_DEG` is unchanged and is what refuses a state — a whole-Texas box is about
+13 degrees on a side and is refused on span before a row is counted. For scale, measured on real
+TIGER tract geometry: a New York first view at 1460 x 1228 px carries **7,470 tracts**, and the
+densest 4-degree box anywhere in the country — the largest this route accepts — carries **9,767**;
+both are served, the first at a delivery tolerance of 0.78 CSS px. A client should still send the
+viewport `bbox` rather than rely on the metro default: the metro envelope is a larger answer than
+any one screen needs.
+
+**Licence.** A layer whose dataset is not `cleared` answers `200` with `"features": []` and
+`"state": "disabled"` or `"blocked"` (+ `blocked_reason`) — never a `403`, because `/api/layers`
+already lists a blocked layer so the UI can render it as unavailable, and a map that 403s cannot
+draw that state. No figure from an uncleared dataset reaches the wire in any of those states. The
+gate is checked twice over: against the layer catalogue's own `dataset_key`, and against the
+dataset the rows are STAMPED with — which differ for `growth`, whose catalogue entry names
+`acs5_prior` while its rows carry `acs5`, so either licence moving turns the layer off (see the
+licence-gates table below). The response is cached for `BOUNDARY_TTL = 86400` seconds under a key
+carrying `gate.version()`, so a licence decision makes every cached body unreachable in the same
+instant (§11's one-minute ceiling), and the nightly writer's own version counter, so a rewrite
+that changes values without moving a vintage does too. The key also carries the `bbox`, so two
+viewports of one metro cannot collide.
+
+**Compression is applied by the handler**, not by a global middleware, and the compressed bytes
+are what the cache holds: `Content-Encoding: gzip` with `Vary: Accept-Encoding` when the request
+accepted it, the same JSON otherwise. Every answer carries `x-cache: hit|miss`. **Geometry is
+never simplified on the request path** — `ST_SimplifyPreserveTopology` measured five to eight
+times the cost of the query itself; if a future geography needs it, the simplified geometry is
+materialised by the nightly job, once per vintage.
 
 ## `GET /api/markets`
 
@@ -94,9 +257,18 @@ gate's own TTL.
 [ { "cbsa_geoid": "12420", "name": "Austin, TX", "center": [30.31, -97.75], "zoom": 10 } ]
 ```
 
-One row per CBSA that has at least one **published** listing (`listing.status = 'published'`),
-named with the design's short form (`short_market_name`: `"Austin-Round Rock-San Marcos, TX Metro
-Area"` → `"Austin, TX"`).
+One row per **listing market key** (`listing.market`, the design's dropdown key, e.g. `"Austin,
+TX"`) per CBSA that holds at least one **published** listing with a geocoded point
+(`practice_location.cbsa_geoid`, found by the practice's own coordinates — never a name heuristic
+over the CBSA's official name). Two listing market keys inside one CBSA are two rows (example:
+`"Sacramento, CA"` and `"South Lake Tahoe, CA"`, both CBSA `40900`). A published listing whose
+point lies outside every CBSA has no row here, and therefore no shading.
+
+The reverse case — **one market key spanning two CBSAs**, which happens where a metro boundary runs
+through a market key's own listings — is also two rows, with the same `name`. A client that resolves
+a metro by name takes one of them, so the rows are ordered by `(name, cbsa_geoid)`: the choice is
+arbitrary but **stable**, and the same catalogue will not shade a different CBSA between two
+requests. A client that needs a particular one of the two must select on `cbsa_geoid`, not on `name`.
 
 ## `GET /api/markets/{cbsa}/communities?band=place|drive_10|drive_20` (default `place`)
 
@@ -178,8 +350,9 @@ score ready" check — it is not a readiness signal, it is a standing decision.
 as unmeasured, never as certain; `high_moe`: a margin that IS present but too wide;
 `input_suppressed`: a derived figure whose own input was suppressed). `approximate: true` (present
 only on `median_hh_income` at a catchment band) means the value SHOWN is itself an approximation
-(a household-weighted average of tract medians, which has no combined margin of error by
-construction, A-C21 (5)) — it is never suppressed, because there is a real value to show, just one
+(a household-weighted median of tract medians, interpolated, which has no combined margin of
+error by construction, A-C21 (5); it was a household-weighted AVERAGE of those medians until
+2026-09-12 — Census plan §14, Task INCOME-MEDIAN) — it is never suppressed, because there is a real value to show, just one
 carrying its own caveat. The same metric can be suppressed at one band and approximate at another.
 
 **Cache.** A hit returns the identical payload with header `x-cache: hit`; a miss computes it,
@@ -343,7 +516,7 @@ the data does not support.
 | `community_label` | `null` | The area figures came from the listing's own community (the `place` band), or there are no figures at all. The design names that community from the listing's own `area`, and its wording stands unchanged. |
 | `community_label` | `"Within about 5 miles of the practice"` | The area figures came from the catchment band. The frontend MUST render this label wherever it names the area — a buyer is never shown a catchment disguised as a named city. |
 | `growth_scope` | e.g. `"Dallas"`, `"Orange County"` | The geography the GROWTH figure was measured at, which `community_label` does not describe. The frontend renders it on the Growth tile's own sub-line, so the figure stops implying it describes the ring beside it. `null` where the geography has no name to give. |
-| `income_note` | e.g. `"Within about 5 miles of the practice · approximate"`, or `"Approximate"` | Replaces the median-income tile's sub-line when that median is an approximation — a catchment median is a household-weighted average of the tract medians inside the ring rather than a published Census figure, and can never be suppressed. The guard is the SERVED ROW's own `is_derived`, never the band the area group came from, so an approximate PLACE median carries the qualifier too; with no `community_label` there is no area to name and the note is the bare word `"Approximate"`. `null` for a published median, and the design's own sub-line then stands. Known limit, ruled and accepted: because the tile has ONE sub-line, a note replaces the vintage rather than joining it — a tile carrying a note does not show its year. |
+| `income_note` | e.g. `"Within about 5 miles of the practice · approximate"`, or `"Approximate"` | Replaces the median-income tile's sub-line when that median is an approximation — a catchment median is a household-weighted median of the tract medians inside the ring rather than a published Census figure, and can never be suppressed. The guard is the SERVED ROW's own `is_derived`, never the band the area group came from, so an approximate PLACE median carries the qualifier too; with no `community_label` there is no area to name and the note is the bare word `"Approximate"`. `null` for a published median, and the design's own sub-line then stands. Known limit, ruled and accepted: because the tile has ONE sub-line, a note replaces the vintage rather than joining it — a tile carrying a note does not show its year. |
 
 **The ring is described by DISTANCE, not by time** (D-C39). The band is an 8 km straight-line
 buffer from the practice point (spec §8: "straight-line buffers of 8 km (≈10 min) and 16 km
@@ -387,6 +560,10 @@ payload — never `0`, never `""`** (D-C31: a missing figure is omitted, never z
 * `suppressed: true` → render "Estimate too imprecise to show at this geography", never a blank or
   a zero.
 * `geo_precision != "rooftop"` → render "approximate community data" near the map pin.
+* On the map, `value: null` with `suppressed: false` is the no-data class with "No data for this
+  area"; `suppressed: true` is the same class with the suppression wording above; `band_ambiguous`
+  `true` renders the value plus "this margin spans two legend bands" — never grey, because greying
+  a measured figure is its own false statement.
 * `opportunity_score`, on the day it is approved for publication, always renders with its three
   `components` and never immediately beside the asking price (spec §14) — there is nothing to wire
   today, since the key never arrives.

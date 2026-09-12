@@ -370,7 +370,7 @@ def community_rows(
         label = BAND_LABEL if from_catchment else None
 
         # An approximate median is SHOWN with the word beside it, never blanked — a catchment
-        # median is a household-weighted average of the tract medians inside the ring rather than
+        # median is a household-weighted median of the tract medians inside the ring rather than
         # a published Census figure, which is exactly what `is_derived` records.
         #
         # The guard is the SERVED ROW's own `is_derived`, never the band the area group came

@@ -386,7 +386,7 @@
         <div style="flex: 1; display: flex; min-height: 300px; border-bottom: 1px solid #e6e6e6; overflow-x: auto;">
 
           <div style="flex: 1 1 460px; position: relative; min-width: 300px; overflow: hidden;">
-            <div class="sc-host-x" style="display: contents"><MarketMapView :on-basemap="v.md?.setBasemap" :practices="v.md?.practices" :communities="v.md?.communities" :active-layer="v.md?.activeLayer" :basemap="v.md?.basemap" :active-id="v.md?.activeId" :on-select="v.md?.selectFromMap" :on-area="v.md?.selectArea" :center="v.md?.mapCenter" :zoom="v.md?.mapZoom" :drive-center="v.md?.driveCenter" :show-drive="v.md?.showDrive" :resize-key="v.md?.resizeKey" :recenter-key="v.md?.recenterKey"></MarketMapView></div>
+            <div class="sc-host-x" style="display: contents"><MarketMapView :on-basemap="v.md?.setBasemap" :practices="v.md?.practices" :communities="v.md?.communities" :areas="v.md?.areas" :active-layer="v.md?.activeLayer" :basemap="v.md?.basemap" :active-id="v.md?.activeId" :on-select="v.md?.selectFromMap" :on-area="v.md?.selectArea" :center="v.md?.mapCenter" :zoom="v.md?.mapZoom" :drive-center="v.md?.driveCenter" :show-drive="v.md?.showDrive" :resize-key="v.md?.resizeKey" :recenter-key="v.md?.recenterKey"></MarketMapView></div>
 
             
             <div class="rf-scroll" style="position: absolute; left: 16px; top: 16px; bottom: 72px; z-index: 600; width: 300px; min-height: 0; overflow-y: auto; overflow-x: visible; padding-right: 2px;">
@@ -426,6 +426,9 @@
                       </div>
                     </template>
 
+                    <template v-if="v.md?.active?.hasGeo">
+                      <div style="margin-top: 11px; font-size: 10.5px; line-height: 1.55; color: #767676;"><span v-if="__s(v.md?.active?.geoLine) !== null" class="sc-interp">{{ __s(v.md?.active?.geoLine) }}</span></div>
+                    </template>
                     <div style="margin-top: 11px; font-size: 10.5px; line-height: 1.55; color: #767676;"><span v-if="__s(v.md?.active?.sourceLine) !== null" class="sc-interp">{{ __s(v.md?.active?.sourceLine) }}</span></div>
                     <div style="font-size: 10.5px; line-height: 1.55; color: #767676;"><span v-if="__s(v.md?.active?.updatedLine) !== null" class="sc-interp">{{ __s(v.md?.active?.updatedLine) }}</span></div>
                   </div>
@@ -834,7 +837,7 @@
                   </div>
                 </template>
               </div>
-              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">Figures describe the area around each practice, not the practice itself. Pet-household counts and average practice payroll are derived estimates, not observed values. Community areas on the map are approximate — production draws Census ZCTA boundaries.</p>
+              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">Figures describe the area around each practice, not the practice itself. Pet-household counts and average practice payroll are derived estimates, not observed values. The map shades Census tracts, places, counties or ZIP Code Tabulation Areas, as each layer’s legend names; the snapshot’s figures describe the area around each practice. Population growth is measured for the surrounding city or county, not the tract.</p>
             </div>
           </template>
 
@@ -1436,7 +1439,7 @@
 
         <template v-if="v.mob?.isMap">
           <div style="flex: 1; position: relative; min-height: 0;">
-            <div class="sc-host-x" style="display: contents"><MarketMapView :practices="v.md?.practices" :communities="v.md?.communities" :active-layer="v.md?.activeLayer" :basemap="v.md?.basemap" :active-id="v.md?.activeId" :on-select="v.mob?.selectMarker" :on-area="v.md?.selectArea" :center="v.md?.mapCenter" :zoom="v.mob?.zoom" :drive-center="v.md?.driveCenter" :show-drive="v.md?.showDrive" :resize-key="v.mob?.resizeKey"></MarketMapView></div>
+            <div class="sc-host-x" style="display: contents"><MarketMapView :practices="v.md?.practices" :communities="v.md?.communities" :areas="v.md?.areas" :active-layer="v.md?.activeLayer" :basemap="v.md?.basemap" :active-id="v.md?.activeId" :on-select="v.mob?.selectMarker" :on-area="v.md?.selectArea" :center="v.md?.mapCenter" :zoom="v.mob?.zoom" :drive-center="v.md?.driveCenter" :show-drive="v.md?.showDrive" :resize-key="v.mob?.resizeKey"></MarketMapView></div>
 
             
             <div style="position: absolute; left: 12px; right: 12px; bottom: 12px; z-index: 520; display: flex; align-items: center; gap: 8px;">
@@ -1502,6 +1505,9 @@
                             <div style="flex: 1; font-size: 9.5px; color: var(--vf-text); text-align: center;"><span v-if="__s(r?.label) !== null" class="sc-interp">{{ __s(r?.label) }}</span></div>
                           </template>
                         </div>
+                        <template v-if="v.md?.active?.hasGeo">
+                          <div style="margin-top: 10px; font-size: 10.5px; line-height: 1.55; color: #767676;"><span v-if="__s(v.md?.active?.geoLine) !== null" class="sc-interp">{{ __s(v.md?.active?.geoLine) }}</span></div>
+                        </template>
                         <div style="margin-top: 10px; font-size: 10.5px; line-height: 1.55; color: #767676;"><span v-if="__s(v.md?.active?.sourceLine) !== null" class="sc-interp">{{ __s(v.md?.active?.sourceLine) }}</span></div>
                         <div style="font-size: 10.5px; line-height: 1.55; color: #767676;"><span v-if="__s(v.md?.active?.updatedLine) !== null" class="sc-interp">{{ __s(v.md?.active?.updatedLine) }}</span></div>
                       </div>
@@ -1674,6 +1680,7 @@ import ImageSlot from './components/ImageSlot.vue';
 import { makeAdminListingsAdapter } from './admin/listings';
 import { makeAuthAdapter } from './auth/adapter';
 import { makeListingsAdapter } from './listings/seller';
+import { makeMarketAdapter } from './market/boundaries';
 import * as api from './auth/api';
 import { useMe } from './auth/me';
 import { useStateRouteSync } from './router/useStateRouteSync';
@@ -1754,7 +1761,16 @@ const props = defineProps({
   // file is copied verbatim into App.vue and sits outside the coverage gate, so the logic lives
   // in a module with unit tests. It needs no `data-props` entry — the parity gate is
   // one-directional.
-  adminListings: { type: Object, default: () => makeAdminListingsAdapter() }
+  adminListings: { type: Object, default: () => makeAdminListingsAdapter() },
+  // A24: the real /api/markets client, as the prototype's `market` adapter — the seam the
+  // design's own script branches on. With it present the Browse map draws the polygons the API
+  // answered or NONE at all, whatever it answered; with no adapter — the reference server and
+  // the Claude Design preview — the design's own boundary fixture is drawn instead, which is what
+  // keeps both targets on the same pixels. Nothing in the template reads `market`; only logic.js
+  // does. Built by the factory in `src/market/boundaries.ts`, not an object literal here, for the
+  // reason `auth` records: this file is copied verbatim into App.vue and sits outside the
+  // coverage gate. It needs no `data-props` entry — the parity gate is one-directional.
+  market: { type: Object, default: () => makeMarketAdapter() }
 });
 
 // The approved prototype logic runs verbatim; `state` is made reactive so that

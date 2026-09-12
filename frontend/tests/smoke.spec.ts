@@ -1,6 +1,8 @@
 import { test, expect, type BrowserContext, type Page } from '@playwright/test';
-import { appOrigin, booted, click, firstMapPaintBudgetMs, listingsStubUrl, matchesListings, personaCredentials, personaSignIn, personaSignOut, prepare, reach, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
+import { appOrigin, booted, click, expectApiStatus, forgetExpectedApiFailures, firstMapPaintBudgetMs, listingsStubUrl, matchesListings, personaCredentials, personaSignIn, personaSignOut, prepare, reach, settleExpectedApiFailures, signInAs, signInAsPersona, waitMap, type PersonaCookies } from './harness';
 import { designListingsBody } from './design-listings.mjs';
+import { designBoundariesBody } from './design-boundaries.mjs';
+import { FILL_LAYERS } from '../src/market/boundaries';
 import { SCREENS } from './screens';
 
 // `/reset?token=abc` (review fix round 1, Minor 8): the bare five paths above prove the routes
@@ -228,9 +230,10 @@ test.describe('mobile: the same map, market data in a sheet', () => {
     expect(Math.round(box.width)).toBeLessThanOrEqual(392);
   });
 
-  test('the Map tab shows community mosaic shading', async ({ page }) => {
+  test('the Map tab shows community boundary shading', async ({ page }) => {
     await mobileMap(page);
-    // The mosaic is drawn on the engine's shared L.canvas renderer, so "shading is showing"
+    // The polygons are drawn on the engine's shared L.canvas renderer (A24.12 passes it to
+    // L.geoJSON exactly as the mosaic passed it to L.rectangle), so "shading is showing"
     // means that canvas has painted pixels. Nothing is drawn from a cross-origin image, so
     // the canvas is untainted and readable.
     const painted = await page.evaluate(() => {
@@ -241,7 +244,7 @@ test.describe('mobile: the same map, market data in a sheet', () => {
       for (let i = 3; i < px.length; i += 4) if (px[i] > 0) n++;
       return n;
     });
-    expect(painted, 'no canvas in the Leaflet overlay pane — the mosaic never drew').toBeGreaterThan(0);
+    expect(painted, 'no canvas in the Leaflet overlay pane — the boundary layer never drew').toBeGreaterThan(0);
   });
 
   test('the key does not overlap the + / − cluster: elementFromPoint on each button returns the button', async ({ page }) => {
@@ -318,7 +321,10 @@ test.describe('mobile: the same map, market data in a sheet', () => {
     expect(updated, 'the sheet renders no "Updated:" line').toBeGreaterThan(source);
     expect(updated, 'the ramp + source/updated block is not between Shading and Compare against')
       .toBeLessThan(text.indexOf('COMPARE AGAINST'));
-    expect(text).toContain('Source: U.S. Census ACS 5-year estimates (2023) · community level');
+    // A24.36 (fix round 1, Important 2): income shades at the CENSUS TRACT and its source line
+    // said "community level" — the one line on this card that named no geography while the line
+    // above it named the tract.
+    expect(text).toContain('Source: U.S. Census ACS 5-year estimates (2023) · Census tract');
   });
 
   test('every tap target in the sheet is at least 44px', async ({ page }) => {
@@ -399,7 +405,7 @@ test.describe('mobile: the same map, market data in a sheet', () => {
   //
   // A selection moves `driveCenter` (`sel ? [sel.lat, sel.lng] : cfg.center`, logic.js:382)
   // and `showDrive` (`!!sel`, :578), which are two of the five deps of MarketMapV3.jsx's own
-  // area effect (`:268`), so the community mosaic really is rebuilt on the second tap. That
+  // area effect (`:268`), so the polygon layer really is rebuilt on the second tap. That
   // is the DESIGN's redraw cost on a 390×800 frame, not an over-trigger the port added:
   // MarketMapView.vue gates the overlay rebuild on exactly those five. The first tap is an
   // unmeasured warm-up, and it is a DIFFERENT pin from the second — tapping the same pin
@@ -1098,5 +1104,261 @@ test.describe('Task MP1 — a listing with no coordinates keeps its place and ge
     await waitMap(page);
     await expect(page.locator('.leaflet-marker-icon')).toHaveCount(AUSTIN.length);
     expect(errors).toEqual([]);
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// Task 10 (A24.14–A24.18) — what a member sees when the boundary route cannot answer.
+//
+// The rule is "the app draws what the API answered, or nothing at all", and nothing at all is
+// exactly the blank screen that made this a fire once already: Task 4 reached QA on its own and
+// the map read as empty. So the degradation is PHOTOGRAPHED here rather than asserted in prose.
+// It cannot be an approved visual state — the reference receives no adapter and always draws the
+// design's fixture, so there is no oracle to compare a failed load against; this is the same
+// mechanism A16's and A17's adapter-failure paths are covered by.
+//
+// Two facts, together: the shading is gone (the design's Austin fixture is NOT drawn over a real
+// metro, which is the honesty half), and everything else on the map still is — the basemap, the
+// practice pins with their price callouts, and the results rail. `drawOverlay` paints the C7
+// drive ring before it reaches the polygon layer and `drawPins()` is a separate call, which is
+// why an empty overlay costs the member nothing but the colour.
+// -------------------------------------------------------------------------------------------
+test.describe('A24 — the boundary route is absent, and the map degrades rather than dying', () => {
+  /** Painted pixels on the Leaflet overlay pane's shared canvas — the polygon layer's own
+   *  surface, read the way the mobile shading smoke above reads it. */
+  const paintedOverlay = (page: Page) => page.evaluate(() => {
+    const c = document.querySelector('.leaflet-overlay-pane canvas') as HTMLCanvasElement | null;
+    if (!c) return 0;
+    const px = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+    let n = 0;
+    for (let i = 3; i < px.length; i += 4) if (px[i] > 0) n++;
+    return n;
+  });
+
+  /** The adapter asks for every fill layer at once, so a refused route logs one 4xx console line
+   *  per layer and each one has to be armed. Counted from `FILL_LAYERS` rather than typed: the
+   *  list went from three to six on 2026-09-12 and a literal here would have made this case fail
+   *  for arithmetic rather than for behaviour. `prepare()`'s own gate still fails the test on
+   *  anything else — a page error, or a request nobody expected. */
+  async function browseWith(page: Page, status: number): Promise<void> {
+    await prepare(page);
+    // The refusal is HELD until the allowances are armed, rather than raced against a timer:
+    // `expectApiStatus` needs a page that has already navigated, and the three requests are made
+    // at mount — so nothing may be DELIVERED before `release()`, which runs after arming.
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    // Registered AFTER prepare()'s own route, and Playwright matches the LAST handler first.
+    await page.route(
+      (url) => url.pathname.startsWith('/api/markets/') && url.pathname.endsWith('/boundaries'),
+      async (route) => {
+        await held;
+        await route.fulfill({ status, contentType: 'application/json', body: '{"error":{"code":"NOT_FOUND","message":"no such route"}}' });
+      }
+    );
+    await signInAs(page, 'design', '/browse');
+    for (let i = 0; i < FILL_LAYERS.length; i++) expectApiStatus(page, status);
+    release();
+    await waitMap(page);
+    await settleExpectedApiFailures(page);
+    await page.waitForTimeout(400);
+  }
+
+  test("a 404 leaves the map unshaded — and never falls back to the design's own Austin fixture", async ({ page }) => {
+    await browseWith(page, 404);
+    expect(await paintedOverlay(page), 'the polygon layer drew something after a refused load — the fixture must not stand in').toBe(0);
+    // Everything the member still has. The pins are the proof the map is alive, not blank.
+    await expect(page.locator('.leaflet-marker-pane .leaflet-marker-icon').first()).toBeVisible();
+    expect(await page.locator('.leaflet-marker-pane .leaflet-marker-icon').count()).toBeGreaterThan(1);
+    await expect(page.locator('.leaflet-container').first()).toBeVisible();
+    // …and the results rail, the filters and the detail path are untouched.
+    await expect(page.getByText('Cedar Park').first()).toBeVisible();
+  });
+
+  test('a refusal the member cannot fix — 401 — degrades the same way, not differently', async ({ page }) => {
+    await browseWith(page, 401);
+    expect(await paintedOverlay(page)).toBe(0);
+    await expect(page.locator('.leaflet-marker-pane .leaflet-marker-icon').first()).toBeVisible();
+    await expect(page.getByText('Cedar Park').first()).toBeVisible();
+  });
+
+  test('the route present but holding NO values paints real outlines in the design\'s own No data grey', async ({ page }) => {
+    // The state QA is in until `geo_metric` is filled, and the one this whole design gained a
+    // neutral swatch for (D-NS16): a polygon with no value is DRAWN, never omitted, because a
+    // hole on a choropleth reads as a park, a lake or the edge of the market. So an unloaded
+    // pipeline degrades inside the design's own vocabulary rather than as an empty map.
+    await prepare(page);
+    await page.route(
+      (url) => url.pathname.startsWith('/api/markets/') && url.pathname.endsWith('/boundaries'),
+      (route) => {
+        const layer = new URL(route.request().url()).searchParams.get('layer') ?? 'income';
+        const body = JSON.parse(designBoundariesBody(layer)) as { features: { properties: Record<string, unknown> }[] };
+        for (const f of body.features) f.properties.value = null;
+        route.fulfill({ status: 200, contentType: 'application/geo+json', body: JSON.stringify(body) });
+      }
+    );
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await page.waitForTimeout(400);
+    // Painted, and painted in ONE colour — `#e6e6e6` at fillOpacity .5 over Leaflet's #ddd
+    // ground, which is what the transparent tile stub leaves showing.
+    const shades = await page.evaluate(() => {
+      const c = document.querySelector('.leaflet-overlay-pane canvas') as HTMLCanvasElement | null;
+      if (!c) return [];
+      const px = c.getContext('2d')!.getImageData(0, 0, c.width, c.height).data;
+      const seen = new Set<string>();
+      for (let i = 0; i < px.length; i += 4) if (px[i + 3] > 0) seen.add(`${px[i]},${px[i + 1]},${px[i + 2]}`);
+      return [...seen];
+    });
+    expect(shades.length, 'nothing was drawn — a value-less polygon must still be drawn (D-NS16)').toBeGreaterThan(0);
+    // (0xe6 + 221) / 2 = 223 on every channel. Anti-aliased polygon edges add near neighbours,
+    // so the assertion is that every painted shade is GREY — no ramp colour anywhere.
+    for (const s of shades) {
+      const [r, g, b] = s.split(',').map(Number);
+      expect(Math.abs(r - g) + Math.abs(g - b), `a non-grey shade ${s} was painted for a value-less polygon`).toBeLessThanOrEqual(2);
+    }
+  });
+
+  test('and with the route answering, the same page DOES paint polygons — so the two above measure the route, not the canvas', async ({ page }) => {
+    await prepare(page);
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await page.waitForTimeout(400);
+    expect(await paintedOverlay(page), 'the control case must paint, or "0" above proves nothing').toBeGreaterThan(0);
+  });
+});
+
+// -------------------------------------------------------------------------------------------
+// A24.21–A24.23 — the map asks the API for the ground it is SHOWING (2026-09-12).
+//
+// The route has taken a `bbox` since Task 9 and the adapter never sent one, so every request was
+// for the whole metro envelope — every screen paying for the whole of New York when it can see a
+// fifth of it. (When this was wired the caps were still the ZCTA era's and that request was a 422
+// outright; they were re-measured for Census tracts the same day — `MAX_FEATURES = 12000`,
+// `MAX_BODY_BYTES = 6_000_000` — so both arms serve now and what the box buys is the size of the
+// ANSWER: `tests/census/test_boundaries.py::test_the_viewport_bbox_narrows_new_yorks_answer_and_both_arms_now_serve`.)
+//
+// The unit tests own the arithmetic — `src/map/viewport.test.ts` for the padding, the grid and
+// the debounce, `src/market/boundaries.test.ts` for the request and the retry, `src/logic.test.ts`
+// for the guard. What only a real browser can prove is that the CHAIN is joined: Leaflet's own
+// bounds → the engine → the viewport module → the adapter → the query string.
+// -------------------------------------------------------------------------------------------
+test.describe('A24.21–A24.23 — the boundary request carries the map own viewport', () => {
+  const bboxesOf = (urls: string[]) => [...new Set(urls.map((u) => new URL(u).searchParams.get('bbox')))];
+
+  async function browseRecording(page: Page): Promise<string[]> {
+    const urls: string[] = [];
+    page.on('request', (r) => { if (/\/api\/markets\/[^/]+\/boundaries/.test(r.url())) urls.push(r.url()); });
+    await prepare(page);
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await page.waitForTimeout(900);          // the module's 250 ms settle, with room to spare
+    return urls;
+  }
+
+  test('every boundary request names a box, and the box covers the map with the renderer own padding', async ({ page }) => {
+    const urls = await browseRecording(page);
+    expect(urls.length, 'the map asked for no boundaries at all').toBeGreaterThan(0);
+    // NOT ONE whole-metro request: that is the request this change exists to stop making.
+    expect(urls.filter((u) => new URL(u).searchParams.get('bbox') === null)).toEqual([]);
+
+    const box = bboxesOf(urls).at(-1)!.split(',').map(Number);
+    expect(box, 'the bbox is not four numbers').toHaveLength(4);
+    const [w, s, e, n] = box;
+    expect(e).toBeGreaterThan(w);
+    expect(n).toBeGreaterThan(s);
+
+    // The measured tie between the browser and the module: at zoom 10 a CSS pixel is
+    // 360 / (256 x 2^10) degrees of longitude, the box is padded by 0.3 of the span on each side
+    // (Leaflet's own canvas-renderer padding) and then snapped outward to at most one 1/8-tile
+    // cell per side.
+    const mapWidth = (await page.locator('.leaflet-container').first().boundingBox())!.width;
+    const span = mapWidth * (360 / (256 * 2 ** 10));
+    const cell = 360 / 2 ** 13;
+    expect(e - w).toBeGreaterThanOrEqual(span * 1.6);
+    expect(e - w).toBeLessThanOrEqual(span * 1.6 + 2 * cell);
+  });
+
+  // Fix round 2, A. Measured on QA (2026-09-12): a metro switch on a 1,912 px map pulled the WHOLE
+  // New York metro TWICE, about 3.9 MB gzipped each time across six layers, because the adapter
+  // fell back to the whole metro for a box the member had already left and `logic.js` then
+  // discarded the answer.
+  //
+  // WHAT THIS CASE IS, EXACTLY — it is a COST assertion and not the guard's gate, and the
+  // difference was measured rather than assumed. Cutting the guard out of `boundaries.ts` leaves
+  // this case GREEN: in this harness the two rounds of requests after a switch each carry the box
+  // that is settled at the moment they are refused, so the guard never fires and the sequence is
+  // identical with and without it. The guard's own gate is the three unit cases in
+  // `src/market/boundaries.test.ts`, each of which was red before the fix and names the request it
+  // stops. What this case does hold is the number a member pays: after a metro switch at a
+  // viewport past the span cap, the new metro is pulled whole ONCE PER LAYER — which is the
+  // fallback working — and a change that made it twice, for any reason, fails here.
+  //
+  // It also needs `prepare`'s stub to refuse the way the route does (`harness.ts`'s
+  // `MAX_BBOX_DEG`): before that the stub answered 200 to every box, the fallback was unreachable
+  // in a browser, and this case passed without ever exercising the ladder at all.
+  test('a metro switch pays for the whole-metro fallback ONCE per layer, not twice', async ({ page }) => {
+    const urls = await browseRecording(page);
+    expect(urls.length).toBeGreaterThan(0);
+    for (let i = 0; i < FILL_LAYERS.length * 3; i++) expectApiStatus(page, 422);
+
+    // One zoom-out doubles the span: at 1440 px and zoom 10 the padded box is about 3.2 degrees,
+    // and at zoom 9 about 6.3 — over the route's 4.0 cap, which is what makes the fallback live
+    // (`prepare`'s stub refuses on the same cap the real route does). The design mounts Leaflet
+    // with `zoomControl: false` (C11) and draws its OWN control, so this is the design's button.
+    //
+    // Every refusal is a console 4xx and has to be armed. How MANY there are depends on which
+    // side of the settle/refusal race the run lands on — two rounds of six is what the harness
+    // usually produces — so this arms an upper bound and drains what is left rather than
+    // requiring every allowance to be spent.
+    await page.getByRole('button', { name: 'Zoom out' }).first().click();
+    await page.waitForTimeout(1200);
+
+    const before = urls.length;
+    await page.getByRole('combobox', { name: 'Metro area' }).click();
+    const menu = page.getByRole('listbox', { name: 'Metro area' });
+    await menu.waitFor({ state: 'visible' });
+    await menu.getByRole('option', { name: 'Atlanta, GA' }).click();
+    await page.waitForTimeout(1500);
+
+    const after = urls.slice(before);
+    expect(after.length, 'the metro switch asked for nothing at all').toBeGreaterThan(0);
+    const wholeMetro = after.filter((u) => new URL(u).searchParams.get('bbox') === null);
+    const geoids = [...new Set(wholeMetro.map((u) => new URL(u).pathname.split('/')[3]))];
+    expect(geoids.length, 'more than one metro was pulled whole').toBeLessThanOrEqual(1);
+    // An UPPER BOUND, not an equality. One pull per layer is the fallback doing its job; ZERO is
+    // the better outcome and the one the guard produces when it wins the race against the settle,
+    // so an equality here would turn correct behaviour red. The QA re-measure shows the guard
+    // usually LOSES that race — the real remedy is a metro envelope in the catalogue, so the
+    // client never sends a box it knows is too wide, and that is scheduled for 0.1.22.
+    expect(
+      wholeMetro.length,
+      `the whole metro was pulled ${wholeMetro.length} times for ${FILL_LAYERS.length} layers — at most once per layer is the fallback, twice is the same answer bought and discarded`
+    ).toBeLessThanOrEqual(FILL_LAYERS.length);
+    // The refusals are armed the same way, and for the same reason: the number depends on which
+    // side of that race the run lands on, so the allowances are DRAINED rather than required.
+    forgetExpectedApiFailures(page);
+  });
+
+  test('panning the map asks again, for the new ground and once', async ({ page }) => {
+    const urls = await browseRecording(page);
+    const before = bboxesOf(urls);
+    expect(before.length).toBeGreaterThan(0);
+
+    const map = (await page.locator('.leaflet-container').first().boundingBox())!;
+    await page.mouse.move(map.x + map.width * 0.7, map.y + map.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(map.x + map.width * 0.2, map.y + map.height / 2, { steps: 12 });
+    // Stand still before letting go: Leaflet's drag handler measures the pointer's speed at
+    // mouseup and throws an inertia pan if there is any, which would be a SECOND settled view.
+    await page.waitForTimeout(200);
+    await page.mouse.up();
+    await page.waitForTimeout(1200);
+
+    const after = bboxesOf(urls);
+    // Exactly one new box — a drag is one settled view, not one request per mouse move.
+    expect(after.length, 'the pan produced no new request, or more than one round of them').toBe(before.length + 1);
+    expect(after.at(-1)).not.toBe(before.at(-1));
+    // …and it is a box to the EAST of the one before it: dragging the map left moves the view right.
+    expect(Number(after.at(-1)!.split(',')[0])).toBeGreaterThan(Number(before.at(-1)!.split(',')[0]));
   });
 });

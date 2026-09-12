@@ -215,7 +215,18 @@ def store():
         yield ObjectStore(endpoint_url=None, bucket="pm-test", access_key="x", secret_key="y", region="us-east-1")
 
 
-def test_load_boundaries_upserts_every_level_and_filters_zctas_by_state_containment(conn):
+def test_load_boundaries_upserts_every_level_and_keeps_every_zcta_in_the_national_file(conn):
+    """The state-containment filter that used to stand here is GONE (controller ruling
+    2026-09-12). It kept only the ZCTAs whose centroid fell inside a `market_state` state, "to
+    bound table size", and that was the mechanism by which nationwide coverage was impossible: a
+    ZIP in any unlisted state had no `geo_area` row, so the geocoder's ZCTA rung -- the FIRST rung,
+    the one that carries the tract -- could never match it.
+
+    Nationally the filter was also nearly pointless: measured, it keeps 33,603 of 33,791 ZCTAs
+    (99.4 %) once every state is a market state, discarding 188 territory ZCTAs for 5.9 s of
+    `unary_union` and point-in-polygon work on every load.
+
+    `99999` is the out-of-state ZCTA the old test asserted was DROPPED; it must now be kept."""
     http = httpx.Client(transport=_handler())
     counts = load_boundaries(conn, http, ["48"], "2023")
     assert counts == {
@@ -224,13 +235,13 @@ def test_load_boundaries_upserts_every_level_and_filters_zctas_by_state_containm
         "050:cb_2023_us_county_500k.zip": 1,
         "310:cb_2023_us_cbsa_500k.zip": 1,
         # the fallback body's own filename, not the GENZ2023 request that 404'd
-        "860:cb_2020_us_zcta520_500k.zip": 1,
+        "860:cb_2020_us_zcta520_500k.zip": 2,
         "140:cb_2023_48_tract_500k.zip": 1,
         "160:cb_2023_48_place_500k.zip": 1,
     }
     with conn.cursor() as cur:
-        cur.execute("SELECT geo_id FROM geo_area WHERE summary_level = '860'")
-        assert [r[0] for r in cur.fetchall()] == ["78701"], "the out-of-state ZCTA centroid must be dropped"
+        cur.execute("SELECT geo_id FROM geo_area WHERE summary_level = '860' ORDER BY geo_id")
+        assert [r[0] for r in cur.fetchall()] == ["78701", "99999"], "no ZCTA may be dropped for being out of state"
         cur.execute("SELECT geo_id, parent_geo_id FROM geo_area WHERE summary_level = '140'")
         assert cur.fetchone() == ("48453000101", "48453")
 
@@ -284,7 +295,7 @@ def test_load_boundaries_runs_with_archiving_disabled_by_default(conn):
     bucket is not configured (A-C2 P2) -- and the load must still complete."""
     http = httpx.Client(transport=_handler())
     counts = load_boundaries(conn, http, ["48"], "2023")
-    assert sum(counts.values()) == 7
+    assert sum(counts.values()) == 8   # 8, not 7: both ZCTAs are kept now the state filter is gone
 
 
 def test_a_malformed_body_is_never_archived(conn, store):
@@ -402,5 +413,5 @@ def test_a_stream_within_the_bound_still_parses_normally(conn):
     before = _glob_tiger_tempfiles()
     http = httpx.Client(transport=_handler())
     counts = load_boundaries(conn, http, ["48"], "2023")
-    assert sum(counts.values()) == 7
+    assert sum(counts.values()) == 8   # 8, not 7: both ZCTAs are kept now the state filter is gone
     assert _glob_tiger_tempfiles() == before

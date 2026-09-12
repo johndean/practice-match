@@ -46,11 +46,18 @@ def test_license_status_is_constrained(conn):
                        license_status, attribution_text) VALUES ('x','x','x','x','x','maybe','x')""")
 
 
-def test_market_state_seeds_all_six_demo_states(conn):
-    # A-C0 ¶10 / A-C1 ¶5: CA, TX, FL, GA, NY, CO — seeds/hospitals.json has demo hospitals in all six.
+def test_market_state_seeds_every_state_and_keeps_the_six_demo_states_provenance(conn):
+    """Migration 017 seeded exactly SIX (A-C0 ¶10 / A-C1 ¶5: CA, TX, FL, GA, NY, CO --
+    seeds/hospitals.json has demo hospitals in all six) and migration 065 widened it to all fifty
+    plus the District of Columbia, because every loader reads this table and six rows made it a
+    finite list of supported places. The original six keep their own `reason` text: 065 adds rows
+    `ON CONFLICT DO NOTHING`, so it can never overwrite the provenance below."""
+    from app.census.states import STATES
+
     with conn.cursor() as cur:
         cur.execute("SELECT state_fips FROM market_state")
-        assert {r[0] for r in cur.fetchall()} == {"06", "08", "12", "13", "36", "48"}
+        assert {r[0] for r in cur.fetchall()} == {fips for _a, fips, _n in STATES}
+        assert {"06", "08", "12", "13", "36", "48"} <= {fips for _a, fips, _n in STATES}
         # South Lake Tahoe is a California market (seeds/hospitals.json "state": "CA") — Colorado's
         # only demo market is Denver, so the reason must not credit Colorado with it.
         cur.execute("SELECT reason FROM market_state WHERE state_fips = '08'")

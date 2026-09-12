@@ -3,9 +3,18 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { designAdminListingsBody } from './design-admin-listings.mjs';
+import { designBoundariesBody, designMarketsBody } from './design-boundaries.mjs';
+
 import { designListingsBody } from './design-listings.mjs';
 import { designSellerPageBody } from './design-seller-listings.mjs';
 import { designWizardDraftBody } from './design-wizard-draft.mjs';
+
+/** `app.api.market.MAX_BBOX_DEG`, the span cap the boundary route refuses on — stated in
+ *  `docs/integrations/market-data-api.md` and pinned against this copy by
+ *  `harness.test.ts`, so the stub cannot go on answering 200 to a box the real route would
+ *  refuse. It is a number rather than an import because this file runs in a browser test
+ *  process and the constant lives in Python. */
+export const MAX_BBOX_DEG = 4.0;
 
 // Deterministic rendering on both targets: no basemap tiles (markers still draw
 // over the blank canvas), fonts loaded, pointer parked, animations settled.
@@ -202,6 +211,59 @@ export async function prepare(page: Page): Promise<void> {
       status: 200, contentType: 'application/json', body: designWizardDraftBody(WIZARD_LISTING_ID)
     }));
   }
+  // ---------------------------------------------------------------------------------------
+  // A24.14-A24.18 — the boundary layer. Thirteen approved states mount a map and, with the
+  // `market` adapter present, the app draws what the API answered and nothing else — so the
+  // oracle answers with the DESIGN's own polygons, derived from `areaSet` by
+  // design-boundaries.mjs, never hand-copied, so the two targets cannot diverge. The adapter
+  // resolves a metro by NAME through `/api/markets` first, so both routes are needed.
+  //
+  // NEVER against a remote target, for the same reason the listings stub is not: there the real,
+  // seeded API answers, and stubbing it would hide the very thing the QA parity run exists to
+  // check.
+  // ---------------------------------------------------------------------------------------
+  const markets = marketsStubUrl();
+  if (markets !== null) {
+    await page.route((url) => url.href === markets, (route) => route.fulfill({
+      status: 200, contentType: 'application/json', body: designMarketsBody()
+    }));
+    await page.route(
+      (url) => url.origin === new URL(markets).origin && url.pathname.startsWith('/api/markets/') && url.pathname.endsWith('/boundaries'),
+      (route) => {
+        // The route's OWN span refusal, imitated: a box wider than `MAX_BBOX_DEG` on either axis
+        // is `422 BBOX_TOO_LARGE` in decision A5's envelope. Without it this stub answers 200 to
+        // everything and the adapter's whole refusal ladder — the retry, the whole-metro fallback
+        // and the guard that stops both for a box the member has left — is unreachable in a real
+        // browser, so a case written against it can only pass. (Proved: the metro-switch case
+        // below passed with the guard cut out until this existed.)
+        const bbox = new URL(route.request().url()).searchParams.get('bbox');
+        const box = bbox === null ? null : bbox.split(',').map(Number);
+        if (box !== null && (box[2] - box[0] > MAX_BBOX_DEG || box[3] - box[1] > MAX_BBOX_DEG)) {
+          return route.fulfill({
+            status: 422, contentType: 'application/json',
+            body: JSON.stringify({ error: { code: 'BBOX_TOO_LARGE', message: `bbox spans more than ${MAX_BBOX_DEG} degrees` } })
+          });
+        }
+        return route.fulfill({
+          status: 200, contentType: 'application/geo+json',
+          body: designBoundariesBody(new URL(route.request().url()).searchParams.get('layer') ?? 'income')
+        });
+      }
+    );
+  }
+}
+
+/** `null` for a REMOTE target (`PW_APP_URL`): there the real, seeded API answers, and stubbing it
+ *  would hide the very thing the QA parity run exists to check — the same rule `listingsStubUrl`
+ *  and `collectionStubUrls` already follow, and pinned in harness.test.ts for the same reason.
+ *  `marketsStubUrl` guards BOTH boundary routes: the adapter cannot reach `/boundaries` without
+ *  resolving a metro through the catalogue first. */
+export function marketsStubUrl(env: NodeJS.ProcessEnv = process.env): string | null {
+  return env.PW_APP_URL ? null : new URL('/api/markets', appOrigin(env)).href;
+}
+
+export function boundariesStubUrl(env: NodeJS.ProcessEnv = process.env): string | null {
+  return env.PW_APP_URL ? null : new URL('/api/markets/12420/boundaries', appOrigin(env)).href;
 }
 
 /** The two collection endpoints the oracle answers itself, or `[]` on a remote target
@@ -1388,6 +1450,19 @@ export function consumeExpectedApiFailure(page: Page, message: string): boolean 
   const [status] = armed.splice(at, 1);
   observedApiFailures.set(page, [...(observedApiFailures.get(page) ?? []), status]);
   return true;
+}
+
+/** Drops any allowance that was never spent, for the ONE case whose refusal count is not
+ *  deterministic: the metro-switch cost case races a settled view against a refusal, and which
+ *  side wins decides whether the map asks twice or three times. `assertExpectedApiFailuresObserved`
+ *  is the right default everywhere else — an allowance nobody used usually means the state stopped
+ *  provoking the failure it exists for — so this is deliberately separate, named for what it gives
+ *  up, and used once.
+ *
+ *  It still spends what DID arrive: an unarmed 4xx is a thrown console error either way, so this
+ *  loosens the count and never the rule. */
+export function forgetExpectedApiFailures(page: Page): void {
+  armedApiFailures.delete(page);
 }
 
 /** Throws unless every armed allowance was actually used. */

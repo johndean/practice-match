@@ -99,7 +99,7 @@ export interface ApiListing {
   // "Since <year>" then stands.
   growth_scope: string | null;
   // D-C38: the median-income tile's whole sub-line, when that median is an approximation rather
-  // than a published Census figure — a catchment median is a household-weighted average of the
+  // than a published Census figure — a catchment median is a household-weighted median of the
   // tract medians inside the ring. Composed server-side because the tile has ONE sub-line and it
   // must carry the area and the qualifier together. `null` for a published place median, and the
   // design's own "Household, 2023" then stands.
