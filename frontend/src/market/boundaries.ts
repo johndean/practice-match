@@ -213,6 +213,20 @@ export function makeMarketAdapter(fetchFn: typeof fetch = globalThis.fetch.bind(
         // made true by asking a second time, and leaves the map in the unshaded state Task 10
         // photographs.
         if (!(e instanceof Refused)) throw e;
+        // IS THE MEMBER STILL LOOKING AT THE BOX THAT WAS REFUSED? Measured on QA, 2026-09-12: a
+        // metro switch on a 1,912 px map pulled the whole New York metro TWICE, about 3.9 MB
+        // gzipped each time across six layers. `setMarket` calls `loadAreas(v)`, which sends the
+        // box the PREVIOUS metro settled on — 4.26 degrees wide — the route refuses it
+        // `BBOX_TOO_LARGE`, the ladder below falls back to the whole metro and pays for it, and
+        // `logic.js`'s own guard then DISCARDS that answer because the settled view is New York's
+        // by the time it lands. The viewport listener repeats the sequence and the second answer
+        // is the one drawn. So the whole first descent of the ladder was bought and thrown away.
+        //
+        // Both arms below are therefore gated on the same question, asked before either is taken:
+        // a retry for a view nobody is looking at cannot be drawn whatever it returns. `settled()`
+        // being null is the same answer — the map has gone.
+        const current = settled();
+        if (current === null || bboxOf(current, PAD) !== bbox) throw e;
         const again = e.code === 'BBOX_TOO_LARGE' ? null : (v === null ? null : bboxOf(v, 0));
         if (bbox === null || (e.code !== 'AREA_TOO_LARGE' && e.code !== 'BBOX_TOO_LARGE') || again === bbox) throw e;
         if (e.code === 'AREA_TOO_LARGE' && again === null) throw e;

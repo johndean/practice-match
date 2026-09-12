@@ -1278,6 +1278,44 @@ test.describe('A24.21–A24.23 — the boundary request carries the map own view
     expect(e - w).toBeLessThanOrEqual(span * 1.6 + 2 * cell);
   });
 
+  // Fix round 2, A. Measured on QA (2026-09-12): a metro switch on a 1,912 px map pulled the WHOLE
+  // New York metro TWICE, about 3.9 MB gzipped each time across six layers. `setMarket` sends the
+  // box the PREVIOUS metro settled on, the route refuses it on span, the adapter fell back to the
+  // whole metro and paid for it, and `logic.js`'s own guard then discarded that answer because the
+  // settled view had become the new metro's. The viewport listener then repeated the sequence and
+  // THAT answer was the one drawn.
+  //
+  // This is the browser's own version of the three unit cases: zoom out until the padded box is
+  // wider than the route's `MAX_BBOX_DEG`, so the fallback is genuinely reached, then switch metro
+  // and count what the NEW metro is asked for without a box. One per layer is the fallback working;
+  // two per layer is the same answer bought twice.
+  test('a metro switch pays for the whole-metro fallback ONCE per layer, not twice', async ({ page }) => {
+    const urls = await browseRecording(page);
+    expect(urls.length).toBeGreaterThan(0);
+
+    // One zoom-out doubles the span: at 1440 px and zoom 10 the padded box is about 3.2 degrees,
+    // and at zoom 9 about 6.3 — over the route's 4.0 cap, which is what makes the fallback live.
+    await page.locator('.leaflet-control-zoom-out').first().click();
+    await page.waitForTimeout(1200);
+
+    const before = urls.length;
+    await page.getByRole('combobox', { name: 'Metro area' }).click();
+    const menu = page.getByRole('listbox', { name: 'Metro area' });
+    await menu.waitFor({ state: 'visible' });
+    await menu.getByRole('option', { name: 'Atlanta, GA' }).click();
+    await page.waitForTimeout(1500);
+
+    const after = urls.slice(before);
+    expect(after.length, 'the metro switch asked for nothing at all').toBeGreaterThan(0);
+    const wholeMetro = after.filter((u) => new URL(u).searchParams.get('bbox') === null);
+    const geoids = [...new Set(wholeMetro.map((u) => new URL(u).pathname.split('/')[3]))];
+    expect(geoids.length, 'more than one metro was pulled whole').toBeLessThanOrEqual(1);
+    expect(
+      wholeMetro.length,
+      `the whole metro was pulled ${wholeMetro.length} times for ${FILL_LAYERS.length} layers — once per layer is the fallback, twice is the same answer bought and discarded`
+    ).toBeLessThanOrEqual(FILL_LAYERS.length);
+  });
+
   test('panning the map asks again, for the new ground and once', async ({ page }) => {
     const urls = await browseRecording(page);
     const before = bboxesOf(urls);

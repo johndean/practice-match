@@ -124,6 +124,60 @@ describe('the viewport bbox (2026-09-12)', () => {
     expect(boundaryUrls(f)).toHaveLength(FILL_LAYERS.length * 2);
   });
 
+  // Measured on QA, 2026-09-12: a metro switch on a 1,912 px map pulled the WHOLE New York metro
+  // TWICE — about 3.9 MB gzipped each time, six layers each. `setMarket` calls `loadAreas(v)`,
+  // which sends the box the PREVIOUS metro settled on (4.26 degrees wide); the route refuses it
+  // `BBOX_TOO_LARGE`; the ladder below falls back to the whole metro and pays for it; and
+  // `logic.js`'s own guard then DISCARDS the answer, because by the time it lands the settled view
+  // is New York's and the token no longer matches. The viewport listener then repeats the whole
+  // sequence and that second answer is the one drawn.
+  //
+  // So the ladder asks first whether the box it is retrying FOR is still the box the member is
+  // looking at. If it is not, the answer would be thrown away on arrival, and the honest thing is
+  // to stop rather than to buy it.
+  it('does not fall back to the whole metro for a box the member has already left', async () => {
+    vi.useFakeTimers();
+    const f = fakeFetch((url) => {
+      if (!url.includes('/boundaries')) return { body: MARKETS };
+      return new URL(url, 'http://x').searchParams.get('bbox') === null ? { body: collection('income') } : refusal('BBOX_TOO_LARGE');
+    });
+    const adapter = makeMarketAdapter(f as unknown as typeof fetch);
+    seeViewport({ w: -160, s: -60, e: 160, n: 60, zoom: 2 });
+    const stale = adapter.viewport();
+    const inFlight = adapter.boundaries('New York, NY', stale);
+    seeViewport();                                    // the member has moved: New York at zoom 10
+    await expect(inFlight).rejects.toThrow(/BBOX_TOO_LARGE/);
+    expect(bboxesAsked(f), 'the whole metro was pulled for a view nobody is looking at').toEqual([stale]);
+  });
+
+  it('does not retry unpadded for a box the member has already left either', async () => {
+    vi.useFakeTimers();
+    const f = fakeFetch((url) => (url.includes('/boundaries') ? refusal('AREA_TOO_LARGE') : { body: MARKETS }));
+    const adapter = makeMarketAdapter(f as unknown as typeof fetch);
+    seeViewport();
+    const stale = adapter.viewport();
+    const inFlight = adapter.boundaries('New York, NY', stale);
+    seeViewport({ w: -98.2, s: 30.0, e: -97.2, n: 30.6, zoom: 10 });   // moved to Austin
+    await expect(inFlight).rejects.toThrow(/AREA_TOO_LARGE/);
+    expect(bboxesAsked(f), 'the unpadded box was asked for a view nobody is looking at').toEqual([stale]);
+  });
+
+  it('and with no map left at all — the frame torn down mid-flight — it stops as well', async () => {
+    vi.useFakeTimers();
+    const f = fakeFetch((url) => {
+      if (!url.includes('/boundaries')) return { body: MARKETS };
+      return new URL(url, 'http://x').searchParams.get('bbox') === null ? { body: collection('income') } : refusal('BBOX_TOO_LARGE');
+    });
+    const adapter = makeMarketAdapter(f as unknown as typeof fetch);
+    seeViewport({ w: -160, s: -60, e: 160, n: 60, zoom: 2 });
+    const stale = adapter.viewport();
+    const inFlight = adapter.boundaries('New York, NY', stale);
+    publish(null);
+    vi.advanceTimersByTime(DEBOUNCE_MS);
+    await expect(inFlight).rejects.toThrow(/BBOX_TOO_LARGE/);
+    expect(bboxesAsked(f)).toEqual([stale]);
+  });
+
   it('does NOT retry a refusal no box can fix at all — a bad layer, a 401, a 404', async () => {
     vi.useFakeTimers();
     const f = fakeFetch((url) => (url.includes('/boundaries') ? refusal('BAD_LAYER') : { body: MARKETS }));
