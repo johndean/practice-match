@@ -521,23 +521,29 @@ export const SCREENS: Screen[] = [
   // A31 (Task SNAP, ruling D-C50 as revised, 2026-09-12) — the strip's OTHER mode, which had no
   // approved state at all: with a practice selected every card is that practice's own community
   // figure, the header reads "LOCATION · …" instead of "AREA · …", and the bars stay the metro's
-  // distribution with the class the practice falls in kept at full strength. The selection is the
-  // same click `browse-market-panel` makes (Cedar Park, the design's own p1), and the strip is
-  // then opened over it; the footnote is brought into frame the same way its AREA twin is, and
-  // for the same reason — the cards wrap to two rows and fill the strip's 40vh body, so a capture
-  // at `scrollTop: 0` would not contain the paragraph.
+  // distribution with the class the practice falls in kept at full strength while the rest take
+  // `opacity: .6`. The selection is the same click `browse-market-panel` makes (Cedar Park, the
+  // design's own p1), and the strip is then opened over it.
+  //
+  // This one is photographed at the TOP of the strip, and its AREA twin at the bottom, and the
+  // pair is deliberate: `browse-market-strip` exists to photograph the FOOTNOTE (D-C40) and
+  // scrolls to it, which puts the mode heading above the fold — so with only that state the one
+  // thing this ruling is loudest about ("it should reflect boldly which is being viewed") would
+  // be in the DOM oracle and in no PIXEL at all. Between the two, the header and the footnote are
+  // each photographed once.
   { name: 'browse-market-strip-location', steps: async (p) => {
     await browse(p);
     await p.getByText('Cedar Park').first().click();
     await p.getByText('View full listing').first().waitFor({ state: 'visible' });
     await click(p, 'Expand all six layers');
-    await p.getByText(STRIP_FOOTNOTE).first().waitFor({ state: 'visible' });
     // The thing the state exists to SHOW, waited for before the settle (review M9): a bare
-    // timeout cannot tell "the card is in LOCATION mode" from "the selection no-opped on both
+    // timeout cannot tell "the strip is in LOCATION mode" from "the selection no-opped on both
     // targets", which is how a state goes on photographing the wrong screen in silence.
-    await p.getByText('LOCATION \u00b7', { exact: false }).first().waitFor({ state: 'visible' });
-    await stripFootnoteInFrame(p);
-    await expect(p.getByText(STRIP_FOOTNOTE).first()).toBeInViewport({ ratio: 1 });
+    await p.getByText(/^LOCATION \u00b7 /).first().waitFor({ state: 'visible' });
+    // …and it is IN THE FRAME, whole. `toBeInViewport()` alone passes at any intersection above
+    // zero, so the ratio is stated for the same reason its AREA twin states it.
+    await expect(p.getByText(/^LOCATION \u00b7 /).first()).toBeInViewport({ ratio: 1 });
+    await expect(p.getByText(/^AREA \u00b7 /), 'both mode words are on screen at once').toHaveCount(0);
     await p.waitForTimeout(400);
   } },
 ];
