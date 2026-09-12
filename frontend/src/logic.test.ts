@@ -5260,7 +5260,7 @@ describe('A24 — the market adapter', () => {
 });
 
 // ---------------------------------------------------------------------------------------
-// A29 — a metro change closes the docked panel, so a practice is never captioned with another
+// A30 — a metro change closes the docked panel, so a practice is never captioned with another
 // metro's figures (Task PANEL-STALE, root cause read from QA 0.1.21: with GHI Veterinary
 // Hospital, Austin, selected and its docked panel open, switching the metro to Dallas left the
 // panel OPEN with GHI's header over the first Dallas listing's community figures).
@@ -5277,7 +5277,7 @@ describe('A24 — the market adapter', () => {
 // The design has no treatment for "the selected practice is not in this metro", so the ruled
 // fix (John) is that a metro change closes the panel: `setMarket` now clears `mdSel` too.
 // ---------------------------------------------------------------------------------------
-describe("A29 — a metro change closes the docked panel (Task PANEL-STALE)", () => {
+describe("A30 — a metro change closes the docked panel (Task PANEL-STALE)", () => {
   it('switching the metro clears the selected practice and closes the panel', () => {
     c.setState({ screen: 'browse', mdSel: 'p2' });
     expect(c.marketVals(c.filtered()).panel, 'sanity: the panel is open before the switch').not.toBeNull();

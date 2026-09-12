@@ -5632,7 +5632,7 @@ const A24_59: Amendment = {
   count: 1
 };
 
-/** A29 — a metro change closes the docked panel (Task PANEL-STALE, 2026-09-12). Root cause read
+/** A30 — a metro change closes the docked panel (Task PANEL-STALE, 2026-09-12). Root cause read
  *  from QA 0.1.21 (screenshot `screenshots/qa-0121-dallas.png`): with GHI Veterinary Hospital,
  *  Austin, selected and its docked panel open, switching the metro to Dallas left the panel OPEN
  *  with GHI's header ("GHI Veterinary Hospital · $2.76M · Austin, TX") over the FIRST Dallas
@@ -5653,8 +5653,8 @@ const A24_59: Amendment = {
  *  The design has no treatment for "the selected practice is not in this metro", and closing is
  *  the only honest state (John's ruling, `task-panel-stale-brief.md`, 2026-09-11): `setMarket`
  *  now clears `mdSel` too, in the same object literal A13.1 wrote. One literal edit. */
-const A29: Amendment = {
-  id: 'A29', date: '2026-09-12',
+const A30: Amendment = {
+  id: 'A30', date: '2026-09-12',
   ruling: 'a metro change closes the docked panel, so a practice is never captioned with another metro\'s figures — the design has no treatment for "the selected practice is not in this metro", and closing is the only honest state (Task PANEL-STALE)',
   find: 'market: v, activeId: null, hoverId: null, loading: true, marketMenu: false, marketMenuAt: -1',
   replace: 'market: v, activeId: null, hoverId: null, mdSel: null, loading: true, marketMenu: false, marketMenuAt: -1',
@@ -5846,8 +5846,8 @@ export function amendments(): Amendment[] {
     // true when A24.43 fixed it. A24.59 reads A24.3's own output.
     A24_58, A24_59,
     A24_9, A24_10, A24_11, A24_12,
-    // A29 -- a metro change closes the docked panel (Task PANEL-STALE, 2026-09-12). Reads
+    // A30 -- a metro change closes the docked panel (Task PANEL-STALE, 2026-09-12). Reads
     // A13.1's own output (the `setMarket` object literal it wrote), so it is appended last, as
     // every family is.
-    A29];
+    A30];
 }
