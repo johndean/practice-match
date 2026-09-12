@@ -293,7 +293,9 @@ def community_rows(
     active: dict[str, str],
     registry: dict[str, dict[str, Any]],
 ) -> dict[str, CommunityRow]:
-    """Two batched queries for a whole page — never one per row, whatever the page holds.
+    """Three batched queries for a whole page — never one per row, whatever the page holds: the
+    `market_metric` rows, `_scope_names` for the Growth tile's geography and `_precisions` for the
+    decision below about which band the area group comes from.
 
     D-C38 (2026-09-11) — PER-FIGURE GEOGRAPHY. Each figure is served at its own honest geography
     and the row names it. This supersedes D-C32's whole-row rule ("built from the `place` band

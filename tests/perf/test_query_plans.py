@@ -34,7 +34,7 @@ from app.api.admin_users import LIST_SQL, MAX_LIST
 from app.census.catchment import BANDS as CATCHMENT_BANDS
 from app.census.catchment import METHOD as CATCHMENT_METHOD
 from app.census.catchment import SQL as CATCHMENT_SQL
-from app.census.serve import _SCOPE_NAME_SQL
+from app.census.serve import _PRECISION_SQL, _SCOPE_NAME_SQL
 
 # Task I9a fix round 1, Important 2. `users_queue` is `GET /api/admin/users?state=pending` — the
 # endpoint's OWN query, imported from the handler rather than retyped, so this gate cannot drift
@@ -163,6 +163,19 @@ PLANS: dict[str, tuple[str, tuple[Any, ...] | dict[str, Any]]] = {
         "EXPLAIN (FORMAT JSON) " + _SCOPE_NAME_SQL,
         (_SCOPE_NAMES_VINTAGE, _SCOPE_NAMES_LISTING_IDS, _SCOPE_NAMES_VINTAGE, _SCOPE_NAMES_LISTING_IDS),
     ),
+    # GEO-WIRE fix round 2, minor 3. `community_rows` runs a THIRD batched query per page since
+    # the controller's non-rooftop ruling — `_precisions`, which reads each listing's
+    # `geo_precision` to decide whether its area figures come from the ring or from its city. It
+    # is on the listings page's own path, once per page, and it had no plan gate; `scope_names`
+    # was added for exactly this omission one round earlier.
+    #
+    # IMPORTED like `scope_names`, for the same reason: `_PRECISION_SQL` is written for a raw
+    # psycopg2 cursor, so this gate reads the module's own string and cannot drift from it. One
+    # parameter, the page's listing ids, which is what `_precisions` passes.
+    "precisions": (
+        "EXPLAIN (FORMAT JSON) " + _PRECISION_SQL,
+        (_SCOPE_NAMES_LISTING_IDS,),
+    ),
 }
 
 # The index each plan must be using, by name. Absent for an entry whose only claim is its shape.
@@ -193,6 +206,10 @@ INDEXES: dict[str, tuple[str, ...]] = {
     # (geo_id, summary_level, vintage) that `_scope_names`'s two-branch UNION exists to let each
     # branch descend. One join with an `OR` across `place_geoid`/`county_geoid` could not.
     "scope_names": ("practice_location_pkey", "geo_area_pkey"),
+    # `practice_location`'s PRIMARY KEY IS `listing_id` (`migrations/061`), which is the only
+    # column this query touches on either side of the `= ANY(...)`, so there is exactly one index
+    # it can be right to use and this names it.
+    "precisions": ("practice_location_pkey",),
 }
 
 
@@ -383,7 +400,12 @@ def _seed_scope_names(conn: Any) -> None:
 
 SEEDS: dict[str, Any] = {"users_queue": _seed_admin_queue, "signups_list": _seed_signups, "signups_counts": _seed_signups,
                         "signups_unmailed": _seed_signups, "catchment_tracts": _seed_catchment_geo, "panel": _seed_panel_metrics,
-                        "community_rows": _seed_community_rows, "scope_names": _seed_scope_names}
+                        "community_rows": _seed_community_rows, "scope_names": _seed_scope_names,
+                        # 3,000 `practice_location` rows, which `_seed_scope_names` already writes
+                        # for its own plan and which are exactly what this one needs — "row counts
+                        # are part of the gate", and a handful of rows would make the planner's
+                        # choice a coin toss.
+                        "precisions": _seed_scope_names}
 
 
 def _node_types(plan: dict[str, Any]) -> list[str]:
