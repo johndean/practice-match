@@ -2332,7 +2332,7 @@ class Component extends DCLogic {
 
   bucket(metric, v, area) {
     // `area` asks for the CHOROPLETH's breaks. Everything else on the screen classes a
-    // community-scale figure and must keep asking for the design's own (A24.22).
+    // community-scale figure and must keep asking for the design's own (A24.25).
     const cfg = (area && AREA_LAYERS[metric]) || VALUE_LAYERS[metric];
     const pal = PALETTES[this.props.layerPalette] || PALETTES.distinct;
     const ramp = pal[metric === "vets" ? "competition" : metric] || BRAND_RAMP;
@@ -2370,7 +2370,7 @@ class Component extends DCLogic {
     );
     const selComm = sel ? comms.filter((c) => c.id === sel.id)[0] : null;
     // Hoisted out of the returned object so the LEGEND can see how many polygons were
-    // actually drawn (A24.29). One call, one collection, no second classification pass.
+    // actually drawn (A24.32). One call, one collection, no second classification pass.
     const areaFc = this.areaVals(this.props.market ? ((s.mdAreas || {})[valueLayer] || { type: "FeatureCollection", features: [] }) : this.areaSet(valueLayer), valueLayer);
 
     const lats = comms.map((c) => c.lat), lngs = comms.map((c) => c.lng);

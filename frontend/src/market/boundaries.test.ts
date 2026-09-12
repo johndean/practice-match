@@ -56,7 +56,7 @@ describe('the viewport bbox (2026-09-12)', () => {
     seeViewport();
     const at = adapter.viewport();
     await adapter.boundaries('New York, NY', at);
-    expect(boundaryUrls(f)).toHaveLength(3);
+    expect(boundaryUrls(f)).toHaveLength(FILL_LAYERS.length);
     expect(bboxesAsked(f)).toEqual([at]);
   });
 
@@ -88,7 +88,7 @@ describe('the viewport bbox (2026-09-12)', () => {
     padded = adapter.viewport();
     await expect(adapter.boundaries('New York, NY', padded)).resolves.toHaveProperty('income');
     expect(bboxesAsked(f)).toEqual([padded, bboxOf(NY, 0)]);
-    expect(boundaryUrls(f)).toHaveLength(6);            // three refused, three re-asked
+    expect(boundaryUrls(f)).toHaveLength(FILL_LAYERS.length * 2);   // every layer refused, every layer re-asked
   });
 
   it('does NOT retry when the narrower box is refused too — the map is left empty, not looping', async () => {
@@ -121,7 +121,7 @@ describe('the viewport bbox (2026-09-12)', () => {
     const adapter = makeMarketAdapter(f as unknown as typeof fetch);
     seeViewport({ w: -160, s: -60, e: 160, n: 60, zoom: 2 });
     await expect(adapter.boundaries('New York, NY', adapter.viewport())).rejects.toThrow(/BBOX_TOO_LARGE/);
-    expect(boundaryUrls(f)).toHaveLength(6);
+    expect(boundaryUrls(f)).toHaveLength(FILL_LAYERS.length * 2);
   });
 
   it('does NOT retry a refusal no box can fix at all — a bad layer, a 401, a 404', async () => {
@@ -130,13 +130,13 @@ describe('the viewport bbox (2026-09-12)', () => {
     const adapter = makeMarketAdapter(f as unknown as typeof fetch);
     seeViewport();
     await expect(adapter.boundaries('New York, NY', adapter.viewport())).rejects.toThrow(/BAD_LAYER/);
-    expect(boundaryUrls(f)).toHaveLength(3);
+    expect(boundaryUrls(f)).toHaveLength(FILL_LAYERS.length);
   });
 
   it('does NOT retry when there was no padding to drop — a request that carried no bbox', async () => {
     const f = fakeFetch((url) => (url.includes('/boundaries') ? refusal('AREA_TOO_LARGE') : { body: MARKETS }));
     await expect(makeMarketAdapter(f as unknown as typeof fetch).boundaries('Austin, TX', null)).rejects.toThrow(/AREA_TOO_LARGE/);
-    expect(boundaryUrls(f)).toHaveLength(3);
+    expect(boundaryUrls(f)).toHaveLength(FILL_LAYERS.length);
   });
 
   it('names the refusal code in the rejection, so a log says which cap was hit', async () => {
@@ -217,9 +217,18 @@ describe('the market adapter (spec §8.3)', () => {
     }
   });
 
-  it('every layer refused answers with nothing at all, which the map draws as nothing at all', async () => {
+  it('every layer refused rejects, so the console is told which cap or code was hit', async () => {
+    // The other side of the same rule: a PARTIAL answer resolves, because one layer's absence is
+    // not the map's, but an answer with NOTHING in it rejects. The app draws the same unshaded
+    // map either way — `loadAreas` sets `mdAreas: {}` from both arms — and the rejection is what
+    // carries the route's own code to the log.
     const f = fakeFetch((url) => (url.includes('/boundaries') ? { ok: false, status: 503 } : { body: MARKETS }));
-    await expect(makeMarketAdapter(f as unknown as typeof fetch).boundaries('Austin, TX')).resolves.toEqual({});
+    await expect(makeMarketAdapter(f as unknown as typeof fetch).boundaries('Austin, TX')).rejects.toThrow(/503/);
+  });
+
+  it('every layer answering rubbish rejects too, naming the layer — no rejection, but nothing usable', async () => {
+    const f = fakeFetch((url) => ({ body: url.includes('/boundaries') ? { type: 'FeatureCollection' } : MARKETS }));
+    await expect(makeMarketAdapter(f as unknown as typeof fetch).boundaries('Austin, TX')).rejects.toThrow(/features/);
   });
 
   it('a catalogue that is not an array rejects rather than reading `find` off it', async () => {

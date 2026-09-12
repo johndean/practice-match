@@ -148,18 +148,28 @@ export function makeMarketAdapter(fetchFn: typeof fetch = globalThis.fetch.bind(
     );
     const out: Record<string, BoundaryCollection> = {};
     let retryable: Refused | null = null;
+    let failure: unknown = null;
     FILL_LAYERS.forEach((layer, i) => {
       const answer = settled[i];
       if (answer.status === 'rejected') {
         const e: unknown = answer.reason;
+        if (failure === null) failure = e;
         if (!final && retryable === null && e instanceof Refused && (e.code === 'AREA_TOO_LARGE' || e.code === 'BBOX_TOO_LARGE')) retryable = e;
         return;
       }
       const body = answer.value as BoundaryCollection;
-      if (!Array.isArray(body?.features)) return;
+      if (!Array.isArray(body?.features)) {
+        if (failure === null) failure = new Error(`${layer}: the answer carries no features array`);
+        return;
+      }
       out[layer] = body;
     });
     if (retryable !== null) throw retryable;
+    // NOTHING came back. Reject rather than resolve with an empty record: the app draws the same
+    // unshaded map either way (`loadAreas` sets `mdAreas: {}` from both arms), but a rejection
+    // carries the route's own code to the console, which is how "which cap did it hit" is
+    // answered at all. A PARTIAL answer resolves — one layer's absence is not the map's.
+    if (Object.keys(out).length === 0 && failure !== null) throw failure;
     return out;
   };
   return {
