@@ -202,6 +202,22 @@ describe('the viewport bbox (2026-09-12)', () => {
     const f = fakeFetch((url) => (url.includes('/boundaries') ? { ok: false, status: 500, body: 'gateway said no' } : { body: MARKETS }));
     await expect(makeMarketAdapter(f as unknown as typeof fetch).boundaries('Austin, TX', null)).rejects.toThrow(/500/);
   });
+
+  // read()'s catch: `res.json()` here is read for the refusal's CODE only, and never trusted to
+  // exist — a proxy's 502 can hand back an HTML error page, and an AbortSignal timeout answers
+  // with no body reader at all. `fakeFetch`'s `json` never throws (it resolves whatever body the
+  // handler gave it, `'gateway said no'` included, above), so this is the one case that string
+  // could not reach: a body that is not even JSON, where `.json()` itself rejects.
+  it('a refusal whose body is not even JSON still rejects, naming the status alone', async () => {
+    const f = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes('/boundaries')) {
+        return { ok: false, status: 502, json: async () => { throw new SyntaxError('Unexpected token < in JSON'); } } as unknown as Response;
+      }
+      return { ok: true, status: 200, json: async () => MARKETS } as unknown as Response;
+    });
+    await expect(makeMarketAdapter(f as unknown as typeof fetch).boundaries('Austin, TX', null)).rejects.toThrow(/502/);
+  });
 });
 
 const ok = () => fakeFetch((url) => ({ body: url.includes('/boundaries') ? collection(new URL(url, 'http://x').searchParams.get('layer') ?? 'income') : MARKETS }));
