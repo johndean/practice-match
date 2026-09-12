@@ -175,3 +175,49 @@ def test_contract_doc_states_the_boundary_caps_and_geographies_the_code_enforces
     assert sample.count('"shading"') == 9, "every layer in the /api/layers sample must show the member"
     assert sample.count('"shading": null') == 6, "the six unshaded layers must each show shading: null"
     assert '`shading` is the geography the MAP paints' in text
+
+
+#: The adapter, as TEXT. `frontend/src/market/boundaries.ts` is TypeScript and this is pytest, so
+#: it is read the way `frontend/src/listings/step-fields.json` is read — no parser, no build step,
+#: no Node in the backend gate. A regex over source is a weak reader, so the assertions below are
+#: written to fail LOUDLY if it reads nothing at all rather than to pass vacuously.
+ADAPTER = Path(__file__).resolve().parents[2] / "frontend" / "src" / "market" / "boundaries.ts"
+
+
+def test_the_refusal_codes_the_boundary_adapter_branches_on_are_pinned_to_the_route() -> None:
+    """The retry ladder is a cross-language contract, and nothing pinned it.
+
+    `boundaries.ts` branches on the literals `'AREA_TOO_LARGE'` and `'BBOX_TOO_LARGE'` to decide
+    whether a refusal is one a smaller box can fix, one the whole-metro request can fix, or one
+    that is final. `app/api/market.py` produces those strings and the contract doc restates them.
+    Rename one on the server and New York goes blank with every gate in this repository green —
+    the drift class this project has been bitten by repeatedly, which is why the caps beside this
+    are pinned off the module rather than typed into the document.
+
+    So: every code the CLIENT compares against `e.code` must (a) be raised by the `boundaries`
+    route itself, and (b) be named in the contract doc. And the set is pinned exactly, so a THIRD
+    code the client starts branching on has to be brought here rather than silently trusted.
+    """
+    import inspect
+
+    from app.api import market
+
+    adapter = ADAPTER.read_text(encoding="utf-8")
+    # Every `e.code === 'X'` / `e.code !== 'X'` in the file, in either order of operands.
+    branched = set(re.findall(r"e\.code\s*[!=]==\s*'([A-Z_]+)'", adapter))
+    branched |= set(re.findall(r"'([A-Z_]+)'\s*[!=]==\s*e\.code", adapter))
+    assert branched == {"AREA_TOO_LARGE", "BBOX_TOO_LARGE"}, (
+        f"{ADAPTER.name} branches on {sorted(branched)}; the route, the contract doc and this pin "
+        "must all be widened together when the client learns a new code"
+    )
+
+    route = inspect.getsource(market.boundaries)
+    doc = DOC.read_text(encoding="utf-8")
+    bounds = doc.split("**Bounds.**", 1)[1].split("**Licence.**", 1)[0]
+    for code in sorted(branched):
+        assert f'_error("{code}"' in route, (
+            f"{ADAPTER.name} branches on {code!r} but `app.api.market.boundaries` never raises it"
+        )
+        assert code in bounds, (
+            f"{ADAPTER.name} branches on {code!r} but the contract doc's Bounds section never names it"
+        )
