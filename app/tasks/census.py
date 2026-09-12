@@ -373,7 +373,8 @@ def materialize_metrics() -> dict[str, object]:
 
 def materialize_geo_metrics() -> dict[str, object]:
     """Nightly job (D-NS9): rebuilds `geo_metric` for every geography in a `market_state` state,
-    at the three ruled levels, from whatever vintages are currently active. Like
+    at the ruled levels -- SIX layers since 2026-09-12, not three -- from whatever vintages are
+    currently active. Like
     `materialize_metrics` it does no Census I/O at all -- only local aggregation over `geo_area`,
     `acs_measure` and `cbp_industry` -- so it needs no `CENSUS_API_KEY`/`CENSUS_CONTACT_EMAIL`
     gate and no `_NotReady` handling, and a missing active vintage is left to fail the task
