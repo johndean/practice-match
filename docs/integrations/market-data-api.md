@@ -20,11 +20,12 @@ of truth and the surrounding sentences as commentary.
 | GET | `/api/markets` | `market.read` |
 | GET | `/api/markets/{cbsa}/communities` | `market.read` |
 | GET | `/api/markets/{cbsa}/boundaries` | `market.read` |
+| GET | `/api/markets/{cbsa}/summary` | `market.read` |
 | GET | `/api/listings/{listing_id}/market` | `market.read` |
 | GET | `/api/admin/data-sources` | `data_sources.read` (staff/admin) |
 | POST | `/api/admin/data-sources/{dataset_key}/license` | `licence.decide` (admin, re-authenticated within 10 minutes) |
 
-**Mounted only while `SITE_MODE=app`.** All seven routes live inside `app/main.py`'s `if
+**Mounted only while `SITE_MODE=app`.** All eight routes live inside `app/main.py`'s `if
 settings.site_mode == "app":` block, the same gate `admin_users_router`/`listings_router` sit
 behind. Production runs `coming_soon` until launch (`CLAUDE.md`), so on production today every one
 of these paths 404s through `not_found_router`, exactly like every other member or admin surface —
@@ -34,7 +35,7 @@ this is not a bug to route around, it is the same launch gate the rest of the ap
 account holding `buyer`/`seller`/`staff`/`admin`, or an `api_token` carrying one of those roles.
 `MARKET_DATA_PUBLIC=true` does **not** remove the `Depends(require("market.read"))` on any route —
 it widens who satisfies it: `app.auth.permissions.allowed` additionally grants `market.read` to
-`anonymous` while the flag is set (spec §15; Task I9a). The four `market.py` routes resolve this
+`anonymous` while the flag is set (spec §15; Task I9a). The five `market.py` routes resolve this
 dependency **once, at import time**, into a module-level constant (`REQUIRE_MARKET_READ`) rather
 than re-wrapping it per route — `tests/auth/test_permissions.py` walks every mounted route and
 resolves its guard by object identity, so a fresh `require(...)` call per route would read as
@@ -258,6 +259,72 @@ accepted it, the same JSON otherwise. Every answer carries `x-cache: hit|miss`. 
 never simplified on the request path** — `ST_SimplifyPreserveTopology` measured five to eight
 times the cost of the query itself; if a future geography needs it, the simplified geometry is
 materialised by the nightly job, once per vintage.
+
+## `GET /api/markets/{cbsa}/summary`
+
+The METRO-WIDE distribution of every shaded layer — the figures the Browse "Market snapshot"
+strip prints in its AREA mode (Task SNAP; ruling D-C50 as revised by the stakeholder,
+2026-09-12). It is the boundary route's population, summarised: same `geo_area`/`geo_metric`
+join, same summary level per layer, same metro envelope, no geometry on the wire.
+
+Until this route existed the strip computed a "metro median" from
+`/api/markets/{cbsa}/communities` — one row per **listing**, each practice's own five-mile ring —
+while the map beside it painted Census geography. On Dallas that read Households **162K** over
+tracts that hold 0–5,988 and Competition **41** over ZIP areas that hold 3–16: two numbers about
+two different things under one caption. A client must not compute this from the boundary route
+either: that route answers for a **viewport**, deliberately, so a median over whatever is on
+screen is a different number every time the member pans.
+
+```json
+{
+  "cbsa_geoid": "12420",
+  "boundary_vintage": "2023",
+  "attribution": ["Boundaries: U.S. Census Bureau, TIGER/Line Cartographic Boundary Files 2023",
+                  "Source: U.S. Census Bureau, American Community Survey 5-Year Estimates, 2019–2023"],
+  "layers": [
+    { "layer": "income", "summary_level": "140", "geo_label": "Census tract", "unit": "usd",
+      "state": "enabled",
+      "count": 577, "with_value": 561, "suppressed": 12, "no_data": 4,
+      "median": 92150.0, "quantiles": [48200.0, 67400.0, 92150.0, 121300.0, 158900.0],
+      "value_vintage": "2019–2023", "source_dataset": "acs5" }
+  ]
+}
+```
+
+**One body, all six shaded layers, in `SHADING`'s own order.** The strip shows them together, so
+six requests would buy nothing but six chances to render half a card set.
+
+**`quantiles` is `[p10, p25, p50, p75, p90]`** over the non-null, unsuppressed values, computed by
+`percentile_cont` — an *interpolating* quantile, which describes a distribution rather than naming
+five of its members — and **`median` is that array's own middle element**, read out rather than
+measured a second time, so a card's value can never disagree with the bars drawn beside it. Both
+are `null` when `with_value` is `0`. The extremes are deliberately p10/p90 and not min/max: one
+outlying tract is not a class a summary should draw.
+
+**The three counts partition the polygons**, and `count == with_value + suppressed + no_data`
+always: `count` is every polygon of that layer's `summary_level` whose geometry intersects the
+metro's envelope, `with_value` those carrying a published, unsuppressed figure, `suppressed` those
+the margin rules or the Census's own publication rules hide (`high_moe`, `no_moe`,
+`input_suppressed`, `source_flag`, `source_threshold` — the same verdicts the boundary route
+serves per polygon), and `no_data` those with no `geo_metric` row at all. A suppressed polygon is
+**counted and never summarised**: "eleven tracts, nine of them summarisable" is the honest
+statement and "nine tracts" is not.
+
+**Licence.** Identical to the boundary route's, checked the same way twice over — against the
+layer catalogue's own `dataset_key` and against the dataset the rows are stamped with, which
+differ for `growth` (`acs5_prior` against `acs5`), so either licence moving turns the layer off. A
+layer that is not `cleared` answers with its `layer`, `summary_level`, `geo_label`, `unit`, its
+`state` (`disabled` / `blocked` + `blocked_reason`) and **zeros and nulls for every figure and
+every count** — never a `403`, because a client has to be able to draw "unavailable". Its dataset
+drops out of `attribution` with it: nothing of that dataset is on the wire to attribute.
+
+**Bounds and caching.** No `bbox` and no `layer` parameter — this is the metro, which is the
+geography the words "metro median" name. An unknown metro is `404 NOT_FOUND` in decision A5's
+envelope. The answer is cached for `SUMMARY_TTL = 86400` seconds under a key carrying the boundary
+vintage, **every value dataset's active vintage** (one body carries four of them, so a key naming
+only the ACS vintage would serve a stale ZIP Business Patterns card for a day), `gate.version()`
+and the nightly writer's own `GEO_VERSION_KEY` — so a licence decision or a rewrite makes every
+cached body unreachable within the same minute (§11). Every answer carries `x-cache: hit|miss`.
 
 ## `GET /api/markets`
 

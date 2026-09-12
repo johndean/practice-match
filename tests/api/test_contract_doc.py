@@ -188,6 +188,29 @@ def test_contract_doc_states_the_boundary_caps_and_geographies_the_code_enforces
     assert '`shading` is the geography the MAP paints' in text
 
 
+def test_contract_doc_states_the_summary_routes_own_constants_and_its_partition_rule() -> None:
+    """Task SNAP. Every number in the summary section is read off `app.api.market` rather than
+    typed here, for the reason the boundary caps beside it are: a hand-maintained figure in a
+    document is a defect waiting to happen (plan Global Constraint (i)).
+
+    The partition rule — `count == with_value + suppressed + no_data` — is the one an integrator
+    can get wrong SILENTLY: a client that reads `with_value` as "how many polygons this metro has"
+    would print "9 Census tracts" over a metro of eleven. It is stated in the document and pinned
+    here so it cannot quietly leave."""
+    from app.api import market
+
+    text = DOC.read_text(encoding="utf-8")
+    section = text.split("## `GET /api/markets/{cbsa}/summary`", 1)[1].split("\n## ", 1)[0]
+    assert f"`SUMMARY_TTL = {market.SUMMARY_TTL}`" in section
+    # The fractions, in the route's own order, spelled the way the payload's `quantiles` array is.
+    assert "[p10, p25, p50, p75, p90]" in section
+    assert [float(p.lstrip("p")) / 100 for p in ("p10", "p25", "p50", "p75", "p90")] == list(market.SUMMARY_FRACTIONS)
+    assert "`median` is that array's own middle element" in section
+    assert market.SUMMARY_FRACTIONS[market.SUMMARY_MEDIAN_AT] == 0.5, "the documented middle element is not the median"
+    assert "`count == with_value + suppressed + no_data`" in section
+    assert "percentile_cont" in section
+
+
 #: The adapter, as TEXT. `frontend/src/market/boundaries.ts` is TypeScript and this is pytest, so
 #: it is read the way `frontend/src/listings/step-fields.json` is read — no parser, no build step,
 #: no Node in the backend gate. A regex over source is a weak reader, so the assertions below are
