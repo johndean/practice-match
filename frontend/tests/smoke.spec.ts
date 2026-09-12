@@ -1220,3 +1220,77 @@ test.describe('A24 — the boundary route is absent, and the map degrades rather
     expect(await paintedOverlay(page), 'the control case must paint, or "0" above proves nothing').toBeGreaterThan(0);
   });
 });
+
+// -------------------------------------------------------------------------------------------
+// A24.21–A24.23 — the map asks the API for the ground it is SHOWING (2026-09-12).
+//
+// The route has taken a `bbox` since Task 9 and the adapter never sent one, so every request was
+// for the whole metro envelope: 5,935 Census tracts in New York against the route's own
+// `MAX_FEATURES = 4000`, a count no delivery tolerance can coarsen away, and so a permanently
+// unshaded map in the largest market in the country
+// (`tests/census/test_boundaries.py::test_new_york_is_refused_whole_metro_and_served_at_the_viewport_bbox`).
+//
+// The unit tests own the arithmetic — `src/map/viewport.test.ts` for the padding, the grid and
+// the debounce, `src/market/boundaries.test.ts` for the request and the retry, `src/logic.test.ts`
+// for the guard. What only a real browser can prove is that the CHAIN is joined: Leaflet's own
+// bounds → the engine → the viewport module → the adapter → the query string.
+// -------------------------------------------------------------------------------------------
+test.describe('A24.21–A24.23 — the boundary request carries the map own viewport', () => {
+  const bboxesOf = (urls: string[]) => [...new Set(urls.map((u) => new URL(u).searchParams.get('bbox')))];
+
+  async function browseRecording(page: Page): Promise<string[]> {
+    const urls: string[] = [];
+    page.on('request', (r) => { if (/\/api\/markets\/[^/]+\/boundaries/.test(r.url())) urls.push(r.url()); });
+    await prepare(page);
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await page.waitForTimeout(900);          // the module's 250 ms settle, with room to spare
+    return urls;
+  }
+
+  test('every boundary request names a box, and the box covers the map with the renderer own padding', async ({ page }) => {
+    const urls = await browseRecording(page);
+    expect(urls.length, 'the map asked for no boundaries at all').toBeGreaterThan(0);
+    // NOT ONE whole-metro request: that is the request this change exists to stop making.
+    expect(urls.filter((u) => new URL(u).searchParams.get('bbox') === null)).toEqual([]);
+
+    const box = bboxesOf(urls).at(-1)!.split(',').map(Number);
+    expect(box, 'the bbox is not four numbers').toHaveLength(4);
+    const [w, s, e, n] = box;
+    expect(e).toBeGreaterThan(w);
+    expect(n).toBeGreaterThan(s);
+
+    // The measured tie between the browser and the module: at zoom 10 a CSS pixel is
+    // 360 / (256 x 2^10) degrees of longitude, the box is padded by 0.3 of the span on each side
+    // (Leaflet's own canvas-renderer padding) and then snapped outward to at most one 1/8-tile
+    // cell per side.
+    const mapWidth = (await page.locator('.leaflet-container').first().boundingBox())!.width;
+    const span = mapWidth * (360 / (256 * 2 ** 10));
+    const cell = 360 / 2 ** 13;
+    expect(e - w).toBeGreaterThanOrEqual(span * 1.6);
+    expect(e - w).toBeLessThanOrEqual(span * 1.6 + 2 * cell);
+  });
+
+  test('panning the map asks again, for the new ground and once', async ({ page }) => {
+    const urls = await browseRecording(page);
+    const before = bboxesOf(urls);
+    expect(before.length).toBeGreaterThan(0);
+
+    const map = (await page.locator('.leaflet-container').first().boundingBox())!;
+    await page.mouse.move(map.x + map.width * 0.7, map.y + map.height / 2);
+    await page.mouse.down();
+    await page.mouse.move(map.x + map.width * 0.2, map.y + map.height / 2, { steps: 12 });
+    // Stand still before letting go: Leaflet's drag handler measures the pointer's speed at
+    // mouseup and throws an inertia pan if there is any, which would be a SECOND settled view.
+    await page.waitForTimeout(200);
+    await page.mouse.up();
+    await page.waitForTimeout(1200);
+
+    const after = bboxesOf(urls);
+    // Exactly one new box — a drag is one settled view, not one request per mouse move.
+    expect(after.length, 'the pan produced no new request, or more than one round of them').toBe(before.length + 1);
+    expect(after.at(-1)).not.toBe(before.at(-1));
+    // …and it is a box to the EAST of the one before it: dragging the map left moves the view right.
+    expect(Number(after.at(-1)!.split(',')[0])).toBeGreaterThan(Number(before.at(-1)!.split(',')[0]));
+  });
+});

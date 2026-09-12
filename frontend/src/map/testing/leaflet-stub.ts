@@ -15,6 +15,18 @@ export class FakeMap { added: unknown[] = []; handlers: Record<string, () => voi
   constructor(public el: HTMLElement, public opts: any) { this.center = opts.center; this.zoom = opts.zoom; el.dataset.leafletMounted = '1'; }
   setView(c: unknown, z: number, o?: unknown) { this.center = c; this.zoom = z; (this as any).lastSetView = [c, z, o]; }
   getZoom() { return this.zoom; } getCenter() { const c = this.center as [number, number]; return { lat: c[0], lng: c[1] }; }
+  // The Browse map measured at the design's own 1440 x 940 preview: 1020 x 740 CSS px beside the
+  // results rail, which at zoom 10 is 1.401 deg of longitude and, at New York's latitude, 0.771
+  // of latitude. Halved per zoom level, the way a tile pyramid is. `boundsReads` is how a test
+  // proves a destroyed engine did not reach in here for a stale box.
+  boundsReads = 0;
+  getBounds() {
+    this.boundsReads += 1;
+    const c = this.center as [number, number];
+    const k = 2 ** (10 - this.zoom);
+    const dLng = 0.7005 * k; const dLat = 0.3855 * k;
+    return { getSouth: () => c[0] - dLat, getWest: () => c[1] - dLng, getNorth: () => c[0] + dLat, getEast: () => c[1] + dLng };
+  }
   zoomIn() { this.zoom += 1; } zoomOut() { this.zoom -= 1; } invalidateSize() { this.invalidated += 1; }
   on(ev: string, cb: () => void) { ev.split(' ').forEach((e) => { this.handlers[e] = cb; }); } off(ev: string) { ev.split(' ').forEach((e) => { delete this.handlers[e]; }); }
   removeLayer(l: unknown) { this.added = this.added.filter((x) => x !== l); } remove() { (this as any).removed = true; } fitBounds(b: unknown, o?: unknown) { (this as any).fitted = [b, o]; } panInside(pos: unknown, o?: unknown) { (this as any).pannedInside = [pos, o]; (this as any).pannedInsideCount = ((this as any).pannedInsideCount ?? 0) + 1; } }

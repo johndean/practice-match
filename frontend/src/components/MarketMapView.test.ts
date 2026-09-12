@@ -26,6 +26,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
 import { FakeMap, installLeafletStub, type LeafletStub } from '../map/testing/leaflet-stub';
 import MarketMapView from './MarketMapView.vue';
+import * as viewport from '../map/viewport';
 
 // Hoisted above every import by vitest. `loadLeaflet` hands back whatever the stub installed
 // on `window.L`, so the engine under test is the real LeafletMapEngine driving the fake.
@@ -864,6 +865,53 @@ describe('MarketMapView — the V3 map', () => {
     expect(() => areaChildren(layerGroups(stub).overlay)[0].on_click!()).not.toThrow();
     await w.setProps({ onBasemap: NO_FN });
     expect(w.findAll('button[aria-pressed]')).toHaveLength(0);
+  });
+
+  // The bbox wiring (2026-09-12). This component is the only thing in the app that holds a map,
+  // so it is the only thing that can say what the member is looking at — `src/map/viewport.ts`
+  // is the channel and `src/market/boundaries.ts` is the reader.
+  describe('publishing the viewport', () => {
+    afterEach(() => viewport.reset());
+
+    it('publishes the mounted map bounds, so the first boundary request is for this ground', async () => {
+      installLeafletStub();
+      const w = mount(MarketMapView, { props: v3Props({ center: [40.5129, -73.5258], zoom: 10 }) });
+      await flushPromises();
+      const v = viewport.current()!;
+      expect([v.w, v.s, v.e, v.n].map((x) => Number(x.toFixed(4)))).toEqual([-74.2263, 40.1274, -72.8253, 40.8984]);
+      expect(v.zoom).toBe(10);
+      w.unmount();
+    });
+
+    it('publishes again on moveend and on zoomend — the map own settled-view events', async () => {
+      const stub = installLeafletStub();
+      const w = mount(MarketMapView, { props: v3Props() });
+      await flushPromises();
+      for (const ev of ['moveend', 'zoomend']) {
+        stub.map.setView([40.5129, -73.5258], ev === 'moveend' ? 10 : 12);
+        stub.map.handlers[ev]!();
+        expect(viewport.current()!.zoom, `no publish on ${ev}`).toBe(ev === 'moveend' ? 10 : 12);
+      }
+      w.unmount();
+    });
+
+    it('publishes null on unmount, so a torn-down map never leaves a box behind to shade', async () => {
+      installLeafletStub();
+      const w = mount(MarketMapView, { props: v3Props() });
+      await flushPromises();
+      expect(viewport.current()).not.toBeNull();
+      w.unmount();
+      expect(viewport.current()).toBeNull();
+    });
+
+    it('publishes nothing at all when the map never came up', async () => {
+      installLeafletStub();
+      loader.gate = new Promise<void>(() => {});           // never resolves: status stays "loading"
+      const w = mount(MarketMapView, { props: v3Props() });
+      await flushPromises();
+      expect(viewport.current()).toBeNull();
+      w.unmount();
+    });
   });
 
   it('renders at a 390 px phone width — no fixed widths keep the map from filling its host', async () => {

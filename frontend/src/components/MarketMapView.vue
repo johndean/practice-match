@@ -42,6 +42,7 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { practiceCallout, practicePin } from '../map/markers.js';
 import { createEngine } from '../map/create';
+import { publish } from '../map/viewport';
 
 const props = defineProps({
   practices: { type: Array, default: () => [] }, communities: { type: Array, default: () => [] },
@@ -59,6 +60,22 @@ const props = defineProps({
 const host = ref(null);
 const status = ref('loading');
 let engine = null;
+// The bbox wiring (2026-09-12). `GET /api/markets/{cbsa}/boundaries` takes a `bbox` and the
+// adapter never sent one, so it always asked for the whole metro envelope — 5,935 Census
+// tracts in New York against the route's own `MAX_FEATURES = 4000`, a count no delivery
+// tolerance can coarsen away and so a permanently unshaded map in the largest market in the
+// country. This component holds the only map, so it is the only thing that can say what the
+// member is looking at; `src/map/viewport.ts` carries it to `src/market/boundaries.ts`.
+//
+// `onMove` is the engine's own `moveend zoomend` subscription — the events Leaflet fires when
+// the map has SETTLED, which is the only view worth asking the API about.
+let offMove = null;
+function publishViewport() {
+  if (!engine) return;
+  const b = engine.getBounds();
+  if (!b) return;
+  publish({ w: b[0][1], s: b[0][0], e: b[1][1], n: b[1][0], zoom: engine.getZoom() });
+}
 
 const BASEMAP_KEYS = ['map', 'satellite'];
 const stackBtn = 'width: auto; height: 32px; display: grid; place-items: center; padding: 0; background: none; border: 0; cursor: pointer; font-family: ProximaNova, Arial, Helvetica, sans-serif; font-size: 17px; font-weight: 500; color: #003a70; line-height: 1; flex: 1;';
@@ -74,6 +91,8 @@ onMounted(async () => {
     // and NO scale control — Leaflet pins it bottom-right, directly under V3's Layers button.
     await e.mount(host.value, { center: props.center, zoom: props.zoom, basemap: props.basemap, zoomControl: false, scaleControl: false, groups: ['overlay', 'pins'] });
     engine = e;
+    offMove = e.onMove(publishViewport);
+    publishViewport();
     // The merged watcher below has `status` among its deps, so flipping it here IS the initial
     // draw — exactly MarketMapV3.jsx's shape, whose effects run at mount, bail on
     // `!mapRef.current`, and run once when status flips. Calling drawOverlay()/drawPins()
@@ -81,7 +100,12 @@ onMounted(async () => {
     status.value = 'ready';
   } catch { status.value = 'error'; }
 });
-onBeforeUnmount(() => { if (engine) { engine.destroy(); engine = null; } });
+// A torn-down map leaves NO box behind: `null` is how the adapter is told there is nothing to
+// shade, rather than being left holding the last view of a map that no longer exists.
+onBeforeUnmount(() => {
+  if (offMove) { offMove(); offMove = null; }
+  if (engine) { engine.destroy(); engine = null; publish(null); }
+});
 
 watch([() => props.basemap, status], () => { if (engine) engine.setBase(props.basemap); });
 watch([() => props.center && props.center[0], () => props.center && props.center[1], () => props.zoom, () => props.recenterKey, status], () => { if (engine && props.center) engine.setView(props.center, props.zoom, true); });

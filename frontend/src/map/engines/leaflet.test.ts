@@ -260,6 +260,27 @@ describe('LeafletMapEngine — teardown', () => {
     expect(stub.map.zoom, 'getZoom() reached the removed map').toBe(99);
   });
 
+  // The bbox wiring (2026-09-12): the adapter asks the API for the ground the map is looking
+  // at, so the engine has to be able to say what that is. Leaflet answers with a LatLngBounds;
+  // the engine hands back the four numbers and nothing Leaflet-shaped.
+  it('getBounds() reports the map own bounds as [[south, west], [north, east]]', async () => {
+    const { stub, engine } = await mounted();
+    stub.map.setView([40.5129, -73.5258], 10);
+    const box = engine.getBounds();
+    expect(box).not.toBeNull();
+    const [[s, w], [n, e]] = box!;
+    expect([s, w, n, e].map((v) => Number(v.toFixed(4)))).toEqual([40.1274, -74.2263, 40.8984, -72.8253]);
+  });
+
+  it('getBounds() after destroy is null, not a stale box read off the removed map', async () => {
+    const { stub, engine } = await mounted();
+    expect(engine.getBounds()).not.toBeNull();
+    (stub.map as unknown as { boundsReads: number }).boundsReads = 0;
+    engine.destroy();
+    expect(engine.getBounds()).toBeNull();
+    expect((stub.map as unknown as { boundsReads: number }).boundsReads, 'getBounds() reached the removed map').toBe(0);
+  });
+
   // Round 4, item 1: destroy() drained the timers but left `groups`, `zoomCtl` and
   // `scaleCtl` populated with objects bound to the REMOVED map. A re-mounted instance then
   // found the stale entries — `group()` returns the cached group without addTo()-ing the new

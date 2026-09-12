@@ -2058,14 +2058,17 @@ class Component extends DCLogic {
     if (this._onDocDown) document.removeEventListener("pointerdown", this._onDocDown, true);
     if (this._onDocKey) document.removeEventListener("keydown", this._onDocKey, true);
     if (this._onDocOut) document.removeEventListener("focusout", this._onDocOut, true);
+    if (this._offViewport) this._offViewport();
   }
 
-  loadAreas(market) {
+  loadAreas(market, keep) {
     if (!this.props.market) return;
     const asked = market || "Austin, TX";
-    const mine = () => (this.state.market || "Austin, TX") === asked;
-    this.setState({ mdAreas: null });
-    this.props.market.boundaries(asked).then(
+    const at = this.props.market.viewport ? this.props.market.viewport() : null;
+    if (!keep) this.setState({ mdAreas: null });
+    if (this.props.market.viewport && at === null) return;
+    const mine = () => (this.state.market || "Austin, TX") === asked && (this.props.market.viewport ? this.props.market.viewport() : null) === at;
+    this.props.market.boundaries(asked, at).then(
       (areas) => { if (mine()) this.setState({ mdAreas: areas }); },
       () => { if (mine()) this.setState({ mdAreas: {} }); }
     );
@@ -2094,6 +2097,7 @@ class Component extends DCLogic {
     if (this.props.startMyListings) this.setState({ myListings: this.props.startMyListings });
     if (this.props.adminListings && me && me.state === "active" && (me.roles || []).some((r) => r === "staff" || r === "admin")) this.props.adminListings.list().then((rows) => this.setState({ adminListingRows: rows }), () => this.setState({ adminListingRows: [] }));
     this.loadAreas(this.state.market);
+    if (this.props.market && this.props.market.onViewport) this._offViewport = this.props.market.onViewport(() => this.loadAreas(this.state.market, true));
   }
 
   // Arrow-key movement inside the Give menu. Focus IS the highlight — vinfoundation.org has

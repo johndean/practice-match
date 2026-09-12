@@ -24,6 +24,8 @@
  * **That makes the route's PRESENCE the operational precondition: this adapter must not reach an
  * environment before Task 9's endpoint does.**
  */
+import { PAD, bboxOf, current, subscribe } from '../map/viewport';
+
 const LIST_URL = '/api/markets';
 
 /**
@@ -51,7 +53,21 @@ interface MetroRow { cbsa_geoid: string; name: string }
 
 /** What `logic.js` sees as `this.props.market`. */
 export interface MarketAdapter {
-  boundaries(marketName: string): Promise<Record<string, BoundaryCollection>>;
+  /** `bbox` is the value `viewport()` last handed out — `logic.js` holds it as the token it
+   *  compares an arriving answer against, and never composes one itself. `null` asks for the whole
+   *  metro envelope, which is the pre-map boot and what the reference would get if it had an
+   *  adapter at all. */
+  boundaries(marketName: string, bbox?: string | null): Promise<Record<string, BoundaryCollection>>;
+  /** The ground the map is looking at, as the route's `bbox`, or `null` before a map exists. */
+  viewport(): string | null;
+  /** Fires once per SETTLED view (`src/map/viewport.ts`'s debounce); returns its unsubscribe. */
+  onViewport(cb: () => void): () => void;
+}
+
+/** A refusal, carrying the route's own decision-A5 code so a caller can tell a cap that a smaller
+ *  box would fix (`AREA_TOO_LARGE`) from one it would not (`BBOX_TOO_LARGE`, `BAD_LAYER`, a 401). */
+class Refused extends Error {
+  constructor(readonly status: number, readonly code: string | null, message: string) { super(message); }
 }
 
 async function read(fetchFn: typeof fetch, url: string): Promise<unknown> {
@@ -60,7 +76,16 @@ async function read(fetchFn: typeof fetch, url: string): Promise<unknown> {
     headers: { Accept: 'application/geo+json, application/json' },
     signal: AbortSignal.timeout(TIMEOUT_MS)
   });
-  if (!res.ok) throw new Error(`${url} answered ${res.status}`);
+  if (!res.ok) {
+    // The body is read for its CODE only, and never trusted to exist: a proxy's 502 and an
+    // AbortSignal's own failure both arrive here with no envelope at all.
+    let code: string | null = null;
+    try {
+      const body = await res.json() as { error?: { code?: unknown } };
+      if (typeof body?.error?.code === 'string') code = body.error.code;
+    } catch { /* not this route's envelope; the status is all there is to say */ }
+    throw new Refused(res.status, code, `${url} answered ${res.status}${code === null ? '' : ` ${code}`}`);
+  }
   return res.json();
 }
 
@@ -76,21 +101,58 @@ export function makeMarketAdapter(fetchFn: typeof fetch = globalThis.fetch.bind(
     metros = body as MetroRow[];
     return metros;
   }
+  const collect = async (geoid: string, bbox: string | null) => {
+    const at = bbox === null ? '' : `&bbox=${encodeURIComponent(bbox)}`;
+    const collections = await Promise.all(
+      FILL_LAYERS.map((layer) => read(fetchFn, `/api/markets/${encodeURIComponent(geoid)}/boundaries?layer=${layer}${at}`))
+    );
+    const out: Record<string, BoundaryCollection> = {};
+    FILL_LAYERS.forEach((layer, i) => {
+      const body = collections[i] as BoundaryCollection;
+      if (!Array.isArray(body?.features)) throw new Error(`${layer}: the answer carries no features array`);
+      out[layer] = body;
+    });
+    return out;
+  };
   return {
-    async boundaries(marketName: string) {
+    viewport() {
+      const v = current();
+      return v === null ? null : bboxOf(v, PAD);
+    },
+    onViewport: subscribe,
+    async boundaries(marketName: string, bbox: string | null = null) {
+      // Read BEFORE the catalogue is awaited: `bbox` is the box `logic.js` took from `viewport()`
+      // one statement ago, and the first call of the page has a `/api/markets` round trip in front
+      // of it. Read after that, the retry's bare box could describe a different view from the
+      // padded box that was sent.
+      const v = current();
       const rows = await catalogue();
       const metro = rows.find((m) => m.name === marketName);
       if (!metro) throw new Error(`no CBSA for market ${marketName}`);
-      const collections = await Promise.all(
-        FILL_LAYERS.map((layer) => read(fetchFn, `/api/markets/${encodeURIComponent(metro.cbsa_geoid)}/boundaries?layer=${layer}`))
-      );
-      const out: Record<string, BoundaryCollection> = {};
-      FILL_LAYERS.forEach((layer, i) => {
-        const body = collections[i] as BoundaryCollection;
-        if (!Array.isArray(body?.features)) throw new Error(`${layer}: the answer carries no features array`);
-        out[layer] = body;
-      });
-      return out;
+      try {
+        return await collect(metro.cbsa_geoid, bbox);
+      } catch (e) {
+        // ONE retry, and only where the route's own refusal names a box the client can change.
+        // The ladder is the route's instruction, not an invention of ours:
+        //
+        //   AREA_TOO_LARGE  — "Zoom in or pass a smaller bbox". The padding is 0.3 of the viewport
+        //     on every side and dropping it is exactly what there is to give back: in New York at
+        //     zoom 10 that is the difference between 4,811 tracts (refused) and 3,706 (served).
+        //   BBOX_TOO_LARGE  — the box is wider than `MAX_BBOX_DEG`, which means the member is
+        //     looking at more than one metro. The honest next question is the metro itself, which
+        //     is the request this adapter made before it learned to send a box at all, and is what
+        //     keeps a zoomed-out small metro shaded instead of losing its colour. The cap itself is
+        //     never restated here — the SERVER says which one it hit.
+        //
+        // Anything else (a bad layer, a 401, a 404, a body that is not a FeatureCollection) is not
+        // made true by asking a second time, and leaves the map in the unshaded state Task 10
+        // photographs.
+        if (!(e instanceof Refused)) throw e;
+        const again = e.code === 'BBOX_TOO_LARGE' ? null : (v === null ? null : bboxOf(v, 0));
+        if (bbox === null || (e.code !== 'AREA_TOO_LARGE' && e.code !== 'BBOX_TOO_LARGE') || again === bbox) throw e;
+        if (e.code === 'AREA_TOO_LARGE' && again === null) throw e;
+        return await collect(metro.cbsa_geoid, again);
+      }
     }
   };
 }

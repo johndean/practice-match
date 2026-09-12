@@ -328,6 +328,7 @@ describe('local design amendments (spec D15)', () => {
     // The Census tract ruling (controller, 2026-09-12). Both CHAINED, so both sit after the
     // entries they read: A24.19 after A24.2, A24.20 after A24.7.
     'A24.19', 'A24.20',
+    'A24.21', 'A24.22', 'A24.23',
     'A24.9', 'A24.10', 'A24.11', 'A24.12',
   ];
 
@@ -396,17 +397,17 @@ describe('local design amendments (spec D15)', () => {
     expect(amended).toContain('mdAreas: null,');
     // One loader, with the rejection arm every adapter path in this design keeps forgetting
     // (A16.17's own lesson): a refused load empties the map, it does not restore the fixture.
-    expect(amended).toContain('loadAreas(market) {');
+    expect(amended).toContain('loadAreas(market, keep) {');   // A24.21 widened the signature
     expect(amended).toContain('if (mine()) this.setState({ mdAreas: {} });');
     // It clears before it asks, so a metro change cannot leave the previous metro's polygons
     // painted over the new metro's view; and it ignores an answer for a market the member has
     // since left, so two fetches resolving out of order cannot strand the wrong metro's
     // boundaries on screen. Both are "draw what the API answered for what you are looking at".
-    expect(amended).toContain('this.setState({ mdAreas: null });');
-    expect(amended).toContain('const mine = () => (this.state.market || "Austin, TX") === asked;');
-    // Two call sites and exactly two: the bootstrap, and a change of metro.
-    expect(amended.split('this.loadAreas(')).toHaveLength(3);   // exactly two call sites
-    expect(amended.split('loadAreas(market) {')).toHaveLength(2); // and exactly one definition
+    expect(amended).toContain('if (!keep) this.setState({ mdAreas: null });');
+    expect(amended).toContain('const mine = () => (this.state.market || "Austin, TX") === asked &&');
+    // Three call sites since A24.22: the bootstrap, a change of metro, and a settled pan or zoom.
+    expect(amended.split('this.loadAreas(')).toHaveLength(4);
+    expect(amended.split('loadAreas(market, keep) {')).toHaveLength(2); // and exactly one definition
     // NO new prototype prop: the reference reaches the fixture path by having no adapter at all,
     // exactly as it does for `listings` and `adminListings`. `market` is an app-only prop, so it
     // must NOT appear in the design's declared `data-props` (which `app-generated.test.ts`
@@ -440,7 +441,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(244);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(247);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

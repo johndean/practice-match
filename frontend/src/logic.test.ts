@@ -4900,6 +4900,110 @@ describe('A24 — the market adapter', () => {
   });
 
   // -----------------------------------------------------------------------------------
+  // A24.21-A24.23 (2026-09-12) — the map asks for the ground it is SHOWING. The route has taken
+  // a `bbox` since Task 9 and the adapter never sent one, so every request was for the whole
+  // metro envelope: 5,935 Census tracts in New York against `MAX_FEATURES = 4000`, a count no
+  // delivery tolerance can coarsen away and so a permanently unshaded map there.
+  //
+  // The adapter's own `viewport()` is BOTH the box that is sent and the token an arriving answer
+  // is checked against — one value, so the guard cannot drift from the request. An adapter
+  // WITHOUT it (every case above, and any older build) keeps the whole-metro behaviour exactly.
+  // -----------------------------------------------------------------------------------
+  const viewportAdapter = (boxes: string[]) => {
+    const calls: { market: string; bbox: string | null }[] = [];
+    const subs: (() => void)[] = [];
+    const pending: ((v: unknown) => void)[] = [];
+    return {
+      calls, pending,
+      move: (box: string) => { boxes.unshift(box); subs.forEach((s) => s()); },
+      unsubscribed: () => subs.length === 0,
+      adapter: {
+        viewport: () => boxes[0] ?? null,
+        onViewport: (cb: () => void) => { subs.push(cb); return () => { subs.length = 0; }; },
+        boundaries: (market: string, bbox: string | null) => {
+          calls.push({ market, bbox });
+          return new Promise((r) => pending.push(r));
+        }
+      }
+    };
+  };
+
+  it('asks for NOTHING until a map has said what it is looking at — no doomed whole-metro request', () => {
+    const a = viewportAdapter([]);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    expect(a.calls).toEqual([]);
+    expect(comp.state.mdAreas).toBeNull();
+  });
+
+  it('asks with the box the map published, the moment it publishes one', async () => {
+    const a = viewportAdapter([]);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    a.move('-74.2,40.1,-72.8,40.9');
+    expect(a.calls).toEqual([{ market: 'Austin, TX', bbox: '-74.2,40.1,-72.8,40.9' }]);
+    a.pending[0]({ income: FC(['tract-a']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['tract-a']);
+  });
+
+  it('KEEPS the polygons on screen while a pan reloads — a pan is not a metro change', async () => {
+    const a = viewportAdapter([]);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    a.move('box-1');
+    a.pending[0]({ income: FC(['before']) });
+    await Promise.resolve();
+    a.move('box-2');
+    expect(comp.state.mdAreas, 'the map went blank mid-pan').not.toBeNull();
+    expect(drawn(comp)).toEqual(['before']);
+    a.pending[1]({ income: FC(['after']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['after']);
+  });
+
+  it('DISCARDS an answer for a box the member has already panned off, the market guard extended', async () => {
+    const a = viewportAdapter([]);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    a.move('box-1');
+    a.move('box-2');
+    a.pending[1]({ income: FC(['box-2']) });
+    await Promise.resolve();
+    expect(drawn(comp)).toEqual(['box-2']);
+    a.pending[0]({ income: FC(['box-1']) });
+    await Promise.resolve();
+    expect(drawn(comp), "box-1's answer landed on box-2's map").toEqual(['box-2']);
+  });
+
+  it('a metro change still CLEARS first, even with a viewport — one city is never drawn over another', () => {
+    const a = viewportAdapter(['box-1']);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    a.pending[0]({ income: FC(['austin']) });
+    comp.setMarket('Sacramento, CA');
+    expect(comp.state.mdAreas).toBeNull();
+    expect(a.calls.map((c) => c.market)).toEqual(['Austin, TX', 'Sacramento, CA']);
+  });
+
+  it('unsubscribes on unmount, so a torn-down screen stops asking the API for boxes', () => {
+    const a = viewportAdapter(['box-1']);
+    const comp: any = new Component({ market: a.adapter });
+    comp.componentDidMount();
+    expect(a.unsubscribed()).toBe(false);
+    comp.componentWillUnmount();
+    expect(a.unsubscribed()).toBe(true);
+    expect(() => comp.componentWillUnmount()).not.toThrow();
+  });
+
+  it('an adapter with no viewport at all keeps the whole-metro behaviour, unchanged', () => {
+    const asked: unknown[] = [];
+    const comp: any = new Component({ market: { boundaries: (n: string, b: unknown) => { asked.push([n, b]); return Promise.resolve({}); } } });
+    comp.componentDidMount();
+    expect(asked).toEqual([['Austin, TX', null]]);
+  });
+
+  // -----------------------------------------------------------------------------------
   // The three states Task 9's payload distinguishes, rendered. These property dicts are
   // `app/api/market._boundary_feature`'s own output, transcribed from the route (commit
   // `c466415`) rather than imagined: `value` is null BOTH when the geography has no row and

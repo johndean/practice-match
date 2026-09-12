@@ -68,6 +68,14 @@ export class LeafletMapEngine implements MapEngine {
   // 0, not a throw and not the last live value: a destroyed engine has no map and therefore
   // no zoom. Callers read this to seed a view; a stale number would be worse than a neutral one.
   getZoom(): number { return this.destroyed ? 0 : this.map.getZoom(); }
+  // `null`, not a last-known box: a destroyed engine has no map and therefore no viewport,
+  // and the adapter reads this to decide WHICH GROUND to ask the API for — a stale box would
+  // shade a place the member is not looking at. The same posture getZoom()'s 0 takes.
+  getBounds(): [LatLng, LatLng] | null {
+    if (this.destroyed) return null;
+    const b = this.map.getBounds();
+    return [[b.getSouth(), b.getWest()], [b.getNorth(), b.getEast()]];
+  }
   zoomIn(): void { if (this.destroyed) return; this.map.zoomIn(); }
   zoomOut(): void { if (this.destroyed) return; this.map.zoomOut(); }
   fitBounds(points: LatLng[]): void { if (this.destroyed) return; this.map.fitBounds(this.L.latLngBounds(points), { padding: [24, 24] }); }

@@ -467,3 +467,131 @@ async def test_the_delivery_tolerance_actually_reaches_postgis(client, seeded, H
 
     assert vertices(exact) > 700, "the fixture must carry real detail for this to mean anything"
     assert vertices(body) < vertices(exact) / 2, "the tolerance never reached PostGIS"
+
+
+# ---------------------------------------------------------------------------------------------
+# NEW YORK — the whole reason the adapter now sends a viewport bbox (2026-09-12).
+#
+# Every number below is MEASURED on real TIGER `cb_2023_*_tract_500k` geometry (31,252 tracts,
+# ten states, in a real PostGIS), not chosen to make a test pass:
+#
+#   * the CBSA 35620 envelope is -75.195114, 39.498537 to -71.856483, 41.527194, and **5,935**
+#     tracts intersect it. `MAX_FEATURES` is 4,000 and a COUNT cannot be coarsened away, so the
+#     whole-metro request the adapter used to make is a 422 at every delivery tolerance — a
+#     permanently unshaded map in the largest market in the country.
+#   * the Browse map at the design's own 1440 x 940 preview is ~1020 x 740 CSS px beside the
+#     results rail, which at zoom 10 is 1.401 x 0.771 degrees; snapped outward to
+#     `src/map/viewport.ts`'s grid that is the box below, and **3,706** tracts intersect it —
+#     under the cap, and served.
+#
+# The geometry here is SYNTHETIC and the two counts are the measured ones: 5,935 tracts of which
+# 3,706 fall in that viewport. What is under test is the straddle — that the route refuses the
+# envelope and serves the viewport at the caps as they stand — which is exactly what would be
+# silently lost if a cap moved or the adapter stopped sending the box.
+NY_METRO = (-75.195114, 39.498537, -71.856483, 41.527194)
+#: The zoom-10 Browse viewport over New York, padded by nothing and snapped to the 1/8-tile grid.
+NY_VIEWPORT = (-74.2426, 40.1221, -72.8174, 40.9131)
+NY_TRACTS_IN_METRO = 5935
+NY_TRACTS_IN_VIEWPORT = 3706
+
+
+@pytest.fixture
+def new_york(conn):
+    """CBSA 35620 and 5,935 tracts, 3,706 of them inside the zoom-10 Browse viewport."""
+    w, s, e, n = NY_METRO
+    vw, vs, ve, vn = NY_VIEWPORT
+    outside = NY_TRACTS_IN_METRO - NY_TRACTS_IN_VIEWPORT
+    with conn.cursor() as cur:
+        for key, vintage in (("tiger_cb", "2023"), ("acs5", "2019\u20132023"), ("acs5_prior", "2014\u20132018"), ("cbp", "2022")):
+            cur.execute("INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by) VALUES (%s,%s,now(),'test')", (key, vintage))
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, geom, centroid) VALUES "
+            "('35620','310','2023','New York-Newark-Jersey City, NY-NJ',"
+            " ST_Multi(ST_MakeEnvelope(%s,%s,%s,%s,4269)), ST_Point(%s,%s,4269))",
+            (w, s, e, n, (w + e) / 2, (s + n) / 2),
+        )
+        # Inside the viewport: a 62-column grid filling the box exactly.
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, geom, centroid) "
+            "SELECT lpad((36000000000 + i)::text, 11, '0'), '140', '2023', 'Census Tract ' || i, '36', "
+            "  ST_Multi(ST_MakeEnvelope(x, y, x + %(cw)s, y + %(ch)s, 4269)), ST_Point(x, y, 4269) "
+            "FROM generate_series(0, %(nin)s - 1) AS i, "
+            "  LATERAL (SELECT %(vw)s + (i %% 62) * %(cw)s AS x, %(vs)s + (i / 62) * %(ch)s AS y) p",
+            {"nin": NY_TRACTS_IN_VIEWPORT, "vw": vw, "vs": vs,
+             "cw": (ve - vw) / 62, "ch": (vn - vs) / 60},
+        )
+        # Outside it, and strictly south of it so no cell can touch the viewport's edge.
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, geom, centroid) "
+            "SELECT lpad((34000000000 + i)::text, 11, '0'), '140', '2023', 'Census Tract ' || i, '34', "
+            "  ST_Multi(ST_MakeEnvelope(x, y, x + %(cw)s, y + %(ch)s, 4269)), ST_Point(x, y, 4269) "
+            "FROM generate_series(0, %(nout)s - 1) AS i, "
+            "  LATERAL (SELECT %(w)s + (i %% 75) * %(cw)s AS x, %(s)s + (i / 75) * %(ch)s AS y) p",
+            {"nout": outside, "w": w, "s": s + 0.001, "cw": (e - w) / 75, "ch": (40.10 - s) / 30},
+        )
+        cur.execute(
+            "INSERT INTO geo_metric (geo_id, summary_level, vintage, metric_key, value_num, unit, moe, suppressed, suppress_reason, source_dataset, computed_at) VALUES "
+            "('36000000001','140','2019\u20132023','median_hh_income',92150,'usd',6420,false,NULL,'acs5',now())"
+        )
+    return conn
+
+
+async def test_new_york_is_refused_whole_metro_and_served_at_the_viewport_bbox(client, new_york, H) -> None:  # noqa: F811
+    """The two arms, measured: the envelope 422s on a COUNT and the viewport is served exact.
+
+    This is the gap the bbox wiring closes. Before it, `boundaries(marketName)` asked for the whole
+    metro every time and there was no second arm at all.
+    """
+    whole = await client.get("/api/markets/35620/boundaries?layer=income", headers=H)
+    assert whole.status_code == 422
+    body = whole.json()["error"]
+    assert body["code"] == "AREA_TOO_LARGE"
+    assert str(NY_TRACTS_IN_METRO) in body["message"]
+    assert str(market.MAX_FEATURES) in body["message"]
+
+    w, s, e, n = NY_VIEWPORT
+    seen = await client.get(f"/api/markets/35620/boundaries?layer=income&bbox={w},{s},{e},{n}", headers=H)
+    assert seen.status_code == 200
+    served = json.loads(seen.content)
+    assert len(served["features"]) == NY_TRACTS_IN_VIEWPORT
+    assert NY_TRACTS_IN_VIEWPORT < market.MAX_FEATURES <= NY_TRACTS_IN_METRO
+    # Served EXACT: the whole point of a viewport request is that it needs no generalisation.
+    assert served["simplified_deg"] == 0.0
+    assert served["state"] == "enabled" and served["summary_level"] == "140"
+    assert any(f["properties"]["value"] == 92150.0 for f in served["features"])
+
+
+async def test_the_viewport_arm_is_not_a_vacuous_pass_the_count_is_what_decides_it(client, new_york, H, monkeypatch) -> None:  # noqa: F811
+    """Prove the gate can fail: drop `MAX_FEATURES` below the viewport's own count and the SERVED
+    arm becomes a refusal. Without this the test above would still pass if the bbox were ignored
+    and both arms answered the same thing."""
+    monkeypatch.setattr(market, "MAX_FEATURES", NY_TRACTS_IN_VIEWPORT - 1)
+    w, s, e, n = NY_VIEWPORT
+    r = await client.get(f"/api/markets/35620/boundaries?layer=income&bbox={w},{s},{e},{n}", headers=H)
+    assert r.status_code == 422 and r.json()["error"]["code"] == "AREA_TOO_LARGE"
+
+
+async def test_panning_hits_the_cache_for_ground_already_asked_for_and_misses_for_new_ground(client, seeded, H) -> None:  # noqa: F811
+    """What the member's panning costs the route, measured through `x-cache`.
+
+    The adapter snaps the box to a grid of one eighth of a basemap tile before it asks
+    (`frontend/src/map/viewport.ts`), so a pan inside one cell produces the IDENTICAL query string
+    and therefore the identical 24-hour cache entry. Without that snap `Leaflet.getBounds()`'s own
+    centimetre-scale float jitter would make every `moveend` its own miss, which is the behaviour
+    this asserts the absence of: `?bbox=` is part of the key, so two boxes that differ AT ALL are
+    two entries and two boxes that are equal are one.
+    """
+    here = "?layer=income&bbox=-97.9,30.15,-97.6,30.35"
+    there = "?layer=income&bbox=-97.85,30.15,-97.55,30.35"
+    first = await client.get(f"/api/markets/12420/boundaries{here}", headers=H)
+    assert first.status_code == 200 and first.headers["x-cache"] == "miss"
+    # The same ground again — a pan that the snap rounded back onto the same cell.
+    again = await client.get(f"/api/markets/12420/boundaries{here}", headers=H)
+    assert again.status_code == 200 and again.headers["x-cache"] == "hit"
+    assert again.content == first.content
+    # A pan onto new ground is new ground: a miss, then a hit of its own.
+    moved = await client.get(f"/api/markets/12420/boundaries{there}", headers=H)
+    assert moved.status_code == 200 and moved.headers["x-cache"] == "miss"
+    assert (await client.get(f"/api/markets/12420/boundaries{there}", headers=H)).headers["x-cache"] == "hit"
+    # …and the whole-metro entry is a third, never served to a box request or the other way round.
+    assert (await client.get("/api/markets/12420/boundaries?layer=income", headers=H)).headers["x-cache"] == "miss"

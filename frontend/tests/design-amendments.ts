@@ -4951,6 +4951,76 @@ const A24_20: Amendment = {
   count: 1
 };
 
+/** A24.21-A24.23 -- the VIEWPORT BBOX (controller, 2026-09-12). `GET /api/markets/{cbsa}/boundaries`
+ *  has taken a `bbox` since Task 9 and A24.15's loader never sent one, so every request was for the
+ *  whole metro envelope. At Census-tract scale that is 5,935 tracts in New York against the route's
+ *  own `MAX_FEATURES = 4000` -- a COUNT, which no delivery tolerance can coarsen away -- so the
+ *  largest market in the country had a permanently unshaded map. The same viewport at the Browse
+ *  map's own zoom is 3,706, and served.
+ *
+ *  All three are CHAINED, the A21.5c / A24.19 shape: A24.21 reads A24.15's whole output, A24.22
+ *  reads A24.17's line and A24.23 reads A13.5's, so none occurs in the pristine bundle.
+ *
+ *  Four properties, each because the alternative puts a false or an empty map on screen:
+ *
+ *  1. `viewport()` is BOTH the box that is sent and the token an arriving answer is checked
+ *     against -- one value read once, so the guard cannot drift from the request. A24.15's market
+ *     guard is extended, not replaced: an answer is drawn only if the member is still on the same
+ *     metro AND the same box.
+ *  2. A pan KEEPS the polygons up while the new box loads (`keep`). A24.15's clear exists so one
+ *     city is never drawn over another; a pan is the same city, and clearing would blank the map
+ *     on every drag. A metro change still clears, because that is a different city.
+ *  3. It asks for NOTHING until a map has published a box. `componentDidMount` runs before the map
+ *     component has finished mounting Leaflet, so without this the boot would fire exactly the
+ *     doomed whole-metro request this amendment exists to stop.
+ *  4. An adapter with NO `viewport` -- the reference, the Claude Design preview, any older build --
+ *     takes the old path unchanged, whole-metro and all, because both new terms are guarded on the
+ *     method's presence. */
+const BBOX = { date: '2026-09-12', ruling: 'The adapter sends the map\'s current viewport as bbox, re-fetches when the viewport changes enough to matter, and draws what the API answers for that box. New York whole-metro is 5,935 tracts and 422s; the viewport is 3,706 and is served.' };
+
+const A24_21: Amendment = {
+  id: 'A24.21', ...BBOX,
+  find: '  loadAreas(market) {\n'
+    + '    if (!this.props.market) return;\n'
+    + '    const asked = market || "Austin, TX";\n'
+    + '    const mine = () => (this.state.market || "Austin, TX") === asked;\n'
+    + '    this.setState({ mdAreas: null });\n'
+    + '    this.props.market.boundaries(asked).then(\n'
+    + '      (areas) => { if (mine()) this.setState({ mdAreas: areas }); },\n'
+    + '      () => { if (mine()) this.setState({ mdAreas: {} }); }\n'
+    + '    );\n'
+    + '  }\n',
+  replace: '  loadAreas(market, keep) {\n'
+    + '    if (!this.props.market) return;\n'
+    + '    const asked = market || "Austin, TX";\n'
+    + '    const at = this.props.market.viewport ? this.props.market.viewport() : null;\n'
+    + '    if (!keep) this.setState({ mdAreas: null });\n'
+    + '    if (this.props.market.viewport && at === null) return;\n'
+    + '    const mine = () => (this.state.market || "Austin, TX") === asked && (this.props.market.viewport ? this.props.market.viewport() : null) === at;\n'
+    + '    this.props.market.boundaries(asked, at).then(\n'
+    + '      (areas) => { if (mine()) this.setState({ mdAreas: areas }); },\n'
+    + '      () => { if (mine()) this.setState({ mdAreas: {} }); }\n'
+    + '    );\n'
+    + '  }\n',
+  count: 1
+};
+
+const A24_22: Amendment = {
+  id: 'A24.22', ...BBOX,
+  find: '    this.loadAreas(this.state.market);\n',
+  replace: '    this.loadAreas(this.state.market);\n'
+    + '    if (this.props.market && this.props.market.onViewport) this._offViewport = this.props.market.onViewport(() => this.loadAreas(this.state.market, true));\n',
+  count: 1
+};
+
+const A24_23: Amendment = {
+  id: 'A24.23', ...BBOX,
+  find: '    if (this._onDocOut) document.removeEventListener("focusout", this._onDocOut, true);\n  }\n',
+  replace: '    if (this._onDocOut) document.removeEventListener("focusout", this._onDocOut, true);\n'
+    + '    if (this._offViewport) this._offViewport();\n  }\n',
+  count: 1
+};
+
 const A24_9: Amendment = {
   id: 'A24.9', ...NS, file: 'jsx',
   find: '// GEOMETRY NOTE: the prototype has no ZCTA boundary file, so community areas are\n// approximated as Voronoi cells around each community\'s centroid, clipped to the metro\n// bounding box. Cells are contiguous and non-overlapping, which is what a choropleth\n// requires, but they are NOT real Census boundaries — the UI labels them "approximate\n// community areas". Production must load tiger_cb ZCTA polygons per the Census Data\n// Source Specification and drop this approximation.\n',
@@ -5108,5 +5178,9 @@ export function amendments(): Amendment[] {
     // A24.19-A24.20 -- the Census tract ruling (2026-09-12). Both CHAINED: A24.19 reads A24.2's
     // output and A24.20 reads A24.7's, so both must sit after those two.
     A24_19, A24_20,
+    // A24.21-A24.23 -- the viewport bbox (2026-09-12). All three CHAINED: A24.21 reads
+    // A24.15's whole output, A24.22 reads A24.17's line and A24.23 reads A13.5's, so each
+    // must sit after the entry it reads.
+    A24_21, A24_22, A24_23,
     A24_9, A24_10, A24_11, A24_12];
 }
