@@ -1501,3 +1501,67 @@ test.describe('A24.21–A24.23 — the boundary request carries the map own view
     expect(Number(after.at(-1)!.split(',')[0])).toBeGreaterThan(Number(before.at(-1)!.split(',')[0]));
   });
 });
+
+// ---------------------------------------------------------------------------------------
+// A31 (Task SNAP, ruling D-C50 as revised, 2026-09-12) — the Market snapshot's two modes, in a
+// real browser and through the real adapter.
+//
+// The two approved states photograph both modes, and pixels cannot say WHY a number is what it
+// is: the point of this ruling is that the AREA figure comes from `GET /api/markets/{cbsa}/summary`
+// — the polygons the map shades — and not from the listings, and those two can agree by accident
+// on a fixture. So this reads the ANSWER the page itself received and the STRING the card printed,
+// and checks that the second follows the first.
+//
+// The answer is taken off the page's own `response` event rather than re-fetched through
+// `page.request`: an APIRequestContext does not go through `page.route`, so a second fetch would
+// reach the real API and read a different body from the one the app rendered — which is exactly
+// what a test like this must not do.
+// ---------------------------------------------------------------------------------------
+interface SummaryRow { layer: string; median: number | null; with_value: number; geo_label: string }
+
+test.describe('A31 — the Market snapshot has two modes (D-C50 as revised)', () => {
+  test('the strip reads the metro summary in AREA mode, and the practice in LOCATION', async ({ page }) => {
+    await prepare(page);
+    const errors = trapErrors(page);
+    const asked: string[] = [];
+    const answers: Promise<{ layers: SummaryRow[] }>[] = [];
+    page.on('response', (r) => {
+      if (!r.url().includes('/summary')) return;
+      asked.push(r.url());
+      answers.push(r.json() as Promise<{ layers: SummaryRow[] }>);
+    });
+    await signInAs(page, 'design', '/browse');
+    await waitMap(page);
+    await click(page, 'Expand all six layers');
+
+    // The route was actually called, for the METRO and with no bbox — "metro median" names the
+    // metro, and a median over whatever is on screen would move with every pan.
+    expect(asked.length, 'the app never asked for the metro summary').toBeGreaterThan(0);
+    expect(asked.at(-1)).toMatch(/\/api\/markets\/\d+\/summary$/);
+    const summary = await answers[answers.length - 1];
+    const income = summary.layers.find((l) => l.layer === 'income')!;
+    expect(income.median, 'the summary answered no median, so this case proves nothing').not.toBeNull();
+
+    const strip = page.locator('div.rf-scroll[style*="max-height: 40vh"]');
+    await expect(strip.getByText(/^AREA · /)).toBeVisible();
+    await expect(strip.getByText('Census areas across the metro, as the map shades them')).toBeVisible();
+    // The figure the card prints IS the answered median, formatted by the design's own
+    // `fmtMetric` — read off the response rather than retyped, so the assertion cannot drift.
+    const card = strip.locator('div[style*="border-radius: 8px"]').filter({ hasText: 'Median household income' }).first();
+    await expect(card).toContainText(`$${Math.round(income.median! / 1000)}K`);
+    // …and it names the geography and the count it summarised, which is the whole correction: a
+    // number under a caption that does not describe it is the defect D-C50 removed.
+    await expect(card).toContainText(`metro median · ${income.with_value.toLocaleString('en-US')} ${income.geo_label}s`);
+
+    // LOCATION: selecting a practice switches the header and the figures, and "metro median"
+    // leaves the card entirely — it is AREA mode's wording alone.
+    await page.getByText('Cedar Park').first().click();
+    await expect(strip.getByText(/^LOCATION · /)).toBeVisible();
+    await expect(strip.getByText(/^AREA · /)).toHaveCount(0);
+    await expect(card).not.toContainText('metro median');
+    // Closing the docked panel returns to AREA — the ruling's own last sentence.
+    await page.getByRole('button', { name: 'Close panel' }).first().click();
+    await expect(strip.getByText(/^AREA · /)).toBeVisible();
+    expect(errors).toEqual([]);
+  });
+});

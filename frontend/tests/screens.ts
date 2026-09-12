@@ -66,8 +66,10 @@ const SHEET = 'div[style*="z-index: 700"]';
 // trigger added later fails there rather than silently re-pointing these two states.
 const layerTrigger = (p: Page) => p.locator('button[aria-haspopup="listbox"]:not([aria-label])');
 
-// A27.5's sentence, in the Browse "Market data" strip's footnote paragraph.
-const STRIP_FOOTNOTE = 'Figures describe the area around each practice, not the practice itself.';
+// The strip's footnote paragraph, as A31.11 (Task SNAP, D-C50 as revised) leaves it: A27.5's
+// sentence said the figures describe the area around each PRACTICE, which AREA mode makes false —
+// it is the metro's Census areas now, and the practice's own community only when one is selected.
+const STRIP_FOOTNOTE = 'In AREA mode each card is the median across the metro\u2019s Census tracts';
 
 /**
  * `browse-market-strip` alone: the strip's OWN `.rf-scroll` container, pinned to its bottom.
@@ -513,6 +515,28 @@ export const SCREENS: Screen[] = [
     // `toBeInViewport()` passes at ANY intersection above zero, so a sentence clipped to its last
     // two words still satisfied it and the state would go on photographing a truncated footnote.
     // The whole element has to be in the frame, which is what this capture exists to prove.
+    await expect(p.getByText(STRIP_FOOTNOTE).first()).toBeInViewport({ ratio: 1 });
+    await p.waitForTimeout(400);
+  } },
+  // A31 (Task SNAP, ruling D-C50 as revised, 2026-09-12) — the strip's OTHER mode, which had no
+  // approved state at all: with a practice selected every card is that practice's own community
+  // figure, the header reads "LOCATION · …" instead of "AREA · …", and the bars stay the metro's
+  // distribution with the class the practice falls in kept at full strength. The selection is the
+  // same click `browse-market-panel` makes (Cedar Park, the design's own p1), and the strip is
+  // then opened over it; the footnote is brought into frame the same way its AREA twin is, and
+  // for the same reason — the cards wrap to two rows and fill the strip's 40vh body, so a capture
+  // at `scrollTop: 0` would not contain the paragraph.
+  { name: 'browse-market-strip-location', steps: async (p) => {
+    await browse(p);
+    await p.getByText('Cedar Park').first().click();
+    await p.getByText('View full listing').first().waitFor({ state: 'visible' });
+    await click(p, 'Expand all six layers');
+    await p.getByText(STRIP_FOOTNOTE).first().waitFor({ state: 'visible' });
+    // The thing the state exists to SHOW, waited for before the settle (review M9): a bare
+    // timeout cannot tell "the card is in LOCATION mode" from "the selection no-opped on both
+    // targets", which is how a state goes on photographing the wrong screen in silence.
+    await p.getByText('LOCATION \u00b7', { exact: false }).first().waitFor({ state: 'visible' });
+    await stripFootnoteInFrame(p);
     await expect(p.getByText(STRIP_FOOTNOTE).first()).toBeInViewport({ ratio: 1 });
     await p.waitForTimeout(400);
   } },

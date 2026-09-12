@@ -819,7 +819,11 @@
 
           <template v-if="v.md?.stripOpen">
             <div class="rf-scroll" style="max-height: 40vh; overflow-y: auto; padding: 0 22px 16px;">
-              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); gap: 10px;">
+              <div style="font-family: var(--rf-display); font-size: 14.5px; font-weight: 800; color: var(--vf-navy);"><span v-if="__s(v.md?.stripMode) !== null" class="sc-interp">{{ __s(v.md?.stripMode) }}</span></div>
+              <template v-if="v.md?.hasStripModeSub">
+                <div style="font-size: 12.5px; color: var(--vf-text); margin-top: 2px;"><span v-if="__s(v.md?.stripModeSub) !== null" class="sc-interp">{{ __s(v.md?.stripModeSub) }}</span></div>
+              </template>
+              <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(232px, 1fr)); gap: 10px; margin-top: 9px;">
                 <template v-for="(c, $index) in __arr(v.md?.stripCards)" :key="$index">
                   <div :style="c?.cardStyle">
                     <div style="flex: none; height: 30px; font-size: 10px; font-weight: 800; letter-spacing: .1em; text-transform: uppercase; line-height: 1.4; color: var(--vf-accent);"><span v-if="__s(c?.title) !== null" class="sc-interp">{{ __s(c?.title) }}</span></div>
@@ -837,7 +841,7 @@
                   </div>
                 </template>
               </div>
-              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">Figures describe the area around each practice, not the practice itself. Pet-household counts and average practice payroll are derived estimates, not observed values. The map shades Census tracts, places, counties or ZIP Code Tabulation Areas, as each layer’s legend names; the snapshot’s figures describe the area around each practice. Population growth is measured for the surrounding city or county, not the tract.</p>
+              <p style="margin: 12px 0 0; font-size: 10.5px; line-height: 1.55; color: #767676; max-width: 96ch;">In AREA mode each card is the median across the metro’s Census tracts, places, counties or ZIP areas, as the card itself names; with a practice selected each card is that practice’s own community figure. Pet-household counts and average practice payroll are derived estimates, not observed values. Population growth is measured for the surrounding city or county, not the tract.</p>
             </div>
           </template>
 
