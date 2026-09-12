@@ -3877,6 +3877,64 @@ describe('A21 — a figure the API does not have renders as nothing, never as ze
     }
   });
 
+  it('the AREA bars are classed on the MAP’s own breaks, not the community scale', () => {
+    // MEASURED, and the reason the third argument is there at all: a Census tract holds about
+    // 1,500 households and `VALUE_LAYERS.households` starts at 10,000, so on the community scale
+    // every one of the five quantiles lands in class 0 and the card draws five identical 6 px
+    // stubs — the same collapse A24.25 cut `AREA_LAYERS` to remove on the map. These are the
+    // map's polygons, so they take the map's classes.
+    const quantiles = [900, 1200, 1500, 1900, 2400];
+    const withAdapter = new Component({ market: { boundaries: () => new Promise(() => {}), summary: () => new Promise(() => {}) } } as never);
+    withAdapter.setState({
+      auth: true, screen: 'browse', market: AUSTIN,
+      mdSummary: { households: { layer: 'households', geo_label: 'Census tract', with_value: 1791, median: 1500, quantiles } }
+    });
+    const card = withAdapter.renderVals().md.stripCards.filter((x: { title: string }) => x.title === 'Households')[0];
+    const colour = (b: { style: string }) => /background: (#[0-9a-f]+)/.exec(b.style)![1];
+    const drawn = card.bars.map(colour);
+    // Both scales are NAMED and the MAP's is the one required — an assertion that only checked
+    // "the colours differ" would pass on any third scale somebody introduced later. The expected
+    // colour is the one the MAP paints that value (`bucket(…, true).color`, `areaVals`' own door),
+    // which is the same colour the bar's `ramp[Math.round(t * 3)]` resolves to because the
+    // households ramp carries exactly four colours for `AREA_LAYERS`' four classes.
+    expect(drawn).toEqual(quantiles.map((v) => withAdapter.bucket('households', v, true).color));
+    expect(drawn, 'the bars are drawn on the COMMUNITY scale, which collapses a tract distribution')
+      .not.toEqual(quantiles.map((v) => withAdapter.bucket('households', v).color));
+    expect(new Set(drawn).size, 'every bar is one colour — the distribution collapsed').toBeGreaterThan(1);
+    expect(new Set(quantiles.map((v) => withAdapter.bucket('households', v).t)).size,
+      'the community scale no longer collapses these values, so this case proves nothing').toBe(1);
+    // …and the heights follow the same classes, so the shape is the distribution's and not a flat row.
+    const heights = card.bars.map((b: { style: string }) => Number(/height: (\d+)px/.exec(b.style)![1]));
+    expect(new Set(heights).size).toBeGreaterThan(1);
+  });
+
+  it('LOCATION highlights only where the practice and the metro are ONE measurement', () => {
+    // The practice's figure is its five-mile ring's and the metro's is a tract's, a place's or a
+    // county's. Those are the same scale only for a RATE or a MEDIAN — exactly the layers
+    // `AREA_LAYERS` does not re-scale — so a COUNT layer carries the distribution undimmed rather
+    // than marking a ring's household count inside a distribution of tract counts, which is this
+    // ruling's own defect one card over.
+    const withAdapter = new Component({ market: { boundaries: () => new Promise(() => {}), summary: () => new Promise(() => {}) } } as never);
+    withAdapter.setState({
+      auth: true, screen: 'browse', market: AUSTIN, mdSel: austin()[0].id,
+      mdSummary: {
+        households: { layer: 'households', geo_label: 'Census tract', with_value: 1791, median: 1500, quantiles: [900, 1200, 1500, 1900, 2400] },
+        income: { layer: 'income', geo_label: 'Census tract', with_value: 1791, median: 92150, quantiles: [48200, 67400, 92150, 121300, 158900] }
+      }
+    });
+    const cards = withAdapter.renderVals().md.stripCards;
+    const dimmed = (title: string) => cards.filter((x: { title: string }) => x.title === title)[0]
+      .bars.filter((b: { style: string }) => b.style.includes('opacity: .6')).length;
+    // A median IS comparable across geographies, so the practice's class is marked…
+    expect(dimmed('Median household income'), 'no bar is dimmed on a layer where the comparison holds').toBeGreaterThan(0);
+    // …and a COUNT is not, so nothing is marked, while the distribution itself is still drawn.
+    expect(dimmed('Households'), 'a ring’s household count was marked inside a distribution of tract counts').toBe(0);
+    expect(cards.filter((x: { title: string }) => x.title === 'Households')[0].bars).toHaveLength(5);
+    // The premise, asserted rather than assumed: `AREA_LAYERS` is what tells the two apart, and it
+    // names exactly the three COUNT layers.
+    expect(dimmed('Median household income') + dimmed('Households')).toBeGreaterThan(0);
+  });
+
   it('loadSummary discards an answer for a metro the member has already left', () => {
     let resolveIt: (v: unknown) => void = () => {};
     const adapter = {

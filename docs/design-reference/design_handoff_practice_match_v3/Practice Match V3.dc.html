@@ -2853,11 +2853,24 @@ class Component extends DCLogic {
           // The selected practice's own figure, through the design's own two field aliases.
           const own = (sel && selComm) ? (k === "households" ? selComm.hh : k === "competition" ? selComm.vets : selComm[k]) : undefined;
           const shown = sel ? (own != null ? num(own) : undefined) : ((sum && sum.median != null) ? num(sum.median) : undefined);
-          // The metro's shape, as five bars. In LOCATION mode the class the practice's own
-          // figure falls in keeps its colour and the rest take the caret's own .6, so the
-          // card says WHERE in the metro the practice sits rather than repeating its number.
-          const dist = ((sum && sum.quantiles) || []).filter((q) => q != null).map((q) => this.bucket(k, num(q)).t);
-          const here = (sel && own != null) ? Math.min(3, Math.round(this.bucket(k, num(own)).t * 3)) : null;
+          // The metro's shape, as five bars, classed on the MAP's OWN breaks - `bucket`'s
+          // third argument, which is what the choropleth asks for (A24.25). These are the
+          // map's polygons, so they take the map's classes: the strip and the legend then
+          // agree about what colour a tract's figure is. Measured, not preferred - a Census
+          // tract holds about 1,500 households and the community breaks start at 10,000, so
+          // the community scale puts ALL FIVE quantiles in one class and draws five identical
+          // 6 px stubs, which is the same collapse A24.25 was cut to remove on the map.
+          const cls = (v) => Math.min(3, Math.round(this.bucket(k, num(v), true).t * 3));
+          const dist = ((sum && sum.quantiles) || []).filter((q) => q != null).map((q) => this.bucket(k, num(q), true).t);
+          // …and in LOCATION mode the class the practice's own figure falls in keeps its
+          // colour while the rest take the caret's own .6, so the card says WHERE in the
+          // metro the practice sits rather than repeating its number. ONLY where the two are
+          // one measurement: the practice's figure is its five-mile ring's and the metro's is
+          // a tract's, a place's or a county's, and those are the same scale only for a RATE
+          // or a MEDIAN - exactly the layers `AREA_LAYERS` does not re-scale. Marking a ring's
+          // household COUNT inside a distribution of tract counts would be this ruling's own
+          // defect, one card over, so the three count layers carry the distribution undimmed.
+          const here = (sel && own != null && !AREA_LAYERS[k]) ? cls(own) : null;
           return {
             title: meta.title,
             value: (shown !== undefined) ? this.fmtMetric(k, shown) : undefined,
