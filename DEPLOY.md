@@ -514,6 +514,62 @@ nothing will consume is worse than not queueing it. A listing published through 
 goes through this geocoding pipeline; seeded listings created via direct INSERT do not, which is why
 the manual step is needed after seeding.
 
+**What the automatic trigger covers, and what it does not (Task GEO-WIRE).** Publishing a listing
+— the reviewer's `POST /api/admin/listings/{id}/decide` with `action: "publish"`, or the seller's
+own `republish` — enqueues `census.geocode_listing` by name, after the transaction commits, when
+the listing has no `practice_location` row. That enqueue is **deduped on the listing id for 600
+seconds**, because the row it checks for is written by the worker: without the dedupe, every
+publish inside the window between the enqueue and that write queued the same listing again. So a
+second publish a minute after the first enqueues nothing. Read that two ways, not one: usually it
+means the first enqueue is still in flight and there is nothing to do, but if the listing **still
+has no pin after ten minutes** the first task failed and the dedupe is now the only reason a
+re-publish does not retry — **re-run `census_load.py geocode`** (the plain form, with no flags: it
+selects exactly the listings that have no `practice_location` row, so it retries the failures and
+touches nothing else), and read the worker log for the reason it failed the first time.
+
+There is a second signature, with a different command behind it: **pin present but no card** — the
+listing has a location and `lat`/`lng` on Browse, but its Community Context reads "Community data
+unavailable" and `GET /api/listings/{id}/market` 404s. That is a geocode that succeeded and a
+BACKFILL that did not, and `census_load.py geocode` will not retry it, because that listing is not
+pinless any more. Run **`census_load.py materialize --listing <id>`** (and, if
+`practice_catchment` is empty for it too, the plain `census_load.py materialize`, which rebuilds
+every geocoded listing). A listing whose ZIP centroid lies in no place at all is NOT this case: it
+is the unincorporated one described above, it is correct, and materialising it again will not
+change it.
+
+The one thing that re-arms the trigger early is an address edit: when a seller **changes the city or the ZIP** at
+step 2 of the wizard, the listing's `practice_location` row is deleted in the same transaction and
+the dedupe key is dropped, so the very next publish resolves the new address. Everything else
+about the listing — a new price, a new photograph, a disclosure switch — leaves the geography
+alone, because the practice has not moved.
+
+**What a seller's own listing is served, and why the demo hospitals are not.** The wizard collects
+a city and a ZIP and no street, so the Census geocoder cannot match an address and the fallback
+ladder resolves at `zcta` — a ZIP-code centroid, which in a large ZIP is miles from the practice.
+A listing like that is served its Census place rather than the ring for its Community Context
+figures (the controller's ruling, GEO-WIRE fix round 1), so its card shows a city figure and no
+"Within about 5 miles of the practice" heading — **its city where the ZIP centroid lies in one;
+otherwise the county carries growth and payroll and the area figures are unavailable** and the card
+reads "Community data unavailable". That second case is unincorporated territory, and it is
+correct rather than broken: `SELECT l.slug, pl.geo_precision, pl.place_geoid FROM listing l JOIN
+practice_location pl ON pl.listing_id = l.id WHERE pl.place_geoid IS NULL;` is the list of listings
+in it. By contrast all twenty-nine demo hospitals carry a street and resolve at `rooftop`, so their
+cards keep the catchment ring they have today and nothing about them changes.
+`SELECT geo_precision, count(*) FROM practice_location GROUP BY 1;` is how to see which listings on
+an environment are in which case.
+
+The geocode writes **both** point columns from one resolved coordinate: `practice_location.point`,
+which every market figure is computed against, and `listing.geom`, which is the pin
+`GET /api/listings` serves as `lat`/`lng` (still blanked for a listing whose seller has not
+disclosed its location). `scripts/seed_listings.py` still writes the seeds' own points on every
+import, and re-asserts them on the UPDATE half, so a re-seed restores a curated pin; the two
+writers write the same column in the same SRID. Nothing above changes the demo hospitals: they
+already carry a `practice_location` row, so the plain `census_load.py geocode` skips them. TWO
+flags re-resolve a row that already has a location, and both will replace a curated seed pin with
+the Census geocoder's own match: `--force` does it to every listing, and `--listing <id>`
+re-resolves the listing it names whether or not it already has one. Neither is needed to pick up
+anything in this release.
+
 The vintage string must match what was ingested exactly, en dash included. `bds` and `qwi` have no
 `activate` step in this sequence — `qwi`'s vintage is `<year>Q<quarter>` and `bds`'s is the year;
 activate them only if the controller wants them pinned. Finally, `GET /api/admin/data-sources` on

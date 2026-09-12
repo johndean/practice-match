@@ -266,6 +266,26 @@ def _scope_names(conn: Any, listing_ids: list[str], geo_vintage: str | None) -> 
     return names
 
 
+_PRECISION_SQL = """
+    SELECT listing_id, geo_precision FROM practice_location WHERE listing_id = ANY(%s::uuid[])
+"""
+
+
+def _precisions(conn: Any, listing_ids: list[str]) -> dict[str, str]:
+    """Each listing's `geo_precision`, keyed by id — ONE batched query for the whole page, the
+    same discipline `_scope_names` follows and for the same reason.
+
+    A listing with no `practice_location` row is ABSENT from this map rather than present with a
+    null: "we have not resolved this point" and "we resolved it to a ZIP-code centroid" are
+    different facts, and only the second one is allowed to move a figure (see `community_rows`)."""
+    precisions: dict[str, str] = {}
+    with conn.cursor() as cur:
+        cur.execute(_PRECISION_SQL, (listing_ids,))
+        for lid, precision in cur.fetchall():
+            precisions[str(lid)] = precision
+    return precisions
+
+
 def community_rows(
     conn: Any,
     listing_ids: list[str],
@@ -273,7 +293,9 @@ def community_rows(
     active: dict[str, str],
     registry: dict[str, dict[str, Any]],
 ) -> dict[str, CommunityRow]:
-    """Two batched queries for a whole page — never one per row, whatever the page holds.
+    """Three batched queries for a whole page — never one per row, whatever the page holds: the
+    `market_metric` rows, `_scope_names` for the Growth tile's geography and `_precisions` for the
+    decision below about which band the area group comes from.
 
     D-C38 (2026-09-11) — PER-FIGURE GEOGRAPHY. Each figure is served at its own honest geography
     and the row names it. This supersedes D-C32's whole-row rule ("built from the `place` band
@@ -349,6 +371,7 @@ def community_rows(
     result: dict[str, CommunityRow] = {}
     acs5_prior_vintage = active.get("acs5_prior")
     names = _scope_names(conn, listing_ids, active.get("tiger_cb"))
+    precisions = _precisions(conn, listing_ids)
 
     for lid in listing_ids:
         place_metrics = metrics_by_listing_band.get((lid, "place"), {})
@@ -356,11 +379,33 @@ def community_rows(
         place = _figures(place_metrics, reg, acs5_prior_vintage)
         drive = _figures(drive_metrics, reg, acs5_prior_vintage)
 
+        # Controller ruling, GEO-WIRE fix round 1: THE RING IS ONLY OFFERED WHEN THE POINT IS THE
+        # PRACTICE. `practice_catchment` is an 8 km buffer around `practice_location.point`, and
+        # `BAND_LABEL` tells the buyer it is "Within about 5 miles of the practice" — true of a
+        # rooftop match and of nothing else. The seller wizard collects a city and a ZIP and no
+        # street (`STEP_FIELDS[2]`; adding one is out of scope, spec Q2), so the §11 ladder
+        # resolves a real seller's listing at `zcta`: a ZIP-code centroid, miles from the practice
+        # in a large ZIP. Wiring the geocode made that the ORDINARY case, so the ring would have
+        # been drawn around a place the practice is not and captioned as though it were —
+        # D-C39's class of false sentence arriving by another door.
+        #
+        # Such a listing is served the PLACE band instead: its own Census place, which the design
+        # already renders with no `community_label` and its own sub-lines, so nothing new is said
+        # anywhere. A true city figure at the precision we hold beats a ring described as the
+        # practice. All twenty-nine QA demo hospitals carry a street and resolve at rooftop, so
+        # none of them moves.
+        #
+        # `not in (None, "rooftop")`, never `!= "rooftop"`: a listing with NO `practice_location`
+        # row is absent from `precisions` and keeps the behaviour it has always had. The rule has
+        # to KNOW the point is approximate; "never geocoded" says nothing about where it is, and
+        # every design fixture and every oracle reaches this line that way.
+        approximate = precisions.get(lid) not in (None, "rooftop")
+
         # The area group, at the finest geography that actually has it. Decided on FIGURES, never
         # on row presence (B-2, and still true): a place band that yields nothing — no rows, all
         # suppressed, or an uncleared dataset — is indistinguishable from no place at all to the
         # buyer, and the catchment can describe the market where the place cannot.
-        from_catchment = any(drive[k] is not None for k in _AREA_KEYS)
+        from_catchment = not approximate and any(drive[k] is not None for k in _AREA_KEYS)
         area = drive if from_catchment else place
         area_metrics = drive_metrics if from_catchment else place_metrics
 

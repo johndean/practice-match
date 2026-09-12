@@ -693,3 +693,66 @@ async def test_publish_does_not_enqueue_geocode_when_practice_location_exists(
 
     # Check that geocode_listing was NOT enqueued
     assert ("census.geocode_listing", [str(listing_id)]) not in enqueued
+
+
+# --- Task GEO-WIRE: the publish trigger is deduped, and an address edit re-arms it ---------------
+def _capture_tasks(monkeypatch: Any) -> list[tuple[str, Any]]:
+    """Every `celery_app.send_task` call, as `(name, args)`. The task is enqueued BY NAME
+    (spec §10: the request path never imports a Census write), so the name is the whole contract
+    and capturing the call is the whole assertion."""
+    sent: list[tuple[str, Any]] = []
+    from app.tasks.celery_app import celery_app
+    monkeypatch.setattr(celery_app, "send_task", lambda name, args=None, **kw: sent.append((name, args)))
+    return sent
+
+
+async def test_a_second_publish_inside_the_dedupe_window_enqueues_nothing(
+    client: Any, conn: Any, member: Any, monkeypatch: Any
+) -> None:
+    """GEO-WIRE (1). The `practice_location` check alone cannot dedupe: the row does not exist
+    until the WORKER writes it, so publish -> unpublish -> publish inside that window enqueued the
+    same listing twice. `app/api/market.py`'s `BACKFILL_DEDUPE_TTL` pattern, keyed on the listing
+    id, is what closes it — the same shape, for the same reason, one task earlier in the chain."""
+    listing_id, _signed = await _submitted(client, member)
+    _account, cookies, headers = member(roles=("admin",), email="al-admin@example.org")
+    admin = auth_headers(cookies, headers)
+    sent = _capture_tasks(monkeypatch)
+
+    publish = {"action": "publish", "state": "TX", "market": "Austin, TX"}
+    assert (await client.post(f"/api/admin/listings/{listing_id}/decide", json=publish, headers=admin)).status_code == 200
+    assert sent == [("census.geocode_listing", [str(listing_id)])]
+
+    assert (await client.post(f"/api/admin/listings/{listing_id}/decide", json={"action": "unpublish"},
+                              headers=admin)).status_code == 200
+    assert (await client.post(f"/api/admin/listings/{listing_id}/decide", json=publish, headers=admin)).status_code == 200
+    assert sent == [("census.geocode_listing", [str(listing_id)])], "the second publish must not re-enqueue"
+
+
+async def test_a_publish_after_an_address_edit_re_enqueues_inside_the_same_window(
+    client: Any, conn: Any, member: Any, monkeypatch: Any
+) -> None:
+    """GEO-WIRE (2). A seller who corrects the city or the ZIP has changed the only address the
+    geocoder ever sees, so the row it wrote describes somewhere the practice is not. The edit drops
+    that row and the dedupe key with it, so the very next publish geocodes again — inside the
+    window the previous publish opened, which is exactly when a correction arrives."""
+    listing_id, signed = await _submitted(client, member)
+    _account, cookies, headers = member(roles=("admin",), email="al-admin@example.org")
+    admin = auth_headers(cookies, headers)
+    sent = _capture_tasks(monkeypatch)
+
+    publish = {"action": "publish", "state": "TX", "market": "Austin, TX"}
+    assert (await client.post(f"/api/admin/listings/{listing_id}/decide", json=publish, headers=admin)).status_code == 200
+    # The worker's own write, which is what stops a re-publish geocoding a second time.
+    with conn.cursor() as cur:
+        cur.execute("INSERT INTO practice_location (listing_id, address_hash, geo_precision, geocoder_vintage, geocoded_at)"
+                    " VALUES (%s, 'h', 'zcta', 'Current_Current', now())", (listing_id,))
+
+    # The seller corrects the ZIP: the listing re-enters review (D3) and its location goes with it.
+    assert (await client.patch(f"/api/seller/listings/{listing_id}?step=2",
+                               json={"city": "Round Rock", "zip": "78664"}, headers=signed)).status_code == 200
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM practice_location WHERE listing_id=%s", (listing_id,))
+        assert cur.fetchone()[0] == 0, "a changed address must not keep the geography it resolved to"
+
+    assert (await client.post(f"/api/admin/listings/{listing_id}/decide", json=publish, headers=admin)).status_code == 200
+    assert sent == [("census.geocode_listing", [str(listing_id)])] * 2

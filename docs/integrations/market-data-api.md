@@ -499,7 +499,7 @@ The rule now, figure by figure:
 
 | Figure | Geography served | Why |
 |---|---|---|
-| `pop`, `hh`, `income`, `vets` | the catchment band, with `place` as the fallback | These vary by band, and the catchment is the finer reading. They move as **one group**: one `community_label` describes all of them, so a group drawn half from the ring and half from the city would put a city figure under a ring caption — the defect being fixed. A figure the chosen band does not have is `null`; it is never backfilled from the other band. |
+| `pop`, `hh`, `income`, `vets` | the catchment band **only when `geo_precision` is `"rooftop"`**, otherwise `place` | These vary by band, and the catchment is the finer reading — *when the point it is drawn around is the practice*. They move as **one group**: one `community_label` describes all of them, so a group drawn half from the ring and half from the city would put a city figure under a ring caption — the defect being fixed. A figure the chosen band does not have is `null`; it is never backfilled from the other band. See "When the ring is offered at all" below. |
 | `growth` | `place`, or `county` where the listing has no place | `population_growth_pct` **cannot vary by band at all.** `app/census/materialize.py` computes it once per listing, outside the band loop, and writes that one value into all three bands (plan D12). Its resolution below place-or-county waits on the 2010→2020 tract crosswalk, a registered Phase C deferral. |
 | `econ` (`econ_k`) | `county`, always | `materialize.py` always writes the county CBP row, identically in all three bands. |
 
@@ -517,6 +517,33 @@ the data does not support.
 | `community_label` | `"Within about 5 miles of the practice"` | The area figures came from the catchment band. The frontend MUST render this label wherever it names the area — a buyer is never shown a catchment disguised as a named city. |
 | `growth_scope` | e.g. `"Dallas"`, `"Orange County"` | The geography the GROWTH figure was measured at, which `community_label` does not describe. The frontend renders it on the Growth tile's own sub-line, so the figure stops implying it describes the ring beside it. `null` where the geography has no name to give. |
 | `income_note` | e.g. `"Within about 5 miles of the practice · approximate"`, or `"Approximate"` | Replaces the median-income tile's sub-line when that median is an approximation — a catchment median is a household-weighted median of the tract medians inside the ring rather than a published Census figure, and can never be suppressed. The guard is the SERVED ROW's own `is_derived`, never the band the area group came from, so an approximate PLACE median carries the qualifier too; with no `community_label` there is no area to name and the note is the bare word `"Approximate"`. `null` for a published median, and the design's own sub-line then stands. Known limit, ruled and accepted: because the tile has ONE sub-line, a note replaces the vintage rather than joining it — a tile carrying a note does not show its year. |
+
+**When the ring is offered at all (controller ruling, GEO-WIRE fix round 1).** `practice_catchment`
+is an 8 km buffer around `practice_location.point`, and `community_label` tells the buyer it is
+"Within about 5 miles of the practice". That sentence is true of a rooftop match and of nothing
+else. The seller wizard collects a city and a ZIP and no street, so the §11 fallback ladder
+resolves a real seller's listing at `zcta` — **a ZIP-code centroid**, which in a large ZIP is miles
+from the practice. Wiring the geocode onto publish (Task GEO-WIRE) made that the ordinary case
+rather than a rarity.
+
+So the area group is **served the `place` band** — the listing's own Census place — whenever
+`geo_precision` is anything but `"rooftop"`. That is the path the design already renders: **no
+`community_label`**, the design's own sub-lines, `growth_scope` and `income_note` exactly as they
+behave for a place band today. **No new string is introduced anywhere.** A rooftop listing is
+unchanged, and **a listing with no `practice_location` row is unaffected** — the rule has to KNOW
+the point is approximate, and "never geocoded" says nothing about where it is. All twenty-nine QA
+demo hospitals carry a street and resolve at rooftop, so none of them moves.
+
+**What "its place" means, exactly, and when there is not one.** The §11 ladder fills every
+geography the point it resolved can be joined to, so a ZCTA-precision listing carries the place its
+ZIP centroid lies inside. So the rule reads: such a listing is served **its city where the ZIP
+centroid lies in one; otherwise `place_geoid` is `null`, the county carries growth and payroll and
+the area figures are unavailable** — `pop`, `hh`, `income` and `vets` are all `null` and the
+frontend reaches the design's own "Community data unavailable" card, exactly as it does for a
+listing with no figures at all. That is the unincorporated case (D-C32's Orlando condition, one
+rung lower), and it is a real state, not a defect: the alternative is reaching for a place whose
+boundary does not contain the practice, which is the class of false statement this whole rule
+exists to remove.
 
 **The ring is described by DISTANCE, not by time** (D-C39). The band is an 8 km straight-line
 buffer from the practice point (spec §8: "straight-line buffers of 8 km (≈10 min) and 16 km
@@ -549,6 +576,59 @@ RARER; it does not make it unreachable. **A figure the database does not have is
 payload — never `0`, never `""`** (D-C31: a missing figure is omitted, never zeroed), because
 `null` is the only value the frontend's own guards read as absence.
 
+## When a listing gets its geography (the per-listing lifecycle, Task GEO-WIRE)
+
+Every endpoint above answers out of `practice_location` and `market_metric`, and both are written
+by the per-listing chain — `census.geocode_listing` → `census.backfill_listing` → `market_metric`.
+Phase B built that chain; Task B9 put the publish trigger on it, and Task GEO-WIRE closed what
+that left: the enqueue had no dedupe, an address change did not invalidate a resolved geography,
+and the geocode did not write the pin at all — so a seller's published listing reached Browse with
+no pin however well it geocoded. This is the whole of what triggers it, and what invalidates it.
+
+| Event | Route | What happens |
+|---|---|---|
+| A reviewer publishes a listing | `POST /api/admin/listings/{listing_id}/decide` (`action: "publish"`) | If the listing has no `practice_location` row, `census.geocode_listing` is enqueued **by name** after the transaction commits |
+| A seller puts a paused listing back on the market | `POST /api/seller/listings/{listing_id}/status` (`action: "republish"`) | The same, on the same condition |
+| A seller changes the address | `PATCH /api/seller/listings/{listing_id}?step=2` | **a changed `city` or `zip`** deletes the listing's `practice_location` row in the same transaction and forgets the dedupe below, so the next publish resolves the new address |
+
+The enqueue is **deduped on the listing id for 600 seconds** (`app/api/market.py`'s own
+`BACKFILL_DEDUPE_TTL` shape). `practice_location` alone cannot dedupe it: that row is written by
+the WORKER, so every publish inside the window between the enqueue and the write saw no row.
+An address edit is the one event that re-opens the window early, for the obvious reason — a
+correction arrives immediately after the publish that revealed the mistake.
+
+The request path **never imports a Census write** (spec §10): the task is asked for by name
+through `celery_app.send_task`, exactly as `app/tasks/census.py` asks for the backfill.
+
+`census.geocode_listing` writes **both** point columns from the one resolved coordinate:
+`practice_location.point` (NAD83, the geography every figure above is computed against) and
+`listing.geom` (WGS84, the pin `GET /api/listings` serves as `lat`/`lng`, still blanked for a
+listing whose seller has not disclosed its location). Before this, `listing.geom` was written by
+`scripts/seed_listings.py` alone.
+
+**The twenty-nine demo hospitals are unaffected and still take the operator path.**
+`scripts/census_load.py geocode` resolves every listing that has no `practice_location` row;
+`--force` re-resolves one that has, and `--listing <id>` re-resolves the listing it names whether
+or not it already has a location — **both** are doors to a re-resolve, and a re-resolve of a seed
+replaces its curated pin with the Census geocoder's own match. `DEPLOY.md` carries the runbook.
+Nothing above changes that command or the rows it has already written.
+
+**What precision a seller's address can reach, and why it is now on every listing payload.** The
+approved wizard's step 2 collects a city and a ZIP and nothing else — **the wizard collects a city
+and a ZIP and no street**, and inventing a field is out of scope (spec Q2, D12) — so the Census
+geocoder cannot match a street address and the §11 ladder resolves the listing at `zcta`: a
+ZIP-code centroid, not the practice. `GET /api/listings` and `GET /api/listings/{id}` therefore
+carry **`geo_precision`** (`"rooftop" | "tract" | "zcta" | "place" | "county"`, or `null` for a
+listing that has never been geocoded) beside the community fields, the same value
+`GET /api/markets/{cbsa}/communities` and `GET /api/listings/{listing_id}/market` have carried
+since Task B5. The copy rule below — `geo_precision != "rooftop"` → "approximate community data" —
+has always applied to it; until now the listing payload gave the card no way to honour it. It is
+NOT gated on `location_disclosed`: it says how well the point is known, never where it is.
+
+Such a listing is ALSO served the `place` band for its area figures rather than the catchment ring
+— "When the ring is offered at all" above — so the figures on its card describe a real Census
+place, and `community_label` is `null`.
+
 ## Copy rules (spec §8/§12/§14) the frontend must honour when wiring this up
 
 * Every figure shown carries its dataset and vintage — `attribution[]` at the response level,
@@ -559,7 +639,10 @@ payload — never `0`, never `""`** (D-C31: a missing figure is omitted, never z
   sub-line and it has to carry the area and the qualifier together.
 * `suppressed: true` → render "Estimate too imprecise to show at this geography", never a blank or
   a zero.
-* `geo_precision != "rooftop"` → render "approximate community data" near the map pin.
+* `geo_precision != "rooftop"` → render "approximate community data" near the map pin. Note that
+  such a listing is also served the `place` band for its area figures rather than the ring (see
+  "When the ring is offered at all" above), so the caption near the pin is the only place the
+  approximation is stated — the figures themselves are a real Census geography, not an estimate.
 * On the map, `value: null` with `suppressed: false` is the no-data class with "No data for this
   area"; `suppressed: true` is the same class with the suppression wording above; `band_ambiguous`
   `true` renders the value plus "this margin spans two legend bands" — never grey, because greying

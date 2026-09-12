@@ -45,6 +45,7 @@ from datetime import UTC, datetime
 import httpx
 import psycopg2
 import psycopg2.extensions
+import redis as redis_sync
 
 from app.census import acs, bds, cbp, geocode, ingest, license, qwi, tiger, zbp
 from app.census.client import CensusClient, missing_archive_settings, require_archive, require_contact, require_key
@@ -346,6 +347,33 @@ def geocode_listing(listing_id: str) -> dict[str, object]:
             gc = geocode.Geocoder(http, "https://geocoding.geo.census.gov/geocoder", ua)
             loc = geocode.resolve(conn, gc, listing_id)
         celery_app.send_task("census.backfill_listing", args=[listing_id])
+        # AFTER the enqueue, and last (fix round 2). `GET /api/listings` caches a page for 60 s
+        # and the PUBLISH that queued this task dropped that cache before the point existed, so a
+        # buyer who loaded Browse in between would be served a pinless card for the rest of the
+        # TTL; this drops it again now the pin is real. It is LAST because the ordering is what
+        # bounds its failure: `resolve` has committed both point columns and the backfill is
+        # queued, so a Redis blip here costs one stale page and nothing else. With the drop
+        # BEFORE the `send_task` (fix round 1, inside `resolve`) the same blip left a committed
+        # pin, no backfill, no retry, and a republish that would not re-trigger because
+        # `has_geocode()` is already true.
+        #
+        # Logged and SWALLOWED on a Redis failure (fix round 4). The ordering above already meant
+        # a blip here could not cost the listing its backfill; what it still did was replace the
+        # task's OUTCOME with an exception — the geocode succeeded, both point columns are
+        # committed and the backfill is queued, and Celery would have recorded the task FAILED and
+        # retried a whole Census round trip to redo work that was already done. A cache drop is
+        # not this task's job, and the cache's own 60 s TTL is the backstop.
+        #
+        # `redis.RedisError` specifically, and only the exception's TYPE in the message — never
+        # its text, which can carry a host and port. Both are `app/api/admin_data_sources.py`'s
+        # shape for a gate invalidation that fails after its decision has committed, for exactly
+        # the same reason; a `TypeError` out of our own code is a defect and still surfaces.
+        from app.cache import drop_list_cache, sync_redis
+        try:
+            drop_list_cache(sync_redis())
+        except redis_sync.RedisError as exc:
+            log.warning("[census] geocoded %s but the Browse list cache was not dropped: %s;"
+                        " it expires on its own within 60 s", listing_id, type(exc).__name__)
         return {"listing_id": listing_id, "precision": loc.geo_precision}
     finally:
         conn.close()

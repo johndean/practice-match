@@ -551,7 +551,9 @@ def cmd_geocode(args: argparse.Namespace) -> int:
     figures. Never touches the Census API (no key/contact gate, like `activate` and `materialize`),
     so it shares only the DATABASE_URL/unreachable/post-connect-database-error arms; it DOES need
     Redis, like `materialize`."""
-    from app.cache import sync_redis
+    import redis as redis_sync
+
+    from app.cache import drop_list_cache, sync_redis
     from app.census import catchment, geocode, materialize
 
     dsn = os.environ.get("DATABASE_URL")
@@ -606,30 +608,64 @@ def cmd_geocode(args: argparse.Namespace) -> int:
             geocoded_count = 0
             import httpx
             ua = f"PracticeMatch/{__import__('app.version', fromlist=['VERSION']).VERSION} (census-operator)"
-            with httpx.Client(headers={"User-Agent": ua}) as http:
-                gc = geocode.Geocoder(http, "https://geocoding.geo.census.gov/geocoder", ua)
-                for (listing_id,) in rows:
-                    try:
-                        loc = geocode.resolve(conn, gc, listing_id)
-                        # Determine rung
-                        # The ladder's rung IS the precision the resolver recorded; an if/elif
-                        # chain that re-states each name would be an identity function with five
-                        # branches nothing can distinguish (controller, B9 round 5).
-                        rung = loc.geo_precision
-                        # Check if geocode_review was written (below rooftop)
-                        with conn.cursor() as cur:
-                            cur.execute("SELECT 1 FROM geocode_review WHERE listing_id = %s", (listing_id,))
-                            has_review = cur.fetchone() is not None
-                        review_str = "review row written" if has_review else "no review needed"
-                        print(f"  {listing_id}: {rung} ({review_str})")
-                        geocoded_count += 1
-                        # Build catchment and materialize
-                        geo_vintage = materialize.active_geo_vintage(conn)
-                        catchment.build(conn, listing_id, geo_vintage)
-                        materialize.materialize_listing(conn, redis, listing_id)
-                    except geocode.GeocodeFailed as exc:
-                        print(f"  {listing_id}: geocoding failed: {exc}", file=sys.stderr)
-                        return 5
+            try:
+                with httpx.Client(headers={"User-Agent": ua}) as http:
+                    gc = geocode.Geocoder(http, "https://geocoding.geo.census.gov/geocoder", ua)
+                    for (listing_id,) in rows:
+                        try:
+                            loc = geocode.resolve(conn, gc, listing_id)
+                            # Determine rung
+                            # The ladder's rung IS the precision the resolver recorded; an if/elif
+                            # chain that re-states each name would be an identity function with five
+                            # branches nothing can distinguish (controller, B9 round 5).
+                            rung = loc.geo_precision
+                            # Check if geocode_review was written (below rooftop)
+                            with conn.cursor() as cur:
+                                cur.execute("SELECT 1 FROM geocode_review WHERE listing_id = %s", (listing_id,))
+                                has_review = cur.fetchone() is not None
+                            review_str = "review row written" if has_review else "no review needed"
+                            print(f"  {listing_id}: {rung} ({review_str})")
+                            geocoded_count += 1
+                            # Build catchment and materialize
+                            geo_vintage = materialize.active_geo_vintage(conn)
+                            catchment.build(conn, listing_id, geo_vintage)
+                            materialize.materialize_listing(conn, redis, listing_id)
+                        except geocode.GeocodeFailed as exc:
+                            print(f"  {listing_id}: geocoding failed: {exc}", file=sys.stderr)
+                            return 5
+            finally:
+                # In a `finally`, so the drop happens on EVERY exit from the batch (fix round 3,
+                # minor 1). The `return 5` above leaves the loop from inside it, so a batch where
+                # listing N geocodes and N+1 fails used to exit with N's pin committed and the
+                # Browse list cache never dropped — a buyer looking at a pinless card for the rest
+                # of its 60 s TTL, for work that succeeded. Round 1 had no such window because
+                # `resolve()` dropped the cache per success; moving the drop to the caller (round
+                # 2, so a Redis blip could not cost a listing its backfill) opened it, and this
+                # closes it without giving the batch back a per-listing flush.
+                #
+                # UNCONDITIONAL here, and fix round 2's `if geocoded_count:` guard is gone with
+                # the move. That guard's whole purpose — "an idempotent re-run stays a read" — is
+                # already served by the `if not rows:` branch above, which never reaches this
+                # block: arriving here means the batch HAD listings to geocode. The only case the
+                # guard could still have distinguished is a batch that failed on its very first
+                # listing, where the drop is one SCAN over a handful of keys that deletes nothing,
+                # and the guard was also unreachable in one direction (a batch cannot enter this
+                # loop, geocode nothing and exit normally), which is a branch no test could ever
+                # cover. Once per batch, not once per listing, either way.
+                #
+                # And REPORTED-then-swallowed on a Redis failure (fix round 4). A `finally` runs
+                # on every exit, which is what makes it able to REPLACE one: a `RedisError` here
+                # turns a clean `return 0` — or, worse, the `return 5` that tells the operator
+                # WHICH listing failed to geocode — into a traceback about Redis, the wrong
+                # problem with the real one lost, on a command whose work has already committed.
+                # The cache drop is the least important thing this command does. Its type goes to
+                # stderr (this script's own warning channel; it has no logger) and never its text,
+                # which can carry a host and port, and the cache's 60 s TTL is the backstop.
+                try:
+                    drop_list_cache(redis)
+                except redis_sync.RedisError as exc:
+                    print(f"[census_load] warning: the Browse list cache was not dropped:"
+                          f" {type(exc).__name__}; it expires on its own within 60 s", file=sys.stderr)
 
         print(f"[census_load] {geocoded_count} listing(s) geocoded")
         return 0

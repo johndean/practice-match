@@ -2511,3 +2511,40 @@ def test_seeding_section_pins_the_geocode_requirement():
         "seeding section must mention geocoding — "
         "the pointer to the manual step is only meaningful if it says why it's needed"
     )
+
+
+def test_deploy_md_says_what_the_publish_trigger_does_and_does_not_cover():
+    """Task GEO-WIRE. The operator page already said a listing published through the API is
+    geocoded automatically and a seeded one is not. What it could not say, because none of it
+    existed, is what re-triggers a geocode, what suppresses one, and that the geocode now writes
+    the pin `GET /api/listings` serves — which is the difference between "re-run the command" and
+    "wait ten minutes" when a seller reports a listing in the wrong place."""
+    text = (ROOT / "DEPLOY.md").read_text()
+    flat = re.sub(r"\s+", " ", text)
+    # The dedupe, named with its own window, so an operator watching the queue knows why a second
+    # publish inside it enqueued nothing.
+    assert "deduped on the listing id for 600 seconds" in flat
+    # The one event that re-arms it.
+    assert "changes the city or the ZIP" in flat
+    # The second column the geocode now writes, and the one it does not replace.
+    assert "`listing.geom`" in text
+    assert "`scripts/seed_listings.py` still writes the seeds' own points" in flat
+    # Controller ruling, fix round 1: what a seller's own listing is served, and why the demo
+    # hospitals are not affected by it — the operator needs both to read a QA card correctly.
+    assert "resolves at `zcta` — a ZIP-code centroid" in flat
+    assert "served its Census place rather than the ring" in flat
+    # Fix round 2: and the honest other half, so an operator reading a blank card on QA knows
+    # which of the two conditions they are looking at.
+    assert "where the ZIP centroid lies in one" in flat
+    assert "all twenty-nine demo hospitals carry a street and resolve at `rooftop`" in flat
+    # Review minor 3: `--force` is not the only door to a re-resolve, and the page said it was.
+    # `--listing <id>` resolves the named listing whether or not it already has a location.
+    assert "`--listing <id>` re-resolves the listing it names" in flat
+    # Review minor 5: what to DO when a listing is still pinless, named as a command.
+    assert "still has no pin after ten minutes" in flat
+    assert "re-run `census_load.py geocode`" in flat
+    # Fix round 2: the SECOND signature, which the first recovery sentence could not name because
+    # the failure it describes could not happen yet. A pin with no card is a backfill that never
+    # ran, and `geocode` will not retry it — that listing HAS a location.
+    assert "pin present but no card" in flat
+    assert "`census_load.py materialize --listing <id>`" in flat

@@ -540,7 +540,14 @@ def test_a_territory_skips_the_place_rung_because_states_py_deliberately_exclude
     Discriminating in the way A-C18 ruling 4 asked for, and for the same reason it gave: a null
     `state_fips` makes `state_fips = %s` fail identically with the guard deleted (SQL `NULL = NULL`
     is never true), so asserting only `GeocodeFailed` could not tell a real guard from no guard.
-    The recording connection proves the place query's own SQL text never executes."""
+    The recording connection proves the place query's own SQL text never executes.
+
+    The needle is the place rung's NAME PREFIX predicate, not `summary_level = '160'` (fix round
+    2). Rung 1 now joins level 160 itself — every rung fills every geography its own point can be
+    joined to — so a bare "160" needle would be satisfied by rung 1's own text and this assertion
+    would pass whether or not the guard existed, which is precisely the failure mode A-C18 ruling
+    4 wrote this test to avoid. `lower(p.name) LIKE lower(%s)` occurs in the place rung and
+    nowhere else."""
     _seed_geo(conn)
     for territory in ("PR", "VI", "GU"):
         lid = make_listing(conn, zip="00000", city="Cedar Park", state=territory)
@@ -548,5 +555,373 @@ def test_a_territory_skips_the_place_rung_because_states_py_deliberately_exclude
         with pytest.raises(geocode.GeocodeFailed):
             geocode.resolve(rec, _geocoder(NOMATCH), lid)
         assert geocode.STATE_FIPS.get(territory) is None, f"{territory} must not be in the state table"
-        assert not any("summary_level = '160'" in q for q in rec.executed), territory
+        assert not any("lower(p.name) LIKE lower(%s)" in q for q in rec.executed), territory
         assert any("summary_level = '860'" in q for q in rec.executed), territory  # the zcta rung DID run
+
+
+# ---- Task GEO-WIRE: one writer for the pin ----------------------------------------------------
+
+
+def test_resolve_writes_the_listings_own_pin_from_the_resolved_point(conn):
+    """GEO-WIRE (3). `listing.geom` is the column `GET /api/listings` serves as `lat`/`lng`
+    (`app/api/listings.py`'s `_SELECT`), and until this it was written by `scripts/seed_listings.py`
+    ALONE -- so a real seller's listing, geocoded on publish, still reached Browse with no pin.
+
+    The point is written HERE, beside `practice_location.point`, rather than in the Celery task or
+    the CLI: `resolve` is where the resolved coordinate exists, and a second writer somewhere else
+    is how the two columns start disagreeing. `geography(Point,4326)` is the listing column's own
+    type (`migrations/016_listing.sql:26`) and `ST_SetSRID(ST_MakePoint(lng,lat),4326)::geography`
+    is the seeder's own expression, so both writers write the same thing."""
+    _seed_geo(conn)
+    lid = make_listing(conn)
+    geocode.resolve(conn, _geocoder(MATCH), lid)
+    with conn.cursor() as cur:
+        cur.execute("SELECT ST_X(geom::geometry), ST_Y(geom::geometry) FROM listing WHERE id=%s", (lid,))
+        assert cur.fetchone() == (-97.820278589313, 30.497509155435)
+
+
+def test_resolve_below_rooftop_writes_the_fallback_centroid_as_the_pin(conn):
+    """The §11 ladder's own rungs carry a point too (the ZCTA/place/county centroid), and that
+    point is the one `practice_location` is written with -- so the pin follows it rather than
+    staying null for every listing the geocoder cannot match. `GET /api/listings` then serves a
+    pin the Community Context card's own figures were computed around."""
+    _seed_geo(conn)
+    lid = make_listing(conn, zip="78613")
+    loc = geocode.resolve(conn, _geocoder(NOMATCH), lid)
+    assert loc.geo_precision == "zcta"
+    with conn.cursor() as cur:
+        cur.execute("SELECT ST_X(geom::geometry), ST_Y(geom::geometry) FROM listing WHERE id=%s", (lid,))
+        assert cur.fetchone() == (-97.8, 30.55)
+
+
+# ---- fix round 1: the pin, the review queue and the Browse cache -------------------------------
+
+
+def _pin(conn, lid):
+    with conn.cursor() as cur:
+        cur.execute("SELECT ST_X(geom::geometry), ST_Y(geom::geometry) FROM listing WHERE id=%s", (lid,))
+        return cur.fetchone()
+
+
+def _open_reviews(conn, lid):
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM geocode_review WHERE listing_id=%s AND resolved_at IS NULL", (lid,))
+        return cur.fetchone()[0]
+
+
+def test_a_resolve_that_finds_no_coordinate_leaves_an_existing_pin_alone(conn):
+    """Review minor 4. The pin write used a `CASE WHEN … IS NULL THEN NULL` mirroring the
+    `practice_location` row above it — which means a re-resolve that lands on a rung with no
+    coordinate would have NULLED a pin that was already there. `scripts/seed_listings.py` writes
+    the seeds' own curated points, so the row this could silently blank is a demo hospital's.
+
+    The rung is reachable, not hypothetical: `geo_area.centroid` is nullable, and a place row
+    loaded without one resolves at `place` precision with `lat`/`lng` both `None`. Absence of a
+    new coordinate is not evidence against the coordinate already held."""
+    with conn.cursor() as cur:
+        # A place the city name matches, with NO centroid — and no ZCTA for this ZIP, so the
+        # ladder cannot take rung 1 and falls to rung 2.
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, geom) VALUES "
+            "('4813552','160','2023','Cedar Park city','48',"
+            " ST_Multi(ST_GeomFromText('POLYGON((-97.9 30.5,-97.7 30.5,-97.7 30.6,-97.9 30.6,-97.9 30.5))',4269)))"
+        )
+        cur.execute("INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by)"
+                    " VALUES ('tiger_cb','2023',now(),'test')")
+    lid = make_listing(conn, zip="00000", city="Cedar Park")
+    with conn.cursor() as cur:
+        cur.execute("UPDATE listing SET geom = ST_SetSRID(ST_MakePoint(-97.75,30.51),4326)::geography WHERE id=%s", (lid,))
+
+    loc = geocode.resolve(conn, _geocoder(NOMATCH), lid)
+
+    assert (loc.geo_precision, loc.lat, loc.lng) == ("place", None, None)
+    assert _pin(conn, lid) == (-97.75, 30.51), "a resolve with no coordinate must not blank the pin"
+
+
+def test_the_pin_and_the_practice_location_point_are_the_same_place(conn):
+    """Review minor 7. `practice_location.point` is `geometry(Point,4269)` (NAD83) and
+    `listing.geom` is `geography(Point,4326)` (WGS84), and the two used to be built by two
+    separate expressions that happened to agree. They are now ONE coordinate put through an
+    explicit `ST_Transform`, so they are the same point by construction rather than by
+    coincidence.
+
+    Stated honestly about what this gate does and does not prove: it catches a swapped argument
+    pair (`ST_MakePoint(lat, lng)`) or a mis-declared SRID, either of which separates the two
+    columns by hundreds of kilometres. It does NOT distinguish the two DATUMS, because PROJ
+    treats NAD83 and WGS84 as equivalent absent a grid shift and returns the identical numbers —
+    which is the very reason the seeder's own convention (`ST_SetSRID(..., 4326)` over a Census
+    coordinate) has always been right to sub-metre, and why minor 7 is a correctness-of-
+    construction change rather than a change of behaviour."""
+    _seed_geo(conn)
+    lid = make_listing(conn)
+    geocode.resolve(conn, _geocoder(MATCH), lid)
+    with conn.cursor() as cur:
+        cur.execute(
+            "SELECT ST_X(l.geom::geometry), ST_Y(l.geom::geometry),"
+            "       ST_X(ST_Transform(p.point, 4326)), ST_Y(ST_Transform(p.point, 4326))"
+            "  FROM listing l JOIN practice_location p ON p.listing_id = l.id WHERE l.id = %s", (lid,)
+        )
+        gx, gy, px, py = cur.fetchone()
+    assert abs(gx - px) < 1e-7 and abs(gy - py) < 1e-7
+
+
+def test_two_sub_rooftop_resolves_leave_one_open_review_row(conn):
+    """Review minor 8. `geocode_review` is the staff queue for a listing that resolved below
+    rooftop (§11), and it has no uniqueness of its own (`migrations/060_geocode_cache.sql`). Every
+    re-publish, every address correction and every `census_load.py geocode --force` runs `resolve`
+    again, so the queue grew one duplicate row per pass for a condition that had not changed —
+    the same listing, the same reason, nothing for staff to do twice.
+
+    An UNRESOLVED row is the open item, so a second resolve adds nothing while one stands. A row a
+    staff member has closed (`resolved_at`) does not suppress a new one: the condition recurring
+    after it was dealt with is a real new item. No migration — the guard is in the INSERT."""
+    _seed_geo(conn)
+    lid = make_listing(conn, zip="78613")
+
+    assert geocode.resolve(conn, _geocoder(NOMATCH), lid).geo_precision == "zcta"
+    assert _open_reviews(conn, lid) == 1
+    assert geocode.resolve(conn, _geocoder(NOMATCH), lid).geo_precision == "zcta"
+    assert _open_reviews(conn, lid) == 1, "a second pass must not re-queue an open review"
+
+    with conn.cursor() as cur:
+        cur.execute("UPDATE geocode_review SET resolved_at = now() WHERE listing_id = %s", (lid,))
+    geocode.resolve(conn, _geocoder(NOMATCH), lid)
+    assert _open_reviews(conn, lid) == 1, "once staff have closed it, the condition can be raised again"
+
+
+# ---- fix round 2: every rung fills every geography its own point can be joined to --------------
+
+
+def test_the_zcta_rung_resolves_the_place_and_cbsa_its_centroid_lies_in(conn):
+    """Fix round 2, Important 1. Rung 1 returned the ZCTA, the tract covering its centroid and
+    that tract's parent county, and NOTHING else — no `place_geoid`, no `cbsa_geoid` — while rung 2
+    (which sets a place) only runs when rung 1 has already FAILED.
+
+    That is the rung a real seller's listing lands on: the wizard collects a city and a ZIP and no
+    street, so the geocoder cannot match an address. Two things followed from the gap, both of
+    which the rest of this programme had already been built to deliver:
+
+    * `materialize._band_inputs("place")` returns `None` without `ctx.place`, so the listing had
+      ZERO `place`-band rows — and the controller's fix-round-1 ruling, which serves exactly these
+      listings their PLACE band, then had nothing to serve and produced four blank tiles. The
+      ruling was right; the ladder was not making it true.
+    * `GET /api/markets` requires `practice_location.cbsa_geoid`, so the listing's metro never
+      joined the map's catalogue — one of the three things wiring the geocode exists to deliver.
+
+    The point the rung holds is the ZCTA centroid, and every one of those geographies is a
+    containment join away from it — the same `ST_Contains(..., z.centroid)` the rung already runs
+    twice, for the tract and the county."""
+    _seed_geo(conn)
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, geom) VALUES"
+            " ('12420','310','2023','Austin-Round Rock-San Marcos, TX Metro Area',"
+            "  ST_Multi(ST_GeomFromText('POLYGON((-98 30,-97 30,-97 31,-98 31,-98 30))',4269)))"
+        )
+    lid = make_listing(conn, zip="78613")
+
+    loc = geocode.resolve(conn, _geocoder(NOMATCH), lid)
+
+    assert loc.geo_precision == "zcta"
+    assert loc.place_geoid == "4813552", "the ZCTA centroid lies inside Cedar Park city"
+    assert loc.cbsa_geoid == "12420"
+    with conn.cursor() as cur:
+        cur.execute("SELECT place_geoid, cbsa_geoid FROM practice_location WHERE listing_id=%s", (lid,))
+        assert cur.fetchone() == ("4813552", "12420")
+
+
+def test_a_zcta_centroid_in_no_place_leaves_the_place_geoid_null(conn):
+    """Unincorporated. A ZCTA centroid that lies inside no place at all resolves with
+    `place_geoid` NULL — honestly, rather than by reaching for a place whose boundary does not
+    contain the point. `materialize`'s own county fallback then carries growth and payroll, and
+    the area group is genuinely unavailable; the contract document says so.
+
+    This is the Orlando specialist centre's condition (D-C32) arriving one rung lower."""
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, county_fips, parent_geo_id, geom, centroid) VALUES"
+            " ('48491020355','140','2023','Census Tract 203.55','48','491','48491',"
+            "  ST_Multi(ST_GeomFromText('POLYGON((-97.9 30.5,-97.7 30.5,-97.7 30.6,-97.9 30.6,-97.9 30.5))',4269)),"
+            "  ST_SetSRID(ST_MakePoint(-97.8,30.55),4269)),"
+            " ('78613','860','2023','ZCTA5 78613',NULL,NULL,NULL,"
+            "  ST_Multi(ST_GeomFromText('POLYGON((-97.9 30.5,-97.7 30.5,-97.7 30.6,-97.9 30.6,-97.9 30.5))',4269)),"
+            "  ST_SetSRID(ST_MakePoint(-97.8,30.55),4269)),"
+            # A real place, far away — so the join runs and correctly matches nothing.
+            " ('4813552','160','2023','Cedar Park city','48',NULL,'48',"
+            "  ST_Multi(ST_GeomFromText('POLYGON((-96.0 30.5,-95.9 30.5,-95.9 30.6,-96.0 30.6,-96.0 30.5))',4269)),"
+            "  ST_SetSRID(ST_MakePoint(-95.95,30.55),4269))"
+        )
+        cur.execute("INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by)"
+                    " VALUES ('tiger_cb','2023',now(),'test')")
+    lid = make_listing(conn, zip="78613")
+
+    loc = geocode.resolve(conn, _geocoder(NOMATCH), lid)
+
+    assert loc.geo_precision == "zcta"
+    assert loc.place_geoid is None
+    assert loc.tract_geoid == "48491020355"
+
+
+def test_the_place_rung_resolves_the_county_and_cbsa_its_own_centroid_lies_in(conn):
+    """The same rule applied to rung 2 (fix round 2). Its point is the PLACE centroid rather than
+    the ZIP's, but it is still a point, and a county and a CBSA are still one containment join
+    away from it — so the rung that used to return a place and nothing else now returns all three.
+
+    Why it matters where rung 1's mattered: without a county, `materialize._Ctx` has no CBP row,
+    so the payroll figure and the county growth fallback both vanish; without a CBSA the listing's
+    metro never reaches `GET /api/markets`. Neither is a property of WHICH rung answered."""
+    _seed_geo(conn)
+    with conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, geom) VALUES"
+            " ('48491','050','2023','Williamson County','48',"
+            "  ST_Multi(ST_GeomFromText('POLYGON((-99 30,-97 30,-97 31,-99 31,-99 30))',4269))),"
+            " ('12420','310','2023','Austin-Round Rock-San Marcos, TX Metro Area',NULL,"
+            "  ST_Multi(ST_GeomFromText('POLYGON((-99 30,-97 30,-97 31,-99 31,-99 30))',4269)))"
+        )
+    # An unknown ZIP, so rung 1 cannot answer and rung 2 does.
+    lid = make_listing(conn, zip="00000", city="Cedar Park", state="TX")
+
+    loc = geocode.resolve(conn, _geocoder(NOMATCH), lid)
+
+    assert loc.geo_precision == "place" and loc.place_geoid == "4813552"
+    assert loc.county_geoid == "48491"
+    assert loc.cbsa_geoid == "12420"
+
+
+# ---- fix round 2, Moderate 2: the cache drop belongs to the task, after the backfill enqueue ----
+
+
+def test_resolve_is_a_pure_postgis_write_and_never_reaches_redis(conn):
+    """Fix round 2, Moderate 2. Fix round 1 put `drop_list_cache(sync_redis())` INSIDE `resolve()`,
+    which put a network call between two committed point columns and the backfill that turns them
+    into figures: `resolve` runs to completion (autocommit, so both writes are durable), the drop
+    raises on a Redis blip, `geocode_listing` never reaches its `send_task`, and a later republish
+    sees `has_geocode() == True` and does not re-trigger. The listing keeps a pin and NO market
+    card, silently and permanently — GEO-WIRE's own defect, wearing the fix for a smaller one.
+
+    `resolve` is a PostGIS write and nothing else again. `app.cache` is not imported by
+    `app/census/geocode.py` at all, which is what this asserts — the ~25 direct callers in this
+    file stopped opening a real Redis connection with it."""
+    import app.census.geocode as G
+
+    assert not hasattr(G, "drop_list_cache") and not hasattr(G, "sync_redis")
+    _seed_geo(conn)
+    lid = make_listing(conn)
+
+    calls: list[str] = []
+    from app import cache as cache_module
+    original = cache_module.sync_redis
+    try:
+        cache_module.sync_redis = lambda: calls.append("redis") or original()  # type: ignore[assignment]
+        geocode.resolve(conn, _geocoder(MATCH), lid)
+    finally:
+        cache_module.sync_redis = original  # type: ignore[assignment]
+    assert calls == []
+
+
+def test_the_task_drops_the_browse_cache_only_after_the_backfill_is_enqueued(conn, monkeypatch):
+    """The ORDER is the whole point: the durable work is committed, the backfill is queued, and
+    only then is a cache touched. A drop that fails after that costs a stale Browse page for the
+    rest of its 60 s TTL and nothing else — the figures are already on their way."""
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+    _seed_geo(conn)
+    lid = make_listing(conn)
+    order: list[str] = []
+
+    # Built BEFORE the patch: `_geocoder` calls `geocode.Geocoder` itself, so patching the name
+    # to a factory that calls `_geocoder` would recurse.
+    gc = _geocoder(MATCH)
+    monkeypatch.setattr(geocode, "Geocoder", lambda *a, **kw: gc)
+    monkeypatch.setattr(celery_app, "send_task", lambda name, args=None, **kw: order.append(f"enqueue:{name}"))
+    from app import cache as cache_module
+    monkeypatch.setattr(cache_module, "drop_list_cache", lambda cache: order.append("drop"))
+
+    CT.geocode_listing(lid)
+
+    assert order == ["enqueue:census.backfill_listing", "drop"]
+
+
+def test_a_redis_failure_during_the_cache_drop_is_logged_and_never_replaces_the_result(conn, monkeypatch, caplog):
+    """The failure this whole move exists to bound, taken to its conclusion (fix round 4). The
+    ordering already meant a blip here could not cost the listing its backfill; what it still did
+    was replace the task's OUTCOME with an exception — the geocode succeeded, both point columns
+    are committed, the backfill is queued, and Celery would have recorded the task as FAILED and
+    retried a whole Census round trip to re-do work that was already done.
+
+    A cache drop is not the task's job. It is logged at WARNING and swallowed, the way
+    `app/api/admin_data_sources.py` already treats a gate invalidation that fails after its
+    decision has committed — and the cache's own 60 s TTL is the backstop. Only the exception's
+    TYPE is logged, never its text, which can carry a host and port.
+
+    `redis.exceptions.RedisError` specifically, never a bare `except`: a `TypeError` from this
+    module's own code is a defect and must still surface."""
+    import logging
+
+    import redis as redis_sync
+
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+    _seed_geo(conn)
+    lid = make_listing(conn)
+    sent: list[str] = []
+
+    def _boom(cache):
+        raise redis_sync.exceptions.ConnectionError("redis://someone:6379 is having a moment")
+
+    gc = _geocoder(MATCH)
+    monkeypatch.setattr(geocode, "Geocoder", lambda *a, **kw: gc)
+    monkeypatch.setattr(celery_app, "send_task", lambda name, args=None, **kw: sent.append(name))
+    from app import cache as cache_module
+    monkeypatch.setattr(cache_module, "drop_list_cache", _boom)
+
+    with caplog.at_level(logging.WARNING, logger="app.tasks.census"):
+        assert CT.geocode_listing(lid) == {"listing_id": lid, "precision": "rooftop"}
+
+    assert sent == ["census.backfill_listing"]
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM practice_location WHERE listing_id=%s", (lid,))
+        assert cur.fetchone()[0] == 1, "the durable write is committed either way"
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert len(warnings) == 1
+    assert "ConnectionError" in warnings[0].getMessage()
+    assert "6379" not in warnings[0].getMessage(), "the type, never the text: it can carry a host"
+
+
+def test_a_non_redis_error_from_the_cache_drop_still_surfaces(conn, monkeypatch):
+    """The other side of the narrow `except`. A `TypeError` (or anything else that is not a
+    `RedisError`) coming out of the drop is this codebase's own defect, not an infrastructure
+    blip, and swallowing it would hide it for as long as nobody reads the logs."""
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+    _seed_geo(conn)
+    lid = make_listing(conn)
+
+    def _boom(cache):
+        raise TypeError("drop_list_cache() got an unexpected keyword argument")
+
+    gc = _geocoder(MATCH)
+    monkeypatch.setattr(geocode, "Geocoder", lambda *a, **kw: gc)
+    monkeypatch.setattr(celery_app, "send_task", lambda *a, **kw: None)
+    from app import cache as cache_module
+    monkeypatch.setattr(cache_module, "drop_list_cache", _boom)
+
+    with pytest.raises(TypeError):
+        CT.geocode_listing(lid)
+
+
+def test_the_task_really_clears_a_planted_browse_page(conn, redis, monkeypatch):
+    """The behaviour fix round 1 pinned at `resolve` level, re-pinned where it now lives: a real
+    `listings:v1:*` key, the real `drop_list_cache`, and the task. The two tests above assert the
+    ORDER and the failure bound with a spy; this one asserts the key actually goes."""
+    monkeypatch.setenv("CENSUS_CONTACT_EMAIL", CONTACT)
+    _seed_geo(conn)
+    lid = make_listing(conn)
+    redis.set("listings:v1:::50", b"stale page")
+
+    gc = _geocoder(MATCH)
+    monkeypatch.setattr(geocode, "Geocoder", lambda *a, **kw: gc)
+    monkeypatch.setattr(celery_app, "send_task", lambda *a, **kw: None)
+
+    CT.geocode_listing(lid)
+
+    assert redis.get("listings:v1:::50") is None

@@ -6,8 +6,12 @@ from __future__ import annotations
 
 import logging
 
+import fakeredis
+
+from app.census import catchment, geocode, materialize
 from app.census.serve import BAND_LABEL, community_rows
 from tests.census.listing_fixtures import make_listing
+from tests.census.test_geocode import NOMATCH, _geocoder
 
 
 def _seed_active_and_registry(conn):
@@ -743,7 +747,8 @@ _CATCHMENT_SIX = (
 )
 
 
-def _seed_geography(conn, listing_id, *, place_geoid=None, place_name=None, county_geoid=None, county_name=None):
+def _seed_geography(conn, listing_id, *, place_geoid=None, place_name=None, county_geoid=None, county_name=None,
+                    precision="rooftop"):
     """The listing's geocoded place and county, and the `geo_area` rows that NAME them.
 
     D-C38 supersedes `serve.py`'s own "There is no geoid lookup and none is wanted": the Growth
@@ -754,8 +759,8 @@ def _seed_geography(conn, listing_id, *, place_geoid=None, place_name=None, coun
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO practice_location (listing_id, address_hash, county_geoid, place_geoid, geo_precision, geocoded_at, geocoder_vintage) "
-            "VALUES (%s, 'h', %s, %s, 'rooftop', now(), 'Current_Current')",
-            (listing_id, county_geoid, place_geoid),
+            "VALUES (%s, 'h', %s, %s, %s, now(), 'Current_Current')",
+            (listing_id, county_geoid, place_geoid, precision),
         )
         # A `geo_area` row only where the caller gave a NAME. A geoid with no name is the
         # "geocoded, but the active boundary edition does not resolve it" case (I4) — the row is
@@ -1264,3 +1269,184 @@ def test_one_listing_whose_place_alone_is_unnamed_still_warns(conn, caplog):
     assert row["growth_scope"] == "Dallas County"
     assert len(caplog.records) == 1
     assert "2023" in caplog.records[0].getMessage()
+
+
+# ---- fix round 1, Important 1: a point that is not a rooftop match is served its city ----------
+
+
+_PLACE_POLY = "POLYGON((-97.95 30.40,-97.65 30.40,-97.65 30.60,-97.95 30.60,-97.95 30.40))"
+_ELSEWHERE_POLY = "POLYGON((-96.00 30.40,-95.70 30.40,-95.70 30.60,-96.00 30.60,-96.00 30.40))"
+
+
+def _seed_ladder_world(conn, *, place_covers_the_zcta: bool) -> None:
+    """The world a WIZARD listing actually lands in, with NO `practice_location` row: `resolve()`
+    writes that itself, through the §11 ladder, which is the whole point of these two tests.
+
+    Two tracts and two ZCTAs around one point, a place, a county and the ACS/CBP/ZBP rows behind
+    them. The CITY figures (place, level 160) and the RING figures (tracts, level 140) are
+    deliberately different numbers, so an assertion on one of them cannot pass for the other's
+    reason."""
+    with conn.cursor() as cur:
+        squares = {
+            "48491000001": "POLYGON((-97.90 30.45,-97.80 30.45,-97.80 30.55,-97.90 30.55,-97.90 30.45))",
+            "48491000002": "POLYGON((-97.80 30.45,-97.70 30.45,-97.70 30.55,-97.80 30.55,-97.80 30.45))",
+        }
+        for gid, wkt in squares.items():
+            cur.execute(
+                "INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, county_fips, parent_geo_id, geom, centroid)"
+                " VALUES (%s,'140','2023',%s,'48','491','48491', ST_Multi(ST_GeomFromText(%s,4269)),"
+                "         ST_Centroid(ST_GeomFromText(%s,4269)))",
+                (gid, f"Census Tract {gid}", wkt, wkt),
+            )
+        for gid, wkt in (("78613", squares["48491000001"]), ("78664", squares["48491000002"])):
+            cur.execute(
+                "INSERT INTO geo_area (geo_id, summary_level, vintage, name, geom, centroid)"
+                " VALUES (%s,'860','2023',%s, ST_Multi(ST_GeomFromText(%s,4269)), ST_Centroid(ST_GeomFromText(%s,4269)))",
+                (gid, f"ZCTA5 {gid}", wkt, wkt),
+            )
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, geom, centroid)"
+            " VALUES ('4813552','160','2023','Cedar Park city','48', ST_Multi(ST_GeomFromText(%s,4269)),"
+            "         ST_Centroid(ST_GeomFromText(%s,4269)))",
+            (_PLACE_POLY if place_covers_the_zcta else _ELSEWHERE_POLY,) * 2,
+        )
+        cur.execute(
+            "INSERT INTO geo_area (geo_id, summary_level, vintage, name, state_fips, geom, centroid)"
+            " VALUES ('48491','050','2023','Williamson County','48',"
+            "  ST_Multi(ST_GeomFromText('POLYGON((-99 30,-97 30,-97 31,-99 31,-99 30))',4269)), ST_Point(-98,30.5,4269))"
+        )
+        cur.execute("DELETE FROM active_vintage WHERE dataset_key = 'tiger_cb'")
+        cur.execute("INSERT INTO active_vintage (dataset_key, vintage, activated_at, activated_by)"
+                    " VALUES ('tiger_cb','2023',now(),'test')")
+
+        cur.execute(
+            "INSERT INTO ingest_run (dataset_key, vintage, started_at, status) VALUES"
+            " ('acs5','2019-2023',now(),'succeeded'),('acs5_prior','2014-2018',now(),'succeeded'),"
+            " ('cbp','2022',now(),'succeeded'),('zbp','2022',now(),'succeeded')"
+        )
+        cur.execute("SELECT id FROM ingest_run ORDER BY id DESC LIMIT 4")
+        zbp_r, cbp_r, prior_r, acs_r = [r[0] for r in cur.fetchall()]
+        # THE CITY: level 160, the figures the ruling serves.
+        cur.executemany(
+            "INSERT INTO acs_measure VALUES ('4813552','160','2019-2023',%s,%s,%s,%s)",
+            [("B01003_001E", 81900, 900, acs_r), ("B11001_001E", 27600, 600, acs_r), ("B19013_001E", 118400, 4100, acs_r)],
+        )
+        cur.execute("INSERT INTO acs_measure VALUES ('4813552','160','2014-2018','B01003_001E',71716,850,%s)", (prior_r,))
+        # THE RING: level 140, deliberately different figures.
+        cur.executemany(
+            "INSERT INTO acs_measure VALUES (%s,'140','2019-2023',%s,%s,%s,%s)",
+            [(g, v, e, m, acs_r) for g, v, e, m in (
+                ("48491000001", "B01003_001E", 4000, 200), ("48491000001", "B11001_001E", 1500, 95),
+                ("48491000001", "B19013_001E", 118400, 9100),
+                ("48491000002", "B01003_001E", 3000, 300), ("48491000002", "B11001_001E", 1200, 80),
+                ("48491000002", "B19013_001E", 98000, 12000),
+            )],
+        )
+        # The county: households for the CBP apportionment, and its own population both vintages so
+        # growth still has a geography when there is no place at all.
+        cur.execute("INSERT INTO acs_measure VALUES ('48491','050','2019-2023','B11001_001E',230000,1200,%s)", (acs_r,))
+        cur.execute("INSERT INTO acs_measure VALUES ('48491','050','2019-2023','B01003_001E',600000,2000,%s)", (acs_r,))
+        cur.execute("INSERT INTO acs_measure VALUES ('48491','050','2014-2018','B01003_001E',500000,2000,%s)", (prior_r,))
+        cur.execute("INSERT INTO acs_measure VALUES ('1','010','2019-2023','B19013_001E',75149,120,%s)", (acs_r,))
+        cur.execute("INSERT INTO cbp_industry VALUES ('48491','050','2022','541940',210,3400,143850,NULL,%s)", (cbp_r,))
+        cur.executemany(
+            "INSERT INTO zbp_industry (geo_id, vintage, naics_code, establishments, ingest_run_id)"
+            " VALUES (%s,'2022','541940',%s,%s)",
+            [("78613", 5, zbp_r), ("78664", 2, zbp_r)],
+        )
+
+
+def _through_the_ladder(conn, *, place_covers_the_zcta: bool):
+    """A listing taken from a city and a ZIP to its served `CommunityRow` through the REAL chain —
+    `geocode.resolve` (the §11 ladder, no street, so the zcta rung), `catchment.build` and
+    `materialize_listing` — and nothing hand-inserted in between."""
+    _seed_ladder_world(conn, place_covers_the_zcta=place_covers_the_zcta)
+    _clear_all(conn)
+    # The active vintages come FIRST: `materialize_listing` refuses without them, which is its own
+    # guard against materialising against nothing and is not this test's subject.
+    active, registry = _seed_active_and_registry(conn)
+    listing_id = make_listing(conn, city="Cedar Park", state="TX", zip="78613", street=None)
+
+    location = geocode.resolve(conn, _geocoder(NOMATCH), listing_id)
+    assert location.geo_precision == "zcta", "the rung this whole ruling is about"
+    catchment.build(conn, listing_id, "2023")
+    materialize.materialize_listing(conn, fakeredis.FakeRedis(), listing_id)
+
+    return listing_id, location, community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+
+def test_a_wizard_listing_is_served_its_city_through_the_real_ladder(conn):
+    """Controller ruling (fix round 1), proven END TO END in fix round 2 — because the fix-round-1
+    test that claimed to prove it did not.
+
+    That test seeded `geo_precision='zcta'` TOGETHER WITH a `place_geoid`, a combination the real
+    `resolve()` could not produce: the zcta rung set no place at all. So it exercised the gate in
+    `community_rows` and said nothing about the case, and the ruled behaviour — "a true city figure
+    at the precision we hold" — actually produced four BLANK tiles for every listing it targeted,
+    `materialize` having written no `place` band for a listing with no `ctx.place`.
+
+    Nothing is hand-inserted here between the address and the answer: a listing with a city, a ZIP
+    and NO street goes through `geocode.resolve` (which takes the zcta rung), `catchment.build` and
+    `materialize_listing`, and `community_rows` is asked what a buyer would see.
+
+    BOTH bands carry figures — that is what makes this a test of the ruling rather than of an empty
+    catchment: without the `geo_precision` term the ring would win, and the assertion below would
+    read the tracts' weighted numbers instead of the city's."""
+    listing_id, location, row = _through_the_ladder(conn, place_covers_the_zcta=True)
+
+    assert location.place_geoid == "4813552"
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM market_metric WHERE listing_id=%s AND band='place'", (listing_id,))
+        assert cur.fetchone()[0] > 0, "the ruling has nothing to serve without a place band"
+        cur.execute("SELECT count(*) FROM market_metric WHERE listing_id=%s AND band='drive_10'", (listing_id,))
+        assert cur.fetchone()[0] > 0, "...and nothing to CHOOSE between without a catchment band"
+
+    # The CITY's own figures (level 160), not the ring's weighted tract sums.
+    assert (row["pop"], row["hh"], row["income"]) == ("81,900", "27,600 households", "$118,400")
+    # ...under the design's own wording, which is what "no new copy" means.
+    assert row["label"] is None
+
+
+def test_a_wizard_listing_in_no_place_has_no_area_figures_and_says_so(conn):
+    """The honest other half, and the case the ladder must NOT paper over. A ZCTA centroid inside
+    no place at all (unincorporated — D-C32's Orlando condition, one rung lower) resolves with
+    `place_geoid` NULL rather than reaching for a place whose boundary does not contain it.
+
+    The area group is then genuinely unavailable, and the payload says so the way it says every
+    other absence: `null`, never a zero and never a ring relabelled as a city. Growth and payroll
+    still arrive, from the county, because neither varies by band."""
+    listing_id, location, row = _through_the_ladder(conn, place_covers_the_zcta=False)
+
+    assert location.place_geoid is None
+    with conn.cursor() as cur:
+        cur.execute("SELECT count(*) FROM market_metric WHERE listing_id=%s AND band='place'", (listing_id,))
+        assert cur.fetchone()[0] == 0, "no place, no place band — and that is correct"
+
+    assert (row["pop"], row["hh"], row["income"], row["vets"]) == (None, None, None, None)
+    assert row["label"] is None
+    # Growth and payroll do not vary by band, so the county carries them (D12).
+    assert row["growth"] is not None
+    assert row["econ_k"] is not None
+
+
+def test_a_rooftop_listing_keeps_its_catchment_and_its_label(conn):
+    """The other half of the same ruling, and the reason it is scoped to precision rather than
+    applied to everyone: a rooftop point IS the practice, so the ring around it is exactly what
+    D-C38 put there and the sentence describing it is true. All twenty-nine QA demo hospitals
+    carry a street and resolve at rooftop, so none of them moves.
+
+    A listing with NO `practice_location` row at all is untouched by this too — the rule needs to
+    KNOW the point is approximate, and an absent row says nothing. That case is already pinned by
+    `test_the_area_figures_come_from_the_catchment_band_when_both_bands_have_them`, which seeds no
+    location and asserts the catchment."""
+    listing_id = make_listing(conn, city="Dallas", state="TX")
+    _clear_all(conn)
+    _seed_band(conn, listing_id, "place", metrics=_PLACE_SIX)
+    _seed_band(conn, listing_id, "drive_10", metrics=_CATCHMENT_SIX)
+    _seed_geography(conn, listing_id, place_geoid="4819000", place_name="Dallas", precision="rooftop")
+
+    active, registry = _seed_active_and_registry(conn)
+    row = community_rows(conn, [listing_id], active=active, registry=registry)[listing_id]
+
+    assert (row["pop"], row["hh"], row["income"]) == ("369,569", "181,745 households", "$109,548")
+    assert row["label"] == BAND_LABEL

@@ -279,32 +279,64 @@ def _fallback(conn: psycopg2.extensions.connection, city: str, state_abbr: str, 
          (only when a county is known)" per spec §6: a ZCTA the loaded tract vintage does not
          fully cover is a real data gap, not a hypothetical one, and migration 061's
          `geo_precision` CHECK constraint has admitted 'county' since Task B1 (A-C18 ruling 1).
-      4. `GeocodeFailed` -- nothing resolved; the listing stays in draft."""
+      4. `GeocodeFailed` -- nothing resolved; the listing stays in draft.
+
+    **EVERY RUNG FILLS EVERY GEOGRAPHY ITS OWN POINT CAN BE JOINED TO** (fix round 2, controller's
+    ruling on its own fix-round-1 ruling). This used to be true only of the geographies each rung
+    happened to need in order to CHOOSE itself: rung 1 returned the ZCTA, its tract and that
+    tract's parent county, and no place and no CBSA at all -- while rung 2, the only rung that set
+    a place, runs solely when rung 1 has already FAILED. Two consequences, on the rung a real
+    seller's listing actually lands on (city + ZIP, no street, so no geocoder match):
+
+    * `materialize._band_inputs("place")` returns `None` without `ctx.place`, so the listing had
+      ZERO `place`-band rows -- and the ruling that serves exactly these listings their PLACE band
+      had nothing to serve, producing four blank tiles for the case it was written for.
+    * `GET /api/markets` requires `practice_location.cbsa_geoid`, so the listing's metro never
+      reached the map's catalogue -- one of the three things wiring the geocode exists to deliver.
+
+    The geographies are separate FACTS about one point, not properties of the rung that found it,
+    and each is one `ST_Contains(..., centroid)` away -- the join rung 1 already ran twice. The
+    PRECISION is unchanged by this: it still describes how well the point itself is known, so a
+    listing resolved at the ZCTA centroid is still `zcta` however many geoids hang off it. A
+    centroid inside no place at all (unincorporated) keeps `place_geoid` NULL honestly; the county
+    then carries growth and payroll and the area group is genuinely unavailable."""
     state_fips = STATE_FIPS.get(state_abbr.upper())
     with conn.cursor() as cur:
         cur.execute(
-            """SELECT z.geo_id, ST_X(z.centroid), ST_Y(z.centroid), t.geo_id, t.parent_geo_id, c.geo_id
+            """SELECT z.geo_id, ST_X(z.centroid), ST_Y(z.centroid), t.geo_id, t.parent_geo_id, c.geo_id,
+                      p.geo_id, m.geo_id
                FROM geo_area z
                LEFT JOIN geo_area t ON t.summary_level = '140' AND t.vintage = z.vintage AND ST_Contains(t.geom, z.centroid)
                LEFT JOIN geo_area c ON c.summary_level = '050' AND c.vintage = z.vintage AND ST_Contains(c.geom, z.centroid)
+               LEFT JOIN geo_area p ON p.summary_level = '160' AND p.vintage = z.vintage AND ST_Contains(p.geom, z.centroid)
+               LEFT JOIN geo_area m ON m.summary_level = '310' AND m.vintage = z.vintage AND ST_Contains(m.geom, z.centroid)
                WHERE z.summary_level = '860' AND z.vintage = %s AND z.geo_id = %s""",
             (vintage, (zip_ or "")[:5]),
         )
         zrow = cur.fetchone()
         if zrow and zrow[3]:
-            return "zcta", {"zcta_geoid": zrow[0], "lng": zrow[1], "lat": zrow[2], "tract_geoid": zrow[3], "county_geoid": zrow[4]}
+            # `zrow[4] or zrow[5]`: the tract's own parent county first (it is the authoritative
+            # parentage TIGER records), the containment join as the fallback for a tract loaded
+            # without one -- "county likewise if it is not already set".
+            return "zcta", {"zcta_geoid": zrow[0], "lng": zrow[1], "lat": zrow[2], "tract_geoid": zrow[3],
+                            "county_geoid": zrow[4] or zrow[5], "place_geoid": zrow[6], "cbsa_geoid": zrow[7]}
         if state_fips is not None:
             cur.execute(
-                """SELECT geo_id, ST_X(centroid), ST_Y(centroid) FROM geo_area
-                   WHERE summary_level = '160' AND vintage = %s AND state_fips = %s AND lower(name) LIKE lower(%s) || ' %%'
+                """SELECT p.geo_id, ST_X(p.centroid), ST_Y(p.centroid), c.geo_id, m.geo_id
+                   FROM geo_area p
+                   LEFT JOIN geo_area c ON c.summary_level = '050' AND c.vintage = p.vintage AND ST_Contains(c.geom, p.centroid)
+                   LEFT JOIN geo_area m ON m.summary_level = '310' AND m.vintage = p.vintage AND ST_Contains(m.geom, p.centroid)
+                   WHERE p.summary_level = '160' AND p.vintage = %s AND p.state_fips = %s AND lower(p.name) LIKE lower(%s) || ' %%'
                    LIMIT 1""",
                 (vintage, state_fips, city),
             )
             prow = cur.fetchone()
             if prow:
-                return "place", {"place_geoid": prow[0], "lng": prow[1], "lat": prow[2]}
+                return "place", {"place_geoid": prow[0], "lng": prow[1], "lat": prow[2],
+                                 "county_geoid": prow[3], "cbsa_geoid": prow[4]}
         if zrow and zrow[5]:
-            return "county", {"county_geoid": zrow[5], "lng": zrow[1], "lat": zrow[2]}
+            return "county", {"county_geoid": zrow[5], "lng": zrow[1], "lat": zrow[2],
+                              "place_geoid": zrow[6], "cbsa_geoid": zrow[7]}
     raise GeocodeFailed(f"no geocoder match and no ZCTA/place/county fallback for {city!r} {zip_!r} in state {state_abbr!r}")
 
 
@@ -371,9 +403,62 @@ def resolve(conn: psycopg2.extensions.connection, geocoder: Geocoder, listing_id
                 GEOCODER_VINTAGE,
             ),
         )
+        # GEO-WIRE (3): the SAME resolved point, written to the column the product actually
+        # serves as a pin. `listing.geom` was written by `scripts/seed_listings.py` alone, so a
+        # real seller's listing reached Browse with no pin however well it geocoded --
+        # `app/api/listings.py`'s `_SELECT` reads `ST_Y(geom::geometry)`/`ST_X(geom::geometry)`
+        # and nothing else. One writer, here, beside `practice_location.point`: a second writer
+        # elsewhere is how the two columns start disagreeing.
+        #
+        # Review minor 7 -- ONE coordinate, transformed, rather than two expressions that agree.
+        # `practice_location.point` above is `geometry(Point,4269)` (NAD83, what the Census
+        # geocoder returns) and `listing.geom` is `geography(Point,4326)` (WGS84,
+        # `migrations/016_listing.sql:26`), so the datum is named in the SQL and PostGIS converts
+        # between them instead of the two columns being the same place by coincidence. The
+        # NUMBERS do not move: PROJ treats NAD83 and WGS84 as equivalent without a grid shift, so
+        # this returns what `scripts/seed_listings.py`'s own `ST_SetSRID(..., 4326)` convention
+        # has always produced, to sub-metre -- the seeder is not wrong and is not changed.
+        #
+        # Review minor 4 -- ABSENCE OF A NEW COORDINATE IS NOT EVIDENCE AGAINST THE ONE ALREADY
+        # HELD. This used to mirror the `CASE WHEN ... IS NULL THEN NULL` of the row above, which
+        # meant a re-resolve landing on a rung with no coordinate (`geo_area.centroid` is
+        # nullable, so the place and county rungs can both yield `None`) NULLED a pin that was
+        # already there -- and the pins most likely to be re-resolved are the twenty-nine demo
+        # hospitals' curated ones. The `WHERE` term makes such a resolve update no row at all:
+        # `practice_location` still records honestly that this pass found no point, and the
+        # listing keeps the pin it had. A listing that has never had one still has none, which is
+        # A25's "no point, no pin" unchanged.
+        cur.execute(
+            """UPDATE listing
+                  SET geom = ST_Transform(ST_SetSRID(ST_MakePoint(%s, %s), 4269), 4326)::geography
+                WHERE id = %s AND %s IS NOT NULL AND %s IS NOT NULL""",
+            (loc.lng, loc.lat, listing_id, loc.lng, loc.lat),
+        )
         if precision != "rooftop":
+            # Review minor 8: one OPEN item per listing, not one per pass. `geocode_review` is the
+            # staff queue for a listing that resolved below rooftop (§11) and carries no
+            # uniqueness of its own (`migrations/060_geocode_cache.sql`), while every re-publish,
+            # every address correction and every `census_load.py geocode --force` runs this
+            # function again -- so the queue grew a duplicate row per pass for a condition that
+            # had not changed and that staff cannot action twice. Guarded in the INSERT rather
+            # than by a migration: `060` is applied on QA and production and an applied migration
+            # is immutable, and a partial unique index would also refuse the row this deliberately
+            # ALLOWS -- a row a staff member has already closed does not suppress a new one,
+            # because the condition recurring after it was dealt with is a real new item.
             cur.execute(
-                "INSERT INTO geocode_review (listing_id, reason) VALUES (%s, %s)",
-                (listing_id, f"geocoder fell back to {precision}; market panel shows 'approximate community data'"),
+                """INSERT INTO geocode_review (listing_id, reason)
+                   SELECT %s, %s
+                    WHERE NOT EXISTS (SELECT 1 FROM geocode_review
+                                       WHERE listing_id = %s AND resolved_at IS NULL)""",
+                (listing_id, f"geocoder fell back to {precision}; market panel shows 'approximate community data'",
+                 listing_id),
             )
+    # The Browse list cache is dropped by this function's CALLERS, after they have done the rest
+    # of their work -- `app.tasks.census.geocode_listing` after it enqueues the backfill, and
+    # `scripts/census_load.py geocode` once after its loop. Fix round 1 put the drop HERE and fix
+    # round 2 took it out again: a network call between two committed point columns and the
+    # backfill that turns them into figures is a place where a Redis blip costs a listing its
+    # market card permanently (`resolve` has already committed, the caller never reaches its
+    # `send_task`, and a later republish sees `has_geocode() == True` and does not re-trigger).
+    # This function is a PostGIS write and nothing else.
     return loc
