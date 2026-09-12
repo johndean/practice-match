@@ -75,7 +75,7 @@ still LISTED (so the UI can render it as unavailable), just never carries data:
     "caveat": "Payroll per establishment (NAICS 541940), not revenue; county level." },
   { "key": "competition", "label": "Veterinary Competition", "dataset_key": "zbp", "geo_level": "zcta",
     "shading": { "summary_level": "860", "label": "ZIP Code Tabulation Area" },
-    "state": "blocked", "blocked_reason": "Counsel declined the terms.", "is_derived": false,
+    "state": "enabled", "is_derived": false,
     "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. Published per ZIP code by ZIP Code Business Patterns, and shaded at the ZIP Code Tabulation Area, which is that dataset's own authoritative geography." },
   { "key": "practices", "label": "Practice Listings", "dataset_key": null, "shading": null, "state": "enabled", "is_derived": false, "caveat": null },
   { "key": "drive_10", "label": "5–10 min drive time", "dataset_key": null, "shading": null, "state": "enabled", "is_derived": true, "caveat": "Straight-line 8 km approximation of drive time." },
@@ -84,7 +84,8 @@ still LISTED (so the UI can render it as unavailable), just never carries data:
 ```
 
 **`state` is three-valued, never a bare boolean** (`enabled` / `disabled` / `blocked`, plus
-`blocked_reason` only when `blocked`) — `dataset_registry.license_status`'s `cleared` /
+`blocked_reason` only when `blocked`, which no layer in the sample above is — `zbp` is seeded
+`cleared` by `migrations/017_census_registry.sql`) — `dataset_registry.license_status`'s `cleared` /
 `unresolved` / `blocked` (migration `017`'s own CHECK constraint), mapped straight across. "Off
 because a member turned a layer off" and "off because the licence is not cleared" are different
 facts the frontend and the admin surface both need to tell apart (A-C14 (4)); "off because it is
@@ -188,13 +189,31 @@ under the values.
 **`value` is `null` in two different cases and the client must tell them apart.** A geography with
 no row at all is `value: null` with `suppressed: false` and `suppress_reason: null`; a suppressed
 one is `value: null` with `suppressed: true` and a `suppress_reason` of `no_moe`, `high_moe`,
-`input_suppressed` or `source_flag`. Both are drawn in the same neutral class; they say different
-things, and a client that guards on `suppressed` alone paints the first as measured.
-`band_ambiguous` is `true` when the margin of error spans a legend stop — that polygon keeps its
-value and takes a caveat, and is **never** greyed. Only `income` can carry either state: `growth`
-and `econ` are published with no margin at all (a difference of two ACS periods, and a census of
-establishments rather than a sample), so both are `false` on those layers by construction rather
-than by omission.
+`input_suppressed`, `source_flag` or `source_threshold`. Both are drawn in the same neutral class;
+they say different things, and a client that guards on `suppressed` alone paints the first as
+measured. `band_ambiguous` is `true` when the margin of error spans a legend stop — that polygon
+keeps its value and takes a caveat, and is **never** greyed.
+
+**Which layers can carry which state.** `income` and `households` are published ACS estimates with
+published margins, so both can be `suppressed` (`no_moe`, `high_moe`) and both can be
+`band_ambiguous`, each judged against its OWN legend stops. `pets` is derived from `households`
+and inherits its verdict as `input_suppressed`; it carries no margin of its own, so it is never
+`band_ambiguous`. `econ` can be `source_flag` (the Census withheld the county cell — a CBP NOISE
+level never suppresses; see "Average practice payroll" below). `competition` can be
+`source_threshold`. `growth` can be neither: it is a difference of two ACS 5-year periods and is
+published with no combined margin at all, so `suppressed` and `band_ambiguous` are both `false` on
+it by construction rather than by omission.
+
+**`source_threshold` — the Census's own ZIP publication rule.** ZIP Code Business Patterns
+publishes industry detail only where a category has three or more establishments: a category under
+three is not reported at ZIP level, though it IS counted in the dataset's all-industry total. A
+ZCTA the dataset covers whose veterinary count was withheld that way is therefore `value: null,
+suppressed: true, suppress_reason: "source_threshold"` — a real figure the Census chose not to
+publish — while a ZCTA ZIP Code Business Patterns does not cover at all is `value: null,
+suppressed: false`. The two are told apart by loading the all-industry total (`NAICS 00`) beside
+the industry codes, which `app/census/zbp.py` does in the same pass; without it both states are
+served as an absence. The served distribution therefore has a FLOOR of three, which is why the
+`competition` legend's first class is labelled `3` and not `1–3`.
 
 **Bounds.** `bbox` is optional and defaults to the metro's own envelope at summary level `310`.
 `MAX_BBOX_DEG = 4.0` degrees on either axis, `MAX_FEATURES = 12000`, `MAX_BODY_BYTES = 6_000_000`

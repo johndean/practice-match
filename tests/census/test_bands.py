@@ -85,7 +85,7 @@ def test_the_design_income_stops_equal_the_band_constants() -> None:
 
 def _area_layers() -> str:
     """The amended design's `AREA_LAYERS` object literal — the CHOROPLETH's own class breaks
-    (A24.22, D-L1). Anchored on the declaration for the same reason `_value_layers` is."""
+    (A24.25, D-L1). Anchored on the declaration for the same reason `_value_layers` is."""
     design = DESIGN.read_text(encoding="utf-8")
     start = design.index("const AREA_LAYERS = {")
     return design[start:design.index("\n};", start)]
@@ -100,7 +100,7 @@ def test_the_design_households_stops_equal_the_band_constants() -> None:
 
     The DESIGN side is `AREA_LAYERS`, not `VALUE_LAYERS`: the choropleth and the community cards
     class the same metric at different geographies, and it is the choropleth's legend a polygon's
-    caveat is about (A24.22)."""
+    caveat is about (A24.25)."""
     layers = _area_layers()
     m = re.search(r"households:\s*\{[^}]*?stops:\s*\[([^\]]*)\]", layers)
     assert m, "AREA_LAYERS.households no longer declares `stops` — the map's bands moved"

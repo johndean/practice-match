@@ -1887,7 +1887,7 @@ const NO_DATA_LABEL = "No data";
 const AREA_LAYERS = {
   households: { buckets: ["< 1,000", "1,000–1,500", "1,500–2,000", "> 2,000"], stops: [1000, 1500, 2000] },
   pets: { buckets: ["< 600", "600–850", "850–1,100", "> 1,100"], stops: [600, 850, 1100] },
-  competition: { buckets: ["1–3", "4–5", "6–9", "10+"], stops: [4, 6, 10] }
+  competition: { buckets: ["3", "4–5", "6–9", "10+"], stops: [4, 6, 10] }
 };
 // Counts → graduated symbols, sized by value. These stack freely, because size and
 // position are a different visual channel from the fill beneath them.
@@ -1912,7 +1912,7 @@ const LAYER_META = {
     title: "Median household income",
     sub: "Household income by community · ACS 5-year",
     updated: "Updated: ACS 2023 release (Jan 2025)",
-    source: "U.S. Census ACS 5-year estimates (2023) · community level",
+    source: "U.S. Census ACS 5-year estimates (2023) · Census tract",
     means: "Higher-income areas may support stronger demand, but income alone does not indicate practice performance.",
     why: "Household income can correlate with pet care spending and service mix, helping you identify attractive markets to explore further."
   },
@@ -1926,9 +1926,9 @@ const LAYER_META = {
   },
   competition: {
     title: "Veterinary competition",
-    sub: "Veterinary establishments · CBP, NAICS 541940",
-    updated: "Updated: CBP 2023 release (Nov 2024)",
-    source: "U.S. Census County Business Patterns (2023), NAICS 541940 · community level",
+    sub: "Veterinary establishments · ZIP Code Business Patterns, NAICS 541940",
+    updated: "Updated: ZIP Code Business Patterns 2022",
+    source: "U.S. Census ZIP Code Business Patterns (2022), NAICS 541940 · ZIP Code Tabulation Area",
     means: "Establishment counts show how many veterinary businesses operate nearby. They say nothing about size, quality or overlap in services.",
     why: "Competitive density helps you judge whether a market is underserved or already crowded."
   },
@@ -1944,7 +1944,7 @@ const LAYER_META = {
     title: "Households",
     sub: "Total households · ACS 5-year",
     updated: "Updated: ACS 2023 release (Jan 2025)",
-    source: "U.S. Census ACS 5-year estimates (2023) · community level",
+    source: "U.S. Census ACS 5-year estimates (2023) · Census tract",
     means: "The count of occupied housing units in each community — the denominator behind most other figures here.",
     why: "Household counts give scale: two areas can share an income level and differ tenfold in size."
   },
@@ -2247,7 +2247,10 @@ class Component extends DCLogic {
           const d = dLat * dLat + dLng * dLng;
           if (d < bestD) { bestD = d; best = s; }
         }
-        const raw = best ? best[layer] : undefined;
+        // The design's own alias, verbatim from `marketVals`: `communities()` names
+        // these two fields `hh` and `vets`, and a fill layer reads the same objects the
+        // symbols and the Compare rows do.
+        const raw = best ? (layer === "households" ? best.hh : layer === "competition" ? best.vets : best[layer]) : undefined;
         return {
           type: "Feature", id: p.geo_id, geometry: f.geometry,
           properties: {
@@ -2293,7 +2296,9 @@ class Component extends DCLogic {
   areaTip(p, layer, shown) {
     const meta = LAYER_META[layer] || {};
     const absent = p.suppressed
-      ? (p.suppress_reason === "source_flag" ? "Not published for this county" : "Estimate too imprecise to show at this geography")
+      ? (p.suppress_reason === "source_flag" ? "Not published for this county"
+        : p.suppress_reason === "source_threshold" ? "Fewer than three veterinary establishments here. The Census does not publish a ZIP-level count for a category with fewer than three establishments, though they are counted in its all-industry total."
+        : "Estimate too imprecise to show at this geography")
       : "No data for this area";
     const margin = (p.moe !== null && p.moe !== undefined)
       ? "± " + this.fmtMetric(layer, p.moe) + (p.band_ambiguous ? " — this margin spans two legend bands." : "")
@@ -2302,7 +2307,7 @@ class Component extends DCLogic {
           : layer === "econ"
             ? "Payroll per establishment (NAICS 541940), county level. County Business Patterns is a census of establishments, not a sample; no margin of error applies."
             : layer === "competition"
-              ? "within this " + AREA_LABEL[layer] + ". ZIP Code Business Patterns is published per ZIP code, which is this dataset’s own authoritative geography. Establishments include corporate-owned and specialty locations."
+              ? "Counted within this " + AREA_LABEL[layer] + ". ZIP Code Business Patterns is published per ZIP code, which is this dataset’s own authoritative geography. Establishments include corporate-owned and specialty locations."
               : layer === "pets"
                 ? "Modelled estimate: households × 0.57. Not an observed count."
                 : "");
@@ -2366,12 +2371,14 @@ class Component extends DCLogic {
     const ramp = (k) => pal[k] || BRAND_RAMP;
     const tightColumn = !!s.mdStrip;
     const activeSymbols = SYMBOL_KEYS.filter(
-      (k) => layers[k] && !(s.mdOff || {})[k === "competition" ? "vets" : k]
+      (k) => k !== valueLayer && layers[k] && !(s.mdOff || {})[k === "competition" ? "vets" : k]
     );
     const selComm = sel ? comms.filter((c) => c.id === sel.id)[0] : null;
     // Hoisted out of the returned object so the LEGEND can see how many polygons were
     // actually drawn (A24.32). One call, one collection, no second classification pass.
     const areaFc = this.areaVals(this.props.market ? ((s.mdAreas || {})[valueLayer] || { type: "FeatureCollection", features: [] }) : this.areaSet(valueLayer), valueLayer);
+    // "asked, not yet answered" — A24.41 keeps the legend mounted across it.
+    const areasPending = !!this.props.market && s.mdAreas === null;
 
     const lats = comms.map((c) => c.lat), lngs = comms.map((c) => c.lng);
     const pad = 0.12;
@@ -2461,8 +2468,8 @@ class Component extends DCLogic {
           updatedLine: meta.updated || "",
           means: meta.means || "",
           why: meta.why || "",
-          hasRamp: !!valueLayer && areaFc.features.length > 0,
-          hasGeo: FILL_KEYS.indexOf(valueLayer) > -1 && areaFc.features.length > 0,
+          hasRamp: !!valueLayer && (areaFc.features.length > 0 || areasPending),
+          hasGeo: FILL_KEYS.indexOf(valueLayer) > -1 && (areaFc.features.length > 0 || areasPending),
           geoLine: AREA_LABEL[valueLayer] || "",
           ramp: valueLayer
             ? ramp(valueLayer).map((c, i) => ({

@@ -205,7 +205,7 @@ describe('the market adapter (spec §8.3)', () => {
     // first refusal, which would have emptied `mdAreas` and blanked every layer at once —
     // exactly the failure this whole task is fixing, one level up. A layer that could not be
     // read is simply ABSENT from the answer, which the design's own `|| { features: [] }` draws
-    // as no polygons and A24.29's legend declines to put a ramp over.
+    // as no polygons and A24.32's legend declines to put a ramp over.
     for (const bad of [{ ok: false, status: 422 }, { ok: false, status: 404 }, { body: { type: 'FeatureCollection' } }]) {
       const f = fakeFetch((url) => {
         if (!url.includes('/boundaries')) return { body: MARKETS };

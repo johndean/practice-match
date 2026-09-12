@@ -333,6 +333,10 @@ describe('local design amendments (spec D15)', () => {
     // an earlier A24 entry's output, so each runs after the one it reads.
     'A24.24', 'A24.25', 'A24.26', 'A24.27', 'A24.28', 'A24.29', 'A24.30a', 'A24.30b',
     'A24.31a', 'A24.31b', 'A24.32',
+    // Fix round 1 (review of e984c85..304b80f, 2026-09-12). Every entry is CHAINED on an earlier
+    // A24 entry's output, so each runs after the one it reads.
+    'A24.33', 'A24.34', 'A24.35', 'A24.36', 'A24.37', 'A24.38', 'A24.39', 'A24.40', 'A24.41',
+    'A24.42',
     'A24.9', 'A24.10', 'A24.11', 'A24.12',
   ];
 
@@ -357,14 +361,22 @@ describe('local design amendments (spec D15)', () => {
     // the snapshot strip, the Compare rows and the docked panel on their own scale and pixels.
     expect(amended).toContain('  households: { buckets: ["< 1,000", "1,000\u20131,500", "1,500\u20132,000", "> 2,000"], stops: [1000, 1500, 2000] },');
     expect(amended).toContain('  pets: { buckets: ["< 600", "600\u2013850", "850\u20131,100", "> 1,100"], stops: [600, 850, 1100] },');
-    expect(amended).toContain('  competition: { buckets: ["1\u20133", "4\u20135", "6\u20139", "10+"], stops: [4, 6, 10] }');
+    // Fix round 1, Important 3: the first class is labelled "3", not "1-3". The Census publishes
+    // no ZIP-level count for a category under three establishments, so the served distribution has
+    // a floor of three and a class promising a 1 or a 2 is false precision.
+    expect(amended).toContain('  competition: { buckets: ["3", "4\u20135", "6\u20139", "10+"], stops: [4, 6, 10] }');
+    // …and the alias `areaSet` was missing, which is what painted households 503/503 "No data".
+    expect(amended).toContain('const raw = best ? (layer === "households" ? best.hh : layer === "competition" ? best.vets : best[layer]) : undefined;');
     expect(amended).toContain('  households: { label: "Households (ACS)", short: "Total households", unit: "count", buckets: ["< 10K", "10K\u201325K", "25K\u201345K", "> 45K"], stops: [10000, 25000, 45000] },');
     // §9: the modelled estimate says it is modelled, in the tip as well as in the catalogue.
     expect(amended).toContain('"Modelled estimate: households \u00d7 0.57. Not an observed count."');
     // §15: a competition count never reaches the screen bare — it names what it counts and the
     // geography it counts them in, and the geography comes from AREA_LABEL rather than a literal.
     expect(amended).toContain('(layer === "competition" ? " veterinary practices" : "")');
-    expect(amended).toContain('"within this " + AREA_LABEL[layer] + ". ZIP Code Business Patterns is published per ZIP code, which is this dataset\u2019s own authoritative geography.');
+    expect(amended).toContain('"Counted within this " + AREA_LABEL[layer] + ". ZIP Code Business Patterns is published per ZIP code, which is this dataset\u2019s own authoritative geography.');
+    // Fix round 1, Important 3: the third ZCTA state says which rule hid it, in the API's own
+    // words (`tests/census/test_design_shading_labels.py` pins the sentence across both sides).
+    expect(amended).toContain('p.suppress_reason === "source_threshold" ? "Fewer than three veterinary establishments here.');
 
     // D-NS16 (John, 2026-09-10): the no-data class is the design's own --border-subtle value and
     // the legend gains one row reading exactly "No data".
@@ -419,8 +431,11 @@ describe('local design amendments (spec D15)', () => {
     expect(amended).toContain('      areas: areaFc,');
     // A24.32 (whole-branch review, finding 5): zero polygons drawn, no ramp and no geography
     // name — the legend never claims a scale the map does not carry.
-    expect(amended).toContain('          hasRamp: !!valueLayer && areaFc.features.length > 0,');
-    expect(amended).toContain('          hasGeo: FILL_KEYS.indexOf(valueLayer) > -1 && areaFc.features.length > 0,');
+    // A24.41/A24.42 (fix round 1, Minor 7): the legend stays mounted while a metro's areas load,
+    // exactly as a pan already keeps it — a legend that disappears and returns is a flicker.
+    expect(amended).toContain('          hasRamp: !!valueLayer && (areaFc.features.length > 0 || areasPending),');
+    expect(amended).toContain('          hasGeo: FILL_KEYS.indexOf(valueLayer) > -1 && (areaFc.features.length > 0 || areasPending),');
+    expect(amended).toContain('    const areasPending = !!this.props.market && s.mdAreas === null;');
     expect(amended).toContain('mdAreas: null,');
     // One loader, with the rejection arm every adapter path in this design keeps forgetting
     // (A16.17's own lesson): a refused load empties the map, it does not restore the fixture.
@@ -468,7 +483,7 @@ describe('local design amendments (spec D15)', () => {
 
   it('amendments() is exactly the pinned id list, in the pinned order, and nothing else', () => {
     expect(amendments().map((a) => a.id)).toEqual(AMENDMENT_IDS);
-    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(258);
+    expect(amendments(), 'the count, stated as a number as well as a list').toHaveLength(268);
     expect(new Set(AMENDMENT_IDS).size, 'two amendments share an id').toBe(AMENDMENT_IDS.length);
   });
 

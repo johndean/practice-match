@@ -30,6 +30,7 @@ import redis as redis_sync
 from psycopg2.extras import execute_batch
 
 from app.census import metrics as M
+from app.census import zbp as Z
 from app.census.materialize import _cbp_suppression, _suppression
 from app.census.registry import load as load_registry
 from app.census.vintage import active
@@ -109,16 +110,27 @@ SELECT g.geo_id, a.estimate, a.moe
  WHERE g.summary_level = '140' AND g.vintage = %(gv)s
 """
 
-# Competition at the ZCTA. LEFT JOIN, not INNER: a ZCTA the `zbp` load has not reached yet must be
-# written with a NULL value and drawn in the design's own no-data class (D-NS16), never omitted
-# and never a zero -- "no veterinary practices here" and "this ZIP is not loaded yet" are
-# different sentences. No `state_fips = ANY(%(states)s)` term, and not only because joining
-# `geo_area` is already the scope: a ZCTA can cross a state line and `app/census/tiger.py` leaves
-# `state_fips` NULL on every 860 row, so a state predicate here would return nothing at all.
+# Competition at the ZCTA, in THREE states rather than two (review round 1, Important 3).
+#
+# Two LEFT JOINs, not one. The first is the veterinary count; the second is ZIP Code Business
+# Patterns' own ALL-INDUSTRY total for the same ZIP, which is the dataset's COVERAGE UNIVERSE.
+# The Census publishes ZIP-level industry detail only where a category has three or more
+# establishments -- a category under three is not reported but IS counted in the sum total -- so
+# the total present with no 541940 row beside it is the Census having WITHHELD a real figure,
+# while both absent is a ZIP area the dataset does not cover at all. Without the second join those
+# two were written identically (`value: null, suppressed: false`), and 393 of Dallas's 535 ZCTAs
+# claimed "no data" over cells the Census had deliberately withheld.
+#
+# Still LEFT and still never INNER: a ZCTA the `zbp` load has not reached is written with a NULL
+# value and drawn in the design's own no-data class (D-NS16), never omitted and never a zero. No
+# `state_fips = ANY(%(states)s)` term, and not only because joining `geo_area` is already the
+# scope: a ZCTA can cross a state line and `app/census/tiger.py` leaves `state_fips` NULL on every
+# 860 row, so a state predicate here would return nothing at all.
 _COMPETITION_SQL = """
-SELECT g.geo_id, z.establishments
+SELECT g.geo_id, z.establishments, (t.geo_id IS NOT NULL) AS covered
   FROM geo_area g
   LEFT JOIN zbp_industry z ON z.geo_id = g.geo_id AND z.summary_level = '860' AND z.vintage = %(zv)s AND z.naics_code = '541940'
+  LEFT JOIN zbp_industry t ON t.geo_id = g.geo_id AND t.summary_level = '860' AND t.vintage = %(zv)s AND t.naics_code = %(total)s
  WHERE g.summary_level = '860' AND g.vintage = %(gv)s
 """
 
@@ -130,6 +142,10 @@ SELECT g.geo_id, c.annual_payroll_k, c.establishments, c.flag
 """
 
 _Row = tuple[str, str, str, str, float | None, str, bool, str | None, float | None, bool, str | None, str, str]
+#: Whatever one `materialize_geo` call wants to read once and use twice. Created by it,
+#: discarded with it: nothing is held between runs, so a changed vintage cannot be served
+#: from a stale list.
+_Cache = dict[str, list[tuple[str, float | None, float | None]]]
 
 
 def _as_float(x: Decimal | float | None) -> float | None:
@@ -154,7 +170,7 @@ def _row(geo_id: str, level: str, vintage: str, key: str, value: float | None, u
     )
 
 
-def _income(cur: psycopg2.extensions.cursor, act: dict[str, str], states: list[str]) -> list[_Row]:
+def _income(cur: psycopg2.extensions.cursor, act: dict[str, str], states: list[str], cache: _Cache) -> list[_Row]:
     """Median household income at the CENSUS TRACT, as loaded -- `is_derived = False`, because at
     '140' it is a published ACS estimate with its own published margin, not a weighted average
     (D-NS4). The uniform `(cur, act, states)` signature is what `_BUILDERS` dispatches on; `states`
@@ -170,7 +186,7 @@ def _income(cur: psycopg2.extensions.cursor, act: dict[str, str], states: list[s
     return out
 
 
-def _growth(cur: psycopg2.extensions.cursor, act: dict[str, str], states: list[str]) -> list[_Row]:
+def _growth(cur: psycopg2.extensions.cursor, act: dict[str, str], states: list[str], cache: _Cache) -> list[_Row]:
     cur.execute(_GROWTH_SQL, {"av": act["acs5"], "pv": act["acs5_prior"], "gv": act["tiger_cb"], "states": states})
     out: list[_Row] = []
     for geo_id, now_, prior in cur.fetchall():
@@ -184,7 +200,7 @@ def _growth(cur: psycopg2.extensions.cursor, act: dict[str, str], states: list[s
     return out
 
 
-def _econ(cur: psycopg2.extensions.cursor, act: dict[str, str], states: list[str]) -> list[_Row]:
+def _econ(cur: psycopg2.extensions.cursor, act: dict[str, str], states: list[str], cache: _Cache) -> list[_Row]:
     cur.execute(_ECON_SQL, {"cv": act["cbp"], "gv": act["tiger_cb"], "states": states})
     out: list[_Row] = []
     for geo_id, payroll_k, establishments, flag in cur.fetchall():
@@ -203,13 +219,28 @@ def _econ(cur: psycopg2.extensions.cursor, act: dict[str, str], states: list[str
     return out
 
 
-def _households(cur: psycopg2.extensions.cursor, act: dict[str, str], states: list[str]) -> list[_Row]:
+def _tract_households(cur: psycopg2.extensions.cursor, act: dict[str, str], cache: _Cache) -> list[tuple[str, float | None, float | None]]:
+    """The ONE scan of `B11001_001E` at the tract, shared by the two layers built from it.
+
+    `households` and `pet_households_est` are the same variable at the same geography -- pets is
+    `round(households x 0.57)` and has no source of its own -- and each builder ran this query in
+    full, so a nightly made two passes over ~84,000 tract rows for a deterministic multiple of
+    figures it had already read (review round 1, Minor 2). The cache lives for one
+    `materialize_geo` call and is created by it, so nothing is held between runs and a changed
+    vintage cannot be served from a stale list."""
+    rows = cache.get("tract_households")
+    if rows is None:
+        cur.execute(_HOUSEHOLDS_SQL, {"av": act["acs5"], "gv": act["tiger_cb"]})
+        rows = [(geo_id, _as_float(estimate), _as_float(moe)) for geo_id, estimate, moe in cur.fetchall()]
+        cache["tract_households"] = rows
+    return rows
+
+
+def _households(cur: psycopg2.extensions.cursor, act: dict[str, str], states: list[str], cache: _Cache) -> list[_Row]:
     """Total households at the CENSUS TRACT -- a published ACS estimate with a published margin,
     so `is_derived` is False and `_suppression` applies exactly as it does to income."""
-    cur.execute(_HOUSEHOLDS_SQL, {"av": act["acs5"], "gv": act["tiger_cb"]})
     out: list[_Row] = []
-    for geo_id, estimate, moe in cur.fetchall():
-        value, margin = _as_float(estimate), _as_float(moe)
+    for geo_id, value, margin in _tract_households(cur, act, cache):
         suppressed, reason = _suppression(value, margin)
         out.append(_row(geo_id, "140", act["acs5"], "households", value, "count", moe=margin,
                         suppressed=suppressed, reason=reason, source="acs5",
@@ -217,7 +248,7 @@ def _households(cur: psycopg2.extensions.cursor, act: dict[str, str], states: li
     return out
 
 
-def _pets(cur: psycopg2.extensions.cursor, act: dict[str, str], states: list[str]) -> list[_Row]:
+def _pets(cur: psycopg2.extensions.cursor, act: dict[str, str], states: list[str], cache: _Cache) -> list[_Row]:
     """Estimated pet-owning households: the design's own `households x PET_RATE`, through
     `metrics.pet_households_est` and never a second spelling of it.
 
@@ -226,11 +257,9 @@ def _pets(cur: psycopg2.extensions.cursor, act: dict[str, str], states: list[str
     caveat names. It carries NO margin -- a rounded model output has no published one -- and it
     inherits the households row's own suppression as `input_suppressed`, which is
     `materialize.py`'s own idiom for the same estimate at the listing point."""
-    cur.execute(_HOUSEHOLDS_SQL, {"av": act["acs5"], "gv": act["tiger_cb"]})
     out: list[_Row] = []
-    for geo_id, estimate, moe in cur.fetchall():
-        hh = _as_float(estimate)
-        suppressed, _reason = _suppression(hh, _as_float(moe))
+    for geo_id, hh, moe in _tract_households(cur, act, cache):
+        suppressed, _reason = _suppression(hh, moe)
         out.append(_row(geo_id, "140", act["acs5"], "pet_households_est", M.pet_households_est(hh), "count",
                         derived=True, suppressed=suppressed, reason="input_suppressed" if suppressed else None,
                         source="acs5",
@@ -238,18 +267,27 @@ def _pets(cur: psycopg2.extensions.cursor, act: dict[str, str], states: list[str
     return out
 
 
-def _competition(cur: psycopg2.extensions.cursor, act: dict[str, str], states: list[str]) -> list[_Row]:
+def _competition(cur: psycopg2.extensions.cursor, act: dict[str, str], states: list[str], cache: _Cache) -> list[_Row]:
     """Veterinary establishments (NAICS 541940) per ZIP Code Tabulation Area.
 
     OBSERVED, not modelled: `is_derived` is False. No `_suppression` and no margin -- Business
     Patterns is a census of establishments rather than a sample, so there is nothing to test and
     greying every ZCTA in the country is what running it through `_suppression` would do (D-NS17,
     the same trap `_growth` and `_econ` avoid). `zbp_industry` carries no flag column at all: ZBP
-    publishes no establishment-count suppression flag (`app/census/zbp.py`)."""
-    cur.execute(_COMPETITION_SQL, {"zv": act["zbp"], "gv": act["tiger_cb"]})
+    publishes no establishment-count suppression flag (`app/census/zbp.py`).
+
+    What it DOES publish is a threshold, and that is a suppression of a different kind: a ZIP area
+    the dataset covers whose veterinary count the Census withheld because the category holds fewer
+    than three establishments is `suppressed` with its own reason, `source_threshold`, and the
+    design's tip says which rule hid it. A ZIP area the dataset does not cover at all stays an
+    ABSENCE. The two were indistinguishable until 2026-09-12 (review round 1, Important 3)."""
+    cur.execute(_COMPETITION_SQL, {"zv": act["zbp"], "gv": act["tiger_cb"], "total": Z.TOTAL_NAICS})
     out: list[_Row] = []
-    for geo_id, establishments in cur.fetchall():
-        out.append(_row(geo_id, "860", act["zbp"], "establishments", _as_float(establishments), "count",
+    for geo_id, establishments, covered in cur.fetchall():
+        value = _as_float(establishments)
+        withheld = value is None and bool(covered)
+        out.append(_row(geo_id, "860", act["zbp"], "establishments", value, "count",
+                        suppressed=withheld, reason="source_threshold" if withheld else None,
                         source="zbp",
                         inputs={"zbp": act["zbp"], "geo_level": "zcta", "naics": "541940"}))
     return out
@@ -300,13 +338,14 @@ def materialize_geo(conn: psycopg2.extensions.connection, redis: redis_sync.Redi
         cur.execute("SELECT state_fips FROM market_state ORDER BY 1")
         states = [r[0] for r in cur.fetchall()]
     written: dict[str, int] = {}
+    cache: _Cache = {}
     for metric_key, level, dataset, extra in LAYERS:
         needed = ("tiger_cb", dataset, *extra)
         if any(act.get(k) is None for k in needed) or not all(reg[k].cleared for k in (dataset, *extra)):
             written[metric_key] = 0
             continue
         with conn.cursor() as cur:
-            rows = _BUILDERS[metric_key](cur, act, states)
+            rows = _BUILDERS[metric_key](cur, act, states, cache)
         written[metric_key] = _rewrite(conn, level, metric_key, act[dataset], rows)
     redis.set(GEO_VERSION_KEY, time.time_ns())
     return written

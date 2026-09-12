@@ -476,6 +476,27 @@ export const SCREENS: Screen[] = [
   // and both are untouched. Then `stripFootnoteInFrame` puts that sentence inside the capture:
   // the strip's body is `max-height: 40vh` and the six cards fill it, so a click alone leaves the
   // footnote below the fold — see that helper for the measurement.
+  // D-L1 fix round 1, Important 5 (2026-09-12): the three layers this branch built could be
+  // selected in no approved state, so nothing rendered one in a browser or a pixel — and the
+  // defect the review found is exactly the class a rendered oracle catches. `households` drew 503
+  // of 503 polygons in the no-data grey under a full four-class ramp naming a geography, and the
+  // characterisation case that looped the layer asserted the LEGEND and never the fill.
+  //
+  // One state, on a TRACT layer, reached the way `browse-layer-menu` reaches the same control —
+  // click the trigger, wait for the listbox, click the row by its own name. D-C40's precedent
+  // (`browse-market-strip`): appending one Browse state moves no frozen hash, none of the
+  // thirteen being a Browse capture. The row is addressed by NAME rather than by index, so a
+  // layer added to or removed from the catalogue fails this loudly instead of silently
+  // photographing its neighbour.
+  { name: 'browse-layer-households', steps: async (p) => {
+    await browse(p);
+    await layerTrigger(p).first().click();
+    const menu = p.getByRole('listbox', { name: 'Active market layer' });
+    await menu.waitFor({ state: 'visible' });
+    await menu.getByRole('option', { name: 'Households' }).click();
+    await menu.waitFor({ state: 'detached' });
+    await p.waitForTimeout(400);
+  } },
   { name: 'browse-market-strip', steps: async (p) => {
     await browse(p);
     await click(p, 'Expand all six layers');

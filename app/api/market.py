@@ -244,6 +244,17 @@ SELECT count(*) FROM geo_metric m
 # (migration 017's own CHECK constraint admits exactly these three strings).
 _STATE_FOR = {"cleared": "enabled", "unresolved": "disabled", "blocked": "blocked"}
 
+# The Census's OWN publication rule for ZIP-level industry detail, stated once and read in two
+# places: this catalogue's `competition` caveat, and -- word for word -- the design's tooltip for a
+# polygon `geo_metric` marked `source_threshold` (`tests/census/test_design_shading_labels.py`
+# pins the two). A category under three establishments is not reported at the ZIP level but IS
+# counted in the sum total, which is why `app/census/zbp.py` loads that total: it is the only way
+# to tell a withheld count from a ZIP the dataset does not cover (review round 1, Important 3).
+THRESHOLD_RULE = (
+    "The Census does not publish a ZIP-level count for a category with fewer than three "
+    "establishments, though they are counted in its all-industry total."
+)
+
 # The nine approved layers (Census spec §2 table + the layer-rendering contract). Labels are the
 # design's; sources/vintages/state come from the registry at request time, never hard-coded.
 LAYERS: list[dict[str, Any]] = [
@@ -256,7 +267,7 @@ LAYERS: list[dict[str, Any]] = [
     {"key": "econ", "label": "Average Practice Payroll", "dataset_key": "cbp", "metric": "revenue_per_establishment", "is_derived": True, "geo_level": "county",
      "caveat": "Payroll per establishment (NAICS 541940), not revenue; county level."},
     {"key": "competition", "label": "Veterinary Competition", "dataset_key": "zbp", "metric": "establishments", "is_derived": False, "geo_level": "zcta",
-     "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. Published per ZIP code by ZIP Code Business Patterns, and shaded at the ZIP Code Tabulation Area, which is that dataset's own authoritative geography."},
+     "caveat": "Establishment counts (NAICS 541940) include corporate-owned and specialty locations; a proxy for competitive density, not a count of independent practices. Published per ZIP code by ZIP Code Business Patterns, and shaded at the ZIP Code Tabulation Area, which is that dataset's own authoritative geography. " + THRESHOLD_RULE},
     {"key": "practices", "label": "Practice Listings", "dataset_key": None, "metric": None, "is_derived": False, "caveat": None},
     {"key": "drive_10", "label": "5\u201310 min drive time", "dataset_key": None, "metric": None, "is_derived": True, "caveat": "Straight-line 8 km approximation of drive time."},
     {"key": "drive_20", "label": "10\u201320 min drive time", "dataset_key": None, "metric": None, "is_derived": True, "caveat": "Straight-line 16 km approximation of drive time."},

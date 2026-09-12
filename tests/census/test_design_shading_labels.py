@@ -21,7 +21,7 @@ have no geometry to serve whatever the design says.
 import re
 from pathlib import Path
 
-from app.api.market import SHADING
+from app.api.market import SHADING, THRESHOLD_RULE
 from app.census.tiger import BOUNDARY_FILES
 
 # D-C35 (John, 2026-09-10): every layer at its own geography, and the legend names it. `income`
@@ -57,3 +57,17 @@ def test_every_ruled_summary_level_is_one_tiger_can_actually_load() -> None:
     """A label the boundary loader cannot produce geometry for is a legend line over an empty map."""
     loadable = {spec.summary_level for spec in BOUNDARY_FILES(2023, ["48"])}
     assert set(RULED_LEVEL.values()) <= loadable
+
+
+def test_the_census_threshold_rule_is_one_sentence_read_by_both_the_api_and_the_design() -> None:
+    """Review round 1, Important 3. A ZIP area whose veterinary count the Census withheld under
+    its own three-establishment rule is served `suppressed: true, suppress_reason:
+    "source_threshold"`, and TWO surfaces have to explain that to a member: the layer catalogue's
+    `caveat`, which an integrator reads, and the map's own tooltip, which a buyer reads. Two
+    spellings of one rule is how they come to disagree, so the sentence is pinned across them --
+    the same shape `test_the_designs_geography_labels_are_the_ruled_ones` above uses for the
+    geography names."""
+    design = DESIGN.read_text(encoding="utf-8")
+    assert THRESHOLD_RULE in design, "the design's tooltip no longer states the Census rule the API states"
+    assert design.count(THRESHOLD_RULE) == 1, "the rule is stated once in the design, not twice"
+    assert "source_threshold" in design, "nothing in the design branches on the reason the API sends"

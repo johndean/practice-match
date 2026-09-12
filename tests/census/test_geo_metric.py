@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import ast
 from pathlib import Path
+from typing import Self
 
 import fakeredis
 import psycopg2
@@ -81,12 +82,13 @@ def _cbp(conn: psycopg2.extensions.connection, run: int, geo_id: str, payroll_k:
         )
 
 
-def _zbp(conn: psycopg2.extensions.connection, run: int, geo_id: str, establishments: int | None) -> None:
+def _zbp(conn: psycopg2.extensions.connection, run: int, geo_id: str, establishments: int | None,
+         naics: str = "541940") -> None:
     with conn.cursor() as cur:
         cur.execute(
             "INSERT INTO zbp_industry (geo_id, summary_level, vintage, naics_code, establishments, ingest_run_id) "
-            "VALUES (%s, '860', %s, '541940', %s, %s)",
-            (geo_id, ZBP_V, establishments, run),
+            "VALUES (%s, '860', %s, %s, %s, %s)",
+            (geo_id, ZBP_V, naics, establishments, run),
         )
 
 
@@ -130,6 +132,7 @@ def world(conn: psycopg2.extensions.connection, run_id: int) -> psycopg2.extensi
     _acs(conn, run_id, "48453001200", "140", ACS_NOW, "B11001_001E", 900, 850)   # CV over 0.30 -> high_moe
     _geo(conn, "78704", "860", "ZCTA5 78704", None)   # a ZCTA carries no state_fips: it crosses state lines
     _zbp(conn, run_id, "78704", 7)
+    _zbp(conn, run_id, "78704", 1904, naics="00")    # the all-industry total: this ZIP is in ZBP
     return conn
 
 
@@ -350,6 +353,72 @@ def test_pet_households_are_derived_from_the_same_tract_and_say_so(world: psycop
     assert (by[("pet_households_est", "48453001200")][8], by[("pet_households_est", "48453001200")][9]) == (True, "input_suppressed")
 
 
+class _CountingCursor:
+    """Everything `geo_metric` asks of a cursor, plus a note of the statements it ran. psycopg2's
+    own `cursor` is an immutable C type, so it cannot be monkeypatched -- a proxy is the only way
+    to count from outside the module under test."""
+
+    def __init__(self, inner: psycopg2.extensions.cursor, seen: list[str]) -> None:
+        self._inner, self._seen = inner, seen
+
+    def execute(self, sql: str, *a: object, **kw: object) -> None:
+        self._seen.append(str(sql))
+        self._inner.execute(sql, *a, **kw)   # type: ignore[arg-type]
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._inner, name)
+
+    def __enter__(self) -> Self:
+        self._inner.__enter__()
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self._inner.__exit__(*exc)   # type: ignore[arg-type]
+
+
+class _Counting:
+    """The connection `materialize_geo` is handed: real in every respect but its cursors."""
+
+    def __init__(self, inner: psycopg2.extensions.connection, seen: list[str]) -> None:
+        self._inner, self._seen = inner, seen
+
+    def cursor(self) -> _CountingCursor:
+        return _CountingCursor(self._inner.cursor(), self._seen)
+
+    def __getattr__(self, name: str) -> object:
+        return getattr(self._inner, name)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name in ("_inner", "_seen"):
+            object.__setattr__(self, name, value)
+        else:
+            setattr(self._inner, name, value)
+
+
+def test_the_tract_household_scan_runs_once_for_both_layers_that_read_it(
+    world: psycopg2.extensions.connection,
+) -> None:
+    """Review round 1, Minor 2. `households` and `pet_households_est` are the same ACS variable at
+    the same geography -- pets is `round(households x 0.57)` and has no source of its own -- and
+    each builder ran the whole `_HOUSEHOLDS_SQL` scan, so a nightly did two full passes over
+    ~84,000 tract rows for a deterministic multiple of figures it had already read.
+
+    One pass, shared through the run's own cache. Asserted by counting the executions rather than
+    by timing: a cache that silently stopped being consulted is exactly the kind of regression a
+    stopwatch would never catch, and the ROWS must still be identical either way."""
+    both = [r for r in _rows(world) if r[0] in ("households", "pet_households_est")]
+    assert both == [], "the fixture starts with no rows, so the comparison below means something"
+
+    scans: list[str] = []
+    geo_metric.materialize_geo(_Counting(world, scans), fakeredis.FakeRedis())   # type: ignore[arg-type]
+    households_scans = [q for q in scans if "B11001_001E" in q]
+    assert len(households_scans) == 1, f"the tract household scan ran {len(households_scans)} times, not once"
+
+    by = {(r[0], r[2]): r for r in _rows(world)}
+    assert float(by[("households", "48453001100")][3]) == 1480
+    assert float(by[("pet_households_est", "48453001100")][3]) == M.pet_households_est(1480)
+
+
 def test_competition_is_written_at_the_zcta_which_is_zbps_own_geography(world: psycopg2.extensions.connection) -> None:
     """ZIP Business Patterns is ZIP-native: its rows ARE ZIP areas, and `zbp_industry` stores them
     under summary level 860 with no state term, because a ZCTA can cross a state line. An
@@ -377,6 +446,39 @@ def test_a_zcta_with_no_zbp_row_yet_is_written_with_a_null_value_rather_than_a_z
     by = {(r[0], r[2]): r for r in _rows(world)}
     assert by[("establishments", "79901")][3] is None
     assert by[("establishments", "79901")][8] is False, "an absent figure is not a suppressed one"
+
+
+def test_a_zip_the_census_withheld_a_count_for_is_suppressed_and_one_it_does_not_cover_is_not(
+    world: psycopg2.extensions.connection, run_id: int,
+) -> None:
+    """Review round 1, Important 3 (2026-09-12). The Census publishes ZIP-level INDUSTRY detail
+    only where a category has three or more establishments -- "if a given NAICS category has less
+    than three business establishments, the number of establishments won't be reported for that
+    category, but they will be included in the sum total" -- which is why `zbp_industry` held a
+    minimum of 3 nationally on QA and not one row below it.
+
+    So there are THREE states at a ZCTA, not two, and the first two were served identically until
+    this case existed: a published count; a ZIP area ZIP Code Business Patterns COVERS whose
+    veterinary count the Census withheld under its own rule (`suppressed`, `source_threshold`);
+    and a ZIP area the dataset does not cover at all (`value: null, suppressed: false`). 393 of
+    Dallas's 535 ZCTAs -- 73 % of that map -- were the middle state saying it was the third, which
+    is the mirror image of the CBP over-suppression this same branch fixed."""
+    _geo(world, "78702", "860", "ZCTA5 78702", None)   # covered, veterinary count withheld
+    _zbp(world, run_id, "78702", 812, naics="00")
+    _geo(world, "79901", "860", "ZCTA5 79901", None)   # not covered by ZBP at all
+    geo_metric.materialize_geo(world, fakeredis.FakeRedis())
+    by = {(r[0], r[2]): r for r in _rows(world)}
+
+    withheld = by[("establishments", "78702")]
+    assert withheld[3] is None, "a withheld count is never invented, and never a zero"
+    assert (withheld[8], withheld[9]) == (True, "source_threshold")
+    assert withheld[12] == {"zbp": ZBP_V, "geo_level": "zcta", "naics": "541940"}
+
+    uncovered = by[("establishments", "79901")]
+    assert (uncovered[3], uncovered[8], uncovered[9]) == (None, False, None)
+
+    published = by[("establishments", "78704")]
+    assert (float(published[3]), published[8]) == (7.0, False)
 
 
 def test_a_layer_whose_own_dataset_is_not_cleared_writes_nothing_and_the_others_still_write(

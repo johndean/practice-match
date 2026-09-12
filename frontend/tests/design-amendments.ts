@@ -5207,6 +5207,161 @@ const A24_32: Amendment = {
   count: 1
 };
 
+/** A24.33-A24.41 -- FIX ROUND 1 on the layers branch (review of e984c85..304b80f, 2026-09-12).
+ *  Every entry is CHAINED on an earlier A24 entry's output. The findings, in the reviewer's own
+ *  order, and what each entry does about it. */
+const FIX1 = {
+  date: '2026-09-12',
+  ruling: 'Fix round 1 on the four-layer change (review of e984c85..304b80f, 2026-09-12): the shaded layers must draw the figures they name. `areaSet` learns the design’s own field aliases; the competition catalogue names the dataset, vintage and geography the route actually serves; a ZIP area the Census withheld under its three-establishment publication rule is SUPPRESSED with its own reason and says so, and no legend class promises a count the data cannot hold; a metric shading the map does not also draw its own symbols; and the legend stays mounted while a metro loads.'
+};
+
+/** A24.33 -- Important 1, and the defect of the round. `areaSet` read `best[layer]` while
+ *  `communities()` names the field `hh` for households and `vets` for competition; the design's
+ *  three OTHER readers of the same objects alias them (`marketVals`'s community values, the
+ *  Compare rows, the strip cards). So on the reference path -- and in the app's own e2e oracle,
+ *  which is derived from `areaSet` -- `households` drew 503 of 503 polygons in the no-data grey
+ *  UNDER A FULL FOUR-CLASS RAMP that named a geography: a legend claiming a scale nothing on the
+ *  map is drawn on, which is the exact statement A24.32 was written to prevent. The alias is the
+ *  one `marketVals` already uses, verbatim, so there is one spelling of it and not a fourth. */
+const A24_33: Amendment = {
+  id: 'A24.33', ...FIX1,
+  find: '        const raw = best ? best[layer] : undefined;\n',
+  replace: '        // The design\'s own alias, verbatim from `marketVals`: `communities()` names\n'
+    + '        // these two fields `hh` and `vets`, and a fill layer reads the same objects the\n'
+    + '        // symbols and the Compare rows do.\n'
+    + '        const raw = best ? (layer === "households" ? best.hh : layer === "competition" ? best.vets : best[layer]) : undefined;\n',
+  count: 1
+};
+
+/** A24.34 -- Important 2. `competition` is served `source_dataset: "zbp"`, `value_vintage:
+ *  "2022"`, `geo_label: "ZIP Code Tabulation Area"`, and its catalogue entry named County
+ *  Business Patterns, a 2023 release and "community level" -- so `areaTip` printed A24.30b's ZBP
+ *  sentence and this CBP source line in the same tooltip. A sentence a release makes false is
+ *  corrected in that release (A27.4/A27.5's own precedent); none of this is new copy. */
+const A24_34: Amendment = {
+  id: 'A24.34', ...FIX1,
+  find: '    sub: "Veterinary establishments · CBP, NAICS 541940",\n'
+    + '    updated: "Updated: CBP 2023 release (Nov 2024)",\n'
+    + '    source: "U.S. Census County Business Patterns (2023), NAICS 541940 · community level",\n',
+  replace: '    sub: "Veterinary establishments · ZIP Code Business Patterns, NAICS 541940",\n'
+    + '    updated: "Updated: ZIP Code Business Patterns 2022",\n'
+    + '    source: "U.S. Census ZIP Code Business Patterns (2022), NAICS 541940 · ZIP Code Tabulation Area",\n',
+  count: 1
+};
+
+/** A24.35 / A24.36 -- Important 2's other half. Both layers shade the CENSUS TRACT and both
+ *  source lines said "community level"; income's has said it since before the tract ruling and is
+ *  corrected here rather than left as the one line on the card that names no geography at all. */
+const A24_35: Amendment = {
+  id: 'A24.35', ...FIX1,
+  find: '    source: "U.S. Census ACS 5-year estimates (2023) · community level",\n'
+    + '    means: "The count of occupied housing units in each community',
+  replace: '    source: "U.S. Census ACS 5-year estimates (2023) · Census tract",\n'
+    + '    means: "The count of occupied housing units in each community',
+  count: 1
+};
+
+const A24_36: Amendment = {
+  id: 'A24.36', ...FIX1,
+  find: '    source: "U.S. Census ACS 5-year estimates (2023) · community level",\n'
+    + '    means: "Higher-income areas may support stronger demand',
+  replace: '    source: "U.S. Census ACS 5-year estimates (2023) · Census tract",\n'
+    + '    means: "Higher-income areas may support stronger demand',
+  count: 1
+};
+
+/** A24.37 -- Important 3's legend half, CHAINED on A24.25. The Census publishes ZIP-level
+ *  INDUSTRY detail only where a category has three or more establishments ("if a given NAICS
+ *  category has less than three business establishments, the number of establishments won't be
+ *  reported for that category, but they will be included in the sum total"), so the served
+ *  distribution has a FLOOR of 3 -- measured on QA: `zbp_industry` min 3, zero rows below it, and
+ *  `geo_metric.establishments` min 3 across 4,719 ZCTAs. A first class labelled "1-3" therefore
+ *  promises two counts the data cannot hold; it can only ever contain a 3, and it says so. The
+ *  stops do not move: re-measured on the served distribution (`scripts/measure_area_breaks.py`),
+ *  `[4, 6, 10]` takes 37.0 / 36.1 / 21.4 / 5.5 % of it. */
+const A24_37: Amendment = {
+  id: 'A24.37', ...FIX1,
+  find: '  competition: { buckets: ["1–3", "4–5", "6–9", "10+"], stops: [4, 6, 10] }\n',
+  replace: '  competition: { buckets: ["3", "4–5", "6–9", "10+"], stops: [4, 6, 10] }\n',
+  count: 1
+};
+
+/** A24.38 -- Important 3's honesty half, CHAINED on A24.3. `geo_metric` now tells the three ZCTA
+ *  states apart (`app/census/geo_metric.py`): a count, a ZIP area the Census WITHHELD under its
+ *  own three-establishment rule (`suppressed: true, suppress_reason: "source_threshold"`), and a
+ *  ZIP area ZIP Code Business Patterns does not cover at all. The design's `absent` line already
+ *  branches on `suppress_reason`, so the third state needs one more arm and no new legend, no new
+ *  colour and no new control: the polygon stays in the design's own no-data grey and the tip says
+ *  which of the three it is. Before this, 393 of Dallas's 535 ZCTAs -- 73 % of the map -- said
+ *  "No data for this area" over cells the Census had deliberately withheld. */
+const A24_38: Amendment = {
+  id: 'A24.38', ...FIX1,
+  find: '      ? (p.suppress_reason === "source_flag" ? "Not published for this county" : "Estimate too imprecise to show at this geography")\n',
+  replace: '      ? (p.suppress_reason === "source_flag" ? "Not published for this county"\n'
+    + '        : p.suppress_reason === "source_threshold" ? "Fewer than three veterinary establishments here. The Census does not publish a ZIP-level count for a category with fewer than three establishments, though they are counted in its all-industry total."\n'
+    + '        : "Estimate too imprecise to show at this geography")\n',
+  count: 1
+};
+
+/** A24.39 -- Minor 5, CHAINED on A24.30b. The competition margin line was written as a lowercase
+ *  fragment meant to be read as the continuation of the value line above it ("7 veterinary
+ *  practices" / "within this ZIP Code Tabulation Area."), but it is its own `<div>` in its own
+ *  declarations, so it read as a sentence beginning in the middle. It is a sentence now; the
+ *  value line above keeps the noun it already names. */
+const A24_39: Amendment = {
+  id: 'A24.39', ...FIX1,
+  find: '              ? "within this " + AREA_LABEL[layer] + ". ZIP Code Business Patterns is published per ZIP code, which is this dataset’s own authoritative geography. Establishments include corporate-owned and specialty locations."\n',
+  replace: '              ? "Counted within this " + AREA_LABEL[layer] + ". ZIP Code Business Patterns is published per ZIP code, which is this dataset’s own authoritative geography. Establishments include corporate-owned and specialty locations."\n',
+  count: 1
+};
+
+/** A24.40 -- Minor 4. `SYMBOL_KEYS` and `FILL_KEYS` now overlap completely for the three count
+ *  layers, and `competition`'s symbols default ON -- so choosing Veterinary competition drew a
+ *  ZCTA choropleth classed on `AREA_LAYERS` AND graduated symbols at the listing points classed
+ *  on `VALUE_LAYERS`, two different scales for one metric under one legend that describes only
+ *  the first. A metric that is SHADING the map does not also draw its own symbols. The design's
+ *  own `layers` toggles are untouched: this narrows what is drawn for the active layer, it does
+ *  not change what a member has turned on, and turning the fill to another layer brings the
+ *  symbols straight back. */
+const A24_40: Amendment = {
+  id: 'A24.40', ...FIX1,
+  find: '    const activeSymbols = SYMBOL_KEYS.filter(\n'
+    + '      (k) => layers[k] && !(s.mdOff || {})[k === "competition" ? "vets" : k]\n'
+    + '    );\n',
+  replace: '    const activeSymbols = SYMBOL_KEYS.filter(\n'
+    + '      (k) => k !== valueLayer && layers[k] && !(s.mdOff || {})[k === "competition" ? "vets" : k]\n'
+    + '    );\n',
+  count: 1
+};
+
+/** A24.41 -- Minor 7, CHAINED on A24.32. A24.32 unmounts the ramp and the geography line when no
+ *  polygon was drawn, which is right for a metro the API cannot answer for and wrong for the
+ *  moment between asking and being answered: `loadAreas` clears `mdAreas` on a METRO CHANGE, so
+ *  the legend vanished and came back on every change of market. A pan already keeps it (A24.21's
+ *  `keep`), and a legend that disappears and returns is a flicker rather than a state. `mdAreas
+ *  === null` is the design's own "nothing has been loaded" value, distinct from `{}` ("the API
+ *  answered, and it held nothing"), which is exactly the distinction this needs. */
+const A24_41: Amendment = {
+  id: 'A24.41', ...FIX1,
+  find: '          hasRamp: !!valueLayer && areaFc.features.length > 0,\n'
+    + '          hasGeo: FILL_KEYS.indexOf(valueLayer) > -1 && areaFc.features.length > 0,\n',
+  replace: '          hasRamp: !!valueLayer && (areaFc.features.length > 0 || areasPending),\n'
+    + '          hasGeo: FILL_KEYS.indexOf(valueLayer) > -1 && (areaFc.features.length > 0 || areasPending),\n',
+  count: 1
+};
+
+/** A24.42 -- A24.41's own term, declared beside the collection it qualifies. It is true only with
+ *  an adapter present and only while `mdAreas` is the design's own "nothing loaded yet" null, so
+ *  the reference and the Claude Design preview never reach it. */
+const A24_42: Amendment = {
+  id: 'A24.42', ...FIX1,
+  find: '    const areaFc = this.areaVals(this.props.market ? ((s.mdAreas || {})[valueLayer] || { type: "FeatureCollection", features: [] }) : this.areaSet(valueLayer), valueLayer);\n',
+  replace: '    const areaFc = this.areaVals(this.props.market ? ((s.mdAreas || {})[valueLayer] || { type: "FeatureCollection", features: [] }) : this.areaSet(valueLayer), valueLayer);\n'
+    + '    // "asked, not yet answered" — A24.41 keeps the legend mounted across it.\n'
+    + '    const areasPending = !!this.props.market && s.mdAreas === null;\n',
+  count: 1
+};
+
 const A24_9: Amendment = {
   id: 'A24.9', ...NS, file: 'jsx',
   find: '// GEOMETRY NOTE: the prototype has no ZCTA boundary file, so community areas are\n// approximated as Voronoi cells around each community\'s centroid, clipped to the metro\n// bounding box. Cells are contiguous and non-overlapping, which is what a choropleth\n// requires, but they are NOT real Census boundaries — the UI labels them "approximate\n// community areas". Production must load tiger_cb ZCTA polygons per the Census Data\n// Source Specification and drop this approximation.\n',
@@ -5374,5 +5529,10 @@ export function amendments(): Amendment[] {
     // A24.5's (A24.32 runs after A24.28, which edits the same block), and A24.31b A24.16's.
     // Definition order in this file matches this list (m8).
     A24_24, A24_25, A24_26, A24_27, A24_28, A24_29, A24_30a, A24_30b, A24_31a, A24_31b, A24_32,
+    // A24.33-A24.42 -- fix round 1 (review of e984c85..304b80f, 2026-09-12). Every entry is
+    // CHAINED: A24.33/A24.38 read A24.3's output, A24.37 A24.25's, A24.39 A24.30b's, A24.41
+    // A24.32's and A24.42 A24.31a's, so each runs after the entry it reads. Definition order in
+    // this file matches this list (m8).
+    A24_33, A24_34, A24_35, A24_36, A24_37, A24_38, A24_39, A24_40, A24_41, A24_42,
     A24_9, A24_10, A24_11, A24_12];
 }

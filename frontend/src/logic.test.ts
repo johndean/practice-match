@@ -4756,9 +4756,21 @@ describe('A24 — real boundary polygons', () => {
     for (const [layer, label] of [['income', 'Census tract'], ['growth', 'Place (city/town)'], ['econ', 'County'],
       ['households', 'Census tract'], ['pets', 'Census tract']] as const) {
       c.state.mdValue = layer;
-      const active = c.marketVals(P).active;
+      const md = c.marketVals(P);
+      const active = md.active;
       expect(active.hasGeo).toBe(true);
       expect(active.geoLine).toBe(label);
+      // Review round 1, Important 1 — the assertion this case was MISSING, and the reason it
+      // stepped over a layer that painted 503 of 503 polygons "No data" under a full four-class
+      // ramp: `areaSet` read `best[layer]` while `communities()` names the field `hh` for
+      // households and `vets` for competition, which the design's three OTHER readers alias. A
+      // legend is a claim about what is drawn, so a case that checks the legend and never the
+      // fill cannot see the exact lie A24.32 exists to prevent.
+      expect(md.areas.features.length, `${layer}: no polygons at all`).toBeGreaterThan(0);
+      expect(
+        md.areas.features.filter((f: { properties: { value: number | null } }) => f.properties.value !== null).length,
+        `${layer}: every polygon is valueless, so the ramp above describes nothing`
+      ).toBeGreaterThan(0);
       expect(active.ramp[active.ramp.length - 1]).toEqual({ style: 'flex: 1; height: 9px; background: #e6e6e6;', label: 'No data' });
       // …and exactly one such row, appended, with the design's own classes ahead of it.
       expect(active.ramp.filter((r: { label: string }) => r.label === 'No data')).toHaveLength(1);

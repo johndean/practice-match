@@ -38,7 +38,7 @@ REQUIRED_CI_COMMANDS = (
     # Shading Task 7 (2026-09-12): scripts/measure_band_ambiguity.py joins it, exactly as Task 3's
     # report predicted it would have to — the plan's own file list for this task names neither
     # file, which is why the note above is here rather than in the plan.
-    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py scripts/measure_boundary_caps.py tests/e2e/api_under_test.py --strict",
+    "scripts/bootstrap_admin.py scripts/seed_persona.py scripts/reset_rate_limits.py scripts/prepare_photos.py scripts/seed_listings.py scripts/census_load.py scripts/export_design_boundaries.py scripts/measure_band_ambiguity.py scripts/measure_area_breaks.py scripts/measure_boundary_caps.py tests/e2e/api_under_test.py --strict",
     "poetry run pytest -q -W error",
     # I5 fix round 1, C1 (John, 2026-09-07): `scripts/` joins the gate. The one arm that kept it
     # below 100 % — `scripts/migrate.py`'s `__main__` guard — is now covered by
@@ -273,12 +273,17 @@ def test_claude_md_literal_edit_clauses_count_each_family_s_own_entries():
     ts = (ROOT / "frontend" / "tests" / "design-amendments.ts").read_text()
     # A18 (2026-09-09) stopped this tuple at "Fifteen" and the assertion failed on its own
     # vocabulary before it compared anything; D-L1 (2026-09-12) took A24 to thirty-three entries
-    # and did it again. Extended to "thirty-nine", which is `NUMBER_WORDS` below, lowercased.
+    # and did it again, and its own fix round to forty-six a few hours later. Extended to "fifty",
+    # which is past `NUMBER_WORDS` below — that table is the FAMILY count's vocabulary (27 today)
+    # and this one is the largest family's ENTRY count, so they grow at different rates and the
+    # second has now outrun the first.
     words = ("zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven", "twelve",
              "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen", "twenty", "twenty-one",
              "twenty-two", "twenty-three", "twenty-four", "twenty-five", "twenty-six", "twenty-seven", "twenty-eight",
              "twenty-nine", "thirty", "thirty-one", "thirty-two", "thirty-three", "thirty-four", "thirty-five",
-             "thirty-six", "thirty-seven", "thirty-eight", "thirty-nine")
+             "thirty-six", "thirty-seven", "thirty-eight", "thirty-nine", "forty", "forty-one",
+             "forty-two", "forty-three", "forty-four", "forty-five", "forty-six", "forty-seven",
+             "forty-eight", "forty-nine", "fifty")
     markers = list(re.finditer(r"\*\*A(\d+)\*\*", claude))
     assert markers, "CLAUDE.md declares no bold amendment family markers (**A<n>**)"
     # The captured word is one of `words` ITSELF, not any `\w+` — a GROUP descriptor ("three more
