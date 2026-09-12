@@ -4,10 +4,16 @@ Review round 1, Minor 6: `AREA_LAYERS` (amendment A24.25) cuts the three COUNT l
 the map paints, and nothing committed could re-derive those cuts. The precedent is
 `scripts/measure_band_ambiguity.py`: a reporting script that reads `geo_metric`, runs nowhere on
 the request path and builds nothing."""
+import runpy
+import sys
+from pathlib import Path
+
 import psycopg2
 import pytest
 
 from scripts import measure_area_breaks as MB
+
+ROOT = Path(__file__).resolve().parents[2]
 
 
 def _metric(conn: psycopg2.extensions.connection, geo_id: str, value: float | None, *,
@@ -84,3 +90,15 @@ def test_main_refuses_without_a_dsn_and_reports_an_empty_metric(conn: psycopg2.e
     monkeypatch.setenv("DATABASE_URL", scratch_dsn)
     assert MB.main(["--metric", "establishments", "--vintage", "2022", "--stops", "4"]) == 1
     assert "nothing served" in capsys.readouterr().err
+
+
+def test_the_main_guard_is_covered(monkeypatch: pytest.MonkeyPatch) -> None:
+    """`scripts/` is inside the 100 % gate, and the `if __name__` line is reachable only by
+    running the file AS a script — `test_measure_band_ambiguity.py`'s own shape, for the same
+    reason."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    monkeypatch.setattr(sys, "argv", ["measure_area_breaks.py", "--metric", "establishments",
+                                      "--vintage", "2022", "--stops", "4"])
+    with pytest.raises(SystemExit) as exc:
+        runpy.run_path(str(ROOT / "scripts" / "measure_area_breaks.py"), run_name="__main__")
+    assert exc.value.code == 2
